@@ -58,6 +58,7 @@ export type SwapDiagnosticReasonV1 =
   | 'provider_not_released'
   | 'provider_preflight_failed'
   | 'no_route'
+  | 'unsupported_token'
   | 'amount_too_small'
   | 'unsupported_pair'
   | 'unsupported_chain'
@@ -99,6 +100,10 @@ const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
   o1_exchange_route_adapter_not_released: 'provider_not_released',
   provider_router_mismatch: 'provider_preflight_failed',
   provider_no_route: 'no_route',
+  // Phase 10B.7: the router does not index the token, so it never reached the
+  // question of whether a route exists. Mapping this onto `no_route` would
+  // blame the market for a question nobody asked it.
+  provider_unsupported_token: 'unsupported_token',
   provider_unsupported_intent: 'unsupported_pair',
   provider_chain_mismatch: 'unsupported_chain',
   provider_expired_quote: 'stale_quote',
@@ -139,6 +144,7 @@ export const SWAP_DIAGNOSTIC_LABEL_V1: Record<SwapDiagnosticReasonV1, string> = 
   provider_not_released: 'not released',
   provider_preflight_failed: 'preflight failed',
   no_route: 'no route',
+  unsupported_token: 'token not covered',
   amount_too_small: 'amount too small',
   unsupported_pair: 'unsupported pair',
   unsupported_chain: 'unsupported chain',
@@ -201,6 +207,10 @@ export function swapDiagnosticMessageV1(input: SwapDiagnosticMessageInputV1): st
       return `${name} preflight could not verify the router on Base, so no calls were built from it.${stillWorks}`;
     case 'no_route':
       return `${name} found no route for this amount.${stillWorks} A slightly larger amount often routes.`;
+    case 'unsupported_token':
+      // Ours, not the market's: another router might cover it, and the token
+      // itself may trade perfectly well somewhere this set does not reach.
+      return `${name} does not cover this token, so it never looked for a route.${stillWorks} This says nothing about whether the token trades.`;
     case 'amount_too_small':
       return `The amount is below ${name}'s minimum.${stillWorks} Try a larger amount.`;
     case 'unsupported_pair':

@@ -92,11 +92,40 @@ function priceImpactFromUsdV1(routeSummary: Record<string, unknown>): number | n
   return Math.max(0, bps);
 }
 
-function reportsNoRoute(value: unknown): boolean {
-  if (!value || typeof value !== 'object') return false;
+function providerMessageV1(value: unknown): string {
+  if (!value || typeof value !== 'object') return '';
   const record = value as Record<string, unknown>;
-  const message = String(record.message ?? record.error ?? record.reason ?? '');
-  return /no (?:swap )?route|route not found|insufficient liquidity/i.test(message);
+  return String(record.message ?? record.error ?? record.reason ?? '');
+}
+
+function reportsNoRoute(value: unknown): boolean {
+  return /no (?:swap )?route|route not found|insufficient liquidity/i.test(providerMessageV1(value));
+}
+
+/**
+ * The router does not index this token at all.
+ *
+ * A THIRD thing, and the Phase 10B.7 audit exists because it was being read as
+ * one of the other two. Measured 2026-08-27 at the same size, direction and
+ * destination, KyberSwap answers the three NVIDIA representations on Base with
+ * three different outcomes:
+ *
+ *   Coinbase NVDAc   200                        quoted
+ *   Backed  bNVDA    400 code 4008  route not found
+ *   Backed  wbNVDA   400 code 4011  token not found
+ *
+ * 4008 is pathfinding: the router considered the pair and found no way through
+ * — the same answer a garbage address gets, and a fact about the market. 4011
+ * is coverage: the token is not in the router's universe, so it never looked.
+ *
+ * Neither `provider_no_route` nor `provider_http_error` is true of 4011. The
+ * first blames the market for a question nobody asked it; the second blames our
+ * transport for a request that completed perfectly. Before this, the wrapper
+ * was recorded as `provider_http_error` on 25 consecutive passes — our
+ * infrastructure taking the blame for the router's token list.
+ */
+function reportsUnsupportedToken(value: unknown): boolean {
+  return /token not found|unsupported token|token not supported/i.test(providerMessageV1(value));
 }
 
 export class KyberSwapRouteAdapter implements SwapRouteAdapter {
@@ -172,11 +201,20 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     //
     // 4xx only. A 5xx body saying "route not found" is a server fault, and a
     // fault is never allowed to become a statement about an asset.
+    // Coverage before pathfinding: a router that does not index the token never
+    // reached the question of whether a route exists, so `no_route` would be a
+    // claim it did not make.
+    if (response.status >= 400 && response.status < 500 && reportsUnsupportedToken(response.data)) {
+      return providerFailure(this.id, 'provider_unsupported_token', response.status);
+    }
     if (response.status >= 400 && response.status < 500 && reportsNoRoute(response.data)) {
       return providerFailure(this.id, 'provider_no_route', response.status);
     }
     if (response.status < 200 || response.status >= 300) {
       return providerFailure(this.id, 'provider_http_error', response.status);
+    }
+    if (reportsUnsupportedToken(response.data)) {
+      return providerFailure(this.id, 'provider_unsupported_token');
     }
     if (reportsNoRoute(response.data)) return providerFailure(this.id, 'provider_no_route');
 

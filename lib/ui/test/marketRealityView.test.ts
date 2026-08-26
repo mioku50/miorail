@@ -121,13 +121,96 @@ describe('the five outcomes stay apart', () => {
   test('a market with no venue is the asset, not us', () => {
     const outcome = representationOutcomeV1(
       representation({
+        status: 'unavailable',
         liveness: 'live',
         lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
-        sources: [{ source: 'kyberswap', status: 'no_route', errorCode: 'cash_size_anchor_no_route', quoteEvidence: null }],
+        sources: [{ source: 'kyberswap', status: 'no_route', errorCode: 'provider_no_route', quoteEvidence: null }],
       }),
       NOW,
     );
     assert.equal(outcome, 'no_route');
+  });
+
+  test('a cash rung nobody could size is the market, and is NOT "no route"', () => {
+    // Phase 10B.7. A cash size becomes a token amount by pricing the buy
+    // first. When that buy has no route the sell was never sized — which says
+    // nothing about selling a position already held, so calling it "no route"
+    // would be a market verdict on a question nobody asked.
+    const outcome = representationOutcomeV1(
+      representation({
+        liveness: 'live',
+        lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
+        sources: [
+          { source: 'kyberswap', status: 'not_measured', errorCode: 'cash_size_anchor_no_route', quoteEvidence: null },
+        ],
+      }),
+      NOW,
+    );
+    assert.equal(outcome, 'unsized');
+  });
+
+  test('a token the router does not index is OURS, not a market verdict', () => {
+    // Measured 2026-08-27: KyberSwap answers the Backed wrapper with HTTP 400
+    // code 4011 "token not found" — it never looked for a route. That arrived
+    // as `provider_http_error` on 25 consecutive passes, our infrastructure
+    // taking the blame for the router's token list.
+    const outcome = representationOutcomeV1(
+      representation({
+        liveness: 'live',
+        lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
+        sources: [
+          { source: 'kyberswap', status: 'not_measured', errorCode: 'provider_unsupported_token', quoteEvidence: null },
+        ],
+      }),
+      NOW,
+    );
+    assert.equal(outcome, 'unsupported_token');
+  });
+
+  test('the three NVIDIA representations produce three different outcomes', () => {
+    // The audit's whole point, as one assertion. Same router, same size, same
+    // direction, same destination — three answers, and the product must not
+    // report them as two.
+    const outcomes = (
+      [
+        [null, 'full' as const],
+        ['provider_no_route', 'unavailable' as const],
+        ['provider_unsupported_token', 'measurement_failed' as const],
+      ] as const
+    ).map(([errorCode, status]) =>
+      representationOutcomeV1(
+        representation({
+          status,
+          liveness: 'live',
+          lastObservation: { ...LAPSED_OBSERVATION, open: true },
+          sources: [{ source: 'kyberswap', status: 'quoted', errorCode, quoteEvidence: null }],
+        }),
+        NOW,
+      ),
+    );
+    assert.deepEqual(outcomes, ['priced', 'no_route', 'unsupported_token']);
+  });
+
+  test('an expired unsupported-token stays ours, and an expired unsized stays the market', () => {
+    // The stored status folds every non-quote into `measurement_failed`, so
+    // once evidence expires the error code is all that keeps the three apart.
+    const aged = (errorCode: string) =>
+      representationOutcomeV1(
+        representation({
+          liveness: 'history_only',
+          lastObservation: {
+            ...LAPSED_OBSERVATION,
+            status: 'measurement_failed',
+            errorCode,
+            returnedCashAtomic: null,
+          },
+          sources: [LAPSED_SOURCE],
+        }),
+        NOW,
+      );
+    assert.equal(aged('provider_unsupported_token'), 'unsupported_token');
+    assert.equal(aged('cash_size_anchor_no_route'), 'unsized');
+    assert.equal(aged('provider_http_error'), 'provider_failed');
   });
 
   test('a provider that would not answer is us, not the asset', () => {
@@ -164,10 +247,11 @@ describe('the five outcomes stay apart', () => {
             issuerId: 'backed',
             representationKind: 'rebasing_erc20',
             issuerInstrumentKey: 'backed:instrument_id:c1077d76',
+            status: 'unavailable',
             liveness: 'live',
             lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
             sources: [
-              { source: 'kyberswap', status: 'no_route', errorCode: 'cash_size_anchor_no_route', quoteEvidence: null },
+              { source: 'kyberswap', status: 'no_route', errorCode: 'provider_no_route', quoteEvidence: null },
             ],
           }),
           representation({

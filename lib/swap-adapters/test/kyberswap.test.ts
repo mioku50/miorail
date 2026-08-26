@@ -127,6 +127,53 @@ test('KyberSwap 400 "route not found" is the router answering, not our failure',
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_no_route');
 });
 
+test('KyberSwap 400 "token not found" is coverage, not a market verdict', async () => {
+  // Phase 10B.7, measured 2026-08-27 at the same size, direction and
+  // destination as the other two NVIDIA representations:
+  //
+  //   Coinbase NVDAc  200                       quoted
+  //   Backed  bNVDA   400 code 4008  route not found
+  //   Backed  wbNVDA  400 code 4011  token not found
+  //
+  // 4008 is pathfinding — the same answer a garbage address gets, and a fact
+  // about the market. 4011 is the router's token list: it never looked. Read
+  // as `provider_http_error` it recorded OUR infrastructure as broken on 25
+  // consecutive passes; read as `provider_no_route` it would state a market
+  // verdict the router never gave.
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () =>
+      mockKyberExecutor({
+        status: 400,
+        data: { code: 4011, message: 'token not found', details: null },
+      }),
+  });
+  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'no-token', now: NOW });
+  assert.equal(result.outcome, 'unavailable');
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_unsupported_token');
+});
+
+test('an unsupported token is never demoted to no route, at any HTTP status', async () => {
+  // Coverage is checked BEFORE pathfinding, so a body carrying both words
+  // cannot be read as the market refusing.
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () =>
+      mockKyberExecutor({ status: 200, data: { message: 'token not found: no route' } }),
+  });
+  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'both-words', now: NOW });
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_unsupported_token');
+});
+
+test('a 5xx saying "token not found" is still a fault, not coverage', async () => {
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () => mockKyberExecutor({ status: 503, data: { message: 'token not found' } }),
+  });
+  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'gateway-token', now: NOW });
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_http_error');
+});
+
 test('KyberSwap 400 that is not about a route stays our failure', async () => {
   const intent = makeIntent();
   const adapter = new KyberSwapRouteAdapter({

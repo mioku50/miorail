@@ -199,6 +199,8 @@ export const MARKET_REALITY_OUTCOMES_V1 = [
   'lapsed',
   'stale_finding',
   'no_route',
+  'unsupported_token',
+  'unsized',
   'provider_failed',
   'never_measured',
 ] as const;
@@ -360,21 +362,51 @@ export function representationOutcomeV1(
     // Telling a reader their price expired when we never had one is a small
     // lie; telling them a FINDING expired when what actually happened is that
     // our router call failed hands our failure to the market.
-    switch (representation.lastObservation?.status) {
-      case 'quoted':
-        return 'lapsed';
-      case 'no_route':
-        return 'stale_finding';
-      default:
-        return 'provider_failed';
-    }
+    if (representation.lastObservation?.status === 'quoted') return 'lapsed';
+    // The stored status folds every non-quote into `measurement_failed`, so the
+    // ERROR CODE is what still separates "the router does not cover this",
+    // "the market gave us no size" and "our call failed". Reading the status
+    // alone put all three under our name once the evidence expired.
+    const aged = outcomeFromCodesV1(
+      representation.lastObservation?.status === 'no_route' ? 'unavailable' : 'measurement_failed',
+      [representation.lastObservation?.errorCode ?? null],
+    );
+    return aged === 'no_route' ? 'stale_finding' : aged;
   }
-  if (representation.status === 'unavailable') return 'no_route';
-  if (representation.sources.some((source) => source.errorCode === 'cash_size_anchor_no_route')) {
-    return 'no_route';
-  }
-  if (representation.status === 'measurement_failed') return 'provider_failed';
-  if (representation.sources.some((source) => source.errorCode !== null)) return 'provider_failed';
+  return outcomeFromCodesV1(
+    representation.status,
+    representation.sources.map((source) => source.errorCode),
+  );
+}
+
+/**
+ * The five ways evidence can fail to be a price, kept apart.
+ *
+ * Phase 10B.7 measured all three NVIDIA representations through the same router
+ * at the same size and got three genuinely different answers, of which the
+ * product was reporting two:
+ *
+ *   Coinbase NVDAc  200                       -> priced
+ *   Backed  bNVDA   400 4008 route not found  -> the market has no venue
+ *   Backed  wbNVDA  400 4011 token not found  -> our router does not index it
+ *
+ * The third was arriving as `provider_http_error` — our infrastructure taking
+ * the blame for the router's token list, on 25 consecutive passes.
+ */
+function outcomeFromCodesV1(
+  status: MarketRealityRepresentationWireV1['status'],
+  errorCodes: readonly (string | null)[],
+): MarketRealityOutcomeV1 {
+  const codes = errorCodes.filter((code): code is string => code !== null);
+  if (codes.some((code) => code === 'provider_unsupported_token')) return 'unsupported_token';
+  if (status === 'unavailable') return 'no_route';
+  if (codes.some((code) => code === 'provider_no_route')) return 'no_route';
+  // A cash rung is sized by pricing the BUY first. When that buy has no route
+  // the sell was never sized — which is the market answering, not our call
+  // failing, even though it lands in storage as `measurement_failed`.
+  if (codes.some((code) => code === 'cash_size_anchor_no_route')) return 'unsized';
+  if (status === 'measurement_failed') return 'provider_failed';
+  if (codes.length > 0) return 'provider_failed';
   return 'never_measured';
 }
 
@@ -382,6 +414,8 @@ const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
   priced: 'Priced now',
   lapsed: 'Price expired',
   stale_finding: 'Finding expired',
+  unsupported_token: 'Not covered',
+  unsized: 'Could not size',
   no_route: 'No route',
   provider_failed: 'Our read failed',
   never_measured: 'Not measured',
@@ -391,6 +425,8 @@ const OUTCOME_TONE_V1: Readonly<Record<MarketRealityOutcomeV1, ToneV1>> = {
   priced: 'good',
   lapsed: 'warn',
   stale_finding: 'off',
+  unsupported_token: 'warn',
+  unsized: 'off',
   no_route: 'off',
   provider_failed: 'warn',
   never_measured: 'neutral',
@@ -402,6 +438,13 @@ const OUTCOME_ATTRIBUTION_V1: Readonly<
   priced: 'the market',
   lapsed: 'the clock',
   stale_finding: 'the clock',
+  // Our router set does not index the token. Another router might; the token
+  // may trade perfectly well somewhere this set does not reach.
+  unsupported_token: 'Miorail',
+  // A cash-denominated size needs a buy quote to become a token amount. The
+  // buy found no route, so the sell was never sized — the market's answer,
+  // arriving as a non-measurement.
+  unsized: 'the market',
   no_route: 'the market',
   provider_failed: 'Miorail',
   never_measured: 'Miorail',
@@ -436,6 +479,13 @@ function outcomeBodyV1(
       return `The last look at ${sizeLabel}${age ? ` ${age}` : ''} found no usable route, and that finding has since expired. Measure now to ask again.`;
     case 'no_route':
       return `No approved venue would trade ${sizeLabel} of this representation. That is a fact about the market for this contract, not about the issuer.`;
+    case 'unsupported_token':
+      // Never "no route": the router did not index the token, so it never
+      // reached the question. Claiming a market verdict here would be us
+      // speaking for a router that stayed silent.
+      return `Our approved router does not cover this contract, so it never looked for a route${age ? ` — last asked ${age}` : ''}. That is our coverage, not the market's answer, and it says nothing about whether the token trades.`;
+    case 'unsized':
+      return `A cash size is set by first pricing a buy of ${sizeLabel}, and that buy found no route${age ? ` ${age}` : ''} — so this sell was never sized. The market gave us no size to test, which is not the same as refusing to trade a position already held.`;
     case 'provider_failed':
       return representation.liveness === 'history_only'
         ? `Our last router call for ${sizeLabel}${age ? ` ${age}` : ''} did not complete, and that is all we hold. Our failure, not the contract's — measure now to try again.`
