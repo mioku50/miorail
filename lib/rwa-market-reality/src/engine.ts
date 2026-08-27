@@ -23,6 +23,7 @@ import {
   type MarketRealityIndexV1,
   type MarketRealityResponseV2,
 } from './contracts.js';
+import { unknownMarketRealityReferenceV1 } from './referenceSession.js';
 
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 // The production reader runs every six hours. One extra hour tolerates timer
@@ -45,15 +46,10 @@ export interface MarketRealityDepsV1 {
 }
 
 function unknownReferenceV1(): MarketRealityReferenceStateV1 {
-  return {
-    status: 'unknown',
-    session: 'unknown',
-    valueAtomic: null,
-    decimals: null,
-    observedAt: null,
-    comparable: false,
-    reason: 'No reviewed comparable reference/session adapter answered for this representation.',
-  };
+  return unknownMarketRealityReferenceV1({
+    reasonCode: 'reference_adapter_not_configured',
+    reason: 'No reviewed reference/session adapter answered for this exact representation.',
+  });
 }
 
 function quoteForDirectionV1(

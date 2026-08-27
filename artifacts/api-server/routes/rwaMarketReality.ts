@@ -5,6 +5,7 @@ import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
 import {
+  createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
   createDatabaseRepresentationRatioRepository,
   createDatabaseRepresentationSupplyRepository,
@@ -24,6 +25,7 @@ import {
 } from '@mioagent/rwa-market-reality';
 import type { TenantUser } from '../middleware/tenantAuth.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+import { createReviewedMarketRealityReferenceAdapterV1 } from '../lib/rwaReferenceSession.js';
 
 export const rwaMarketRealityRouter = Router();
 
@@ -84,17 +86,30 @@ export const rwaMarketRealityRuntime = {
   quoteAdapters: () => [new KyberSwapRouteAdapter()],
   measureOne: measureOfficialCashExitV1,
   reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
+  reference: () =>
+    createReviewedMarketRealityReferenceAdapterV1({
+      official: createDatabaseOfficialAssetRepository(client),
+      reader: createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
+    }),
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
         to_regclass('public.underlying_asset') AS underlying,
         to_regclass('public.representation_underlying') AS representations,
+        to_regclass('public.official_asset_sources') AS official_sources,
+        to_regclass('public.official_assets') AS official_assets,
         to_regclass('public.official_cash_exit_runs') AS cash_exit,
         to_regclass('public.representation_ratio') AS ratios,
         to_regclass('public.representation_supply') AS supplies`;
     const row = rows[0];
     return Boolean(
-      row?.underlying && row.representations && row.cash_exit && row.ratios && row.supplies,
+      row?.underlying &&
+      row.representations &&
+      row.official_sources &&
+      row.official_assets &&
+      row.cash_exit &&
+      row.ratios &&
+      row.supplies,
     );
   },
 };
@@ -210,6 +225,7 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
         ratios: rwaMarketRealityRuntime.ratios(),
         supplies: rwaMarketRealityRuntime.supplies(),
         now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
       },
       {
         underlyingKey: question.underlyingKey,
@@ -290,6 +306,7 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
         ratios: rwaMarketRealityRuntime.ratios(),
         supplies: rwaMarketRealityRuntime.supplies(),
         now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
         approvedSources: adapters.map((adapter) => adapter.id),
         // `decimals` and `symbol` come off the chain because a representation
         // binding does not carry them, and a wrong decimals turns an exact size

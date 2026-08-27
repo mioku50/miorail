@@ -154,7 +154,14 @@ export interface MarketRealityRepresentationWireV1 {
   premiumDiscountBps: string | null;
   reference: {
     status: 'fresh' | 'stale' | 'paused' | 'unavailable' | 'unknown';
-    session: 'regular' | 'after_hours' | 'weekend' | 'held' | 'unknown';
+    session:
+      | 'regular_hours'
+      | 'after_hours'
+      | 'weekend'
+      | 'reference_holding_last_close'
+      | 'corporate_action_hold'
+      | 'stale'
+      | 'unknown';
     comparable: boolean;
     reason: string | null;
   };

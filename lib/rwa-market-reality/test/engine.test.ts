@@ -180,6 +180,8 @@ test('complete numeric coverage remains ranking-withheld by Phase 10B.8 policy',
   assert.equal(result.numericComparisonCoverage.status, 'complete');
   assert.equal(result.ranking.status, 'withheld');
   assert.deepEqual(result.ranking.orderedTokenAddresses, []);
+  assert.ok(result.representations.every((row) => row.reference.session === 'unknown'));
+  assert.ok(result.representations.every((row) => row.premiumDiscountBps === null));
   assert.ok(
     result.representations.every(
       (row) => row.sources[0]?.simulationEvidence.status === 'not_simulated',
