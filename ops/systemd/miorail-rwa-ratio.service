@@ -1,9 +1,11 @@
 [Unit]
-# The ratio between one token and one underlying share, read and stored. Base Docs: "One B20 token does not permanently equal one share."
+# Exact-address outstanding supply for every reviewed representation, plus the
+# issuer-specific ratio between token units and underlying shares, read and
+# stored. Base Docs: "One B20 token does not permanently equal one share."
 #
 # Oneshot, driven by miorail-rwa-ratio.timer. The tokens publish no advance notice this build can call — uiMultiplier/newUIMultiplier/effectiveAt all revert — so comparing today against the stored value is the ONLY way a corporate action is ever noticed. Read-only outside Miorail's own
 # evidence tables: no signer, no key, no chain write, no wallet.
-Description=Miorail representation-ratio read
+Description=Miorail representation supply and ratio evidence read
 Documentation=https://github.com/mioku50/miorail
 After=network-online.target postgresql.service
 Wants=network-online.target postgresql.service
@@ -18,7 +20,7 @@ Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_read_representation_ratio.ts
 
-TimeoutStartSec=300
+TimeoutStartSec=600
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

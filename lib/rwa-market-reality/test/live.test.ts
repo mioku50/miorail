@@ -4,11 +4,13 @@ import type {
   CashExitMeasurementRunV1,
   OfficialCashExitRepositoryV1,
   RepresentationRatioRepositoryV1,
+  RepresentationSupplyRepositoryV1,
+  RepresentationSupplyRowV1,
   RepresentationUnderlyingV1,
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
-import { assembleMarketRealityV1 } from '../src/engine.js';
+import { assembleMarketRealityV2 } from '../src/engine.js';
 import {
   createMarketRealityCoordinatorV1,
   marketRealityQuestionHashV1,
@@ -22,6 +24,29 @@ const A = '0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const B = '0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
 const UNDERLYING = 'security:isin:US67066G1040';
 const NOW = new Date('2026-08-26T12:01:00.000Z');
+
+function positiveSupply(address: string): RepresentationSupplyRowV1 {
+  return {
+    chainId: 8453,
+    tokenAddress: address,
+    state: 'positive_supply',
+    totalSupplyAtomic: '1000000000000000000',
+    decimals: 18,
+    normalization: 'raw_erc20_total_supply',
+    blockNumber: '50000000',
+    blockHash: H,
+    source: 'erc20_total_supply',
+    evidenceHash: H,
+    readOutcome: 'success',
+    failureCode: null,
+    observedAt: '2026-08-26T12:00:00.000Z',
+    lastCheckedAt: '2026-08-26T12:00:00.000Z',
+    lastChangedAt: null,
+    reads: 1,
+    changes: 0,
+    createdAt: '2026-08-26T12:00:00.000Z',
+  };
+}
 
 function binding(address: string): RepresentationUnderlyingV1 {
   return {
@@ -43,7 +68,10 @@ function binding(address: string): RepresentationUnderlyingV1 {
 }
 
 /** A run whose quote window is open or closed at NOW, on demand. */
-function run(address: string, options: { expiresAt: string; observedAt: string }): CashExitMeasurementRunV1 {
+function run(
+  address: string,
+  options: { expiresAt: string; observedAt: string },
+): CashExitMeasurementRunV1 {
   return {
     schemaVersion: 'official-cash-exit-run/v1',
     runId: H,
@@ -107,7 +135,11 @@ const LAPSED = { observedAt: '2026-08-26T11:21:00.000Z', expiresAt: '2026-08-26T
 
 function liveDeps(
   runs: Record<string, CashExitMeasurementRunV1>,
-  hooks: { onMeasure?: (address: string) => void; resolveFails?: Set<string> } = {},
+  hooks: {
+    onMeasure?: (address: string) => void;
+    resolveFails?: Set<string>;
+    zeroSupply?: Set<string>;
+  } = {},
 ): MarketRealityLiveDepsV1 {
   const store: Record<string, CashExitMeasurementRunV1> = { ...runs };
   return {
@@ -119,6 +151,14 @@ function liveDeps(
         store[tokenAddress] ?? null,
     } as unknown as OfficialCashExitRepositoryV1,
     ratios: { readRatios: async () => [] } as unknown as RepresentationRatioRepositoryV1,
+    supplies: {
+      readSupplies: async () =>
+        [A, B].map((address) =>
+          hooks.zeroSupply?.has(address)
+            ? { ...positiveSupply(address), state: 'zero_supply' as const, totalSupplyAtomic: '0' }
+            : positiveSupply(address),
+        ),
+    } as unknown as RepresentationSupplyRepositoryV1,
     now: () => NOW,
     approvedSources: ['router-a'],
     resolveToken: async (tokenAddress) =>
@@ -166,7 +206,10 @@ describe('the exact question is the key', () => {
     // Two measurements through different routers are not comparable, so they
     // must not be deduplicated onto each other either — the same rule the
     // coverage gate applies across representations.
-    const one = marketRealityQuestionHashV1({ question: question(), approvedSources: ['router-a'] });
+    const one = marketRealityQuestionHashV1({
+      question: question(),
+      approvedSources: ['router-a'],
+    });
     const two = marketRealityQuestionHashV1({
       question: question(),
       approvedSources: ['router-a', 'router-b'],
@@ -190,7 +233,10 @@ describe('the exact question is the key', () => {
       question: question({ destination: 'ETH' }),
       approvedSources: ['router-a'],
     });
-    const base = marketRealityQuestionHashV1({ question: question(), approvedSources: ['router-a'] });
+    const base = marketRealityQuestionHashV1({
+      question: question(),
+      approvedSources: ['router-a'],
+    });
     assert.notEqual(sell, base);
     assert.notEqual(eth, base);
   });
@@ -235,6 +281,29 @@ describe('measuring on demand', () => {
     assert.deepEqual(measured.sort(), [A, B].sort());
   });
 
+  test('a zero-supply representation stays visible but spends no router call until re-entry', async () => {
+    const measured: string[] = [];
+    const zeroSupply = new Set([A]);
+    const coordinator = createMarketRealityCoordinatorV1({ now: () => NOW });
+    const deps = liveDeps({}, { onMeasure: (address) => measured.push(address), zeroSupply });
+    const result = await coordinator.measure(deps, {
+      underlyingKey: UNDERLYING,
+      direction: 'buy',
+      requestedCashAtomic: '100000000',
+    });
+    assert.deepEqual(measured, [B]);
+    assert.deepEqual(result.excludedZeroSupply, [A]);
+    assert.equal(result.answer.representations.length, 2, 'reviewed identity remains on the board');
+
+    zeroSupply.delete(A);
+    await coordinator.measure(deps, {
+      underlyingKey: UNDERLYING,
+      direction: 'buy',
+      requestedCashAtomic: '100000000',
+    });
+    assert.deepEqual(measured, [B, A], 'positive supply re-enters measurement without a restart');
+  });
+
   test('the answer is re-read from storage, never patched in memory', async () => {
     // The read path is the only thing allowed to decide what counts as current.
     // A live answer that took a shortcut would be a second definition of
@@ -246,7 +315,7 @@ describe('measuring on demand', () => {
       direction: 'buy',
       requestedCashAtomic: '100000000',
     });
-    const readAgain = await assembleMarketRealityV1(deps, {
+    const readAgain = await assembleMarketRealityV2(deps, {
       underlyingKey: UNDERLYING,
       direction: 'buy',
       requestedCashAtomic: '100000000',
@@ -259,10 +328,11 @@ describe('measuring on demand', () => {
 
   test('a token the chain would not describe is unresolved, and accused of nothing', async () => {
     const coordinator = createMarketRealityCoordinatorV1({ now: () => NOW });
-    const result = await coordinator.measure(
-      liveDeps({}, { resolveFails: new Set([A]) }),
-      { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
-    );
+    const result = await coordinator.measure(liveDeps({}, { resolveFails: new Set([A]) }), {
+      underlyingKey: UNDERLYING,
+      direction: 'buy',
+      requestedCashAtomic: '100000000',
+    });
     assert.deepEqual(result.unresolved, [
       { tokenAddress: A, reason: 'token_decimals_unavailable' },
     ]);

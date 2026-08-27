@@ -57,7 +57,7 @@ describe('GET multi-issuer Market Reality', () => {
     rwaMarketRealityRuntime.assemble = async (_deps, input) => {
       supplied = input;
       return {
-        schemaVersion: 'market-reality/v1',
+        schemaVersion: 'market-reality/v2',
         question: {
           chainId: 8453,
           underlyingKey: input.underlyingKey,
@@ -70,15 +70,29 @@ describe('GET multi-issuer Market Reality', () => {
           exactSizeOnly: true,
           baseOnly: true,
         },
-        coverage: {
-          policy: 'same_approved_router_set_exact_size_and_destination',
-          reviewedRepresentations: 0,
-          comparableRepresentations: 0,
+        universe: {
+          reviewedRepresentationCount: 0,
+          positiveSupplyRepresentationCount: 0,
+          zeroSupplyRepresentationCount: 0,
+          unresolvedSupplyRepresentationCount: 0,
+        },
+        marketOutcomeCoverage: {
+          policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+          eligibleRepresentationCount: 0,
+          establishedOutcomeCount: 0,
+          status: 'incomplete',
+          reason: 'No reviewed representation is bound to this exact underlying.',
+        },
+        numericComparisonCoverage: {
+          policy: 'fresh_numeric_quotes_same_exact_question_and_normalization',
+          eligibleRepresentationCount: 0,
+          pricedRepresentationCount: 0,
           status: 'incomplete',
           reason: 'No reviewed representation is bound to this exact underlying.',
         },
         ranking: {
           status: 'withheld',
+          policy: 'withheld_phase_10b8',
           orderedTokenAddresses: [],
           reason: 'Coverage comparability did not pass; no BEST representation is emitted.',
         },
@@ -163,7 +177,7 @@ describe('POST the live measurement', () => {
         inFlightCount: () => 0,
         measure: async () => ({
           answer: {
-            schemaVersion: 'market-reality/v1' as const,
+            schemaVersion: 'market-reality/v2' as const,
             question: {
               chainId: 8453 as const,
               underlyingKey: UNDERLYING,
@@ -176,14 +190,32 @@ describe('POST the live measurement', () => {
               exactSizeOnly: true as const,
               baseOnly: true as const,
             },
-            coverage: {
-              policy: 'same_approved_router_set_exact_size_and_destination' as const,
-              reviewedRepresentations: 0,
-              comparableRepresentations: 0,
+            universe: {
+              reviewedRepresentationCount: 0,
+              positiveSupplyRepresentationCount: 0,
+              zeroSupplyRepresentationCount: 0,
+              unresolvedSupplyRepresentationCount: 0,
+            },
+            marketOutcomeCoverage: {
+              policy: 'same_reviewed_router_policy_exact_size_direction_and_destination' as const,
+              eligibleRepresentationCount: 0,
+              establishedOutcomeCount: 0,
               status: 'incomplete' as const,
               reason: 'nothing bound',
             },
-            ranking: { status: 'withheld' as const, orderedTokenAddresses: [], reason: 'no coverage' },
+            numericComparisonCoverage: {
+              policy: 'fresh_numeric_quotes_same_exact_question_and_normalization' as const,
+              eligibleRepresentationCount: 0,
+              pricedRepresentationCount: 0,
+              status: 'incomplete' as const,
+              reason: 'nothing priced',
+            },
+            ranking: {
+              status: 'withheld' as const,
+              policy: 'withheld_phase_10b8' as const,
+              orderedTokenAddresses: [],
+              reason: 'no coverage',
+            },
             quoteEvidenceIsExecutionProof: false as const,
             representations: [],
             assembledAt: new Date().toISOString(),
@@ -191,6 +223,7 @@ describe('POST the live measurement', () => {
           measured: ['0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'],
           reusedOpen: ['0xbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'],
           reusedCooldown: [],
+          excludedZeroSupply: [],
           unresolved: [],
           joinedInFlight: false,
         }),

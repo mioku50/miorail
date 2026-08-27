@@ -99,7 +99,12 @@ test('KyberSwap no-route response produces no fake candidate', async () => {
   const adapter = new KyberSwapRouteAdapter({
     executorFactory: () => mockKyberExecutor({ status: 404, data: { message: 'no route' } }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'no-route', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'no-route',
+    now: NOW,
+  });
   assert.deepEqual(result, {
     outcome: 'unavailable',
     provider: 'kyberswap',
@@ -122,7 +127,12 @@ test('KyberSwap 400 "route not found" is the router answering, not our failure',
         data: { code: 4008, message: 'route not found', details: null },
       }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'no-route-400', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'no-route-400',
+    now: NOW,
+  });
   assert.equal(result.outcome, 'unavailable');
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_no_route');
 });
@@ -148,8 +158,28 @@ test('KyberSwap 400 "token not found" is coverage, not a market verdict', async 
         data: { code: 4011, message: 'token not found', details: null },
       }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'no-token', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'no-token',
+    now: NOW,
+  });
   assert.equal(result.outcome, 'unavailable');
+  assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_unsupported_token');
+});
+
+test('KyberSwap 404 token-not-found body wins over the legacy 404 no-route fallback', async () => {
+  const intent = makeIntent();
+  const adapter = new KyberSwapRouteAdapter({
+    executorFactory: () =>
+      mockKyberExecutor({ status: 404, data: { code: 4011, message: 'token not found' } }),
+  });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'no-token-404',
+    now: NOW,
+  });
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_unsupported_token');
 });
 
@@ -161,7 +191,12 @@ test('an unsupported token is never demoted to no route, at any HTTP status', as
     executorFactory: () =>
       mockKyberExecutor({ status: 200, data: { message: 'token not found: no route' } }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'both-words', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'both-words',
+    now: NOW,
+  });
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_unsupported_token');
 });
 
@@ -170,7 +205,12 @@ test('a 5xx saying "token not found" is still a fault, not coverage', async () =
   const adapter = new KyberSwapRouteAdapter({
     executorFactory: () => mockKyberExecutor({ status: 503, data: { message: 'token not found' } }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'gateway-token', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'gateway-token',
+    now: NOW,
+  });
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_http_error');
 });
 
@@ -180,7 +220,12 @@ test('KyberSwap 400 that is not about a route stays our failure', async () => {
     executorFactory: () =>
       mockKyberExecutor({ status: 400, data: { code: 4001, message: 'invalid amountIn' } }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'bad-request', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'bad-request',
+    now: NOW,
+  });
   assert.equal(result.outcome, 'unavailable');
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_http_error');
 });
@@ -191,7 +236,12 @@ test('a 5xx is never allowed to become a statement about the asset', async () =>
   const adapter = new KyberSwapRouteAdapter({
     executorFactory: () => mockKyberExecutor({ status: 502, data: { message: 'route not found' } }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'gateway', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'gateway',
+    now: NOW,
+  });
   assert.equal(result.outcome, 'unavailable');
   assert.equal(result.outcome === 'unavailable' && result.errorCode, 'provider_http_error');
 });
@@ -228,7 +278,12 @@ test('KyberSwap timeout is normalized and never throws', async () => {
         throw new DOMException('timed out', 'AbortError');
       }),
   });
-  const result = await adapter.quote({ intent, walletAddress: WALLET, requestId: 'timeout', now: NOW });
+  const result = await adapter.quote({
+    intent,
+    walletAddress: WALLET,
+    requestId: 'timeout',
+    now: NOW,
+  });
   assert.equal(result.outcome, 'timeout');
 });
 
@@ -244,14 +299,19 @@ test('KyberSwap route adapter never calls route/build or the token API', async (
   assert.equal(result.outcome, 'quoted');
   assert.equal(paths.length, 1);
   assert.match(paths[0], /^\/base\/api\/v1\/routes\?/);
-  assert.equal(paths.some((path) => /route\/build|public\/tokens|token-api/i.test(path)), false);
+  assert.equal(
+    paths.some((path) => /route\/build|public\/tokens|token-api/i.test(path)),
+    false,
+  );
 });
 
 test('KyberSwap rejects response asset and chain mismatches', async () => {
   const intent = makeIntent();
-  const assetMismatch = await adapterFor(kyberResponse(intent, {
-    tokenOut: '0x3333333333333333333333333333333333333333',
-  })).quote({ intent, walletAddress: WALLET, requestId: 'asset-mismatch', now: NOW });
+  const assetMismatch = await adapterFor(
+    kyberResponse(intent, {
+      tokenOut: '0x3333333333333333333333333333333333333333',
+    }),
+  ).quote({ intent, walletAddress: WALLET, requestId: 'asset-mismatch', now: NOW });
   const chainMismatch = await adapterFor(kyberResponse(intent, { chainId: 1 })).quote({
     intent,
     walletAddress: WALLET,
@@ -266,9 +326,11 @@ test('KyberSwap rejects response asset and chain mismatches', async () => {
 
 test('KyberSwap rejects an already-expired quote', async () => {
   const intent = makeIntent();
-  const result = await adapterFor(kyberResponse(intent, {
-    expiresAt: '2026-07-15T11:59:59.000Z',
-  })).quote({ intent, walletAddress: WALLET, requestId: 'expired', now: NOW });
+  const result = await adapterFor(
+    kyberResponse(intent, {
+      expiresAt: '2026-07-15T11:59:59.000Z',
+    }),
+  ).quote({ intent, walletAddress: WALLET, requestId: 'expired', now: NOW });
   assert.equal(result.outcome, 'invalid_response');
   assert.equal(result.errorCode, 'provider_expired_quote');
 });
@@ -286,13 +348,17 @@ test('KyberSwap returns not_configured when the explicit namespace executor is u
 
 test('KyberSwap response hash covers the complete validated routeSummary', async () => {
   const intent = makeIntent();
-  const first = await adapterFor(kyberResponse(intent, { providerSpecific: { split: '60/40' } })).quote({
+  const first = await adapterFor(
+    kyberResponse(intent, { providerSpecific: { split: '60/40' } }),
+  ).quote({
     intent,
     walletAddress: WALLET,
     requestId: 'complete-summary',
     now: NOW,
   });
-  const second = await adapterFor(kyberResponse(intent, { providerSpecific: { split: '70/30' } })).quote({
+  const second = await adapterFor(
+    kyberResponse(intent, { providerSpecific: { split: '70/30' } }),
+  ).quote({
     intent,
     walletAddress: WALLET,
     requestId: 'complete-summary',
@@ -327,7 +393,12 @@ test('KyberSwap response hash redacts secret-like provider fields', async () => 
 test('KyberSwap artifacts are deterministic with injected clock and routeSummary', async () => {
   const intent = makeIntent();
   const adapter = adapterFor(kyberResponse(intent));
-  const input = { intent, walletAddress: WALLET, requestId: 'deterministic-kyber', now: NOW } as const;
+  const input = {
+    intent,
+    walletAddress: WALLET,
+    requestId: 'deterministic-kyber',
+    now: NOW,
+  } as const;
   assert.deepEqual(await adapter.quote(input), await adapter.quote(input));
 });
 
@@ -350,7 +421,10 @@ test('KyberSwap artifacts are deterministic with injected clock and routeSummary
 // ---------------------------------------------------------------------------
 
 /** Verbatim from /base/api/v1/routes, trimmed to the fields the adapter reads. */
-function liveKyberResponseV1(intent: ReturnType<typeof makeIntent>, overrides: Record<string, unknown> = {}) {
+function liveKyberResponseV1(
+  intent: ReturnType<typeof makeIntent>,
+  overrides: Record<string, unknown> = {},
+) {
   return {
     code: 0,
     message: 'successfully',
@@ -385,7 +459,11 @@ test('KyberSwap quotes the live response shape, which reports no price impact', 
     requestId: 'kyber-live-shape',
     now: NOW,
   });
-  assert.equal(result.outcome, 'quoted', `refused with ${result.outcome === 'quoted' ? '' : result.errorCode}`);
+  assert.equal(
+    result.outcome,
+    'quoted',
+    `refused with ${result.outcome === 'quoted' ? '' : result.errorCode}`,
+  );
 });
 
 test('price impact is derived from the two USD figures KyberSwap does send', async () => {

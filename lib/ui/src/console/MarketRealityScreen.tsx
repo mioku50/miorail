@@ -315,10 +315,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           engine a question it answers exactly or not at all, and an exact miss
           returns an empty board that reads as a broken product. */}
       <p className="lnote">
-        Sizes are the rungs the public ladder actually measures. An exact size is
-        the whole question — a $10,000 answer is not a $100 answer multiplied.
-        A router quote is good for about twenty seconds, so a board that has been
-        open a while is history until you measure again.
+        Sizes are the rungs the public ladder actually measures. An exact size is the whole question
+        — a $10,000 answer is not a $100 answer multiplied. A router quote is good for about twenty
+        seconds, so a board that has been open a while is history until you measure again.
       </p>
 
       {model.measurementError ? <p className="note warn">{model.measurementError}</p> : null}
@@ -357,6 +356,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
 
           <p className="cr-verdict">{model.view.coverageBody}</p>
 
+          <FactList facts={model.view.comparisonSummary} label="Market Reality denominators" />
+
           {/* Above the cards, in the body, unconditional while withheld. A
               reader who misses this reads the leftmost card as the winner. */}
           {model.view.rankingNote ? (
@@ -374,9 +375,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           </div>
 
           {model.view.representations.length === 0 ? (
-            <p className="empty">
-              No reviewed source has bound a Base contract to this security.
-            </p>
+            <p className="empty">No reviewed source has bound a Base contract to this security.</p>
           ) : null}
 
           <p className="discover-scope">{model.view.scope}</p>
@@ -412,7 +411,7 @@ export function MarketRealityRail({ view }: { view: MarketRealityViewV1 | null }
           {view ? (
             <>
               <div className="qrow">
-                <span>Comparable</span>
+                <span>Market outcomes</span>
                 <span className={`v ${view.coverageTone === 'good' ? 'ok' : 'warn'}`}>
                   {view.coverageChip}
                 </span>

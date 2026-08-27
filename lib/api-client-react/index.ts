@@ -1042,7 +1042,7 @@ export function useRwaMarketReality(
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey!)}?${query.toString()}`,
       );
-      return apiSpec.MarketRealityResponseV1Schema.parse(response);
+      return apiSpec.MarketRealityResponseV2Schema.parse(response);
     },
     retry: false,
     // A null key is not an error and not an empty result: it is a question
@@ -1063,7 +1063,7 @@ export function useRwaMarketReality(
 export function useMeasureRwaMarketReality(
   options?: Omit<
     UseMutationOptions<
-      apiSpec.MarketRealityLiveResponseV1,
+      apiSpec.MarketRealityLiveResponseV2,
       Error,
       {
         underlyingKey: string;
@@ -1089,7 +1089,7 @@ export function useMeasureRwaMarketReality(
         `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey)}/measure?${query.toString()}`,
         { method: 'POST' },
       );
-      return apiSpec.MarketRealityLiveResponseV1Schema.parse(response);
+      return apiSpec.MarketRealityLiveResponseV2Schema.parse(response);
     },
     onSuccess: (data, variables, onMutateResult, context) => {
       // The response IS the new answer, written straight into the read's cache

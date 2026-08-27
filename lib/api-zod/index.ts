@@ -66,15 +66,15 @@ export {
   MarketRealityIndexV1Schema,
   MarketRealityIndexEntryV1Schema,
   MarketRealityHistoryV1Schema,
-  MarketRealityLiveResponseV1Schema,
+  MarketRealityLiveResponseV2Schema,
   MarketRealityMeasurementV1Schema,
-  MarketRealityResponseV1Schema,
+  MarketRealityResponseV2Schema,
   type MarketRealityIndexV1,
   type MarketRealityIndexEntryV1,
   type MarketRealityHistoryV1,
-  type MarketRealityLiveResponseV1,
+  type MarketRealityLiveResponseV2,
   type MarketRealityMeasurementV1,
-  type MarketRealityResponseV1,
+  type MarketRealityResponseV2,
 } from '@mioagent/rwa-market-reality/contracts';
 // Phase 7 — one pasted address. Re-exported rather than restated for the same
 // reason the Discover schemas are: the projection that assembles a dossier and

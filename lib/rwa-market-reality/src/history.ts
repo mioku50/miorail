@@ -56,10 +56,11 @@ export type MarketRealityWindowV1 = keyof typeof MARKET_REALITY_WINDOWS_V1;
 function pointStatusV1(
   row: CashExitSourceObservationV1,
   direction: MarketRealityDirectionV1,
-): 'quoted' | 'no_route' | 'measurement_failed' {
+): 'quoted' | 'no_route' | 'unsized' | 'measurement_failed' {
   const quote = direction === 'buy' ? row.buyQuote : row.sellQuote;
   if (quote) return 'quoted';
   if (direction === 'buy' && row.errorCode === 'cash_size_anchor_no_route') return 'no_route';
+  if (direction === 'sell' && row.errorCode === 'cash_size_anchor_no_route') return 'unsized';
   if (direction === 'sell' && ['buy_only', 'unavailable'].includes(row.status)) return 'no_route';
   return 'measurement_failed';
 }
@@ -76,7 +77,7 @@ function pointForRunV1(
   },
 ): {
   observedAt: string;
-  status: 'quoted' | 'no_route' | 'measurement_failed';
+  status: 'quoted' | 'no_route' | 'unsized' | 'measurement_failed';
   source: string;
   returnedCashAtomic: string | null;
   testedTokenAtomic: string | null;
@@ -102,10 +103,13 @@ function pointForRunV1(
           );
           return l === r ? left.row.source.localeCompare(right.row.source) : l > r ? -1 : 1;
         })[0]!
-      : // No quote anywhere. `no_route` outranks `measurement_failed` as the
-        // point's label because a venue that answered "nothing at this size" is
-        // a fact about the market, and our failed call is not.
-        (scored.find((item) => item.status === 'no_route') ?? scored[0]!);
+      : // No quote anywhere. An answered market question outranks a technical
+        // failure, and an explicitly unsized SELL outranks it too: the latter
+        // proves this direction was never tested after the BUY sizing anchor
+        // failed. Source ordering must not turn either fact into our failure.
+        (scored.find((item) => item.status === 'no_route') ??
+        scored.find((item) => item.status === 'unsized') ??
+        scored[0]!);
 
   return {
     observedAt: chosen.row.observedAt,

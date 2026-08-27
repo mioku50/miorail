@@ -1,11 +1,5 @@
-import {
-  JsonObjectV1Schema,
-  type GasEstimateV1,
-} from '@mioagent/route-domain';
-import {
-  loadSkillExecutor,
-  type BaseMcpSkillExecutor,
-} from '@mioagent/runtime-skills';
+import { JsonObjectV1Schema, type GasEstimateV1 } from '@mioagent/route-domain';
+import { loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
 import { z } from 'zod';
 import { buildQuoteArtifacts, KYBERSWAP_PROVIDER_V1 } from './candidate.js';
 import {
@@ -25,11 +19,7 @@ import {
   supportsRoutableSwapIntentV1,
 } from './normalization.js';
 import { extractRouteProvenance } from './provenance.js';
-import type {
-  SwapAdapterQuoteInput,
-  SwapAdapterResult,
-  SwapRouteAdapter,
-} from './types.js';
+import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
 const KyberResponseSchema = z
   .object({
@@ -99,7 +89,16 @@ function providerMessageV1(value: unknown): string {
 }
 
 function reportsNoRoute(value: unknown): boolean {
-  return /no (?:swap )?route|route not found|insufficient liquidity/i.test(providerMessageV1(value));
+  if (
+    value &&
+    typeof value === 'object' &&
+    Number((value as Record<string, unknown>).code) === 4008
+  ) {
+    return true;
+  }
+  return /no (?:swap )?route|route not found|insufficient liquidity/i.test(
+    providerMessageV1(value),
+  );
 }
 
 /**
@@ -125,6 +124,13 @@ function reportsNoRoute(value: unknown): boolean {
  * infrastructure taking the blame for the router's token list.
  */
 function reportsUnsupportedToken(value: unknown): boolean {
+  if (
+    value &&
+    typeof value === 'object' &&
+    Number((value as Record<string, unknown>).code) === 4011
+  ) {
+    return true;
+  }
   return /token not found|unsupported token|token not supported/i.test(providerMessageV1(value));
 }
 
@@ -186,7 +192,6 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     } catch (error) {
       return normalizeCaughtProviderError(this.id, error);
     }
-    if (response.status === 404) return providerFailure(this.id, 'provider_no_route', 404);
     if (response.status === 429) return providerFailure(this.id, 'provider_rate_limited', 429);
     // A 4xx whose body says there is no route is the ROUTER answering, not a
     // transport fault, and the difference decides whether a screen reads "no
@@ -210,6 +215,10 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     if (response.status >= 400 && response.status < 500 && reportsNoRoute(response.data)) {
       return providerFailure(this.id, 'provider_no_route', response.status);
     }
+    // A bare 404 is Kyber's legacy no-route shape, but body semantics win: a
+    // 404 that explicitly says the token is unsupported never becomes a
+    // market verdict merely because of the status code.
+    if (response.status === 404) return providerFailure(this.id, 'provider_no_route', 404);
     if (response.status < 200 || response.status >= 300) {
       return providerFailure(this.id, 'provider_http_error', response.status);
     }
@@ -259,8 +268,9 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     const parsedImpactBps = parseUnsignedAtomic(rawPriceImpactBps);
     const priceImpactBps =
       rawPriceImpactBps === undefined
-        ? (percentageToBasisPoints(String(field(routeSummary, 'priceImpact', 'priceImpactPct') ?? '')) ??
-          priceImpactFromUsdV1(routeSummary))
+        ? (percentageToBasisPoints(
+            String(field(routeSummary, 'priceImpact', 'priceImpactPct') ?? ''),
+          ) ?? priceImpactFromUsdV1(routeSummary))
         : parsedImpactBps === null
           ? null
           : Number(parsedImpactBps);
@@ -303,9 +313,7 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
     };
     const quoteIdValue = field(routeSummary, 'routeId', 'quoteId');
     const providerQuoteId =
-      typeof quoteIdValue === 'string'
-        ? quoteIdValue
-        : parsed.data.data.routeId ?? null;
+      typeof quoteIdValue === 'string' ? quoteIdValue : (parsed.data.data.routeId ?? null);
     const blockNumber = parseUnsignedAtomic(field(routeSummary, 'blockNumber'));
     const artifacts = buildQuoteArtifacts({
       adapterId: this.id,

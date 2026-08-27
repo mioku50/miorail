@@ -25,6 +25,18 @@ function representation(
     issuerId: 'coinbase',
     issuerInstrumentKey: `coinbase:b20_address:${COINBASE_NVDA}`,
     representationKind: 'b20_asset',
+    supply: {
+      state: 'positive_supply',
+      totalSupplyAtomic: '1000000000000000000',
+      decimals: 18,
+      blockNumber: '50000000',
+      blockHash: `0x${'11'.repeat(32)}`,
+      observedAt: NOW,
+      evidenceHash: `0x${'12'.repeat(32)}`,
+      readOutcome: 'success',
+      fresh: true,
+      reason: null,
+    },
     status: 'not_measured',
     routePolicyKey: `0x${'b5'.repeat(32)}`,
     exactTestedTokenAtomic: null,
@@ -87,18 +99,36 @@ function wire(over: Partial<MarketRealityWireV1> = {}): MarketRealityWireV1 {
       cashDecimals: 6,
       destination: 'USDC',
     },
-    coverage: {
-      reviewedRepresentations: 3,
-      comparableRepresentations: 0,
+    universe: {
+      reviewedRepresentationCount: 3,
+      positiveSupplyRepresentationCount: 3,
+      zeroSupplyRepresentationCount: 0,
+      unresolvedSupplyRepresentationCount: 0,
+    },
+    marketOutcomeCoverage: {
+      eligibleRepresentationCount: 3,
+      establishedOutcomeCount: 0,
       status: 'incomplete',
       reason: 'Every reviewed representation must have fresh exact-size evidence.',
+    },
+    numericComparisonCoverage: {
+      eligibleRepresentationCount: 3,
+      pricedRepresentationCount: 0,
+      status: 'incomplete',
+      reason: 'Numeric comparison coverage is incomplete.',
     },
     ranking: {
       status: 'withheld',
       orderedTokenAddresses: [],
       reason: 'Coverage comparability did not pass; no BEST representation is emitted.',
     },
-    representations: [representation({ sources: [LAPSED_SOURCE], liveness: 'history_only', lastObservation: LAPSED_OBSERVATION })],
+    representations: [
+      representation({
+        sources: [LAPSED_SOURCE],
+        liveness: 'history_only',
+        lastObservation: LAPSED_OBSERVATION,
+      }),
+    ],
     assembledAt: NOW,
     ...over,
   };
@@ -110,7 +140,14 @@ describe('the five outcomes stay apart', () => {
     // for about twenty seconds and the worker runs on a much longer timer. The
     // engine reports `not_measured` for it, correctly — but a reader told
     // "not measured" concludes nobody ever looked.
-    const outcome = representationOutcomeV1(representation({ sources: [LAPSED_SOURCE], liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }), NOW);
+    const outcome = representationOutcomeV1(
+      representation({
+        sources: [LAPSED_SOURCE],
+        liveness: 'history_only',
+        lastObservation: LAPSED_OBSERVATION,
+      }),
+      NOW,
+    );
     assert.equal(outcome, 'lapsed');
   });
 
@@ -118,17 +155,88 @@ describe('the five outcomes stay apart', () => {
     assert.equal(representationOutcomeV1(representation({ sources: [] }), NOW), 'never_measured');
   });
 
-  test('a market with no venue is the asset, not us', () => {
+  test('a scoped router-policy no-route is a market outcome, not our transport failure', () => {
     const outcome = representationOutcomeV1(
       representation({
         status: 'unavailable',
         liveness: 'live',
-        lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
-        sources: [{ source: 'kyberswap', status: 'no_route', errorCode: 'provider_no_route', quoteEvidence: null }],
+        lastObservation: {
+          ...LAPSED_OBSERVATION,
+          status: 'no_route',
+          returnedCashAtomic: null,
+          open: true,
+        },
+        sources: [
+          {
+            source: 'kyberswap',
+            status: 'no_route',
+            errorCode: 'provider_no_route',
+            quoteEvidence: null,
+          },
+        ],
       }),
       NOW,
     );
     assert.equal(outcome, 'no_route');
+  });
+
+  test('no-route copy names the reviewed router-policy scope and never all approved venues', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            status: 'unavailable',
+            liveness: 'live',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'no_route',
+              returnedCashAtomic: null,
+              open: true,
+            },
+            sources: [
+              {
+                source: 'kyberswap',
+                status: 'no_route',
+                errorCode: 'provider_no_route',
+                quoteEvidence: null,
+              },
+            ],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    assert.match(view?.representations[0]?.outcomeBody ?? '', /current reviewed router policy/i);
+    assert.doesNotMatch(view?.representations[0]?.outcomeBody ?? '', /No approved venue/);
+  });
+
+  test('zero supply is primary; unsupported-router diagnostics never become the market verdict', () => {
+    const row = representation({
+      supply: {
+        ...representation().supply,
+        state: 'zero_supply',
+        totalSupplyAtomic: '0',
+      },
+      liveness: 'live',
+      sources: [
+        {
+          source: 'kyberswap',
+          status: 'measurement_failed',
+          errorCode: 'provider_unsupported_token',
+          quoteEvidence: null,
+        },
+      ],
+    });
+    assert.equal(representationOutcomeV1(row, NOW), 'zero_supply');
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [row] }),
+      choice: null,
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.attribution, 'onchain read');
+    assert.match(view?.representations[0]?.outcomeBody ?? '', /No outstanding supply/);
+    assert.doesNotMatch(view?.representations[0]?.outcomeBody ?? '', /no market/i);
   });
 
   test('a cash rung nobody could size is the market, and is NOT "no route"', () => {
@@ -139,9 +247,19 @@ describe('the five outcomes stay apart', () => {
     const outcome = representationOutcomeV1(
       representation({
         liveness: 'live',
-        lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
+        lastObservation: {
+          ...LAPSED_OBSERVATION,
+          status: 'measurement_failed',
+          returnedCashAtomic: null,
+          open: true,
+        },
         sources: [
-          { source: 'kyberswap', status: 'not_measured', errorCode: 'cash_size_anchor_no_route', quoteEvidence: null },
+          {
+            source: 'kyberswap',
+            status: 'not_measured',
+            errorCode: 'cash_size_anchor_no_route',
+            quoteEvidence: null,
+          },
         ],
       }),
       NOW,
@@ -157,9 +275,19 @@ describe('the five outcomes stay apart', () => {
     const outcome = representationOutcomeV1(
       representation({
         liveness: 'live',
-        lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
+        lastObservation: {
+          ...LAPSED_OBSERVATION,
+          status: 'measurement_failed',
+          returnedCashAtomic: null,
+          open: true,
+        },
         sources: [
-          { source: 'kyberswap', status: 'not_measured', errorCode: 'provider_unsupported_token', quoteEvidence: null },
+          {
+            source: 'kyberswap',
+            status: 'not_measured',
+            errorCode: 'provider_unsupported_token',
+            quoteEvidence: null,
+          },
         ],
       }),
       NOW,
@@ -217,8 +345,20 @@ describe('the five outcomes stay apart', () => {
     const outcome = representationOutcomeV1(
       representation({
         liveness: 'live',
-        lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
-        sources: [{ source: 'kyberswap', status: 'not_measured', errorCode: 'provider_http_error', quoteEvidence: null }],
+        lastObservation: {
+          ...LAPSED_OBSERVATION,
+          status: 'measurement_failed',
+          returnedCashAtomic: null,
+          open: true,
+        },
+        sources: [
+          {
+            source: 'kyberswap',
+            status: 'not_measured',
+            errorCode: 'provider_http_error',
+            quoteEvidence: null,
+          },
+        ],
       }),
       NOW,
     );
@@ -232,7 +372,15 @@ describe('the five outcomes stay apart', () => {
       quoteEvidence: { ...LAPSED_SOURCE.quoteEvidence, expiresAt: '2026-08-26T20:35:00.000Z' },
     };
     assert.equal(
-      representationOutcomeV1(representation({ status: 'full', sources: [open], liveness: 'live', lastObservation: { ...LAPSED_OBSERVATION, open: true } }), NOW),
+      representationOutcomeV1(
+        representation({
+          status: 'full',
+          sources: [open],
+          liveness: 'live',
+          lastObservation: { ...LAPSED_OBSERVATION, open: true },
+        }),
+        NOW,
+      ),
       'priced',
     );
   });
@@ -241,7 +389,11 @@ describe('the five outcomes stay apart', () => {
     const view = marketRealityViewV1({
       wire: wire({
         representations: [
-          representation({ sources: [LAPSED_SOURCE], liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }),
+          representation({
+            sources: [LAPSED_SOURCE],
+            liveness: 'history_only',
+            lastObservation: LAPSED_OBSERVATION,
+          }),
           representation({
             tokenAddress: BACKED_NVDA,
             issuerId: 'backed',
@@ -249,9 +401,19 @@ describe('the five outcomes stay apart', () => {
             issuerInstrumentKey: 'backed:instrument_id:c1077d76',
             status: 'unavailable',
             liveness: 'live',
-            lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'no_route',
+              returnedCashAtomic: null,
+              open: true,
+            },
             sources: [
-              { source: 'kyberswap', status: 'no_route', errorCode: 'provider_no_route', quoteEvidence: null },
+              {
+                source: 'kyberswap',
+                status: 'no_route',
+                errorCode: 'provider_no_route',
+                quoteEvidence: null,
+              },
             ],
           }),
           representation({
@@ -260,9 +422,19 @@ describe('the five outcomes stay apart', () => {
             representationKind: 'non_rebasing_erc4626_wrapper',
             issuerInstrumentKey: 'backed:instrument_id:c1077d76',
             liveness: 'live',
-            lastObservation: { ...LAPSED_OBSERVATION, status: 'measurement_failed', returnedCashAtomic: null, open: true },
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'measurement_failed',
+              returnedCashAtomic: null,
+              open: true,
+            },
             sources: [
-              { source: 'kyberswap', status: 'not_measured', errorCode: 'provider_http_error', quoteEvidence: null },
+              {
+                source: 'kyberswap',
+                status: 'not_measured',
+                errorCode: 'provider_http_error',
+                quoteEvidence: null,
+              },
             ],
           }),
         ],
@@ -288,20 +460,30 @@ describe('the board never picks a winner', () => {
     assert.match(view?.rankingNote ?? '', /no BEST/i);
   });
 
-  test('an available ranking carries no withheld note', () => {
+  test('even complete numeric coverage remains explicitly withheld in Phase 10B.8', () => {
     const view = marketRealityViewV1({
       wire: wire({
-        ranking: { status: 'available', orderedTokenAddresses: [COINBASE_NVDA], reason: null },
+        numericComparisonCoverage: {
+          eligibleRepresentationCount: 2,
+          pricedRepresentationCount: 2,
+          status: 'complete',
+          reason: null,
+        },
+        ranking: {
+          status: 'withheld',
+          orderedTokenAddresses: [],
+          reason: 'Numeric coverage is complete, but Phase 10B.8 withholds ranking.',
+        },
       }),
       choice: null,
       now: NOW,
     });
-    assert.equal(view?.rankingNote, null);
+    assert.match(view?.rankingNote ?? '', /withholds ranking/i);
   });
 
   test('coverage is stated as a fraction, not as a verdict about the assets', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    assert.equal(view?.coverageChip, '0 of 3 comparable');
+    assert.equal(view?.coverageChip, '0 of 3 market outcomes');
     assert.equal(view?.coverageTone, 'warn');
   });
 
@@ -311,28 +493,37 @@ describe('the board never picks a winner', () => {
     // what to do next.
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     assert.doesNotMatch(view?.coverageBody ?? '', /normalized exposure|approved-router policy/);
-    assert.match(view?.coverageBody ?? '', /held 3 ways on Base/);
-    assert.match(view?.coverageBody ?? '', /none of them/i);
+    assert.match(view?.coverageBody ?? '', /answered this exact market question for 0 of 3/);
   });
 
   test('all three coverage shapes are different sentences', () => {
     const none = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const some = marketRealityViewV1({
       wire: wire({
-        coverage: { reviewedRepresentations: 3, comparableRepresentations: 1, status: 'incomplete', reason: null },
+        marketOutcomeCoverage: {
+          eligibleRepresentationCount: 3,
+          establishedOutcomeCount: 1,
+          status: 'incomplete',
+          reason: null,
+        },
       }),
       choice: null,
       now: NOW,
     });
     const all = marketRealityViewV1({
       wire: wire({
-        coverage: { reviewedRepresentations: 3, comparableRepresentations: 3, status: 'complete', reason: null },
+        marketOutcomeCoverage: {
+          eligibleRepresentationCount: 3,
+          establishedOutcomeCount: 3,
+          status: 'complete',
+          reason: null,
+        },
       }),
       choice: null,
       now: NOW,
     });
-    assert.match(some?.coverageBody ?? '', /one of them has evidence/);
-    assert.match(all?.coverageBody ?? '', /read against each other/);
+    assert.match(some?.coverageBody ?? '', /1 of 3/);
+    assert.match(all?.coverageBody ?? '', /all 3/);
     assert.notEqual(none?.coverageBody, some?.coverageBody);
     assert.notEqual(some?.coverageBody, all?.coverageBody);
   });
@@ -341,7 +532,18 @@ describe('the board never picks a winner', () => {
     const view = marketRealityViewV1({
       wire: wire({
         representations: [],
-        coverage: { reviewedRepresentations: 0, comparableRepresentations: 0, status: 'incomplete', reason: null },
+        universe: {
+          reviewedRepresentationCount: 0,
+          positiveSupplyRepresentationCount: 0,
+          zeroSupplyRepresentationCount: 0,
+          unresolvedSupplyRepresentationCount: 0,
+        },
+        marketOutcomeCoverage: {
+          eligibleRepresentationCount: 0,
+          establishedOutcomeCount: 0,
+          status: 'incomplete',
+          reason: null,
+        },
       }),
       choice: null,
       now: NOW,
@@ -402,7 +604,12 @@ describe('an absent number never renders as a zero', () => {
     const view = marketRealityViewV1({
       wire: wire({
         representations: [
-          representation({ normalization: 'reviewed_token_already_applied', issuerId: 'backed', liveness: 'live', lastObservation: { ...LAPSED_OBSERVATION, open: true } }),
+          representation({
+            normalization: 'reviewed_token_already_applied',
+            issuerId: 'backed',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, open: true },
+          }),
         ],
       }),
       choice: null,
@@ -638,7 +845,9 @@ describe('history is history, and says so', () => {
             liveness: 'never_measured',
             lastObservation: null,
             // Sources present but carrying nothing — the engine already ruled.
-            sources: [{ source: 'kyberswap', status: 'not_measured', errorCode: null, quoteEvidence: null }],
+            sources: [
+              { source: 'kyberswap', status: 'not_measured', errorCode: null, quoteEvidence: null },
+            ],
           }),
         ],
       }),

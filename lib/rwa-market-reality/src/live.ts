@@ -1,12 +1,12 @@
 import { stableHashV1 } from '@mioagent/route-domain';
 import type { CashExitMeasurementRunV1 } from '@mioagent/route-storage';
 
-import { assembleMarketRealityV1, type MarketRealityDepsV1 } from './engine.js';
+import { assembleMarketRealityV2, type MarketRealityDepsV1 } from './engine.js';
 import {
   MarketRealityQuestionV1Schema,
   type MarketRealityDirectionV1,
   type MarketRealityQuestionV1,
-  type MarketRealityResponseV1,
+  type MarketRealityResponseV2,
 } from './contracts.js';
 
 // ---------------------------------------------------------------------------
@@ -106,7 +106,7 @@ export interface MarketRealityLiveDepsV1 extends MarketRealityDepsV1 {
 }
 
 export interface MarketRealityLiveResultV1 {
-  answer: MarketRealityResponseV1;
+  answer: MarketRealityResponseV2;
   /** What this call actually spent. A surface may say "nothing was measured
    * because everything was already current" instead of implying it refreshed. */
   measured: string[];
@@ -114,6 +114,9 @@ export interface MarketRealityLiveResultV1 {
   reusedOpen: string[];
   /** Representations left alone because they were measured moments ago. */
   reusedCooldown: string[];
+  /** Reviewed zero-supply representations remain visible, but no route call is
+   * spent until a later supply read automatically moves them back to positive. */
+  excludedZeroSupply: string[];
   /** Representations we could not measure, and why. Never a claim about them. */
   unresolved: { tokenAddress: string; reason: string }[];
   /** True when this caller joined an in-flight measurement instead of starting
@@ -144,7 +147,7 @@ export function createMarketRealityCoordinatorV1(options?: {
     question: MarketRealityQuestionV1,
     questionHash: string,
   ): Promise<MarketRealityLiveResultV1> {
-    const before = await assembleMarketRealityV1(deps, {
+    const before = await assembleMarketRealityV2(deps, {
       underlyingKey: question.underlyingKey,
       direction: question.direction,
       requestedCashAtomic: question.requestedCashAtomic,
@@ -154,10 +157,15 @@ export function createMarketRealityCoordinatorV1(options?: {
     const measured: string[] = [];
     const reusedOpen: string[] = [];
     const reusedCooldown: string[] = [];
+    const excludedZeroSupply: string[] = [];
     const unresolved: { tokenAddress: string; reason: string }[] = [];
 
     for (const representation of before.representations) {
       const address = representation.tokenAddress;
+      if (representation.supply.state === 'zero_supply') {
+        excludedZeroSupply.push(address);
+        continue;
+      }
       // Already current. Asking the router again would spend a call to learn
       // what we are already holding.
       if (representation.liveness === 'live') {
@@ -191,7 +199,7 @@ export function createMarketRealityCoordinatorV1(options?: {
     const answer =
       measured.length === 0
         ? before
-        : await assembleMarketRealityV1(deps, {
+        : await assembleMarketRealityV2(deps, {
             underlyingKey: question.underlyingKey,
             direction: question.direction,
             requestedCashAtomic: question.requestedCashAtomic,
@@ -203,6 +211,7 @@ export function createMarketRealityCoordinatorV1(options?: {
       measured: measured.sort(),
       reusedOpen: reusedOpen.sort(),
       reusedCooldown: reusedCooldown.sort(),
+      excludedZeroSupply: excludedZeroSupply.sort(),
       unresolved,
       joinedInFlight: false,
     };

@@ -17,11 +17,9 @@ export type { FactViewV1, ToneV1 };
 //
 // THE THING THIS SCREEN MUST NEVER DO
 //
-// Show a winner. `ranking.status` is `withheld` until the coverage gate proves
-// every representation was measured through the same approved router set, at
-// the same exact size, to the same destination. Measured 2026-08-26 it is
-// withheld for every underlying in the corpus, and a BEST badge drawn anyway
-// would be an ordering over rows that were not asked the same question.
+// Show a winner. Phase 10B.8 withholds ranking even when numeric coverage is
+// complete; categorical coverage and numeric comparability are both visible,
+// but neither emits BEST in this phase.
 //
 // THE SPLIT THE BACKEND CANNOT MAKE AND THIS FILE CAN
 //
@@ -40,17 +38,18 @@ export type { FactViewV1, ToneV1 };
 // splits them, and the screen says which one it is. That is the difference
 // between a page that looks broken and a page that is honest.
 //
-// FIVE OUTCOMES, AND WHOSE FACT EACH ONE IS
+// ROUTE OUTCOMES, AND WHOSE FACT EACH ONE IS
 //
 //   priced          a live quote at the exact size          the market
 //   lapsed          we had one; router quotes live ~20s     time
-//   no_route        no venue would trade this size          the asset
+//   no_route        no route under the reviewed policy      the market, scoped
 //   provider_failed our router call did not complete        us
 //   never_measured  this size was never asked               us
 //
-// Three of those five are about Miorail or the clock, and only one is about
-// the asset. Collapsing them into "no data" would let a reader conclude the
-// token is untradeable when the truth is that our timer has not come round.
+// Supply adds two separate onchain-read states before these route outcomes:
+// zero supply and supply unknown. Collapsing any of them into "no data" would
+// let a reader conclude the token is untradeable when the truth may only be
+// that our timer has not come round or the RPC read failed.
 // ---------------------------------------------------------------------------
 
 export const MARKET_REALITY_SCOPE_V1 =
@@ -84,10 +83,7 @@ export const MARKET_REALITY_SIZES_V1 = [
 // ---------------------------------------------------------------------------
 
 export type IssuerIdV1 = 'coinbase' | 'dinari' | 'backed';
-export type RepresentationKindV1 =
-  | 'b20_asset'
-  | 'rebasing_erc20'
-  | 'non_rebasing_erc4626_wrapper';
+export type RepresentationKindV1 = 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper';
 
 export interface MarketRealityIndexEntryWireV1 {
   underlyingKey: string;
@@ -124,7 +120,7 @@ export interface MarketRealityQuoteWireV1 {
 
 export interface MarketRealitySourceWireV1 {
   source: string;
-  status: 'quoted' | 'no_route' | 'measurement_failed' | 'not_measured';
+  status: 'quoted' | 'no_route' | 'unsized' | 'measurement_failed' | 'not_measured';
   errorCode: string | null;
   quoteEvidence: MarketRealityQuoteWireV1 | null;
 }
@@ -134,6 +130,18 @@ export interface MarketRealityRepresentationWireV1 {
   issuerId: IssuerIdV1;
   issuerInstrumentKey: string;
   representationKind: RepresentationKindV1;
+  supply: {
+    state: 'positive_supply' | 'zero_supply' | 'supply_unknown';
+    totalSupplyAtomic: string | null;
+    decimals: number | null;
+    blockNumber: string | null;
+    blockHash: string | null;
+    observedAt: string | null;
+    evidenceHash: string | null;
+    readOutcome: 'success' | 'rpc_failure' | 'decode_failure' | 'not_observed';
+    fresh: boolean;
+    reason: string | null;
+  };
   status: 'full' | 'unavailable' | 'not_measured' | 'measurement_failed';
   routePolicyKey: string | null;
   exactTestedTokenAtomic: string | null;
@@ -158,7 +166,7 @@ export interface MarketRealityRepresentationWireV1 {
    * surface cannot render it as one by forgetting to check a freshness flag. */
   lastObservation: {
     source: string;
-    status: 'quoted' | 'no_route' | 'measurement_failed';
+    status: 'quoted' | 'no_route' | 'unsized' | 'measurement_failed';
     errorCode: string | null;
     observedAt: string;
     expiresAt: string;
@@ -175,14 +183,26 @@ export interface MarketRealityWireV1 {
     cashDecimals: number;
     destination: 'USDC' | 'ETH';
   };
-  coverage: {
-    reviewedRepresentations: number;
-    comparableRepresentations: number;
+  universe: {
+    reviewedRepresentationCount: number;
+    positiveSupplyRepresentationCount: number;
+    zeroSupplyRepresentationCount: number;
+    unresolvedSupplyRepresentationCount: number;
+  };
+  marketOutcomeCoverage: {
+    eligibleRepresentationCount: number;
+    establishedOutcomeCount: number;
+    status: 'complete' | 'incomplete';
+    reason: string | null;
+  };
+  numericComparisonCoverage: {
+    eligibleRepresentationCount: number;
+    pricedRepresentationCount: number;
     status: 'complete' | 'incomplete';
     reason: string | null;
   };
   ranking: {
-    status: 'available' | 'withheld';
+    status: 'withheld';
     orderedTokenAddresses: readonly string[];
     reason: string | null;
   };
@@ -195,6 +215,8 @@ export interface MarketRealityWireV1 {
 // ---------------------------------------------------------------------------
 
 export const MARKET_REALITY_OUTCOMES_V1 = [
+  'zero_supply',
+  'supply_unknown',
   'priced',
   'lapsed',
   'stale_finding',
@@ -236,7 +258,7 @@ export interface RepresentationViewV1 {
   outcomeTone: ToneV1;
   /** Whose fact the outcome is. Rendered as a small label so a reader can tell
    * a fact about the asset from a fact about us at a glance. */
-  attribution: 'the market' | 'the clock' | 'Miorail';
+  attribution: 'the market' | 'the clock' | 'Miorail' | 'onchain read';
   /** The three comparison numbers, always present, dashed when absent. */
   numbers: FactViewV1[];
   /** Holding, redeeming and distributions — from the reviewed adapters. */
@@ -257,6 +279,8 @@ export interface MarketRealityViewV1 {
   /** The engine's own wording, kept reachable rather than discarded. A reader
    * gets `coverageBody`; an operator checking why gets this. */
   coverageDetail: string | null;
+  /** The four denominators Phase 10B.8 keeps structurally separate. */
+  comparisonSummary: FactViewV1[];
   /** Why no representation is marked best. Always shown while withheld. */
   rankingNote: string | null;
   representations: RepresentationViewV1[];
@@ -335,7 +359,7 @@ function bpsLabelV1(bps: string | null): string | null {
 }
 
 /**
- * The one derived fact this module owns: which of five outcomes a row is in.
+ * The one derived fact this module owns: which evidence outcome a row is in.
  *
  * Reads the SOURCES rather than the row status, because the row status folds
  * "expired" and "never asked" into one word and the sources keep them apart.
@@ -345,6 +369,8 @@ export function representationOutcomeV1(
   nowIso: string,
 ): MarketRealityOutcomeV1 {
   void nowIso;
+  if (representation.supply.state === 'zero_supply') return 'zero_supply';
+  if (representation.supply.state === 'supply_unknown') return 'supply_unknown';
   if (representation.status === 'full') return 'priced';
   // `liveness` is the engine's own answer and it is authoritative: it was
   // computed from the same rows that produced the status, at the same instant.
@@ -380,14 +406,14 @@ export function representationOutcomeV1(
 }
 
 /**
- * The five ways evidence can fail to be a price, kept apart.
+ * The ways route evidence can fail to be a price, kept apart.
  *
  * Phase 10B.7 measured all three NVIDIA representations through the same router
- * at the same size and got three genuinely different answers, of which the
- * product was reporting two:
+ * at the same size and got three different router-policy answers, of which
+ * the product was reporting two:
  *
  *   Coinbase NVDAc  200                       -> priced
- *   Backed  bNVDA   400 4008 route not found  -> the market has no venue
+ *   Backed  bNVDA   400 4008 route not found  -> no route in this router policy
  *   Backed  wbNVDA  400 4011 token not found  -> our router does not index it
  *
  * The third was arriving as `provider_http_error` — our infrastructure taking
@@ -411,6 +437,8 @@ function outcomeFromCodesV1(
 }
 
 const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
+  zero_supply: 'Zero supply',
+  supply_unknown: 'Supply unknown',
   priced: 'Priced now',
   lapsed: 'Price expired',
   stale_finding: 'Finding expired',
@@ -422,6 +450,8 @@ const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
 };
 
 const OUTCOME_TONE_V1: Readonly<Record<MarketRealityOutcomeV1, ToneV1>> = {
+  zero_supply: 'neutral',
+  supply_unknown: 'warn',
   priced: 'good',
   lapsed: 'warn',
   stale_finding: 'off',
@@ -435,6 +465,8 @@ const OUTCOME_TONE_V1: Readonly<Record<MarketRealityOutcomeV1, ToneV1>> = {
 const OUTCOME_ATTRIBUTION_V1: Readonly<
   Record<MarketRealityOutcomeV1, RepresentationViewV1['attribution']>
 > = {
+  zero_supply: 'onchain read',
+  supply_unknown: 'Miorail',
   priced: 'the market',
   lapsed: 'the clock',
   stale_finding: 'the clock',
@@ -466,6 +498,10 @@ function outcomeBodyV1(
     nowIso,
   );
   switch (outcome) {
+    case 'zero_supply':
+      return `No outstanding supply was observed at the latest fresh successful totalSupply read. This reviewed representation stays visible but is outside the current market-comparison denominator.`;
+    case 'supply_unknown':
+      return `${representation.supply.reason ?? 'Current outstanding supply could not be established.'} This reviewed representation remains unresolved and cannot be silently removed from coverage.`;
     case 'priced':
       return `A router quoted this exact size and the quote is still open.`;
     case 'lapsed':
@@ -476,9 +512,9 @@ function outcomeBodyV1(
     case 'stale_finding':
       // Not a lapsed price: we never had a price here. What expired was a
       // finding about the market, and saying "price expired" would invent one.
-      return `The last look at ${sizeLabel}${age ? ` ${age}` : ''} found no usable route, and that finding has since expired. Measure now to ask again.`;
+      return `The last look at ${sizeLabel}${age ? ` ${age}` : ''} found no route under Miorail's reviewed router policy, and that finding has since expired. Measure now to ask again.`;
     case 'no_route':
-      return `No approved venue would trade ${sizeLabel} of this representation. That is a fact about the market for this contract, not about the issuer.`;
+      return `No route was found for ${sizeLabel} under Miorail's current reviewed router policy. That scoped finding is about this exact contract and question, not the issuer or every market on Base.`;
     case 'unsupported_token':
       // Never "no route": the router did not index the token, so it never
       // reached the question. Claiming a market verdict here would be us
@@ -562,12 +598,19 @@ function lastSeenV1(
     return {
       label: 'Last seen',
       value: usdV1(observation.returnedCashAtomic) ?? '—',
-      note: observation.open ? `measured ${age}, still open` : `measured ${age} — history, not a price now`,
+      note: observation.open
+        ? `measured ${age}, still open`
+        : `measured ${age} — history, not a price now`,
     };
   }
   return {
     label: 'Last seen',
-    value: observation.status === 'no_route' ? 'No route' : 'Read failed',
+    value:
+      observation.status === 'no_route'
+        ? 'No route under policy'
+        : observation.status === 'unsized'
+          ? 'Sell not sized'
+          : 'Read failed',
     note: `measured ${age}`,
   };
 }
@@ -602,12 +645,26 @@ function technicalV1(
     { label: 'Representation', value: representation.representationKind },
     { label: 'Engine status', value: representation.status },
     { label: 'Normalization', value: representation.normalization },
+    { label: 'Supply state', value: representation.supply.state },
+    {
+      label: 'Total supply (atomic)',
+      value: representation.supply.totalSupplyAtomic ?? 'not established',
+    },
+    {
+      label: 'Supply evidence',
+      value: representation.supply.observedAt
+        ? `${representation.supply.readOutcome} · ${quoteAgeLabelV1(representation.supply.observedAt, nowIso) ?? representation.supply.observedAt}`
+        : representation.supply.readOutcome,
+    },
   ];
   if (representation.routePolicyKey) {
     rows.push({ label: 'Route policy', value: representation.routePolicyKey });
   }
   if (representation.exactTestedTokenAtomic) {
-    rows.push({ label: 'Tested token amount (atomic)', value: representation.exactTestedTokenAtomic });
+    rows.push({
+      label: 'Tested token amount (atomic)',
+      value: representation.exactTestedTokenAtomic,
+    });
   }
   for (const source of representation.sources) {
     rows.push({
@@ -623,7 +680,10 @@ function technicalV1(
       rows.push({ label: `Evidence · ${source.source}`, value: source.quoteEvidence.evidenceHash });
     }
   }
-  rows.push({ label: 'Reference', value: `${representation.reference.status} · session ${representation.reference.session}` });
+  rows.push({
+    label: 'Reference',
+    value: `${representation.reference.status} · session ${representation.reference.session}`,
+  });
   return rows;
 }
 
@@ -688,22 +748,26 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
  */
 function coverageBodyV1(input: {
   status: 'complete' | 'incomplete';
-  comparable: number;
+  answered: number;
+  eligible: number;
   reviewed: number;
+  unresolvedSupply: number;
   subject: string;
 }): string {
   const ways = input.reviewed === 1 ? 'one way' : `${input.reviewed} ways`;
-  if (input.status === 'complete' && input.reviewed > 0) {
-    return `${input.subject} is held ${ways} on Base, and all of them were measured the same way — so the numbers below can be read against each other.`;
-  }
   if (input.reviewed === 0) {
     return `No reviewed source has bound a Base contract to ${input.subject}.`;
   }
-  if (input.comparable === 0) {
-    return `${input.subject} is held ${ways} on Base, and none of them has evidence that can be compared right now. Each card below says which of them it is.`;
+  if (input.unresolvedSupply > 0) {
+    return `${input.subject} has ${ways} on Base, but current outstanding supply is unresolved for ${input.unresolvedSupply}. It stays visible and keeps market-outcome coverage incomplete.`;
   }
-  const plural = input.comparable === 1 ? 'one' : String(input.comparable);
-  return `${input.subject} is held ${ways} on Base, and ${plural} of them has evidence that can be compared. The rest say why they do not.`;
+  if (input.eligible === 0) {
+    return `${input.subject} has ${ways} on Base, but no representation currently has fresh evidence of outstanding supply. Reviewed zero-supply contracts remain visible below.`;
+  }
+  if (input.status === 'complete') {
+    return `Miorail obtained a legitimate answer to this exact market question for all ${input.eligible} positive-supply representations. This is categorical coverage, not permission to rank them.`;
+  }
+  return `Miorail answered this exact market question for ${input.answered} of ${input.eligible} positive-supply representations. Every unanswered card says whether the missing fact belongs to coverage, sizing or infrastructure.`;
 }
 
 export function marketRealityViewV1(input: {
@@ -721,34 +785,70 @@ export function marketRealityViewV1(input: {
       ? `Selling ${sizeLabel} worth into ${wire.question.destination}`
       : `Buying ${sizeLabel} worth with ${wire.question.destination}`;
 
-  const comparable = wire.coverage.comparableRepresentations;
-  const reviewed = wire.coverage.reviewedRepresentations;
+  const reviewed = wire.universe.reviewedRepresentationCount;
+  const eligible = wire.marketOutcomeCoverage.eligibleRepresentationCount;
+  const answered = wire.marketOutcomeCoverage.establishedOutcomeCount;
+  const priced = wire.numericComparisonCoverage.pricedRepresentationCount;
 
   return {
     title: input.choice?.title ?? wire.question.underlyingKey,
     identifier: input.choice?.identifier ?? null,
     questionLine,
-    coverageChip: `${comparable} of ${reviewed} comparable`,
-    coverageTone: comparable === reviewed && reviewed > 0 ? 'good' : 'warn',
-    coverageDetail: wire.coverage.reason,
+    coverageChip: `${answered} of ${eligible} market outcomes`,
+    coverageTone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
+    coverageDetail: wire.marketOutcomeCoverage.reason,
+    comparisonSummary: [
+      {
+        label: 'Reviewed representations',
+        value: String(reviewed),
+        note: 'exact addresses remain visible regardless of supply',
+        tone: 'neutral',
+      },
+      {
+        label: 'Outstanding supply',
+        value: String(wire.universe.positiveSupplyRepresentationCount),
+        note:
+          wire.universe.unresolvedSupplyRepresentationCount > 0
+            ? `${wire.universe.unresolvedSupplyRepresentationCount} unresolved`
+            : `${wire.universe.zeroSupplyRepresentationCount} zero-supply`,
+        tone: wire.universe.unresolvedSupplyRepresentationCount > 0 ? 'warn' : 'neutral',
+      },
+      {
+        label: 'Market question answered',
+        value: `${answered} / ${eligible}`,
+        note: 'categorical outcomes for this exact direction and size',
+        tone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
+      },
+      {
+        label: 'Priced',
+        value: `${priced} / ${wire.numericComparisonCoverage.eligibleRepresentationCount}`,
+        note: 'fresh normalized numeric quotes',
+        tone: wire.numericComparisonCoverage.status === 'complete' ? 'good' : 'warn',
+      },
+      {
+        label: 'Ranking',
+        value: 'WITHHELD',
+        note: 'Phase 10B.8 never emits BEST',
+        tone: 'off',
+      },
+    ],
     // The one sentence a reader gets in five seconds. Deliberately NOT the
     // engine's `coverage.reason`, which is written for an operator — "fresh
     // exact-size evidence, normalized exposure and the same approved-router
     // policy" is true and tells a person nothing about what to do next. The
     // operator sentence stays reachable, under Technical evidence on the cards.
     coverageBody: coverageBodyV1({
-      status: wire.coverage.status,
-      comparable,
+      status: wire.marketOutcomeCoverage.status,
+      answered,
+      eligible,
       reviewed,
+      unresolvedSupply: wire.universe.unresolvedSupplyRepresentationCount,
       subject: input.choice?.title ?? 'This security',
     }),
     // Never hidden behind a control. A reader who does not see this line will
     // read the leftmost column as the winner.
     rankingNote:
-      wire.ranking.status === 'withheld'
-        ? (wire.ranking.reason ??
-          'No representation is marked best: the coverage gate has not passed.')
-        : null,
+      wire.ranking.reason ?? 'No representation is marked best: Phase 10B.8 withholds ranking.',
     representations: wire.representations.map((representation) => {
       const outcome = representationOutcomeV1(representation, input.now);
       const adapter = REPRESENTATION_STRUCTURE_ADAPTERS_V1[representation.issuerId];
@@ -768,7 +868,9 @@ export function marketRealityViewV1(input: {
           {
             label: 'Ratio',
             value:
-              representation.normalization === 'not_established' ? 'Not established' : 'Applied once',
+              representation.normalization === 'not_established'
+                ? 'Not established'
+                : 'Applied once',
             note: NORMALIZATION_NOTE_V1[representation.normalization],
             tone: representation.normalization === 'not_established' ? 'off' : 'neutral',
           },

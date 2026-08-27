@@ -6,6 +6,8 @@ import type {
   OfficialCashExitRepositoryV1,
   RepresentationRatioRepositoryV1,
   RepresentationRatioRowV1,
+  RepresentationSupplyRepositoryV1,
+  RepresentationSupplyRowV1,
   RepresentationUnderlyingV1,
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
@@ -13,13 +15,13 @@ import type {
 import {
   MarketRealityIndexV1Schema,
   MarketRealityQuestionV1Schema,
-  MarketRealityResponseV1Schema,
+  MarketRealityResponseV2Schema,
   type MarketRealityDirectionV1,
   type MarketRealityLivenessV1,
-  type MarketRealityObservationV1,
+  type MarketRealityObservationV2,
   type MarketRealityReferenceStateV1,
   type MarketRealityIndexV1,
-  type MarketRealityResponseV1,
+  type MarketRealityResponseV2,
 } from './contracts.js';
 
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
@@ -27,11 +29,13 @@ const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 // jitter without allowing yesterday's pre-corporate-action multiplier to
 // normalize a fresh quote.
 const RATIO_FRESHNESS_TTL_MS_V1 = 7 * 60 * 60 * 1_000;
+const SUPPLY_FRESHNESS_TTL_MS_V1 = 7 * 60 * 60 * 1_000;
 
 export interface MarketRealityDepsV1 {
   underlyings: UnderlyingAssetRepositoryV1;
   cashExit: OfficialCashExitRepositoryV1;
   ratios: RepresentationRatioRepositoryV1;
+  supplies: RepresentationSupplyRepositoryV1;
   now: () => Date;
   reference?: (input: {
     tokenAddress: string;
@@ -63,12 +67,58 @@ function sourceStatusV1(
   row: CashExitSourceObservationV1,
   direction: MarketRealityDirectionV1,
   nowMs: number,
-): 'quoted' | 'no_route' | 'measurement_failed' | 'not_measured' {
+): 'quoted' | 'no_route' | 'unsized' | 'measurement_failed' | 'not_measured' {
   if (Date.parse(row.expiresAt) <= nowMs) return 'not_measured';
   if (quoteForDirectionV1(row, direction)) return 'quoted';
   if (direction === 'buy' && row.errorCode === 'cash_size_anchor_no_route') return 'no_route';
+  if (direction === 'sell' && row.errorCode === 'cash_size_anchor_no_route') return 'unsized';
   if (direction === 'sell' && ['buy_only', 'unavailable'].includes(row.status)) return 'no_route';
   return 'measurement_failed';
+}
+
+function supplyEvidenceV1(row: RepresentationSupplyRowV1 | null, nowMs: number) {
+  if (!row) {
+    return {
+      state: 'supply_unknown' as const,
+      totalSupplyAtomic: null,
+      decimals: null,
+      normalization: 'raw_erc20_total_supply' as const,
+      blockNumber: null,
+      blockHash: null,
+      observedAt: null,
+      evidenceHash: null,
+      source: 'erc20_total_supply' as const,
+      readOutcome: 'not_observed' as const,
+      fresh: false,
+      reason: 'No exact-address totalSupply observation has been stored.',
+    };
+  }
+  const observedMs = Date.parse(row.observedAt);
+  const fresh =
+    row.readOutcome === 'success' &&
+    Number.isFinite(observedMs) &&
+    observedMs <= nowMs &&
+    nowMs - observedMs <= SUPPLY_FRESHNESS_TTL_MS_V1;
+  const state = fresh ? row.state : ('supply_unknown' as const);
+  return {
+    state,
+    totalSupplyAtomic: row.totalSupplyAtomic,
+    decimals: row.decimals,
+    normalization: 'raw_erc20_total_supply' as const,
+    blockNumber: row.blockNumber,
+    blockHash: row.blockHash,
+    observedAt: row.observedAt,
+    evidenceHash: row.evidenceHash,
+    source: 'erc20_total_supply' as const,
+    readOutcome: row.readOutcome,
+    fresh,
+    reason:
+      state !== 'supply_unknown'
+        ? null
+        : row.readOutcome !== 'success'
+          ? `The latest totalSupply read did not establish a value (${row.failureCode ?? row.readOutcome}).`
+          : 'The latest successful totalSupply observation is outside the current comparison window.',
+  };
 }
 
 function normalizedExposureV1(input: {
@@ -155,7 +205,7 @@ function latestObservationV1(
   rows: readonly CashExitSourceObservationV1[],
   direction: MarketRealityDirectionV1,
   nowMs: number,
-): MarketRealityObservationV1 | null {
+): MarketRealityObservationV2 | null {
   const observed = rows
     .map((row) => {
       const quote = quoteForDirectionV1(row, direction);
@@ -178,10 +228,13 @@ function latestObservationV1(
     // undo.
     status: newest.quote
       ? 'quoted'
-      : newest.row.errorCode === 'cash_size_anchor_no_route' ||
-          ['buy_only', 'unavailable'].includes(newest.row.status)
-        ? 'no_route'
-        : 'measurement_failed',
+      : newest.row.errorCode === 'cash_size_anchor_no_route'
+        ? direction === 'buy'
+          ? 'no_route'
+          : 'unsized'
+        : ['buy_only', 'unavailable'].includes(newest.row.status)
+          ? 'no_route'
+          : 'measurement_failed',
     errorCode: newest.row.errorCode ?? null,
     observedAt: newest.observedAt,
     expiresAt,
@@ -204,7 +257,7 @@ function exactRowsV1(
   );
 }
 
-export async function assembleMarketRealityV1(
+export async function assembleMarketRealityV2(
   deps: MarketRealityDepsV1,
   input: {
     underlyingKey: string;
@@ -212,7 +265,7 @@ export async function assembleMarketRealityV1(
     requestedCashAtomic: string;
     destination?: 'USDC' | 'ETH';
   },
-): Promise<MarketRealityResponseV1> {
+): Promise<MarketRealityResponseV2> {
   const now = deps.now();
   const question = MarketRealityQuestionV1Schema.parse({
     chainId: 8453,
@@ -235,6 +288,11 @@ export async function assembleMarketRealityV1(
     tokenAddresses: bindings.map((row) => row.tokenAddress),
   });
   const ratioByAddress = new Map(ratios.map((row) => [row.tokenAddress, row]));
+  const supplies = await deps.supplies.readSupplies({
+    chainId: 8453,
+    tokenAddresses: bindings.map((row) => row.tokenAddress),
+  });
+  const supplyByAddress = new Map(supplies.map((row) => [row.tokenAddress, row]));
   const nowMs = now.getTime();
 
   const representations = await Promise.all(
@@ -319,6 +377,7 @@ export async function assembleMarketRealityV1(
         issuerId: binding.issuerId!,
         issuerInstrumentKey: binding.issuerInstrumentKey!,
         representationKind: binding.representationKind!,
+        supply: supplyEvidenceV1(supplyByAddress.get(binding.tokenAddress) ?? null, nowMs),
         status,
         routePolicyKey,
         exactTestedTokenAtomic: tokenAtomic,
@@ -366,63 +425,72 @@ export async function assembleMarketRealityV1(
     }),
   );
 
+  const positiveSupply = representations.filter((row) => row.supply.state === 'positive_supply');
+  const zeroSupply = representations.filter((row) => row.supply.state === 'zero_supply');
+  const unresolvedSupply = representations.filter((row) => row.supply.state === 'supply_unknown');
   const routePolicies = new Set(
-    representations
+    positiveSupply
       .map((row) => row.routePolicyKey)
       .filter((value): value is `0x${string}` => value !== null),
   );
-  const comparable = representations.filter(
+  const establishedMarketOutcomes = positiveSupply.filter(
+    (row) => ['full', 'unavailable'].includes(row.status) && row.routePolicyKey !== null,
+  );
+  const comparable = positiveSupply.filter(
     (row) =>
       row.status === 'full' &&
       row.normalizedExposureAtomic !== null &&
       row.effectivePriceAtomic !== null &&
       row.routePolicyKey !== null,
   );
-  const coverageComplete =
-    representations.length >= 2 &&
-    comparable.length === representations.length &&
+  const marketOutcomeComplete =
+    unresolvedSupply.length === 0 &&
+    positiveSupply.length > 0 &&
+    establishedMarketOutcomes.length === positiveSupply.length &&
     routePolicies.size === 1;
-  const ordered = coverageComplete
-    ? [...comparable]
-        .sort((left, right) => {
-          const l = BigInt(left.effectivePriceAtomic!);
-          const r = BigInt(right.effectivePriceAtomic!);
-          const buyOrder =
-            question.direction === 'buy'
-              ? l < r
-                ? -1
-                : l > r
-                  ? 1
-                  : 0
-              : l > r
-                ? -1
-                : l < r
-                  ? 1
-                  : 0;
-          return buyOrder || left.tokenAddress.localeCompare(right.tokenAddress);
-        })
-        .map((row) => row.tokenAddress)
-    : [];
-  return MarketRealityResponseV1Schema.parse({
-    schemaVersion: 'market-reality/v1',
+  const numericComparisonComplete =
+    unresolvedSupply.length === 0 &&
+    positiveSupply.length >= 2 &&
+    comparable.length === positiveSupply.length &&
+    routePolicies.size === 1;
+  return MarketRealityResponseV2Schema.parse({
+    schemaVersion: 'market-reality/v2',
     question,
-    coverage: {
-      policy: 'same_approved_router_set_exact_size_and_destination',
-      reviewedRepresentations: representations.length,
-      comparableRepresentations: comparable.length,
-      status: coverageComplete ? 'complete' : 'incomplete',
-      reason: coverageComplete
+    universe: {
+      reviewedRepresentationCount: representations.length,
+      positiveSupplyRepresentationCount: positiveSupply.length,
+      zeroSupplyRepresentationCount: zeroSupply.length,
+      unresolvedSupplyRepresentationCount: unresolvedSupply.length,
+    },
+    marketOutcomeCoverage: {
+      policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+      eligibleRepresentationCount: positiveSupply.length,
+      establishedOutcomeCount: establishedMarketOutcomes.length,
+      status: marketOutcomeComplete ? 'complete' : 'incomplete',
+      reason: marketOutcomeComplete
         ? null
-        : representations.length < 2
-          ? 'Fewer than two reviewed exact-address representations are bound to this underlying.'
-          : 'Every reviewed representation must have fresh exact-size evidence, normalized exposure and the same approved-router policy.',
+        : unresolvedSupply.length > 0
+          ? 'Supply is unresolved for one or more reviewed representations; none may be silently removed from the denominator.'
+          : positiveSupply.length === 0
+            ? 'No reviewed representation has fresh evidence of outstanding supply.'
+            : 'Every positive-supply representation must have a fresh exact-direction outcome under the same reviewed router policy.',
+    },
+    numericComparisonCoverage: {
+      policy: 'fresh_numeric_quotes_same_exact_question_and_normalization',
+      eligibleRepresentationCount: positiveSupply.length,
+      pricedRepresentationCount: comparable.length,
+      status: numericComparisonComplete ? 'complete' : 'incomplete',
+      reason: numericComparisonComplete
+        ? null
+        : 'Every positive-supply representation needs a fresh normalized numeric quote for this exact question before numeric comparison is complete.',
     },
     ranking: {
-      status: coverageComplete ? 'available' : 'withheld',
-      orderedTokenAddresses: ordered,
-      reason: coverageComplete
-        ? null
-        : 'Coverage comparability did not pass; no BEST representation is emitted.',
+      status: 'withheld',
+      policy: 'withheld_phase_10b8',
+      orderedTokenAddresses: [],
+      reason: numericComparisonComplete
+        ? 'Numeric comparison coverage is complete, but Phase 10B.8 policy still withholds ranking and BEST.'
+        : 'Numeric comparison coverage is incomplete; no BEST representation is emitted.',
     },
     quoteEvidenceIsExecutionProof: false,
     representations,

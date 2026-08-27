@@ -87,9 +87,7 @@ function questionFromSearchV1(search: string): {
       : 'sell',
     // An unmeasured size returns an empty board that reads as a broken page,
     // so a size the ladder does not carry falls back rather than being asked.
-    requestedCashAtomic: MARKET_REALITY_SIZES_V1.some(
-      (rung) => rung.requestedCashAtomic === size,
-    )
+    requestedCashAtomic: MARKET_REALITY_SIZES_V1.some((rung) => rung.requestedCashAtomic === size)
       ? size!
       : DEFAULT_SIZE_V1,
   };
@@ -115,7 +113,10 @@ export function MarketRealityPage() {
   // would open the page on a board with one card and nothing to weigh it
   // against, which is the one thing this surface is for.
   const defaultKey = useMemo(
-    () => choices.find((choice) => choice.multiIssuer)?.underlyingKey ?? choices[0]?.underlyingKey ?? null,
+    () =>
+      choices.find((choice) => choice.multiIssuer)?.underlyingKey ??
+      choices[0]?.underlyingKey ??
+      null,
     [choices],
   );
   const selectedKey = question.underlyingKey ?? defaultKey;
@@ -178,6 +179,11 @@ export function MarketRealityPage() {
     }
     if (spent.reusedCooldown.length > 0) {
       parts.push(`${spent.reusedCooldown.length} measured moments ago`);
+    }
+    if (spent.excludedZeroSupply.length > 0) {
+      parts.push(
+        `${spent.excludedZeroSupply.length} zero-supply representation${spent.excludedZeroSupply.length === 1 ? '' : 's'} kept visible without a router call`,
+      );
     }
     for (const row of spent.unresolved) {
       parts.push(`${row.tokenAddress.slice(0, 8)}… could not be measured (${row.reason})`);
@@ -258,9 +264,7 @@ export function MarketRealityPage() {
 
           measuring: measure.isPending,
           measurementNote,
-          measurementError: measure.error
-            ? failureCopyV1(measure.error, 'this measurement')
-            : null,
+          measurementError: measure.error ? failureCopyV1(measure.error, 'this measurement') : null,
 
           actions: {
             onUnderlying: (underlyingKey) => setQuestion({ key: underlyingKey }),

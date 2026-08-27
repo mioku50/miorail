@@ -44,10 +44,10 @@ export const MarketRealityQuoteEvidenceV1Schema = z
   })
   .strict();
 
-export const MarketRealitySourceObservationV1Schema = z
+export const MarketRealitySourceObservationV2Schema = z
   .object({
     source: z.string().min(1).max(100),
-    status: z.enum(['quoted', 'no_route', 'measurement_failed', 'not_measured']),
+    status: z.enum(['quoted', 'no_route', 'unsized', 'measurement_failed', 'not_measured']),
     errorCode: z.string().min(1).max(120).nullable(),
     quoteEvidence: MarketRealityQuoteEvidenceV1Schema.nullable(),
     simulationEvidence: z
@@ -94,12 +94,12 @@ export type MarketRealityReferenceStateV1 = z.infer<typeof MarketRealityReferenc
 // a freshness flag somebody can forget to read.
 // ---------------------------------------------------------------------------
 
-export const MarketRealityObservationV1Schema = z
+export const MarketRealityObservationV2Schema = z
   .object({
     source: z.string().min(1).max(100),
     /** What the router said. `not_measured` never appears here: an observation
      * exists because somebody measured. */
-    status: z.enum(['quoted', 'no_route', 'measurement_failed']),
+    status: z.enum(['quoted', 'no_route', 'unsized', 'measurement_failed']),
     errorCode: z.string().min(1).max(120).nullable(),
     observedAt: Timestamp,
     expiresAt: Timestamp,
@@ -109,7 +109,7 @@ export const MarketRealityObservationV1Schema = z
     open: z.boolean(),
   })
   .strict();
-export type MarketRealityObservationV1 = z.infer<typeof MarketRealityObservationV1Schema>;
+export type MarketRealityObservationV2 = z.infer<typeof MarketRealityObservationV2Schema>;
 
 /**
  * Whether this representation has anything current, anything at all, or nothing.
@@ -121,12 +121,75 @@ export type MarketRealityObservationV1 = z.infer<typeof MarketRealityObservation
 export const MARKET_REALITY_LIVENESS_V1 = ['live', 'history_only', 'never_measured'] as const;
 export type MarketRealityLivenessV1 = (typeof MARKET_REALITY_LIVENESS_V1)[number];
 
-export const MarketRealityRepresentationV1Schema = z
+export const MarketRealitySupplyV1Schema = z
+  .object({
+    state: z.enum(['positive_supply', 'zero_supply', 'supply_unknown']),
+    totalSupplyAtomic: Digits.nullable(),
+    decimals: z.number().int().min(0).max(36).nullable(),
+    normalization: z.literal('raw_erc20_total_supply'),
+    blockNumber: Digits.nullable(),
+    blockHash: Hash.nullable(),
+    observedAt: Timestamp.nullable(),
+    evidenceHash: Hash.nullable(),
+    source: z.literal('erc20_total_supply'),
+    readOutcome: z.enum(['success', 'rpc_failure', 'decode_failure', 'not_observed']),
+    fresh: z.boolean(),
+    reason: z.string().min(1).max(240).nullable(),
+  })
+  .strict()
+  .superRefine((row, ctx) => {
+    const successful = row.readOutcome === 'success';
+    if (
+      successful !==
+      (row.totalSupplyAtomic !== null &&
+        row.decimals !== null &&
+        row.blockNumber !== null &&
+        row.blockHash !== null &&
+        row.observedAt !== null &&
+        row.evidenceHash !== null)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a successful supply read carries one complete exact-address observation',
+      });
+    }
+    if ((row.state !== 'supply_unknown') !== (successful && row.fresh)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'only a fresh successful supply read establishes the current denominator state',
+      });
+    }
+    if ((row.state === 'supply_unknown') !== (row.reason !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['reason'],
+        message: 'unknown supply states explain why, established states do not',
+      });
+    }
+    if (row.state === 'zero_supply' && row.totalSupplyAtomic !== '0') {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'zero supply requires exact atomic zero',
+      });
+    }
+    if (
+      row.state === 'positive_supply' &&
+      (row.totalSupplyAtomic === null || row.totalSupplyAtomic === '0')
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'positive supply requires a positive amount',
+      });
+    }
+  });
+
+export const MarketRealityRepresentationV2Schema = z
   .object({
     tokenAddress: Address,
     issuerId: z.enum(['coinbase', 'dinari', 'backed']),
     issuerInstrumentKey: z.string().min(1).max(200),
     representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper']),
+    supply: MarketRealitySupplyV1Schema,
     status: z.enum(['full', 'unavailable', 'not_measured', 'measurement_failed']),
     routePolicyKey: Hash.nullable(),
     exactTestedTokenAtomic: Digits.nullable(),
@@ -142,13 +205,13 @@ export const MarketRealityRepresentationV1Schema = z
     effectivePriceDecimals: z.literal(8).nullable(),
     premiumDiscountBps: SignedDigits.nullable(),
     reference: MarketRealityReferenceStateV1Schema,
-    sources: z.array(MarketRealitySourceObservationV1Schema).max(16),
+    sources: z.array(MarketRealitySourceObservationV2Schema).max(16),
     observedAt: Timestamp.nullable(),
     expiresAt: Timestamp.nullable(),
     liveness: z.enum(MARKET_REALITY_LIVENESS_V1),
     /** The newest observation whatever its age. History, never a current price
      * — every field above it is computed from OPEN evidence only. */
-    lastObservation: MarketRealityObservationV1Schema.nullable(),
+    lastObservation: MarketRealityObservationV2Schema.nullable(),
   })
   .strict()
   .superRefine((row, ctx) => {
@@ -175,32 +238,50 @@ export const MarketRealityRepresentationV1Schema = z
     }
   });
 
-export const MarketRealityResponseV1Schema = z
+export const MarketRealityResponseV2Schema = z
   .object({
-    schemaVersion: z.literal('market-reality/v1'),
+    schemaVersion: z.literal('market-reality/v2'),
     question: MarketRealityQuestionV1Schema,
-    coverage: z
+    universe: z
       .object({
-        policy: z.literal('same_approved_router_set_exact_size_and_destination'),
-        reviewedRepresentations: z.number().int().min(0),
-        comparableRepresentations: z.number().int().min(0),
+        reviewedRepresentationCount: z.number().int().min(0),
+        positiveSupplyRepresentationCount: z.number().int().min(0),
+        zeroSupplyRepresentationCount: z.number().int().min(0),
+        unresolvedSupplyRepresentationCount: z.number().int().min(0),
+      })
+      .strict(),
+    marketOutcomeCoverage: z
+      .object({
+        policy: z.literal('same_reviewed_router_policy_exact_size_direction_and_destination'),
+        eligibleRepresentationCount: z.number().int().min(0),
+        establishedOutcomeCount: z.number().int().min(0),
+        status: z.enum(['complete', 'incomplete']),
+        reason: z.string().min(1).max(300).nullable(),
+      })
+      .strict(),
+    numericComparisonCoverage: z
+      .object({
+        policy: z.literal('fresh_numeric_quotes_same_exact_question_and_normalization'),
+        eligibleRepresentationCount: z.number().int().min(0),
+        pricedRepresentationCount: z.number().int().min(0),
         status: z.enum(['complete', 'incomplete']),
         reason: z.string().min(1).max(300).nullable(),
       })
       .strict(),
     ranking: z
       .object({
-        status: z.enum(['available', 'withheld']),
-        orderedTokenAddresses: z.array(Address),
+        status: z.literal('withheld'),
+        policy: z.literal('withheld_phase_10b8'),
+        orderedTokenAddresses: z.array(Address).max(0),
         reason: z.string().min(1).max(300).nullable(),
       })
       .strict(),
     quoteEvidenceIsExecutionProof: z.literal(false),
-    representations: z.array(MarketRealityRepresentationV1Schema).max(256),
+    representations: z.array(MarketRealityRepresentationV2Schema).max(256),
     assembledAt: Timestamp,
   })
   .strict();
-export type MarketRealityResponseV1 = z.infer<typeof MarketRealityResponseV1Schema>;
+export type MarketRealityResponseV2 = z.infer<typeof MarketRealityResponseV2Schema>;
 
 // ---------------------------------------------------------------------------
 // The chooser.
@@ -270,7 +351,7 @@ export const MARKET_REALITY_WINDOW_KEYS_V1 = ['1h', '6h', '24h', '7d'] as const;
 export const MarketRealityHistoryPointV1Schema = z
   .object({
     observedAt: Timestamp,
-    status: z.enum(['quoted', 'no_route', 'measurement_failed']),
+    status: z.enum(['quoted', 'no_route', 'unsized', 'measurement_failed']),
     source: z.string().min(1).max(100),
     /** Cash at the exact size. Null on a point that is a failure or a refusal
      * — which is still a point, because an hour with no route is a fact. */
@@ -352,6 +433,9 @@ export const MarketRealityMeasurementV1Schema = z
     reusedOpen: z.array(Address).max(256),
     /** Left alone: measured moments ago, inside the cooldown. */
     reusedCooldown: z.array(Address).max(256),
+    /** Reviewed and visible, but no outstanding supply exists at the latest
+     * fresh successful read, so there is no current position to size. */
+    excludedZeroSupply: z.array(Address).max(256),
     /** Could not be measured, and accused of nothing. */
     unresolved: z
       .array(z.object({ tokenAddress: Address, reason: z.string().min(1).max(120) }).strict())
@@ -371,7 +455,7 @@ export type MarketRealityMeasurementV1 = z.infer<typeof MarketRealityMeasurement
  * right-hand side adds. That failure arrives as a thrown parse error inside a
  * route's catch block and leaves a 500 with nothing in the log.
  */
-export const MarketRealityLiveResponseV1Schema = MarketRealityResponseV1Schema.extend({
+export const MarketRealityLiveResponseV2Schema = MarketRealityResponseV2Schema.extend({
   measurement: MarketRealityMeasurementV1Schema,
 }).strict();
-export type MarketRealityLiveResponseV1 = z.infer<typeof MarketRealityLiveResponseV1Schema>;
+export type MarketRealityLiveResponseV2 = z.infer<typeof MarketRealityLiveResponseV2Schema>;

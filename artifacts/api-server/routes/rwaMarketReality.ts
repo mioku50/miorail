@@ -7,17 +7,18 @@ import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
 import {
   createDatabaseOfficialCashExitRepository,
   createDatabaseRepresentationRatioRepository,
+  createDatabaseRepresentationSupplyRepository,
   createDatabaseUnderlyingAssetRepository,
 } from '@mioagent/route-storage';
 import {
   MARKET_REALITY_WINDOWS_V1,
   MarketRealityHistoryV1Schema,
   MarketRealityIndexV1Schema,
-  MarketRealityLiveResponseV1Schema,
-  MarketRealityResponseV1Schema,
+  MarketRealityLiveResponseV2Schema,
+  MarketRealityResponseV2Schema,
   assembleMarketRealityHistoryV1,
   assembleMarketRealityIndexV1,
-  assembleMarketRealityV1,
+  assembleMarketRealityV2,
   createMarketRealityCoordinatorV1,
   type MarketRealityWindowV1,
 } from '@mioagent/rwa-market-reality';
@@ -39,8 +40,20 @@ function sessionUserV1(req: Request): TenantUser | null {
 }
 
 const ERC20_METADATA_ABI_V1 = [
-  { type: 'function', name: 'decimals', inputs: [], outputs: [{ type: 'uint8' }], stateMutability: 'view' },
-  { type: 'function', name: 'symbol', inputs: [], outputs: [{ type: 'string' }], stateMutability: 'view' },
+  {
+    type: 'function',
+    name: 'decimals',
+    inputs: [],
+    outputs: [{ type: 'uint8' }],
+    stateMutability: 'view',
+  },
+  {
+    type: 'function',
+    name: 'symbol',
+    inputs: [],
+    outputs: [{ type: 'string' }],
+    stateMutability: 'view',
+  },
 ] as const;
 
 function rpcUrlV1(): string {
@@ -62,8 +75,9 @@ export const rwaMarketRealityRuntime = {
   underlyings: () => createDatabaseUnderlyingAssetRepository(client),
   cashExit: () => createDatabaseOfficialCashExitRepository(client),
   ratios: () => createDatabaseRepresentationRatioRepository(client),
+  supplies: () => createDatabaseRepresentationSupplyRepository(client),
   now: () => new Date(),
-  assemble: assembleMarketRealityV1,
+  assemble: assembleMarketRealityV2,
   assembleIndex: assembleMarketRealityIndexV1,
   assembleHistory: assembleMarketRealityHistoryV1,
   coordinator: () => marketRealityCoordinatorV1,
@@ -76,9 +90,12 @@ export const rwaMarketRealityRuntime = {
         to_regclass('public.underlying_asset') AS underlying,
         to_regclass('public.representation_underlying') AS representations,
         to_regclass('public.official_cash_exit_runs') AS cash_exit,
-        to_regclass('public.representation_ratio') AS ratios`;
+        to_regclass('public.representation_ratio') AS ratios,
+        to_regclass('public.representation_supply') AS supplies`;
     const row = rows[0];
-    return Boolean(row?.underlying && row.representations && row.cash_exit && row.ratios);
+    return Boolean(
+      row?.underlying && row.representations && row.cash_exit && row.ratios && row.supplies,
+    );
   },
 };
 
@@ -191,6 +208,7 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
         underlyings: rwaMarketRealityRuntime.underlyings(),
         cashExit: rwaMarketRealityRuntime.cashExit(),
         ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
         now: rwaMarketRealityRuntime.now,
       },
       {
@@ -200,7 +218,7 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
         destination: question.destination,
       },
     );
-    res.status(200).json(MarketRealityResponseV1Schema.parse(result));
+    res.status(200).json(MarketRealityResponseV2Schema.parse(result));
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }
@@ -255,8 +273,9 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
     // representation already holds an open quote must touch nothing: the point
     // of this path is to spend router calls only when they buy something, and
     // an eager anchor spends an RPC call to discover it had nothing to do.
-    let anchorOnce: ReturnType<ReturnType<typeof rwaMarketRealityRuntime.reader>['readBlockAnchor']> | null =
-      null;
+    let anchorOnce: ReturnType<
+      ReturnType<typeof rwaMarketRealityRuntime.reader>['readBlockAnchor']
+    > | null = null;
     let readerOnce: ReturnType<typeof rwaMarketRealityRuntime.reader> | null = null;
     const chainAnchor = async () => {
       readerOnce ??= rwaMarketRealityRuntime.reader();
@@ -269,6 +288,7 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
         underlyings: rwaMarketRealityRuntime.underlyings(),
         cashExit,
         ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
         now: rwaMarketRealityRuntime.now,
         approvedSources: adapters.map((adapter) => adapter.id),
         // `decimals` and `symbol` come off the chain because a representation
@@ -349,12 +369,13 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
     // only thing telling a reader whether the button did anything, so a shape
     // change there must fail here rather than render as an empty sentence.
     res.status(200).json(
-      MarketRealityLiveResponseV1Schema.parse({
+      MarketRealityLiveResponseV2Schema.parse({
         ...result.answer,
         measurement: {
           measured: result.measured,
           reusedOpen: result.reusedOpen,
           reusedCooldown: result.reusedCooldown,
+          excludedZeroSupply: result.excludedZeroSupply,
           unresolved: result.unresolved,
           joinedInFlight: result.joinedInFlight,
         },

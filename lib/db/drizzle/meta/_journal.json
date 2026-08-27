@@ -421,6 +421,13 @@
       "when": 1788010300000,
       "tag": "0059_underlying_identity_and_backed",
       "breakpoints": true
+    },
+    {
+      "idx": 60,
+      "version": "7",
+      "when": 1788096700000,
+      "tag": "0060_representation_supply",
+      "breakpoints": true
     }
   ]
 }

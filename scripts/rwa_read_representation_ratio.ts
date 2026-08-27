@@ -26,12 +26,22 @@
  *   pnpm rwa:read-ratio
  *   pnpm rwa:read-ratio --gap-ms 2000
  */
-import { createB20ReaderV1 } from '@mioagent/b20-control';
+import {
+  B20_SELECTORS_V1,
+  callManyV1,
+  createB20ReaderV1,
+  decodeUint8V1,
+  decodeUintV1,
+  encodeNoArgsV1,
+} from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
+import { stableHashV1 } from '@mioagent/route-domain';
 import {
   createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseRepresentationRatioRepository,
+  createDatabaseRepresentationSupplyRepository,
+  createDatabaseUnderlyingAssetRepository,
 } from '@mioagent/route-storage';
 import { readB20MultiplierV1 } from '@mioagent/rwa-dossier';
 import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
@@ -73,7 +83,9 @@ async function main(): Promise<void> {
 
   const official = createDatabaseOfficialAssetRepository(client);
   const ratios = createDatabaseRepresentationRatioRepository(client);
+  const supplies = createDatabaseRepresentationSupplyRepository(client);
   const issuers = createDatabaseIssuerRepresentationRepository(client);
+  const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const reader = createB20ReaderV1({ rpcUrl });
 
   // A reviewed issuer adapter selects its own corpus. Backed is also an
@@ -92,11 +104,23 @@ async function main(): Promise<void> {
     issuerId: 'dinari',
     limit: 500,
   });
+  const underlyingRows = await underlyings.listUnderlyings({ chainId: CHAIN_ID_V1, limit: 500 });
+  const reviewedBindings = (
+    await Promise.all(
+      underlyingRows.map((row) =>
+        underlyings.representationsOf({
+          chainId: CHAIN_ID_V1,
+          underlyingKey: row.underlying.underlyingKey,
+        }),
+      ),
+    )
+  ).flat();
   console.log(
     `${coinbaseB20.length} reviewed Coinbase B20 representation(s), ` +
-      `${dinari.length} established Dinari representation(s)`,
+      `${dinari.length} established Dinari representation(s), ` +
+      `${reviewedBindings.length} reviewed exact-address supply target(s)`,
   );
-  if (coinbaseB20.length === 0 && dinari.length === 0) return;
+  if (coinbaseB20.length === 0 && dinari.length === 0 && reviewedBindings.length === 0) return;
 
   const anchorRead = await reader.readBlockAnchor();
   if (!anchorRead.ok) {
@@ -115,6 +139,86 @@ async function main(): Promise<void> {
   }
 
   const now = new Date();
+
+  let supplyRead = 0;
+  let supplyZero = 0;
+  let supplyFailed = 0;
+  let supplyFirst = 0;
+  let supplyChanged = 0;
+
+  // Supply is universal ERC-20 evidence, unlike issuer-specific representation
+  // ratios. Every reviewed exact address is asked the same pinned
+  // totalSupply()/decimals() question; ticker and issuer never select it.
+  for (const binding of reviewedBindings) {
+    const [totalResult, decimalsResult] = await callManyV1(reader, [
+      {
+        to: binding.tokenAddress,
+        data: encodeNoArgsV1(B20_SELECTORS_V1.totalSupply),
+        blockTag: anchor.blockTag,
+      },
+      {
+        to: binding.tokenAddress,
+        data: encodeNoArgsV1(B20_SELECTORS_V1.decimals),
+        blockTag: anchor.blockTag,
+      },
+    ]);
+    const totalSupply = totalResult?.ok ? decodeUintV1(totalResult.value) : null;
+    const decimals = decimalsResult?.ok ? decodeUint8V1(decimalsResult.value) : null;
+    const successful = totalResult?.ok === true && decimalsResult?.ok === true;
+    const decoded = successful && totalSupply !== null && decimals !== null;
+    const failureCode = decoded
+      ? null
+      : successful
+        ? 'erc20_supply_decode_failed'
+        : `erc20_supply_rpc_${
+            [
+              totalResult && !totalResult.ok ? totalResult.reason : null,
+              decimalsResult && !decimalsResult.ok ? decimalsResult.reason : null,
+            ]
+              .filter(Boolean)
+              .join('_') || 'unavailable'
+          }`;
+    const evidenceHash = stableHashV1('representation-supply-read/v1', {
+      chainId: CHAIN_ID_V1,
+      tokenAddress: binding.tokenAddress,
+      blockNumber: anchor.blockNumber,
+      totalSupplyRaw: totalResult?.ok ? totalResult.raw : null,
+      decimalsRaw: decimalsResult?.ok ? decimalsResult.raw : null,
+      failureCode,
+    });
+    const stored = await supplies.recordObservation({
+      chainId: CHAIN_ID_V1,
+      tokenAddress: binding.tokenAddress,
+      totalSupplyAtomic: decoded ? totalSupply.toString() : null,
+      decimals: decoded ? decimals : null,
+      blockNumber: anchor.blockNumber,
+      blockHash: anchor.blockHash,
+      evidenceHash,
+      readOutcome: decoded ? 'success' : successful ? 'decode_failure' : 'rpc_failure',
+      failureCode,
+      observedAt: now.toISOString(),
+      now: now.toISOString(),
+    });
+    if (decoded) {
+      supplyRead += 1;
+      if (totalSupply === 0n) supplyZero += 1;
+      if (stored.outcome === 'first_observation') supplyFirst += 1;
+      if (stored.outcome === 'changed') supplyChanged += 1;
+      console.log(
+        `  supply ${binding.tokenAddress}  ${totalSupply.toString()}  ${stored.row.state}  ${stored.outcome}`,
+      );
+    } else {
+      supplyFailed += 1;
+      console.log(`  supply ${binding.tokenAddress}  supply_unknown (${failureCode})`);
+    }
+    await sleep(gapMs);
+  }
+
+  console.log(
+    `supply read ${supplyRead}, zero ${supplyZero}, unresolved ${supplyFailed} · ` +
+      `${supplyFirst} first observation(s), ${supplyChanged} change(s)`,
+  );
+
   let read = 0;
   let absent = 0;
   let failed = 0;

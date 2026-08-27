@@ -103,7 +103,10 @@ function run(input: {
   };
 }
 
-function deps(runs: Record<string, CashExitMeasurementRunV1[]>, bindings = [binding(A), binding(B)]) {
+function deps(
+  runs: Record<string, CashExitMeasurementRunV1[]>,
+  bindings = [binding(A), binding(B)],
+) {
   return {
     underlyings: {
       representationsOf: async () => bindings,
@@ -148,11 +151,7 @@ describe('the series is one exact question over time', () => {
     const series = history.representations.find((row) => row.tokenAddress === A);
     assert.deepEqual(
       series?.points.map((point) => point.observedAt),
-      [
-        '2026-08-26T10:30:00.000Z',
-        '2026-08-26T11:00:00.000Z',
-        '2026-08-26T11:30:00.000Z',
-      ],
+      ['2026-08-26T10:30:00.000Z', '2026-08-26T11:00:00.000Z', '2026-08-26T11:30:00.000Z'],
       'a series is read left to right',
     );
     assert.equal(series?.firstObservedAt, '2026-08-26T10:30:00.000Z');
@@ -165,7 +164,11 @@ describe('the series is one exact question over time', () => {
     const history = await assembleMarketRealityHistoryV1(
       deps({
         [A]: [
-          run({ address: A, observedAt: '2026-08-26T11:00:00.000Z', requestedCashAtomic: '10000000000' }),
+          run({
+            address: A,
+            observedAt: '2026-08-26T11:00:00.000Z',
+            requestedCashAtomic: '10000000000',
+          }),
           run({ address: A, observedAt: '2026-08-26T11:30:00.000Z' }),
         ],
         [B]: [],
@@ -209,7 +212,11 @@ describe('the series is one exact question over time', () => {
       deps({
         [A]: [
           run({ address: A, observedAt: '2026-08-26T11:00:00.000Z' }),
-          run({ address: A, observedAt: '2026-08-26T11:30:00.000Z', errorCode: 'provider_no_route' }),
+          run({
+            address: A,
+            observedAt: '2026-08-26T11:30:00.000Z',
+            errorCode: 'provider_no_route',
+          }),
         ],
         [B]: [],
       }),
@@ -224,6 +231,31 @@ describe('the series is one exact question over time', () => {
     assert.equal(series?.pointCount, 2);
     assert.equal(series?.points[1]?.status, 'no_route');
     assert.equal(series?.points[1]?.returnedCashAtomic, null);
+  });
+
+  test('a failed BUY sizing anchor is an unsized SELL, not a route refusal', async () => {
+    const history = await assembleMarketRealityHistoryV1(
+      deps({
+        [A]: [
+          run({
+            address: A,
+            observedAt: '2026-08-26T11:30:00.000Z',
+            errorCode: 'cash_size_anchor_no_route',
+          }),
+        ],
+        [B]: [],
+      }),
+      {
+        underlyingKey: UNDERLYING,
+        direction: 'sell',
+        requestedCashAtomic: '100000000',
+        window: '6h',
+      },
+    );
+    const point = history.representations.find((row) => row.tokenAddress === A)?.points[0];
+    assert.equal(point?.status, 'unsized');
+    assert.equal(point?.returnedCashAtomic, null);
+    assert.equal(point?.errorCode, 'cash_size_anchor_no_route');
   });
 
   test('nothing is ever interpolated, and the payload says so', async () => {
@@ -251,7 +283,11 @@ describe('the series is one exact question over time', () => {
     const history = await assembleMarketRealityHistoryV1(
       deps({
         [A]: [
-          run({ address: A, observedAt: '2026-08-26T11:00:00.000Z', approvedSources: ['router-a'] }),
+          run({
+            address: A,
+            observedAt: '2026-08-26T11:00:00.000Z',
+            approvedSources: ['router-a'],
+          }),
           run({
             address: A,
             observedAt: '2026-08-26T11:30:00.000Z',
@@ -307,7 +343,11 @@ describe('the series is one exact question over time', () => {
       deps({
         [A]: [
           run({ address: A, observedAt: '2026-08-26T11:00:00.000Z' }),
-          run({ address: A, observedAt: '2026-08-26T11:30:00.000Z', errorCode: 'provider_no_route' }),
+          run({
+            address: A,
+            observedAt: '2026-08-26T11:30:00.000Z',
+            errorCode: 'provider_no_route',
+          }),
         ],
         [B]: [],
       }),

@@ -5,11 +5,13 @@ import type {
   OfficialCashExitRepositoryV1,
   RepresentationRatioRepositoryV1,
   RepresentationRatioRowV1,
+  RepresentationSupplyRepositoryV1,
+  RepresentationSupplyRowV1,
   RepresentationUnderlyingV1,
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
-import { assembleMarketRealityV1 } from '../src/engine.js';
+import { assembleMarketRealityV2 } from '../src/engine.js';
 
 const H = `0x${'11'.repeat(32)}` as const;
 const CANDIDATE = `0x${'22'.repeat(32)}` as const;
@@ -112,6 +114,7 @@ function deps(
   options: {
     bindings?: RepresentationUnderlyingV1[];
     ratios?: RepresentationRatioRowV1[];
+    supplies?: RepresentationSupplyRowV1[];
   } = {},
 ) {
   const bindings = options.bindings ?? [
@@ -129,12 +132,43 @@ function deps(
     ratios: {
       readRatios: async () => options.ratios ?? [],
     } as unknown as RepresentationRatioRepositoryV1,
+    supplies: {
+      readSupplies: async () =>
+        options.supplies ?? bindings.map((row) => supply(row.tokenAddress, 'positive_supply')),
+    } as unknown as RepresentationSupplyRepositoryV1,
     now: () => new Date('2026-08-26T12:01:00.000Z'),
   };
 }
 
-test('ranks only after the same exact-size route policy covers every representation', async () => {
-  const result = await assembleMarketRealityV1(
+function supply(
+  address: string,
+  state: 'positive_supply' | 'zero_supply' | 'supply_unknown',
+): RepresentationSupplyRowV1 {
+  const established = state !== 'supply_unknown';
+  return {
+    chainId: 8453,
+    tokenAddress: address,
+    state,
+    totalSupplyAtomic: established ? (state === 'zero_supply' ? '0' : '1000000000000000000') : null,
+    decimals: established ? 18 : null,
+    normalization: 'raw_erc20_total_supply',
+    blockNumber: '50000000',
+    blockHash: H,
+    source: 'erc20_total_supply',
+    evidenceHash: H,
+    readOutcome: established ? 'success' : 'rpc_failure',
+    failureCode: established ? null : 'rpc_timeout',
+    observedAt: '2026-08-26T12:00:00.000Z',
+    lastCheckedAt: '2026-08-26T12:00:00.000Z',
+    lastChangedAt: null,
+    reads: 1,
+    changes: 0,
+    createdAt: '2026-08-26T12:00:00.000Z',
+  };
+}
+
+test('complete numeric coverage remains ranking-withheld by Phase 10B.8 policy', async () => {
+  const result = await assembleMarketRealityV2(
     deps({ [A]: run(A, '500000000000000000'), [B]: run(B, '400000000000000000') }),
     {
       underlyingKey: UNDERLYING,
@@ -142,9 +176,10 @@ test('ranks only after the same exact-size route policy covers every representat
       requestedCashAtomic: '100000000',
     },
   );
-  assert.equal(result.coverage.status, 'complete');
-  assert.equal(result.ranking.status, 'available');
-  assert.deepEqual(result.ranking.orderedTokenAddresses, [A, B]);
+  assert.equal(result.marketOutcomeCoverage.status, 'complete');
+  assert.equal(result.numericComparisonCoverage.status, 'complete');
+  assert.equal(result.ranking.status, 'withheld');
+  assert.deepEqual(result.ranking.orderedTokenAddresses, []);
   assert.ok(
     result.representations.every(
       (row) => row.sources[0]?.simulationEvidence.status === 'not_simulated',
@@ -153,7 +188,7 @@ test('ranks only after the same exact-size route policy covers every representat
 });
 
 test('provider failure remains measurement_failed and withholds ranking', async () => {
-  const result = await assembleMarketRealityV1(
+  const result = await assembleMarketRealityV2(
     deps({ [A]: run(A, '500000000000000000'), [B]: run(B, '0', 'provider_timeout') }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
@@ -161,8 +196,81 @@ test('provider failure remains measurement_failed and withholds ranking', async 
     result.representations.find((row) => row.tokenAddress === B)?.status,
     'measurement_failed',
   );
-  assert.equal(result.coverage.status, 'incomplete');
+  assert.equal(result.marketOutcomeCoverage.status, 'incomplete');
   assert.equal(result.ranking.status, 'withheld');
+});
+
+test('positive supply plus scoped no-route establishes a categorical outcome, not a price', async () => {
+  const result = await assembleMarketRealityV2(
+    deps({
+      [A]: run(A, '500000000000000000'),
+      [B]: run(B, '0', 'cash_size_anchor_no_route'),
+    }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  assert.equal(result.universe.positiveSupplyRepresentationCount, 2);
+  assert.equal(result.marketOutcomeCoverage.establishedOutcomeCount, 2);
+  assert.equal(result.marketOutcomeCoverage.status, 'complete');
+  assert.equal(result.numericComparisonCoverage.pricedRepresentationCount, 1);
+  assert.equal(result.numericComparisonCoverage.status, 'incomplete');
+  assert.equal(result.ranking.status, 'withheld');
+});
+
+test('zero supply stays reviewed and visible without blocking the current market denominator', async () => {
+  const result = await assembleMarketRealityV2(
+    deps(
+      {
+        [A]: run(A, '500000000000000000'),
+        [B]: run(B, '0', 'provider_unsupported_token'),
+      },
+      { supplies: [supply(A, 'positive_supply'), supply(B, 'zero_supply')] },
+    ),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  assert.equal(result.universe.reviewedRepresentationCount, 2);
+  assert.equal(result.universe.positiveSupplyRepresentationCount, 1);
+  assert.equal(result.universe.zeroSupplyRepresentationCount, 1);
+  assert.equal(result.marketOutcomeCoverage.status, 'complete');
+  assert.equal(
+    result.representations.find((row) => row.tokenAddress === B)?.supply.state,
+    'zero_supply',
+  );
+  assert.notEqual(
+    result.representations.find((row) => row.tokenAddress === B)?.status,
+    'unavailable',
+    'router coverage is not promoted to a market verdict',
+  );
+});
+
+test('a supply read failure remains unknown and keeps coverage incomplete', async () => {
+  const result = await assembleMarketRealityV2(
+    deps(
+      { [A]: run(A, '500000000000000000'), [B]: run(B, '400000000000000000') },
+      { supplies: [supply(A, 'positive_supply'), supply(B, 'supply_unknown')] },
+    ),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  assert.equal(result.universe.unresolvedSupplyRepresentationCount, 1);
+  assert.equal(result.marketOutcomeCoverage.status, 'incomplete');
+  assert.match(result.marketOutcomeCoverage.reason ?? '', /silently removed/);
+});
+
+test('cash-size anchor no-route is BUY no-route but SELL unsized for the same exact row', async () => {
+  const options = { bindings: [binding(B, 'backed:instrument_id:b')] };
+  const buy = await assembleMarketRealityV2(
+    deps({ [B]: run(B, '0', 'cash_size_anchor_no_route') }, options),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const sell = await assembleMarketRealityV2(
+    deps({ [B]: run(B, '0', 'cash_size_anchor_no_route') }, options),
+    { underlyingKey: UNDERLYING, direction: 'sell', requestedCashAtomic: '100000000' },
+  );
+  assert.equal(buy.representations[0]?.status, 'unavailable');
+  assert.equal(buy.representations[0]?.lastObservation?.status, 'no_route');
+  assert.equal(buy.marketOutcomeCoverage.status, 'complete');
+  assert.equal(sell.representations[0]?.status, 'measurement_failed');
+  assert.equal(sell.representations[0]?.lastObservation?.status, 'unsized');
+  assert.equal(sell.marketOutcomeCoverage.status, 'incomplete');
 });
 
 test('a stale B20 multiplier cannot normalize a fresh router quote', async () => {
@@ -184,7 +292,7 @@ test('a stale B20 multiplier cannot normalize a fresh router quote', async () =>
     changes: 0,
     createdAt: '2026-08-25T00:00:00.000Z',
   });
-  const result = await assembleMarketRealityV1(
+  const result = await assembleMarketRealityV2(
     deps(
       { [A]: run(A, '500000000000000000'), [B]: run(B, '400000000000000000') },
       {
@@ -198,7 +306,7 @@ test('a stale B20 multiplier cannot normalize a fresh router quote', async () =>
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   assert.ok(result.representations.every((row) => row.normalization === 'not_established'));
-  assert.equal(result.coverage.status, 'incomplete');
+  assert.equal(result.numericComparisonCoverage.status, 'incomplete');
   assert.equal(result.ranking.status, 'withheld');
 });
 
@@ -210,7 +318,7 @@ test('a background sample is history, never a current quote', async () => {
   const lapsed = run(A, '500000000000000000');
   lapsed.observations[0]!.expiresAt = '2026-08-26T12:00:20.000Z';
   lapsed.observations[0]!.buyQuote!.expiresAt = '2026-08-26T12:00:20.000Z';
-  const result = await assembleMarketRealityV1(
+  const result = await assembleMarketRealityV2(
     deps({ [A]: lapsed }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
@@ -225,8 +333,11 @@ test('a background sample is history, never a current quote', async () => {
 });
 
 test('open evidence is live, and its observation is marked open', async () => {
-  const result = await assembleMarketRealityV1(
-    deps({ [A]: run(A, '500000000000000000') }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+  const result = await assembleMarketRealityV2(
+    deps(
+      { [A]: run(A, '500000000000000000') },
+      { bindings: [binding(A, 'backed:instrument_id:a')] },
+    ),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   const row = result.representations[0]!;
@@ -236,7 +347,7 @@ test('open evidence is live, and its observation is marked open', async () => {
 });
 
 test('a representation nobody ever measured has no observation to show', async () => {
-  const result = await assembleMarketRealityV1(
+  const result = await assembleMarketRealityV2(
     deps({}, { bindings: [binding(A, 'backed:instrument_id:a')] }),
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
