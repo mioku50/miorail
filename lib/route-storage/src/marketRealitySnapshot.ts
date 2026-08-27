@@ -1,4 +1,3 @@
-import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
 import { z } from 'zod';
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
@@ -246,7 +245,7 @@ const SnapshotRatioV1Schema = z
   })
   .strict();
 
-const MarketRealityEvidenceSnapshotObjectV1Schema = z
+export const MarketRealityEvidenceSnapshotContractV1Schema = z
   .object({
     schemaVersion: z.literal('market-reality-evidence-snapshot/v1'),
     snapshotHash: Hash,
@@ -331,23 +330,5 @@ const MarketRealityEvidenceSnapshotObjectV1Schema = z
   });
 
 export type MarketRealityEvidenceSnapshotV1 = z.infer<
-  typeof MarketRealityEvidenceSnapshotObjectV1Schema
+  typeof MarketRealityEvidenceSnapshotContractV1Schema
 >;
-
-export function hashMarketRealityEvidenceSnapshotV1(
-  value: Omit<MarketRealityEvidenceSnapshotV1, 'snapshotHash'>,
-): HashV1 {
-  return stableHashV1('market-reality-evidence-snapshot/v1', value);
-}
-
-export const MarketRealityEvidenceSnapshotV1Schema =
-  MarketRealityEvidenceSnapshotObjectV1Schema.superRefine((row, ctx) => {
-    const { snapshotHash: _snapshotHash, ...content } = row;
-    if (row.snapshotHash !== hashMarketRealityEvidenceSnapshotV1(content)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['snapshotHash'],
-        message: 'market-reality snapshot hash mismatch',
-      });
-    }
-  });

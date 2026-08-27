@@ -4,20 +4,22 @@ import {
   MARKET_REALITY_PUBLICATION_MODES_V1,
   MARKET_REALITY_REFERENCE_REASON_CODES_V1,
   MarketRealityBasisDecisionV1Schema,
-  MarketRealityEvidenceSnapshotV1Schema,
+  MarketRealityEvidenceSnapshotContractV1Schema,
   MarketRealityReferenceCalendarV1Schema,
   MarketRealityReferenceEvidenceV1Schema,
   MarketRealityReferenceStateV1Schema,
   type MarketRealityBasisDecisionV1,
   type MarketRealityReferenceStateV1,
-} from '@mioagent/route-storage';
+} from '@mioagent/route-storage/market-reality-contracts';
+
+export const MarketRealityEvidenceSnapshotV1Schema =
+  MarketRealityEvidenceSnapshotContractV1Schema;
 
 export {
   MARKET_REALITY_MARKET_SESSIONS_V1,
   MARKET_REALITY_PUBLICATION_MODES_V1,
   MARKET_REALITY_REFERENCE_REASON_CODES_V1,
   MarketRealityBasisDecisionV1Schema,
-  MarketRealityEvidenceSnapshotV1Schema,
   MarketRealityReferenceCalendarV1Schema,
   MarketRealityReferenceEvidenceV1Schema,
   MarketRealityReferenceStateV1Schema,

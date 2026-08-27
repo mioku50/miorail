@@ -3,9 +3,9 @@ import { z } from 'zod';
 
 import { RouteStorageIntegrityError } from './types.js';
 import {
-  MarketRealityEvidenceSnapshotV1Schema,
   type MarketRealityEvidenceSnapshotV1,
 } from './marketRealitySnapshot.js';
+import { MarketRealityEvidenceSnapshotV1Schema } from './marketRealitySnapshotIntegrity.js';
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
 const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);

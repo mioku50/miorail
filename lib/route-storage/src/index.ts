@@ -50,6 +50,7 @@ export * from './officialCashExit.js';
 export * from './officialCashExitDatabase.js';
 export * from './officialCashExitMemory.js';
 export * from './marketRealitySnapshot.js';
+export * from './marketRealitySnapshotIntegrity.js';
 export * from './marketTail.js';
 export * from './marketTailDatabase.js';
 export * from './marketTailMemory.js';
