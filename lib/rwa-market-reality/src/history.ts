@@ -1,8 +1,9 @@
-import type {
-  CashExitMeasurementRunV1,
-  CashExitSourceObservationV1,
-  OfficialCashExitRepositoryV1,
-  UnderlyingAssetRepositoryV1,
+import {
+  marketRealitySnapshotForObservationV1,
+  type CashExitMeasurementRunV1,
+  type CashExitSourceObservationV1,
+  type OfficialCashExitRepositoryV1,
+  type UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
 import {
@@ -82,6 +83,7 @@ function pointForRunV1(
   returnedCashAtomic: string | null;
   testedTokenAtomic: string | null;
   errorCode: string | null;
+  marketReality: NonNullable<CashExitMeasurementRunV1['marketRealitySnapshots']>[number] | null;
 } | null {
   const rows = run.observations.filter(
     (row) =>
@@ -121,6 +123,11 @@ function pointForRunV1(
         : (chosen.row.buyQuote?.inputAtomic ?? null),
     testedTokenAtomic: chosen.row.testedTokenAtomic,
     errorCode: chosen.row.errorCode ?? null,
+    marketReality: marketRealitySnapshotForObservationV1(
+      run,
+      chosen.row.observationHash,
+      input.direction,
+    ),
   };
 }
 

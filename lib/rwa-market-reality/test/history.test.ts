@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import type {
-  CashExitMeasurementRunV1,
-  OfficialCashExitRepositoryV1,
-  RepresentationUnderlyingV1,
-  UnderlyingAssetRepositoryV1,
+import {
+  MarketRealityEvidenceSnapshotV1Schema,
+  hashMarketRealityEvidenceSnapshotV1,
+  type CashExitMeasurementRunV1,
+  type MarketRealityEvidenceSnapshotV1,
+  type OfficialCashExitRepositoryV1,
+  type RepresentationUnderlyingV1,
+  type UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
 import { assembleMarketRealityHistoryV1 } from '../src/history.js';
@@ -33,6 +36,136 @@ function binding(address: string): RepresentationUnderlyingV1 {
     observedBlockHash: null,
     observedAt: '2026-08-20T12:00:00.000Z',
   };
+}
+
+function coinbaseBinding(address: string): RepresentationUnderlyingV1 {
+  return {
+    ...binding(address),
+    sourceKind: 'coinbase_b20_metadata',
+    sourceRef: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base',
+    issuerId: 'coinbase',
+    issuerInstrumentKey: `coinbase:b20_address:${address}`,
+    representationKind: 'b20_asset',
+    evidenceStrength: 'reviewed_machine_mapping_with_onchain_cross_check',
+  };
+}
+
+function withRecordedMarketReality(
+  value: CashExitMeasurementRunV1,
+  referenceValueAtomic: string,
+): CashExitMeasurementRunV1 {
+  const observation = value.observations[0]!;
+  const snapshots = (['buy', 'sell'] as const).map((direction) => {
+    const content: Omit<MarketRealityEvidenceSnapshotV1, 'snapshotHash'> = {
+      schemaVersion: 'market-reality-evidence-snapshot/v1',
+      runId: value.runId,
+      observationHash: observation.observationHash,
+      chainId: 8453,
+      tokenAddress: value.tokenAddress,
+      issuerId: 'coinbase',
+      issuerInstrumentKey: `coinbase:b20_address:${value.tokenAddress}`,
+      representationKind: 'b20_asset',
+      direction,
+      requestedCashAtomic: observation.requestedCashAtomic,
+      requestedTokenAtomic: null,
+      testedTokenAtomic: observation.testedTokenAtomic,
+      destination: observation.destination,
+      destinationAddress: observation.destinationAddress,
+      destinationDecimals: observation.destinationDecimals,
+      source: observation.source,
+      approvedSources: [...value.approvedSources],
+      routePolicyKey: H,
+      marketStatus: direction === 'buy' ? 'quoted' : 'measurement_failed',
+      marketObservedAt: observation.observedAt,
+      marketExpiresAt: observation.expiresAt,
+      normalizedExposureAtomic: direction === 'buy' ? observation.testedTokenAtomic : null,
+      normalizedExposureDecimals: direction === 'buy' ? 18 : null,
+      normalization: direction === 'buy' ? 'fresh_ratio_applied' : 'not_established',
+      ratio: {
+        ratioKind: 'b20_multiplier',
+        application: 'apply_to_raw_balance',
+        rawValue: '1000000000000000000',
+        scale: '1000000000000000000',
+        scaleSource: 'read_from_contract',
+        blockNumber: '50000000',
+        blockHash: H,
+        evidenceHash: H,
+        observedAt: observation.observedAt,
+        lastCheckedAt: observation.observedAt,
+      },
+      supply: {
+        state: 'positive_supply',
+        totalSupplyAtomic: '1000000000000000000',
+        decimals: 18,
+        blockNumber: '50000000',
+        blockHash: H,
+        evidenceHash: H,
+        observedAt: observation.observedAt,
+        readOutcome: 'success',
+      },
+      effectivePriceAtomic: direction === 'buy' ? '20000000000' : null,
+      effectivePriceDecimals: direction === 'buy' ? 8 : null,
+      reference: {
+        status: 'fresh',
+        session: 'regular_hours',
+        marketSession: 'regular_hours',
+        publicationMode: 'live_reference',
+        valueAtomic: referenceValueAtomic,
+        decimals: 8,
+        observedAt: observation.observedAt,
+        referenceUpdatedAt: observation.observedAt,
+        freshness: 'fresh',
+        referenceSource: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base',
+        referenceAddress: '0x04689a41629776563e6822f76f2e57d148d28513',
+        calendar: {
+          key: 'us_equities_core_2026_v1',
+          sourceUrls: ['https://www.nyse.com/trade/hours-calendars'],
+          timeZone: 'America/New_York',
+          localDate: '2026-08-26',
+          regularOpenMinute: 570,
+          regularCloseMinute: 960,
+          publicationSessionLocalDate: '2026-08-26',
+          publicationSessionOpenMinute: 570,
+          publicationSessionCloseMinute: 960,
+        },
+        evidence: {
+          kind: 'chainlink_feed',
+          source: 'chainlink_v3_proxy_total_return',
+          blockNumber: '50000000',
+          blockHash: H,
+          targetAddress: '0x04689a41629776563e6822f76f2e57d148d28513',
+          evidenceHash: H,
+        },
+        comparable: false,
+        reasonCode: 'reviewed_calendar_regular_hours',
+        reason: 'Reviewed regular-hours reference.',
+      },
+      basis:
+        direction === 'buy'
+          ? {
+              policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+              status: 'comparable',
+              kind: 'current_reference',
+              premiumDiscountBps: '0',
+              reasonCode: 'current_reference_comparable',
+              reason: 'Stored at measurement time.',
+            }
+          : {
+              policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+              status: 'withheld',
+              kind: 'withheld',
+              premiumDiscountBps: null,
+              reasonCode: 'measurement_failed',
+              reason: 'SELL was not measured in this fixture.',
+            },
+      capturedAt: observation.observedAt,
+    };
+    return MarketRealityEvidenceSnapshotV1Schema.parse({
+      ...content,
+      snapshotHash: hashMarketRealityEvidenceSnapshotV1(content),
+    });
+  });
+  return { ...value, marketRealitySnapshots: snapshots };
 }
 
 function run(input: {
@@ -383,5 +516,63 @@ describe('the series is one exact question over time', () => {
     assert.equal(series?.pointCount, 1);
     assert.equal(series?.quotedCount, 0);
     assert.equal(series?.points[0]?.returnedCashAtomic, null);
+  });
+
+  test('an old history point remains without invented session or basis context', async () => {
+    const old = run({ address: A, observedAt: '2026-08-26T11:00:00.000Z' });
+    const history = await assembleMarketRealityHistoryV1(
+      deps({ [A]: [old] }, [coinbaseBinding(A)]),
+      {
+        underlyingKey: UNDERLYING,
+        direction: 'buy',
+        requestedCashAtomic: '100000000',
+        window: '6h',
+      },
+    );
+    assert.equal(history.representations[0]?.points[0]?.marketReality, null);
+    assert.equal(old.marketRealitySnapshots, undefined, 'the read did not mutate old evidence');
+  });
+
+  test('a new history point retains the exact snapshot recorded at measurement time', async () => {
+    const recorded = withRecordedMarketReality(
+      run({ address: A, observedAt: '2026-08-26T11:00:00.000Z' }),
+      '20000000000',
+    );
+    const history = await assembleMarketRealityHistoryV1(
+      deps({ [A]: [recorded] }, [coinbaseBinding(A)]),
+      {
+        underlyingKey: UNDERLYING,
+        direction: 'buy',
+        requestedCashAtomic: '100000000',
+        window: '6h',
+      },
+    );
+    const snapshot = history.representations[0]?.points[0]?.marketReality;
+    assert.equal(snapshot?.reference.valueAtomic, '20000000000');
+    assert.equal(snapshot?.reference.marketSession, 'regular_hours');
+    assert.equal(snapshot?.reference.publicationMode, 'live_reference');
+    assert.equal(snapshot?.basis.kind, 'current_reference');
+  });
+
+  test('a later reference change cannot mutate an old historical point', async () => {
+    const recorded = withRecordedMarketReality(
+      run({ address: A, observedAt: '2026-08-26T11:00:00.000Z' }),
+      '20000000000',
+    );
+    const history = await assembleMarketRealityHistoryV1(
+      deps({ [A]: [recorded] }, [coinbaseBinding(A)]),
+      {
+        underlyingKey: UNDERLYING,
+        direction: 'buy',
+        requestedCashAtomic: '100000000',
+        window: '6h',
+      },
+    );
+    const laterReference = '30000000000';
+    assert.notEqual(laterReference, '20000000000');
+    assert.equal(
+      history.representations[0]?.points[0]?.marketReality?.reference.valueAtomic,
+      '20000000000',
+    );
   });
 });

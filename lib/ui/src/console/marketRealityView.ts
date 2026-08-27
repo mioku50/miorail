@@ -162,8 +162,21 @@ export interface MarketRealityRepresentationWireV1 {
       | 'corporate_action_hold'
       | 'stale'
       | 'unknown';
+    marketSession: 'regular_hours' | 'after_hours' | 'weekend' | 'unknown';
+    publicationMode:
+      | 'live_reference'
+      | 'holding_last_close'
+      | 'corporate_action_hold'
+      | 'stale'
+      | 'unknown';
     comparable: boolean;
     reason: string | null;
+  };
+  basis: {
+    status: 'comparable' | 'withheld';
+    kind: 'current_reference' | 'last_close_reference' | 'withheld';
+    premiumDiscountBps: string | null;
+    reason: string;
   };
   sources: readonly MarketRealitySourceWireV1[];
   observedAt: string | null;
@@ -549,7 +562,6 @@ function numbersV1(
       ? usdV1(representation.effectivePriceAtomic, representation.effectivePriceDecimals)
       : null;
   const premium = bpsLabelV1(representation.premiumDiscountBps);
-  const reference = representation.reference;
 
   return [
     {
@@ -573,14 +585,14 @@ function numbersV1(
       tone: price === null ? 'neutral' : 'good',
     },
     {
-      label: 'vs reference',
+      label:
+        representation.basis.kind === 'current_reference'
+          ? 'vs current reference'
+          : representation.basis.kind === 'last_close_reference'
+            ? 'vs last published close'
+            : 'Reference basis',
       value: premium ?? '—',
-      note:
-        premium === null
-          ? reference.comparable
-            ? 'needs an effective price'
-            : (reference.reason ?? 'no comparable reference')
-          : null,
+      note: premium === null ? representation.basis.reason : null,
       tone: premium === null ? 'neutral' : 'good',
     },
   ];
@@ -689,7 +701,7 @@ function technicalV1(
   }
   rows.push({
     label: 'Reference',
-    value: `${representation.reference.status} · session ${representation.reference.session}`,
+    value: `${representation.reference.status} · ${representation.reference.marketSession} · ${representation.reference.publicationMode}`,
   });
   return rows;
 }

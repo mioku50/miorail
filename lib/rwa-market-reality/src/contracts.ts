@@ -1,4 +1,28 @@
 import { z } from 'zod';
+import {
+  MARKET_REALITY_MARKET_SESSIONS_V1,
+  MARKET_REALITY_PUBLICATION_MODES_V1,
+  MARKET_REALITY_REFERENCE_REASON_CODES_V1,
+  MarketRealityBasisDecisionV1Schema,
+  MarketRealityEvidenceSnapshotV1Schema,
+  MarketRealityReferenceCalendarV1Schema,
+  MarketRealityReferenceEvidenceV1Schema,
+  MarketRealityReferenceStateV1Schema,
+  type MarketRealityBasisDecisionV1,
+  type MarketRealityReferenceStateV1,
+} from '@mioagent/route-storage';
+
+export {
+  MARKET_REALITY_MARKET_SESSIONS_V1,
+  MARKET_REALITY_PUBLICATION_MODES_V1,
+  MARKET_REALITY_REFERENCE_REASON_CODES_V1,
+  MarketRealityBasisDecisionV1Schema,
+  MarketRealityEvidenceSnapshotV1Schema,
+  MarketRealityReferenceCalendarV1Schema,
+  MarketRealityReferenceEvidenceV1Schema,
+  MarketRealityReferenceStateV1Schema,
+};
+export type { MarketRealityBasisDecisionV1, MarketRealityReferenceStateV1 };
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
 const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);
@@ -59,131 +83,6 @@ export const MarketRealitySourceObservationV2Schema = z
       .strict(),
   })
   .strict();
-
-export const MARKET_REALITY_REFERENCE_SESSION_STATES_V1 = [
-  'regular_hours',
-  'after_hours',
-  'weekend',
-  'reference_holding_last_close',
-  'corporate_action_hold',
-  'stale',
-  'unknown',
-] as const;
-
-export const MARKET_REALITY_REFERENCE_REASON_CODES_V1 = [
-  'reviewed_calendar_regular_hours',
-  'reviewed_calendar_after_hours',
-  'reviewed_calendar_weekend',
-  'reviewed_feed_holding_last_close',
-  'reviewed_registry_corporate_action_hold',
-  'reviewed_reference_stale',
-  'reference_adapter_not_configured',
-  'issuer_reference_not_reviewed',
-  'exact_representation_not_reviewed',
-  'reference_configuration_missing',
-  'reference_identity_mismatch',
-  'reference_read_failed',
-  'reference_response_invalid',
-  'calendar_semantics_missing',
-  'calendar_outside_reviewed_range',
-  'calendar_classification_failed',
-] as const;
-
-export const MarketRealityReferenceCalendarV1Schema = z
-  .object({
-    key: z.string().min(1).max(100),
-    sourceUrls: z.array(z.string().url().startsWith('https://')).min(1).max(4),
-    timeZone: z.literal('America/New_York'),
-    localDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-    regularOpenMinute: z.number().int().min(0).max(1_439),
-    regularCloseMinute: z.number().int().min(1).max(1_440),
-  })
-  .strict();
-
-export const MarketRealityReferenceEvidenceV1Schema = z
-  .object({
-    kind: z.literal('chainlink_feed'),
-    source: z.string().min(1).max(160),
-    blockNumber: Digits,
-    blockHash: Hash,
-    targetAddress: Address,
-    evidenceHash: Hash,
-  })
-  .strict();
-
-export const MarketRealityReferenceStateV1Schema = z
-  .object({
-    status: z.enum(['fresh', 'stale', 'paused', 'unavailable', 'unknown']),
-    session: z.enum(MARKET_REALITY_REFERENCE_SESSION_STATES_V1),
-    valueAtomic: SignedDigits.nullable(),
-    decimals: z.number().int().min(0).max(36).nullable(),
-    /** When Miorail took this exact-address observation. */
-    observedAt: Timestamp.nullable(),
-    /** When the reviewed reference source last published, when it exposes one. */
-    referenceUpdatedAt: Timestamp.nullable(),
-    freshness: z.enum(['fresh', 'stale', 'unknown']),
-    referenceSource: z.string().min(1).max(160).nullable(),
-    referenceAddress: Address.nullable(),
-    calendar: MarketRealityReferenceCalendarV1Schema.nullable(),
-    evidence: MarketRealityReferenceEvidenceV1Schema.nullable(),
-    comparable: z.boolean(),
-    reasonCode: z.enum(MARKET_REALITY_REFERENCE_REASON_CODES_V1),
-    reason: z.string().min(1).max(240).nullable(),
-  })
-  .strict()
-  .superRefine((row, ctx) => {
-    const hasValue =
-      row.valueAtomic !== null &&
-      row.decimals !== null &&
-      row.observedAt !== null &&
-      row.referenceUpdatedAt !== null &&
-      row.referenceSource !== null &&
-      row.referenceAddress !== null &&
-      row.evidence !== null;
-    if (hasValue !== (row.valueAtomic !== null)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'a reference value carries one complete exact-address evidence observation',
-      });
-    }
-    if (row.evidence && row.referenceAddress !== row.evidence.targetAddress) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['evidence', 'targetAddress'],
-        message: 'reference evidence must target the configured reference address',
-      });
-    }
-    if (row.status === 'fresh' && row.freshness !== 'fresh') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['freshness'],
-        message: 'fresh status requires fresh reference evidence',
-      });
-    }
-    if (['stale', 'paused'].includes(row.status) && row.freshness !== 'stale') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['freshness'],
-        message: 'stale or held reference status is not fresh evidence',
-      });
-    }
-    if (['unknown', 'unavailable'].includes(row.status) && row.freshness !== 'unknown') {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['freshness'],
-        message: 'an unestablished reference has unknown freshness',
-      });
-    }
-    if (row.session !== 'unknown' && (row.calendar === null || row.observedAt === null)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['session'],
-        message:
-          'an established session state requires reviewed calendar evidence and an observation time',
-      });
-    }
-  });
-export type MarketRealityReferenceStateV1 = z.infer<typeof MarketRealityReferenceStateV1Schema>;
 
 // ---------------------------------------------------------------------------
 // Current evidence and history are not the same thing, and this is where the
@@ -317,6 +216,7 @@ export const MarketRealityRepresentationV2Schema = z
     effectivePriceDecimals: z.literal(8).nullable(),
     premiumDiscountBps: SignedDigits.nullable(),
     reference: MarketRealityReferenceStateV1Schema,
+    basis: MarketRealityBasisDecisionV1Schema,
     sources: z.array(MarketRealitySourceObservationV2Schema).max(16),
     observedAt: Timestamp.nullable(),
     expiresAt: Timestamp.nullable(),
@@ -346,6 +246,13 @@ export const MarketRealityRepresentationV2Schema = z
         code: z.ZodIssueCode.custom,
         path: ['status'],
         message: 'a full answer requires open evidence, and history is not open evidence',
+      });
+    }
+    if (row.premiumDiscountBps !== row.basis.premiumDiscountBps) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['premiumDiscountBps'],
+        message: 'the compatibility field must equal the authoritative typed basis decision',
       });
     }
   });
@@ -473,6 +380,9 @@ export const MarketRealityHistoryPointV1Schema = z
     /** The router set behind this point. Two points measured through different
      * sets are not comparable with each other. */
     approvedSources: z.array(z.string().min(1).max(100)).max(16),
+    /** Exact append-only evidence captured with this run. Null means the run
+     * predates Phase 10C.2A; history never reconstructs it later. */
+    marketReality: MarketRealityEvidenceSnapshotV1Schema.nullable(),
   })
   .strict();
 export type MarketRealityHistoryPointV1 = z.infer<typeof MarketRealityHistoryPointV1Schema>;

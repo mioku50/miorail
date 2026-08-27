@@ -24,12 +24,20 @@ import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseB20WatchlistRepository,
   createDatabaseOfficialCashExitRepository,
+  createDatabaseOfficialAssetRepository,
+  createDatabaseRepresentationRatioRepository,
+  createDatabaseRepresentationSupplyRepository,
+  createDatabaseUnderlyingAssetRepository,
   createDatabaseRwaSignalRepository,
   createDatabaseWatchScheduleRepository,
   type WatchCheckOutcomeV1,
 } from '@mioagent/route-storage';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { cashExitSignalsV1, watchlistCapacityV1 } from '@mioagent/rwa-dossier';
+import {
+  createMarketRealityEvidenceCaptureV1,
+  createReviewedMarketRealityReferenceAdapterV1,
+} from '@mioagent/rwa-market-reality';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -78,6 +86,16 @@ async function main(): Promise<void> {
   const signals = createDatabaseRwaSignalRepository(client);
   const reader = createB20ReaderV1({ rpcUrl });
   const adapters = [new KyberSwapRouteAdapter()];
+  const captureMarketRealitySnapshots = createMarketRealityEvidenceCaptureV1({
+    underlyings: createDatabaseUnderlyingAssetRepository(client),
+    ratios: createDatabaseRepresentationRatioRepository(client),
+    supplies: createDatabaseRepresentationSupplyRepository(client),
+    now: () => new Date(),
+    reference: createReviewedMarketRealityReferenceAdapterV1({
+      official: createDatabaseOfficialAssetRepository(client),
+      reader,
+    }),
+  });
 
   const now = new Date();
   const watched = await watchlist.distinctWatchedAddresses({ chainId: CHAIN_ID_V1, limit: 1_000 });
@@ -119,7 +137,8 @@ async function main(): Promise<void> {
     now: now.toISOString(),
   });
   if (reconciled.created.length > 0) console.log(`  scheduled ${reconciled.created.length} new`);
-  if (reconciled.retired.length > 0) console.log(`  retired ${reconciled.retired.length} unwatched`);
+  if (reconciled.retired.length > 0)
+    console.log(`  retired ${reconciled.retired.length} unwatched`);
 
   // Opened before anything is measured. The pass that opens a watch reports
   // nothing: an address measured for the first time has not changed, it has
@@ -175,6 +194,7 @@ async function main(): Promise<void> {
             walletAddress: MEASUREMENT_RECIPIENT_V1,
             tenantId: MEASUREMENT_TENANT_V1,
             scope: 'public_ladder',
+            captureMarketRealitySnapshots,
           });
           outcome = 'measured';
           measured += 1;
@@ -189,7 +209,8 @@ async function main(): Promise<void> {
                 signals: transitions,
               });
               emitted += recorded.recorded.length;
-              for (const key of recorded.recorded) console.log(`         signal ${key.split(':')[0]}`);
+              for (const key of recorded.recorded)
+                console.log(`         signal ${key.split(':')[0]}`);
             }
           }
         } catch (error) {
@@ -201,7 +222,9 @@ async function main(): Promise<void> {
         }
       }
     } else {
-      console.log(`${short}  block anchor unavailable (${anchor.reason}) — clock moves, nothing claimed`);
+      console.log(
+        `${short}  block anchor unavailable (${anchor.reason}) — clock moves, nothing claimed`,
+      );
     }
 
     if (outcome !== 'measured') failed += 1;

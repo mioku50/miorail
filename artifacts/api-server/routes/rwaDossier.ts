@@ -6,11 +6,17 @@ import {
   createDatabaseMarketTailRepository,
   createDatabaseOfficialCashExitRepository,
   createDatabaseOfficialAssetRepository,
+  createDatabaseRepresentationRatioRepository,
+  createDatabaseRepresentationSupplyRepository,
   createDatabaseUnderlyingAssetRepository,
   isOfficialV1,
 } from '@mioagent/route-storage';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { assembleOfficialAssetDossierV1 } from '@mioagent/rwa-dossier';
+import {
+  createMarketRealityEvidenceCaptureV1,
+  createReviewedMarketRealityReferenceAdapterV1,
+} from '@mioagent/rwa-market-reality';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
 import { decodeFunctionResult, encodeFunctionData } from 'viem';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
@@ -32,11 +38,24 @@ export const rwaDossierRuntime = {
   marketTail: () => createDatabaseMarketTailRepository(client),
   cashExit: () => createDatabaseOfficialCashExitRepository(client),
   underlying: () => createDatabaseUnderlyingAssetRepository(client),
+  ratios: () => createDatabaseRepresentationRatioRepository(client),
+  supplies: () => createDatabaseRepresentationSupplyRepository(client),
   quoteAdapters: () => [new KyberSwapRouteAdapter()],
   measure: measureOfficialCashExitV1,
   reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
   now: () => new Date(),
   assemble: assembleOfficialAssetDossierV1,
+  capture: () =>
+    createMarketRealityEvidenceCaptureV1({
+      underlyings: createDatabaseUnderlyingAssetRepository(client),
+      ratios: createDatabaseRepresentationRatioRepository(client),
+      supplies: createDatabaseRepresentationSupplyRepository(client),
+      now: () => new Date(),
+      reference: createReviewedMarketRealityReferenceAdapterV1({
+        official: createDatabaseOfficialAssetRepository(client),
+        reader: createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
+      }),
+    }),
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
@@ -46,7 +65,16 @@ export const rwaDossierRuntime = {
         to_regclass('public.market_venue_transfers') AS transfers,
         to_regclass('public.market_tail_cursors') AS cursors,
         to_regclass('public.official_cash_exit_runs') AS cash_exit,
-        to_regclass('public.representation_underlying') AS underlying`;
+        to_regclass('public.representation_underlying') AS underlying,
+        to_regclass('public.representation_ratio') AS ratios,
+        to_regclass('public.representation_supply') AS supplies,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'official_cash_exit_runs'
+            AND column_name = 'market_reality_snapshots'
+        ) AS cash_exit_snapshots`;
     const row = rows[0];
     return Boolean(
       row?.sources &&
@@ -55,7 +83,10 @@ export const rwaDossierRuntime = {
       row.transfers &&
       row.cursors &&
       row.cash_exit &&
-      row.underlying,
+      row.cash_exit_snapshots &&
+      row.underlying &&
+      row.ratios &&
+      row.supplies,
     );
   },
 };
@@ -234,6 +265,7 @@ rwaDossierRouter.post('/rwa/official/:tokenAddress/dossier/measure', async (req,
       tenantId: user.id,
       scope: 'public_ladder',
       now: rwaDossierRuntime.now,
+      captureMarketRealitySnapshots: rwaDossierRuntime.capture(),
     });
 
     if (anchor.ok) {
@@ -262,6 +294,7 @@ rwaDossierRouter.post('/rwa/official/:tokenAddress/dossier/measure', async (req,
             scope: 'tenant_position',
             positionTokenAtomic: balance.toString(),
             now: rwaDossierRuntime.now,
+            captureMarketRealitySnapshots: rwaDossierRuntime.capture(),
           });
         }
       }

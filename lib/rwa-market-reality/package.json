@@ -14,8 +14,10 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@mioagent/b20-control": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
+    "@mioagent/rwa-dossier": "workspace:*",
     "zod": "^3.25.76"
   },
   "devDependencies": {

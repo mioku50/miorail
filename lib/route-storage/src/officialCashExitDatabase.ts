@@ -23,6 +23,9 @@ function runFromRowV1(row: Record<string, unknown>): CashExitMeasurementRunV1 {
     startedAt: new Date(row.started_at as string).toISOString(),
     completedAt: new Date(row.completed_at as string).toISOString(),
     observations: row.observations,
+    ...(row.market_reality_snapshots === null || row.market_reality_snapshots === undefined
+      ? {}
+      : { marketRealitySnapshots: row.market_reality_snapshots }),
   });
 }
 
@@ -35,18 +38,23 @@ export function createDatabaseOfficialCashExitRepository(
       await sql`
         INSERT INTO official_cash_exit_runs (
           run_id, chain_id, token_address, scope, tenant_id, approved_sources,
-          destinations, started_at, completed_at, observations
+          destinations, started_at, completed_at, observations, market_reality_snapshots
         ) VALUES (
           ${run.runId}, ${run.chainId}, ${run.tokenAddress}, ${run.scope}, ${run.tenantId},
           ${JSON.stringify(run.approvedSources)}::text::jsonb,
           ${JSON.stringify(run.destinations)}::text::jsonb,
           ${run.startedAt}, ${run.completedAt},
-          ${JSON.stringify(run.observations)}::text::jsonb
+          ${JSON.stringify(run.observations)}::text::jsonb,
+          ${
+            run.marketRealitySnapshots === undefined || run.marketRealitySnapshots === null
+              ? null
+              : JSON.stringify(run.marketRealitySnapshots)
+          }::text::jsonb
         )
         ON CONFLICT (run_id) DO NOTHING`;
       const stored = await sql`
         SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
-               destinations, started_at, completed_at, observations
+               destinations, started_at, completed_at, observations, market_reality_snapshots
         FROM official_cash_exit_runs
         WHERE run_id = ${run.runId}`;
       if (
@@ -65,7 +73,7 @@ export function createDatabaseOfficialCashExitRepository(
         throw new RouteStorageTenantError('public ladder is not tenant scoped');
       const rows = await sql`
         SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
-               destinations, started_at, completed_at, observations
+               destinations, started_at, completed_at, observations, market_reality_snapshots
         FROM official_cash_exit_runs
         WHERE chain_id = ${input.chainId}
           AND token_address = ${input.tokenAddress.toLowerCase()}
@@ -88,7 +96,7 @@ export function createDatabaseOfficialCashExitRepository(
       // two reads and produce a change that never happened.
       const rows = await sql`
         SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
-               destinations, started_at, completed_at, observations
+               destinations, started_at, completed_at, observations, market_reality_snapshots
         FROM official_cash_exit_runs
         WHERE chain_id = ${input.chainId}
           AND token_address = ${input.tokenAddress.toLowerCase()}
@@ -109,7 +117,7 @@ export function createDatabaseOfficialCashExitRepository(
       // a pair drawn from it can never disagree about which run came first.
       const rows = await sql`
         SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
-               destinations, started_at, completed_at, observations
+               destinations, started_at, completed_at, observations, market_reality_snapshots
         FROM official_cash_exit_runs
         WHERE chain_id = ${input.chainId}
           AND token_address = ${input.tokenAddress.toLowerCase()}

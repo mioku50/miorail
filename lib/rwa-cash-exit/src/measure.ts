@@ -4,6 +4,7 @@ import {
   ZERO_HASH_V1,
   assetIdV1,
   hashRouteIntentV1,
+  stableHashV1,
   type AssetRefV1,
   type EvidenceRecordV1,
   type RouteCandidateV1,
@@ -13,12 +14,15 @@ import {
   CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
   CashExitMeasurementRunV1Schema,
   CashExitSourceObservationV1Schema,
+  MarketRealityEvidenceSnapshotV1Schema,
+  hashMarketRealityEvidenceSnapshotV1,
   hashCashExitObservationV1,
   hashCashExitRunV1,
   type CashExitMeasurementRunV1,
   type CashExitQuoteLegV1,
   type CashExitSourceObservationV1,
   type OfficialCashExitRepositoryV1,
+  type MarketRealityEvidenceSnapshotV1,
 } from '@mioagent/route-storage';
 import type { SwapAdapterResult, SwapRouteAdapter } from '@mioagent/swap-adapters';
 
@@ -117,6 +121,120 @@ function explicitNoRouteV1(result: SwapAdapterResult): boolean {
   return result.outcome !== 'quoted' && result.errorCode === 'provider_no_route';
 }
 
+function defaultMarketRealitySnapshotsV1(input: {
+  run: CashExitMeasurementRunV1;
+  capturedAt: string;
+}): MarketRealityEvidenceSnapshotV1[] {
+  const routePolicyKey = stableHashV1('market-reality-route-policy/v1', {
+    chainId: 8453,
+    approvedSources: [...input.run.approvedSources].sort(),
+    destinations: [...input.run.destinations].sort(),
+  });
+  return input.run.observations.flatMap((observation) =>
+    (['buy', 'sell'] as const).map((direction) => {
+      const quote = direction === 'buy' ? observation.buyQuote : observation.sellQuote;
+      const marketStatus = quote
+        ? ('quoted' as const)
+        : observation.errorCode === 'cash_size_anchor_no_route'
+          ? direction === 'buy'
+            ? ('no_route' as const)
+            : ('unsized' as const)
+          : direction === 'sell' && ['buy_only', 'unavailable'].includes(observation.status)
+            ? ('no_route' as const)
+            : ('measurement_failed' as const);
+      const reason =
+        marketStatus === 'no_route'
+          ? {
+              reasonCode: 'no_route' as const,
+              reason: 'No approved route returned a quote for this exact question.',
+            }
+          : marketStatus === 'unsized'
+            ? {
+                reasonCode: 'unsized_sell' as const,
+                reason: 'SELL was not sized after the exact BUY sizing anchor failed.',
+              }
+            : marketStatus === 'measurement_failed'
+              ? {
+                  reasonCode: 'measurement_failed' as const,
+                  reason: 'The market measurement failed; no asset-price claim was made.',
+                }
+              : {
+                  reasonCode: 'unreviewed_issuer_reference' as const,
+                  reason: 'No reviewed representation/reference capture adapter was supplied.',
+                };
+      const content: Omit<MarketRealityEvidenceSnapshotV1, 'snapshotHash'> = {
+        schemaVersion: 'market-reality-evidence-snapshot/v1',
+        runId: input.run.runId,
+        observationHash: observation.observationHash,
+        chainId: 8453,
+        tokenAddress: observation.tokenAddress,
+        issuerId: null,
+        issuerInstrumentKey: null,
+        representationKind: null,
+        direction,
+        requestedCashAtomic: observation.requestedCashAtomic,
+        requestedTokenAtomic: observation.requestedTokenAtomic,
+        testedTokenAtomic: observation.testedTokenAtomic,
+        destination: observation.destination,
+        destinationAddress: observation.destinationAddress,
+        destinationDecimals: observation.destinationDecimals,
+        source: observation.source,
+        approvedSources: [...input.run.approvedSources].sort(),
+        routePolicyKey,
+        marketStatus,
+        marketObservedAt: quote?.observedAt ?? observation.observedAt,
+        marketExpiresAt: quote?.expiresAt ?? observation.expiresAt,
+        normalizedExposureAtomic: null,
+        normalizedExposureDecimals: null,
+        normalization: 'not_established',
+        ratio: null,
+        supply: {
+          state: 'supply_unknown',
+          totalSupplyAtomic: null,
+          decimals: null,
+          blockNumber: null,
+          blockHash: null,
+          evidenceHash: null,
+          observedAt: null,
+          readOutcome: 'not_observed',
+        },
+        effectivePriceAtomic: null,
+        effectivePriceDecimals: null,
+        reference: {
+          status: 'unknown',
+          session: 'unknown',
+          marketSession: 'unknown',
+          publicationMode: 'unknown',
+          valueAtomic: null,
+          decimals: null,
+          observedAt: input.capturedAt,
+          referenceUpdatedAt: null,
+          freshness: 'unknown',
+          referenceSource: null,
+          referenceAddress: null,
+          calendar: null,
+          evidence: null,
+          comparable: false,
+          reasonCode: 'reference_adapter_not_configured',
+          reason: 'No reviewed reference capture adapter answered for this measurement.',
+        },
+        basis: {
+          policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+          status: 'withheld',
+          kind: 'withheld',
+          premiumDiscountBps: null,
+          ...reason,
+        },
+        capturedAt: input.capturedAt,
+      };
+      return MarketRealityEvidenceSnapshotV1Schema.parse({
+        ...content,
+        snapshotHash: hashMarketRealityEvidenceSnapshotV1(content),
+      });
+    }),
+  );
+}
+
 async function quoteV1(
   adapter: SwapRouteAdapter,
   input: {
@@ -159,6 +277,12 @@ export async function measureOfficialCashExitV1(input: {
   destinations?: readonly ('USDC' | 'ETH')[];
   now?: () => Date;
   negativeEvidenceTtlMs?: number;
+  /** Optional enrichment boundary. Absence still records an explicit UNKNOWN
+   * snapshot; production Market Reality call sites provide the reviewed
+   * exact-address capture adapter. */
+  captureMarketRealitySnapshots?: (
+    run: CashExitMeasurementRunV1,
+  ) => Promise<MarketRealityEvidenceSnapshotV1[]>;
 }): Promise<CashExitMeasurementRunV1> {
   if (input.adapters.length === 0)
     throw new TypeError('cash-exit measurement requires an explicit approved-router set');
@@ -295,7 +419,7 @@ export async function measureOfficialCashExitV1(input: {
       }
     }
   }
-  const run = CashExitMeasurementRunV1Schema.parse({
+  const draftRun = CashExitMeasurementRunV1Schema.parse({
     schemaVersion: 'official-cash-exit-run/v1',
     runId,
     chainId: 8453,
@@ -307,6 +431,15 @@ export async function measureOfficialCashExitV1(input: {
     startedAt,
     completedAt: now().toISOString(),
     observations,
+  });
+  const capturedAt = now().toISOString();
+  const marketRealitySnapshots = input.captureMarketRealitySnapshots
+    ? await input.captureMarketRealitySnapshots(draftRun)
+    : defaultMarketRealitySnapshotsV1({ run: draftRun, capturedAt });
+  const run = CashExitMeasurementRunV1Schema.parse({
+    ...draftRun,
+    completedAt: capturedAt,
+    marketRealitySnapshots,
   });
   await input.repository.recordCompletedRun(run);
   return run;

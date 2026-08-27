@@ -90,7 +90,38 @@ type CalendarClassificationV1 = {
   localDate: string;
   regularOpenMinute: number;
   regularCloseMinute: number;
+  publicationSessionLocalDate: string;
+  publicationSessionOpenMinute: number;
+  publicationSessionCloseMinute: number;
 };
+
+function dateShiftV1(localDate: string, days: number): string {
+  const [year, month, day] = localDate.split('-').map(Number);
+  const value = new Date(Date.UTC(year!, month! - 1, day! + days));
+  return value.toISOString().slice(0, 10);
+}
+
+function reviewedOpenSessionV1(
+  localDate: string,
+  calendar: ReviewedReferenceCalendarV1,
+): { localDate: string; open: number; close: number } | null {
+  if (localDate < calendar.validFrom || localDate > calendar.validThrough) return null;
+  const day = new Date(`${localDate}T12:00:00.000Z`).getUTCDay();
+  if (day === 0 || day === 6 || calendar.closedDates.includes(localDate)) return null;
+  return {
+    localDate,
+    open: calendar.regularOpenMinute,
+    close: calendar.earlyCloseMinutes[localDate] ?? calendar.regularCloseMinute,
+  };
+}
+
+function publicationSessionV1(localDate: string, calendar: ReviewedReferenceCalendarV1) {
+  for (let offset = 0; offset <= 10; offset += 1) {
+    const session = reviewedOpenSessionV1(dateShiftV1(localDate, -offset), calendar);
+    if (session) return session;
+  }
+  return null;
+}
 
 function localPartsV1(now: Date, timeZone: 'America/New_York') {
   if (!Number.isFinite(now.getTime())) return null;
@@ -143,6 +174,8 @@ function classifyReviewedCalendarV1(
     return 'outside_reviewed_range';
   }
   const close = calendar.earlyCloseMinutes[local.localDate] ?? calendar.regularCloseMinute;
+  const publicationSession = publicationSessionV1(local.localDate, calendar);
+  if (!publicationSession) return null;
   const weekend = local.weekday === 'Sat' || local.weekday === 'Sun';
   if (weekend) {
     return {
@@ -150,6 +183,9 @@ function classifyReviewedCalendarV1(
       localDate: local.localDate,
       regularOpenMinute: calendar.regularOpenMinute,
       regularCloseMinute: close,
+      publicationSessionLocalDate: publicationSession.localDate,
+      publicationSessionOpenMinute: publicationSession.open,
+      publicationSessionCloseMinute: publicationSession.close,
     };
   }
   const closed = calendar.closedDates.includes(local.localDate);
@@ -160,6 +196,9 @@ function classifyReviewedCalendarV1(
     localDate: local.localDate,
     regularOpenMinute: calendar.regularOpenMinute,
     regularCloseMinute: close,
+    publicationSessionLocalDate: publicationSession.localDate,
+    publicationSessionOpenMinute: publicationSession.open,
+    publicationSessionCloseMinute: publicationSession.close,
   };
 }
 
@@ -180,6 +219,8 @@ export function unknownMarketRealityReferenceV1(input: {
   return MarketRealityReferenceStateV1Schema.parse({
     status: 'unknown',
     session: 'unknown',
+    marketSession: 'unknown',
+    publicationMode: 'unknown',
     valueAtomic: null,
     decimals: null,
     observedAt: input.observedAt ?? null,
@@ -200,6 +241,8 @@ function observedStateV1(input: {
   observation: ReviewedReferenceObservationV1;
   calendar: CalendarClassificationV1 | null;
   session: MarketRealityReferenceStateV1['session'];
+  marketSession: MarketRealityReferenceStateV1['marketSession'];
+  publicationMode: MarketRealityReferenceStateV1['publicationMode'];
   status: MarketRealityReferenceStateV1['status'];
   freshness: MarketRealityReferenceStateV1['freshness'];
   reasonCode: MarketRealityReferenceStateV1['reasonCode'];
@@ -209,6 +252,8 @@ function observedStateV1(input: {
   return MarketRealityReferenceStateV1Schema.parse({
     status: input.status,
     session: input.session,
+    marketSession: input.marketSession,
+    publicationMode: input.publicationMode,
     valueAtomic: observation.valueAtomic,
     decimals: observation.decimals,
     observedAt: observation.observedAt,
@@ -224,11 +269,14 @@ function observedStateV1(input: {
           localDate: calendar.localDate,
           regularOpenMinute: calendar.regularOpenMinute,
           regularCloseMinute: calendar.regularCloseMinute,
+          publicationSessionLocalDate: calendar.publicationSessionLocalDate,
+          publicationSessionOpenMinute: calendar.publicationSessionOpenMinute,
+          publicationSessionCloseMinute: calendar.publicationSessionCloseMinute,
         }
       : null,
     evidence: observation.evidence,
-    // Phase 10C.1 establishes state only. It intentionally does not activate
-    // the existing premium/discount calculation; that is the next bounded task.
+    // Kept false for Phase 10C.1 consumers. Phase 10C.2A comparability lives in
+    // the separate typed basis decision and is never inferred from this flag.
     comparable: false,
     reasonCode: input.reasonCode,
     reason: input.reason,
@@ -273,6 +321,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar: null,
       session: 'unknown',
+      marketSession: 'unknown',
+      publicationMode: 'unknown',
       status:
         observation.status === 'fresh'
           ? 'fresh'
@@ -291,6 +341,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar: null,
       session: 'unknown',
+      marketSession: 'unknown',
+      publicationMode: 'unknown',
       status:
         observation.status === 'fresh'
           ? 'fresh'
@@ -308,6 +360,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar: null,
       session: 'unknown',
+      marketSession: 'unknown',
+      publicationMode: 'unknown',
       status:
         observation.status === 'fresh'
           ? 'fresh'
@@ -326,6 +380,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar,
       session: 'corporate_action_hold',
+      marketSession: calendar.kind,
+      publicationMode: 'corporate_action_hold',
       status: 'paused',
       freshness: 'stale',
       reasonCode: 'reviewed_registry_corporate_action_hold',
@@ -338,6 +394,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar,
       session: 'stale',
+      marketSession: calendar.kind,
+      publicationMode: 'stale',
       status: 'stale',
       freshness: 'stale',
       reasonCode: 'reviewed_reference_stale',
@@ -350,6 +408,13 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar,
       session: 'weekend',
+      marketSession: 'weekend',
+      publicationMode:
+        configuration.outsideRegularHours === 'holds_last_close'
+          ? 'holding_last_close'
+          : configuration.outsideRegularHours === 'publishes'
+            ? 'live_reference'
+            : 'unknown',
       status: 'fresh',
       freshness: 'fresh',
       reasonCode: 'reviewed_calendar_weekend',
@@ -362,6 +427,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar,
       session: 'reference_holding_last_close',
+      marketSession: 'after_hours',
+      publicationMode: 'holding_last_close',
       status: 'fresh',
       freshness: 'fresh',
       reasonCode: 'reviewed_feed_holding_last_close',
@@ -375,6 +442,8 @@ export function classifyMarketRealityReferenceV1(input: {
       observation,
       calendar,
       session: 'unknown',
+      marketSession: 'after_hours',
+      publicationMode: 'unknown',
       status: 'fresh',
       freshness: 'fresh',
       reasonCode: 'calendar_semantics_missing',
@@ -387,6 +456,8 @@ export function classifyMarketRealityReferenceV1(input: {
     observation,
     calendar,
     session: calendar.kind,
+    marketSession: calendar.kind,
+    publicationMode: 'live_reference',
     status: 'fresh',
     freshness: 'fresh',
     reasonCode:

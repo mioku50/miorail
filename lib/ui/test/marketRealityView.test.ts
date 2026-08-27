@@ -50,8 +50,16 @@ function representation(
     reference: {
       status: 'unknown',
       session: 'unknown',
+      marketSession: 'unknown',
+      publicationMode: 'unknown',
       comparable: false,
       reason: 'No reviewed comparable reference/session adapter answered.',
+    },
+    basis: {
+      status: 'withheld',
+      kind: 'withheld',
+      premiumDiscountBps: null,
+      reason: 'No reviewed reference basis was established.',
     },
     sources: [],
     observedAt: null,

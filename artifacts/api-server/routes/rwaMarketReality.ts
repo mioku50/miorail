@@ -20,6 +20,7 @@ import {
   assembleMarketRealityHistoryV1,
   assembleMarketRealityIndexV1,
   assembleMarketRealityV2,
+  createMarketRealityEvidenceCaptureV1,
   createMarketRealityCoordinatorV1,
   type MarketRealityWindowV1,
 } from '@mioagent/rwa-market-reality';
@@ -91,6 +92,17 @@ export const rwaMarketRealityRuntime = {
       official: createDatabaseOfficialAssetRepository(client),
       reader: createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
     }),
+  capture: () =>
+    createMarketRealityEvidenceCaptureV1({
+      underlyings: createDatabaseUnderlyingAssetRepository(client),
+      ratios: createDatabaseRepresentationRatioRepository(client),
+      supplies: createDatabaseRepresentationSupplyRepository(client),
+      now: () => new Date(),
+      reference: createReviewedMarketRealityReferenceAdapterV1({
+        official: createDatabaseOfficialAssetRepository(client),
+        reader: createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
+      }),
+    }),
   migrationAvailable: async (): Promise<boolean> => {
     const rows = await client`
       SELECT
@@ -100,7 +112,14 @@ export const rwaMarketRealityRuntime = {
         to_regclass('public.official_assets') AS official_assets,
         to_regclass('public.official_cash_exit_runs') AS cash_exit,
         to_regclass('public.representation_ratio') AS ratios,
-        to_regclass('public.representation_supply') AS supplies`;
+        to_regclass('public.representation_supply') AS supplies,
+        EXISTS (
+          SELECT 1
+          FROM information_schema.columns
+          WHERE table_schema = 'public'
+            AND table_name = 'official_cash_exit_runs'
+            AND column_name = 'market_reality_snapshots'
+        ) AS cash_exit_snapshots`;
     const row = rows[0];
     return Boolean(
       row?.underlying &&
@@ -108,6 +127,7 @@ export const rwaMarketRealityRuntime = {
       row.official_sources &&
       row.official_assets &&
       row.cash_exit &&
+      row.cash_exit_snapshots &&
       row.ratios &&
       row.supplies,
     );
@@ -372,6 +392,7 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
             cashSizesAtomic: [requestedCashAtomic],
             destinations: [destination],
             now: rwaMarketRealityRuntime.now,
+            captureMarketRealitySnapshots: rwaMarketRealityRuntime.capture(),
           }),
       },
       {

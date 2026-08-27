@@ -2,6 +2,10 @@ import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
 import { z } from 'zod';
 
 import { RouteStorageIntegrityError } from './types.js';
+import {
+  MarketRealityEvidenceSnapshotV1Schema,
+  type MarketRealityEvidenceSnapshotV1,
+} from './marketRealitySnapshot.js';
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
 const Hash = z.string().regex(/^0x[0-9a-f]{64}$/);
@@ -251,12 +255,25 @@ const CashExitMeasurementRunObjectV1Schema = z
     startedAt: Timestamp,
     completedAt: Timestamp,
     observations: z.array(CashExitSourceObservationV1Schema).min(1).max(256),
+    /** Null/absent means this run predates Phase 10C.2A. New measurements
+     * attach an immutable pair (BUY + SELL) for every exact source row. */
+    marketRealitySnapshots: z
+      .array(MarketRealityEvidenceSnapshotV1Schema)
+      .min(2)
+      .max(512)
+      .nullable()
+      .optional(),
   })
   .strict();
 export type CashExitMeasurementRunV1 = z.infer<typeof CashExitMeasurementRunObjectV1Schema>;
 
 export function hashCashExitRunV1(value: Omit<CashExitMeasurementRunV1, 'runId'>): HashV1 {
-  const { observations: _observations, completedAt: _completedAt, ...identity } = value;
+  const {
+    observations: _observations,
+    marketRealitySnapshots: _marketRealitySnapshots,
+    completedAt: _completedAt,
+    ...identity
+  } = value;
   return stableHashV1('official-cash-exit-run/v1', identity);
 }
 
@@ -343,8 +360,72 @@ export const CashExitMeasurementRunV1Schema = CashExitMeasurementRunObjectV1Sche
         }
       }
     }
+
+    const snapshots = value.marketRealitySnapshots;
+    if (snapshots) {
+      const observationsByHash = new Map(
+        value.observations.map((row) => [row.observationHash, row]),
+      );
+      const snapshotKeys = new Set<string>();
+      for (const [index, snapshot] of snapshots.entries()) {
+        const observation = observationsByHash.get(snapshot.observationHash);
+        if (
+          !observation ||
+          snapshot.runId !== value.runId ||
+          snapshot.chainId !== value.chainId ||
+          snapshot.tokenAddress !== value.tokenAddress ||
+          snapshot.source !== observation.source ||
+          snapshot.destination !== observation.destination ||
+          snapshot.destinationAddress !== observation.destinationAddress ||
+          snapshot.destinationDecimals !== observation.destinationDecimals ||
+          snapshot.requestedCashAtomic !== observation.requestedCashAtomic ||
+          snapshot.requestedTokenAtomic !== observation.requestedTokenAtomic ||
+          snapshot.testedTokenAtomic !== observation.testedTokenAtomic ||
+          snapshot.approvedSources.length !== value.approvedSources.length ||
+          snapshot.approvedSources.some((source) => !value.approvedSources.includes(source))
+        ) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['marketRealitySnapshots', index],
+            message: 'market-reality snapshot does not belong to this exact run observation',
+          });
+        }
+        const key = `${snapshot.observationHash}:${snapshot.direction}`;
+        if (snapshotKeys.has(key)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ['marketRealitySnapshots', index],
+            message: 'duplicate market-reality observation/direction snapshot',
+          });
+        }
+        snapshotKeys.add(key);
+      }
+      for (const observation of value.observations) {
+        for (const direction of ['buy', 'sell'] as const) {
+          if (!snapshotKeys.has(`${observation.observationHash}:${direction}`)) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ['marketRealitySnapshots'],
+              message: `missing ${direction} snapshot for ${observation.observationHash}`,
+            });
+          }
+        }
+      }
+    }
   },
 );
+
+export function marketRealitySnapshotForObservationV1(
+  run: CashExitMeasurementRunV1,
+  observationHash: string,
+  direction: 'buy' | 'sell',
+): MarketRealityEvidenceSnapshotV1 | null {
+  return (
+    run.marketRealitySnapshots?.find(
+      (row) => row.observationHash === observationHash && row.direction === direction,
+    ) ?? null
+  );
+}
 
 export function assertCashExitRunV1(
   value: unknown,

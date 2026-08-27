@@ -202,6 +202,21 @@ test('provider failure remains measurement_failed and withholds ranking', async 
   assert.equal(result.ranking.status, 'withheld');
 });
 
+test('a previously quoted but closed question is typed expired, never a current price', async () => {
+  const expired = run(A, '500000000000000000');
+  expired.observations[0]!.expiresAt = '2026-08-26T12:00:30.000Z';
+  expired.observations[0]!.buyQuote!.expiresAt = '2026-08-26T12:00:30.000Z';
+  const result = await assembleMarketRealityV2(
+    deps({ [A]: expired }, { bindings: [binding(A, 'coinbase:instrument_id:a', 'coinbase')] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const representation = result.representations[0]!;
+  assert.equal(representation.status, 'not_measured');
+  assert.equal(representation.effectivePriceAtomic, null);
+  assert.equal(representation.basis.status, 'withheld');
+  assert.equal(representation.basis.reasonCode, 'expired_quote');
+});
+
 test('positive supply plus scoped no-route establishes a categorical outcome, not a price', async () => {
   const result = await assembleMarketRealityV2(
     deps({

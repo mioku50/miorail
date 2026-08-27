@@ -126,6 +126,11 @@ before(async () => {
   await sql.unsafe('DROP TABLE IF EXISTS official_cash_exit_runs CASCADE');
   const migration = await readFile(resolve(drizzleDir(), '0052_official_cash_exit.sql'), 'utf8');
   await sql.unsafe(migration);
+  const snapshotMigration = await readFile(
+    resolve(drizzleDir(), '0061_market_reality_evidence_snapshot.sql'),
+    'utf8',
+  );
+  await sql.unsafe(snapshotMigration);
 });
 
 after(async () => {

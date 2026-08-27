@@ -24,6 +24,7 @@ import {
   type MarketRealityResponseV2,
 } from './contracts.js';
 import { unknownMarketRealityReferenceV1 } from './referenceSession.js';
+import { evaluateMarketRealityBasisV1 } from './basis.js';
 
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 // The production reader runs every six hours. One extra hour tolerates timer
@@ -72,7 +73,7 @@ function sourceStatusV1(
   return 'measurement_failed';
 }
 
-function supplyEvidenceV1(row: RepresentationSupplyRowV1 | null, nowMs: number) {
+export function supplyEvidenceV1(row: RepresentationSupplyRowV1 | null, nowMs: number) {
   if (!row) {
     return {
       state: 'supply_unknown' as const,
@@ -117,7 +118,7 @@ function supplyEvidenceV1(row: RepresentationSupplyRowV1 | null, nowMs: number) 
   };
 }
 
-function normalizedExposureV1(input: {
+export function normalizedExposureV1(input: {
   binding: RepresentationUnderlyingV1;
   tokenAtomic: string;
   tokenDecimals: number;
@@ -159,7 +160,7 @@ function normalizedExposureV1(input: {
   };
 }
 
-function effectivePriceV1(
+export function effectivePriceV1(
   cashAtomic: string,
   exposureAtomic: string,
   exposureDecimals: number,
@@ -253,6 +254,26 @@ function exactRowsV1(
   );
 }
 
+function lastObservationRowV1(
+  rows: readonly CashExitSourceObservationV1[],
+): CashExitSourceObservationV1 | null {
+  return (
+    [...rows].sort(
+      (left, right) =>
+        Date.parse(right.observedAt) - Date.parse(left.observedAt) ||
+        left.source.localeCompare(right.source),
+    )[0] ?? null
+  );
+}
+
+function lastObservationTimeV1(rows: readonly CashExitSourceObservationV1[]): string | null {
+  return lastObservationRowV1(rows)?.observedAt ?? null;
+}
+
+function lastObservationExpiryV1(rows: readonly CashExitSourceObservationV1[]): string | null {
+  return lastObservationRowV1(rows)?.expiresAt ?? null;
+}
+
 export async function assembleMarketRealityV2(
   deps: MarketRealityDepsV1,
   input: {
@@ -307,6 +328,12 @@ export async function assembleMarketRealityV2(
         sourceStates.filter((item) => item.status === 'quoted').map((item) => item.row),
         question.direction,
       );
+      // Keep the newest closed quote available only to explain why basis is
+      // withheld. It must never populate the current-price fields below.
+      const basisEvidenceRow = best ?? bestRowV1(rows, question.direction);
+      const basisEvidenceQuote = basisEvidenceRow
+        ? quoteForDirectionV1(basisEvidenceRow, question.direction)
+        : null;
       const complete = Boolean(run) && rows.length === run!.approvedSources.length;
       const status = best
         ? ('full' as const)
@@ -347,13 +374,28 @@ export async function assembleMarketRealityV2(
             now,
           }) ?? Promise.resolve(unknownReferenceV1()))
         : unknownReferenceV1();
-      const premium =
-        price && reference.comparable && reference.valueAtomic && reference.decimals === 8
-          ? (
-              ((BigInt(price) - BigInt(reference.valueAtomic)) * 10_000n) /
-              BigInt(reference.valueAtomic)
-            ).toString()
-          : null;
+      const supply = supplyEvidenceV1(supplyByAddress.get(binding.tokenAddress) ?? null, nowMs);
+      const basisMarketStatus = basisEvidenceQuote
+        ? ('quoted' as const)
+        : sourceStates.some((item) => item.status === 'unsized')
+          ? ('unsized' as const)
+          : sourceStates.length > 0 && sourceStates.every((item) => item.status === 'no_route')
+            ? ('no_route' as const)
+            : ('measurement_failed' as const);
+      const basis = evaluateMarketRealityBasisV1({
+        issuerId: binding.issuerId ?? null,
+        marketStatus: basisMarketStatus,
+        quoteObservedAt:
+          basisEvidenceQuote?.observedAt ?? lastObservationTimeV1(rows) ?? now.toISOString(),
+        quoteExpiresAt:
+          basisEvidenceQuote?.expiresAt ?? lastObservationExpiryV1(rows) ?? now.toISOString(),
+        evaluatedAt: now.toISOString(),
+        normalizedExposureAtomic: normalized.atomic,
+        effectivePriceAtomic: price,
+        effectivePriceDecimals: price ? 8 : null,
+        supplyState: supply.state,
+        reference,
+      });
       const routePolicyKey = run
         ? stableHashV1('market-reality-route-policy/v1', {
             chainId: 8453,
@@ -373,7 +415,7 @@ export async function assembleMarketRealityV2(
         issuerId: binding.issuerId!,
         issuerInstrumentKey: binding.issuerInstrumentKey!,
         representationKind: binding.representationKind!,
-        supply: supplyEvidenceV1(supplyByAddress.get(binding.tokenAddress) ?? null, nowMs),
+        supply,
         status,
         routePolicyKey,
         exactTestedTokenAtomic: tokenAtomic,
@@ -383,8 +425,9 @@ export async function assembleMarketRealityV2(
         returnedCashAtomic,
         effectivePriceAtomic: price,
         effectivePriceDecimals: price ? (8 as const) : null,
-        premiumDiscountBps: premium,
+        premiumDiscountBps: basis.premiumDiscountBps,
         reference,
+        basis,
         sources: sourceStates.map(({ row, status: sourceStatus }) => {
           const sourceQuote = quoteForDirectionV1(row, question.direction);
           return {

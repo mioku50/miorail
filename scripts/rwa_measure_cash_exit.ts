@@ -28,6 +28,9 @@ import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
+  createDatabaseRepresentationRatioRepository,
+  createDatabaseRepresentationSupplyRepository,
+  createDatabaseUnderlyingAssetRepository,
   createDatabaseRwaSignalRepository,
   isOfficialV1,
 } from '@mioagent/route-storage';
@@ -38,6 +41,10 @@ import {
   routeStatusFromPreviewV1,
 } from '@mioagent/rwa-dossier';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
+import {
+  createMarketRealityEvidenceCaptureV1,
+  createReviewedMarketRealityReferenceAdapterV1,
+} from '@mioagent/rwa-market-reality';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -116,6 +123,13 @@ async function main(): Promise<void> {
   const signals = createDatabaseRwaSignalRepository(client);
   const reader = createB20ReaderV1({ rpcUrl });
   const adapters = [new KyberSwapRouteAdapter()];
+  const captureMarketRealitySnapshots = createMarketRealityEvidenceCaptureV1({
+    underlyings: createDatabaseUnderlyingAssetRepository(client),
+    ratios: createDatabaseRepresentationRatioRepository(client),
+    supplies: createDatabaseRepresentationSupplyRepository(client),
+    now: () => new Date(),
+    reference: createReviewedMarketRealityReferenceAdapterV1({ official, reader }),
+  });
 
   const listed = (await official.officialAssets({ chainId: CHAIN_ID_V1, limit })).filter(
     (identity) => isOfficialV1(identity),
@@ -186,7 +200,11 @@ async function main(): Promise<void> {
       data: DECIMALS_SELECTOR_V1,
       blockTag: anchor.value.blockTag,
     });
-    for (let retry = 0; !decimalsRead.ok && decimalsRead.reason === 'rate_limited' && retry < 3; retry += 1) {
+    for (
+      let retry = 0;
+      !decimalsRead.ok && decimalsRead.reason === 'rate_limited' && retry < 3;
+      retry += 1
+    ) {
       await sleep(gapMs * (retry + 1));
       decimalsRead = await reader.call({
         to: tokenAddress,
@@ -198,7 +216,9 @@ async function main(): Promise<void> {
     // whose decimals we could not read is not an asset without a market, and
     // one unreadable token does not end the pass for the other twelve.
     if (!decimalsRead.ok) {
-      console.log(`${listing.ticker.padEnd(8)} decimals unreadable (${decimalsRead.reason}) — skipped`);
+      console.log(
+        `${listing.ticker.padEnd(8)} decimals unreadable (${decimalsRead.reason}) — skipped`,
+      );
       continue;
     }
     const decimals = decodeDecimalsV1(decimalsRead.value);
@@ -208,7 +228,9 @@ async function main(): Promise<void> {
     }
 
     if (dry) {
-      console.log(`${listing.ticker.padEnd(8)} ${tokenAddress} decimals ${decimals} — would measure`);
+      console.log(
+        `${listing.ticker.padEnd(8)} ${tokenAddress} decimals ${decimals} — would measure`,
+      );
       continue;
     }
 
@@ -226,6 +248,7 @@ async function main(): Promise<void> {
       walletAddress: MEASUREMENT_RECIPIENT_V1,
       tenantId: MEASUREMENT_TENANT_V1,
       scope: 'public_ladder',
+      captureMarketRealitySnapshots,
     });
     measured += 1;
     const now = new Date();

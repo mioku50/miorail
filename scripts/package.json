@@ -22,6 +22,7 @@
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/rwa-cash-exit": "workspace:*",
     "@mioagent/rwa-dossier": "workspace:*",
+    "@mioagent/rwa-market-reality": "workspace:*",
     "@mioagent/rwa-issuer": "workspace:*",
     "@mioagent/rwa-lookalike": "workspace:*",
     "@mioagent/rwa-official": "workspace:*",
