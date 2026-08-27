@@ -16,6 +16,10 @@ User=miorail
 Group=miorail
 WorkingDirectory=/home/miorail/mioagent
 EnvironmentFile=/home/miorail/mioagent/.env
+# Keep evidence reads on the same operator-reviewed RPC as the API. This file
+# is deliberately second: its BASE_MAINNET_RPC_URL overrides the repository
+# fallback without copying provider credentials into git.
+EnvironmentFile=/etc/miorail/api-rpc.env
 Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_read_representation_ratio.ts
