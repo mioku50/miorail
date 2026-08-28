@@ -7,3 +7,4 @@ export * from './backedAssetsApi.js';
 export * from './exitFamilies.js';
 export * from './dinariStockApi.js';
 export * from './dinariCandidates.js';
+export * from './utilityMap.js';

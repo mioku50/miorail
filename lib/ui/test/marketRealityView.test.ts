@@ -1,6 +1,9 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import React from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
 
+import { MarketRealityScreen } from '../src/console/MarketRealityScreen';
 import {
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
@@ -465,9 +468,10 @@ describe('the five outcomes stay apart', () => {
 });
 
 describe('the board never picks a winner', () => {
-  test('a withheld ranking always carries its reason', () => {
+  test('a withheld ranking is consumer-neutral', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    assert.match(view?.rankingNote ?? '', /no BEST/i);
+    assert.match(view?.rankingNote ?? '', /No winner is selected/i);
+    assert.doesNotMatch(view?.rankingNote ?? '', /Phase|BEST|WITHHELD/);
   });
 
   test('even complete numeric coverage remains explicitly withheld in Phase 10B.8', () => {
@@ -488,12 +492,12 @@ describe('the board never picks a winner', () => {
       choice: null,
       now: NOW,
     });
-    assert.match(view?.rankingNote ?? '', /withholds ranking/i);
+    assert.match(view?.rankingNote ?? '', /No winner is selected/i);
   });
 
   test('coverage is stated as a fraction, not as a verdict about the assets', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    assert.equal(view?.coverageChip, '0 of 3 market outcomes');
+    assert.equal(view?.coverageChip, '0 / 3 market answers');
     assert.equal(view?.coverageTone, 'warn');
   });
 
@@ -503,7 +507,7 @@ describe('the board never picks a winner', () => {
     // what to do next.
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     assert.doesNotMatch(view?.coverageBody ?? '', /normalized exposure|approved-router policy/);
-    assert.match(view?.coverageBody ?? '', /answered this exact market question for 0 of 3/);
+    assert.match(view?.coverageBody ?? '', /current market answer for 0 of 3/);
   });
 
   test('all three coverage shapes are different sentences', () => {
@@ -790,10 +794,10 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
       choice: null,
       now: NOW,
     });
-    const ranking = view?.comparisonSummary.find((fact) => fact.label === 'Ranking');
-    assert.equal(ranking?.value, 'WITHHELD');
+    const ranking = view?.comparisonSummary.find((fact) => fact.label === 'Comparison');
+    assert.equal(ranking?.value, 'Not ranked');
     assert.equal(ranking?.tone, 'off');
-    assert.match(view?.rankingNote ?? '', /withholds ranking/);
+    assert.match(view?.rankingNote ?? '', /No winner is selected/);
   });
 });
 
@@ -842,9 +846,9 @@ describe('the chooser', () => {
       totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 2 },
       observedAt: NOW,
     });
-    const compare = counters.find((row) => row.label === 'Carried by two issuers');
+    const compare = counters.find((row) => row.label === 'Multi-issuer stocks');
     assert.equal(compare?.value, '2');
-    assert.equal(compare?.tone, 'good');
+    assert.equal(compare?.tone, 'neutral');
   });
 
   test('nothing to compare is stated, not hidden', () => {
@@ -853,7 +857,93 @@ describe('the chooser', () => {
       totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 0 },
       observedAt: NOW,
     });
-    assert.equal(counters.find((row) => row.label === 'Carried by two issuers')?.tone, 'off');
+    assert.equal(counters.find((row) => row.label === 'Multi-issuer stocks')?.tone, 'neutral');
+  });
+});
+
+describe('Phase 11 utility and eligibility map', () => {
+  test('utility evidence is keyed to the exact CAIP-10 representation', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const utility = view?.representations[0]?.utility;
+    assert.equal(utility?.caip10, `eip155:8453:${COINBASE_NVDA}`);
+    assert.equal(utility?.groups.length, 2);
+  });
+
+  test('a router quote is observed or stale, never presented as execution availability', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const trade = view?.representations[0]?.utility.groups[0]?.edges.find(
+      (edge) => edge.edgeId === 'market_trade',
+    );
+    assert.equal(trade?.state, 'stale');
+    assert.match(trade?.note ?? '', /history/);
+    assert.notEqual(trade?.state, 'available');
+  });
+
+  test('unreviewed DeFi edges remain not established', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const defi = view?.representations[0]?.utility.groups[0]?.edges.slice(1) ?? [];
+    assert.ok(defi.length > 0);
+    assert.ok(defi.every((edge) => edge.state === 'not_established'));
+  });
+
+  test('reviewed issuer processes link their evidence without deciding wallet eligibility', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const redemption = view?.representations[0]?.utility.groups[1]?.edges.find(
+      (edge) => edge.edgeId === 'issuer_redeem_sell',
+    );
+    assert.equal(redemption?.state, 'documented');
+    assert.ok(redemption?.sources.some((source) => source.href?.startsWith('https://')));
+    assert.match(redemption?.eligibilityNote ?? '', /eligible|outside/i);
+    assert.doesNotMatch(JSON.stringify(redemption), /walletEligible|approval|calldata/i);
+  });
+
+  test('the Utility view renders evidence states without rendering a ranking', () => {
+    const choices = underlyingChoicesV1({
+      entries: [{
+        underlyingKey: 'security:isin:US67066G1040',
+        canonicalName: 'NVIDIA Corporation',
+        displaySymbol: 'NVDA',
+        assetClass: 'equity',
+        identifierScheme: 'isin',
+        identifierValue: 'US67066G1040',
+        representationCount: 1,
+        issuerIds: ['coinbase'],
+        multiIssuer: false,
+      }],
+      totals: { underlyings: 1, boundRepresentations: 1, multiIssuerUnderlyings: 0 },
+      observedAt: NOW,
+    });
+    const view = marketRealityViewV1({ wire: wire(), choice: choices[0] ?? null, now: NOW });
+    assert.ok(view);
+    const markup = renderToStaticMarkup(React.createElement(MarketRealityScreen, {
+      model: {
+        choices,
+        choicesLoading: false,
+        choicesError: null,
+        counters: [],
+        selectedKey: choices[0]!.underlyingKey,
+        direction: 'sell',
+        requestedCashAtomic: MARKET_REALITY_SIZES_V1[0]!.requestedCashAtomic,
+        surface: 'utility',
+        view,
+        viewLoading: false,
+        viewError: null,
+        measuring: false,
+        measurementNote: null,
+        measurementError: null,
+        actions: {
+          onUnderlying: () => undefined,
+          onDirection: () => undefined,
+          onSize: () => undefined,
+          onSurface: () => undefined,
+        },
+      },
+    }));
+    assert.match(markup, /Utility \+ eligibility/);
+    assert.match(markup, /eip155:8453:/);
+    assert.match(markup, /Documented/);
+    assert.match(markup, /Not established/);
+    assert.doesNotMatch(markup, /No winner is selected|Not ranked|BEST/);
   });
 });
 

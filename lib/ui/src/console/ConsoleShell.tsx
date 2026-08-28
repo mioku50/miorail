@@ -167,6 +167,8 @@ export function ConsoleShell(props: ConsoleShellProps) {
   const { header, left, footer } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const railNav = left.nav ?? header.nav ?? [];
+  const activeSection = railNav.find((item) => item.active)?.id ?? null;
+  const showExecutionRail = activeSection === 'routes' || activeSection === 'activity';
   useConsoleHostClass();
 
   useEffect(() => {
@@ -181,7 +183,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
   return (
     <>
       <div className="mio-glow" />
-      <div className={`mio-console app${drawerOpen ? ' drawer-open' : ''}`}>
+      <div className={`mio-console app${drawerOpen ? ' drawer-open' : ''}${props.right ? '' : ' no-right'}`}>
         <header>
           <button
             type="button"
@@ -255,60 +257,65 @@ export function ConsoleShell(props: ConsoleShellProps) {
 
         <div className="scrim" onClick={() => setDrawerOpen(false)} aria-hidden="true" />
 
-        <aside className="left" aria-label="Navigation and sessions">
+        <aside className="left" aria-label="Navigation">
           {/* T70 §3 — the drawer's navigation IS the product's five sections.
               On a phone this rail is the only place they appear, so it carries
               Settings too; the header bar has room for four. */}
           {railNav.length > 0 && (
             <nav className="railnav" aria-label="Sections">
-              {railNav.map((item) =>
-                item.available ? (
-                  <button
-                    key={item.id}
-                    type="button"
-                    className={`item${item.active ? ' on' : ''}`}
-                    aria-current={item.active ? 'page' : undefined}
-                    onClick={() => {
-                      header.onNavigate?.(item.id);
-                      setDrawerOpen(false);
-                    }}
-                  >
-                    <span className="t">{item.label}</span>
-                  </button>
-                ) : (
-                  <div key={item.id} className="item off">
-                    <span className="t">{item.label}</span>
-                    {/* Explained, not merely dimmed. */}
-                    <span className="m">{item.unavailableReason}</span>
-                  </div>
-                ),
-              )}
+              {railNav.map((item) => (
+                <React.Fragment key={item.id}>
+                  {item.id === 'opportunities' ? <div className="railgroup">Advanced evidence</div> : null}
+                  {item.available ? (
+                    <button
+                      type="button"
+                      className={`item${item.active ? ' on' : ''}`}
+                      aria-current={item.active ? 'page' : undefined}
+                      onClick={() => {
+                        header.onNavigate?.(item.id);
+                        setDrawerOpen(false);
+                      }}
+                    >
+                      <span className="t">{item.label}</span>
+                    </button>
+                  ) : (
+                    <div className="item off">
+                      <span className="t">{item.label}</span>
+                      <span className="m">{item.unavailableReason}</span>
+                    </div>
+                  )}
+                </React.Fragment>
+              ))}
             </nav>
           )}
 
-          <button type="button" className="newgoal" onClick={props.onNewGoal}>
-            + New goal
-          </button>
+          {showExecutionRail ? (
+            <>
+              <button type="button" className="newgoal" onClick={props.onNewGoal}>
+                + New goal
+              </button>
 
-          <div className="sechead">
-            <span>Active session</span>
-            <span className="mono">{left.sessionCount}</span>
-          </div>
-          {left.sessions.length === 0 ? (
-            <p className="empty">No active session yet — start one above.</p>
-          ) : (
-            left.sessions.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectSession} />)
-          )}
+              <div className="sechead">
+                <span>Active session</span>
+                <span className="mono">{left.sessionCount}</span>
+              </div>
+              {left.sessions.length === 0 ? (
+                <p className="empty">No active session yet — start one above.</p>
+              ) : (
+                left.sessions.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectSession} />)
+              )}
 
-          <div className="sechead">
-            <span>Recent proofs</span>
-            <span className="mono">{left.proofCount}</span>
-          </div>
-          {left.proofs.length === 0 ? (
-            <p className="empty">No proofs yet. They appear here after your first signed route.</p>
-          ) : (
-            left.proofs.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectProof} />)
-          )}
+              <div className="sechead">
+                <span>Recent proofs</span>
+                <span className="mono">{left.proofCount}</span>
+              </div>
+              {left.proofs.length === 0 ? (
+                <p className="empty">No proofs yet. They appear here after your first signed route.</p>
+              ) : (
+                left.proofs.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectProof} />)
+              )}
+            </>
+          ) : null}
 
           {/* T70 §2 — what is left of Budget & payments outside Settings: a
               status, what still works, and a way through. The panel itself, the
@@ -340,9 +347,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
           {props.railFold && <div className="railfold">{props.railFold}</div>}
         </main>
 
-        <aside className="right" aria-label="Live data">
-          {props.right}
-        </aside>
+        {props.right ? <aside className="right" aria-label="Live data">{props.right}</aside> : null}
 
         <footer>
           <span className="g">

@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useMemo, useState } from 'react';
 
 import { TokenIdentityV1 } from './TokenIdentity';
 import {
@@ -70,12 +70,15 @@ export interface MarketRealityActionsV1 {
   onUnderlying: (underlyingKey: string) => void;
   onDirection: (direction: MarketRealityDirectionV1) => void;
   onSize: (requestedCashAtomic: string) => void;
+  onSurface: (surface: MarketRealitySurfaceV1) => void;
   /** Open the full dossier for one address. Absent when not wired. */
   onInvestigate?: (tokenAddress: string) => void;
   /** Measure the exact question now. Absent when the server does not offer it,
    * because a control that answers with a refusal reads as a broken product. */
   onMeasure?: () => void;
 }
+
+export type MarketRealitySurfaceV1 = 'market' | 'utility';
 
 export interface MarketRealityScreenModelV1 {
   choices: readonly UnderlyingChoiceViewV1[];
@@ -87,6 +90,7 @@ export interface MarketRealityScreenModelV1 {
   selectedKey: string | null;
   direction: MarketRealityDirectionV1;
   requestedCashAtomic: string;
+  surface: MarketRealitySurfaceV1;
 
   view: MarketRealityViewV1 | null;
   viewLoading: boolean;
@@ -109,10 +113,73 @@ const DIRECTION_LABEL_V1: Readonly<Record<MarketRealityDirectionV1, string>> = {
 function RepresentationCard({
   representation,
   actions,
+  surface,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
+  surface: MarketRealitySurfaceV1;
 }) {
+  if (surface === 'utility') {
+    return (
+      <article className="mr-rep mr-utility-rep" aria-label={`${representation.issuerName} utility map`}>
+        <div className="cr-top">
+          <span className="cr-name">
+            <TokenIdentityV1
+              symbol={representation.issuerName}
+              name={representation.structureLabel}
+              tokenAddress={representation.tokenAddress}
+            />
+          </span>
+          <span className="pill cr-status" data-tone="neutral">Exact address</span>
+        </div>
+        <p className="mr-caip mono">{representation.utility.caip10}</p>
+        <p className="lnote">{representation.structureNote}</p>
+        {representation.utility.groups.map((group) => (
+          <section className="mr-utility-group" key={group.label} aria-label={group.label}>
+            <h4>{group.label}</h4>
+            <div className="mr-utility-edges">
+              {group.edges.map((edge) => (
+                <article className="mr-utility-edge" key={edge.edgeId} data-state={edge.state}>
+                  <div className="mr-utility-edge-head">
+                    <strong>{edge.label}</strong>
+                    <span className="pill cr-status" data-tone={edge.state === 'stale' ? 'warn' : edge.state === 'not_established' ? 'off' : 'neutral'}>
+                      {edge.stateLabel}
+                    </span>
+                  </div>
+                  <p>{edge.note}</p>
+                  <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
+                  <p className="mr-utility-meta">
+                    Checked <span className="mono">{edge.checkedAt}</span>
+                    {edge.providerLabel ? <> · source <span className="mono">{edge.providerLabel}</span></> : null}
+                  </p>
+                  {edge.sources.length > 0 ? (
+                    <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
+                      {edge.sources.map((source, index) =>
+                        source.href ? (
+                          <a key={`${source.label}:${index}`} href={source.href} target="_blank" rel="noreferrer">
+                            {source.label}
+                          </a>
+                        ) : (
+                          <span key={`${source.label}:${index}`}>{source.label}</span>
+                        ),
+                      )}
+                    </div>
+                  ) : null}
+                </article>
+              ))}
+            </div>
+          </section>
+        ))}
+        {actions.onInvestigate ? (
+          <div className="card-actions">
+            <button type="button" className="btn sec" onClick={() => actions.onInvestigate!(representation.tokenAddress)}>
+              Technical evidence
+            </button>
+          </div>
+        ) : null}
+      </article>
+    );
+  }
   return (
     <article
       className="mr-rep"
@@ -211,6 +278,16 @@ function Chooser({
   error: string | null;
   onUnderlying: (underlyingKey: string) => void;
 }) {
+  const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'multi' | 'coinbase' | 'dinari' | 'backed'>('all');
+  const visible = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return choices.filter((choice) => {
+      if (filter === 'multi' && !choice.multiIssuer) return false;
+      if (filter !== 'all' && filter !== 'multi' && !choice.issuerIds.includes(filter)) return false;
+      return !query || `${choice.title} ${choice.identifier ?? ''} ${choice.issuerLine}`.toLowerCase().includes(query);
+    });
+  }, [choices, filter, search]);
   if (error) return <p className="note warn">{error}</p>;
   if (choices.length === 0) {
     return (
@@ -222,26 +299,43 @@ function Chooser({
     );
   }
   return (
-    <div className="mr-choices" role="tablist" aria-label="Reviewed securities">
-      {choices.map((choice) => (
-        <button
-          key={choice.underlyingKey}
-          type="button"
-          role="tab"
-          aria-selected={choice.underlyingKey === selectedKey}
-          className={`mr-choice${choice.underlyingKey === selectedKey ? ' on' : ''}`}
-          onClick={() => onUnderlying(choice.underlyingKey)}
-        >
-          <span className="mr-choice-name">{choice.title}</span>
-          <span className="mr-choice-sub">
-            {choice.issuerLine}
-            {/* The count is the promise the page is making. A security carried
-                one way has nothing on the other side of the comparison, and
-                saying so here saves a click that leads to a single card. */}
-            {choice.multiIssuer ? <span className="pill g mr-choice-tag">compare</span> : null}
-          </span>
-        </button>
-      ))}
+    <div className="mr-browser">
+      <label className="mr-search">
+        <span className="sr-only">Search stocks</span>
+        <input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Search stocks, ticker or ISIN" />
+      </label>
+      <div className="mr-filters" role="group" aria-label="Stock filters">
+        {([
+          ['all', 'All'],
+          ['multi', 'Multi-issuer'],
+          ['coinbase', 'Coinbase'],
+          ['dinari', 'Dinari'],
+          ['backed', 'Backed'],
+        ] as const).map(([id, label]) => (
+          <button key={id} type="button" className={`pill${filter === id ? ' on' : ''}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      <div className="mr-choices" role="listbox" aria-label="Reviewed stocks">
+        {visible.map((choice) => (
+          <button
+            key={choice.underlyingKey}
+            type="button"
+            role="option"
+            aria-selected={choice.underlyingKey === selectedKey}
+            className={`mr-choice${choice.underlyingKey === selectedKey ? ' on' : ''}`}
+            onClick={() => onUnderlying(choice.underlyingKey)}
+          >
+            <span className="mr-choice-name">{choice.title}</span>
+            <span className="mr-choice-sub">
+              {choice.issuerLine}
+              {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
+            </span>
+          </button>
+        ))}
+      </div>
+      {visible.length === 0 ? <p className="empty">No reviewed stock matches these filters.</p> : null}
     </div>
   );
 }
@@ -267,6 +361,15 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         error={model.choicesError}
         onUnderlying={actions.onUnderlying}
       />
+
+      <div className="mr-surface-tabs tabbar" role="tablist" aria-label="Stock views">
+        <button type="button" role="tab" aria-selected={model.surface === 'market'} className={`item${model.surface === 'market' ? ' on' : ''}`} onClick={() => actions.onSurface('market')}>
+          Market Reality
+        </button>
+        <button type="button" role="tab" aria-selected={model.surface === 'utility'} className={`item${model.surface === 'utility' ? ' on' : ''}`} onClick={() => actions.onSurface('utility')}>
+          Utility + eligibility
+        </button>
+      </div>
 
       <div className="mr-question" aria-label="The question">
         <div className="tabbar" role="tablist" aria-label="Direction">
@@ -315,9 +418,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           engine a question it answers exactly or not at all, and an exact miss
           returns an empty board that reads as a broken product. */}
       <p className="lnote">
-        Sizes are the rungs the public ladder actually measures. An exact size is the whole question
-        — a $10,000 answer is not a $100 answer multiplied. A router quote is good for about twenty
-        seconds, so a board that has been open a while is history until you measure again.
+        {model.surface === 'market'
+          ? 'Sizes are the rungs the public ladder actually measures. An exact size is the whole question — a $10,000 answer is not a $100 answer multiplied. A router quote is good for about twenty seconds, so a board that has been open a while is history until you measure again.'
+          : 'Every utility edge belongs to the exact Base address shown on its card. Documented issuer processes, observed router reachability and personal eligibility are separate facts.'}
       </p>
 
       {model.measurementError ? <p className="note warn">{model.measurementError}</p> : null}
@@ -347,22 +450,22 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               <p className="sub">{model.view.questionLine}</p>
             </div>
             <div className="mr-head-r">
-              <span className="pill cr-status" data-tone={model.view.coverageTone}>
-                {model.view.coverageChip}
+              <span className="pill cr-status" data-tone={model.surface === 'market' ? model.view.coverageTone : 'neutral'}>
+                {model.surface === 'market' ? model.view.coverageChip : `${model.view.representations.length} exact-address maps`}
               </span>
               <span className="d">assembled {model.view.assembledAge}</span>
             </div>
           </div>
 
-          <p className="cr-verdict">{model.view.coverageBody}</p>
-
-          <FactList facts={model.view.comparisonSummary} label="Market Reality denominators" />
-
-          {/* Above the cards, in the body, unconditional while withheld. A
-              reader who misses this reads the leftmost card as the winner. */}
-          {model.view.rankingNote ? (
-            <p className="note warn mr-ranking">{model.view.rankingNote}</p>
-          ) : null}
+          {model.surface === 'market' ? (
+            <>
+              <p className="cr-verdict">{model.view.coverageBody}</p>
+              <FactList facts={model.view.comparisonSummary} label="Market Reality coverage" />
+              {model.view.rankingNote ? <p className="lnote mr-ranking">{model.view.rankingNote}</p> : null}
+            </>
+          ) : (
+            <p className="cr-verdict">What can be established for each representation, without treating documentation as availability or a quote as execution.</p>
+          )}
 
           <div className="mr-board" aria-label="Reviewed representations">
             {model.view.representations.map((representation) => (
@@ -370,6 +473,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                 key={representation.tokenAddress}
                 representation={representation}
                 actions={actions}
+                surface={model.surface}
               />
             ))}
           </div>
@@ -378,7 +482,11 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
             <p className="empty">No reviewed source has bound a Base contract to this security.</p>
           ) : null}
 
-          <p className="discover-scope">{model.view.scope}</p>
+          <p className="discover-scope">
+            {model.surface === 'market'
+              ? model.view.scope
+              : 'Mapped to exact Base addresses. Documentation, observed route reachability and personal eligibility remain separate evidence.'}
+          </p>
         </>
       )}
     </section>
@@ -411,16 +519,14 @@ export function MarketRealityRail({ view }: { view: MarketRealityViewV1 | null }
           {view ? (
             <>
               <div className="qrow">
-                <span>Market outcomes</span>
+                <span>Market answers</span>
                 <span className={`v ${view.coverageTone === 'good' ? 'ok' : 'warn'}`}>
                   {view.coverageChip}
                 </span>
               </div>
               <div className="qrow">
-                <span>Best marked</span>
-                {/* The rail says it too. A reader who scrolled past the body
-                    sentence still meets it beside the numbers. */}
-                <span className="v off">{view.rankingNote ? 'no' : 'yes'}</span>
+                <span>Comparison</span>
+                <span className="v off">not ranked</span>
               </div>
               <div className="qrow">
                 <span>Assembled</span>

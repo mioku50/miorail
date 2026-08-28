@@ -252,6 +252,10 @@ test('zero supply stays reviewed and visible without blocking the current market
     result.representations.find((row) => row.tokenAddress === B)?.supply.state,
     'zero_supply',
   );
+  assert.equal(
+    result.representations.find((row) => row.tokenAddress === B)?.basis.reasonCode,
+    'zero_supply',
+  );
   assert.notEqual(
     result.representations.find((row) => row.tokenAddress === B)?.status,
     'unavailable',
@@ -287,7 +291,19 @@ test('cash-size anchor no-route is BUY no-route but SELL unsized for the same ex
   assert.equal(buy.marketOutcomeCoverage.status, 'complete');
   assert.equal(sell.representations[0]?.status, 'measurement_failed');
   assert.equal(sell.representations[0]?.lastObservation?.status, 'unsized');
+  assert.equal(sell.representations[0]?.basis.reasonCode, 'unsized_sell');
   assert.equal(sell.marketOutcomeCoverage.status, 'incomplete');
+});
+
+test('an expired SELL sizing miss keeps unsized as the basis blocker', async () => {
+  const closed = run(B, '0', 'cash_size_anchor_no_route');
+  closed.observations[0]!.expiresAt = '2026-08-26T12:00:30.000Z';
+  const result = await assembleMarketRealityV2(
+    deps({ [B]: closed }, { bindings: [binding(B, 'backed:instrument_id:b')] }),
+    { underlyingKey: UNDERLYING, direction: 'sell', requestedCashAtomic: '100000000' },
+  );
+  assert.equal(result.representations[0]?.lastObservation?.status, 'unsized');
+  assert.equal(result.representations[0]?.basis.reasonCode, 'unsized_sell');
 });
 
 test('a stale B20 multiplier cannot normalize a fresh router quote', async () => {

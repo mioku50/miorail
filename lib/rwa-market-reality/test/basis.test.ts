@@ -312,6 +312,14 @@ test('zero supply stays visible but cannot become comparable', () => {
   );
 });
 
+test('zero supply is the primary basis blocker even when the router read failed', () => {
+  const basis = evaluateMarketRealityBasisV1(
+    input({ supplyState: 'zero_supply', marketStatus: 'measurement_failed' }),
+  );
+  assert.equal(basis.reasonCode, 'zero_supply');
+  assert.equal(basis.reason, 'Zero supply is outside the active market comparison.');
+});
+
 test('basis objects never contain simulation, approval, calldata or transaction fields', () => {
   const json = JSON.stringify(evaluateMarketRealityBasisV1(input()));
   for (const forbidden of ['simulation', 'approval', 'calldata', 'transaction']) {

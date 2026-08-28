@@ -25,6 +25,7 @@ import {
   type ConsolePipelineStateV1,
 } from '../src/console/navigation';
 import { ConsoleRightRail } from '../src/console/ConsoleScreens';
+import { ConsoleShell } from '../src/console/ConsoleShell';
 import { OpportunitiesScreen, type OpportunityCardViewV1 } from '../src/console/OpportunitiesScreen';
 import { opportunityCardViewV1 } from '../src/console/opportunityCardView';
 import { B20_STANDING_GROUP_COPY_V1 } from '@mioagent/opportunity-rail/exitStanding';
@@ -158,18 +159,14 @@ describe('§9.2 — an unconfigured pipeline is never an empty feed', () => {
 describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => {
   const shell = read('../src/console/ConsoleShell.tsx');
 
-  test('the drawer carries the three tabs plus the five surfaces that are not where work starts', () => {
-    // None of the five is in the tab bar. Investigate is where you go with an
-    // address you already have; Market Reality is where you go with a company
-    // you already picked. A bar of three working surfaces is more honest than
-    // one that grows a tab for every surface that exists.
+  test('Stocks leads and the evidence tools remain reachable after it', () => {
     assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 8);
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
+      'market',
       'opportunities',
+      'investigate',
       'portfolio',
       'routes',
-      'market',
-      'investigate',
       'activity',
       'extensions',
       'settings',
@@ -209,6 +206,36 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
     assert.ok(!shell.includes('Route adapters'), 'the adapter list is still in the rail');
     assert.ok(!shell.includes('usebar'), 'the usage bars are still in the rail');
     assert.ok(!shell.includes('Daily limit'), 'the limits row is still in the rail');
+  });
+
+  test('Stocks does not carry execution sessions or an empty right rail', () => {
+    const nav = consoleNavModelV1({ mounted: CONSOLE_DRAWER_SECTIONS_V1, active: 'market' });
+    const markup = renderToStaticMarkup(
+      <ConsoleShell
+        header={{
+          crumb: ['Stocks'],
+          nav,
+          blockNumber: null,
+          gasLabel: null,
+          networkLabel: 'Base mainnet',
+          connected: false,
+          walletLabel: null,
+        }}
+        left={{ nav, sessions: [], sessionCount: '0', proofs: [], proofCount: '0' }}
+        footer={{ adaptersLabel: '—', sourcesLabel: '0', spendLabel: '$0', blockNumber: null }}
+        right={null}
+        theme="dark"
+        onThemeChange={() => undefined}
+        onNewGoal={() => undefined}
+        onSelectSession={() => undefined}
+        onSelectProof={() => undefined}
+      >
+        <div>Stocks body</div>
+      </ConsoleShell>,
+    );
+    assert.match(markup, /Advanced evidence/);
+    assert.match(markup, /app no-right/);
+    assert.doesNotMatch(markup, /\+ New goal|Active session|Recent proofs|aria-label="Live data"/);
   });
 
   test('the adapter list is on Settings instead', () => {

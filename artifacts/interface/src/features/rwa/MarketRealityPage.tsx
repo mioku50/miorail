@@ -5,7 +5,6 @@ import {
   ConsoleShell,
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
-  MarketRealityRail,
   MarketRealityScreen,
   chainBlockNumberV1,
   chainGasLabelV1,
@@ -17,6 +16,7 @@ import {
   underlyingCountersV1,
   useConsoleTheme,
   type MarketRealityDirectionV1,
+  type MarketRealitySurfaceV1,
 } from '@mioagent/ui';
 import {
   useMeasureRwaMarketReality,
@@ -76,12 +76,14 @@ function questionFromSearchV1(search: string): {
   underlyingKey: string | null;
   direction: MarketRealityDirectionV1;
   requestedCashAtomic: string;
+  surface: MarketRealitySurfaceV1;
 } {
   const params = new URLSearchParams(search);
   const direction = params.get('direction');
   const size = params.get('size');
   return {
     underlyingKey: params.get('key'),
+    surface: params.get('view') === 'utility' ? 'utility' : 'market',
     direction: MARKET_REALITY_DIRECTIONS_V1.includes(direction as MarketRealityDirectionV1)
       ? (direction as MarketRealityDirectionV1)
       : 'sell',
@@ -206,7 +208,7 @@ export function MarketRealityPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Market Reality'],
+        crumb: ['Stocks'],
         nav: nav.header,
         onNavigate: nav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
@@ -232,11 +234,7 @@ export function MarketRealityPage() {
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
-      // What this comparison checked and what it never checks. `railFold`
-      // repeats it in the centre column on a narrow screen, so a phone loses
-      // the layout and not the caveats.
-      right={<MarketRealityRail view={view} />}
-      railFold={<MarketRealityRail view={view} />}
+      right={null}
       theme={theme}
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
@@ -255,6 +253,7 @@ export function MarketRealityPage() {
           selectedKey,
           direction: question.direction,
           requestedCashAtomic: question.requestedCashAtomic,
+          surface: question.surface,
 
           view,
           viewLoading: reality.isLoading,
@@ -280,6 +279,7 @@ export function MarketRealityPage() {
               : {}),
             onDirection: (direction) => setQuestion({ direction }),
             onSize: (requestedCashAtomic) => setQuestion({ size: requestedCashAtomic }),
+            onSurface: (surface) => setQuestion({ view: surface }),
             onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
           },
         }}

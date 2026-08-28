@@ -75,6 +75,23 @@ function localDateAndMinuteV1(timestamp: string): { localDate: string; minute: n
 export function evaluateMarketRealityBasisV1(
   input: MarketRealityBasisInputV1,
 ): MarketRealityBasisDecisionV1 {
+  // Supply is the representation's admission gate to the active market
+  // denominator. A router may have failed, refused or never been called, but
+  // none of those observations is the reason a reviewed zero-supply address
+  // has no basis. Keeping this first prevents infrastructure state from
+  // overwriting the stronger exact-address onchain fact.
+  if (input.supplyState === 'zero_supply') {
+    return withheldV1(
+      'zero_supply',
+      'Zero supply is outside the active market comparison.',
+    );
+  }
+  if (input.supplyState !== 'positive_supply') {
+    return withheldV1(
+      'supply_unknown',
+      'Positive outstanding supply is not established for this exact representation.',
+    );
+  }
   if (input.marketStatus === 'no_route') {
     return withheldV1('no_route', 'No approved route returned a quote for this exact question.');
   }
@@ -113,15 +130,6 @@ export function evaluateMarketRealityBasisV1(
     evaluatedMs >= quoteExpiresMs
   ) {
     return withheldV1('expired_quote', 'The exact executable quote is no longer open.');
-  }
-  if (input.supplyState === 'zero_supply') {
-    return withheldV1('zero_supply', 'The reviewed representation has exact zero supply.');
-  }
-  if (input.supplyState !== 'positive_supply') {
-    return withheldV1(
-      'supply_unknown',
-      'Positive outstanding supply is not established for this exact representation.',
-    );
   }
   if (
     input.normalizedExposureAtomic === null ||

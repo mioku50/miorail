@@ -30,17 +30,25 @@ export function HomeRoute() {
   const { address } = useAccount();
   const status = useStatus();
   const discoverOn = status.data?.productMigration?.b20ControlV1 === true;
+  const stocksOn = status.data?.productMigration?.routeIntelligenceV1 === true;
 
   // Not asked at all when the flag is off: the endpoint would refuse, and
   // spending a round trip to be told what the status response already said is
   // just a slower redirect.
   const feed = useB20Opportunities(undefined, { enabled: discoverOn });
 
-  const resolving = status.isPending || (discoverOn && feed.isPending);
+  const resolving = status.isPending || (!stocksOn && discoverOn && feed.isPending);
   if (resolving) {
     // Deliberately quiet. A spinner here would be the first thing every user
     // sees on every cold load, for a decision that resolves in one request.
     return <div className="mio-console app" />;
+  }
+
+  // Phase 11: the reviewed stock graph is the consumer product. The legacy
+  // evidence index remains reachable, but it is no longer the first screen
+  // when route intelligence is available on this deployment.
+  if (stocksOn) {
+    return <Redirect to={`${consoleSectionPathV1('market')}${window.location.search}`} replace />;
   }
 
   const pipeline = feed.data?.pipeline ?? null;

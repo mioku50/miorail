@@ -375,11 +375,14 @@ export async function assembleMarketRealityV2(
           }) ?? Promise.resolve(unknownReferenceV1()))
         : unknownReferenceV1();
       const supply = supplyEvidenceV1(supplyByAddress.get(binding.tokenAddress) ?? null, nowMs);
+      const lastObservation = latestObservationV1(rows, question.direction, nowMs);
       const basisMarketStatus = basisEvidenceQuote
         ? ('quoted' as const)
-        : sourceStates.some((item) => item.status === 'unsized')
+        : lastObservation?.status === 'unsized' ||
+            sourceStates.some((item) => item.status === 'unsized')
           ? ('unsized' as const)
-          : sourceStates.length > 0 && sourceStates.every((item) => item.status === 'no_route')
+          : lastObservation?.status === 'no_route' ||
+              (sourceStates.length > 0 && sourceStates.every((item) => item.status === 'no_route'))
             ? ('no_route' as const)
             : ('measurement_failed' as const);
       const basis = evaluateMarketRealityBasisV1({
@@ -403,7 +406,6 @@ export async function assembleMarketRealityV2(
             destinations: [...run.destinations].sort(),
           })
         : null;
-      const lastObservation = latestObservationV1(rows, question.direction, nowMs);
       const liveness: MarketRealityLivenessV1 =
         lastObservation === null
           ? 'never_measured'

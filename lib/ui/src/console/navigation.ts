@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['opportunities', 'market', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['market', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -46,7 +46,7 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // corpus — assets an issuer publishes, identified by address — with the
     // launch feed a page deeper. Keeping "B20" in the label would name the
     // smaller half of the page after the part that moved.
-    label: 'Discover',
+    label: 'Evidence index',
     compactLabel: 'Discover',
     path: '/opportunities',
     blurb: 'Officially issued assets, what getting back out costs, and what changed.',
@@ -63,8 +63,8 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // security in the corpus, a tab promising a comparison would be promising
     // more than the evidence currently supports — the drawer is honest about
     // where the surface stands without hiding it.
-    label: 'Market Reality',
-    compactLabel: 'Reality',
+    label: 'Stocks',
+    compactLabel: 'Stocks',
     path: '/market',
     blurb: 'One security, every reviewed way to hold it on Base, at one exact size.',
   },
@@ -87,7 +87,7 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // compact bar has said "B20" since it was built, with a comment noting
     // that is what the tab actually contains; the full label just never
     // followed, so the two disagreed on every screen wider than 390px.
-    label: 'B20',
+    label: 'B20 controls',
     compactLabel: 'B20',
     path: '/portfolio',
     blurb: 'The B20 tokens you hold, what their controls have done, and your wallet balances.',
@@ -147,7 +147,7 @@ export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'route
 /** T70 §3 — the mobile drawer is exactly these eight and nothing else. */
 // Activity and Extensions sit in the drawer rather than the tab bar. Neither
 // is where work starts; both are places you go to look something up.
-export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_PRIMARY_SECTIONS_V1, 'market', 'investigate', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_DRAWER_SECTIONS_V1 = ['market', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;

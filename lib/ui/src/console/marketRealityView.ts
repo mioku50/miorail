@@ -1,4 +1,9 @@
 import { REPRESENTATION_STRUCTURE_ADAPTERS_V1 } from '@mioagent/rwa-issuer/structureAdapters';
+import {
+  representationUtilityMapV1,
+  type RepresentationUtilityEdgeV1,
+  type UtilityEvidenceStateV1,
+} from '@mioagent/rwa-issuer/utilityMap';
 
 import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
@@ -258,8 +263,32 @@ export interface UnderlyingChoiceViewV1 {
   identifier: string | null;
   /** "Coinbase · Backed" or "Backed only". */
   issuerLine: string;
+  issuerIds: readonly IssuerIdV1[];
   representationCount: number;
   multiIssuer: boolean;
+}
+
+export interface UtilitySourceViewV1 {
+  label: string;
+  href: string | null;
+  checkedAt: string;
+}
+
+export interface UtilityEdgeViewV1 {
+  edgeId: RepresentationUtilityEdgeV1['edgeId'];
+  label: string;
+  state: UtilityEvidenceStateV1;
+  stateLabel: string;
+  checkedAt: string;
+  providerLabel: string | null;
+  note: string;
+  eligibilityNote: string;
+  sources: UtilitySourceViewV1[];
+}
+
+export interface UtilityGroupViewV1 {
+  label: string;
+  edges: UtilityEdgeViewV1[];
 }
 
 export interface RepresentationViewV1 {
@@ -286,6 +315,12 @@ export interface RepresentationViewV1 {
   /** Holding, redeeming and distributions — from the reviewed adapters. */
   terms: FactViewV1[];
   technical: { label: string; value: string }[];
+  /** Phase 11. Exact-address utility evidence. No edge implies personal
+   * eligibility and no router quote is promoted to execution. */
+  utility: {
+    caip10: string;
+    groups: UtilityGroupViewV1[];
+  };
 }
 
 export interface MarketRealityViewV1 {
@@ -748,6 +783,107 @@ function technicalV1(
   return rows;
 }
 
+const UTILITY_STATE_LABEL_V1: Readonly<Record<UtilityEvidenceStateV1, string>> = {
+  available: 'Available',
+  observed: 'Observed',
+  documented: 'Documented',
+  not_established: 'Not established',
+  stale: 'Stale',
+};
+
+const UTILITY_SOURCE_LABEL_V1: Readonly<
+  Record<RepresentationUtilityEdgeV1['evidence'][number]['kind'], string>
+> = {
+  reviewed_document: 'Reviewed documentation',
+  reviewed_machine_api: 'Reviewed machine source',
+  reviewed_source_code: 'Reviewed source code',
+  base_chain_call: 'Base contract read',
+  router_quote: 'Exact router quote',
+  reviewed_registry_check: 'Reviewed registry check',
+};
+
+function latestQuoteV1(
+  representation: MarketRealityRepresentationWireV1,
+): MarketRealityQuoteWireV1 | null {
+  let latest: MarketRealityQuoteWireV1 | null = null;
+  for (const source of representation.sources) {
+    const quote = source.quoteEvidence;
+    if (!quote) continue;
+    if (!latest || Date.parse(quote.observedAt) > Date.parse(latest.observedAt)) latest = quote;
+  }
+  return latest;
+}
+
+function utilityEdgeViewV1(
+  edge: RepresentationUtilityEdgeV1,
+): UtilityEdgeViewV1 {
+  return {
+    edgeId: edge.edgeId,
+    label: edge.label,
+    state: edge.state,
+    stateLabel: UTILITY_STATE_LABEL_V1[edge.state],
+    checkedAt: edge.checkedAt,
+    providerLabel: edge.providerId,
+    note: edge.note,
+    eligibilityNote: edge.eligibilityNote,
+    sources: edge.evidence.map((source) => ({
+      label: UTILITY_SOURCE_LABEL_V1[source.kind],
+      href: /^https:\/\//.test(source.ref) ? source.ref : null,
+      checkedAt: source.checkedAt,
+    })),
+  };
+}
+
+function utilityViewV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): RepresentationViewV1['utility'] {
+  const quote = latestQuoteV1(representation);
+  const quoteOpen = quote !== null && Date.parse(quote.expiresAt) > Date.parse(nowIso);
+  const last = representation.lastObservation;
+  const source = quote?.source ?? last?.source ?? representation.sources[0]?.source ?? null;
+  const outcome = representationOutcomeV1(representation, nowIso);
+  const marketTrade = quote
+    ? {
+        state: quoteOpen ? ('observed' as const) : ('stale' as const),
+        providerId: quote.source,
+        checkedAt: quote.observedAt,
+        evidenceRef: `router_quote:${quote.evidenceHash}`,
+        note: quoteOpen
+          ? 'A router reached this exact representation and size. The quote estimates economics; execution is not established.'
+          : 'A router previously reached this exact representation and size, but that quote is now history.',
+      }
+    : {
+        state: 'not_established' as const,
+        providerId: source,
+        checkedAt:
+          last?.observedAt ?? representation.observedAt ?? representation.supply.observedAt ?? nowIso,
+        evidenceRef: null,
+        note:
+          outcome === 'no_route' || outcome === 'stale_finding'
+            ? 'No approved router route was established for this exact direction and size. This route-scoped result is not an asset-wide claim.'
+            : outcome === 'provider_failed'
+              ? 'Miorail did not obtain a successful router measurement. Provider failure is not a claim about the representation.'
+              : outcome === 'unsized'
+                ? 'The exact market question was not sized, so route reachability was not established.'
+                : 'No reviewed exact-address router observation establishes trade reachability for this question.',
+      };
+
+  const map = representationUtilityMapV1({
+    tokenAddress: representation.tokenAddress,
+    issuerId: representation.issuerId,
+    evaluatedAt: nowIso,
+    marketTrade,
+  });
+  return {
+    caip10: map.caip10,
+    groups: [
+      { label: 'Markets and DeFi', edges: map.marketDefi.map(utilityEdgeViewV1) },
+      { label: 'Issuer services', edges: map.issuer.map(utilityEdgeViewV1) },
+    ],
+  };
+}
+
 export function underlyingChoicesV1(
   wire: MarketRealityIndexWireV1 | null,
 ): UnderlyingChoiceViewV1[] {
@@ -765,6 +901,7 @@ export function underlyingChoicesV1(
       entry.issuerIds.length === 0
         ? 'Issuer not attributed'
         : entry.issuerIds.map((id) => ISSUER_NAME_V1[id]).join(' · '),
+    issuerIds: entry.issuerIds,
     representationCount: entry.representationCount,
     multiIssuer: entry.multiIssuer,
   }));
@@ -788,13 +925,13 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
       tone: 'neutral',
     },
     {
-      label: 'Carried by two issuers',
+      label: 'Multi-issuer stocks',
       value: String(wire.totals.multiIssuerUnderlyings),
       // The only number on the page that says whether a COMPARISON exists at
       // all. Counted by distinct issuer, so one issuer's token plus its own
       // wrapper never inflates it.
-      note: 'the only securities this page can compare',
-      tone: wire.totals.multiIssuerUnderlyings > 0 ? 'good' : 'off',
+      note: 'have reviewed representations from two or more issuers',
+      tone: 'neutral',
     },
   ];
 }
@@ -826,9 +963,9 @@ function coverageBodyV1(input: {
     return `${input.subject} has ${ways} on Base, but no representation currently has fresh evidence of outstanding supply. Reviewed zero-supply contracts remain visible below.`;
   }
   if (input.status === 'complete') {
-    return `Miorail obtained a legitimate answer to this exact market question for all ${input.eligible} positive-supply representations. This is categorical coverage, not permission to rank them.`;
+    return `Miorail has a current market answer for all ${input.eligible} outstanding representations at this exact direction and size.`;
   }
-  return `Miorail answered this exact market question for ${input.answered} of ${input.eligible} positive-supply representations. Every unanswered card says whether the missing fact belongs to coverage, sizing or infrastructure.`;
+  return `Miorail has a current market answer for ${input.answered} of ${input.eligible} outstanding representations at this exact direction and size. Each remaining card says what is missing.`;
 }
 
 export function marketRealityViewV1(input: {
@@ -855,7 +992,7 @@ export function marketRealityViewV1(input: {
     title: input.choice?.title ?? wire.question.underlyingKey,
     identifier: input.choice?.identifier ?? null,
     questionLine,
-    coverageChip: `${answered} of ${eligible} market outcomes`,
+    coverageChip: `${answered} / ${eligible} market answers`,
     coverageTone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
     coverageDetail: wire.marketOutcomeCoverage.reason,
     comparisonSummary: [
@@ -866,7 +1003,7 @@ export function marketRealityViewV1(input: {
         tone: 'neutral',
       },
       {
-        label: 'Outstanding supply',
+        label: 'Outstanding representations',
         value: String(wire.universe.positiveSupplyRepresentationCount),
         note:
           wire.universe.unresolvedSupplyRepresentationCount > 0
@@ -875,21 +1012,21 @@ export function marketRealityViewV1(input: {
         tone: wire.universe.unresolvedSupplyRepresentationCount > 0 ? 'warn' : 'neutral',
       },
       {
-        label: 'Market question answered',
+        label: 'Market answers',
         value: `${answered} / ${eligible}`,
-        note: 'categorical outcomes for this exact direction and size',
+        note: 'this exact direction and size',
         tone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
       },
       {
-        label: 'Priced',
+        label: 'Live prices',
         value: `${priced} / ${wire.numericComparisonCoverage.eligibleRepresentationCount}`,
-        note: 'fresh normalized numeric quotes',
+        note: 'open normalized router quotes',
         tone: wire.numericComparisonCoverage.status === 'complete' ? 'good' : 'warn',
       },
       {
-        label: 'Ranking',
-        value: 'WITHHELD',
-        note: 'Phase 10B.8 never emits BEST',
+        label: 'Comparison',
+        value: 'Not ranked',
+        note: 'Miorail does not choose a winner from these facts',
         tone: 'off',
       },
     ],
@@ -909,7 +1046,7 @@ export function marketRealityViewV1(input: {
     // Never hidden behind a control. A reader who does not see this line will
     // read the leftmost column as the winner.
     rankingNote:
-      wire.ranking.reason ?? 'No representation is marked best: Phase 10B.8 withholds ranking.',
+      'No winner is selected. Compare the exact market state and evidence for each representation.',
     representations: wire.representations.map((representation) => {
       const outcome = representationOutcomeV1(representation, input.now);
       const adapter = REPRESENTATION_STRUCTURE_ADAPTERS_V1[representation.issuerId];
@@ -938,6 +1075,7 @@ export function marketRealityViewV1(input: {
           ...termsV1(representation),
         ],
         technical: technicalV1(representation, input.now),
+        utility: utilityViewV1(representation, input.now),
       };
     }),
     scope: MARKET_REALITY_SCOPE_V1,
