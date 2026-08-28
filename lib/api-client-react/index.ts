@@ -1106,6 +1106,17 @@ export function useMeasureRwaMarketReality(
         ],
         data,
       );
+      // The completed run is append-only history too. A reader already on a
+      // historical target must not keep the series from before this measure.
+      void queryClient.invalidateQueries({
+        queryKey: [
+          'rwa-market-reality-history',
+          variables.underlyingKey,
+          variables.direction,
+          variables.requestedCashAtomic,
+          variables.destination ?? 'USDC',
+        ],
+      });
       options?.onSuccess?.(data, variables, onMutateResult, context);
     },
   });

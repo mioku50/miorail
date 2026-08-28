@@ -11,6 +11,12 @@ import {
   type ToneV1,
   type UnderlyingChoiceViewV1,
 } from './marketRealityView';
+import {
+  MARKET_REALITY_HISTORY_PERIODS_V1,
+  type ComparableMarketHistoryRepresentationV1,
+  type ComparableMarketHistoryViewV1,
+  type MarketRealityHistoryPeriodV1,
+} from './marketRealityHistoryView';
 
 void React;
 
@@ -71,6 +77,7 @@ export interface MarketRealityActionsV1 {
   onDirection: (direction: MarketRealityDirectionV1) => void;
   onSize: (requestedCashAtomic: string) => void;
   onSurface: (surface: MarketRealitySurfaceV1) => void;
+  onHistoryPeriod: (period: MarketRealityHistoryPeriodV1) => void;
   /** Open the full dossier for one address. Absent when not wired. */
   onInvestigate?: (tokenAddress: string) => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -91,10 +98,17 @@ export interface MarketRealityScreenModelV1 {
   direction: MarketRealityDirectionV1;
   requestedCashAtomic: string;
   surface: MarketRealitySurfaceV1;
+  historyPeriod: MarketRealityHistoryPeriodV1;
 
   view: MarketRealityViewV1 | null;
   viewLoading: boolean;
   viewError: string | null;
+
+  /** Phase 12.1. The raw technical series is projected before it reaches the
+   * screen, so a provider failure can only arrive as a gap. */
+  history: ComparableMarketHistoryViewV1 | null;
+  historyLoading: boolean;
+  historyError: string | null;
 
   /** A measurement is running. */
   measuring: boolean;
@@ -110,6 +124,126 @@ const DIRECTION_LABEL_V1: Readonly<Record<MarketRealityDirectionV1, string>> = {
   buy: 'Buy',
 };
 
+function HistoryMetricList({
+  metrics,
+  label,
+}: {
+  metrics: ReadonlyArray<ComparableMarketHistoryRepresentationV1['metrics'][number]>;
+  label: string;
+}) {
+  if (metrics.length === 0) return null;
+  return (
+    <dl className="cr-facts mr-history-facts" aria-label={label}>
+      {metrics.map((metric) => (
+        <div key={metric.label}>
+          <dt>{metric.label}</dt>
+          <dd>
+            <strong className="cr-v mono">{metric.value}</strong>
+            {metric.note ? <span className="cr-fact-note"> · {metric.note}</span> : null}
+          </dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+function ComparableHistoryCard({
+  representation,
+  onInvestigate,
+}: {
+  representation: ComparableMarketHistoryRepresentationV1;
+  onInvestigate?: (tokenAddress: string) => void;
+}) {
+  return (
+    <article
+      className="mr-rep mr-history-rep"
+      data-history-state={representation.state}
+      aria-label={`${representation.issuerName} comparable history ${representation.tokenAddress}`}
+    >
+      <div className="cr-top">
+        <span className="cr-name">
+          <TokenIdentityV1
+            symbol={representation.issuerName}
+            name={representation.structureLabel}
+            tokenAddress={representation.tokenAddress}
+          />
+        </span>
+        <span
+          className="pill cr-status"
+          data-tone={representation.state === 'quoted' ? 'neutral' : 'off'}
+        >
+          {representation.stateLabel}
+        </span>
+      </div>
+
+      {representation.observedAge ? (
+        <p className="mr-attribution">
+          <span className="mr-attribution-k">Captured</span> {representation.observedAge}
+          {representation.source ? <> · {representation.source}</> : null}
+        </p>
+      ) : null}
+      <p className="cr-verdict">{representation.summary}</p>
+      <HistoryMetricList
+        metrics={representation.metrics}
+        label={`${representation.issuerName} historical observation`}
+      />
+
+      {representation.changesToNow.length > 0 ? (
+        <section className="mr-history-change" aria-label="Change to now">
+          <h4>Change to now</h4>
+          <HistoryMetricList
+            metrics={representation.changesToNow}
+            label={`${representation.issuerName} change to now`}
+          />
+        </section>
+      ) : null}
+      {representation.changeNote ? <p className="lnote">{representation.changeNote}</p> : null}
+
+      {representation.observedAt ? (
+        <details className="card-evidence">
+          <summary>Technical evidence</summary>
+          <div className="card-evidence-body">
+            <dl className="cr-facts">
+              <div>
+                <dt>Exact observation</dt>
+                <dd>
+                  <strong className="cr-v mono">{representation.observedAt}</strong>
+                </dd>
+              </div>
+              <div>
+                <dt>Representation</dt>
+                <dd>
+                  <strong className="cr-v mono">{representation.tokenAddress}</strong>
+                </dd>
+              </div>
+              {representation.source ? (
+                <div>
+                  <dt>Route source</dt>
+                  <dd>
+                    <strong className="cr-v mono">{representation.source}</strong>
+                  </dd>
+                </div>
+              ) : null}
+            </dl>
+          </div>
+        </details>
+      ) : null}
+
+      {onInvestigate ? (
+        <div className="card-actions">
+          <button
+            type="button"
+            className="btn sec"
+            onClick={() => onInvestigate(representation.tokenAddress)}
+          >
+            Investigate
+          </button>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function RepresentationCard({
   representation,
   actions,
@@ -121,7 +255,10 @@ function RepresentationCard({
 }) {
   if (surface === 'utility') {
     return (
-      <article className="mr-rep mr-utility-rep" aria-label={`${representation.issuerName} utility map`}>
+      <article
+        className="mr-rep mr-utility-rep"
+        aria-label={`${representation.issuerName} utility map`}
+      >
         <div className="cr-top">
           <span className="cr-name">
             <TokenIdentityV1
@@ -130,7 +267,9 @@ function RepresentationCard({
               tokenAddress={representation.tokenAddress}
             />
           </span>
-          <span className="pill cr-status" data-tone="neutral">Exact address</span>
+          <span className="pill cr-status" data-tone="neutral">
+            Exact address
+          </span>
         </div>
         <p className="mr-caip mono">{representation.utility.caip10}</p>
         <p className="lnote">{representation.structureNote}</p>
@@ -142,7 +281,16 @@ function RepresentationCard({
                 <article className="mr-utility-edge" key={edge.edgeId} data-state={edge.state}>
                   <div className="mr-utility-edge-head">
                     <strong>{edge.label}</strong>
-                    <span className="pill cr-status" data-tone={edge.state === 'stale' ? 'warn' : edge.state === 'not_established' ? 'off' : 'neutral'}>
+                    <span
+                      className="pill cr-status"
+                      data-tone={
+                        edge.state === 'stale'
+                          ? 'warn'
+                          : edge.state === 'not_established'
+                            ? 'off'
+                            : 'neutral'
+                      }
+                    >
                       {edge.stateLabel}
                     </span>
                   </div>
@@ -150,13 +298,23 @@ function RepresentationCard({
                   <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
                   <p className="mr-utility-meta">
                     Checked <span className="mono">{edge.checkedAt}</span>
-                    {edge.providerLabel ? <> · source <span className="mono">{edge.providerLabel}</span></> : null}
+                    {edge.providerLabel ? (
+                      <>
+                        {' '}
+                        · source <span className="mono">{edge.providerLabel}</span>
+                      </>
+                    ) : null}
                   </p>
                   {edge.sources.length > 0 ? (
                     <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
                       {edge.sources.map((source, index) =>
                         source.href ? (
-                          <a key={`${source.label}:${index}`} href={source.href} target="_blank" rel="noreferrer">
+                          <a
+                            key={`${source.label}:${index}`}
+                            href={source.href}
+                            target="_blank"
+                            rel="noreferrer"
+                          >
                             {source.label}
                           </a>
                         ) : (
@@ -172,7 +330,11 @@ function RepresentationCard({
         ))}
         {actions.onInvestigate ? (
           <div className="card-actions">
-            <button type="button" className="btn sec" onClick={() => actions.onInvestigate!(representation.tokenAddress)}>
+            <button
+              type="button"
+              className="btn sec"
+              onClick={() => actions.onInvestigate!(representation.tokenAddress)}
+            >
               Technical evidence
             </button>
           </div>
@@ -284,8 +446,14 @@ function Chooser({
     const query = search.trim().toLowerCase();
     return choices.filter((choice) => {
       if (filter === 'multi' && !choice.multiIssuer) return false;
-      if (filter !== 'all' && filter !== 'multi' && !choice.issuerIds.includes(filter)) return false;
-      return !query || `${choice.title} ${choice.identifier ?? ''} ${choice.issuerLine}`.toLowerCase().includes(query);
+      if (filter !== 'all' && filter !== 'multi' && !choice.issuerIds.includes(filter))
+        return false;
+      return (
+        !query ||
+        `${choice.title} ${choice.identifier ?? ''} ${choice.issuerLine}`
+          .toLowerCase()
+          .includes(query)
+      );
     });
   }, [choices, filter, search]);
   if (error) return <p className="note warn">{error}</p>;
@@ -302,17 +470,29 @@ function Chooser({
     <div className="mr-browser">
       <label className="mr-search">
         <span className="sr-only">Search stocks</span>
-        <input value={search} onChange={(event) => setSearch(event.currentTarget.value)} placeholder="Search stocks, ticker or ISIN" />
+        <input
+          value={search}
+          onChange={(event) => setSearch(event.currentTarget.value)}
+          placeholder="Search stocks, ticker or ISIN"
+        />
       </label>
       <div className="mr-filters" role="group" aria-label="Stock filters">
-        {([
-          ['all', 'All'],
-          ['multi', 'Multi-issuer'],
-          ['coinbase', 'Coinbase'],
-          ['dinari', 'Dinari'],
-          ['backed', 'Backed'],
-        ] as const).map(([id, label]) => (
-          <button key={id} type="button" className={`pill${filter === id ? ' on' : ''}`} aria-pressed={filter === id} onClick={() => setFilter(id)}>
+        {(
+          [
+            ['all', 'All'],
+            ['multi', 'Multi-issuer'],
+            ['coinbase', 'Coinbase'],
+            ['dinari', 'Dinari'],
+            ['backed', 'Backed'],
+          ] as const
+        ).map(([id, label]) => (
+          <button
+            key={id}
+            type="button"
+            className={`pill${filter === id ? ' on' : ''}`}
+            aria-pressed={filter === id}
+            onClick={() => setFilter(id)}
+          >
             {label}
           </button>
         ))}
@@ -335,7 +515,9 @@ function Chooser({
           </button>
         ))}
       </div>
-      {visible.length === 0 ? <p className="empty">No reviewed stock matches these filters.</p> : null}
+      {visible.length === 0 ? (
+        <p className="empty">No reviewed stock matches these filters.</p>
+      ) : null}
     </div>
   );
 }
@@ -363,10 +545,22 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       />
 
       <div className="mr-surface-tabs tabbar" role="tablist" aria-label="Stock views">
-        <button type="button" role="tab" aria-selected={model.surface === 'market'} className={`item${model.surface === 'market' ? ' on' : ''}`} onClick={() => actions.onSurface('market')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={model.surface === 'market'}
+          className={`item${model.surface === 'market' ? ' on' : ''}`}
+          onClick={() => actions.onSurface('market')}
+        >
           Market Reality
         </button>
-        <button type="button" role="tab" aria-selected={model.surface === 'utility'} className={`item${model.surface === 'utility' ? ' on' : ''}`} onClick={() => actions.onSurface('utility')}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={model.surface === 'utility'}
+          className={`item${model.surface === 'utility' ? ' on' : ''}`}
+          onClick={() => actions.onSurface('utility')}
+        >
           Utility + eligibility
         </button>
       </div>
@@ -414,6 +608,27 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         )}
       </div>
 
+      {model.surface === 'market' ? (
+        <div
+          className="tabbar mr-history-tabs"
+          role="tablist"
+          aria-label="Comparable market history"
+        >
+          {MARKET_REALITY_HISTORY_PERIODS_V1.map((period) => (
+            <button
+              key={period.key}
+              type="button"
+              role="tab"
+              aria-selected={period.key === model.historyPeriod}
+              className={`item${period.key === model.historyPeriod ? ' on' : ''}`}
+              onClick={() => actions.onHistoryPeriod(period.key)}
+            >
+              {period.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
       {/* The sizes are the ladder's own rungs. A free size field would ask the
           engine a question it answers exactly or not at all, and an exact miss
           returns an empty board that reads as a broken product. */}
@@ -430,6 +645,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       {model.measurementNote ? <p className="lnote mr-spent">{model.measurementNote}</p> : null}
 
       {model.viewError ? <p className="note warn">{model.viewError}</p> : null}
+      {model.historyError && model.historyPeriod !== 'now' ? (
+        <p className="note warn">{model.historyError}</p>
+      ) : null}
 
       {!model.view ? (
         <p className="empty">
@@ -450,33 +668,83 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               <p className="sub">{model.view.questionLine}</p>
             </div>
             <div className="mr-head-r">
-              <span className="pill cr-status" data-tone={model.surface === 'market' ? model.view.coverageTone : 'neutral'}>
-                {model.surface === 'market' ? model.view.coverageChip : `${model.view.representations.length} exact-address maps`}
+              <span
+                className="pill cr-status"
+                data-tone={
+                  model.surface === 'market' && model.historyPeriod === 'now'
+                    ? model.view.coverageTone
+                    : 'neutral'
+                }
+              >
+                {model.surface === 'utility'
+                  ? `${model.view.representations.length} exact-address maps`
+                  : model.historyPeriod === 'now'
+                    ? model.view.coverageChip
+                    : model.history
+                      ? `${model.history.comparableCount} of ${model.history.representations.length} comparable`
+                      : 'Reading history'}
               </span>
-              <span className="d">assembled {model.view.assembledAge}</span>
+              <span className="d">
+                {model.surface === 'market' && model.historyPeriod !== 'now'
+                  ? (model.history?.targetLabel ?? 'historical target')
+                  : `assembled ${model.view.assembledAge}`}
+              </span>
             </div>
           </div>
 
-          {model.surface === 'market' ? (
+          {model.surface === 'market' && model.historyPeriod === 'now' ? (
             <>
               <p className="cr-verdict">{model.view.coverageBody}</p>
               <FactList facts={model.view.comparisonSummary} label="Market Reality coverage" />
-              {model.view.rankingNote ? <p className="lnote mr-ranking">{model.view.rankingNote}</p> : null}
+              {model.view.rankingNote ? (
+                <p className="lnote mr-ranking">{model.view.rankingNote}</p>
+              ) : null}
             </>
-          ) : (
-            <p className="cr-verdict">What can be established for each representation, without treating documentation as availability or a quote as execution.</p>
-          )}
+          ) : model.surface === 'utility' ? (
+            <p className="cr-verdict">
+              What can be established for each representation, without treating documentation as
+              availability or a quote as execution.
+            </p>
+          ) : model.history ? (
+            <>
+              <p className="cr-verdict">
+                {model.history.exactQuestion} at the nearest successful captured observation to{' '}
+                {model.history.targetLabel}.
+              </p>
+              <p className="lnote mr-history-scope">{model.history.scope}</p>
+            </>
+          ) : null}
 
-          <div className="mr-board" aria-label="Reviewed representations">
-            {model.view.representations.map((representation) => (
-              <RepresentationCard
-                key={representation.tokenAddress}
-                representation={representation}
-                actions={actions}
-                surface={model.surface}
-              />
-            ))}
-          </div>
+          {model.surface === 'market' && model.historyPeriod !== 'now' ? (
+            model.history ? (
+              <div className="mr-board" aria-label="Comparable historical observations">
+                {model.history.representations.map((representation) => (
+                  <ComparableHistoryCard
+                    key={representation.tokenAddress}
+                    representation={representation}
+                    onInvestigate={actions.onInvestigate}
+                  />
+                ))}
+              </div>
+            ) : (
+              <p className="empty">
+                {model.historyLoading
+                  ? 'Reading comparable observations…'
+                  : 'No comparable history response.'}
+              </p>
+            )
+          ) : (
+            <div className="mr-board" aria-label="Reviewed representations">
+              {model.view.representations.map((representation) => (
+                <RepresentationCard
+                  key={representation.tokenAddress}
+                  representation={representation}
+                  actions={actions}
+                  surface={model.surface}
+                />
+              ))}
+            </div>
+          )}
 
           {model.view.representations.length === 0 ? (
             <p className="empty">No reviewed source has bound a Base contract to this security.</p>
@@ -484,7 +752,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
 
           <p className="discover-scope">
             {model.surface === 'market'
-              ? model.view.scope
+              ? model.historyPeriod === 'now'
+                ? model.view.scope
+                : (model.history?.scope ?? model.view.scope)
               : 'Mapped to exact Base addresses. Documentation, observed route reachability and personal eligibility remain separate evidence.'}
           </p>
         </>
@@ -498,14 +768,13 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
  *
  * The absence list is a CONSTANT, not a computed one. A list that shrank when
  * a check happened to run would let a reader infer that everything not shown
- * was covered — and the four things below are never covered by this surface at
+ * was covered — and the three things below are never covered by this surface at
  * any point, however good the evidence gets.
  */
 export const MARKET_REALITY_NOT_CHECKED_V1: readonly string[] = [
   'Whether a quote would still fill when signed — nothing here is simulated.',
   'Anything off Base. A representation on another chain is not on this board.',
   'Whether you personally may hold or redeem a representation.',
-  'History. This is the latest measurement, not a series.',
 ];
 
 export function MarketRealityRail({ view }: { view: MarketRealityViewV1 | null }) {

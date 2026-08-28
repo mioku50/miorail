@@ -236,6 +236,38 @@ function run(input: {
   };
 }
 
+function twoSourceRun(input: {
+  address: string;
+  observedAt: string;
+  routerAError: string;
+  routerBError: string;
+}): CashExitMeasurementRunV1 {
+  const routerA = run({
+    address: input.address,
+    observedAt: input.observedAt,
+    errorCode: input.routerAError,
+    approvedSources: ['router-a', 'router-b'],
+  });
+  const routerB = run({
+    address: input.address,
+    observedAt: input.observedAt,
+    errorCode: input.routerBError,
+    approvedSources: ['router-a', 'router-b'],
+  });
+  return {
+    ...routerA,
+    observations: [
+      routerA.observations[0]!,
+      {
+        ...routerB.observations[0]!,
+        source: 'router-b',
+        status: input.routerBError === 'provider_no_route' ? 'unavailable' : 'measurement_failed',
+        observationHash: CANDIDATE,
+      },
+    ],
+  };
+}
+
 function deps(
   runs: Record<string, CashExitMeasurementRunV1[]>,
   bindings = [binding(A), binding(B)],
@@ -338,9 +370,10 @@ describe('the series is one exact question over time', () => {
     assert.equal(history.since, '2026-08-26T11:00:00.000Z');
   });
 
-  test('a failure is a point, not a gap', async () => {
-    // An hour with no route is a fact about the market. Dropping it would turn
-    // illiquidity into silence, and silence reads as "nobody looked".
+  test('a successful scoped no-route is a point, not a technical gap', async () => {
+    // `provider_no_route` is the typed successful router-market outcome; the
+    // storage schema forbids it on `measurement_failed`. An HTTP/RPC/provider
+    // failure uses a different code and must never be read as this fact.
     const history = await assembleMarketRealityHistoryV1(
       deps({
         [A]: [
@@ -364,6 +397,55 @@ describe('the series is one exact question over time', () => {
     assert.equal(series?.pointCount, 2);
     assert.equal(series?.points[1]?.status, 'no_route');
     assert.equal(series?.points[1]?.returnedCashAtomic, null);
+  });
+
+  test('one venue miss plus one provider failure is our failed read, not an asset no-route', async () => {
+    const history = await assembleMarketRealityHistoryV1(
+      deps({
+        [A]: [
+          twoSourceRun({
+            address: A,
+            observedAt: '2026-08-26T11:30:00.000Z',
+            routerAError: 'provider_no_route',
+            routerBError: 'provider_http_500',
+          }),
+        ],
+        [B]: [],
+      }),
+      {
+        underlyingKey: UNDERLYING,
+        direction: 'sell',
+        requestedCashAtomic: '100000000',
+        window: '6h',
+      },
+    );
+    const point = history.representations.find((row) => row.tokenAddress === A)?.points[0];
+    assert.equal(point?.status, 'measurement_failed');
+    assert.equal(point?.source, 'router-b');
+  });
+
+  test('no-route is retained when every approved source successfully proves it', async () => {
+    const history = await assembleMarketRealityHistoryV1(
+      deps({
+        [A]: [
+          twoSourceRun({
+            address: A,
+            observedAt: '2026-08-26T11:30:00.000Z',
+            routerAError: 'provider_no_route',
+            routerBError: 'provider_no_route',
+          }),
+        ],
+        [B]: [],
+      }),
+      {
+        underlyingKey: UNDERLYING,
+        direction: 'sell',
+        requestedCashAtomic: '100000000',
+        window: '6h',
+      },
+    );
+    const point = history.representations.find((row) => row.tokenAddress === A)?.points[0];
+    assert.equal(point?.status, 'no_route');
   });
 
   test('a failed BUY sizing anchor is an unsized SELL, not a route refusal', async () => {

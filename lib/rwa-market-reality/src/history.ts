@@ -33,9 +33,11 @@ import {
 //     Those are holes in the record and they stay holes, because a line drawn
 //     through them is a measurement nobody took.
 //
-// The series carries failures as points too. "No route at 14:00" is a fact
-// about the market worth seeing next to "0.4% at 15:00", and dropping it would
-// turn an hour of illiquidity into an hour of silence.
+// The raw series retains technical attempts as points so an operator can tell
+// "nobody looked" from "our read failed". Consumer comparability is stricter:
+// `measurement_failed` remains a gap and can never generate a market value or
+// a change event. A typed `no_route` is different — the storage contract only
+// permits it after a successful scoped router measurement.
 // ---------------------------------------------------------------------------
 
 export interface MarketRealityHistoryDepsV1 {
@@ -94,6 +96,12 @@ function pointForRunV1(
 
   const scored = rows.map((row) => ({ row, status: pointStatusV1(row, input.direction) }));
   const quoted = scored.filter((item) => item.status === 'quoted');
+  const measuredSourceSet = new Set(rows.map((row) => row.source));
+  const completeRouterSet =
+    measuredSourceSet.size === run.approvedSources.length &&
+    run.approvedSources.every((source) => measuredSourceSet.has(source));
+  const completeNoRoute =
+    completeRouterSet && scored.length > 0 && scored.every((item) => item.status === 'no_route');
   const chosen =
     quoted.length > 0
       ? quoted.sort((left, right) => {
@@ -105,12 +113,12 @@ function pointForRunV1(
           );
           return l === r ? left.row.source.localeCompare(right.row.source) : l > r ? -1 : 1;
         })[0]!
-      : // No quote anywhere. An answered market question outranks a technical
-        // failure, and an explicitly unsized SELL outranks it too: the latter
-        // proves this direction was never tested after the BUY sizing anchor
-        // failed. Source ordering must not turn either fact into our failure.
-        (scored.find((item) => item.status === 'no_route') ??
+      : // An asset-level no-route point needs the complete reviewed router set.
+        // One venue answering "no route" while another provider fails is still
+        // our incomplete read, never a historical market event.
+        ((completeNoRoute ? scored[0] : undefined) ??
         scored.find((item) => item.status === 'unsized') ??
+        scored.find((item) => item.status === 'measurement_failed') ??
         scored[0]!);
 
   return {

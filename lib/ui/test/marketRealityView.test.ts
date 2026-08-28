@@ -5,6 +5,11 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { MarketRealityScreen } from '../src/console/MarketRealityScreen';
 import {
+  comparableMarketHistoryViewV1,
+  marketExitCostBpsV1,
+  type MarketRealityHistoryWireV1,
+} from '../src/console/marketRealityHistoryView';
+import {
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
   quoteAgeLabelV1,
@@ -146,6 +151,342 @@ function wire(over: Partial<MarketRealityWireV1> = {}): MarketRealityWireV1 {
     ...over,
   };
 }
+
+const ROUTE_POLICY = `0x${'b5'.repeat(32)}`;
+
+function openSellWireV1(returnedCashAtomic = '9958200000'): MarketRealityWireV1 {
+  return wire({
+    question: {
+      underlyingKey: 'security:isin:US67066G1040',
+      direction: 'sell',
+      requestedCashAtomic: '10000000000',
+      cashDecimals: 6,
+      destination: 'USDC',
+    },
+    representations: [
+      representation({
+        status: 'full',
+        routePolicyKey: ROUTE_POLICY,
+        exactTestedTokenAtomic: '50000000000000000000',
+        normalizedExposureAtomic: '50000000000000000000',
+        normalizedExposureDecimals: 18,
+        normalization: 'fresh_ratio_applied',
+        returnedCashAtomic,
+        effectivePriceAtomic: '19916400000',
+        effectivePriceDecimals: 8,
+        premiumDiscountBps: '11',
+        basis: {
+          status: 'comparable',
+          kind: 'current_reference',
+          premiumDiscountBps: '11',
+          reason: 'Same-window reviewed reference.',
+        },
+        sources: [
+          {
+            source: 'kyberswap',
+            status: 'quoted',
+            errorCode: null,
+            quoteEvidence: {
+              source: 'kyberswap',
+              direction: 'sell',
+              inputAtomic: '50000000000000000000',
+              outputAtomic: returnedCashAtomic,
+              observedAt: NOW,
+              expiresAt: '2026-08-26T20:35:00.000Z',
+              evidenceHash: `0x${'95'.repeat(32)}`,
+              blockNumber: null,
+            },
+          },
+        ],
+        liveness: 'live',
+        observedAt: NOW,
+        expiresAt: '2026-08-26T20:35:00.000Z',
+        lastObservation: {
+          ...LAPSED_OBSERVATION,
+          observedAt: NOW,
+          expiresAt: '2026-08-26T20:35:00.000Z',
+          returnedCashAtomic,
+          open: true,
+        },
+      }),
+    ],
+  });
+}
+
+function historyPointV1(
+  over: Partial<MarketRealityHistoryWireV1['representations'][number]['points'][number]> = {},
+): MarketRealityHistoryWireV1['representations'][number]['points'][number] {
+  const observedAt = over.observedAt ?? '2026-08-26T19:30:00.000Z';
+  return {
+    observedAt,
+    status: 'quoted',
+    source: 'kyberswap',
+    returnedCashAtomic: '9973400000',
+    testedTokenAtomic: '50000000000000000000',
+    errorCode: null,
+    approvedSources: ['kyberswap'],
+    marketReality: {
+      tokenAddress: COINBASE_NVDA,
+      direction: 'sell',
+      requestedCashAtomic: '10000000000',
+      destination: 'USDC',
+      source: 'kyberswap',
+      approvedSources: ['kyberswap'],
+      routePolicyKey: ROUTE_POLICY,
+      marketStatus: 'quoted',
+      marketObservedAt: observedAt,
+      effectivePriceAtomic: '19946800000',
+      effectivePriceDecimals: 8,
+      basis: {
+        status: 'comparable',
+        premiumDiscountBps: '-4',
+        reason: 'Same-window reviewed reference.',
+      },
+    },
+    ...over,
+  };
+}
+
+function historyWireV1(
+  points: MarketRealityHistoryWireV1['representations'][number]['points'],
+): MarketRealityHistoryWireV1 {
+  return {
+    underlyingKey: 'security:isin:US67066G1040',
+    direction: 'sell',
+    requestedCashAtomic: '10000000000',
+    destination: 'USDC',
+    window: '7d',
+    since: '2026-08-19T20:34:19.000Z',
+    interpolated: false,
+    representations: [
+      {
+        tokenAddress: COINBASE_NVDA,
+        issuerId: 'coinbase',
+        representationKind: 'b20_asset',
+        points,
+        pointCount: points.length,
+        quotedCount: points.filter((point) => point.status === 'quoted').length,
+        firstObservedAt: points[0]?.observedAt ?? null,
+        lastObservedAt: points[points.length - 1]?.observedAt ?? null,
+      },
+    ],
+    assembledAt: NOW,
+  };
+}
+
+describe('Phase 12.1 comparable market history', () => {
+  test('SELL history derives cash-back and exit-cost changes with exact integer math', () => {
+    assert.equal(marketExitCostBpsV1('10000000000', '9973400000'), '27');
+    assert.equal(marketExitCostBpsV1('10000000000', '9958200000'), '42');
+
+    const view = comparableMarketHistoryViewV1({
+      wire: openSellWireV1(),
+      history: historyWireV1([historyPointV1()]),
+      period: '1h',
+      now: NOW,
+    });
+    const row = view?.representations[0];
+    assert.equal(row?.state, 'quoted');
+    assert.deepEqual(row?.metrics, [
+      { label: 'Cash back', value: '$9,973.40', note: null },
+      { label: 'Exit cost', value: '0.27%', note: '27 bps' },
+    ]);
+    assert.deepEqual(row?.changesToNow, [
+      {
+        label: 'Cash back',
+        value: '$9,973.40 → $9,958.20',
+        note: '−$15.20',
+      },
+      {
+        label: 'Exit cost',
+        value: '0.27% → 0.42%',
+        note: '+15 bps',
+      },
+    ]);
+  });
+
+  test('a provider failure remains a gap and cannot replace a nearby market observation', () => {
+    const failedAt = '2026-08-26T19:34:00.000Z';
+    const failed = historyPointV1({
+      observedAt: failedAt,
+      status: 'measurement_failed',
+      returnedCashAtomic: null,
+      testedTokenAtomic: null,
+      errorCode: 'provider_http_error',
+      marketReality: {
+        ...historyPointV1().marketReality!,
+        marketStatus: 'measurement_failed',
+        marketObservedAt: failedAt,
+        effectivePriceAtomic: null,
+        effectivePriceDecimals: null,
+      },
+    });
+    const view = comparableMarketHistoryViewV1({
+      wire: openSellWireV1(),
+      history: historyWireV1([historyPointV1(), failed]),
+      period: '1h',
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.observedAt, '2026-08-26T19:30:00.000Z');
+    assert.equal(view?.representations[0]?.state, 'quoted');
+
+    const onlyFailure = comparableMarketHistoryViewV1({
+      wire: openSellWireV1(),
+      history: historyWireV1([failed]),
+      period: '1h',
+      now: NOW,
+    });
+    assert.equal(onlyFailure?.representations[0]?.state, 'no_comparable_observation');
+    assert.doesNotMatch(onlyFailure?.representations[0]?.summary ?? '', /unavailable|no route/i);
+  });
+
+  test('old evidence, a different route policy and an observation outside the target stay gaps', () => {
+    const cases = [
+      historyPointV1({ marketReality: null }),
+      historyPointV1({
+        marketReality: {
+          ...historyPointV1().marketReality!,
+          routePolicyKey: `0x${'ee'.repeat(32)}`,
+        },
+      }),
+      historyPointV1({
+        observedAt: '2026-08-26T18:40:00.000Z',
+        marketReality: {
+          ...historyPointV1().marketReality!,
+          marketObservedAt: '2026-08-26T18:40:00.000Z',
+        },
+      }),
+    ];
+    for (const point of cases) {
+      const view = comparableMarketHistoryViewV1({
+        wire: openSellWireV1(),
+        history: historyWireV1([point]),
+        period: '1h',
+        now: NOW,
+      });
+      assert.equal(view?.representations[0]?.state, 'no_comparable_observation');
+    }
+  });
+
+  test('a successful scoped no-route can describe an outcome change', () => {
+    const noRoute = historyPointV1({
+      status: 'no_route',
+      returnedCashAtomic: null,
+      errorCode: 'provider_no_route',
+      marketReality: {
+        ...historyPointV1().marketReality!,
+        marketStatus: 'no_route',
+        effectivePriceAtomic: null,
+        effectivePriceDecimals: null,
+      },
+    });
+    const view = comparableMarketHistoryViewV1({
+      wire: openSellWireV1(),
+      history: historyWireV1([noRoute]),
+      period: '1h',
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.state, 'no_route');
+    assert.deepEqual(view?.representations[0]?.changesToNow, [
+      { label: 'Outcome', value: 'No reviewed route → Route priced', note: null },
+    ]);
+  });
+
+  test('without a fresh Now observation numeric change is withheld', () => {
+    const view = comparableMarketHistoryViewV1({
+      wire: wire({
+        question: openSellWireV1().question,
+        representations: [representation({ routePolicyKey: ROUTE_POLICY })],
+      }),
+      history: historyWireV1([historyPointV1()]),
+      period: '1h',
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.state, 'quoted');
+    assert.deepEqual(view?.representations[0]?.changesToNow, []);
+    assert.match(view?.representations[0]?.changeNote ?? '', /No fresh comparable Now/);
+  });
+
+  test('a changed winning route source withholds numeric change instead of mixing routes', () => {
+    const current = openSellWireV1();
+    const changedSource = wire({
+      ...current,
+      representations: [
+        representation({
+          ...current.representations[0]!,
+          sources: [
+            {
+              ...current.representations[0]!.sources[0]!,
+              source: 'another-router',
+              quoteEvidence: {
+                ...current.representations[0]!.sources[0]!.quoteEvidence!,
+                source: 'another-router',
+              },
+            },
+          ],
+        }),
+      ],
+    });
+    const view = comparableMarketHistoryViewV1({
+      wire: changedSource,
+      history: historyWireV1([historyPointV1()]),
+      period: '1h',
+      now: NOW,
+    });
+    assert.deepEqual(view?.representations[0]?.changesToNow, []);
+    assert.match(view?.representations[0]?.changeNote ?? '', /route source changed/);
+  });
+
+  test('the history screen is neutral, exact and does not emit ranking', () => {
+    const current = openSellWireV1();
+    const currentView = marketRealityViewV1({ wire: current, choice: null, now: NOW });
+    const historyView = comparableMarketHistoryViewV1({
+      wire: current,
+      history: historyWireV1([historyPointV1()]),
+      period: '1h',
+      now: NOW,
+    });
+    assert.ok(currentView && historyView);
+    const markup = renderToStaticMarkup(
+      React.createElement(MarketRealityScreen, {
+        model: {
+          choices: [],
+          choicesLoading: false,
+          choicesError: null,
+          counters: [],
+          selectedKey: current.question.underlyingKey,
+          direction: 'sell',
+          requestedCashAtomic: current.question.requestedCashAtomic,
+          surface: 'market',
+          historyPeriod: '1h',
+          view: currentView,
+          viewLoading: false,
+          viewError: null,
+          history: historyView,
+          historyLoading: false,
+          historyError: null,
+          measuring: false,
+          measurementNote: null,
+          measurementError: null,
+          actions: {
+            onUnderlying: () => undefined,
+            onDirection: () => undefined,
+            onSize: () => undefined,
+            onSurface: () => undefined,
+            onHistoryPeriod: () => undefined,
+          },
+        },
+      }),
+    );
+    assert.match(markup, /Comparable market history/);
+    assert.match(markup, /NOW|Now/);
+    assert.match(markup, /1H/);
+    assert.match(markup, /Cash back/);
+    assert.match(markup, /Change to now/);
+    assert.match(markup, /same Base address|Same Base address/);
+    assert.doesNotMatch(markup, /data-tone="good"|cr-v mono good|BEST/);
+  });
+});
 
 describe('the five outcomes stay apart', () => {
   test('a quote whose window closed is lapsed, not unmeasured', () => {
@@ -728,9 +1069,7 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
       choice: null,
       now: NOW,
     });
-    const basis = view?.representations[0]?.numbers.find(
-      (fact) => fact.label === 'Basis withheld',
-    );
+    const basis = view?.representations[0]?.numbers.find((fact) => fact.label === 'Basis withheld');
     assert.equal(basis?.value, '—');
     assert.equal(basis?.note, reason);
     assert.equal(basis?.tone, 'neutral');
@@ -899,46 +1238,55 @@ describe('Phase 11 utility and eligibility map', () => {
 
   test('the Utility view renders evidence states without rendering a ranking', () => {
     const choices = underlyingChoicesV1({
-      entries: [{
-        underlyingKey: 'security:isin:US67066G1040',
-        canonicalName: 'NVIDIA Corporation',
-        displaySymbol: 'NVDA',
-        assetClass: 'equity',
-        identifierScheme: 'isin',
-        identifierValue: 'US67066G1040',
-        representationCount: 1,
-        issuerIds: ['coinbase'],
-        multiIssuer: false,
-      }],
+      entries: [
+        {
+          underlyingKey: 'security:isin:US67066G1040',
+          canonicalName: 'NVIDIA Corporation',
+          displaySymbol: 'NVDA',
+          assetClass: 'equity',
+          identifierScheme: 'isin',
+          identifierValue: 'US67066G1040',
+          representationCount: 1,
+          issuerIds: ['coinbase'],
+          multiIssuer: false,
+        },
+      ],
       totals: { underlyings: 1, boundRepresentations: 1, multiIssuerUnderlyings: 0 },
       observedAt: NOW,
     });
     const view = marketRealityViewV1({ wire: wire(), choice: choices[0] ?? null, now: NOW });
     assert.ok(view);
-    const markup = renderToStaticMarkup(React.createElement(MarketRealityScreen, {
-      model: {
-        choices,
-        choicesLoading: false,
-        choicesError: null,
-        counters: [],
-        selectedKey: choices[0]!.underlyingKey,
-        direction: 'sell',
-        requestedCashAtomic: MARKET_REALITY_SIZES_V1[0]!.requestedCashAtomic,
-        surface: 'utility',
-        view,
-        viewLoading: false,
-        viewError: null,
-        measuring: false,
-        measurementNote: null,
-        measurementError: null,
-        actions: {
-          onUnderlying: () => undefined,
-          onDirection: () => undefined,
-          onSize: () => undefined,
-          onSurface: () => undefined,
+    const markup = renderToStaticMarkup(
+      React.createElement(MarketRealityScreen, {
+        model: {
+          choices,
+          choicesLoading: false,
+          choicesError: null,
+          counters: [],
+          selectedKey: choices[0]!.underlyingKey,
+          direction: 'sell',
+          requestedCashAtomic: MARKET_REALITY_SIZES_V1[0]!.requestedCashAtomic,
+          surface: 'utility',
+          historyPeriod: 'now',
+          view,
+          viewLoading: false,
+          viewError: null,
+          history: null,
+          historyLoading: false,
+          historyError: null,
+          measuring: false,
+          measurementNote: null,
+          measurementError: null,
+          actions: {
+            onUnderlying: () => undefined,
+            onDirection: () => undefined,
+            onSize: () => undefined,
+            onSurface: () => undefined,
+            onHistoryPeriod: () => undefined,
+          },
         },
-      },
-    }));
+      }),
+    );
     assert.match(markup, /Utility \+ eligibility/);
     assert.match(markup, /eip155:8453:/);
     assert.match(markup, /Documented/);

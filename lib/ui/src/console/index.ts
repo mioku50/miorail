@@ -39,6 +39,7 @@ export * from './PublicProofPanels';
 export * from './rwaDiscoverView';
 export * from './RwaDiscoverScreen';
 export * from './marketRealityView';
+export * from './marketRealityHistoryView';
 export * from './MarketRealityScreen';
 export * from './investigateView';
 export * from './InvestigateScreen';

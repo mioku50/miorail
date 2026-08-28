@@ -6,21 +6,25 @@ import {
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
   MarketRealityScreen,
+  comparableMarketHistoryViewV1,
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
   chainUnavailableReasonV1,
   consoleSectionPathV1,
   marketRealityViewV1,
+  MARKET_REALITY_HISTORY_PERIODS_V1,
   underlyingChoicesV1,
   underlyingCountersV1,
   useConsoleTheme,
   type MarketRealityDirectionV1,
+  type MarketRealityHistoryPeriodV1,
   type MarketRealitySurfaceV1,
 } from '@mioagent/ui';
 import {
   useMeasureRwaMarketReality,
   useRwaMarketReality,
+  useRwaMarketRealityHistory,
   useRwaUnderlyings,
   useStatus,
 } from '@mioagent/api-client-react';
@@ -77,10 +81,12 @@ function questionFromSearchV1(search: string): {
   direction: MarketRealityDirectionV1;
   requestedCashAtomic: string;
   surface: MarketRealitySurfaceV1;
+  historyPeriod: MarketRealityHistoryPeriodV1;
 } {
   const params = new URLSearchParams(search);
   const direction = params.get('direction');
   const size = params.get('size');
+  const historyPeriod = params.get('history');
   return {
     underlyingKey: params.get('key'),
     surface: params.get('view') === 'utility' ? 'utility' : 'market',
@@ -92,6 +98,9 @@ function questionFromSearchV1(search: string): {
     requestedCashAtomic: MARKET_REALITY_SIZES_V1.some((rung) => rung.requestedCashAtomic === size)
       ? size!
       : DEFAULT_SIZE_V1,
+    historyPeriod: MARKET_REALITY_HISTORY_PERIODS_V1.some((period) => period.key === historyPeriod)
+      ? (historyPeriod as MarketRealityHistoryPeriodV1)
+      : 'now',
   };
 }
 
@@ -140,12 +149,25 @@ export function MarketRealityPage() {
     },
     { enabled },
   );
+  const history = useRwaMarketRealityHistory(
+    {
+      underlyingKey: selectedKey,
+      direction: question.direction,
+      requestedCashAtomic: question.requestedCashAtomic,
+      // One lazy seven-day read supplies all four historical targets. The view
+      // selects the nearest exact captured point and never interpolates it.
+      window: '7d',
+    },
+    {
+      enabled: enabled && question.surface === 'market' && question.historyPeriod !== 'now',
+    },
+  );
 
   // One clock for the whole render, so two ages on the same screen cannot be
   // computed a few milliseconds apart and disagree.
   const nowIso = useMemo(
     () => new Date().toISOString(),
-    [reality.dataUpdatedAt, index.dataUpdatedAt],
+    [reality.dataUpdatedAt, history.dataUpdatedAt, index.dataUpdatedAt],
   );
 
   const view = useMemo(
@@ -156,6 +178,21 @@ export function MarketRealityPage() {
         now: nowIso,
       }),
     [reality.data, choices, selectedKey, nowIso],
+  );
+
+  const historyView = useMemo(
+    () =>
+      question.historyPeriod === 'now'
+        ? null
+        : comparableMarketHistoryViewV1({
+            wire: reality.data ?? null,
+            history: history.data ?? null,
+            period: question.historyPeriod,
+            // The API stamps the read. Use that clock for target selection so
+            // a skewed browser clock cannot move an observation into a slot.
+            now: history.data?.assembledAt ?? nowIso,
+          }),
+    [question.historyPeriod, reality.data, history.data, nowIso],
   );
 
   const measure = useMeasureRwaMarketReality();
@@ -254,12 +291,18 @@ export function MarketRealityPage() {
           direction: question.direction,
           requestedCashAtomic: question.requestedCashAtomic,
           surface: question.surface,
+          historyPeriod: question.historyPeriod,
 
           view,
           viewLoading: reality.isLoading,
           viewError:
             disabledNotice ??
             (reality.error ? failureCopyV1(reality.error, 'this comparison') : null),
+          history: historyView,
+          historyLoading: history.isLoading,
+          historyError:
+            disabledNotice ??
+            (history.error ? failureCopyV1(history.error, 'comparable history') : null),
 
           measuring: measure.isPending,
           measurementNote,
@@ -280,6 +323,7 @@ export function MarketRealityPage() {
             onDirection: (direction) => setQuestion({ direction }),
             onSize: (requestedCashAtomic) => setQuestion({ size: requestedCashAtomic }),
             onSurface: (surface) => setQuestion({ view: surface }),
+            onHistoryPeriod: (historyPeriod) => setQuestion({ history: historyPeriod }),
             onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
           },
         }}
