@@ -169,6 +169,8 @@ export interface MarketRealityRepresentationWireV1 {
       | 'corporate_action_hold'
       | 'stale'
       | 'unknown';
+    valueAtomic: string | null;
+    decimals: number | null;
     comparable: boolean;
     reason: string | null;
   };
@@ -279,7 +281,7 @@ export interface RepresentationViewV1 {
   /** Whose fact the outcome is. Rendered as a small label so a reader can tell
    * a fact about the asset from a fact about us at a glance. */
   attribution: 'the market' | 'the clock' | 'Miorail' | 'onchain read';
-  /** The three comparison numbers, always present, dashed when absent. */
+  /** The comparison numbers, always present, dashed when absent. */
   numbers: FactViewV1[];
   /** Holding, redeeming and distributions — from the reviewed adapters. */
   terms: FactViewV1[];
@@ -372,10 +374,36 @@ export function quoteAgeLabelV1(iso: string | null, nowIso: string): string | nu
 
 function bpsLabelV1(bps: string | null): string | null {
   if (bps === null) return null;
-  const value = Number.parseInt(bps, 10);
-  if (!Number.isFinite(value)) return null;
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${(value / 100).toFixed(2)}%`;
+  if (!/^-?(0|[1-9][0-9]*)$/.test(bps)) return null;
+  const value = BigInt(bps);
+  const sign = value > 0n ? '+' : '';
+  return `${sign}${value.toString()} bps`;
+}
+
+const MARKET_SESSION_LABEL_V1: Readonly<
+  Record<MarketRealityRepresentationWireV1['reference']['marketSession'], string>
+> = {
+  regular_hours: 'US market open',
+  after_hours: 'US market closed / after hours',
+  weekend: 'Weekend',
+  unknown: 'Market session not established',
+};
+
+const PUBLICATION_MODE_LABEL_V1: Readonly<
+  Record<MarketRealityRepresentationWireV1['reference']['publicationMode'], string>
+> = {
+  live_reference: 'Live reference',
+  holding_last_close: 'Reference holding last published value',
+  corporate_action_hold: 'Reference held for a corporate action',
+  stale: 'Reference stale',
+  unknown: 'Reference publication mode not established',
+};
+
+function referenceNoteV1(
+  reference: MarketRealityRepresentationWireV1['reference'],
+): string {
+  const context = `${MARKET_SESSION_LABEL_V1[reference.marketSession]} · ${PUBLICATION_MODE_LABEL_V1[reference.publicationMode]}`;
+  return reference.reason ? `${context} · ${reference.reason}` : context;
 }
 
 /**
@@ -561,6 +589,10 @@ function numbersV1(
     representation.effectivePriceAtomic && representation.effectivePriceDecimals !== null
       ? usdV1(representation.effectivePriceAtomic, representation.effectivePriceDecimals)
       : null;
+  const referencePrice =
+    representation.reference.valueAtomic !== null && representation.reference.decimals !== null
+      ? usdV1(representation.reference.valueAtomic, representation.reference.decimals)
+      : null;
   const premium = bpsLabelV1(representation.premiumDiscountBps);
 
   return [
@@ -568,7 +600,9 @@ function numbersV1(
       label: direction === 'sell' ? 'Cash back' : 'Cash in',
       value: cash ?? '—',
       note: cash === null ? 'no open quote at this size' : null,
-      tone: cash === null ? 'neutral' : 'good',
+      // A returned amount is a fact, not an assessment of whether the route is
+      // attractive. Route state remains visible in the outcome chip above.
+      tone: 'neutral',
     },
     {
       label: 'Effective price',
@@ -582,18 +616,26 @@ function numbersV1(
             ? 'exposure not normalized, so no per-share price'
             : 'needs an open quote'
           : 'per unit of normalized exposure',
-      tone: price === null ? 'neutral' : 'good',
+      tone: 'neutral',
     },
     {
-      label:
-        representation.basis.kind === 'current_reference'
-          ? 'vs current reference'
-          : representation.basis.kind === 'last_close_reference'
-            ? 'vs last published close'
-            : 'Reference basis',
+      label: 'Reference price',
+      value: referencePrice ?? '—',
+      note: referenceNoteV1(representation.reference),
+      tone: 'neutral',
+    },
+    {
+      label: premium === null ? 'Basis withheld' : 'Basis',
       value: premium ?? '—',
-      note: premium === null ? representation.basis.reason : null,
-      tone: premium === null ? 'neutral' : 'good',
+      note:
+        premium === null
+          ? representation.basis.reason
+          : representation.basis.kind === 'last_close_reference'
+            ? 'vs last published reference value'
+            : 'vs current reviewed reference',
+      // The sign describes direction relative to the named reference. It does
+      // not describe investment quality and never selects a green/red tone.
+      tone: 'neutral',
     },
   ];
 }

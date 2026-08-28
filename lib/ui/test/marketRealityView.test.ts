@@ -52,6 +52,8 @@ function representation(
       session: 'unknown',
       marketSession: 'unknown',
       publicationMode: 'unknown',
+      valueAtomic: null,
+      decimals: null,
       comparable: false,
       reason: 'No reviewed comparable reference/session adapter answered.',
     },
@@ -566,7 +568,7 @@ describe('an absent number never renders as a zero', () => {
     const numbers = view?.representations[0]?.numbers ?? [];
     assert.deepEqual(
       numbers.map((fact) => fact.value),
-      ['—', '—', '—'],
+      ['—', '—', '—', '—'],
     );
     for (const fact of numbers) {
       assert.ok(fact.note && fact.note.length > 0, `${fact.label} must say why it is empty`);
@@ -602,10 +604,12 @@ describe('an absent number never renders as a zero', () => {
     const numbers = view?.representations[0]?.numbers ?? [];
     assert.equal(numbers[0]?.value, '$99.95');
     assert.equal(numbers[1]?.value, '$209.66');
-    // No reference adapter answered, so the premium stays absent and says so
+    // No reference adapter answered, so both reference and basis stay absent
     // rather than comparing a cash return against a value in another unit.
     assert.equal(numbers[2]?.value, '—');
-    assert.match(numbers[2]?.note ?? '', /reference/i);
+    assert.match(numbers[2]?.note ?? '', /not established|reference/i);
+    assert.equal(numbers[3]?.value, '—');
+    assert.match(numbers[3]?.note ?? '', /reference/i);
   });
 
   test('the ratio convention is stated per representation, never assumed', () => {
@@ -627,6 +631,169 @@ describe('an absent number never renders as a zero', () => {
     // Applying a rebasing token's ratio a second time overstates a holding by
     // the whole ratio. Five Dinari dShares are already away from 1.0.
     assert.match(ratio?.note ?? '', /already carries the ratio/);
+  });
+});
+
+describe('numeric Market Reality facts stay factual and neutral', () => {
+  function comparableRepresentation(bps: string): MarketRealityRepresentationWireV1 {
+    const open = {
+      ...LAPSED_SOURCE,
+      status: 'quoted' as const,
+      quoteEvidence: {
+        ...LAPSED_SOURCE.quoteEvidence,
+        direction: 'sell' as const,
+        expiresAt: '2026-08-26T20:35:00.000Z',
+      },
+    };
+    return representation({
+      status: 'full',
+      liveness: 'live',
+      lastObservation: { ...LAPSED_OBSERVATION, open: true },
+      sources: [open],
+      returnedCashAtomic: '100000000',
+      normalizedExposureAtomic: '47272400',
+      normalizedExposureDecimals: 8,
+      normalization: 'fresh_ratio_applied',
+      effectivePriceAtomic: bps.startsWith('-') ? '21106000000' : '21154000000',
+      effectivePriceDecimals: 8,
+      premiumDiscountBps: bps,
+      reference: {
+        ...representation().reference,
+        status: 'fresh',
+        session: 'regular_hours',
+        marketSession: 'regular_hours',
+        publicationMode: 'live_reference',
+        valueAtomic: '21130000000',
+        decimals: 8,
+        reason: null,
+      },
+      basis: {
+        status: 'comparable',
+        kind: 'current_reference',
+        premiumDiscountBps: bps,
+        reason: 'The exact execution price and reviewed current reference are comparable.',
+      },
+    });
+  }
+
+  test('+11 bps and established prices do not receive a good tone', () => {
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [comparableRepresentation('11')] }),
+      choice: null,
+      now: NOW,
+    });
+    const numbers = view?.representations[0]?.numbers ?? [];
+    const effective = numbers.find((fact) => fact.label === 'Effective price');
+    const reference = numbers.find((fact) => fact.label === 'Reference price');
+    const basis = numbers.find((fact) => fact.label === 'Basis');
+
+    assert.equal(effective?.value, '$211.54');
+    assert.equal(effective?.tone, 'neutral');
+    assert.equal(reference?.value, '$211.3');
+    assert.equal(reference?.tone, 'neutral');
+    assert.equal(basis?.value, '+11 bps');
+    assert.equal(basis?.tone, 'neutral');
+    assert.notEqual(basis?.tone, 'good');
+  });
+
+  test('-11 bps receives neither a good nor a bad semantic', () => {
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [comparableRepresentation('-11')] }),
+      choice: null,
+      now: NOW,
+    });
+    const basis = view?.representations[0]?.numbers.find((fact) => fact.label === 'Basis');
+    assert.equal(basis?.value, '-11 bps');
+    assert.equal(basis?.tone, 'neutral');
+    assert.notEqual(basis?.tone, 'good');
+    assert.notEqual(String(basis?.tone), 'bad');
+  });
+
+  test('withheld basis stays neutral and retains the exact evidence reason', () => {
+    const reason = 'The exact executable quote is no longer open.';
+    const row = representation({
+      basis: {
+        status: 'withheld',
+        kind: 'withheld',
+        premiumDiscountBps: null,
+        reason,
+      },
+    });
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [row] }),
+      choice: null,
+      now: NOW,
+    });
+    const basis = view?.representations[0]?.numbers.find(
+      (fact) => fact.label === 'Basis withheld',
+    );
+    assert.equal(basis?.value, '—');
+    assert.equal(basis?.note, reason);
+    assert.equal(basis?.tone, 'neutral');
+  });
+
+  test('primary reference copy is human-readable while technical evidence keeps raw enums', () => {
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [comparableRepresentation('11')] }),
+      choice: null,
+      now: NOW,
+    });
+    const row = view?.representations[0];
+    const reference = row?.numbers.find((fact) => fact.label === 'Reference price');
+    assert.match(reference?.note ?? '', /US market open/);
+    assert.match(reference?.note ?? '', /Live reference/);
+    assert.doesNotMatch(reference?.note ?? '', /regular_hours|live_reference/);
+    assert.match(
+      row?.technical.find((fact) => fact.label === 'Reference')?.value ?? '',
+      /regular_hours · live_reference/,
+    );
+  });
+
+  test('closed-market and held-reference enums become consumer labels', () => {
+    const base = comparableRepresentation('11');
+    const row = representation({
+      ...base,
+      reference: {
+        ...base.reference,
+        session: 'reference_holding_last_close',
+        marketSession: 'after_hours',
+        publicationMode: 'holding_last_close',
+      },
+      basis: {
+        ...base.basis,
+        kind: 'last_close_reference',
+      },
+    });
+    const view = marketRealityViewV1({
+      wire: wire({ representations: [row] }),
+      choice: null,
+      now: NOW,
+    });
+    const reference = view?.representations[0]?.numbers.find(
+      (fact) => fact.label === 'Reference price',
+    );
+    assert.match(reference?.note ?? '', /US market closed \/ after hours/);
+    assert.match(reference?.note ?? '', /Reference holding last published value/);
+    assert.doesNotMatch(reference?.note ?? '', /after_hours|holding_last_close/);
+  });
+
+  test('ranking remains withheld after numeric facts become present', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        ranking: {
+          status: 'withheld',
+          orderedTokenAddresses: [],
+          reason: 'Numeric coverage is complete, but Phase 10B.8 withholds ranking.',
+        },
+        representations: [comparableRepresentation('11')],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const ranking = view?.comparisonSummary.find((fact) => fact.label === 'Ranking');
+    assert.equal(ranking?.value, 'WITHHELD');
+    assert.equal(ranking?.tone, 'off');
+    assert.match(view?.rankingNote ?? '', /withholds ranking/);
   });
 });
 
@@ -784,7 +951,7 @@ describe('history is history, and says so', () => {
     // And the current numbers stay empty.
     assert.deepEqual(
       row?.numbers.map((fact) => fact.value),
-      ['—', '—', '—'],
+      ['—', '—', '—', '—'],
     );
   });
 
