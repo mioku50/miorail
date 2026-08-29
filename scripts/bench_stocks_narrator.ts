@@ -1,12 +1,15 @@
+import { AsyncLocalStorage } from 'node:async_hooks';
 import { writeFileSync } from 'node:fs';
 
 import {
-  createLlmProvider,
+  LlmProviderChainV1,
   createStructuredLlmProvider,
   fallbackLinkV1,
   primaryApiKeyV1,
   primaryLinkV1,
   type LlmProvider,
+  type LlmRequest,
+  type LlmResponse,
 } from '@mioagent/llm';
 
 import {
@@ -125,35 +128,58 @@ function lanesV1(): LaneV1[] {
   } catch (error) {
     console.warn(`[bench] structured lane is not usable: ${error instanceof Error ? error.message : 'unknown'}`);
   }
-  try {
+  // The production chain, composed from the links above in the order
+  // `createLlmProvider` composes them: primary, first spare, second spare.
+  const chainLinks = lanes.filter((lane) => !lane.isChain && lane.key !== 'structured');
+  if (chainLinks.length > 1) {
     lanes.push({
       key: 'chain',
       label: 'production chain',
-      model: `${primaryModel} + spares`,
-      provider: createLlmProvider(),
+      model: chainLinks.map((lane) => lane.model).join(' → '),
+      provider: new LlmProviderChainV1(
+        chainLinks.map((lane, index) => ({
+          label: lane.label,
+          provider: attributedLinkV1(lane.provider, index),
+        })),
+      ),
       isChain: true,
     });
-  } catch (error) {
-    console.warn(`[bench] production chain is not usable: ${error instanceof Error ? error.message : 'unknown'}`);
   }
   return lanes;
 }
 
-/** Counts falloveres by watching the one line the chain logs. Nothing else in
- * this process writes `[llm] `, and reading the chain's own signal beats
- * rebuilding it here with a callback production does not use. */
-function countingFalloversV1<T>(run: () => Promise<T>): Promise<{ value: T; fellOver: boolean }> {
-  const original = console.warn;
-  let fellOver = false;
-  console.warn = (...args: unknown[]) => {
-    if (typeof args[0] === 'string' && args[0].startsWith('[llm] ')) fellOver = true;
-    original(...(args as []));
+/**
+ * Which link in the chain actually answered, per call.
+ *
+ * The first version of this watched `console.warn` for the chain's own
+ * fallover line, restoring the original in a `finally`. That is correct with
+ * one request in flight and wrong with eight: the first run to finish restores
+ * the real `console.warn` and every other run in flight stops counting. It
+ * reported a 0% fallback activation rate in the same run whose log carried a
+ * fallover line — a measurement that contradicted the evidence beside it.
+ *
+ * An async context is per-call and survives every await between here and the
+ * link that answers, which is exactly the scope the question has.
+ */
+interface ChainCallV1 {
+  answeredByIndex: number | null;
+  attempts: number;
+}
+const chainCall = new AsyncLocalStorage<ChainCallV1>();
+
+/** Wraps one link so it records that IT was the one that answered. The client
+ * underneath is production's — the same key resolution, the same gateway
+ * headers — so this observes the chain rather than approximating it. */
+function attributedLinkV1(provider: LlmProvider, index: number): LlmProvider {
+  return {
+    async generate(request: LlmRequest): Promise<LlmResponse> {
+      const context = chainCall.getStore();
+      if (context) context.attempts += 1;
+      const response = await provider.generate(request);
+      if (context) context.answeredByIndex = index;
+      return response;
+    },
   };
-  return run()
-    .then((value) => ({ value, fellOver }))
-    .finally(() => {
-      console.warn = original;
-    });
 }
 
 function percentileV1(values: number[], percentile: number): number | null {
@@ -226,9 +252,11 @@ async function main(): Promise<void> {
   }
 
   const runs = await mapWithConcurrencyV1(jobs, concurrency, async (job) => {
-    const { value: answered, fellOver } = await countingFalloversV1(() =>
+    const context: ChainCallV1 = { answeredByIndex: null, attempts: 0 };
+    const answered = await chainCall.run(context, () =>
       narrateStocksAnswerV1({ bundle: job.fixture.bundle, provider: job.lane.provider, timeoutMs: 60_000 }),
     );
+    const fellOver = job.lane.isChain && context.attempts > 1;
     const providerError = answered.providerError;
     const run: RunV1 = {
       lane: job.lane.key,

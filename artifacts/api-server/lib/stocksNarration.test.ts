@@ -276,6 +276,24 @@ describe('the Stocks verifier', () => {
     assert.ok(codes(verdict).includes('expired_quote_as_current'));
   });
 
+  test('a bare "currently" with no figure is not a price claim', () => {
+    // Found by the benchmark: the first version of this rule refused "there
+    // is currently no outstanding supply", which is a true sentence about a
+    // denominator and says nothing about a quote. The rule is about an
+    // expired quote reported as a live cost, so it needs a cost in the
+    // sentence.
+    const bundle = bundleOf('E');
+    assert.equal(bundle.hasOpenEvidence, false);
+    const narration = goodNarration(bundle);
+    narration.explanation = 'There is currently no outstanding supply at this address.';
+    const verdict = verify(bundle, narration);
+    assert.equal(
+      codes(verdict).includes('expired_quote_as_current'),
+      false,
+      JSON.stringify(verdict.violations),
+    );
+  });
+
   test('the same figure with its age attached is allowed', () => {
     const bundle = bundleOf('B');
     const narration = goodNarration(bundle);

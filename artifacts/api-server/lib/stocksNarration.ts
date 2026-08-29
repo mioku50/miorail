@@ -134,9 +134,21 @@ const ZERO_SUPPLY_AS_DEAD_V1 =
 const ASSET_BLAMED_V1 =
   /\b(the (token|asset|representation)|it) (is|was|has been) (broken|down|failing|offline|unavailable)\b|(токен|актив) (сломан|недоступен|не работает)/iu;
 
-/** Present-tense freshness. */
-const CURRENT_CLAIM_V1 =
-  /\b(currently|right now|at this moment|as of now|now costs|current (price|cost)|today it costs)\b|(сейчас|в данный момент|на текущий момент)/iu;
+/**
+ * Present-tense freshness, in two strengths.
+ *
+ * The first names a cost outright and is wrong on its own. The second is a
+ * bare adverb, which is only wrong beside a figure: "there is currently no
+ * outstanding supply" is a true sentence about a denominator and says nothing
+ * about a quote. The first version of this rule refused it, which is an
+ * over-rejection with a cost — it fired on three of the ten fixtures for
+ * sentences that never mentioned a price.
+ */
+const CURRENT_COST_CLAIM_V1 = /\b(now costs|current (price|cost)|today it costs)\b|(сейчас стоит|текущая цена)/iu;
+const CURRENT_ADVERB_V1 =
+  /\b(currently|right now|at this moment|as of now)\b|(сейчас|в данный момент|на текущий момент)/iu;
+/** What makes a bare adverb a claim about a quote. */
+const PRICE_TOKEN_V1 = /\d|\bUSDC\b|\b(costs?|price|priced|returns?|spends?)\b|(цен|стои)/iu;
 
 /** Vocabulary that marks a figure as history rather than a live price. */
 const FRESHNESS_QUALIFIER_V1 =
@@ -423,7 +435,10 @@ export function verifyStocksNarrationV1(input: {
     // passed "it currently costs 1000 USDC" because some other line in the
     // same answer happened to contain the word "expired".
     for (const sentence of sentencesV1(text)) {
-      if (CURRENT_CLAIM_V1.test(sentence) && !FRESHNESS_QUALIFIER_V1.test(sentence)) {
+      const claimsNow =
+        CURRENT_COST_CLAIM_V1.test(sentence) ||
+        (CURRENT_ADVERB_V1.test(sentence) && PRICE_TOKEN_V1.test(sentence));
+      if (claimsNow && !FRESHNESS_QUALIFIER_V1.test(sentence)) {
         violations.push({
           code: 'expired_quote_as_current',
           detail: `no representation carries open evidence and this states a present-tense cost: "${sentence.trim()}"`,
