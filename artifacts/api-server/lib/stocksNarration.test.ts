@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { existsSync, readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import test, { describe } from 'node:test';
-import { fileURLToPath } from 'node:url';
 
 import { LlmProviderChainV1, OpenAiCompatibleClient } from '@mioagent/llm';
 import type { LlmProvider, LlmRequest, LlmResponse } from '@mioagent/llm';
@@ -130,9 +129,12 @@ describe('the Stocks verifier', () => {
     // the bundle, so the global check passes it; only the citation catches it.
     const bundle = bundleOf('J');
     const narration = goodNarration(bundle);
+    // 178.4511 is Coinbase's effective price. The size in the question is
+    // deliberately NOT used here: it is the frame every claim is about, so it
+    // is ambient and citing it separately is not required.
     narration.established = [
       {
-        claim: `${BACKED_NVDA} returned 1000 USDC at the exact size`,
+        claim: `${BACKED_NVDA} priced at 178.4511 USDC per token`,
         sourceIds: [itemId(bundle, 'route_status', BACKED_NVDA)],
       },
     ];
@@ -171,13 +173,30 @@ describe('the Stocks verifier', () => {
     assert.ok(codes(verdict).includes('unknown_source_id'));
   });
 
-  test('sources must be exactly what the claims cite', () => {
+  test('sources is repaired from the citations, not refused', () => {
+    // It used to have to match exactly, and an otherwise perfect answer was
+    // discarded for listing one id its claims did not cite. The claims carry
+    // the citations; this field is their union, and a slip in a derived field
+    // is not a false statement about a market.
     const bundle = bundleOf('A');
     const narration = goodNarration(bundle);
     narration.sources = [...narration.sources, itemId(bundle, 'question', null)];
     const verdict = verify(bundle, narration);
+    assert.equal(verdict.ok, true, JSON.stringify(verdict.violations));
+    assert.deepEqual(
+      verdict.narration?.sources,
+      narration.established.flatMap((entry) => entry.sourceIds),
+      'the returned answer carries the citations, not what was declared',
+    );
+  });
+
+  test('an unknown id in sources is still refused', () => {
+    const bundle = bundleOf('A');
+    const narration = goodNarration(bundle);
+    narration.sources = [...narration.sources, 'e404'];
+    const verdict = verify(bundle, narration);
     assert.equal(verdict.ok, false);
-    assert.ok(codes(verdict).includes('sources_do_not_match_citations'));
+    assert.ok(codes(verdict).includes('unknown_source_id'));
   });
 
   test('an address that is not a reviewed representation cannot be a subject', () => {
@@ -226,6 +245,51 @@ describe('the Stocks verifier', () => {
       assert.equal(verdict.ok, false, sentence);
       assert.ok(codes(verdict).includes('universal_market_claim'), sentence);
     }
+  });
+
+  test('the product’s own coverage vocabulary is not a universal claim', () => {
+    // "no market outcome is established" is the name of a coverage field and
+    // the correct sentence. The first version of this rule matched it on the
+    // substring "no market" and refused answers for saying the right thing.
+    const bundle = bundleOf('C');
+    const narration = goodNarration(bundle);
+    narration.explanation =
+      'No market outcome is established for this representation, and any router quote would be a price at one block.';
+    const verdict = verify(bundle, narration);
+    assert.equal(
+      codes(verdict).includes('universal_market_claim'),
+      false,
+      JSON.stringify(verdict.violations),
+    );
+  });
+
+  test('a caveat the bundle asked the narrator to preserve may be quoted', () => {
+    // The bundle tells the narrator these sentences must survive any
+    // paraphrase. A rule that then refuses the sentence it asked for is
+    // refusing obedience: roughly a hundred benchmark rejections were exactly
+    // this, on the fixtures the caveat exists for.
+    const bundle = bundleOf('D');
+    assert.equal(bundle.hasOpenEvidence, false);
+    const caveat = bundle.caveats.find((entry) => entry.includes('current cost'));
+    assert.ok(caveat, 'the no-open-evidence bundle carries that caveat');
+    const narration = goodNarration(bundle);
+    narration.explanation = caveat;
+    const verdict = verify(bundle, narration);
+    assert.equal(
+      codes(verdict).includes('expired_quote_as_current'),
+      false,
+      JSON.stringify(verdict.violations),
+    );
+  });
+
+  test('quoting a caveat does not license a present-tense price beside it', () => {
+    const bundle = bundleOf('D');
+    const caveat = bundle.caveats.find((entry) => entry.includes('current cost'))!;
+    const narration = goodNarration(bundle);
+    narration.explanation = `${caveat} It currently costs 1000 USDC to take that position.`;
+    const verdict = verify(bundle, narration);
+    assert.equal(verdict.ok, false);
+    assert.ok(codes(verdict).includes('expired_quote_as_current'));
   });
 
   test('the same absence stated about the reviewed router set is allowed', () => {
@@ -573,7 +637,13 @@ describe('the Stocks narrator has no actions', () => {
     // it. A capability the runtime never links cannot be granted by a prompt,
     // a tool description, or a caller who forgets the rule — there is no code
     // path to it at all.
-    const here = dirname(fileURLToPath(import.meta.url));
+    // Resolved from the working directory rather than import.meta: this
+    // package builds to CommonJS, where import.meta is not available.
+    const here = [
+      resolve(process.cwd(), 'artifacts/api-server/lib'),
+      resolve(process.cwd(), 'lib'),
+    ].find((candidate) => existsSync(resolve(candidate, 'stocksNarration.ts')));
+    assert.ok(here, 'the narrator source is where the test expects it');
     const closure = new Set<string>();
     const packages = new Set<string>();
     const walk = (file: string): void => {

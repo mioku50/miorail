@@ -55,7 +55,7 @@ async function main(): Promise<void> {
       history: entry.history,
       now: STOCKS_BENCH_NOW_V1,
     });
-    let raw = '';
+    let raw: string;
     try {
       const response = await provider.generate({
         messages: [

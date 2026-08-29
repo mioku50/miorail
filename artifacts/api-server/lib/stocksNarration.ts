@@ -85,7 +85,6 @@ export const STOCKS_NARRATION_VIOLATION_CODES_V1 = [
   'unknown_subject',
   'subject_as_established_claim',
   'unknown_source_id',
-  'sources_do_not_match_citations',
   'claim_number_not_in_cited_evidence',
   'claim_cites_another_representation',
   'judgement_vocabulary',
@@ -121,10 +120,24 @@ export interface StocksNarrationVerdictV1 {
 const JUDGEMENT_VOCABULARY_V1 =
   /\b(illiquid|liquid|liquidity is (good|bad|poor|deep|thin|low|high)|best|worst|bad|cheap|expensive|attractive|favou?rable|superior|inferior)\b|(ликвид|лучш|худш|плох|дешев|дорог|выгодн)/iu;
 
-/** A claim about the whole market drawn from one router's answer. Miorail
- * asks a reviewed router set at an exact size; that is never every venue. */
+/**
+ * A claim about the whole market drawn from one router's answer. Miorail asks
+ * a reviewed router set at an exact size; that is never every venue.
+ *
+ * Two alternations were removed after the benchmark, because they matched the
+ * product's own vocabulary rather than an overclaim:
+ *
+ *   "no market"   also matched "no market OUTCOME is established", which is
+ *                 the name of a coverage field and the correct sentence.
+ *   "any router"  also matched "any router quote is a price at one block",
+ *                 which is the caveat this rule exists to protect.
+ *
+ * Both refused answers that were saying exactly the right thing. The rule is
+ * about REACH — traded anywhere, no liquidity at all — so reach is what it
+ * matches now.
+ */
 const UNIVERSAL_MARKET_CLAIM_V1 =
-  /\b(anywhere|any (venue|dex|exchange|market|router)|every (venue|dex|exchange|router)|all (venues|exchanges|routers)|no market|cannot be (traded|sold|bought)|un(tradeable|tradable)|not tradable|no liquidity)\b|(нигде|ни на одной|нельзя (продать|купить)|нет ликвидности)/iu;
+  /\b(anywhere|any (venue|dex|exchange)|every (venue|dex|exchange|router)|all (venues|exchanges|routers)|no market(?!\s+outcome)|cannot be (traded|sold|bought)|un(tradeable|tradable)|not tradable|no liquidity)\b|(нигде|ни на одной|нельзя (продать|купить)|нет ликвидности)/iu;
 
 /** Zero outstanding supply is a denominator, not an obituary. */
 const ZERO_SUPPLY_AS_DEAD_V1 =
@@ -153,6 +166,10 @@ const PRICE_TOKEN_V1 = /\d|\bUSDC\b|\b(costs?|price|priced|returns?|spends?)\b|(
 /** Vocabulary that marks a figure as history rather than a live price. */
 const FRESHNESS_QUALIFIER_V1 =
   /\b(expired|stale|no longer open|as of|last (measured|observed|observation)|minutes ago|hours ago|history|historical|earlier)\b|(истёк|истек|устарел|минут назад|назад|по состоянию на)/iu;
+
+/** The one reused semantic violation the structured contract answers better.
+ * Matched by its message, which is the shared verifier's own wording. */
+const EMPTIED_ANSWER_RULE_V1 = /^the deterministic answer matched \d+ and the narration reports none$/;
 
 /** How an answer attributes a gap to Miorail. */
 const ATTRIBUTION_V1 = /miorail|миорейл/iu;
@@ -223,6 +240,15 @@ export function parseStocksNarrationV1(raw: string): StocksNarrationV1 | null {
   };
 }
 
+/** Case, punctuation and spacing removed, so a quoted sentence can be
+ * recognised as the one the bundle asked for. */
+export function normaliseSentenceV1(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+}
+
 /** One claim, absence or sentence at a time.
  *
  * Rules about how a figure is QUALIFIED have to run at this scale. A rule that
@@ -236,12 +262,17 @@ export function sentencesV1(text: string): string[] {
     .filter((part) => part.length > 0);
 }
 
-/** Every text field, as one string, for the rules that are about prose. */
+/**
+ * Every text field, as one string, for the rules that are about prose.
+ *
+ * Explanation FIRST, because the prose field is the answer and the claims are
+ * the evidence under it. That is the order the reused rules were written for.
+ */
 export function flattenStocksNarrationV1(narration: StocksNarrationV1): string {
   return [
+    narration.explanation,
     ...narration.established.map((entry) => entry.claim),
     ...narration.notEstablished,
-    narration.explanation,
   ].join('\n');
 }
 
@@ -284,6 +315,18 @@ export function verifyStocksNarrationV1(input: {
     maxChars: STOCKS_NARRATION_MAX_CHARS_V1,
   });
   for (const detail of reused.violations) {
+    // One reused rule does not survive the change of contract. It asks whether
+    // an answer OPENS by saying none of them matched — a sound question about a
+    // paragraph, and the wrong one here, because a Stocks answer legitimately
+    // opens "No reviewed router returned a route at this exact size." and then
+    // names the representation it is about.
+    //
+    // The structured contract answers that question in a field instead of by
+    // inspecting prose: an answer carrying subjects is not claiming the result
+    // was empty, and `subjects` is separately checked against the bundle above.
+    // So the rule is suppressed only when the narration names a subject, and
+    // every other reused rule is untouched.
+    if (EMPTIED_ANSWER_RULE_V1.test(detail) && narration.subjects.length > 0) continue;
     violations.push({ code: reusedCodeV1(detail), detail });
   }
 
@@ -300,6 +343,7 @@ export function verifyStocksNarrationV1(input: {
 
   // ---- citations -----------------------------------------------------------
   const byId = new Map(bundle.items.map((item) => [item.id, item]));
+  const questionRows = bundle.items.filter((item) => item.kind === 'question');
   const cited = new Set<string>();
   const support: Array<{ claim: string; items: StocksEvidenceItemV1[] }> = [];
 
@@ -330,6 +374,15 @@ export function verifyStocksNarrationV1(input: {
     }
 
     const allowed = new Set<string>();
+    // The question's own figures are ambient: the size, the chain and the
+    // destination are what every claim is ABOUT, not findings a claim has to
+    // cite separately. Without this, "kyberswap returned no_route at the exact
+    // size of 1000 USDC" was refused for naming the size it was asked about.
+    for (const item of questionRows) {
+      for (const value of numbersInV1(withoutExactIdentifiersV1(`${item.label} ${item.value}`))) {
+        allowed.add(value);
+      }
+    }
     for (const item of items) {
       for (const value of numbersInV1(withoutExactIdentifiersV1(`${item.label} ${item.value}`))) {
         allowed.add(value);
@@ -361,20 +414,19 @@ export function verifyStocksNarrationV1(input: {
     }
   }
 
+  // `sources` is derived, so it is repaired rather than refused.
+  //
+  // It used to have to equal the citations exactly, and a narration that got
+  // every fact right was discarded for listing one id its claims did not cite.
+  // That protected no reader: the claims carry the citations, and this field
+  // is their union. A bookkeeping slip in a derived field is not a false
+  // statement about a market, and the only rejections worth spending are the
+  // ones that are.
   const declared = new Set(narration.sources);
-  const missingFromDeclared = [...cited].filter((id) => !declared.has(id));
-  const extraDeclared = [...declared].filter((id) => !cited.has(id));
-  if (missingFromDeclared.length > 0 || extraDeclared.length > 0) {
-    violations.push({
-      code: 'sources_do_not_match_citations',
-      detail: `sources must be exactly the rows the claims cite (missing ${missingFromDeclared.join(', ') || 'none'}; not cited ${extraDeclared.join(', ') || 'none'})`,
-    });
+  for (const id of [...declared].filter((entry) => !byId.has(entry))) {
+    violations.push({ code: 'unknown_source_id', detail: `sources names ${id}, which is not in the bundle` });
   }
-  for (const id of declared) {
-    if (!byId.has(id)) {
-      violations.push({ code: 'unknown_source_id', detail: `sources names ${id}, which is not in the bundle` });
-    }
-  }
+  narration.sources = [...cited];
 
   // ---- absences ------------------------------------------------------------
   if (bundle.missing.length > 0 && narration.notEstablished.length === 0) {
@@ -391,17 +443,29 @@ export function verifyStocksNarrationV1(input: {
   }
 
   // ---- prose rules ---------------------------------------------------------
+  // A sentence the bundle told the narrator to preserve cannot also be a
+  // violation of the rule it states. The benchmark refused
+  // "no representation carries open evidence, so nothing here may be stated as
+  // a current cost" — my own caveat, quoted back verbatim, on the fixtures
+  // that caveat exists for. Roughly a hundred of the rejections were that.
+  const quotedCaveats = new Set(bundle.caveats.map(normaliseSentenceV1));
+  const isQuotedCaveat = (sentence: string): boolean => quotedCaveats.has(normaliseSentenceV1(sentence));
+
   const judgement = JUDGEMENT_VOCABULARY_V1.exec(text);
   if (judgement) {
     violations.push({ code: 'judgement_vocabulary', detail: `a judgement, not a measurement: "${judgement[0]}"` });
   }
 
-  const universal = UNIVERSAL_MARKET_CLAIM_V1.exec(text);
-  if (universal) {
-    violations.push({
-      code: 'universal_market_claim',
-      detail: `a reviewed router set at one size is not every venue: "${universal[0]}"`,
-    });
+  for (const sentence of sentencesV1(text)) {
+    if (isQuotedCaveat(sentence)) continue;
+    const universal = UNIVERSAL_MARKET_CLAIM_V1.exec(sentence);
+    if (universal) {
+      violations.push({
+        code: 'universal_market_claim',
+        detail: `a reviewed router set at one size is not every venue: "${universal[0]}"`,
+      });
+      break;
+    }
   }
 
   const dead = ZERO_SUPPLY_AS_DEAD_V1.exec(text);
@@ -435,6 +499,7 @@ export function verifyStocksNarrationV1(input: {
     // passed "it currently costs 1000 USDC" because some other line in the
     // same answer happened to contain the word "expired".
     for (const sentence of sentencesV1(text)) {
+      if (isQuotedCaveat(sentence)) continue;
       const claimsNow =
         CURRENT_COST_CLAIM_V1.test(sentence) ||
         (CURRENT_ADVERB_V1.test(sentence) && PRICE_TOKEN_V1.test(sentence));

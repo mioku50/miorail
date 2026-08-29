@@ -47,7 +47,6 @@ const CONTENT_VIOLATIONS_V1: readonly StocksNarrationViolationCodeV1[] = [
   'unsupported_number',
   'claim_number_not_in_cited_evidence',
   'unknown_source_id',
-  'sources_do_not_match_citations',
   'claim_cites_another_representation',
   'subject_as_established_claim',
   'unknown_subject',
