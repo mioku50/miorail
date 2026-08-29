@@ -22,9 +22,21 @@ import {
   miorailMarketRailsV1,
   miorailSummariseUniverseV1,
 } from './tools.js';
+import {
+  MarketRealityAgentChangesInputV1Schema,
+  MarketRealityAgentChangesOutputV1Schema,
+  MarketRealityAgentComparisonInputV1Schema,
+  MarketRealityAgentComparisonMcpOutputV1Schema,
+  MarketRealityAgentRepresentationsInputV1Schema,
+  MarketRealityAgentRepresentationsOutputV1Schema,
+  miorailCompareMarketRealityV1,
+  miorailGetMarketChangesV1,
+  miorailGetRepresentationsV1,
+} from './marketRealityTools.js';
 
 // ---------------------------------------------------------------------------
-// T72 — the Miorail MCP server: eight read-only tools over stored evidence.
+// T72/Phase 12B.1 — eight legacy B20 tools plus three read-only Market Reality
+// tools over the same stored evidence used by the consumer application.
 //
 // It cannot execute anything. There is no signer, no wallet_sendCalls, no
 // clearance, no entry plan, no submission and no x402 payment on this surface,
@@ -42,7 +54,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export const MIORAIL_MCP_NAME_V1 = 'miorail';
-export const MIORAIL_MCP_VERSION_V1 = '1.1.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.2.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
@@ -61,7 +73,9 @@ Five things you must preserve when you summarise anything from this server:
 
 Miorail measures unique buying wallets only inside a completed launch window. It does not measure buyers beyond that window, trading volume, current holder concentration, related-wallet clusters, organic buy pressure, future price or profit probability. Do not infer any of them from what is here, and do not describe a token as safe, unsafe, good, promising or a scam on this evidence — none of those are things Miorail measured.
 
-An empty result is not the same as a quiet chain. Call miorail_discover_status first: the workers may be behind, unconfigured or degraded, and the status says which.`;
+An empty result is not the same as a quiet chain. Call miorail_discover_status first: the workers may be behind, unconfigured or degraded, and the status says which.
+
+The three Market Reality tools are a separate read-only product surface for reviewed tokenized-stock representations. An underlying key groups representations but never selects one. Preserve every exact Base address. A router quote is not execution evidence; provider failure is not an asset finding; an expired quote is history; ranking is withheld. get_market_changes requires an exact address or CAIP-10 and reads only public append-only market evidence — never tenant Radar watches or user metadata.`;
 
 export function createMiorailMcpServerV1(): McpServer {
   const server = new McpServer(
@@ -141,7 +155,9 @@ Every measurement also carries a "standing": what the reading CONCLUDED, with an
         bothRoutes: z
           .boolean()
           .optional()
-          .describe('Only launches where a purchase AND a sale both priced. Still not executable quotes.'),
+          .describe(
+            'Only launches where a purchase AND a sale both priced. Still not executable quotes.',
+          ),
         maxRoundTripBps: z
           .number()
           .int()
@@ -354,6 +370,63 @@ Evidence older than a day is labelled stale and describes what was true when it 
     async (args) => {
       try {
         return reply(await miorailFindProjectsV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_representations',
+    {
+      title: 'Reviewed Base representations of one underlying',
+      description:
+        'Returns every reviewed Base representation bound to one namespaced underlying key, separately and by exact contract address. The underlying and its display ticker are grouping metadata only: this tool never chooses Coinbase, Backed, Dinari, a wrapper, or any other representation for the caller. Each row retains CAIP-10, issuer, representation kind, current supply evidence, and the reviewed identity trust root. An empty list means Miorail has no reviewed binding for that exact underlying key; it does not mean the instrument has no tokenized representations elsewhere.',
+      inputSchema: MarketRealityAgentRepresentationsInputV1Schema,
+      outputSchema: MarketRealityAgentRepresentationsOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetRepresentationsV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'compare_market_reality',
+    {
+      title: 'Compare one exact Market Reality question across representations',
+      description:
+        'Returns the same typed market-reality/v2 answer used by Miorail Stocks for one namespaced underlying, exact USD size, direction, destination and Base chain. Every reviewed representation stays separate by exact address. The canonical engine preserves supply-denominator, route-policy, normalization, provider outcome, reference/session/basis, current-versus-history, and ranking-withheld semantics. This is quote-only evidence: it never simulates execution, requests approval, returns calldata, signs, or submits a transaction. Provider/RPC failure remains Miorail uncertainty and one venue miss never becomes universal market absence.',
+      inputSchema: MarketRealityAgentComparisonInputV1Schema,
+      outputSchema: MarketRealityAgentComparisonMcpOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailCompareMarketRealityV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'get_market_changes',
+    {
+      title: 'Comparable public Market Reality changes for one exact representation',
+      description:
+        'Requires an exact Base contract address or CAIP-10 plus exact USD size, direction, destination and bounded window. Returns only stored public-ladder observations and transitions derived by the same Radar comparability logic. It never resolves a ticker, interpolates a missing point, reconstructs old evidence, crosses size/direction/destination/router-policy boundaries, or exposes tenant watches and users. Provider/RPC failures are explicit non-asset gaps and cannot replace the last comparable baseline.',
+      inputSchema: MarketRealityAgentChangesInputV1Schema,
+      outputSchema: MarketRealityAgentChangesOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetMarketChangesV1(args));
       } catch (error) {
         return refuse(error);
       }

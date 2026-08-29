@@ -470,6 +470,7 @@ describe('Phase 12.1 comparable market history', () => {
           measurementError: null,
           watchedTokenAddresses: [],
           watchingTokenAddress: null,
+          removingWatchTokenAddress: null,
           watchError: null,
           actions: {
             onUnderlying: () => undefined,
@@ -1182,6 +1183,39 @@ describe('the chooser', () => {
     assert.equal(choices[1]?.multiIssuer, false);
   });
 
+  test('a row whose only name is its ticker is titled once, not twice', () => {
+    const [named, tickerOnly] = underlyingChoicesV1({
+      entries: [
+        {
+          underlyingKey: 'security:isin:US0378331005',
+          canonicalName: 'Apple Inc.',
+          displaySymbol: 'AAPL',
+          assetClass: 'equity',
+          identifierScheme: 'isin',
+          identifierValue: 'US0378331005',
+          representationCount: 1,
+          issuerIds: ['coinbase'] as const,
+          multiIssuer: false,
+        },
+        {
+          underlyingKey: 'security:isin:US67066G1040',
+          canonicalName: 'NVDA',
+          displaySymbol: 'NVDA',
+          assetClass: 'equity',
+          identifierScheme: 'isin',
+          identifierValue: 'US67066G1040',
+          representationCount: 3,
+          issuerIds: ['backed', 'coinbase'] as const,
+          multiIssuer: true,
+        },
+      ],
+      totals: { underlyings: 2, boundRepresentations: 4, multiIssuerUnderlyings: 1 },
+      observedAt: NOW,
+    });
+    assert.equal(named?.title, 'Apple Inc. (AAPL)');
+    assert.equal(tickerOnly?.title, 'NVDA');
+  });
+
   test('the headline counter is the number of comparable securities', () => {
     const counters = underlyingCountersV1({
       entries: [],
@@ -1282,6 +1316,7 @@ describe('Phase 11 utility and eligibility map', () => {
           measurementError: null,
           watchedTokenAddresses: [],
           watchingTokenAddress: null,
+          removingWatchTokenAddress: null,
           watchError: null,
           actions: {
             onUnderlying: () => undefined,
@@ -1328,6 +1363,54 @@ describe('Phase 12.2 exact-market watch control', () => {
     });
     assert.equal(view?.representations[0]?.watchable, false);
     assert.match(view?.representations[0]?.watchUnavailableReason ?? '', /outstanding supply/i);
+  });
+
+  test('a watched Stocks card exposes an enabled removal control', () => {
+    const choices: ReturnType<typeof underlyingChoicesV1> = [];
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    assert.ok(view);
+    const watchedAddress = view.representations[0]!.tokenAddress;
+    const markup = renderToStaticMarkup(
+      React.createElement(MarketRealityScreen, {
+        model: {
+          choices,
+          choicesLoading: false,
+          choicesError: null,
+          counters: [],
+          selectedKey: 'security:isin:US67066G1040',
+          direction: 'sell',
+          requestedCashAtomic: MARKET_REALITY_SIZES_V1[0]!.requestedCashAtomic,
+          surface: 'market',
+          historyPeriod: 'now',
+          view,
+          viewLoading: false,
+          viewError: null,
+          history: null,
+          historyLoading: false,
+          historyError: null,
+          measuring: false,
+          measurementNote: null,
+          measurementError: null,
+          watchedTokenAddresses: [watchedAddress],
+          watchingTokenAddress: null,
+          removingWatchTokenAddress: null,
+          watchError: null,
+          actions: {
+            onUnderlying: () => undefined,
+            onDirection: () => undefined,
+            onSize: () => undefined,
+            onSurface: () => undefined,
+            onHistoryPeriod: () => undefined,
+            onWatch: () => undefined,
+            onUnwatch: () => undefined,
+          },
+        },
+      }),
+    );
+    assert.match(markup, />Remove watch</);
+    assert.match(markup, /Remove this exact market question from Radar/);
+    assert.doesNotMatch(markup, /disabled=""[^>]*>Remove watch/);
+    assert.doesNotMatch(markup, />Watching this market</);
   });
 });
 
@@ -1422,6 +1505,10 @@ describe('history is history, and says so', () => {
     const row = view?.representations[0];
     assert.equal(row?.lastSeen?.value, '$99.95');
     assert.match(row?.lastSeen?.note ?? '', /history, not a price now/);
+    // The badge names the read it reports. "Last seen · Read failed" under a
+    // headline about a fresh successful totalSupply read reads as a
+    // contradiction; supply and the cash-exit route are different reads.
+    assert.equal(row?.lastSeen?.label, 'Last market check');
     // And the current numbers stay empty.
     assert.deepEqual(
       row?.numbers.map((fact) => fact.value),

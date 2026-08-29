@@ -372,9 +372,9 @@ done
 
 mcp_initialize="$mcp_ready"
 printf '%s' "$mcp_initialize" | jq -e \
-  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.1.0" and .result.protocolVersion == "2025-03-26"' \
+  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.2.0" and .result.protocolVersion == "2025-03-26"' \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
-printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.1.0'
+printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.2.0'
 
 # Same hazard as the readiness probe, one line down: a failed request here would
 # abort under `set -e` with no message at all. The request failing IS a deploy
@@ -387,6 +387,9 @@ printf '%s' "$mcp_tools" | jq -e '
   | map(.name)
   | sort
   == [
+    "compare_market_reality",
+    "get_market_changes",
+    "get_representations",
     "miorail_b20_market_rails",
     "miorail_compare_b20_tokens",
     "miorail_discover_status",
@@ -396,8 +399,8 @@ printf '%s' "$mcp_tools" | jq -e '
     "miorail_list_b20_opportunities",
     "miorail_summarise_b20_universe"
   ]
-' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed eight-tool surface'; exit 1; }
-printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '8 read-only tools'
+' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed eleven-tool surface'; exit 1; }
+printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '11 read-only tools'
 
 echo
 # Counted from the response, not typed in. The literal said "5 tools" for a

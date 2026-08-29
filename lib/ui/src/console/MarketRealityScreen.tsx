@@ -82,6 +82,8 @@ export interface MarketRealityActionsV1 {
   onInvestigate?: (tokenAddress: string) => void;
   /** Create one exact representation/size/direction/destination watch. */
   onWatch?: (tokenAddress: string) => void;
+  /** Remove the tenant's matching exact watch. */
+  onUnwatch?: (tokenAddress: string) => void;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -123,6 +125,7 @@ export interface MarketRealityScreenModelV1 {
   /** Exact representations already watched for the question selected above. */
   watchedTokenAddresses: readonly string[];
   watchingTokenAddress: string | null;
+  removingWatchTokenAddress: string | null;
   watchError: string | null;
 
   actions: MarketRealityActionsV1;
@@ -259,12 +262,14 @@ function RepresentationCard({
   surface,
   watched,
   watching,
+  removing,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
   surface: MarketRealitySurfaceV1;
   watched: boolean;
   watching: boolean;
+  removing: boolean;
 }) {
   if (surface === 'utility') {
     return (
@@ -425,17 +430,35 @@ function RepresentationCard({
         </div>
       </details>
 
-      {actions.onInvestigate || actions.onWatch ? (
+      {actions.onInvestigate || actions.onWatch || actions.onUnwatch ? (
         <div className="card-actions">
-          {actions.onWatch ? (
+          {actions.onWatch || actions.onUnwatch ? (
             <button
               type="button"
               className="btn sec"
-              disabled={watched || watching || !representation.watchable}
-              title={representation.watchUnavailableReason ?? undefined}
-              onClick={() => actions.onWatch!(representation.tokenAddress)}
+              disabled={
+                watching ||
+                removing ||
+                (watched ? !actions.onUnwatch : !actions.onWatch || !representation.watchable)
+              }
+              title={
+                watched
+                  ? 'Remove this exact market question from Radar'
+                  : (representation.watchUnavailableReason ?? undefined)
+              }
+              onClick={() =>
+                watched
+                  ? actions.onUnwatch?.(representation.tokenAddress)
+                  : actions.onWatch?.(representation.tokenAddress)
+              }
             >
-              {watching ? 'Adding watch…' : watched ? 'Watching this market' : 'Watch this market'}
+              {watching
+                ? 'Adding watch…'
+                : removing
+                  ? 'Removing watch…'
+                  : watched
+                    ? 'Remove watch'
+                    : 'Watch this market'}
             </button>
           ) : null}
           {actions.onInvestigate ? (
@@ -773,8 +796,11 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                   representation={representation}
                   actions={actions}
                   surface={model.surface}
-                  watched={model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false}
+                  watched={
+                    model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
+                  }
                   watching={model.watchingTokenAddress === representation.tokenAddress}
+                  removing={model.removingWatchTokenAddress === representation.tokenAddress}
                 />
               ))}
             </div>

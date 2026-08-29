@@ -271,7 +271,13 @@ describe('§11 — the public MCP surface cannot reach execution', () => {
     // The public directory's guarantee is checked by listing it, so the
     // executable surface must not live inside it.
     const publicFiles = readdirSync(path.join(here, '..', 'mcp')).sort();
-    assert.deepEqual(publicFiles, ['index.ts', 'mcpServer.test.ts', 'server.ts', 'tools.ts']);
+    assert.deepEqual(publicFiles, [
+      'index.ts',
+      'marketRealityTools.ts',
+      'mcpServer.test.ts',
+      'server.ts',
+      'tools.ts',
+    ]);
   });
 });
 

@@ -696,9 +696,13 @@ function lastSeenV1(
   const observation = representation.lastObservation;
   if (!observation) return null;
   const age = quoteAgeLabelV1(observation.observedAt, nowIso) ?? 'recently';
+  // Named for the read it reports. "Last seen · Read failed" sat under a
+  // headline about a fresh successful totalSupply read and looked like a
+  // contradiction; the two are different reads, and only the label said
+  // otherwise. Supply is onchain, this is the cash-exit route measurement.
   if (observation.status === 'quoted' && observation.returnedCashAtomic) {
     return {
-      label: 'Last seen',
+      label: 'Last market check',
       value: usdV1(observation.returnedCashAtomic) ?? '—',
       note: observation.open
         ? `measured ${age}, still open`
@@ -706,7 +710,7 @@ function lastSeenV1(
     };
   }
   return {
-    label: 'Last seen',
+    label: 'Last market check',
     value:
       observation.status === 'no_route'
         ? 'No route under policy'
@@ -896,9 +900,13 @@ export function underlyingChoicesV1(
   if (!wire) return [];
   return wire.entries.map((entry) => ({
     underlyingKey: entry.underlyingKey,
-    title: entry.displaySymbol
-      ? `${entry.canonicalName} (${entry.displaySymbol})`
-      : entry.canonicalName,
+    // Enrichment does not always reach a company name: some reviewed rows
+    // carry the ticker in both fields, and `NVDA (NVDA)` reads as a rendering
+    // fault rather than as the one name Miorail actually holds.
+    title:
+      entry.displaySymbol && entry.displaySymbol !== entry.canonicalName
+        ? `${entry.canonicalName} (${entry.displaySymbol})`
+        : entry.canonicalName,
     identifier:
       entry.identifierScheme && entry.identifierValue
         ? `${entry.identifierScheme.toUpperCase()} ${entry.identifierValue}`

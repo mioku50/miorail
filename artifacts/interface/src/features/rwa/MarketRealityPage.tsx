@@ -24,6 +24,7 @@ import {
 import {
   useAddMarketRealityRadarWatch,
   useMarketRealityRadar,
+  useRemoveMarketRealityRadarWatch,
   useMeasureRwaMarketReality,
   useRwaMarketReality,
   useRwaMarketRealityHistory,
@@ -171,16 +172,17 @@ export function MarketRealityPage() {
   );
   const radar = useMarketRealityRadar({ enabled });
   const addWatch = useAddMarketRealityRadarWatch();
+  const removeWatch = useRemoveMarketRealityRadarWatch();
 
-  const watchedTokenAddresses = useMemo(
-    () => {
-      const representationByAddress = new Map(
-        (reality.data?.representations ?? []).map((representation) => [
-          representation.tokenAddress,
-          representation,
-        ]),
-      );
-      return (radar.data?.watches ?? [])
+  const watchIdByTokenAddress = useMemo(() => {
+    const representationByAddress = new Map(
+      (reality.data?.representations ?? []).map((representation) => [
+        representation.tokenAddress,
+        representation,
+      ]),
+    );
+    return new Map(
+      (radar.data?.watches ?? [])
         .filter((watch) => {
           if (
             watch.underlyingKey !== selectedKey ||
@@ -197,16 +199,19 @@ export function MarketRealityPage() {
           const sources = [...new Set(representation.sources.map((row) => row.source))].sort();
           return sources.join('\u0000') === [...watch.approvedSources].sort().join('\u0000');
         })
-        .map((watch) => watch.tokenAddress);
-    },
-    [
-      radar.data,
-      reality.data,
-      selectedKey,
-      question.direction,
-      question.requestedCashAtomic,
-      question.destination,
-    ],
+        .map((watch) => [watch.tokenAddress, watch.watchId] as const),
+    );
+  }, [
+    radar.data,
+    reality.data,
+    selectedKey,
+    question.direction,
+    question.requestedCashAtomic,
+    question.destination,
+  ]);
+  const watchedTokenAddresses = useMemo(
+    () => [...watchIdByTokenAddress.keys()],
+    [watchIdByTokenAddress],
   );
 
   // One clock for the whole render, so two ages on the same screen cannot be
@@ -354,8 +359,18 @@ export function MarketRealityPage() {
           measurementNote,
           measurementError: measure.error ? failureCopyV1(measure.error, 'this measurement') : null,
           watchedTokenAddresses,
-          watchingTokenAddress: addWatch.isPending ? (addWatch.variables?.tokenAddress ?? null) : null,
-          watchError: addWatch.error ? failureCopyV1(addWatch.error, 'this exact watch') : null,
+          watchingTokenAddress: addWatch.isPending
+            ? (addWatch.variables?.tokenAddress ?? null)
+            : null,
+          removingWatchTokenAddress: removeWatch.isPending
+            ? ([...watchIdByTokenAddress.entries()].find(
+                ([, watchId]) => watchId === removeWatch.variables?.watchId,
+              )?.[0] ?? null)
+            : null,
+          watchError:
+            addWatch.error || removeWatch.error
+              ? failureCopyV1(addWatch.error ?? removeWatch.error, 'this exact watch')
+              : null,
 
           actions: {
             onUnderlying: (underlyingKey) => setQuestion({ key: underlyingKey }),
@@ -402,6 +417,10 @@ export function MarketRealityPage() {
                       routePolicyKey: representation.routePolicyKey,
                       approvedSources,
                     });
+                  },
+                  onUnwatch: (tokenAddress: string) => {
+                    const watchId = watchIdByTokenAddress.get(tokenAddress);
+                    if (watchId) removeWatch.mutate({ watchId });
                   },
                 }
               : {}),

@@ -388,3 +388,81 @@ test('a representation nobody ever measured has no observation to show', async (
   assert.equal(row.liveness, 'never_measured');
   assert.equal(row.lastObservation, null, 'absence, not a zeroed point');
 });
+
+// ---------------------------------------------------------------------------
+// Migration 0059 added issuer typing to a table that already existed, so a row
+// written before it holds NULLs. `market-reality/v2` asserted those non-null,
+// which turned one legacy row into a Zod throw that took the whole canonical
+// assembler down -- and with it a valid agent request for an underlying that
+// was otherwise perfectly measurable. The contract does not move; the identity
+// is recovered from the exact address instead.
+// ---------------------------------------------------------------------------
+
+function legacyRowV1(address: string): RepresentationUnderlyingV1 {
+  return {
+    ...binding(address, 'unused'),
+    issuerId: null,
+    issuerInstrumentKey: null,
+    representationKind: null,
+  };
+}
+
+const legacyRatioV1 = (address: string): RepresentationRatioRowV1 => ({
+  chainId: 8453,
+  tokenAddress: address,
+  ratioKind: 'backed_evm_multiplier',
+  application: 'already_applied_by_token',
+  rawValue: '1000000000000000000',
+  scale: '1000000000000000000',
+  scaleSource: 'reviewed_constant',
+  blockNumber: '49900000',
+  blockHash: H,
+  evidenceHash: H,
+  observedAt: '2026-08-25T00:00:00.000Z',
+  lastCheckedAt: '2026-08-25T00:00:00.000Z',
+  lastChangedAt: null,
+  reads: 1,
+  changes: 0,
+  createdAt: '2026-08-25T00:00:00.000Z',
+});
+
+test('a pre-0059 row is recovered from its exact address, and v2 stays strict', async () => {
+  const result = await assembleMarketRealityV2(
+    deps(
+      { [A]: run(A, '500000000000000000') },
+      { bindings: [legacyRowV1(A)], ratios: [legacyRatioV1(A)] },
+    ),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const row = result.representations[0]!;
+  // `backed_assets_api` IS Backed's own reviewed source, so the issuer follows
+  // from the row. Neither `null` nor "unknown" appears anywhere.
+  assert.equal(row.issuerId, 'backed');
+  assert.equal(row.representationKind, 'rebasing_erc20');
+  assert.equal(row.issuerInstrumentKey, `backed:base_address:${A}`);
+  assert.equal(result.universe.reviewedRepresentationCount, 1);
+});
+
+test('an unestablished structure leaves the comparison instead of being guessed', async () => {
+  // A non-rebasing ERC-4626 wrapper has no ratio row. "No evidence" must not
+  // become "rebasing", so the address is not placed in the strict array -- and
+  // the count of reviewed rows still reports it, so nothing vanishes quietly.
+  const result = await assembleMarketRealityV2(
+    deps({ [A]: run(A, '500000000000000000') }, { bindings: [legacyRowV1(A)], ratios: [] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  assert.deepEqual(result.representations, []);
+  assert.equal(result.universe.reviewedRepresentationCount, 1);
+  assert.equal(result.marketOutcomeCoverage.status, 'incomplete');
+  assert.match(result.marketOutcomeCoverage.reason ?? '', /structure of the exact address/i);
+  assert.match(result.marketOutcomeCoverage.reason ?? '', /did not guess/i);
+  assert.equal(result.ranking.status, 'withheld');
+});
+
+test('a complete binding is never rewritten by the recovery', async () => {
+  const result = await assembleMarketRealityV2(
+    deps({ [A]: run(A, '500000000000000000') }, { bindings: [binding(A, 'backed:instrument_id:a')] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  assert.equal(result.representations[0]?.issuerInstrumentKey, 'backed:instrument_id:a');
+});

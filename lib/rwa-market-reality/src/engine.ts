@@ -23,6 +23,7 @@ import {
   type MarketRealityIndexV1,
   type MarketRealityResponseV2,
 } from './contracts.js';
+import { canonicalReviewedBindingV1 } from './canonicalBinding.js';
 import { unknownMarketRealityReferenceV1 } from './referenceSession.js';
 import { evaluateMarketRealityBasisV1 } from './basis.js';
 
@@ -312,8 +313,22 @@ export async function assembleMarketRealityV2(
   const supplyByAddress = new Map(supplies.map((row) => [row.tokenAddress, row]));
   const nowMs = now.getTime();
 
+  // Issuer typing is completed from the exact address before anything reads it,
+  // so a pre-0059 row answers instead of throwing and `market-reality/v2` stays
+  // strict. A binding whose structure cannot be established leaves the array
+  // rather than entering it with an invented one; the coverage reason below
+  // says so, and `reviewedRepresentationCount` still counts every reviewed row
+  // Miorail holds, so the difference is visible rather than silent.
+  const canonical = bindings.map((row) =>
+    canonicalReviewedBindingV1(row, ratioByAddress.get(row.tokenAddress) ?? null),
+  );
+  const uncanonical = canonical.filter((row) => row.status === 'refused');
+  const usableBindings = canonical.flatMap((row) =>
+    row.status === 'canonical' ? [row.binding] : [],
+  );
+
   const representations = await Promise.all(
-    bindings.map(async (binding) => {
+    usableBindings.map(async (binding) => {
       const run = await deps.cashExit.latestCompletedRun({
         chainId: 8453,
         tokenAddress: binding.tokenAddress,
@@ -414,9 +429,9 @@ export async function assembleMarketRealityV2(
             : 'history_only';
       return {
         tokenAddress: binding.tokenAddress,
-        issuerId: binding.issuerId!,
-        issuerInstrumentKey: binding.issuerInstrumentKey!,
-        representationKind: binding.representationKind!,
+        issuerId: binding.issuerId,
+        issuerInstrumentKey: binding.issuerInstrumentKey,
+        representationKind: binding.representationKind,
         supply,
         status,
         routePolicyKey,
@@ -484,12 +499,20 @@ export async function assembleMarketRealityV2(
       row.effectivePriceAtomic !== null &&
       row.routePolicyKey !== null,
   );
+  const uncanonicalReason =
+    uncanonical.length === 0
+      ? null
+      : `${uncanonical.length} reviewed representation${
+          uncanonical.length === 1 ? '' : 's'
+        } could not be placed in this comparison because the structure of the exact address is not established. Miorail did not guess one.`;
   const marketOutcomeComplete =
+    uncanonical.length === 0 &&
     unresolvedSupply.length === 0 &&
     positiveSupply.length > 0 &&
     establishedMarketOutcomes.length === positiveSupply.length &&
     routePolicies.size === 1;
   const numericComparisonComplete =
+    uncanonical.length === 0 &&
     unresolvedSupply.length === 0 &&
     positiveSupply.length >= 2 &&
     comparable.length === positiveSupply.length &&
@@ -498,7 +521,10 @@ export async function assembleMarketRealityV2(
     schemaVersion: 'market-reality/v2',
     question,
     universe: {
-      reviewedRepresentationCount: representations.length,
+      // Every reviewed row, including one that could not be canonicalized. A
+      // count that dropped with the array would hide the row instead of
+      // reporting it.
+      reviewedRepresentationCount: bindings.length,
       positiveSupplyRepresentationCount: positiveSupply.length,
       zeroSupplyRepresentationCount: zeroSupply.length,
       unresolvedSupplyRepresentationCount: unresolvedSupply.length,
@@ -510,11 +536,13 @@ export async function assembleMarketRealityV2(
       status: marketOutcomeComplete ? 'complete' : 'incomplete',
       reason: marketOutcomeComplete
         ? null
-        : unresolvedSupply.length > 0
-          ? 'Supply is unresolved for one or more reviewed representations; none may be silently removed from the denominator.'
-          : positiveSupply.length === 0
-            ? 'No reviewed representation has fresh evidence of outstanding supply.'
-            : 'Every positive-supply representation must have a fresh exact-direction outcome under the same reviewed router policy.',
+        : uncanonicalReason !== null
+          ? uncanonicalReason
+          : unresolvedSupply.length > 0
+            ? 'Supply is unresolved for one or more reviewed representations; none may be silently removed from the denominator.'
+            : positiveSupply.length === 0
+              ? 'No reviewed representation has fresh evidence of outstanding supply.'
+              : 'Every positive-supply representation must have a fresh exact-direction outcome under the same reviewed router policy.',
     },
     numericComparisonCoverage: {
       policy: 'fresh_numeric_quotes_same_exact_question_and_normalization',
@@ -523,7 +551,8 @@ export async function assembleMarketRealityV2(
       status: numericComparisonComplete ? 'complete' : 'incomplete',
       reason: numericComparisonComplete
         ? null
-        : 'Every positive-supply representation needs a fresh normalized numeric quote for this exact question before numeric comparison is complete.',
+        : (uncanonicalReason ??
+          'Every positive-supply representation needs a fresh normalized numeric quote for this exact question before numeric comparison is complete.'),
     },
     ranking: {
       status: 'withheld',

@@ -631,7 +631,12 @@ describe('§9 — the public MCP surface cannot reach the audit or the execution
     .map((name) => ({ name, text: readFileSync(path.join(publicDir, name), 'utf8') }));
 
   test('the scan found the public files it claims to check', () => {
-    assert.deepEqual(publicSources.map((entry) => entry.name).sort(), ['index.ts', 'server.ts', 'tools.ts']);
+    assert.deepEqual(publicSources.map((entry) => entry.name).sort(), [
+      'index.ts',
+      'marketRealityTools.ts',
+      'server.ts',
+      'tools.ts',
+    ]);
   });
 
   test('nothing public imports the private surface or the audit', () => {

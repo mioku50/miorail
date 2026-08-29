@@ -335,6 +335,19 @@ export interface MarketRealityRadarRepositoryV1 {
   eventsForUser(input: { userId: string; limit: number }): Promise<MarketRealityRadarEventV1[]>;
 }
 
+/**
+ * The part of a watch that decides whether two observations may be compared.
+ *
+ * `issuerId` and `representationKind` say which reviewed row a tenant watch
+ * belongs to. They take no part in comparability, so a caller holding an exact
+ * question whose issuer typing is still incomplete may use these functions
+ * without asserting an issuer it cannot prove.
+ */
+export type MarketRealityComparabilityKeyV1 = Omit<
+  MarketRealityRadarWatchV1,
+  'issuerId' | 'representationKind'
+>;
+
 function sourceSetKeyV1(sources: readonly string[]): string {
   return [...sources].sort().join('\u0000');
 }
@@ -373,7 +386,7 @@ function quoteForDirectionV1(row: CashExitSourceObservationV1, direction: 'buy' 
 function compactPointV1(input: {
   row: CashExitSourceObservationV1;
   snapshot: MarketRealityEvidenceSnapshotV1;
-  watch: MarketRealityRadarWatchV1;
+  watch: MarketRealityComparabilityKeyV1;
 }): MarketRealityRadarPointV1 {
   const quote = quoteForDirectionV1(input.row, input.watch.direction);
   return MarketRealityRadarPointV1Schema.parse({
@@ -423,7 +436,7 @@ export type MarketRealityRadarPointResultV1 =
 /** Select one asset-level point from the complete reviewed router matrix. */
 export function marketRealityRadarPointFromRunV1(
   run: CashExitMeasurementRunV1,
-  watch: MarketRealityRadarWatchV1,
+  watch: MarketRealityComparabilityKeyV1,
 ): MarketRealityRadarPointResultV1 {
   const rows = run.observations.filter(
     (row) =>
@@ -504,7 +517,7 @@ function eventIdV1(input: {
 
 /** Two exact successful points in, zero or more factual transitions out. */
 export function deriveMarketRealityRadarEventsV1(input: {
-  watch: MarketRealityRadarWatchV1;
+  watch: MarketRealityComparabilityKeyV1;
   previous: MarketRealityRadarPointV1;
   next: MarketRealityRadarPointV1;
 }): MarketRealityRadarEventV1[] {

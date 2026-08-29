@@ -190,10 +190,13 @@ function payloadOf(result: unknown): Record<string, unknown> {
 }
 
 describe('§8 — tool discovery', () => {
-  test('a client sees exactly the eight tools, with usable descriptions', async () => {
+  test('a client sees the eight legacy tools and three Market Reality tools', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      'compare_market_reality',
+      'get_market_changes',
+      'get_representations',
       'miorail_b20_market_rails',
       'miorail_compare_b20_tokens',
       'miorail_discover_status',
@@ -211,8 +214,8 @@ describe('§8 — tool discovery', () => {
     await client.close();
   });
 
-  test('the advertised server version is 1.1.0', () => {
-    assert.equal(MIORAIL_MCP_VERSION_V1, '1.1.0');
+  test('the advertised server version is 1.2.0', () => {
+    assert.equal(MIORAIL_MCP_VERSION_V1, '1.2.0');
   });
 
   test('§7 — the server instructions carry all five caveats', async () => {
@@ -225,6 +228,11 @@ describe('§8 — tool discovery', () => {
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /LAUNCH-WINDOW BUYING IS NOT CURRENT HOLDINGS/);
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /buyers beyond that window/);
     assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /READ-ONLY/);
+    assert.match(
+      MIORAIL_MCP_INSTRUCTIONS_V1,
+      /underlying key groups representations but never selects one/i,
+    );
+    assert.match(MIORAIL_MCP_INSTRUCTIONS_V1, /expired quote is history/i);
   });
 
   test('the market-rails tool refuses to present itself as a ranking', async () => {
@@ -473,6 +481,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     // nothing to notice only because the total test count moved.
     assert.deepEqual(sources.map((entry) => entry.name).sort(), [
       'index.ts',
+      'marketRealityTools.ts',
       'server.ts',
       'tools.ts',
     ]);
@@ -565,6 +574,77 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
       'the tools reach the repository directly',
     );
     assert.ok(!tools.includes('b20OpportunityCardV1('), 'the tools build their own cards');
+  });
+});
+
+describe('Phase 12B.1 Market Reality tool boundaries', () => {
+  test('the exact-address tool rejects a ticker before any evidence read', async () => {
+    const client = await connectedClient();
+    const result = await client.callTool({
+      name: 'get_market_changes',
+      arguments: {
+        address: 'NVDA',
+        sizeUsd: 1000,
+        direction: 'sell',
+        destination: 'USDC',
+        window: '24h',
+        chain: 'base',
+      },
+    });
+    assert.equal((result as { isError?: boolean }).isError, true);
+    await client.close();
+  });
+
+  test('schemas expose no hidden ticker selector or execution input', async () => {
+    const client = await connectedClient();
+    const { tools } = await client.listTools();
+    for (const name of ['get_representations', 'compare_market_reality', 'get_market_changes']) {
+      const tool = tools.find((entry) => entry.name === name)!;
+      const input = Object.keys(
+        (tool.inputSchema as { properties?: Record<string, unknown> }).properties ?? {},
+      );
+      const output = JSON.stringify(tool.outputSchema ?? {});
+      assert.ok(
+        !input.some((key) =>
+          /ticker|symbol|wallet|signer|approval|calldata|transaction/i.test(key),
+        ),
+      );
+      assert.ok(!/approvalCalldata|transactionRequest|signedTransaction/.test(output));
+      assert.ok(
+        !/watchId|userId|tenantId/.test(output),
+        `${name} advertises private Radar metadata`,
+      );
+      assert.ok(tool.outputSchema, `${name} does not advertise typed structured output`);
+    }
+    const changes = tools.find((entry) => entry.name === 'get_market_changes')!;
+    const required = (changes.inputSchema as { required?: string[] }).required ?? [];
+    assert.ok(required.includes('address'));
+    assert.ok(!required.includes('underlyingKey'));
+    await client.close();
+  });
+
+  test('the deploy gate asserts this exact tool registry and version', async () => {
+    // The deploy pins the advertised surface by name and by version, so it is
+    // the one check that a new tool cannot pass by accident. It also fails a
+    // whole deploy when it drifts, which is how registering these three tools
+    // would otherwise have been discovered: in production, halfway through.
+    const deploy = readFileSync(
+      path.join(here, '..', '..', '..', '..', 'ops', 'deploy.sh'),
+      'utf8',
+    );
+    const client = await connectedClient();
+    const { tools } = await client.listTools();
+    await client.close();
+
+    const asserted = [...deploy.matchAll(/^\s*"([a-z0-9_]+)",?$/gm)].map((match) => match[1]!);
+    assert.deepEqual(
+      [...new Set(asserted)].sort(),
+      tools.map((tool) => tool.name).sort(),
+    );
+    assert.ok(
+      deploy.includes(`.result.serverInfo.version == "${MIORAIL_MCP_VERSION_V1}"`),
+      `deploy.sh pins an MCP version other than ${MIORAIL_MCP_VERSION_V1}`,
+    );
   });
 });
 
@@ -687,7 +767,6 @@ describe('the market rails are the server’s, not the MCP’s', () => {
   });
 });
 
-
 // ---------------------------------------------------------------------------
 // V2 pass 2 — Compare, Fundamental predicates, and opt-in public context.
 //
@@ -745,7 +824,10 @@ describe('compare answers comparability before it answers anything', () => {
     const missing = roundTrip.values.find((value) => value.token === other)!;
     assert.equal(missing.value, null);
     assert.equal(missing.state, 'not_in_index');
-    assert.deepEqual(roundTrip.values.map((value) => value.token), [LAUNCH.tokenAddress, other]);
+    assert.deepEqual(
+      roundTrip.values.map((value) => value.token),
+      [LAUNCH.tokenAddress, other],
+    );
     await client.close();
   });
 
@@ -773,7 +855,10 @@ describe('compare answers comparability before it answers anything', () => {
     // The per-token states still say WHICH gap, and are not flattened by it.
     const dimensions = payload.dimensions as { key: string; values: { state: string }[] }[];
     const roundTrip = dimensions.find((dimension) => dimension.key === 'round_trip_bps')!;
-    assert.deepEqual(roundTrip.values.map((value) => value.state), ['not_in_index', 'not_in_index']);
+    assert.deepEqual(
+      roundTrip.values.map((value) => value.state),
+      ['not_in_index', 'not_in_index'],
+    );
     await client.close();
   });
 
@@ -812,7 +897,8 @@ describe('a fundamental predicate answers over the claims, not the chain', () =>
     const { tools } = await client.listTools();
     const tool = tools.find((entry) => entry.name === 'miorail_find_b20_projects')!;
     const predicates =
-      (tool.inputSchema as { properties?: { predicate?: { enum?: string[] } } }).properties?.predicate?.enum ?? [];
+      (tool.inputSchema as { properties?: { predicate?: { enum?: string[] } } }).properties
+        ?.predicate?.enum ?? [];
     assert.ok(predicates.length >= 8);
     for (const predicate of predicates) {
       assert.ok(!/^no_|_missing$|lacks/.test(predicate), `${predicate} is a negative predicate`);
@@ -872,7 +958,10 @@ describe('public context is opt-in and never sits inside the verified layer', ()
     const tool = tools.find((entry) => entry.name === 'miorail_get_b20_opportunity')!;
     assert.match(tool.description ?? '', /Looked up DIRECTLY by address/);
     const schema = tool.inputSchema as { properties?: Record<string, { description?: string }> };
-    assert.match(schema.properties?.includePublicContext?.description ?? '', /NOTHING it returns is verified/);
+    assert.match(
+      schema.properties?.includePublicContext?.description ?? '',
+      /NOTHING it returns is verified/,
+    );
     assert.match(schema.properties?.publicContextDomain?.description ?? '', /NO SEARCH RUNS/);
     await client.close();
   });

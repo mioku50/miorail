@@ -13,6 +13,7 @@ import {
   deriveMarketRealityRadarEventsV1,
   evaluateMarketRealityRadarRunV1,
   marketRealityRadarPointFromRunV1,
+  type MarketRealityComparabilityKeyV1,
   type MarketRealityRadarPointV1,
   type MarketRealityRadarWatchV1,
 } from '../src/index.js';
@@ -340,6 +341,27 @@ describe('Radar accepts only asset-level successful market points', () => {
     );
     assert.equal(result.outcome, 'comparable');
     if (result.outcome === 'comparable') assert.equal(result.point.returnedCashAtomic, null);
+  });
+});
+
+describe('comparability does not depend on issuer typing', () => {
+  test('a key without an issuer selects the same point a full watch does', () => {
+    // Address, size, direction, destination and route policy decide whether
+    // two observations may be compared. Issuer identifies the row a tenant
+    // watch belongs to and takes no part in it, so a public caller holding an
+    // exact question must not have to assert an issuer to ask it.
+    const full = watch();
+    const { issuerId: _issuerId, representationKind: _kind, ...key } = full;
+    const comparabilityKey: MarketRealityComparabilityKeyV1 = key;
+
+    const quoted = run([
+      { source: 'router-a', status: 'quoted', returnedCashAtomic: '999000000' },
+    ]);
+    assert.deepEqual(
+      marketRealityRadarPointFromRunV1(quoted, comparabilityKey),
+      marketRealityRadarPointFromRunV1(quoted, full),
+    );
+    assert.equal(marketRealityRadarPointFromRunV1(quoted, comparabilityKey).outcome, 'comparable');
   });
 });
 

@@ -1,4 +1,5 @@
 export * from './contracts.js';
+export * from './canonicalBinding.js';
 export * from './engine.js';
 export * from './history.js';
 export * from './radar.js';
@@ -9,3 +10,4 @@ export * from './referenceSession.js';
 export * from './basis.js';
 export * from './capture.js';
 export * from './referenceAdapter.js';
+export * from './agent.js';
