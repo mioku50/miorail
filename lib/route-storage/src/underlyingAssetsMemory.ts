@@ -1,6 +1,6 @@
 import {
   UnknownUnderlyingError,
-  assertRepresentationUnderlyingV1,
+  assertBindRepresentationInputV1,
   assertUnderlyingAssetV1,
   type RepresentationUnderlyingV1,
   type UnderlyingAssetRepositoryV1,
@@ -38,7 +38,10 @@ export function createMemoryUnderlyingAssetRepository(): UnderlyingAssetReposito
     },
 
     async bindRepresentation(input) {
-      const parsed = assertRepresentationUnderlyingV1(input, 'write');
+      // The write gate, not the read one: a new binding must carry complete
+      // typed identity. The read schema tolerates a pre-0059 row so history
+      // stays legible; nothing may add to that history.
+      const parsed = assertBindRepresentationInputV1(input);
       if (!underlyings.has(parsed.underlyingKey))
         throw new UnknownUnderlyingError(parsed.underlyingKey);
       const existing = bindings.get(key(parsed.chainId, parsed.tokenAddress));

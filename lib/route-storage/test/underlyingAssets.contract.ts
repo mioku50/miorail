@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import type {
+  BindRepresentationInputV1,
   RepresentationUnderlyingV1,
   UnderlyingAssetRepositoryV1,
 } from '../src/underlyingAssets.js';
@@ -33,14 +34,14 @@ export function underlyingAssetContractV1(
     observedAt: '2026-08-26T12:00:00.000Z',
   });
 
-  // Typed against the full row rather than against the helper's return, so a
-  // case may set an optional field — `issuerId`, `representationKind` — that
-  // the base fixture leaves out. Narrowing it to the base's own keys made the
-  // runtime tests pass while `tsc` refused them.
-  const binding = (over: Partial<RepresentationUnderlyingV1> = {}) => ({
-    ...bindingBase(),
-    ...over,
-  });
+  // A write now needs complete typed identity, so the base fixture carries it.
+  // Typed against the full row rather than the helper's return, so a case may
+  // still set a field the base leaves out.
+  const binding = (over: Partial<RepresentationUnderlyingV1> = {}) =>
+    ({
+      ...bindingBase(),
+      ...over,
+    }) as BindRepresentationInputV1;
   function bindingBase() {
     return {
       chainId: 8453 as const,
@@ -48,6 +49,9 @@ export function underlyingAssetContractV1(
       underlyingKey: APPLE,
       sourceKind: 'dinari_stock_api' as const,
       sourceRef: 'tokens[] eip155:8453',
+      issuerId: 'dinari' as const,
+      issuerInstrumentKey: 'dinari:stock_id:7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77',
+      representationKind: 'rebasing_erc20' as const,
       observedAt: '2026-08-26T12:00:00.000Z',
     };
   }
@@ -59,6 +63,80 @@ export function underlyingAssetContractV1(
       assert.equal(
         await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL }),
         null,
+      );
+    });
+
+    // -----------------------------------------------------------------------
+    // The write gate. Migration 0059 added issuer typing to a table that
+    // already existed, so the READ shape must stay tolerant of a row that
+    // predates it. Nothing may add to that history: a reviewed source names
+    // its own issuer, instrument and structure, and a writer that cannot
+    // supply all three has not established a representation.
+    // -----------------------------------------------------------------------
+    for (const field of ['issuerId', 'issuerInstrumentKey', 'representationKind'] as const) {
+      test(`a binding without ${field} is refused on write`, async () => {
+        const { repository } = await open();
+        await repository.declareUnderlying(underlying());
+        const incomplete = { ...binding() } as Record<string, unknown>;
+        delete incomplete[field];
+        await assert.rejects(
+          () => repository.bindRepresentation(incomplete as BindRepresentationInputV1),
+          (error: Error) =>
+            /failed validation on write/.test(error.message) && error.message.includes(field),
+          `${field} must be required on a new write`,
+        );
+        // And an explicit null is the same absence wearing a value's clothes.
+        await assert.rejects(
+          () =>
+            repository.bindRepresentation({
+              ...binding(),
+              [field]: null,
+            } as unknown as BindRepresentationInputV1),
+          /failed validation on write/,
+        );
+        assert.equal(
+          await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL }),
+          null,
+          'a refused write leaves no row behind',
+        );
+      });
+    }
+
+    test('the write gate never invents identity from a ticker or a name', async () => {
+      // The underlying is called "Apple Inc." and the source ref names a
+      // Dinari stock id. Neither may stand in for an issuer nobody typed.
+      const { repository } = await open();
+      await repository.declareUnderlying(underlying());
+      const noIssuer = { ...binding() } as Record<string, unknown>;
+      delete noIssuer.issuerId;
+      await assert.rejects(
+        () => repository.bindRepresentation(noIssuer as BindRepresentationInputV1),
+        /failed validation on write/,
+      );
+      for (const invented of ['unknown', 'apple', 'AAPL', '']) {
+        await assert.rejects(
+          () =>
+            repository.bindRepresentation({
+              ...binding(),
+              issuerId: invented,
+            } as unknown as BindRepresentationInputV1),
+          /failed validation on write/,
+          `${invented || '<empty>'} must not pass as an issuer`,
+        );
+      }
+    });
+
+    test('a complete binding still writes, and reads back unchanged', async () => {
+      const { repository } = await open();
+      await repository.declareUnderlying(underlying());
+      const written = await repository.bindRepresentation(binding());
+      assert.equal(written.issuerId, 'dinari');
+      assert.equal(written.representationKind, 'rebasing_erc20');
+      const read = await repository.underlyingOf({ chainId: 8453, tokenAddress: DINARI_AAPL });
+      assert.equal(read?.binding.issuerId, 'dinari');
+      assert.equal(
+        read?.binding.issuerInstrumentKey,
+        'dinari:stock_id:7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77',
       );
     });
 
@@ -152,13 +230,18 @@ export function underlyingAssetContractV1(
       assert.deepEqual(listed[0]?.issuerIds, ['backed']);
     });
 
-    test('a representation with no issuer is counted, and claims no issuer', async () => {
+    test('the index names the issuer a write was required to establish', async () => {
+      // This case used to assert that an unattributed binding is counted and
+      // names nobody. A write can no longer produce that state at all, so the
+      // index is now free to report the issuer rather than an empty list. The
+      // read side still tolerates a pre-0059 row -- that path is exercised by
+      // the recovery tests in rwa-market-reality, against the read schema.
       const { repository } = await open();
       await repository.declareUnderlying(underlying());
       await repository.bindRepresentation(binding());
       const listed = await repository.listUnderlyings({ chainId: 8453, limit: 50 });
       assert.equal(listed[0]?.representationCount, 1);
-      assert.deepEqual(listed[0]?.issuerIds, [], 'an unattributed binding names nobody');
+      assert.deepEqual(listed[0]?.issuerIds, ['dinari']);
     });
 
     test('a bound representation names the source that bound it', async () => {

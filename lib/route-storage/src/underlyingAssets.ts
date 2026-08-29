@@ -102,7 +102,7 @@ export const UnderlyingAssetV1Schema = z
 
 export type UnderlyingAssetV1 = z.infer<typeof UnderlyingAssetV1Schema>;
 
-export const RepresentationUnderlyingV1Schema = z
+const RepresentationUnderlyingObjectV1Schema = z
   .object({
     chainId: z.literal(8453),
     tokenAddress: Address,
@@ -135,24 +135,61 @@ export const RepresentationUnderlyingV1Schema = z
       .optional(),
     observedAt: z.string().datetime(),
   })
-  .strict()
-  .superRefine((row, ctx) => {
-    if ((row.observedBlockNumber === null) !== (row.observedBlockHash === null)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: 'an onchain cross-check has both block number and block hash, or neither',
-      });
-    }
-    if (row.caip10 !== undefined && row.caip10 !== null && !row.caip10.endsWith(row.tokenAddress)) {
-      ctx.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ['caip10'],
-        message: 'CAIP-10 must name this exact Base address',
-      });
-    }
-  });
+  .strict();
+
+function refineRepresentationUnderlyingV1(
+  row: {
+    observedBlockNumber?: string | null;
+    observedBlockHash?: string | null;
+    caip10?: string | null;
+    tokenAddress: string;
+  },
+  ctx: z.RefinementCtx,
+): void {
+  if ((row.observedBlockNumber === null) !== (row.observedBlockHash === null)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: 'an onchain cross-check has both block number and block hash, or neither',
+    });
+  }
+  if (row.caip10 !== undefined && row.caip10 !== null && !row.caip10.endsWith(row.tokenAddress)) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['caip10'],
+      message: 'CAIP-10 must name this exact Base address',
+    });
+  }
+}
+
+/**
+ * What a stored row may look like -- INCLUDING one written before migration
+ * 0059 added issuer typing to a table that already existed. Issuer typing stays
+ * nullable here so such a row can still be read, recovered from its exact
+ * address, or refused as our own data-integrity gap. It must never be the
+ * shape a new write is allowed to take.
+ */
+export const RepresentationUnderlyingV1Schema =
+  RepresentationUnderlyingObjectV1Schema.superRefine(refineRepresentationUnderlyingV1);
 
 export type RepresentationUnderlyingV1 = z.infer<typeof RepresentationUnderlyingV1Schema>;
+
+/**
+ * What a WRITE must carry. Complete typed identity, no defaults, no inference.
+ *
+ * The read schema above exists to tolerate history. This one exists so history
+ * cannot be added to: every reviewed source names its own issuer, its own
+ * instrument and its own structure, so a writer that cannot supply all three
+ * has not established a representation and must not record one. There is no
+ * fallback to a ticker, a name, or the string "unknown" -- an issuer nobody
+ * proved is an absence, and an absence is not a value.
+ */
+export const BindRepresentationInputV1Schema = RepresentationUnderlyingObjectV1Schema.extend({
+  issuerId: z.enum(['coinbase', 'dinari', 'backed']),
+  issuerInstrumentKey: z.string().min(1).max(200),
+  representationKind: z.enum(UNDERLYING_REPRESENTATION_KINDS_V1),
+}).superRefine(refineRepresentationUnderlyingV1);
+
+export type BindRepresentationInputV1 = z.infer<typeof BindRepresentationInputV1Schema>;
 
 export function assertUnderlyingAssetV1(
   value: unknown,
@@ -179,6 +216,18 @@ export function assertRepresentationUnderlyingV1(
     .join('; ');
   throw new RouteStorageIntegrityError(
     `representation underlying failed validation on ${direction}: ${detail}`,
+  );
+}
+
+/** The write gate. Refuses a binding whose typed identity is incomplete. */
+export function assertBindRepresentationInputV1(value: unknown): BindRepresentationInputV1 {
+  const parsed = BindRepresentationInputV1Schema.safeParse(value);
+  if (parsed.success) return parsed.data;
+  const detail = parsed.error.issues
+    .map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+    .join('; ');
+  throw new RouteStorageIntegrityError(
+    `representation underlying failed validation on write: ${detail}`,
   );
 }
 
@@ -211,7 +260,7 @@ export interface UnderlyingAssetRepositoryV1 {
    * Refuses a key no source has declared, so the graph cannot grow an edge to
    * a node somebody invented in a worker.
    */
-  bindRepresentation(input: RepresentationUnderlyingV1): Promise<RepresentationUnderlyingV1>;
+  bindRepresentation(input: BindRepresentationInputV1): Promise<RepresentationUnderlyingV1>;
 
   /** What a representation stands for, or null. */
   underlyingOf(input: {

@@ -1,5 +1,6 @@
 import {
   UnknownUnderlyingError,
+  assertBindRepresentationInputV1,
   assertRepresentationUnderlyingV1,
   assertUnderlyingAssetV1,
   type RepresentationUnderlyingV1,
@@ -115,7 +116,10 @@ export function createDatabaseUnderlyingAssetRepository(
     },
 
     async bindRepresentation(input) {
-      const parsed = assertRepresentationUnderlyingV1(input, 'write');
+      // The write gate, not the read one: a new binding must carry complete
+      // typed identity. The read schema tolerates a pre-0059 row so history
+      // stays legible; nothing may add to that history.
+      const parsed = assertBindRepresentationInputV1(input);
       const address = parsed.tokenAddress.toLowerCase();
       // Checked here as well as by the foreign key, so the caller gets the
       // refusal in our vocabulary instead of a constraint name.
