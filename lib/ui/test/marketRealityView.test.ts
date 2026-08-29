@@ -915,13 +915,58 @@ describe('an absent number never renders as a zero', () => {
   test('every missing figure is an em dash with a reason', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const numbers = view?.representations[0]?.numbers ?? [];
+    // The cash row carries the last measurement now, with its age. The three
+    // that follow need open evidence or a reference nobody established, and
+    // they still say why they are empty rather than showing a zero.
     assert.deepEqual(
-      numbers.map((fact) => fact.value),
-      ['—', '—', '—', '—'],
+      numbers.slice(1).map((fact) => fact.value),
+      ['—', '—', '—'],
     );
     for (const fact of numbers) {
       assert.ok(fact.note && fact.note.length > 0, `${fact.label} must say why it is empty`);
     }
+  });
+
+  test('a measured figure fills the body, marked as history with its age', () => {
+    // The defect this replaced: a card over a stored run rendered four dashes
+    // and hid the measurement in a one-line strip, while Discover showed the
+    // same run in full. The number is the body now; the age is what keeps it
+    // honest.
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const cash = view?.representations[0]?.numbers[0];
+    assert.equal(cash?.value, '$99.95');
+    assert.match(cash?.note ?? '', /history, not a price now/);
+    assert.match(cash?.note ?? '', /ago/);
+    assert.equal(cash?.tone, 'off', 'history is muted, never styled as a live price');
+  });
+
+  test('the open-quote strip says there is nothing open, and how to get one', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const strip = view?.representations[0]?.openQuote;
+    assert.equal(strip?.value, 'None open');
+    assert.match(strip?.note ?? '', /twenty seconds/);
+    assert.match(strip?.note ?? '', /Measure now/);
+  });
+
+  test('the ladder is the caller’s, and absent until one is supplied', () => {
+    const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    assert.deepEqual(bare?.representations[0]?.ladder, []);
+    assert.equal(bare?.representations[0]?.ladderNote, null);
+
+    const address = bare!.representations[0]!.tokenAddress.toLowerCase();
+    const withLadder = marketRealityViewV1({
+      wire: wire(),
+      choice: null,
+      now: NOW,
+      ladders: {
+        [address]: {
+          rungs: [{ label: '$1,000', value: '0.09%', note: null, tone: 'neutral' }],
+          note: 'Measured 46m ago through kyberswap.',
+        },
+      },
+    });
+    assert.equal(withLadder?.representations[0]?.ladder[0]?.value, '0.09%');
+    assert.match(withLadder?.representations[0]?.ladderNote ?? '', /kyberswap/);
   });
 
   test('a present figure is formatted, not raw atomic', () => {
@@ -1498,22 +1543,41 @@ describe('history is history, and says so', () => {
     assert.doesNotMatch(row?.outcomeBody ?? '', /price/i);
   });
 
-  test('the last observation is shown apart from the current numbers', () => {
+  test('a quoted observation is not repeated below the body that carries it', () => {
     // A background sample rendered in the same list as open evidence is the
     // confusion the engine grew a second field to prevent.
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const row = view?.representations[0];
-    assert.equal(row?.lastSeen?.value, '$99.95');
-    assert.match(row?.lastSeen?.note ?? '', /history, not a price now/);
+    // The figure lives in the body now, with its age. Showing it twice, in two
+    // styles, taught nobody anything and made the card longer.
+    assert.equal(row?.numbers[0]?.value, '$99.95');
+    assert.equal(row?.lastSeen, null);
+  });
+
+  test('a look that found no figure still gets its own line, naming the read', () => {
     // The badge names the read it reports. "Last seen · Read failed" under a
     // headline about a fresh successful totalSupply read reads as a
     // contradiction; supply and the cash-exit route are different reads.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'no_route' as const,
+              returnedCashAtomic: null,
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const row = view?.representations[0];
     assert.equal(row?.lastSeen?.label, 'Last market check');
-    // And the current numbers stay empty.
-    assert.deepEqual(
-      row?.numbers.map((fact) => fact.value),
-      ['—', '—', '—', '—'],
-    );
+    assert.equal(row?.lastSeen?.value, 'No route under policy');
+    // And the body says why it has no figure, rather than only a dash.
+    assert.match(row?.numbers[0]?.note ?? '', /no route under the reviewed router policy/i);
   });
 
   test('an open observation is labelled open, not as history', () => {
@@ -1531,7 +1595,14 @@ describe('history is history, and says so', () => {
       choice: null,
       now: NOW,
     });
-    assert.match(view?.representations[0]?.lastSeen?.note ?? '', /still open/);
+    // Open evidence is the strip's job now, and the body says so too. The
+    // history line is for a look that produced no figure at all.
+    const row = view?.representations[0];
+    assert.equal(row?.openQuote.value, '$99.95');
+    assert.match(row?.openQuote.note ?? '', /open right now/);
+    assert.match(row?.numbers[0]?.note ?? '', /still open/);
+    assert.equal(row?.numbers[0]?.tone, 'neutral', 'a live figure is not muted');
+    assert.equal(row?.lastSeen, null);
   });
 
   test('an expired failed read stays OUR failure, however long ago it was', () => {

@@ -402,9 +402,31 @@ function RepresentationCard({
         <span className="mr-attribution-k">Says</span> {representation.attribution}
       </p>
 
+      {/* The narrow strip. What is true only inside a twenty-second window
+          belongs on one line, not in the body: for almost every reader it is
+          empty, and a card whose body can only be filled in that window renders
+          as a column of dashes over a measurement taken minutes ago. */}
+      <p className="mr-openquote">
+        <span className="mr-lastseen-k">Open quote</span>
+        <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
+        <span className="cr-fact-note"> · {representation.openQuote.note}</span>
+      </p>
+
       <p className="cr-verdict">{representation.outcomeBody}</p>
 
       <FactList facts={representation.numbers} label={`${representation.issuerName} outcome`} />
+
+      {/* The ladder, from the same stored run. Discover has rendered this all
+          along; the only reason Stocks did not was that it never read it. */}
+      {representation.ladder.length > 0 ? (
+        <div className="mr-ladder">
+          <p className="mr-attribution">
+            <span className="mr-attribution-k">Round trip</span> at each reviewed size
+          </p>
+          <FactList facts={representation.ladder} label={`${representation.issuerName} ladder`} />
+          {representation.ladderNote ? <p className="lnote">{representation.ladderNote}</p> : null}
+        </div>
+      ) : null}
 
       {/* History, and marked as history. Never in the same list as the numbers
           above it, which carry open evidence only — a background sample sitting

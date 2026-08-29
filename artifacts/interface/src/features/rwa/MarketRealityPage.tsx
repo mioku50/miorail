@@ -12,6 +12,7 @@ import {
   chainLabelV1,
   chainUnavailableReasonV1,
   consoleSectionPathV1,
+  cashExitLadderRungsV1,
   marketRealityViewV1,
   MARKET_REALITY_HISTORY_PERIODS_V1,
   underlyingChoicesV1,
@@ -26,6 +27,7 @@ import {
   useMarketRealityRadar,
   useRemoveMarketRealityRadarWatch,
   useMeasureRwaMarketReality,
+  useOfficialAssetDossier,
   useRwaMarketReality,
   useRwaMarketRealityHistory,
   useRwaUnderlyings,
@@ -225,14 +227,60 @@ export function MarketRealityPage() {
     [reality.dataUpdatedAt, history.dataUpdatedAt, index.dataUpdatedAt],
   );
 
+  // ---------------------------------------------------------------------------
+  // The round-trip ladder, per representation.
+  //
+  // Market Reality answers ONE exact question — one size, one direction — and
+  // that is the right shape for comparing issuers. It is the wrong shape for
+  // the reader's first question, which is what this costs at the size they
+  // actually hold. Discover has answered that all along out of the stored
+  // cash-exit run; this reads the same run, through the dossier, for each
+  // exact address on the page.
+  //
+  // Three fixed hooks rather than a loop, because a hook cannot be called
+  // conditionally. Three is the reviewed maximum for one security today
+  // (Coinbase, Backed, and Backed's wrapper); a fourth shows no ladder rather
+  // than a wrong one, and the count is asserted in the UI test.
+  // ---------------------------------------------------------------------------
+  const representationAddresses = useMemo(
+    () => (reality.data?.representations ?? []).map((row) => row.tokenAddress),
+    [reality.data],
+  );
+  const dossierA = useOfficialAssetDossier(representationAddresses[0] ?? null);
+  const dossierB = useOfficialAssetDossier(representationAddresses[1] ?? null);
+  const dossierC = useOfficialAssetDossier(representationAddresses[2] ?? null);
+
+  const ladders = useMemo(() => {
+    const built: Record<
+      string,
+      { rungs: ReturnType<typeof cashExitLadderRungsV1>; note: string | null }
+    > = {};
+    for (const response of [dossierA.data, dossierB.data, dossierC.data]) {
+      // `not_in_reviewed_corpus` is a legible answer, not an error. It simply
+      // has no ladder to show.
+      if (!response || response.outcome !== 'dossier') continue;
+      const ladder = response.dossier.cashExitLadder;
+      const rungs = cashExitLadderRungsV1(ladder.rungs);
+      if (rungs.length === 0) continue;
+      built[response.dossier.tokenAddress.toLowerCase()] = {
+        rungs,
+        note: `Exact sizes only, quoted through ${
+          ladder.approvedSources.join(', ') || 'no approved router'
+        }. Nothing here was executed.`,
+      };
+    }
+    return built;
+  }, [dossierA.data, dossierB.data, dossierC.data]);
+
   const view = useMemo(
     () =>
       marketRealityViewV1({
         wire: reality.data ?? null,
         choice: choices.find((choice) => choice.underlyingKey === selectedKey) ?? null,
         now: nowIso,
+        ladders,
       }),
-    [reality.data, choices, selectedKey, nowIso],
+    [reality.data, choices, selectedKey, nowIso, ladders],
   );
 
   const historyView = useMemo(

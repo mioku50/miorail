@@ -316,8 +316,28 @@ export interface RepresentationViewV1 {
   watchUnavailableReason: string | null;
   routePolicyKey: string | null;
   approvedSources: readonly string[];
-  /** The comparison numbers, always present, dashed when absent. */
+  /**
+   * The narrow strip: what is true ONLY while a router quote is open.
+   *
+   * A quote lives about twenty seconds and the background sampler runs about
+   * every forty-five minutes, so for almost every reader this is empty — which
+   * is why it is a strip and not the card. Giving the body to fields that can
+   * only be filled in a twenty-second window is how a card measured minutes
+   * ago rendered as four dashes.
+   */
+  openQuote: { value: string; note: string };
+  /**
+   * The body: the newest measurement, with its age said out loud.
+   *
+   * History, and never disguised as a live price — every row that came from a
+   * closed observation carries its age in the note, which is the same contract
+   * Discover renders under.
+   */
   numbers: FactViewV1[];
+  /** Round-trip cost at each reviewed size, from the same stored run. Empty
+   * when nothing measured it — never a row of zeros. */
+  ladder: FactViewV1[];
+  ladderNote: string | null;
   /** Holding, redeeming and distributions — from the reviewed adapters. */
   terms: FactViewV1[];
   technical: { label: string; value: string }[];
@@ -621,9 +641,38 @@ function outcomeBodyV1(
   }
 }
 
+/**
+ * What is true only while a quote is open, in one line.
+ *
+ * Separated from the body so the body can hold a measurement. The reader is
+ * told plainly whether anything is open right now, and the recovery is named
+ * in the same breath rather than left in a toolbar at the top of the page.
+ */
+function openQuoteStripV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): { value: string; note: string } {
+  if (representation.status === 'full' && representation.returnedCashAtomic) {
+    return {
+      value: usdV1(representation.returnedCashAtomic) ?? '—',
+      note: 'open right now, at this exact size',
+    };
+  }
+  const age = representation.lastObservation
+    ? quoteAgeLabelV1(representation.lastObservation.observedAt, nowIso)
+    : null;
+  return {
+    value: 'None open',
+    note: age
+      ? `router quotes last about twenty seconds; the newest was taken ${age}. Measure now to open one.`
+      : 'nothing has been measured at this size yet. Measure now to open one.',
+  };
+}
+
 function numbersV1(
   representation: MarketRealityRepresentationWireV1,
   direction: MarketRealityDirectionV1,
+  nowIso: string,
 ): FactViewV1[] {
   const cash = usdV1(representation.returnedCashAtomic);
   const price =
@@ -636,15 +685,45 @@ function numbersV1(
       : null;
   const premium = bpsLabelV1(representation.premiumDiscountBps);
 
+  // The measurement, when there is no open quote to state instead.
+  //
+  // This is the change that stopped the card rendering four dashes over a
+  // stored run: the figure exists, Discover has always shown it, and the only
+  // thing that made it unshowable here was that this list would not carry a
+  // closed observation. It carries one now, with its age in the note and a
+  // muted tone, which is the distinction that actually protects a reader —
+  // not the absence of the number.
+  const observation = representation.lastObservation;
+  const historyAge = observation ? quoteAgeLabelV1(observation.observedAt, nowIso) : null;
+  const historyCash =
+    observation && observation.status === 'quoted' && observation.returnedCashAtomic
+      ? usdV1(observation.returnedCashAtomic)
+      : null;
+  const cashLabel = direction === 'sell' ? 'Cash back' : 'Cash in';
+
   return [
-    {
-      label: direction === 'sell' ? 'Cash back' : 'Cash in',
-      value: cash ?? '—',
-      note: cash === null ? 'no open quote at this size' : null,
-      // A returned amount is a fact, not an assessment of whether the route is
-      // attractive. Route state remains visible in the outcome chip above.
-      tone: 'neutral',
-    },
+    cash !== null
+      ? {
+          label: cashLabel,
+          value: cash,
+          note: 'on evidence still open',
+          // A returned amount is a fact, not an assessment of whether the route
+          // is attractive. Route state remains visible in the outcome chip.
+          tone: 'neutral' as const,
+        }
+      : historyCash !== null
+        ? {
+            label: cashLabel,
+            value: historyCash,
+            note: `measured ${historyAge ?? 'earlier'} — history, not a price now`,
+            tone: 'off' as const,
+          }
+        : {
+            label: cashLabel,
+            value: '—',
+            note: observationAbsenceNoteV1(observation, historyAge),
+            tone: 'neutral' as const,
+          },
     {
       label: 'Effective price',
       value: price ?? '—',
@@ -681,6 +760,25 @@ function numbersV1(
   ];
 }
 
+/** Why there is no cash figure, named by what the last look actually found. */
+function observationAbsenceNoteV1(
+  observation: MarketRealityRepresentationWireV1['lastObservation'],
+  age: string | null,
+): string {
+  if (!observation) return 'nothing has been measured at this size yet';
+  const when = age ? ` ${age}` : '';
+  switch (observation.status) {
+    case 'no_route':
+      return `no route under the reviewed router policy${when}`;
+    case 'unsized':
+      return `the buy anchor found no route${when}, so the sell was never sized`;
+    case 'measurement_failed':
+      return `Miorail's router call did not complete${when}`;
+    default:
+      return `no cash figure was returned${when}`;
+  }
+}
+
 /**
  * What the last look found, and when — as HISTORY.
  *
@@ -700,15 +798,12 @@ function lastSeenV1(
   // headline about a fresh successful totalSupply read and looked like a
   // contradiction; the two are different reads, and only the label said
   // otherwise. Supply is onchain, this is the cash-exit route measurement.
-  if (observation.status === 'quoted' && observation.returnedCashAtomic) {
-    return {
-      label: 'Last market check',
-      value: usdV1(observation.returnedCashAtomic) ?? '—',
-      note: observation.open
-        ? `measured ${age}, still open`
-        : `measured ${age} — history, not a price now`,
-    };
-  }
+  // A quoted observation is no longer repeated here: the body carries that
+  // figure now, with its age, which is where a reader looks first. Showing the
+  // same number twice in two styles taught nobody anything and made the card
+  // longer. What remains is the case the body has no figure FOR — a route that
+  // was not found, a sell that was never sized, a call that did not complete.
+  if (observation.status === 'quoted' && observation.returnedCashAtomic) return null;
   return {
     label: 'Last market check',
     value:
@@ -982,10 +1077,26 @@ function coverageBodyV1(input: {
   return `Miorail has a current market answer for ${input.answered} of ${input.eligible} outstanding representations at this exact direction and size. Each remaining card says what is missing.`;
 }
 
+/**
+ * Round-trip cost per reviewed size, keyed by exact token address.
+ *
+ * Supplied by the caller rather than derived here: it comes from the stored
+ * cash-exit run — the same read Discover has always rendered — and this view
+ * builds from the market-reality answer. Passing it in keeps one projection of
+ * the ladder in the product instead of a second one that can disagree with the
+ * first.
+ */
+export interface RepresentationLadderInputV1 {
+  rungs: FactViewV1[];
+  note: string | null;
+}
+
 export function marketRealityViewV1(input: {
   wire: MarketRealityWireV1 | null;
   choice: UnderlyingChoiceViewV1 | null;
   now: string;
+  /** Keyed by lowercase token address. */
+  ladders?: Readonly<Record<string, RepresentationLadderInputV1>>;
 }): MarketRealityViewV1 | null {
   const wire = input.wire;
   if (!wire) return null;
@@ -1086,7 +1197,10 @@ export function marketRealityViewV1(input: {
         routePolicyKey: representation.routePolicyKey,
         approvedSources,
         lastSeen: lastSeenV1(representation, input.now),
-        numbers: numbersV1(representation, direction),
+        openQuote: openQuoteStripV1(representation, input.now),
+        numbers: numbersV1(representation, direction, input.now),
+        ladder: input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? [],
+        ladderNote: input.ladders?.[representation.tokenAddress.toLowerCase()]?.note ?? null,
         terms: [
           {
             label: 'Ratio',

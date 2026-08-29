@@ -280,6 +280,61 @@ const ROUTE_STATUS_V1: Readonly<
   },
 };
 
+/**
+ * One rung of a cash-exit ladder, in the shape both readers of it carry.
+ *
+ * Discover reads it off its own list wire; Stocks reads it off the stored
+ * dossier. The field names agree because both are projections of the same run,
+ * and the subset below is what a ladder actually needs to be rendered.
+ */
+export interface CashExitRungInputV1 {
+  requestedCashAtomic: string | null;
+  destination: 'USDC' | 'ETH';
+  status: OfficialLadderRungWireV1['status'];
+  roundTripCostBps: string | null;
+  derivedFromExactRung: boolean;
+  lowerBoundRequestedCashAtomic: string | null;
+  /** Discover's list wire carries this; the dossier's does not. */
+  entryRouteRefused?: boolean;
+}
+
+/**
+ * The ladder, as rows.
+ *
+ * Extracted so the product has ONE projection of a round-trip ladder. Stocks
+ * spent a phase rendering four dashes over a run whose ladder Discover was
+ * already showing in full, and the cheapest way to grow a second, disagreeing
+ * ladder would have been to write this logic again over there.
+ *
+ * USDC first, and only the rungs that were actually measured: a ladder of
+ * "not measured" rows is four ways of saying nothing.
+ */
+export function cashExitLadderRungsV1(rungs: readonly CashExitRungInputV1[]): FactViewV1[] {
+  return rungs
+    .filter(
+      (rung): rung is CashExitRungInputV1 & { requestedCashAtomic: string } =>
+        rung.destination === 'USDC' &&
+        rung.status !== 'not_measured' &&
+        // A rung sized by an actual position carries no cash size, so it is
+        // not a rung of the CASH ladder. The dossier holds both kinds.
+        rung.requestedCashAtomic !== null,
+    )
+    .map((rung) => {
+      const cost = rwaBpsLabelV1(rung.roundTripCostBps);
+      const meta = rung.entryRouteRefused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[rung.status];
+      return {
+        label: cashSizeLabelV1(rung.requestedCashAtomic),
+        value: cost ?? meta.label,
+        // A cost carried forward from a smaller rung must say so. Reading it
+        // as this size's cost is reading a measurement of something else.
+        note: rung.derivedFromExactRung
+          ? `carried from ${cashSizeLabelV1(rung.lowerBoundRequestedCashAtomic ?? '0')}`
+          : null,
+        tone: meta.tone,
+      };
+    });
+}
+
 const RUNG_STATUS_V1: Readonly<
   Record<OfficialLadderRungWireV1['status'], { label: string; tone: ToneV1 }>
 > = {
@@ -568,24 +623,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     });
   }
 
-  // USDC first, and only the rungs that were actually measured. A ladder of
-  // "not measured" rows is four ways of saying nothing.
-  const ladderRungs = asset.market.ladder
-    .filter((rung) => rung.destination === 'USDC' && rung.status !== 'not_measured')
-    .map((rung) => {
-      const cost = rwaBpsLabelV1(rung.roundTripCostBps);
-      const meta = rung.entryRouteRefused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[rung.status];
-      return {
-        label: cashSizeLabelV1(rung.requestedCashAtomic),
-        value: cost ?? meta.label,
-        // A cost carried forward from a smaller rung must say so. Reading it
-        // as this size's cost is reading a measurement of something else.
-        note: rung.derivedFromExactRung
-          ? `carried from ${cashSizeLabelV1(rung.lowerBoundRequestedCashAtomic ?? '0')}`
-          : null,
-        tone: meta.tone,
-      };
-    });
+  const ladderRungs = cashExitLadderRungsV1(asset.market.ladder);
 
   const observation = asset.market.observation;
   const market: FactViewV1[] = [

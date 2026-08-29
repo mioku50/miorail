@@ -250,7 +250,26 @@ async function main(): Promise<void> {
     }
   }
 
+  // Pacing, for a provider metered by TOKENS rather than requests.
+  //
+  // Mistral publishes x-ratelimit-limit-tokens-minute: 25,000 on medium and
+  // 50,000 on small, against a Stocks prompt of roughly 3,000 tokens. That is
+  // six to sixteen narrations a minute — ample for a reader asking questions,
+  // and nothing at all for a benchmark firing as fast as it can. Measuring
+  // availability without pacing measures the benchmark, which is exactly what
+  // the first three runs here did.
+  const delayMs = Number(process.env.BENCH_DELAY_MS || '0');
+  let nextSlot = Date.now();
+  const pace = async (): Promise<void> => {
+    if (delayMs <= 0) return;
+    const slot = nextSlot;
+    nextSlot += delayMs;
+    const wait = slot - Date.now();
+    if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  };
+
   const runs = await mapWithConcurrencyV1(jobs, concurrency, async (job) => {
+    await pace();
     const context: ChainCallV1 = { answeredByIndex: null, attempts: 0 };
     const answered = await chainCall.run(context, () =>
       narrateStocksAnswerV1({ bundle: job.fixture.bundle, provider: job.lane.provider, timeoutMs: 60_000 }),
@@ -275,6 +294,7 @@ async function main(): Promise<void> {
     schemaVersion: 'stocks-narrator-benchmark/v1',
     startedAt: new Date().toISOString(),
     repetitions,
+    delayMs,
     fixtures: bundles.map((entry) => ({ id: entry.id, name: entry.name })),
     lanes: lanes.map((lane) => ({ key: lane.key, host: lane.label, model: lane.model })),
     byLane: lanes.map((lane) => summariseV1(runs.filter((run) => run.lane === lane.key), lane)),

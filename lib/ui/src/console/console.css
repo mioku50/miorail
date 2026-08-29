@@ -1186,6 +1186,20 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-lastseen-k { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; }
 .mio-console .mr-lastseen-v { color: var(--muted); font-size: 12px; font-weight: 600; }
 
+/* The open-quote strip. One line, above the body, because what is true only
+   inside a twenty-second window is almost never true when a reader arrives —
+   and a card that gave its body to those fields rendered as a column of dashes
+   over a measurement taken forty minutes earlier. Same vocabulary as the
+   last-check strip below it, deliberately: they are the same kind of aside. */
+.mio-console .mr-openquote { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 6px;
+  margin: 6px 0 8px; padding: 5px 8px; border-radius: 7px; background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line); font-size: 11.5px; color: var(--faint); }
+
+/* The round-trip ladder, from the stored run. Set apart from the body so a
+   cost measured at four sizes is not read as four costs at this one. */
+.mio-console .mr-ladder { margin-top: 10px; padding-top: 8px;
+  border-top: 1px solid var(--line); }
+
 /* Phase 12.1 — historical observations stay visually factual. No green/red
    direction semantics: a wider cost is a number, not an investment verdict. */
 .mio-console .mr-history-tabs { justify-self: start; }
