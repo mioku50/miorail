@@ -314,6 +314,8 @@ const COMPARISON_REASON_V1: Readonly<Record<string, string>> = {
   executable_value_unavailable: 'no approved router returned a route',
   executable_value_buy_only: 'only the buy leg completed',
   executable_value_measurement_failed: 'the measurement did not finish',
+  executable_value_not_normalized:
+    'the quote is cash back at one size, not a per-share price, and the feed is per share',
 };
 
 export const LOOKALIKE_ALIAS_LABEL_V1: Readonly<Record<LookalikeAliasFilterV1, string>> = {

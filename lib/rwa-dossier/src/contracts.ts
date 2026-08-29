@@ -190,6 +190,10 @@ export const ReferenceValueV1Schema = z
   .strict();
 export type ReferenceValueV1 = z.infer<typeof ReferenceValueV1Schema>;
 
+/** The scale every per-token executable price is expressed in, on both the
+ * list and the dossier, so the reference comparison has exactly one basis. */
+export const PER_TOKEN_PRICE_DECIMALS_V1 = 8;
+
 export const ExecutableValueV1Schema = z
   .object({
     status: z.enum([
@@ -202,13 +206,29 @@ export const ExecutableValueV1Schema = z
     ]),
     valueAtomic: Digits.nullable(),
     decimals: z.number().int().min(0).max(36).nullable(),
+    // The per-token price the same measurement implies, and the ONLY basis the
+    // reference comparison is allowed to use. `valueAtomic` is whatever the
+    // surface displays -- on the list it is the cash a sized rung handed back,
+    // which is a total, not a price. Dividing a $100,000 total by a per-share
+    // feed is a category error that renders as a 31,015% premium.
+    perTokenValueAtomic: Digits.nullable(),
+    perTokenDecimals: z.number().int().min(0).max(36).nullable(),
     requestedSizeAtomic: Digits.nullable(),
     executableSizeAtomic: Digits.nullable(),
     destination: z.enum(['USDC', 'ETH']).nullable(),
     observedAt: Timestamp.nullable(),
     evidence: DossierEvidenceRefV1Schema.nullable(),
   })
-  .strict();
+  .strict()
+  .superRefine((value, ctx) => {
+    if ((value.perTokenValueAtomic === null) !== (value.perTokenDecimals === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'a per-token price and its scale travel together',
+        path: ['perTokenDecimals'],
+      });
+    }
+  });
 export type ExecutableValueV1 = z.infer<typeof ExecutableValueV1Schema>;
 
 export const ReferenceExecutableComparisonV1Schema = z
@@ -229,6 +249,7 @@ export const ReferenceExecutableComparisonV1Schema = z
         'executable_value_unavailable',
         'executable_value_buy_only',
         'executable_value_measurement_failed',
+        'executable_value_not_normalized',
       ])
       .nullable(),
   })

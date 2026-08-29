@@ -37,6 +37,7 @@ import {
   unavailableTokenizedStockReferenceV1,
 } from './reference.js';
 import { readB20MultiplierV1, unavailableMultiplierV1 } from './multiplier.js';
+import { PER_TOKEN_PRICE_DECIMALS_V1 } from './contracts.js';
 
 const USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const WETH_BASE_V1 = '0x4200000000000000000000000000000000000006';
@@ -80,6 +81,8 @@ function executableFromLadderV1(rungs: readonly CashExitLadderRungV1[]): Executa
       status: 'not_measured',
       valueAtomic: null,
       decimals: null,
+      perTokenValueAtomic: null,
+      perTokenDecimals: null,
       requestedSizeAtomic: null,
       executableSizeAtomic: null,
       destination: null,
@@ -102,8 +105,14 @@ function executableFromLadderV1(rungs: readonly CashExitLadderRungV1[]): Executa
       : null;
   return {
     status: preferred.status,
+    // The dossier already displays a per-token price here, so both fields hold
+    // the same quantity on this surface. The list's `valueAtomic` is a cash
+    // total, which is why the comparison reads the per-token field and never
+    // this one.
     valueAtomic,
-    decimals: valueAtomic === null ? null : 8,
+    decimals: valueAtomic === null ? null : PER_TOKEN_PRICE_DECIMALS_V1,
+    perTokenValueAtomic: valueAtomic,
+    perTokenDecimals: valueAtomic === null ? null : PER_TOKEN_PRICE_DECIMALS_V1,
     requestedSizeAtomic:
       preferred.requestedTokenAtomic ??
       preferred.exactTestedTokenAtomic ??

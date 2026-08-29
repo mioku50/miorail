@@ -31,6 +31,7 @@ import {
   type OfficialRouteStatusV1,
   type RwaSignalFeedV1,
 } from './discover.js';
+import { PER_TOKEN_PRICE_DECIMALS_V1 } from './contracts.js';
 import {
   compareReferenceAndExecutableV1,
   readTokenizedStockReferenceV1,
@@ -217,7 +218,7 @@ export function routeStatusFromPreviewV1(
 }
 
 /** The executable value a card shows: the largest completed round trip. */
-function executableFromRunV1(
+export function executableFromRunV1(
   run: CashExitMeasurementRunV1 | null,
   rungs: readonly OfficialCashExitRungPreviewV1[],
 ): ExecutableValueV1 {
@@ -231,6 +232,8 @@ function executableFromRunV1(
       status: rungs.length === 0 ? 'not_measured' : 'unavailable',
       valueAtomic: null,
       decimals: null,
+      perTokenValueAtomic: null,
+      perTokenDecimals: null,
       requestedSizeAtomic: null,
       executableSizeAtomic: null,
       destination: null,
@@ -246,12 +249,31 @@ function executableFromRunV1(
         row.requestedCashAtomic === largest.requestedCashAtomic,
     ),
   );
+  // The card shows the CASH a sized rung handed back, because that is the
+  // question the rung asked. The comparison against the reference feed needs
+  // the price that same quote implies, so it is carried separately rather than
+  // inferred from a total by whoever reads it next.
+  const returned = observation.sellQuote?.outputAtomic ?? null;
+  const tested = observation.testedTokenAtomic;
+  const perTokenValueAtomic =
+    returned !== null && tested !== null && BigInt(tested) > 0n
+      ? (
+          (BigInt(returned) *
+            10n **
+              BigInt(
+                observation.tokenDecimals + PER_TOKEN_PRICE_DECIMALS_V1 - observation.destinationDecimals,
+              )) /
+          BigInt(tested)
+        ).toString()
+      : null;
   return {
     status: 'full',
-    valueAtomic: observation.sellQuote?.outputAtomic ?? null,
+    valueAtomic: returned,
     decimals: observation.destinationDecimals,
+    perTokenValueAtomic,
+    perTokenDecimals: perTokenValueAtomic === null ? null : PER_TOKEN_PRICE_DECIMALS_V1,
     requestedSizeAtomic: largest.requestedCashAtomic,
-    executableSizeAtomic: observation.testedTokenAtomic,
+    executableSizeAtomic: tested,
     destination: 'USDC',
     observedAt: observation.observedAt,
     evidence: null,

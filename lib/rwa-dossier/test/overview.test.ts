@@ -3,7 +3,11 @@ import test, { describe } from 'node:test';
 
 import type { CashExitMeasurementRunV1 } from '@mioagent/route-storage';
 
-import { previewLadderFromRunV1, routeStatusFromPreviewV1 } from '../src/overview.js';
+import {
+  executableFromRunV1,
+  previewLadderFromRunV1,
+  routeStatusFromPreviewV1,
+} from '../src/overview.js';
 
 const AAPL = '0xb200000000000000000000c2e324d24d7eecd1fb';
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
@@ -98,6 +102,31 @@ function runV1(observations: ReturnType<typeof observationV1>[]): CashExitMeasur
 // The list projection, and the one thing it must not inherit from the
 // executable one: a quote's twenty-second expiry.
 // ---------------------------------------------------------------------------
+
+describe('the executable value a Discover card carries', () => {
+  test('the cash a rung handed back and the price it implies are separate fields', () => {
+    // $100 in, 0.32220799 AAPLc tested, $99.902125 back. The card shows the
+    // cash; the reference feed is per share, so the comparison may only read
+    // the price. Handing it the cash total is what renders as 31,015%.
+    const run = runV1([observationV1({ size: '100000000', status: 'full' })]);
+    const executable = executableFromRunV1(run, previewLadderFromRunV1(run));
+
+    assert.equal(executable.status, 'full');
+    assert.equal(executable.valueAtomic, '99902125');
+    assert.equal(executable.decimals, 6);
+    assert.equal(executable.perTokenValueAtomic, '31005477238');
+    assert.equal(executable.perTokenDecimals, 8);
+  });
+
+  test('no tested amount means no price, and the pair stays absent together', () => {
+    const run = runV1([observationV1({ size: '100000000', status: 'unavailable' })]);
+    const executable = executableFromRunV1(run, previewLadderFromRunV1(run));
+
+    assert.equal(executable.status, 'unavailable');
+    assert.equal(executable.perTokenValueAtomic, null);
+    assert.equal(executable.perTokenDecimals, null);
+  });
+});
 
 describe('the Discover ladder preview', () => {
   test('a run whose quotes lapsed days ago is still a measurement', () => {

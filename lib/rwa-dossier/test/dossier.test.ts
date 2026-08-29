@@ -601,6 +601,8 @@ describe('tokenized stock reference boundary', () => {
       status: 'full',
       valueAtomic: '11000000000',
       decimals: 8,
+      perTokenValueAtomic: '11000000000',
+      perTokenDecimals: 8,
       requestedSizeAtomic: '1000000000000000000',
       executableSizeAtomic: '1000000000000000000',
       destination: 'USDC',
@@ -611,6 +613,37 @@ describe('tokenized stock reference boundary', () => {
       status: 'comparable',
       differenceBps: '1000',
       reason: null,
+    });
+  });
+
+  test('withholds the comparison when the executable value is a cash total, not a price', async () => {
+    // The Discover list carries the cash a sized rung handed back. Against a
+    // per-share feed that renders as a five-figure percentage, so the basis
+    // must be absent rather than approximated.
+    const value = await readTokenizedStockReferenceV1(reader({}), {
+      feedAddress: FEED,
+      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+      now: NOW,
+      registryPause: false,
+    });
+    assert.equal(value.comparisonEligible, true);
+    const cashTotal: ExecutableValueV1 = {
+      status: 'full',
+      // $99,663.28 back on a $100,000 rung, in USDC atoms.
+      valueAtomic: '99663280000',
+      decimals: 6,
+      perTokenValueAtomic: null,
+      perTokenDecimals: null,
+      requestedSizeAtomic: '100000000000',
+      executableSizeAtomic: '311000000000000000000',
+      destination: 'USDC',
+      observedAt: NOW.toISOString(),
+      evidence: null,
+    };
+    assert.deepEqual(compareReferenceAndExecutableV1(value, cashTotal), {
+      status: 'withheld',
+      differenceBps: null,
+      reason: 'executable_value_not_normalized',
     });
   });
 
@@ -631,6 +664,8 @@ describe('tokenized stock reference boundary', () => {
         status: 'full',
         valueAtomic: '1',
         decimals: 8,
+        perTokenValueAtomic: '1',
+        perTokenDecimals: 8,
         requestedSizeAtomic: '1',
         executableSizeAtomic: '1',
         destination: 'USDC',

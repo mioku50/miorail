@@ -248,23 +248,32 @@ export function compareReferenceAndExecutableV1(
       reason,
     });
   }
-  if (
-    reference.valueAtomic === null ||
-    reference.decimals === null ||
-    executable.valueAtomic === null ||
-    executable.decimals === null
-  ) {
+  if (reference.valueAtomic === null || reference.decimals === null) {
     return ReferenceExecutableComparisonV1Schema.parse({
       status: 'withheld',
       differenceBps: null,
       reason: 'executable_value_unavailable',
     });
   }
-  const commonDecimals = Math.max(reference.decimals, executable.decimals);
+  // The reference is a price per share. Only a price may be compared with it.
+  // A sized rung's cash back is a total, and the two have never been the same
+  // quantity -- read as a difference it renders as a five-figure percentage.
+  if (executable.perTokenValueAtomic === null || executable.perTokenDecimals === null) {
+    return ReferenceExecutableComparisonV1Schema.parse({
+      status: 'withheld',
+      differenceBps: null,
+      reason:
+        executable.valueAtomic === null
+          ? 'executable_value_unavailable'
+          : 'executable_value_not_normalized',
+    });
+  }
+  const commonDecimals = Math.max(reference.decimals, executable.perTokenDecimals);
   const referenceScaled =
     BigInt(reference.valueAtomic) * 10n ** BigInt(commonDecimals - reference.decimals);
   const executableScaled =
-    BigInt(executable.valueAtomic) * 10n ** BigInt(commonDecimals - executable.decimals);
+    BigInt(executable.perTokenValueAtomic) *
+    10n ** BigInt(commonDecimals - executable.perTokenDecimals);
   if (referenceScaled <= 0n) {
     return ReferenceExecutableComparisonV1Schema.parse({
       status: 'withheld',
