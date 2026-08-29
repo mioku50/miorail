@@ -31,6 +31,10 @@ import {
   useRwaUnderlyings,
   useStatus,
 } from '@mioagent/api-client-react';
+import {
+  stockExecutionGoalSentenceV1,
+  stockExecutionHandoffV1,
+} from '@mioagent/rwa-market-reality/execution-handoff';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -367,6 +371,19 @@ export function MarketRealityPage() {
                 ([, watchId]) => watchId === removeWatch.variables?.watchId,
               )?.[0] ?? null)
             : null,
+          inspectRouteUnavailable: Object.fromEntries(
+            (reality.data?.representations ?? []).flatMap((representation) => {
+              if (!reality.data) return [];
+              const built = stockExecutionHandoffV1({
+                response: reality.data as never,
+                tokenAddress: representation.tokenAddress,
+                now: new Date(),
+              });
+              return built.status === 'refused'
+                ? [[representation.tokenAddress, built.detail] as const]
+                : [];
+            }),
+          ),
           watchError:
             addWatch.error || removeWatch.error
               ? failureCopyV1(addWatch.error ?? removeWatch.error, 'this exact watch')
@@ -391,6 +408,28 @@ export function MarketRealityPage() {
             onHistoryPeriod: (historyPeriod) => setQuestion({ history: historyPeriod }),
             onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
             onOpenRadar: () => navigate('/radar'),
+            // Phase 13.1. The handoff is built HERE, from the exact typed
+            // answer this page is rendering, and it carries an address — never
+            // a ticker. Navigation prefills the advanced surface and submits
+            // nothing: opening a route inspection is not approval.
+            ...(reality.data
+              ? {
+                  onInspectRoute: (tokenAddress: string) => {
+                    const built = stockExecutionHandoffV1({
+                      response: reality.data as never,
+                      tokenAddress,
+                      now: new Date(),
+                    });
+                    if (built.status !== 'ready') return;
+                    const params = new URLSearchParams({
+                      goal: stockExecutionGoalSentenceV1(built.handoff),
+                      from: 'stocks',
+                      token: built.handoff.tokenAddress,
+                    });
+                    navigate(`/routes?${params.toString()}`);
+                  },
+                }
+              : {}),
             ...(enabled && selectedKey
               ? {
                   onWatch: (tokenAddress: string) => {

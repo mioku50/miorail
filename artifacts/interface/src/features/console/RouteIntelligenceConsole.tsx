@@ -168,7 +168,16 @@ export function RouteIntelligenceConsole() {
   const consoleNav = useConsoleNav('routes');
 
   const [screen, setScreen] = useState<ConsoleScreenV1>('plan');
-  const [goal, setGoal] = useState('');
+  // Phase 13.1 — a goal handed over from Stocks. Read ONCE, at mount, into the
+  // same state a typed goal uses, and nothing is submitted: arriving here is a
+  // decision to look at a route, and pressing Plan is a separate one. The
+  // sentence Stocks builds names addresses only, so nothing downstream has a
+  // ticker to resolve.
+  const [goal, setGoal] = useState(() => {
+    if (typeof window === 'undefined') return '';
+    const handed = new URLSearchParams(window.location.search).get('goal') ?? '';
+    return handed.trim().slice(0, 4_000);
+  });
   /** The one-word reply to a clarification. Held here rather than inside
    * ComparingScreen, which is a pure function of its model like every other
    * screen in that file. */

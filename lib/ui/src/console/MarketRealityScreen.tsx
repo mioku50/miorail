@@ -84,6 +84,14 @@ export interface MarketRealityActionsV1 {
   onWatch?: (tokenAddress: string) => void;
   /** Remove the tenant's matching exact watch. */
   onUnwatch?: (tokenAddress: string) => void;
+  /**
+   * Phase 13.1 — open advanced execution on THIS exact address.
+   *
+   * Optional, secondary, and an intent to look: it opens a route inspection
+   * with the address prefilled and submits nothing. Absent when the handoff
+   * refuses, and the reason is rendered instead of a dead control.
+   */
+  onInspectRoute?: (tokenAddress: string) => void;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -94,6 +102,9 @@ export interface MarketRealityActionsV1 {
 export type MarketRealitySurfaceV1 = 'market' | 'utility';
 
 export interface MarketRealityScreenModelV1 {
+  /** Why advanced execution is unavailable for an exact address, when it is.
+   * Keyed by token address; absence means the action is offered. */
+  inspectRouteUnavailable?: Readonly<Record<string, string>>;
   choices: readonly UnderlyingChoiceViewV1[];
   choicesLoading: boolean;
   /** Why there is no chooser. Never a claim about the corpus. */
@@ -263,6 +274,7 @@ function RepresentationCard({
   watched,
   watching,
   removing,
+  inspectRouteUnavailable,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
@@ -270,6 +282,7 @@ function RepresentationCard({
   watched: boolean;
   watching: boolean;
   removing: boolean;
+  inspectRouteUnavailable: string | null;
 }) {
   if (surface === 'utility') {
     return (
@@ -430,7 +443,7 @@ function RepresentationCard({
         </div>
       </details>
 
-      {actions.onInvestigate || actions.onWatch || actions.onUnwatch ? (
+      {actions.onInvestigate || actions.onWatch || actions.onUnwatch || actions.onInspectRoute ? (
         <div className="card-actions">
           {actions.onWatch || actions.onUnwatch ? (
             <button
@@ -469,6 +482,26 @@ function RepresentationCard({
             >
               Investigate
             </button>
+          ) : null}
+          {/* Phase 13.1. Secondary and last: Stocks answers what the market
+              does, and execution is an optional capability a reader opts into.
+              Pressing this opens a route inspection with this exact address
+              prefilled; it submits nothing and approves nothing. */}
+          {actions.onInspectRoute ? (
+            inspectRouteUnavailable ? (
+              <span className="cr-fact-note" title={inspectRouteUnavailable}>
+                Advanced route unavailable
+              </span>
+            ) : (
+              <button
+                type="button"
+                className="btn sec"
+                title="Opens a route inspection for this exact address. Nothing is approved or submitted."
+                onClick={() => actions.onInspectRoute!(representation.tokenAddress)}
+              >
+                Advanced: inspect route
+              </button>
+            )
           ) : null}
         </div>
       ) : null}
@@ -801,6 +834,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                   }
                   watching={model.watchingTokenAddress === representation.tokenAddress}
                   removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                  inspectRouteUnavailable={
+                    model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
+                  }
                 />
               ))}
             </div>

@@ -1,5 +1,6 @@
 export * from './contracts.js';
 export * from './canonicalBinding.js';
+export * from './executionHandoff.js';
 export * from './engine.js';
 export * from './history.js';
 export * from './radar.js';

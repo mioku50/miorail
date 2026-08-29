@@ -19,6 +19,7 @@
     "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/proof-verifier": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
+    "@mioagent/rwa-market-reality": "workspace:*",
     "@mioagent/ui": "workspace:*",
     "@mioagent/wallet-actions": "workspace:*",
     "@mioagent/x402-actions": "workspace:*",
