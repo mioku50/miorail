@@ -51,6 +51,31 @@ describe('api-client-react', () => {
     assert.ok(!/calls:/.test(submissionSource), 'the submission hook must never send calls');
   });
 
+  it('both Radar watch mutations refresh the card without a reload', () => {
+    // A watched card used to be a disabled button with no way back. Removal
+    // only feels immediate because each mutation writes the server's fresh
+    // radar response straight into the cache the screen reads; without that
+    // the card would keep its old state until something refetched.
+    for (const [name, hook] of [
+      ['add', apiClient.useAddMarketRealityRadarWatch],
+      ['remove', apiClient.useRemoveMarketRealityRadarWatch],
+    ] as const) {
+      const source = hook.toString();
+      assert.ok(
+        /setQueryData\(\s*\[\s*['"]market-reality-radar['"]\s*\]/.test(source),
+        `the ${name} mutation must write the fresh radar response into the cache`,
+      );
+      assert.ok(
+        source.includes('MarketRealityRadarResponseV1Schema'),
+        `the ${name} mutation must re-validate what it caches`,
+      );
+    }
+    assert.ok(
+      /method:\s*['"]DELETE['"]/.test(apiClient.useRemoveMarketRealityRadarWatch.toString()),
+      'removal is a DELETE on the exact watch',
+    );
+  });
+
   it('keeps one request ID for a manual retry and rotates it after material changes', () => {
     const identity = new apiClient.RoutePlanRequestIdentity();
     const wallet = '0x1111111111111111111111111111111111111111' as const;
