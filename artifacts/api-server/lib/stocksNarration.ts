@@ -1,5 +1,3 @@
-import { z } from 'zod';
-
 import type { LlmProvider } from '@mioagent/llm';
 
 import {
@@ -7,6 +5,12 @@ import {
   stripNarrationFormattingV1,
   verifyB20NarrationV1,
 } from './b20AnswerVerify.js';
+import {
+  STOCKS_EXPLANATION_MAX_CHARS_V1,
+  StocksNarrationV1Schema,
+  type StocksAnswerSourceV1,
+  type StocksNarrationV1,
+} from '@mioagent/rwa-market-reality/narration-contract';
 import {
   stocksBundleEvidenceStringsV1,
   type StocksEvidenceBundleV1,
@@ -42,32 +46,15 @@ import {
 /** Flattened-text ceiling. The prose field carries its own, smaller cap: that
  * is where a model that starts explaining the product runs long. */
 export const STOCKS_NARRATION_MAX_CHARS_V1 = 4_000;
-export const STOCKS_EXPLANATION_MAX_CHARS_V1 = 1_200;
-
-export const StocksNarrationClaimV1Schema = z
-  .object({
-    claim: z.string().min(1).max(400),
-    /** Evidence ids this claim stands on. At least one, always. */
-    sourceIds: z.array(z.string().min(1).max(20)).min(1).max(8),
-  })
-  .strict();
-export type StocksNarrationClaimV1 = z.infer<typeof StocksNarrationClaimV1Schema>;
-
-export const StocksNarrationV1Schema = z
-  .object({
-    /** Exact representation addresses this answer is about. */
-    subjects: z.array(z.string().min(1).max(60)).min(1).max(16),
-    /** Factual claims present in the bundle, each with its citation. */
-    established: z.array(StocksNarrationClaimV1Schema).max(24),
-    /** Facts Miorail explicitly cannot prove. */
-    notEstablished: z.array(z.string().min(1).max(300)).max(24),
-    /** The prose. Everything a reader needs that is not a claim or an absence. */
-    explanation: z.string().min(1).max(STOCKS_EXPLANATION_MAX_CHARS_V1),
-    /** Typed provenance: the union of every citation above. */
-    sources: z.array(z.string().min(1).max(20)).max(64),
-  })
-  .strict();
-export type StocksNarrationV1 = z.infer<typeof StocksNarrationV1Schema>;
+// The answer shape is the wire contract, shared with the screen that renders
+// it. Only the rules live here.
+export {
+  STOCKS_EXPLANATION_MAX_CHARS_V1,
+  StocksNarrationClaimV1Schema,
+  StocksNarrationV1Schema,
+  type StocksNarrationClaimV1,
+  type StocksNarrationV1,
+} from '@mioagent/rwa-market-reality/narration-contract';
 
 export interface StocksNarrationViolationV1 {
   /** Stable machine code, so a benchmark can count rejection classes. */
@@ -602,8 +589,6 @@ export function deterministicStocksNarrationV1(bundle: StocksEvidenceBundleV1): 
     sources: established.flatMap((entry) => entry.sourceIds),
   };
 }
-
-export type StocksAnswerSourceV1 = 'deterministic_evidence' | 'verified_narration';
 
 export interface StocksNarratedAnswerV1 {
   answer: StocksNarrationV1;

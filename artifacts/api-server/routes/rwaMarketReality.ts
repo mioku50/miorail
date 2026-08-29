@@ -30,6 +30,12 @@ import {
 } from '@mioagent/rwa-market-reality';
 import type { TenantUser } from '../middleware/tenantAuth.js';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
+import { createLlmProvider, type LlmProvider } from '@mioagent/llm';
+import { StocksAskResponseV1Schema } from '@mioagent/rwa-market-reality/narration-contract';
+import { logger } from '@mioagent/utils';
+import { B20_UNSUPPORTED_QUESTIONS_V1 } from '../lib/b20AnswerPlan.js';
+import { stocksEvidenceBundleV1 } from '../lib/stocksEvidence.js';
+import { narrateStocksAnswerV1 } from '../lib/stocksNarration.js';
 import { createReviewedMarketRealityReferenceAdapterV1 } from '../lib/rwaReferenceSession.js';
 
 export const rwaMarketRealityRouter = Router();
@@ -84,6 +90,22 @@ export const rwaMarketRealityRuntime = {
   ratios: () => createDatabaseRepresentationRatioRepository(client),
   supplies: () => createDatabaseRepresentationSupplyRepository(client),
   now: () => new Date(),
+  /**
+   * The narrator, or null when none is configured.
+   *
+   * A seam rather than a direct call, so a test can hand in a provider that
+   * says something wrong and assert the reader never sees it. Null is an
+   * ordinary state: without a provider this surface answers with the
+   * deterministic evidence exactly as it did before a model was involved.
+   */
+  narrator: (): LlmProvider | null => {
+    try {
+      return createLlmProvider();
+    } catch {
+      // A misconfigured provider is not a reason to fail a read-only answer.
+      return null;
+    }
+  },
   assemble: assembleMarketRealityV2,
   assembleIndex: assembleMarketRealityIndexV1,
   assembleHistory: assembleMarketRealityHistoryV1,
@@ -661,6 +683,176 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey/history', async (
       },
     );
     res.status(200).json(MarketRealityHistoryV1Schema.parse(history));
+  } catch {
+    res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Phase 13.2 — Ask Miorail, about exactly what is on the screen.
+//
+// The whole design is one sentence: THE AI ESTABLISHES NOTHING. It does not
+// choose what to read, it does not widen the question, and it cannot reach
+// past the answer the reader is already looking at.
+//
+// So there is no planner here, unlike the B20 console. The evidence bundle is
+// built from the SAME assembled market-reality answer the page renders, for
+// the same exact question in the same query string — which means the strongest
+// possible version of the guarantee: a narration cannot cite a row that was
+// not on screen, because no other row was ever assembled.
+//
+// What the model does is turn that bundle into a structured answer, and a
+// verifier decides whether the reader sees it. Every failure — no provider, a
+// timeout, a refusal, an unverifiable claim — lands on the deterministic
+// answer built from the same rows, and `answerSource` says which one arrived.
+//
+// Read-only in the strongest sense this codebase has: the narrator's whole
+// import closure is a provider interface and two sets of contracts. No signer,
+// no wallet, no calldata, no repository. The request that reaches the provider
+// carries messages, a model and a temperature, and nothing else.
+// ---------------------------------------------------------------------------
+
+/** Longest question this surface accepts. A reader asking more than this is
+ * writing a brief, and the bundle is one exact market question wide. */
+const STOCKS_ASK_MAX_QUESTION_V1 = 1_000;
+
+/**
+ * Questions this surface will not answer, matched before any evidence is read.
+ *
+ * Not a safety filter — a scope one, and the same list the B20 console is held
+ * to. Miorail measures what it cost to enter and exit one exact position at
+ * one block. It does not measure price, intent, identity or the future, and
+ * saying so costs nothing here rather than a metered call after the fact.
+ */
+function stocksAskRefusalV1(asked: string): string | null {
+  for (const rule of B20_UNSUPPORTED_QUESTIONS_V1) {
+    if (rule.patterns.some((pattern) => pattern.test(asked))) return rule.refusal;
+  }
+  return null;
+}
+
+rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/ask', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  if (!sessionUserV1(req)) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const question = questionFromRequestV1(req);
+  if (!question.ok) {
+    res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
+    return;
+  }
+  const asked = String((req.body as { question?: unknown } | undefined)?.question ?? '').trim();
+  if (asked.length === 0 || asked.length > STOCKS_ASK_MAX_QUESTION_V1) {
+    res.status(400).json({
+      error: 'invalid_question',
+      code: 'invalid_question',
+      detail: `A question of 1 to ${STOCKS_ASK_MAX_QUESTION_V1} characters is required.`,
+    });
+    return;
+  }
+
+  const now = rwaMarketRealityRuntime.now();
+  const echo = {
+    underlyingKey: question.underlyingKey,
+    direction: question.direction,
+    requestedCashAtomic: question.requestedCashAtomic,
+    destination: question.destination,
+    asked,
+  };
+
+  // Scope, refused BEFORE any read. Miorail measures what it cost to get in
+  // and out at one block; it does not measure price, intent or the future, and
+  // a surface that assembled evidence first and then declined would have spent
+  // a metered call to say so. The same boundary the B20 console is held to,
+  // Russian included — this console is used in it.
+  const refusal = stocksAskRefusalV1(asked);
+  if (refusal) {
+    res.status(200).json(
+      StocksAskResponseV1Schema.parse({
+        schemaVersion: 'stocks-ask/v1',
+        question: echo,
+        answer: {
+          subjects: [question.underlyingKey],
+          established: [],
+          notEstablished: [refusal],
+          explanation: refusal,
+          sources: [],
+        },
+        answerSource: 'deterministic_evidence',
+        evidence: [],
+        refused: true,
+        quoteOnly: true,
+        executionEvidenceIncluded: false,
+        assembledAt: now.toISOString(),
+      }),
+    );
+    return;
+  }
+
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
+      res.status(503).json({
+        error: 'market_reality_storage_unavailable',
+        code: 'market_reality_storage_unavailable',
+      });
+      return;
+    }
+    // The same call the GET makes, with the same arguments. Ask and read
+    // cannot drift apart, because there is only one way to build the answer.
+    const assembled = await rwaMarketRealityRuntime.assemble(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
+        now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
+      },
+      {
+        underlyingKey: question.underlyingKey,
+        direction: question.direction,
+        requestedCashAtomic: question.requestedCashAtomic,
+        destination: question.destination,
+      },
+    );
+    const reality = MarketRealityResponseV2Schema.parse(assembled);
+    const bundle = stocksEvidenceBundleV1({ question: asked, reality, now });
+
+    const narrated = await narrateStocksAnswerV1({
+      bundle,
+      provider: rwaMarketRealityRuntime.narrator(),
+    });
+    if (narrated.rejectedBecause || narrated.providerError) {
+      // Operator-facing only. A reader is never shown why a sentence they
+      // cannot see was discarded, and the provider error is a NAME, never a
+      // cause: a provider message carries a base URL and a base URL carries a
+      // key.
+      logger.info('stocks narration not used', {
+        underlyingKey: question.underlyingKey,
+        because: narrated.rejectedBecause?.map((violation) => violation.code) ?? null,
+        providerError: narrated.providerError ? 'provider_did_not_answer' : null,
+      });
+    }
+
+    res.status(200).json(
+      StocksAskResponseV1Schema.parse({
+        schemaVersion: 'stocks-ask/v1',
+        question: echo,
+        answer: narrated.answer,
+        answerSource: narrated.answerSource,
+        evidence: bundle.items,
+        refused: false,
+        quoteOnly: true,
+        executionEvidenceIncluded: false,
+        assembledAt: now.toISOString(),
+      }),
+    );
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }

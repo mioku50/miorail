@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@mioagent/api-spec": "workspace:*"
+    "@mioagent/api-spec": "workspace:*",
+    "@mioagent/rwa-market-reality": "workspace:*"
   },
   "peerDependencies": {
     "@tanstack/react-query": ">=5",

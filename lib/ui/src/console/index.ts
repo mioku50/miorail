@@ -46,3 +46,4 @@ export * from './MarketRealityRadarScreen';
 export * from './investigateView';
 export * from './InvestigateScreen';
 export * from './watchSlaView';
+export * from './StocksAskPanel';

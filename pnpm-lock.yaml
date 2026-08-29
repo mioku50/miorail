@@ -463,6 +463,9 @@ importers:
       '@mioagent/api-spec':
         specifier: workspace:*
         version: link:../api-spec
+      '@mioagent/rwa-market-reality':
+        specifier: workspace:*
+        version: link:../rwa-market-reality
     devDependencies:
       '@tanstack/react-query':
         specifier: ^5.101.1
@@ -1290,6 +1293,9 @@ importers:
       '@mioagent/rwa-issuer':
         specifier: workspace:*
         version: link:../rwa-issuer
+      '@mioagent/rwa-market-reality':
+        specifier: workspace:*
+        version: link:../rwa-market-reality
     devDependencies:
       '@types/react':
         specifier: ^19.2.17

@@ -729,8 +729,12 @@ describe('the Stocks narrator has no actions', () => {
     );
     assert.deepEqual(
       [...packages].sort(),
-      ['@mioagent/llm', '@mioagent/rwa-market-reality/contracts'],
-      'a provider interface and a set of contracts — no wallet, no chain, no repository',
+      [
+        '@mioagent/llm',
+        '@mioagent/rwa-market-reality/contracts',
+        '@mioagent/rwa-market-reality/narration-contract',
+      ],
+      'a provider interface and two sets of contracts — no wallet, no chain, no repository',
     );
     // And nothing in those three files names an action.
     const sources = [...closure].map((file) => readFileSync(file, 'utf8')).join('\n');

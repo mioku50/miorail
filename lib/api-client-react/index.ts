@@ -2,6 +2,10 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef } from 'react';
 import type { QueryClient, UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
+import {
+  StocksAskResponseV1Schema,
+  type StocksAskResponseV1,
+} from '@mioagent/rwa-market-reality/narration-contract';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
 // gate the confirm button without a new dep (api-spec already re-exports it
@@ -1060,6 +1064,51 @@ export function useRwaMarketReality(
  * measurement returned, rather than invalidated — an invalidation would send
  * the reader back through a fetch to learn what this response already carries.
  */
+/**
+ * Phase 13.2 — ask Miorail about the exact question already on screen.
+ *
+ * A mutation rather than a query because it spends a provider call, and
+ * because a reader asks rather than subscribes. Nothing is cached: the same
+ * words asked twice against a market that moved are two different answers, and
+ * serving the first one again would be the freshness defect this product exists
+ * to avoid.
+ *
+ * Read-only: the response carries an answer, the rows it was built from, and
+ * two literals saying no execution evidence is included.
+ */
+export function useAskRwaMarketReality(
+  options?: Omit<
+    UseMutationOptions<
+      StocksAskResponseV1,
+      Error,
+      {
+        underlyingKey: string;
+        direction: 'buy' | 'sell';
+        requestedCashAtomic: string;
+        destination?: 'USDC' | 'ETH';
+        question: string;
+      }
+    >,
+    'mutationFn'
+  >,
+) {
+  return useMutation({
+    ...options,
+    mutationFn: async (input) => {
+      const query = new URLSearchParams({
+        direction: input.direction,
+        requestedCashAtomic: input.requestedCashAtomic,
+        destination: input.destination ?? 'USDC',
+      });
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey)}/ask?${query.toString()}`,
+        { method: 'POST', body: JSON.stringify({ question: input.question }) },
+      );
+      return StocksAskResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useMeasureRwaMarketReality(
   options?: Omit<
     UseMutationOptions<

@@ -947,6 +947,22 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .b20-answer-unknowns li,
 .mio-console .b20-answer-reads li,
 .mio-console .b20-answer-caveats li { overflow-wrap: anywhere; }
+/* Phase 13.2 — the Stocks answer, which separates what was established from
+   what was not and carries a followable citation on every claim. The blocks
+   reuse the B20 answer's vocabulary above; only the claim list and its citation
+   are new, because no other surface renders a claim that cites its evidence. */
+.mio-console .stocks-ask-block { margin-top: 11px; }
+.mio-console .stocks-ask-claims { margin: 6px 0 0; padding-left: 18px; color: var(--ink);
+  font-size: 12px; line-height: 1.55; }
+.mio-console .stocks-ask-claims li { margin-bottom: 7px; overflow-wrap: anywhere; }
+/* An absence is not a warning and never styled as one. */
+.mio-console .stocks-ask-absent { color: var(--muted); }
+.mio-console .stocks-ask-cite { margin-top: 4px; }
+.mio-console .stocks-ask-cite summary { padding: 5px 8px; font-size: 10.5px;
+  text-transform: uppercase; letter-spacing: .06em; }
+.mio-console .stocks-ask-cite .card-evidence-body { padding: 7px 9px; }
+.mio-console .stocks-ask-cite p { margin: 0 0 5px; }
+
 /* Stage 09 — the identity checklist and the context caveats. A list, never a
    grade: every link is named with what happened to it, so "0 of 3" reads as a
    checklist rather than as a score. */

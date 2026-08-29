@@ -3,6 +3,10 @@ import type {
   MarketRealityRepresentationV2,
   MarketRealityResponseV2,
 } from '@mioagent/rwa-market-reality/contracts';
+import type {
+  StocksEvidenceItemV1,
+  StocksEvidenceKindV1,
+} from '@mioagent/rwa-market-reality/narration-contract';
 
 import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
 
@@ -25,41 +29,14 @@ import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
 // is a pure function of an already-assembled market-reality/v2 answer.
 // ---------------------------------------------------------------------------
 
-export const STOCKS_EVIDENCE_KINDS_V1 = [
-  /** The exact question: size, direction, destination, cash asset. */
-  'question',
-  /** Corpus counts for the underlying. */
-  'universe',
-  /** What the assembler could and could not cover. */
-  'coverage',
-  /** Who a representation is. Never a claim — see the verifier. */
-  'identity',
-  'supply',
-  /** A router's answer for one representation. */
-  'route_status',
-  /** Cash returned and the effective price, from OPEN evidence. */
-  'quote',
-  /** The newest observation whatever its age. */
-  'observation',
-  'reference',
-  'basis',
-  /** A read of ours that did not complete. Miorail's, not the token's. */
-  'provider_failure',
-  /** A prior point for the same exact question. */
-  'history',
-] as const;
-export type StocksEvidenceKindV1 = (typeof STOCKS_EVIDENCE_KINDS_V1)[number];
-
-export interface StocksEvidenceItemV1 {
-  /** Citation handle. Stable within one bundle, assigned by position. */
-  id: string;
-  kind: StocksEvidenceKindV1;
-  /** The exact representation this is about, or null when it is about the
-   * question or the corpus. A claim may not cite another subject's row. */
-  subject: string | null;
-  label: string;
-  value: string;
-}
+// The evidence row is part of the wire contract now — Phase 13.2 renders the
+// provenance — so its shape lives beside the answer it supports rather than
+// here. What stays here is how a row is BUILT.
+export {
+  STOCKS_EVIDENCE_KINDS_V1,
+  type StocksEvidenceItemV1,
+  type StocksEvidenceKindV1,
+} from '@mioagent/rwa-market-reality/narration-contract';
 
 export interface StocksSubjectV1 {
   tokenAddress: string;

@@ -547,3 +547,292 @@ describe('Market Reality Radar', () => {
     assert.equal((await radar.watchesForUser({ userId: other })).length, 1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 13.2 — Ask Miorail.
+//
+// The property under test is not "does the model answer well" — 13.2A measured
+// that. It is that the surface cannot be made to establish anything: the
+// evidence is the page's own, the verifier decides what ships, and every
+// failure lands on the deterministic answer.
+// ---------------------------------------------------------------------------
+
+describe('POST Ask Miorail about the exact question on screen', () => {
+  const ASK = `/api/route-intelligence/rwa/market-reality/${UNDERLYING}/ask?direction=buy&requestedCashAtomic=1000000000`;
+
+  /** The smallest answer the assembler can return that still has a subject. */
+  function assembled() {
+    const address = '0xb20000000000000000000078ee7ce2fe4908108c';
+    return {
+      schemaVersion: 'market-reality/v2' as const,
+      question: {
+        chainId: 8453 as const,
+        underlyingKey: UNDERLYING,
+        direction: 'buy' as const,
+        requestedCashAtomic: '1000000000',
+        cashAsset: 'USDC' as const,
+        cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        cashDecimals: 6 as const,
+        destination: 'USDC' as const,
+        exactSizeOnly: true as const,
+        baseOnly: true as const,
+      },
+      universe: {
+        reviewedRepresentationCount: 1,
+        positiveSupplyRepresentationCount: 1,
+        zeroSupplyRepresentationCount: 0,
+        unresolvedSupplyRepresentationCount: 0,
+      },
+      marketOutcomeCoverage: {
+        policy: 'same_reviewed_router_policy_exact_size_direction_and_destination' as const,
+        eligibleRepresentationCount: 1,
+        establishedOutcomeCount: 0,
+        status: 'incomplete' as const,
+        reason: 'No representation produced an established outcome.',
+      },
+      numericComparisonCoverage: {
+        policy: 'fresh_numeric_quotes_same_exact_question_and_normalization' as const,
+        eligibleRepresentationCount: 1,
+        pricedRepresentationCount: 0,
+        status: 'incomplete' as const,
+        reason: 'No representation carries a fresh numeric quote.',
+      },
+      ranking: {
+        status: 'withheld' as const,
+        policy: 'withheld_phase_10b8' as const,
+        orderedTokenAddresses: [],
+        reason: 'Ranking is withheld.',
+      },
+      quoteEvidenceIsExecutionProof: false as const,
+      representations: [
+        {
+          tokenAddress: address,
+          issuerId: 'coinbase' as const,
+          issuerInstrumentKey: `coinbase:b20_address:${address}`,
+          representationKind: 'b20_asset' as const,
+          supply: {
+            state: 'positive_supply' as const,
+            totalSupplyAtomic: '4820000000000000000000',
+            decimals: 18,
+            normalization: 'raw_erc20_total_supply' as const,
+            blockNumber: '50612000',
+            blockHash: `0x${'11'.repeat(32)}`,
+            observedAt: '2026-08-29T17:58:00.000Z',
+            evidenceHash: `0x${'11'.repeat(32)}`,
+            source: 'erc20_total_supply' as const,
+            readOutcome: 'success' as const,
+            fresh: true,
+            reason: null,
+          },
+          status: 'unavailable' as const,
+          routePolicyKey: `0x${'b5'.repeat(32)}`,
+          exactTestedTokenAtomic: null,
+          normalizedExposureAtomic: null,
+          normalizedExposureDecimals: null,
+          normalization: 'not_established' as const,
+          returnedCashAtomic: null,
+          effectivePriceAtomic: null,
+          effectivePriceDecimals: null,
+          premiumDiscountBps: null,
+          reference: {
+            status: 'unknown' as const,
+            session: 'unknown' as const,
+            marketSession: 'unknown' as const,
+            publicationMode: 'unknown' as const,
+            valueAtomic: null,
+            decimals: null,
+            observedAt: null,
+            referenceUpdatedAt: null,
+            freshness: 'unknown' as const,
+            referenceSource: null,
+            referenceAddress: null,
+            calendar: null,
+            evidence: null,
+            comparable: false as const,
+            reasonCode: 'issuer_reference_not_reviewed' as const,
+            reason: 'No reviewed reference source.',
+          },
+          basis: {
+            policy:
+              'exact_normalized_price_same_quote_window_reviewed_publication_v1' as const,
+            status: 'withheld' as const,
+            kind: 'withheld' as const,
+            premiumDiscountBps: null,
+            reasonCode: 'no_route' as const,
+            reason: 'No reviewed router returned a route at this exact size.',
+          },
+          sources: [
+            {
+              source: 'kyberswap',
+              status: 'no_route' as const,
+              errorCode: 'no_route_at_exact_size',
+              quoteEvidence: null,
+              simulationEvidence: {
+                kind: 'route_simulation' as const,
+                status: 'not_simulated' as const,
+                evidenceHash: null,
+              },
+            },
+          ],
+          observedAt: '2026-08-29T17:59:40.000Z',
+          expiresAt: '2026-08-29T18:00:20.000Z',
+          liveness: 'live' as const,
+          lastObservation: {
+            source: 'kyberswap',
+            status: 'no_route' as const,
+            errorCode: 'no_route_at_exact_size',
+            observedAt: '2026-08-29T17:59:40.000Z',
+            expiresAt: '2026-08-29T18:00:20.000Z',
+            returnedCashAtomic: null,
+            open: true,
+          },
+        },
+      ],
+      assembledAt: '2026-08-29T18:00:00.000Z',
+    };
+  }
+
+  function ready() {
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.assemble = async () => assembled() as never;
+    rwaMarketRealityRuntime.narrator = () => null;
+  }
+
+  test('requires a session before it reads anything', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('authentication must stop first');
+    };
+    const response = await request(app(null)).post(ASK).send({ question: 'what does it cost?' });
+    assert.equal(response.status, 401);
+  });
+
+  test('requires a question, and bounds it', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('input validation must stop first');
+    };
+    for (const body of [{}, { question: '   ' }, { question: 'x'.repeat(1_001) }]) {
+      const response = await request(app()).post(ASK).send(body);
+      assert.equal(response.status, 400, JSON.stringify(body).slice(0, 40));
+      assert.equal(response.body.code, 'invalid_question');
+    }
+  });
+
+  test('answers from the deterministic evidence when no provider is configured', async () => {
+    ready();
+    const response = await request(app())
+      .post(ASK)
+      .send({ question: 'Почему нет цены на выходе?' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.schemaVersion, 'stocks-ask/v1');
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    assert.equal(response.body.refused, false);
+    assert.ok(response.body.answer.established.length > 0);
+    assert.ok(response.body.evidence.length > 0, 'the provenance rows travel with the answer');
+  });
+
+  test('the answer is about the question on screen, and echoes it', async () => {
+    // A reader must never be shown an answer to a different size than the one
+    // they are looking at.
+    ready();
+    const response = await request(app()).post(ASK).send({ question: 'what does it cost?' });
+    assert.deepEqual(response.body.question, {
+      underlyingKey: UNDERLYING,
+      direction: 'buy',
+      requestedCashAtomic: '1000000000',
+      destination: 'USDC',
+      asked: 'what does it cost?',
+    });
+  });
+
+  test('every citation the answer makes resolves to a row that travelled with it', async () => {
+    ready();
+    const response = await request(app()).post(ASK).send({ question: 'what is established?' });
+    const ids = new Set((response.body.evidence as { id: string }[]).map((row) => row.id));
+    for (const claim of response.body.answer.established as { sourceIds: string[] }[]) {
+      for (const id of claim.sourceIds) {
+        assert.ok(ids.has(id), `${id} is cited and not supplied`);
+      }
+    }
+  });
+
+  test('a question this product does not measure is refused before any read', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      throw new Error('a refusal must not reach storage');
+    };
+    rwaMarketRealityRuntime.assemble = async () => {
+      throw new Error('a refusal must not assemble evidence');
+    };
+    for (const asked of ['should i buy this?', 'какой прогноз по цене?', 'стоит ли покупать?']) {
+      const response = await request(app()).post(ASK).send({ question: asked });
+      assert.equal(response.status, 200, asked);
+      assert.equal(response.body.refused, true, asked);
+      assert.equal(response.body.answerSource, 'deterministic_evidence');
+      assert.deepEqual(response.body.evidence, [], 'a refusal reads nothing');
+    }
+  });
+
+  test('a narration that fabricates is discarded, and the reader gets the evidence', async () => {
+    ready();
+    rwaMarketRealityRuntime.narrator = () => ({
+      async generate() {
+        return {
+          message: {
+            role: 'assistant' as const,
+            content: JSON.stringify({
+              subjects: ['0xb20000000000000000000078ee7ce2fe4908108c'],
+              established: [
+                { claim: 'It returned 4321.99 USDC at this size.', sourceIds: ['e1'] },
+              ],
+              notEstablished: [],
+              explanation: 'This token is safe and liquid.',
+              sources: ['e1'],
+            }),
+          },
+        };
+      },
+    });
+    const response = await request(app()).post(ASK).send({ question: 'what does it cost?' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    const text = JSON.stringify(response.body.answer);
+    assert.equal(text.includes('4321.99'), false, 'an invented figure never reaches the reader');
+    assert.equal(text.includes('liquid'), false, 'a judgement never reaches the reader');
+  });
+
+  test('a provider that fails costs the reader nothing', async () => {
+    ready();
+    rwaMarketRealityRuntime.narrator = () => ({
+      async generate() {
+        throw new Error('OpenAI API error (429): https://provider.example/v1 key=secret');
+      },
+    });
+    const response = await request(app()).post(ASK).send({ question: 'what does it cost?' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.answerSource, 'deterministic_evidence');
+    // The failure is operator-facing. Nothing about the provider — and above
+    // all no URL, which carries a key — reaches the payload.
+    const body = JSON.stringify(response.body);
+    assert.equal(body.includes('provider.example'), false);
+    assert.equal(body.includes('secret'), false);
+    assert.equal(body.includes('429'), false);
+  });
+
+  test('the payload states it is read-only, and carries no execution field', async () => {
+    ready();
+    const response = await request(app()).post(ASK).send({ question: 'what does it cost?' });
+    assert.equal(response.body.quoteOnly, true);
+    assert.equal(response.body.executionEvidenceIncluded, false);
+    const body = JSON.stringify(response.body);
+    for (const forbidden of [
+      'calldata',
+      'wallet_sendCalls',
+      'blueprintId',
+      'signer',
+      'privateKey',
+      'approval',
+      'transaction',
+    ]) {
+      assert.equal(body.includes(forbidden), false, `the payload carries ${forbidden}`);
+    }
+  });
+});

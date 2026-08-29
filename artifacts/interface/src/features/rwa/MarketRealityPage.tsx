@@ -24,6 +24,7 @@ import {
 } from '@mioagent/ui';
 import {
   useAddMarketRealityRadarWatch,
+  useAskRwaMarketReality,
   useMarketRealityRadar,
   useRemoveMarketRealityRadarWatch,
   useMeasureRwaMarketReality,
@@ -226,6 +227,14 @@ export function MarketRealityPage() {
     () => new Date().toISOString(),
     [reality.dataUpdatedAt, history.dataUpdatedAt, index.dataUpdatedAt],
   );
+
+  // Phase 13.2 — Ask Miorail.
+  //
+  // The mutation carries the question the page is ALREADY showing, so an
+  // answer can only be about what the reader is looking at. Nothing is cached:
+  // the same words asked twice against a market that moved are two different
+  // answers.
+  const ask = useAskRwaMarketReality();
 
   // ---------------------------------------------------------------------------
   // The round-trip ladder, per representation.
@@ -437,6 +446,15 @@ export function MarketRealityPage() {
               ? failureCopyV1(addWatch.error ?? removeWatch.error, 'this exact watch')
               : null,
 
+          // Phase 13.2. Offered only once a security is chosen and the surface
+          // is enabled: an answer needs a question to be about.
+          ask: {
+            answer: ask.data ?? null,
+            asking: ask.isPending,
+            error: ask.error ? failureCopyV1(ask.error, 'this question') : null,
+            available: Boolean(enabled && selectedKey),
+          },
+
           actions: {
             onUnderlying: (underlyingKey) => setQuestion({ key: underlyingKey }),
             ...(enabled && selectedKey
@@ -447,6 +465,22 @@ export function MarketRealityPage() {
                       direction: question.direction,
                       requestedCashAtomic: question.requestedCashAtomic,
                       destination: question.destination,
+                    }),
+                }
+              : {}),
+            ...(enabled && selectedKey
+              ? {
+                  // The question on screen travels with the words asked, so an
+                  // answer can never be about a size the reader is not looking
+                  // at. The server echoes both back and the screen renders the
+                  // echo.
+                  onAsk: (asked: string) =>
+                    ask.mutate({
+                      underlyingKey: selectedKey,
+                      direction: question.direction,
+                      requestedCashAtomic: question.requestedCashAtomic,
+                      destination: question.destination,
+                      question: asked,
                     }),
                 }
               : {}),

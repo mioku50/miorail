@@ -2,6 +2,10 @@ import React, { useMemo, useState } from 'react';
 
 import { TokenIdentityV1 } from './TokenIdentity';
 import {
+  StocksAskPanel,
+  type StocksAskPanelModelV1,
+} from './StocksAskPanel';
+import {
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
   type FactViewV1,
@@ -73,6 +77,14 @@ function FactList({ facts, label }: { facts: readonly FactViewV1[]; label: strin
 }
 
 export interface MarketRealityActionsV1 {
+  /**
+   * Phase 13.2 — ask about the exact question already on screen.
+   *
+   * Absent when the surface is not offered. The panel establishes nothing: it
+   * renders an answer the server already checked, and the reader can follow
+   * every citation to the row it stands on.
+   */
+  onAsk?: (question: string) => void;
   onUnderlying: (underlyingKey: string) => void;
   onDirection: (direction: MarketRealityDirectionV1) => void;
   onSize: (requestedCashAtomic: string) => void;
@@ -102,6 +114,8 @@ export interface MarketRealityActionsV1 {
 export type MarketRealitySurfaceV1 = 'market' | 'utility';
 
 export interface MarketRealityScreenModelV1 {
+  /** Phase 13.2. Null until a reader has asked. */
+  ask?: StocksAskPanelModelV1;
   /** Why advanced execution is unavailable for an exact address, when it is.
    * Keyed by token address; absence means the action is offered. */
   inspectRouteUnavailable?: Readonly<Record<string, string>>;
@@ -716,6 +730,10 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           </button>
         ) : null}
       </div>
+
+      {actions.onAsk && model.ask ? (
+        <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
+      ) : null}
 
       {model.surface === 'market' ? (
         <div
