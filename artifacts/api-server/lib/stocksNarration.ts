@@ -201,8 +201,21 @@ const KNOWN_VENUES_V1 = [
  * "every digit run in this address appears in the row I cited" would reject
  * correct answers for naming the thing they are about. */
 export function withoutExactIdentifiersV1(text: string): string {
-  return text.replace(/0x[0-9a-fA-F]{40,64}/g, ' ');
+  return text.replace(/0x[0-9a-fA-F]{40,64}/g, ' ').replace(TRUNCATED_IDENTIFIER_V1, ' ');
 }
+
+/**
+ * An address a narration shortened for prose: `0xb200…`, `0x7e81...`.
+ *
+ * Read by a number scanner these are the integers 200 and 81, neither of which
+ * is in any bundle — so an answer was refused for abbreviating the address it
+ * had already given in full in its claims. They are identity, not measurement.
+ *
+ * Only the TRUNCATED form is removed. A full address stays in the text, because
+ * the reused semantic rule that asks whether an answer named its subjects looks
+ * for exactly that string.
+ */
+const TRUNCATED_IDENTIFIER_V1 = /0x[0-9a-fA-F]{1,39}(?:\u2026|\.{3})/g;
 
 /**
  * Parses a provider reply into the answer contract.
@@ -309,7 +322,9 @@ export function verifyStocksNarrationV1(input: {
 
   // ---- the existing verifier, unchanged -----------------------------------
   const reused = verifyB20NarrationV1({
-    narration: text,
+    // Truncated identifiers removed, full addresses kept: the reused semantic
+    // rule about naming subjects matches on the exact address string.
+    narration: text.replace(TRUNCATED_IDENTIFIER_V1, ' '),
     evidence,
     assertions: bundle.assertions,
     maxChars: STOCKS_NARRATION_MAX_CHARS_V1,
@@ -500,6 +515,18 @@ export function verifyStocksNarrationV1(input: {
     // same answer happened to contain the word "expired".
     for (const sentence of sentencesV1(text)) {
       if (isQuotedCaveat(sentence)) continue;
+      // You cannot misstate a price without stating one.
+      //
+      // The exemption above only recognises the caveat quoted verbatim, and
+      // models paraphrase it — "nothing here is a current cost" against the
+      // bundle's "nothing here may be stated as a current cost". Those
+      // paraphrases say exactly what the rule wants said, and were refused for
+      // saying it in their own words: 87 of the rejections in the second run.
+      //
+      // A figure in the sentence is what separates the two, and it is the
+      // rule's actual subject. A sentence with no number cannot describe an
+      // expired quote as current, whichever way it is phrased.
+      if (numbersInV1(withoutExactIdentifiersV1(sentence)).length === 0) continue;
       const claimsNow =
         CURRENT_COST_CLAIM_V1.test(sentence) ||
         (CURRENT_ADVERB_V1.test(sentence) && PRICE_TOKEN_V1.test(sentence));

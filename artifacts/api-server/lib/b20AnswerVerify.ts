@@ -112,7 +112,20 @@ export function numbersInV1(text: string): string[] {
     /(\d{1,3})((?:[\u0020\u00a0\u202f\u2009]\d{3})+)/g,
     (_whole, head: string, rest: string) => head + rest.replace(/[\u0020\u00a0\u202f\u2009]/g, ''),
   );
-  for (const match of normalised.matchAll(/-?(?:\d[\d,]*)?\.?\d+/g)) {
+  // A comma is a thousands separator in English and a DECIMAL POINT in
+  // Russian, and this console is used in both. Stripping every comma read
+  // "0,1784511" as the integer 1784511 and "178,45" as 17845 — neither of
+  // which is in any bundle, so a correct Russian narration was refused for
+  // its punctuation. (The same defect as the thousands-space fix above, on
+  // the other separator.)
+  //
+  // The disambiguation is the group size: exactly three digits after a comma
+  // is a thousands separator, anything else is a decimal fraction. "1,139"
+  // stays 1139; "0,1784511" becomes 0.1784511; "178,45" becomes 178.45. A
+  // three-digit Russian fraction is genuinely ambiguous and keeps the English
+  // reading, which is the one this corpus has always used.
+  const decimalised = normalised.replace(/(\d),(\d{1,2}|\d{4,})\b/g, '$1.$2');
+  for (const match of decimalised.matchAll(/-?(?:\d[\d,]*)?\.?\d+/g)) {
     const raw = match[0].replace(/,/g, '');
     if (raw === '' || raw === '-' || raw === '.') continue;
     const value = Number(raw);

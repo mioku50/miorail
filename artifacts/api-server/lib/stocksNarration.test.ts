@@ -361,6 +361,60 @@ describe('the Stocks verifier', () => {
     );
   });
 
+  test('a paraphrase of the caveat, in the model’s own words, is allowed', () => {
+    // The verbatim exemption is not enough: models restate the caveat rather
+    // than quote it, and those restatements say exactly what the rule wants
+    // said. A sentence with no figure cannot misstate a price.
+    const bundle = bundleOf('B');
+    for (const sentence of [
+      'No representation has open evidence, so nothing here is a current cost.',
+      'No fresh numeric quote or current cost can be stated.',
+    ]) {
+      const narration = goodNarration(bundle);
+      narration.explanation = sentence;
+      const verdict = verify(bundle, narration);
+      assert.equal(
+        codes(verdict).includes('expired_quote_as_current'),
+        false,
+        `${sentence}: ${JSON.stringify(verdict.violations)}`,
+      );
+    }
+  });
+
+  test('a truncated address is an identifier, not an invented figure', () => {
+    // "0xb200…" reads to a number scanner as 200. The answer had already given
+    // the address in full in its claims; abbreviating it in prose is not a
+    // fabricated measurement.
+    const bundle = bundleOf('A');
+    const narration = goodNarration(bundle);
+    narration.explanation = `The Coinbase representation (0xb200…) was quoted by kyberswap.`;
+    const verdict = verify(bundle, narration);
+    assert.equal(codes(verdict).includes('unsupported_number'), false, JSON.stringify(verdict.violations));
+  });
+
+  test('a Russian decimal comma is a decimal, not a thousands separator', () => {
+    // The console is used in Russian, where "0,1784511" is a fraction. Read as
+    // an English thousands group it became the integer 1784511, which is in no
+    // bundle — so a correct Russian answer was refused for its punctuation.
+    const bundle = bundleOf('A');
+    const narration = goodNarration(bundle);
+    narration.explanation = 'Эффективная цена составляет 0,1784511 USDC за токен.';
+    const verdict = verify(bundle, narration);
+    assert.equal(codes(verdict).includes('unsupported_number'), false, JSON.stringify(verdict.violations));
+  });
+
+  test('a figure the cited row does not carry is still refused, in Russian too', () => {
+    // The other half of the same run: the model wrote 178 450 000 000 where the
+    // reference row carries 17 845 000 000. That is a fabricated figure and it
+    // stays refused — the punctuation fix must not become a hole.
+    const bundle = bundleOf('A');
+    const narration = goodNarration(bundle);
+    narration.explanation = 'Референсная цена составляет 178 450 000 000 атомарных единиц.';
+    const verdict = verify(bundle, narration);
+    assert.equal(verdict.ok, false);
+    assert.ok(codes(verdict).includes('unsupported_number'), JSON.stringify(verdict.violations));
+  });
+
   test('the same figure with its age attached is allowed', () => {
     const bundle = bundleOf('B');
     const narration = goodNarration(bundle);
