@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
+import { existsSync, readFileSync } from 'node:fs';
+import { dirname, resolve } from 'node:path';
 import test, { describe } from 'node:test';
+import { fileURLToPath } from 'node:url';
 
 import { LlmProviderChainV1, OpenAiCompatibleClient } from '@mioagent/llm';
 import type { LlmProvider, LlmRequest, LlmResponse } from '@mioagent/llm';
@@ -561,6 +564,67 @@ describe('the Stocks narrator has no actions', () => {
     assert.deepEqual(Object.keys(sent).sort(), ['messages', 'model', 'temperature']);
     for (const forbidden of ['tools', 'tool_choice', 'functions', 'function_call']) {
       assert.equal(forbidden in sent, false, `the body carries ${forbidden}`);
+    }
+  });
+
+  test('the runtime cannot reach an execution module, because it does not import one', () => {
+    // The strongest form of the boundary available without a sandbox: walk the
+    // import closure of the narrator and the bundle builder and see what is in
+    // it. A capability the runtime never links cannot be granted by a prompt,
+    // a tool description, or a caller who forgets the rule — there is no code
+    // path to it at all.
+    const here = dirname(fileURLToPath(import.meta.url));
+    const closure = new Set<string>();
+    const packages = new Set<string>();
+    const walk = (file: string): void => {
+      if (closure.has(file)) return;
+      closure.add(file);
+      const source = readFileSync(file, 'utf8');
+      for (const match of source.matchAll(/from\s+'([^']+)'/g)) {
+        const specifier = match[1]!;
+        if (!specifier.startsWith('.')) {
+          if (specifier.startsWith('@mioagent/')) packages.add(specifier);
+          continue;
+        }
+        const base = resolve(dirname(file), specifier.replace(/\.js$/, ''));
+        for (const candidate of [`${base}.ts`, `${base}.tsx`, `${base}/index.ts`]) {
+          if (existsSync(candidate)) {
+            walk(candidate);
+            break;
+          }
+        }
+      }
+    };
+    walk(resolve(here, 'stocksNarration.ts'));
+    walk(resolve(here, 'stocksEvidence.ts'));
+
+    assert.deepEqual(
+      [...closure].map((file) => file.slice(here.length + 1)).sort(),
+      ['b20AnswerVerify.ts', 'stocksEvidence.ts', 'stocksNarration.ts'],
+      'the Stocks narrator runtime is three files',
+    );
+    assert.deepEqual(
+      [...packages].sort(),
+      ['@mioagent/llm', '@mioagent/rwa-market-reality/contracts'],
+      'a provider interface and a set of contracts — no wallet, no chain, no repository',
+    );
+    // And nothing in those three files names an action.
+    const sources = [...closure].map((file) => readFileSync(file, 'utf8')).join('\n');
+    for (const forbidden of [
+      'wallet_sendCalls',
+      'signTransaction',
+      'encodeFunctionData',
+      'sendTransaction',
+      'privateKey',
+      'blueprint',
+      'useSubmitApproved',
+      'eth_sendRawTransaction',
+    ]) {
+      assert.equal(
+        sources.toLowerCase().includes(forbidden.toLowerCase()),
+        false,
+        `the narrator runtime names ${forbidden}`,
+      );
     }
   });
 
