@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { LlmProviderChainV1 } from '@mioagent/llm';
+import { LlmProviderChainV1, OpenAiCompatibleClient } from '@mioagent/llm';
 import type { LlmProvider, LlmRequest, LlmResponse } from '@mioagent/llm';
 
 import {
@@ -512,6 +512,38 @@ describe('the Stocks narrator has no actions', () => {
     // pipeline can dispatch one: there is no executor between the provider and
     // the verifier.
     assert.equal(JSON.stringify(answered.answer).includes('wallet_sendCalls'), false);
+  });
+
+  test('the request that reaches the wire carries no tool, function or capability', async () => {
+    // One level below the provider interface: the narrator is run through the
+    // real HTTP client, and the body it puts on the wire is inspected. A
+    // permission that is absent from the request cannot be granted by a prompt,
+    // and cannot be re-granted by a caller who forgets this rule.
+    const bundle = bundleOf('A');
+    let body: Record<string, unknown> | null = null;
+    const client = new OpenAiCompatibleClient({
+      baseUrl: 'https://provider.invalid',
+      apiKey: 'test-key-not-a-credential',
+      defaultModel: 'bench-model',
+      fetchImpl: (async (_url: string, init: { body: string }) => {
+        body = JSON.parse(init.body) as Record<string, unknown>;
+        return new Response(
+          JSON.stringify({
+            choices: [{ message: { role: 'assistant', content: JSON.stringify(goodNarration(bundle)) } }],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      }) as unknown as typeof fetch,
+    });
+
+    const answered = await narrateStocksAnswerV1({ bundle, provider: client });
+    assert.equal(answered.answerSource, 'verified_narration');
+    const sent = body as unknown as Record<string, unknown>;
+    assert.ok(sent, 'a request was sent');
+    assert.deepEqual(Object.keys(sent).sort(), ['messages', 'model', 'temperature']);
+    for (const forbidden of ['tools', 'tool_choice', 'functions', 'function_call']) {
+      assert.equal(forbidden in sent, false, `the body carries ${forbidden}`);
+    }
   });
 
   test('the evidence bundle carries no wallet, key or execution field', () => {
