@@ -9,6 +9,7 @@ import type {
 
 import {
   MarketRealityAgentChangesInputV1Schema,
+  MarketRealityAgentChangesOutputV1Schema,
   compareMarketRealityForAgentV1,
   getMarketRealityChangesForAgentV1,
   getMarketRealityRepresentationsForAgentV1,
@@ -288,6 +289,61 @@ describe('Phase 12B.1 agent contracts', () => {
     assert.deepEqual(result.changes, []);
     assert.equal(result.privateRadarMetadataIncluded, false);
     assert.doesNotMatch(JSON.stringify(result), /watchId|userId|tenantId/);
+  });
+
+  test('the assembled response re-parses with its changes already stripped', () => {
+    // The response is parsed once as it is built and again by the output
+    // schema. A transform re-run over its own output demands the input shape
+    // back, so a change that had `eventId`/`watchId` stripped failed on the
+    // very fields stripping them had removed -- and the tool answered ONLY
+    // while `changes` was empty. A fixture asserting `[]` cannot see that.
+    const publicChange = {
+      chainId: 8453 as const,
+      tokenAddress: COINBASE,
+      previousSnapshotHash: HASH,
+      snapshotHash: `0x${'44'.repeat(32)}`,
+      previousObservedAt: '2026-08-29T10:00:00.000Z',
+      occurredAt: '2026-08-29T11:00:00.000Z',
+      approvedSources: ['router-a'],
+      kind: 'sell_exit_cost_changed' as const,
+      facts: { exitCostBpsBefore: '9', exitCostBpsAfter: '14' },
+    };
+    const response = {
+      schemaVersion: 'miorail-agent-market-changes/v1' as const,
+      chain: 'base' as const,
+      chainId: 8453 as const,
+      tokenAddress: COINBASE,
+      caip10: `eip155:8453:${COINBASE}`,
+      underlyingKey: UNDERLYING,
+      question: {
+        requestedCashAtomic: '1000000000',
+        sizeUsd: 1000,
+        direction: 'sell' as const,
+        destination: 'USDC' as const,
+        exactSizeOnly: true as const,
+      },
+      window: '24h' as const,
+      since: '2026-08-28T12:00:00.000Z',
+      interpolated: false as const,
+      routePolicy: { routePolicyKey: HASH, approvedSources: ['router-a'] },
+      observations: [],
+      changes: [publicChange],
+      privateRadarMetadataIncluded: false as const,
+      assembledAt: NOW.toISOString(),
+    };
+
+    const parsed = MarketRealityAgentChangesOutputV1Schema.parse(response);
+    assert.equal(parsed.changes.length, 1);
+    assert.equal(parsed.changes[0]?.kind, 'sell_exit_cost_changed');
+
+    // And the private identifiers cannot travel back in through this door.
+    assert.equal(
+      MarketRealityAgentChangesOutputV1Schema.safeParse({
+        ...response,
+        changes: [{ ...publicChange, eventId: HASH, watchId: HASH }],
+      }).success,
+      false,
+    );
   });
 
   test('a size the converter represents exactly is not refused by its own float test', () => {

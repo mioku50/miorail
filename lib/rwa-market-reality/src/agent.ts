@@ -193,31 +193,43 @@ export const MarketRealityAgentComparisonOutputV1Schema = z
   })
   .strict();
 
+/**
+ * The public shape of a change, defined ONCE and used twice.
+ *
+ * The transform below is the door an event comes through; this is what is on
+ * the other side of it. The output schema must reference THIS, never the
+ * transform: `MarketRealityAgentChangesOutputV1Schema` re-parses the assembled
+ * response, and a transform re-run over its own output demands the input shape
+ * back -- so every already-stripped change failed on the `eventId` and
+ * `watchId` that stripping them had just removed. The tool answered only while
+ * `changes` was empty, which is exactly the case a fixture asserting `[]`
+ * cannot catch.
+ */
+const PublicRadarChangeShapeV1Schema = z
+  .object({
+    chainId: z.literal(8453),
+    tokenAddress: AddressV1,
+    previousSnapshotHash: HashV1,
+    snapshotHash: HashV1,
+    previousObservedAt: TimestampV1,
+    occurredAt: TimestampV1,
+    approvedSources: z.array(z.string().min(1).max(100)).min(1).max(16),
+    kind: z.enum([
+      'sell_exit_cost_changed',
+      'buy_effective_price_changed',
+      'route_became_unavailable',
+      'route_became_available',
+      'market_session_changed',
+      'reference_became_stale',
+      'representation_ratio_changed',
+    ]),
+    facts: z.record(z.unknown()),
+  })
+  .strict();
+
 const PublicRadarChangeV1Schema = MarketRealityRadarEventV1Schema.transform(
   ({ eventId: _eventId, watchId: _watchId, ...event }) => event,
-).pipe(
-  z
-    .object({
-      chainId: z.literal(8453),
-      tokenAddress: AddressV1,
-      previousSnapshotHash: HashV1,
-      snapshotHash: HashV1,
-      previousObservedAt: TimestampV1,
-      occurredAt: TimestampV1,
-      approvedSources: z.array(z.string().min(1).max(100)).min(1).max(16),
-      kind: z.enum([
-        'sell_exit_cost_changed',
-        'buy_effective_price_changed',
-        'route_became_unavailable',
-        'route_became_available',
-        'market_session_changed',
-        'reference_became_stale',
-        'representation_ratio_changed',
-      ]),
-      facts: z.record(z.unknown()),
-    })
-    .strict(),
-);
+).pipe(PublicRadarChangeShapeV1Schema);
 
 const AgentHistoryEntryV1Schema = z.discriminatedUnion('kind', [
   z
@@ -269,7 +281,7 @@ export const MarketRealityAgentChangesOutputV1Schema = z
       .strict()
       .nullable(),
     observations: z.array(AgentHistoryEntryV1Schema).max(500),
-    changes: z.array(PublicRadarChangeV1Schema).max(500),
+    changes: z.array(PublicRadarChangeShapeV1Schema).max(500),
     privateRadarMetadataIncluded: z.literal(false),
     assembledAt: TimestampV1,
   })
@@ -356,10 +368,12 @@ export async function getMarketRealityRepresentationsForAgentV1(
       reason: 'Every reviewed representation is returned separately by exact address.',
     },
     representations: bindings.map((row) => {
-      const canonical = canonicalReviewedBindingV1(row, ratioByAddress.get(row.tokenAddress) ?? null);
+      const canonical = canonicalReviewedBindingV1(
+        row,
+        ratioByAddress.get(row.tokenAddress) ?? null,
+      );
       const binding = canonical.status === 'canonical' ? canonical.binding : row;
-      const issuerId =
-        binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[binding.sourceKind];
+      const issuerId = binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[binding.sourceKind];
       const supply = supplyEvidenceV1(
         supplyByAddress.get(binding.tokenAddress) ?? null,
         now.getTime(),
