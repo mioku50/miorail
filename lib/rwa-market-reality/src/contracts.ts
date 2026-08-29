@@ -259,6 +259,8 @@ export const MarketRealityRepresentationV2Schema = z
     }
   });
 
+export type MarketRealityRepresentationV2 = z.infer<typeof MarketRealityRepresentationV2Schema>;
+
 export const MarketRealityResponseV2Schema = z
   .object({
     schemaVersion: z.literal('market-reality/v2'),

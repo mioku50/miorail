@@ -160,6 +160,32 @@ export function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: s
 }
 
 /**
+ * The PRIMARY link, on its own, with no chain around it.
+ *
+ * Exported for the same reason `fallbackLinkV1` is: a measurement of the
+ * primary lane has to run the link production builds, headers and key
+ * resolution included. The one that measured its own copy reported a lane
+ * broken that was fine, which an operator then acted on.
+ */
+export function primaryLinkV1(input: {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+}): NamedLlmProviderV1 & { model: string } {
+  return {
+    label: providerLabelV1(input.baseUrl),
+    model: input.model,
+    provider: new OpenAiCompatibleClient({
+      apiKey: input.apiKey,
+      baseUrl: input.baseUrl,
+      defaultModel: input.model,
+      headers: providerHeadersV1(input.baseUrl),
+      fetchImpl: fetchForPaymentMode(),
+    }),
+  };
+}
+
+/**
  * Adds the model to a label whenever the host alone cannot identify the link.
  *
  * Two OpenRouter links in one chain logged "openrouter.ai failed, falling over
@@ -233,17 +259,7 @@ export function createLlmProvider(): LlmProvider {
           ' where node --env-file takes the LAST one)',
       );
     }
-    return withFallbackV1({
-      label: providerLabelV1(baseUrl),
-      model,
-      provider: new OpenAiCompatibleClient({
-        apiKey,
-        baseUrl,
-        defaultModel: model,
-        headers: providerHeadersV1(baseUrl),
-        fetchImpl: fetchForPaymentMode()
-      })
-    });
+    return withFallbackV1(primaryLinkV1({ baseUrl, apiKey, model }));
   }
 
   throw new Error(providerType

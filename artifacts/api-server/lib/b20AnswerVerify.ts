@@ -315,6 +315,17 @@ export function verifyB20NarrationV1(input: {
   narration: string;
   evidence: readonly string[];
   assertions?: B20AnswerAssertionsV1;
+  /**
+   * Length ceiling, when the caller's answer contract is not one sentence.
+   *
+   * Added for the Stocks bundle, whose answer is a structured object with a
+   * claim per measurement rather than a paragraph — flattening it for these
+   * rules produces a longer string, and the ceiling's real job (a model that
+   * starts explaining the product) is done there by a cap on the prose field.
+   * Every other rule is unchanged, which is the point of passing a number
+   * rather than writing a second verifier.
+   */
+  maxChars?: number;
 }): B20NarrationVerdictV1 {
   const violations: string[] = [];
   const narration = stripNarrationFormattingV1(input.narration);
@@ -322,8 +333,9 @@ export function verifyB20NarrationV1(input: {
   if (narration.length === 0) {
     return { ok: false, violations: ['the narration is empty'], narration };
   }
-  if (narration.length > B20_NARRATION_MAX_CHARS_V1) {
-    violations.push(`the narration is ${narration.length} characters, over the ${B20_NARRATION_MAX_CHARS_V1} limit`);
+  const maxChars = input.maxChars ?? B20_NARRATION_MAX_CHARS_V1;
+  if (narration.length > maxChars) {
+    violations.push(`the narration is ${narration.length} characters, over the ${maxChars} limit`);
   }
 
   const allowed = new Set<string>();
