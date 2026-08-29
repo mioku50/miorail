@@ -468,6 +468,9 @@ describe('Phase 12.1 comparable market history', () => {
           measuring: false,
           measurementNote: null,
           measurementError: null,
+          watchedTokenAddresses: [],
+          watchingTokenAddress: null,
+          watchError: null,
           actions: {
             onUnderlying: () => undefined,
             onDirection: () => undefined,
@@ -1277,6 +1280,9 @@ describe('Phase 11 utility and eligibility map', () => {
           measuring: false,
           measurementNote: null,
           measurementError: null,
+          watchedTokenAddresses: [],
+          watchingTokenAddress: null,
+          watchError: null,
           actions: {
             onUnderlying: () => undefined,
             onDirection: () => undefined,
@@ -1292,6 +1298,36 @@ describe('Phase 11 utility and eligibility map', () => {
     assert.match(markup, /Documented/);
     assert.match(markup, /Not established/);
     assert.doesNotMatch(markup, /No winner is selected|Not ranked|BEST/);
+  });
+});
+
+describe('Phase 12.2 exact-market watch control', () => {
+  test('the view carries the reviewed policy and source set used by the server', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const representation = view?.representations[0];
+    assert.equal(representation?.watchable, true);
+    assert.match(representation?.routePolicyKey ?? '', /^0x[0-9a-f]{64}$/);
+    assert.deepEqual(representation?.approvedSources, ['kyberswap']);
+  });
+
+  test('zero or unresolved supply cannot be presented as a watchable market', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            supply: {
+              ...representation().supply,
+              state: 'zero_supply',
+              totalSupplyAtomic: '0',
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    assert.equal(view?.representations[0]?.watchable, false);
+    assert.match(view?.representations[0]?.watchUnavailableReason ?? '', /outstanding supply/i);
   });
 });
 

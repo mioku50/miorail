@@ -442,6 +442,20 @@ export const MarketRealityHistoryV1Schema = z
   .strict();
 export type MarketRealityHistoryV1 = z.infer<typeof MarketRealityHistoryV1Schema>;
 
+// Phase 12.2. Re-exported from the contracts entry so the API and browser
+// parse the same Radar payload the evaluator writes.
+export {
+  MARKET_REALITY_RADAR_CAPACITY_V1,
+  MARKET_REALITY_RADAR_EVALUATION_OUTCOMES_V1,
+  MarketRealityRadarEventV1Schema,
+  MarketRealityRadarPublicWatchV1Schema,
+  MarketRealityRadarResponseV1Schema,
+  MarketRealityRadarWatchInputV1Schema,
+  type MarketRealityRadarEventV1,
+  type MarketRealityRadarResponseV1,
+  type MarketRealityRadarWatchInputV1,
+} from './radar.js';
+
 /**
  * What a live measurement actually spent.
  *

@@ -160,9 +160,10 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
   const shell = read('../src/console/ConsoleShell.tsx');
 
   test('Stocks leads and the evidence tools remain reachable after it', () => {
-    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 8);
+    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 9);
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
       'market',
+      'radar',
       'opportunities',
       'investigate',
       'portfolio',

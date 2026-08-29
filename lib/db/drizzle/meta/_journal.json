@@ -435,6 +435,13 @@
       "when": 1788183000000,
       "tag": "0061_market_reality_evidence_snapshot",
       "breakpoints": true
+    },
+    {
+      "idx": 62,
+      "version": "7",
+      "when": 1788269400000,
+      "tag": "0062_market_reality_radar",
+      "breakpoints": true
     }
   ]
 }

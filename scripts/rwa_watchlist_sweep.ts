@@ -35,8 +35,10 @@ import {
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { cashExitSignalsV1, watchlistCapacityV1 } from '@mioagent/rwa-dossier';
 import {
+  createDatabaseMarketRealityRadarRepositoryV1,
   createMarketRealityEvidenceCaptureV1,
   createReviewedMarketRealityReferenceAdapterV1,
+  evaluateMarketRealityRadarRunV1,
 } from '@mioagent/rwa-market-reality';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
 
@@ -84,6 +86,7 @@ async function main(): Promise<void> {
   const schedule = createDatabaseWatchScheduleRepository(client);
   const cashExit = createDatabaseOfficialCashExitRepository(client);
   const signals = createDatabaseRwaSignalRepository(client);
+  const radar = createDatabaseMarketRealityRadarRepositoryV1(client);
   const reader = createB20ReaderV1({ rpcUrl });
   const adapters = [new KyberSwapRouteAdapter()];
   const captureMarketRealitySnapshots = createMarketRealityEvidenceCaptureV1({
@@ -98,7 +101,13 @@ async function main(): Promise<void> {
   });
 
   const now = new Date();
-  const watched = await watchlist.distinctWatchedAddresses({ chainId: CHAIN_ID_V1, limit: 1_000 });
+  const [controlWatched, radarWatched] = await Promise.all([
+    watchlist.distinctWatchedAddresses({ chainId: CHAIN_ID_V1, limit: 1_000 }),
+    radar.distinctWatchedAddresses({ chainId: CHAIN_ID_V1, limit: 1_000 }),
+  ]);
+  // One address, one schedule and one measurement, even when it appears in
+  // both Control Watch and several tenants' exact market watches.
+  const watched = [...new Set([...controlWatched, ...radarWatched])].sort();
   // The interval is derived from the SET, so it is computed before anything is
   // scheduled and re-promised onto every row: one more address changes what
   // every other address can be promised.
@@ -164,6 +173,8 @@ async function main(): Promise<void> {
   let measured = 0;
   let failed = 0;
   let emitted = 0;
+  let radarEvents = 0;
+  let radarFailures = 0;
 
   for (const [index, row] of due.entries()) {
     const short = `${row.tokenAddress.slice(0, 8)}…${row.tokenAddress.slice(-4)}`;
@@ -213,6 +224,27 @@ async function main(): Promise<void> {
                 console.log(`         signal ${key.split(':')[0]}`);
             }
           }
+          try {
+            const evaluated = await evaluateMarketRealityRadarRunV1({
+              repository: radar,
+              run: next,
+              evaluatedAt: new Date().toISOString(),
+            });
+            radarEvents += evaluated.events;
+            if (evaluated.evaluated > 0) {
+              console.log(
+                `         radar ${evaluated.evaluated} evaluated · ${evaluated.events} event(s) · ${evaluated.gaps} gap(s)`,
+              );
+            }
+          } catch (error) {
+            // The market measurement completed and stays completed. A Radar
+            // persistence failure is ours; it neither rewrites the schedule as
+            // a provider failure nor creates an asset event.
+            radarFailures += 1;
+            console.log(
+              `         radar evaluation failed (${error instanceof Error ? error.message : 'unknown'})`,
+            );
+          }
         } catch (error) {
           // Our call, not the market. The clock moves and nothing is claimed.
           outcome = 'measurement_failed';
@@ -240,6 +272,8 @@ async function main(): Promise<void> {
 
   console.log(`\nchecked ${due.length}: ${measured} measured, ${failed} not completed`);
   console.log(`signals recorded: ${emitted}`);
+  console.log(`radar events recorded: ${radarEvents} · radar evaluation failures: ${radarFailures}`);
+  if (radarFailures > 0) process.exitCode = 1;
 }
 
 main()

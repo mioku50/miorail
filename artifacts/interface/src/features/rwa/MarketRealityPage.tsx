@@ -22,6 +22,8 @@ import {
   type MarketRealitySurfaceV1,
 } from '@mioagent/ui';
 import {
+  useAddMarketRealityRadarWatch,
+  useMarketRealityRadar,
   useMeasureRwaMarketReality,
   useRwaMarketReality,
   useRwaMarketRealityHistory,
@@ -80,6 +82,7 @@ function questionFromSearchV1(search: string): {
   underlyingKey: string | null;
   direction: MarketRealityDirectionV1;
   requestedCashAtomic: string;
+  destination: 'USDC' | 'ETH';
   surface: MarketRealitySurfaceV1;
   historyPeriod: MarketRealityHistoryPeriodV1;
 } {
@@ -87,6 +90,7 @@ function questionFromSearchV1(search: string): {
   const direction = params.get('direction');
   const size = params.get('size');
   const historyPeriod = params.get('history');
+  const destination = params.get('destination');
   return {
     underlyingKey: params.get('key'),
     surface: params.get('view') === 'utility' ? 'utility' : 'market',
@@ -98,6 +102,7 @@ function questionFromSearchV1(search: string): {
     requestedCashAtomic: MARKET_REALITY_SIZES_V1.some((rung) => rung.requestedCashAtomic === size)
       ? size!
       : DEFAULT_SIZE_V1,
+    destination: destination === 'ETH' ? 'ETH' : 'USDC',
     historyPeriod: MARKET_REALITY_HISTORY_PERIODS_V1.some((period) => period.key === historyPeriod)
       ? (historyPeriod as MarketRealityHistoryPeriodV1)
       : 'now',
@@ -146,6 +151,7 @@ export function MarketRealityPage() {
       underlyingKey: selectedKey,
       direction: question.direction,
       requestedCashAtomic: question.requestedCashAtomic,
+      destination: question.destination,
     },
     { enabled },
   );
@@ -154,6 +160,7 @@ export function MarketRealityPage() {
       underlyingKey: selectedKey,
       direction: question.direction,
       requestedCashAtomic: question.requestedCashAtomic,
+      destination: question.destination,
       // One lazy seven-day read supplies all four historical targets. The view
       // selects the nearest exact captured point and never interpolates it.
       window: '7d',
@@ -161,6 +168,45 @@ export function MarketRealityPage() {
     {
       enabled: enabled && question.surface === 'market' && question.historyPeriod !== 'now',
     },
+  );
+  const radar = useMarketRealityRadar({ enabled });
+  const addWatch = useAddMarketRealityRadarWatch();
+
+  const watchedTokenAddresses = useMemo(
+    () => {
+      const representationByAddress = new Map(
+        (reality.data?.representations ?? []).map((representation) => [
+          representation.tokenAddress,
+          representation,
+        ]),
+      );
+      return (radar.data?.watches ?? [])
+        .filter((watch) => {
+          if (
+            watch.underlyingKey !== selectedKey ||
+            watch.direction !== question.direction ||
+            watch.requestedCashAtomic !== question.requestedCashAtomic ||
+            watch.destination !== question.destination
+          ) {
+            return false;
+          }
+          const representation = representationByAddress.get(watch.tokenAddress);
+          if (!representation || representation.routePolicyKey !== watch.routePolicyKey) {
+            return false;
+          }
+          const sources = [...new Set(representation.sources.map((row) => row.source))].sort();
+          return sources.join('\u0000') === [...watch.approvedSources].sort().join('\u0000');
+        })
+        .map((watch) => watch.tokenAddress);
+    },
+    [
+      radar.data,
+      reality.data,
+      selectedKey,
+      question.direction,
+      question.requestedCashAtomic,
+      question.destination,
+    ],
   );
 
   // One clock for the whole render, so two ages on the same screen cannot be
@@ -307,6 +353,9 @@ export function MarketRealityPage() {
           measuring: measure.isPending,
           measurementNote,
           measurementError: measure.error ? failureCopyV1(measure.error, 'this measurement') : null,
+          watchedTokenAddresses,
+          watchingTokenAddress: addWatch.isPending ? (addWatch.variables?.tokenAddress ?? null) : null,
+          watchError: addWatch.error ? failureCopyV1(addWatch.error, 'this exact watch') : null,
 
           actions: {
             onUnderlying: (underlyingKey) => setQuestion({ key: underlyingKey }),
@@ -317,6 +366,7 @@ export function MarketRealityPage() {
                       underlyingKey: selectedKey,
                       direction: question.direction,
                       requestedCashAtomic: question.requestedCashAtomic,
+                      destination: question.destination,
                     }),
                 }
               : {}),
@@ -325,6 +375,36 @@ export function MarketRealityPage() {
             onSurface: (surface) => setQuestion({ view: surface }),
             onHistoryPeriod: (historyPeriod) => setQuestion({ history: historyPeriod }),
             onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
+            onOpenRadar: () => navigate('/radar'),
+            ...(enabled && selectedKey
+              ? {
+                  onWatch: (tokenAddress: string) => {
+                    const representation = reality.data?.representations.find(
+                      (row) => row.tokenAddress === tokenAddress,
+                    );
+                    if (
+                      !representation ||
+                      representation.supply.state !== 'positive_supply' ||
+                      representation.routePolicyKey === null
+                    ) {
+                      return;
+                    }
+                    const approvedSources = [
+                      ...new Set(representation.sources.map((source) => source.source)),
+                    ].sort();
+                    if (approvedSources.length === 0) return;
+                    addWatch.mutate({
+                      underlyingKey: selectedKey,
+                      tokenAddress,
+                      direction: question.direction,
+                      requestedCashAtomic: question.requestedCashAtomic,
+                      destination: question.destination,
+                      routePolicyKey: representation.routePolicyKey,
+                      approvedSources,
+                    });
+                  },
+                }
+              : {}),
           },
         }}
       />

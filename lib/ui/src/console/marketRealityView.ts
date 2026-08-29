@@ -310,6 +310,12 @@ export interface RepresentationViewV1 {
   /** Whose fact the outcome is. Rendered as a small label so a reader can tell
    * a fact about the asset from a fact about us at a glance. */
   attribution: 'the market' | 'the clock' | 'Miorail' | 'onchain read';
+  /** Phase 12.2. A watch is one exact reviewed market question. These fields
+   * are projected from the server response, never reconstructed from labels. */
+  watchable: boolean;
+  watchUnavailableReason: string | null;
+  routePolicyKey: string | null;
+  approvedSources: readonly string[];
   /** The comparison numbers, always present, dashed when absent. */
   numbers: FactViewV1[];
   /** Holding, redeeming and distributions — from the reviewed adapters. */
@@ -1050,6 +1056,13 @@ export function marketRealityViewV1(input: {
     representations: wire.representations.map((representation) => {
       const outcome = representationOutcomeV1(representation, input.now);
       const adapter = REPRESENTATION_STRUCTURE_ADAPTERS_V1[representation.issuerId];
+      const approvedSources = [...new Set(representation.sources.map((source) => source.source))].sort();
+      const watchUnavailableReason =
+        representation.supply.state !== 'positive_supply'
+          ? 'A watch starts only after fresh evidence establishes outstanding supply.'
+          : representation.routePolicyKey === null || approvedSources.length === 0
+            ? 'No reviewed route policy is established for this representation.'
+            : null;
       return {
         tokenAddress: representation.tokenAddress,
         issuerName: ISSUER_NAME_V1[representation.issuerId],
@@ -1060,6 +1073,10 @@ export function marketRealityViewV1(input: {
         outcomeBody: outcomeBodyV1(outcome, representation, sizeLabel, input.now),
         outcomeTone: OUTCOME_TONE_V1[outcome],
         attribution: OUTCOME_ATTRIBUTION_V1[outcome],
+        watchable: watchUnavailableReason === null,
+        watchUnavailableReason,
+        routePolicyKey: representation.routePolicyKey,
+        approvedSources,
         lastSeen: lastSeenV1(representation, input.now),
         numbers: numbersV1(representation, direction),
         terms: [

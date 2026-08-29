@@ -80,6 +80,10 @@ export interface MarketRealityActionsV1 {
   onHistoryPeriod: (period: MarketRealityHistoryPeriodV1) => void;
   /** Open the full dossier for one address. Absent when not wired. */
   onInvestigate?: (tokenAddress: string) => void;
+  /** Create one exact representation/size/direction/destination watch. */
+  onWatch?: (tokenAddress: string) => void;
+  /** Open the tenant's Radar feed. */
+  onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
    * because a control that answers with a refusal reads as a broken product. */
   onMeasure?: () => void;
@@ -115,6 +119,11 @@ export interface MarketRealityScreenModelV1 {
   /** What the last measurement spent, in a reader's words. Null before one. */
   measurementNote: string | null;
   measurementError: string | null;
+
+  /** Exact representations already watched for the question selected above. */
+  watchedTokenAddresses: readonly string[];
+  watchingTokenAddress: string | null;
+  watchError: string | null;
 
   actions: MarketRealityActionsV1;
 }
@@ -248,10 +257,14 @@ function RepresentationCard({
   representation,
   actions,
   surface,
+  watched,
+  watching,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
   surface: MarketRealitySurfaceV1;
+  watched: boolean;
+  watching: boolean;
 }) {
   if (surface === 'utility') {
     return (
@@ -412,17 +425,30 @@ function RepresentationCard({
         </div>
       </details>
 
-      {actions.onInvestigate && (
+      {actions.onInvestigate || actions.onWatch ? (
         <div className="card-actions">
-          <button
-            type="button"
-            className="btn sec"
-            onClick={() => actions.onInvestigate!(representation.tokenAddress)}
-          >
-            Investigate
-          </button>
+          {actions.onWatch ? (
+            <button
+              type="button"
+              className="btn sec"
+              disabled={watched || watching || !representation.watchable}
+              title={representation.watchUnavailableReason ?? undefined}
+              onClick={() => actions.onWatch!(representation.tokenAddress)}
+            >
+              {watching ? 'Adding watch…' : watched ? 'Watching this market' : 'Watch this market'}
+            </button>
+          ) : null}
+          {actions.onInvestigate ? (
+            <button
+              type="button"
+              className="btn sec"
+              onClick={() => actions.onInvestigate!(representation.tokenAddress)}
+            >
+              Investigate
+            </button>
+          ) : null}
         </div>
-      )}
+      ) : null}
     </article>
   );
 }
@@ -606,6 +632,11 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
             {model.measuring ? 'Measuring…' : 'Measure now'}
           </button>
         )}
+        {actions.onOpenRadar ? (
+          <button type="button" className="btn sec" onClick={actions.onOpenRadar}>
+            Open Radar
+          </button>
+        ) : null}
       </div>
 
       {model.surface === 'market' ? (
@@ -639,6 +670,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       </p>
 
       {model.measurementError ? <p className="note warn">{model.measurementError}</p> : null}
+      {model.watchError ? <p className="note warn">{model.watchError}</p> : null}
       {/* What the measurement actually spent. "Everything was already current"
           and "two routers answered" are different facts, and a reader who
           pressed a button deserves to know which one happened. */}
@@ -741,6 +773,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                   representation={representation}
                   actions={actions}
                   surface={model.surface}
+                  watched={model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false}
+                  watching={model.watchingTokenAddress === representation.tokenAddress}
                 />
               ))}
             </div>

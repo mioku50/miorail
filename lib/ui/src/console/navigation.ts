@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['market', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['market', 'radar', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -67,6 +67,13 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     compactLabel: 'Stocks',
     path: '/market',
     blurb: 'One security, every reviewed way to hold it on Base, at one exact size.',
+  },
+  radar: {
+    id: 'radar',
+    label: 'Radar',
+    compactLabel: 'Radar',
+    path: '/radar',
+    blurb: 'Changes to exact watched representation, size, direction and destination questions.',
   },
   investigate: {
     id: 'investigate',
@@ -144,10 +151,10 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
  */
 export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes'] as const;
 
-/** T70 §3 — the mobile drawer is exactly these eight and nothing else. */
+/** T70 §3 — the mobile drawer is the complete map of mounted sections. */
 // Activity and Extensions sit in the drawer rather than the tab bar. Neither
 // is where work starts; both are places you go to look something up.
-export const CONSOLE_DRAWER_SECTIONS_V1 = ['market', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_DRAWER_SECTIONS_V1 = ['market', 'radar', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;

@@ -7,7 +7,8 @@
   "main": "src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./market-reality-contracts": "./src/marketRealitySnapshot.ts"
+    "./market-reality-contracts": "./src/marketRealitySnapshot.ts",
+    "./official-cash-exit": "./src/officialCashExit.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test MIOAGENT_TEST_SUITE=unit node --import tsx --test test/*.test.ts",

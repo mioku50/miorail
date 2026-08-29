@@ -297,7 +297,7 @@ export class SwapPrepareRequestIdentity {
       input.routeRunId,
       input.routeCardHash,
       input.selectedCandidateHash,
-    ].join(' ');
+    ].join('\u0000');
     if (material !== this.lastMaterial || !this.lastRequestId) {
       this.lastMaterial = material;
       this.lastRequestId = globalThis.crypto.randomUUID();
@@ -1163,6 +1163,71 @@ export function useRwaMarketRealityHistory(
     },
     retry: false,
     enabled: options?.enabled !== false && Boolean(input.underlyingKey),
+  });
+}
+
+/** Phase 12.2 — tenant-scoped exact market watches and their transition feed. */
+export function useMarketRealityRadar(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['market-reality-radar'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/route-intelligence/rwa/radar');
+      return apiSpec.MarketRealityRadarResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+  });
+}
+
+export function useAddMarketRealityRadarWatch(
+  options?: Omit<
+    UseMutationOptions<
+      apiSpec.MarketRealityRadarResponseV1,
+      Error,
+      apiSpec.MarketRealityRadarWatchInputV1
+    >,
+    'mutationFn'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    mutationFn: async (input) => {
+      const request = apiSpec.MarketRealityRadarWatchInputV1Schema.parse(input);
+      const response = await fetchApi<unknown>('/api/route-intelligence/rwa/radar/watches', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.MarketRealityRadarResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, onMutateResult, context) => {
+      queryClient.setQueryData(['market-reality-radar'], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
+export function useRemoveMarketRealityRadarWatch(
+  options?: Omit<
+    UseMutationOptions<apiSpec.MarketRealityRadarResponseV1, Error, { watchId: string }>,
+    'mutationFn'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    mutationFn: async (input) => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/radar/watches/${encodeURIComponent(input.watchId)}`,
+        { method: 'DELETE' },
+      );
+      return apiSpec.MarketRealityRadarResponseV1Schema.parse(response);
+    },
+    onSuccess: (data, variables, onMutateResult, context) => {
+      queryClient.setQueryData(['market-reality-radar'], data);
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
   });
 }
 

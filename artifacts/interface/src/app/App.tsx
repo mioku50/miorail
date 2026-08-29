@@ -65,6 +65,9 @@ const InvestigatePage = lazy(() =>
 const MarketRealityPage = lazy(() =>
   import('../features/rwa/MarketRealityPage').then((m) => ({ default: m.MarketRealityPage })),
 );
+const MarketRealityRadarPage = lazy(() =>
+  import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
+);
 const SettingsPage = lazy(() =>
   import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
@@ -207,6 +210,14 @@ export function App() {
         <Route path="/market">
           <RequireSession>
             <MarketRealityPage />
+          </RequireSession>
+        </Route>
+
+        {/* Phase 12.2 — tenant-scoped changes to exact watched market
+            questions. A failed read is a gap and never appears as an event. */}
+        <Route path="/radar">
+          <RequireSession>
+            <MarketRealityRadarPage />
           </RequireSession>
         </Route>
 

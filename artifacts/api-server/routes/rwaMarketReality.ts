@@ -10,18 +10,22 @@ import {
   createDatabaseRepresentationRatioRepository,
   createDatabaseRepresentationSupplyRepository,
   createDatabaseUnderlyingAssetRepository,
+  RouteStorageConflictError,
 } from '@mioagent/route-storage';
 import {
   MARKET_REALITY_WINDOWS_V1,
   MarketRealityHistoryV1Schema,
   MarketRealityIndexV1Schema,
   MarketRealityLiveResponseV2Schema,
+  MarketRealityRadarResponseV1Schema,
+  MarketRealityRadarWatchInputV1Schema,
   MarketRealityResponseV2Schema,
   assembleMarketRealityHistoryV1,
   assembleMarketRealityIndexV1,
   assembleMarketRealityV2,
   createMarketRealityEvidenceCaptureV1,
   createMarketRealityCoordinatorV1,
+  createDatabaseMarketRealityRadarRepositoryV1,
   type MarketRealityWindowV1,
 } from '@mioagent/rwa-market-reality';
 import type { TenantUser } from '../middleware/tenantAuth.js';
@@ -85,6 +89,7 @@ export const rwaMarketRealityRuntime = {
   assembleHistory: assembleMarketRealityHistoryV1,
   coordinator: () => marketRealityCoordinatorV1,
   quoteAdapters: () => [new KyberSwapRouteAdapter()],
+  radar: () => createDatabaseMarketRealityRadarRepositoryV1(client),
   measureOne: measureOfficialCashExitV1,
   reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
   reference: () =>
@@ -132,6 +137,14 @@ export const rwaMarketRealityRuntime = {
       row.supplies,
     );
   },
+  radarAvailable: async (): Promise<boolean> => {
+    const rows = await client`
+      SELECT
+        to_regclass('public.market_reality_radar_watches') AS watches,
+        to_regclass('public.market_reality_radar_state') AS state,
+        to_regclass('public.market_reality_radar_events') AS events`;
+    return Boolean(rows[0]?.watches && rows[0]?.state && rows[0]?.events);
+  },
 };
 
 /**
@@ -168,6 +181,168 @@ rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
     res.status(200).json(MarketRealityIndexV1Schema.parse(index));
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
+  }
+});
+
+async function radarBodyV1(userId: string) {
+  const radar = rwaMarketRealityRuntime.radar();
+  const [watches, events] = await Promise.all([
+    radar.watchesForUser({ userId }),
+    radar.eventsForUser({ userId, limit: 100 }),
+  ]);
+  return MarketRealityRadarResponseV1Schema.parse({
+    schemaVersion: 'market-reality-radar/v1',
+    chainId: 8453,
+    watches: watches.map(({ userId: _userId, ...watch }) => watch),
+    events,
+    assembledAt: rwaMarketRealityRuntime.now().toISOString(),
+  });
+}
+
+/** The tenant's exact market watches and their deterministic transition feed. */
+rwaMarketRealityRouter.get('/rwa/radar', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  try {
+    if (!(await rwaMarketRealityRuntime.radarAvailable())) {
+      res.status(503).json({ error: 'radar_storage_unavailable', code: 'radar_storage_unavailable' });
+      return;
+    }
+    res.status(200).json(await radarBodyV1(user.id));
+  } catch {
+    res.status(500).json({ error: 'radar_failed', code: 'radar_failed' });
+  }
+});
+
+/**
+ * Add one exact representation question. The server re-establishes the
+ * reviewed binding and route policy instead of accepting presentation labels
+ * as identity.
+ */
+rwaMarketRealityRouter.post('/rwa/radar/watches', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = MarketRealityRadarWatchInputV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_radar_watch', code: 'invalid_radar_watch' });
+    return;
+  }
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable()) || !(await rwaMarketRealityRuntime.radarAvailable())) {
+      res.status(503).json({ error: 'radar_storage_unavailable', code: 'radar_storage_unavailable' });
+      return;
+    }
+    const bindings = await rwaMarketRealityRuntime.underlyings().representationsOf({
+      chainId: 8453,
+      underlyingKey: parsed.data.underlyingKey,
+    });
+    const binding = bindings.find(
+      (row) => row.tokenAddress === parsed.data.tokenAddress.toLowerCase(),
+    );
+    if (!binding?.issuerId || !binding.issuerInstrumentKey || !binding.representationKind) {
+      res.status(409).json({
+        error: 'radar_representation_not_reviewed',
+        code: 'radar_representation_not_reviewed',
+        detail: 'This exact Base address is not a complete reviewed representation of the selected underlying.',
+      });
+      return;
+    }
+    const current = await rwaMarketRealityRuntime.assemble(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
+        now: rwaMarketRealityRuntime.now,
+      },
+      {
+        underlyingKey: parsed.data.underlyingKey,
+        direction: parsed.data.direction,
+        requestedCashAtomic: parsed.data.requestedCashAtomic,
+        destination: parsed.data.destination,
+      },
+    );
+    const representation = current.representations.find(
+      (row) => row.tokenAddress === parsed.data.tokenAddress.toLowerCase(),
+    );
+    const currentSources = representation
+      ? [...new Set(representation.sources.map((row) => row.source))].sort()
+      : [];
+    const requestedSources = [...parsed.data.approvedSources].sort();
+    if (
+      !representation ||
+      representation.supply.state !== 'positive_supply' ||
+      representation.routePolicyKey !== parsed.data.routePolicyKey ||
+      currentSources.join('\u0000') !== requestedSources.join('\u0000')
+    ) {
+      res.status(409).json({
+        error: 'radar_question_not_watchable',
+        code: 'radar_question_not_watchable',
+        detail: 'A positive-supply exact representation and the current reviewed route policy are required. Refresh Market Reality and try again.',
+      });
+      return;
+    }
+    await rwaMarketRealityRuntime.radar().addWatch({
+      userId: user.id,
+      question: parsed.data,
+      issuerId: binding.issuerId,
+      representationKind: binding.representationKind,
+      now: rwaMarketRealityRuntime.now().toISOString(),
+    });
+    res.status(201).json(await radarBodyV1(user.id));
+  } catch (error) {
+    if (error instanceof RouteStorageConflictError) {
+      res.status(409).json({ error: 'radar_watch_full', code: 'radar_watch_full', detail: error.message });
+      return;
+    }
+    res.status(500).json({ error: 'radar_failed', code: 'radar_failed' });
+  }
+});
+
+rwaMarketRealityRouter.delete('/rwa/radar/watches/:watchId', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const watchId = String(req.params.watchId ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{64}$/.test(watchId)) {
+    res.status(400).json({ error: 'invalid_radar_watch_id', code: 'invalid_radar_watch_id' });
+    return;
+  }
+  try {
+    if (!(await rwaMarketRealityRuntime.radarAvailable())) {
+      res.status(503).json({ error: 'radar_storage_unavailable', code: 'radar_storage_unavailable' });
+      return;
+    }
+    await rwaMarketRealityRuntime.radar().removeWatch({ userId: user.id, watchId });
+    res.status(200).json(await radarBodyV1(user.id));
+  } catch {
+    res.status(500).json({ error: 'radar_failed', code: 'radar_failed' });
   }
 });
 

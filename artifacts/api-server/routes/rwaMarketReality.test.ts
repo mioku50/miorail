@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
+import { InMemoryMarketRealityRadarRepositoryV1 } from '@mioagent/rwa-market-reality';
 
 import { rwaMarketRealityRouter, rwaMarketRealityRuntime } from './rwaMarketReality.js';
 
@@ -12,6 +13,7 @@ const originalRuntime = { ...rwaMarketRealityRuntime };
 
 function app(user: typeof USER | null = USER) {
   const server = express();
+  server.use(express.json());
   server.use((req, _res, next) => {
     if (user) Object.defineProperty(req, 'session', { configurable: true, value: { user } });
     next();
@@ -300,5 +302,248 @@ describe('GET the comparable series', () => {
     assert.equal(response.status, 200);
     assert.equal(response.body.interpolated, false);
     assert.equal(response.body.window, '24h');
+  });
+});
+
+describe('Market Reality Radar', () => {
+  const TOKEN = '0xb20000000000000000000078ee7ce2fe4908108c';
+  const POLICY = `0x${'11'.repeat(32)}`;
+
+  function radarAnswer() {
+    return {
+      schemaVersion: 'market-reality/v2' as const,
+      question: {
+        chainId: 8453 as const,
+        underlyingKey: UNDERLYING,
+        direction: 'sell' as const,
+        requestedCashAtomic: '1000000000',
+        cashAsset: 'USDC' as const,
+        cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        cashDecimals: 6 as const,
+        destination: 'USDC' as const,
+        exactSizeOnly: true as const,
+        baseOnly: true as const,
+      },
+      universe: {
+        reviewedRepresentationCount: 1,
+        positiveSupplyRepresentationCount: 1,
+        zeroSupplyRepresentationCount: 0,
+        unresolvedSupplyRepresentationCount: 0,
+      },
+      marketOutcomeCoverage: {
+        policy: 'same_reviewed_router_policy_exact_size_direction_and_destination' as const,
+        eligibleRepresentationCount: 1,
+        establishedOutcomeCount: 0,
+        status: 'incomplete' as const,
+        reason: 'The current quote expired.',
+      },
+      numericComparisonCoverage: {
+        policy: 'fresh_numeric_quotes_same_exact_question_and_normalization' as const,
+        eligibleRepresentationCount: 1,
+        pricedRepresentationCount: 0,
+        status: 'incomplete' as const,
+        reason: 'The current quote expired.',
+      },
+      ranking: {
+        status: 'withheld' as const,
+        policy: 'withheld_phase_10b8' as const,
+        orderedTokenAddresses: [],
+        reason: 'Ranking is withheld.',
+      },
+      quoteEvidenceIsExecutionProof: false as const,
+      representations: [
+        {
+          tokenAddress: TOKEN,
+          issuerId: 'coinbase' as const,
+          issuerInstrumentKey: `coinbase:b20_address:${TOKEN}`,
+          representationKind: 'b20_asset' as const,
+          supply: {
+            state: 'positive_supply' as const,
+            totalSupplyAtomic: '1000000000000000000',
+            decimals: 18,
+            normalization: 'raw_erc20_total_supply' as const,
+            blockNumber: '50000000',
+            blockHash: `0x${'22'.repeat(32)}`,
+            observedAt: '2026-08-28T10:00:00.000Z',
+            evidenceHash: `0x${'33'.repeat(32)}`,
+            source: 'erc20_total_supply' as const,
+            readOutcome: 'success' as const,
+            fresh: true,
+            reason: null,
+          },
+          status: 'not_measured' as const,
+          routePolicyKey: POLICY,
+          exactTestedTokenAtomic: null,
+          normalizedExposureAtomic: null,
+          normalizedExposureDecimals: null,
+          normalization: 'not_established' as const,
+          returnedCashAtomic: null,
+          effectivePriceAtomic: null,
+          effectivePriceDecimals: null,
+          premiumDiscountBps: null,
+          reference: {
+            status: 'unknown' as const,
+            session: 'unknown' as const,
+            marketSession: 'unknown' as const,
+            publicationMode: 'unknown' as const,
+            valueAtomic: null,
+            decimals: null,
+            observedAt: null,
+            referenceUpdatedAt: null,
+            freshness: 'unknown' as const,
+            referenceSource: null,
+            referenceAddress: null,
+            calendar: null,
+            evidence: null,
+            comparable: false as const,
+            reasonCode: 'reference_adapter_not_configured' as const,
+            reason: 'No adapter needed to validate this watch.',
+          },
+          basis: {
+            policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1' as const,
+            status: 'withheld' as const,
+            kind: 'withheld' as const,
+            premiumDiscountBps: null,
+            reasonCode: 'expired_quote' as const,
+            reason: 'The last quote is history.',
+          },
+          sources: [
+            {
+              source: 'router-a',
+              status: 'not_measured' as const,
+              errorCode: null,
+              quoteEvidence: null,
+              simulationEvidence: {
+                kind: 'route_simulation' as const,
+                status: 'not_simulated' as const,
+                evidenceHash: null,
+              },
+            },
+          ],
+          observedAt: null,
+          expiresAt: null,
+          liveness: 'history_only' as const,
+          lastObservation: {
+            source: 'router-a',
+            status: 'quoted' as const,
+            errorCode: null,
+            observedAt: '2026-08-28T09:00:00.000Z',
+            expiresAt: '2026-08-28T09:00:20.000Z',
+            returnedCashAtomic: '999000000',
+            open: false,
+          },
+        },
+      ],
+      assembledAt: '2026-08-28T10:00:00.000Z',
+    };
+  }
+
+  function bindingRepository() {
+    return {
+      representationsOf: async () => [
+        {
+          chainId: 8453,
+          tokenAddress: TOKEN,
+          underlyingKey: UNDERLYING,
+          sourceKind: 'coinbase_b20_metadata',
+          sourceRef: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base',
+          sourceHash: 'aa'.repeat(32),
+          issuerId: 'coinbase',
+          issuerInstrumentKey: `coinbase:b20_address:${TOKEN}`,
+          caip10: `eip155:8453:${TOKEN}`,
+          representationKind: 'b20_asset',
+          evidenceStrength: 'reviewed_machine_mapping_with_onchain_cross_check',
+          observedBlockNumber: '50000000',
+          observedBlockHash: `0x${'44'.repeat(32)}`,
+          observedAt: '2026-08-28T09:00:00.000Z',
+        },
+      ],
+    } as unknown as ReturnType<typeof rwaMarketRealityRuntime.underlyings>;
+  }
+
+  test('requires the Base tenant before reading Radar storage', async () => {
+    rwaMarketRealityRuntime.radarAvailable = async () => {
+      throw new Error('authentication must stop first');
+    };
+    const response = await request(app(null)).get('/api/route-intelligence/rwa/radar');
+    assert.equal(response.status, 401);
+    assert.equal(response.body.code, 'authentication_required');
+  });
+
+  test('adds only a server-verified exact representation and route policy', async () => {
+    const radar = new InMemoryMarketRealityRadarRepositoryV1();
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.radarAvailable = async () => true;
+    rwaMarketRealityRuntime.radar = () => radar;
+    rwaMarketRealityRuntime.underlyings = bindingRepository;
+    rwaMarketRealityRuntime.assemble = async () => radarAnswer();
+    rwaMarketRealityRuntime.now = () => new Date('2026-08-28T10:05:00.000Z');
+
+    const response = await request(app())
+      .post('/api/route-intelligence/rwa/radar/watches')
+      .send({
+        underlyingKey: UNDERLYING,
+        tokenAddress: TOKEN,
+        direction: 'sell',
+        requestedCashAtomic: '1000000000',
+        destination: 'USDC',
+        routePolicyKey: POLICY,
+        approvedSources: ['router-a'],
+      });
+    assert.equal(response.status, 201, JSON.stringify(response.body));
+    assert.equal(response.body.schemaVersion, 'market-reality-radar/v1');
+    assert.equal(response.body.watches.length, 1);
+    assert.equal(response.body.watches[0].tokenAddress, TOKEN);
+    assert.equal('userId' in response.body.watches[0], false);
+  });
+
+  test('a stale client policy is refused rather than silently rewritten', async () => {
+    const radar = new InMemoryMarketRealityRadarRepositoryV1();
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.radarAvailable = async () => true;
+    rwaMarketRealityRuntime.radar = () => radar;
+    rwaMarketRealityRuntime.underlyings = bindingRepository;
+    rwaMarketRealityRuntime.assemble = async () => radarAnswer();
+    const response = await request(app())
+      .post('/api/route-intelligence/rwa/radar/watches')
+      .send({
+        underlyingKey: UNDERLYING,
+        tokenAddress: TOKEN,
+        direction: 'sell',
+        requestedCashAtomic: '1000000000',
+        destination: 'USDC',
+        routePolicyKey: `0x${'ff'.repeat(32)}`,
+        approvedSources: ['router-a'],
+      });
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'radar_question_not_watchable');
+    assert.deepEqual(await radar.watchesForUser({ userId: USER.id }), []);
+  });
+
+  test('one tenant cannot remove another tenant’s watch', async () => {
+    const radar = new InMemoryMarketRealityRadarRepositoryV1();
+    const other = 'eip155:8453:0x2222222222222222222222222222222222222222';
+    const stored = await radar.addWatch({
+      userId: other,
+      question: {
+        underlyingKey: UNDERLYING,
+        tokenAddress: TOKEN,
+        direction: 'sell',
+        requestedCashAtomic: '1000000000',
+        destination: 'USDC',
+        routePolicyKey: POLICY,
+        approvedSources: ['router-a'],
+      },
+      issuerId: 'coinbase',
+      representationKind: 'b20_asset',
+      now: '2026-08-28T10:00:00.000Z',
+    });
+    rwaMarketRealityRuntime.radarAvailable = async () => true;
+    rwaMarketRealityRuntime.radar = () => radar;
+    const response = await request(app()).delete(
+      `/api/route-intelligence/rwa/radar/watches/${stored.watchId}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal((await radar.watchesForUser({ userId: other })).length, 1);
   });
 });
