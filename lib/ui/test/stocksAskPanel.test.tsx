@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import url from 'node:url';
 import test, { describe } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -157,14 +158,44 @@ describe('asking from a chip', () => {
     // at an answer and four unchanged buttons, with nothing on screen saying
     // which one it belongs to. Rendered statically here, so the guard is on
     // the handler: `submit` is the one path both the chips and the form take.
-    const source = readFileSync(
-      path.join(process.cwd(), 'src/console/StocksAskPanel.tsx'),
-      'utf8',
-    );
+    // Anchored to this file, not to the working directory: the suite runs from
+    // the repo root as well as from lib/ui.
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    const source = readFileSync(path.join(here, '../src/console/StocksAskPanel.tsx'), 'utf8');
     const submit = source.slice(source.indexOf('const submit ='), source.indexOf('return ('));
     const fill = submit.indexOf('setDraft(trimmed)');
     const ask = submit.indexOf('actions.onAsk(trimmed)');
     assert.ok(fill > -1, 'the field must show what was asked');
     assert.ok(ask > -1 && fill < ask, 'the field is filled before the ask is sent');
+  });
+});
+
+describe('the suggested questions', () => {
+  test('are all one locale', () => {
+    // Screenshot, 2026-08-30: "Как давно это измерялось?" sat between three
+    // English chips on a console that is not localized. One localized string is
+    // a rendering fault, not a feature.
+    for (const prompt of STOCKS_ASK_PROMPTS_V1) {
+      assert.doesNotMatch(prompt, /[\u0400-\u04FF]/, `non-Latin script in: ${prompt}`);
+      assert.match(prompt, /\?$/, `a suggested question should ask something: ${prompt}`);
+    }
+  });
+
+  test('none of them assumes a comparison the board has not established', () => {
+    // "Which representation costs less to exit, and how do you know?" promised a
+    // ranking on a board reading "0 / 2 market answers": the only possible answer
+    // was a refusal, and the chip had invited it.
+    for (const prompt of STOCKS_ASK_PROMPTS_V1) {
+      assert.doesNotMatch(
+        prompt,
+        /\b(costs less|cheaper|better|best|which .* wins|should i)\b/i,
+        `presupposes a comparison or a recommendation: ${prompt}`,
+      );
+    }
+    // And at least one asks whether comparing is possible at all.
+    assert.ok(
+      STOCKS_ASK_PROMPTS_V1.some((prompt) => /compared right now/i.test(prompt)),
+      'a reader needs a way to ask whether the comparison exists',
+    );
   });
 });

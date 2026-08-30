@@ -329,8 +329,29 @@ export interface RepresentationViewV1 {
    * is why it is a strip and not the card. Giving the body to fields that can
    * only be filled in a twenty-second window is how a card measured minutes
    * ago rendered as four dashes.
+   *
+   * The strip states NOW and nothing else. Why a quote expires is said once for
+   * the whole board, not repeated on every card — three cards each explaining
+   * the twenty-second window taught a reader the window three times and the
+   * state zero times.
    */
-  openQuote: { value: string; note: string };
+  openQuote: { value: string; note: string | null };
+  /**
+   * When the last completed measurement happened, in one phrase.
+   *
+   * The other half of the split: the strip above says what is true now, this
+   * says what was true and when. A reader deciding whether to press Measure
+   * needs both, apart, in that order.
+   */
+  lastMeasuredLabel: string | null;
+  /**
+   * Whether this representation belongs in the primary comparison.
+   *
+   * False for zero-supply: the card stays visible with its one fact, out of the
+   * area where representations are read against each other. Not a ranking --
+   * there is no order here, only membership.
+   */
+  inComparison: boolean;
   /**
    * The body: the newest measurement, with its age said out loud.
    *
@@ -551,13 +572,16 @@ function outcomeFromCodesV1(
 }
 
 const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
-  zero_supply: 'Zero supply',
+  zero_supply: 'Zero outstanding supply',
   supply_unknown: 'Supply unknown',
   priced: 'Priced now',
   lapsed: 'Price expired',
   stale_finding: 'Finding expired',
   unsupported_token: 'Not covered',
-  unsized: 'Could not size',
+  // "Could not size" reads as our failure. The BUY anchor found no route, so
+  // there was no token amount to sell — the market gave us no size, and the
+  // sentence should say which of the two it is.
+  unsized: 'Sell size not established',
   no_route: 'No route',
   provider_failed: 'Our read failed',
   never_measured: 'Not measured',
@@ -647,31 +671,36 @@ function outcomeBodyV1(
 }
 
 /**
- * What is true only while a quote is open, in one line.
+ * NOW, in one line.
  *
- * Separated from the body so the body can hold a measurement. The reader is
- * told plainly whether anything is open right now, and the recovery is named
- * in the same breath rather than left in a toolbar at the top of the page.
+ * Separated from the body so the body can hold a measurement. It says whether
+ * anything is open at this instant and nothing else — the WHY of a twenty-
+ * second window is a property of router quotes, not of this representation, so
+ * the board says it once above the cards.
  */
 function openQuoteStripV1(
   representation: MarketRealityRepresentationWireV1,
-  nowIso: string,
-): { value: string; note: string } {
+): { value: string; note: string | null } {
   if (representation.status === 'full' && representation.returnedCashAtomic) {
     return {
       value: usdV1(representation.returnedCashAtomic) ?? '—',
       note: 'open right now, at this exact size',
     };
   }
-  const age = representation.lastObservation
-    ? quoteAgeLabelV1(representation.lastObservation.observedAt, nowIso)
-    : null;
-  return {
-    value: 'None open',
-    note: age
-      ? `router quotes last about twenty seconds; the newest was taken ${age}. Measure now to open one.`
-      : 'nothing has been measured at this size yet. Measure now to open one.',
-  };
+  return { value: 'No live quote', note: null };
+}
+
+/** LAST MEASURED, in one phrase. The other half of the split. */
+function lastMeasuredLabelV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): string | null {
+  const observedAt =
+    representation.lastObservation?.observedAt ??
+    representation.sources.find((source) => source.quoteEvidence)?.quoteEvidence?.observedAt ??
+    null;
+  const age = quoteAgeLabelV1(observedAt, nowIso);
+  return age ? `Last measured ${age}` : null;
 }
 
 function numbersV1(
@@ -801,6 +830,9 @@ function observationAbsenceNoteV1(
  * Both of these are the ROUTER's answer, not ours. Kept in one table so the
  * chip and the note cannot drift into describing the same code two ways.
  */
+export const ROUTER_UNSUPPORTED_SENTENCE_V1 =
+  'Router does not support this token under the reviewed policy';
+
 const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; note: string }>> = {
   // The chip already reads "Sell not sized", which Phase 10B.7 chose on purpose
   // and is right; only the note was written in engineering vocabulary.
@@ -809,7 +841,7 @@ const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; no
     note: 'no reviewed router would sell this token for cash at this size, so the sell was never sized',
   },
   provider_unsupported_token: {
-    label: 'Router does not list it',
+    label: ROUTER_UNSUPPORTED_SENTENCE_V1,
     note: 'the reviewed router answered that it does not carry this token',
   },
 };
@@ -1179,7 +1211,6 @@ export function marketRealityViewV1(input: {
   const reviewed = wire.universe.reviewedRepresentationCount;
   const eligible = wire.marketOutcomeCoverage.eligibleRepresentationCount;
   const answered = wire.marketOutcomeCoverage.establishedOutcomeCount;
-  const priced = wire.numericComparisonCoverage.pricedRepresentationCount;
 
   return {
     title: input.choice?.title ?? underlyingKeyTitleV1(wire.question.underlyingKey),
@@ -1196,7 +1227,7 @@ export function marketRealityViewV1(input: {
         tone: 'neutral',
       },
       {
-        label: 'Outstanding representations',
+        label: 'Positive supply',
         value: String(wire.universe.positiveSupplyRepresentationCount),
         note:
           wire.universe.unresolvedSupplyRepresentationCount > 0
@@ -1205,16 +1236,13 @@ export function marketRealityViewV1(input: {
         tone: wire.universe.unresolvedSupplyRepresentationCount > 0 ? 'warn' : 'neutral',
       },
       {
-        label: 'Market answers',
+        // One coverage row, not two. "Market answers 0 / 2" and "Live prices
+        // 0 / 2" sat one above the other saying the same thing to a reader in
+        // two vocabularies, and neither said which one to act on.
+        label: 'Live answers',
         value: `${answered} / ${eligible}`,
-        note: 'this exact direction and size',
+        note: 'open at this exact direction and size',
         tone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
-      },
-      {
-        label: 'Live prices',
-        value: `${priced} / ${wire.numericComparisonCoverage.eligibleRepresentationCount}`,
-        note: 'open normalized router quotes',
-        tone: wire.numericComparisonCoverage.status === 'complete' ? 'good' : 'warn',
       },
       {
         label: 'Comparison',
@@ -1265,8 +1293,16 @@ export function marketRealityViewV1(input: {
         routePolicyKey: representation.routePolicyKey,
         approvedSources,
         lastSeen: lastSeenV1(representation, input.now),
-        openQuote: openQuoteStripV1(representation, input.now),
-        numbers: numbersV1(representation, direction, input.now),
+        openQuote: openQuoteStripV1(representation),
+        lastMeasuredLabel: lastMeasuredLabelV1(representation, input.now),
+        // Zero supply is the whole card. A representation with nothing
+        // outstanding is not being compared against anything, so it leaves the
+        // comparison area rather than sitting in it with five dashes.
+        inComparison: outcome !== 'zero_supply',
+        // The numbers grid answers "what did it cost". With no supply there is
+        // no position to cost, and four dashes each explaining a different
+        // absence buried the one fact that mattered.
+        numbers: outcome === 'zero_supply' ? [] : numbersV1(representation, direction, input.now),
         ladder: input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? [],
         ladderNote: input.ladders?.[representation.tokenAddress.toLowerCase()]?.note ?? null,
         terms: [

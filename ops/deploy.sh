@@ -167,9 +167,18 @@ if ! [[ "$public_builder_code" =~ ^[a-z0-9_]{1,32}$ ]]; then
   echo 'FAILED: a valid BASE_BUILDER_CODE is required to build attributed production wallet calls'
   exit 1
 fi
+# Phase 15.1 — where the Base App reaches the MiniApp. NEXT_PUBLIC_* is inlined
+# at build time, so an unset value here is not a runtime warning: it is baked
+# into the distribution manifest as `http://localhost:3000`, which is what it
+# said before this line existed. The path must match `basePath` in
+# artifacts/miniapp/next.config.ts and the `location ^~ /app` block in
+# ops/nginx/miorail-app.conf; all three are the same fact.
+miniapp_url=$(read_public_env_value NEXT_PUBLIC_URL)
+miniapp_url=${miniapp_url:-https://miorail.xyz/app}
 as_service_user env \
   VITE_BASE_BUILDER_CODE="$public_builder_code" \
   NEXT_PUBLIC_BASE_BUILDER_CODE="$public_builder_code" \
+  NEXT_PUBLIC_URL="$miniapp_url" \
   pnpm -r build
 
 step "4/7  install Nginx route, Base App and B20 services"
@@ -301,6 +310,10 @@ printf '  built  %s\n  served %s\n' "$built_entry" "$served_entry"
 [ "$built_entry" = "$served_entry" ] || { echo 'FAILED: the served bundle is not the built one'; exit 1; }
 
 MINIAPP_PORT=3020
+# The app is mounted under `basePath` now, so its root answers 404 by design.
+# Checking `/` here would have reported a healthy service as broken on the very
+# deploy that published it.
+MINIAPP_PATH=/app
 # Next.js binds about thirteen seconds after systemd starts it, and step 6 does
 # not wait. On 2026-08-25 this line ran into a refused connection, and because
 # a failed command substitution aborts under `set -e`, the deploy exited with
@@ -314,11 +327,11 @@ MINIAPP_PORT=3020
 miniapp_status=''
 for attempt in $(seq 1 15); do
   miniapp_status=$(curl --silent --output /dev/null --write-out '%{http_code}' \
-    --connect-timeout 3 --max-time 10 "http://127.0.0.1:$MINIAPP_PORT/") || miniapp_status=''
+    --connect-timeout 3 --max-time 10 "http://127.0.0.1:$MINIAPP_PORT$MINIAPP_PATH") || miniapp_status=''
   [ "$miniapp_status" = 200 ] && break
   sleep 2
 done
-printf '  miniapp http://127.0.0.1:%s/  %s\n' "$MINIAPP_PORT" "${miniapp_status:-no answer}"
+printf '  miniapp http://127.0.0.1:%s%s  %s\n' "$MINIAPP_PORT" "$MINIAPP_PATH" "${miniapp_status:-no answer}"
 if [ "$miniapp_status" != 200 ]; then
   # Name the process holding the port. The previous message said only that the
   # service was not serving its build, which is the symptom of a bind failure

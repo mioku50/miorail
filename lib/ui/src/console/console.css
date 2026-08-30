@@ -1235,6 +1235,20 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 
 /* The round-trip ladder, from the stored run. Set apart from the body so a
    cost measured at four sizes is not read as four costs at this one. */
+/* Phase 15.1 — NOW and LAST MEASURED, apart.
+   The strip carries the live state on the left and the age of the last
+   completed measurement on the right, so a reader takes both in one glance
+   without either borrowing the other's tense. */
+.mio-console .mr-openquote-last { margin-left: auto; color: var(--faint); font-size: 10.5px;
+  white-space: nowrap; }
+
+/* Reviewed, and out of the comparison. Quieter than the board above it and
+   separated by a rule, because it is a different question -- not a lower rank. */
+.mio-console .mr-outside { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mio-console .mr-outside h4 { margin: 0 0 9px; color: var(--muted); font-size: 11px;
+  font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
+.mio-console .mr-quote-note { margin: 0 0 9px; }
+
 .mio-console .mr-ladder { margin-top: 10px; padding-top: 8px;
   border-top: 1px solid var(--line); }
 

@@ -940,12 +940,14 @@ describe('an absent number never renders as a zero', () => {
     assert.equal(cash?.tone, 'off', 'history is muted, never styled as a live price');
   });
 
-  test('the open-quote strip says there is nothing open, and how to get one', () => {
+  test('the strip says whether anything is open, and only that', () => {
+    // Phase 15.1 — it used to carry the twenty-second explanation too, once per
+    // card. That belongs to router quotes, not to a representation, so the
+    // board says it once and the strip states NOW.
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const strip = view?.representations[0]?.openQuote;
-    assert.equal(strip?.value, 'None open');
-    assert.match(strip?.note ?? '', /twenty seconds/);
-    assert.match(strip?.note ?? '', /Measure now/);
+    assert.equal(strip?.value, 'No live quote');
+    assert.equal(strip?.note, null);
   });
 
   test('a router that does not carry the token says so, and is not our outage', () => {
@@ -975,7 +977,10 @@ describe('an absent number never renders as a zero', () => {
     const cash = wrapper?.representations[0]?.numbers[0];
     assert.match(cash?.note ?? '', /does not carry this token/);
     assert.doesNotMatch(cash?.note ?? '', /did not complete/);
-    assert.equal(wrapper?.representations[0]?.lastSeen?.value, 'Router does not list it');
+    assert.equal(
+      wrapper?.representations[0]?.lastSeen?.value,
+      'Router does not support this token under the reviewed policy',
+    );
 
     const unsized = marketRealityViewV1({
       wire: wire({
@@ -1102,6 +1107,123 @@ describe('an absent number never renders as a zero', () => {
     // It stays visible: a reviewed representation is not removed for having
     // no supply, it is removed from the comparison denominator.
     assert.match(card.outcomeBody, /stays visible/);
+  });
+
+  test('now and last measured are separate fields, and the TTL is not on the card', () => {
+    // Phase 15.1. The strip carried the state AND the twenty-second
+    // explanation, on every card. Three cards taught the window three times and
+    // the state none.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({ liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view!.representations[0]!;
+    assert.equal(card.openQuote.value, 'No live quote');
+    assert.equal(card.openQuote.note, null, 'the strip states NOW and nothing else');
+    assert.match(card.lastMeasuredLabel ?? '', /^Last measured .+ ago$/);
+    for (const field of [card.openQuote.value, card.openQuote.note ?? '', card.lastMeasuredLabel ?? '']) {
+      assert.doesNotMatch(field, /twenty seconds/i, 'the quote window is said once, for the board');
+    }
+  });
+
+  test('a historical cash total is never presented as current', () => {
+    const lapsed = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({ liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = lapsed!.representations[0]!;
+    // The strip is the only field allowed to speak in the present, and it says
+    // there is nothing open.
+    assert.equal(card.openQuote.value, 'No live quote');
+    for (const row of card.numbers) {
+      if (row.value === '\u2014') continue;
+      // Any figure on the card carries its age and is toned as history.
+      assert.match(row.note ?? '', /ago|history|not a price now|no per-share price|reference|Zero supply/i);
+    }
+  });
+
+  test('zero supply is the whole card, and leaves the comparison', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            supply: { ...representation().supply, state: 'zero_supply', totalSupplyAtomic: '0' },
+          }),
+          representation({ tokenAddress: BACKED_NVDA, issuerId: 'backed' }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const zero = view!.representations[0]!;
+    const live = view!.representations[1]!;
+    assert.equal(zero.outcome, 'zero_supply');
+    assert.equal(zero.inComparison, false, 'a representation with nothing outstanding is not compared');
+    assert.deepEqual(zero.numbers, [], 'five dashes buried the one fact that mattered');
+    assert.equal(zero.outcomeChip, 'Zero outstanding supply');
+    // Membership, never ranking: the other card keeps its own state and no order.
+    assert.equal(live.inComparison, true);
+    assert.deepEqual(
+      view!.comparisonSummary.map((row) => row.label),
+      ['Reviewed representations', 'Positive supply', 'Live answers', 'Comparison'],
+    );
+  });
+
+  test('an unsized sell says the size was not established, not that we failed', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'unsized',
+              errorCode: 'cash_size_anchor_no_route',
+              returnedCashAtomic: null,
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    assert.equal(view!.representations[0]!.outcomeChip, 'Sell size not established');
+  });
+
+  test('the router refusing coverage is spelled out, and is the router\u2019s', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'measurement_failed',
+              errorCode: 'provider_unsupported_token',
+              returnedCashAtomic: null,
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view!.representations[0]!;
+    assert.equal(
+      card.lastSeen?.value,
+      'Router does not support this token under the reviewed policy',
+    );
+    assert.doesNotMatch(card.lastSeen?.value ?? '', /Miorail|our |failed/i);
   });
 
   test('the ladder is the caller’s, and absent until one is supplied', () => {

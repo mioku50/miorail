@@ -426,10 +426,20 @@ function RepresentationCard({
           belongs on one line, not in the body: for almost every reader it is
           empty, and a card whose body can only be filled in that window renders
           as a column of dashes over a measurement taken minutes ago. */}
+      {/* NOW, then LAST MEASURED, in that order and never blended. The strip
+          used to carry the twenty-second explanation as well, once per card —
+          three cards taught the reader the window three times and the state
+          none. The window is a property of router quotes, so the board says it
+          once, above. */}
       <p className="mr-openquote">
-        <span className="mr-lastseen-k">Open quote</span>
+        <span className="mr-lastseen-k">Now</span>
         <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
-        <span className="cr-fact-note"> · {representation.openQuote.note}</span>
+        {representation.openQuote.note ? (
+          <span className="cr-fact-note"> · {representation.openQuote.note}</span>
+        ) : null}
+        {representation.lastMeasuredLabel ? (
+          <span className="mr-openquote-last">{representation.lastMeasuredLabel}</span>
+        ) : null}
       </p>
 
       <p className="cr-verdict">{representation.outcomeBody}</p>
@@ -648,6 +658,11 @@ function Chooser({
 
 export function MarketRealityScreen({ model }: { model: MarketRealityScreenModelV1 }) {
   const { actions } = model;
+  // Membership, not order. `inComparison` comes from the view, which reads it
+  // off supply — the screen performs no selection of its own.
+  const representations = model.view?.representations ?? [];
+  const compared = representations.filter((representation) => representation.inComparison);
+  const outside = representations.filter((representation) => !representation.inComparison);
   return (
     <section className="mr" aria-label="Market Reality">
       <div className="kpis" aria-label="Reviewed securities on Base">
@@ -870,24 +885,59 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               </p>
             )
           ) : (
-            <div className="mr-board" aria-label="Reviewed representations">
-              {model.view.representations.map((representation) => (
-                <RepresentationCard
-                  key={representation.tokenAddress}
-                  representation={representation}
-                  actions={actions}
-                  surface={model.surface}
-                  watched={
-                    model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
-                  }
-                  watching={model.watchingTokenAddress === representation.tokenAddress}
-                  removing={model.removingWatchTokenAddress === representation.tokenAddress}
-                  inspectRouteUnavailable={
-                    model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
-                  }
-                />
-              ))}
-            </div>
+            <>
+              {/* Said once for the board. */}
+              {model.surface === 'market' ? (
+                <p className="lnote mr-quote-note">
+                  A router quote is open for about twenty seconds. Anything older is what the last
+                  measurement found, with its age on the card.
+                </p>
+              ) : null}
+              <div className="mr-board" aria-label="Reviewed representations">
+                {compared.map((representation) => (
+                  <RepresentationCard
+                    key={representation.tokenAddress}
+                    representation={representation}
+                    actions={actions}
+                    surface={model.surface}
+                    watched={
+                      model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
+                    }
+                    watching={model.watchingTokenAddress === representation.tokenAddress}
+                    removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                    inspectRouteUnavailable={
+                      model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
+                    }
+                  />
+                ))}
+              </div>
+              {/* Visible, and out of the comparison. Not a ranking: there is no
+                  order here, only membership — a representation with nothing
+                  outstanding is not being read against anything. */}
+              {outside.length > 0 ? (
+                <section className="mr-outside" aria-label="Reviewed but outside current comparison">
+                  <h4>Reviewed, outside the current comparison</h4>
+                  <div className="mr-board">
+                    {outside.map((representation) => (
+                      <RepresentationCard
+                        key={representation.tokenAddress}
+                        representation={representation}
+                        actions={actions}
+                        surface={model.surface}
+                        watched={
+                          model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
+                        }
+                        watching={model.watchingTokenAddress === representation.tokenAddress}
+                        removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                        inspectRouteUnavailable={
+                          model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </>
           )}
 
           {model.view.representations.length === 0 ? (

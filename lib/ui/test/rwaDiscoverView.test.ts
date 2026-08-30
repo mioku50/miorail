@@ -197,7 +197,7 @@ describe('rwa discover view — official assets', () => {
     assert.equal(card.status.chip, 'NO EXIT AT MEASURED SIZES');
     assert.match(card.status.body, /reading about the market, not about the issuance/);
 
-    const executable = card.facts.find((fact) => fact.label === 'Executable value')!;
+    const executable = card.facts.find((fact) => /cash-out/i.test(fact.label))!;
     assert.equal(executable.value, 'not measured');
     assert.equal(executable.note, 'Bought, and no approved router would sell it back');
     // A rung with no cost renders the words, never a percentage.
@@ -256,7 +256,7 @@ describe('rwa discover view — official assets', () => {
       ['no cash entry'],
     );
     assert.equal(
-      card.facts.find((fact) => fact.label === 'Executable value')!.note,
+      card.facts.find((fact) => /cash-out/i.test(fact.label))!.note,
       'No approved router would sell it to you for cash',
     );
   });
@@ -705,7 +705,7 @@ describe('the cash-exit ladder as rows', () => {
       ],
       NOW,
     );
-    assert.equal(rows[0]?.value, 'not on the router');
+    assert.equal(rows[0]?.value, 'not supported');
   });
 
   test('a rung nothing ever measured stays out of the ladder', () => {
@@ -748,5 +748,51 @@ describe('the cash-exit ladder as rows', () => {
     );
     assert.equal(rows[0]?.value, '0.04%');
     assert.equal(rows[0]?.note, null);
+  });
+});
+
+describe('a stored round trip is never spoken of in the present', () => {
+  const withObservation = (secondsAgo: number) =>
+    officialAssetsViewV1(
+      overviewV1([
+        assetV1({
+          executableValue: {
+            status: 'full',
+            valueAtomic: '9974382',
+            decimals: 2,
+            requestedSizeAtomic: '100000000000',
+            destination: 'USDC',
+            observedAt: new Date(NOW.getTime() - secondsAgo * 1000).toISOString(),
+          },
+        }),
+      ]),
+      NOW,
+    );
+
+  test('ACTIVE MARKET never appears, and an aged observation says it is history', () => {
+    // Screenshot, 2026-08-30: AAPLc carried "ACTIVE MARKET" over an executable
+    // observation 22 minutes old, beside a reference feed marked stale. The
+    // verdict was right; the tense was a claim nothing supported.
+    const fresh = withObservation(60);
+    const aged = withObservation(22 * 60);
+    assert.equal(fresh.assets[0]?.status.chip, 'ROUTE OBSERVED');
+    assert.equal(aged.assets[0]?.status.chip, 'HISTORICAL ROUTE EVIDENCE');
+    for (const view of [fresh, aged]) {
+      assert.doesNotMatch(JSON.stringify(view), /ACTIVE MARKET/);
+    }
+    // And the aged one stops claiming the good tone.
+    assert.notEqual(aged.assets[0]?.status.tone, 'good');
+    assert.match(aged.assets[0]?.status.body ?? '', /history, not a current price/);
+  });
+
+  test('a cash-out figure carries its size in the label, not just in a note', () => {
+    // The unit bug this closes: a $99,663 cash TOTAL was divided by a $320
+    // per-share reference and rendered as 31,015%, because both rows read
+    // "value".
+    const view = withObservation(60);
+    const row = view.assets[0]?.facts.find((fact) => /cash-out/i.test(fact.label));
+    assert.ok(row, 'the executable row names its size');
+    assert.match(row!.label, /^\$100k cash-out$/);
+    assert.doesNotMatch(JSON.stringify(view.assets[0]?.facts), /Executable value/);
   });
 });

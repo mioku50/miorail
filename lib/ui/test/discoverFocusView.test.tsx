@@ -308,7 +308,8 @@ describe('Discover leads with what it lists', () => {
         console={CONSOLE_MODEL}
       />,
     );
-    assert.match(html, /Ask Miorail/);
+    assert.match(html, /B20 Evidence Assistant/);
+    assert.doesNotMatch(html, /Ask Miorail/);
     assert.ok(!html.includes('class="ask-inline"'));
   });
 });

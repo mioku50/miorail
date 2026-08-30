@@ -28,7 +28,25 @@ const singleInstance = (name: string): [string, string] => [
 
 const API_URL = process.env.MIOAGENT_API_URL || "http://localhost:8080";
 
+/**
+ * Where the Base App reaches this.
+ *
+ * Phase 15.1. The MiniApp ran on 127.0.0.1:3020 with no public route at all —
+ * the service was up and nothing outside the host could see it. It is published
+ * under `/app` on the same origin as the web console rather than on a
+ * subdomain, for one reason worth stating: the session cookie is per-origin, so
+ * a reader signed in at miorail.xyz is signed in here too. A subdomain would
+ * have meant a second sign-in for the same person and the same wallet.
+ *
+ * `basePath` is what makes that honest — Next emits its own asset and route
+ * URLs under the prefix, so nothing has to be rewritten at the proxy. Absolute
+ * fetches to `/api/...` are NOT affected by it, which is exactly right: they go
+ * to the same API the web console uses, through the same nginx location.
+ */
+const BASE_PATH = process.env.NEXT_PUBLIC_BASE_PATH ?? "/app";
+
 const nextConfig: NextConfig = {
+  basePath: BASE_PATH,
   // Workspace packages ship TS source; Next.js must transpile them.
   transpilePackages: [
     "@mioagent/api-client-react",

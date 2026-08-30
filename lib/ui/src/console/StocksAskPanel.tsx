@@ -51,8 +51,15 @@ export interface StocksAskPanelActionsV1 {
 export const STOCKS_ASK_PROMPTS_V1: readonly string[] = [
   'Why is there no price at this size?',
   'What did Miorail establish here, and what did it not?',
-  'Which representation costs less to exit, and how do you know?',
-  'Как давно это измерялось?',
+  // Was "Which representation costs less to exit, and how do you know?" — which
+  // assumes a comparison exists. On a board reading "0 / 2 market answers" the
+  // chip promised something the evidence had already denied, and the answer
+  // could only be a refusal. This asks the question the board is actually in a
+  // position to answer.
+  'Can these representations be compared right now?',
+  // Was in Russian on a fully English screen. The console is not localized, so
+  // one localized string is a rendering fault, not a feature.
+  'How recently was this measured?',
 ];
 
 function evidenceById(

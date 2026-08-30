@@ -330,9 +330,10 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
   // top of the page.
   if (inline) {
     return (
-      <section className="ask-inline" aria-label="Ask Miorail">
+      // Phase 15.1 — named apart from the consumer narrator.
+      <section className="ask-inline" aria-label="Ask about B20 evidence">
         <div className="ask-inline-head">
-          <h4>Ask Miorail</h4>
+          <h4>B20 Evidence Assistant</h4>
           <span className="rt">
             <button
               type="button"
@@ -353,7 +354,7 @@ export function B20ConsolePanel(model: B20ConsolePanelModelV1) {
   return (
     <div className="panel">
       <div className="ph">
-        <h3>Ask Miorail</h3>
+        <h3>B20 Evidence Assistant</h3>
         <span className="rt">
           <button
             type="button"

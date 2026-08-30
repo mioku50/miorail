@@ -201,7 +201,10 @@ describe('the console is a row on Discover, not the top of it', () => {
   test('inline drops the panel chrome and keeps the heading', () => {
     const html = renderToStaticMarkup(<B20ConsolePanel {...model({ variant: 'inline' })} />);
     assert.match(html, /class="ask-inline"/);
-    assert.match(html, /Ask Miorail/);
+    // Phase 15.1 — named apart from the consumer narrator in Stocks/Radar, so
+    // a reader does not read four AI surfaces as four different assistants.
+    assert.match(html, /B20 Evidence Assistant/);
+    assert.doesNotMatch(html, /Ask Miorail/);
     // No card of its own: the feed panel it sits inside already is one.
     assert.ok(!html.startsWith('<div class="panel">'), html.slice(0, 80));
   });

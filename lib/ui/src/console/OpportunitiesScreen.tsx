@@ -754,13 +754,13 @@ function OpportunityCard({
             aria-expanded={askOpen}
             onClick={() => setAskOpen((open) => !open)}
           >
-            Ask Miorail
+            Ask about evidence
           </button>
         )}
       </div>
 
       {askOpen && copilot && (
-        <section className="b20-copilot" aria-label={`Ask Miorail about ${card.symbol}`}>
+        <section className="b20-copilot" aria-label={`Ask about ${card.symbol} evidence`}>
           <div className="b20-copilot-head">
             <div>
               <span className="eyebrow">Evidence lens</span>

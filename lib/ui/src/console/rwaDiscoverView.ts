@@ -194,6 +194,25 @@ export function cashSizeLabelV1(atomic: string, decimals = 6): string {
   return `$${groupedV1(formatAtomicAmount(atomic, decimals))}`;
 }
 
+/**
+ * The same size, in the compact words the size chips already use.
+ *
+ * A LABEL has to stay short enough to read as a unit rather than as a figure:
+ * "$100,000 cash-out $99,743.82" puts two long numbers side by side and invites
+ * exactly the confusion the label exists to prevent. The four values are the
+ * public ladder's own rungs, so this is a lookup, not arithmetic.
+ */
+const COMPACT_CASH_SIZE_V1: Readonly<Record<string, string>> = {
+  '100000000': '$100',
+  '1000000000': '$1k',
+  '10000000000': '$10k',
+  '100000000000': '$100k',
+};
+
+export function compactCashSizeLabelV1(atomic: string, decimals = 6): string {
+  return COMPACT_CASH_SIZE_V1[atomic] ?? cashSizeLabelV1(atomic, decimals);
+}
+
 /** Basis points as a percentage, two places. Null stays null. */
 export function rwaBpsLabelV1(bps: string | null): string | null {
   if (bps === null || !/^-?(0|[1-9][0-9]*)$/.test(bps)) return null;
@@ -248,7 +267,13 @@ const ROUTE_STATUS_V1: Readonly<
   Record<OfficialAssetWireV1['market']['routeStatus'], { chip: string; tone: ToneV1; body: string }>
 > = {
   cash_route_established: {
-    chip: 'ACTIVE MARKET',
+    // NOT "active market". A completed round trip is an OBSERVATION, and the
+    // one it is built from was 22 minutes old on the screen that carried this
+    // chip — beside a reference feed marked stale. "Active" reads as a claim
+    // about right now, which is the one thing a stored measurement cannot
+    // support. `routeChipV1` below still downgrades it further when the
+    // observation has aged out of its own window.
+    chip: 'ROUTE OBSERVED',
     tone: 'good',
     body: 'An approved router returned a completed round trip at a measured size.',
   },
@@ -390,7 +415,10 @@ const ENTRY_REFUSED_LABEL_V1 = { label: 'no cash entry', tone: 'warn' as ToneV1 
  */
 const RUNG_ERROR_LABEL_V1: Readonly<Record<string, { label: string; tone: ToneV1 }>> = {
   cash_size_anchor_no_route: ENTRY_REFUSED_LABEL_V1,
-  provider_unsupported_token: { label: 'not on the router', tone: 'warn' },
+  // Compact in the rung, because it repeats once per size. The full sentence --
+  // "Router does not support this token under the reviewed policy" -- is said
+  // once on the card, where a reader meets it before the ladder.
+  provider_unsupported_token: { label: 'not supported', tone: 'warn' },
 };
 
 const REFERENCE_NOTE_V1: Readonly<Record<OfficialAssetWireV1['referenceValue']['status'], string>> =
@@ -497,7 +525,11 @@ export function officialAssetsViewV1(
     {
       label: 'Official issuance',
       value: String(wire.counts.officialIssuance),
-      note: 'Currently listed by a reviewed Coinbase source',
+      // Named for the corpus, not for one issuer in it. The count reached 34
+      // once Backed's bTokens API became a reviewed source — and the right rail
+      // on the same screen listed all three sources beside a sentence that
+      // credited only Coinbase.
+      note: 'Currently listed by a reviewed issuer source',
       tone: 'neutral',
     },
     {
@@ -600,8 +632,44 @@ export function officialAssetsViewV1(
   };
 }
 
-function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): OfficialAssetCardViewV1 {
+/**
+ * How long a round-trip observation may still be spoken of in the present.
+ *
+ * A router quote is good for about twenty seconds; this is not that window. It
+ * is the point past which calling a stored measurement anything but history
+ * misleads a reader, and it is deliberately generous: the sampler runs on a
+ * much longer timer than a quote lives, so a stricter bound would mark every
+ * card historical and teach nobody anything.
+ */
+const ROUTE_OBSERVATION_RECENT_SECONDS_V1 = 15 * 60;
+
+/**
+ * The chip, with the age of the evidence behind it taken into account.
+ *
+ * Screenshot, 2026-08-30: `AAPLc` carried `ACTIVE MARKET` over an executable
+ * observation 22 minutes old and a reference feed marked stale on the same
+ * card. The verdict was right and the tense was wrong.
+ */
+function routeChipV1(
+  asset: OfficialAssetWireV1,
+  now: Date,
+): { chip: string; tone: ToneV1; body: string } {
   const status = ROUTE_STATUS_V1[asset.market.routeStatus];
+  if (asset.market.routeStatus !== 'cash_route_established') return status;
+  const observedAt = asset.executableValue.observedAt;
+  const ageSeconds =
+    observedAt === null ? null : Math.max(0, (now.getTime() - Date.parse(observedAt)) / 1000);
+  if (ageSeconds !== null && ageSeconds <= ROUTE_OBSERVATION_RECENT_SECONDS_V1) return status;
+  return {
+    chip: 'HISTORICAL ROUTE EVIDENCE',
+    // Not `good`: the finding stands, but nothing here is current.
+    tone: 'neutral',
+    body: `${status.body} That measurement is history, not a current price — measure again for an answer about now.`,
+  };
+}
+
+function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): OfficialAssetCardViewV1 {
+  const status = routeChipV1(asset, now);
   const reference = moneyLabelV1(asset.referenceValue.valueAtomic, asset.referenceValue.decimals);
   const executable = moneyLabelV1(
     asset.executableValue.valueAtomic,
@@ -628,7 +696,13 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
       tone: reference === null ? 'off' : asset.referenceValue.status === 'fresh' ? 'good' : 'warn',
     },
     {
-      label: 'Executable value',
+      // The size is IN the label. "Executable value $99,743.82" beside a
+      // "$320.30" reference is how a $99,663 cash total once got divided by a
+      // per-share feed and rendered as 31,015%: two different units under two
+      // labels that both read as "value".
+      label: executable
+        ? `${compactCashSizeLabelV1(asset.executableValue.requestedSizeAtomic ?? '0')} cash-out`
+        : 'Cash-out at a measured size',
       value: executable ?? 'not measured',
       note:
         executable === null
@@ -637,7 +711,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
             : asset.market.routeStatus === 'no_entry_route_at_measured_sizes'
               ? 'No approved router would sell it to you for cash'
               : 'No completed round trip on file'
-          : `Router quote for ${cashSizeLabelV1(asset.executableValue.requestedSizeAtomic ?? '0')} · measured ${
+          : `Router quote · measured ${
               rwaAgeLabelV1(asset.executableValue.observedAt, now) ?? 'at an unknown time'
             }`,
       tone: executable === null ? 'off' : 'good',

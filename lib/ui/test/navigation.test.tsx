@@ -952,8 +952,8 @@ describe('a card never turns a missing measurement into a number', () => {
   });
 });
 
-describe('Ask this B20 card stays an evidence read', () => {
-  test('the card offers Ask Miorail without adding a wallet action', () => {
+describe('the B20 card question stays an evidence read', () => {
+  test('the card offers an evidence read without adding a wallet action', () => {
     const markup = renderToStaticMarkup(
       <OpportunitiesScreen
         pipelineNotice={null}
@@ -976,7 +976,8 @@ describe('Ask this B20 card stays an evidence read', () => {
         }}
       />,
     );
-    assert.match(markup, /Ask Miorail/);
+    assert.match(markup, /Ask about evidence/);
+    assert.doesNotMatch(markup, /Ask Miorail/);
     assert.match(markup, /aria-expanded="false"/);
     assert.ok(!markup.includes('wallet_sendCalls'));
   });
