@@ -721,6 +721,18 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    --------------------------------------------------------------------------- */
 .mio-console.mini { display: grid; grid-template-columns: minmax(0,1fr); grid-template-rows: 52px minmax(0,1fr) 34px; height: 100vh; }
 .mio-console.mini .drawerbtn { display: block; }
+/* Phase 15.1 — touch targets in the Base App shell.
+   Measured at 390px on the deployed MiniApp: the drawer button was 30px, the
+   theme toggle 25px and Connect 20px tall. A phone control below ~40px is a
+   control people miss, and these three are the chrome every Stocks screen is
+   framed by. Only the hit area grows; nothing moves. */
+.mio-console.mini .drawerbtn { min-height: 40px; min-width: 40px; }
+.mio-console.mini .themetog button { min-height: 36px; padding-inline: 12px; }
+/* The wallet control is the lib/ui `Button`, whose Tailwind classes the console
+   never generates — so it arrives with no padding at all and measured 20px.
+   The drawer panel is where it lives; giving the panel's buttons a floor fixes
+   it without reaching into a component this stylesheet does not own. */
+.mio-console.mini .minipanel button { min-height: 40px; }
 .mio-console.mini header { gap: 10px; padding: 0 12px; }
 .mio-console.mini .minihead { flex: 1; min-width: 0; }
 .mio-console.mini .goalline { font-size: 13.5px; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
