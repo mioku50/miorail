@@ -8,6 +8,10 @@ dist
 *.js
 !scripts/validate_tasks.js
 !scripts/validate_tasks.test.js
+# Phase 15.1 — the manual launch check a human pastes into the browser. It is
+# source, not build output: the authenticated smoke needs a signed wallet
+# session, which no shell here can produce.
+!scripts/manual-phase15-auth-smoke.js
 !eslint.config.mjs
 *.tsbuildinfo
 coverage/

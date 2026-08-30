@@ -102,6 +102,40 @@ async function publicRun(repository: OfficialCashExitRepositoryV1) {
 }
 
 describe('official cash-exit ladder', () => {
+  test('an expired run keeps what it found; only the open figure goes away', async () => {
+    // The bug this pins: `status` carries open evidence, a router quote lives
+    // about a minute, so ten minutes later every rung of every ladder read
+    // `not_measured` -- which says nobody looked, over a run that finished and
+    // answered. Discover never showed that, because its list preview reads the
+    // stored observation and applies no freshness filter at all.
+    const repository = createMemoryOfficialCashExitRepository();
+    const run = await publicRun(repository);
+    const later = new Date(NOW.getTime() + 10 * 60 * 1000);
+    const ladder = assembleCashExitLadderV1({ publicRun: run, now: later });
+    const usdc = ladder.rungs.filter((rung) => rung.destination === 'USDC');
+
+    assert.deepEqual(
+      usdc.map((rung) => rung.status),
+      ['not_measured', 'not_measured', 'not_measured', 'not_measured'],
+    );
+    // Nothing that decides an executable value may pick history up by accident.
+    assert.deepEqual(
+      usdc.map((rung) => rung.roundTripCostBps),
+      [null, null, null, null],
+    );
+    assert.deepEqual(
+      usdc.map((rung) => rung.lastMeasured?.status ?? null),
+      // Its OWN outcome, not the carry-forward: fresh, rung 3 reads `partial`
+      // because a smaller size completed, and that is a presentation of the
+      // smaller rung. History says what happened at THIS size.
+      ['full', 'full', 'buy_only', 'measurement_failed'],
+    );
+    assert.equal(usdc[2]!.status, 'not_measured');
+    assert.equal(usdc[0]!.lastMeasured!.observedAt, NOW.toISOString());
+    assert.ok(usdc[0]!.lastMeasured!.roundTripCostBps !== null);
+    assert.equal(usdc[3]!.lastMeasured!.errorCode, 'cash_size_anchor_no_route');
+  });
+
   test('keeps exact quote evidence separate from unrun simulation and never interpolates', async () => {
     const repository = createMemoryOfficialCashExitRepository();
     const run = await publicRun(repository);

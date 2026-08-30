@@ -24,6 +24,14 @@ export function setWalletEnvironment(value: WalletEnvironment): void {
 async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   const headers = new Headers(options?.headers);
   headers.set('x-miorail-wallet-environment', walletEnvironment);
+  // A JSON body with no content type is a body express.json() will not parse,
+  // so the server sees an empty object and rejects the request for missing the
+  // very field that was sent. Every other call here sets the header by hand;
+  // one that forgot spent a release answering 400 to a working client, so the
+  // default lives here instead of in sixty-odd call sites.
+  if (typeof options?.body === 'string' && !headers.has('Content-Type')) {
+    headers.set('Content-Type', 'application/json');
+  }
   const response = await fetch(url, { credentials: 'same-origin', ...options, headers });
   if (!response.ok) {
     let errorMsg = `API error: ${response.status} ${response.statusText}`;
@@ -1102,7 +1110,11 @@ export function useAskRwaMarketReality(
       });
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey)}/ask?${query.toString()}`,
-        { method: 'POST', body: JSON.stringify({ question: input.question }) },
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ question: input.question }),
+        },
       );
       return StocksAskResponseV1Schema.parse(response);
     },

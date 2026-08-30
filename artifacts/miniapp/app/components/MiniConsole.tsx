@@ -15,7 +15,7 @@ import {
   NftReviewPanel,
   NftRouteCardPanel,
   commerceCheckoutAvailableV1,
-  CONSOLE_PRIMARY_SECTIONS_V1,
+  CONSOLE_MINIAPP_SECTIONS_V1,
   ConsoleMiniShell,
   ConsoleRightRail,
   B20ExitCard,
@@ -38,6 +38,7 @@ import {
   ActivitySpendCard,
   consoleHomeSectionV1,
   consoleNavModelV1,
+  consoleSectionLabelV1,
   opportunityCardViewV1,
   type B20ConsoleScopeViewV1,
   type ConsolePipelineStateV1,
@@ -99,6 +100,12 @@ import {
   usagePercentV1,
   RwaDiscoverRail,
   RwaDiscoverScreen,
+  MarketRealityScreen,
+  MarketRealityRadarScreen,
+  STOCKS_CONSOLE_DEFAULT_SIZE_V1,
+  useStocksConsoleV1,
+  useRadarConsoleV1,
+  type StocksConsoleQuestionV1,
   lookalikeFeedViewV1,
   officialAssetsViewV1,
   signalFeedViewV1,
@@ -217,14 +224,24 @@ function readStoredSectionV1(): ConsoleSectionV1 {
       return stored as ConsoleSectionV1;
     }
   } catch {
-    /* storage can be blocked; Opportunities is the default either way */
+    /* storage can be blocked; Stocks is the default either way */
   }
-  return "opportunities";
+  // Phase 15.1 — Stocks is the product, so it is what the Base App opens on.
+  // It used to be Discover, which is one of the surfaces Stocks is built from.
+  return "market";
 }
 
 /** T70 §4 — every one of these has a real handler below. A section with none
- * would be absent from this list, not present and inert. */
-const MINIAPP_SECTIONS_V1 = CONSOLE_PRIMARY_SECTIONS_V1;
+ * would be absent from this list, not present and inert.
+ *
+ * Phase 15.1: Stocks and Radar are the first two, and both have a handler now.
+ * The list is its own constant rather than the web tab bar's, so the two
+ * surfaces can differ without either shipping a tab that renders nothing. */
+const MINIAPP_SECTIONS_V1 = CONSOLE_MINIAPP_SECTIONS_V1;
+
+/** Sections the Base App renders that the tab bar has no room for. Every one
+ * has a handler below; `navigation.test.tsx` holds both lists to that rule. */
+const MINIAPP_DRAWER_SECTIONS_V1 = ["opportunities", "routes", "extensions", "activity"] as const;
 
 
 export function MiniConsole() {
@@ -921,6 +938,25 @@ export function MiniConsole() {
           </div>
         ))}
       </div>
+      {/* Phase 15.1 — the sections that are not in the tab bar.
+          Three tabs get ~130px each on a 390px screen and four get ~90px, so
+          Stocks, Radar and B20 took the bar. The rest still have real handlers,
+          and a handler with no way in is a dead screen — so the drawer is the
+          way in, exactly as it is on the web. Labels come from the shared
+          table, never typed here. */}
+      <div className="sechead">
+        <span>More</span>
+      </div>
+      {MINIAPP_DRAWER_SECTIONS_V1.map((id) => (
+        <button
+          key={id}
+          type="button"
+          className={`item${section === id ? " on" : ""}`}
+          onClick={() => setSection(id)}
+        >
+          <span className="t">{consoleSectionLabelV1(id)}</span>
+        </button>
+      ))}
       <div className="minipanel">
         <WalletConnect />
       </div>
@@ -1952,9 +1988,60 @@ export function MiniConsole() {
           },
   });
 
+  // -------------------------------------------------------------------------
+  // Phase 15.1 — Stocks and Radar in the Base App.
+  //
+  // The same hooks the web page mounts. Not a port: `useStocksConsoleV1` holds
+  // every read, the watch matching, the ladder and the execution handoff, so
+  // the two surfaces cannot drift on what a measurement means. What the Base
+  // App writes for itself is the two things that are genuinely its own — where
+  // the question is stored (component state, because there is no URL bar) and
+  // what happens when a reader asks to leave a screen.
+  // -------------------------------------------------------------------------
+  const [stocksQuestion, setStocksQuestion] = useState<StocksConsoleQuestionV1>({
+    underlyingKey: null,
+    direction: "sell",
+    requestedCashAtomic: STOCKS_CONSOLE_DEFAULT_SIZE_V1,
+    destination: "USDC",
+    surface: "market",
+    historyPeriod: "now",
+  });
+  const stocks = useStocksConsoleV1({
+    question: stocksQuestion,
+    enabled: routeIntelligenceOn,
+    // Signed out, `/status` answers 401 and every flag reads false. The Base
+    // App told those visitors the server had route intelligence switched off,
+    // which it had no way to know.
+    configurationRead: status.isSuccess,
+    onQuestion: (patch) => setStocksQuestion((current) => ({ ...current, ...patch })),
+    // Base App has no URL bar, so every handoff is a section switch. The B20
+    // tab owns the wallet-bound checks, which is where an address belongs.
+    onInvestigate: (token) => {
+      setTokenInput(token);
+      setSection("portfolio");
+    },
+    onOpenRadar: () => setSection("radar"),
+    // No `onInspectRoute`: the Base App mounts no advanced route surface, so
+    // the action is absent rather than present and inert. That is NOT the same
+    // as the handoff refusing — a refusal still arrives per address in
+    // `inspectRouteUnavailable` and is rendered with its reason.
+  });
+  const radarConsole = useRadarConsoleV1({
+    enabled: routeIntelligenceOn,
+    configurationRead: status.isSuccess,
+    onOpenMarket: (question) => {
+      setStocksQuestion(question);
+      setSection("market");
+    },
+  });
+
   const now = new Date();
   let sectionContent: ReactNode = content;
-  if (section === "opportunities" && discoverView === "official") {
+  if (section === "market") {
+    sectionContent = <MarketRealityScreen model={stocks.model} />;
+  } else if (section === "radar") {
+    sectionContent = <MarketRealityRadarScreen model={radarConsole.model} />;
+  } else if (section === "opportunities" && discoverView === "official") {
     const officialView = rwaOfficial.data ? officialAssetsViewV1(rwaOfficial.data, now) : null;
     sectionContent = (
       <>

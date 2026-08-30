@@ -534,6 +534,41 @@ describe('official asset dossier assembly', () => {
     assert.equal(result.dossier.comparison.reason, null);
   });
 
+  test('an expired run is history on the ladder and never an executable value', async () => {
+    // Phase 15.1. The ladder carries what the last run found even after its
+    // quotes expire, so the rungs stop reading "not measured" over a run that
+    // finished minutes ago. That history must stay history: `executableValue`
+    // is what a reader could act on, and a minute-old quote is not that.
+    const later = new Date(NOW.getTime() + 10 * 60 * 1000);
+    const result = await assembleOfficialAssetDossierV1(
+      {
+        official: await corpus(),
+        marketTail: await tail(),
+        cashExit: await cashExit(),
+        reader: reader(),
+        now: () => later,
+      },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+
+    const rung = result.dossier.cashExitLadder.rungs[0];
+    assert.ok(rung, 'the ladder still carries its rungs');
+    // What the run found is kept...
+    assert.equal(rung!.lastMeasured?.status, 'full');
+    assert.ok(rung!.lastMeasured?.returnedAtomic);
+    // ...and the open fields are empty, which is what freshness means.
+    assert.equal(rung!.status, 'not_measured');
+    assert.equal(rung!.returnedAtomic, null);
+    assert.equal(rung!.observedAt, null);
+    // The executable value must not pick the history up.
+    assert.equal(result.dossier.executableValue.status, 'not_measured');
+    assert.equal(result.dossier.executableValue.valueAtomic, null);
+    assert.equal(result.dossier.executableValue.evidence, null);
+    assert.notEqual(result.dossier.comparison.status, 'comparable');
+  });
+
   test('retains the reviewed feed address when the Base anchor is unavailable', async () => {
     const offline = reader();
     let calls = 0;

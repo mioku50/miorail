@@ -18,13 +18,9 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 //
 // Both tables are DERIVED from the shared section table in lib/ui, so this test
 // also pins that the web app has no navigation vocabulary of its own.
-test('advanced navigation names the evidence index, B20 controls and Routes AI', () => {
+test('the header names Stocks, Radar and the evidence index', () => {
   const tabs = navTabs();
-  assert.deepEqual(tabs.map((route) => route.path), [
-    '/opportunities',
-    '/portfolio',
-    '/routes',
-  ]);
+  assert.deepEqual(tabs.map((route) => route.path), ['/market', '/radar', '/opportunities']);
   // Named for what each surface CONTAINS. "Opportunities" described the shape
   // of a list and "Portfolio" the generic category, and neither told a user
   // which flow they were in — the compact bar had already said "B20" for the
@@ -38,7 +34,9 @@ test('advanced navigation names the evidence index, B20 controls and Routes AI',
   // Activity (was Proofs) moved to the drawer: it is a viewer for records this
   // deployment has never produced, and a bar of three working surfaces beats
   // four where one is empty.
-  assert.deepEqual(tabs.map((route) => route.label), ['Evidence index', 'B20 controls', 'Routes AI']);
+  // Phase 15.1 — the header opens on the product, not on the surfaces it was
+  // built from. Stocks was reachable only from the drawer.
+  assert.deepEqual(tabs.map((route) => route.label), ['Stocks', 'Radar', 'Evidence index']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

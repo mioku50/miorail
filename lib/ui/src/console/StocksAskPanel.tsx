@@ -76,6 +76,10 @@ export function StocksAskPanel({
   const submit = (question: string) => {
     const trimmed = question.trim();
     if (trimmed.length === 0 || model.asking) return;
+    // The field shows what was asked, including when a chip asked it. A panel
+    // that answers a question the reader cannot see on screen leaves them
+    // guessing which of four chips the answer belongs to.
+    setDraft(trimmed);
     actions.onAsk(trimmed);
   };
 

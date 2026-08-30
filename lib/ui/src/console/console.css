@@ -1183,6 +1183,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 
 .mio-console.mini .mr-board { grid-template-columns: minmax(0, 1fr); }
 .mio-console.mini .mr-title { font-size: 15px; }
+/* Phase 15.1 — Stocks in the Base App.
+   The narrow rules above are keyed to the VIEWPORT, and the mini shell is a
+   narrow column that can sit inside a wide one. Keyed to the shell instead,
+   these hold on a tablet-width host too: label over value, one column of
+   controls, and the ask field above its button rather than beside it. */
+.mio-console.mini .cr-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+.mio-console.mini .b20-ask-form > div { grid-template-columns: minmax(0, 1fr); }
+.mio-console.mini .ask-inline { padding-left: 8px; }
+.mio-console.mini .mr-head { flex-direction: column; }
+.mio-console.mini .mr-head-r { justify-items: start; text-align: left; }
 @media (max-width: 720px) {
   .mio-console .mr-board { grid-template-columns: minmax(0, 1fr); }
 }

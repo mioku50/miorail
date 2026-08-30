@@ -18,6 +18,7 @@
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts test/*.test.tsx"
   },
   "dependencies": {
+    "@mioagent/api-client-react": "workspace:*",
     "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
@@ -25,6 +26,7 @@
     "@mioagent/rwa-market-reality": "workspace:*"
   },
   "peerDependencies": {
+    "@tanstack/react-query": "^5.0.0",
     "react": ">=19",
     "react-dom": ">=19"
   },

@@ -1281,6 +1281,9 @@ importers:
 
   lib/ui:
     dependencies:
+      '@mioagent/api-client-react':
+        specifier: workspace:*
+        version: link:../api-client-react
       '@mioagent/opportunity-rail':
         specifier: workspace:*
         version: link:../opportunity-rail
@@ -1296,6 +1299,9 @@ importers:
       '@mioagent/rwa-market-reality':
         specifier: workspace:*
         version: link:../rwa-market-reality
+      '@tanstack/react-query':
+        specifier: ^5.0.0
+        version: 5.101.1(react@19.2.7)
     devDependencies:
       '@types/react':
         specifier: ^19.2.17

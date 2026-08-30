@@ -9,6 +9,7 @@ import url from 'node:url';
 import {
   CONSOLE_DRAWER_SECTIONS_V1,
   CONSOLE_PIPELINE_STATES_V1,
+  CONSOLE_MINIAPP_SECTIONS_V1,
   CONSOLE_PRIMARY_SECTIONS_V1,
   CONSOLE_SECTIONS_V1,
   CONSOLE_SECTION_TABLE_V1,
@@ -257,12 +258,92 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
 });
 
 describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
-  test('Base App shows Discover, B20 and Routes AI', () => {
-    const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'opportunities' });
-    // "Discover" rather than "Discover B20" since Phase 6: the surface opens
-    // on the official corpus and the launch feed sits a page deeper, so the
-    // label names what a reader meets first.
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Discover', 'B20', 'Routes AI']);
+  test('Base App shows Stocks, Radar and B20', () => {
+    const nav = consoleNavModelV1({ mounted: CONSOLE_MINIAPP_SECTIONS_V1, active: 'market' });
+    // Phase 15.1. It was Discover / B20 / Routes AI -- the surfaces Stocks is
+    // built from, on the narrow screen where the product should lead.
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Radar', 'B20']);
+  });
+
+  test('the web tab bar opens on the product, not on what it was built from', () => {
+    // Phase 15.1. Stocks lived in the drawer only, so the narrow surface -- the
+    // one a new reader is most likely to meet -- led with Discover, B20
+    // controls and Routes AI. Those are the foundations, not the product.
+    const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'market' });
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Radar', 'Discover']);
+  });
+
+  test('a Base App tab always has a handler behind it', () => {
+    // The two lists are allowed to differ, and this is the rule that keeps the
+    // difference honest: every miniapp section must be one the miniapp renders.
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    for (const section of CONSOLE_MINIAPP_SECTIONS_V1) {
+      assert.ok(
+        new RegExp(`section === "${section}"`).test(mini),
+        `the miniapp lists "${section}" with no handler`,
+      );
+    }
+  });
+
+  test('the Base App opens on Stocks, and Radar is one tab away', () => {
+    // Phase 15.1. The Base App is the narrow surface and it opened on Discover
+    // -- one of the surfaces Stocks is built from.
+    assert.equal(CONSOLE_MINIAPP_SECTIONS_V1[0], 'market');
+    assert.ok(CONSOLE_MINIAPP_SECTIONS_V1.includes('radar'));
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    assert.match(mini, /return "market";/, 'the stored-section fallback must be Stocks');
+    assert.match(mini, /MarketRealityScreen model=\{stocks\.model\}/);
+    assert.match(mini, /MarketRealityRadarScreen model=\{radarConsole\.model\}/);
+  });
+
+  test('every Base App section a reader can reach has a screen', () => {
+    // Tabs are not the only way in: what the bar has no room for moves to the
+    // drawer, and a handler with no way in is a dead screen either way.
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    const drawer = /const MINIAPP_DRAWER_SECTIONS_V1 = \[([^\]]+)\]/.exec(mini);
+    assert.ok(drawer, 'the miniapp must declare its drawer sections');
+    const listed = [...drawer![1]!.matchAll(/"([a-z]+)"/g)].map((match) => match[1]!);
+    assert.ok(listed.length > 0);
+    for (const section of listed) {
+      assert.ok(
+        (CONSOLE_SECTIONS_V1 as readonly string[]).includes(section),
+        `"${section}" is not a shared section`,
+      );
+      assert.ok(
+        new RegExp(`section === "${section}"`).test(mini) ||
+          new RegExp(`section === .${section}. \\?`).test(mini),
+        `the miniapp offers "${section}" with no handler`,
+      );
+    }
+    // And the two lists must not overlap: a section in both is a section twice.
+    for (const section of CONSOLE_MINIAPP_SECTIONS_V1) {
+      assert.ok(!listed.includes(section), `"${section}" is both a tab and a drawer entry`);
+    }
+  });
+
+  test('the Base App mounts the shared Stocks console, not a copy of it', () => {
+    // The whole point of the extraction: one set of reads, one watch-matching
+    // rule, one ladder, one handoff. A second copy is two answers to "what did
+    // this measurement mean".
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    assert.match(mini, /useStocksConsoleV1/);
+    assert.match(mini, /useRadarConsoleV1/);
+    for (const forbidden of [
+      'marketRealityViewV1(',
+      'comparableMarketHistoryViewV1(',
+      'cashExitLadderRungsV1(',
+      'stockExecutionHandoffV1(',
+    ]) {
+      assert.ok(!mini.includes(forbidden), `the miniapp re-implements ${forbidden}`);
+    }
+  });
+
+  test('the Base App mounts no advanced execution path from Stocks', () => {
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    assert.ok(
+      !/onInspectRoute:/.test(mini),
+      'Stocks in the Base App must not open an advanced route surface',
+    );
   });
 
   test('Routes and the Base MCP extension layer are named apart', () => {
@@ -287,7 +368,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
     assert.ok(mini.includes('consoleNavModelV1'), 'the miniapp builds its own nav');
     // The four words must not appear as bare navigation strings in the miniapp.
-    for (const section of CONSOLE_PRIMARY_SECTIONS_V1) {
+    for (const section of CONSOLE_MINIAPP_SECTIONS_V1) {
       const compact = CONSOLE_SECTION_TABLE_V1[section].compactLabel;
       assert.ok(
         !new RegExp(`(label|compactLabel):\\s*["']${compact}["']`).test(mini),
@@ -296,8 +377,13 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     }
   });
 
-  test('both surfaces use the same order', () => {
-    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['opportunities', 'portfolio', 'routes']);
+  test('both surfaces read the same table, in each surface\u2019s own order', () => {
+    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['market', 'radar', 'opportunities']);
+    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'radar', 'portfolio']);
+    // Whatever each surface lists, the words come from the shared table.
+    for (const section of [...CONSOLE_PRIMARY_SECTIONS_V1, ...CONSOLE_MINIAPP_SECTIONS_V1]) {
+      assert.ok(CONSOLE_SECTION_TABLE_V1[section].compactLabel.length > 0);
+    }
   });
 
   test('every section has a static path with no wallet state in it', () => {
@@ -1195,5 +1281,36 @@ describe('what the sections say about a gap', () => {
     assert.ok(!/class="note">22,265 launches/.test(markup), 'the backlog still leads the panel');
     assert.match(markup, /Index details/);
     assert.match(markup, /B20 index synced/);
+  });
+});
+
+describe('Phase 15.1 — a signed-out reader is told about the session, not the server', () => {
+  test('an unread configuration is never reported as a switched-off feature', async () => {
+    const { stocksUnavailableNoticeV1 } = await import('../src/console/stocksConsole');
+
+    // Signed out: `/status` is behind the tenant gate, so every flag reads
+    // false. The old copy turned that into a claim about the deployment.
+    const signedOut = stocksUnavailableNoticeV1({ enabled: false, configurationRead: false });
+    assert.match(signedOut ?? '', /not signed in/i);
+    assert.doesNotMatch(signedOut ?? '', /switched off on this server/i);
+
+    // Actually off: the sentence about the server is allowed, because the
+    // server is what answered.
+    const off = stocksUnavailableNoticeV1({ enabled: false, configurationRead: true });
+    assert.match(off ?? '', /switched off on this server/i);
+
+    // On: no notice at all.
+    assert.equal(stocksUnavailableNoticeV1({ enabled: true, configurationRead: true }), null);
+    assert.equal(stocksUnavailableNoticeV1({ enabled: true, configurationRead: false }), null);
+  });
+
+  test('both surfaces feed the same fact into that sentence', () => {
+    for (const rel of [
+      '../../../artifacts/interface/src/features/rwa/MarketRealityPage.tsx',
+      '../../../artifacts/interface/src/features/rwa/MarketRealityRadarPage.tsx',
+      '../../../artifacts/miniapp/app/components/MiniConsole.tsx',
+    ]) {
+      assert.match(read(rel), /configurationRead: status\.isSuccess/, rel);
+    }
   });
 });

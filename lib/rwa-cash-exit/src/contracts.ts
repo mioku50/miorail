@@ -67,6 +67,34 @@ export const CashExitSourceProjectionV1Schema = z
   })
   .strict();
 
+/**
+ * What the last completed measurement of this rung found, regardless of whether
+ * its quote is still open.
+ *
+ * The rung's own `status` carries OPEN evidence only, and a router quote is
+ * good for about a minute — so a reader arriving later saw `not_measured` on
+ * every rung of every ladder, which said nobody had looked when in fact a run
+ * had completed minutes earlier. Discover never had that problem because its
+ * list preview reads the stored observation directly; this is the same fact,
+ * kept beside the open one instead of replacing it.
+ *
+ * It is history, and a surface must render it as history. It is never merged
+ * into `status`, so nothing that decides an executable value can pick it up by
+ * accident.
+ */
+export const CashExitRungLastMeasuredV1Schema = z
+  .object({
+    status: CashExitStateV1Schema,
+    /** The measurement's own code, so a surface can tell a market finding
+     * (`cash_size_anchor_no_route`) from an outage without knowing strings. */
+    errorCode: z.string().min(1).max(120).nullable(),
+    observedAt: Timestamp,
+    roundTripCostBps: SignedDigits.nullable(),
+    returnedAtomic: Digits.nullable(),
+  })
+  .strict();
+export type CashExitRungLastMeasuredV1 = z.infer<typeof CashExitRungLastMeasuredV1Schema>;
+
 export const CashExitLadderRungV1Schema = z
   .object({
     sizeKind: z.enum(['cash_equivalent', 'actual_position']),
@@ -92,6 +120,7 @@ export const CashExitLadderRungV1Schema = z
     simulationEvidence: CashExitSimulationEvidenceV1Schema,
     observedAt: Timestamp.nullable(),
     expiresAt: Timestamp.nullable(),
+    lastMeasured: CashExitRungLastMeasuredV1Schema.nullable(),
   })
   .strict();
 export type CashExitLadderRungV1 = z.infer<typeof CashExitLadderRungV1Schema>;

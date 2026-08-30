@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test, { describe } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
@@ -146,5 +148,23 @@ describe('the Stocks ask panel', () => {
     const markup = html({ answer: null, error: 'Miorail could not answer this question.' });
     assert.ok(markup.includes('could not answer'));
     assert.equal(markup.includes('Established'), false);
+  });
+});
+
+describe('asking from a chip', () => {
+  test('the chip puts its question in the field it asked from', () => {
+    // A chip that answers without filling the field leaves the reader looking
+    // at an answer and four unchanged buttons, with nothing on screen saying
+    // which one it belongs to. Rendered statically here, so the guard is on
+    // the handler: `submit` is the one path both the chips and the form take.
+    const source = readFileSync(
+      path.join(process.cwd(), 'src/console/StocksAskPanel.tsx'),
+      'utf8',
+    );
+    const submit = source.slice(source.indexOf('const submit ='), source.indexOf('return ('));
+    const fill = submit.indexOf('setDraft(trimmed)');
+    const ask = submit.indexOf('actions.onAsk(trimmed)');
+    assert.ok(fill > -1, 'the field must show what was asked');
+    assert.ok(ask > -1 && fill < ask, 'the field is filled before the ask is sent');
   });
 });

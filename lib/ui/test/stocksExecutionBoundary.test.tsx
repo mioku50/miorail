@@ -19,12 +19,17 @@ const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 describe('the Stocks screen cannot execute anything', () => {
   const screen = read('lib/ui/src/console/MarketRealityScreen.tsx');
   const page = read('artifacts/interface/src/features/rwa/MarketRealityPage.tsx');
+  // Phase 15.1 — the reads and the handoff moved out of the page and into the
+  // console both surfaces mount. The boundary did not move; its home did.
+  const console_ = read('lib/ui/src/console/stocksConsole.ts');
+  const miniapp = read('artifacts/miniapp/app/components/MiniConsole.tsx');
 
   // §11.9, §11.10, §3
   test('neither the screen nor its page can build a call, sign, or submit', () => {
     for (const [label, source] of [
       ['MarketRealityScreen', screen],
       ['MarketRealityPage', page],
+      ['stocksConsole', console_],
     ] as const) {
       for (const forbidden of [
         'wallet_sendCalls',
@@ -57,14 +62,26 @@ describe('the Stocks screen cannot execute anything', () => {
   });
 
   // §2 — the handoff is built from the typed answer, by address.
-  test('the page hands over an address and never a ticker', () => {
-    assert.ok(page.includes('stockExecutionHandoffV1'), 'the page builds the reviewed handoff');
+  test('the console hands over an address and never a ticker', () => {
     assert.ok(
-      page.includes('stockExecutionGoalSentenceV1'),
-      'the page uses the address-only sentence',
+      console_.includes('stockExecutionHandoffV1'),
+      'the shared console builds the reviewed handoff',
+    );
+    assert.ok(
+      console_.includes('stockExecutionGoalSentenceV1'),
+      'the shared console uses the address-only sentence',
     );
     // The navigation carries the built sentence, not a label from the view.
     assert.ok(!/goal:\s*`[^`]*\$\{[^}]*(symbol|Symbol|title|name)/.test(page));
+    assert.ok(!/goal:\s*`[^`]*\$\{[^}]*(symbol|Symbol|title|name)/.test(console_));
+  });
+
+  test('the Base App mounts Stocks with no advanced route surface at all', () => {
+    // Absent, not inert: the Base App passes no `onInspectRoute`, so the shared
+    // console omits the action rather than rendering a control that refuses.
+    // A per-address REFUSAL is a different thing and still reaches the screen.
+    assert.ok(miniapp.includes('useStocksConsoleV1'), 'the Base App mounts the shared console');
+    assert.ok(!/onInspectRoute:/.test(miniapp), 'and hands it no advanced route callback');
   });
 
   // §3 — opening advanced execution is not approval.
@@ -141,5 +158,50 @@ describe('the market/infrastructure taxonomy survives the boundary', () => {
     for (const outcome of ['provider_failed', 'unsupported_token', 'no_route', 'unsized']) {
       assert.ok(view.includes(`'${outcome}'`), `${outcome} must remain a distinct outcome`);
     }
+  });
+});
+
+describe('the manual launch check stays a read', () => {
+  // Phase 15.1. The authenticated smoke needs a signed wallet session, so a
+  // human runs it in their own browser. That makes it the one script in the
+  // repo a person is invited to paste into a page holding their session — so
+  // what it may do is pinned here rather than left to review.
+  const smoke = read('scripts/manual-phase15-auth-smoke.js');
+
+  test('it cannot sign, submit or approve anything', () => {
+    for (const forbidden of [
+      'wallet_sendCalls',
+      'eth_sendTransaction',
+      'signTransaction',
+      'personal_sign',
+      'signTypedData',
+      'window.ethereum',
+      'calldata',
+      '/execute',
+      '/order/complete',
+      '/swap/prepare',
+      '/blueprint',
+    ]) {
+      assert.ok(!smoke.includes(forbidden), `the manual smoke must not contain ${forbidden}`);
+    }
+  });
+
+  test('every write it makes is a Radar watch it also removes', () => {
+    const writes = [...smoke.matchAll(/method:\s*['"](POST|DELETE|PUT|PATCH)['"]/g)].map(
+      (match) => match[1]!,
+    );
+    // Three Ask calls and one watch add are the POSTs; the DELETE undoes the
+    // add. Anything else is a write this check is not allowed to make.
+    // One helper issues every POST (the three Asks and the watch add) and the
+    // removal is the one DELETE. Any other write verb is one this check may
+    // not make.
+    assert.deepEqual([...new Set(writes)].sort(), ['DELETE', 'POST']);
+    assert.ok(smoke.includes('/radar/watches'), 'the watch it adds');
+    // The removal names the same collection; the URL is written before the
+    // verb, so the window is checked in both directions.
+    assert.ok(
+      /radar\/watches[\s\S]{0,300}DELETE/.test(smoke),
+      'and the one it removes',
+    );
   });
 });

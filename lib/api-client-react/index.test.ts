@@ -306,3 +306,20 @@ test('a server detail is carried into the thrown error, not dropped for a bare c
   const source = readFileSync(path.join(here, 'index.ts'), 'utf8');
   assert.ok(/errJson\.detail/.test(source), 'the server detail must reach the surface');
 });
+
+test('every request that carries a JSON body declares one', () => {
+  // Ask Miorail shipped without the header and the server answered 400 to a
+  // correct client: express.json() skips an untyped body, so `question` never
+  // arrived and the route rejected the request for missing it. The route's own
+  // test passed throughout, because supertest sets the header for you.
+  const source = readFileSync(path.join(here, 'index.ts'), 'utf8');
+  assert.ok(
+    /if \(typeof options\?\.body === 'string' && !headers\.has\('Content-Type'\)\)/.test(source),
+    'fetchApi must default a string body to application/json',
+  );
+  // And the default must be set BEFORE the request is issued, not after.
+  const helper = source.slice(source.indexOf('async function fetchApi'));
+  const guard = helper.indexOf("headers.set('Content-Type', 'application/json')");
+  const call = helper.indexOf('await fetch(url');
+  assert.ok(guard > -1 && call > -1 && guard < call, 'the default must precede the fetch');
+});

@@ -47,3 +47,4 @@ export * from './investigateView';
 export * from './InvestigateScreen';
 export * from './watchSlaView';
 export * from './StocksAskPanel';
+export * from './stocksConsole';

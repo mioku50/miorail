@@ -2,6 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  cashExitLadderRungsV1,
   cashSizeLabelV1,
   lookalikeFeedViewV1,
   moneyLabelV1,
@@ -634,5 +635,118 @@ describe('rwa discover view — signals', () => {
     );
     assert.equal(unnamed.cards[0]!.subject.label, '0xb200…ad01');
     assert.match(unnamed.cards[0]!.detail, /Addresses differ; this is a resemblance/);
+  });
+});
+
+describe('the cash-exit ladder as rows', () => {
+  test('an expired rung is history, not an empty ladder', () => {
+    // Stocks rendered no ladder at all for any representation, because the
+    // dossier's projection turns an expired rung into `not_measured` and this
+    // list dropped those rows as "four ways of saying nothing". The run had
+    // finished minutes earlier and had answers for every rung.
+    const rows = cashExitLadderRungsV1(
+      [
+        {
+          requestedCashAtomic: '1000000000',
+          destination: 'USDC',
+          status: 'not_measured',
+          roundTripCostBps: null,
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: {
+            status: 'full',
+            errorCode: null,
+            observedAt: '2026-08-25T11:50:00.000Z',
+            roundTripCostBps: '9',
+          },
+        },
+        {
+          requestedCashAtomic: '10000000000',
+          destination: 'USDC',
+          status: 'not_measured',
+          roundTripCostBps: null,
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: {
+            status: 'measurement_failed',
+            errorCode: 'cash_size_anchor_no_route',
+            observedAt: '2026-08-25T11:50:00.000Z',
+            roundTripCostBps: null,
+          },
+        },
+      ],
+      NOW,
+    );
+    assert.equal(rows.length, 2);
+    assert.equal(rows[0]?.value, '0.09%');
+    assert.equal(rows[0]?.note, 'measured 10m ago');
+    // The router's refusal, named as the router's — the same label Discover's
+    // own preview gives it, from the same error code.
+    assert.equal(rows[1]?.value, 'no cash entry');
+  });
+
+  test('a router that does not carry the token is not "did not finish"', () => {
+    const rows = cashExitLadderRungsV1(
+      [
+        {
+          requestedCashAtomic: '1000000000',
+          destination: 'USDC',
+          status: 'not_measured',
+          roundTripCostBps: null,
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: {
+            status: 'measurement_failed',
+            errorCode: 'provider_unsupported_token',
+            observedAt: '2026-08-25T11:50:00.000Z',
+            roundTripCostBps: null,
+          },
+        },
+      ],
+      NOW,
+    );
+    assert.equal(rows[0]?.value, 'not on the router');
+  });
+
+  test('a rung nothing ever measured stays out of the ladder', () => {
+    const rows = cashExitLadderRungsV1(
+      [
+        {
+          requestedCashAtomic: '1000000000',
+          destination: 'USDC',
+          status: 'not_measured',
+          roundTripCostBps: null,
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: null,
+        },
+      ],
+      NOW,
+    );
+    assert.deepEqual(rows, []);
+  });
+
+  test('an open figure still wins over the history beside it', () => {
+    const rows = cashExitLadderRungsV1(
+      [
+        {
+          requestedCashAtomic: '1000000000',
+          destination: 'USDC',
+          status: 'full',
+          roundTripCostBps: '4',
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: {
+            status: 'unavailable',
+            errorCode: null,
+            observedAt: '2026-08-25T11:50:00.000Z',
+            roundTripCostBps: null,
+          },
+        },
+      ],
+      NOW,
+    );
+    assert.equal(rows[0]?.value, '0.04%');
+    assert.equal(rows[0]?.note, null);
   });
 });

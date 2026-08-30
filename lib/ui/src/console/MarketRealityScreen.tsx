@@ -342,7 +342,13 @@ function RepresentationCard({
                   <p>{edge.note}</p>
                   <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
                   <p className="mr-utility-meta">
-                    Checked <span className="mono">{edge.checkedAt}</span>
+                    {/* An age, with the exact instant one hover away. A reader
+                        deciding whether evidence is current needs "9m ago"; an
+                        ISO string in UTC is a conversion, not an answer. */}
+                    Checked{' '}
+                    <span className="mono" title={edge.checkedAt}>
+                      {edge.checkedAgo ?? edge.checkedAt}
+                    </span>
                     {edge.providerLabel ? (
                       <>
                         {' '}
@@ -805,7 +811,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                 }
               >
                 {model.surface === 'utility'
-                  ? `${model.view.representations.length} exact-address maps`
+                  ? `${model.view.representations.length} exact-address map${
+                      model.view.representations.length === 1 ? '' : 's'
+                    }`
                   : model.historyPeriod === 'now'
                     ? model.view.coverageChip
                     : model.history

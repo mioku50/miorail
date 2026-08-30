@@ -56,6 +56,48 @@ function bestFullV1(
   );
 }
 
+/**
+ * What the run found at this rung, ignoring the quote window.
+ *
+ * The same rows the fresh projection reads, without the freshness filter. A
+ * negative outcome -- the router does not list this token, no route at this
+ * size -- is the only thing a rung ever had to say, and dropping it at expiry
+ * turned "we asked and the answer was no" into "nobody has looked".
+ */
+function lastMeasuredV1(
+  rows: readonly CashExitSourceObservationV1[],
+  sample: CashExitSourceObservationV1,
+): CashExitLadderRungV1['lastMeasured'] {
+  const best = bestFullV1(rows);
+  const status = best
+    ? ('full' as const)
+    : rows.some((row) => row.status === 'measurement_failed')
+      ? ('measurement_failed' as const)
+      : rows.some((row) => row.status === 'buy_only')
+        ? ('buy_only' as const)
+        : ('unavailable' as const);
+  const returned = best?.sellQuote?.outputAtomic ?? null;
+  return {
+    status,
+    // The first code any source gave. Sources agree in practice; when they do
+    // not, the rung's own status already says the outcome was mixed.
+    errorCode: rows.map((row) => row.errorCode).find((code) => code !== null) ?? null,
+    observedAt:
+      rows
+        .map((row) => row.observedAt)
+        .sort()
+        .at(-1) ?? sample.observedAt,
+    roundTripCostBps:
+      best && sample.destination === 'USDC' && sample.requestedCashAtomic !== null && returned !== null
+        ? (
+            ((BigInt(sample.requestedCashAtomic) - BigInt(returned)) * 10_000n) /
+            BigInt(sample.requestedCashAtomic)
+          ).toString()
+        : null,
+    returnedAtomic: returned,
+  };
+}
+
 function baseRungV1(rows: readonly CashExitSourceObservationV1[], now: Date): CashExitLadderRungV1 {
   const sample = rows[0]!;
   const nowMs = now.getTime();
@@ -115,6 +157,7 @@ function baseRungV1(rows: readonly CashExitSourceObservationV1[], now: Date): Ca
       observedAt: null,
       blockNumber: null,
     },
+    lastMeasured: lastMeasuredV1(rows, sample),
     observedAt:
       best?.observedAt ??
       (complete

@@ -279,7 +279,12 @@ export interface UtilityEdgeViewV1 {
   label: string;
   state: UtilityEvidenceStateV1;
   stateLabel: string;
+  /** The exact instant, kept for the tooltip and for evidence. */
   checkedAt: string;
+  /** The same instant as an age. A reader works out nothing from an ISO string
+   * in a timezone they have to convert, and every other surface in the product
+   * already says "9m ago". */
+  checkedAgo: string | null;
   providerLabel: string | null;
   note: string;
   eligibilityNote: string;
@@ -760,13 +765,24 @@ function numbersV1(
   ];
 }
 
-/** Why there is no cash figure, named by what the last look actually found. */
+/**
+ * Why there is no cash figure, named by what the last look actually found.
+ *
+ * The measurement's own error code decides the sentence wherever it has one.
+ * "Miorail's router call did not complete" was covering two different facts:
+ * a router that answered and said it does not carry this token at all, and a
+ * router that never answered. The first is a finding about the market and the
+ * second is an outage of ours, and a reader who is told the second when the
+ * first is true will keep pressing Measure now forever.
+ */
 function observationAbsenceNoteV1(
   observation: MarketRealityRepresentationWireV1['lastObservation'],
   age: string | null,
 ): string {
   if (!observation) return 'nothing has been measured at this size yet';
   const when = age ? ` ${age}` : '';
+  const coded = MEASUREMENT_OUTCOME_V1[observation.errorCode ?? ''];
+  if (coded) return `${coded.note}${when}`;
   switch (observation.status) {
     case 'no_route':
       return `no route under the reviewed router policy${when}`;
@@ -778,6 +794,25 @@ function observationAbsenceNoteV1(
       return `no cash figure was returned${when}`;
   }
 }
+
+/**
+ * The measurement codes a reader is entitled to see spelled out.
+ *
+ * Both of these are the ROUTER's answer, not ours. Kept in one table so the
+ * chip and the note cannot drift into describing the same code two ways.
+ */
+const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; note: string }>> = {
+  // The chip already reads "Sell not sized", which Phase 10B.7 chose on purpose
+  // and is right; only the note was written in engineering vocabulary.
+  cash_size_anchor_no_route: {
+    label: null,
+    note: 'no reviewed router would sell this token for cash at this size, so the sell was never sized',
+  },
+  provider_unsupported_token: {
+    label: 'Router does not list it',
+    note: 'the reviewed router answered that it does not carry this token',
+  },
+};
 
 /**
  * What the last look found, and when — as HISTORY.
@@ -804,14 +839,16 @@ function lastSeenV1(
   // longer. What remains is the case the body has no figure FOR — a route that
   // was not found, a sell that was never sized, a call that did not complete.
   if (observation.status === 'quoted' && observation.returnedCashAtomic) return null;
+  const coded = MEASUREMENT_OUTCOME_V1[observation.errorCode ?? ''];
   return {
     label: 'Last market check',
     value:
-      observation.status === 'no_route'
+      coded?.label ||
+      (observation.status === 'no_route'
         ? 'No route under policy'
         : observation.status === 'unsized'
           ? 'Sell not sized'
-          : 'Read failed',
+          : 'Read failed'),
     note: `measured ${age}`,
   };
 }
@@ -921,6 +958,7 @@ function latestQuoteV1(
 
 function utilityEdgeViewV1(
   edge: RepresentationUtilityEdgeV1,
+  nowIso: string,
 ): UtilityEdgeViewV1 {
   return {
     edgeId: edge.edgeId,
@@ -928,6 +966,7 @@ function utilityEdgeViewV1(
     state: edge.state,
     stateLabel: UTILITY_STATE_LABEL_V1[edge.state],
     checkedAt: edge.checkedAt,
+    checkedAgo: quoteAgeLabelV1(edge.checkedAt, nowIso),
     providerLabel: edge.providerId,
     note: edge.note,
     eligibilityNote: edge.eligibilityNote,
@@ -983,10 +1022,39 @@ function utilityViewV1(
   return {
     caip10: map.caip10,
     groups: [
-      { label: 'Markets and DeFi', edges: map.marketDefi.map(utilityEdgeViewV1) },
-      { label: 'Issuer services', edges: map.issuer.map(utilityEdgeViewV1) },
+      {
+        label: 'Markets and DeFi',
+        edges: map.marketDefi.map((edge) => utilityEdgeViewV1(edge, nowIso)),
+      },
+      { label: 'Issuer services', edges: map.issuer.map((edge) => utilityEdgeViewV1(edge, nowIso)) },
     ],
   };
+}
+
+/**
+ * The security's name when the chooser has not arrived yet.
+ *
+ * `security:isin:US67066G1040` is a storage key, and it was the page's heading
+ * for as long as the index request was in flight or the selected key was not in
+ * the chooser's list. A reader is owed the identifier, not the key that holds
+ * it.
+ */
+function underlyingKeyPartsV1(key: string): { scheme: string; value: string } | null {
+  const parts = key.split(':');
+  if (parts.length !== 3 || parts[0] !== 'security') return null;
+  const [, scheme, value] = parts;
+  if (!scheme || !value) return null;
+  return { scheme: scheme.toUpperCase(), value };
+}
+
+function underlyingKeyTitleV1(key: string): string {
+  const parts = underlyingKeyPartsV1(key);
+  return parts ? parts.value : key;
+}
+
+function underlyingKeyIdentifierV1(key: string): string | null {
+  const parts = underlyingKeyPartsV1(key);
+  return parts ? `${parts.scheme} ${parts.value}` : null;
 }
 
 export function underlyingChoicesV1(
@@ -1114,8 +1182,8 @@ export function marketRealityViewV1(input: {
   const priced = wire.numericComparisonCoverage.pricedRepresentationCount;
 
   return {
-    title: input.choice?.title ?? wire.question.underlyingKey,
-    identifier: input.choice?.identifier ?? null,
+    title: input.choice?.title ?? underlyingKeyTitleV1(wire.question.underlyingKey),
+    identifier: input.choice?.identifier ?? underlyingKeyIdentifierV1(wire.question.underlyingKey),
     questionLine,
     coverageChip: `${answered} / ${eligible} market answers`,
     coverageTone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',

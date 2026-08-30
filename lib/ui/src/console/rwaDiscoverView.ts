@@ -296,6 +296,18 @@ export interface CashExitRungInputV1 {
   lowerBoundRequestedCashAtomic: string | null;
   /** Discover's list wire carries this; the dossier's does not. */
   entryRouteRefused?: boolean;
+  /**
+   * What the last completed run found at this rung, whether or not its quote is
+   * still open. The dossier carries it; Discover's list preview does not need
+   * it, because that projection never applied a freshness filter in the first
+   * place.
+   */
+  lastMeasured?: {
+    status: OfficialLadderRungWireV1['status'];
+    errorCode: string | null;
+    observedAt: string;
+    roundTripCostBps: string | null;
+  } | null;
 }
 
 /**
@@ -306,22 +318,38 @@ export interface CashExitRungInputV1 {
  * already showing in full, and the cheapest way to grow a second, disagreeing
  * ladder would have been to write this logic again over there.
  *
- * USDC first, and only the rungs that were actually measured: a ladder of
- * "not measured" rows is four ways of saying nothing.
+ * USDC first, and only the rungs a run actually reached: a ladder of "not
+ * measured" rows is four ways of saying nothing.
+ *
+ * A rung whose quote has expired is NOT one of those rows. The dossier's
+ * projection carries open evidence in `status` and the completed measurement in
+ * `lastMeasured`, and a router quote is good for about a minute -- so reading
+ * `status` alone emptied every ladder on the Stocks page for every reader who
+ * arrived later than that. The open figure wins when there is one; otherwise
+ * the rung says what the run found, and when.
  */
-export function cashExitLadderRungsV1(rungs: readonly CashExitRungInputV1[]): FactViewV1[] {
+export function cashExitLadderRungsV1(
+  rungs: readonly CashExitRungInputV1[],
+  now?: Date,
+): FactViewV1[] {
   return rungs
     .filter(
       (rung): rung is CashExitRungInputV1 & { requestedCashAtomic: string } =>
         rung.destination === 'USDC' &&
-        rung.status !== 'not_measured' &&
+        (rung.status !== 'not_measured' || (rung.lastMeasured ?? null) !== null) &&
         // A rung sized by an actual position carries no cash size, so it is
         // not a rung of the CASH ladder. The dossier holds both kinds.
         rung.requestedCashAtomic !== null,
     )
     .map((rung) => {
-      const cost = rwaBpsLabelV1(rung.roundTripCostBps);
-      const meta = rung.entryRouteRefused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[rung.status];
+      const history = rung.status === 'not_measured' ? (rung.lastMeasured ?? null) : null;
+      const cost = rwaBpsLabelV1(history ? history.roundTripCostBps : rung.roundTripCostBps);
+      const coded = history?.errorCode ? (RUNG_ERROR_LABEL_V1[history.errorCode] ?? null) : null;
+      const refused = history ? false : rung.entryRouteRefused === true;
+      const meta =
+        coded ??
+        (refused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[history ? history.status : rung.status]);
+      const age = history && now ? rwaAgeLabelV1(history.observedAt, now) : null;
       return {
         label: cashSizeLabelV1(rung.requestedCashAtomic),
         value: cost ?? meta.label,
@@ -329,7 +357,9 @@ export function cashExitLadderRungsV1(rungs: readonly CashExitRungInputV1[]): Fa
         // as this size's cost is reading a measurement of something else.
         note: rung.derivedFromExactRung
           ? `carried from ${cashSizeLabelV1(rung.lowerBoundRequestedCashAtomic ?? '0')}`
-          : null,
+          : // History is labelled as history. The tone stays the outcome's --
+            // a rung nobody can exit is not less true for being ten minutes old.
+            (age ? `measured ${age}` : null),
         tone: meta.tone,
       };
     });
@@ -349,6 +379,19 @@ const RUNG_STATUS_V1: Readonly<
 /** The one rung label that depends on WHY the measurement stopped: a refused
  * buy leg is the router's answer, not our failure. */
 const ENTRY_REFUSED_LABEL_V1 = { label: 'no cash entry', tone: 'warn' as ToneV1 };
+
+/**
+ * Rung labels the measurement's own error code decides.
+ *
+ * Both of these are the ROUTER answering. `measurement_failed` alone renders as
+ * "did not finish", which is our vocabulary for our outage, and putting it over
+ * a router that said "I do not carry this token" files the router's answer
+ * under our failure.
+ */
+const RUNG_ERROR_LABEL_V1: Readonly<Record<string, { label: string; tone: ToneV1 }>> = {
+  cash_size_anchor_no_route: ENTRY_REFUSED_LABEL_V1,
+  provider_unsupported_token: { label: 'not on the router', tone: 'warn' },
+};
 
 const REFERENCE_NOTE_V1: Readonly<Record<OfficialAssetWireV1['referenceValue']['status'], string>> =
   {
@@ -623,7 +666,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     });
   }
 
-  const ladderRungs = cashExitLadderRungsV1(asset.market.ladder);
+  const ladderRungs = cashExitLadderRungsV1(asset.market.ladder, now);
 
   const observation = asset.market.observation;
   const market: FactViewV1[] = [

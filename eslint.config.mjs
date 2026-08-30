@@ -34,6 +34,22 @@ export default tseslint.config(
     },
   },
   {
+    // The manual launch check runs in a browser devtools console, not in Node.
+    // Linted rather than ignored — it is the one script a person is invited to
+    // paste into a page holding their session, so it should stay under review.
+    files: ['scripts/manual-phase15-auth-smoke.js'],
+    languageOptions: {
+      globals: {
+        fetch: 'readonly',
+        performance: 'readonly',
+        URLSearchParams: 'readonly',
+        // devtools-only: it copies the result to the clipboard, and the call
+        // is already wrapped in a try/catch for hosts that do not provide it.
+        copy: 'readonly',
+      },
+    },
+  },
+  {
     // Generated/built artifacts only — real source stays linted.
     ignores: [
       'node_modules',
@@ -49,6 +65,12 @@ export default tseslint.config(
       'contracts/lib/**',
       'contracts/out/**',
       'contracts/cache/**',
+      // `tsc -b` emits compiled JS beside the TypeScript it came from, and
+      // those files are git-ignored build output. Linting them turned a clean
+      // gate into six `no-undef` errors purely because the build had run
+      // first -- `pnpm lint` passed or failed depending on what ran before it.
+      'lib/*/src/**/*.js',
+      'lib/*/test/**/*.js',
     ],
   },
 );

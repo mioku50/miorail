@@ -948,6 +948,162 @@ describe('an absent number never renders as a zero', () => {
     assert.match(strip?.note ?? '', /Measure now/);
   });
 
+  test('a router that does not carry the token says so, and is not our outage', () => {
+    // Screenshot, 2026-08-30: NVDA's two Backed representations rendered five
+    // dashes and "Miorail's router call did not complete". Both readings were
+    // wrong. `provider_unsupported_token` is the router answering that it does
+    // not carry the token; `cash_size_anchor_no_route` is the router refusing
+    // to sell it for cash at this size. Neither is a call that failed, and a
+    // reader told it was ours will press Measure now forever.
+    const wrapper = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'measurement_failed',
+              errorCode: 'provider_unsupported_token',
+              returnedCashAtomic: null,
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const cash = wrapper?.representations[0]?.numbers[0];
+    assert.match(cash?.note ?? '', /does not carry this token/);
+    assert.doesNotMatch(cash?.note ?? '', /did not complete/);
+    assert.equal(wrapper?.representations[0]?.lastSeen?.value, 'Router does not list it');
+
+    const unsized = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              // The engine maps this code to `unsized` for a sell, which is
+              // what production carries.
+              status: 'unsized',
+              errorCode: 'cash_size_anchor_no_route',
+              returnedCashAtomic: null,
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    assert.match(unsized?.representations[0]?.numbers[0]?.note ?? '', /at this size/);
+    // The chip keeps the wording Phase 10B.7 chose: a cash size nobody could
+    // price is not a verdict on selling a position already held.
+    assert.equal(unsized?.representations[0]?.lastSeen?.value, 'Sell not sized');
+  });
+
+  test('the page is named by its security, never by the key that stores it', () => {
+    // `security:isin:US67066G1040` was the heading whenever the chooser had not
+    // arrived — on first paint, and for any key the chooser does not carry.
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    assert.equal(view?.title, 'US67066G1040');
+    assert.equal(view?.identifier, 'ISIN US67066G1040');
+    // A chooser entry still wins: it carries the company name.
+    const named = marketRealityViewV1({
+      wire: wire(),
+      choice: {
+        underlyingKey: 'security:isin:US67066G1040',
+        title: 'NVIDIA (NVDA)',
+        identifier: 'ISIN US67066G1040',
+        issuerLine: 'Coinbase',
+        issuerIds: ['coinbase'],
+        representationCount: 3,
+        multiIssuer: true,
+      },
+      now: NOW,
+    });
+    assert.equal(named?.title, 'NVIDIA (NVDA)');
+  });
+
+  test('utility evidence is dated by age, with the exact instant kept', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const edge = view?.representations[0]?.utility?.groups[0]?.edges[0];
+    assert.ok(edge, 'the first market edge');
+    // The ISO stays — evidence needs it — but the reader is shown an age.
+    assert.match(edge!.checkedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(edge!.checkedAgo !== null && /ago$/.test(edge!.checkedAgo));
+  });
+
+  test('a router that does not carry the token is never "Miorail failed"', () => {
+    // Two different facts wore one sentence: a router that answered "I do not
+    // carry this token", and a router call of ours that did not complete. The
+    // reader told the second when the first is true keeps pressing Measure now.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'measurement_failed',
+              errorCode: 'provider_unsupported_token',
+              returnedCashAtomic: null,
+            },
+            sources: [
+              {
+                source: 'kyberswap',
+                status: 'not_measured',
+                errorCode: 'provider_unsupported_token',
+                quoteEvidence: null,
+              },
+            ],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view!.representations[0]!;
+    const spoken = [card.outcomeBody, card.numbers[0]?.note ?? '', card.lastSeen?.value ?? ''].join(' ');
+    assert.match(spoken, /does not (carry|cover) this (token|contract)/);
+    for (const blame of [/Miorail failed/i, /did not complete/i, /our failure/i]) {
+      assert.doesNotMatch(card.numbers[0]?.note ?? '', blame);
+      assert.doesNotMatch(card.lastSeen?.value ?? '', blame);
+    }
+    // And it is still not a market verdict about the asset.
+    assert.doesNotMatch(spoken, /cannot be (sold|traded)|no liquidity|untradeable/i);
+  });
+
+  test('zero supply says what was read, and claims nothing about the market', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            supply: {
+              ...representation().supply,
+              state: 'zero_supply',
+              totalSupplyAtomic: '0',
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view!.representations[0]!;
+    assert.equal(card.outcome, 'zero_supply');
+    // The attribution names the read, not the market and not us.
+    assert.equal(card.attribution, 'onchain read');
+    assert.match(card.outcomeBody, /No outstanding supply was observed/);
+    // Never "delisted", never "dead", never a route verdict.
+    for (const forbidden of [/delisted/i, /\bdead\b/i, /no route/i, /cannot be sold/i]) {
+      assert.doesNotMatch(card.outcomeBody, forbidden);
+    }
+    // It stays visible: a reviewed representation is not removed for having
+    // no supply, it is removed from the comparison denominator.
+    assert.match(card.outcomeBody, /stays visible/);
+  });
+
   test('the ladder is the caller’s, and absent until one is supplied', () => {
     const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     assert.deepEqual(bare?.representations[0]?.ladder, []);
@@ -1664,3 +1820,4 @@ describe('history is history, and says so', () => {
     assert.equal(view?.representations[0]?.outcome, 'never_measured');
   });
 });
+

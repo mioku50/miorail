@@ -140,16 +140,42 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
 };
 
 /**
- * The primary navigation, in order. Opportunities first because it is the only
- * surface that answers "what should I look at?" — Routes answers "how do I do
- * this thing I already decided on", which is a later question.
+ * The primary navigation, in order.
+ *
+ * Stocks first. It was in the drawer only, which made the tab bar the product
+ * Miorail used to be: Discover, B20 controls, Routes AI — the surfaces Stocks
+ * was built on top of. A reader whose first screen is the narrow one met the
+ * foundations and never the product.
+ *
+ * Radar second because it is the same question, watched: a reader who has just
+ * chosen an exact address, size and direction has one next move, and it is not
+ * a different feed.
  *
  * Three, not four. Activity moved to the drawer beside Extensions: a tab bar
  * of three working surfaces is more honest than four where one is a viewer for
  * records this deployment has never produced, and the three that remain get
  * ~130px each on a 390px screen instead of ~90px.
  */
-export const CONSOLE_PRIMARY_SECTIONS_V1 = ['opportunities', 'portfolio', 'routes'] as const;
+export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'radar', 'opportunities'] as const;
+
+/**
+ * What the Base App MiniApp renders, in order.
+ *
+ * Deliberately its own list. It used to BE `CONSOLE_PRIMARY_SECTIONS_V1`, on
+ * the rule that a tab must have a real handler behind it — so reordering the
+ * web tab bar would have shipped inert tabs into the Base App. The rule is
+ * right; sharing one constant between two surfaces that mount different screens
+ * was what made it fragile.
+ *
+ * Stocks first here too: the Base App is the narrow surface, and it opened on
+ * Discover — one of the surfaces Stocks is built from. B20 controls stay
+ * because the wallet-bound checks live there and nowhere else in the MiniApp.
+ * Routes AI moved out of the bar: three tabs get ~130px each on a 390px screen.
+ *
+ * Adding a section here without adding its screen is the bug this separation
+ * exists to make visible, and `navigation.test.tsx` fails on it.
+ */
+export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'radar', 'portfolio'] as const;
 
 /** T70 §3 — the mobile drawer is the complete map of mounted sections. */
 // Activity and Extensions sit in the drawer rather than the tab bar. Neither
