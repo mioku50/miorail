@@ -98,9 +98,18 @@ export function marketRealityAgentSummaryV1(
       ? `No representation is currently eligible for a market comparison at ${question}, so there is nothing to compare.`
       : currentComparisonAvailable
         ? `Miorail has a current market answer for all ${eligible} at ${question}.`
-        : `Miorail does not currently hold a fresh established market answer for ${
-            answered === 0 ? 'either' : `${eligible - answered} of ${eligible}`
-          } active representation${eligible - answered === 1 ? '' : 's'} at ${question}, so there is nothing reliable to compare right now.`;
+        : // "either" takes a singular noun, so the plural suffix belongs only to
+          // the counted branch. The first version read "either active
+          // representations" in production.
+          `Miorail does not currently hold a fresh established market answer for ${
+            answered === 0 && eligible === 2
+              ? 'either active representation'
+              : answered === 0
+                ? `any of the ${eligible} active representations`
+                : `${eligible - answered} of ${eligible} active representation${
+                    eligible - answered === 1 ? '' : 's'
+                  }`
+          } at ${question}, so there is nothing reliable to compare right now.`;
 
   // Said in Miorail's words so it does not have to be reconstructed from a
   // count. A router quote lives about twenty seconds; the absence of one is

@@ -80,6 +80,10 @@ describe('Miorail reads its own comparison', () => {
     assert.match(summary.summary, /2 have positive supply/);
     assert.match(summary.summary, /1 has zero observed supply/);
     assert.match(summary.summary, /nothing reliable to compare right now/);
+    // "either" takes a singular noun. Production read "either active
+    // representations" on the first deploy of this sentence.
+    assert.match(summary.summary, /either active representation at/);
+    assert.doesNotMatch(summary.summary, /either active representations/);
     // The size and direction travel with the claim: an answer about $1,000 SELL
     // is not an answer about $100,000.
     assert.match(summary.summary, /\$1,000 SELL → USDC/);
@@ -127,5 +131,63 @@ describe('Miorail reads its own comparison', () => {
     const summary = marketRealityAgentSummaryV1(response());
     assert.match(summary.summary, /zero observed supply/);
     assert.doesNotMatch(summary.summary, /dead|delisted|worthless/i);
+  });
+
+  test('the sentence agrees with itself at every count', () => {
+    // Three eligible, none answered: "either" no longer applies.
+    const many = marketRealityAgentSummaryV1(
+      response({
+        universe: {
+          reviewedRepresentationCount: 4,
+          positiveSupplyRepresentationCount: 3,
+          zeroSupplyRepresentationCount: 1,
+          unresolvedSupplyRepresentationCount: 0,
+        },
+        marketOutcomeCoverage: {
+          policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+          eligibleRepresentationCount: 3,
+          establishedOutcomeCount: 0,
+          status: 'incomplete',
+          reason: 'none',
+        },
+      }),
+    );
+    assert.match(many.summary, /any of the 3 active representations/);
+
+    // Partially answered: the remainder is counted, and agrees in number.
+    const partial = marketRealityAgentSummaryV1(
+      response({
+        marketOutcomeCoverage: {
+          policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+          eligibleRepresentationCount: 2,
+          establishedOutcomeCount: 1,
+          status: 'incomplete',
+          reason: 'one missing',
+        },
+      }),
+    );
+    assert.match(partial.summary, /1 of 2 active representation at/);
+    assert.doesNotMatch(partial.summary, /representations at/);
+
+    // Nothing eligible at all is its own sentence, not a count of zero.
+    const none = marketRealityAgentSummaryV1(
+      response({
+        universe: {
+          reviewedRepresentationCount: 1,
+          positiveSupplyRepresentationCount: 0,
+          zeroSupplyRepresentationCount: 1,
+          unresolvedSupplyRepresentationCount: 0,
+        },
+        marketOutcomeCoverage: {
+          policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+          eligibleRepresentationCount: 0,
+          establishedOutcomeCount: 0,
+          status: 'incomplete',
+          reason: 'no eligible representation',
+        },
+      }),
+    );
+    assert.match(none.summary, /nothing to compare/);
+    assert.doesNotMatch(none.summary, /either/);
   });
 });
