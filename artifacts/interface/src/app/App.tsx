@@ -65,6 +65,11 @@ const InvestigatePage = lazy(() =>
 const MarketRealityPage = lazy(() =>
   import('../features/rwa/MarketRealityPage').then((m) => ({ default: m.MarketRealityPage })),
 );
+const StockActionReviewPage = lazy(() =>
+  import('../features/rwa/StockActionReviewPage').then((m) => ({
+    default: m.StockActionReviewPage,
+  })),
+);
 const MarketRealityRadarPage = lazy(() =>
   import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
 );
@@ -210,6 +215,15 @@ export function App() {
         <Route path="/market">
           <RequireSession>
             <MarketRealityPage />
+          </RequireSession>
+        </Route>
+
+        {/* Connected Intelligence 1 — the review an external assistant's draft
+            points at. Behind the session gate like every other Stocks surface:
+            the draft names a wallet, and only that wallet may open it. */}
+        <Route path="/action/:draft">
+          <RequireSession>
+            <StockActionReviewPage />
           </RequireSession>
         </Route>
 

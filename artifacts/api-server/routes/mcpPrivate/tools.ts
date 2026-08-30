@@ -12,7 +12,13 @@ import {
   runOpportunitySimulationV1,
   type B20FacadeRefusalV1,
 } from '../b20Control.js';
+import {
+  stockExecutionHandoffV1,
+  type StockExecutionHandoffResultV1,
+} from '@mioagent/rwa-market-reality/execution-handoff';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
+import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
+import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 
@@ -579,3 +585,213 @@ export const EXECUTION_STATE_COPY_V1: Record<string, string> = {
   reconciliation_required:
     'The batch was confirmed but the expected token receipt was not found in it. A confirmed approval is not an entry. This needs a person to look.',
 };
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 1 — the stock action draft.
+//
+// The one stock-native primitive on this surface, and deliberately the
+// narrowest thing that can be called a prepare: it establishes WHICH exact
+// representation and WHICH exact question a review will be about, mints a
+// short-lived wallet-bound draft, and returns a link.
+//
+// It returns no financial terms at all. Not "roughly", not "as of a minute
+// ago" — none. An assistant that knew the cash figure would repeat it in its
+// own prose, and that prose is the one surface Miorail does not control: the
+// user would then approve a number they read in a chat window rather than the
+// number the review page derived. So the assistant is allowed to know what is
+// being reviewed and not what it costs.
+//
+// It also creates nothing executable. `miorail_get_base_mcp_action` is
+// unchanged and still reachable only through the B20 entry path, which requires
+// its own clearance and its own confirmed review.
+// ---------------------------------------------------------------------------
+
+/**
+ * The seam Connected Intelligence 1 is tested through.
+ *
+ * Assembly, the handoff rule, the clock, the signing secret and the public
+ * origin, in one object a test can replace. Nothing here is a new source of
+ * truth: `assembleMarketReality` and `handoff` are the SAME functions the web
+ * page calls, so an assistant and a browser cannot be told different things
+ * about which representations exist.
+ */
+export const stockActionRuntime = {
+  assembleMarketReality: async (question: {
+    underlyingKey: string;
+    direction: 'buy' | 'sell';
+    requestedCashAtomic: string;
+    destination: 'USDC';
+  }): Promise<unknown> =>
+    rwaMarketRealityRuntime.assemble(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
+        now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
+      },
+      question,
+    ),
+  handoff: (input: {
+    response: never;
+    tokenAddress: string;
+    now: Date;
+  }): StockExecutionHandoffResultV1 => stockExecutionHandoffV1(input),
+  issue: issueStockActionDraftV1,
+  now: () => new Date(),
+  secret: (): string | null => {
+    const secret = (process.env.SESSION_SECRET ?? '').trim();
+    return secret.length > 0 ? secret : null;
+  },
+  origin: (): string =>
+    (process.env.MIORAIL_PUBLIC_ORIGIN ?? 'https://miorail.xyz').replace(/\/+$/, ''),
+};
+
+export const STOCK_ACTION_REFUSAL_COPY_V1: Record<string, string> = {
+  stock_action_disabled:
+    'Route intelligence is switched off on this server, so no representation can be prepared. That is a statement about this deployment, not about the security.',
+  stock_action_unknown_security:
+    'Miorail holds no reviewed representation graph for that underlying key. Nothing was substituted.',
+  representation_not_reviewed:
+    'That exact address is not one of the reviewed representations for that security at that question. Miorail did not substitute another one.',
+  zero_supply_representation:
+    'That representation has no outstanding supply, so there is no position to act on. Miorail will not redirect to its wrapper, its underlying, or another issuer — those are different contracts and a different question.',
+  supply_not_established:
+    'Outstanding supply for that representation is not established, so Miorail will not prepare an action against it.',
+  route_policy_not_established:
+    'No reviewed route policy is established for that representation at that question.',
+  destination_not_supported: 'Only USDC-denominated reviewed questions can be prepared.',
+  stock_action_identity_mismatch:
+    'One of the identity fields you supplied does not match Miorail’s reviewed evidence for that exact address. Nothing was prepared. Re-read the representation and pass the fields exactly as Miorail returned them.',
+  stock_action_secret_unavailable:
+    'This server cannot sign an action draft right now, so nothing was prepared.',
+};
+
+/** The exact identity a caller must state, and Miorail must confirm. */
+export interface StockActionArgsV1 {
+  chainId: number;
+  tokenAddress: string;
+  underlyingKey: string;
+  issuerId: string;
+  issuerInstrumentKey: string;
+  representationKind: string;
+  direction: string;
+  requestedCashAtomic: string;
+  destination: string;
+  routePolicyKey: string;
+}
+
+function stockActionRefusalV1(code: string): McpPrivateError {
+  return new McpPrivateError(
+    code,
+    STOCK_ACTION_REFUSAL_COPY_V1[code] ?? 'Miorail refused that request.',
+  );
+}
+
+/**
+ * Prepare a review of ONE exact reviewed representation.
+ *
+ * Every identity field the caller supplied is checked against what canonical
+ * Stocks evidence says about that address. A model that guessed an issuer, or
+ * carried a route policy over from another size, is refused rather than
+ * silently corrected — a correction here would be Miorail choosing a different
+ * contract than the one the conversation was about.
+ */
+export async function miorailPrepareStockActionV1(
+  identity: McpPrivateIdentityV1,
+  args: StockActionArgsV1,
+): Promise<Record<string, unknown>> {
+  if (!getMiorailProductMigrationFlags().routeIntelligenceV1) {
+    throw stockActionRefusalV1('stock_action_disabled');
+  }
+  if (Number(args.chainId) !== 8453) throw stockActionRefusalV1('representation_not_reviewed');
+  if (String(args.destination) !== 'USDC') throw stockActionRefusalV1('destination_not_supported');
+
+  const tokenAddress = String(args.tokenAddress ?? '').trim().toLowerCase();
+  // A ticker can never select a representation: 61.7% of launches share a
+  // symbol, and two different CHEESEBURGE contracts once sat on one screen.
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    throw stockActionRefusalV1('representation_not_reviewed');
+  }
+
+  const runtime = stockActionRuntime;
+  let response: unknown;
+  try {
+    response = await runtime.assembleMarketReality({
+      underlyingKey: String(args.underlyingKey ?? ''),
+      direction: String(args.direction ?? '') === 'buy' ? 'buy' : 'sell',
+      requestedCashAtomic: String(args.requestedCashAtomic ?? ''),
+      destination: 'USDC',
+    });
+  } catch {
+    throw stockActionRefusalV1('stock_action_unknown_security');
+  }
+
+  const built = runtime.handoff({
+    response: response as never,
+    tokenAddress,
+    now: runtime.now(),
+  });
+  if (built.status === 'refused') throw stockActionRefusalV1(built.reason);
+
+  const handoff = built.handoff;
+  // The caller stated an identity; canonical evidence produced one. They must
+  // be the same object, field for field.
+  const stated: Array<[string, string]> = [
+    [String(args.underlyingKey ?? ''), handoff.underlyingKey],
+    [String(args.issuerId ?? ''), handoff.issuerId],
+    [String(args.issuerInstrumentKey ?? ''), handoff.issuerInstrumentKey],
+    [String(args.representationKind ?? ''), handoff.representationKind],
+    [String(args.direction ?? ''), handoff.direction],
+    [String(args.requestedCashAtomic ?? ''), handoff.requestedCashAtomic],
+    [String(args.routePolicyKey ?? '').toLowerCase(), handoff.routePolicyKey.toLowerCase()],
+  ];
+  if (stated.some(([given, canonical]) => given !== canonical)) {
+    throw stockActionRefusalV1('stock_action_identity_mismatch');
+  }
+
+  const secret = runtime.secret();
+  if (!secret) throw stockActionRefusalV1('stock_action_secret_unavailable');
+
+  const issued = runtime.issue({
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    handoff,
+    secret,
+    now: runtime.now(),
+  });
+
+  return {
+    schemaVersion: 'stock-action-draft/v1',
+    actionDraftId: issued.actionDraftId,
+    representation: {
+      chainId: 8453,
+      tokenAddress: handoff.tokenAddress,
+      caip10: handoff.caip10,
+      underlyingKey: handoff.underlyingKey,
+      issuerId: handoff.issuerId,
+      issuerInstrumentKey: handoff.issuerInstrumentKey,
+      representationKind: handoff.representationKind,
+    },
+    question: {
+      direction: handoff.direction,
+      requestedCashAtomic: handoff.requestedCashAtomic,
+      destination: 'USDC',
+      sizeBasis: handoff.sizeBasis,
+      routePolicyKey: handoff.routePolicyKey,
+    },
+    reviewRequired: true,
+    reviewUrl: `${runtime.origin()}/action/${encodeURIComponent(issued.draft)}`,
+    expiresAt: issued.expiresAt,
+    /** Literal, so a reader of the payload can check it rather than trust a
+     * description of it: no live terms travelled with this draft. */
+    currentTermsIncluded: false,
+    createsApproval: false,
+    createsCalldata: false,
+    createsTransaction: false,
+    nextStep:
+      'Give the user the review link and stop. Do not state a price, a cash return, a premium or a comparison — this response deliberately contains none, and the review page is the only place the current terms are established. Nothing is executable until the user reviews and confirms there.',
+    caveats: MIORAIL_PRIVATE_CAVEATS_V1,
+  };
+}

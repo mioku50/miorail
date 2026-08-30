@@ -37,6 +37,11 @@ import { B20_UNSUPPORTED_QUESTIONS_V1 } from '../lib/b20AnswerPlan.js';
 import { stocksEvidenceBundleV1 } from '../lib/stocksEvidence.js';
 import { narrateStocksAnswerV1 } from '../lib/stocksNarration.js';
 import { createReviewedMarketRealityReferenceAdapterV1 } from '../lib/rwaReferenceSession.js';
+import {
+  STOCK_ACTION_DRAFT_REFUSAL_COPY_V1,
+  verifyStockActionDraftV1,
+} from '../lib/stockActionDraft.js';
+import { stockExecutionHandoffV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 
 export const rwaMarketRealityRouter = Router();
 
@@ -853,6 +858,189 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/ask', async (req
         assembledAt: now.toISOString(),
       }),
     );
+  } catch {
+    res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 1 — the review a draft points at.
+//
+// The authority for live terms. An assistant established WHICH representation
+// and WHICH question; it was told nothing about what that costs, and this is
+// where the cost is established — under the session of the wallet the draft is
+// bound to, from canonical evidence read now.
+//
+// Nothing conversational survives into this answer. The draft carries no
+// figure, so there is no old number to preserve, and the state reported here is
+// whatever the evidence says at this moment — including "the route policy
+// changed" and "there is no route now", both of which stop the review.
+// ---------------------------------------------------------------------------
+
+rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+
+  const secret = (process.env.SESSION_SECRET ?? '').trim();
+  if (secret.length === 0) {
+    res.status(503).json({
+      error: 'stock_action_secret_unavailable',
+      code: 'stock_action_secret_unavailable',
+    });
+    return;
+  }
+
+  // The SESSION's tenant, never the URL's. A draft opened under another account
+  // is refused rather than resolved.
+  const verified = verifyStockActionDraftV1({
+    draft: String(req.params.draft ?? ''),
+    secret,
+    now: rwaMarketRealityRuntime.now(),
+    expectTenantId: user.id,
+  });
+  if (!verified.ok) {
+    res.status(verified.reason === 'stock_action_draft_wrong_wallet' ? 403 : 400).json({
+      error: verified.reason,
+      code: verified.reason,
+      detail: STOCK_ACTION_DRAFT_REFUSAL_COPY_V1[verified.reason],
+    });
+    return;
+  }
+  const claims = verified.claims;
+
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
+      res.status(503).json({
+        error: 'market_reality_storage_unavailable',
+        code: 'market_reality_storage_unavailable',
+      });
+      return;
+    }
+
+    // Re-assembled, not remembered.
+    const assembled = await rwaMarketRealityRuntime.assemble(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
+        now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
+      },
+      {
+        underlyingKey: claims.underlyingKey,
+        direction: claims.direction,
+        requestedCashAtomic: claims.requestedCashAtomic,
+        destination: 'USDC',
+      },
+    );
+    const reality = MarketRealityResponseV2Schema.parse(assembled);
+    const now = rwaMarketRealityRuntime.now();
+
+    // The same rule the web page and the MCP tool use. A representation that has
+    // since gone to zero supply, or lost its reviewed route policy, refuses here
+    // exactly as it would have refused at prepare time.
+    const rebuilt = stockExecutionHandoffV1({
+      response: reality as never,
+      tokenAddress: claims.tokenAddress,
+      now,
+    });
+    if (rebuilt.status === 'refused') {
+      res.status(200).json({
+        schemaVersion: 'stock-action-review/v1',
+        actionDraftId: claims.actionDraftId,
+        representation: {
+          chainId: 8453,
+          tokenAddress: claims.tokenAddress,
+          caip10: claims.caip10,
+          underlyingKey: claims.underlyingKey,
+          issuerId: claims.issuerId,
+          issuerInstrumentKey: claims.issuerInstrumentKey,
+          representationKind: claims.representationKind,
+        },
+        question: {
+          direction: claims.direction,
+          requestedCashAtomic: claims.requestedCashAtomic,
+          destination: 'USDC',
+          sizeBasis: claims.sizeBasis,
+        },
+        outcome: 'refused',
+        reason: rebuilt.reason,
+        detail: rebuilt.detail,
+        confirmed: false,
+        executableActionAvailable: false,
+        assembledAt: now.toISOString(),
+      });
+      return;
+    }
+
+    // The reviewed measurement basis changed under the draft. The question the
+    // conversation was about is not the question this would now answer, and
+    // silently answering the new one is how a reader approves a comparison they
+    // never saw.
+    if (rebuilt.handoff.routePolicyKey.toLowerCase() !== claims.routePolicyKey.toLowerCase()) {
+      res.status(200).json({
+        schemaVersion: 'stock-action-review/v1',
+        actionDraftId: claims.actionDraftId,
+        outcome: 'refused',
+        reason: 'route_policy_changed',
+        detail:
+          'Miorail’s reviewed router policy for this representation changed after this draft was prepared, so the measurement basis is no longer the one it was prepared under. Ask again for a current answer.',
+        confirmed: false,
+        executableActionAvailable: false,
+        assembledAt: now.toISOString(),
+      });
+      return;
+    }
+
+    res.status(200).json({
+      schemaVersion: 'stock-action-review/v1',
+      actionDraftId: claims.actionDraftId,
+      representation: {
+        chainId: 8453,
+        tokenAddress: rebuilt.handoff.tokenAddress,
+        caip10: rebuilt.handoff.caip10,
+        underlyingKey: rebuilt.handoff.underlyingKey,
+        issuerId: rebuilt.handoff.issuerId,
+        issuerInstrumentKey: rebuilt.handoff.issuerInstrumentKey,
+        representationKind: rebuilt.handoff.representationKind,
+      },
+      question: {
+        direction: rebuilt.handoff.direction,
+        requestedCashAtomic: rebuilt.handoff.requestedCashAtomic,
+        destination: 'USDC',
+        sizeBasis: rebuilt.handoff.sizeBasis,
+        routePolicyKey: rebuilt.handoff.routePolicyKey,
+        approvedSources: rebuilt.handoff.approvedSources,
+      },
+      outcome: 'review',
+      /** Established NOW. `expired_quote` is a legitimate state to review in —
+       * it is never promoted to `fresh_quote`, and the reader is told to
+       * measure rather than shown an old figure as a current one. */
+      evidenceState: rebuilt.handoff.evidenceState,
+      quoteExpiresAt: rebuilt.handoff.quoteExpiresAt,
+      /** The full current board for this exact question. The page renders the
+       * SAME projection Stocks renders — one answer, two entry points. */
+      reality,
+      confirmed: false,
+      /** Preserved invariant: prepare is not confirmation, and confirmation is
+       * not an executable action. Nothing on this response is executable. */
+      executableActionAvailable: false,
+      createsApproval: false,
+      createsCalldata: false,
+      createsTransaction: false,
+      draftExpiresAt: claims.expiresAt,
+      assembledAt: now.toISOString(),
+    });
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }

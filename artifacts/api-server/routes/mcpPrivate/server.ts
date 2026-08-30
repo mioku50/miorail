@@ -8,6 +8,7 @@ import {
   miorailGetBaseMcpActionV1,
   miorailGetExecutionStatusV1,
   miorailPrepareB20EntryV1,
+  miorailPrepareStockActionV1,
   miorailRecordBaseMcpSubmissionV1,
   privateFailureV1,
 } from './tools.js';
@@ -27,10 +28,18 @@ import type { McpPrivateIdentityV1 } from './session.js';
 // find the status of.
 // ---------------------------------------------------------------------------
 
-export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-private';
+/**
+ * What a client displays.
+ *
+ * "private" describes the ROUTE's trust zone and reads to a user as something
+ * hidden. What this surface actually is, from where they stand, is the one
+ * they connected their Base Account to — so the product name is "Miorail
+ * Connected" and the path stays `/mcp/private`, which nobody has to see.
+ */
+export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
 export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.0.0';
 
-export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail's authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
+export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
 
@@ -96,6 +105,61 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
       content: [{ type: 'text' as const, text: `${failure.code}: ${failure.message}` }],
     };
   };
+
+  // -------------------------------------------------------------------------
+  // Connected Intelligence 1 — the stock-native prepare.
+  //
+  // Registered first because it is the one an assistant reaches from the public
+  // Stocks tools, and because its contract is the strictest on this surface: it
+  // returns no financial term at all.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'miorail_prepare_stock_action',
+    {
+      title: 'Prepare a review of ONE exact reviewed stock representation',
+      description: `Turns a reviewed Stocks representation into a short-lived review link for the signed-in wallet. Use it after the public tools (get_representations, compare_market_reality) have identified an EXACT address the user chose.
+
+WHAT THIS RETURNS: which representation and which question are about to be reviewed. THAT IS ALL. It deliberately contains no price, no cash return, no premium or discount, and no comparison — do not supply one from an earlier message either. The review page is the only place the current terms are established, because a router quote is open for about twenty seconds and anything you carry into prose is already history.
+
+Pass the identity fields exactly as Miorail returned them. A ticker cannot select a representation: different issuers publish different contracts for the same company, and Miorail will not guess which one you meant. If any field disagrees with Miorail's reviewed evidence the call is refused rather than corrected.
+
+A representation with zero outstanding supply refuses. It is NOT redirected to its wrapper, its underlying, or another issuer's contract — those are different contracts and a different question.
+
+This creates nothing executable. There is no path from here to calldata, an approval or a transaction; the user reviews, and only their own Base Account can move anything.`,
+      inputSchema: {
+        chainId: z.literal(8453).describe('Base mainnet. The only chain this surface reviews.'),
+        tokenAddress: ADDRESS_ARG_V1.describe(
+          'The EXACT reviewed representation contract on Base. Never a ticker, never a symbol.',
+        ),
+        underlyingKey: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe('The security this representation claims, e.g. "security:isin:US67066G1040".'),
+        issuerId: z.enum(['coinbase', 'dinari', 'backed']).describe('As Miorail returned it.'),
+        issuerInstrumentKey: z.string().min(1).max(200).describe('As Miorail returned it.'),
+        representationKind: z
+          .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper'])
+          .describe('As Miorail returned it.'),
+        direction: z.enum(['buy', 'sell']).describe('The exact direction the user asked about.'),
+        requestedCashAtomic: POSITION_ARG_V1.describe(
+          'The exact cash size in USDC atomic units. A $10,000 question is not a $100 question multiplied.',
+        ),
+        destination: z.literal('USDC').describe('The cash side of every reviewed question.'),
+        routePolicyKey: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{64}$/)
+          .describe('The reviewed router policy Miorail measured under, as it returned it.'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailPrepareStockActionV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
 
   server.registerTool(
     'miorail_check_exit_profile',

@@ -1027,6 +1027,28 @@ export function useRwaUnderlyings(options?: { enabled?: boolean; limit?: number 
  * the migration being absent and the database being unreachable all answer the
  * same way twice, and the body says which one it was.
  */
+/**
+ * Connected Intelligence 1 — the review a stock action draft points at.
+ *
+ * Never cached and never retried: the whole point of the endpoint is that it
+ * re-establishes the current terms, and serving a remembered answer here would
+ * put the conversational number back that the draft deliberately left out.
+ */
+export function useStockActionReview(draft: string | null | undefined) {
+  return useQuery({
+    queryKey: ['stock-action-review', draft ?? 'none'],
+    queryFn: async () =>
+      fetchApi<unknown>(
+        `/api/route-intelligence/rwa/stock-action/${encodeURIComponent(draft ?? '')}`,
+      ),
+    enabled: typeof draft === 'string' && draft.length > 0,
+    retry: false,
+    gcTime: 0,
+    staleTime: 0,
+    refetchInterval: false,
+  });
+}
+
 export function useRwaMarketReality(
   input: {
     underlyingKey: string | null;

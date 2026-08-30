@@ -5,6 +5,12 @@ import request from 'supertest';
 import { InMemoryMarketRealityRadarRepositoryV1 } from '@mioagent/rwa-market-reality';
 
 import { rwaMarketRealityRouter, rwaMarketRealityRuntime } from './rwaMarketReality.js';
+import { issueStockActionDraftV1 } from '../lib/stockActionDraft.js';
+import {
+  STOCKS_BENCH_ADDRESSES_V1,
+  STOCKS_BENCH_CORPUS_V1,
+  STOCKS_BENCH_NOW_V1,
+} from '../lib/stocksBenchCorpus.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const USER = { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 as const };
@@ -834,5 +840,158 @@ describe('POST Ask Miorail about the exact question on screen', () => {
     ]) {
       assert.equal(body.includes(forbidden), false, `the payload carries ${forbidden}`);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 1 — the review is the authority for live terms.
+// ---------------------------------------------------------------------------
+
+describe('GET the review a stock action draft points at', () => {
+  const OTHER = '0x2222222222222222222222222222222222222222';
+  const CASE = (id: string) => STOCKS_BENCH_CORPUS_V1.find((row) => row.id === id)!.reality;
+  const MIXED = CASE('J');
+  const COINBASE = STOCKS_BENCH_ADDRESSES_V1.COINBASE_NVDA;
+  const NOW = new Date(STOCKS_BENCH_NOW_V1);
+
+  const draftFor = (
+    over: { tenantId?: string; wallet?: string; ttlMs?: number; policy?: string } = {},
+  ) => {
+    const representation = MIXED.representations.find((row) => row.tokenAddress === COINBASE)!;
+    const wallet = over.wallet ?? WALLET;
+    return issueStockActionDraftV1({
+      tenantId: over.tenantId ?? `eip155:8453:${wallet}`,
+      walletAddress: wallet,
+      secret: 'review-test-secret',
+      now: NOW,
+      ttlMs: over.ttlMs,
+      handoff: {
+        schemaVersion: 'stock-execution-handoff/v1',
+        intent: 'inspect_route',
+        chainId: 8453,
+        tokenAddress: COINBASE,
+        caip10: `eip155:8453:${COINBASE}`,
+        underlyingKey: MIXED.question.underlyingKey,
+        issuerId: representation.issuerId,
+        issuerInstrumentKey: representation.issuerInstrumentKey,
+        representationKind: representation.representationKind,
+        direction: MIXED.question.direction,
+        requestedCashAtomic: MIXED.question.requestedCashAtomic,
+        cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        destination: 'USDC',
+        routePolicyKey: over.policy ?? representation.routePolicyKey!,
+        approvedSources: ['kyberswap'],
+        evidenceState: 'fresh_quote',
+        quoteExpiresAt: new Date(NOW.getTime() + 20_000).toISOString(),
+        sizeBasis: 'cash_equivalent_requires_replan',
+        createsApproval: false,
+        createsCalldata: false,
+        createsTransaction: false,
+        quoteIsExecutionEvidence: false,
+      } as never,
+    }).draft;
+  };
+
+  beforeEach(() => {
+    process.env.SESSION_SECRET = 'review-test-secret';
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.now = () => NOW;
+    rwaMarketRealityRuntime.assemble = (async () => MIXED) as never;
+  });
+
+  test('a signed-out reader is refused before anything is read', async () => {
+    let assembled = 0;
+    rwaMarketRealityRuntime.assemble = (async () => {
+      assembled += 1;
+      return MIXED;
+    }) as never;
+    const response = await request(app(null)).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 401);
+    assert.equal(assembled, 0);
+  });
+
+  test('another wallet cannot open one account’s review', async () => {
+    const response = await request(app({ id: `eip155:8453:${OTHER}`, address: OTHER, chainId: 8453 }))
+      .get(`/api/route-intelligence/rwa/stock-action/${draftFor()}`);
+    assert.equal(response.status, 403);
+    assert.equal(response.body.code, 'stock_action_draft_wrong_wallet');
+  });
+
+  test('an expired draft is refused, and its question is never assembled', async () => {
+    const draft = draftFor({ ttlMs: 60_000 });
+    rwaMarketRealityRuntime.now = () => new Date(NOW.getTime() + 61_000);
+    let assembled = 0;
+    rwaMarketRealityRuntime.assemble = (async () => {
+      assembled += 1;
+      return MIXED;
+    }) as never;
+    const response = await request(app()).get(`/api/route-intelligence/rwa/stock-action/${draft}`);
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'stock_action_draft_expired');
+    assert.equal(assembled, 0);
+  });
+
+  test('the review re-assembles the exact question rather than remembering it', async () => {
+    const seen: unknown[] = [];
+    rwaMarketRealityRuntime.assemble = (async (_deps: unknown, question: unknown) => {
+      seen.push(question);
+      return MIXED;
+    }) as never;
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(seen, [
+      {
+        underlyingKey: MIXED.question.underlyingKey,
+        direction: MIXED.question.direction,
+        requestedCashAtomic: MIXED.question.requestedCashAtomic,
+        destination: 'USDC',
+      },
+    ]);
+    assert.equal(response.body.outcome, 'review');
+    // Nothing here is executable, and the literals say so.
+    assert.equal(response.body.confirmed, false);
+    assert.equal(response.body.executableActionAvailable, false);
+    assert.equal(response.body.createsApproval, false);
+    assert.equal(response.body.createsCalldata, false);
+    assert.equal(response.body.createsTransaction, false);
+  });
+
+  test('expired market evidence is reported as expired, never promoted', async () => {
+    // The same draft, opened long after the quote it was prepared beside.
+    const later = new Date(NOW.getTime() + 45 * 60 * 1000);
+    const draft = draftFor({ ttlMs: 60 * 60 * 1000 });
+    rwaMarketRealityRuntime.now = () => later;
+    const response = await request(app()).get(`/api/route-intelligence/rwa/stock-action/${draft}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'review');
+    assert.equal(response.body.evidenceState, 'expired_quote');
+    assert.notEqual(response.body.evidenceState, 'fresh_quote');
+  });
+
+  test('a reviewed policy that changed under the draft stops the review', async () => {
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor({ policy: `0x${'ab'.repeat(32)}` })}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'refused');
+    assert.equal(response.body.reason, 'route_policy_changed');
+    assert.equal(response.body.executableActionAvailable, false);
+  });
+
+  test('a representation that has since gone to zero supply refuses at review', async () => {
+    rwaMarketRealityRuntime.assemble = (async () => CASE('E')) as never;
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'refused');
+    // The wrapper's own address is not in this answer either way — what matters
+    // is that the review stops instead of resolving to whatever it can find.
+    assert.ok(['representation_not_reviewed', 'zero_supply_representation'].includes(response.body.reason));
+    assert.equal(response.body.executableActionAvailable, false);
   });
 });
