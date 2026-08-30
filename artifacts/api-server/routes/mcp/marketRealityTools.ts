@@ -40,6 +40,9 @@ export const MarketRealityAgentComparisonMcpOutputV1Schema = z
     chain: z.literal('base'),
     quoteOnly: z.literal(true),
     executionEvidenceIncluded: z.literal(false),
+    /** Read this first. See `MarketRealityAgentSummaryV1Schema` for the exact
+     * shape; advertised loosely here for the same AJV reason as below. */
+    miorailSummary: z.object({ summary: z.string() }).passthrough(),
     comparison: z.object({ schemaVersion: z.literal('market-reality/v2') }).passthrough(),
   })
   .strict();

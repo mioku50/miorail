@@ -8,6 +8,7 @@ import {
 import { z } from 'zod';
 
 import { MarketRealityResponseV2Schema, type MarketRealityResponseV2 } from './contracts.js';
+import { marketRealityAgentSummaryV1 } from './agentSummary.js';
 import {
   ISSUER_BY_REVIEWED_SOURCE_KIND_V1,
   canonicalReviewedBindingV1,
@@ -183,12 +184,43 @@ export const MarketRealityAgentRepresentationsOutputV1Schema = z
   })
   .strict();
 
+/**
+ * Miorail's own reading of the comparison, beside the comparison.
+ *
+ * Deterministic and derived: every sentence is a rearrangement of counts the
+ * payload already carries. It exists because `establishedOutcomeCount: 0` is a
+ * fact about OUR coverage that an external model, asked for English, turns into
+ * a claim about the market.
+ */
+export const MarketRealityAgentSummaryV1Schema = z
+  .object({
+    summary: z.string().min(1).max(1000),
+    currentComparisonAvailable: z.boolean(),
+    nextSafeStep: z.string().min(1).max(500),
+    notEstablished: z.string().min(1).max(500),
+    representations: z
+      .array(
+        z
+          .object({
+            tokenAddress: z.string(),
+            issuerId: z.string(),
+            line: z.string().min(1).max(300),
+            inCurrentComparison: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(16),
+  })
+  .strict();
+
 export const MarketRealityAgentComparisonOutputV1Schema = z
   .object({
     schemaVersion: z.literal('miorail-agent-market-reality/v1'),
     chain: z.literal('base'),
     quoteOnly: z.literal(true),
     executionEvidenceIncluded: z.literal(false),
+    /** Read this first, and prefer it to improvising from the counts below. */
+    miorailSummary: MarketRealityAgentSummaryV1Schema,
     comparison: MarketRealityResponseV2Schema,
   })
   .strict();
@@ -424,12 +456,14 @@ export async function compareMarketRealityForAgentV1(
     requestedCashAtomic: marketRealityUsdToAtomicV1(input.sizeUsd),
     destination: input.destination,
   });
+  const parsed = MarketRealityResponseV2Schema.parse(comparison);
   return MarketRealityAgentComparisonOutputV1Schema.parse({
     schemaVersion: 'miorail-agent-market-reality/v1',
     chain: 'base',
     quoteOnly: true,
     executionEvidenceIncluded: false,
-    comparison: MarketRealityResponseV2Schema.parse(comparison),
+    miorailSummary: marketRealityAgentSummaryV1(parsed),
+    comparison: parsed,
   });
 }
 
