@@ -646,7 +646,9 @@ function outcomeBodyV1(
       // The state a reader is most likely to misread as a broken product. It
       // says what happened, says the number was real, and points at the one
       // control that fixes it.
-      return `A router did quote ${sizeLabel}${age ? ` ${age}` : ''}, and that quote has since expired — router quotes are good for about twenty seconds. Measure now to get an open one.`;
+      // The twenty-second window is said once for the board, above the cards.
+      // Repeating it here put it back on every card it had just left.
+      return `A router did quote ${sizeLabel}${age ? ` ${age}` : ''}, and that quote has since expired. Measure now to get an open one.`;
     case 'stale_finding':
       // Not a lapsed price: we never had a price here. What expired was a
       // finding about the market, and saying "price expired" would invent one.
@@ -879,7 +881,10 @@ function lastSeenV1(
       (observation.status === 'no_route'
         ? 'No route under policy'
         : observation.status === 'unsized'
-          ? 'Sell not sized'
+          ? // The SAME words the chip uses. It said "Sell not sized" here and
+            // "Sell size not established" three inches above, which reads as
+            // two findings rather than one stated twice.
+            OUTCOME_CHIP_V1.unsized
           : 'Read failed'),
     note: `measured ${age}`,
   };
@@ -1303,8 +1308,18 @@ export function marketRealityViewV1(input: {
         // no position to cost, and four dashes each explaining a different
         // absence buried the one fact that mattered.
         numbers: outcome === 'zero_supply' ? [] : numbersV1(representation, direction, input.now),
-        ladder: input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? [],
-        ladderNote: input.ladders?.[representation.tokenAddress.toLowerCase()]?.note ?? null,
+        // Same reasoning for the ladder: four rungs of "not supported" under a
+        // card whose subject is that nothing is outstanding is four ways of
+        // repeating a finding that is not about this size. What the last look
+        // found still reaches the reader — as one line, in `lastSeen`.
+        ladder:
+          outcome === 'zero_supply'
+            ? []
+            : (input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? []),
+        ladderNote:
+          outcome === 'zero_supply'
+            ? null
+            : (input.ladders?.[representation.tokenAddress.toLowerCase()]?.note ?? null),
         terms: [
           {
             label: 'Ratio',

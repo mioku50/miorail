@@ -356,6 +356,15 @@ export interface CashExitRungInputV1 {
 export function cashExitLadderRungsV1(
   rungs: readonly CashExitRungInputV1[],
   now?: Date,
+  /**
+   * How to say an age. Defaults to Discover's own wording.
+   *
+   * Stocks renders this ladder beside its own rows, and the two spellings —
+   * "46m ago" here, "46 min ago" three lines below — read as two different
+   * measurements on one card. Each surface passes the words it uses everywhere
+   * else rather than one of them being made to speak the other's.
+   */
+  ageLabel: (iso: string, at: Date) => string | null = rwaAgeLabelV1,
 ): FactViewV1[] {
   return rungs
     .filter(
@@ -374,7 +383,7 @@ export function cashExitLadderRungsV1(
       const meta =
         coded ??
         (refused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[history ? history.status : rung.status]);
-      const age = history && now ? rwaAgeLabelV1(history.observedAt, now) : null;
+      const age = history && now ? ageLabel(history.observedAt, now) : null;
       return {
         label: cashSizeLabelV1(rung.requestedCashAtomic),
         value: cost ?? meta.label,

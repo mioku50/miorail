@@ -19,6 +19,7 @@ import { cashExitLadderRungsV1 } from './rwaDiscoverView';
 import {
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
+  quoteAgeLabelV1,
   underlyingChoicesV1,
   underlyingCountersV1,
   type MarketRealityDirectionV1,
@@ -269,7 +270,11 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       // has no ladder to show.
       if (!response || response.outcome !== 'dossier') continue;
       const ladder = response.dossier.cashExitLadder;
-      const rungs = cashExitLadderRungsV1(ladder.rungs, new Date(nowIso));
+      // The card's own wording for an age, so the ladder does not say "46m ago"
+      // beside a row saying "46 min ago" about the same measurement.
+      const rungs = cashExitLadderRungsV1(ladder.rungs, new Date(nowIso), (iso, at) =>
+        quoteAgeLabelV1(iso, at.toISOString()),
+      );
       if (rungs.length === 0) continue;
       built[response.dossier.tokenAddress.toLowerCase()] = {
         rungs,

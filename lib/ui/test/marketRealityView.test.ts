@@ -1002,9 +1002,10 @@ describe('an absent number never renders as a zero', () => {
       now: NOW,
     });
     assert.match(unsized?.representations[0]?.numbers[0]?.note ?? '', /at this size/);
-    // The chip keeps the wording Phase 10B.7 chose: a cash size nobody could
-    // price is not a verdict on selling a position already held.
-    assert.equal(unsized?.representations[0]?.lastSeen?.value, 'Sell not sized');
+    // One name for one outcome, shared with the chip. Phase 10B.7's rule still
+    // holds — a cash size nobody could price is not a verdict on selling a
+    // position already held — the words just no longer differ per row.
+    assert.equal(unsized?.representations[0]?.lastSeen?.value, 'Sell size not established');
   });
 
   test('the page is named by its security, never by the key that stores it', () => {
@@ -1197,7 +1198,11 @@ describe('an absent number never renders as a zero', () => {
       choice: null,
       now: NOW,
     });
-    assert.equal(view!.representations[0]!.outcomeChip, 'Sell size not established');
+    const card = view!.representations[0]!;
+    assert.equal(card.outcomeChip, 'Sell size not established');
+    // One outcome, one name. The chip and the last-market-check said it two
+    // different ways on the same card, which reads as two findings.
+    assert.equal(card.lastSeen?.value, card.outcomeChip);
   });
 
   test('the router refusing coverage is spelled out, and is the router\u2019s', () => {
@@ -1224,6 +1229,63 @@ describe('an absent number never renders as a zero', () => {
       'Router does not support this token under the reviewed policy',
     );
     assert.doesNotMatch(card.lastSeen?.value ?? '', /Miorail|our |failed/i);
+  });
+
+  test('the quote window is explained for the board, never on a card', () => {
+    // It left the strip and stayed in the lapsed body, which put it back on
+    // every card it had just been taken off.
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({ liveness: 'history_only', lastObservation: LAPSED_OBSERVATION }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view!.representations[0]!;
+    for (const text of [card.outcomeBody, card.openQuote.note ?? '', card.lastMeasuredLabel ?? '']) {
+      assert.doesNotMatch(text, /twenty seconds/i);
+    }
+    // The recovery is still named — that is what a reader acts on.
+    assert.match(card.outcomeBody, /Measure now/);
+  });
+
+  test('a zero-supply card carries no ladder of its own', () => {
+    const address = COINBASE_NVDA.toLowerCase();
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            supply: { ...representation().supply, state: 'zero_supply', totalSupplyAtomic: '0' },
+            lastObservation: {
+              ...LAPSED_OBSERVATION,
+              status: 'measurement_failed',
+              errorCode: 'provider_unsupported_token',
+              returnedCashAtomic: null,
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+      ladders: {
+        [address]: {
+          rungs: [
+            { label: '$100', value: 'not supported', note: null, tone: 'warn' },
+            { label: '$1,000', value: 'not supported', note: null, tone: 'warn' },
+          ],
+          note: 'Exact sizes only.',
+        },
+      },
+    });
+    const card = view!.representations[0]!;
+    // Four rungs repeating a finding that is not about supply, under a card
+    // whose whole subject is that nothing is outstanding.
+    assert.deepEqual(card.ladder, []);
+    assert.equal(card.ladderNote, null);
+    // What the last look found still reaches the reader, as one line.
+    assert.ok(card.lastSeen !== null);
   });
 
   test('the ladder is the caller’s, and absent until one is supplied', () => {
@@ -1782,7 +1844,10 @@ describe('ages, not timestamps', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const body = view?.representations[0]?.outcomeBody ?? '';
     assert.match(body, /39 min ago/);
-    assert.match(body, /twenty seconds/);
+    // The twenty-second window moved to the board: it is a property of router
+    // quotes, and saying it here put it back on every card.
+    assert.doesNotMatch(body, /twenty seconds/);
+    assert.match(body, /Measure now/);
     assert.doesNotMatch(body, /no data|unavailable/i);
   });
 });
