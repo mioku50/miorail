@@ -41,6 +41,7 @@ import {
   STOCK_ACTION_DRAFT_REFUSAL_COPY_V1,
   verifyStockActionDraftV1,
 } from '../lib/stockActionDraft.js';
+import { issueStockActionClearanceV1 } from '../lib/stockActionClearance.js';
 import { stockExecutionHandoffV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 
 export const rwaMarketRealityRouter = Router();
@@ -1040,6 +1041,165 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
       createsTransaction: false,
       draftExpiresAt: claims.expiresAt,
       assembledAt: now.toISOString(),
+    });
+  } catch {
+    res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 2 — the explicit confirmation.
+//
+// Everything the GET does, then one more thing: it records that a PERSON, in
+// their own session, looking at terms this server established just now, said
+// yes to ONE exact representation.
+//
+// It is a POST because it is not a read, and it re-runs every check rather
+// than trusting that the GET ran moments ago — a confirmation that believed a
+// prior read would be a confirmation of whatever was true then.
+//
+// It still creates nothing executable. What it produces is a clearance: the
+// authority to ASK for the unsigned request, which is a different thing again.
+// ---------------------------------------------------------------------------
+
+rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const secret = (process.env.SESSION_SECRET ?? '').trim();
+  if (secret.length === 0) {
+    res.status(503).json({
+      error: 'stock_action_secret_unavailable',
+      code: 'stock_action_secret_unavailable',
+    });
+    return;
+  }
+
+  const verified = verifyStockActionDraftV1({
+    draft: String(req.params.draft ?? ''),
+    secret,
+    now: rwaMarketRealityRuntime.now(),
+    expectTenantId: user.id,
+  });
+  if (!verified.ok) {
+    res.status(verified.reason === 'stock_action_draft_wrong_wallet' ? 403 : 400).json({
+      error: verified.reason,
+      code: verified.reason,
+      detail: STOCK_ACTION_DRAFT_REFUSAL_COPY_V1[verified.reason],
+    });
+    return;
+  }
+  const claims = verified.claims;
+
+  try {
+    if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
+      res.status(503).json({
+        error: 'market_reality_storage_unavailable',
+        code: 'market_reality_storage_unavailable',
+      });
+      return;
+    }
+
+    const assembled = await rwaMarketRealityRuntime.assemble(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
+        now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
+      },
+      {
+        underlyingKey: claims.underlyingKey,
+        direction: claims.direction,
+        requestedCashAtomic: claims.requestedCashAtomic,
+        destination: 'USDC',
+      },
+    );
+    const reality = MarketRealityResponseV2Schema.parse(assembled);
+    const now = rwaMarketRealityRuntime.now();
+
+    const rebuilt = stockExecutionHandoffV1({
+      response: reality as never,
+      tokenAddress: claims.tokenAddress,
+      now,
+    });
+    if (rebuilt.status === 'refused') {
+      res.status(409).json({
+        error: rebuilt.reason,
+        code: rebuilt.reason,
+        detail: rebuilt.detail,
+        confirmed: false,
+        executableActionAvailable: false,
+      });
+      return;
+    }
+    if (rebuilt.handoff.routePolicyKey.toLowerCase() !== claims.routePolicyKey.toLowerCase()) {
+      res.status(409).json({
+        error: 'route_policy_changed',
+        code: 'route_policy_changed',
+        detail:
+          'Miorail’s reviewed router policy for this representation changed after this draft was prepared. Nothing was confirmed — review again for a current answer.',
+        confirmed: false,
+        executableActionAvailable: false,
+      });
+      return;
+    }
+
+    // The clearance is built from what was REBUILT, not from what the draft
+    // remembered. What the person confirmed is what this server established
+    // for them a moment ago.
+    const issued = issueStockActionClearanceV1({
+      tenantId: user.id,
+      walletAddress: user.address,
+      actionDraftId: claims.actionDraftId,
+      handoff: rebuilt.handoff,
+      secret,
+      now,
+    });
+
+    res.status(200).json({
+      schemaVersion: 'stock-action-confirmation/v1',
+      actionDraftId: claims.actionDraftId,
+      clearanceId: issued.clearanceId,
+      /** The credential the Connected surface needs to ask for the unsigned
+       * request. It authorises ONE exact action and expires quickly. */
+      clearance: issued.clearance,
+      representation: {
+        chainId: 8453,
+        tokenAddress: rebuilt.handoff.tokenAddress,
+        caip10: rebuilt.handoff.caip10,
+        underlyingKey: rebuilt.handoff.underlyingKey,
+        issuerId: rebuilt.handoff.issuerId,
+        issuerInstrumentKey: rebuilt.handoff.issuerInstrumentKey,
+        representationKind: rebuilt.handoff.representationKind,
+      },
+      question: {
+        direction: rebuilt.handoff.direction,
+        requestedCashAtomic: rebuilt.handoff.requestedCashAtomic,
+        destination: 'USDC',
+        sizeBasis: rebuilt.handoff.sizeBasis,
+        routePolicyKey: rebuilt.handoff.routePolicyKey,
+      },
+      confirmed: true,
+      /** Confirmation is not a wallet approval. Nothing here is executable, and
+       * the unsigned request still has to be planned, simulated and passed
+       * through the Safety Kernel before a wallet is ever asked. */
+      approvalRequired: true,
+      executableActionAvailable: false,
+      createsApproval: false,
+      createsCalldata: false,
+      createsTransaction: false,
+      expiresAt: issued.expiresAt,
+      confirmedAt: now.toISOString(),
     });
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });

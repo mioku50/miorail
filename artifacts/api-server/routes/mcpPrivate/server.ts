@@ -8,6 +8,7 @@ import {
   miorailGetBaseMcpActionV1,
   miorailGetExecutionStatusV1,
   miorailPrepareB20EntryV1,
+  miorailGetStockBaseMcpActionV1,
   miorailPrepareStockActionV1,
   miorailRecordBaseMcpSubmissionV1,
   privateFailureV1,
@@ -155,6 +156,41 @@ This creates nothing executable. There is no path from here to calldata, an appr
     async (args) => {
       try {
         return reply(await miorailPrepareStockActionV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_get_stock_base_mcp_action',
+    {
+      title: 'The unsigned Base MCP request for a CONFIRMED stock action',
+      description: `Turns a confirmed stock clearance into the same unsigned EIP-5792 request the Miorail web console produces. A clearance comes from the review page after the USER pressed confirm — you cannot mint one, and there is no argument here that would let you act for another wallet.
+
+Nothing about this is a price. Do not describe the terms, restate a figure from earlier in the conversation, or characterise the route as good, cheap or best: the review surface established the terms, it is the only place they are current, and the user approves them there and in their own Base Account.
+
+Miorail plans, simulates and runs its Safety Kernel over this before returning anything, and refuses rather than offering a stale request if the market moved after the confirmation.
+
+A confirmed SELL is refused on this surface. A reviewed sell question is "cash worth", which is not a token amount, and the only thing that turns one into the other is a quote that lives about twenty seconds.
+
+Pass the calls to Base MCP send_calls UNCHANGED, then record the submission exactly once.`,
+      inputSchema: {
+        clearance: z
+          .string()
+          .min(1)
+          .max(4000)
+          .describe('From the review page, after the user confirmed. Never construct one.'),
+        requestId: z
+          .string()
+          .min(1)
+          .max(200)
+          .describe('Your idempotency handle. Reuse it on a retry; never generate a new one for the same intent.'),
+      },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetStockBaseMcpActionV1(identity, args));
       } catch (error) {
         return refuse(error);
       }

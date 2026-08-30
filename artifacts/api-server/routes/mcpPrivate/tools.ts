@@ -18,8 +18,15 @@ import {
 } from '@mioagent/rwa-market-reality/execution-handoff';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
+import {
+  STOCK_ACTION_CLEARANCE_REFUSAL_COPY_V1,
+  verifyStockActionClearanceV1,
+} from '../../lib/stockActionClearance.js';
+import { stockActionIntentV1 } from '../../lib/stockActionIntent.js';
 import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
+import type { RouteIntentV1 } from '@mioagent/route-domain';
+import type { TransactionPreparationResultV1 } from '@mioagent/transaction-composer';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -646,6 +653,53 @@ export const stockActionRuntime = {
   },
   origin: (): string =>
     (process.env.MIORAIL_PUBLIC_ORIGIN ?? 'https://miorail.xyz').replace(/\/+$/, ''),
+  /**
+   * The two flags this surface is gated on.
+   *
+   * A seam like every other dependency here, and for a reason a test found:
+   * files in one package share a process, so `process.env` is global mutable
+   * state that another file's teardown can clear in the middle of a call. A
+   * gate that a neighbour can flip is not a gate.
+   */
+  flags: () => {
+    const resolved = getMiorailProductMigrationFlags(process.env);
+    return {
+      routeIntelligenceV1: resolved.routeIntelligenceV1,
+      mcpPrivateExecutionV1: resolved.mcpPrivateExecutionV1,
+    };
+  },
+  verifyClearance: verifyStockActionClearanceV1,
+  intent: stockActionIntentV1,
+  /**
+   * `decimals()` and `symbol()` for the exact representation, read on chain.
+   *
+   * A representation binding does not carry them, and a wrong decimals turns an
+   * exact size into a different size entirely. Supplied as a seam so a test can
+   * hand in a token without opening an RPC.
+   */
+  readToken: async (
+    tokenAddress: string,
+  ): Promise<{ ok: true; decimals: number; symbol: string } | { ok: false }> => {
+    const { readStockRepresentationTokenV1 } = await import('../../lib/stockTokenRead.js');
+    return readStockRepresentationTokenV1(tokenAddress);
+  },
+  /**
+   * Plan and prepare, through the path the web console already uses.
+   *
+   * The resolver is deterministic — it returns the intent this clearance
+   * describes and reads no words at all — and everything after it is shared:
+   * route run, adapters, engine, card, composer, Safety Kernel, blueprint.
+   */
+  planAndPrepare: async (input: {
+    intent: RouteIntentV1;
+    tenantId: string;
+    walletAddress: `0x${string}`;
+    requestId: string;
+    now: Date;
+  }): Promise<TransactionPreparationResultV1> => {
+    const { prepareStockActionBlueprintV1 } = await import('../routeIntelligence.js');
+    return prepareStockActionBlueprintV1(input);
+  },
 };
 
 export const STOCK_ACTION_REFUSAL_COPY_V1: Record<string, string> = {
@@ -702,7 +756,7 @@ export async function miorailPrepareStockActionV1(
   identity: McpPrivateIdentityV1,
   args: StockActionArgsV1,
 ): Promise<Record<string, unknown>> {
-  if (!getMiorailProductMigrationFlags().routeIntelligenceV1) {
+  if (!stockActionRuntime.flags().routeIntelligenceV1) {
     throw stockActionRefusalV1('stock_action_disabled');
   }
   if (Number(args.chainId) !== 8453) throw stockActionRefusalV1('representation_not_reviewed');
@@ -794,4 +848,153 @@ export async function miorailPrepareStockActionV1(
       'Give the user the review link and stop. Do not state a price, a cash return, a premium or a comparison — this response deliberately contains none, and the review page is the only place the current terms are established. Nothing is executable until the user reviews and confirms there.',
     caveats: MIORAIL_PRIVATE_CAVEATS_V1,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 2 — the executable request, after a confirmation.
+//
+// A SEPARATE tool from `miorail_get_base_mcp_action`, and that is the smaller
+// design rather than the larger one. The B20 tool's whole argument set is
+// entry-plan shaped — a plan id, a position, two tolerances, an attempt handle
+// — and its refusal vocabulary is B20's. Teaching it "typed clearance kinds"
+// would make one tool with two disjoint argument sets and two refusal
+// vocabularies, and an assistant would have to know which half applies before
+// it could call anything. Two narrow tools are smaller in the only sense that
+// matters here: what a caller must understand before acting.
+//
+// It duplicates no transaction-building logic. The confirmed clearance becomes
+// a route intent built from an address, and everything after that is the path
+// the web console already uses: the same route run, the same adapters, the same
+// engine, the same composer, the same Safety Kernel, the same unsigned
+// EIP-5792 blueprint.
+// ---------------------------------------------------------------------------
+
+export const STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1: Record<string, string> = {
+  stock_action_sell_requires_exact_size:
+    'A reviewed SELL question is "cash worth", which is not a token amount — nothing establishes how many tokens that is except a quote, and a quote is open for about twenty seconds. Miorail will not build an executable request from a number that expired before the wallet opened. Sell sizing by exact token amount is not offered on this surface.',
+  stock_action_token_unreadable:
+    'Miorail could not read this representation’s decimals and symbol on chain, and it will not assume them: a wrong decimals turns an exact size into a different size entirely.',
+  stock_action_route_unavailable:
+    'No route was found for this exact confirmed question through the reviewed sources. Nothing was prepared.',
+  stock_action_refresh_required:
+    'The market moved after this was confirmed. Miorail will not offer the old request — review the current terms again.',
+  stock_action_blocked:
+    'Miorail’s Safety Kernel refused this plan. Nothing executable was produced.',
+};
+
+export interface StockActionExecutionArgsV1 {
+  clearance: string;
+  requestId: string;
+}
+
+/**
+ * Turn a CONFIRMED stock clearance into the existing unsigned Base MCP request.
+ */
+export async function miorailGetStockBaseMcpActionV1(
+  identity: McpPrivateIdentityV1,
+  args: StockActionExecutionArgsV1,
+): Promise<Record<string, unknown>> {
+  const flags = stockActionRuntime.flags();
+  if (!flags.routeIntelligenceV1) throw stockActionRefusalV1('stock_action_disabled');
+  if (!flags.mcpPrivateExecutionV1) {
+    throw new McpPrivateError(
+      'mcp_execution_disabled',
+      PRIVATE_REFUSAL_COPY_V1.mcp_execution_disabled,
+    );
+  }
+
+  const runtime = stockActionRuntime;
+  const secret = runtime.secret();
+  if (!secret) throw stockActionRefusalV1('stock_action_secret_unavailable');
+
+  // The tenant is the PROVED one. A clearance minted for another wallet and
+  // presented under this token is a refusal, never a lookup.
+  const verified = runtime.verifyClearance({
+    clearance: String(args.clearance ?? ''),
+    secret,
+    now: runtime.now(),
+    expectTenantId: identity.tenantId,
+  });
+  if (!verified.ok) {
+    throw new McpPrivateError(
+      verified.reason,
+      STOCK_ACTION_CLEARANCE_REFUSAL_COPY_V1[verified.reason],
+    );
+  }
+  const clearance = verified.claims;
+
+  const token = await runtime.readToken(clearance.tokenAddress);
+  if (!token.ok) throw stockActionExecutionRefusalV1('stock_action_token_unreadable');
+
+  const built = runtime.intent({
+    clearance,
+    tokenDecimals: token.decimals,
+    tokenSymbol: token.symbol,
+    requestId: String(args.requestId ?? ''),
+    now: runtime.now(),
+  });
+  if (!built.ok) throw stockActionExecutionRefusalV1(built.reason);
+
+  const prepared = await runtime.planAndPrepare({
+    intent: built.intent,
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    requestId: String(args.requestId ?? ''),
+    now: runtime.now(),
+  });
+
+  if (prepared.outcome === 'refresh_required') {
+    throw stockActionExecutionRefusalV1('stock_action_refresh_required');
+  }
+  if (prepared.outcome === 'unsupported') {
+    throw stockActionExecutionRefusalV1('stock_action_route_unavailable');
+  }
+  if (prepared.outcome === 'blocked') {
+    throw stockActionExecutionRefusalV1('stock_action_blocked');
+  }
+
+  await auditV1(identity, {
+    toolName: 'miorail_get_stock_base_mcp_action',
+    outcome: 'action_released',
+    planId: prepared.blueprint.id,
+    callsHash: prepared.blueprint.blueprintHash,
+  });
+
+  return {
+    schemaVersion: 'stock-action-execution/v1',
+    outcome: 'ready',
+    clearanceId: clearance.clearanceId,
+    actionDraftId: clearance.actionDraftId,
+    representation: {
+      chainId: 8453,
+      tokenAddress: clearance.tokenAddress,
+      caip10: clearance.caip10,
+      underlyingKey: clearance.underlyingKey,
+      issuerId: clearance.issuerId,
+      issuerInstrumentKey: clearance.issuerInstrumentKey,
+      representationKind: clearance.representationKind,
+    },
+    action: {
+      chainId: prepared.blueprint.chainId,
+      from: prepared.blueprint.walletAddress,
+      calls: prepared.blueprint.calls,
+      atomicRequired: true,
+    },
+    blueprintId: prepared.blueprint.id,
+    blueprintHash: prepared.blueprint.blueprintHash,
+    routeRunId: prepared.routeRunId,
+    blueprintStatus: prepared.blueprint.status,
+    reviewConfirmed: true,
+    approvalRequired: true,
+    instructions:
+      'Pass these calls to Base MCP send_calls UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute your own recipient, amount or router — a modified batch no longer matches what Miorail simulated. Do not describe the terms: the review surface established them and is the only place they are current.',
+    caveats: MIORAIL_PRIVATE_CAVEATS_V1,
+  };
+}
+
+function stockActionExecutionRefusalV1(code: string): McpPrivateError {
+  return new McpPrivateError(
+    code,
+    STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1[code] ?? 'Miorail refused that request.',
+  );
 }

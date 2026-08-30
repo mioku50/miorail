@@ -214,7 +214,13 @@ import {
   getMiorailProductMigrationFlags,
   getMiorailReliabilityThresholds,
 } from '../lib/productMigrationConfig.js';
-import { RoutePlanCoordinator, type RoutePlanCoordinatorInput } from '../lib/routePlanCoordinator.js';
+import {
+  RoutePlanCoordinator,
+  type RoutePlanCoordinatorDependencies,
+  type RoutePlanCoordinatorInput,
+} from '../lib/routePlanCoordinator.js';
+import type { RouteIntentV1 } from '@mioagent/route-domain';
+import type { TransactionPreparationResultV1 } from '@mioagent/transaction-composer';
 import { loadTokenSecurityContext } from '../lib/executionSecurity.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { resolveEarnContractPreflightV1 } from '../lib/earnPreflight.js';
@@ -352,7 +358,22 @@ export const routePlanRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: routeStorageMigrationAvailable,
   pendingIntentStorageAvailable,
-  coordinate: async (input: RoutePlanCoordinatorInput) => {
+  /**
+   * Plan a route.
+   *
+   * `resolveIntent` is a seam, not a feature: Connected Intelligence 2 passes a
+   * resolver that returns an intent BUILT FROM AN ADDRESS, so a confirmed stock
+   * action never passes through the natural-language extractor. A typed
+   * identity that survived a review boundary must not be re-derived from
+   * words — that is exactly where a ticker could get back in.
+   *
+   * Everything after the resolver is unchanged and shared: the same route run,
+   * the same adapters, the same engine, the same card.
+   */
+  coordinate: async (
+    input: RoutePlanCoordinatorInput,
+    resolveIntent?: RoutePlanCoordinatorDependencies['resolveIntent'],
+  ) => {
     const flags = getMiorailProductMigrationFlags(process.env);
     const repository = createDatabaseRouteStorageRepository(client);
     const continuationAvailable = await routePlanRouteRuntime
@@ -362,6 +383,7 @@ export const routePlanRouteRuntime = {
         return false;
       });
     const coordinator = new RoutePlanCoordinator({
+      ...(resolveIntent ? { resolveIntent } : {}),
       // RouteIntentV2 extraction is a short, closed JSON contract. Keep it on
       // the structured lane; the primary lane remains the narrator/reasoner.
       llm: createStructuredLlmProvider(),
@@ -4011,3 +4033,69 @@ routeIntelligenceRouter.use(submissionRecoveryRouter);
 // outside the tenant middleware — see routes/index.ts — because a proof only
 // its owner can read is not a proof anybody else can check.
 routeIntelligenceRouter.use(publicProofOwnerRouter);
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 2 — plan and prepare ONE confirmed stock action.
+//
+// The whole of the ordinary path, entered one step later. The resolver returns
+// an intent that was built from an address at the review boundary, so nothing
+// here re-derives an identity from words; after that the run, the adapters, the
+// engine, the card, the composer and the Safety Kernel are the same objects the
+// web console uses. That is what keeps a stock action from becoming a second
+// execution path.
+// ---------------------------------------------------------------------------
+
+export async function prepareStockActionBlueprintV1(input: {
+  intent: RouteIntentV1;
+  tenantId: string;
+  walletAddress: `0x${string}`;
+  requestId: string;
+  now: Date;
+}): Promise<TransactionPreparationResultV1> {
+  const planned = await routePlanRouteRuntime.coordinate(
+    {
+      tenantId: input.tenantId,
+      walletAddress: input.walletAddress,
+      // Miorail's own sentence, built from an address. It is what the run
+      // records; a user's chat words never reach this path.
+      message: `Confirmed Miorail stock action for ${input.intent.toAsset?.address ?? 'an exact address'}`,
+      requestId: input.requestId,
+      now: input.now,
+    },
+    // Deterministic: no model, no extraction, no clarification. The intent was
+    // established at the review boundary the user confirmed.
+    async () => ({
+      outcome: 'ready' as const,
+      routeIntent: input.intent,
+      clarification: null,
+      issues: [],
+      pendingIntent: null,
+    }),
+  );
+
+  // A deterministic intent cannot need clarification and cannot be rejected —
+  // it was built from an address, not from words. Anything but `evaluated`
+  // means the ROUTE was not found, which is an honest market answer.
+  if (planned.outcome !== 'evaluated' || !planned.routeCard) {
+    return {
+      outcome: 'unsupported',
+      reason: 'unsupported_pair',
+      detail:
+        'No reviewed source returned a route for this exact confirmed question. That is the market answering at this size, not a Miorail failure.',
+    };
+  }
+
+  // The card's OWN recommendation, never a choice made here. Which candidate a
+  // card recommends is the engine's decision and it is already made and
+  // reasoned; selecting a different one at this point would be a second
+  // ranking that nobody reviewed.
+  return swapPrepareRouteRuntime.prepare({
+    tenantId: input.tenantId,
+    walletAddress: input.walletAddress,
+    routeRunId: planned.routeRunId,
+    routeCardHash: planned.routeCard.routeCardHash,
+    selectedCandidateHash: planned.routeCard.recommendedCandidate.candidateHash,
+    requestId: input.requestId,
+    now: input.now,
+  });
+}

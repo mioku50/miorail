@@ -12,8 +12,15 @@ import {
   STOCKS_BENCH_CORPUS_V1,
   STOCKS_BENCH_NOW_V1,
 } from '../../lib/stocksBenchCorpus.js';
-import { miorailPrepareStockActionV1, stockActionRuntime } from './tools.js';
+import {
+  miorailGetStockBaseMcpActionV1,
+  miorailPrepareStockActionV1,
+  stockActionRuntime,
+} from './tools.js';
+import { issueStockActionClearanceV1 } from '../../lib/stockActionClearance.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
+import { mcpAuditRuntime } from './audit.js';
+import { InMemoryMcpExecutionAuditRepositoryV1 } from '@mioagent/route-storage';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 /** The refusal CODE, which is what an assistant branches on. The message is
@@ -82,10 +89,10 @@ function argsFor(reality: typeof MIXED, address: string) {
 const ARGS = argsFor(MIXED, COINBASE);
 
 const original = { ...stockActionRuntime };
-let flags = process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
+const originalAudit = { ...mcpAuditRuntime };
 
 function stub(reality: unknown, over: Partial<typeof stockActionRuntime> = {}) {
-  process.env.MIORAIL_ROUTE_INTELLIGENCE_V1 = 'true';
+  stockActionRuntime.flags = () => ({ routeIntelligenceV1: true, mcpPrivateExecutionV1: false });
   stockActionRuntime.assembleMarketReality = async () => reality;
   stockActionRuntime.now = () => NOW;
   stockActionRuntime.secret = () => SECRET;
@@ -95,9 +102,7 @@ function stub(reality: unknown, over: Partial<typeof stockActionRuntime> = {}) {
 
 afterEach(() => {
   Object.assign(stockActionRuntime, original);
-  if (flags === undefined) delete process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
-  else process.env.MIORAIL_ROUTE_INTELLIGENCE_V1 = flags;
-  flags = process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
+  Object.assign(mcpAuditRuntime, originalAudit);
 });
 
 describe('a ticker can never select a representation', () => {
@@ -435,6 +440,7 @@ describe('the existing execution boundary is unchanged', () => {
       'miorail_check_exit_profile',
       'miorail_get_base_mcp_action',
       'miorail_get_execution_status',
+      'miorail_get_stock_base_mcp_action',
       'miorail_prepare_b20_entry',
       'miorail_prepare_stock_action',
       'miorail_record_base_mcp_submission',
@@ -472,5 +478,271 @@ describe('the existing execution boundary is unchanged', () => {
     assert.match(description, /zero outstanding supply refuses/i);
     assert.match(description, /creates nothing executable/i);
     await client.close();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Connected Intelligence 2 — the last mile, and what it refuses.
+// ---------------------------------------------------------------------------
+
+describe('a confirmed clearance is the only way to an executable request', () => {
+  const CLEARANCE_SECRET = 'stock-clearance-test-secret';
+  const handoffFor = (address: string, direction: 'buy' | 'sell') => {
+    const representation = representationIn(direction === 'buy' ? MIXED : MIXED, address);
+    return {
+      schemaVersion: 'stock-execution-handoff/v1',
+      intent: 'inspect_route',
+      chainId: 8453,
+      tokenAddress: address,
+      caip10: `eip155:8453:${address}`,
+      underlyingKey: UNDERLYING,
+      issuerId: representation.issuerId,
+      issuerInstrumentKey: representation.issuerInstrumentKey,
+      representationKind: representation.representationKind,
+      direction,
+      requestedCashAtomic: '1000000000',
+      cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      destination: 'USDC',
+      routePolicyKey: representation.routePolicyKey ?? POLICY,
+      approvedSources: ['kyberswap'],
+      evidenceState: 'fresh_quote',
+      quoteExpiresAt: new Date(NOW.getTime() + 20_000).toISOString(),
+      sizeBasis: direction === 'buy' ? 'exact_cash_in' : 'cash_equivalent_requires_replan',
+      createsApproval: false,
+      createsCalldata: false,
+      createsTransaction: false,
+      quoteIsExecutionEvidence: false,
+    } as never;
+  };
+
+  const clearanceFor = (
+    address: string = COINBASE,
+    direction: 'buy' | 'sell' = 'buy',
+    wallet: string = WALLET,
+  ) =>
+    issueStockActionClearanceV1({
+      tenantId: `eip155:8453:${wallet}`,
+      walletAddress: wallet,
+      actionDraftId: 'draft-1',
+      handoff: handoffFor(address, direction),
+      secret: CLEARANCE_SECRET,
+      now: NOW,
+    }).clearance;
+
+  const executionStub = (over: Partial<typeof stockActionRuntime> = {}) => {
+    stockActionRuntime.flags = () => ({ routeIntelligenceV1: true, mcpPrivateExecutionV1: true });
+    stockActionRuntime.now = () => NOW;
+    stockActionRuntime.secret = () => CLEARANCE_SECRET;
+    stockActionRuntime.readToken = async () => ({ ok: true, decimals: 18, symbol: 'NVDAc' });
+    // The audit row is mandatory: no row, no bytes. Files in this package share
+    // a process, so the repository has to be supplied here rather than
+    // inherited from whichever neighbour ran last.
+    mcpAuditRuntime.available = async () => true;
+    mcpAuditRuntime.audit = () => new InMemoryMcpExecutionAuditRepositoryV1();
+    mcpAuditRuntime.now = () => NOW;
+    stockActionRuntime.planAndPrepare = async () =>
+      ({
+        outcome: 'prepared',
+        routeRunId: 'run-1',
+        blueprint: {
+          id: 'bp-1',
+          blueprintHash: `0x${'cd'.repeat(32)}`,
+          chainId: 8453,
+          walletAddress: WALLET,
+          status: 'ready_for_review',
+          calls: [{ to: '0x00', data: '0x', value: '0x0' }],
+        },
+        review: {},
+      }) as never;
+    Object.assign(stockActionRuntime, over);
+  };
+
+  test('no clearance, no action', async () => {
+    executionStub();
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: '', requestId: 'r1' }),
+      refusedWith('stock_clearance_missing'),
+    );
+  });
+
+  test('another wallet’s confirmation is refused, not resolved', async () => {
+    executionStub();
+    await assert.rejects(
+      () =>
+        miorailGetStockBaseMcpActionV1(IDENTITY, {
+          clearance: clearanceFor(COINBASE, 'buy', OTHER_WALLET),
+          requestId: 'r1',
+        }),
+      refusedWith('stock_clearance_wrong_wallet'),
+    );
+  });
+
+  test('an expired confirmation cannot be spent', async () => {
+    executionStub({ now: () => new Date(NOW.getTime() + 60 * 60 * 1000) });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      refusedWith('stock_clearance_expired'),
+    );
+  });
+
+  test('a confirmed SELL is refused, and the refusal names why', async () => {
+    executionStub();
+    await assert.rejects(
+      () =>
+        miorailGetStockBaseMcpActionV1(IDENTITY, {
+          clearance: clearanceFor(COINBASE, 'sell'),
+          requestId: 'r1',
+        }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'stock_action_sell_requires_exact_size');
+        // Not a gap and not a failure: "cash worth" is not a token amount.
+        assert.match((error as Error).message, /not a token amount/);
+        return true;
+      },
+    );
+  });
+
+  test('decimals are read, never assumed', async () => {
+    executionStub({ readToken: async () => ({ ok: false }) });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      (error: unknown) => {
+        assert.equal((error as { code?: string }).code, 'stock_action_token_unreadable');
+        assert.match((error as Error).message, /different size entirely/);
+        return true;
+      },
+    );
+  });
+
+  test('a market that moved after the confirmation refuses the old request', async () => {
+    executionStub({
+      planAndPrepare: async () =>
+        ({ outcome: 'refresh_required', reason: 'quote_expired', detail: 'moved' }) as never,
+    });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      refusedWith('stock_action_refresh_required'),
+    );
+  });
+
+  test('a Safety Kernel refusal produces nothing executable', async () => {
+    executionStub({
+      planAndPrepare: async () =>
+        ({ outcome: 'blocked', safetyKernel: { passed: false } }) as never,
+    });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      refusedWith('stock_action_blocked'),
+    );
+  });
+
+  test('the exact representation survives to the executable request', async () => {
+    executionStub();
+    const action = await miorailGetStockBaseMcpActionV1(IDENTITY, {
+      clearance: clearanceFor(),
+      requestId: 'r1',
+    });
+    const representation = action.representation as Record<string, string>;
+    assert.equal(representation.tokenAddress, COINBASE);
+    assert.equal(representation.issuerId, 'coinbase');
+    assert.equal(representation.caip10, `eip155:8453:${COINBASE}`);
+    // Coinbase stayed Coinbase: the Backed address in the same answer never
+    // appears anywhere in the executable response.
+    const serialised = JSON.stringify(action);
+    assert.ok(!serialised.includes(BACKED));
+    assert.ok(!serialised.includes(WRAPPER));
+    assert.equal(action.approvalRequired, true);
+    assert.equal(action.reviewConfirmed, true);
+  });
+
+  test('Backed stays Backed, and never becomes its wrapper', async () => {
+    executionStub();
+    const action = await miorailGetStockBaseMcpActionV1(IDENTITY, {
+      clearance: clearanceFor(BACKED),
+      requestId: 'r1',
+    });
+    const representation = action.representation as Record<string, string>;
+    assert.equal(representation.tokenAddress, BACKED);
+    assert.equal(representation.issuerId, representationIn(MIXED, BACKED).issuerId);
+    const serialised = JSON.stringify(action);
+    assert.ok(!serialised.includes(WRAPPER));
+    assert.ok(!serialised.includes(COINBASE));
+  });
+
+  test('the response states, and never characterises', async () => {
+    executionStub();
+    const action = await miorailGetStockBaseMcpActionV1(IDENTITY, {
+      clearance: clearanceFor(),
+      requestId: 'r1',
+    });
+    const { caveats: _caveats, instructions, ...rest } = action;
+    const serialised = JSON.stringify(rest);
+    for (const forbidden of [/\bbest\b/i, /\bcheapest\b/i, /\bcheaper\b/i, /recommend/i, /\bgood\b/i]) {
+      assert.doesNotMatch(serialised, forbidden, String(forbidden));
+    }
+    // The instructions may forbid these words, and must.
+    assert.match(String(instructions), /Do not describe the terms/);
+  });
+});
+
+describe('no audit row, no executable bytes', () => {
+  test('an unavailable audit refuses the action rather than releasing it', async () => {
+    stockActionRuntime.flags = () => ({ routeIntelligenceV1: true, mcpPrivateExecutionV1: true });
+    stockActionRuntime.now = () => NOW;
+    stockActionRuntime.secret = () => 'audit-test-secret';
+    stockActionRuntime.readToken = async () => ({ ok: true, decimals: 18, symbol: 'NVDAc' });
+    stockActionRuntime.planAndPrepare = async () =>
+      ({
+        outcome: 'prepared',
+        routeRunId: 'run-1',
+        blueprint: {
+          id: 'bp-1',
+          blueprintHash: `0x${'cd'.repeat(32)}`,
+          chainId: 8453,
+          walletAddress: WALLET,
+          status: 'ready_for_review',
+          calls: [{ to: '0x00', data: '0x', value: '0x0' }],
+        },
+        review: {},
+      }) as never;
+    // The audit is the record that executable bytes left this server. Without
+    // it the honest outcome is a refusal, not a quiet release.
+    mcpAuditRuntime.available = async () => false;
+
+    const clearance = issueStockActionClearanceV1({
+      tenantId: `eip155:8453:${WALLET}`,
+      walletAddress: WALLET,
+      actionDraftId: 'draft-1',
+      secret: 'audit-test-secret',
+      now: NOW,
+      handoff: {
+        schemaVersion: 'stock-execution-handoff/v1',
+        intent: 'inspect_route',
+        chainId: 8453,
+        tokenAddress: COINBASE,
+        caip10: `eip155:8453:${COINBASE}`,
+        underlyingKey: UNDERLYING,
+        issuerId: 'coinbase',
+        issuerInstrumentKey: `coinbase:b20_address:${COINBASE}`,
+        representationKind: 'b20_asset',
+        direction: 'buy',
+        requestedCashAtomic: '1000000000',
+        cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        destination: 'USDC',
+        routePolicyKey: POLICY,
+        approvedSources: ['kyberswap'],
+        evidenceState: 'no_quote',
+        quoteExpiresAt: null,
+        sizeBasis: 'exact_cash_in',
+        createsApproval: false,
+        createsCalldata: false,
+        createsTransaction: false,
+        quoteIsExecutionEvidence: false,
+      } as never,
+    }).clearance;
+
+    await assert.rejects(() =>
+      miorailGetStockBaseMcpActionV1(IDENTITY, { clearance, requestId: 'r1' }),
+    );
   });
 });
