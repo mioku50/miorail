@@ -24,7 +24,13 @@ const BalancerResponseSchemaV1 = z.object({
         priceImpact: z.string().nullable(),
         error: z.string().nullable().optional(),
       }).nullable(),
-      paths: z.array(BalancerPathSchemaV1).min(1).max(12),
+      // NOT `.min(1)`. Balancer answers a pair it cannot route with
+      // `200 {"returnAmount":"0","priceImpact":{"error":"No swaps found"},"paths":[]}`
+      // — a complete, well-formed reply that happens to carry no path. Requiring
+      // one here made the parse fail, and a clean market finding was recorded as
+      // `invalid_response`, i.e. as Balancer having sent us something broken.
+      // The empty case is recognised below and reported as `no_route`.
+      paths: z.array(BalancerPathSchemaV1).max(12),
     }).strict(),
   }).strict(),
 }).strict();
@@ -94,6 +100,20 @@ export class BalancerClientV1 {
     const parsed = BalancerResponseSchemaV1.safeParse(payload);
     if (!parsed.success) return { ok: false, reason: 'invalid_response' };
     const quote = parsed.data.data.sorGetSwapPaths;
+    // An EMPTY path set is the router's answer, not a malformed one.
+    //
+    // Balancer replies `200 {"data":{"sorGetSwapPaths":{"paths":[]}}}` when it
+    // knows both tokens and can find no way between them — the same thing
+    // KyberSwap says with code 4008. This branch used to fall through to the
+    // version check below, where `new Set([]).size !== 1` is trivially true,
+    // and every no-route answer was filed as `invalid_response` — our schema
+    // complaint standing in for the market's finding.
+    //
+    // The Market Route Coverage Audit is what exposed it: Balancer failed 44 of
+    // 44 attempts across the reviewed stock corpus and looked like a broken
+    // integration, while the same client quoted USDC to WETH perfectly. It was
+    // answering correctly the whole time about tokens it has no pool for.
+    if (quote.paths.length === 0) return { ok: false, reason: 'no_route' };
     const versions = new Set(quote.paths.map((path) => path.protocolVersion));
     if (versions.size !== 1) return { ok: false, reason: 'invalid_response' };
     const tokenIn = input.tokenIn.toLowerCase();

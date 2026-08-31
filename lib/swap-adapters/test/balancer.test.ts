@@ -78,3 +78,42 @@ test('Balancer rejects a response whose path total differs from the intent amoun
 test('Balancer pinned Base router constant matches the official SDK deployment', () => {
   assert.equal(BALANCER_V3_ROUTER_BASE_V1, '0x3f170631ed9821ca51a59d996ab095162438dc10');
 });
+
+test('an empty path set is the market answering, not a malformed reply', async () => {
+  // Measured against the live API on 2026-08-31 for USDC -> NVDAc: Balancer
+  // answers 200 with this exact body. The schema used to require `paths.min(1)`,
+  // so the parse failed and a clean "no route" was filed as `invalid_response` —
+  // Balancer accused of sending us something broken for correctly reporting
+  // that it has no pool. That is how it failed 44 of 44 attempts across the
+  // reviewed stock corpus while quoting USDC -> WETH perfectly.
+  const client = new BalancerClientV1({
+    fetchImpl: responseFetch({
+      data: {
+        sorGetSwapPaths: {
+          returnAmount: '0',
+          priceImpact: { priceImpact: null, error: 'No swaps found' },
+          paths: [],
+        },
+      },
+    }),
+  });
+  const result = await client.quoteExactIn({
+    tokenIn: USDC,
+    tokenOut: '0xb20000000000000000000078ee7ce2fe4908108c',
+    amountHuman: '100',
+    amountAtomic: '100000000',
+  });
+  assert.deepEqual(result, { ok: false, reason: 'no_route' });
+});
+
+test('a genuinely malformed reply is still ours to report, not the market’s', async () => {
+  // The distinction the fix above must not erase: a path set that contradicts
+  // itself is not a finding about liquidity.
+  const client = new BalancerClientV1({
+    fetchImpl: responseFetch(payload({ paths: [{ notAPath: true }] })),
+  });
+  const result = await client.quoteExactIn({
+    tokenIn: USDC, tokenOut: WETH, amountHuman: '100', amountAtomic: '100000000',
+  });
+  assert.deepEqual(result, { ok: false, reason: 'invalid_response' });
+});
