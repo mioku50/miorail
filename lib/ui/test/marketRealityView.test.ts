@@ -1573,7 +1573,9 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
     assert.equal(effective?.tone, 'neutral');
     assert.equal(reference?.value, '$211.30');
     assert.equal(reference?.tone, 'neutral');
-    assert.equal(basis?.value, '+11 bps');
+    // Percent first: basis points are a unit a reader has to convert, and
+    // this was the primary value of the row rather than a footnote.
+    assert.equal(basis?.value, '+0.11% · +11 bps');
     assert.equal(basis?.tone, 'neutral');
     assert.notEqual(basis?.tone, 'good');
   });
@@ -1585,7 +1587,7 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
       now: NOW,
     });
     const basis = view?.representations[0]?.numbers.find((fact) => fact.label === 'Basis');
-    assert.equal(basis?.value, '-11 bps');
+    assert.equal(basis?.value, '-0.11% · -11 bps');
     assert.equal(basis?.tone, 'neutral');
     assert.notEqual(basis?.tone, 'good');
     assert.notEqual(String(basis?.tone), 'bad');

@@ -480,12 +480,27 @@ export function quoteAgeLabelV1(iso: string | null, nowIso: string): string | nu
   return `${Math.round(hours / 24)}d ago`;
 }
 
+/**
+ * Premium or discount against the reference — PERCENT first.
+ *
+ * It read `+11 bps`, which is a unit a reader has to convert before it means
+ * anything, and it was the primary value of the Basis row rather than a
+ * footnote. Basis points stay, second, because they are how this number is
+ * quoted between systems and how two sizes are compared; the percentage is
+ * what a person reads.
+ *
+ * The sign is carried on BOTH halves. It is the whole content of this figure —
+ * trading above or below the reference — and dropping it from either half
+ * leaves a number that looks like a cost.
+ */
 function bpsLabelV1(bps: string | null): string | null {
   if (bps === null) return null;
   if (!/^-?(0|[1-9][0-9]*)$/.test(bps)) return null;
   const value = BigInt(bps);
   const sign = value > 0n ? '+' : '';
-  return `${sign}${value.toString()} bps`;
+  const percent = rwaBpsLabelV1(bps);
+  if (percent === null) return `${sign}${value.toString()} bps`;
+  return `${sign}${percent} · ${sign}${value.toString()} bps`;
 }
 
 const MARKET_SESSION_LABEL_V1: Readonly<
