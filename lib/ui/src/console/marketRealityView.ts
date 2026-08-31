@@ -9,6 +9,7 @@ import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
 // four fields would let the two views drift into different meanings for the
 // same word, which is exactly what the shared section table exists to stop.
+import { rwaBpsLabelV1 } from './rwaDiscoverView';
 import type { FactViewV1, ToneV1 } from './rwaDiscoverView';
 
 export type { FactViewV1, ToneV1 };
@@ -345,6 +346,14 @@ export interface RepresentationViewV1 {
    */
   lastMeasuredLabel: string | null;
   /**
+   * Whether the money comes back — the one fact a quote alone never carried.
+   *
+   * Null when nothing has measured a round trip here, which is most
+   * representations: a round trip needs both legs, and a size whose buy found
+   * no route never had a sell to price.
+   */
+  exit: FactViewV1 | null;
+  /**
    * Whether this representation belongs in the primary comparison.
    *
    * False for zero-supply: the card stays visible with its one fact, out of the
@@ -582,7 +591,12 @@ const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
   // there was no token amount to sell — the market gave us no size, and the
   // sentence should say which of the two it is.
   unsized: 'Sell size not established',
-  no_route: 'No route',
+  // "No route" is a claim about the whole of Base that this product cannot
+  // make and has never measured. What was established is narrower and is the
+  // only thing the chip may say: none of the routers under the reviewed policy
+  // returned one. The same words the `lastSeen` line uses, so the headline and
+  // the history below it cannot read as two separate findings.
+  no_route: 'No route under policy',
   provider_failed: 'Our read failed',
   never_measured: 'Not measured',
 };
@@ -835,6 +849,64 @@ function observationAbsenceNoteV1(
 export const ROUTER_UNSUPPORTED_SENTENCE_V1 =
   'Router does not support this token under the reviewed policy';
 
+/**
+ * The round-trip cost past which a size is not exitable under the reviewed
+ * policy.
+ *
+ * DERIVED, NOT OBSERVED. Every cash-exit intent is planned with
+ * `slippageConstraint.maxBps = 100`, and a round trip is two of those legs, so
+ * two hundred basis points is the most the policy Miorail already measures
+ * under is willing to tolerate. No market number is hard-coded here: change the
+ * slippage policy and this bound moves with it, which is the point.
+ *
+ * It decides one thing only — which sentence a reader gets. The measured cost
+ * is always shown next to it, so a reader who disagrees with the bound can see
+ * the number the bound was applied to.
+ */
+export const MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 = 200;
+
+/**
+ * Can the position be CLOSED at this size — as its own fact, with its own age.
+ *
+ * Deliberately not folded into `outcome`. A router quote lives about twenty
+ * seconds, so for almost every reader the outcome is `lapsed` rather than
+ * `priced`; an exit verdict that only fired on `priced` would be invisible
+ * exactly when it matters. Exitability is a property of the venue behind the
+ * token, it changes on the timescale of liquidity rather than of a quote, and
+ * it is worth stating from the last completed run — labelled as such.
+ *
+ * The bound is ours and the cost is measured, so both are shown. Saying only
+ * "cannot be exited" would be a verdict a reader cannot check.
+ */
+function exitViewV1(
+  exit: RepresentationExitEvidenceV1 | null | undefined,
+  nowIso: string,
+): FactViewV1 | null {
+  if (!exit) return null;
+  const cost = rwaBpsLabelV1(exit.roundTripCostBps);
+  if (cost === null) return null;
+  const bps = Number(exit.roundTripCostBps);
+  if (!Number.isFinite(bps)) return null;
+  const age = quoteAgeLabelV1(exit.observedAt, nowIso);
+  const when = exit.basis === 'open' ? 'on the open quote' : `measured ${age ?? 'earlier'}`;
+  return bps <= MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1
+    ? {
+        label: 'Round trip at this size',
+        value: cost,
+        note: `buying and selling straight back costs this much — ${when}`,
+        tone: 'good',
+      }
+    : {
+        label: 'Round trip at this size',
+        value: cost,
+        // Never "no route": a route exists and answered. What it answered is
+        // that the money does not come back, which is a fact about how much
+        // sits behind this contract and not about whether anyone would quote.
+        note: `a router quotes this size, but buying and selling straight back costs this much — ${when}. The position cannot be closed at this size under the reviewed policy.`,
+        tone: 'off',
+      };
+}
+
 const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; note: string }>> = {
   // The chip already reads "Sell not sized", which Phase 10B.7 chose on purpose
   // and is right; only the note was written in engineering vocabulary.
@@ -879,7 +951,7 @@ function lastSeenV1(
     value:
       coded?.label ||
       (observation.status === 'no_route'
-        ? 'No route under policy'
+        ? OUTCOME_CHIP_V1.no_route
         : observation.status === 'unsized'
           ? // The SAME words the chip uses. It said "Sell not sized" here and
             // "Sell size not established" three inches above, which reads as
@@ -1194,6 +1266,37 @@ function coverageBodyV1(input: {
 export interface RepresentationLadderInputV1 {
   rungs: FactViewV1[];
   note: string | null;
+  /**
+   * Whether the position can be CLOSED at the size being asked — not merely
+   * whether a router answered.
+   *
+   * The Market Route Coverage Audit is why this field exists. Six reviewed
+   * representations were quoting; two of them round-tripped to roughly nothing,
+   * because the only pool behind them held a fraction of a token. Both facts
+   * were already in the stored run — the buy leg, the sell leg, and the cost
+   * between them — and neither reached the reader, because every surface asked
+   * the ladder whether a quote existed and none asked what came back.
+   *
+   * Supplied by the caller for the same reason the rungs are: the cash-exit run
+   * is read once, by the console, and projected once.
+   */
+  exit?: RepresentationExitEvidenceV1 | null;
+}
+
+/**
+ * The measured cost of a full round trip at one exact size.
+ *
+ * `basis` is not decoration. A round trip computed from an open quote is a
+ * statement about now; one computed from the last completed run is history,
+ * and the card has to say which it is holding — the same split `openQuote` and
+ * `lastMeasuredLabel` already keep.
+ */
+export interface RepresentationExitEvidenceV1 {
+  /** Signed integer bps. Positive is cost, so larger is worse. */
+  roundTripCostBps: string;
+  basis: 'open' | 'last_measured';
+  /** When the measurement behind it completed. */
+  observedAt: string;
 }
 
 export function marketRealityViewV1(input: {
@@ -1300,6 +1403,15 @@ export function marketRealityViewV1(input: {
         lastSeen: lastSeenV1(representation, input.now),
         openQuote: openQuoteStripV1(representation),
         lastMeasuredLabel: lastMeasuredLabelV1(representation, input.now),
+        // Zero supply leaves the comparison, and a round trip through a
+        // contract with nothing outstanding is not a fact about anything.
+        exit:
+          outcome === 'zero_supply'
+            ? null
+            : exitViewV1(
+                input.ladders?.[representation.tokenAddress.toLowerCase()]?.exit ?? null,
+                input.now,
+              ),
         // Zero supply is the whole card. A representation with nothing
         // outstanding is not being compared against anything, so it leaves the
         // comparison area rather than sitting in it with five dashes.

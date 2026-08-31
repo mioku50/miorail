@@ -9,12 +9,17 @@ import {
   chainLabelV1,
   chainUnavailableReasonV1,
   consoleSectionPathV1,
+  exitEvidenceV1,
   marketRealityViewV1,
   underlyingChoicesV1,
   useConsoleTheme,
   type MarketRealityScreenModelV1,
 } from '@mioagent/ui';
-import { useStatus, useStockActionReview } from '@mioagent/api-client-react';
+import {
+  useOfficialAssetDossier,
+  useStatus,
+  useStockActionReview,
+} from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -42,8 +47,15 @@ interface ReviewBodyV1 {
   evidenceState?: 'fresh_quote' | 'expired_quote' | 'no_quote';
   draftExpiresAt?: string;
   representation?: { tokenAddress?: string; caip10?: string; issuerId?: string };
-  question?: { direction?: 'buy' | 'sell'; requestedCashAtomic?: string };
+  question?: {
+    direction?: 'buy' | 'sell';
+    requestedCashAtomic?: string;
+    destination?: 'USDC' | 'ETH';
+  };
   reality?: unknown;
+  transferEligibility?: {
+    scopes?: { scope?: string; verdict?: string; policyId?: string | null; reason?: string | null }[];
+  } | null;
 }
 
 /** What the reader is told about freshness, in the words the rest of Stocks
@@ -87,15 +99,67 @@ export function StockActionReviewPage() {
   const body = (review.data ?? null) as ReviewBodyV1 | null;
 
   const nowIso = useMemo(() => new Date().toISOString(), [review.dataUpdatedAt]);
+
+  // Whether the position can be CLOSED, on the one page where somebody is
+  // about to act. The Stocks board grew this line first; leaving it off here
+  // would mean the surface nearest the wallet was the one surface that never
+  // said the money might not come back. One representation, so one read.
+  // The draft names one exact representation, and the server echoes it. Reading
+  // it from here rather than out of `reality` keeps the address the reviewed
+  // one instead of whichever card happened to be first.
+  const reviewedAddress = body?.representation?.tokenAddress ?? null;
+  const dossier = useOfficialAssetDossier(reviewedAddress);
+
   const view = useMemo(() => {
     if (!body?.reality) return null;
     const choices = underlyingChoicesV1(null);
+    const question = {
+      requestedCashAtomic: body.question?.requestedCashAtomic ?? '0',
+      destination: body.question?.destination ?? ('USDC' as const),
+    };
+    const ladder =
+      dossier.data && dossier.data.outcome === 'dossier' ? dossier.data.dossier : null;
     return marketRealityViewV1({
       wire: body.reality as never,
       choice: choices[0] ?? null,
       now: nowIso,
+      ...(ladder && reviewedAddress
+        ? {
+            ladders: {
+              [reviewedAddress.toLowerCase()]: {
+                rungs: [],
+                note: null,
+                exit: exitEvidenceV1(ladder.cashExitLadder.rungs, question),
+              },
+            },
+          }
+        : {}),
     });
-  }, [body?.reality, nowIso]);
+  }, [body?.reality, body?.question, dossier.data, reviewedAddress, nowIso]);
+
+  // Built here rather than in the shared view module: this is the only surface
+  // that knows WHICH wallet the draft was issued to, and a verdict about a
+  // different address would be worse than none.
+  const eligibilityNotice = useMemo(() => {
+    const scopes = body?.transferEligibility?.scopes ?? [];
+    if (scopes.length === 0) return null;
+    const denied = scopes.filter((scope) => scope.verdict === 'denied');
+    if (denied.length > 0) {
+      const sending = denied.some((scope) => scope.scope === 'transfer_sender');
+      const receiving = denied.some((scope) => scope.scope === 'transfer_receiver');
+      const what = sending && receiving ? 'send or receive' : sending ? 'send' : 'receive';
+      return `This token's transfer policy does not currently authorize this wallet to ${what} it. That is the issuer's policy for this contract, read on chain — it says nothing about the market or about any other asset you hold.`;
+    }
+    if (scopes.every((scope) => scope.verdict === 'authorized')) {
+      return `This token's transfer policy authorizes this wallet to send and receive it, as read on chain. A policy can change, and this says nothing about whether a route exists or what it costs.`;
+    }
+    // Partly or wholly unread. Never a reassuring default — "no restriction
+    // found" and "we did not look" are the two states this product separates.
+    const reason = scopes.find((scope) => scope.reason)?.reason;
+    return reason
+      ? `${reason} Nothing about this wallet's permission to move this token was established, which is not the same as being blocked.`
+      : null;
+  }, [body?.transferEligibility]);
 
   const refused = body?.outcome === 'refused';
   const model: MarketRealityScreenModelV1 | null = view
@@ -198,6 +262,16 @@ export function StockActionReviewPage() {
             {/* The exact address, spelled out. A review that named a ticker
                 would be a review of whichever contract the reader assumed. */}
             <p className="lnote mono">{body.representation?.caip10}</p>
+            {/* Whether this wallet may move this token at all — read on chain
+                from a registry documented never to revert. Everything else on
+                this page is about the market; a transfer policy can deny one
+                address while the market is perfectly healthy, and every
+                reviewed Coinbase representation points its transfer scopes at
+                a live blocklist. Rendered only when the chain answered: a
+                missing verdict prints nothing rather than reassurance. */}
+            {eligibilityNotice ? (
+              <p className="cr-verdict">{eligibilityNotice}</p>
+            ) : null}
             {model ? <MarketRealityScreen model={model} /> : null}
             <p className="lnote">
               Miorail never signs and never broadcasts. Continuing opens the advanced route surface,

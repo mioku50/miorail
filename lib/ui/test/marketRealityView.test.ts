@@ -10,6 +10,7 @@ import {
   type MarketRealityHistoryWireV1,
 } from '../src/console/marketRealityHistoryView';
 import {
+  MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
   quoteAgeLabelV1,
@@ -1307,6 +1308,121 @@ describe('an absent number never renders as a zero', () => {
     });
     assert.equal(withLadder?.representations[0]?.ladder[0]?.value, '0.09%');
     assert.match(withLadder?.representations[0]?.ladderNote ?? '', /kyberswap/);
+  });
+
+  test('a quote that answers is not the same as a position that can be closed', () => {
+    const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const address = bare!.representations[0]!.tokenAddress.toLowerCase();
+    // Nothing measured a round trip: the line is absent, never a zero.
+    assert.equal(bare?.representations[0]?.exit, null);
+
+    const cheap = marketRealityViewV1({
+      wire: wire(),
+      choice: null,
+      now: NOW,
+      ladders: {
+        [address]: {
+          rungs: [],
+          note: null,
+          exit: { roundTripCostBps: '51', basis: 'open', observedAt: NOW },
+        },
+      },
+    });
+    const good = cheap!.representations[0]!.exit!;
+    assert.equal(good.value, '0.51%');
+    assert.equal(good.tone, 'good');
+    assert.doesNotMatch(good.note ?? '', /cannot be closed/);
+
+    // The audit's case: a router quotes it, and the money does not come back.
+    const dust = marketRealityViewV1({
+      wire: wire(),
+      choice: null,
+      now: NOW,
+      ladders: {
+        [address]: {
+          rungs: [],
+          note: null,
+          exit: { roundTripCostBps: '9957', basis: 'last_measured', observedAt: NOW },
+        },
+      },
+    });
+    const bad = dust!.representations[0]!.exit!;
+    assert.equal(bad.value, '99.57%');
+    assert.equal(bad.tone, 'off');
+    // Never borrows the market's vocabulary for absence: a route existed.
+    assert.doesNotMatch(bad.note ?? '', /no route/i);
+    assert.match(bad.note ?? '', /cannot be closed at this size under the reviewed policy/);
+  });
+
+  test('the round-trip bound is our policy, and the measured cost is always shown beside it', () => {
+    const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const address = bare!.representations[0]!.tokenAddress.toLowerCase();
+    const at = (bps: string) =>
+      marketRealityViewV1({
+        wire: wire(),
+        choice: null,
+        now: NOW,
+        ladders: {
+          [address]: {
+            rungs: [],
+            note: null,
+            exit: { roundTripCostBps: bps, basis: 'open', observedAt: NOW },
+          },
+        },
+      })!.representations[0]!.exit!;
+    // Exactly at the bound is still exitable; one basis point past it is not.
+    assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1)).tone, 'good');
+    assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 + 1)).tone, 'off');
+    // A reader who disagrees with the bound can still see the number it read.
+    assert.equal(at('1234').value, '12.34%');
+  });
+
+  test('open evidence and history are named apart, never merged', () => {
+    const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const address = bare!.representations[0]!.tokenAddress.toLowerCase();
+    const withBasis = (basis: 'open' | 'last_measured') =>
+      marketRealityViewV1({
+        wire: wire(),
+        choice: null,
+        now: NOW,
+        ladders: {
+          [address]: {
+            rungs: [],
+            note: null,
+            exit: { roundTripCostBps: '51', basis, observedAt: LAPSED_OBSERVATION.observedAt },
+          },
+        },
+      })!.representations[0]!.exit!;
+    assert.match(withBasis('open').note ?? '', /on the open quote/);
+    assert.doesNotMatch(withBasis('open').note ?? '', /measured/);
+    assert.match(withBasis('last_measured').note ?? '', /measured/);
+  });
+
+  test('the no-route chip is scoped to the reviewed policy, not to Base', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            status: 'unavailable',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null, open: true },
+            sources: [
+              { source: 'kyberswap', status: 'no_route', errorCode: 'provider_no_route', quoteEvidence: null },
+            ],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view!.representations[0]!;
+    assert.equal(card.outcome, 'no_route');
+    // An asset-level claim this product has never measured. The chip is the
+    // headline, so an unbounded one there outranks every bounded sentence
+    // below it — and "No route" reads as a fact about the whole of Base.
+    assert.equal(card.outcomeChip, 'No route under policy');
+    // The chip and the history line say it the same way, not two findings.
+    assert.equal(card.lastSeen?.value, card.outcomeChip);
   });
 
   test('a present figure is formatted, not raw atomic', () => {

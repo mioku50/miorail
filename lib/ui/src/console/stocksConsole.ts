@@ -23,6 +23,7 @@ import {
   underlyingChoicesV1,
   underlyingCountersV1,
   type MarketRealityDirectionV1,
+  type RepresentationExitEvidenceV1,
 } from './marketRealityView';
 import {
   comparableMarketHistoryViewV1,
@@ -137,6 +138,50 @@ export function stocksUnavailableNoticeV1(input: {
     return `You are not signed in, so this server's configuration was not read and ${subject}. That is about this session, not about what the server serves.`;
   }
   return `Route intelligence is switched off on this server, so ${subject}. This says nothing about what is issued.`;
+}
+
+/**
+ * The round trip at the exact size being asked, out of the stored run.
+ *
+ * Written after the Market Route Coverage Audit found two reviewed
+ * representations quoting happily while returning almost nothing on the way
+ * back out. Both legs were already in the ladder and the cost between them was
+ * already computed; no surface asked for it, because every surface asked the
+ * ladder whether a quote EXISTED.
+ *
+ * Open evidence is preferred and history is the fallback — never merged, and
+ * the basis travels with the number so the card can say which it is holding.
+ * A quote lives about twenty seconds, so history is what a reader almost always
+ * gets, and dropping it would hide this fact exactly when it is most useful.
+ */
+export function exitEvidenceV1(
+  rungs: readonly {
+    destination: 'USDC' | 'ETH';
+    requestedCashAtomic: string | null;
+    roundTripCostBps: string | null;
+    observedAt: string | null;
+    lastMeasured?: { roundTripCostBps: string | null; observedAt: string } | null;
+  }[],
+  question: Pick<StocksConsoleQuestionV1, 'requestedCashAtomic' | 'destination'>,
+): RepresentationExitEvidenceV1 | null {
+  const rung = rungs.find(
+    (row) =>
+      row.destination === question.destination &&
+      row.requestedCashAtomic === question.requestedCashAtomic,
+  );
+  if (!rung) return null;
+  if (rung.roundTripCostBps !== null && rung.observedAt !== null) {
+    return { roundTripCostBps: rung.roundTripCostBps, basis: 'open', observedAt: rung.observedAt };
+  }
+  const last = rung.lastMeasured ?? null;
+  if (last && last.roundTripCostBps !== null) {
+    return {
+      roundTripCostBps: last.roundTripCostBps,
+      basis: 'last_measured',
+      observedAt: last.observedAt,
+    };
+  }
+  return null;
 }
 
 export interface StocksConsoleResultV1 {
@@ -263,7 +308,11 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   const ladders = useMemo(() => {
     const built: Record<
       string,
-      { rungs: ReturnType<typeof cashExitLadderRungsV1>; note: string | null }
+      {
+        rungs: ReturnType<typeof cashExitLadderRungsV1>;
+        note: string | null;
+        exit: RepresentationExitEvidenceV1 | null;
+      }
     > = {};
     for (const response of [dossierA.data, dossierB.data, dossierC.data]) {
       // `not_in_reviewed_corpus` is a legible answer, not an error. It simply
@@ -281,10 +330,22 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
         note: `Exact sizes only, quoted through ${
           ladder.approvedSources.join(', ') || 'no approved router'
         }. Nothing here was executed.`,
+        // The round trip AT THE SIZE BEING ASKED, from the same run the rungs
+        // come from. The open quote first, the last completed measurement
+        // second — never merged, because one is now and the other is history
+        // and the card prints which it got.
+        exit: exitEvidenceV1(ladder.rungs, question),
       };
     }
     return built;
-  }, [dossierA.data, dossierB.data, dossierC.data, nowIso]);
+  }, [
+    dossierA.data,
+    dossierB.data,
+    dossierC.data,
+    nowIso,
+    question.requestedCashAtomic,
+    question.destination,
+  ]);
 
   const view = useMemo(
     () =>

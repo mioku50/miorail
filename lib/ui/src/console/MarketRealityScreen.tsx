@@ -444,6 +444,17 @@ function RepresentationCard({
 
       <p className="cr-verdict">{representation.outcomeBody}</p>
 
+      {/* Whether the money comes back, directly under the verdict and above
+          every other number. A quote says a router answered; this says what it
+          answered — and the two came apart badly enough on live representations
+          that the audit which found it is the reason this line exists. */}
+      {representation.exit ? (
+        <FactList
+          facts={[representation.exit]}
+          label={`${representation.issuerName} round trip`}
+        />
+      ) : null}
+
       <FactList facts={representation.numbers} label={`${representation.issuerName} outcome`} />
 
       {/* The ladder, from the same stored run. Discover has rendered this all
