@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { useLocation } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
   BudgetPaymentsPanel,
+  ConnectedAppsCard,
   ConsoleRightRail,
   ConsoleShell,
   SettingsScreen,
@@ -16,9 +18,13 @@ import {
   paidIntelligenceViewV1,
   providerUnavailableCopyV1,
   useConsoleTheme,
+  type ConnectedAppClientKindV1,
 } from '@mioagent/ui';
 import {
   useIntelligenceBudget,
+  useIssueMcpHandoff,
+  useMcpHandoffGrants,
+  useRevokeMcpHandoff,
   useIntelligenceCharges,
   usePauseIntelligenceBudget,
   useResumeIntelligenceBudget,
@@ -95,6 +101,23 @@ export function SettingsPage() {
   });
   const paidView = paidIntelligenceViewV1(paidState);
 
+  // Connect Miorail to your AI. The minted key is held in component state for
+  // exactly as long as the user is looking at it — never in the query cache,
+  // because a credential in a cache outlives the moment it was shown.
+  const grants = useMcpHandoffGrants();
+  // Availability comes from the endpoint that knows, not from a guess at
+  // /api/status: the grants route answers `mcp_private_disabled` when the
+  // surface is off, and that is a different thing from a read that failed.
+  const mcpDisabled = /mcp_private_disabled/.test(grants.error?.message ?? '');
+  const mcpEnabled = !mcpDisabled;
+  const [issuedKey, setIssuedKey] = useState<
+    { token: string; tokenId: string; expiresAt: string; notice: string } | null
+  >(null);
+  const issueHandoff = useIssueMcpHandoff({
+    onSuccess: (issued) => setIssuedKey(issued),
+  });
+  const revokeHandoff = useRevokeMcpHandoff();
+
   return (
     <ConsoleShell
       header={{
@@ -139,6 +162,38 @@ export function SettingsPage() {
       onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
     >
       <SettingsScreen
+        connectedApps={
+          <ConnectedAppsCard
+            available={mcpEnabled}
+            unavailableReason={
+              mcpEnabled
+                ? null
+                : 'The private MCP surface is switched off on this server, so there is nothing to connect to.'
+            }
+            grants={grants.data?.grants ?? []}
+            loading={grants.isPending}
+            // Never an empty list on failure: "could not read" and "you have
+            // none" are the two states an owner must not confuse on this page.
+            error={
+              grants.error && !mcpDisabled
+                ? 'Your connected apps could not be read right now. This is not a statement that you have none.'
+                : issueHandoff.error
+                  ? 'That key could not be issued. Nothing was connected.'
+                  : revokeHandoff.error
+                    ? 'That key could not be revoked. It is still connected.'
+                    : null
+            }
+            permissions={grants.data?.permissions ?? null}
+            issued={issuedKey}
+            issuing={issueHandoff.isPending}
+            revokingTokenId={revokeHandoff.isPending ? (revokeHandoff.variables?.tokenId ?? null) : null}
+            onConnect={(clientKind: ConnectedAppClientKindV1) =>
+              issueHandoff.mutate({ clientKind })
+            }
+            onRevoke={(tokenId: string) => revokeHandoff.mutate({ tokenId })}
+            onDismissIssued={() => setIssuedKey(null)}
+          />
+        }
         budget={
           <BudgetPaymentsPanel
             featureEnabled={paidIntelligenceOn}

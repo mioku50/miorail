@@ -6,6 +6,7 @@ export * from './OpportunitiesScreen';
 export * from './discoverFocus';
 export * from './opportunityCardView';
 export * from './SettingsScreen';
+export * from './ConnectedAppsCard';
 export * from './consoleState';
 export * from './goalHandoff';
 export * from './resultAnchors';

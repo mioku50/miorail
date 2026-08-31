@@ -3338,3 +3338,76 @@ export function useRevokeProofShare(
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Connected Apps — reading, minting and ending a grant.
+//
+// The mint returns the token exactly once and nothing caches it. It is handed
+// straight to the caller's `onSuccess` and never written into query state,
+// because a credential in a cache is a credential that outlives the moment the
+// user was looking at it.
+// ---------------------------------------------------------------------------
+
+export function useMcpHandoffGrants(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['mcp-handoff-grants'],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>('/api/mcp/handoff/grants');
+      return apiSpec.McpHandoffGrantsResponseV1Schema.parse(response);
+    },
+    retry: false,
+    enabled: options?.enabled !== false,
+    staleTime: 10_000,
+  });
+}
+
+export function useIssueMcpHandoff(
+  options?: Omit<
+    UseMutationOptions<
+      { token: string; tokenId: string; expiresAt: string; clientKind: string | null; notice: string },
+      Error,
+      { clientKind?: apiSpec.McpClientKindV1 }
+    >,
+    'mutationFn'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    mutationFn: async (input) => {
+      const response = await fetchApi<Record<string, unknown>>('/api/mcp/handoff', {
+        method: 'POST',
+        body: JSON.stringify({ clientKind: input?.clientKind }),
+      });
+      return {
+        token: String(response.token ?? ''),
+        tokenId: String(response.tokenId ?? ''),
+        expiresAt: String(response.expiresAt ?? ''),
+        clientKind: response.clientKind === null ? null : String(response.clientKind ?? ''),
+        notice: String(response.notice ?? ''),
+      };
+    },
+    onSuccess: (data, variables, onMutateResult, context) => {
+      void queryClient.invalidateQueries({ queryKey: ['mcp-handoff-grants'] });
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}
+
+export function useRevokeMcpHandoff(
+  options?: Omit<UseMutationOptions<unknown, Error, { tokenId: string }>, 'mutationFn'>,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    mutationFn: async (input) =>
+      fetchApi<unknown>('/api/mcp/handoff/revoke', {
+        method: 'POST',
+        body: JSON.stringify({ tokenId: input.tokenId }),
+      }),
+    onSuccess: (data, variables, onMutateResult, context) => {
+      void queryClient.invalidateQueries({ queryKey: ['mcp-handoff-grants'] });
+      options?.onSuccess?.(data, variables, onMutateResult, context);
+    },
+  });
+}

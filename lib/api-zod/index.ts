@@ -1957,6 +1957,55 @@ export const BaseMcpActionEnvelopeV1Schema = z.object({
   resultPreview: z.string().max(2000).nullable().default(null),
 });
 
+// ---------------------------------------------------------------------------
+// Connected Apps — the grants a wallet has handed to an assistant.
+//
+// The one thing this contract guarantees by SHAPE: there is no field a bearer
+// token could be returned in. A grant is addressed by its opaque id, which is
+// also what the revoke endpoint takes, so an owner never needs the credential
+// in order to end it.
+// ---------------------------------------------------------------------------
+
+export const McpClientKindV1Schema = z.enum(['claude', 'chatgpt', 'hermes', 'other']);
+export type McpClientKindV1 = z.infer<typeof McpClientKindV1Schema>;
+
+export const McpHandoffGrantV1Schema = z
+  .object({
+    tokenId: z.string().min(1).max(100),
+    /** Null is "nobody recorded one", never `other`. */
+    clientKind: McpClientKindV1Schema.nullable(),
+    walletAddress: z.string().max(42),
+    /** Null when the issuance row is outside the audit window read. */
+    issuedAt: z.string().datetime().nullable(),
+    /** Null when the grant has never been used. Issuing is not using. */
+    lastUsedAt: z.string().datetime().nullable(),
+    useCount: z.number().int().min(0),
+    revokedAt: z.string().datetime().nullable(),
+    historyComplete: z.boolean(),
+  })
+  .strict();
+export type McpHandoffGrantV1 = z.infer<typeof McpHandoffGrantV1Schema>;
+
+export const McpHandoffGrantsResponseV1Schema = z
+  .object({
+    schemaVersion: z.literal('mcp-handoff-grants/v1'),
+    walletAddress: z.string().max(42),
+    chainId: z.literal(8453),
+    /** What this SERVER allows right now — not a per-grant scope. A handoff
+     * token carries none, and the executable half can be switched off under a
+     * token that already exists. */
+    permissions: z
+      .object({
+        read: z.boolean(),
+        executableHandoff: z.boolean(),
+        scope: z.literal('server'),
+      })
+      .strict(),
+    grants: z.array(McpHandoffGrantV1Schema).max(200),
+  })
+  .strict();
+export type McpHandoffGrantsResponseV1 = z.infer<typeof McpHandoffGrantsResponseV1Schema>;
+
 export const BaseMcpHandoffV1Schema = z.discriminatedUnion('target', [
   z.object({
     target: z.literal('routes'),

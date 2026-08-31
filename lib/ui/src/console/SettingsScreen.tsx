@@ -31,6 +31,14 @@ export interface SettingsProviderRowV1 {
 export interface SettingsScreenModelV1 {
   /** The full Budget & payments panel. §2: it opens from here and nowhere else. */
   budget: ReactNode;
+  /**
+   * Connect Miorail to your AI — the grants a wallet handed to an assistant.
+   *
+   * First, above adapters and providers: those describe how the server works,
+   * and this is the only card on the page that answers "who else can act as
+   * me". A person looking for it is looking for it urgently.
+   */
+  connectedApps?: ReactNode;
   adapters: { rows: readonly SettingsAdapterRowV1[]; summary: string };
   adaptersUnavailableReason: string | null;
   providers: readonly SettingsProviderRowV1[];
@@ -44,6 +52,8 @@ export function SettingsScreen(model: SettingsScreenModelV1) {
   return (
     <>
       {model.budget}
+
+      {model.connectedApps}
 
       <div className="panel">
         <div className="ph">

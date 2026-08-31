@@ -6,6 +6,11 @@ import {
   handoffTtlMsV1,
   issueHandoffTokenV1,
 } from '../lib/mcpHandoffToken.js';
+import {
+  mcpClientKindV1,
+  mcpHandoffGrantsV1,
+  type McpHandoffGrantV1,
+} from '@mioagent/route-storage';
 import { mcpAuditRuntime, recordAuditV1 } from './mcpPrivate/audit.js';
 import { tenantUserFromRequest } from '../middleware/tenantAuth';
 
@@ -32,6 +37,19 @@ export const mcpHandoffRuntime = {
   issue: issueHandoffTokenV1,
   audit: mcpAuditRuntime,
   record: recordAuditV1,
+  /**
+   * Connected Apps reads the grants, and reads NOTHING a token could hide in.
+   * There is still no endpoint that returns an outstanding token: this lists
+   * what each grant has done, by its opaque id.
+   */
+  grants: async (tenantId: string): Promise<McpHandoffGrantV1[]> => {
+    if (!(await mcpAuditRuntime.available())) return [];
+    const [audit, revocations] = await Promise.all([
+      mcpAuditRuntime.audit().listForTenant({ tenantId, limit: 200 }),
+      mcpAuditRuntime.revocations().listForTenant(tenantId),
+    ]);
+    return mcpHandoffGrantsV1({ audit, revocations });
+  },
 };
 
 /**
@@ -153,6 +171,12 @@ mcpHandoffRouter.post('/', async (req: Request, res: Response) => {
     return;
   }
 
+  // Which assistant this is for. Optional, and validated against a closed
+  // vocabulary rather than coerced: an unrecognised string becomes null — "not
+  // recorded" — and never `other`, which is a client the user actually named.
+  // Recording a guess would put a claim in an append-only table.
+  const clientKind = mcpClientKindV1((req.body as { clientKind?: unknown } | undefined)?.clientKind);
+
   const issued = mcpHandoffRuntime.issue({
     tenantId: identity.tenantId,
     walletAddress: identity.walletAddress,
@@ -175,6 +199,7 @@ mcpHandoffRouter.post('/', async (req: Request, res: Response) => {
     walletAddress: identity.walletAddress,
     toolName: 'handoff_issue',
     outcome: 'token_issued',
+    clientKind,
   });
   logger.info('MCP handoff token issued', {
     tokenId: issued.tokenId,
@@ -189,6 +214,7 @@ mcpHandoffRouter.post('/', async (req: Request, res: Response) => {
     expiresInMs: issued.expiresInMs,
     walletAddress: identity.walletAddress,
     chainId: 8453,
+    clientKind,
     endpointPath: '/mcp/private',
     executionAvailable: flags.mcpPrivateExecutionV1,
     // Said plainly, because these are the two properties a holder cannot infer
@@ -197,6 +223,61 @@ mcpHandoffRouter.post('/', async (req: Request, res: Response) => {
       'This token is bound to your wallet and expires on its own. Treat it like a password: anyone holding it can read your plans and, while executable handoff is on, fetch the calls for one. It can never sign or send a transaction — every transaction still has to be approved in your Base Account. If you lose it, revoke it by its token id.',
     revokePath: '/api/mcp/handoff/revoke',
   });
+});
+
+/**
+ * Connected Apps — every grant this wallet has handed out.
+ *
+ * Derived from the audit trail and the revocation list; there is no grant
+ * table, because those two already record a grant's whole life and a third
+ * copy would be a third opinion about the same events.
+ *
+ * WHAT THIS RESPONSE CANNOT CONTAIN
+ *
+ * A token. Not the outstanding one, not a prefix of it, not a hint. The
+ * endpoint that mints one returns it exactly once, and this is a list of what
+ * each grant DID, addressed by an opaque id — which is also the id the revoke
+ * endpoint takes, so an owner never needs the credential to end it.
+ *
+ * `permissions` describes THIS SERVER RIGHT NOW, not the grant. A handoff
+ * token carries no scopes: what it can do is whatever the deployment allows
+ * while it is being used, and the executable half can be switched off under a
+ * token that already exists. Reporting it per grant would invent a permission
+ * model the system does not have.
+ */
+mcpHandoffRouter.get('/grants', async (req: Request, res: Response) => {
+  const flags = mcpHandoffRuntime.flags(process.env);
+  if (!flags.mcpPrivateV1) {
+    res.status(404).json({ error: 'mcp_private_disabled', code: 'mcp_private_disabled' });
+    return;
+  }
+  const identity = signedInWalletV1(req);
+  if (!identity) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  try {
+    const grants = await mcpHandoffRuntime.grants(identity.tenantId);
+    res.json({
+      schemaVersion: 'mcp-handoff-grants/v1',
+      walletAddress: identity.walletAddress,
+      chainId: 8453,
+      permissions: {
+        read: flags.mcpPrivateV1,
+        // The one that matters, and the one an owner should be able to see is
+        // on: with it, a grant can fetch the unsigned calls for a plan.
+        executableHandoff: flags.mcpPrivateExecutionV1,
+        scope: 'server',
+      },
+      grants,
+    });
+  } catch {
+    // A grant list that cannot be read must not read as "you have none": an
+    // owner would conclude nothing is connected and stop looking.
+    res
+      .status(503)
+      .json({ error: 'mcp_grants_unavailable', code: 'mcp_grants_unavailable' });
+  }
 });
 
 /**

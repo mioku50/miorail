@@ -13,6 +13,26 @@ import { z } from 'zod';
 // it proves WHICH batch was released without being the batch.
 // ---------------------------------------------------------------------------
 
+/**
+ * Which assistant a handoff grant was issued to.
+ *
+ * A closed vocabulary, because this column lives in a table whose whole rule is
+ * that there is nowhere to put free text (see 0031). `other` is a client the
+ * user NAMED and we do not list; the absence of a value — null — is "not
+ * recorded", which every row written before Connected Apps existed is. Those
+ * two are never collapsed: one is a statement, the other is a gap.
+ */
+export const MCP_CLIENT_KINDS_V1 = ['claude', 'chatgpt', 'hermes', 'other'] as const;
+export type McpClientKindV1 = (typeof MCP_CLIENT_KINDS_V1)[number];
+
+export function mcpClientKindV1(value: unknown): McpClientKindV1 | null {
+  if (typeof value !== 'string') return null;
+  const normalized = value.trim().toLowerCase();
+  return (MCP_CLIENT_KINDS_V1 as readonly string[]).includes(normalized)
+    ? (normalized as McpClientKindV1)
+    : null;
+}
+
 export const MCP_AUDIT_OUTCOMES_V1 = [
   'token_issued',
   'plan_read',
@@ -59,6 +79,10 @@ export const McpExecutionAuditV1Schema = z
     callsHash: z.string().regex(HASH_V1).nullable(),
     batchId: z.string().min(1).max(200).nullable(),
     outcome: z.enum(MCP_AUDIT_OUTCOMES_V1),
+    /** Which assistant this grant was handed to. Only ever set on the
+     * `token_issued` row: a grant's client is a fact about the moment of
+     * issuance, and this table cannot be updated afterwards. */
+    clientKind: z.enum(MCP_CLIENT_KINDS_V1).nullable(),
     createdAt: z.string().min(1).max(60),
   })
   .strict();
@@ -138,6 +162,7 @@ export function mcpAuditRowV1(input: {
   planId?: string | null;
   callsHash?: string | null;
   batchId?: string | null;
+  clientKind?: McpClientKindV1 | null;
   now: Date;
 }): McpExecutionAuditV1 {
   return assertMcpAuditV1(
@@ -152,6 +177,7 @@ export function mcpAuditRowV1(input: {
       callsHash: input.callsHash ? input.callsHash.toLowerCase() : null,
       batchId: input.batchId ?? null,
       outcome: input.outcome,
+      clientKind: input.clientKind ?? null,
       createdAt: input.now.toISOString(),
     },
     'write',

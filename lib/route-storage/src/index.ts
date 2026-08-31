@@ -75,6 +75,7 @@ export * from './providerOutcomesDatabase.js';
 export * from './mcpExecutionAudit.js';
 export * from './mcpExecutionAuditMemory.js';
 export * from './mcpExecutionAuditDatabase.js';
+export * from './mcpHandoffGrants.js';
 export * from './swapPendingIntents.js';
 export * from './swapPendingIntentsMemory.js';
 export * from './swapPendingIntentsDatabase.js';
