@@ -108,7 +108,7 @@ function shortV1(value: string): string {
 }
 
 export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
-  const [choice, setChoice] = useState<ConnectedAppClientKindV1>('claude');
+  const [pressed, setPressed] = useState<ConnectedAppClientKindV1 | null>(null);
   const now = new Date();
 
   return (
@@ -178,29 +178,29 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
               </div>
             ) : null}
 
+            {/* One button per client, not a dropdown. This card carried the
+                only <select> in the whole console, and the console has no
+                vocabulary for one — it rendered as a raw browser control
+                wedged into a row meant for buttons. Four buttons use the
+                styling that already exists and save a click. */}
+            <p className="sub">Connect an assistant</p>
             <div className="card-actions">
-              <label className="sub" htmlFor="connected-app-choice">
-                Connect
-              </label>
-              <select
-                id="connected-app-choice"
-                value={choice}
-                onChange={(event) => setChoice(event.target.value as ConnectedAppClientKindV1)}
-              >
-                {CONNECTED_APP_CHOICES_V1.map((option) => (
-                  <option key={option.kind} value={option.kind}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-              <button
-                type="button"
-                className="btn lg"
-                disabled={model.issuing}
-                onClick={() => model.onConnect(choice)}
-              >
-                {model.issuing ? 'Connecting…' : 'Connect'}
-              </button>
+              {CONNECTED_APP_CHOICES_V1.map((option) => (
+                <button
+                  key={option.kind}
+                  type="button"
+                  className="btn sec"
+                  disabled={model.issuing}
+                  onClick={() => {
+                    // Remembered only so THIS button reads "Connecting…" while
+                    // the others stay legible. It selects nothing.
+                    setPressed(option.kind);
+                    model.onConnect(option.kind);
+                  }}
+                >
+                  {model.issuing && pressed === option.kind ? 'Connecting…' : option.label}
+                </button>
+              ))}
             </div>
 
             {model.error ? (
@@ -213,27 +213,38 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
                 assistant.
               </p>
             ) : (
-              <dl className="cr-facts" aria-label="Connected apps">
+              /* One card per grant, with its action as a SIBLING of the text.
+                 The first version put Revoke inside the <dd> of a definition
+                 list, so the button sat on top of "connected 18s ago". This is
+                 the shape Radar already uses for a watch. */
+              <div className="console-card-grid" aria-label="Connected apps">
                 {model.grants.map((grant) => (
-                  <div key={grant.tokenId}>
-                    <dt>{connectedAppLabelV1(grant.clientKind)}</dt>
-                    <dd>
-                      <strong className={grant.revokedAt ? 'cr-v off' : 'cr-v'}>
+                  <article
+                    className={grant.revokedAt ? 'cardrow off' : 'cardrow'}
+                    key={grant.tokenId}
+                  >
+                    <div className="cr-top">
+                      <span className="cr-name">{connectedAppLabelV1(grant.clientKind)}</span>
+                      <span
+                        className="pill cr-status"
+                        data-tone={grant.revokedAt ? 'off' : grant.lastUsedAt ? 'measured' : 'neutral'}
+                      >
                         {grant.revokedAt
                           ? `Revoked ${ageV1(grant.revokedAt, now)}`
                           : grant.lastUsedAt
                             ? `Last used ${ageV1(grant.lastUsedAt, now)}`
                             : 'Never used'}
-                      </strong>
-                      <span className="cr-fact-note">
-                        {' · '}
-                        {grant.walletAddress ? `${shortV1(grant.walletAddress)} · ` : ''}
-                        {grant.issuedAt
-                          ? `connected ${ageV1(grant.issuedAt, now)}`
-                          : 'connected before this list began'}
-                        {grant.useCount > 0 ? ` · ${grant.useCount} calls` : ''}
                       </span>
-                      {grant.revokedAt ? null : (
+                    </div>
+                    <p className="lnote">
+                      {grant.walletAddress ? `${shortV1(grant.walletAddress)} · ` : ''}
+                      {grant.issuedAt
+                        ? `connected ${ageV1(grant.issuedAt, now)}`
+                        : 'connected before this list began'}
+                      {grant.useCount > 0 ? ` · ${grant.useCount} calls` : ''}
+                    </p>
+                    {grant.revokedAt ? null : (
+                      <div className="card-actions">
                         <button
                           type="button"
                           className="btn sec"
@@ -242,11 +253,11 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
                         >
                           {model.revokingTokenId === grant.tokenId ? 'Revoking…' : 'Revoke'}
                         </button>
-                      )}
-                    </dd>
-                  </div>
+                      </div>
+                    )}
+                  </article>
                 ))}
-              </dl>
+              </div>
             )}
 
             <p className="lnote">

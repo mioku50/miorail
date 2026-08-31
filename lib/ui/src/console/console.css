@@ -1284,7 +1284,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   padding-bottom: 7px; border-bottom: 1px solid var(--line); }
 .mio-console .radar-section-head h3 { margin: 0; font-size: 14px; }
 .mio-console .radar-section-head span { color: var(--faint); font-size: 10.5px; }
-.mio-console .radar-watch-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 10px; }
+/* A responsive stack of `.cardrow` cards. Radar had it first and kept the
+   name; Connected Apps renders the same shape, so the rule is shared under a
+   second, truthful name rather than duplicated or borrowed under a lie. */
+.mio-console .radar-watch-grid,
+.mio-console .console-card-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 10px; }
 .mio-console .radar-watch { min-width: 0; padding: 13px; border-radius: var(--r); background: var(--panel2);
   box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .radar-question { margin: 10px 0 0; color: var(--ink); font-size: 12px; font-weight: 650; }
@@ -1312,5 +1316,6 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 @media (max-width: 720px) {
   .mio-console .radar-hero { align-items: stretch; padding: 14px; }
   .mio-console .radar-counts { width: 100%; }
-  .mio-console .radar-watch-grid { grid-template-columns: minmax(0,1fr); }
+  .mio-console .radar-watch-grid,
+  .mio-console .console-card-grid { grid-template-columns: minmax(0,1fr); }
 }

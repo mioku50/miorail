@@ -149,7 +149,26 @@ describe('Connect Miorail to your AI', () => {
   test('a server without the surface offers nothing to connect', () => {
     const markup = render({ available: false, unavailableReason: 'Switched off here.' });
     assert.match(markup, /Switched off here/);
-    assert.doesNotMatch(markup, />Connect</);
+    // The real check: no client button, and no grant list. An earlier version
+    // of this test looked for the string "Connect", which stopped
+    // discriminating the moment the button was labelled with a client name.
+    for (const label of ['Claude', 'ChatGPT', 'Hermes']) {
+      assert.doesNotMatch(markup, new RegExp(`>${label}<`));
+    }
+    assert.doesNotMatch(markup, /Revoke/);
+  });
+
+  test('it renders no control the console has no styling for', () => {
+    // This card shipped with the only <select> in the console. There is no CSS
+    // for one, so it rendered as a raw browser widget wedged into a row meant
+    // for buttons. Everything interactive here is a `.btn`.
+    const markup = render({
+      issued: { token: 't', tokenId: 'i', expiresAt: 'e', notice: 'n' },
+    });
+    for (const tag of ['<select', '<input', '<textarea']) {
+      assert.doesNotMatch(markup, new RegExp(tag));
+    }
+    assert.match(markup, /class="btn sec"/);
   });
 
   test('the three named clients are offered, plus a way to name another', () => {
