@@ -6,6 +6,7 @@ import {
   type FactViewV1,
   type ToneV1,
 } from './rwaDiscoverView';
+import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 
 // ---------------------------------------------------------------------------
 // Phase 7 — one pasted address, turned into something a person reads.
@@ -387,7 +388,10 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
       value:
         rwaBpsLabelV1(rung.roundTripCostBps) ??
         (rung.entryRouteRefused
-          ? 'no cash entry'
+          // The SAME words Discover and Stocks use. This was a second,
+          // independent copy of the label, so fixing one screen would have
+          // left the product naming one state two ways.
+          ? 'no buy route'
           : rung.status === 'full'
             ? 'round trip'
             : 'no exit route'),
@@ -464,7 +468,7 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
     ladderNote:
       ladder.length === 0
         ? null
-        : `Exact sizes only, quoted through ${market.approvedSources.join(', ') || 'no approved router'} · measured ${
+        : `Exact sizes only, quoted through ${market.approvedSources.map((source) => swapProviderDisplayNameV1(source)).join(', ') || 'no approved router'} · measured ${
             rwaAgeLabelV1(market.measuredAt, now) ?? 'at an unknown time'
           }. Nothing here was executed.`,
     change: { headline: changeHeadline, rows: changeRows },
