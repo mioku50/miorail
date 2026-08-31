@@ -18,7 +18,9 @@ import {
   createReviewedMarketRealityReferenceAdapterV1,
 } from '@mioagent/rwa-market-reality';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
+import { logger } from '@mioagent/utils';
 import { decodeFunctionResult, encodeFunctionData } from 'viem';
+import { ZodError } from 'zod';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
 // Loads the express-session augmentation as well as documenting which session
 // identity this read-only evidence surface requires.
@@ -149,9 +151,24 @@ rwaDossierRouter.get('/rwa/official/:tokenAddress/dossier', async (req, res) => 
     // Absence from the reviewed corpus is a typed evidence outcome, not a
     // transport failure. The clients must be able to render that distinction.
     res.status(200).json(response);
-  } catch {
-    // Provider and database details can contain connection material. The API
-    // exposes only a stable refusal and never forwards the upstream message.
+  } catch (error) {
+    // Provider and database details can contain connection material, so the
+    // RESPONSE stays a stable refusal and never forwards the upstream message.
+    //
+    // The LOG is a different question, and leaving it empty cost real time: a
+    // schema bound rejected four of the five live Coinbase dossiers for weeks
+    // and the only trace anywhere was `status: 500`. What goes out here is the
+    // error's type and, for a validation failure, the field PATHS that failed —
+    // our own schema's field names, never a value, never a message.
+    const paths =
+      error instanceof ZodError
+        ? [...new Set(error.issues.map((issue) => issue.path.join('.')))].slice(0, 8)
+        : null;
+    logger.warn('Official asset dossier failed', {
+      tokenAddress: supplied.toLowerCase(),
+      errorName: error instanceof Error ? error.name : typeof error,
+      invalidPaths: paths,
+    });
     res
       .status(500)
       .json({ error: 'official_asset_dossier_failed', code: 'official_asset_dossier_failed' });

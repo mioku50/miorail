@@ -17,7 +17,21 @@ export const DossierEvidenceRefV1Schema = z
       'stored_market_tail',
       'router_quote',
     ]),
-    source: z.string().min(1).max(160),
+    /**
+     * Where the evidence came from — usually a URL, and the bound has to fit a
+     * real one.
+     *
+     * It was 160, which silently made four of the five live Coinbase dossiers
+     * un-servable: the reviewed identity binding joins BOTH of its sources into
+     * one reference (`<prospectus URL>#page=67#extraMetadata(isin)`), which runs
+     * to 189-190 characters. The parse threw, the route's catch turned it into a
+     * bare 500, and nothing was logged. The rule that makes the binding
+     * trustworthy is exactly what made the reference long.
+     *
+     * Truncating instead would be worse than a wide bound: a citation a reader
+     * cannot follow is decoration, not provenance.
+     */
+    source: z.string().min(1).max(512),
     observedAt: Timestamp,
     blockNumber: Digits.nullable(),
     blockHash: Hash.nullable(),

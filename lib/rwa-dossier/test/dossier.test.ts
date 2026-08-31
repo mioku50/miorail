@@ -14,6 +14,7 @@ import {
   hashCashExitRunV1,
 } from '@mioagent/route-storage';
 import { ZERO_HASH_V1 } from '@mioagent/route-domain';
+import { DossierEvidenceRefV1Schema } from '../src/contracts.js';
 
 import {
   assembleOfficialAssetDossierV1,
@@ -863,4 +864,48 @@ describe('representation multiplier', () => {
     assert.equal(read.status, 'invalid');
     assert.equal(read.unavailableReason, 'answer_unusable');
   });
+});
+
+// ---------------------------------------------------------------------------
+// The reference that made four live dossiers un-servable.
+//
+// Production acceptance smoke, 2026-08-31: NVDAc, AAPLc, GOOGLc and METAc all
+// returned 500 while TSLAc, COINc and both Backed addresses returned 200. The
+// discriminator was the reviewed identity binding's `sourceRef`, which joins
+// BOTH of its sources into one reference and runs to 189-190 characters
+// against a 160-character bound. The route's catch turned the ZodError into a
+// bare 500 and logged nothing.
+// ---------------------------------------------------------------------------
+
+test('a reviewed identity reference carrying both its sources fits the evidence bound', () => {
+  // The exact shape production stores: prospectus URL, page anchor, and the
+  // on-chain call that agreed with it.
+  const source =
+    'https://assets.ctfassets.net/o10es7wu5gm1/7N224uw3q8ouQcHhuzs9rx/c0326c67068da144f47db1c4b66a1ee5/Coinbase_Onchain_SPV_Ltd_-_Prospectus__NVDA__-_FSRA_VERSION.pdf#page=67#extraMetadata(isin)';
+  assert.ok(source.length > 160, 'the value this regression is about must exceed the old bound');
+  const parsed = DossierEvidenceRefV1Schema.safeParse({
+    kind: 'reviewed_identity_mapping',
+    source,
+    observedAt: '2026-08-31T00:00:00.000Z',
+    blockNumber: null,
+    blockHash: null,
+    targetAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+    method: 'extraMetadata(isin)',
+    evidenceHash: null,
+  });
+  assert.equal(parsed.success, true);
+  // Still bounded — the fix widened the field, it did not remove the limit.
+  assert.equal(
+    DossierEvidenceRefV1Schema.safeParse({
+      kind: 'reviewed_identity_mapping',
+      source: 'https://example.test/'.padEnd(513, 'x'),
+      observedAt: '2026-08-31T00:00:00.000Z',
+      blockNumber: null,
+      blockHash: null,
+      targetAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      method: 'extraMetadata(isin)',
+      evidenceHash: null,
+    }).success,
+    false,
+  );
 });
