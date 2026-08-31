@@ -64,6 +64,10 @@ export const B20_SELECTORS_V1 = {
   // Policy Registry
   policyExists: selectorV1('policyExists(uint64)'),
   policyAdmin: selectorV1('policyAdmin(uint64)'),
+  // The one question a holder actually has. `uint64` and not `uint256`: the
+  // `uint256` overload reverts on the live registry (measured 2026-08-31), and
+  // a wrong overload is indistinguishable from a denial at the call site.
+  isAuthorized: selectorV1('isAuthorized(uint64,address)'),
 } as const;
 
 /** Feature keys the Activation Registry is asked about. The literal strings

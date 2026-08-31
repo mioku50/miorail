@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import { decodeFunctionResult, encodeFunctionData } from 'viem';
-import { createB20ReaderV1 } from '@mioagent/b20-control';
+import { createB20ReaderV1, readB20TransferEligibilityV1 } from '@mioagent/b20-control';
 import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
@@ -118,6 +118,36 @@ export const rwaMarketRealityRuntime = {
   coordinator: () => marketRealityCoordinatorV1,
   quoteAdapters: () => [new KyberSwapRouteAdapter()],
   radar: () => createDatabaseMarketRealityRadarRepositoryV1(client),
+  /**
+   * Transfer eligibility for one wallet against one B20, or null.
+   *
+   * Null rather than a reassuring shape when the chain cannot be reached: a
+   * surface with no verdict must render nothing, because "no restriction found"
+   * and "we did not look" are the two states this product exists to separate.
+   */
+  eligibility: async (input: { tokenAddress: string; wallet: string }) => {
+    if (!rpcUrlV1()) return null;
+    try {
+      const reader = createB20ReaderV1({ rpcUrl: rpcUrlV1() });
+      const anchor = await reader.readBlockAnchor();
+      if (!anchor.ok) return null;
+      return await readB20TransferEligibilityV1({
+        reader,
+        tokenAddress: input.tokenAddress,
+        wallet: input.wallet,
+        blockTag: anchor.value.blockTag,
+        blockNumber:
+          anchor.value.blockNumber === undefined ? null : String(anchor.value.blockNumber),
+      });
+    } catch {
+      // This read is an ADDITION to the review, never a precondition for it.
+      // It sits inside the route's own try, so a thrown socket error here would
+      // turn a working review into a 500 — losing the market answer, the
+      // evidence state and the whole board over a question the reader could
+      // simply have gone without.
+      return null;
+    }
+  },
   measureOne: measureOfficialCashExitV1,
   reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
   reference: () =>
@@ -1024,6 +1054,27 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
         approvedSources: rebuilt.handoff.approvedSources,
       },
       outcome: 'review',
+      /**
+       * Whether THIS wallet may move THIS token, read on chain at one block.
+       *
+       * The third axis, and the one this surface most needed: everything else
+       * on this page is about the market, and a regulated asset can carry a
+       * transfer policy that denies one address while the market is perfectly
+       * healthy. Every reviewed Coinbase representation points its transfer
+       * scopes at a live blocklist, so this is not hypothetical.
+       *
+       * Never a gate. It states what the registry said and lets the reader
+       * decide; a failed read is `not_established` and never a denial.
+       */
+      transferEligibility: await rwaMarketRealityRuntime
+        .eligibility({ tokenAddress: claims.tokenAddress, wallet: claims.walletAddress })
+        // Guarded HERE and not only inside the default implementation: this
+        // read is an ADDITION to the review, never a precondition for it, and
+        // the whole handler runs inside one try/catch. An unguarded throw would
+        // return a 500 and cost the reader the market answer, the evidence
+        // state and the entire board — over a question they could have gone
+        // without. Whatever implementation is installed, this stays true.
+        .catch(() => null),
       /** Established NOW. `expired_quote` is a legitimate state to review in —
        * it is never promoted to `fresh_quote`, and the reader is told to
        * measure rather than shown an old figure as a current one. */

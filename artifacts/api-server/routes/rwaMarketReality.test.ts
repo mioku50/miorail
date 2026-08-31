@@ -972,6 +972,72 @@ describe('GET the review a stock action draft points at', () => {
     assert.notEqual(response.body.evidenceState, 'fresh_quote');
   });
 
+  test('the review states whether this wallet may move this token', async () => {
+    // The third axis. Everything else on this response is about the market; a
+    // B20 transfer policy can deny one address while the market is healthy, and
+    // every reviewed Coinbase representation points its scopes at a live
+    // blocklist.
+    rwaMarketRealityRuntime.eligibility = (async () => ({
+      tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      wallet: '0x1111111111111111111111111111111111111111',
+      blockTag: '0x1',
+      blockNumber: '1',
+      scopes: [
+        { scope: 'transfer_sender', verdict: 'denied', policyId: '5', policyType: 'blocklist', reason: null },
+        { scope: 'transfer_receiver', verdict: 'authorized', policyId: '5', policyType: 'blocklist', reason: null },
+      ],
+    })) as never;
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'review');
+    // The two scopes stay apart. A collapsed "can trade" bit would hide which
+    // side of the transfer the policy actually applies to.
+    assert.deepEqual(
+      response.body.transferEligibility.scopes.map((scope: { scope: string; verdict: string }) => [
+        scope.scope,
+        scope.verdict,
+      ]),
+      [
+        ['transfer_sender', 'denied'],
+        ['transfer_receiver', 'authorized'],
+      ],
+    );
+    // A policy verdict never becomes an execution gate on this response.
+    assert.equal(response.body.executableActionAvailable, false);
+  });
+
+  test('a chain that could not be read leaves the policy question unanswered, not open', async () => {
+    // Null, and never an empty-but-present shape: a surface with no verdict has
+    // to render nothing, because "no restriction found" and "we did not look"
+    // are the two states this product exists to keep apart.
+    rwaMarketRealityRuntime.eligibility = (async () => null) as never;
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.transferEligibility, null);
+  });
+
+  test('a chain read that throws never costs the reader the review', async () => {
+    // The whole handler runs inside one try/catch, so an unguarded socket error
+    // in this addition would return a 500 and lose the market answer, the
+    // evidence state and the board — over a question the reader could have gone
+    // without.
+    rwaMarketRealityRuntime.eligibility = (async () => {
+      throw new Error('socket hang up');
+    }) as never;
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'review');
+    assert.equal(response.body.transferEligibility, null);
+    // The rest of the review is untouched by the failure.
+    assert.equal(response.body.evidenceState, 'fresh_quote');
+  });
+
   test('a reviewed policy that changed under the draft stops the review', async () => {
     const response = await request(app()).get(
       `/api/route-intelligence/rwa/stock-action/${draftFor({ policy: `0x${'ab'.repeat(32)}` })}`,
