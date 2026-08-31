@@ -77,6 +77,8 @@ import {
 } from '@mioagent/route-proof';
 import {
   AerodromeSwapRouteAdapter,
+  aerodromeClReaderFromReaderV1,
+  createAerodromeReaderV1,
   KyberSwapRouteAdapter,
   O1SwapRouteAdapter,
   HydrexSwapRouteAdapter,
@@ -408,7 +410,14 @@ export const routePlanRouteRuntime = {
       adapters: [
         new UniswapSwapRouteAdapter(),
         new KyberSwapRouteAdapter(),
-        new AerodromeSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
+        // The CL reader is supplied EXPLICITLY, not defaulted inside the
+        // adapter: it changes what Aerodrome answers, and a behaviour change
+        // that arrives implicitly for every caller is one nobody reviewed.
+        // Without it the adapter prices the reviewed stocks off v2 pools
+        // holding dust while Aerodrome's real market for them sits in
+        // concentrated liquidity — measured at $76,263 a token against a true
+        // ~$219 (2026-08-31).
+        aerodromeAdapterV1(),
         new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new BalancerSwapRouteAdapter(),
@@ -432,6 +441,18 @@ export const routePlanRouteRuntime = {
   },
   now: () => new Date(),
 };
+
+/** Aerodrome, with the concentrated-liquidity guard wired to the same RPC
+ * transport the quote path already uses — so the lookup inherits its adaptive
+ * throttle pacing rather than answering "unavailable" under rate limiting. */
+function aerodromeAdapterV1(): AerodromeSwapRouteAdapter {
+  const rpcUrl = baseMainnetRpcUrlV1();
+  const reader = rpcUrl ? createAerodromeReaderV1({ rpcUrl }) : null;
+  return new AerodromeSwapRouteAdapter({
+    rpcUrl,
+    ...(reader ? { reader, clReader: aerodromeClReaderFromReaderV1(reader) } : {}),
+  });
+}
 
 /** The Base mainnet endpoint, resolved the same way every other on-chain read
  * in this server resolves it. Empty means the Aerodrome adapter reports
@@ -881,7 +902,7 @@ export const swapPrepareRouteRuntime = {
       quoteAdapters: [
         new UniswapSwapRouteAdapter(),
         new KyberSwapRouteAdapter(),
-        new AerodromeSwapRouteAdapter({ rpcUrl }),
+        aerodromeAdapterV1(),
         new O1SwapRouteAdapter({ rpcUrl }),
         new HydrexSwapRouteAdapter({ rpcUrl }),
         new BalancerSwapRouteAdapter(),

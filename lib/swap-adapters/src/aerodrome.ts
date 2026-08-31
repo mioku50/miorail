@@ -11,6 +11,7 @@ import {
   type AerodromeRouteLegV1,
 } from './aerodrome-pinned.js';
 import { createAerodromeReaderV1, type AerodromeReaderV1 } from './aerodrome-client.js';
+import { aerodromeClHasMarketV1, type AerodromeClReaderV1 } from './aerodrome-cl.js';
 import {
   canonicalRequestHash,
   canonicalResponseHash,
@@ -18,7 +19,7 @@ import {
   providerFailure,
   normalizeCaughtProviderError,
   resolveQuoteTimes,
-  supportsSwapIntent,
+  supportsRoutableSwapIntentV1,
 } from './normalization.js';
 import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
@@ -60,6 +61,14 @@ export const AERODROME_PROVIDER_V1 = {
 export interface AerodromeSwapRouteAdapterOptions {
   /** Injected so unit tests never open a socket. */
   reader?: AerodromeReaderV1 | null;
+  /**
+   * Concentrated-liquidity lookup for the same pair.
+   *
+   * Optional, and absent means the guard does not run — an adapter built
+   * without it behaves exactly as it did before, which keeps every existing
+   * caller and test honest rather than silently changing under them.
+   */
+  clReader?: AerodromeClReaderV1 | null;
   rpcUrl?: string;
   quoteTtlMs?: number;
   /** Gas units for the swap, by hop count. An ESTIMATE, and the candidate
@@ -134,13 +143,31 @@ function provenanceV1(
 export class AerodromeSwapRouteAdapter implements SwapRouteAdapter {
   readonly id = 'aerodrome' as const;
   private readonly options: AerodromeSwapRouteAdapterOptions;
+  private readonly clReader: AerodromeClReaderV1 | null;
 
   constructor(options: AerodromeSwapRouteAdapterOptions = {}) {
     this.options = options;
+    this.clReader = options.clReader ?? null;
   }
 
+  /**
+   * Any well-formed Base pair, exactly like KyberSwap and Uniswap.
+   *
+   * This used to be `supportsSwapIntent`, which requires BOTH sides to sit on
+   * the canonical trusted-asset list. Aerodrome was the last adapter still on
+   * that gate, and the Market Route Coverage Audit is what made the cost of it
+   * legible: the adapter declined every reviewed stock representation BEFORE
+   * sending a request, so a Miorail policy decision arrived at the measurement
+   * layer wearing the shape of a provider finding.
+   *
+   * Widening the gate is not a claim that these tokens are safe to trade. That
+   * is decided where it always was — by the token-security verdict on both
+   * sides and by the Safety Kernel over the calldata that comes back. All this
+   * says is that the pair is well enough described to ASK about, which is the
+   * same bar `isRoutableRouteAssetV1` was written to express.
+   */
   supports(intent: Parameters<SwapRouteAdapter['supports']>[0]): boolean {
-    return supportsSwapIntent(intent) && protocolAllowsAdapter(intent, this.id);
+    return supportsRoutableSwapIntentV1(intent) && protocolAllowsAdapter(intent, this.id);
   }
 
   async quote(input: SwapAdapterQuoteInput): Promise<SwapAdapterResult> {
@@ -207,6 +234,33 @@ export class AerodromeSwapRouteAdapter implements SwapRouteAdapter {
           this.id,
           sawTransportFailure ? 'provider_unreachable' : 'provider_no_route',
         );
+      }
+
+      // A v2 number exists. Is it Aerodrome's answer, or only the answer of the
+      // pools this adapter happens to be able to read?
+      //
+      // `getAmountsOut` walks stable/volatile pools only. For the tokenized
+      // stocks those hold dust while Aerodrome's CONCENTRATED-liquidity pool
+      // holds seven figures — which is how this adapter came to price NVDAc at
+      // $76,263 a token against a real market of about $219. A quote that names
+      // Aerodrome must be Aerodrome's, so when the venue holding the market is
+      // one this adapter cannot read, the honest result is a typed refusal
+      // rather than a confident number about somewhere else.
+      //
+      // Checked HERE and not before the routes, deliberately. A pair v2 cannot
+      // route has no number to misreport, so the lookup would be a dozen RPC
+      // calls spent to protect nothing — and on a throttled endpoint those
+      // calls turn a clean `no_route` into `unreachable`, which is a worse
+      // answer than the one it replaced.
+      if (this.clReader) {
+        const cl = await this.clReader.findPools({ tokenA: from, tokenB: to });
+        // An RPC failure is NOT "no CL pool". Falling through on a failed read
+        // would restore the exact misquote this guard exists to prevent, and it
+        // would do it intermittently.
+        if (!cl.ok) return providerFailure(this.id, 'provider_unreachable');
+        if (aerodromeClHasMarketV1(cl.pools)) {
+          return providerFailure(this.id, 'provider_venue_not_covered');
+        }
       }
 
       const blockNumber = await reader.readBlockNumber();

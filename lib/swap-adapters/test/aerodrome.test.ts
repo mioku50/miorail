@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
-import type { RouteIntentV1 } from '@mioagent/route-domain';
+import { hashRouteIntentV1, type RouteIntentV1 } from '@mioagent/route-domain';
 
 import {
   AERODROME_ROUTER_V1,
@@ -25,6 +25,7 @@ import {
   redactRpcTextV1,
   selectorV1,
   type AerodromeReaderV1,
+  type AerodromeClReaderV1,
 } from '../src/index.js';
 import { makeIntent, withProtocolConstraint } from './fixtures.js';
 
@@ -548,5 +549,154 @@ describe('T67B.1 the allowance read is honest about failure', () => {
     });
     assert.equal(result.ok, true);
     if (result.ok) assert.equal(result.value, 12345n);
+  });
+});
+
+describe('the reviewed-asset allowlist is not the adapter’s to enforce', () => {
+  const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
+
+  function stockIntent(): RouteIntentV1 {
+    const draft = {
+      ...makeIntent(),
+      toAsset: {
+        assetId: `eip155:8453/erc20:${NVDAC}`,
+        chainId: 8453 as const,
+        kind: 'erc20' as const,
+        address: NVDAC,
+        symbol: 'NVDAc',
+        decimals: 8,
+      },
+    } as RouteIntentV1;
+    // The schema verifies the hash over the financial payload, so an intent
+    // assembled by hand has to be re-sealed or it is not well formed at all —
+    // which would make this test pass for the wrong reason.
+    return { ...draft, intentHash: hashRouteIntentV1(draft) };
+  }
+
+  test('a well-formed Base pair is asked about, exactly like KyberSwap and Uniswap', () => {
+    // Aerodrome was the last adapter gated on `supportsSwapIntent`, which needs
+    // BOTH sides on the canonical trusted list. Every reviewed stock
+    // representation was therefore declined before a request was ever sent, so
+    // a Miorail policy decision reached the measurement layer wearing the shape
+    // of a provider finding. Base names Aerodrome as the DEX for these assets;
+    // refusing to ask it was ours, not the market's.
+    assert.equal(new AerodromeSwapRouteAdapter().supports(stockIntent()), true);
+  });
+
+  test('widening the gate did not widen what may be EXECUTED', async () => {
+    // The bar this crosses is "well enough described to quote". Safety is still
+    // decided downstream — by the token-security verdict on both sides and by
+    // the Safety Kernel over the calldata. A quote adapter with no reader
+    // configured still refuses rather than inventing one.
+    const result = await new AerodromeSwapRouteAdapter().quote({
+      intent: stockIntent(),
+      walletAddress: '0x1111111111111111111111111111111111111111',
+      requestId: 'req-stock',
+      now: NOW,
+    });
+    assert.equal(result.outcome === 'quoted', false);
+    assert.equal(result.outcome !== 'quoted' && result.errorCode, 'provider_not_configured');
+  });
+});
+
+describe('an Aerodrome answer must be Aerodrome’s answer', () => {
+  const clReader = (result: Awaited<ReturnType<AerodromeClReaderV1['findPools']>>) => ({
+    async findPools() {
+      return result;
+    },
+  });
+  const funded = {
+    ok: true as const,
+    pools: [
+      {
+        factory: '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef' as `0x${string}`,
+        pool: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9' as `0x${string}`,
+        tickSpacing: 10,
+        tokenABalanceAtomic: '814421000000',
+        tokenBBalanceAtomic: '369771000000',
+      },
+    ],
+  };
+
+  test('a pair whose liquidity is in CL is refused, not priced off the v2 dust pool', async () => {
+    // Measured 2026-08-31: the v2 Router prices NVDAc at $295/token at $100 and
+    // $76,263/token at $100,000, because the pools it can see hold dust. The CL
+    // pool holds about $1.6M. Answering with the first while naming Aerodrome
+    // is the worst kind of wrong — confident, well-formed, and off by orders of
+    // magnitude.
+    const adapter = new AerodromeSwapRouteAdapter({
+      clReader: clReader(funded),
+      reader: reader({
+        async readAmountsOut(input) {
+          return { ok: true, value: [input.amountIn, 1_000n] };
+        },
+      }),
+    });
+    const result = await adapter.quote({
+      intent: makeIntent(),
+      walletAddress: '0x1111111111111111111111111111111111111111',
+      requestId: 'req-cl',
+      now: NOW,
+    });
+    assert.equal(result.outcome !== 'quoted' && result.errorCode, 'provider_venue_not_covered');
+    assert.equal(result.outcome, 'unsupported');
+  });
+
+  test('with no CL market the v2 Router is still the answer', async () => {
+    const adapter = new AerodromeSwapRouteAdapter({
+      clReader: clReader({ ok: true, pools: [] }),
+      reader: reader({
+        async readAmountsOut(input) {
+          return { ok: true, value: [input.amountIn, 1_000n] };
+        },
+      }),
+    });
+    const result = await adapter.quote({
+      intent: makeIntent(),
+      walletAddress: '0x1111111111111111111111111111111111111111',
+      requestId: 'req-no-cl',
+      now: NOW,
+    });
+    assert.equal(result.outcome, 'quoted');
+  });
+
+  test('a failed CL read never falls through to the v2 number', async () => {
+    // Falling through on a failed lookup would restore exactly the misquote the
+    // guard exists to prevent, and it would do it intermittently — which is
+    // worse than doing it always, because it would pass every test run.
+    const adapter = new AerodromeSwapRouteAdapter({
+      clReader: clReader({ ok: false, reason: 'unavailable' }),
+      reader: reader({
+        async readAmountsOut(input) {
+          return { ok: true, value: [input.amountIn, 1_000n] };
+        },
+      }),
+    });
+    const result = await adapter.quote({
+      intent: makeIntent(),
+      walletAddress: '0x1111111111111111111111111111111111111111',
+      requestId: 'req-cl-fail',
+      now: NOW,
+    });
+    assert.equal(result.outcome !== 'quoted' && result.errorCode, 'provider_unreachable');
+  });
+
+  test('an adapter built without a CL reader behaves exactly as before', async () => {
+    // Every existing caller and test constructs one this way. The guard must be
+    // something a caller opts into, not something that changes under them.
+    const adapter = new AerodromeSwapRouteAdapter({
+      reader: reader({
+        async readAmountsOut(input) {
+          return { ok: true, value: [input.amountIn, 1_000n] };
+        },
+      }),
+    });
+    const result = await adapter.quote({
+      intent: makeIntent(),
+      walletAddress: '0x1111111111111111111111111111111111111111',
+      requestId: 'req-legacy',
+      now: NOW,
+    });
+    assert.equal(result.outcome, 'quoted');
   });
 });

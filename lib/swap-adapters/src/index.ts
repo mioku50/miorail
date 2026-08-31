@@ -10,6 +10,7 @@ export * from './uniswap-trade-client.js';
 export * from './uniswap.js';
 export * from './aerodrome-pinned.js';
 export * from './aerodrome-client.js';
+export * from './aerodrome-cl.js';
 export * from './aerodrome.js';
 export * from './uniswap-v4-pinned.js';
 export * from './uniswap-v4-pool.js';

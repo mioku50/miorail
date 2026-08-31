@@ -75,6 +75,12 @@ export interface AerodromeReaderV1 {
     inputs: readonly { amountIn: bigint; route: readonly AerodromeRouteLegV1[] }[],
   ): Promise<AerodromeRpcResultV1<bigint[]>[]>;
   readBlockNumber(): Promise<string | null>;
+  /** A plain `eth_call`, sharing this reader's pacing and retry policy.
+   * Optional so existing fakes stay valid. */
+  readCall?(input: {
+    to: `0x${string}`;
+    data: `0x${string}`;
+  }): Promise<AerodromeRpcResultV1<string>>;
   /** T67B.1: the CURRENT allowance the wallet has granted the Router.
    * Read so the approval decision is made from observed state rather than
    * from the assumption that a previous approval is still standing. */
@@ -350,6 +356,21 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
   }
 
   return {
+    /**
+     * A plain `eth_call` at an arbitrary address, through the SAME transport.
+     *
+     * Added so the concentrated-liquidity lookup does not become a second place
+     * where an endpoint is configured, and — the reason that actually matters —
+     * so it inherits this reader's adaptive throttle pacing. The public Base
+     * endpoint serves about half a call a second; a CL scan issuing a dozen
+     * unpaced reads answers `unavailable` for a pool that plainly exists, which
+     * is the failure this whole guard was built to stop.
+     */
+    async readCall(input) {
+      const result = await rpc('eth_call', [{ to: input.to, data: input.data }, 'latest']);
+      return result.ok ? { ok: true, value: String(result.value) } : result;
+    },
+
     async readDefaultFactory() {
       const result = await rpc('eth_call', [
         { to: AERODROME_ROUTER_V1, data: encodeDefaultFactoryV1() },

@@ -334,6 +334,14 @@ export function providerFailure(
   if (errorCode === 'provider_unsupported_intent') {
     return { outcome: 'unsupported', provider, errorCode, retryable: false };
   }
+  // The provider has a market for this pair at a venue this adapter cannot
+  // read. `unsupported`, deliberately, and never `unavailable`: the second is
+  // the word for the market having no route, and this is the opposite — a route
+  // exists and OUR coverage stops short of it. Not retryable, because asking
+  // again reaches the same venue we still cannot read.
+  if (errorCode === 'provider_venue_not_covered') {
+    return { outcome: 'unsupported', provider, errorCode, retryable: false };
+  }
   if (errorCode === 'provider_no_route') {
     return { outcome: 'unavailable', provider, errorCode, retryable: false };
   }
