@@ -980,11 +980,14 @@ describe('GET the review a stock action draft points at', () => {
     rwaMarketRealityRuntime.eligibility = (async () => ({
       tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
       wallet: '0x1111111111111111111111111111111111111111',
+      executor: null,
       blockTag: '0x1',
       blockNumber: '1',
+      transferPause: { state: 'not_paused', reason: null },
       scopes: [
-        { scope: 'transfer_sender', verdict: 'denied', policyId: '5', policyType: 'blocklist', reason: null },
-        { scope: 'transfer_receiver', verdict: 'authorized', policyId: '5', policyType: 'blocklist', reason: null },
+        { scope: 'transfer_sender', subject: 'wallet', account: '0x1111111111111111111111111111111111111111', verdict: 'denied', policyId: '5', policyType: 'blocklist', reason: null },
+        { scope: 'transfer_receiver', subject: 'wallet', account: '0x1111111111111111111111111111111111111111', verdict: 'authorized', policyId: '5', policyType: 'blocklist', reason: null },
+        { scope: 'transfer_executor', subject: 'executor', account: null, verdict: 'not_established', policyId: '5', policyType: 'blocklist', reason: 'The contract that would move this token is not known at this step, so its permission was not checked.' },
       ],
     })) as never;
     const response = await request(app()).get(
@@ -1002,6 +1005,7 @@ describe('GET the review a stock action draft points at', () => {
       [
         ['transfer_sender', 'denied'],
         ['transfer_receiver', 'authorized'],
+        ['transfer_executor', 'not_established'],
       ],
     );
     // A policy verdict never becomes an execution gate on this response.
@@ -1018,6 +1022,26 @@ describe('GET the review a stock action draft points at', () => {
     );
     assert.equal(response.status, 200);
     assert.equal(response.body.transferEligibility, null);
+  });
+
+  test('the review asks about no executor, and says so rather than assuming the wallet', async () => {
+    // A sell moves the token through a router under `transferFrom`, and this
+    // build chooses that router AFTER the review. Passing the wallet in the
+    // executor's place would answer a different question and label it as this
+    // one; passing nothing and reporting `not_established` is the honest state.
+    const asked: unknown[] = [];
+    rwaMarketRealityRuntime.eligibility = (async (input: unknown) => {
+      asked.push(input);
+      return null;
+    }) as never;
+    const response = await request(app()).get(
+      `/api/route-intelligence/rwa/stock-action/${draftFor()}`,
+    );
+    assert.equal(response.status, 200);
+    assert.equal(asked.length, 1);
+    const input = asked[0] as { wallet: string; executor: unknown };
+    assert.equal(input.executor, null);
+    assert.notEqual(input.executor, input.wallet);
   });
 
   test('a chain read that throws never costs the reader the review', async () => {

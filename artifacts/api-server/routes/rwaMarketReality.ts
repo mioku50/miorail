@@ -119,13 +119,18 @@ export const rwaMarketRealityRuntime = {
   quoteAdapters: () => [new KyberSwapRouteAdapter()],
   radar: () => createDatabaseMarketRealityRadarRepositoryV1(client),
   /**
-   * Transfer eligibility for one wallet against one B20, or null.
+   * The token's own transfer rules for one wallet, or null.
    *
    * Null rather than a reassuring shape when the chain cannot be reached: a
    * surface with no verdict must render nothing, because "no restriction found"
    * and "we did not look" are the two states this product exists to separate.
    */
-  eligibility: async (input: { tokenAddress: string; wallet: string }) => {
+  eligibility: async (input: {
+    tokenAddress: string;
+    wallet: string;
+    /** The contract that would call `transferFrom`, where a caller knows it. */
+    executor?: string | null;
+  }) => {
     if (!rpcUrlV1()) return null;
     try {
       const reader = createB20ReaderV1({ rpcUrl: rpcUrlV1() });
@@ -135,6 +140,7 @@ export const rwaMarketRealityRuntime = {
         reader,
         tokenAddress: input.tokenAddress,
         wallet: input.wallet,
+        executor: input.executor ?? null,
         blockTag: anchor.value.blockTag,
         blockNumber:
           anchor.value.blockNumber === undefined ? null : String(anchor.value.blockNumber),
@@ -1055,19 +1061,31 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
       },
       outcome: 'review',
       /**
-       * Whether THIS wallet may move THIS token, read on chain at one block.
+       * The token's own transfer rules for THIS wallet, read on chain at one
+       * block — sending, receiving, and the contract that would do the moving.
        *
        * The third axis, and the one this surface most needed: everything else
        * on this page is about the market, and a regulated asset can carry a
        * transfer policy that denies one address while the market is perfectly
-       * healthy. Every reviewed Coinbase representation points its transfer
-       * scopes at a live blocklist, so this is not hypothetical.
+       * healthy. Every reviewed Coinbase representation points all three
+       * transfer scopes at a live blocklist, so this is not hypothetical.
+       *
+       * `executor` is null here on purpose, and the read reports it as not
+       * established rather than assuming it. A sell moves the token through a
+       * router under `transferFrom`, and this build chooses that router AFTER
+       * this step — so at review time no exact executor address exists to ask
+       * about. Passing the wallet in its place would answer a different
+       * question and label it as this one.
        *
        * Never a gate. It states what the registry said and lets the reader
        * decide; a failed read is `not_established` and never a denial.
        */
       transferEligibility: await rwaMarketRealityRuntime
-        .eligibility({ tokenAddress: claims.tokenAddress, wallet: claims.walletAddress })
+        .eligibility({
+          tokenAddress: claims.tokenAddress,
+          wallet: claims.walletAddress,
+          executor: null,
+        })
         // Guarded HERE and not only inside the default implementation: this
         // read is an ADDITION to the review, never a precondition for it, and
         // the whole handler runs inside one try/catch. An unguarded throw would
