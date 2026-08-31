@@ -16,6 +16,7 @@ import {
 } from '@mioagent/rwa-market-reality/execution-handoff';
 
 import { cashExitLadderRungsV1 } from './rwaDiscoverView';
+import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
@@ -344,8 +345,12 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       if (rungs.length === 0) continue;
       built[response.dossier.tokenAddress.toLowerCase()] = {
         rungs,
+        // The router's NAME, not its adapter id. This line read "quoted
+        // through kyberswap" on a consumer card — an internal identifier, in
+        // the one place a reader looks to find out who answered.
         note: `Exact sizes only, quoted through ${
-          ladder.approvedSources.join(', ') || 'no approved router'
+          ladder.approvedSources.map((source) => swapProviderDisplayNameV1(source)).join(', ') ||
+          'no approved router'
         }. Nothing here was executed.`,
         // The round trip AT THE SIZE BEING ASKED, from the same run the rungs
         // come from. The open quote first, the last completed measurement

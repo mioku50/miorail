@@ -1531,7 +1531,7 @@ export function marketRealityViewV1(input: {
             label: 'Ratio',
             value:
               representation.normalization === 'not_established'
-                ? 'Not established'
+                ? 'Not confirmed yet'
                 : 'Applied once',
             note: NORMALIZATION_NOTE_V1[representation.normalization],
             tone: representation.normalization === 'not_established' ? 'off' : 'neutral',

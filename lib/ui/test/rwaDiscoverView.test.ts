@@ -253,7 +253,7 @@ describe('rwa discover view — official assets', () => {
     // The rung says the router refused, not that our measurement broke.
     assert.deepEqual(
       card.ladder.map((rung) => rung.value),
-      ['no cash entry'],
+      ['no buy route'],
     );
     assert.equal(
       card.facts.find((fact) => /cash-out/i.test(fact.label))!.note,
@@ -682,7 +682,7 @@ describe('the cash-exit ladder as rows', () => {
     assert.equal(rows[0]?.note, 'measured 10m ago');
     // The router's refusal, named as the router's — the same label Discover's
     // own preview gives it, from the same error code.
-    assert.equal(rows[1]?.value, 'no cash entry');
+    assert.equal(rows[1]?.value, 'no buy route');
   });
 
   test('a router that does not carry the token is not "did not finish"', () => {

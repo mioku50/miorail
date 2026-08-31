@@ -411,8 +411,12 @@ const RUNG_STATUS_V1: Readonly<
 };
 
 /** The one rung label that depends on WHY the measurement stopped: a refused
- * buy leg is the router's answer, not our failure. */
-const ENTRY_REFUSED_LABEL_V1 = { label: 'no cash entry', tone: 'warn' as ToneV1 };
+ * buy leg is the router's answer, not our failure.
+ *
+ * Was "no cash entry", which is a phrase nobody outside this codebase can
+ * read. It pairs with `unavailable`'s "no exit route" — one side in, one side
+ * out — so it now says the same thing in the same shape. */
+const ENTRY_REFUSED_LABEL_V1 = { label: 'no buy route', tone: 'warn' as ToneV1 };
 
 /**
  * Rung labels the measurement's own error code decides.
