@@ -21,6 +21,11 @@ export const SwapAdapterFailureV1Schema = z
       'rate_limited',
       'invalid_response',
       'rejected',
+      // A provider that CAN route this and will not, on its own trading
+      // policy. Kept apart from `unavailable` and `unsupported` all the way to
+      // the wire: a surface that receives it must be able to say who declined,
+      // and neither of those two words can.
+      'policy_refused',
     ]),
     // T67B: Aerodrome quotes over Base RPC rather than a partner API, so it
     // reports failures through the same shape as the two HTTP adapters.

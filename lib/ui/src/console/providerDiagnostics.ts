@@ -59,6 +59,10 @@ export type SwapDiagnosticReasonV1 =
   | 'provider_preflight_failed'
   | 'no_route'
   | 'unsupported_token'
+  // A venue that CAN route this and declines to, on its own trading policy.
+  // Its own reason precisely because the three it would otherwise fall into
+  // each name the wrong party: the market, our coverage, or our transport.
+  | 'provider_policy_refused'
   | 'amount_too_small'
   | 'unsupported_pair'
   | 'unsupported_chain'
@@ -104,6 +108,7 @@ const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
   // question of whether a route exists. Mapping this onto `no_route` would
   // blame the market for a question nobody asked it.
   provider_unsupported_token: 'unsupported_token',
+  provider_policy_refused: 'provider_policy_refused',
   provider_unsupported_intent: 'unsupported_pair',
   provider_chain_mismatch: 'unsupported_chain',
   provider_expired_quote: 'stale_quote',
@@ -145,6 +150,7 @@ export const SWAP_DIAGNOSTIC_LABEL_V1: Record<SwapDiagnosticReasonV1, string> = 
   provider_preflight_failed: 'preflight failed',
   no_route: 'no route',
   unsupported_token: 'token not covered',
+  provider_policy_refused: 'declined to quote',
   amount_too_small: 'amount too small',
   unsupported_pair: 'unsupported pair',
   unsupported_chain: 'unsupported chain',
@@ -207,6 +213,11 @@ export function swapDiagnosticMessageV1(input: SwapDiagnosticMessageInputV1): st
       return `${name} preflight could not verify the router on Base, so no calls were built from it.${stillWorks}`;
     case 'no_route':
       return `${name} found no route for this amount.${stillWorks} A slightly larger amount often routes.`;
+    case 'provider_policy_refused':
+      // States what the venue did and stops. No inference about the reader,
+      // about the token, or about whether the refusal is lawful, correct or
+      // permanent — none of which this build measured or could measure.
+      return `${name} declined to quote this token under its trading policy.${stillWorks} That is this venue's own rule; it is not a finding about the token or about you.`;
     case 'unsupported_token':
       // Ours, not the market's: another router might cover it, and the token
       // itself may trade perfectly well somewhere this set does not reach.

@@ -13,7 +13,18 @@ export type SwapAdapterFailureOutcome =
   | 'timeout'
   | 'rate_limited'
   | 'invalid_response'
-  | 'rejected';
+  | 'rejected'
+  /**
+   * The provider reached a verdict and declined to give one, on its own
+   * trading policy.
+   *
+   * A fifth thing, and the only one that is about neither the token nor the
+   * market. It is NOT `unavailable` (that is the market having no route), NOT
+   * `unsupported` (that is our coverage stopping short), and NOT `rejected`
+   * (that is us refusing an answer we did get). Collapsing it into any of the
+   * three would put a venue's house rules on a different party's account.
+   */
+  | 'policy_refused';
 
 export interface SwapAdapterQuoteInput {
   intent: RouteIntentV1;

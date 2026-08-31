@@ -296,6 +296,52 @@ const INVALID_RESPONSE_CODES_V1 = new Set([
   'provider_slippage_echo_mismatch',
 ]);
 
+/**
+ * The one error code that means "this venue will not quote this token".
+ *
+ * Exported as a constant so an adapter, the normaliser and the surface all
+ * name the same string. A second spelling anywhere is a state that silently
+ * falls through to `unavailable`.
+ */
+export const PROVIDER_POLICY_REFUSED_CODE_V1 = 'provider_policy_refused' as const;
+
+/**
+ * Provider reasons that mean "we can route this, and we will not".
+ *
+ * 0x answers `BUY_TOKEN_NOT_AUTHORIZED_FOR_TRADE` /
+ * `SELL_TOKEN_NOT_AUTHORIZED_FOR_TRADE` at HTTP 200 for the Coinbase tokenized
+ * equities — a complete, well-formed answer carrying a verdict, and not a
+ * route finding. Each of the three obvious places to file it says something
+ * untrue:
+ *
+ *   no_route                 hands a venue's house rules to the market
+ *   unsupported_token        claims the router never heard of a token it named
+ *   provider_failed / HTTP   puts a clean 200 on Miorail's account
+ *
+ * NOTE: nothing in this build calls 0x — the audit measured it out of process
+ * and no adapter was integrated. This is the seam, typed and tested, so the
+ * state exists BEFORE the adapter does. A provider that starts answering this
+ * way lands in its own bucket instead of quietly joining one of the three.
+ *
+ * Matching is exact and case-insensitive on a trimmed string. No substring
+ * search: a provider message that merely contains the phrase is prose, and
+ * this taxonomy is built on typed codes rather than on parsing text.
+ */
+export const PROVIDER_POLICY_REFUSAL_REASONS_V1: readonly string[] = [
+  'BUY_TOKEN_NOT_AUTHORIZED_FOR_TRADE',
+  'SELL_TOKEN_NOT_AUTHORIZED_FOR_TRADE',
+];
+
+export function providerPolicyRefusalCodeV1(
+  rawReason: unknown,
+): typeof PROVIDER_POLICY_REFUSED_CODE_V1 | null {
+  if (typeof rawReason !== 'string') return null;
+  const normalized = rawReason.trim().toUpperCase();
+  return PROVIDER_POLICY_REFUSAL_REASONS_V1.includes(normalized)
+    ? PROVIDER_POLICY_REFUSED_CODE_V1
+    : null;
+}
+
 export function providerFailure(
   provider: SwapAdapterId,
   errorCode: string,
@@ -341,6 +387,14 @@ export function providerFailure(
   // again reaches the same venue we still cannot read.
   if (errorCode === 'provider_venue_not_covered') {
     return { outcome: 'unsupported', provider, errorCode, retryable: false };
+  }
+  // A venue that CAN route this pair and declines to, on its own trading
+  // policy. Deliberately not folded into any of its three neighbours: it is
+  // not `unavailable` (the market having no route), not `unsupported` (our
+  // coverage falling short), and not a transport code (our failure). See
+  // `providerPolicyRefusalCodeV1` for what produces it.
+  if (errorCode === PROVIDER_POLICY_REFUSED_CODE_V1) {
+    return { outcome: 'policy_refused', provider, errorCode, retryable: false };
   }
   if (errorCode === 'provider_no_route') {
     return { outcome: 'unavailable', provider, errorCode, retryable: false };
