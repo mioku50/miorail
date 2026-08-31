@@ -626,14 +626,49 @@ describe('a confirmed clearance is the only way to an executable request', () =>
   });
 
   test('a Safety Kernel refusal produces nothing executable', async () => {
+    // The real shape: `safety`, a SafetyKernelResultV1. The stub said
+    // `safetyKernel` and got away with it through `as never` until the refusal
+    // path started reading the field.
     executionStub({
       planAndPrepare: async () =>
-        ({ outcome: 'blocked', safetyKernel: { passed: false } }) as never,
+        ({
+          outcome: 'blocked',
+          routeRunId: 'run-1',
+          safety: {
+            schemaVersion: 'safety-kernel-result/v1',
+            verdict: 'blocked',
+            blockedReason: 'the wallet cannot fund this size',
+            checks: [
+              { id: 'wallet_balance', description: 'funds the exact size', status: 'failed', detail: null },
+              { id: 'router_allowlist', description: 'router is reviewed', status: 'passed', detail: null },
+            ],
+          },
+        }) as never,
     });
     await assert.rejects(
       () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
       refusedWith('stock_action_blocked'),
     );
+  });
+
+  test('a blocked result the logger cannot read still refuses, and never crashes', async () => {
+    // Diagnostics must not decide the outcome. A refusal is the safe path, and
+    // a logger that throws on an unexpected shape turns it into a 500 — worse
+    // than no log at all.
+    for (const blocked of [
+      { outcome: 'blocked' },
+      { outcome: 'blocked', safety: null },
+      { outcome: 'blocked', safety: { checks: 'not-an-array' } },
+      { outcome: 'blocked', safety: { checks: [null] } },
+    ]) {
+      executionStub({ planAndPrepare: async () => blocked as never });
+      await assert.rejects(
+        () =>
+          miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+        refusedWith('stock_action_blocked'),
+        JSON.stringify(blocked),
+      );
+    }
   });
 
   test('the exact representation survives to the executable request', async () => {

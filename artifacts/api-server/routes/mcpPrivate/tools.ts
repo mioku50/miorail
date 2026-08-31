@@ -17,6 +17,7 @@ import {
   type StockExecutionHandoffResultV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
+import { logger } from '@mioagent/utils';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
 import {
   STOCK_ACTION_CLEARANCE_REFUSAL_COPY_V1,
@@ -950,6 +951,31 @@ export async function miorailGetStockBaseMcpActionV1(
     throw stockActionExecutionRefusalV1('stock_action_route_unavailable');
   }
   if (prepared.outcome === 'blocked') {
+    // The kernel knows WHY and the client is not told, deliberately: a refusal
+    // on an execution surface must not narrate its own checks to a caller.
+    // The server had no record either, which is a different problem — the
+    // acceptance smoke hit this refusal and the only way to learn the cause
+    // was to read the wallet's balance on chain by hand.
+    //
+    // Logged: the ids of the checks that FAILED. Our own check identifiers,
+    // never `blockedReason` or a check's `detail` — those are free text and a
+    // provider message can end up in free text.
+    // Read defensively, and never let this line decide the outcome. A refusal
+    // is the safe path; a logger that throws on an unexpected shape turns it
+    // into a crash, which is strictly worse than not logging. Caught in gates:
+    // the first version read `.checks` straight and a stub without it made a
+    // clean refusal fail as a TypeError.
+    const failedChecks = Array.isArray(prepared.safety?.checks)
+      ? prepared.safety.checks
+          .filter((check) => check?.status === 'failed')
+          .map((check) => check.id)
+          .slice(0, 8)
+      : null;
+    logger.warn('Stock action blocked by the Safety Kernel', {
+      tenantId: identity.tenantId,
+      tokenAddress: clearance.tokenAddress,
+      failedChecks,
+    });
     throw stockActionExecutionRefusalV1('stock_action_blocked');
   }
 
