@@ -148,6 +148,11 @@ function bpsPercentV1(value: unknown): string {
   return `${sign}${magnitude / 100n}.${(magnitude % 100n).toString().padStart(2, '0')}%`;
 }
 
+function signedPercentFromBpsV1(value: unknown): string {
+  if (typeof value !== 'string' || !/^-?(0|[1-9][0-9]*)$/.test(value)) return '—';
+  return `${BigInt(value) > 0n ? '+' : ''}${bpsPercentV1(value)}`;
+}
+
 function signedBpsV1(value: unknown): string {
   if (typeof value !== 'string' || !/^-?(0|[1-9][0-9]*)$/.test(value)) return '—';
   const bps = BigInt(value);
@@ -240,7 +245,9 @@ function eventCopyV1(event: MarketRealityRadarEventWireV1): {
         headline: 'Effective execution price changed',
         primary: `${usdV1(facts.previousEffectivePriceAtomic, Number(facts.effectivePriceDecimals))} → ${usdV1(facts.effectivePriceAtomic, Number(facts.effectivePriceDecimals))}`,
         secondary: null,
-        delta: signedBpsV1(facts.changeBps),
+        // Was a bare basis-point delta — the only relative figure on this
+        // event, in the one unit a reader has to convert.
+        delta: `${signedPercentFromBpsV1(facts.changeBps)} · ${signedBpsV1(facts.changeBps)}`,
       };
     case 'route_became_unavailable':
       return {

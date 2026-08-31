@@ -194,6 +194,14 @@ function percentFromBpsV1(bps: string): string {
   return `${sign}${whole.toString()}.${fraction}%`;
 }
 
+/** Signed percent, for the rows where a basis point was the primary value.
+ * The neighbouring exit-cost rows already read percent-first; the reference
+ * basis did not, so one screen quoted two units for the same kind of figure. */
+function signedPercentFromBpsV1(value: bigint): string {
+  const sign = value > BigInt(0) ? '+' : '';
+  return `${sign}${percentFromBpsV1(value.toString())}`;
+}
+
 function signedBpsV1(value: bigint): string {
   const sign = value > BigInt(0) ? '+' : value < BigInt(0) ? '−' : '';
   const magnitude = value < BigInt(0) ? -value : value;
@@ -333,8 +341,10 @@ function pointMetricsV1(input: {
     snapshot.basis.status === 'comparable' && snapshot.basis.premiumDiscountBps !== null
       ? {
           label: 'Reference basis',
-          value: signedBpsV1(BigInt(snapshot.basis.premiumDiscountBps)),
-          note: null,
+          // Percent first, basis points as the note — the same shape as the
+          // `Exit cost` row above, which a reader meets on the same card.
+          value: signedPercentFromBpsV1(BigInt(snapshot.basis.premiumDiscountBps)),
+          note: signedBpsV1(BigInt(snapshot.basis.premiumDiscountBps)),
         }
       : { label: 'Reference basis', value: '—', note: snapshot.basis.reason },
   );
@@ -438,7 +448,7 @@ function changesToNowV1(input: {
     const nowBasis = BigInt(input.current.basis.premiumDiscountBps);
     rows.push({
       label: 'Reference basis',
-      value: `${signedBpsV1(oldBasis)} → ${signedBpsV1(nowBasis)}`,
+      value: `${signedPercentFromBpsV1(oldBasis)} → ${signedPercentFromBpsV1(nowBasis)}`,
       note: signedBpsV1(nowBasis - oldBasis),
     });
   }
