@@ -90,8 +90,8 @@ describe('the Stocks ask panel', () => {
 
   test('separates what was established from what was not', () => {
     const markup = html();
-    assert.ok(markup.includes('Established'));
-    assert.ok(markup.includes('Not established'));
+    assert.ok(markup.includes('Confirmed'));
+    assert.ok(markup.includes('Not confirmed'));
     assert.ok(markup.includes('999.02 USDC'));
     assert.ok(markup.includes('a reference price for this issuer'));
   });

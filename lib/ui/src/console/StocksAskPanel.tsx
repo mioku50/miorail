@@ -156,7 +156,10 @@ export function StocksAskPanel({
           {answer.answer.established.length > 0 ? (
             <div className="stocks-ask-block">
               <p className="mr-attribution">
-                <span className="mr-attribution-k">Established</span>
+                {/* The reader's word, not the engine's. "Established" is
+                    this product's internal term for "carried by the evidence
+                    bundle"; a person reads "Confirmed" without translating. */}
+                <span className="mr-attribution-k">Confirmed</span>
               </p>
               <ul className="stocks-ask-claims">
                 {answer.answer.established.map((claim, index) => (
@@ -187,7 +190,7 @@ export function StocksAskPanel({
           {answer.answer.notEstablished.length > 0 ? (
             <div className="stocks-ask-block">
               <p className="mr-attribution">
-                <span className="mr-attribution-k">Not established</span>
+                <span className="mr-attribution-k">Not confirmed</span>
               </p>
               <ul className="stocks-ask-claims stocks-ask-absent">
                 {answer.answer.notEstablished.map((entry, index) => (

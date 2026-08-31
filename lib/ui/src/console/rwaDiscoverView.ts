@@ -425,9 +425,14 @@ const ENTRY_REFUSED_LABEL_V1 = { label: 'no cash entry', tone: 'warn' as ToneV1 
 const RUNG_ERROR_LABEL_V1: Readonly<Record<string, { label: string; tone: ToneV1 }>> = {
   cash_size_anchor_no_route: ENTRY_REFUSED_LABEL_V1,
   // Compact in the rung, because it repeats once per size. The full sentence --
-  // "Router does not support this token under the reviewed policy" -- is said
-  // once on the card, where a reader meets it before the ladder.
-  provider_unsupported_token: { label: 'not supported', tone: 'warn' },
+  // "This route source does not cover this token" -- is said once on the card,
+  // where a reader meets it before the ladder.
+  provider_unsupported_token: { label: 'not covered', tone: 'warn' },
+  // A venue that CAN route this and declined to, on its own trading rules.
+  // `warn`, not `off`: nothing was found wrong with the token or the market.
+  provider_policy_refused: { label: 'venue declined', tone: 'warn' },
+  // Ours, not the market's: a market exists at a venue this build cannot read.
+  provider_venue_not_covered: { label: 'venue not covered by us', tone: 'warn' },
 };
 
 const REFERENCE_NOTE_V1: Readonly<Record<OfficialAssetWireV1['referenceValue']['status'], string>> =

@@ -159,8 +159,13 @@ export function exitEvidenceV1(
     destination: 'USDC' | 'ETH';
     requestedCashAtomic: string | null;
     roundTripCostBps: string | null;
+    returnedAtomic: string | null;
     observedAt: string | null;
-    lastMeasured?: { roundTripCostBps: string | null; observedAt: string } | null;
+    lastMeasured?: {
+      roundTripCostBps: string | null;
+      returnedAtomic: string | null;
+      observedAt: string;
+    } | null;
   }[],
   question: Pick<StocksConsoleQuestionV1, 'requestedCashAtomic' | 'destination'>,
 ): RepresentationExitEvidenceV1 | null {
@@ -170,13 +175,25 @@ export function exitEvidenceV1(
       row.requestedCashAtomic === question.requestedCashAtomic,
   );
   if (!rung) return null;
+  // The money on both sides travels with the cost, so the card can say
+  // "$1,000 in → $342.80 back" from the measurement instead of rebuilding one
+  // side out of the other. Open evidence and history are never mixed: an
+  // amount always comes from the same run as the percentage beside it.
   if (rung.roundTripCostBps !== null && rung.observedAt !== null) {
-    return { roundTripCostBps: rung.roundTripCostBps, basis: 'open', observedAt: rung.observedAt };
+    return {
+      roundTripCostBps: rung.roundTripCostBps,
+      requestedCashAtomic: rung.requestedCashAtomic,
+      returnedCashAtomic: rung.returnedAtomic,
+      basis: 'open',
+      observedAt: rung.observedAt,
+    };
   }
   const last = rung.lastMeasured ?? null;
   if (last && last.roundTripCostBps !== null) {
     return {
       roundTripCostBps: last.roundTripCostBps,
+      requestedCashAtomic: rung.requestedCashAtomic,
+      returnedCashAtomic: last.returnedAtomic,
       basis: 'last_measured',
       observedAt: last.observedAt,
     };

@@ -705,7 +705,7 @@ describe('the cash-exit ladder as rows', () => {
       ],
       NOW,
     );
-    assert.equal(rows[0]?.value, 'not supported');
+    assert.equal(rows[0]?.value, 'not covered');
   });
 
   test('a rung nothing ever measured stays out of the ladder', () => {

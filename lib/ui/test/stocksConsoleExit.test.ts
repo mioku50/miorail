@@ -22,6 +22,7 @@ function rung(over: Partial<Parameters<typeof exitEvidenceV1>[0][number]> = {}) 
     destination: 'USDC' as const,
     requestedCashAtomic: '100000000000',
     roundTripCostBps: null,
+    returnedAtomic: null,
     observedAt: null,
     lastMeasured: null,
     ...over,
@@ -34,13 +35,24 @@ describe('the round trip at the size being asked', () => {
       [
         rung({
           roundTripCostBps: '51',
+          returnedAtomic: '99490000000',
           observedAt: OPEN_AT,
-          lastMeasured: { roundTripCostBps: '9999', observedAt: OLD_AT },
+          lastMeasured: {
+            roundTripCostBps: '9999',
+            returnedAtomic: '10000000',
+            observedAt: OLD_AT,
+          },
         }),
       ],
       QUESTION,
     );
-    assert.deepEqual(exit, { roundTripCostBps: '51', basis: 'open', observedAt: OPEN_AT });
+    assert.deepEqual(exit, {
+      roundTripCostBps: '51',
+      requestedCashAtomic: '100000000000',
+      returnedCashAtomic: '99490000000',
+      basis: 'open',
+      observedAt: OPEN_AT,
+    });
   });
 
   test('history is used when nothing is open, and is never relabelled as open', () => {
@@ -49,11 +61,24 @@ describe('the round trip at the size being asked', () => {
     // always gets the last completed run. Dropping it would hide the fact
     // exactly when it is most useful.
     const exit = exitEvidenceV1(
-      [rung({ lastMeasured: { roundTripCostBps: '9957', observedAt: OLD_AT } })],
+      [
+        rung({
+          // The rung's own open figure is absent, so the money must come from
+          // the SAME run as the cost beside it — never half from each.
+          returnedAtomic: null,
+          lastMeasured: {
+            roundTripCostBps: '9957',
+            returnedAtomic: '430000000',
+            observedAt: OLD_AT,
+          },
+        }),
+      ],
       QUESTION,
     );
     assert.deepEqual(exit, {
       roundTripCostBps: '9957',
+      requestedCashAtomic: '100000000000',
+      returnedCashAtomic: '430000000',
       basis: 'last_measured',
       observedAt: OLD_AT,
     });
@@ -62,7 +87,14 @@ describe('the round trip at the size being asked', () => {
   test('a rung that measured no round trip yields nothing, never a zero', () => {
     assert.equal(exitEvidenceV1([rung()], QUESTION), null);
     assert.equal(
-      exitEvidenceV1([rung({ lastMeasured: { roundTripCostBps: null, observedAt: OLD_AT } })], QUESTION),
+      exitEvidenceV1(
+        [
+          rung({
+            lastMeasured: { roundTripCostBps: null, returnedAtomic: null, observedAt: OLD_AT },
+          }),
+        ],
+        QUESTION,
+      ),
       null,
     );
   });
@@ -81,4 +113,26 @@ describe('the round trip at the size being asked', () => {
     );
     assert.equal(exitEvidenceV1([], QUESTION), null);
   });
+});
+
+test('a cost with no returned amount still answers, without inventing the money', () => {
+  // The percentage is derived FROM the two amounts, so rebuilding an amount
+  // from the percentage would print a figure that was never measured. When one
+  // side is missing the card falls back to the percentage alone.
+  const exit = exitEvidenceV1(
+    [
+      {
+        destination: 'USDC' as const,
+        requestedCashAtomic: '100000000000',
+        roundTripCostBps: '51',
+        returnedAtomic: null,
+        observedAt: OPEN_AT,
+        lastMeasured: null,
+      },
+    ],
+    QUESTION,
+  );
+  assert.equal(exit?.roundTripCostBps, '51');
+  assert.equal(exit?.returnedCashAtomic, null);
+  assert.equal(exit?.requestedCashAtomic, '100000000000');
 });

@@ -250,6 +250,11 @@ export const MARKET_REALITY_OUTCOMES_V1 = [
   'stale_finding',
   'no_route',
   'unsupported_token',
+  // A route source that covers this token and declined to quote it, on its
+  // own trading rules. Its own outcome because the three it would otherwise
+  // fall into each name the wrong party: the market, our coverage, our
+  // transport. See `PROVIDER_POLICY_REFUSED_CODE_V1` in swap-adapters.
+  'policy_refused',
   'unsized',
   'provider_failed',
   'never_measured',
@@ -315,7 +320,7 @@ export interface RepresentationViewV1 {
   outcomeTone: ToneV1;
   /** Whose fact the outcome is. Rendered as a small label so a reader can tell
    * a fact about the asset from a fact about us at a glance. */
-  attribution: 'the market' | 'the clock' | 'Miorail' | 'onchain read';
+  attribution: 'the market' | 'the clock' | 'Miorail' | 'onchain read' | 'the venue';
   /** Phase 12.2. A watch is one exact reviewed market question. These fields
    * are projected from the server response, never reconstructed from labels. */
   watchable: boolean;
@@ -435,15 +440,22 @@ const NORMALIZATION_NOTE_V1: Readonly<
 > = {
   fresh_ratio_applied: 'Balance is raw; the current multiplier was read and applied once.',
   reviewed_token_already_applied: 'The token rebases — its own balance already carries the ratio.',
-  not_established: 'The ratio behind this size is not established, so exposure is not normalized.',
+  not_established:
+    "The share ratio behind this size isn't confirmed yet, so the holding shown is not adjusted for it.",
 };
 
-function usdV1(atomic: string | null, decimals = 6): string | null {
-  if (atomic === null) return null;
+function usdV1(atomic: string | null | undefined, decimals = 6): string | null {
+  // Guards the SHAPE, not just null. These atomics arrive from a wire, and an
+  // absent field is `undefined` rather than `null` — a `=== null` check let
+  // one through and threw inside the formatter, taking the whole card with it.
+  if (typeof atomic !== 'string' || atomic.length === 0) return null;
   const plain = formatAtomicAmount(atomic, decimals);
   const [whole, fraction] = plain.split('.');
   const grouped = (whole ?? '0').replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return fraction ? `$${grouped}.${fraction.slice(0, 2)}` : `$${grouped}`;
+  // Cents are padded, never truncated to whatever the atomic happened to have:
+  // `$342.8` is not how money is written, and this figure is now the headline
+  // of the exit line rather than a footnote.
+  return fraction ? `$${grouped}.${fraction.slice(0, 2).padEnd(2, '0')}` : `$${grouped}`;
 }
 
 /**
@@ -482,17 +494,19 @@ const MARKET_SESSION_LABEL_V1: Readonly<
   regular_hours: 'US market open',
   after_hours: 'US market closed / after hours',
   weekend: 'Weekend',
-  unknown: 'Market session not established',
+  unknown: 'Market session not confirmed',
 };
 
 const PUBLICATION_MODE_LABEL_V1: Readonly<
   Record<MarketRealityRepresentationWireV1['reference']['publicationMode'], string>
 > = {
-  live_reference: 'Live reference',
-  holding_last_close: 'Reference holding last published value',
-  corporate_action_hold: 'Reference held for a corporate action',
-  stale: 'Reference stale',
-  unknown: 'Reference publication mode not established',
+  live_reference: 'Reference price is live',
+  holding_last_close: 'Reference price is holding its last published value',
+  corporate_action_hold: 'Reference price is held for a corporate action',
+  // "Stale" is a system word for a fact a reader can act on: the number on
+  // screen is not the current one.
+  stale: 'Reference price has not updated recently',
+  unknown: 'How the reference price publishes is not confirmed',
 };
 
 function referenceNoteV1(
@@ -569,6 +583,12 @@ function outcomeFromCodesV1(
 ): MarketRealityOutcomeV1 {
   const codes = errorCodes.filter((code): code is string => code !== null);
   if (codes.some((code) => code === 'provider_unsupported_token')) return 'unsupported_token';
+  // BEFORE the status, and deliberately. Storage folds a refusal into
+  // `measurement_failed` (its `unavailable` state is reserved for an explicit
+  // `provider_no_route`), so reading the status first would file a venue's own
+  // decision as our call failing — the exact collapse this outcome exists to
+  // prevent, in the direction that blames Miorail.
+  if (codes.some((code) => code === 'provider_policy_refused')) return 'policy_refused';
   if (status === 'unavailable') return 'no_route';
   if (codes.some((code) => code === 'provider_no_route')) return 'no_route';
   // A cash rung is sized by pricing the BUY first. When that buy has no route
@@ -581,22 +601,25 @@ function outcomeFromCodesV1(
 }
 
 const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
-  zero_supply: 'Zero outstanding supply',
+  zero_supply: 'No tokens outstanding',
   supply_unknown: 'Supply unknown',
   priced: 'Priced now',
   lapsed: 'Price expired',
-  stale_finding: 'Finding expired',
+  stale_finding: 'Earlier check expired',
   unsupported_token: 'Not covered',
   // "Could not size" reads as our failure. The BUY anchor found no route, so
   // there was no token amount to sell — the market gave us no size, and the
   // sentence should say which of the two it is.
   unsized: 'Sell size not established',
   // "No route" is a claim about the whole of Base that this product cannot
-  // make and has never measured. What was established is narrower and is the
-  // only thing the chip may say: none of the routers under the reviewed policy
-  // returned one. The same words the `lastSeen` line uses, so the headline and
-  // the history below it cannot read as two separate findings.
-  no_route: 'No route under policy',
+  // make and has never measured. The scope still has to be stated — but as a
+  // quiet second line under the card, not inside the chip. A reader is asking
+  // "can I get cash out of this", and "No route under reviewed policy" answers
+  // in Miorail's vocabulary instead of theirs. The same words the `lastSeen`
+  // line uses, so the headline and the history below cannot read as two
+  // separate findings.
+  no_route: 'No cash route found',
+  policy_refused: 'Venue declined to quote',
   provider_failed: 'Our read failed',
   never_measured: 'Not measured',
 };
@@ -610,6 +633,9 @@ const OUTCOME_TONE_V1: Readonly<Record<MarketRealityOutcomeV1, ToneV1>> = {
   unsupported_token: 'warn',
   unsized: 'off',
   no_route: 'off',
+  // Not `off`: nothing was found wrong with the token or the market. One
+  // venue applied its own rule, and the others were still asked.
+  policy_refused: 'warn',
   provider_failed: 'warn',
   never_measured: 'neutral',
 };
@@ -630,6 +656,9 @@ const OUTCOME_ATTRIBUTION_V1: Readonly<
   // arriving as a non-measurement.
   unsized: 'the market',
   no_route: 'the market',
+  // Neither the market nor us. A venue that could quote and chose not to is a
+  // third party with its own rules, and there was no word for it until now.
+  policy_refused: 'the venue',
   provider_failed: 'Miorail',
   never_measured: 'Miorail',
 };
@@ -651,9 +680,12 @@ function outcomeBodyV1(
   );
   switch (outcome) {
     case 'zero_supply':
-      return `No outstanding supply was observed at the latest fresh successful totalSupply read. This reviewed representation stays visible but is outside the current market-comparison denominator.`;
+      // Was written in the engine's vocabulary — "the latest fresh successful
+      // totalSupply read", "the market-comparison denominator". Both are true
+      // and neither tells a reader that there is simply nothing here.
+      return `No tokens of this contract are outstanding right now, so there is nothing to buy or sell at this address. It stays on the page: an exact address does not disappear because its supply is zero.`;
     case 'supply_unknown':
-      return `${representation.supply.reason ?? 'Current outstanding supply could not be established.'} This reviewed representation remains unresolved and cannot be silently removed from coverage.`;
+      return `${representation.supply.reason ?? 'How many tokens are outstanding could not be read.'} The contract stays on the page rather than quietly leaving it — not knowing is not the same as nothing being there.`;
     case 'priced':
       return `A router quoted this exact size and the quote is still open.`;
     case 'lapsed':
@@ -666,9 +698,18 @@ function outcomeBodyV1(
     case 'stale_finding':
       // Not a lapsed price: we never had a price here. What expired was a
       // finding about the market, and saying "price expired" would invent one.
-      return `The last look at ${sizeLabel}${age ? ` ${age}` : ''} found no route under Miorail's reviewed router policy, and that finding has since expired. Measure now to ask again.`;
+      return `The last look at ${sizeLabel}${age ? ` ${age}` : ''} found no way to turn this into cash, and that finding has since expired. Measure now to ask again.`;
     case 'no_route':
-      return `No route was found for ${sizeLabel} under Miorail's current reviewed router policy. That scoped finding is about this exact contract and question, not the issuer or every market on Base.`;
+      // The scope still has to be here — it is the difference between a fact
+      // and an overclaim — but said as where we looked, not as the name of an
+      // internal rule set. "Under Miorail's current reviewed router policy"
+      // made a reader parse our vocabulary to learn we had not checked Base.
+      return `No cash route was found for ${sizeLabel}. Checked across Miorail's reviewed route sources — this is about this exact contract at this exact size, not about the issuer or every market on Base.`;
+    case 'policy_refused':
+      // Says what the venue did and stops. No inference about the reader,
+      // about the token, or about whether the refusal is lawful or permanent —
+      // none of which was measured, and none of which is ours to conclude.
+      return `A route source that covers this token declined to quote it${age ? ` — last asked ${age}` : ''}. That is that venue's own trading rule. It is not a finding about the token, and the other sources were still asked.`;
     case 'unsupported_token':
       // Never "no route": the router did not index the token, so it never
       // reached the question. Claiming a market verdict here would be us
@@ -783,7 +824,7 @@ function numbersV1(
       note:
         price === null
           ? representation.normalization === 'not_established'
-            ? 'exposure not normalized, so no per-share price'
+            ? "the share ratio isn't confirmed, so there is no per-share price"
             : 'needs an open quote'
           : 'per unit of normalized exposure',
       tone: 'neutral',
@@ -830,7 +871,7 @@ function observationAbsenceNoteV1(
   if (coded) return `${coded.note}${when}`;
   switch (observation.status) {
     case 'no_route':
-      return `no route under the reviewed router policy${when}`;
+      return `no cash route was found${when}`;
     case 'unsized':
       return `the buy anchor found no route${when}, so the sell was never sized`;
     case 'measurement_failed':
@@ -846,8 +887,7 @@ function observationAbsenceNoteV1(
  * Both of these are the ROUTER's answer, not ours. Kept in one table so the
  * chip and the note cannot drift into describing the same code two ways.
  */
-export const ROUTER_UNSUPPORTED_SENTENCE_V1 =
-  'Router does not support this token under the reviewed policy';
+export const ROUTER_UNSUPPORTED_SENTENCE_V1 = 'This route source does not cover this token';
 
 /**
  * The round-trip cost past which a size is not exitable under the reviewed
@@ -889,22 +929,38 @@ function exitViewV1(
   if (!Number.isFinite(bps)) return null;
   const age = quoteAgeLabelV1(exit.observedAt, nowIso);
   const when = exit.basis === 'open' ? 'on the open quote' : `measured ${age ?? 'earlier'}`;
-  return bps <= MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1
-    ? {
-        label: 'Round trip at this size',
-        value: cost,
-        note: `buying and selling straight back costs this much — ${when}`,
-        tone: 'good',
-      }
-    : {
-        label: 'Round trip at this size',
-        value: cost,
-        // Never "no route": a route exists and answered. What it answered is
-        // that the money does not come back, which is a fact about how much
-        // sits behind this contract and not about whether anyone would quote.
-        note: `a router quotes this size, but buying and selling straight back costs this much — ${when}. The position cannot be closed at this size under the reviewed policy.`,
-        tone: 'off',
-      };
+  const withinBound = bps <= MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1;
+
+  // Money first, whenever both sides of the trip were measured.
+  //
+  // "Round trip: 65.72%" is arithmetic a reader has to do something with before
+  // it means anything. "$1,000 in → $342.80 back" is the same measurement and
+  // needs no DeFi vocabulary at all — it is read, not computed. The percentage
+  // stays, one line down, because it is what makes two sizes comparable.
+  const paidIn = usdV1(exit.requestedCashAtomic);
+  const cameBack = usdV1(exit.returnedCashAtomic);
+  if (paidIn !== null && cameBack !== null) {
+    return {
+      label: 'Buying in and selling back out',
+      value: `${paidIn} in → ${cameBack} back`,
+      note: withinBound
+        ? `Total cost to buy and exit: ${cost} — ${when}.`
+        : // Never "no route": a route exists and answered. What it answered is
+          // that the money does not come back, which is a fact about how much
+          // sits behind this contract and not about whether anyone would quote.
+          `Total cost to buy and exit: ${cost} — ${when}. A price is available at this size; most of the money is not.`,
+      tone: withinBound ? 'good' : 'off',
+    };
+  }
+
+  return {
+    label: 'Cost to buy and exit',
+    value: cost,
+    note: withinBound
+      ? `what buying in and selling straight back costs at this size — ${when}`
+      : `a price is available at this size, and buying in then selling straight back costs this much — ${when}. Most of the money does not come back.`,
+    tone: withinBound ? 'good' : 'off',
+  };
 }
 
 const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; note: string }>> = {
@@ -916,7 +972,19 @@ const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; no
   },
   provider_unsupported_token: {
     label: ROUTER_UNSUPPORTED_SENTENCE_V1,
-    note: 'the reviewed router answered that it does not carry this token',
+    note: 'this route source answered that it does not carry this token',
+  },
+  // The venue could route it and would not. Stated as what happened, with no
+  // inference about the reader, the token, or whether the rule is permanent.
+  provider_policy_refused: {
+    label: "This venue won't quote this token",
+    note: 'a route source that covers this token declined to quote it',
+  },
+  // Ours, not the market's: a market exists here at a venue this build cannot
+  // read. Saying "no route" would hand our gap to the token.
+  provider_venue_not_covered: {
+    label: "This market isn't covered by this route source",
+    note: 'a market exists at a venue this route source cannot read, so no price was taken from it',
   },
 };
 
@@ -969,7 +1037,7 @@ function termsV1(representation: MarketRealityRepresentationWireV1): FactViewV1[
     entry: { status: 'reviewed' | 'unknown'; note: string },
   ): FactViewV1 => ({
     label,
-    value: entry.status === 'reviewed' ? 'Reviewed' : 'Not established',
+    value: entry.status === 'reviewed' ? 'Reviewed' : 'Not confirmed yet',
     note: entry.note,
     // `unknown` is the absence of evidence, not a warning about the issuer.
     tone: entry.status === 'reviewed' ? 'neutral' : 'off',
@@ -1038,7 +1106,7 @@ const UTILITY_STATE_LABEL_V1: Readonly<Record<UtilityEvidenceStateV1, string>> =
   available: 'Available',
   observed: 'Observed',
   documented: 'Documented',
-  not_established: 'Not established',
+  not_established: 'Not confirmed yet',
   stale: 'Stale',
 };
 
@@ -1294,6 +1362,17 @@ export interface RepresentationLadderInputV1 {
 export interface RepresentationExitEvidenceV1 {
   /** Signed integer bps. Positive is cost, so larger is worse. */
   roundTripCostBps: string;
+  /**
+   * The two sides of the round trip, as MEASURED atomic USDC — the cash the
+   * question put in, and the cash that came back out.
+   *
+   * Carried rather than reconstructed from the cost. The percentage is the
+   * derived figure here (it is computed FROM these two), so rebuilding the
+   * money from the percentage would print a number that never existed and
+   * present it as a measurement. Null where the run did not complete both legs.
+   */
+  requestedCashAtomic: string | null;
+  returnedCashAtomic: string | null;
   basis: 'open' | 'last_measured';
   /** When the measurement behind it completed. */
   observedAt: string;
@@ -1335,12 +1414,12 @@ export function marketRealityViewV1(input: {
         tone: 'neutral',
       },
       {
-        label: 'Positive supply',
+        label: 'With tokens outstanding',
         value: String(wire.universe.positiveSupplyRepresentationCount),
         note:
           wire.universe.unresolvedSupplyRepresentationCount > 0
-            ? `${wire.universe.unresolvedSupplyRepresentationCount} unresolved`
-            : `${wire.universe.zeroSupplyRepresentationCount} zero-supply`,
+            ? `${wire.universe.unresolvedSupplyRepresentationCount} not confirmed`
+            : `${wire.universe.zeroSupplyRepresentationCount} with none outstanding`,
         tone: wire.universe.unresolvedSupplyRepresentationCount > 0 ? 'warn' : 'neutral',
       },
       {
@@ -1384,7 +1463,7 @@ export function marketRealityViewV1(input: {
         representation.supply.state !== 'positive_supply'
           ? 'A watch starts only after fresh evidence establishes outstanding supply.'
           : representation.routePolicyKey === null || approvedSources.length === 0
-            ? 'No reviewed route policy is established for this representation.'
+            ? 'No reviewed route source is established for this representation, so there is nothing to watch.'
             : null;
       return {
         tokenAddress: representation.tokenAddress,

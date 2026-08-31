@@ -566,7 +566,13 @@ describe('the five outcomes stay apart', () => {
       choice: null,
       now: NOW,
     });
-    assert.match(view?.representations[0]?.outcomeBody ?? '', /current reviewed router policy/i);
+    // The scope is still stated — it is what keeps this from being an
+    // asset-level claim — but as WHERE we looked, not as the name of an
+    // internal rule set.
+    assert.match(
+      view?.representations[0]?.outcomeBody ?? '',
+      /Checked across Miorail's reviewed route sources/i,
+    );
     assert.doesNotMatch(view?.representations[0]?.outcomeBody ?? '', /No approved venue/);
   });
 
@@ -594,7 +600,7 @@ describe('the five outcomes stay apart', () => {
       now: NOW,
     });
     assert.equal(view?.representations[0]?.attribution, 'onchain read');
-    assert.match(view?.representations[0]?.outcomeBody ?? '', /No outstanding supply/);
+    assert.match(view?.representations[0]?.outcomeBody ?? '', /nothing to buy or sell at this address/);
     assert.doesNotMatch(view?.representations[0]?.outcomeBody ?? '', /no market/i);
   });
 
@@ -980,7 +986,7 @@ describe('an absent number never renders as a zero', () => {
     assert.doesNotMatch(cash?.note ?? '', /did not complete/);
     assert.equal(
       wrapper?.representations[0]?.lastSeen?.value,
-      'Router does not support this token under the reviewed policy',
+      'This route source does not cover this token',
     );
 
     const unsized = marketRealityViewV1({
@@ -1101,14 +1107,14 @@ describe('an absent number never renders as a zero', () => {
     assert.equal(card.outcome, 'zero_supply');
     // The attribution names the read, not the market and not us.
     assert.equal(card.attribution, 'onchain read');
-    assert.match(card.outcomeBody, /No outstanding supply was observed/);
+    assert.match(card.outcomeBody, /No tokens of this contract are outstanding/);
     // Never "delisted", never "dead", never a route verdict.
     for (const forbidden of [/delisted/i, /\bdead\b/i, /no route/i, /cannot be sold/i]) {
       assert.doesNotMatch(card.outcomeBody, forbidden);
     }
     // It stays visible: a reviewed representation is not removed for having
     // no supply, it is removed from the comparison denominator.
-    assert.match(card.outcomeBody, /stays visible/);
+    assert.match(card.outcomeBody, /stays on the page/);
   });
 
   test('now and last measured are separate fields, and the TTL is not on the card', () => {
@@ -1172,12 +1178,12 @@ describe('an absent number never renders as a zero', () => {
     assert.equal(zero.outcome, 'zero_supply');
     assert.equal(zero.inComparison, false, 'a representation with nothing outstanding is not compared');
     assert.deepEqual(zero.numbers, [], 'five dashes buried the one fact that mattered');
-    assert.equal(zero.outcomeChip, 'Zero outstanding supply');
+    assert.equal(zero.outcomeChip, 'No tokens outstanding');
     // Membership, never ranking: the other card keeps its own state and no order.
     assert.equal(live.inComparison, true);
     assert.deepEqual(
       view!.comparisonSummary.map((row) => row.label),
-      ['Reviewed representations', 'Positive supply', 'Live answers', 'Comparison'],
+      ['Reviewed representations', 'With tokens outstanding', 'Live answers', 'Comparison'],
     );
   });
 
@@ -1227,7 +1233,7 @@ describe('an absent number never renders as a zero', () => {
     const card = view!.representations[0]!;
     assert.equal(
       card.lastSeen?.value,
-      'Router does not support this token under the reviewed policy',
+      'This route source does not cover this token',
     );
     assert.doesNotMatch(card.lastSeen?.value ?? '', /Miorail|our |failed/i);
   });
@@ -1324,7 +1330,13 @@ describe('an absent number never renders as a zero', () => {
         [address]: {
           rungs: [],
           note: null,
-          exit: { roundTripCostBps: '51', basis: 'open', observedAt: NOW },
+          exit: {
+            roundTripCostBps: '51',
+            requestedCashAtomic: null,
+            returnedCashAtomic: null,
+            basis: 'open',
+            observedAt: NOW,
+          },
         },
       },
     });
@@ -1342,7 +1354,13 @@ describe('an absent number never renders as a zero', () => {
         [address]: {
           rungs: [],
           note: null,
-          exit: { roundTripCostBps: '9957', basis: 'last_measured', observedAt: NOW },
+          exit: {
+            roundTripCostBps: '9957',
+            requestedCashAtomic: null,
+            returnedCashAtomic: null,
+            basis: 'last_measured',
+            observedAt: NOW,
+          },
         },
       },
     });
@@ -1351,7 +1369,9 @@ describe('an absent number never renders as a zero', () => {
     assert.equal(bad.tone, 'off');
     // Never borrows the market's vocabulary for absence: a route existed.
     assert.doesNotMatch(bad.note ?? '', /no route/i);
-    assert.match(bad.note ?? '', /cannot be closed at this size under the reviewed policy/);
+    assert.match(bad.note ?? '', /Most of the money does not come back/);
+    // The word a reader would have to translate is gone from this line.
+    assert.doesNotMatch(bad.note ?? '', /policy/i);
   });
 
   test('the round-trip bound is our policy, and the measured cost is always shown beside it', () => {
@@ -1366,7 +1386,13 @@ describe('an absent number never renders as a zero', () => {
           [address]: {
             rungs: [],
             note: null,
-            exit: { roundTripCostBps: bps, basis: 'open', observedAt: NOW },
+            exit: {
+              roundTripCostBps: bps,
+              requestedCashAtomic: null,
+              returnedCashAtomic: null,
+              basis: 'open',
+              observedAt: NOW,
+            },
           },
         },
       })!.representations[0]!.exit!;
@@ -1389,7 +1415,13 @@ describe('an absent number never renders as a zero', () => {
           [address]: {
             rungs: [],
             note: null,
-            exit: { roundTripCostBps: '51', basis, observedAt: LAPSED_OBSERVATION.observedAt },
+            exit: {
+              roundTripCostBps: '51',
+              requestedCashAtomic: null,
+              returnedCashAtomic: null,
+              basis,
+              observedAt: LAPSED_OBSERVATION.observedAt,
+            },
           },
         },
       })!.representations[0]!.exit!;
@@ -1420,7 +1452,7 @@ describe('an absent number never renders as a zero', () => {
     // An asset-level claim this product has never measured. The chip is the
     // headline, so an unbounded one there outranks every bounded sentence
     // below it — and "No route" reads as a fact about the whole of Base.
-    assert.equal(card.outcomeChip, 'No route under policy');
+    assert.equal(card.outcomeChip, 'No cash route found');
     // The chip and the history line say it the same way, not two findings.
     assert.equal(card.lastSeen?.value, card.outcomeChip);
   });
@@ -1539,7 +1571,7 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
 
     assert.equal(effective?.value, '$211.54');
     assert.equal(effective?.tone, 'neutral');
-    assert.equal(reference?.value, '$211.3');
+    assert.equal(reference?.value, '$211.30');
     assert.equal(reference?.tone, 'neutral');
     assert.equal(basis?.value, '+11 bps');
     assert.equal(basis?.tone, 'neutral');
@@ -1589,7 +1621,7 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
     const row = view?.representations[0];
     const reference = row?.numbers.find((fact) => fact.label === 'Reference price');
     assert.match(reference?.note ?? '', /US market open/);
-    assert.match(reference?.note ?? '', /Live reference/);
+    assert.match(reference?.note ?? '', /Reference price is live/);
     assert.doesNotMatch(reference?.note ?? '', /regular_hours|live_reference/);
     assert.match(
       row?.technical.find((fact) => fact.label === 'Reference')?.value ?? '',
@@ -1621,7 +1653,7 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
       (fact) => fact.label === 'Reference price',
     );
     assert.match(reference?.note ?? '', /US market closed \/ after hours/);
-    assert.match(reference?.note ?? '', /Reference holding last published value/);
+    assert.match(reference?.note ?? '', /Reference price is holding its last published value/);
     assert.doesNotMatch(reference?.note ?? '', /after_hours|holding_last_close/);
   });
 
@@ -1832,7 +1864,7 @@ describe('Phase 11 utility and eligibility map', () => {
     assert.match(markup, /Utility \+ eligibility/);
     assert.match(markup, /eip155:8453:/);
     assert.match(markup, /Documented/);
-    assert.match(markup, /Not established/);
+    assert.match(markup, /Not confirmed yet/);
     assert.doesNotMatch(markup, /No winner is selected|Not ranked|BEST/);
   });
 });
@@ -1998,7 +2030,7 @@ describe('history is history, and says so', () => {
     });
     const row = view?.representations[0];
     assert.equal(row?.outcome, 'stale_finding');
-    assert.equal(row?.outcomeChip, 'Finding expired');
+    assert.equal(row?.outcomeChip, 'Earlier check expired');
     assert.doesNotMatch(row?.outcomeBody ?? '', /price/i);
   });
 
@@ -2034,9 +2066,9 @@ describe('history is history, and says so', () => {
     });
     const row = view?.representations[0];
     assert.equal(row?.lastSeen?.label, 'Last market check');
-    assert.equal(row?.lastSeen?.value, 'No route under policy');
+    assert.equal(row?.lastSeen?.value, 'No cash route found');
     // And the body says why it has no figure, rather than only a dash.
-    assert.match(row?.numbers[0]?.note ?? '', /no route under the reviewed router policy/i);
+    assert.match(row?.numbers[0]?.note ?? '', /no cash route was found/i);
   });
 
   test('an open observation is labelled open, not as history', () => {
@@ -2124,3 +2156,122 @@ describe('history is history, and says so', () => {
   });
 });
 
+
+// ---------------------------------------------------------------------------
+// A venue that CAN route this and will not.
+//
+// The audit measured 0x answering BUY_TOKEN_NOT_AUTHORIZED_FOR_TRADE at HTTP
+// 200 on the Coinbase equities: a complete answer, carrying a verdict, that is
+// not a route finding. Each of the three states it could have been filed under
+// names the wrong party.
+// ---------------------------------------------------------------------------
+
+describe('a venue declining to quote is its own answer', () => {
+  const refused = () =>
+    marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            status: 'measurement_failed',
+            liveness: 'live',
+            sources: [
+              {
+                source: 'kyberswap',
+                status: 'measurement_failed' as const,
+                errorCode: 'provider_policy_refused',
+                quoteEvidence: null,
+              },
+            ],
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    })!.representations[0]!;
+
+  test('it is not the market, not our coverage, and not our failure', () => {
+    const card = refused();
+    assert.equal(card.outcome, 'policy_refused');
+    for (const collapsed of ['no_route', 'unsupported_token', 'provider_failed']) {
+      assert.notEqual(card.outcome, collapsed);
+    }
+    // Storage folds a refusal into `measurement_failed`, so reading the row
+    // status before the error code would have filed it under our name.
+    assert.equal(card.attribution, 'the venue');
+  });
+
+  test('the chip and the body say what happened and stop there', () => {
+    const card = refused();
+    assert.equal(card.outcomeChip, 'Venue declined to quote');
+    assert.match(card.outcomeBody, /declined to quote it/);
+    assert.match(card.outcomeBody, /other sources were still asked/);
+    // No legal or moral inference about the reader or the asset.
+    for (const overclaim of [/you are not eligible/i, /prohibited/i, /restricted asset/i, /illegal/i]) {
+      assert.doesNotMatch(card.outcomeBody, overclaim);
+    }
+    // And never the market's vocabulary for absence.
+    assert.doesNotMatch(card.outcomeBody, /no route/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The exit line, in money.
+// ---------------------------------------------------------------------------
+
+describe('what a round trip costs, said as money first', () => {
+  const at = (over: Record<string, unknown>) => {
+    const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW })!;
+    const address = bare.representations[0]!.tokenAddress.toLowerCase();
+    return marketRealityViewV1({
+      wire: wire(),
+      choice: null,
+      now: NOW,
+      ladders: {
+        [address]: {
+          rungs: [],
+          note: null,
+          exit: { basis: 'last_measured', observedAt: NOW, ...over } as never,
+        },
+      },
+    })!.representations[0]!.exit!;
+  };
+
+  test('both sides measured: the reader sees money, then the percentage', () => {
+    // "Round trip: 65.72%" is arithmetic somebody has to do something with.
+    // "$1,000 in → $342.80 back" is the same measurement, read rather than
+    // computed, and needs no DeFi vocabulary at all.
+    const bad = at({
+      roundTripCostBps: '6572',
+      requestedCashAtomic: '1000000000',
+      returnedCashAtomic: '342800000',
+    });
+    assert.equal(bad.value, '$1,000 in → $342.80 back');
+    assert.match(bad.note ?? '', /Total cost to buy and exit: 65\.72%/);
+    assert.equal(bad.tone, 'off');
+    // Never "no route": a route existed and answered.
+    assert.doesNotMatch(bad.note ?? '', /no route/i);
+    assert.doesNotMatch(bad.note ?? '', /bps/);
+
+    const good = at({
+      roundTripCostBps: '32',
+      requestedCashAtomic: '1000000000',
+      returnedCashAtomic: '996800000',
+    });
+    assert.equal(good.value, '$1,000 in → $996.80 back');
+    assert.match(good.note ?? '', /Total cost to buy and exit: 0\.32%/);
+    assert.equal(good.tone, 'good');
+  });
+
+  test('one side unmeasured falls back to the percentage, never a rebuilt figure', () => {
+    // The percentage is derived FROM the two amounts. Reconstructing an amount
+    // out of it would print money that was never measured.
+    const only = at({
+      roundTripCostBps: '32',
+      requestedCashAtomic: '1000000000',
+      returnedCashAtomic: null,
+    });
+    assert.equal(only.value, '0.32%');
+    assert.equal(only.label, 'Cost to buy and exit');
+    assert.doesNotMatch(only.value, /\$/);
+  });
+});

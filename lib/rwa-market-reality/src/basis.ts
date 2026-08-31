@@ -102,9 +102,14 @@ export function evaluateMarketRealityBasisV1(
     );
   }
   if (input.marketStatus !== 'quoted') {
+    // Says the measurement did not complete, and stops short of naming whose
+    // fault that was. `marketStatus` folds several endings into one word, and
+    // one of them is a venue REFUSING to quote on its own trading rules — a
+    // card whose chip says the venue declined and whose basis line says
+    // "provider failure" is two answers to one question on one screen.
     return withheldV1(
       'measurement_failed',
-      'The market measurement failed; provider failure is not an asset-price claim.',
+      'The market measurement did not complete, and an incomplete measurement is not an asset-price claim.',
     );
   }
   if (input.issuerId !== 'coinbase') {
