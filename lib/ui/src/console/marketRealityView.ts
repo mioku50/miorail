@@ -9,7 +9,7 @@ import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
 // four fields would let the two views drift into different meanings for the
 // same word, which is exactly what the shared section table exists to stop.
-import { rwaBpsLabelV1 } from './rwaDiscoverView';
+import { ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1, rwaBpsLabelV1 } from './rwaDiscoverView';
 import type { FactViewV1, ToneV1 } from './rwaDiscoverView';
 
 export type { FactViewV1, ToneV1 };
@@ -99,6 +99,7 @@ export interface MarketRealityIndexEntryWireV1 {
   identifierScheme: string | null;
   identifierValue: string | null;
   representationCount: number;
+  liveRepresentationCount: number;
   issuerIds: readonly IssuerIdV1[];
   multiIssuer: boolean;
 }
@@ -272,6 +273,14 @@ export interface UnderlyingChoiceViewV1 {
   issuerIds: readonly IssuerIdV1[];
   representationCount: number;
   multiIssuer: boolean;
+  /**
+   * Said out loud when nothing behind this security has any tokens outstanding.
+   *
+   * Null when at least one representation is live. Ordering already puts these
+   * rows last; the line is what stops a reader opening one and concluding the
+   * product is broken when the honest answer is that the contract is empty.
+   */
+  emptyNote: string | null;
 }
 
 export interface UtilitySourceViewV1 {
@@ -922,7 +931,9 @@ export const ROUTER_UNSUPPORTED_SENTENCE_V1 = 'This route source does not cover 
  * is always shown next to it, so a reader who disagrees with the bound can see
  * the number the bound was applied to.
  */
-export const MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 = 200;
+export const MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 = Number(
+  ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1,
+);
 
 /**
  * Can the position be CLOSED at this size — as its own fact, with its own age.
@@ -968,7 +979,10 @@ function exitViewV1(
           // that the money does not come back, which is a fact about how much
           // sits behind this contract and not about whether anyone would quote.
           `Total cost to buy and exit: ${cost} — ${when}. A price is available at this size; most of the money is not.`,
-      tone: withinBound ? 'good' : 'off',
+      // `warn`, not `off`: this console's `off` means nothing was measured, and
+      // this was measured. It is the same tone the ladder rung beside it now
+      // carries for the same number.
+      tone: withinBound ? 'good' : 'warn',
     };
   }
 
@@ -978,7 +992,7 @@ function exitViewV1(
     note: withinBound
       ? `what buying in and selling straight back costs at this size — ${when}`
       : `a price is available at this size, and buying in then selling straight back costs this much — ${when}. Most of the money does not come back.`,
-    tone: withinBound ? 'good' : 'off',
+    tone: withinBound ? 'good' : 'warn',
   };
 }
 
@@ -1140,6 +1154,41 @@ const UTILITY_SOURCE_LABEL_V1: Readonly<
   reviewed_registry_check: 'Reviewed registry check',
 };
 
+/**
+ * Who published a cited document, by host.
+ *
+ * The label used to be the source's KIND, so an edge citing both the Base
+ * standard and Coinbase's product page rendered
+ * "Reviewed documentation  Reviewed documentation" — two links, one word, and
+ * no way to tell which was which. It read as a duplication bug rather than as
+ * two independent documents, which is the opposite of what citing two of them
+ * is for.
+ *
+ * A CODE-OWNED registry, keyed on the exact host, never a prettified domain:
+ * this is the same rule provider links follow everywhere else in the console.
+ * An unknown host falls back to the kind label rather than inventing a
+ * publisher out of a string we have not reviewed.
+ */
+const SOURCE_PUBLISHER_BY_HOST_V1: Readonly<Record<string, string>> = {
+  'docs.base.org': 'Base standard',
+  'www.coinbase.com': 'Coinbase product terms',
+  'coinbase.com': 'Coinbase product terms',
+  'docs.dinari.com': 'Dinari documentation',
+  'assets.backed.fi': 'Backed legal documentation',
+  'docs.xstocks.fi': 'Backed machine source',
+  'github.com': 'Published source code',
+  'docs.chain.link': 'Chainlink documentation',
+};
+
+export function sourceLabelV1(href: string | null, fallback: string): string {
+  if (href === null) return fallback;
+  try {
+    return SOURCE_PUBLISHER_BY_HOST_V1[new URL(href).host] ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 function latestQuoteV1(
   representation: MarketRealityRepresentationWireV1,
 ): MarketRealityQuoteWireV1 | null {
@@ -1166,11 +1215,14 @@ function utilityEdgeViewV1(
     providerLabel: edge.providerId,
     note: edge.note,
     eligibilityNote: edge.eligibilityNote,
-    sources: edge.evidence.map((source) => ({
-      label: UTILITY_SOURCE_LABEL_V1[source.kind],
-      href: /^https:\/\//.test(source.ref) ? source.ref : null,
-      checkedAt: source.checkedAt,
-    })),
+    sources: edge.evidence.map((source) => {
+      const href = /^https:\/\//.test(source.ref) ? source.ref : null;
+      return {
+        label: sourceLabelV1(href, UTILITY_SOURCE_LABEL_V1[source.kind]),
+        href,
+        checkedAt: source.checkedAt,
+      };
+    }),
   };
 }
 
@@ -1333,12 +1385,19 @@ export function underlyingChoicesV1(
   if (!wire) return [];
   return wire.entries.map((entry) => ({
     underlyingKey: entry.underlyingKey,
-    // Enrichment does not always reach a company name: some reviewed rows
-    // carry the ticker in both fields, and `NVDA (NVDA)` reads as a rendering
+    // Ticker first, company second.
+    //
+    // These rows are one line and they ellipsis, so `Microsoft Corporation
+    // (MSFT)` rendered as `Microsoft Corporation (MS…` — cutting off exactly
+    // the part a reader scans for. Leading with the ticker means the truncation
+    // falls on the half that can afford it.
+    //
+    // Enrichment does not always reach a company name: some reviewed rows carry
+    // the ticker in both fields, and `NVDA · NVDA` would read as a rendering
     // fault rather than as the one name Miorail actually holds.
     title:
       entry.displaySymbol && entry.displaySymbol !== entry.canonicalName
-        ? `${entry.canonicalName} (${entry.displaySymbol})`
+        ? `${entry.displaySymbol} · ${entry.canonicalName}`
         : entry.canonicalName,
     identifier:
       entry.identifierScheme && entry.identifierValue
@@ -1351,7 +1410,58 @@ export function underlyingChoicesV1(
     issuerIds: entry.issuerIds,
     representationCount: entry.representationCount,
     multiIssuer: entry.multiIssuer,
+    emptyNote:
+      entry.liveRepresentationCount === 0 && entry.representationCount > 0
+        ? entry.representationCount === 1
+          ? 'No tokens outstanding'
+          : entry.representationCount === 2
+            ? 'No tokens outstanding on either contract'
+            : // "either" is two. MSTR has three.
+              `No tokens outstanding on any of ${entry.representationCount} contracts`
+        : null,
   }));
+}
+
+export interface StockFilterViewV1 {
+  id: 'all' | 'multi' | IssuerIdV1;
+  label: string;
+  /** How many of the reviewed securities this chip would leave on screen. */
+  count: number;
+}
+
+/**
+ * The filter chips, derived from the corpus rather than typed out.
+ *
+ * They used to be a literal list of five, and one of them was Dinari. Dinari
+ * has a hundred contracts proven to be dShares and NOT ONE bound to a security
+ * — a root proves who deployed an address, never which share it is — so
+ * pressing it emptied the page. A filter that can only return nothing is worse
+ * than an absent one: it reads as a broken product rather than as a gap in
+ * coverage, and it is the first thing a demo finds.
+ *
+ * `multi` appears only when something is actually held by two issuers, for the
+ * same reason.
+ */
+export function stockFiltersV1(
+  choices: readonly UnderlyingChoiceViewV1[],
+): StockFilterViewV1[] {
+  const perIssuer = new Map<IssuerIdV1, number>();
+  let multi = 0;
+  for (const choice of choices) {
+    if (choice.multiIssuer) multi += 1;
+    for (const issuer of new Set(choice.issuerIds)) {
+      perIssuer.set(issuer, (perIssuer.get(issuer) ?? 0) + 1);
+    }
+  }
+  const filters: StockFilterViewV1[] = [{ id: 'all', label: 'All', count: choices.length }];
+  if (multi > 0) filters.push({ id: 'multi', label: 'Multi-issuer', count: multi });
+  // ISSUER_NAME_V1's own order, so the chips do not reshuffle when the corpus
+  // grows and a reader does not have to re-find the one they use.
+  for (const issuer of Object.keys(ISSUER_NAME_V1) as IssuerIdV1[]) {
+    const count = perIssuer.get(issuer) ?? 0;
+    if (count > 0) filters.push({ id: issuer, label: ISSUER_NAME_V1[issuer], count });
+  }
+  return filters;
 }
 
 /** The headline counters. Corpus-wide — every one of these is a claim about the

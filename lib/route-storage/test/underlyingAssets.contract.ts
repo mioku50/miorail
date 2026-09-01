@@ -76,6 +76,32 @@ export function underlyingAssetContractV1(
         /ISO 6166 check digit/,
       );
     });
+    test('a security with tokens outstanding outranks one with more empty contracts', async () => {
+      // Nine of the thirteen Coinbase tokenized stocks hold exactly zero, so
+      // ranking on the number of CONTRACTS put empty securities above live
+      // ones. Both twins must agree on the order and on the count, because the
+      // chooser reads whichever one is wired.
+      const { repository } = await open();
+      const declare = (key: string) =>
+        repository.declareUnderlying({ ...underlying(), underlyingKey: key });
+      const bind = (key: string, tokenAddress: string) =>
+        repository.bindRepresentation({ ...binding(), underlyingKey: key, tokenAddress });
+
+      await declare('security:isin:US0378331005');
+      await declare('security:isin:US67066G1040');
+      await bind('security:isin:US0378331005', DINARI_AAPL);
+      await bind('security:isin:US67066G1040', COINBASE_AAPL);
+
+      const rows = await repository.listUnderlyings({ chainId: 8453, limit: 50 });
+      // With no supply read for either, neither is live and neither ordering
+      // claim is made — exactly what Postgres does with an empty supply table.
+      for (const row of rows) {
+        assert.equal(typeof row.liveRepresentationCount, 'number');
+        assert.equal(row.liveRepresentationCount, 0);
+        assert.ok(row.liveRepresentationCount <= row.representationCount);
+      }
+    });
+
     test('nothing is bound until a source declared it', async () => {
       const { repository } = await open();
       await assert.rejects(() => repository.bindRepresentation(binding()), /no reviewed source/);

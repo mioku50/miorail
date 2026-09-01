@@ -46,7 +46,13 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // corpus — assets an issuer publishes, identified by address — with the
     // launch feed a page deeper. Keeping "B20" in the label would name the
     // smaller half of the page after the part that moved.
-    label: 'Evidence index',
+    //
+    // It was then called "Evidence index" in the sidebar while the page header
+    // and Base App both said "Discover", so one surface carried three names and
+    // a reader counted three places. "Discover" wins because it is the reader's
+    // word for what they are doing; "Evidence index" was ours for what we
+    // store. The page's own subtitle already says which evidence it holds.
+    label: 'Discover',
     compactLabel: 'Discover',
     path: '/opportunities',
     blurb: 'Officially issued assets, what getting back out costs, and what changed.',
@@ -284,6 +290,7 @@ export const CONSOLE_PIPELINE_STATES_V1 = [
   'healthy',
   'degraded',
   'worker_stale',
+  'feed_frozen',
   'decoder_mismatch',
   'storage_unavailable',
 ] as const;
@@ -309,7 +316,8 @@ export type ConsoleOperationalLabelV1 =
   | 'Measuring'
   | 'Catching up'
   | 'Worker stale'
-  | 'Unavailable';
+  | 'Unavailable'
+  | 'Frozen';
 
 export function consoleOperationalLabelV1(
   state: ConsolePipelineStateV1 | null,
@@ -326,6 +334,10 @@ export function consoleOperationalLabelV1(
     case 'worker_stale':
     case 'ingestion_not_started':
       return 'Worker stale';
+    // Never 'Worker stale': nothing is broken and there is nothing to go and
+    // fix. The stored corpus reads exactly as before.
+    case 'feed_frozen':
+      return 'Frozen';
     case 'ingestion_catching_up':
     case 'degraded':
       return 'Catching up';
@@ -405,6 +417,7 @@ const INDEX_HEADLINE_V1: Readonly<Record<ConsolePipelineStateV1, string>> = {
   degraded: 'B20 index synced · some reads incomplete',
   ingestion_catching_up: 'B20 index catching up',
   worker_stale: 'B20 index not advancing',
+  feed_frozen: 'B20 launch feed is frozen',
   ingestion_not_started: 'B20 index not started',
   configuration_required: 'B20 index not configured',
   decoder_mismatch: 'B20 index stopped',
@@ -417,6 +430,8 @@ const INDEX_LIVE_STATE_V1: Readonly<Record<ConsolePipelineStateV1, string>> = {
   degraded: 'reading, some reads incomplete',
   ingestion_catching_up: 'catching up',
   worker_stale: 'not advancing',
+  // A decision, not a fault. The stored corpus still reads.
+  feed_frozen: 'frozen by the operator',
   ingestion_not_started: 'never run',
   configuration_required: 'not configured',
   decoder_mismatch: 'stopped',

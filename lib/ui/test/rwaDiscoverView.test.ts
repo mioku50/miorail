@@ -2,6 +2,7 @@ import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
 
 import {
+  ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1,
   cashExitLadderRungsV1,
   cashSizeLabelV1,
   lookalikeFeedViewV1,
@@ -639,6 +640,74 @@ describe('rwa discover view — signals', () => {
 });
 
 describe('the cash-exit ladder as rows', () => {
+  test('the colour of a rung is what it cost, not that it was measured', () => {
+    // The production defect this pins. Tone used to come from the rung's
+    // STATUS, so a `full` round trip was painted `good` at any price: NVDAc's
+    // ladder read 99.65% / 99.90% / 99.98% / 99.99% in the same green a 0.32%
+    // round trip gets, over a line saying a thousand dollars came back as
+    // ninety-four cents. On a card read in two seconds, the colour is read.
+    const rung = (bps: string) => ({
+      requestedCashAtomic: '1000000000',
+      destination: 'USDC' as const,
+      status: 'full' as const,
+      roundTripCostBps: bps,
+      derivedFromExactRung: false,
+      lowerBoundRequestedCashAtomic: null,
+      lastMeasured: null,
+    });
+    const toneAt = (bps: string) => cashExitLadderRungsV1([rung(bps)], NOW)[0]?.tone;
+
+    assert.equal(toneAt('9990'), 'warn');
+    assert.equal(toneAt('6493'), 'warn');
+    // Exactly at the bound is still cheap; one basis point past it is not.
+    assert.equal(toneAt(String(ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1)), 'good');
+    assert.equal(toneAt(String(ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 + 1n)), 'warn');
+    assert.equal(toneAt('32'), 'good');
+    // Money returned above what went in.
+    assert.equal(toneAt('-1'), 'good');
+    // The number itself is untouched — only how it is painted.
+    assert.equal(cashExitLadderRungsV1([rung('9990')], NOW)[0]?.value, '99.90%');
+  });
+
+  test('a rung with no cost keeps the tone of its outcome', () => {
+    // `warn` for a cost is a statement about a number. A rung that has no
+    // number — refused, uncovered, never measured — still has to say what
+    // happened to it, and that is the outcome's own tone.
+    const rows = cashExitLadderRungsV1(
+      [
+        {
+          requestedCashAtomic: '1000000000',
+          destination: 'USDC',
+          status: 'not_measured',
+          roundTripCostBps: null,
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: null,
+        },
+      ],
+      NOW,
+    );
+    assert.equal(rows.length, 0);
+
+    const refused = cashExitLadderRungsV1(
+      [
+        {
+          requestedCashAtomic: '1000000000',
+          destination: 'USDC',
+          status: 'unavailable',
+          roundTripCostBps: null,
+          derivedFromExactRung: false,
+          lowerBoundRequestedCashAtomic: null,
+          lastMeasured: null,
+        },
+      ],
+      NOW,
+    );
+    assert.equal(refused[0]?.value, 'no exit route');
+    assert.equal(refused[0]?.tone, 'warn');
+  });
+
+
   test('an expired rung is history, not an empty ladder', () => {
     // Stocks rendered no ladder at all for any representation, because the
     // dossier's projection turns an expired rung into `not_measured` and this

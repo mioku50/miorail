@@ -31,12 +31,17 @@ test('the header names Stocks, Radar and the evidence index', () => {
   // feed sits a page deeper at /opportunities/launches. Keeping "B20" in the
   // label would name the whole surface after the half that moved.
   //
+  // It then spent a while as "Evidence index" here while the page's own header
+  // and Base App both still said "Discover", so one surface answered to three
+  // names and a reader counted three places. "Discover" is the reader's word
+  // for what they are doing; "Evidence index" was ours for what we store.
+  //
   // Activity (was Proofs) moved to the drawer: it is a viewer for records this
   // deployment has never produced, and a bar of three working surfaces beats
   // four where one is empty.
   // Phase 15.1 — the header opens on the product, not on the surfaces it was
   // built from. Stocks was reachable only from the drawer.
-  assert.deepEqual(tabs.map((route) => route.label), ['Stocks', 'Radar', 'Evidence index']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Stocks', 'Radar', 'Discover']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

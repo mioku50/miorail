@@ -597,6 +597,7 @@ export async function assembleMarketRealityIndexV1(
     identifierScheme: row.underlying.identifierScheme ?? null,
     identifierValue: row.underlying.identifierValue ?? null,
     representationCount: row.representationCount,
+    liveRepresentationCount: row.liveRepresentationCount,
     issuerIds: row.issuerIds,
     multiIssuer: row.issuerIds.length > 1,
   }));

@@ -333,6 +333,16 @@ export const MarketRealityIndexEntryV1Schema = z
     identifierScheme: z.string().min(1).max(40).nullable(),
     identifierValue: z.string().min(1).max(120).nullable(),
     representationCount: z.number().int().min(0),
+    /**
+     * How many of those representations have tokens outstanding.
+     *
+     * A separate sentence from `representationCount` for the same reason
+     * `issuerIds` is: nine of the thirteen Coinbase tokenized stocks are
+     * deployed contracts holding exactly zero, so a count of contracts says
+     * nothing about whether a reader can do anything here. Zero is a measured
+     * zero — a representation nobody has read is not counted as live.
+     */
+    liveRepresentationCount: z.number().int().min(0),
     issuerIds: z.array(z.enum(['coinbase', 'dinari', 'backed'])).max(8),
     /** True when more than one ISSUER carries it — the comparable case. */
     multiIssuer: z.boolean(),

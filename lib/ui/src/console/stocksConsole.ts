@@ -286,7 +286,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
             return false;
           }
           const sources = [...new Set(representation.sources.map((row) => row.source))].sort();
-          return sources.join(' ') === [...watch.approvedSources].sort().join(' ');
+          return sources.join('\u0000') === [...watch.approvedSources].sort().join('\u0000');
         })
         .map((watch) => [watch.tokenAddress, watch.watchId] as const),
     );

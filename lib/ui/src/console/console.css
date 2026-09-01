@@ -1288,6 +1288,15 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    name; Connected Apps renders the same shape, so the rule is shared under a
    second, truthful name rather than duplicated or borrowed under a lie. */
 .mio-console .radar-watch-grid,
+/* A label that opens a group inside a panel body.
+   `.sub` was only ever styled as a descendant of `.ph` and `.cr-name`, so a
+   bare one in a panel body rendered as unstyled paragraph text flush against
+   whatever sat above it — which is how "Connect with OAuth" came to collide
+   with the permission list on Settings. */
+.mio-console .pb > .sub { margin: 16px 0 6px; font-size: 11.5px; font-weight: 600;
+  letter-spacing: .04em; text-transform: uppercase; color: var(--faint); }
+.mio-console .pb > .sub:first-child { margin-top: 0; }
+
 .mio-console .console-card-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(280px,1fr)); gap: 10px; }
 .mio-console .radar-watch { min-width: 0; padding: 13px; border-radius: var(--r); background: var(--panel2);
   box-shadow: inset 0 0 0 1px var(--line); }

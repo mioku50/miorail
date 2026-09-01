@@ -264,7 +264,7 @@ export function entryPlanIdempotencyKeyV1(input: {
     input.walletAddress.toLowerCase(),
     input.clearanceId,
     input.requestId,
-  ].join(' ');
+  ].join('\u0000');
 }
 
 /**

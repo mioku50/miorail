@@ -249,20 +249,32 @@ export function createDatabaseUnderlyingAssetRepository(
       // same rows. `array_agg` over a filtered join yields `{NULL}` for an
       // underlying nothing is bound to, which is why the null is stripped here
       // rather than trusted to be absent.
+      // A security with a live representation sorts above one with more
+      // contracts and no tokens outstanding: `representation_count` counts
+      // CONTRACTS, and nine of the thirteen Coinbase stocks hold zero. The
+      // supply join is LEFT so an unread representation lowers nothing — it
+      // simply is not counted as live.
       const rows = (await sql`
         SELECT u.*,
                count(r.token_address)::int AS representation_count,
+               count(*) FILTER (WHERE s.supply_state = 'positive_supply')::int AS live_count,
                array_remove(array_agg(DISTINCT r.issuer_id), NULL) AS issuer_ids
           FROM underlying_asset u
           LEFT JOIN representation_underlying r
             ON r.underlying_key = u.underlying_key AND r.chain_id = ${input.chainId}
+          LEFT JOIN representation_supply s
+            ON s.token_address = r.token_address AND s.chain_id = r.chain_id
          GROUP BY u.underlying_key
-         ORDER BY representation_count DESC, u.canonical_name ASC, u.underlying_key ASC
+         ORDER BY live_count DESC,
+                  representation_count DESC,
+                  u.canonical_name ASC,
+                  u.underlying_key ASC
          LIMIT ${Math.max(1, Math.min(500, input.limit))}
       `) as Record<string, unknown>[];
       return rows.map((row) => ({
         underlying: rowToUnderlyingV1(row),
         representationCount: Number(row.representation_count ?? 0),
+        liveRepresentationCount: Number(row.live_count ?? 0),
         issuerIds: [...new Set((row.issuer_ids as string[] | null) ?? [])].sort(),
       }));
     },

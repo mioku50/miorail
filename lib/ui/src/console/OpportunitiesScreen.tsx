@@ -1056,8 +1056,12 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
           <div className="ph">
             {/* What the panel IS. "Opportunities" is a promise this surface
                 does not make — every card here is a measurement, and four in
-                five of them are a measurement that found no way out. */}
-            <h3>Discover B20</h3>
+                five of them are a measurement that found no way out.
+                "B20 launches" rather than "Discover B20" because the crumb
+                above it already says Discover: this page is the launch feed one
+                level under it, and repeating the section name here made a
+                fifth word for one place. */}
+            <h3>B20 launches</h3>
             <span className="rt">
               <span className="sub">{model.cards.length} shown</span>
             </span>
@@ -1257,7 +1261,7 @@ export function OpportunitiesScreen(model: OpportunitiesScreenModelV1) {
       {!model.feedRenderable && !model.pipelineNotice && (
         <div className="panel">
           <div className="ph">
-            <h3>Discover B20</h3>
+            <h3>B20 launches</h3>
           </div>
           <div className="pb">
             <p className="empty">{CONSOLE_NO_ANALYSIS_COPY_V1}</p>

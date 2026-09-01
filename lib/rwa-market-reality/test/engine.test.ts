@@ -473,6 +473,7 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     assetClass: 'equity' | 'fund_share' | 'other' | 'unknown',
     representationCount: number,
     issuerIds: string[],
+    live = representationCount,
   ) => ({
     underlying: {
       underlyingKey,
@@ -487,6 +488,7 @@ test('the Stocks index admits only reviewed equities and computes totals over th
       observedAt: '2026-09-01T12:00:00.000Z',
     },
     representationCount,
+    liveRepresentationCount: live,
     issuerIds,
   });
   const rows = [
@@ -517,4 +519,54 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     boundRepresentations: 4,
     multiIssuerUnderlyings: 1,
   });
+  // Carried through, so the surface can order and label on it.
+  assert.deepEqual(
+    result.entries.map((entry) => entry.liveRepresentationCount),
+    [3, 1],
+  );
+});
+
+test('a security with tokens outstanding is not ranked below an empty contract', async () => {
+  // Nine of the thirteen Coinbase tokenized stocks hold exactly zero. Ranking
+  // on `representationCount` alone counts CONTRACTS, so an empty security with
+  // two deployments sorted above a live one with a single deployment and the
+  // first card a visitor opened could do nothing. The repository does the
+  // ordering; this pins that the engine preserves it and reports the fact the
+  // surface needs to label the rest honestly.
+  const row = (key: string, representationCount: number, live: number) => ({
+    underlying: {
+      underlyingKey: key,
+      assetClass: 'equity' as const,
+      canonicalName: key,
+      displaySymbol: null,
+      identifierScheme: null,
+      identifierValue: null,
+      sourceKind: 'coinbase_b20_metadata' as const,
+      sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base',
+      sourceHash: 'cd'.repeat(32),
+      observedAt: '2026-09-01T12:00:00.000Z',
+    },
+    representationCount,
+    liveRepresentationCount: live,
+    issuerIds: ['coinbase'],
+  });
+  const result = await assembleMarketRealityIndexV1(
+    {
+      underlyings: {
+        listUnderlyings: async () => [row('security:isin:live', 1, 1), row('security:isin:empty', 2, 0)],
+        underlyingCounts: async () => {
+          throw new Error('generic security totals must not leak into Stocks');
+        },
+      } as unknown as UnderlyingAssetRepositoryV1,
+      now: () => new Date('2026-09-01T12:00:00.000Z'),
+    },
+    { limit: 50 },
+  );
+  assert.deepEqual(
+    result.entries.map((entry) => [entry.underlyingKey, entry.liveRepresentationCount]),
+    [
+      ['security:isin:live', 1],
+      ['security:isin:empty', 0],
+    ],
+  );
 });

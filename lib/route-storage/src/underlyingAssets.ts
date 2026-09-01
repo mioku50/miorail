@@ -354,4 +354,18 @@ export interface UnderlyingIndexEntryV1 {
   representationCount: number;
   /** Distinct issuers behind those representations, sorted. */
   issuerIds: string[];
+  /**
+   * How many of those representations have tokens outstanding.
+   *
+   * The chooser used to rank on `representationCount` alone, which counts
+   * CONTRACTS rather than markets. Nine of the thirteen Coinbase tokenized
+   * stocks hold exactly zero, so the securities a reader could actually trade
+   * were interleaved alphabetically with ones that can do nothing, and the
+   * first card opened was as likely as not to be an empty contract.
+   *
+   * Zero here is a measured zero. A representation nobody has read yet is
+   * `supply_unknown` and is not counted as live — the ordering may never
+   * promise a market on the strength of an unread contract.
+   */
+  liveRepresentationCount: number;
 }

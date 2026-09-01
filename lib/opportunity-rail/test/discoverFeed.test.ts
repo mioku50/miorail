@@ -13,6 +13,7 @@ import {
   B20_WALLET_INDEPENDENT_REJECTIONS_V1,
   b20LaunchBuyerWindowV1,
   b20OpportunityCardV1,
+  b20OperationalLabelV1,
   b20PipelineCopyV1,
   b20PipelineStatusV1,
   type B20CardInputV1,
@@ -126,6 +127,38 @@ function card(overrides: Partial<B20CardInputV1['observation']> = {}, launchOver
     now: NOW,
   });
 }
+
+describe('a frozen feed is a decision, not a fault', () => {
+  test('an operator freeze outranks the staleness a stopped worker produces', () => {
+    // Stopping the two launch workers makes the cursor stop moving, and the
+    // very next state check reports `worker_stale` — "not advancing". True,
+    // and a reader files it as an outage and goes looking for the broken
+    // worker. This is the difference between our fault and our decision.
+    const stopped = {
+      ...BASE_FACTS,
+      lastIngestionRunAt: '2026-08-01T12:00:00.000Z',
+      operatorState: null,
+    };
+    assert.equal(b20PipelineStatusV1(stopped).state, 'worker_stale');
+
+    const frozen = b20PipelineStatusV1({ ...stopped, operatorState: 'feed_frozen' });
+    assert.equal(frozen.state, 'feed_frozen');
+    assert.equal(b20OperationalLabelV1(frozen), 'Frozen');
+    // And it never borrows the vocabulary of an outage.
+    const copy = b20PipelineCopyV1(frozen);
+    assert.match(copy, /no longer being read/);
+    assert.doesNotMatch(copy, /stale|broken|unavailable|failed/i);
+    // What still works is said out loud.
+    assert.match(copy, /still reads normally/);
+  });
+
+  test('a freeze does not hide a decoder that stopped reading', () => {
+    // `decoder_mismatch` is ours and still has to surface. Only the states a
+    // freeze actually explains are absorbed by it.
+    const status = b20PipelineStatusV1({ ...BASE_FACTS, operatorState: 'decoder_mismatch' });
+    assert.equal(status.state, 'decoder_mismatch');
+  });
+});
 
 describe('an empty feed says which of seven things happened', () => {
   test('no start block configured is not the same as nothing launched', () => {

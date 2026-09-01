@@ -242,7 +242,45 @@ export const INTELLIGENCE_CATEGORY_LABEL_V1: Record<string, string> = {
   contract_risk: 'Contract risk',
   liquidity_evidence: 'Liquidity evidence',
   premium_research: 'Premium research',
+  // Production printed "route_quote, liquidity, risk, Simulation, inference"
+  // — four raw enum values beside one that happened to have a label, in a
+  // consent panel a reader is being asked to approve spending against.
+  route_quote: 'Route quotes',
+  liquidity: 'Liquidity depth',
+  risk: 'Contract risk',
+  inference: 'Model inference',
 };
+
+/**
+ * A category nobody has written a word for.
+ *
+ * Never the raw key. `route_quote` in a spending consent panel is asking
+ * somebody to approve a thing the product has not named, and a snake_case
+ * token beside "Simulation" reads as a rendering fault on top of that.
+ */
+export function intelligenceCategoryLabelV1(category: string): string {
+  return INTELLIGENCE_CATEGORY_LABEL_V1[category] ?? 'Another checked category';
+}
+
+/**
+ * A future date, said the way a person writes one.
+ *
+ * `2026-09-08T15:41:34.980Z` is an instant to the millisecond in a timezone
+ * the reader is probably not in, printed where the rest of the console gives
+ * ages and plain dates. The precision was never the point — the point is which
+ * day the allowance resets.
+ */
+export function periodEndLabelV1(iso: string | null): string {
+  if (iso === null) return 'not set';
+  const at = new Date(iso);
+  if (!Number.isFinite(at.getTime())) return 'not set';
+  return at.toLocaleDateString('en-GB', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+    timeZone: 'UTC',
+  });
+}
 
 export function budgetPaymentsViewV1(input: PaidIntelligenceInputV1): BudgetPaymentsViewV1 {
   const state = paidIntelligenceStateV1(input);
@@ -261,13 +299,13 @@ export function budgetPaymentsViewV1(input: PaidIntelligenceInputV1): BudgetPaym
           { label: 'Reserved', value: usdc(budget.reservedUsdc) },
           { label: 'Remaining', value: usdc(budget.remainingUsdc) },
           { label: 'Maximum per request', value: usdc(budget.maxPerRequestUsdc) },
-          { label: 'Period ends', value: budget.periodEndsAt ?? 'not set' },
+          { label: 'Period ends', value: periodEndLabelV1(budget.periodEndsAt) },
         ]
       : null,
     usedPercent: limit > 0 ? Math.max(0, Math.min(100, Math.round((spent / limit) * 100))) : 0,
-    allowedCategories: (budget?.allowedCategories ?? []).map(
-      (category) => INTELLIGENCE_CATEGORY_LABEL_V1[category] ?? category,
-    ),
+    allowedCategories: [
+      ...new Set((budget?.allowedCategories ?? []).map(intelligenceCategoryLabelV1)),
+    ],
     // Named, not addressed: the drawer says who may charge, and a raw address
     // in a consent dialog is something nobody verifies and everybody skips.
     recipientLabel: budget ? 'Miorail service wallet' : 'nobody — no permission exists',

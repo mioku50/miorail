@@ -11,6 +11,8 @@ import {
 } from '../src/console/marketRealityHistoryView';
 import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
+  sourceLabelV1,
+  stockFiltersV1,
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
   quoteAgeLabelV1,
@@ -1032,6 +1034,7 @@ describe('an absent number never renders as a zero', () => {
         issuerIds: ['coinbase'],
         representationCount: 3,
         multiIssuer: true,
+        emptyNote: null,
       },
       now: NOW,
     });
@@ -1366,7 +1369,8 @@ describe('an absent number never renders as a zero', () => {
     });
     const bad = dust!.representations[0]!.exit!;
     assert.equal(bad.value, '99.57%');
-    assert.equal(bad.tone, 'off');
+    // `warn`. `off` reads as "we did not look", and this is the answer.
+    assert.equal(bad.tone, 'warn');
     // Never borrows the market's vocabulary for absence: a route existed.
     assert.doesNotMatch(bad.note ?? '', /no route/i);
     assert.match(bad.note ?? '', /Most of the money does not come back/);
@@ -1398,7 +1402,10 @@ describe('an absent number never renders as a zero', () => {
       })!.representations[0]!.exit!;
     // Exactly at the bound is still exitable; one basis point past it is not.
     assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1)).tone, 'good');
-    assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 + 1)).tone, 'off');
+    // `warn`, never `off`: `off` is this console's word for nothing having been
+    // measured, and a round trip that ate the money is a measurement.
+    assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 + 1)).tone, 'warn');
+    assert.equal(at('9990').tone, 'warn');
     // A reader who disagrees with the bound can still see the number it read.
     assert.equal(at('1234').value, '12.34%');
   });
@@ -1691,6 +1698,7 @@ describe('the chooser', () => {
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
           representationCount: 3,
+          liveRepresentationCount: 2,
           issuerIds: ['backed', 'coinbase'] as const,
           multiIssuer: true,
         },
@@ -1702,6 +1710,7 @@ describe('the chooser', () => {
           identifierScheme: 'isin',
           identifierValue: 'US5949724083',
           representationCount: 2,
+          liveRepresentationCount: 0,
           issuerIds: ['backed'] as const,
           multiIssuer: false,
         },
@@ -1729,6 +1738,7 @@ describe('the chooser', () => {
           identifierScheme: 'isin',
           identifierValue: 'US0378331005',
           representationCount: 1,
+          liveRepresentationCount: 1,
           issuerIds: ['coinbase'] as const,
           multiIssuer: false,
         },
@@ -1740,6 +1750,7 @@ describe('the chooser', () => {
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
           representationCount: 3,
+          liveRepresentationCount: 3,
           issuerIds: ['backed', 'coinbase'] as const,
           multiIssuer: true,
         },
@@ -1747,7 +1758,9 @@ describe('the chooser', () => {
       totals: { underlyings: 2, boundRepresentations: 4, multiIssuerUnderlyings: 1 },
       observedAt: NOW,
     });
-    assert.equal(named?.title, 'Apple Inc. (AAPL)');
+    // Ticker first: this row is one line and it ellipsis, so the company name
+    // is the half that can afford to be cut.
+    assert.equal(named?.title, 'AAPL · Apple Inc.');
     assert.equal(tickerOnly?.title, 'NVDA');
   });
 
@@ -1834,6 +1847,104 @@ describe('Phase 11 utility and eligibility map', () => {
     assert.equal(ids.has('issuer_redeem_sell'), false);
   });
 
+  test('a security nothing has outstanding says so, and counts correctly', () => {
+    const entry = (representationCount: number, liveRepresentationCount: number) => ({
+      underlyingKey: `security:isin:US000000000${representationCount}`,
+      canonicalName: 'Example Inc.',
+      displaySymbol: 'EX',
+      assetClass: 'equity' as const,
+      identifierScheme: 'isin',
+      identifierValue: 'US0378331005',
+      representationCount,
+      liveRepresentationCount,
+      issuerIds: ['coinbase'] as const,
+      multiIssuer: false,
+    });
+    const noteFor = (reps: number, live: number) =>
+      underlyingChoicesV1({
+        entries: [entry(reps, live)],
+        totals: { underlyings: 1, boundRepresentations: reps, multiIssuerUnderlyings: 0 },
+        observedAt: NOW,
+      })[0]?.emptyNote;
+
+    assert.equal(noteFor(1, 0), 'No tokens outstanding');
+    assert.equal(noteFor(2, 0), 'No tokens outstanding on either contract');
+    // "either" is two. MSTR has three.
+    assert.equal(noteFor(3, 0), 'No tokens outstanding on any of 3 contracts');
+    // One live representation is enough for the security to be worth opening.
+    assert.equal(noteFor(3, 1), null);
+    assert.equal(noteFor(1, 1), null);
+  });
+
+  test('a filter chip exists only when something is behind it', () => {
+    // Dinari has a hundred contracts proven to be dShares and none bound to a
+    // security, and the chip list was a literal of five — so pressing "Dinari"
+    // emptied the page. A filter that can only return nothing reads as a broken
+    // product, not as a gap in coverage.
+    const choice = (issuerIds: readonly ('coinbase' | 'dinari' | 'backed')[], multiIssuer: boolean) => ({
+      underlyingKey: issuerIds.join('-') + String(multiIssuer),
+      title: 'x',
+      identifier: null,
+      issuerLine: 'x',
+      issuerIds,
+      representationCount: issuerIds.length,
+      multiIssuer,
+      emptyNote: null,
+    });
+
+    const both = stockFiltersV1([choice(['coinbase', 'backed'], true), choice(['backed'], false)]);
+    assert.deepEqual(
+      both.map((entry) => entry.id),
+      ['all', 'multi', 'coinbase', 'backed'],
+    );
+    assert.deepEqual(
+      both.map((entry) => entry.count),
+      [2, 1, 1, 2],
+    );
+
+    // Nothing held by two issuers: no "Multi-issuer" chip either.
+    const single = stockFiltersV1([choice(['coinbase'], false)]);
+    assert.deepEqual(
+      single.map((entry) => entry.id),
+      ['all', 'coinbase'],
+    );
+
+    // And the moment a Dinari representation IS bound, its chip appears with
+    // no further change here.
+    assert.ok(stockFiltersV1([choice(['dinari'], false)]).some((entry) => entry.id === 'dinari'));
+    assert.deepEqual(stockFiltersV1([]).map((entry) => entry.id), ['all']);
+  });
+
+  test('two documents on one edge are named by publisher, never twice by kind', () => {
+    // Production rendered "Reviewed documentation  Reviewed documentation" on
+    // every Coinbase card: the label was the source KIND, so two independent
+    // documents were indistinguishable and read as a duplication bug.
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const sources = view!.representations[0]!.utility.groups
+      .flatMap((group) => group.edges)
+      .flatMap((edge) => edge.sources)
+      .filter((source) => source.href !== null);
+    assert.ok(sources.length > 0);
+    for (const source of sources) {
+      assert.notEqual(source.label, 'Reviewed documentation');
+    }
+    // Every edge that cites more than one document distinguishes them.
+    for (const edge of view!.representations[0]!.utility.groups.flatMap((g) => g.edges)) {
+      const labels = edge.sources.map((source) => source.label);
+      assert.equal(new Set(labels).size, labels.length, `${edge.edgeId} repeats a source label`);
+    }
+    // A host nobody reviewed keeps the kind label rather than inventing one.
+    assert.equal(
+      sourceLabelV1('https://example.invalid/x', 'Reviewed documentation'),
+      'Reviewed documentation',
+    );
+    assert.equal(sourceLabelV1(null, 'Reviewed documentation'), 'Reviewed documentation');
+    assert.equal(
+      sourceLabelV1('https://docs.base.org/anything', 'Reviewed documentation'),
+      'Base standard',
+    );
+  });
+
   test('the Utility view renders evidence states without rendering a ranking', () => {
     const choices = underlyingChoicesV1({
       entries: [
@@ -1845,6 +1956,7 @@ describe('Phase 11 utility and eligibility map', () => {
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
           representationCount: 1,
+          liveRepresentationCount: 1,
           issuerIds: ['coinbase'],
           multiIssuer: false,
         },
@@ -2279,7 +2391,10 @@ describe('what a round trip costs, said as money first', () => {
     });
     assert.equal(bad.value, '$1,000 in → $342.80 back');
     assert.match(bad.note ?? '', /Total cost to buy and exit: 65\.72%/);
-    assert.equal(bad.tone, 'off');
+    // `warn`, not `off`. `off` is this console's word for nothing having been
+    // measured; a round trip that returned a third of the money is a
+    // measurement, and it is the tone its own ladder rung carries.
+    assert.equal(bad.tone, 'warn');
     // Never "no route": a route existed and answered.
     assert.doesNotMatch(bad.note ?? '', /no route/i);
     assert.doesNotMatch(bad.note ?? '', /bps/);

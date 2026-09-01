@@ -886,7 +886,15 @@ export async function pipelineStatusV1(
     observationCount: counts.observationCount,
     observationsLastRun: counts.observationsLastRun,
     budgetExhausted: counts.lastIngestionBudgetExhausted,
-    operatorState: counts.ingestionOperatorState,
+    // An operator who has deliberately stopped the launch workers outranks
+    // whatever the cursor last recorded: without this the surface reports
+    // "not advancing", which is true and reads as a broken worker rather than
+    // as a decision. Set MIORAIL_B20_LAUNCH_FEED_FROZEN_V1=true alongside
+    // stopping miorail-b20-discover and miorail-b20-measure.
+    operatorState:
+      (process.env.MIORAIL_B20_LAUNCH_FEED_FROZEN_V1 ?? '').trim().toLowerCase() === 'true'
+        ? 'feed_frozen'
+        : counts.ingestionOperatorState,
     // T73-LIVE §8 — the clock the staleness check runs against. A dead worker
     // used to report `healthy`, because nothing compared the last run to now.
     now: now.toISOString(),

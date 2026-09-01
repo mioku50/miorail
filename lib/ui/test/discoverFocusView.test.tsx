@@ -277,7 +277,7 @@ const CONSOLE_MODEL = {
 describe('Discover leads with what it lists', () => {
   test('the console sits inside the feed panel, after the header and before the filters', () => {
     const html = render(undefined, [FEED_CARD], { console: CONSOLE_MODEL });
-    const header = html.indexOf('Discover B20');
+    const header = html.indexOf('B20 launches');
     const ask = html.indexOf('class="ask-inline"');
     const filters = html.indexOf('aria-label="Filter by what the measurement found"');
     const card = html.indexOf('CHEESE');

@@ -15,7 +15,19 @@ import {
  * graph whose edges point at nothing and pass, while the same worker throws in
  * production.
  */
-export function createMemoryUnderlyingAssetRepository(): UnderlyingAssetRepositoryV1 {
+export function createMemoryUnderlyingAssetRepository(
+  /**
+   * Which representations have tokens outstanding, by lowercase address.
+   *
+   * The database twin reads this from `representation_supply` and orders the
+   * chooser by it. Absent here means the same thing it means there — nobody has
+   * read that contract's supply — so the default is an empty map and the
+   * ordering falls back to the representation count exactly as Postgres does
+   * when the supply table is empty. This exists so the fake cannot rank a list
+   * the real one ranks differently.
+   */
+  supplyStates: ReadonlyMap<string, 'positive_supply' | 'zero_supply' | 'supply_unknown'> = new Map(),
+): UnderlyingAssetRepositoryV1 {
   const underlyings = new Map<string, UnderlyingAssetV1>();
   const bindings = new Map<string, RepresentationUnderlyingV1>();
   const key = (chainId: number, address: string) => `${chainId}:${address.toLowerCase()}`;
@@ -67,11 +79,16 @@ export function createMemoryUnderlyingAssetRepository(): UnderlyingAssetReposito
     },
 
     async listUnderlyings(input) {
-      const byKey = new Map<string, { count: number; issuers: Set<string> }>();
+      const byKey = new Map<string, { count: number; live: number; issuers: Set<string> }>();
       for (const row of bindings.values()) {
         if (row.chainId !== input.chainId) continue;
-        const entry = byKey.get(row.underlyingKey) ?? { count: 0, issuers: new Set<string>() };
+        const entry = byKey.get(row.underlyingKey) ?? {
+          count: 0,
+          live: 0,
+          issuers: new Set<string>(),
+        };
         entry.count += 1;
+        if (supplyStates.get(row.tokenAddress.toLowerCase()) === 'positive_supply') entry.live += 1;
         if (row.issuerId) entry.issuers.add(row.issuerId);
         byKey.set(row.underlyingKey, entry);
       }
@@ -81,13 +98,17 @@ export function createMemoryUnderlyingAssetRepository(): UnderlyingAssetReposito
           return {
             underlying,
             representationCount: entry?.count ?? 0,
+            liveRepresentationCount: entry?.live ?? 0,
             issuerIds: [...(entry?.issuers ?? [])].sort(),
           };
         })
-        // Most-represented first: a security Base carries two ways is the only
-        // kind this surface can compare, so it sorts above one it carries once.
+        // A security with tokens outstanding first; then most-represented,
+        // because a security Base carries two ways is the only kind this
+        // surface can compare. Contract count alone put empty contracts ahead
+        // of live markets.
         .sort(
           (a, b) =>
+            b.liveRepresentationCount - a.liveRepresentationCount ||
             b.representationCount - a.representationCount ||
             a.underlying.canonicalName.localeCompare(b.underlying.canonicalName) ||
             a.underlying.underlyingKey.localeCompare(b.underlying.underlyingKey),

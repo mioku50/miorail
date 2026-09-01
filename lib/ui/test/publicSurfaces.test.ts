@@ -71,6 +71,28 @@ test('every remaining Base Account call surface receives ERC-8021 attribution', 
   assert.match(routeHome, /builderCode=\{BUILDER_CODE\}/);
 });
 
+// ---------------------------------------------------------------------------
+// A file git thinks is binary is a file nobody reviewed.
+//
+// Six source files carried a raw NUL byte, written as a separator inside a
+// string literal — `parts.join('\0')` — instead of the `\u0000` escape. Git
+// treats a NUL in the first 8,000 bytes as binary, so those files had no line
+// diffs, no merges and no reviewable history. One of them was the shared Stocks
+// console; another computed the deterministic id of every audit row we have
+// ever written, where an invisible byte is one whitespace pass away from
+// silently changing all of them.
+//
+// The value is identical either way. Only the reviewability differs.
+// ---------------------------------------------------------------------------
+
+test('no tracked source file hides a NUL byte from git', () => {
+  const offenders: string[] = [];
+  for (const file of sourceFilesV1(root)) {
+    if (readFileSync(file).includes(0)) offenders.push(path.relative(root, file));
+  }
+  assert.deepEqual(offenders, [], `write \\u0000 rather than a raw NUL: ${offenders.join(', ')}`);
+});
+
 test('the production build injects one validated public Builder Code into web and Base App', () => {
   const deploy = source('ops/deploy.sh');
   assert.match(deploy, /VITE_BASE_BUILDER_CODE="\$public_builder_code"/);

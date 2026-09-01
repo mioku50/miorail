@@ -9,3 +9,4 @@ export * from './launchSource.js';
 export * from './indexStanding.js';
 export * from './eligibility.js';
 export * from './securityIdentifier.js';
+export * from './registry.js';

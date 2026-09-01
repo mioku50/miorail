@@ -513,7 +513,7 @@ export function encodeFeedCursorV1(input: {
   measuredAt: string | null;
   launchId: string;
 }): string {
-  const payload = [input.launchBlockNumber, input.measuredAt ?? '', input.launchId].join(' ');
+  const payload = [input.launchBlockNumber, input.measuredAt ?? '', input.launchId].join('\u0000');
   return Buffer.from(payload, 'utf8').toString('base64url');
 }
 
@@ -521,7 +521,7 @@ export function decodeFeedCursorV1(
   cursor: string,
 ): { launchBlockNumber: string; measuredAt: string | null; launchId: string } | null {
   try {
-    const parts = Buffer.from(cursor, 'base64url').toString('utf8').split(' ');
+    const parts = Buffer.from(cursor, 'base64url').toString('utf8').split('\u0000');
     if (parts.length !== 3) return null;
     const [launchBlockNumber, measuredAt, launchId] = parts as [string, string, string];
     if (!/^\d+$/.test(launchBlockNumber) || launchId.length === 0) return null;

@@ -26,6 +26,36 @@ export const B20_FACTORY_V1 = '0xb20f000000000000000000000000000000000000' as co
 export const B20_ACTIVATION_REGISTRY_V1 = '0x8453000000000000000000000000000000000001' as const;
 export const B20_POLICY_REGISTRY_V1 = '0x8453000000000000000000000000000000000002' as const;
 
+/**
+ * Coinbase's onchain oracle registry for tokenized stocks.
+ *
+ * Not a precompile and not part of the B20 standard: one deployed contract,
+ * separate from the tokens, that Base Docs names under "Contract addresses" on
+ * the tokenized-stocks page and describes as the thing each Chainlink feed
+ * reads — "a single contract (separate from the tokens) that returns both
+ * values for a token in one call".
+ *
+ * Source: https://docs.base.org/specifications/b20/tokenized-stocks-on-base
+ */
+export const B20_ONCHAIN_REGISTRY_V1 = '0x3f3e8cf41cdd3b1d118c16471ab0113dfddd5cad' as const;
+
+/**
+ * The registry read, pinned by SELECTOR because it has no published name.
+ *
+ * The registry publishes no ABI and no interface page, and fifteen selectors
+ * sit in its 1,548 bytes — eleven of them OpenZeppelin AccessControl. This one
+ * was found by disassembling the dispatcher rather than by guessing a name,
+ * and its shape was then MEASURED rather than assumed: called with one address
+ * argument it returns two words, and on 2026-09-01 all thirteen Coinbase
+ * tokenized stocks answered `(1e18, false)` — a WAD-scaled multiplier of
+ * exactly one and an unpaused flag, which is what Base Docs says the feed
+ * reads from it.
+ *
+ * A name is not claimed here because none is published. Guessing one is how
+ * `bGME` came to be contradicted by a selector nobody had verified.
+ */
+export const B20_REGISTRY_TOKEN_STATE_SELECTOR_V1 = 'd4197e82' as const;
+
 /** 4-byte selector for a Solidity signature, computed rather than copied. */
 export function selectorV1(signature: string): string {
   return bytesToHex(keccak_256(utf8ToBytes(signature))).slice(0, 8);

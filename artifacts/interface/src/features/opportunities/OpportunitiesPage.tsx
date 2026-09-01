@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { useLocation, useSearch } from 'wouter';
 import { useAccount } from 'wagmi';
 import {
+  consoleSectionLabelV1,
   B20ExitCapacityLeadersCard,
   B20MeasuredMoversCard,
   ConsoleShell,
@@ -211,7 +212,10 @@ export function OpportunitiesPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Discover B20'],
+        // A real sub-page of a real section: the launch feed lives one level
+        // under Discover. "Discover B20" was a fourth name for a surface that
+        // already had three.
+        crumb: [consoleSectionLabelV1('opportunities'), 'B20 launches'],
         nav: nav.header,
         onNavigate: nav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),

@@ -83,6 +83,7 @@ function project(input: {
         issuerIds: ['coinbase'],
         representationCount: 1,
         multiIssuer: false,
+      emptyNote: null,
       },
     ],
     now: NOW,

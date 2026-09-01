@@ -336,6 +336,43 @@ export interface CashExitRungInputV1 {
 }
 
 /**
+ * The round trip this build is willing to call cheap, in basis points.
+ *
+ * DERIVED, NOT OBSERVED, and deliberately the only copy. Every cash-exit intent
+ * is planned with `slippageConstraint.maxBps = 100`, and a round trip is two of
+ * those legs, so two hundred basis points is the most the policy Miorail
+ * already measures under is willing to tolerate. No market number is
+ * hard-coded: change the slippage policy and this moves with it.
+ *
+ * It lives here rather than beside the card that used it first because the
+ * ladder and the round-trip line are two views of one measurement, and a second
+ * threshold would eventually paint them different colours for one number.
+ */
+export const ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 = 200n;
+
+/**
+ * The tone of a MEASURED round trip, decided by what it cost.
+ *
+ * This exists because the tone used to be decided by whether the measurement
+ * finished. A rung whose status was `full` was painted `good` at any cost, so
+ * a 99.90% round trip — a thousand dollars in and ninety-four cents back —
+ * rendered in exactly the green a 0.32% one did. The sentence beside it said
+ * "most of the money is not" available and the colour said otherwise, and on a
+ * card that is read in two seconds the colour is what is read.
+ *
+ * A cost above the line is `warn`, the same tone the neighbouring "no exit
+ * route" rung carries, because it is the same answer: the market will quote
+ * you, and the money does not come back. `off` would be wrong — that is this
+ * console's word for nothing having been measured, and this was measured.
+ *
+ * A negative cost is money returned above what went in. It stays `good`.
+ */
+export function roundTripToneV1(bps: string | null, fallback: ToneV1): ToneV1 {
+  if (bps === null || !/^-?(0|[1-9][0-9]*)$/.test(bps)) return fallback;
+  return BigInt(bps) <= ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 ? 'good' : 'warn';
+}
+
+/**
  * The ladder, as rows.
  *
  * Extracted so the product has ONE projection of a round-trip ladder. Stocks
@@ -384,6 +421,7 @@ export function cashExitLadderRungsV1(
         coded ??
         (refused ? ENTRY_REFUSED_LABEL_V1 : RUNG_STATUS_V1[history ? history.status : rung.status]);
       const age = history && now ? ageLabel(history.observedAt, now) : null;
+      const costBps = history ? history.roundTripCostBps : rung.roundTripCostBps;
       return {
         label: cashSizeLabelV1(rung.requestedCashAtomic),
         value: cost ?? meta.label,
@@ -394,7 +432,10 @@ export function cashExitLadderRungsV1(
           : // History is labelled as history. The tone stays the outcome's --
             // a rung nobody can exit is not less true for being ten minutes old.
             (age ? `measured ${age}` : null),
-        tone: meta.tone,
+        // When the rung HAS a cost, the cost is what the reader is looking at,
+        // so the cost is what decides the colour. `meta.tone` still speaks for
+        // every rung that has no number to show -- refused, uncovered, unmeasured.
+        tone: cost === null ? meta.tone : roundTripToneV1(costBps, meta.tone),
       };
     });
 }

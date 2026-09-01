@@ -13,6 +13,8 @@ import {
   CONSOLE_PRIMARY_SECTIONS_V1,
   CONSOLE_SECTIONS_V1,
   CONSOLE_SECTION_TABLE_V1,
+  consoleSectionLabelV1,
+  type ConsoleSectionV1,
   CONSOLE_NO_ANALYSIS_TITLE_V1,
   consoleHomeSectionV1,
   consoleIndexStatusV1,
@@ -30,6 +32,7 @@ import { ConsoleShell } from '../src/console/ConsoleShell';
 import { OpportunitiesScreen, type OpportunityCardViewV1 } from '../src/console/OpportunitiesScreen';
 import { opportunityCardViewV1 } from '../src/console/opportunityCardView';
 import { B20_STANDING_GROUP_COPY_V1 } from '@mioagent/opportunity-rail/exitStanding';
+import { CONSOLE_BREADCRUMB_V1 } from '../src/console/consoleState';
 
 // The JSX below compiles to React.createElement.
 void React;
@@ -1313,5 +1316,64 @@ describe('Phase 15.1 — a signed-out reader is told about the session, not the 
     ]) {
       assert.match(read(rel), /configurationRead: status\.isSuccess/, rel);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One surface, one name.
+//
+// The sidebar said "Evidence index", the page header on that same screen said
+// "Discover", Base App's bar said "Discover", and the launch feed one level
+// down said "Discover B20". Four words, one place. The same happened at
+// "B20 controls / Control watch" and at "Routes AI" opening on
+// "Session / New goal" — a breadcrumb that starts somewhere the reader has
+// never been.
+//
+// Checked by reading each page's own header rather than a list kept here: a
+// list is the surfaces somebody remembered.
+// ---------------------------------------------------------------------------
+
+describe('every surface carries one name', () => {
+  const PAGE_SECTION_V1: readonly [string, ConsoleSectionV1][] = [
+    ['../../../artifacts/interface/src/features/rwa/MarketRealityPage.tsx', 'market'],
+    ['../../../artifacts/interface/src/features/rwa/MarketRealityRadarPage.tsx', 'radar'],
+    ['../../../artifacts/interface/src/features/rwa/RwaDiscoverPage.tsx', 'opportunities'],
+    ['../../../artifacts/interface/src/features/rwa/InvestigatePage.tsx', 'investigate'],
+    ['../../../artifacts/interface/src/features/extensions/ExtensionsPage.tsx', 'extensions'],
+    ['../../../artifacts/interface/src/features/plan/RouteHistoryPage.tsx', 'activity'],
+    ['../../../artifacts/interface/src/features/settings/SettingsPage.tsx', 'settings'],
+  ];
+
+  test("a page's first crumb is the word its own nav entry uses", () => {
+    for (const [rel, section] of PAGE_SECTION_V1) {
+      const match = /crumb: \[([^\]]*)\]/.exec(read(rel));
+      assert.ok(match, `${rel} renders no crumb`);
+      const first = (match![1] ?? '').split(',')[0]!.trim().replace(/^'|'$/g, '');
+      assert.equal(first, consoleSectionLabelV1(section), rel);
+    }
+  });
+
+  test('the pages that build a crumb from the table are not exempt from it', () => {
+    // These two take the label from `consoleSectionLabelV1` rather than typing
+    // it, so the assertion above cannot read them. What it CAN check is that
+    // neither appends a second name for the same page.
+    const watch = read('../../../artifacts/interface/src/features/b20/B20WatchPage.tsx');
+    assert.match(watch, /crumb: \[consoleSectionLabelV1\('portfolio'\)\]/);
+    assert.doesNotMatch(watch, /'Control watch'/);
+
+    const launches = read('../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx');
+    assert.match(launches, /crumb: \[consoleSectionLabelV1\('opportunities'\), 'B20 launches'\]/);
+    assert.doesNotMatch(launches, /'Discover B20'/);
+  });
+
+  test('the Routes AI trail starts at Routes AI, never at "Session"', () => {
+    for (const crumb of Object.values(CONSOLE_BREADCRUMB_V1)) {
+      assert.equal(crumb('swap 100 USDC to ETH')[0], consoleSectionLabelV1('routes'));
+    }
+  });
+
+  test('no section label is a second name for another section', () => {
+    const labels = CONSOLE_SECTIONS_V1.map((section) => consoleSectionLabelV1(section));
+    assert.equal(new Set(labels).size, labels.length);
   });
 });

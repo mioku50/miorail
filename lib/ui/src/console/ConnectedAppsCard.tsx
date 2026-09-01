@@ -228,7 +228,11 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
               </div>
             ) : null}
 
-            <details>
+            {/* The console's own disclosure vocabulary, not a bare browser
+                triangle: `.mcp-tech` is what every other "quieter, foldable,
+                technical" block on these screens uses. A `<details>` with no
+                class rendered unstyled and wedged against the buttons above. */}
+            <details className="mcp-tech">
               <summary>Advanced: temporary bearer key</summary>
               <p className="lnote">
                 Use this only for a client that cannot perform MCP OAuth. It requires manual

@@ -8,7 +8,9 @@ import {
 import {
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
+  stockFiltersV1,
   type FactViewV1,
+  type StockFilterViewV1,
   type MarketRealityDirectionV1,
   type MarketRealityViewV1,
   type RepresentationViewV1,
@@ -595,12 +597,17 @@ function Chooser({
   onUnderlying: (underlyingKey: string) => void;
 }) {
   const [search, setSearch] = useState('');
-  const [filter, setFilter] = useState<'all' | 'multi' | 'coinbase' | 'dinari' | 'backed'>('all');
+  const [filter, setFilter] = useState<StockFilterViewV1['id']>('all');
+  // Derived from what is actually bound, never a literal. See `stockFiltersV1`.
+  const filters = useMemo(() => stockFiltersV1(choices), [choices]);
+  // A chip can disappear when the corpus changes under a reader who is standing
+  // on it. Falling back to `all` beats rendering an empty list with no chip lit.
+  const active = filters.some((entry) => entry.id === filter) ? filter : 'all';
   const visible = useMemo(() => {
     const query = search.trim().toLowerCase();
     return choices.filter((choice) => {
-      if (filter === 'multi' && !choice.multiIssuer) return false;
-      if (filter !== 'all' && filter !== 'multi' && !choice.issuerIds.includes(filter))
+      if (active === 'multi' && !choice.multiIssuer) return false;
+      if (active !== 'all' && active !== 'multi' && !choice.issuerIds.includes(active))
         return false;
       return (
         !query ||
@@ -609,7 +616,7 @@ function Chooser({
           .includes(query)
       );
     });
-  }, [choices, filter, search]);
+  }, [choices, active, search]);
   if (error) return <p className="note warn">{error}</p>;
   if (choices.length === 0) {
     return (
@@ -631,23 +638,15 @@ function Chooser({
         />
       </label>
       <div className="mr-filters" role="group" aria-label="Stock filters">
-        {(
-          [
-            ['all', 'All'],
-            ['multi', 'Multi-issuer'],
-            ['coinbase', 'Coinbase'],
-            ['dinari', 'Dinari'],
-            ['backed', 'Backed'],
-          ] as const
-        ).map(([id, label]) => (
+        {filters.map((entry) => (
           <button
-            key={id}
+            key={entry.id}
             type="button"
-            className={`pill${filter === id ? ' on' : ''}`}
-            aria-pressed={filter === id}
-            onClick={() => setFilter(id)}
+            className={`pill${active === entry.id ? ' on' : ''}`}
+            aria-pressed={active === entry.id}
+            onClick={() => setFilter(entry.id)}
           >
-            {label}
+            {entry.label}
           </button>
         ))}
       </div>
@@ -665,6 +664,12 @@ function Chooser({
             <span className="mr-choice-sub">
               {choice.issuerLine}
               {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
+              {/* Ordering puts these last; this is what stops a reader who
+                  opens one anyway from reading an empty contract as a broken
+                  product. */}
+              {choice.emptyNote ? (
+                <span className="pill mr-choice-tag">{choice.emptyNote}</span>
+              ) : null}
             </span>
           </button>
         ))}

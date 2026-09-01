@@ -51,6 +51,7 @@ export const B20_PIPELINE_STATES_V1 = [
    * behind AND not moving is not catching up.
    */
   'worker_stale',
+  'feed_frozen',
   /** The event shape changed. The launch feed is stopped until somebody looks. */
   'decoder_mismatch',
   'storage_unavailable',
@@ -137,8 +138,16 @@ export function b20PipelineStatusV1(
   const status = (state: B20PipelineStateV1): B20PipelineStatusV1 => ({ state, facts, blocksBehind });
 
   if (!input.storageAvailable) return status('storage_unavailable');
-  // A stopped decoder outranks everything: no later state is meaningful while
-  // the launch feed is refusing to read.
+  // Frozen on purpose outranks every fault below, because none of them applies.
+  // The launch feed was ~93% of everything Miorail stored and 85,000 rows a day
+  // for a surface Phase 6 moved a page deeper, so an operator can stop it and
+  // keep the corpus read-only. Without this state the surface reported
+  // "not advancing" — true, and read as a broken worker rather than a decision,
+  // which is the exact confusion between our fault and a deliberate state that
+  // this vocabulary exists to prevent.
+  if (facts.operatorState === 'feed_frozen') return status('feed_frozen');
+  // A stopped decoder outranks everything else: no later state is meaningful
+  // while the launch feed is refusing to read.
   if (facts.operatorState === 'decoder_mismatch') return status('decoder_mismatch');
   if (facts.ingestionCursorBlock === null) {
     // No cursor at all. Either nobody configured a start block, or the worker
@@ -183,7 +192,8 @@ export type B20OperationalLabelV1 =
   | 'Measuring'
   | 'Catching up'
   | 'Worker stale'
-  | 'Unavailable';
+  | 'Unavailable'
+  | 'Frozen';
 
 export function b20OperationalLabelV1(status: B20PipelineStatusV1): B20OperationalLabelV1 {
   switch (status.state) {
@@ -194,6 +204,9 @@ export function b20OperationalLabelV1(status: B20PipelineStatusV1): B20Operation
     case 'worker_stale':
     case 'ingestion_not_started':
       return 'Worker stale';
+    // Never 'Worker stale': nothing is wrong. The corpus still reads.
+    case 'feed_frozen':
+      return 'Frozen';
     case 'ingestion_catching_up':
       return 'Catching up';
     case 'degraded':
@@ -225,6 +238,8 @@ export function b20PipelineCopyV1(status: B20PipelineStatusV1): string {
       return 'Discover needs an explicit historical start block before it can read launches.';
     case 'ingestion_not_started':
       return 'Discover has not read any launch history yet.';
+    case 'feed_frozen':
+      return 'New B20 launches are no longer being read. Everything already measured still reads normally, and each card carries the age of its own measurement.';
     case 'ingestion_catching_up':
       return facts.ingestionCursorBlock && facts.confirmedHead
         ? `Miorail is reading B20 launch history: block ${formatBlockV1(facts.ingestionCursorBlock)} of ${formatBlockV1(facts.confirmedHead)}. Opportunities will appear as launches are measured.`

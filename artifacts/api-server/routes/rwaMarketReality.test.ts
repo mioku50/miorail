@@ -141,6 +141,7 @@ describe('GET the reviewed-securities chooser', () => {
           identifierScheme: 'isin',
           identifierValue: 'US67066G1040',
           representationCount: 3,
+          liveRepresentationCount: 3,
           issuerIds: ['backed' as const, 'coinbase' as const],
           multiIssuer: true,
         },

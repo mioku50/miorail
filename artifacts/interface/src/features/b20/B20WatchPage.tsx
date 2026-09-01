@@ -754,10 +754,13 @@ export function B20WatchPage() {
   return (
     <ConsoleShell
       header={{
-        // The section's OWN label, not a second name for it. The rail said
-        // "B20", the breadcrumb said "Portfolio" and the page title said
-        // "Control watch" — three names for one place, on one screen.
-        crumb: [consoleSectionLabelV1('portfolio'), 'Control watch'],
+        // The section's OWN label, and nothing after it. The rail said "B20",
+        // the breadcrumb said "Portfolio" and the page title said "Control
+        // watch" — three names for one place, on one screen. Naming the
+        // section correctly and then appending a fourth word for the same page
+        // fixed two thirds of that and left the reader one name too many: a
+        // second crumb element has to be a place you can still go back FROM.
+        crumb: [consoleSectionLabelV1('portfolio')],
         nav: consoleNav.header,
         onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
