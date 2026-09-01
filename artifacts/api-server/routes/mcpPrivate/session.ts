@@ -44,6 +44,11 @@ export type McpPrivateAuthRefusalV1 =
 
 export const MCP_PRIVATE_AUTH_COPY_V1: Record<McpPrivateAuthRefusalV1, string> = {
   ...MCP_HANDOFF_REFUSAL_COPY_V1,
+  // The endpoint now advertises standards-based OAuth discovery. Keep the
+  // legacy reason code for compatibility, but never tell a new MCP client
+  // that manual handoff-token issuance is the only way in.
+  handoff_token_missing:
+    'This endpoint needs Miorail authorization. Follow the OAuth resource metadata advertised in WWW-Authenticate, or use a temporary bearer key only if your MCP client cannot perform OAuth.',
   mcp_private_disabled:
     'This Miorail server does not expose the private MCP surface. Only the public read-only tools at /mcp are available here.',
   // §3 — deliberately distinct from expiry. "It ran out" and "somebody turned

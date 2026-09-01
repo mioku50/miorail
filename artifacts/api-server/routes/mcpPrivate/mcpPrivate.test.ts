@@ -26,7 +26,11 @@ import { routeHashV1 } from '../../lib/opportunityClearance.js';
 import { b20RouteRuntime } from '../b20Control.js';
 import { mcpAuditRuntime } from './audit.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { resolvePrivateIdentityV1, mcpPrivateAuthRuntime } from './session.js';
+import {
+  MCP_PRIVATE_AUTH_COPY_V1,
+  resolvePrivateIdentityV1,
+  mcpPrivateAuthRuntime,
+} from './session.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -289,6 +293,8 @@ describe('§10 — nothing happens without a proved wallet', () => {
     const resolved = await request();
     assert.equal(resolved.ok, false);
     assert.equal(resolved.ok === false && resolved.reason, 'handoff_token_missing');
+    assert.match(MCP_PRIVATE_AUTH_COPY_V1.handoff_token_missing, /OAuth resource metadata/);
+    assert.doesNotMatch(MCP_PRIVATE_AUTH_COPY_V1.handoff_token_missing, /issue one from Settings/);
   });
 
   test('a bad token never falls back to a session', async () => {
