@@ -16,11 +16,9 @@ import {
 //
 // FOUR THINGS THIS PROJECTION REFUSES TO SAY
 //
-//   1. That a grant is "active". Nothing here knows: a handoff token carries
-//      its own expiry, signed, and the server stores neither the expiry nor
-//      the token. What is knowable is whether it was REVOKED, so that is what
-//      is reported, and the surface says out loud that tokens also lapse on
-//      their own.
+//   1. That a historical grant is current when its issuance row never stored
+//      an expiry. New issuance rows carry the exact expiry; old rows remain
+//      `unknown`, never reconstructed from today's configured TTL.
 //
 //   2. That issuing is using. `token_issued` is excluded from `lastUsedAt` and
 //      from `useCount`. A grant minted and never touched must read as never
@@ -41,6 +39,19 @@ import {
  * is not handed to anybody, and there is nothing to revoke. */
 export const MCP_SESSION_TOKEN_ID_V1 = 'session';
 
+/**
+ * An OAuth grant audits under its own durable id, and `mcp_oauth_grants` is
+ * the authority on that grant's client, expiry and use count. So this
+ * projection must skip those rows rather than derive a second, weaker opinion
+ * about the same grant — otherwise every OAuth connection appears twice, once
+ * named and once as an anonymous row with no client and no expiry.
+ */
+export const MCP_OAUTH_GRANT_ID_PREFIX_V1 = 'oauth-grant_';
+
+function derivedElsewhereV1(tokenId: string): boolean {
+  return tokenId === MCP_SESSION_TOKEN_ID_V1 || tokenId.startsWith(MCP_OAUTH_GRANT_ID_PREFIX_V1);
+}
+
 export interface McpHandoffGrantV1 {
   tokenId: string;
   /** Null when the grant predates Connected Apps, or was issued without one. */
@@ -53,6 +64,10 @@ export interface McpHandoffGrantV1 {
   /** Calls made with this grant. Issuance is not one of them. */
   useCount: number;
   revokedAt: string | null;
+  /** Exact signed-token expiry when it was recorded at issuance. */
+  expiresAt: string | null;
+  /** `unknown` is the honest state for pre-expiry-history grants. */
+  status: 'current' | 'expired' | 'revoked' | 'unknown';
   /** False when the issuance row was not in the window, so counts and dates
    * describe the window rather than the grant's whole life. */
   historyComplete: boolean;
@@ -69,6 +84,7 @@ export interface McpHandoffGrantV1 {
 export function mcpHandoffGrantsV1(input: {
   audit: readonly McpExecutionAuditV1[];
   revocations: readonly McpHandoffRevocationV1[];
+  now: Date;
 }): McpHandoffGrantV1[] {
   const revokedAt = new Map<string, string>();
   for (const revocation of input.revocations) {
@@ -82,7 +98,7 @@ export function mcpHandoffGrantsV1(input: {
 
   const byToken = new Map<string, McpHandoffGrantV1>();
   for (const row of input.audit) {
-    if (row.tokenId === MCP_SESSION_TOKEN_ID_V1) continue;
+    if (derivedElsewhereV1(row.tokenId)) continue;
     const grant = byToken.get(row.tokenId) ?? {
       tokenId: row.tokenId,
       clientKind: null,
@@ -91,6 +107,8 @@ export function mcpHandoffGrantsV1(input: {
       lastUsedAt: null,
       useCount: 0,
       revokedAt: revokedAt.get(row.tokenId) ?? null,
+      expiresAt: null,
+      status: 'unknown',
       historyComplete: false,
     };
 
@@ -100,6 +118,7 @@ export function mcpHandoffGrantsV1(input: {
       // The client is recorded at issuance and nowhere else, so this row is
       // the only one that can carry it.
       if (row.clientKind !== null) grant.clientKind = row.clientKind;
+      grant.expiresAt = row.expiresAt;
     } else {
       grant.useCount += 1;
       if (grant.lastUsedAt === null || row.createdAt > grant.lastUsedAt) {
@@ -115,7 +134,7 @@ export function mcpHandoffGrantsV1(input: {
   // disappear from the list that reports revocations.
   for (const revocation of input.revocations) {
     if (byToken.has(revocation.tokenId)) continue;
-    if (revocation.tokenId === MCP_SESSION_TOKEN_ID_V1) continue;
+    if (derivedElsewhereV1(revocation.tokenId)) continue;
     byToken.set(revocation.tokenId, {
       tokenId: revocation.tokenId,
       clientKind: null,
@@ -124,8 +143,21 @@ export function mcpHandoffGrantsV1(input: {
       lastUsedAt: null,
       useCount: 0,
       revokedAt: revocation.revokedAt,
+      expiresAt: null,
+      status: 'revoked',
       historyComplete: false,
     });
+  }
+
+  const nowMs = input.now.getTime();
+  for (const grant of byToken.values()) {
+    grant.status = grant.revokedAt
+      ? 'revoked'
+      : grant.expiresAt === null
+        ? 'unknown'
+        : Date.parse(grant.expiresAt) > nowMs
+          ? 'current'
+          : 'expired';
   }
 
   const activityOf = (grant: McpHandoffGrantV1): string =>

@@ -14,6 +14,7 @@ const DB_TEST_FILES = new Set([
   'lib/agent/test/e2e-sepolia.test.ts',
   'lib/agent/test/e2e.test.ts',
   'lib/db/src/db.test.ts',
+  'lib/db/migration0064.constraints.test.ts',
   'lib/observability/src/index.test.ts',
   'lib/route-storage/test/database.test.ts',
   'lib/settings/tests/index.test.ts',

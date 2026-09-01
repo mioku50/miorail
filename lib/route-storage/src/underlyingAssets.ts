@@ -59,6 +59,31 @@ export const UNDERLYING_IDENTIFIER_SCHEMES_V1 = [
   'dinari_stock_id',
   'composite_figi',
 ] as const;
+
+/** ISO 6166 check-digit validation. A syntactically plausible twelve-byte
+ * string is not enough to become canonical identity: issuer metadata is
+ * accepted only when its own check digit reconciles. */
+export function isValidIsinV1(value: string): boolean {
+  const normalized = value.trim().toUpperCase();
+  if (!/^[A-Z]{2}[A-Z0-9]{9}[0-9]$/.test(normalized)) return false;
+  const expanded = [...normalized]
+    .map((character) =>
+      /[0-9]/.test(character) ? character : String(character.charCodeAt(0) - 55),
+    )
+    .join('');
+  let sum = 0;
+  let double = false;
+  for (let index = expanded.length - 1; index >= 0; index -= 1) {
+    let digit = Number(expanded[index]);
+    if (double) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+    double = !double;
+  }
+  return sum % 10 === 0;
+}
 export const UNDERLYING_EVIDENCE_STRENGTHS_V1 = [
   'reviewed_issuer_identifier',
   'reviewed_machine_address_mapping',
@@ -92,10 +117,21 @@ export const UnderlyingAssetV1Schema = z
   })
   .strict()
   .superRefine((row, ctx) => {
-    if ((row.identifierScheme === null) !== (row.identifierValue === null)) {
+    if ((row.identifierScheme == null) !== (row.identifierValue == null)) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         message: 'an underlying identifier scheme and value travel together',
+      });
+    }
+    if (
+      row.identifierScheme === 'isin' &&
+      row.identifierValue != null &&
+      !isValidIsinV1(row.identifierValue)
+    ) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['identifierValue'],
+        message: 'an ISIN must have a valid ISO 6166 check digit',
       });
     }
   });

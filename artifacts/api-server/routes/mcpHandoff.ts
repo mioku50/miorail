@@ -8,11 +8,17 @@ import {
 } from '../lib/mcpHandoffToken.js';
 import {
   mcpClientKindV1,
+  MCP_OAUTH_GRANT_ID_PREFIX_V1,
   mcpHandoffGrantsV1,
   type McpHandoffGrantV1,
 } from '@mioagent/route-storage';
 import { mcpAuditRuntime, recordAuditV1 } from './mcpPrivate/audit.js';
 import { tenantUserFromRequest } from '../middleware/tenantAuth';
+import {
+  listMcpOAuthGrantsV1,
+  mcpOAuthResourceUrlV1,
+  revokeMcpOAuthGrantForTenantV1,
+} from '../lib/mcpOAuthProvider.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §1 — where a handoff token comes from.
@@ -48,9 +54,25 @@ export const mcpHandoffRuntime = {
       mcpAuditRuntime.audit().listForTenant({ tenantId, limit: 200 }),
       mcpAuditRuntime.revocations().listForTenant(tenantId),
     ]);
-    return mcpHandoffGrantsV1({ audit, revocations });
+    return mcpHandoffGrantsV1({ audit, revocations, now: mcpHandoffRuntime.now() });
   },
+  oauthGrants: async (tenantId: string) =>
+    process.env.NODE_ENV === 'test' && process.env.MIOAGENT_TEST_SUITE !== 'db'
+      ? []
+      : listMcpOAuthGrantsV1(tenantId),
+  revokeOauthGrant: async (input: { tenantId: string; grantId: string }) =>
+    process.env.NODE_ENV === 'test' && process.env.MIOAGENT_TEST_SUITE !== 'db'
+      ? false
+      : revokeMcpOAuthGrantForTenantV1(input),
 };
+
+function oauthClientKindV1(name: string): 'claude' | 'chatgpt' | 'hermes' | 'other' {
+  const normalized = name.toLowerCase();
+  if (normalized.includes('claude')) return 'claude';
+  if (normalized.includes('chatgpt') || normalized.includes('openai')) return 'chatgpt';
+  if (normalized.includes('hermes')) return 'hermes';
+  return 'other';
+}
 
 /**
  * §7 — issuance is bounded per tenant.
@@ -200,6 +222,7 @@ mcpHandoffRouter.post('/', async (req: Request, res: Response) => {
     toolName: 'handoff_issue',
     outcome: 'token_issued',
     clientKind,
+    expiresAt: issued.expiresAt,
   });
   logger.info('MCP handoff token issued', {
     tokenId: issued.tokenId,
@@ -257,7 +280,40 @@ mcpHandoffRouter.get('/grants', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const grants = await mcpHandoffRuntime.grants(identity.tenantId);
+    const [legacy, oauth] = await Promise.all([
+      mcpHandoffRuntime.grants(identity.tenantId),
+      mcpHandoffRuntime.oauthGrants(identity.tenantId),
+    ]);
+    const now = mcpHandoffRuntime.now();
+    const grants = [
+      ...legacy.map((grant) => ({
+        ...grant,
+        grantKind: 'temporary_bearer' as const,
+        clientName: grant.clientKind ? connectedClientNameV1(grant.clientKind) : null,
+        scopes: [] as string[],
+      })),
+      ...oauth.map((grant) => ({
+        tokenId: grant.id,
+        grantKind: 'oauth' as const,
+        clientKind: oauthClientKindV1(grant.clientName),
+        clientName: grant.clientName,
+        walletAddress: grant.walletAddress,
+        issuedAt: grant.createdAt,
+        lastUsedAt: grant.lastUsedAt,
+        useCount: grant.useCount,
+        revokedAt: grant.revokedAt,
+        expiresAt: grant.expiresAt,
+        status: grant.revokedAt
+          ? ('revoked' as const)
+          : Date.parse(grant.expiresAt) <= now.getTime()
+            ? ('expired' as const)
+            : ('current' as const),
+        historyComplete: true,
+        scopes: grant.scopes,
+      })),
+    ]
+      .sort((a, b) => Date.parse(b.issuedAt ?? '') - Date.parse(a.issuedAt ?? ''))
+      .slice(0, 200);
     res.json({
       schemaVersion: 'mcp-handoff-grants/v1',
       walletAddress: identity.walletAddress,
@@ -269,6 +325,12 @@ mcpHandoffRouter.get('/grants', async (req: Request, res: Response) => {
         executableHandoff: flags.mcpPrivateExecutionV1,
         scope: 'server',
       },
+      oauth: {
+        endpointUrl: mcpOAuthResourceUrlV1().href,
+        accessTokenTtlMinutes: 15,
+        grantTtlDays: 30,
+        refreshTokenRotation: true,
+      },
       grants,
     });
   } catch {
@@ -279,6 +341,13 @@ mcpHandoffRouter.get('/grants', async (req: Request, res: Response) => {
       .json({ error: 'mcp_grants_unavailable', code: 'mcp_grants_unavailable' });
   }
 });
+
+function connectedClientNameV1(kind: string): string {
+  if (kind === 'claude') return 'Claude';
+  if (kind === 'chatgpt') return 'ChatGPT';
+  if (kind === 'hermes') return 'Hermes';
+  return 'Another client';
+}
 
 /**
  * T72-C §3 — early revocation.
@@ -319,6 +388,28 @@ mcpHandoffRouter.post('/revoke', async (req: Request, res: Response) => {
   if (!tokenId || tokenId.length > 100 || tokenId === 'session') {
     res.status(400).json({ error: 'invalid_token_id', code: 'invalid_token_id' });
     return;
+  }
+
+  if (tokenId.startsWith(MCP_OAUTH_GRANT_ID_PREFIX_V1)) {
+    try {
+      const revoked = await mcpHandoffRuntime.revokeOauthGrant({
+        tenantId: identity.tenantId,
+        grantId: tokenId,
+      });
+      if (!revoked) {
+        res.status(404).json({ error: 'grant_not_found', code: 'grant_not_found' });
+        return;
+      }
+      res.json({
+        revoked: true,
+        tokenId,
+        notice: 'The OAuth grant and every access or refresh token derived from it are revoked.',
+      });
+      return;
+    } catch {
+      res.status(503).json({ error: 'mcp_revocation_unavailable', code: 'mcp_revocation_unavailable' });
+      return;
+    }
   }
 
   try {

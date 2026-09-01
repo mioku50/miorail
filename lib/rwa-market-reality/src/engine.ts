@@ -582,8 +582,13 @@ export async function assembleMarketRealityIndexV1(
   deps: Pick<MarketRealityDepsV1, 'underlyings' | 'now'>,
   input: { limit: number },
 ): Promise<MarketRealityIndexV1> {
-  const rows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: input.limit });
-  const counts = await deps.underlyings.underlyingCounts({ chainId: 8453 });
+  // This endpoint backs the consumer `Stocks` screen, not a generic securities
+  // catalogue. Pull the bounded full reviewed corpus first so an `unknown` or
+  // bond/fund row cannot consume a page slot ahead of a later equity. Asset
+  // class comes from reviewed identity evidence; labels never select it.
+  const reviewedRows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: 500 });
+  const stockRows = reviewedRows.filter((row) => row.underlying.assetClass === 'equity');
+  const rows = stockRows.slice(0, Math.max(1, Math.min(500, input.limit)));
   const entries = rows.map((row) => ({
     underlyingKey: row.underlying.underlyingKey,
     canonicalName: row.underlying.canonicalName,
@@ -600,9 +605,9 @@ export async function assembleMarketRealityIndexV1(
     chainId: 8453,
     entries,
     totals: {
-      underlyings: counts.underlyings,
-      boundRepresentations: counts.boundRepresentations,
-      multiIssuerUnderlyings: counts.multiIssuerUnderlyings,
+      underlyings: stockRows.length,
+      boundRepresentations: stockRows.reduce((total, row) => total + row.representationCount, 0),
+      multiIssuerUnderlyings: stockRows.filter((row) => row.issuerIds.length > 1).length,
     },
     observedAt: deps.now().toISOString(),
   });

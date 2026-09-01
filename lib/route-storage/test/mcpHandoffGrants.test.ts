@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  MCP_OAUTH_GRANT_ID_PREFIX_V1,
   MCP_SESSION_TOKEN_ID_V1,
   mcpAuditRowV1,
   mcpHandoffGrantsV1,
@@ -18,6 +19,7 @@ import {
 
 const TENANT = 'eip155:8453:0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
 const WALLET = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
+const NOW = new Date('2026-09-01T13:30:00.000Z');
 
 let seq = 0;
 const row = (over: {
@@ -26,6 +28,7 @@ const row = (over: {
   at: string;
   toolName?: string;
   clientKind?: McpExecutionAuditV1['clientKind'];
+  expiresAt?: string | null;
 }): McpExecutionAuditV1 =>
   mcpAuditRowV1({
     id: `row-${(seq += 1)}`,
@@ -35,6 +38,7 @@ const row = (over: {
     toolName: over.toolName ?? 'miorail_get_stock_base_mcp_action',
     outcome: over.outcome,
     clientKind: over.clientKind ?? null,
+    expiresAt: over.expiresAt ?? null,
     now: new Date(over.at),
   });
 
@@ -60,6 +64,7 @@ describe('the grants a wallet has handed out', () => {
         row({ tokenId: 't1', outcome: 'action_released', at: '2026-09-01T11:00:00.000Z' }),
       ],
       revocations: [],
+      now: NOW,
     });
     assert.equal(grants.length, 1);
     assert.deepEqual(
@@ -85,6 +90,7 @@ describe('the grants a wallet has handed out', () => {
         }),
       ],
       revocations: [],
+      now: NOW,
     });
     assert.equal(grants[0]!.lastUsedAt, null);
     assert.equal(grants[0]!.useCount, 0);
@@ -97,24 +103,40 @@ describe('the grants a wallet has handed out', () => {
     const grants = mcpHandoffGrantsV1({
       audit: [row({ tokenId: 't3', outcome: 'plan_read', at: '2026-09-01T12:00:00.000Z' })],
       revocations: [],
+      now: NOW,
     });
     assert.equal(grants[0]!.issuedAt, null);
     assert.equal(grants[0]!.historyComplete, false);
     assert.equal(grants[0]!.lastUsedAt, '2026-09-01T12:00:00.000Z');
   });
 
-  test('nothing here claims a grant is active — only that it was not revoked', () => {
-    // A handoff token carries its own expiry, signed, and the server stores
-    // neither the token nor the expiry. `revokedAt` is the only fact available.
+  test('recorded expiry distinguishes current, expired and historical unknown', () => {
     const grants = mcpHandoffGrantsV1({
       audit: [
-        row({ tokenId: 't4', outcome: 'token_issued', at: '2026-09-01T09:00:00.000Z', toolName: 'handoff_issue' }),
+        row({
+          tokenId: 'current',
+          outcome: 'token_issued',
+          at: '2026-09-01T13:00:00.000Z',
+          expiresAt: '2026-09-01T14:00:00.000Z',
+          toolName: 'handoff_issue',
+        }),
+        row({
+          tokenId: 'expired',
+          outcome: 'token_issued',
+          at: '2026-09-01T09:00:00.000Z',
+          expiresAt: '2026-09-01T10:00:00.000Z',
+          toolName: 'handoff_issue',
+        }),
+        row({ tokenId: 'historical', outcome: 'token_issued', at: '2026-09-01T08:00:00.000Z', toolName: 'handoff_issue' }),
       ],
       revocations: [],
+      now: NOW,
     });
-    assert.equal(grants[0]!.revokedAt, null);
-    assert.equal('active' in grants[0]!, false);
-    assert.equal('expiresAt' in grants[0]!, false);
+    assert.deepEqual(
+      Object.fromEntries(grants.map((grant) => [grant.tokenId, grant.status])),
+      { current: 'current', expired: 'expired', historical: 'unknown' },
+    );
+    assert.equal(grants.find((grant) => grant.tokenId === 'historical')?.expiresAt, null);
   });
 
   test('a revoked grant with no rows in the window still appears', () => {
@@ -123,6 +145,7 @@ describe('the grants a wallet has handed out', () => {
     const grants = mcpHandoffGrantsV1({
       audit: [],
       revocations: [revocation('t5', '2026-09-01T13:00:00.000Z')],
+      now: NOW,
     });
     assert.equal(grants.length, 1);
     assert.equal(grants[0]!.tokenId, 't5');
@@ -137,6 +160,7 @@ describe('the grants a wallet has handed out', () => {
         revocation('t6', '2026-09-01T14:00:00.000Z'),
         revocation('t6', '2026-09-01T11:00:00.000Z'),
       ],
+      now: NOW,
     });
     assert.equal(grants[0]!.revokedAt, '2026-09-01T11:00:00.000Z');
   });
@@ -150,10 +174,31 @@ describe('the grants a wallet has handed out', () => {
         row({ tokenId: 't7', outcome: 'plan_read', at: '2026-09-01T10:00:00.000Z' }),
       ],
       revocations: [revocation(MCP_SESSION_TOKEN_ID_V1, '2026-09-01T13:00:00.000Z')],
+      now: NOW,
     });
     assert.deepEqual(
       grants.map((grant) => grant.tokenId),
       ['t7'],
+    );
+  });
+
+  test('an OAuth grant is not derived here, however it was used or revoked', () => {
+    // OAuth grants audit under their own durable id, and `mcp_oauth_grants`
+    // already knows their client, expiry and use count. Deriving a second,
+    // weaker row for the same grant would show every OAuth connection twice:
+    // once named, once as an anonymous grant with no client and no expiry.
+    const oauthId = `${MCP_OAUTH_GRANT_ID_PREFIX_V1}0f0f`;
+    const grants = mcpHandoffGrantsV1({
+      audit: [
+        row({ tokenId: oauthId, outcome: 'plan_read', at: '2026-09-01T12:00:00.000Z' }),
+        row({ tokenId: 't9', outcome: 'plan_read', at: '2026-09-01T10:00:00.000Z' }),
+      ],
+      revocations: [revocation(oauthId, '2026-09-01T13:00:00.000Z')],
+      now: NOW,
+    });
+    assert.deepEqual(
+      grants.map((grant) => grant.tokenId),
+      ['t9'],
     );
   });
 
@@ -166,6 +211,7 @@ describe('the grants a wallet has handed out', () => {
         row({ tokenId: 't8', outcome: 'token_issued', at: '2026-09-01T09:00:00.000Z', toolName: 'handoff_issue' }),
       ],
       revocations: [],
+      now: NOW,
     });
     assert.equal(grants[0]!.clientKind, null);
   });
@@ -178,6 +224,7 @@ describe('the grants a wallet has handed out', () => {
         row({ tokenId: 'killed', outcome: 'plan_read', at: '2026-09-01T09:00:00.000Z' }),
       ],
       revocations: [revocation('killed', '2026-09-01T13:00:00.000Z')],
+      now: NOW,
     });
     assert.deepEqual(
       grants.map((grant) => grant.tokenId),

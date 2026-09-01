@@ -243,7 +243,7 @@ async function main(): Promise<void> {
     for (const row of byInstrument.values()) {
       await underlyings.declareUnderlying({
         underlyingKey: row.underlyingKey,
-        assetClass: 'unknown',
+        assetClass: row.underlyingAssetClass,
         canonicalName: row.underlyingDisplaySymbol,
         displaySymbol: row.underlyingDisplaySymbol,
         identifierScheme: 'isin',

@@ -28,7 +28,7 @@ test('every edge is keyed to the exact CAIP-10 representation and carries no ran
   assert.equal(result.caip10, `eip155:8453:${TOKEN}`);
   assert.equal(result.ranking, 'none');
   assert.equal(result.marketDefi.length, 7);
-  assert.equal(result.issuer.length, 5);
+  assert.equal(result.issuer.length, 9);
   for (const edge of [...result.marketDefi, ...result.issuer]) {
     assert.equal(edge.tokenAddress, TOKEN);
     assert.equal(edge.caip10, result.caip10);
@@ -63,6 +63,17 @@ test('issuer processes are documented without becoming personal eligibility verd
   assert.ok(redemption.evidence.length > 0);
   assert.equal(redemption.nextStep.kind, 'external_ui');
   assert.match(redemption.nextStep.href ?? '', /^https:\/\//);
+});
+
+test('transfer, eligibility and reference semantics are useful facts of their own', () => {
+  const result = map();
+  const byId = Object.fromEntries(result.issuer.map((edge) => [edge.edgeId, edge]));
+  assert.equal(byId.representation_transfer?.state, 'documented');
+  assert.match(byId.representation_transfer?.note ?? '', /permissionless|polic/i);
+  assert.equal(byId.representation_eligibility?.state, 'documented');
+  assert.match(byId.representation_eligibility?.eligibilityNote ?? '', /not a decision/i);
+  assert.equal(byId.representation_reference_model?.state, 'documented');
+  assert.match(byId.representation_reference_model?.note ?? '', /Chainlink|reference/i);
 });
 
 test('unknown issuer bridge remains not established rather than unavailable', () => {

@@ -83,6 +83,9 @@ export const McpExecutionAuditV1Schema = z
      * `token_issued` row: a grant's client is a fact about the moment of
      * issuance, and this table cannot be updated afterwards. */
     clientKind: z.enum(MCP_CLIENT_KINDS_V1).nullable(),
+    /** Known only for credential issuance. Historical rows remain null: the
+     * default TTL is configuration, not evidence about an already-issued key. */
+    expiresAt: z.string().datetime().nullable(),
     createdAt: z.string().min(1).max(60),
   })
   .strict();
@@ -163,6 +166,7 @@ export function mcpAuditRowV1(input: {
   callsHash?: string | null;
   batchId?: string | null;
   clientKind?: McpClientKindV1 | null;
+  expiresAt?: string | null;
   now: Date;
 }): McpExecutionAuditV1 {
   return assertMcpAuditV1(
@@ -178,6 +182,7 @@ export function mcpAuditRowV1(input: {
       batchId: input.batchId ?? null,
       outcome: input.outcome,
       clientKind: input.clientKind ?? null,
+      expiresAt: input.expiresAt ?? null,
       createdAt: input.now.toISOString(),
     },
     'write',

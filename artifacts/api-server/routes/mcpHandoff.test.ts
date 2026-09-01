@@ -60,6 +60,8 @@ function app(user: unknown = { id: TENANT, address: WALLET, chainId: 8453 }) {
 
 const originalFlags = mcpHandoffRuntime.flags;
 const originalNow = mcpHandoffRuntime.now;
+const originalOauthGrants = mcpHandoffRuntime.oauthGrants;
+const originalRevokeOauthGrant = mcpHandoffRuntime.revokeOauthGrant;
 const originalAudit = { ...mcpAuditRuntime };
 let originalSecret: string | undefined;
 let audit: InMemoryMcpExecutionAuditRepositoryV1;
@@ -70,6 +72,8 @@ beforeEach(() => {
   process.env.SESSION_SECRET = 'session-secret-under-test';
   mcpHandoffRuntime.flags = () => ({ ...FLAGS });
   mcpHandoffRuntime.now = () => NOW;
+  mcpHandoffRuntime.oauthGrants = async () => [];
+  mcpHandoffRuntime.revokeOauthGrant = async () => false;
   audit = new InMemoryMcpExecutionAuditRepositoryV1();
   revocations = new InMemoryMcpHandoffRevocationRepositoryV1();
   mcpAuditRuntime.available = async () => true;
@@ -81,6 +85,8 @@ beforeEach(() => {
 afterEach(() => {
   mcpHandoffRuntime.flags = originalFlags;
   mcpHandoffRuntime.now = originalNow;
+  mcpHandoffRuntime.oauthGrants = originalOauthGrants;
+  mcpHandoffRuntime.revokeOauthGrant = originalRevokeOauthGrant;
   Object.assign(mcpAuditRuntime, originalAudit);
   if (originalSecret === undefined) delete process.env.SESSION_SECRET;
   else process.env.SESSION_SECRET = originalSecret;
@@ -304,6 +310,7 @@ describe('Connected Apps', () => {
     assert.equal(response.status, 200);
     const grant = response.body.grants.find((row: { tokenId: string }) => row.tokenId === tokenId);
     assert.equal(grant.clientKind, 'chatgpt');
+    assert.equal(grant.grantKind, 'temporary_bearer');
     assert.equal(grant.walletAddress, owner.address);
     assert.equal(grant.useCount, 1);
     assert.equal(grant.revokedAt, null);
@@ -313,6 +320,52 @@ describe('Connected Apps', () => {
     const body = JSON.stringify(response.body);
     assert.equal(body.includes(token), false);
     assert.equal(body.includes(token.slice(0, 24)), false);
+    assert.deepEqual(response.body.oauth, {
+      endpointUrl: 'https://miorail.xyz/mcp/private',
+      accessTokenTtlMinutes: 15,
+      grantTtlDays: 30,
+      refreshTokenRotation: true,
+    });
+  });
+
+  test('a durable OAuth grant is tenant-scoped, expiring and revocable by grant id', async () => {
+    const owner = wallet();
+    mcpHandoffRuntime.oauthGrants = async (tenantId) =>
+      tenantId === owner.tenantId
+        ? [
+            {
+              id: 'oauth-grant_test',
+              tenantId,
+              walletAddress: owner.address,
+              clientId: 'client-1',
+              clientName: 'Claude Desktop',
+              scopes: ['miorail:connected'],
+              resource: 'https://miorail.xyz/mcp/private',
+              createdAt: NOW.toISOString(),
+              expiresAt: new Date(NOW.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString(),
+              lastUsedAt: null,
+              useCount: 0,
+              revokedAt: null,
+            },
+          ]
+        : [];
+    let revokedFor: { tenantId: string; grantId: string } | null = null;
+    mcpHandoffRuntime.revokeOauthGrant = async (input) => {
+      revokedFor = input;
+      return input.tenantId === owner.tenantId && input.grantId === 'oauth-grant_test';
+    };
+
+    const listed = await request(app(owner.session)).get('/handoff/grants');
+    assert.equal(listed.status, 200);
+    assert.equal(listed.body.grants[0].grantKind, 'oauth');
+    assert.equal(listed.body.grants[0].clientName, 'Claude Desktop');
+    assert.equal(listed.body.grants[0].status, 'current');
+
+    const revoked = await request(app(owner.session))
+      .post('/handoff/revoke')
+      .send({ tokenId: 'oauth-grant_test' });
+    assert.equal(revoked.status, 200);
+    assert.deepEqual(revokedFor, { tenantId: owner.tenantId, grantId: 'oauth-grant_test' });
   });
 
   test('permissions describe the server, not the grant', async () => {

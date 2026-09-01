@@ -340,22 +340,31 @@ function RepresentationCard({
                     </span>
                   </div>
                   <p>{edge.note}</p>
-                  <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
-                  <p className="mr-utility-meta">
-                    {/* An age, with the exact instant one hover away. A reader
-                        deciding whether evidence is current needs "9m ago"; an
-                        ISO string in UTC is a conversion, not an answer. */}
-                    Checked{' '}
-                    <span className="mono" title={edge.checkedAt}>
-                      {edge.checkedAgo ?? edge.checkedAt}
-                    </span>
-                    {edge.providerLabel ? (
-                      <>
-                        {' '}
-                        · source <span className="mono">{edge.providerLabel}</span>
-                      </>
-                    ) : null}
-                  </p>
+                  {edge.edgeId === 'market_trade' ||
+                  edge.edgeId === 'defi_reviewed_integrations' ||
+                  edge.edgeId === 'issuer_primary_market' ||
+                  edge.edgeId === 'representation_eligibility' ? (
+                    <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
+                  ) : null}
+                  {edge.sources.length === 0 && edge.providerLabel === null ? (
+                    <p className="mr-utility-meta">No reviewed exact-address evidence</p>
+                  ) : (
+                    <p className="mr-utility-meta">
+                      {/* An age, with the exact instant one hover away. A reader
+                          deciding whether evidence is current needs "9m ago"; an
+                          ISO string in UTC is a conversion, not an answer. */}
+                      Checked{' '}
+                      <span className="mono" title={edge.checkedAt}>
+                        {edge.checkedAgo ?? edge.checkedAt}
+                      </span>
+                      {edge.providerLabel ? (
+                        <>
+                          {' '}
+                          · source <span className="mono">{edge.providerLabel}</span>
+                        </>
+                      ) : null}
+                    </p>
+                  )}
                   {edge.sources.length > 0 ? (
                     <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
                       {edge.sources.map((source, index) =>

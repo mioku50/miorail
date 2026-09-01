@@ -34,6 +34,10 @@ function rowToAuditV1(row: Record<string, unknown>): McpExecutionAuditV1 {
       outcome: row.outcome,
       clientKind:
         row.client_kind === null || row.client_kind === undefined ? null : row.client_kind,
+      expiresAt:
+        row.expires_at === null || row.expires_at === undefined
+          ? null
+          : new Date(String(row.expires_at)).toISOString(),
       createdAt: new Date(String(row.created_at)).toISOString(),
     },
     'read',
@@ -52,20 +56,20 @@ export function createDatabaseMcpExecutionAuditRepository(
       const inserted = await sql`
         INSERT INTO mcp_execution_audit (
           id, token_id, tenant_id, wallet_address, tool_name,
-          plan_id, calls_hash, batch_id, outcome, client_kind, created_at
+          plan_id, calls_hash, batch_id, outcome, client_kind, expires_at, created_at
         ) VALUES (
           ${row.id}, ${row.tokenId}, ${row.tenantId}, ${row.walletAddress}, ${row.toolName},
           ${row.planId}, ${row.callsHash}, ${row.batchId}, ${row.outcome}, ${row.clientKind},
-          ${row.createdAt}
+          ${row.expiresAt}, ${row.createdAt}
         )
         ON CONFLICT (id) DO NOTHING
         RETURNING id, token_id, tenant_id, wallet_address, tool_name,
-                  plan_id, calls_hash, batch_id, outcome, client_kind, created_at`;
+                  plan_id, calls_hash, batch_id, outcome, client_kind, expires_at, created_at`;
       if (inserted.length > 0) return rowToAuditV1(inserted[0] as Record<string, unknown>);
 
       const existing = await sql`
         SELECT id, token_id, tenant_id, wallet_address, tool_name,
-               plan_id, calls_hash, batch_id, outcome, client_kind, created_at
+               plan_id, calls_hash, batch_id, outcome, client_kind, expires_at, created_at
         FROM mcp_execution_audit WHERE id = ${row.id}`;
       if (existing.length === 0) {
         // Neither inserted nor found: the write did not happen, and for a
@@ -79,7 +83,7 @@ export function createDatabaseMcpExecutionAuditRepository(
       const limit = Math.max(1, Math.min(200, query.limit ?? 50));
       const rows = await sql`
         SELECT id, token_id, tenant_id, wallet_address, tool_name,
-               plan_id, calls_hash, batch_id, outcome, client_kind, created_at
+               plan_id, calls_hash, batch_id, outcome, client_kind, expires_at, created_at
         FROM mcp_execution_audit
         WHERE tenant_id = ${query.tenantId}
         ORDER BY created_at DESC, id DESC
@@ -90,7 +94,7 @@ export function createDatabaseMcpExecutionAuditRepository(
     async listForPlan(input) {
       const rows = await sql`
         SELECT id, token_id, tenant_id, wallet_address, tool_name,
-               plan_id, calls_hash, batch_id, outcome, client_kind, created_at
+               plan_id, calls_hash, batch_id, outcome, client_kind, expires_at, created_at
         FROM mcp_execution_audit
         WHERE tenant_id = ${input.tenantId} AND plan_id = ${input.planId}
         ORDER BY created_at ASC, id ASC`;

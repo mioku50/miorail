@@ -34,6 +34,7 @@ export const BackedAssetV1Schema = z
     isin: Isin,
     underlyingSymbol: z.string().min(1).max(32),
     underlyingIsin: Isin,
+    description: z.string().min(1),
     isTradingHalted: z.boolean(),
     deployments: z.array(BackedDeploymentV1Schema),
   })
@@ -53,6 +54,56 @@ export const BACKED_REPRESENTATION_KINDS_V1 = [
 ] as const;
 export type BackedRepresentationKindV1 = (typeof BACKED_REPRESENTATION_KINDS_V1)[number];
 
+export const REVIEWED_BACKED_UNDERLYING_ASSET_CLASSES_V1 = [
+  'equity',
+  'fund_share',
+  'other',
+  'unknown',
+] as const;
+export type ReviewedBackedUnderlyingAssetClassV1 =
+  (typeof REVIEWED_BACKED_UNDERLYING_ASSET_CLASSES_V1)[number];
+
+/**
+ * Asset class review keyed by the issuer's stable instrument UUID and exact
+ * underlying ISIN. Neither ticker, name nor free-text description is allowed
+ * to choose the class at runtime. The pairs below were reviewed against the
+ * same versioned issuer corpus that binds each UUID/ISIN to its Base address.
+ *
+ * A new UUID or a changed ISIN deliberately becomes `unknown` until reviewed;
+ * it is never admitted to the Stocks surface by a label-shaped guess.
+ */
+const REVIEWED_BACKED_ASSET_CLASS_BY_INSTRUMENT_V1: Readonly<
+  Record<string, { underlyingIsin: string; assetClass: ReviewedBackedUnderlyingAssetClassV1 }>
+> = {
+  'c2c9dbb0-53f8-4848-8ed6-09ce2ca5261f': { underlyingIsin: 'FR0010754200', assetClass: 'other' },
+  'a7c70290-b878-43cd-bbea-d16dc53f7969': { underlyingIsin: 'IE000RHYOR04', assetClass: 'other' },
+  'bfdee27b-7389-4086-a2fd-da7197a4d781': { underlyingIsin: 'US5949724083', assetClass: 'equity' },
+  '5dbc2b22-02bb-4f62-92d9-fc2d48b7160b': { underlyingIsin: 'IE00BJXRT698', assetClass: 'other' },
+  '541a84c9-e975-467b-83c5-386242d633a4': { underlyingIsin: 'CH0102530786', assetClass: 'other' },
+  '36c0d3ce-7c8e-4224-8f2a-48fce474722d': { underlyingIsin: 'US65481N1000', assetClass: 'equity' },
+  'f1cfc60f-42f7-48b2-82b0-a0385b8bf325': { underlyingIsin: 'US88160R1014', assetClass: 'equity' },
+  'fa5b7ff7-c40a-4fda-8c5b-0ff43c0829c3': { underlyingIsin: 'IE00BGSF1X88', assetClass: 'other' },
+  '707c94eb-69c8-4ee2-879a-ac6d3ec42c30': { underlyingIsin: 'IE00BF3N7094', assetClass: 'other' },
+  '626515a7-1347-4d73-a9f1-05d429127563': { underlyingIsin: 'US02079K3059', assetClass: 'equity' },
+  '15865458-f1af-4be1-9b4a-0b7504e9dbce': { underlyingIsin: 'US36467W1099', assetClass: 'equity' },
+  'c1077d76-ba02-4ab1-bd91-db0d18191c1a': { underlyingIsin: 'US67066G1040', assetClass: 'equity' },
+  'a046956f-db44-4eb8-8ada-fae0cbea61df': { underlyingIsin: 'US5949181045', assetClass: 'equity' },
+  'a3daf2e3-28df-4abd-860a-0e5a32c67873': { underlyingIsin: 'IE00B5BMR087', assetClass: 'fund_share' },
+  'd9e29ddc-8009-4e54-b429-150e8e14d476': { underlyingIsin: 'IE00BYXPSP02', assetClass: 'other' },
+  '0fb3fd15-dc6c-4576-a09d-8cd03604031e': { underlyingIsin: 'IE00BGCSB447', assetClass: 'other' },
+  'a0ddd010-22ba-4c24-b03b-ab0ca147515e': { underlyingIsin: 'US19260Q1076', assetClass: 'equity' },
+};
+
+export function reviewedBackedAssetClassV1(
+  issuerInstrumentId: string,
+  underlyingIsin: string,
+): ReviewedBackedUnderlyingAssetClassV1 {
+  const reviewed = REVIEWED_BACKED_ASSET_CLASS_BY_INSTRUMENT_V1[issuerInstrumentId.toLowerCase()];
+  return reviewed?.underlyingIsin === underlyingIsin.toUpperCase()
+    ? reviewed.assetClass
+    : 'unknown';
+}
+
 export interface ReviewedBackedRepresentationV1 {
   chainId: 8453;
   tokenAddress: string;
@@ -66,6 +117,7 @@ export interface ReviewedBackedRepresentationV1 {
   displaySymbol: string;
   displayName: string;
   underlyingDisplaySymbol: string;
+  underlyingAssetClass: ReviewedBackedUnderlyingAssetClassV1;
   tradingHalted: boolean;
 }
 
@@ -97,6 +149,7 @@ function addRepresentationV1(
     displaySymbol: asset.symbol,
     displayName: asset.name,
     underlyingDisplaySymbol: asset.underlyingSymbol,
+    underlyingAssetClass: reviewedBackedAssetClassV1(asset.id, asset.underlyingIsin),
     tradingHalted: asset.isTradingHalted,
   });
 }
@@ -148,6 +201,7 @@ export function backedCorpusHashV1(rows: readonly ReviewedBackedRepresentationV1
       issuerInstrumentId: row.issuerInstrumentId,
       certificateIsin: row.certificateIsin,
       underlyingIsin: row.underlyingIsin,
+      underlyingAssetClass: row.underlyingAssetClass,
     }));
   return createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }

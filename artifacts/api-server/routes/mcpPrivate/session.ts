@@ -7,6 +7,8 @@ import {
   verifyHandoffTokenV1,
   type McpHandoffRefusalV1,
 } from '../../lib/mcpHandoffToken.js';
+import { mcpOAuthProviderV1 } from '../../lib/mcpOAuthProvider.js';
+import { MCP_OAUTH_GRANT_ID_PREFIX_V1 } from '@mioagent/route-storage';
 
 // ---------------------------------------------------------------------------
 // T72-B §1/§10 — who is calling.
@@ -31,13 +33,14 @@ export interface McpPrivateIdentityV1 {
   chainId: 8453;
   /** For audit lines. `session` when the caller had a cookie instead. */
   tokenId: string;
-  source: 'handoff_token' | 'browser_session';
+  source: 'handoff_token' | 'oauth' | 'browser_session';
 }
 
 export type McpPrivateAuthRefusalV1 =
   | McpHandoffRefusalV1
   | 'mcp_private_disabled'
-  | 'handoff_token_revoked';
+  | 'handoff_token_revoked'
+  | 'oauth_token_invalid';
 
 export const MCP_PRIVATE_AUTH_COPY_V1: Record<McpPrivateAuthRefusalV1, string> = {
   ...MCP_HANDOFF_REFUSAL_COPY_V1,
@@ -48,6 +51,8 @@ export const MCP_PRIVATE_AUTH_COPY_V1: Record<McpPrivateAuthRefusalV1, string> =
   // that the revocation is what stopped it.
   handoff_token_revoked:
     'That handoff token was revoked. Issue a new one from Miorail if you still want an assistant connected.',
+  oauth_token_invalid:
+    'That Miorail OAuth access token is expired, invalid or revoked. The client should refresh it or ask you to authorize again.',
 };
 
 export type McpPrivateAuthV1 =
@@ -86,6 +91,40 @@ export async function resolvePrivateIdentityV1(req: Request): Promise<McpPrivate
 
   const token = bearerTokenV1(req.headers.authorization);
   if (token) {
+    if (token.startsWith('miorail_oauth_access_')) {
+      try {
+        const auth = await mcpOAuthProviderV1.verifyAccessToken(token);
+        const extra = auth.extra ?? {};
+        const tenantId = typeof extra.tenantId === 'string' ? extra.tenantId : '';
+        const walletAddress = typeof extra.walletAddress === 'string' ? extra.walletAddress : '';
+        const grantId = typeof extra.grantId === 'string' ? extra.grantId : '';
+        if (
+          !auth.scopes.includes('miorail:connected') ||
+          !/^eip155:8453:0x[0-9a-f]{40}$/.test(tenantId) ||
+          !/^0x[0-9a-f]{40}$/.test(walletAddress) ||
+          tenantId !== `eip155:8453:${walletAddress}` ||
+          !grantId.startsWith(MCP_OAUTH_GRANT_ID_PREFIX_V1)
+        ) {
+          return { ok: false, reason: 'oauth_token_invalid' };
+        }
+        return {
+          ok: true,
+          identity: {
+            tenantId,
+            walletAddress: walletAddress as `0x${string}`,
+            chainId: 8453,
+            // The DURABLE grant, never the access token's own id. An access
+            // token is replaced every fifteen minutes, so auditing under it
+            // would file one connection as a new anonymous grant every time it
+            // refreshed, and would reset the per-caller rate limit with it.
+            tokenId: grantId,
+            source: 'oauth',
+          },
+        };
+      } catch {
+        return { ok: false, reason: 'oauth_token_invalid' };
+      }
+    }
     const secret = (process.env.SESSION_SECRET ?? '').trim();
     if (!secret) return { ok: false, reason: 'handoff_token_bad_signature' };
     const verified = verifyHandoffTokenV1({ token, secret, now: mcpPrivateAuthRuntime.now() });

@@ -58,8 +58,8 @@ export interface RepresentationStructureAdapterV1 {
   >;
 }
 
-const REVIEWED_AT = '2026-08-26T00:00:00.000Z';
-const BASE_STOCKS = 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base';
+const REVIEWED_AT = '2026-09-01T00:00:00.000Z';
+const BASE_STOCKS = 'https://docs.base.org/base-chain/specs/reference/b20/tokenized-stocks-on-base';
 const COINBASE_TOKENIZE = 'https://www.coinbase.com/tokenize';
 const DINARI_DOCS = 'https://docs.dinari.com';
 const BACKED_LEGAL = 'https://assets.backed.fi/legal-documentation';
@@ -100,7 +100,7 @@ export const REPRESENTATION_STRUCTURE_ADAPTERS_V1: Readonly<
     ),
     transferRestrictions: reviewed(
       'policy_screened_permissionless_secondary',
-      'Secondary holding and transfer are permissionless subject to B20 policy checks and blocked-address controls.',
+      'Secondary holding and trading are documented as permissionless, while B20 policies can still block specific addresses and transfers.',
       [source('reviewed_document', BASE_STOCKS)],
     ),
     redemption: reviewed(
@@ -110,18 +110,18 @@ export const REPRESENTATION_STRUCTURE_ADAPTERS_V1: Readonly<
     ),
     distributions: reviewed(
       'reinvested_via_multiplier',
-      'Cash distributions are reflected through the token multiplier rather than paid as an independently measured cash exit.',
+      'Cash dividends are converted into underlying shares and reflected through the token multiplier, not paid as a separate cash exit.',
       [source('reviewed_document', BASE_STOCKS)],
     ),
     corporateActions: reviewed(
       'b20_multiplier_and_offchain_registry',
-      'The B20 multiplier changes representation ratios; advance corporate-action state is a separate offchain registry/feed.',
+      'The B20 multiplier changes the redemption ratio. The standard documents scheduled multiplier updates and onchain announcements; current callable state still requires an exact-address read.',
       [source('reviewed_document', BASE_STOCKS)],
     ),
     bridge: unknown('No reviewed Coinbase representation-specific bridge route is established.'),
     eligibility: reviewed(
       'outside_us_secondary_permissionless_primary_kyc',
-      'The product is for eligible users outside the United States; primary access and secondary holding are distinct permissions.',
+      'The product is limited to eligible jurisdictions outside the United States. Mint and redeem require an authorized participant; secondary holding/trading and address-policy checks are separate facts.',
       [source('reviewed_document', COINBASE_TOKENIZE), source('reviewed_document', BASE_STOCKS)],
     ),
     referenceSource: reviewed(

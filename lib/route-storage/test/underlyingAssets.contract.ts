@@ -6,6 +6,7 @@ import type {
   RepresentationUnderlyingV1,
   UnderlyingAssetRepositoryV1,
 } from '../src/underlyingAssets.js';
+import { isValidIsinV1 } from '../src/underlyingAssets.js';
 
 const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
 const COINBASE_AAPL = '0xb200000000000000000000c2e324d24d7eecd1fb';
@@ -57,6 +58,24 @@ export function underlyingAssetContractV1(
   }
 
   describe(`underlying assets (${label})`, () => {
+    test('ISIN identity requires a valid ISO 6166 check digit', async () => {
+      assert.equal(isValidIsinV1('US0378331005'), true);
+      assert.equal(isValidIsinV1('US0231351067'), true);
+      assert.equal(isValidIsinV1('US0231351068'), false);
+      assert.equal(isValidIsinV1('AAPL'), false);
+
+      const { repository } = await open();
+      await assert.rejects(
+        () =>
+          repository.declareUnderlying({
+            ...underlying(),
+            underlyingKey: 'security:isin:US0378331004',
+            identifierScheme: 'isin',
+            identifierValue: 'US0378331004',
+          }),
+        /ISO 6166 check digit/,
+      );
+    });
     test('nothing is bound until a source declared it', async () => {
       const { repository } = await open();
       await assert.rejects(() => repository.bindRepresentation(binding()), /no reviewed source/);

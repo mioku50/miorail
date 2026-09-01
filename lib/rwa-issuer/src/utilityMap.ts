@@ -22,6 +22,10 @@ export const UTILITY_EDGE_IDS_V1 = [
   'defi_vault',
   'defi_yield_agent',
   'defi_lp',
+  'representation_claim_model',
+  'representation_transfer',
+  'representation_eligibility',
+  'representation_reference_model',
   'issuer_mint_issue',
   'issuer_redeem_sell',
   'issuer_distributions',
@@ -104,6 +108,10 @@ const EDGE_LABELS_V1: Readonly<Record<UtilityEdgeIdV1, string>> = {
   defi_vault: 'Vault',
   defi_yield_agent: 'Yield agent',
   defi_lp: 'Liquidity position',
+  representation_claim_model: 'What this token represents',
+  representation_transfer: 'Hold and transfer',
+  representation_eligibility: 'Who may use issuer services',
+  representation_reference_model: 'Reference value model',
   issuer_mint_issue: 'Mint / issue',
   issuer_redeem_sell: 'Redeem / sell through issuer',
   issuer_distributions: 'Corporate distributions',
@@ -183,6 +191,10 @@ function unknownDefiEdgeV1(input: {
   edgeId: Exclude<
     UtilityEdgeIdV1,
     | 'market_trade'
+    | 'representation_claim_model'
+    | 'representation_transfer'
+    | 'representation_eligibility'
+    | 'representation_reference_model'
     | 'issuer_mint_issue'
     | 'issuer_redeem_sell'
     | 'issuer_distributions'
@@ -208,6 +220,10 @@ function unknownDefiEdgeV1(input: {
 
 function issuerEdgeV1(input: {
   edgeId:
+    | 'representation_claim_model'
+    | 'representation_transfer'
+    | 'representation_eligibility'
+    | 'representation_reference_model'
     | 'issuer_mint_issue'
     | 'issuer_redeem_sell'
     | 'issuer_distributions'
@@ -228,7 +244,7 @@ function issuerEdgeV1(input: {
     state: reviewed ? 'documented' : 'not_established',
     tokenAddress: input.tokenAddress,
     issuerId: input.issuerId,
-    providerId: input.issuerId,
+    providerId: reviewed ? input.issuerId : null,
     checkedAt: latestCheckedAtV1(sources, input.evaluatedAt),
     note: input.note,
     eligibilityNote: input.eligibilityNote,
@@ -316,6 +332,45 @@ export function representationUtilityMapV1(input: {
   ];
 
   const issuer = [
+    issuerEdgeV1({
+      edgeId: 'representation_claim_model',
+      tokenAddress,
+      issuerId: input.issuerId,
+      evaluatedAt: input.evaluatedAt,
+      fields: [adapter.structure, adapter.claimModel],
+      note: `${adapter.structure.note} ${adapter.claimModel.note}`,
+      eligibilityNote:
+        'This describes the legal and economic representation, not current market availability.',
+    }),
+    issuerEdgeV1({
+      edgeId: 'representation_transfer',
+      tokenAddress,
+      issuerId: input.issuerId,
+      evaluatedAt: input.evaluatedAt,
+      fields: [adapter.transferRestrictions],
+      note: adapter.transferRestrictions.note,
+      eligibilityNote,
+    }),
+    issuerEdgeV1({
+      edgeId: 'representation_eligibility',
+      tokenAddress,
+      issuerId: input.issuerId,
+      evaluatedAt: input.evaluatedAt,
+      fields: [adapter.eligibility],
+      note: adapter.eligibility.note,
+      eligibilityNote:
+        'These are product and issuer rules, not a decision about the connected wallet.',
+    }),
+    issuerEdgeV1({
+      edgeId: 'representation_reference_model',
+      tokenAddress,
+      issuerId: input.issuerId,
+      evaluatedAt: input.evaluatedAt,
+      fields: [adapter.referenceSource],
+      note: adapter.referenceSource.note,
+      eligibilityNote:
+        'A reference value is independent from a router quote and does not establish execution.',
+    }),
     issuerEdgeV1({
       edgeId: 'issuer_mint_issue',
       tokenAddress,

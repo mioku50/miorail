@@ -1972,8 +1972,11 @@ export type McpClientKindV1 = z.infer<typeof McpClientKindV1Schema>;
 export const McpHandoffGrantV1Schema = z
   .object({
     tokenId: z.string().min(1).max(100),
+    grantKind: z.enum(['oauth', 'temporary_bearer']),
     /** Null is "nobody recorded one", never `other`. */
     clientKind: McpClientKindV1Schema.nullable(),
+    clientName: z.string().min(1).max(120).nullable(),
+    scopes: z.array(z.string().min(1).max(80)).max(16),
     walletAddress: z.string().max(42),
     /** Null when the issuance row is outside the audit window read. */
     issuedAt: z.string().datetime().nullable(),
@@ -1981,6 +1984,8 @@ export const McpHandoffGrantV1Schema = z
     lastUsedAt: z.string().datetime().nullable(),
     useCount: z.number().int().min(0),
     revokedAt: z.string().datetime().nullable(),
+    expiresAt: z.string().datetime().nullable(),
+    status: z.enum(['current', 'expired', 'revoked', 'unknown']),
     historyComplete: z.boolean(),
   })
   .strict();
@@ -1999,6 +2004,14 @@ export const McpHandoffGrantsResponseV1Schema = z
         read: z.boolean(),
         executableHandoff: z.boolean(),
         scope: z.literal('server'),
+      })
+      .strict(),
+    oauth: z
+      .object({
+        endpointUrl: z.string().url().startsWith('https://'),
+        accessTokenTtlMinutes: z.number().int().positive(),
+        grantTtlDays: z.number().int().positive(),
+        refreshTokenRotation: z.literal(true),
       })
       .strict(),
     grants: z.array(McpHandoffGrantV1Schema).max(200),

@@ -14,6 +14,7 @@ const ASSET = {
   isin: 'CH1173294336',
   underlyingSymbol: 'NVDA',
   underlyingIsin: 'US67066G1040',
+  description: 'Backed NVIDIA Corp',
   isTradingHalted: false,
   deployments: [
     {
@@ -44,6 +45,18 @@ test('Backed mapping joins exact Base addresses to underlying ISIN, never ticker
     ],
   );
   assert.equal(isinUnderlyingKeyV1('us67066g1040'), 'security:isin:US67066G1040');
+  assert.ok(rows.every((row) => row.underlyingAssetClass === 'equity'));
+});
+
+test('Backed asset class requires the reviewed UUID and exact underlying ISIN pair', () => {
+  const unknownId = reviewedBackedBaseRepresentationsV1([
+    { ...ASSET, id: '11111111-1111-4111-8111-111111111111' },
+  ]);
+  const changedIsin = reviewedBackedBaseRepresentationsV1([
+    { ...ASSET, underlyingIsin: 'US0378331005' },
+  ]);
+  assert.ok(unknownId.every((row) => row.underlyingAssetClass === 'unknown'));
+  assert.ok(changedIsin.every((row) => row.underlyingAssetClass === 'unknown'));
 });
 
 test('Backed fetch refuses a successful empty Base corpus', async () => {

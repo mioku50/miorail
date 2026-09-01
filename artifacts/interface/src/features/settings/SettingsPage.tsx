@@ -184,10 +184,11 @@ export function SettingsPage() {
                     : null
             }
             permissions={grants.data?.permissions ?? null}
+            oauth={grants.data?.oauth ?? null}
             issued={issuedKey}
             issuing={issueHandoff.isPending}
             revokingTokenId={revokeHandoff.isPending ? (revokeHandoff.variables?.tokenId ?? null) : null}
-            onConnect={(clientKind: ConnectedAppClientKindV1) =>
+            onIssueTemporary={(clientKind: ConnectedAppClientKindV1) =>
               issueHandoff.mutate({ clientKind })
             }
             onRevoke={(tokenId: string) => revokeHandoff.mutate({ tokenId })}

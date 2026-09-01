@@ -4,8 +4,15 @@ import cors from 'cors';
 import session from 'express-session';
 import requestContext from 'express-request-context';
 import crypto from 'node:crypto';
+import { mcpAuthRouter } from '@modelcontextprotocol/sdk/server/auth/router.js';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 import { rateLimit } from './middleware/rate-limit';
+import { sessionStoreV1 } from './lib/postgresSessionStore.js';
+import {
+  MCP_OAUTH_SCOPES_V1,
+  mcpOAuthProviderV1,
+  mcpOAuthResourceUrlV1,
+} from './lib/mcpOAuthProvider.js';
 
 export const app = express();
 app.set('trust proxy', 1);
@@ -58,6 +65,7 @@ app.use(express.json());
 // Session middleware
 app.use(
   session({
+    store: sessionStoreV1(),
     secret: configuredSessionSecret(),
     resave: false,
     saveUninitialized: false,
@@ -86,6 +94,24 @@ app.use((req: Request, res: Response, _next: NextFunction) => {
 
 // Observability and metrics middleware
 app.use(observability);
+
+// Standards-based MCP OAuth 2.1 authorization. This must live at the app root
+// so MCP clients can discover RFC 8414 / RFC 9728 metadata. It is mounted only
+// after the durable browser session: the consent page binds a grant to the
+// wallet that already authenticated with Miorail, never to a request field.
+const mcpOAuthResource = mcpOAuthResourceUrlV1();
+const mcpOAuthIssuer = new URL(mcpOAuthResource.origin);
+app.use(
+  mcpAuthRouter({
+    provider: mcpOAuthProviderV1,
+    issuerUrl: mcpOAuthIssuer,
+    baseUrl: mcpOAuthIssuer,
+    resourceServerUrl: mcpOAuthResource,
+    serviceDocumentationUrl: new URL('/settings', mcpOAuthIssuer),
+    resourceName: 'Miorail Connected',
+    scopesSupported: [...MCP_OAUTH_SCOPES_V1],
+  }),
+);
 
 import { routes } from './routes';
 import { mcpServerRouter } from './routes/mcp/index.js';

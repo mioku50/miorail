@@ -1777,35 +1777,61 @@ describe('Phase 11 utility and eligibility map', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const utility = view?.representations[0]?.utility;
     assert.equal(utility?.caip10, `eip155:8453:${COINBASE_NVDA}`);
-    assert.equal(utility?.groups.length, 2);
+    assert.equal(utility?.groups.length, 4);
   });
 
   test('a router quote is observed or stale, never presented as execution availability', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    const trade = view?.representations[0]?.utility.groups[0]?.edges.find(
+    const trade = view?.representations[0]?.utility.groups
+      .flatMap((group) => group.edges)
+      .find(
       (edge) => edge.edgeId === 'market_trade',
-    );
+      );
     assert.equal(trade?.state, 'stale');
     assert.match(trade?.note ?? '', /history/);
     assert.notEqual(trade?.state, 'available');
   });
 
-  test('unreviewed DeFi edges remain not established', () => {
+  test('unreviewed DeFi gaps are consolidated without becoming unavailable claims', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    const defi = view?.representations[0]?.utility.groups[0]?.edges.slice(1) ?? [];
-    assert.ok(defi.length > 0);
-    assert.ok(defi.every((edge) => edge.state === 'not_established'));
+    const defi = view?.representations[0]?.utility.groups
+      .flatMap((group) => group.edges)
+      .filter((edge) => edge.edgeId === 'defi_reviewed_integrations') ?? [];
+    assert.equal(defi.length, 1);
+    assert.equal(defi[0]?.state, 'not_established');
+    assert.match(defi[0]?.note ?? '', /one evidence gap/i);
   });
 
   test('reviewed issuer processes link their evidence without deciding wallet eligibility', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    const redemption = view?.representations[0]?.utility.groups[1]?.edges.find(
-      (edge) => edge.edgeId === 'issuer_redeem_sell',
+    const primaryMarket = view?.representations[0]?.utility.groups
+      .flatMap((group) => group.edges)
+      .find((edge) => edge.edgeId === 'issuer_primary_market');
+    assert.equal(primaryMarket?.state, 'documented');
+    assert.ok(primaryMarket?.sources.some((source) => source.href?.startsWith('https://')));
+    assert.match(primaryMarket?.eligibilityNote ?? '', /eligible|outside/i);
+    assert.doesNotMatch(JSON.stringify(primaryMarket), /walletEligible|approval|calldata/i);
+  });
+
+  test('legal claim, access, reference, primary market and value lifecycle are separate facts', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const ids = new Set(
+      view?.representations[0]?.utility.groups.flatMap((group) =>
+        group.edges.map((edge) => edge.edgeId),
+      ),
     );
-    assert.equal(redemption?.state, 'documented');
-    assert.ok(redemption?.sources.some((source) => source.href?.startsWith('https://')));
-    assert.match(redemption?.eligibilityNote ?? '', /eligible|outside/i);
-    assert.doesNotMatch(JSON.stringify(redemption), /walletEligible|approval|calldata/i);
+    for (const id of [
+      'representation_claim_model',
+      'representation_transfer',
+      'representation_eligibility',
+      'representation_reference_model',
+      'issuer_primary_market',
+      'issuer_value_lifecycle',
+    ]) {
+      assert.ok(ids.has(id as never), `missing ${id}`);
+    }
+    assert.equal(ids.has('issuer_mint_issue'), false);
+    assert.equal(ids.has('issuer_redeem_sell'), false);
   });
 
   test('the Utility view renders evidence states without rendering a ranking', () => {
@@ -1866,7 +1892,11 @@ describe('Phase 11 utility and eligibility map', () => {
     assert.match(markup, /Utility \+ eligibility/);
     assert.match(markup, /eip155:8453:/);
     assert.match(markup, /Documented/);
-    assert.match(markup, /Not confirmed yet/);
+    assert.match(markup, /Not established/);
+    assert.match(markup, /Access, transfer and value model/);
+    assert.match(markup, /Lending, borrowing, collateral, vaults and liquidity/);
+    assert.match(markup, /No reviewed exact-address evidence/);
+    assert.doesNotMatch(markup, /Not confirmed yet/);
     assert.doesNotMatch(markup, /No winner is selected|Not ranked|BEST/);
   });
 });

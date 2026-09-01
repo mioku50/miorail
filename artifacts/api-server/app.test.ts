@@ -31,4 +31,23 @@ test('Express App', async (t) => {
     assert.ok(response.headers['access-control-expose-headers']?.includes('x-payment-response'));
     assert.ok(response.headers['access-control-expose-headers']?.includes('PAYMENT-REQUIRED'));
   });
+
+  await t.test('publishes path-specific MCP protected-resource metadata', async () => {
+    const response = await request(app).get('/.well-known/oauth-protected-resource/mcp/private');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.resource, 'https://miorail.xyz/mcp/private');
+    assert.deepStrictEqual(response.body.authorization_servers, ['https://miorail.xyz/']);
+    assert.ok(response.body.scopes_supported.includes('miorail:connected'));
+  });
+
+  await t.test('publishes OAuth authorization, refresh, registration and revocation endpoints', async () => {
+    const response = await request(app).get('/.well-known/oauth-authorization-server');
+    assert.strictEqual(response.status, 200);
+    assert.strictEqual(response.body.authorization_endpoint, 'https://miorail.xyz/authorize');
+    assert.strictEqual(response.body.token_endpoint, 'https://miorail.xyz/token');
+    assert.strictEqual(response.body.registration_endpoint, 'https://miorail.xyz/register');
+    assert.strictEqual(response.body.revocation_endpoint, 'https://miorail.xyz/revoke');
+    assert.deepStrictEqual(response.body.code_challenge_methods_supported, ['S256']);
+    assert.ok(response.body.grant_types_supported.includes('refresh_token'));
+  });
 });

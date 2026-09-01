@@ -11,7 +11,7 @@ import type {
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
-import { assembleMarketRealityV2 } from '../src/engine.js';
+import { assembleMarketRealityIndexV1, assembleMarketRealityV2 } from '../src/engine.js';
 
 const H = `0x${'11'.repeat(32)}` as const;
 const CANDIDATE = `0x${'22'.repeat(32)}` as const;
@@ -465,4 +465,56 @@ test('a complete binding is never rewritten by the recovery', async () => {
     { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
   );
   assert.equal(result.representations[0]?.issuerInstrumentKey, 'backed:instrument_id:a');
+});
+
+test('the Stocks index admits only reviewed equities and computes totals over that universe', async () => {
+  const underlying = (
+    underlyingKey: string,
+    assetClass: 'equity' | 'fund_share' | 'other' | 'unknown',
+    representationCount: number,
+    issuerIds: string[],
+  ) => ({
+    underlying: {
+      underlyingKey,
+      assetClass,
+      canonicalName: underlyingKey,
+      displaySymbol: null,
+      identifierScheme: null,
+      identifierValue: null,
+      sourceKind: 'backed_assets_api' as const,
+      sourceRef: 'https://api.xstocks.fi/api/v1/token?type=btokens',
+      sourceHash: 'ab'.repeat(32),
+      observedAt: '2026-09-01T12:00:00.000Z',
+    },
+    representationCount,
+    issuerIds,
+  });
+  const rows = [
+    underlying('backed:instrument:equity', 'equity', 3, ['backed', 'coinbase']),
+    underlying('backed:instrument:bond', 'other', 1, ['backed']),
+    underlying('backed:instrument:unreviewed', 'unknown', 1, ['backed']),
+    underlying('backed:instrument:fund', 'fund_share', 1, ['backed']),
+    underlying('backed:instrument:equity-2', 'equity', 1, ['coinbase']),
+  ];
+  const result = await assembleMarketRealityIndexV1(
+    {
+      underlyings: {
+        listUnderlyings: async () => rows,
+        underlyingCounts: async () => {
+          throw new Error('generic security totals must not leak into Stocks');
+        },
+      } as unknown as UnderlyingAssetRepositoryV1,
+      now: () => new Date('2026-09-01T12:00:00.000Z'),
+    },
+    { limit: 50 },
+  );
+  assert.deepEqual(
+    result.entries.map((entry) => entry.assetClass),
+    ['equity', 'equity'],
+  );
+  assert.deepEqual(result.totals, {
+    underlyings: 2,
+    boundRepresentations: 4,
+    multiIssuerUnderlyings: 1,
+  });
 });

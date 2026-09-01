@@ -20,6 +20,9 @@ declare module 'express-session' {
       message: string;
       expiresAt: string;
     };
+    /** One-use CSRF proof for an MCP OAuth consent POST. It authorizes no
+     * wallet by itself; the strict session user is checked again at consent. */
+    mcpOAuthConsentToken?: string;
   }
 }
 

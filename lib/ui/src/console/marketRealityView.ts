@@ -281,7 +281,11 @@ export interface UtilitySourceViewV1 {
 }
 
 export interface UtilityEdgeViewV1 {
-  edgeId: RepresentationUtilityEdgeV1['edgeId'];
+  edgeId:
+    | RepresentationUtilityEdgeV1['edgeId']
+    | 'defi_reviewed_integrations'
+    | 'issuer_primary_market'
+    | 'issuer_value_lifecycle';
   label: string;
   state: UtilityEvidenceStateV1;
   stateLabel: string;
@@ -1121,7 +1125,7 @@ const UTILITY_STATE_LABEL_V1: Readonly<Record<UtilityEvidenceStateV1, string>> =
   available: 'Available',
   observed: 'Observed',
   documented: 'Documented',
-  not_established: 'Not confirmed yet',
+  not_established: 'Not established',
   stale: 'Stale',
 };
 
@@ -1211,14 +1215,88 @@ function utilityViewV1(
     evaluatedAt: nowIso,
     marketTrade,
   });
+  const [trade, ...defi] = map.marketDefi.map((edge) => utilityEdgeViewV1(edge, nowIso));
+  const allDefiUnestablished =
+    defi.length > 0 &&
+    defi.every(
+      (edge) =>
+        edge.state === 'not_established' && edge.sources.length === 0 && edge.providerLabel === null,
+    );
+  const defiPresentation: UtilityEdgeViewV1[] = allDefiUnestablished
+    ? [
+        {
+          ...defi[0]!,
+          edgeId: 'defi_reviewed_integrations',
+          label: 'Lending, borrowing, collateral, vaults and liquidity',
+          note:
+            'No reviewed exact-address integration is established in these DeFi categories. This is one evidence gap, not six unavailable-product claims.',
+        },
+      ]
+    : defi;
+  const issuerViews = map.issuer.map((edge) => utilityEdgeViewV1(edge, nowIso));
+  const accessIds = new Set<UtilityEdgeViewV1['edgeId']>([
+    'representation_claim_model',
+    'representation_transfer',
+    'representation_eligibility',
+    'representation_reference_model',
+  ]);
+  const combineIssuerEdgesV1 = (
+    edgeId: 'issuer_primary_market' | 'issuer_value_lifecycle',
+    label: string,
+    sourceIds: readonly UtilityEdgeViewV1['edgeId'][],
+  ): UtilityEdgeViewV1 | null => {
+    const selected = issuerViews.filter((edge) => sourceIds.includes(edge.edgeId));
+    if (selected.length !== sourceIds.length || selected.length === 0) return null;
+    const sources = new Map<string, UtilitySourceViewV1>();
+    for (const edge of selected) {
+      for (const source of edge.sources) {
+        sources.set(`${source.label}:${source.href ?? ''}:${source.checkedAt}`, source);
+      }
+    }
+    const latest = selected.reduce(
+      (value, edge) =>
+        Date.parse(edge.checkedAt) > Date.parse(value) ? edge.checkedAt : value,
+      selected[0]!.checkedAt,
+    );
+    const allDocumented = selected.every((edge) => edge.state === 'documented');
+    return {
+      ...selected[0]!,
+      edgeId,
+      label,
+      state: allDocumented ? 'documented' : 'not_established',
+      stateLabel: allDocumented ? 'Documented terms' : 'Evidence gap',
+      checkedAt: latest,
+      checkedAgo: quoteAgeLabelV1(latest, nowIso),
+      note: selected.map((edge) => edge.note).join(' '),
+      sources: [...sources.values()],
+    };
+  };
+  const primaryMarket = combineIssuerEdgesV1(
+    'issuer_primary_market',
+    'Primary issue and redemption',
+    ['issuer_mint_issue', 'issuer_redeem_sell'],
+  );
+  const valueLifecycle = combineIssuerEdgesV1(
+    'issuer_value_lifecycle',
+    'Distributions and corporate actions',
+    ['issuer_distributions', 'issuer_corporate_actions'],
+  );
+  const bridge = issuerViews.find((edge) => edge.edgeId === 'issuer_bridge');
   return {
     caip10: map.caip10,
     groups: [
       {
-        label: 'Markets and DeFi',
-        edges: map.marketDefi.map((edge) => utilityEdgeViewV1(edge, nowIso)),
+        label: 'Market reachability',
+        edges: trade ? [trade] : [],
       },
-      { label: 'Issuer services', edges: map.issuer.map((edge) => utilityEdgeViewV1(edge, nowIso)) },
+      { label: 'Access, transfer and value model', edges: issuerViews.filter((edge) => accessIds.has(edge.edgeId)) },
+      {
+        label: 'Issuer lifecycle',
+        edges: [primaryMarket, valueLifecycle, bridge].filter(
+          (edge): edge is UtilityEdgeViewV1 => edge !== null && edge !== undefined,
+        ),
+      },
+      { label: 'Reviewed DeFi integrations', edges: defiPresentation },
     ],
   };
 }

@@ -31,12 +31,17 @@ const definedConsoleClasses = new Set(
 
 const GRANT = {
   tokenId: 'grant-1',
+  grantKind: 'oauth' as const,
   clientKind: 'claude' as const,
+  clientName: 'Claude',
+  scopes: ['miorail:connected'],
   walletAddress: '0x4de27ead5a3c9aeb58c7f812178ddde282670d70',
   issuedAt: '2026-09-01T09:00:00.000Z',
   lastUsedAt: '2026-09-01T11:00:00.000Z',
   useCount: 3,
   revokedAt: null,
+  expiresAt: '2099-09-01T13:00:00.000Z',
+  status: 'current' as const,
   historyComplete: true,
 };
 
@@ -48,10 +53,16 @@ function model(over: Partial<ConnectedAppsCardModelV1> = {}): ConnectedAppsCardM
     loading: false,
     error: null,
     permissions: { read: true, executableHandoff: true },
+    oauth: {
+      endpointUrl: 'https://miorail.xyz/mcp/private',
+      accessTokenTtlMinutes: 15,
+      grantTtlDays: 30,
+      refreshTokenRotation: true,
+    },
     issued: null,
     issuing: false,
     revokingTokenId: null,
-    onConnect: () => {},
+    onIssueTemporary: () => {},
     onRevoke: () => {},
     onDismissIssued: () => {},
     ...over,
@@ -72,14 +83,16 @@ describe('Connect Miorail to your AI', () => {
     assert.match(markup, /3 calls/);
   });
 
-  test('it never calls a grant active, and never shows an expiry it does not know', () => {
-    // A handoff token carries its own expiry, signed, and the server stores
-    // neither the token nor the date. The card says what is knowable — whether
-    // it was revoked — and warns that keys also lapse on their own.
-    const markup = render();
-    assert.doesNotMatch(markup, /\bActive\b/);
-    assert.doesNotMatch(markup, /Expires/);
-    assert.match(markup, /expires on its own/);
+  test('it counts only grants whose recorded expiry is still current', () => {
+    const markup = render({
+      grants: [
+        GRANT,
+        { ...GRANT, tokenId: 'expired', status: 'expired', expiresAt: '2026-09-01T10:00:00.000Z' },
+        { ...GRANT, tokenId: 'revoked', status: 'revoked', revokedAt: '2026-09-01T12:00:00.000Z' },
+      ],
+    });
+    assert.match(markup, /1 usable now/);
+    assert.doesNotMatch(markup, /3 connected/);
   });
 
   test('a grant minted and never used says so', () => {
@@ -92,7 +105,7 @@ describe('Connect Miorail to your AI', () => {
 
   test('a revoked grant stays visible, and loses its Revoke button', () => {
     const markup = render({
-      grants: [{ ...GRANT, revokedAt: '2026-09-01T12:00:00.000Z' }],
+      grants: [{ ...GRANT, status: 'revoked', revokedAt: '2026-09-01T12:00:00.000Z' }],
     });
     assert.match(markup, /Revoked/);
     assert.doesNotMatch(markup, />Revoke</);
@@ -102,8 +115,22 @@ describe('Connect Miorail to your AI', () => {
     assert.equal(connectedAppLabelV1(null), 'Not recorded');
     assert.equal(connectedAppLabelV1('claude'), 'Claude');
     assert.equal(connectedAppLabelV1('other'), 'Another client');
-    const markup = render({ grants: [{ ...GRANT, clientKind: null }] });
+    const markup = render({ grants: [{ ...GRANT, clientKind: null, clientName: null }] });
     assert.match(markup, /Not recorded/);
+  });
+
+  test('a current grant describes a future expiry as future, never as zero seconds ago', () => {
+    const markup = render();
+    assert.match(markup, /expires in/);
+    assert.doesNotMatch(markup, /expires 0s ago/);
+  });
+
+  test('OAuth is primary and manual bearer issuance is explicitly advanced fallback', () => {
+    const markup = render();
+    assert.match(markup, /Connect with OAuth/);
+    assert.match(markup, /Advanced: temporary bearer key/);
+    assert.match(markup, /Issue temporary key/);
+    assert.doesNotMatch(markup, /Give an assistant a key/);
   });
 
   test('permissions are stated once for the server, never per grant', () => {
@@ -122,12 +149,12 @@ describe('Connect Miorail to your AI', () => {
     // stops looking.
     const markup = render({ grants: [], error: 'Your connected apps could not be read right now.' });
     assert.match(markup, /could not be read/);
-    assert.doesNotMatch(markup, /Nothing is connected/);
+    assert.doesNotMatch(markup, /No grants have been issued/);
   });
 
   test('an empty list says it plainly, and only when it is one', () => {
     const markup = render({ grants: [], error: null });
-    assert.match(markup, /Nothing is connected/);
+    assert.match(markup, /No grants have been issued/);
   });
 
   test('the minted key is shown once, with the warning attached', () => {
@@ -140,6 +167,7 @@ describe('Connect Miorail to your AI', () => {
       },
     });
     assert.match(markup, /shown once/);
+    assert.match(markup, /Expires/);
     assert.match(markup, /miorail-handoff-v1\.aaaa\.bbbb/);
     assert.match(markup, /Treat it like a password/);
     // And a card with no freshly minted key never renders one.

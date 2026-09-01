@@ -3,6 +3,7 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { MCP_PRIVATE_AUTH_COPY_V1, resolvePrivateIdentityV1 } from './session.js';
+import { mcpOAuthResourceUrlV1 } from '../../lib/mcpOAuthProvider.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §1/§10 — the authenticated Streamable HTTP endpoint.
@@ -64,7 +65,10 @@ mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
     }
     // 401 with a WWW-Authenticate header: an MCP client can then tell its user
     // that a credential is needed rather than reporting a broken server.
-    res.setHeader('WWW-Authenticate', 'Bearer realm="miorail"');
+    res.setHeader(
+      'WWW-Authenticate',
+      `Bearer realm="miorail", resource_metadata="${new URL(`/.well-known/oauth-protected-resource${mcpOAuthResourceUrlV1().pathname}`, mcpOAuthResourceUrlV1()).href}"`,
+    );
     jsonRpcError(res, auth.reason === 'mcp_private_disabled' ? 404 : 401, MCP_PRIVATE_AUTH_COPY_V1[auth.reason]);
     return;
   }

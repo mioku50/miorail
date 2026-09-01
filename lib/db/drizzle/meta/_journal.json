@@ -449,6 +449,13 @@
       "when": 1788355800000,
       "tag": "0063_mcp_handoff_client_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 64,
+      "version": "7",
+      "when": 1788442200000,
+      "tag": "0064_connected_apps_oauth",
+      "breakpoints": true
     }
   ]
 }

@@ -2,16 +2,27 @@
  * Enrich exact Coinbase B20 addresses with reviewed underlying identifiers.
  *
  * The contract is asked for `extraMetadata("isin")` at one pinned Base block.
- * A value is accepted only when an issuer prospectus independently names the
- * same underlying ISIN. Empty metadata, an unknown ISIN or an RPC failure
- * writes no binding and remains `unknown`; symbol/name are never consulted.
+ * Base Docs first establishes the exact Coinbase B20 address and documents
+ * `extraMetadata` as the issuer's security-identifier surface. A non-empty
+ * ISIN is accepted only when its ISO 6166 check digit reconciles. Mutable
+ * symbol/name are read only as presentation metadata and never select an
+ * address or build the underlying key. Empty/invalid metadata or an RPC
+ * failure writes no binding and remains `unknown`.
  */
 import { createHash } from 'node:crypto';
-import { createB20ReaderV1, decodeStringV1, selectorV1 } from '@mioagent/b20-control';
+import {
+  B20_SELECTORS_V1,
+  callManyV1,
+  createB20ReaderV1,
+  decodeStringV1,
+  encodeNoArgsV1,
+  selectorV1,
+} from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseOfficialAssetRepository,
   createDatabaseUnderlyingAssetRepository,
+  isValidIsinV1,
 } from '@mioagent/route-storage';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -50,6 +61,9 @@ const REVIEWED_PROSPECTUS_BY_UNDERLYING_ISIN_V1: Readonly<
       'https://assets.ctfassets.net/o10es7wu5gm1/7N224uw3q8ouQcHhuzs9rx/c0326c67068da144f47db1c4b66a1ee5/Coinbase_Onchain_SPV_Ltd_-_Prospectus__NVDA__-_FSRA_VERSION.pdf#page=67',
   },
 };
+
+const BASE_STOCKS_SOURCE_V1 =
+  'https://docs.base.org/base-chain/specs/reference/b20/tokenized-stocks-on-base';
 
 function rpcUrlV1(): string {
   return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
@@ -99,12 +113,27 @@ async function main(): Promise<void> {
       console.log(`${address}  undecodable — no claim written`);
       continue;
     }
-    const reviewed = REVIEWED_PROSPECTUS_BY_UNDERLYING_ISIN_V1[isin];
-    if (!reviewed) {
+    if (!isValidIsinV1(isin)) {
       unknown += 1;
-      console.log(`${address}  ${isin || 'empty'} — no reviewed identifier match`);
+      console.log(`${address}  ${isin || 'empty'} — invalid or absent issuer ISIN`);
       continue;
     }
+    const reviewed = REVIEWED_PROSPECTUS_BY_UNDERLYING_ISIN_V1[isin] ?? null;
+    const [nameRead, symbolRead] = await callManyV1(reader, [
+      { to: address, data: encodeNoArgsV1(B20_SELECTORS_V1.name), blockTag: anchor.value.blockTag },
+      { to: address, data: encodeNoArgsV1(B20_SELECTORS_V1.symbol), blockTag: anchor.value.blockTag },
+    ]);
+    const listing = identity.listings.find(
+      (candidate) => candidate.sourceKind === 'base_docs_technical' && candidate.currentlyListed,
+    );
+    const decodedName = nameRead?.ok ? (decodeStringV1(nameRead.value) ?? '').trim() : '';
+    const decodedSymbol = symbolRead?.ok ? (decodeStringV1(symbolRead.value) ?? '').trim() : '';
+    const representationSymbol = decodedSymbol || listing?.ticker || null;
+    const displaySymbol = representationSymbol?.endsWith('c')
+      ? representationSymbol.slice(0, -1)
+      : representationSymbol;
+    const displayName = decodedName || listing?.displayName || `ISIN ${isin}`;
+    const identitySourceRef = reviewed?.sourceRef ?? `${BASE_STOCKS_SOURCE_V1}#extra-metadata`;
     const sourceHash = createHash('sha256')
       .update(
         JSON.stringify({
@@ -113,7 +142,12 @@ async function main(): Promise<void> {
           isin,
           blockNumber: anchor.value.blockNumber,
           blockHash: anchor.value.blockHash,
-          sourceRef: reviewed.sourceRef,
+          sourceRef: identitySourceRef,
+          baseDocsListing: listing
+            ? { ticker: listing.ticker, sourceUrl: listing.sourceUrl }
+            : null,
+          displayName,
+          representationSymbol,
         }),
       )
       .digest('hex');
@@ -121,12 +155,12 @@ async function main(): Promise<void> {
       await underlyings.declareUnderlying({
         underlyingKey: `security:isin:${isin}`,
         assetClass: 'equity',
-        canonicalName: reviewed.displayName,
-        displaySymbol: reviewed.displaySymbol,
+        canonicalName: displayName,
+        displaySymbol,
         identifierScheme: 'isin',
         identifierValue: isin,
         sourceKind: 'coinbase_b20_metadata',
-        sourceRef: reviewed.sourceRef,
+        sourceRef: identitySourceRef,
         sourceHash,
         observedAt,
       });
@@ -135,13 +169,13 @@ async function main(): Promise<void> {
         tokenAddress: address,
         underlyingKey: `security:isin:${isin}`,
         sourceKind: 'coinbase_b20_metadata',
-        sourceRef: `${reviewed.sourceRef}#extraMetadata(isin)`,
+        sourceRef: `${BASE_STOCKS_SOURCE_V1}#extraMetadata(isin)`,
         sourceHash,
         issuerId: 'coinbase',
         issuerInstrumentKey: `coinbase:b20_address:${address}`,
         caip10: `eip155:8453:${address}`,
         representationKind: 'b20_asset',
-        evidenceStrength: 'reviewed_machine_mapping_with_onchain_cross_check',
+        evidenceStrength: 'reviewed_issuer_identifier',
         observedBlockNumber: anchor.value.blockNumber,
         observedBlockHash: anchor.value.blockHash,
         observedAt,

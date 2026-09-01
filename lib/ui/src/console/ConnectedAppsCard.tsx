@@ -13,10 +13,9 @@ void React;
 //
 // FOUR THINGS THIS CARD DOES NOT SAY
 //
-//   1. "Active". Nothing knows: a handoff token carries its own expiry, signed,
-//      and the server stores neither the token nor the date. What is knowable
-//      is whether it was REVOKED, so that is what is shown, and the card says
-//      out loud that tokens also lapse on their own.
+//   1. "Active". New temporary credentials and OAuth grants have stored expiry,
+//      but legacy issuance rows do not. The UI therefore says current, expired,
+//      revoked or unknown only when the corresponding evidence exists.
 //
 //   2. That issuing is using. A grant minted and never touched reads "never
 //      used", because that is the one an owner most wants to find.
@@ -62,12 +61,17 @@ export function connectedAppLabelV1(kind: string | null): string {
 
 export interface ConnectedAppGrantViewV1 {
   tokenId: string;
+  grantKind: 'oauth' | 'temporary_bearer';
   clientKind: string | null;
+  clientName: string | null;
+  scopes: readonly string[];
   walletAddress: string;
   issuedAt: string | null;
   lastUsedAt: string | null;
   useCount: number;
   revokedAt: string | null;
+  expiresAt: string | null;
+  status: 'current' | 'expired' | 'revoked' | 'unknown';
   historyComplete: boolean;
 }
 
@@ -81,11 +85,17 @@ export interface ConnectedAppsCardModelV1 {
    * none" are the two states an owner must not confuse. */
   error: string | null;
   permissions: { read: boolean; executableHandoff: boolean } | null;
+  oauth: {
+    endpointUrl: string;
+    accessTokenTtlMinutes: number;
+    grantTtlDays: number;
+    refreshTokenRotation: true;
+  } | null;
   /** Shown exactly once, immediately after minting. */
   issued: { token: string; tokenId: string; expiresAt: string; notice: string } | null;
   issuing: boolean;
   revokingTokenId: string | null;
-  onConnect: (clientKind: ConnectedAppClientKindV1) => void;
+  onIssueTemporary: (clientKind: ConnectedAppClientKindV1) => void;
   onRevoke: (tokenId: string) => void;
   onDismissIssued: () => void;
 }
@@ -103,6 +113,20 @@ function ageV1(iso: string | null, now: Date): string {
   return `${Math.round(hours / 24)}d ago`;
 }
 
+function expiryV1(iso: string | null, status: ConnectedAppGrantViewV1['status'], now: Date): string {
+  if (!iso) return '';
+  const then = Date.parse(iso);
+  if (!Number.isFinite(then)) return '';
+  if (status === 'expired') return `expired ${ageV1(iso, now)}`;
+  const seconds = Math.max(0, Math.round((then - now.getTime()) / 1000));
+  if (seconds < 60) return `expires in ${seconds}s`;
+  const minutes = Math.round(seconds / 60);
+  if (minutes < 60) return `expires in ${minutes} min`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 48) return `expires in ${hours}h`;
+  return `expires in ${Math.round(hours / 24)}d`;
+}
+
 function shortV1(value: string): string {
   return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
@@ -110,6 +134,8 @@ function shortV1(value: string): string {
 export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
   const [pressed, setPressed] = useState<ConnectedAppClientKindV1 | null>(null);
   const now = new Date();
+  const usableNow = model.grants.filter((grant) => grant.status === 'current').length;
+  const uncertain = model.grants.filter((grant) => grant.status === 'unknown').length;
 
   return (
     <div className="panel">
@@ -117,7 +143,11 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
         <h3>Connect Miorail to your AI</h3>
         <span className="rt">
           <span className="sub mono">
-            {model.grants.length === 0 ? 'none connected' : `${model.grants.length} connected`}
+            {usableNow > 0
+              ? `${usableNow} usable now`
+              : uncertain > 0
+                ? `${uncertain} expiry unknown`
+                : 'no usable grants'}
           </span>
         </span>
       </div>
@@ -130,9 +160,9 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
         ) : (
           <>
             <p className="lnote">
-              Give an assistant a key to your Miorail account. It reads what you have already
-              reviewed and can never sign or send a transaction — every transaction is still
-              approved in your own Base Account.
+              Authorize an assistant to read what you have already reviewed in Miorail. It can
+              never sign or send a transaction — every transaction is still approved in your own
+              Base Account.
             </p>
 
             {/* Stated once, for the server. A grant carries no scopes of its own. */}
@@ -163,45 +193,75 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
               </dl>
             ) : null}
 
-            {model.issued ? (
-              <div className="card-evidence" data-testid="connected-app-issued">
-                <div className="card-evidence-body">
-                  <p className="cr-verdict">Copy this key now — it is shown once.</p>
-                  <p className="mono" style={{ overflowWrap: 'anywhere' }}>
-                    {model.issued.token}
-                  </p>
-                  <p className="lnote">{model.issued.notice}</p>
-                  <button type="button" className="btn sec" onClick={model.onDismissIssued}>
-                    Done
-                  </button>
-                </div>
-              </div>
-            ) : null}
-
-            {/* One button per client, not a dropdown. This card carried the
-                only <select> in the whole console, and the console has no
-                vocabulary for one — it rendered as a raw browser control
-                wedged into a row meant for buttons. Four buttons use the
-                styling that already exists and save a click. */}
-            <p className="sub">Connect an assistant</p>
+            <p className="sub">Connect with OAuth</p>
             <div className="card-actions">
               {CONNECTED_APP_CHOICES_V1.map((option) => (
                 <button
                   key={option.kind}
                   type="button"
                   className="btn sec"
-                  disabled={model.issuing}
                   onClick={() => {
-                    // Remembered only so THIS button reads "Connecting…" while
-                    // the others stay legible. It selects nothing.
                     setPressed(option.kind);
-                    model.onConnect(option.kind);
                   }}
                 >
-                  {model.issuing && pressed === option.kind ? 'Connecting…' : option.label}
+                  {option.label}
                 </button>
               ))}
             </div>
+            {pressed && model.oauth ? (
+              <div className="card-evidence" data-testid="connected-app-oauth-guide">
+                <div className="card-evidence-body">
+                  <p className="cr-verdict">Connect from {connectedAppLabelV1(pressed)}</p>
+                  <ol>
+                    <li>Open that client&apos;s Connectors or MCP settings.</li>
+                    <li>Add this remote MCP server:</li>
+                  </ol>
+                  <p className="mono" style={{ overflowWrap: 'anywhere' }}>
+                    {model.oauth.endpointUrl}
+                  </p>
+                  <p className="lnote">
+                    The client creates the redirect and PKCE proof, then opens Miorail for your
+                    approval. Access expires in {model.oauth.accessTokenTtlMinutes} minutes;
+                    refresh tokens rotate and the grant expires in {model.oauth.grantTtlDays} days.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            <details>
+              <summary>Advanced: temporary bearer key</summary>
+              <p className="lnote">
+                Use this only for a client that cannot perform MCP OAuth. It requires manual
+                copy/paste and does not refresh.
+              </p>
+              <div className="card-actions">
+                <button
+                  type="button"
+                  className="btn sec"
+                  disabled={model.issuing}
+                  onClick={() => model.onIssueTemporary(pressed ?? 'other')}
+                >
+                  {model.issuing ? 'Issuing…' : 'Issue temporary key'}
+                </button>
+              </div>
+              {model.issued ? (
+                <div className="card-evidence" data-testid="connected-app-issued">
+                  <div className="card-evidence-body">
+                    <p className="cr-verdict">Temporary key — copy it now; it is shown once.</p>
+                    <p className="mono" style={{ overflowWrap: 'anywhere' }}>
+                      {model.issued.token}
+                    </p>
+                    <p className="lnote">{model.issued.notice}</p>
+                    <p className="lnote">
+                      Expires <span className="mono">{model.issued.expiresAt}</span>
+                    </p>
+                    <button type="button" className="btn sec" onClick={model.onDismissIssued}>
+                      Done
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </details>
 
             {model.error ? (
               <p className="lnote warn">{model.error}</p>
@@ -209,8 +269,7 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
               <p className="empty">Reading your connected apps…</p>
             ) : model.grants.length === 0 ? (
               <p className="empty">
-                Nothing is connected to your wallet. Connect one above to use Miorail from an
-                assistant.
+                No grants have been issued for this wallet.
               </p>
             ) : (
               /* One card per grant, with its action as a SIBLING of the text.
@@ -220,30 +279,39 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
               <div className="console-card-grid" aria-label="Connected apps">
                 {model.grants.map((grant) => (
                   <article
-                    className={grant.revokedAt ? 'cardrow off' : 'cardrow'}
+                    className={grant.status === 'current' || grant.status === 'unknown' ? 'cardrow' : 'cardrow off'}
                     key={grant.tokenId}
                   >
                     <div className="cr-top">
-                      <span className="cr-name">{connectedAppLabelV1(grant.clientKind)}</span>
+                      <span className="cr-name">
+                        {grant.clientName ?? connectedAppLabelV1(grant.clientKind)}
+                      </span>
                       <span
                         className="pill cr-status"
-                        data-tone={grant.revokedAt ? 'off' : grant.lastUsedAt ? 'measured' : 'neutral'}
+                        data-tone={grant.status === 'current' ? 'measured' : grant.status === 'unknown' ? 'neutral' : 'off'}
                       >
-                        {grant.revokedAt
+                        {grant.status === 'revoked'
                           ? `Revoked ${ageV1(grant.revokedAt, now)}`
-                          : grant.lastUsedAt
+                          : grant.status === 'expired'
+                            ? `Expired ${ageV1(grant.expiresAt, now)}`
+                            : grant.status === 'unknown'
+                              ? 'Expiry not recorded'
+                              : grant.lastUsedAt
                             ? `Last used ${ageV1(grant.lastUsedAt, now)}`
                             : 'Never used'}
                       </span>
                     </div>
                     <p className="lnote">
+                      {grant.grantKind === 'oauth' ? 'OAuth grant' : 'Temporary bearer key'}
+                      {' · '}
                       {grant.walletAddress ? `${shortV1(grant.walletAddress)} · ` : ''}
                       {grant.issuedAt
-                        ? `connected ${ageV1(grant.issuedAt, now)}`
-                        : 'connected before this list began'}
+                        ? `issued ${ageV1(grant.issuedAt, now)}`
+                        : 'issued before this list began'}
+                      {grant.expiresAt ? ` · ${expiryV1(grant.expiresAt, grant.status, now)}` : ''}
                       {grant.useCount > 0 ? ` · ${grant.useCount} calls` : ''}
                     </p>
-                    {grant.revokedAt ? null : (
+                    {grant.status === 'revoked' || grant.status === 'expired' ? null : (
                       <div className="card-actions">
                         <button
                           type="button"
@@ -261,8 +329,8 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
             )}
 
             <p className="lnote">
-              Revoking takes effect immediately. A key also expires on its own, so a connection
-              you no longer see used may already have lapsed.
+              Revoking takes effect immediately. Expired and revoked grants remain visible as
+              history; older grants whose expiry was never recorded are labelled explicitly.
             </p>
           </>
         )}
