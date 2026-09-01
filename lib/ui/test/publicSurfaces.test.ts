@@ -79,6 +79,45 @@ test('the production build injects one validated public Builder Code into web an
   assert.doesNotMatch(deploy, /source\s+[^\n]*\.env/);
 });
 
+// ---------------------------------------------------------------------------
+// An OAuth endpoint the edge does not forward is an endpoint that does not
+// exist.
+//
+// Every path MCP OAuth publishes lives at the API root, and the Nginx snippet
+// forwarded only /api/, /mcp and /health. The server was complete and
+// correct; a client asking miorail.xyz where to authorize got the SPA's HTML
+// and reported a broken server. Code and edge config are one fact, so they are
+// asserted together — and the deploy is required to check it against the
+// public origin rather than against the app.
+// ---------------------------------------------------------------------------
+
+test('every published MCP OAuth path is forwarded by the edge and verified by the deploy', () => {
+  const nginx = source('ops/nginx/miorail-app.conf');
+  const deploy = source('ops/deploy.sh');
+
+  // The paths the MCP SDK's auth router mounts from the advertised metadata.
+  for (const location of [
+    'location ^~ /authorize',
+    'location ^~ /token',
+    'location ^~ /register',
+    'location ^~ /revoke',
+    'location ^~ /.well-known/oauth-',
+  ]) {
+    assert.ok(nginx.includes(location), `Nginx does not forward ${location}`);
+  }
+  // Forwarding it to the static bundle would satisfy the check above and break
+  // the flow, so the API is named too.
+  const oauthBlock = nginx.slice(nginx.indexOf('location ^~ /authorize'));
+  assert.match(oauthBlock.slice(0, 400), /proxy_pass http:\/\/127\.0\.0\.1:8080;/);
+
+  assert.match(deploy, /\.well-known\/oauth-protected-resource\/mcp\/private/);
+  assert.match(deploy, /\.well-known\/oauth-authorization-server/);
+  assert.match(deploy, /code_challenge_methods_supported/);
+  // The discriminator that catches the SPA answering: a bare /authorize must
+  // be refused as a bad OAuth request, never rendered as a page.
+  assert.match(deploy, /the SPA is still serving it/);
+});
+
 test('Metrics is sessionless on web and shared with the Base App', () => {
   const app = source('artifacts/interface/src/app/App.tsx');
   const miniMetrics = source('artifacts/miniapp/app/metrics/page.tsx');

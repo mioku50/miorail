@@ -415,6 +415,39 @@ printf '%s' "$mcp_tools" | jq -e '
 ' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed eleven-tool surface'; exit 1; }
 printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '11 read-only tools'
 
+# MCP OAuth discovery, checked through Nginx rather than against the app.
+#
+# Every one of these paths lives at the API root, and until 2026-09-01 Nginx
+# forwarded none of them: the snippet routed /api/, /mcp and /health, so a
+# client asking miorail.xyz where to authorize was served the SPA's HTML and
+# reported a broken server. The code was correct and unreachable, which is the
+# exact failure this whole script exists to catch. So the check is a public
+# GET, and `/authorize` is asserted to answer as an OAuth endpoint — a bare
+# request must be REFUSED as a bad OAuth request, never answered with a page.
+oauth_origin=${MCP_PUBLIC_URL%/mcp}
+
+oauth_resource=$(curl -fsS --max-time 15 "$oauth_origin/.well-known/oauth-protected-resource/mcp/private" 2>/dev/null) \
+  || { echo 'FAILED: MCP protected-resource metadata is not reachable through Nginx'; exit 1; }
+printf '%s' "$oauth_resource" | jq -e --arg want "$oauth_origin/mcp/private" '.resource == $want' >/dev/null \
+  || { echo 'FAILED: protected-resource metadata does not name this deployment'; exit 1; }
+
+oauth_server=$(curl -fsS --max-time 15 "$oauth_origin/.well-known/oauth-authorization-server" 2>/dev/null) \
+  || { echo 'FAILED: OAuth authorization-server metadata is not reachable through Nginx'; exit 1; }
+printf '%s' "$oauth_server" | jq -e --arg o "$oauth_origin" '
+  .authorization_endpoint == ($o + "/authorize")
+  and .token_endpoint == ($o + "/token")
+  and .registration_endpoint == ($o + "/register")
+  and .revocation_endpoint == ($o + "/revoke")
+  and (.code_challenge_methods_supported | index("S256") != null)
+' >/dev/null || { echo 'FAILED: advertised OAuth endpoints are not this origin with PKCE'; exit 1; }
+
+# No client_id, so the authorization server must refuse it AS an OAuth server.
+# HTML here means the SPA answered and the location is missing again.
+oauth_authorize=$(curl -sS --max-time 15 "$oauth_origin/authorize" 2>/dev/null) || oauth_authorize=''
+printf '%s' "$oauth_authorize" | jq -e 'has("error")' >/dev/null \
+  || { echo 'FAILED: /authorize did not answer as an OAuth endpoint (the SPA is still serving it)'; exit 1; }
+printf '  mcp oauth      %-28s %s\n' "$oauth_origin/authorize" 'discovery + PKCE, refuses a bare request'
+
 echo
 # Counted from the response, not typed in. The literal said "5 tools" for a
 # deploy whose own check had just verified six, which is how a summary line
