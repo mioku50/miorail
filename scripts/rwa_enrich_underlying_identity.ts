@@ -132,7 +132,11 @@ async function main(): Promise<void> {
     const displaySymbol = representationSymbol?.endsWith('c')
       ? representationSymbol.slice(0, -1)
       : representationSymbol;
-    const displayName = decodedName || listing?.displayName || `ISIN ${isin}`;
+    // Name and symbol are presentation only. A transient name() RPC miss must
+    // not degrade a previously reviewed consumer label to "ISIN …" when the
+    // reviewed prospectus already supplies that label; none of these fields
+    // participates in address selection or canonical identity.
+    const displayName = decodedName || listing?.displayName || reviewed?.displayName || `ISIN ${isin}`;
     const identitySourceRef = reviewed?.sourceRef ?? `${BASE_STOCKS_SOURCE_V1}#extra-metadata`;
     const sourceHash = createHash('sha256')
       .update(
