@@ -92,6 +92,11 @@ export const UNDERLYING_EVIDENCE_STRENGTHS_V1 = [
 export const UNDERLYING_REPRESENTATION_KINDS_V1 = [
   'b20_asset',
   'rebasing_erc20',
+  // Phase 17.5. A Dinari dShare is none of the other three: it does not rebase,
+  // it is not an ERC-4626 wrapper, and it is not a B20. Adding a kind is a
+  // review decision about what exists, which is why it is spelled out here
+  // rather than approximated by the nearest existing value.
+  'dinari_dshare',
   'non_rebasing_erc4626_wrapper',
 ] as const;
 

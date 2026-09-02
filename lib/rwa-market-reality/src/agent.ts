@@ -204,7 +204,7 @@ export const MarketRealityAgentRepresentationsOutputV1Schema = z
            * rather than read from the stored binding. */
           issuerTypingRecovered: z.boolean(),
           representationKind: z
-            .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper'])
+            .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
             .nullable(),
           supply: AgentSupplyV1Schema,
           identityEvidence: ReviewedIdentityEvidenceV1Schema,

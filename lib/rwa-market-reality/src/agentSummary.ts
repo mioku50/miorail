@@ -53,6 +53,7 @@ const KIND_LABEL_V1: Readonly<Record<string, string>> = {
   b20_asset: 'B20 asset',
   rebasing_erc20: 'rebasing ERC-20',
   non_rebasing_erc4626_wrapper: 'ERC-4626 wrapper',
+  dinari_dshare: 'Dinari dShare',
 };
 
 function moneyV1(atomic: string, decimals = 6): string {

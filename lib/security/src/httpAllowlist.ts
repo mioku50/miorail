@@ -26,6 +26,16 @@ export const ALLOWED_PARTNER_HOSTS = [
   // lib/ai-engine. There is deliberately no configurable Venice base URL:
   // a settable provider host is how a private prompt ends up somewhere else.
   'api.venice.ai',
+  // Phase 17.5: Dinari's Enterprise catalogue, read-only, for the stock rows
+  // that carry the composite FIGI a Base dShare is bound by. Both environments
+  // are listed because the sandbox is the one production access is currently
+  // gated behind, and which one is used is decided by configuration, not here.
+  'api-enterprise.sbt.dinari.com',
+  'api-enterprise.sandbox.dinari.com',
+  // The registry that ISSUES composite FIGIs. Every FIGI taken from an issuer
+  // catalogue is put to it before it becomes an underlying key, and the same
+  // answer carries the security type the asset class is read from.
+  'api.openfigi.com',
 ] as const;
 
 export class PartnerHostNotAllowlistedError extends Error {

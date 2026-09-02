@@ -144,6 +144,7 @@ const STRUCTURE_LABEL_V1: Readonly<Record<RepresentationKindV1, string>> = {
   b20_asset: 'B20 asset',
   rebasing_erc20: 'Rebasing ERC-20',
   non_rebasing_erc4626_wrapper: 'ERC-4626 wrapper',
+  dinari_dshare: 'Dinari dShare',
 };
 
 const PERIOD_TARGET_LABEL_V1: Readonly<Record<MarketRealityPastPeriodV1, string>> = {

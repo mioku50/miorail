@@ -75,6 +75,7 @@ const MarketRealityRadarWatchObjectV1Schema = MarketRealityRadarWatchInputObject
     'b20_asset',
     'rebasing_erc20',
     'non_rebasing_erc4626_wrapper',
+    'dinari_dshare',
   ]),
   createdAt: Timestamp,
   lastEvaluatedAt: Timestamp.nullable(),

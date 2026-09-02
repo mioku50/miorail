@@ -56,7 +56,7 @@ export const REPRESENTATION_KIND_BY_RATIO_KIND_V1 = {
 export type CanonicalReviewedBindingV1 = RepresentationUnderlyingV1 & {
   issuerId: 'coinbase' | 'dinari' | 'backed';
   issuerInstrumentKey: string;
-  representationKind: 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper';
+  representationKind: 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper' | 'dinari_dshare';
 };
 
 export type CanonicalBindingResultV1 =

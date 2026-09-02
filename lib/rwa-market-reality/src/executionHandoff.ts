@@ -70,7 +70,7 @@ export const StockExecutionHandoffV1Schema = z
       .max(200),
     issuerId: z.enum(['coinbase', 'dinari', 'backed']),
     issuerInstrumentKey: z.string().min(1).max(200),
-    representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper']),
+    representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare']),
     direction: z.enum(['buy', 'sell']),
     requestedCashAtomic: Digits,
     cashAddress: z.literal(HANDOFF_CASH_ADDRESS_V1),

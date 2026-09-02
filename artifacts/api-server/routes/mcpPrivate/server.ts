@@ -152,7 +152,7 @@ This creates nothing executable. There is no path from here to calldata, an appr
         issuerId: z.enum(['coinbase', 'dinari', 'backed']).describe('As Miorail returned it.'),
         issuerInstrumentKey: z.string().min(1).max(200).describe('As Miorail returned it.'),
         representationKind: z
-          .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper'])
+          .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
           .describe('As Miorail returned it.'),
         direction: z.enum(['buy', 'sell']).describe('The exact direction the user asked about.'),
         requestedCashAtomic: POSITION_ARG_V1.describe(

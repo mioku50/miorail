@@ -41,7 +41,7 @@ export {
 export interface StocksSubjectV1 {
   tokenAddress: string;
   issuerId: 'coinbase' | 'dinari' | 'backed';
-  representationKind: 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper';
+  representationKind: 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper' | 'dinari_dshare';
 }
 
 export interface StocksEvidenceBundleV1 {

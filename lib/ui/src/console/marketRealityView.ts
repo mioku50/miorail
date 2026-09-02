@@ -94,7 +94,11 @@ export const MARKET_REALITY_SIZES_V1 = [
 // ---------------------------------------------------------------------------
 
 export type IssuerIdV1 = 'coinbase' | 'dinari' | 'backed';
-export type RepresentationKindV1 = 'b20_asset' | 'rebasing_erc20' | 'non_rebasing_erc4626_wrapper';
+export type RepresentationKindV1 =
+  | 'b20_asset'
+  | 'rebasing_erc20'
+  | 'non_rebasing_erc4626_wrapper'
+  | 'dinari_dshare';
 
 export interface MarketRealityIndexEntryWireV1 {
   underlyingKey: string;
@@ -506,6 +510,7 @@ const STRUCTURE_LABEL_V1: Readonly<Record<RepresentationKindV1, string>> = {
   b20_asset: 'B20 asset',
   rebasing_erc20: 'Rebasing ERC-20',
   non_rebasing_erc4626_wrapper: 'ERC-4626 wrapper',
+  dinari_dshare: 'Dinari dShare',
 };
 
 /**

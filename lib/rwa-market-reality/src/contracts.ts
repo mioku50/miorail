@@ -201,7 +201,7 @@ export const MarketRealityRepresentationV2Schema = z
     tokenAddress: Address,
     issuerId: z.enum(['coinbase', 'dinari', 'backed']),
     issuerInstrumentKey: z.string().min(1).max(200),
-    representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper']),
+    representationKind: z.enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare']),
     supply: MarketRealitySupplyV1Schema,
     status: z.enum(['full', 'unavailable', 'not_measured', 'measurement_failed']),
     routePolicyKey: Hash.nullable(),
@@ -406,7 +406,7 @@ export const MarketRealityHistorySeriesV1Schema = z
     tokenAddress: Address,
     issuerId: z.enum(['coinbase', 'dinari', 'backed']).nullable(),
     representationKind: z
-      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper'])
+      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
       .nullable(),
     /** Oldest first. */
     points: z.array(MarketRealityHistoryPointV1Schema).max(500),

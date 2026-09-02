@@ -5,7 +5,8 @@ export type RadarIssuerV1 = 'coinbase' | 'dinari' | 'backed';
 export type RadarRepresentationKindV1 =
   | 'b20_asset'
   | 'rebasing_erc20'
-  | 'non_rebasing_erc4626_wrapper';
+  | 'non_rebasing_erc4626_wrapper'
+  | 'dinari_dshare';
 
 export interface MarketRealityRadarWatchWireV1 {
   watchId: string;
@@ -111,6 +112,7 @@ const STRUCTURE_V1: Readonly<Record<RadarRepresentationKindV1, string>> = {
   b20_asset: 'B20 asset',
   rebasing_erc20: 'Rebasing ERC-20',
   non_rebasing_erc4626_wrapper: 'ERC-4626 wrapper',
+  dinari_dshare: 'Dinari dShare',
 };
 
 const SESSION_V1: Readonly<Record<string, string>> = {

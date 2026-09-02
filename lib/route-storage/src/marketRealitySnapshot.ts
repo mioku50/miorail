@@ -256,7 +256,7 @@ export const MarketRealityEvidenceSnapshotContractV1Schema = z
     issuerId: z.enum(['coinbase', 'dinari', 'backed']).nullable(),
     issuerInstrumentKey: z.string().min(1).max(200).nullable(),
     representationKind: z
-      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper'])
+      .enum(['b20_asset', 'rebasing_erc20', 'non_rebasing_erc4626_wrapper', 'dinari_dshare'])
       .nullable(),
     direction: z.enum(['buy', 'sell']),
     requestedCashAtomic: Digits.nullable(),
