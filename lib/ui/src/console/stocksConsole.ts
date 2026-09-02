@@ -383,10 +383,15 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   );
 
   // The round-trip ladder, per representation, out of the stored cash-exit run
-  // Discover has rendered all along. Three fixed hooks rather than a loop,
-  // because a hook cannot be called conditionally. Three is the reviewed
-  // maximum for one security today (Coinbase, Backed, and Backed's wrapper); a
-  // fourth shows no ladder rather than a wrong one.
+  // Discover has rendered all along. FIVE fixed hooks rather than a loop,
+  // because a hook cannot be called conditionally.
+  //
+  // Three was the reviewed maximum while the corpus was Coinbase, Backed and
+  // Backed's wrapper. Binding Dinari's dShares took it to five — NVDA now has
+  // Coinbase, Backed, Backed's wrapper, Dinari and Dinari's `.dw` variant — and
+  // three underlyings sit at five, two at four. A sixth still shows no ladder
+  // rather than a wrong one, which is the same honest fallback; the real fix is
+  // one query over the address list, and this is not it.
   const representationAddresses = useMemo(
     () => (reality.data?.representations ?? []).map((row) => row.tokenAddress),
     [reality.data],
@@ -394,6 +399,8 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   const dossierA = useOfficialAssetDossier(representationAddresses[0] ?? null);
   const dossierB = useOfficialAssetDossier(representationAddresses[1] ?? null);
   const dossierC = useOfficialAssetDossier(representationAddresses[2] ?? null);
+  const dossierD = useOfficialAssetDossier(representationAddresses[3] ?? null);
+  const dossierE = useOfficialAssetDossier(representationAddresses[4] ?? null);
 
   const ladders = useMemo(() => {
     const built: Record<
@@ -404,7 +411,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
         exit: RepresentationExitEvidenceV1 | null;
       }
     > = {};
-    for (const response of [dossierA.data, dossierB.data, dossierC.data]) {
+    for (const response of [dossierA.data, dossierB.data, dossierC.data, dossierD.data, dossierE.data]) {
       // `not_in_reviewed_corpus` is a legible answer, not an error. It simply
       // has no ladder to show.
       if (!response || response.outcome !== 'dossier') continue;
@@ -564,25 +571,32 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // -------------------------------------------------------------------------
   // Phase 17.4 — Use & access reads the chain, and only when the tab is open.
   //
-  // Three fixed hooks rather than a loop, for the same reason the ladders are:
-  // a hook cannot be called conditionally, and three is the reviewed maximum
-  // for one security. A fourth representation shows the documented sections
-  // with its onchain answers missing, which the card says out loud rather than
-  // rendering as negative.
+  // Five fixed hooks rather than a loop, for the same reason the ladders are:
+  // a hook cannot be called conditionally, and five is the measured maximum for
+  // one security since Dinari's dShares were bound. A sixth shows the documented
+  // sections with its onchain answers missing, which the card says out loud
+  // rather than rendering as negative.
   // -------------------------------------------------------------------------
   const useAccessEnabled = enabled && question.surface === 'utility';
   const useAccess0 = useRwaUseAccess(representationAddresses[0] ?? null, { enabled: useAccessEnabled });
   const useAccess1 = useRwaUseAccess(representationAddresses[1] ?? null, { enabled: useAccessEnabled });
   const useAccess2 = useRwaUseAccess(representationAddresses[2] ?? null, { enabled: useAccessEnabled });
+  const useAccess3 = useRwaUseAccess(representationAddresses[3] ?? null, { enabled: useAccessEnabled });
+  const useAccess4 = useRwaUseAccess(representationAddresses[4] ?? null, { enabled: useAccessEnabled });
   const useAccessByAddress = useMemo(() => {
     const entries: [string, RepresentationUseAccessV1 | null][] = [];
-    for (const [index, query] of [useAccess0, useAccess1, useAccess2].entries()) {
+    for (const [index, query] of [useAccess0, useAccess1, useAccess2, useAccess3, useAccess4].entries()) {
       const address = representationAddresses[index];
       if (address) entries.push([address, query.data ?? null]);
     }
     return Object.fromEntries(entries);
-  }, [representationAddresses, useAccess0.data, useAccess1.data, useAccess2.data]);
-  const useAccessLoading = useAccess0.isLoading || useAccess1.isLoading || useAccess2.isLoading;
+  }, [representationAddresses, useAccess0.data, useAccess1.data, useAccess2.data, useAccess3.data, useAccess4.data]);
+  const useAccessLoading =
+    useAccess0.isLoading ||
+    useAccess1.isLoading ||
+    useAccess2.isLoading ||
+    useAccess3.isLoading ||
+    useAccess4.isLoading;
 
   const disabledNotice = stocksUnavailableNoticeV1({
     enabled,

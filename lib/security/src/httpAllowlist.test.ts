@@ -61,6 +61,13 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     'api.bitrefill.com',
     'api.opensea.io',
     'api.venice.ai',
+    // Phase 17.5 — the Dinari Enterprise catalogue (both environments) and the
+    // registry that issues composite FIGIs. Read-only, and the only reason the
+    // sandbox host is listed is that production access is gated behind a
+    // verification form; which one is used is configuration, not this list.
+    'api-enterprise.sbt.dinari.com',
+    'api-enterprise.sandbox.dinari.com',
+    'api.openfigi.com',
   ]);
 });
 
