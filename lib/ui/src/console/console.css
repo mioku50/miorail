@@ -548,7 +548,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console.app.no-right { grid-template-columns: 220px minmax(0,1fr); }
 }
 @media (max-width: 1180px) {
-  .mio-console.app { grid-template-columns: 210px minmax(0,1fr); }
+  /* `.no-right` repeated for the same reason as at 900px: without it the
+     1400px variant's higher specificity keeps the wider rail on every page
+     that has no right column. */
+  .mio-console.app,
+  .mio-console.app.no-right { grid-template-columns: 210px minmax(0,1fr); }
   .mio-console aside.right { display: none; }
   /* The right rail does not vanish — its panels move to the end of the centre
      column, so no data is lost at narrow widths. */
@@ -556,7 +560,17 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 }
 @media (min-width: 1181px) { .mio-console .railfold { display: none; } }
 @media (max-width: 900px) {
-  .mio-console.app { grid-template-columns: minmax(0,1fr); }
+  /* `.no-right` is repeated here, and that repetition is the whole fix.
+     `@media (max-width: 1400px)` sets `.mio-console.app.no-right` — specificity
+     (0,3,0) — and this block set only `.mio-console.app` — (0,2,0). Specificity
+     beats source order across media queries, so on a 393px phone the wider
+     breakpoint won and the grid stayed TWO columns: `main` measured 220px with
+     a 173px phantom track beside it. Every page without a right rail — which is
+     Stocks, and therefore all of Base App's Stocks surface — rendered in 56% of
+     the screen with the rest empty. Measured in Chromium at 393px, before and
+     after. */
+  .mio-console.app,
+  .mio-console.app.no-right { grid-template-columns: minmax(0,1fr); }
   /* An overlay must be opaque. Without this the drawer inherited --rail-bg and
      every line of the page underneath showed through it. */
   .mio-console aside.left { position: fixed; top: 52px; bottom: 34px; left: 0; width: 246px; max-width: 84vw; z-index: 50;

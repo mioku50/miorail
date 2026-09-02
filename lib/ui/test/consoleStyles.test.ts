@@ -394,3 +394,42 @@ describe('a console control is styled by the console', () => {
     }
   });
 });
+
+// ---------------------------------------------------------------------------
+// A phone layout a wider breakpoint outranks.
+//
+// `@media (max-width: 1400px)` sets `.mio-console.app.no-right` — specificity
+// (0,3,0) — and the 900px block set only `.mio-console.app` — (0,2,0).
+// Specificity beats source order ACROSS media queries, so on a 393px phone the
+// grid stayed two columns: `main` measured 220px of 393 with a 173px empty
+// track beside it. Every page without a right rail — Stocks, and therefore all
+// of Base App's Stocks surface — rendered in 56% of the screen.
+//
+// Measured in Chromium at 393px before and after; this test is the cheap
+// static guard so the pair cannot come apart again.
+// ---------------------------------------------------------------------------
+
+test('every app grid breakpoint covers the no-right variant too', () => {
+  const blocks = [...css.matchAll(/@media \(max-width: (\d+)px\) \{([\s\S]*?)\n\}/g)];
+  assert.ok(blocks.length >= 3, 'the media blocks are still findable');
+  const checked: string[] = [];
+  const offenders: string[] = [];
+  for (const match of blocks) {
+    const width = match[1]!;
+    // Comments stripped FIRST: the fix's own comment names
+    // `.mio-console.app.no-right` in prose, so a check that reads the raw block
+    // passes on a file where the selector has been deleted — which is exactly
+    // what this test caught itself doing.
+    const body = match[2]!.replace(/\/\*[\s\S]*?\*\//g, '');
+    if (!/\.mio-console\.app[^{]*\{[^}]*grid-template-columns/.test(body)) continue;
+    checked.push(`${width}px`);
+    if (!body.includes('.mio-console.app.no-right')) offenders.push(`${width}px`);
+  }
+  // Without this the assertion below can pass because nothing was examined.
+  assert.deepEqual(checked, ['1400px', '1180px', '900px'], 'the app grid breakpoints moved');
+  assert.deepEqual(
+    offenders,
+    [],
+    `these breakpoints set the app grid without the .no-right variant: ${offenders.join(', ')}`,
+  );
+});
