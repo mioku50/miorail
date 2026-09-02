@@ -1,6 +1,7 @@
 import { Router, type Request } from 'express';
 import { decodeFunctionResult, encodeFunctionData } from 'viem';
 import { callManyV1, createB20ReaderV1, readB20TransferEligibilityV1 } from '@mioagent/b20-control';
+import { budgetedRpcConfigFromEnvV1, createBudgetedReaderV1 } from '../lib/budgetedRpc.js';
 import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
@@ -160,11 +161,23 @@ export const rwaMarketRealityRuntime = {
     }
   },
   measureOne: measureOfficialCashExitV1,
-  reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
+  // Alchemy while the month's compute units allow it, the public endpoint when
+  // they do not. The public one caps a batch at ten calls and throttles under
+  // load; the same hundred-contract sweep read 8 of 100 there and 100 of 100
+  // through Alchemy.
+  reader: (): ReturnType<typeof createB20ReaderV1> => {
+    const config = budgetedRpcConfigFromEnvV1();
+    return config
+      ? (createBudgetedReaderV1(config) as ReturnType<typeof createB20ReaderV1>)
+      : createB20ReaderV1({ rpcUrl: rpcUrlV1() });
+  },
   /** The same reader, narrowed to what Use & access needs: an anchor and a
    * pinned `eth_call`. Nothing on that surface may reach a wider seam. */
   useAccessReader: (): UseAccessReaderV1 => {
-    const reader = createB20ReaderV1({ rpcUrl: rpcUrlV1() });
+    const config = budgetedRpcConfigFromEnvV1();
+    const reader = config
+      ? createBudgetedReaderV1(config)
+      : createB20ReaderV1({ rpcUrl: rpcUrlV1() });
     return {
       async readBlockAnchor() {
         const anchor = await reader.readBlockAnchor();

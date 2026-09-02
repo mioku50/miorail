@@ -2,6 +2,9 @@ import { Router } from 'express';
 import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
+import { rpcBudgetReportV1 } from '@mioagent/b20-control';
+import { client } from '@mioagent/db';
+import { createDatabaseRpcCuLedgerRepository } from '@mioagent/route-storage';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { attachBaseMcpToolProbeStatus, finalizeBaseMcpReadiness, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
@@ -90,6 +93,12 @@ export function getSystemStatus(envOverride?: string) {
     rpc: {
       status: "connected" as const,
       provider: rpcProvider,
+      // Phase 17.6 — what the metered endpoint has cost this month, in COMPUTE
+      // UNITS, which is the unit the plan is sold in. Filled by the caller from
+      // the durable ledger; a counter in memory reports "under budget" after
+      // every deploy regardless of the truth, so an absent figure is reported
+      // as absent rather than as zero.
+      meteredBudget: null as null | Record<string, unknown>,
     },
     tokenBalances: {
       status: tokenStatus,
@@ -255,6 +264,28 @@ statusRouter.get('/', async (req, res, next) => {
     const baseMcp = await probeBaseMcpStatus();
     const auth = await statusRouteRuntime.getBaseMcpAuthStatus(tenantUserId(req));
     const baseStatus = getSystemStatus();
+    // The month's metered spend, from the durable ledger. A read that fails
+    // leaves the field null: absent is "we did not read it", and reporting zero
+    // would be the budget saying it is fine because it forgot.
+    try {
+      const now = new Date();
+      const rows = await createDatabaseRpcCuLedgerRepository(client).readMonth(now);
+      const alchemyCu = rows
+        .filter((row) => row.provider === 'alchemy')
+        .reduce((total, row) => total + row.spentCu, 0);
+      const fallbackCalls = rows
+        .filter((row) => row.provider === 'fallback')
+        .reduce((total, row) => total + row.callCount, 0);
+      baseStatus.rpc.meteredBudget = {
+        ...rpcBudgetReportV1({ now, spentCu: alchemyCu }),
+        alchemyConfigured: (process.env.ALCHEMY_BASE_MAINNET_RPC_URL ?? '').trim().length > 0,
+        // How much of the month ran on the fallback, which is the number that
+        // says whether the budget is actually holding.
+        fallbackCalls,
+      };
+    } catch {
+      baseStatus.rpc.meteredBudget = null;
+    }
     const userId = tenantUserId(req);
     const tenantWallet = tenantWalletAddress(req);
     const rpcUrl = baseStatus.chainId === 84532
