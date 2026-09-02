@@ -93,6 +93,29 @@ test('no tracked source file hides a NUL byte from git', () => {
   assert.deepEqual(offenders, [], `write \\u0000 rather than a raw NUL: ${offenders.join(', ')}`);
 });
 
+// ---------------------------------------------------------------------------
+// A freeze a deploy silently lifts is worse than no freeze.
+//
+// Phase 17 stopped and disabled the two B20 ingestion workers and set a flag so
+// the surface says the feed was frozen by decision. The very next deploy
+// re-enabled and restarted both, while the flag stayed set — so /status kept
+// answering `feed_frozen` about workers that were reading again. One state is
+// held in the env file; the deploy has to read the same file.
+// ---------------------------------------------------------------------------
+
+test('a frozen launch feed survives a deploy', () => {
+  const deploy = source('ops/deploy.sh');
+  assert.match(deploy, /MIORAIL_B20_LAUNCH_FEED_FROZEN_V1/);
+  // Disabled, not merely stopped: an enabled-but-stopped unit returns on the
+  // next reboot, which is a freeze with an expiry nobody chose.
+  assert.match(deploy, /systemctl disable --now "\$\{B20_INGESTION_SERVICES\[@\]\}"/);
+  // And the restart loop must not hold them either, or the disable above is
+  // undone one step later by `systemctl restart`.
+  const services = /^SERVICES=\(([^)]*)\)/m.exec(deploy)?.[1] ?? '';
+  assert.doesNotMatch(services, /b20-discover|b20-measure/);
+  assert.match(deploy, /SERVICES\+=\("\$\{B20_INGESTION_SERVICES\[@\]\}"\)/);
+});
+
 test('the production build injects one validated public Builder Code into web and Base App', () => {
   const deploy = source('ops/deploy.sh');
   assert.match(deploy, /VITE_BASE_BUILDER_CODE="\$public_builder_code"/);

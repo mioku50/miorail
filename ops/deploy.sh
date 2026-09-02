@@ -52,7 +52,22 @@ REPO=${REPO:-/home/miorail/mioagent}
 SERVE_ROOT=${SERVE_ROOT:-/var/www/miorail}
 SERVICE_USER=${SERVICE_USER:-miorail}
 NODE_BIN=${NODE_BIN:-/home/miorail/.nvm/versions/node/v22.23.1/bin}
-SERVICES=(miorail-api miorail-miniapp miorail-b20-discover miorail-b20-measure)
+# The launch feed can be frozen by decision (Phase 17). A deploy that enables and
+# restarts the two ingestion workers anyway leaves the worst of both states: the
+# API keeps answering `feed_frozen`, because the flag is still set, while the
+# workers are in fact reading again — a surface saying one thing about itself and
+# doing another. So the flag, read from the same env file the API reads, decides
+# whether they are part of this deploy at all.
+B20_FEED_FROZEN=false
+if [ -f "$REPO/.env" ] && grep -qiE '^[[:space:]]*MIORAIL_B20_LAUNCH_FEED_FROZEN_V1[[:space:]]*=[[:space:]]*true[[:space:]]*$' "$REPO/.env"; then
+  B20_FEED_FROZEN=true
+fi
+
+SERVICES=(miorail-api miorail-miniapp)
+B20_INGESTION_SERVICES=(miorail-b20-discover miorail-b20-measure)
+if [ "$B20_FEED_FROZEN" = false ]; then
+  SERVICES+=("${B20_INGESTION_SERVICES[@]}")
+fi
 MCP_PUBLIC_URL=${MCP_PUBLIC_URL:-https://miorail.xyz/mcp}
 NGINX_SNIPPET_SOURCE="$REPO/ops/nginx/miorail-app.conf"
 NGINX_SNIPPET_TARGET=/etc/nginx/snippets/miorail-app.conf
@@ -262,7 +277,15 @@ for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchl
 done
 
 systemctl daemon-reload
-systemctl enable miorail-miniapp miorail-b20-discover miorail-b20-measure >/dev/null
+systemctl enable miorail-miniapp >/dev/null
+if [ "$B20_FEED_FROZEN" = true ]; then
+  # Disabled as well as stopped: an enabled-but-stopped unit comes back on the
+  # next reboot, which is a freeze that silently expires.
+  systemctl disable --now "${B20_INGESTION_SERVICES[@]}" >/dev/null 2>&1 || true
+  echo "  b20 launch ingestion  frozen by MIORAIL_B20_LAUNCH_FEED_FROZEN_V1 — left stopped and disabled"
+else
+  systemctl enable "${B20_INGESTION_SERVICES[@]}" >/dev/null
+fi
 # `enable --now` on a timer starts the clock without running the pass, so a
 # deploy never fires every worker at once. A NEW timer with Persistent=true
 # still fires on its first enable, so a migration a new worker needs must be
