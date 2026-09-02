@@ -631,11 +631,27 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     inspectRouteUnavailable: Object.fromEntries(
       (reality.data?.representations ?? []).flatMap((representation) => {
         if (!reality.data) return [];
-        const built = stockExecutionHandoffV1({
-          response: reality.data as never,
-          tokenAddress: representation.tokenAddress,
-          now: new Date(),
-        });
+        // A LABEL may not take the page down. This calls a strict parse, and a
+        // response carrying one key it did not expect threw inside render and
+        // hit the error boundary — over a caption on a secondary button. The
+        // shape is fixed at the source; this is the seatbelt, and it fails to
+        // "unavailable", which is the honest reading of a handoff that could
+        // not be built.
+        let built: ReturnType<typeof stockExecutionHandoffV1>;
+        try {
+          built = stockExecutionHandoffV1({
+            response: reality.data as never,
+            tokenAddress: representation.tokenAddress,
+            now: new Date(),
+          });
+        } catch {
+          return [
+            [
+              representation.tokenAddress,
+              'Miorail could not build a route inspection from this answer.',
+            ] as const,
+          ];
+        }
         return built.status === 'refused'
           ? [[representation.tokenAddress, built.detail] as const]
           : [];

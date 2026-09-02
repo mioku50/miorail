@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import test, { describe } from 'node:test';
 
 import { autoMeasureDecisionV1, exitEvidenceV1 } from '../src/console/stocksConsole';
+
+const here = path.dirname(fileURLToPath(import.meta.url));
 
 // ---------------------------------------------------------------------------
 // The round trip at the size being asked.
@@ -175,5 +180,53 @@ describe('autoMeasureDecisionV1', () => {
       autoMeasureDecisionV1({ hasOpenQuote: true, anySupplyOutstanding: false, measurementInFlight: true }),
       'already_open',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The crash Phase 17.2 made reachable.
+//
+// `useMeasureRwaMarketReality` writes its response straight into the READ
+// query's cache entry so the board updates without a refetch. That response is
+// the live envelope — the comparison PLUS a `measurement` key — and the read
+// entry is re-parsed by `stockExecutionHandoffV1` with a STRICT schema. So an
+// unrecognised key reached a strict parse and threw during render:
+//
+//   [{ "code": "unrecognized_keys", "keys": ["measurement"],
+//      "message": "Unrecognized key(s) in object: 'measurement'" }]
+//
+// It had always been possible, and only ever after somebody pressed Measure
+// now. Measuring on open made it happen to everyone who opened Stocks.
+// ---------------------------------------------------------------------------
+
+describe('a live measurement written into the read cache', () => {
+  test('the live-only key is stripped before it reaches a strict parse', () => {
+    const source = readFileSync(
+      path.join(here, '..', '..', 'api-client-react', 'index.ts'),
+      'utf8',
+    );
+    const start = source.indexOf('export function useMeasureRwaMarketReality');
+    const onSuccess = source.slice(start, source.indexOf('export function', start + 10));
+    assert.ok(onSuccess.length > 0, 'the mutation is still findable');
+    assert.match(
+      onSuccess,
+      /const \{ measurement: _measurement, \.\.\.comparison \} = data;/,
+      'the live envelope must be narrowed to the comparison',
+    );
+    assert.doesNotMatch(
+      onSuccess,
+      /\],\s*data,\s*\);/,
+      'the raw live response must not be written into the read cache entry',
+    );
+  });
+
+  test('the route-inspection label cannot take the page down', () => {
+    const source = readFileSync(path.join(here, '..', 'src', 'console', 'stocksConsole.ts'), 'utf8');
+    const block = source.slice(
+      source.indexOf('inspectRouteUnavailable:'),
+      source.indexOf('watchError:'),
+    );
+    assert.match(block, /try \{/, 'a strict parse inside render needs a seatbelt');
+    assert.match(block, /could not build a route inspection/);
   });
 });

@@ -1179,6 +1179,15 @@ export function useMeasureRwaMarketReality(
       // entry. Invalidating instead would send the reader through a fetch to
       // learn what this response already carries — and show the pre-measurement
       // board for a beat, which reads as a refresh that did nothing.
+      //
+      // WITHOUT its live-only `measurement` key. That cache entry is typed as
+      // the comparison, and `stockExecutionHandoffV1` re-parses whatever is in
+      // it with a STRICT schema — so writing the live envelope there put an
+      // unrecognised key into a strict parse and threw during render. It only
+      // ever happened when somebody pressed Measure now, until Phase 17.2 began
+      // measuring on open and made it happen to everyone. What the measurement
+      // spent is still on `measure.data`, which is where the note reads it.
+      const { measurement: _measurement, ...comparison } = data;
       queryClient.setQueryData(
         [
           'rwa-market-reality',
@@ -1187,7 +1196,7 @@ export function useMeasureRwaMarketReality(
           variables.requestedCashAtomic,
           variables.destination ?? 'USDC',
         ],
-        data,
+        comparison,
       );
       // The completed run is append-only history too. A reader already on a
       // historical target must not keep the series from before this measure.
