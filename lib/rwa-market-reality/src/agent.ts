@@ -67,7 +67,13 @@ export const MarketRealityAgentComparisonInputV1Schema = z
 /** `address` accepts an exact Base address or its exact CAIP-10 spelling. A
  * ticker is intentionally not part of the schema. */
 export const MARKET_REALITY_AGENT_CHANGES_MAX_PAGE_V1 = 500;
-export const MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1 = 50;
+// Ten, measured rather than chosen: one observation is ~1.2 KB and one change
+// ~0.6 KB of structured payload, and the protocol reply carries the same JSON
+// twice — once as text, once as structuredContent. A page of fifty was still
+// 220 KB on the wire, which is the defect this pagination exists to fix. Ten is
+// ~25 KB, answers "what moved lately" on its own, and `nextCursor` walks back
+// for a caller that actually wants the series.
+export const MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1 = 10;
 
 export const MarketRealityAgentChangesInputV1Schema = z
   .object({
