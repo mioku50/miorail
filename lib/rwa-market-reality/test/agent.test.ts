@@ -465,12 +465,23 @@ describe('list_reviewed_stocks', () => {
     assert.equal(result.stocks[0]?.representationCount, 2);
   });
 
-  test('no match is an empty list, not a claim about Base', async () => {
+  test('no match is a miss in Miorail\u2019s naming, not a claim about Base', async () => {
+    // Production holds the TICKER in both name fields for most rows, so
+    // "nvidia" finds nothing while "NVDA" finds three representations. An
+    // assistant told only "0 results" repeats it as "Miorail has no NVIDIA".
     const result = await listReviewedStocksForAgentV1(stockDeps, { query: 'zzzz' });
     assert.deepEqual(result.stocks, []);
     assert.equal(result.returned, 0);
     assert.equal(result.reviewedTotal, 2);
-    assert.match(result.note, /never selects one/);
+    assert.match(result.note, /try the ticker/);
+    assert.match(result.note, /never a statement that the instrument has no representation/);
+  });
+
+  test('an empty corpus is not reported as a naming miss', async () => {
+    const empty = { underlyings: { listUnderlyings: async () => [] } } as never;
+    const result = await listReviewedStocksForAgentV1(empty, { query: 'zzzz' });
+    assert.equal(result.reviewedTotal, 0);
+    assert.doesNotMatch(result.note, /try the ticker/);
   });
 
   test('a page that had to stop says so', async () => {

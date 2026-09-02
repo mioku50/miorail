@@ -501,7 +501,15 @@ export async function listReviewedStocksForAgentV1(
       liveRepresentationCount: entry.liveRepresentationCount,
     })),
     selection: 'never',
-    note: 'An underlying key groups reviewed Base representations and never selects one. Pass a key to get_representations to see every exact address separately. liveRepresentationCount is a measured count of representations with tokens outstanding; zero means nothing is outstanding on any reviewed contract, not that the instrument has no representation elsewhere.',
+    // A query that matches nothing is the one answer an assistant is most
+    // likely to repeat as a fact. Most reviewed rows carry the TICKER in both
+    // name fields — enrichment does not always reach a company name — so
+    // "nvidia" finds nothing while "NVDA" finds three representations, and a
+    // caller told only "0 results" concludes Miorail has no NVIDIA.
+    note:
+      query !== null && page.length === 0 && entries.length > 0
+        ? `No reviewed underlying matches that text. Miorail holds ${entries.length} reviewed underlyings and most of them are named by TICKER rather than by company name, so try the ticker. This is a miss in Miorail's own naming, never a statement that the instrument has no representation on Base.`
+        : 'An underlying key groups reviewed Base representations and never selects one. Pass a key to get_representations to see every exact address separately. liveRepresentationCount is a measured count of representations with tokens outstanding; zero means nothing is outstanding on any reviewed contract, not that the instrument has no representation elsewhere.',
   });
 }
 
