@@ -66,12 +66,34 @@ export const DinariStockV1Schema = z
 
 export type DinariStockV1 = z.infer<typeof DinariStockV1Schema>;
 
-export const DinariStockPageV1Schema = z
-  .object({
-    data: z.array(DinariStockV1Schema),
-    pagination_metadata: z.unknown().optional(),
-  })
-  .passthrough();
+/**
+ * A page of stocks, in either shape the API actually returns.
+ *
+ * The published contract wraps the rows: `{ data: [...], pagination_metadata }`.
+ * The deployed endpoint returns a BARE ARRAY — measured against the sandbox
+ * environment on 2026-09-03, where a hundred rows arrived as `[{...}, ...]` and
+ * the wrapper schema rejected every one of them as "did not match the published
+ * contract".
+ *
+ * Documented and deployed are two axes, and this repository has been on the
+ * wrong side of that before. Both are accepted; neither is guessed at.
+ */
+export const DinariStockPageV1Schema = z.union([
+  z
+    .object({
+      data: z.array(DinariStockV1Schema),
+      pagination_metadata: z.unknown().optional(),
+    })
+    .passthrough(),
+  z.array(DinariStockV1Schema),
+]);
+
+/** The rows of a page, whichever shape it arrived in. */
+export function dinariStockPageRowsV1(
+  page: z.infer<typeof DinariStockPageV1Schema>,
+): DinariStockV1[] {
+  return Array.isArray(page) ? page : page.data;
+}
 
 /** A CAIP-10 account id split into its parts, or null. */
 export function parseCaip10V1(value: string): { chainId: number; address: string } | null {
@@ -196,7 +218,7 @@ export async function fetchDinariStocksV1(input: {
     if (!parsed.success) {
       return { ok: false, reason: 'unparsable', detail: 'the stocks response did not match the published contract' };
     }
-    return { ok: true, stocks: parsed.data.data };
+    return { ok: true, stocks: dinariStockPageRowsV1(parsed.data) };
   } catch (error) {
     const detail = error instanceof Error && error.name === 'AbortError' ? 'the stocks request timed out' : 'the stocks request did not complete';
     return { ok: false, reason: 'transport', detail };
