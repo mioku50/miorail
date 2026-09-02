@@ -21,12 +21,27 @@ const REQUIRED_CAVEATS_V1 = [
   'EXIT CAPACITY IS MEASURED, NOT INTERPOLATED',
 ];
 
+// Every tool the public surface must publish, by name.
+//
+// This list went stale: it still required `miorail_get_b20_market_leaders`
+// months after the server replaced it with `miorail_b20_market_rails`, so the
+// smoke was red against a perfectly healthy production MCP. A red check nobody
+// can act on is worse than no check — it is the one that teaches an operator to
+// ignore the colour. `deploy.sh` asserts the same names; `mcpServer.test.ts`
+// asserts that these two lists and the server agree.
 const EXPECTED_TOOLS_V1 = [
+  'compare_market_reality',
+  'get_market_changes',
+  'get_representations',
+  'list_reviewed_stocks',
+  'miorail_b20_market_rails',
+  'miorail_compare_b20_tokens',
   'miorail_discover_status',
   'miorail_explain_b20_rejection',
-  'miorail_get_b20_market_leaders',
+  'miorail_find_b20_projects',
   'miorail_get_b20_opportunity',
   'miorail_list_b20_opportunities',
+  'miorail_summarise_b20_universe',
 ];
 
 function textOf(result: unknown): string {

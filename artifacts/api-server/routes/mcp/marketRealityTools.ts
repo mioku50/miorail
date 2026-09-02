@@ -4,12 +4,16 @@ import {
   MarketRealityAgentComparisonInputV1Schema,
   MarketRealityAgentRepresentationsInputV1Schema,
   MarketRealityAgentRepresentationsOutputV1Schema,
+  MarketRealityAgentStocksInputV1Schema,
+  MarketRealityAgentStocksOutputV1Schema,
   compareMarketRealityForAgentV1,
   getMarketRealityChangesForAgentV1,
   getMarketRealityRepresentationsForAgentV1,
+  listReviewedStocksForAgentV1,
   type MarketRealityAgentChangesInputV1,
   type MarketRealityAgentComparisonInputV1,
   type MarketRealityAgentRepresentationsInputV1,
+  type MarketRealityAgentStocksInputV1,
 } from '@mioagent/rwa-market-reality';
 
 import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
@@ -22,6 +26,8 @@ export {
   MarketRealityAgentComparisonInputV1Schema,
   MarketRealityAgentRepresentationsInputV1Schema,
   MarketRealityAgentRepresentationsOutputV1Schema,
+  MarketRealityAgentStocksInputV1Schema,
+  MarketRealityAgentStocksOutputV1Schema,
 };
 
 /**
@@ -65,6 +71,11 @@ async function storageReadyV1(): Promise<void> {
       'Miorail could not read its Market Reality evidence store. This is not a statement about any representation.',
     );
   }
+}
+
+export async function miorailListReviewedStocksV1(input: MarketRealityAgentStocksInputV1) {
+  await storageReadyV1();
+  return listReviewedStocksForAgentV1({ underlyings: rwaMarketRealityRuntime.underlyings() }, input);
 }
 
 export async function miorailGetRepresentationsV1(input: MarketRealityAgentRepresentationsInputV1) {

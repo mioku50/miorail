@@ -426,6 +426,7 @@ printf '%s' "$mcp_tools" | jq -e '
     "compare_market_reality",
     "get_market_changes",
     "get_representations",
+    "list_reviewed_stocks",
     "miorail_b20_market_rails",
     "miorail_compare_b20_tokens",
     "miorail_discover_status",
@@ -435,8 +436,8 @@ printf '%s' "$mcp_tools" | jq -e '
     "miorail_list_b20_opportunities",
     "miorail_summarise_b20_universe"
   ]
-' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed eleven-tool surface'; exit 1; }
-printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '11 read-only tools'
+' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed twelve-tool surface'; exit 1; }
+printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '12 read-only tools'
 
 # MCP OAuth discovery, checked through Nginx rather than against the app.
 #

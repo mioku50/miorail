@@ -426,6 +426,18 @@ describe('a draft belongs to one wallet', () => {
   });
 });
 
+/** The read-only B20 tools this surface now shares with the public server. */
+const PUBLIC_READ_ONLY_PREFIXES_V1 = [
+  'miorail_b20_',
+  'miorail_compare_b20_',
+  'miorail_discover_',
+  'miorail_explain_b20_',
+  'miorail_find_b20_',
+  'miorail_get_b20_',
+  'miorail_list_b20_',
+  'miorail_summarise_b20_',
+] as const;
+
 describe('the existing execution boundary is unchanged', () => {
   test('the private surface still gates the executable action behind the B20 path', async () => {
     const client = new Client({ name: 'probe', version: '1.0.0' });
@@ -435,16 +447,23 @@ describe('the existing execution boundary is unchanged', () => {
       client.connect(clientTransport),
     ]);
     const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
-    // The new primitive is added; nothing is removed or renamed.
-    assert.deepEqual(names, [
-      'miorail_check_exit_profile',
-      'miorail_get_base_mcp_action',
-      'miorail_get_execution_status',
-      'miorail_get_stock_base_mcp_action',
-      'miorail_prepare_b20_entry',
-      'miorail_prepare_stock_action',
-      'miorail_record_base_mcp_submission',
-    ]);
+    // The WALLET-BOUND set, exactly. Since Phase 17.3 this surface also carries
+    // the read-only registry — a connected assistant could otherwise prepare a
+    // review of a representation it had no way to find — so the assertion is on
+    // the tools that can touch a wallet, which is what this boundary is about.
+    // Nothing is removed or renamed, and nothing new can execute.
+    assert.deepEqual(
+      names.filter((name) => name.startsWith('miorail_') && !PUBLIC_READ_ONLY_PREFIXES_V1.some((prefix) => name.startsWith(prefix))),
+      [
+        'miorail_check_exit_profile',
+        'miorail_get_base_mcp_action',
+        'miorail_get_execution_status',
+        'miorail_get_stock_base_mcp_action',
+        'miorail_prepare_b20_entry',
+        'miorail_prepare_stock_action',
+        'miorail_record_base_mcp_submission',
+      ],
+    );
 
     // And the stock prepare offers no argument that could reach the executable
     // surface: `miorail_get_base_mcp_action` still consumes an entry plan id

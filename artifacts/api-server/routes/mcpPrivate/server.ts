@@ -13,6 +13,7 @@ import {
   miorailRecordBaseMcpSubmissionV1,
   privateFailureV1,
 } from './tools.js';
+import { registerMiorailReadOnlyToolsV1 } from '../mcp/server.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -43,6 +44,8 @@ export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.0.0';
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
+
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound seven below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
 The order is fixed and every step exists for a reason:
 
@@ -93,6 +96,15 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
     { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1 },
     { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1 },
   );
+
+  // The read half, first — because it is the half a connected assistant needs
+  // before any of the seven below can be called at all. A client that connected
+  // here used to be able to prepare a review of an exact representation with no
+  // way to FIND that representation, and had to be pointed at a second,
+  // separately configured server to do it. The import runs one way: this file
+  // reaches into the public registry, never the reverse, so the public surface
+  // keeps its physical inability to execute.
+  registerMiorailReadOnlyToolsV1(server);
 
   const reply = (payload: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
@@ -152,6 +164,7 @@ This creates nothing executable. There is no path from here to calldata, an appr
           .regex(/^0x[0-9a-fA-F]{64}$/)
           .describe('The reviewed router policy Miorail measured under, as it returned it.'),
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -187,6 +200,7 @@ Pass the calls to Base MCP send_calls UNCHANGED, then record the submission exac
           .max(200)
           .describe('Your idempotency handle. Reuse it on a retry; never generate a new one for the same intent.'),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -214,6 +228,7 @@ The token's controls must have been read on this server first; if they have not,
         maxRoundTripBps: ROUND_TRIP_ARG_V1,
         maxExitSlippageBps: SLIPPAGE_ARG_V1,
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -246,6 +261,7 @@ requestId is an idempotency handle you choose. Reusing it returns the stored pla
           .max(200)
           .describe('Your idempotency handle. Reuse it on a retry; never generate a new one for the same intent.'),
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -278,6 +294,7 @@ This opens the plan's ONE submission slot. ${MIORAIL_PRIVATE_CAVEATS_V1.onePlanO
           .max(200)
           .describe('Idempotency handle for this submission attempt. Reuse it on a retry.'),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -316,6 +333,7 @@ submittedCallsHash must be the callsHash you were given. A mismatch means what w
           .nullish()
           .describe('The Base MCP request/batch id. Required for "submitted".'),
       },
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -342,6 +360,7 @@ Only "entry_succeeded" means the wallet's own decoded movements show USDC spent 
       inputSchema: {
         planId: z.string().min(1).max(200),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {

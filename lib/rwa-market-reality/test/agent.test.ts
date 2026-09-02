@@ -11,7 +11,9 @@ import {
   MarketRealityAgentChangesInputV1Schema,
   MarketRealityAgentChangesOutputV1Schema,
   compareMarketRealityForAgentV1,
+  MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1,
   getMarketRealityChangesForAgentV1,
+  listReviewedStocksForAgentV1,
   getMarketRealityRepresentationsForAgentV1,
 } from '../src/agent.js';
 import { assembleMarketRealityV2 } from '../src/engine.js';
@@ -326,6 +328,13 @@ describe('Phase 12B.1 agent contracts', () => {
       since: '2026-08-28T12:00:00.000Z',
       interpolated: false as const,
       routePolicy: { routePolicyKey: HASH, approvedSources: ['router-a'] },
+      detail: 'full',
+      windowObservationCount: 0,
+      windowChangeCount: 1,
+      changeCountsByKind: { sell_exit_cost_changed: 1 },
+      returnedSince: null,
+      returnedUntil: null,
+      nextCursor: null,
       observations: [],
       changes: [publicChange],
       privateRadarMetadataIncluded: false as const,
@@ -374,5 +383,162 @@ describe('Phase 12B.1 agent contracts', () => {
       }).success,
       false,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Discovery, and the size of an answer.
+//
+// A live Codex audit found two things a connected assistant could not work
+// around: every Stocks tool needed a namespaced key or an exact address and
+// nothing produced one, and a 7d changes call came back as 163 observations,
+// 137 changes and 239,764 bytes — a meaningful fraction of an agent's whole
+// context spent on one call.
+// ---------------------------------------------------------------------------
+
+describe('list_reviewed_stocks', () => {
+  const index = [
+    {
+      underlying: {
+        underlyingKey: 'security:isin:US67066G1040',
+        canonicalName: 'NVIDIA Corporation',
+        displaySymbol: 'NVDA',
+        assetClass: 'equity' as const,
+        identifierScheme: 'isin' as const,
+        identifierValue: 'US67066G1040',
+        sourceKind: 'coinbase_b20_metadata' as const,
+        sourceRef: 'https://docs.base.org/',
+        sourceHash: null,
+        observedAt: '2026-08-26T20:00:00.000Z',
+      },
+      representationCount: 2,
+      issuerIds: ['backed', 'coinbase'],
+      liveRepresentationCount: 2,
+    },
+    {
+      underlying: {
+        underlyingKey: 'security:isin:US5949181045',
+        canonicalName: 'Microsoft Corporation',
+        displaySymbol: 'MSFT',
+        assetClass: 'equity' as const,
+        identifierScheme: 'isin' as const,
+        identifierValue: 'US5949181045',
+        sourceKind: 'coinbase_b20_metadata' as const,
+        sourceRef: 'https://docs.base.org/',
+        sourceHash: null,
+        observedAt: '2026-08-26T20:00:00.000Z',
+      },
+      representationCount: 2,
+      issuerIds: ['backed', 'coinbase'],
+      liveRepresentationCount: 0,
+    },
+  ];
+  const stockDeps = { underlyings: { listUnderlyings: async () => index } } as never;
+
+  test('turns a company name into the key every other tool requires', async () => {
+    const result = await listReviewedStocksForAgentV1(stockDeps, { query: 'nvidia' });
+    assert.equal(result.returned, 1);
+    assert.equal(result.stocks[0]?.underlyingKey, 'security:isin:US67066G1040');
+    assert.equal(result.reviewedTotal, 2);
+    assert.equal(result.query, 'nvidia');
+  });
+
+  test('matches a ticker and an identifier as well as a name', async () => {
+    for (const query of ['MSFT', 'msft', 'US5949181045', 'microsoft']) {
+      const result = await listReviewedStocksForAgentV1(stockDeps, { query });
+      assert.deepEqual(result.stocks.map((row) => row.displaySymbol), ['MSFT'], query);
+    }
+  });
+
+  test('it never selects a representation', async () => {
+    const result = await listReviewedStocksForAgentV1(stockDeps, {});
+    assert.equal(result.selection, 'never');
+    // No address, anywhere: choosing between two issuers' contracts for one
+    // company is exactly the decision this product refuses to make.
+    assert.doesNotMatch(JSON.stringify(result), /0x[0-9a-fA-F]{40}/);
+    assert.doesNotMatch(JSON.stringify(result), /tokenAddress|caip10/);
+  });
+
+  test('a security with nothing outstanding says so before a comparison is spent', async () => {
+    const result = await listReviewedStocksForAgentV1(stockDeps, { query: 'MSFT' });
+    assert.equal(result.stocks[0]?.liveRepresentationCount, 0);
+    assert.equal(result.stocks[0]?.representationCount, 2);
+  });
+
+  test('no match is an empty list, not a claim about Base', async () => {
+    const result = await listReviewedStocksForAgentV1(stockDeps, { query: 'zzzz' });
+    assert.deepEqual(result.stocks, []);
+    assert.equal(result.returned, 0);
+    assert.equal(result.reviewedTotal, 2);
+    assert.match(result.note, /never selects one/);
+  });
+
+  test('a page that had to stop says so', async () => {
+    const result = await listReviewedStocksForAgentV1(stockDeps, { limit: 1 });
+    assert.equal(result.returned, 1);
+    assert.equal(result.truncated, true);
+  });
+});
+
+describe('get_market_changes stays inside an agent context', () => {
+  const question = {
+    address: `eip155:8453:${COINBASE}`,
+    sizeUsd: 1000,
+    direction: 'buy' as const,
+    destination: 'USDC' as const,
+    window: '24h' as const,
+    chain: 'base' as const,
+  };
+
+  test('summary returns the counts and the tally, and no rows at all', async () => {
+    const result = await getMarketRealityChangesForAgentV1(deps(), {
+      ...question,
+      detail: 'summary',
+    });
+    assert.equal(result.detail, 'summary');
+    assert.deepEqual(result.observations, []);
+    assert.deepEqual(result.changes, []);
+    // The counts are of the WHOLE window, so "nothing returned" is never
+    // readable as "nothing happened".
+    assert.equal(typeof result.windowObservationCount, 'number');
+    assert.equal(typeof result.windowChangeCount, 'number');
+    assert.equal(result.nextCursor, null);
+    assert.equal(result.returnedSince, null);
+  });
+
+  test('full is the default and pages the newest rows', async () => {
+    const result = await getMarketRealityChangesForAgentV1(deps(), question);
+    assert.equal(result.detail, 'full');
+    assert.ok(result.observations.length <= MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1);
+    assert.equal(result.windowObservationCount, result.observations.length);
+    // Everything fits, so there is nothing older to walk back to.
+    assert.equal(result.nextCursor, null);
+  });
+
+  test('a limit smaller than the window leaves a cursor behind', async () => {
+    const full = await getMarketRealityChangesForAgentV1(deps(), question);
+    if (full.observations.length < 2) return; // the fixture has one run
+    const first = await getMarketRealityChangesForAgentV1(deps(), { ...question, limit: 1 });
+    assert.equal(first.observations.length, 1);
+    assert.equal(first.windowObservationCount, full.observations.length);
+    assert.ok(first.nextCursor, 'a truncated page must be continuable');
+    const next = await getMarketRealityChangesForAgentV1(deps(), {
+      ...question,
+      limit: 1,
+      before: first.nextCursor!,
+    });
+    assert.notDeepEqual(next.observations, first.observations);
+  });
+
+  test('the whole window is still what gets derived', async () => {
+    // Paging the ANSWER, never the derivation: changes come from consecutive
+    // pairs, so a page taken before the pairs are built would invent gaps.
+    const paged = await getMarketRealityChangesForAgentV1(deps(), { ...question, limit: 1 });
+    const summary = await getMarketRealityChangesForAgentV1(deps(), {
+      ...question,
+      detail: 'summary',
+    });
+    assert.equal(paged.windowChangeCount, summary.windowChangeCount);
+    assert.deepEqual(paged.changeCountsByKind, summary.changeCountsByKind);
   });
 });

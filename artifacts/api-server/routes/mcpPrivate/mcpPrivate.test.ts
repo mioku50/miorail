@@ -777,6 +777,109 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     await client.close();
   });
 
+  // -------------------------------------------------------------------------
+  // A connected app that cannot find what it is allowed to prepare.
+  //
+  // The OAuth connector points at /mcp/private, and /mcp/private held only the
+  // seven wallet-bound tools. So an assistant could prepare a review of an
+  // exact representation and had NO way to discover that representation — it
+  // had to be pointed at a second, separately configured public server to do
+  // it, while the consent screen promised it could "read your reviewed plans
+  // and measurements". One registry, used by both surfaces.
+  // -------------------------------------------------------------------------
+  test('the connected surface carries the read tools as well as the seven', async () => {
+    const client = await connectedClient();
+    const names = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    await client.close();
+
+    for (const readTool of [
+      'list_reviewed_stocks',
+      'get_representations',
+      'compare_market_reality',
+      'get_market_changes',
+      'miorail_discover_status',
+      'miorail_list_b20_opportunities',
+    ]) {
+      assert.ok(names.includes(readTool), `the connected surface cannot ${readTool}`);
+    }
+    for (const walletTool of [
+      'miorail_prepare_stock_action',
+      'miorail_get_stock_base_mcp_action',
+      'miorail_check_exit_profile',
+      'miorail_prepare_b20_entry',
+      'miorail_get_base_mcp_action',
+      'miorail_record_base_mcp_submission',
+      'miorail_get_execution_status',
+    ]) {
+      assert.ok(names.includes(walletTool), `the connected surface lost ${walletTool}`);
+    }
+  });
+
+  test('the connected surface is exactly the public registry plus seven', async () => {
+    const connected = await connectedClient();
+    const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
+    await connected.close();
+
+    const { createMiorailMcpServerV1 } = await import('../mcp/server.js');
+    const publicClient = new Client({ name: 'probe', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    await Promise.all([
+      createMiorailMcpServerV1().connect(serverTransport),
+      publicClient.connect(clientTransport),
+    ]);
+    const publicNames = (await publicClient.listTools()).tools.map((tool) => tool.name);
+    await publicClient.close();
+
+    for (const name of publicNames) {
+      assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
+    }
+    assert.equal(connectedNames.size, publicNames.length + 7);
+  });
+
+  test('every tool says what kind of call it is, and says it truthfully', async () => {
+    // A host that cannot see `readOnlyHint` treats a read as a possible write:
+    // a live Codex run cancelled `miorail_get_execution_status` for exactly
+    // that reason. The hint is a promise about MIORAIL's own state, so the four
+    // that persist a clearance, a plan, a review or a submission must not claim
+    // it — the point is to be believed, not to be green.
+    const client = await connectedClient();
+    const tools = (await client.listTools()).tools;
+    await client.close();
+
+    const readOnly = new Set([
+      'miorail_get_stock_base_mcp_action',
+      'miorail_get_base_mcp_action',
+      'miorail_get_execution_status',
+    ]);
+    const writes = new Set([
+      'miorail_prepare_stock_action',
+      'miorail_check_exit_profile',
+      'miorail_prepare_b20_entry',
+      'miorail_record_base_mcp_submission',
+    ]);
+    for (const tool of tools) {
+      const annotations = tool.annotations as
+        | { readOnlyHint?: boolean; destructiveHint?: boolean }
+        | undefined;
+      assert.ok(annotations, `${tool.name} carries no annotations`);
+      // Nothing on this surface destroys anything: Miorail never signs, never
+      // broadcasts, and refuses to overwrite the record of what was sent.
+      assert.equal(annotations!.destructiveHint, false, `${tool.name} claims to be destructive`);
+      if (readOnly.has(tool.name)) {
+        assert.equal(annotations!.readOnlyHint, true, `${tool.name} should be read-only`);
+      }
+      if (writes.has(tool.name)) {
+        assert.equal(annotations!.readOnlyHint, false, `${tool.name} must not claim to be read-only`);
+      }
+    }
+    assert.equal(
+      tools.filter((tool) => (tool.annotations as { readOnlyHint?: boolean })?.readOnlyHint === false)
+        .length,
+      writes.size,
+      'exactly the four writing tools declare themselves writes',
+    );
+  });
+
   test('§12 — generic Swap stays closed to arbitrary tokens', async () => {
     // Nothing here accepts a router, a recipient, calldata or an arbitrary
     // pair. The only executable family this surface can reach is the B20 entry

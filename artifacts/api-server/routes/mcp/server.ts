@@ -29,9 +29,12 @@ import {
   MarketRealityAgentComparisonMcpOutputV1Schema,
   MarketRealityAgentRepresentationsInputV1Schema,
   MarketRealityAgentRepresentationsOutputV1Schema,
+  MarketRealityAgentStocksInputV1Schema,
+  MarketRealityAgentStocksOutputV1Schema,
   miorailCompareMarketRealityV1,
   miorailGetMarketChangesV1,
   miorailGetRepresentationsV1,
+  miorailListReviewedStocksV1,
 } from './marketRealityTools.js';
 
 // ---------------------------------------------------------------------------
@@ -77,12 +80,24 @@ An empty result is not the same as a quiet chain. Call miorail_discover_status f
 
 The three Market Reality tools are a separate read-only product surface for reviewed tokenized-stock representations. An underlying key groups representations but never selects one. Preserve every exact Base address. A router quote is not execution evidence; provider failure is not an asset finding; an expired quote is history; ranking is withheld. get_market_changes requires an exact address or CAIP-10 and reads only public append-only market evidence — never tenant Radar watches or user metadata.`;
 
-export function createMiorailMcpServerV1(): McpServer {
-  const server = new McpServer(
-    { name: MIORAIL_MCP_NAME_V1, version: MIORAIL_MCP_VERSION_V1 },
-    { instructions: MIORAIL_MCP_INSTRUCTIONS_V1 },
-  );
-
+/**
+ * The read-only tools, registered onto whichever server asked for them.
+ *
+ * A connected client reached `/mcp/private`, which held the seven wallet-bound
+ * tools and NONE of the read-only ones — so an assistant could prepare a review
+ * of an exact representation and had no way to find that representation, and
+ * the consent screen's promise to "read your reviewed plans and measurements"
+ * was true of a surface the client had not been given. The fix is one registry
+ * used by both servers.
+ *
+ * The dependency runs one way only, and that direction is the boundary: the
+ * authenticated server imports these, and nothing here imports anything from
+ * `mcpPrivate/`. `mcpServer.test.ts` §5 scans every file in this directory for
+ * signer, submission, clearance and payment vocabulary, so the public surface
+ * stays physically unable to execute even while it is also the connected one's
+ * read half.
+ */
+export function registerMiorailReadOnlyToolsV1(server: McpServer): void {
   /** One shape for every reply: MCP content plus the structured payload. */
   const reply = (payload: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
@@ -108,6 +123,8 @@ export function createMiorailMcpServerV1(): McpServer {
       description:
         'Reports whether Miorail is currently reading Base for B20 launches, and how far behind it is. CALL THIS FIRST when an opportunity list comes back empty: an empty list has several causes and only one of them is "nothing is launching". The others are that ingestion was never configured, is still catching up, has nothing measured yet, or is degraded. This tool says which.',
       inputSchema: {},
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async () => {
       try {
@@ -191,6 +208,8 @@ Every measurement also carries a "standing": what the reading CONCLUDED, with an
             'summary (default) omits the duplicated discoverCard and the per-item caveat block, which together are ~73% of a full payload. full keeps the old shape for a caller that reads discoverCard directly.',
           ),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
@@ -221,6 +240,8 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
           .optional()
           .describe('How far back to count, by launch age. Default 48 hours, the Discover window.'),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
@@ -262,6 +283,8 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
             'A bare hostname you already know, e.g. orbitlab.xyz — no scheme, no path, no port. When present NO SEARCH RUNS: Miorail fetches that domain and looks for this token address on it. It believes the domain no more than it believes a ranked search result.',
           ),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
@@ -281,6 +304,8 @@ Counts may be up to a minute old; "computedAt" says when they were taken.`,
       inputSchema: {
         reasonCode: z.string().max(64).optional().describe('Omit to list every reason code.'),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
@@ -311,6 +336,8 @@ Replaces miorail_get_b20_market_leaders, which sorted a page of the feed inside 
           .describe('Accepted for compatibility. Both rails are returned either way.'),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
@@ -339,6 +366,8 @@ Project context is included as its own dimension because it answers a different 
           .max(MCP_COMPARE_MAX_V1)
           .describe('Distinct Base token addresses. The order is preserved in the answer.'),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
@@ -366,10 +395,34 @@ Evidence older than a day is labelled stale and describes what was true when it 
           .describe('Required. There is no default question.'),
         limit: z.number().int().min(1).max(MCP_MAX_PAGE_V1).optional(),
       },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+
     },
     async (args) => {
       try {
         return reply(await miorailFindProjectsV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  // Discovery, and the first tool in the Stocks order. Everything else needs a
+  // namespaced key or an exact address, and nothing produced one — a connected
+  // assistant had to already know `security:isin:US67066G1040`.
+  server.registerTool(
+    'list_reviewed_stocks',
+    {
+      title: 'Search the reviewed tokenized stocks Miorail holds',
+      description:
+        'Lists the reviewed underlyings Miorail has bound to Base representations, so a caller can turn a company name or ticker into the namespaced underlying key every other Stocks tool requires. Pass `query` to match a ticker, a company name or an identifier value as a case-insensitive substring; omit it to list everything. THIS TOOL NEVER SELECTS A REPRESENTATION: it returns no contract address and no issuer choice, because different issuers publish different contracts for the same company and choosing between them is not Miorail\u2019s decision. Read `liveRepresentationCount` before comparing anything \u2014 it is a measured count of representations with tokens outstanding, and zero means nothing is outstanding on any reviewed contract at any size. An empty list means Miorail holds no reviewed binding matching that query; it is never a claim about what exists on Base or anywhere else.',
+      inputSchema: MarketRealityAgentStocksInputV1Schema,
+      outputSchema: MarketRealityAgentStocksOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailListReviewedStocksV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -384,7 +437,7 @@ Evidence older than a day is labelled stale and describes what was true when it 
         'Returns every reviewed Base representation bound to one namespaced underlying key, separately and by exact contract address. The underlying and its display ticker are grouping metadata only: this tool never chooses Coinbase, Backed, Dinari, a wrapper, or any other representation for the caller. Each row retains CAIP-10, issuer, representation kind, current supply evidence, and the reviewed identity trust root. An empty list means Miorail has no reviewed binding for that exact underlying key; it does not mean the instrument has no tokenized representations elsewhere.',
       inputSchema: MarketRealityAgentRepresentationsInputV1Schema,
       outputSchema: MarketRealityAgentRepresentationsOutputV1Schema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -403,7 +456,7 @@ Evidence older than a day is labelled stale and describes what was true when it 
         'Returns the same typed market-reality/v2 answer used by Miorail Stocks for one namespaced underlying, exact USD size, direction, destination and Base chain. Every reviewed representation stays separate by exact address. The canonical engine preserves supply-denominator, route-policy, normalization, provider outcome, reference/session/basis, current-versus-history, and ranking-withheld semantics. This is quote-only evidence: it never simulates execution, requests approval, returns calldata, signs, or submits a transaction. Provider/RPC failure remains Miorail uncertainty and one venue miss never becomes universal market absence. READ `miorailSummary` FIRST and prefer its wording to your own: it is Miorail\u2019s deterministic reading of the same counts, written by no model, and it exists because `establishedOutcomeCount: 0` describes MIORAIL\u2019S FRESHNESS at this exact size rather than the market. A missing current answer never means illiquid, untradeable, cheaper or better \u2014 `miorailSummary.notEstablished` says so in words you may repeat. When `currentComparisonAvailable` is false, offer `miorailSummary.nextSafeStep` instead of concluding anything.',
       inputSchema: MarketRealityAgentComparisonInputV1Schema,
       outputSchema: MarketRealityAgentComparisonMcpOutputV1Schema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -419,10 +472,10 @@ Evidence older than a day is labelled stale and describes what was true when it 
     {
       title: 'Comparable public Market Reality changes for one exact representation',
       description:
-        'Requires an exact Base contract address or CAIP-10 plus exact USD size, direction, destination and bounded window. Returns only stored public-ladder observations and transitions derived by the same Radar comparability logic. It never resolves a ticker, interpolates a missing point, reconstructs old evidence, crosses size/direction/destination/router-policy boundaries, or exposes tenant watches and users. Provider/RPC failures are explicit non-asset gaps and cannot replace the last comparable baseline.',
+        'Requires an exact Base contract address or CAIP-10 plus exact USD size, direction, destination and bounded window. Returns only stored public-ladder observations and transitions derived by the same Radar comparability logic. It never resolves a ticker, interpolates a missing point, reconstructs old evidence, crosses size/direction/destination/router-policy boundaries, or exposes tenant watches and users. Provider/RPC failures are explicit non-asset gaps and cannot replace the last comparable baseline. CALL IT WITH `detail: "summary"` FIRST: that returns the counts, the span and a per-kind tally of what changed with no rows at all, and a 7d window can otherwise be hundreds of observations. The rows themselves are paged newest-first by `limit` (50 by default, 500 at most); pass the returned `nextCursor` as `before` to walk back. Changes are always derived over the whole window and only then paged, so a page never invents a gap \u2014 and `nextCursor: null` means this window is exhausted, never that nothing older exists.',
       inputSchema: MarketRealityAgentChangesInputV1Schema,
       outputSchema: MarketRealityAgentChangesOutputV1Schema,
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true },
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -432,6 +485,13 @@ Evidence older than a day is labelled stale and describes what was true when it 
       }
     },
   );
+}
 
+export function createMiorailMcpServerV1(): McpServer {
+  const server = new McpServer(
+    { name: MIORAIL_MCP_NAME_V1, version: MIORAIL_MCP_VERSION_V1 },
+    { instructions: MIORAIL_MCP_INSTRUCTIONS_V1 },
+  );
+  registerMiorailReadOnlyToolsV1(server);
   return server;
 }

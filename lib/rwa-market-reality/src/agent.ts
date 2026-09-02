@@ -66,6 +66,9 @@ export const MarketRealityAgentComparisonInputV1Schema = z
 
 /** `address` accepts an exact Base address or its exact CAIP-10 spelling. A
  * ticker is intentionally not part of the schema. */
+export const MARKET_REALITY_AGENT_CHANGES_MAX_PAGE_V1 = 500;
+export const MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1 = 50;
+
 export const MarketRealityAgentChangesInputV1Schema = z
   .object({
     address: z
@@ -80,6 +83,28 @@ export const MarketRealityAgentChangesInputV1Schema = z
     destination: z.enum(['USDC', 'ETH']),
     window: z.enum(['1h', '6h', '24h', '7d']),
     chain: z.literal('base'),
+    // A 7d window returned 163 observations and 137 changes in one 240 KB
+    // reply, which is a meaningful fraction of an agent's whole context spent
+    // on one call. The window still bounds what is DERIVED; these bound what is
+    // returned, so a caller can ask what moved before deciding to read it all.
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MARKET_REALITY_AGENT_CHANGES_MAX_PAGE_V1)
+      .optional()
+      .describe(
+        `Newest observations to return, ${MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1} by default and at most ${MARKET_REALITY_AGENT_CHANGES_MAX_PAGE_V1}. Changes are returned for the same span.`,
+      ),
+    before: TimestampV1.optional().describe(
+      'Continue an earlier page: pass the `nextCursor` it returned to get the observations immediately older than it.',
+    ),
+    detail: z
+      .enum(['full', 'summary'])
+      .optional()
+      .describe(
+        '`summary` returns the counts, the span and a per-kind tally of what changed, with no observation or change rows at all. Ask for it first when you only need to know whether anything moved.',
+      ),
   })
   .strict();
 
@@ -312,8 +337,20 @@ export const MarketRealityAgentChangesOutputV1Schema = z
       })
       .strict()
       .nullable(),
-    observations: z.array(AgentHistoryEntryV1Schema).max(500),
-    changes: z.array(PublicRadarChangeShapeV1Schema).max(500),
+    detail: z.enum(['full', 'summary']),
+    /** Everything the window derived, before this page narrowed it. */
+    windowObservationCount: z.number().int().min(0),
+    windowChangeCount: z.number().int().min(0),
+    /** What a caller that reads only `summary` still learns: what moved. */
+    changeCountsByKind: z.record(z.number().int().min(1)),
+    /** The span these rows cover, oldest and newest, or null when empty. */
+    returnedSince: TimestampV1.nullable(),
+    returnedUntil: TimestampV1.nullable(),
+    /** Pass back as `before` for the next older page. Null means the window is
+     * exhausted — never that nothing older exists outside the window. */
+    nextCursor: TimestampV1.nullable(),
+    observations: z.array(AgentHistoryEntryV1Schema).max(MARKET_REALITY_AGENT_CHANGES_MAX_PAGE_V1),
+    changes: z.array(PublicRadarChangeShapeV1Schema).max(MARKET_REALITY_AGENT_CHANGES_MAX_PAGE_V1),
     privateRadarMetadataIncluded: z.literal(false),
     assembledAt: TimestampV1,
   })
@@ -344,6 +381,128 @@ function exactAddressV1(value: string): string {
   return (
     value.toLowerCase().startsWith('eip155:8453:') ? value.slice('eip155:8453:'.length) : value
   ).toLowerCase();
+}
+
+// ---------------------------------------------------------------------------
+// Discovery, without selection.
+//
+// Every other tool on this surface needs a namespaced underlying key or an
+// exact Base address, and there was no tool that produced one. A connected
+// assistant had to already know `security:isin:US67066G1040` before it could
+// ask anything at all, which is not a thing anybody knows. This returns the
+// reviewed list and the grouping metadata a person searches by.
+//
+// What it deliberately does NOT do is pick. It returns no address, no issuer
+// choice and no ranking — an underlying groups representations and never
+// selects one, and a discovery tool that returned "the" contract for a ticker
+// would be making exactly the decision the whole product refuses to make.
+// `liveRepresentationCount` is reported because a security with nothing
+// outstanding cannot be traded at any size, and a caller that cannot see that
+// will spend a comparison to discover it.
+// ---------------------------------------------------------------------------
+
+export const MARKET_REALITY_AGENT_STOCKS_MAX_V1 = 200;
+
+export const MarketRealityAgentStocksInputV1Schema = z
+  .object({
+    query: z
+      .string()
+      .trim()
+      .min(1)
+      .max(120)
+      .optional()
+      .describe(
+        'Optional. Matches the ticker, the company name or the identifier value, case-insensitively, as a substring. Omit it to list everything reviewed.',
+      ),
+    limit: z
+      .number()
+      .int()
+      .min(1)
+      .max(MARKET_REALITY_AGENT_STOCKS_MAX_V1)
+      .optional()
+      .describe(`How many reviewed underlyings to return. Default and maximum ${MARKET_REALITY_AGENT_STOCKS_MAX_V1}.`),
+  })
+  .strict();
+
+export type MarketRealityAgentStocksInputV1 = z.infer<typeof MarketRealityAgentStocksInputV1Schema>;
+
+export const MarketRealityAgentStocksOutputV1Schema = z
+  .object({
+    schemaVersion: z.literal('miorail-agent-stocks/v1'),
+    chain: z.literal('base'),
+    chainId: z.literal(8453),
+    query: z.string().nullable(),
+    /** How many reviewed underlyings exist, before the query narrowed them. */
+    reviewedTotal: z.number().int().min(0),
+    returned: z.number().int().min(0),
+    truncated: z.boolean(),
+    stocks: z
+      .array(
+        z
+          .object({
+            underlyingKey: UnderlyingKeyV1,
+            canonicalName: z.string().min(1).max(200),
+            displaySymbol: z.string().min(1).max(40).nullable(),
+            assetClass: z.enum(['equity', 'fund_share', 'other', 'unknown']),
+            identifierScheme: z.enum(['isin', 'dinari_stock_id', 'composite_figi']).nullable(),
+            identifierValue: z.string().min(1).max(120).nullable(),
+            issuerIds: z.array(z.string().min(1).max(60)),
+            representationCount: z.number().int().min(0),
+            liveRepresentationCount: z.number().int().min(0),
+          })
+          .strict(),
+      )
+      .max(MARKET_REALITY_AGENT_STOCKS_MAX_V1),
+    selection: z.literal('never'),
+    note: z.string().min(1),
+  })
+  .strict();
+
+export async function listReviewedStocksForAgentV1(
+  deps: Pick<MarketRealityAgentDepsV1, 'underlyings'>,
+  rawInput: MarketRealityAgentStocksInputV1,
+) {
+  const input = MarketRealityAgentStocksInputV1Schema.parse(rawInput ?? {});
+  const limit = input.limit ?? MARKET_REALITY_AGENT_STOCKS_MAX_V1;
+  const entries = await deps.underlyings.listUnderlyings({
+    chainId: 8453,
+    limit: MARKET_REALITY_AGENT_STOCKS_MAX_V1,
+  });
+  const query = input.query?.toLowerCase() ?? null;
+  const matched = query
+    ? entries.filter((entry) =>
+        [
+          entry.underlying.displaySymbol,
+          entry.underlying.canonicalName,
+          entry.underlying.identifierValue,
+        ]
+          .filter((value): value is string => typeof value === 'string')
+          .some((value) => value.toLowerCase().includes(query)),
+      )
+    : entries;
+  const page = matched.slice(0, limit);
+  return MarketRealityAgentStocksOutputV1Schema.parse({
+    schemaVersion: 'miorail-agent-stocks/v1',
+    chain: 'base',
+    chainId: 8453,
+    query: input.query ?? null,
+    reviewedTotal: entries.length,
+    returned: page.length,
+    truncated: matched.length > page.length,
+    stocks: page.map((entry) => ({
+      underlyingKey: entry.underlying.underlyingKey,
+      canonicalName: entry.underlying.canonicalName,
+      displaySymbol: entry.underlying.displaySymbol,
+      assetClass: entry.underlying.assetClass,
+      identifierScheme: entry.underlying.identifierScheme,
+      identifierValue: entry.underlying.identifierValue,
+      issuerIds: entry.issuerIds,
+      representationCount: entry.representationCount,
+      liveRepresentationCount: entry.liveRepresentationCount,
+    })),
+    selection: 'never',
+    note: 'An underlying key groups reviewed Base representations and never selects one. Pass a key to get_representations to see every exact address separately. liveRepresentationCount is a measured count of representations with tokens outstanding; zero means nothing is outstanding on any reviewed contract, not that the instrument has no representation elsewhere.',
+  });
 }
 
 export async function getMarketRealityRepresentationsForAgentV1(
@@ -578,6 +737,35 @@ export async function getMarketRealityChangesForAgentV1(
     }
   }
 
+  // Page the ANSWER, never the derivation: changes come from consecutive pairs,
+  // so a page taken before the pairs are built would invent gaps that the
+  // measurement does not have. The newest rows are the page, because a caller
+  // asking what moved wants the end of the series; `nextCursor` walks back.
+  const detail = input.detail ?? 'full';
+  const limit = input.limit ?? MARKET_REALITY_AGENT_CHANGES_DEFAULT_PAGE_V1;
+  const beforeMs = input.before ? Date.parse(input.before) : null;
+  const eligible =
+    beforeMs === null
+      ? observations
+      : observations.filter((row) => Date.parse(row.completedAt) < beforeMs);
+  const page = eligible.slice(Math.max(0, eligible.length - limit));
+  const returnedSince = page[0]?.completedAt ?? null;
+  const returnedUntil = page[page.length - 1]?.completedAt ?? null;
+  // A change sitting exactly on the oldest row was derived against a baseline
+  // OUTSIDE this page, so it is not this page's to report.
+  const pagedChanges =
+    returnedSince !== null && returnedUntil !== null
+      ? changes.filter(
+          (change) =>
+            Date.parse(change.occurredAt) > Date.parse(returnedSince) &&
+            Date.parse(change.occurredAt) <= Date.parse(returnedUntil),
+        )
+      : [];
+  const changeCountsByKind: Record<string, number> = {};
+  for (const change of changes) {
+    changeCountsByKind[change.kind] = (changeCountsByKind[change.kind] ?? 0) + 1;
+  }
+
   return MarketRealityAgentChangesOutputV1Schema.parse({
     schemaVersion: 'miorail-agent-market-changes/v1',
     chain: 'base',
@@ -596,8 +784,16 @@ export async function getMarketRealityChangesForAgentV1(
     since,
     interpolated: false,
     routePolicy,
-    observations,
-    changes,
+    detail,
+    windowObservationCount: observations.length,
+    windowChangeCount: changes.length,
+    changeCountsByKind,
+    returnedSince: detail === 'summary' ? null : returnedSince,
+    returnedUntil: detail === 'summary' ? null : returnedUntil,
+    nextCursor:
+      detail === 'summary' || eligible.length <= page.length ? null : (returnedSince ?? null),
+    observations: detail === 'summary' ? [] : page,
+    changes: detail === 'summary' ? [] : pagedChanges,
     privateRadarMetadataIncluded: false,
     assembledAt: now.toISOString(),
   });

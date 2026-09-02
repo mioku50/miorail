@@ -190,13 +190,14 @@ function payloadOf(result: unknown): Record<string, unknown> {
 }
 
 describe('§8 — tool discovery', () => {
-  test('a client sees the eight legacy tools and three Market Reality tools', async () => {
+  test('a client sees the eight legacy tools and four Market Reality tools', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       'compare_market_reality',
       'get_market_changes',
       'get_representations',
+      'list_reviewed_stocks',
       'miorail_b20_market_rails',
       'miorail_compare_b20_tokens',
       'miorail_discover_status',
@@ -210,8 +211,40 @@ describe('§8 — tool discovery', () => {
       // An assistant chooses from the description alone. A one-liner produces
       // a model that calls the wrong tool and summarises it wrongly.
       assert.ok((tool.description ?? '').length > 120, `${tool.name} has a thin description`);
+      // Every tool on this surface is a read. A host that cannot see that says
+      // so to the user and cancels the call — a live Codex run refused
+      // `miorail_get_execution_status` as potentially state-changing purely
+      // because it carried no annotations.
+      assert.deepEqual(
+        tool.annotations,
+        { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+        `${tool.name} does not declare itself read-only`,
+      );
     }
     await client.close();
+  });
+
+  test('the smoke script and the deploy assert the same tool registry the server publishes', async () => {
+    // The smoke required `miorail_get_b20_market_leaders` months after the
+    // server replaced it with `miorail_b20_market_rails`, so a healthy
+    // production MCP failed its own check. A red gate nobody can act on teaches
+    // an operator to ignore the colour.
+    const client = await connectedClient();
+    const published = (await client.listTools()).tools.map((tool) => tool.name).sort();
+    await client.close();
+
+    const smoke = readFileSync(path.join(here, '..', '..', '..', '..', 'scripts', 'smoke_mcp.ts'), 'utf8');
+    const smokeList = /const EXPECTED_TOOLS_V1 = \[([\s\S]*?)\];/.exec(smoke)?.[1] ?? '';
+    const smokeNames = [...smokeList.matchAll(/'([a-z0-9_]+)'/g)].map((match) => match[1]!).sort();
+    assert.deepEqual(smokeNames, published, 'scripts/smoke_mcp.ts is out of date');
+
+    const deploy = readFileSync(
+      path.join(here, '..', '..', '..', '..', 'ops', 'deploy.sh'),
+      'utf8',
+    );
+    for (const name of published) {
+      assert.ok(deploy.includes(`"${name}"`), `ops/deploy.sh does not assert ${name}`);
+    }
   });
 
   test('the advertised server version is 1.2.0', () => {
