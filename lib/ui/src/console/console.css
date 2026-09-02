@@ -1224,6 +1224,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-lastseen-k { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; }
 .mio-console .mr-lastseen-v { color: var(--muted); font-size: 12px; font-weight: 600; }
 
+/* Use & access. Four measured sections, then the issuer's processes, then the
+   documents — so the page opens on what can be done rather than on citations.
+   Each section is a band, not a card: cards next to cards read as a comparison,
+   and these are steps in one answer. */
+.mio-console .mr-use-section { margin-top: 12px; padding-top: 10px;
+  border-top: 1px solid var(--line); }
+.mio-console .mr-use-section:first-of-type { border-top: 0; padding-top: 0; }
+.mio-console .mr-use-headline { margin: 6px 0 0; font-size: 12.5px; }
+.mio-console .mr-use-section > .mcp-tech { margin-top: 8px; }
+
 /* The live/checking/expired states of the NOW strip, and the durable answer
    under it. NOW is the only thing on the card that changes when a quote lapses:
    the block below it came from the stored run and stays exactly as it was. */

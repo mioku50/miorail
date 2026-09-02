@@ -10,6 +10,7 @@ import {
   MARKET_REALITY_SIZES_V1,
   partitionChoicesBySupplyV1,
   stockFiltersV1,
+  useSectionsV1,
   type FactViewV1,
   type StockFilterViewV1,
   type MarketRealityDirectionV1,
@@ -18,6 +19,7 @@ import {
   type ToneV1,
   type UnderlyingChoiceViewV1,
 } from './marketRealityView';
+import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -146,6 +148,10 @@ export interface MarketRealityScreenModelV1 {
 
   /** A measurement is running. */
   measuring: boolean;
+  /** Phase 17.4 — onchain Use & access, by exact address. Absent until the tab
+   * is opened; a missing entry is "not read", never "nothing there". */
+  useAccess?: Readonly<Record<string, RepresentationUseAccessV1 | null>>;
+  useAccessLoading?: boolean;
   /** What the last measurement spent, in a reader's words. Null before one. */
   measurementNote: string | null;
   measurementError: string | null;
@@ -292,6 +298,8 @@ function RepresentationCard({
   watching,
   removing,
   measuring,
+  useAccess,
+  useAccessLoading,
   inspectRouteUnavailable,
 }: {
   representation: RepresentationViewV1;
@@ -302,13 +310,26 @@ function RepresentationCard({
   removing: boolean;
   /** A refresh of THIS exact question is in flight. */
   measuring: boolean;
+  /** What this exact address answered on chain, or null when nothing read it. */
+  useAccess: RepresentationUseAccessV1 | null;
+  useAccessLoading: boolean;
   inspectRouteUnavailable: string | null;
 }) {
   if (surface === 'utility') {
+    const sections = useSectionsV1({
+      use: useAccess,
+      groups: representation.utility.groups,
+      exit: representation.exit,
+      exitBasis: representation.exitBasis,
+      openQuote: representation.openQuote,
+      lastMeasuredLabel: representation.lastMeasuredLabel,
+      outcomeBody: representation.outcomeBody,
+      caip10: representation.utility.caip10,
+    });
     return (
       <article
         className="mr-rep mr-utility-rep"
-        aria-label={`${representation.issuerName} utility map`}
+        aria-label={`${representation.issuerName} use and access`}
       >
         <div className="cr-top">
           <span className="cr-name">
@@ -322,124 +343,131 @@ function RepresentationCard({
             Exact address
           </span>
         </div>
-        <p className="mr-caip mono">{representation.utility.caip10}</p>
-        <p className="lnote">{representation.structureNote}</p>
 
-        {/* The answer, before any document. The panel exists to say what a
-            reader can do with THIS address; it used to open on a wall of
-            citations and make them assemble that themselves. Same edges, same
-            states — read in the order the question is asked. */}
-        <div className="mr-utility-answer">
-          <p className="cr-verdict">{representation.utility.answer.headline}</p>
-          {representation.utility.answer.buckets.map((bucket) => (
-            <div className="mr-utility-bucket" key={bucket.label}>
-              <p className="mr-attribution">
-                <span className="mr-attribution-k">{bucket.label}</span> {bucket.note}
-              </p>
-              <ul>
-                {bucket.items.map((item) => (
-                  <li key={item}>{item}</li>
-                ))}
-              </ul>
+        {/* Four measured sections, then the issuer's processes, then the
+            documents. The order is the order a person asks: can I trade it, can
+            I move it, can I bridge it, does anything lend against it. */}
+        {sections.map((section) => (
+          <section className="mr-use-section" key={section.id} aria-label={section.label}>
+            <div className="mr-utility-edge-head">
+              <strong>{section.label}</strong>
+              <span className="pill cr-status" data-tone={section.tone}>
+                {section.chip}
+              </span>
             </div>
-          ))}
-        </div>
+            <p className="cr-verdict mr-use-headline">{section.headline}</p>
+            {section.facts.length > 0 ? (
+              <FactList facts={section.facts} label={`${section.label} facts`} />
+            ) : null}
 
-        {representation.utility.groups.map((group) => (
-          <section className="mr-utility-group" key={group.label} aria-label={group.label}>
-            <h4>{group.label}</h4>
-            <div className="mr-utility-edges">
-              {group.edges.map((edge) => (
-                <article className="mr-utility-edge" key={edge.edgeId} data-state={edge.state}>
-                  <div className="mr-utility-edge-head">
-                    <strong>{edge.label}</strong>
-                    <span
-                      className="pill cr-status"
-                      data-tone={
-                        edge.state === 'stale'
-                          ? 'warn'
-                          : edge.state === 'not_established'
-                            ? 'off'
-                            : 'neutral'
-                      }
-                    >
-                      {edge.stateLabel}
-                    </span>
-                  </div>
-                  <p>{edge.note}</p>
-                  {edge.edgeId === 'market_trade' ||
-                  edge.edgeId === 'defi_reviewed_integrations' ||
-                  edge.edgeId === 'issuer_primary_market' ||
-                  edge.edgeId === 'representation_eligibility' ? (
-                    <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
-                  ) : null}
-                  {/* Evidence, on disclosure. The documents are what make the
-                      line above trustworthy, not what a reader came for — and a
-                      prospectus link rendered at the same weight as the answer
-                      made every card read as a bibliography. The freshness stays
-                      in the summary, because a reader deciding whether to trust
-                      the line needs the age without opening anything. */}
-                  {edge.sources.length === 0 && edge.providerLabel === null ? (
-                    <p className="mr-utility-meta">No reviewed exact-address evidence</p>
-                  ) : (
-                    <details className="mcp-tech">
-                      <summary>
-                        {/* An age, with the exact instant one hover away. An ISO
-                            string in UTC is a conversion, not an answer. */}
-                        Evidence{edge.sources.length > 0 ? ` (${edge.sources.length})` : ''} ·
-                        checked{' '}
-                        <span className="mono" title={edge.checkedAt}>
-                          {edge.checkedAgo ?? edge.checkedAt}
-                        </span>
-                      </summary>
-                      <p className="mr-utility-meta">
-                        {edge.providerLabel ? (
-                          <>
-                            Source <span className="mono">{edge.providerLabel}</span>
-                          </>
-                        ) : (
-                          'No route source is named for this edge.'
-                        )}
-                      </p>
-                      {edge.sources.length > 0 ? (
-                        <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
-                          {edge.sources.map((source, index) =>
-                            source.href ? (
-                              <a
-                                key={`${source.label}:${index}`}
-                                href={source.href}
-                                target="_blank"
-                                rel="noreferrer"
-                              >
-                                {source.label}
-                              </a>
-                            ) : (
-                              <span key={`${source.label}:${index}`}>{source.label}</span>
-                            ),
+            {section.edges.length > 0 ? (
+              <div className="mr-utility-edges">
+                {section.edges.map((edge) => (
+                  <article className="mr-utility-edge" key={edge.edgeId} data-state={edge.state}>
+                    <div className="mr-utility-edge-head">
+                      <strong>{edge.label}</strong>
+                      <span
+                        className="pill cr-status"
+                        data-tone={
+                          edge.state === 'stale'
+                            ? 'warn'
+                            : edge.state === 'not_established'
+                              ? 'off'
+                              : 'neutral'
+                        }
+                      >
+                        {edge.stateLabel}
+                      </span>
+                    </div>
+                    <p>{edge.note}</p>
+                    {edge.edgeId === 'issuer_primary_market' ||
+                    edge.edgeId === 'representation_eligibility' ? (
+                      <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
+                    ) : null}
+                    {edge.sources.length === 0 && edge.providerLabel === null ? (
+                      <p className="mr-utility-meta">No reviewed exact-address evidence</p>
+                    ) : (
+                      <details className="mcp-tech">
+                        <summary>
+                          Evidence{edge.sources.length > 0 ? ` (${edge.sources.length})` : ''} ·
+                          checked{' '}
+                          <span className="mono" title={edge.checkedAt}>
+                            {edge.checkedAgo ?? edge.checkedAt}
+                          </span>
+                        </summary>
+                        <p className="mr-utility-meta">
+                          {edge.providerLabel ? (
+                            <>
+                              Source <span className="mono">{edge.providerLabel}</span>
+                            </>
+                          ) : (
+                            'No route source is named for this edge.'
                           )}
-                        </div>
-                      ) : null}
-                    </details>
-                  )}
-                </article>
-              ))}
-            </div>
+                        </p>
+                        {edge.sources.length > 0 ? (
+                          <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
+                            {edge.sources.map((source, index) =>
+                              source.href ? (
+                                <a
+                                  key={`${source.label}:${index}`}
+                                  href={source.href}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                >
+                                  {source.label}
+                                </a>
+                              ) : (
+                                <span key={`${source.label}:${index}`}>{source.label}</span>
+                              ),
+                            )}
+                          </div>
+                        ) : null}
+                      </details>
+                    )}
+                  </article>
+                ))}
+              </div>
+            ) : null}
+
+            {/* Ids, selectors, policy numbers and the block. Nothing above this
+                line carries one: a reader deciding whether they can move a token
+                is not helped by `policy 5`, and an operator checking the claim
+                cannot do without it. */}
+            {section.evidence.length > 0 ? (
+              <details className="mcp-tech">
+                <summary>Evidence ({section.evidence.length})</summary>
+                <dl className="cr-facts">
+                  {section.evidence.map((row) => (
+                    <div key={`${section.id}:${row.label}`}>
+                      <dt>{row.label}</dt>
+                      <dd>
+                        <strong className="cr-v mono">{row.value}</strong>
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+              </details>
+            ) : null}
           </section>
         ))}
-        {actions.onInvestigate ? (
-          <div className="card-actions">
-            <button
-              type="button"
-              className="btn sec"
-              onClick={() => actions.onInvestigate!(representation.tokenAddress)}
-            >
-              Technical evidence
-            </button>
-          </div>
+
+        {useAccessLoading ? (
+          <p className="lnote">Reading this contract on chain…</p>
+        ) : useAccess === null ? (
+          <p className="lnote">
+            Miorail has not read this contract on chain for this view. The sections above show what
+            the reviewed issuer material establishes; the onchain answers are missing, not negative.
+          </p>
         ) : null}
+
+        <p className="lnote">
+          Every check on this page is an onchain address-policy read. It is not KYC, not
+          jurisdiction eligibility, and not legal permission to trade a security.
+        </p>
       </article>
     );
   }
+
   return (
     <article
       className="mr-rep"
@@ -863,7 +891,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           className={`item${model.surface === 'utility' ? ' on' : ''}`}
           onClick={() => actions.onSurface('utility')}
         >
-          Utility + eligibility
+          Use & access
         </button>
       </div>
 
@@ -946,7 +974,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       <p className="lnote">
         {model.surface === 'market'
           ? 'Sizes are the rungs the public ladder actually measures. An exact size is the whole question — a $10,000 answer is not a $100 answer multiplied. A router quote is good for about twenty seconds, so a board that has been open a while is history until you measure again.'
-          : 'Every utility edge belongs to the exact Base address shown on its card. Documented issuer processes, observed router reachability and personal eligibility are separate facts.'}
+          : 'What can be done with each exact Base address, measured first and documented second. Onchain policy checks are not KYC, jurisdiction eligibility, or legal permission to trade.'}
       </p>
 
       {model.measurementError ? <p className="note warn">{model.measurementError}</p> : null}
@@ -1069,6 +1097,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     watching={model.watchingTokenAddress === representation.tokenAddress}
                     removing={model.removingWatchTokenAddress === representation.tokenAddress}
                     measuring={model.measuring}
+                    useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
+                    useAccessLoading={model.useAccessLoading === true}
                     inspectRouteUnavailable={
                       model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                     }
@@ -1094,6 +1124,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                         watching={model.watchingTokenAddress === representation.tokenAddress}
                         removing={model.removingWatchTokenAddress === representation.tokenAddress}
                         measuring={model.measuring}
+                        useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
+                        useAccessLoading={model.useAccessLoading === true}
                         inspectRouteUnavailable={
                           model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                         }

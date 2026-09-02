@@ -9,11 +9,14 @@ import {
   useRwaMarketReality,
   useRwaMarketRealityHistory,
   useRwaUnderlyings,
+  useRwaUseAccess,
 } from '@mioagent/api-client-react';
 import {
   stockExecutionGoalSentenceV1,
   stockExecutionHandoffV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
+
+import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1 } from './rwaDiscoverView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
@@ -558,6 +561,29 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     question.destination,
   ]);
 
+  // -------------------------------------------------------------------------
+  // Phase 17.4 — Use & access reads the chain, and only when the tab is open.
+  //
+  // Three fixed hooks rather than a loop, for the same reason the ladders are:
+  // a hook cannot be called conditionally, and three is the reviewed maximum
+  // for one security. A fourth representation shows the documented sections
+  // with its onchain answers missing, which the card says out loud rather than
+  // rendering as negative.
+  // -------------------------------------------------------------------------
+  const useAccessEnabled = enabled && question.surface === 'utility';
+  const useAccess0 = useRwaUseAccess(representationAddresses[0] ?? null, { enabled: useAccessEnabled });
+  const useAccess1 = useRwaUseAccess(representationAddresses[1] ?? null, { enabled: useAccessEnabled });
+  const useAccess2 = useRwaUseAccess(representationAddresses[2] ?? null, { enabled: useAccessEnabled });
+  const useAccessByAddress = useMemo(() => {
+    const entries: [string, RepresentationUseAccessV1 | null][] = [];
+    for (const [index, query] of [useAccess0, useAccess1, useAccess2].entries()) {
+      const address = representationAddresses[index];
+      if (address) entries.push([address, query.data ?? null]);
+    }
+    return Object.fromEntries(entries);
+  }, [representationAddresses, useAccess0.data, useAccess1.data, useAccess2.data]);
+  const useAccessLoading = useAccess0.isLoading || useAccess1.isLoading || useAccess2.isLoading;
+
   const disabledNotice = stocksUnavailableNoticeV1({
     enabled,
     configurationRead: input.configurationRead !== false,
@@ -589,6 +615,8 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       (history.error ? stocksConsoleFailureCopyV1(history.error, 'comparable history') : null),
 
     measuring: measure.isPending,
+    useAccess: useAccessByAddress,
+    useAccessLoading,
     measurementNote,
     measurementError: measure.error
       ? stocksConsoleFailureCopyV1(measure.error, 'this measurement')

@@ -1,3 +1,5 @@
+import { z } from 'zod';
+
 import {
   B20_POLICY_REGISTRY_V1,
   bridgeCapabilityFromReadsV1,
@@ -91,11 +93,137 @@ export interface RepresentationUseAccessV1 {
   wallet: { address: string; checks: WalletPolicyCheckV1[] } | null;
 }
 
+/**
+ * The wire schema, defined beside the projection that fills it.
+ *
+ * Same object on both sides on purpose: a field dropped from one and not the
+ * other is how a column renders blank with nothing failing.
+ */
+const ScopeV1 = z.enum(['sender', 'receiver', 'executor']);
+
+export const RepresentationUseAccessV1Schema = z
+  .object({
+    schemaVersion: z.literal('representation-use-access/v1'),
+    chainId: z.literal(8453),
+    tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+    caip10: z.string().regex(/^eip155:8453:0x[0-9a-f]{40}$/),
+    blockTag: z.string().min(1).max(80).nullable(),
+    observedAt: z.string().min(1),
+    transfers: z.discriminatedUnion('state', [
+      z.object({ state: z.literal('read'), transfersPaused: z.boolean() }).strict(),
+      z.object({ state: z.literal('unread'), reason: z.string() }).strict(),
+    ]),
+    transferPolicies: z.array(
+      z.discriminatedUnion('state', [
+        z.object({ scope: ScopeV1, state: z.literal('unrestricted') }).strict(),
+        z
+          .object({
+            scope: ScopeV1,
+            state: z.literal('bound'),
+            policyId: z.string(),
+            policyExists: z.boolean(),
+          })
+          .strict(),
+        z.object({ scope: ScopeV1, state: z.literal('unread'), reason: z.string() }).strict(),
+      ]),
+    ),
+    bridge: z.discriminatedUnion('state', [
+      z.object({ state: z.literal('none_detected') }).strict(),
+      z
+        .object({
+          state: z.literal('detected'),
+          endpointAddress: z.string().nullable(),
+          configuredPeers: z.array(z.number().int()),
+        })
+        .strict(),
+      z.object({ state: z.literal('unread'), reason: z.string() }).strict(),
+    ]),
+    defi: z
+      .object({
+        checkedVenues: z.array(z.string()),
+        venues: z.array(
+          z
+            .object({
+              venueId: z.string(),
+              venueName: z.string(),
+              state: z.enum(['listed', 'not_listed', 'unread']),
+              uses: z
+                .object({
+                  lend: z.boolean().nullable(),
+                  borrow: z.boolean().nullable(),
+                  collateral: z.boolean().nullable(),
+                })
+                .strict(),
+              marketRef: z.string().nullable(),
+              reason: z.string().nullable(),
+            })
+            .strict(),
+        ),
+      })
+      .strict(),
+    wallet: z
+      .object({
+        address: z.string().regex(/^0x[0-9a-f]{40}$/),
+        checks: z.array(
+          z.discriminatedUnion('state', [
+            z
+              .object({
+                scope: ScopeV1,
+                state: z.enum(['allowed', 'blocked']),
+                policyId: z.string(),
+              })
+              .strict(),
+            z.object({ scope: ScopeV1, state: z.literal('unrestricted') }).strict(),
+            z
+              .object({ scope: ScopeV1, state: z.literal('not_confirmed'), reason: z.string() })
+              .strict(),
+          ]),
+        ),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+
+function rawV1(
+  result: { ok: true; value: string } | { ok: false; reason: string; detail?: string },
+): RawCallResultV1 {
+  return result.ok ? { ok: true, value: result.value } : { ok: false, reason: result.reason };
+}
+
+export type UseAccessCallV1 = { to: string; data: string; blockTag: string };
+export type UseAccessAnswerV1 =
+  | { ok: true; value: string }
+  | { ok: false; reason: string; detail?: string };
+
 export interface UseAccessReaderV1 {
   readBlockAnchor(): Promise<{ ok: true; value: { blockTag: string } } | { ok: false; reason: string }>;
-  call(input: { to: string; data: string; blockTag: string }): Promise<
-    { ok: true; value: string } | { ok: false; reason: string; detail?: string }
-  >;
+  call(input: UseAccessCallV1): Promise<UseAccessAnswerV1>;
+  /**
+   * Several pinned calls in as few round trips as the endpoint allows.
+   *
+   * Optional, and the reason this whole assembly is written in rounds. The
+   * public Base endpoint serves roughly half an `eth_call` a second; a live run
+   * issuing eight sequential reads had the later ones fail and render as
+   * `unread` and `not_confirmed` — a flaky surface producing honest-looking
+   * absences, which is the worst possible failure for a page about permission.
+   */
+  callMany?(inputs: readonly UseAccessCallV1[]): Promise<UseAccessAnswerV1[]>;
+}
+
+async function roundV1(
+  reader: UseAccessReaderV1,
+  inputs: readonly UseAccessCallV1[],
+): Promise<RawCallResultV1[]> {
+  if (inputs.length === 0) return [];
+  const answers = reader.callMany
+    ? await reader.callMany(inputs)
+    : await (async () => {
+        const results: UseAccessAnswerV1[] = [];
+        for (const input of inputs) results.push(await reader.call(input));
+        return results;
+      })();
+  return answers.map(rawV1);
 }
 
 export interface DefiListingSourceV1 {
@@ -105,12 +233,6 @@ export interface DefiListingSourceV1 {
 }
 
 const SCOPES_V1: readonly B20TransferScopeV1[] = ['sender', 'receiver', 'executor'];
-
-function rawV1(
-  result: { ok: true; value: string } | { ok: false; reason: string; detail?: string },
-): RawCallResultV1 {
-  return result.ok ? { ok: true, value: result.value } : { ok: false, reason: result.reason };
-}
 
 function unreadEverythingV1(
   tokenAddress: string,
@@ -162,55 +284,87 @@ export async function assembleUseAccessV1(input: {
     return unreadEverythingV1(tokenAddress, observedAt, anchor.reason, defi, walletAddress);
   }
   const blockTag = anchor.value.blockTag;
-  const at = (to: string, data: string) => input.reader.call({ to, data, blockTag });
+  const call = (to: string, data: string): UseAccessCallV1 => ({ to, data, blockTag });
 
-  const transfers = transferPauseFromReadV1(rawV1(await at(tokenAddress, encodeIsPausedCallV1())));
+  // Round 1 — everything that depends on nothing.
+  const first = await roundV1(input.reader, [
+    call(tokenAddress, encodeIsPausedCallV1()),
+    ...SCOPES_V1.map((scope) => call(tokenAddress, encodePolicyIdCallV1(scope))),
+    call(tokenAddress, encodeOftProbeCallV1('endpoint')),
+  ]);
+  const transfers = transferPauseFromReadV1(first[0]!);
+  const policyIdReads = SCOPES_V1.map((_, index) => first[index + 1]!);
+  const endpointRead = first[SCOPES_V1.length + 1]!;
 
-  const transferPolicies: TransferPolicyBindingV1[] = [];
-  for (const scope of SCOPES_V1) {
-    const policyIdRead = rawV1(await at(tokenAddress, encodePolicyIdCallV1(scope)));
+  // Round 2 — one existence read per DISTINCT policy, and the bridge peers.
+  //
+  // All three transfer scopes are normally bound to the same policy, so asking
+  // the registry three times about policy 5 spent three calls to learn one
+  // fact, and against a rate-limited endpoint the third is the one that fails.
+  const distinctPolicies: string[] = [];
+  for (const read of policyIdReads) {
+    if (!read.ok) continue;
+    const policyId = decodeUint64WordV1(read.value);
+    if (policyId === null || policyId === 0n) continue;
+    const key = policyId.toString();
+    if (!distinctPolicies.includes(key)) distinctPolicies.push(key);
+  }
+  const peerIds = endpointRead.ok ? [...endpointIds] : [];
+  const second = await roundV1(input.reader, [
+    ...distinctPolicies.map((policyId) =>
+      call(B20_POLICY_REGISTRY_V1, encodePolicyExistsCallV1(BigInt(policyId))),
+    ),
+    ...peerIds.map((endpointId) => call(tokenAddress, encodeOftPeersCallV1(endpointId))),
+  ]);
+  const existsByPolicy = new Map<string, RawCallResultV1>(
+    distinctPolicies.map((policyId, index) => [policyId, second[index]!]),
+  );
+  const peers = peerIds.map((endpointId, index) => ({
+    endpointId,
+    read: second[distinctPolicies.length + index]!,
+  }));
+
+  const transferPolicies = SCOPES_V1.map((scope, index) => {
+    const policyIdRead = policyIdReads[index]!;
     let existsRead: RawCallResultV1 | null = null;
     if (policyIdRead.ok) {
       const policyId = decodeUint64WordV1(policyIdRead.value);
       if (policyId !== null && policyId !== 0n) {
-        existsRead = rawV1(
-          await at(B20_POLICY_REGISTRY_V1, encodePolicyExistsCallV1(policyId)),
-        );
+        existsRead = existsByPolicy.get(policyId.toString()) ?? null;
       }
     }
-    transferPolicies.push(transferPolicyBindingFromReadsV1(scope, policyIdRead, existsRead));
-  }
+    return transferPolicyBindingFromReadsV1(scope, policyIdRead, existsRead);
+  });
 
-  const endpointRead = rawV1(await at(tokenAddress, encodeOftProbeCallV1('endpoint')));
-  const peers: { endpointId: number; read: RawCallResultV1 }[] = [];
-  if (endpointRead.ok) {
-    for (const endpointId of endpointIds) {
-      peers.push({
-        endpointId,
-        read: rawV1(await at(tokenAddress, encodeOftPeersCallV1(endpointId))),
-      });
-    }
-  }
   const bridge = bridgeCapabilityFromReadsV1({ endpoint: endpointRead, peers });
 
+  // Round 3 — the signed-in wallet, once per distinct gating policy.
   let wallet: RepresentationUseAccessV1['wallet'] = null;
   if (walletAddress) {
-    const checks: WalletPolicyCheckV1[] = [];
+    const gating: string[] = [];
     for (const binding of transferPolicies) {
-      // Only a scope with a real, existing policy is worth an RPC call, and
-      // only such a scope can produce anything but `not_confirmed`.
-      const authorized =
-        binding.state === 'bound' && binding.policyExists
-          ? rawV1(
-              await at(
-                B20_POLICY_REGISTRY_V1,
-                encodeIsAuthorizedCallV1(BigInt(binding.policyId), walletAddress),
-              ),
-            )
-          : null;
-      checks.push(walletPolicyCheckFromReadsV1(binding, authorized));
+      if (binding.state === 'bound' && binding.policyExists && !gating.includes(binding.policyId)) {
+        gating.push(binding.policyId);
+      }
     }
-    wallet = { address: walletAddress, checks };
+    const third = await roundV1(
+      input.reader,
+      gating.map((policyId) =>
+        call(B20_POLICY_REGISTRY_V1, encodeIsAuthorizedCallV1(BigInt(policyId), walletAddress)),
+      ),
+    );
+    const authorizedByPolicy = new Map<string, RawCallResultV1>(
+      gating.map((policyId, index) => [policyId, third[index]!]),
+    );
+    wallet = {
+      address: walletAddress,
+      checks: transferPolicies.map((binding) =>
+        walletPolicyCheckFromReadsV1(
+          binding,
+          binding.state === 'bound' ? (authorizedByPolicy.get(binding.policyId) ?? null) : null,
+        ),
+      ),
+    };
   }
 
   return {

@@ -1249,6 +1249,35 @@ export function useRwaMarketRealityHistory(
   });
 }
 
+/**
+ * Phase 17.4 — what one exact address can actually do, read on demand.
+ *
+ * Its own query rather than a field on the comparison: it costs chain reads and
+ * two venue calls, and paying for those on every size press would slow the
+ * board down for an answer the Use & access tab asks for by being opened. The
+ * wallet comes from the session on the server; there is no address argument
+ * here for the same reason there is none there.
+ */
+export function useRwaUseAccess(
+  tokenAddress: string | null,
+  options?: { enabled?: boolean },
+) {
+  return useQuery({
+    queryKey: ['rwa-use-access', tokenAddress?.toLowerCase() ?? null],
+    queryFn: async () => {
+      const response = await fetchApi<unknown>(
+        `/api/route-intelligence/rwa/use-access/${encodeURIComponent(tokenAddress!.toLowerCase())}`,
+      );
+      return apiSpec.RepresentationUseAccessV1Schema.parse(response);
+    },
+    retry: false,
+    // A chain read is worth keeping for a moment: switching tabs back and forth
+    // must not re-read the same block.
+    staleTime: 60_000,
+    enabled: options?.enabled !== false && Boolean(tokenAddress),
+  });
+}
+
 /** Phase 12.2 — tenant-scoped exact market watches and their transition feed. */
 export function useMarketRealityRadar(options?: { enabled?: boolean }) {
   return useQuery({

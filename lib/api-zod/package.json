@@ -6,6 +6,7 @@
   "type": "module",
   "main": "index.ts",
   "dependencies": {
+    "@mioagent/rwa-issuer": "workspace:*",
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",

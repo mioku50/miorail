@@ -16,6 +16,7 @@ import {
   partitionChoicesBySupplyV1,
   splitEstablishedFactsV1,
   utilityAnswerV1,
+  useSectionsV1,
   sourceLabelV1,
   stockFiltersV1,
   MARKET_REALITY_SIZES_V1,
@@ -2028,13 +2029,23 @@ describe('Phase 11 utility and eligibility map', () => {
         },
       }),
     );
-    assert.match(markup, /Utility \+ eligibility/);
+    assert.match(markup, /Use &amp; access/);
     assert.match(markup, /eip155:8453:/);
     assert.match(markup, /Documented/);
     assert.match(markup, /Not established/);
-    assert.match(markup, /Access, transfer and value model/);
-    assert.match(markup, /Lending, borrowing, collateral, vaults and liquidity/);
+    // Phase 17.4 — the six sections, in the order a person asks. The structure
+    // rows still exist; they are the last two sections rather than the page.
+    assert.deepEqual(
+      [...markup.matchAll(/<section class="mr-use-section" aria-label="([^"]+)"/g)].map(
+        (match) => match[1],
+      ),
+      ['Trade', 'Transfer', 'Bridge', 'DeFi', 'Issuer services', 'How it works'],
+    );
     assert.match(markup, /No reviewed exact-address evidence/);
+    // `approve()` is an Evidence line, never a headline card of its own.
+    assert.match(markup, /an approval is not permission to transfer/);
+    // The boundary, stated on the page and not only in a type.
+    assert.match(markup, /not KYC/);
     assert.doesNotMatch(markup, /Not confirmed yet/);
     assert.doesNotMatch(markup, /No winner is selected|Not ranked|BEST/);
   });
@@ -2700,5 +2711,195 @@ describe('Phase 17.2 — markets first, reviewed-and-empty second', () => {
     const rows = [choice('A', null), choice('B', 'No tokens outstanding')] as never;
     const split = partitionChoicesBySupplyV1(rows);
     assert.equal(split.live.length + split.empty.length, 2);
+  });
+});
+
+describe('Phase 17.4 — Use & access answers, then cites', () => {
+  const base = {
+    groups: [],
+    exit: null,
+    exitBasis: null as 'open' | 'last_measured' | null,
+    openQuote: null,
+    lastMeasuredLabel: null,
+    outcomeBody: 'Nothing has been measured at this size yet.',
+    caip10: 'eip155:8453:0xb20000000000000000000078ee7ce2fe4908108c',
+  };
+  const use = (over: Record<string, unknown> = {}) =>
+    ({
+      schemaVersion: 'representation-use-access/v1',
+      chainId: 8453,
+      tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      caip10: base.caip10,
+      blockTag: '0x3060000',
+      observedAt: NOW,
+      transfers: { state: 'read', transfersPaused: false },
+      transferPolicies: [
+        { scope: 'sender', state: 'bound', policyId: '5', policyExists: true },
+        { scope: 'receiver', state: 'bound', policyId: '5', policyExists: true },
+        { scope: 'executor', state: 'bound', policyId: '5', policyExists: true },
+      ],
+      bridge: { state: 'none_detected' },
+      defi: { checkedVenues: ['Moonwell', 'Morpho'], venues: [] },
+      wallet: null,
+      ...over,
+    }) as never;
+
+  test('the six sections are in the order a person asks', () => {
+    const sections = useSectionsV1({ ...base, use: use() });
+    assert.deepEqual(sections.map((section) => section.id), [
+      'trade',
+      'transfer',
+      'bridge',
+      'defi',
+      'issuer',
+      'how_it_works',
+    ]);
+  });
+
+  test('an expired quote does not un-measure a trade', () => {
+    // The bug this replaces: Trade read only the twenty-second quote, so a
+    // round trip measured half an hour ago and rendered in full on Market
+    // Reality read here as "Stale".
+    const sections = useSectionsV1({
+      ...base,
+      use: use(),
+      exit: { label: 'Buying in and selling back out', value: '$100 in → $99.91 back', note: 'measured 28 min ago', tone: 'good' },
+      exitBasis: 'last_measured',
+      lastMeasuredLabel: 'Last measured 28 min ago',
+      openQuote: { state: 'none', value: 'No live quote', note: null, expiresInLabel: null },
+    });
+    const trade = sections[0]!;
+    assert.equal(trade.chip, 'Tradable when measured');
+    assert.doesNotMatch(trade.headline, /Stale|not established/i);
+    assert.match(trade.headline, /measurement stands/);
+    assert.equal(trade.facts.length, 1);
+  });
+
+  test('a live quote sits above the stored answer, not instead of it', () => {
+    const sections = useSectionsV1({
+      ...base,
+      use: use(),
+      exit: { label: 'Buying in and selling back out', value: '$100 in → $99.91 back', note: 'measured 28 min ago', tone: 'good' },
+      exitBasis: 'last_measured',
+      openQuote: { state: 'live', value: '$100 in → $99.95 back', note: null, expiresInLabel: 'Expires in 17s' },
+    });
+    assert.equal(sections[0]!.chip, 'Tradable now');
+    assert.deepEqual(sections[0]!.facts.map((fact) => fact.label), [
+      'Open right now',
+      'Buying in and selling back out',
+    ]);
+  });
+
+  test('transfers say active or paused, and no id leaves Evidence', () => {
+    const active = useSectionsV1({ ...base, use: use() })[1]!;
+    assert.equal(active.chip, 'Transfers active');
+    assert.equal(active.tone, 'good');
+
+    const paused = useSectionsV1({
+      ...base,
+      use: use({ transfers: { state: 'read', transfersPaused: true } }),
+    })[1]!;
+    assert.equal(paused.chip, 'Transfers paused');
+    assert.equal(paused.tone, 'warn');
+
+    // Policy numbers, selectors and the block are Evidence, never a headline.
+    const visible = JSON.stringify([active.headline, active.facts]);
+    assert.doesNotMatch(visible, /policy 5|0x3060000|ALWAYS_ALLOW|bc61e733/);
+    assert.match(JSON.stringify(active.evidence), /policy 5/);
+    assert.match(JSON.stringify(active.evidence), /0x3060000/);
+  });
+
+  test('approve() is an Evidence line, not a card', () => {
+    const transfer = useSectionsV1({ ...base, use: use() })[1]!;
+    assert.match(
+      JSON.stringify(transfer.evidence),
+      /an approval is not permission to transfer/,
+    );
+    assert.doesNotMatch(JSON.stringify(transfer.facts), /approve/i);
+  });
+
+  test('the wallet answer names the scope and never claims more than a policy read', () => {
+    const transfer = useSectionsV1({
+      ...base,
+      use: use({
+        wallet: {
+          address: '0xdead00000000000000000000000000000000beef',
+          checks: [
+            { scope: 'sender', state: 'allowed', policyId: '5' },
+            { scope: 'receiver', state: 'blocked', policyId: '5' },
+            { scope: 'executor', state: 'not_confirmed', reason: 'the policy was not checked for this address' },
+          ],
+        },
+      }),
+    })[1]!;
+    assert.deepEqual(
+      transfer.facts.map((fact) => [fact.label, fact.value]),
+      [
+        ['Transfers', 'Active'],
+        ['Your wallet can send', 'Yes'],
+        ['Your wallet can receive', 'No'],
+        ['Route executor checked', 'Not confirmed'],
+      ],
+    );
+    assert.doesNotMatch(JSON.stringify(transfer), /KYC|jurisdiction|accredited|permission to trade/i);
+  });
+
+  test('a bridge is claimed only for a destination that is really configured', () => {
+    const none = useSectionsV1({ ...base, use: use() })[2]!;
+    assert.equal(none.chip, 'No bridge here');
+    assert.match(none.headline, /No bridge capability answers at this exact address/);
+
+    const capable = useSectionsV1({
+      ...base,
+      use: use({ bridge: { state: 'detected', endpointAddress: '0x1a44', configuredPeers: [] } }),
+    })[2]!;
+    assert.equal(capable.chip, 'Bridge capability detected');
+    assert.match(capable.headline, /no destination Miorail checked is configured/);
+
+    const established = useSectionsV1({
+      ...base,
+      use: use({ bridge: { state: 'detected', endpointAddress: '0x1a44', configuredPeers: [30101] } }),
+    })[2]!;
+    assert.equal(established.chip, 'Bridge established');
+    assert.match(established.headline, /configured at this exact address to Ethereum/);
+  });
+
+  test('a DeFi miss names the venues, and never says "not in DeFi"', () => {
+    const defi = useSectionsV1({ ...base, use: use() })[3]!;
+    assert.match(defi.headline, /No reviewed integration found in the venues Miorail checked \(Moonwell, Morpho\)/);
+    assert.match(defi.headline, /Other venues exist and were not checked/);
+    assert.doesNotMatch(defi.headline, /not in DeFi|no DeFi|unavailable/i);
+  });
+
+  test('a found integration leads with the use, per axis', () => {
+    const defi = useSectionsV1({
+      ...base,
+      use: use({
+        defi: {
+          checkedVenues: ['Moonwell', 'Morpho'],
+          venues: [
+            {
+              venueId: 'moonwell',
+              venueName: 'Moonwell',
+              state: 'listed',
+              uses: { lend: true, borrow: null, collateral: true },
+              marketRef: '0xabc',
+              reason: null,
+            },
+          ],
+        },
+      }),
+    })[3]!;
+    assert.equal(defi.chip, 'Integration found');
+    assert.deepEqual(defi.facts.map((fact) => fact.label), ['Lend', 'Collateral']);
+    assert.doesNotMatch(JSON.stringify(defi.facts), /Borrow/);
+  });
+
+  test('with nothing read on chain, every measured section says so and none says no', () => {
+    const sections = useSectionsV1({ ...base, use: null });
+    for (const section of sections.slice(1, 4)) {
+      assert.match(section.headline, /gap in our reading|did not check/);
+      assert.doesNotMatch(section.headline, /cannot|is not allowed|no bridge exists/i);
+    }
   });
 });

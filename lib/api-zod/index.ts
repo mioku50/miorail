@@ -5226,3 +5226,16 @@ export const PublicProofShareResponseV1Schema = z
   })
   .strict();
 export type PublicProofShareResponseV1 = z.infer<typeof PublicProofShareResponseV1Schema>;
+
+// Phase 17.4 — Use & access, defined beside the projection that fills it in
+// `@mioagent/rwa-issuer` for the same reason the Market Reality schemas are
+// re-exported rather than restated.
+// The SUBPATH, never the barrel. `@mioagent/rwa-issuer` re-exports
+// `backedAssetsApi`, which imports `node:crypto` — and this module is bundled
+// for the browser, so one barrel import broke the Base App build with an
+// unhandled-scheme error a hundred lines from its cause. Same class as the
+// entry chunk that dragged in eleven screens.
+export {
+  RepresentationUseAccessV1Schema,
+  type RepresentationUseAccessV1,
+} from '@mioagent/rwa-issuer/useAccess';

@@ -4,6 +4,11 @@ import {
   type RepresentationUtilityEdgeV1,
   type UtilityEvidenceStateV1,
 } from '@mioagent/rwa-issuer/utilityMap';
+import {
+  establishedDefiUsesV1,
+  type DefiUseKindV1,
+  type RepresentationUseAccessV1,
+} from '@mioagent/rwa-issuer/useAccess';
 
 import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
@@ -1338,6 +1343,327 @@ function latestQuoteV1(
     if (!latest || Date.parse(quote.observedAt) > Date.parse(latest.observedAt)) latest = quote;
   }
   return latest;
+}
+
+// ---------------------------------------------------------------------------
+// Use & access — what can actually be done with this exact address.
+//
+// The tab used to open on a wall of citations. Every fact in it was true and
+// almost none of it answered the question a reader arrived with, because three
+// of its rows said "Not established" for things nobody had ever measured and
+// the rest described a legal structure.
+//
+// Four measured sections first, in the order a person would ask: can I trade
+// it, can I move it, can I bridge it, can anything lend against it. Then the
+// issuer's own processes, then the documents. Nothing is hidden — the structure
+// simply stops being the first screen.
+// ---------------------------------------------------------------------------
+
+export type UseSectionIdV1 = 'trade' | 'transfer' | 'bridge' | 'defi' | 'issuer' | 'how_it_works';
+
+export interface UseSectionViewV1 {
+  id: UseSectionIdV1;
+  label: string;
+  /** The answer, in one sentence, before any evidence. */
+  headline: string;
+  /** A short verdict chip. Never a number and never an id. */
+  chip: string;
+  tone: ToneV1;
+  /** Consumer-facing lines. No selector, policy id, block tag or CAIP-10. */
+  facts: FactViewV1[];
+  /** Everything an operator needs and a reader does not: ids and raw reads. */
+  evidence: { label: string; value: string }[];
+  /** Issuer documentation, unchanged, for the two sections that carry it. */
+  edges: UtilityEdgeViewV1[];
+}
+
+/** The LayerZero endpoint ids Miorail names, so a destination has a word. */
+const BRIDGE_NETWORK_NAMES_V1: Readonly<Record<number, string>> = {
+  30101: 'Ethereum',
+  30102: 'BNB Chain',
+  30106: 'Avalanche',
+  30109: 'Polygon',
+  30110: 'Arbitrum',
+  30111: 'Optimism',
+  30184: 'Base',
+};
+
+const SCOPE_SENTENCE_V1: Readonly<Record<'sender' | 'receiver' | 'executor', string>> = {
+  sender: 'Your wallet can send',
+  receiver: 'Your wallet can receive',
+  executor: 'Route executor checked',
+};
+
+function tradeSectionV1(input: {
+  exit: FactViewV1 | null;
+  exitBasis: 'open' | 'last_measured' | null;
+  openQuote: OpenQuoteViewV1 | null;
+  lastMeasuredLabel: string | null;
+  outcomeBody: string;
+}): UseSectionViewV1 {
+  // The bug this section replaces: the trade edge read only the twenty-second
+  // quote, so a round trip measured half an hour ago and rendered in full on
+  // Market Reality read here as "Stale". A live quote and a stored measurement
+  // are different things, and an expired quote does not un-measure a trade.
+  const live = input.openQuote?.state === 'live';
+  const measured = input.exit !== null;
+  const facts: FactViewV1[] = [];
+  if (live && input.openQuote) {
+    facts.push({
+      label: 'Open right now',
+      value: input.openQuote.value,
+      note: input.openQuote.expiresInLabel,
+      tone: 'good',
+    });
+  }
+  if (input.exit) facts.push(input.exit);
+  return {
+    id: 'trade',
+    label: 'Trade',
+    headline: live
+      ? 'A router reaches this exact address at this size, and the quote is open now.'
+      : measured
+        ? `A router reached this exact address at this size when it was last measured${input.lastMeasuredLabel ? ` — ${input.lastMeasuredLabel.toLowerCase()}` : ''}. That measurement stands; only the live quote expired.`
+        : input.outcomeBody,
+    chip: live ? 'Tradable now' : measured ? 'Tradable when measured' : 'Not established',
+    tone: live ? 'good' : measured ? 'neutral' : 'off',
+    facts,
+    evidence: [],
+    edges: [],
+  };
+}
+
+function transferSectionV1(
+  use: RepresentationUseAccessV1 | null,
+): UseSectionViewV1 {
+  const facts: FactViewV1[] = [];
+  const evidence: { label: string; value: string }[] = [];
+  let chip = 'Not confirmed';
+  let tone: ToneV1 = 'off';
+  let headline =
+    'Miorail has not read this contract’s transfer state. That is a gap in our reading, not a restriction on the token.';
+
+  if (use?.transfers.state === 'read') {
+    const paused = use.transfers.transfersPaused;
+    chip = paused ? 'Transfers paused' : 'Transfers active';
+    tone = paused ? 'warn' : 'good';
+    headline = paused
+      ? 'Transfers of this token are paused on chain right now. Nothing can be moved between wallets until that is lifted.'
+      : 'Transfers of this token are active on chain right now.';
+    facts.push({
+      label: 'Transfers',
+      value: paused ? 'Paused' : 'Active',
+      note: 'read on chain, at the block in Evidence',
+      tone: paused ? 'warn' : 'good',
+    });
+  } else if (use?.transfers.state === 'unread') {
+    evidence.push({ label: 'Transfer pause read', value: use.transfers.reason });
+  }
+
+  for (const binding of use?.transferPolicies ?? []) {
+    evidence.push({
+      label: `Policy · ${binding.scope}`,
+      value:
+        binding.state === 'unrestricted'
+          ? 'unrestricted (ALWAYS_ALLOW)'
+          : binding.state === 'bound'
+            ? `policy ${binding.policyId}${binding.policyExists ? '' : ' (registry has no such policy)'}`
+            : `unread — ${binding.reason}`,
+    });
+  }
+
+  // The wallet's own answer, and only the scopes that really gate it. Every
+  // sentence here is about an ONCHAIN ADDRESS POLICY and nothing else.
+  for (const check of use?.wallet?.checks ?? []) {
+    const label = SCOPE_SENTENCE_V1[check.scope as 'sender' | 'receiver' | 'executor'];
+    if (check.state === 'allowed') {
+      facts.push({ label, value: 'Yes', note: 'this address passes the bound transfer policy', tone: 'good' });
+    } else if (check.state === 'blocked') {
+      facts.push({ label, value: 'No', note: 'this address does not pass the bound transfer policy', tone: 'warn' });
+    } else if (check.state === 'unrestricted') {
+      facts.push({ label, value: 'Yes', note: 'no policy gates this scope, so no address can fail it', tone: 'good' });
+    } else if (check.state === 'not_confirmed') {
+      facts.push({ label, value: 'Not confirmed', note: check.reason, tone: 'off' });
+    }
+  }
+  if (use?.blockTag) evidence.push({ label: 'Read at block', value: use.blockTag });
+  // Base Docs states this separately and it is exactly the kind of true fact a
+  // reader turns into a false one: an allowance is not permission.
+  evidence.push({
+    label: 'approve()',
+    value: 'not policy gated — an approval is not permission to transfer',
+  });
+  return {
+    id: 'transfer',
+    label: 'Transfer',
+    headline,
+    chip,
+    tone,
+    facts,
+    evidence,
+    edges: [],
+  };
+}
+
+function bridgeSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 {
+  const bridge = use?.bridge;
+  if (!bridge || bridge.state === 'unread') {
+    return {
+      id: 'bridge',
+      label: 'Bridge',
+      headline:
+        'Miorail has not read this contract for a bridge. That is a gap in our reading, not an absence of one.',
+      chip: 'Not confirmed',
+      tone: 'off',
+      facts: [],
+      evidence: bridge?.state === 'unread' ? [{ label: 'Bridge read', value: bridge.reason }] : [],
+      edges: [],
+    };
+  }
+  if (bridge.state === 'none_detected') {
+    return {
+      id: 'bridge',
+      label: 'Bridge',
+      headline:
+        'No bridge capability answers at this exact address. Another representation of the same company may bridge; this contract does not.',
+      chip: 'No bridge here',
+      tone: 'neutral',
+      facts: [],
+      evidence: [{ label: 'LayerZero endpoint()', value: 'did not answer at this address' }],
+      edges: [],
+    };
+  }
+  const networks = bridge.configuredPeers.map(
+    (id: number) => BRIDGE_NETWORK_NAMES_V1[id] ?? `endpoint ${id}`,
+  );
+  return {
+    id: 'bridge',
+    label: 'Bridge',
+    headline:
+      networks.length > 0
+        ? `A bridge is configured at this exact address to ${networks.join(', ')}.`
+        : 'Bridge capability is present at this exact address, but no destination Miorail checked is configured. A capability with no peer can send nothing anywhere.',
+    chip: networks.length > 0 ? 'Bridge established' : 'Bridge capability detected',
+    tone: networks.length > 0 ? 'good' : 'neutral',
+    facts: networks.map((network: string) => ({
+      label: 'Bridge to',
+      value: network,
+      note: 'a peer is configured for this destination',
+      tone: 'good' as const,
+    })),
+    evidence: [
+      { label: 'LayerZero endpoint', value: bridge.endpointAddress ?? 'not decoded' },
+      {
+        label: 'Destinations checked',
+        value: Object.values(BRIDGE_NETWORK_NAMES_V1).join(', '),
+      },
+    ],
+    edges: [],
+  };
+}
+
+function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 {
+  const listing = use?.defi;
+  const checked = listing?.checkedVenues ?? [];
+  const uses: { kind: DefiUseKindV1; venues: string[] }[] = listing
+    ? establishedDefiUsesV1(listing)
+    : [];
+  const unread = (listing?.venues ?? []).filter(
+    (venue: RepresentationUseAccessV1['defi']['venues'][number]) => venue.state === 'unread',
+  );
+  const evidence = (listing?.venues ?? []).map((venue: RepresentationUseAccessV1['defi']['venues'][number]) => ({
+    label: venue.venueName,
+    value:
+      venue.state === 'listed'
+        ? `listed${venue.marketRef ? ` · ${venue.marketRef}` : ''}`
+        : venue.state === 'unread'
+          ? `unread — ${venue.reason ?? 'no reason given'}`
+          : 'not listed',
+  }));
+  if (uses.length > 0) {
+    return {
+      id: 'defi',
+      label: 'DeFi',
+      headline: `This exact address is used in DeFi: ${uses
+        .map((entry) => `${DEFI_USE_LABEL_V1[entry.kind]} at ${entry.venues.join(', ')}`)
+        .join('; ')}.`,
+      chip: 'Integration found',
+      tone: 'good',
+      facts: uses.map((entry) => ({
+        label: DEFI_USE_LABEL_V1[entry.kind],
+        value: entry.venues.join(', '),
+        note: 'the venue names this exact address',
+        tone: 'good' as const,
+      })),
+      evidence,
+      edges: [],
+    };
+  }
+  return {
+    id: 'defi',
+    label: 'DeFi',
+    headline:
+      checked.length > 0
+        ? `No reviewed integration found in the venues Miorail checked (${checked.join(', ')}). Other venues exist and were not checked.`
+        : 'Miorail did not check any lending venue for this address.',
+    chip: unread.length > 0 && unread.length === checked.length ? 'Not confirmed' : 'None found here',
+    tone: 'off',
+    facts: [],
+    evidence,
+    edges: [],
+  };
+}
+
+const DEFI_USE_LABEL_V1: Readonly<Record<'lend' | 'borrow' | 'collateral', string>> = {
+  lend: 'Lend',
+  borrow: 'Borrow',
+  collateral: 'Collateral',
+};
+
+export function useSectionsV1(input: {
+  use: RepresentationUseAccessV1 | null;
+  groups: readonly UtilityGroupViewV1[];
+  exit: FactViewV1 | null;
+  exitBasis: 'open' | 'last_measured' | null;
+  openQuote: OpenQuoteViewV1 | null;
+  lastMeasuredLabel: string | null;
+  outcomeBody: string;
+  caip10: string;
+}): UseSectionViewV1[] {
+  const issuerEdges = input.groups
+    .filter((group) => group.label === 'Issuer lifecycle')
+    .flatMap((group) => group.edges);
+  const structureEdges = input.groups
+    .filter((group) => group.label === 'Access, transfer and value model')
+    .flatMap((group) => group.edges);
+  return [
+    tradeSectionV1(input),
+    transferSectionV1(input.use),
+    bridgeSectionV1(input.use),
+    defiSectionV1(input.use),
+    {
+      id: 'issuer',
+      label: 'Issuer services',
+      headline:
+        'What the issuer documents it will do. These are authenticated processes, not actions Miorail can carry out.',
+      chip: 'Documented',
+      tone: 'neutral',
+      facts: [],
+      evidence: [],
+      edges: issuerEdges,
+    },
+    {
+      id: 'how_it_works',
+      label: 'How it works',
+      headline:
+        'What this token represents and how its value is referenced. Structure, not availability.',
+      chip: 'Reference',
+      tone: 'neutral',
+      facts: [],
+      evidence: [{ label: 'Exact address', value: input.caip10 }],
+      edges: structureEdges,
+    },
+  ];
 }
 
 function utilityEdgeViewV1(

@@ -1,6 +1,6 @@
 import { Router, type Request } from 'express';
 import { decodeFunctionResult, encodeFunctionData } from 'viem';
-import { createB20ReaderV1, readB20TransferEligibilityV1 } from '@mioagent/b20-control';
+import { callManyV1, createB20ReaderV1, readB20TransferEligibilityV1 } from '@mioagent/b20-control';
 import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
@@ -43,6 +43,11 @@ import {
 } from '../lib/stockActionDraft.js';
 import { issueStockActionClearanceV1 } from '../lib/stockActionClearance.js';
 import { stockExecutionHandoffV1 } from '@mioagent/rwa-market-reality/execution-handoff';
+import {
+  assembleUseAccessV1,
+  reviewedDefiSourcesV1,
+  type UseAccessReaderV1,
+} from '@mioagent/rwa-issuer';
 
 export const rwaMarketRealityRouter = Router();
 
@@ -156,6 +161,35 @@ export const rwaMarketRealityRuntime = {
   },
   measureOne: measureOfficialCashExitV1,
   reader: () => createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
+  /** The same reader, narrowed to what Use & access needs: an anchor and a
+   * pinned `eth_call`. Nothing on that surface may reach a wider seam. */
+  useAccessReader: (): UseAccessReaderV1 => {
+    const reader = createB20ReaderV1({ rpcUrl: rpcUrlV1() });
+    return {
+      async readBlockAnchor() {
+        const anchor = await reader.readBlockAnchor();
+        return anchor.ok
+          ? { ok: true, value: { blockTag: anchor.value.blockTag } }
+          : { ok: false, reason: anchor.reason };
+      },
+      async call(input) {
+        const result = await reader.call(input);
+        return result.ok ? { ok: true, value: result.value } : { ok: false, reason: result.reason };
+      },
+      // Batched, because the assembly is written in rounds for exactly this:
+      // eight sequential reads against a rate-limited endpoint produce
+      // `unread` and `not_confirmed` that look like findings.
+      async callMany(inputs) {
+        const results = await callManyV1(reader, [...inputs]);
+        return results.map((result) =>
+          result.ok
+            ? { ok: true as const, value: result.value }
+            : { ok: false as const, reason: result.reason },
+        );
+      },
+    };
+  },
+  defiSources: () => reviewedDefiSourcesV1(),
   reference: () =>
     createReviewedMarketRealityReferenceAdapterV1({
       official: createDatabaseOfficialAssetRepository(client),
@@ -452,6 +486,62 @@ function questionFromRequestV1(req: Request): QuestionParseV1 {
     destination: destination as 'USDC' | 'ETH',
   };
 }
+
+// ---------------------------------------------------------------------------
+// Use & access, for ONE exact address.
+//
+// Its own route rather than a field on the comparison: these are chain reads
+// and two HTTP calls, and paying for them on every size or direction press
+// would make the board slower to answer the question it exists for. The tab
+// asks when it is opened.
+//
+// The wallet is taken from the SESSION and never from a request field. A route
+// that accepted an address would answer for a wallet nobody proved, and the
+// answer is about permission.
+// ---------------------------------------------------------------------------
+rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    res.status(400).json({ error: 'exact_address_required', code: 'exact_address_required' });
+    return;
+  }
+  if (!rpcUrlV1()) {
+    res.status(503).json({
+      error: 'market_reality_chain_unavailable',
+      code: 'market_reality_chain_unavailable',
+    });
+    return;
+  }
+  try {
+    const use = await assembleUseAccessV1({
+      tokenAddress,
+      reader: rwaMarketRealityRuntime.useAccessReader(),
+      now: rwaMarketRealityRuntime.now(),
+      defiSources: rwaMarketRealityRuntime.defiSources(),
+      walletAddress: user.address,
+    });
+    res.json(use);
+  } catch (error) {
+    // Named, not swallowed: 23 bare catches once meant a production 500
+    // recorded nothing at all.
+    res.status(502).json({
+      error: 'use_access_unavailable',
+      code: 'use_access_unavailable',
+      detail: error instanceof Error ? error.message.slice(0, 200) : 'unknown',
+    });
+  }
+});
 
 rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res) => {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {
