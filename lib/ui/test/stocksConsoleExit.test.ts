@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import { exitEvidenceV1 } from '../src/console/stocksConsole';
+import { autoMeasureDecisionV1, exitEvidenceV1 } from '../src/console/stocksConsole';
 
 // ---------------------------------------------------------------------------
 // The round trip at the size being asked.
@@ -135,4 +135,45 @@ test('a cost with no returned amount still answers, without inventing the money'
   assert.equal(exit?.roundTripCostBps, '51');
   assert.equal(exit?.returnedCashAtomic, null);
   assert.equal(exit?.requestedCashAtomic, '100000000000');
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.2 — measuring on interest, not on render.
+//
+// A router quote lives about twenty seconds and the sampler runs on a timer of
+// tens of minutes, so a reader has essentially never arrived to an open quote.
+// The answer is to measure when somebody chooses a question — and to refuse to
+// measure the moment there is nothing to buy with the call, because a page that
+// measures on every render is the sampler 10B.5 deliberately did not build.
+// ---------------------------------------------------------------------------
+
+describe('autoMeasureDecisionV1', () => {
+  const base = { hasOpenQuote: false, anySupplyOutstanding: true, measurementInFlight: false };
+
+  test('a chosen question with nothing open and something outstanding is measured', () => {
+    assert.equal(autoMeasureDecisionV1(base), 'measure');
+  });
+
+  test('an open quote is already the answer', () => {
+    assert.equal(autoMeasureDecisionV1({ ...base, hasOpenQuote: true }), 'already_open');
+  });
+
+  test('a security with nothing outstanding buys nothing with a router call', () => {
+    // Nine of the thirteen Coinbase tokenized stocks are exactly this.
+    assert.equal(
+      autoMeasureDecisionV1({ ...base, anySupplyOutstanding: false }),
+      'no_supply_outstanding',
+    );
+  });
+
+  test('a measurement already running is not doubled', () => {
+    assert.equal(autoMeasureDecisionV1({ ...base, measurementInFlight: true }), 'in_flight');
+  });
+
+  test('the cheapest refusal wins, so a call is never made to learn it was unnecessary', () => {
+    assert.equal(
+      autoMeasureDecisionV1({ hasOpenQuote: true, anySupplyOutstanding: false, measurementInFlight: true }),
+      'already_open',
+    );
+  });
 });

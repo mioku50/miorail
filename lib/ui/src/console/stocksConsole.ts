@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   useAddMarketRealityRadarWatch,
   useAskRwaMarketReality,
@@ -202,6 +202,34 @@ export function exitEvidenceV1(
   return null;
 }
 
+/**
+ * Whether an automatic measurement is worth a router call — named, not implied.
+ *
+ * The trigger is a question a person chose; this is the second half, which
+ * decides whether that question needs asking at all. Every refusal is a saving
+ * with a reason, and the reasons are different enough that collapsing them into
+ * one boolean would hide which one fired.
+ */
+export type AutoMeasureDecisionV1 =
+  | 'measure'
+  /** Already current: asking again buys evidence that expires with what we hold. */
+  | 'already_open'
+  /** Nothing is outstanding anywhere, so there is nothing for a router to route. */
+  | 'no_supply_outstanding'
+  /** A measurement of this same question is already running. */
+  | 'in_flight';
+
+export function autoMeasureDecisionV1(input: {
+  hasOpenQuote: boolean;
+  anySupplyOutstanding: boolean;
+  measurementInFlight: boolean;
+}): AutoMeasureDecisionV1 {
+  if (input.hasOpenQuote) return 'already_open';
+  if (!input.anySupplyOutstanding) return 'no_supply_outstanding';
+  if (input.measurementInFlight) return 'in_flight';
+  return 'measure';
+}
+
 export interface StocksConsoleResultV1 {
   model: MarketRealityScreenModelV1;
   /** The security actually on screen: the question's, or the first comparable
@@ -303,11 +331,52 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [watchIdByTokenAddress],
   );
 
+  // The exact question, as one key. Every field the answer depends on is in it
+  // and nothing else — a surface change or a re-render is not a new question.
+  const questionKey = selectedKey
+    ? [selectedKey, question.direction, question.requestedCashAtomic, question.destination].join('|')
+    : null;
+
+  // Is anything open right now, and when does the first one lapse?
+  const openQuote = useMemo(() => {
+    let open = false;
+    let earliestExpiry: number | null = null;
+    for (const representation of reality.data?.representations ?? []) {
+      if (representation.status !== 'full' || !representation.returnedCashAtomic) continue;
+      open = true;
+      for (const source of representation.sources) {
+        const expiresAt = source.quoteEvidence?.expiresAt;
+        if (!expiresAt) continue;
+        const at = Date.parse(expiresAt);
+        if (Number.isFinite(at) && (earliestExpiry === null || at < earliestExpiry)) {
+          earliestExpiry = at;
+        }
+      }
+    }
+    return { open, earliestExpiry };
+  }, [reality.data]);
+
+  // A one-second tick, and ONLY while something is open.
+  //
+  // "Expires in 17s" is the one number on this page worth watching move, and it
+  // is also the only reason to re-render on a timer. When nothing is open the
+  // interval does not exist, so an idle Stocks tab costs nothing.
+  const [tick, setTick] = useState(0);
+  useEffect(() => {
+    const expiry = openQuote.earliestExpiry;
+    if (!openQuote.open || expiry === null) return undefined;
+    const timer = setInterval(() => {
+      setTick((value) => value + 1);
+      if (Date.now() >= expiry) clearInterval(timer);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [openQuote.open, openQuote.earliestExpiry]);
+
   // One clock for the whole render, so two ages on the same screen cannot be
   // computed a few milliseconds apart and disagree.
   const nowIso = useMemo(
     () => new Date().toISOString(),
-    [reality.dataUpdatedAt, history.dataUpdatedAt, index.dataUpdatedAt],
+    [reality.dataUpdatedAt, history.dataUpdatedAt, index.dataUpdatedAt, tick],
   );
 
   // The round-trip ladder, per representation, out of the stored cash-exit run
@@ -428,6 +497,66 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     if (parts.length === 0) return 'Nothing needed measuring.';
     return `${parts.join(' · ')}.${spent.joinedInFlight ? ' Shared with a measurement already running.' : ''}`;
   }, [measure.data]);
+
+  // -------------------------------------------------------------------------
+  // Phase 17.2 — the page measures on interest, not on render.
+  //
+  // A router quote lives about twenty seconds and the background sampler runs
+  // on a timer measured in tens of minutes, so a reader has essentially never
+  // arrived to an open quote. Measuring on every render would close that gap by
+  // turning the page into the sampler 10B.5 deliberately did not build, so the
+  // trigger is a question a person actually chose: the first open of a
+  // selection, a different stock, a different direction, a different size, a
+  // different destination. A surface switch is not one of them — the answer
+  // does not depend on which tab is showing.
+  //
+  // Four guards before a call is made, and three of them exist to spend
+  // nothing:
+  //   * the read has to have arrived, because it is what says whether anything
+  //     is open;
+  //   * a question that already holds an open quote is current, and asking
+  //     again would buy an answer that expires at the same instant;
+  //   * a security with no supply anywhere has nothing to route, and nine of
+  //     the thirteen Coinbase contracts are exactly that;
+  //   * one automatic attempt per question per session, so a refetch, a tab
+  //     change or a re-render never becomes a second call.
+  // The server's own single-flight, cooldown and open-evidence reuse still sit
+  // behind all of it; this is the layer that decides not to ask at all.
+  // -------------------------------------------------------------------------
+  const autoMeasuredQuestion = useRef<string | null>(null);
+  const measureMutate = measure.mutate;
+  useEffect(() => {
+    if (!enabled || !selectedKey || !questionKey) return;
+    if (autoMeasuredQuestion.current === questionKey) return;
+    const representations = reality.data?.representations;
+    if (!representations) return;
+    // Marked done whatever the decision below: this question has been
+    // considered, and reconsidering it on the next render is the loop.
+    autoMeasuredQuestion.current = questionKey;
+    const decision = autoMeasureDecisionV1({
+      hasOpenQuote: openQuote.open,
+      anySupplyOutstanding: representations.some((row) => row.supply.state === 'positive_supply'),
+      measurementInFlight: measure.isPending,
+    });
+    if (decision !== 'measure') return;
+    measureMutate({
+      underlyingKey: selectedKey,
+      direction: question.direction,
+      requestedCashAtomic: question.requestedCashAtomic,
+      destination: question.destination,
+    });
+  }, [
+    enabled,
+    selectedKey,
+    questionKey,
+    reality.data,
+    openQuote.open,
+    measure.isPending,
+    measureMutate,
+    question.direction,
+    question.requestedCashAtomic,
+    question.destination,
+  ]);
 
   const disabledNotice = stocksUnavailableNoticeV1({
     enabled,

@@ -1224,6 +1224,22 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-lastseen-k { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; }
 .mio-console .mr-lastseen-v { color: var(--muted); font-size: 12px; font-weight: 600; }
 
+/* The live/checking/expired states of the NOW strip, and the durable answer
+   under it. NOW is the only thing on the card that changes when a quote lapses:
+   the block below it came from the stored run and stays exactly as it was. */
+.mio-console .mr-openquote[data-state='live'] { box-shadow: inset 0 0 0 1px var(--good, var(--line)); }
+.mio-console .mr-openquote-ttl { color: var(--muted); font-size: 10.5px;
+  font-variant-numeric: tabular-nums; }
+.mio-console .mr-openquote[data-state='checking'] .mr-lastseen-v { color: var(--dim); }
+.mio-console .mr-durable { margin-top: 8px; }
+.mio-console .mr-durable .mr-attribution { margin: 0 0 4px; }
+
+/* Reviewed and empty, one disclosure below the markets. Nine of the thirteen
+   Coinbase contracts hold zero; interleaved, they made four working markets
+   look like a product that mostly does not work. */
+.mio-console .mr-choices-empty { margin-top: 10px; }
+.mio-console .mr-choices-empty .lnote { margin: 4px 0 8px; }
+
 /* What is NOT established, once, with no value column.
 
    Four rows reading `Effective price  —  the share ratio isn't confirmed` gave

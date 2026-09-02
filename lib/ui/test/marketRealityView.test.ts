@@ -12,6 +12,8 @@ import {
 import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
   collapseLadderRungsV1,
+  expiresInLabelV1,
+  partitionChoicesBySupplyV1,
   splitEstablishedFactsV1,
   utilityAnswerV1,
   sourceLabelV1,
@@ -2248,6 +2250,19 @@ describe('history is history, and says so', () => {
             status: 'full',
             liveness: 'live',
             lastObservation: { ...LAPSED_OBSERVATION, open: true },
+            // Phase 17.2: the strip decides liveness from the clock, so a
+            // fixture that wants a live strip needs quote evidence that has not
+            // actually expired. The default source's has.
+            sources: [
+              {
+                ...LAPSED_SOURCE,
+                status: 'quoted' as const,
+                quoteEvidence: {
+                  ...LAPSED_SOURCE.quoteEvidence,
+                  expiresAt: '2026-08-26T20:34:36.000Z',
+                },
+              },
+            ],
             returnedCashAtomic: '99952618',
           }),
         ],
@@ -2258,7 +2273,11 @@ describe('history is history, and says so', () => {
     // Open evidence is the strip's job now, and the body says so too. The
     // history line is for a look that produced no figure at all.
     const row = view?.representations[0];
-    assert.equal(row?.openQuote?.value, '$99.95');
+    // Phase 17.2: NOW says the round trip in the same words the durable answer
+    // does, so a reader reads one measurement taken twice — not two kinds of
+    // thing that happen to sit near each other.
+    assert.equal(row?.openQuote?.state, 'live');
+    assert.equal(row?.openQuote?.value, '$100 in \u2192 $99.95 back');
     assert.match(row?.openQuote?.note ?? '', /open right now/);
     assert.match(row?.numbers[0]?.note ?? '', /still open/);
     assert.equal(row?.numbers[0]?.tone, 'neutral', 'a live figure is not muted');
@@ -2561,5 +2580,125 @@ describe('Phase 17.1 — the answer, then the evidence', () => {
         assert.ok(named.has(edge.label), `${edge.label} must appear in the answer`);
       }
     }
+  });
+});
+
+describe('Phase 17.2 — NOW is short-lived, LAST MEASURED is not', () => {
+  const OPEN_SOURCE = {
+    ...LAPSED_SOURCE,
+    status: 'quoted' as const,
+    quoteEvidence: { ...LAPSED_SOURCE.quoteEvidence, expiresAt: '2026-08-26T20:34:36.000Z' },
+  };
+
+  function openCard(now: string) {
+    return marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            status: 'full',
+            liveness: 'live',
+            lastObservation: { ...LAPSED_OBSERVATION, open: true },
+            sources: [OPEN_SOURCE],
+            returnedCashAtomic: '99952618',
+          }),
+        ],
+      }),
+      choice: null,
+      now,
+      ladders: {
+        [COINBASE_NVDA]: {
+          rungs: [{ label: '$100', value: '0.09%', note: 'measured 28 min ago', tone: 'good' }],
+          note: 'Exact sizes only, quoted through KyberSwap.',
+          exit: {
+            roundTripCostBps: '9',
+            requestedCashAtomic: '100000000',
+            returnedCashAtomic: '99910000',
+            observedAt: '2026-08-26T20:06:00.000Z',
+            basis: 'last_measured',
+          },
+        },
+      },
+    });
+  }
+
+  test('an open quote counts down, in whole seconds', () => {
+    assert.equal(expiresInLabelV1('2026-08-26T20:34:36.000Z', NOW), 'Expires in 17s');
+    assert.equal(expiresInLabelV1('2026-08-26T20:34:19.400Z', NOW), 'Expires in 1s');
+    // At and past expiry nothing is open, so the strip claims nothing.
+    assert.equal(expiresInLabelV1('2026-08-26T20:34:19.000Z', NOW), null);
+    assert.equal(expiresInLabelV1('2026-08-26T20:34:10.000Z', NOW), null);
+    assert.equal(expiresInLabelV1(null, NOW), null);
+  });
+
+  test('NOW says the round trip in the same words the stored answer does', () => {
+    const strip = openCard(NOW)?.representations[0]?.openQuote;
+    assert.equal(strip?.state, 'live');
+    assert.equal(strip?.value, '$100 in \u2192 $99.95 back');
+    assert.equal(strip?.expiresInLabel, 'Expires in 17s');
+  });
+
+  test('when the quote lapses, ONLY the strip changes', () => {
+    const live = openCard(NOW)!.representations[0]!;
+    // Twenty seconds later: past this quote's own expiry.
+    const lapsed = openCard('2026-08-26T20:34:39.000Z')!.representations[0]!;
+
+    assert.equal(live.openQuote?.state, 'live');
+    assert.equal(lapsed.openQuote?.state, 'none');
+    assert.equal(lapsed.openQuote?.expiresInLabel, null);
+
+    // The durable half is byte-identical across the lapse. This is the whole
+    // point: a card that emptied itself twenty seconds after a measurement is
+    // what made Stocks look like it had no data.
+    // Same money, same tone, same label. Only the AGE moves, because an age is
+    // supposed to move — what must not move is the answer.
+    assert.equal(lapsed.exit?.value, live.exit?.value);
+    assert.equal(lapsed.exit?.label, live.exit?.label);
+    assert.equal(lapsed.exit?.tone, live.exit?.tone);
+    assert.equal(lapsed.exitBasis, 'last_measured');
+    assert.deepEqual(lapsed.ladder, live.ladder);
+    assert.ok(lapsed.exit, 'the stored round trip survives the lapse');
+    assert.match(lapsed.exit!.value, /in \u2192 .* back/);
+    assert.ok(lapsed.numbers.length > 0, 'the value grid is not emptied by an expiry');
+    assert.ok(lapsed.lastMeasuredLabel, 'and it still says when it was measured');
+  });
+
+  test('a stored round trip is marked as stored, not as live', () => {
+    const card = openCard('2026-08-26T20:34:39.000Z')!.representations[0]!;
+    assert.equal(card.exitBasis, 'last_measured');
+    assert.match(card.exit?.note ?? '', /measured/);
+    assert.doesNotMatch(card.exit?.note ?? '', /open quote/);
+  });
+});
+
+describe('Phase 17.2 — markets first, reviewed-and-empty second', () => {
+  const choice = (key: string, emptyNote: string | null) => ({
+    underlyingKey: key, title: key, identifier: null, issuerLine: 'Coinbase',
+    issuerIds: ['coinbase'], representationCount: 1, multiIssuer: false, emptyNote,
+  });
+
+  test('a security whose supply read came back zero moves below the markets', () => {
+    const split = partitionChoicesBySupplyV1([
+      choice('NVDA', null),
+      choice('MSFT', 'No tokens outstanding'),
+      choice('GOOGL', null),
+      choice('CRCL', 'No tokens outstanding'),
+    ] as never);
+    assert.deepEqual(split.live.map((row) => row.underlyingKey), ['NVDA', 'GOOGL']);
+    assert.deepEqual(split.empty.map((row) => row.underlyingKey), ['MSFT', 'CRCL']);
+  });
+
+  test('an unread security is not an empty one', () => {
+    // `emptyNote` is set only when supply was read and came back zero on every
+    // contract. Never-read stays with the markets rather than being filed as
+    // empty on evidence nobody has.
+    const split = partitionChoicesBySupplyV1([choice('UNREAD', null)] as never);
+    assert.deepEqual(split.live.map((row) => row.underlyingKey), ['UNREAD']);
+    assert.deepEqual(split.empty, []);
+  });
+
+  test('nothing is dropped', () => {
+    const rows = [choice('A', null), choice('B', 'No tokens outstanding')] as never;
+    const split = partitionChoicesBySupplyV1(rows);
+    assert.equal(split.live.length + split.empty.length, 2);
   });
 });

@@ -360,7 +360,7 @@ export interface RepresentationViewV1 {
    * it invites the reader to conclude the market refused, when there is no
    * position for a market to refuse.
    */
-  openQuote: { value: string; note: string | null } | null;
+  openQuote: OpenQuoteViewV1 | null;
   /**
    * When the last completed measurement happened, in one phrase.
    *
@@ -377,6 +377,14 @@ export interface RepresentationViewV1 {
    * no route never had a sell to price.
    */
   exit: FactViewV1 | null;
+  /**
+   * Which measurement `exit` came from — the open quote, or the stored run.
+   *
+   * The card must be able to say LAST MEASURED over a durable answer, because
+   * the whole point of keeping it is that it is still there twenty seconds
+   * after the live quote is gone.
+   */
+  exitBasis: 'open' | 'last_measured' | null;
   /**
    * Whether this representation belongs in the primary comparison.
    *
@@ -425,6 +433,21 @@ export interface RepresentationViewV1 {
     answer: UtilityAnswerViewV1;
     groups: UtilityGroupViewV1[];
   };
+}
+
+/**
+ * NOW: the short-lived half of the card.
+ *
+ * `live` and `none` are exclusive and neither of them is the durable answer.
+ * When a quote lapses this becomes `none` and NOTHING else on the card changes
+ * — the stored measurement below it was never sourced from the quote.
+ */
+export interface OpenQuoteViewV1 {
+  state: 'live' | 'none';
+  value: string;
+  note: string | null;
+  /** Counts down while the quote is open; null the moment it is not. */
+  expiresInLabel: string | null;
 }
 
 /** A named absence: a label and the reason, and structurally no value. */
@@ -803,14 +826,47 @@ function outcomeBodyV1(
  */
 function openQuoteStripV1(
   representation: MarketRealityRepresentationWireV1,
-): { value: string; note: string | null } {
-  if (representation.status === 'full' && representation.returnedCashAtomic) {
+  requestedCashAtomic: string,
+  nowIso: string,
+): OpenQuoteViewV1 {
+  // Liveness is decided by the CLOCK, not by the status the server stamped when
+  // it assembled. `full` means the quote was open at assembly time; a reader
+  // holding that answer twenty-one seconds later holds a lapsed one, and a strip
+  // that reads it off the status alone goes on claiming "open right now" over a
+  // quote nobody could execute.
+  const expiresInLabel = expiresInLabelV1(latestQuoteV1(representation)?.expiresAt ?? null, nowIso);
+  if (representation.status === 'full' && representation.returnedCashAtomic && expiresInLabel) {
+    const paidIn = usdV1(requestedCashAtomic);
+    const cameBack = usdV1(representation.returnedCashAtomic);
     return {
-      value: usdV1(representation.returnedCashAtomic) ?? '—',
+      state: 'live',
+      // Money first, in the same words the durable answer below uses, so a
+      // reader sees the live number and the last measured number as the same
+      // measurement taken twice — not as two different kinds of thing.
+      value:
+        paidIn !== null && cameBack !== null
+          ? `${paidIn} in \u2192 ${cameBack} back`
+          : (cameBack ?? '\u2014'),
       note: 'open right now, at this exact size',
+      expiresInLabel,
     };
   }
-  return { value: 'No live quote', note: null };
+  return { state: 'none', value: 'No live quote', note: null, expiresInLabel: null };
+}
+
+/**
+ * "Expires in 17s" — the only number on this card that is worth watching move.
+ *
+ * A router quote is good for about twenty seconds and nothing else on the page
+ * changes inside that window, so a static "open right now" leaves a reader with
+ * no way to tell a quote that has eighteen seconds left from one that has one.
+ * Under a second, and at expiry, the strip stops claiming anything is open.
+ */
+export function expiresInLabelV1(expiresAt: string | null, nowIso: string): string | null {
+  if (!expiresAt) return null;
+  const remainingMs = Date.parse(expiresAt) - Date.parse(nowIso);
+  if (!Number.isFinite(remainingMs) || remainingMs <= 0) return null;
+  return `Expires in ${Math.max(1, Math.ceil(remainingMs / 1000))}s`;
 }
 
 /** LAST MEASURED, in one phrase. The other half of the split. */
@@ -1575,6 +1631,28 @@ export interface StockFilterViewV1 {
  * `multi` appears only when something is actually held by two issuers, for the
  * same reason.
  */
+/**
+ * Markets first, reviewed-but-empty second.
+ *
+ * Nine of the thirteen Coinbase tokenized stocks hold exactly zero, and a
+ * chooser that interleaves them makes a product with four working markets look
+ * like a product that mostly does not work. Neither set is hidden and neither is
+ * ranked: this is the denominator separation the comparison already publishes
+ * ("3 reviewed · 0 with tokens outstanding"), applied to the list a reader picks
+ * from. An empty representation keeps its exact address and all of its evidence
+ * — it simply stops occupying the first screen.
+ */
+export function partitionChoicesBySupplyV1(
+  choices: readonly UnderlyingChoiceViewV1[],
+): { live: UnderlyingChoiceViewV1[]; empty: UnderlyingChoiceViewV1[] } {
+  const live: UnderlyingChoiceViewV1[] = [];
+  const empty: UnderlyingChoiceViewV1[] = [];
+  // `emptyNote` is set only when supply was READ and came back zero on every
+  // contract. A representation nobody has read is not empty, and stays above.
+  for (const choice of choices) (choice.emptyNote === null ? live : empty).push(choice);
+  return { live, empty };
+}
+
 export function stockFiltersV1(
   choices: readonly UnderlyingChoiceViewV1[],
 ): StockFilterViewV1[] {
@@ -1825,11 +1903,18 @@ export function marketRealityViewV1(input: {
         // taken against a contract with nothing outstanding measures our own
         // question, not this token.
         lastSeen: outcome === 'zero_supply' ? null : lastSeenV1(representation, input.now),
-        openQuote: outcome === 'zero_supply' ? null : openQuoteStripV1(representation),
+        openQuote:
+          outcome === 'zero_supply'
+            ? null
+            : openQuoteStripV1(representation, wire.question.requestedCashAtomic, input.now),
         lastMeasuredLabel:
           outcome === 'zero_supply' ? null : lastMeasuredLabelV1(representation, input.now),
         // Zero supply leaves the comparison, and a round trip through a
         // contract with nothing outstanding is not a fact about anything.
+        exitBasis:
+          outcome === 'zero_supply'
+            ? null
+            : (input.ladders?.[representation.tokenAddress.toLowerCase()]?.exit?.basis ?? null),
         exit:
           outcome === 'zero_supply'
             ? null

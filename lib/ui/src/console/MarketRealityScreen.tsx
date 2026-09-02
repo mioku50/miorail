@@ -8,6 +8,7 @@ import {
 import {
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
+  partitionChoicesBySupplyV1,
   stockFiltersV1,
   type FactViewV1,
   type StockFilterViewV1,
@@ -290,6 +291,7 @@ function RepresentationCard({
   watched,
   watching,
   removing,
+  measuring,
   inspectRouteUnavailable,
 }: {
   representation: RepresentationViewV1;
@@ -298,6 +300,8 @@ function RepresentationCard({
   watched: boolean;
   watching: boolean;
   removing: boolean;
+  /** A refresh of THIS exact question is in flight. */
+  measuring: boolean;
   inspectRouteUnavailable: string | null;
 }) {
   if (surface === 'utility') {
@@ -474,13 +478,45 @@ function RepresentationCard({
           three cards taught the reader the window three times and the state
           none. The window is a property of router quotes, so the board says it
           once, above. */}
+      {/* NOW, and only NOW. Three exclusive states: a live quote with its own
+          countdown, a refresh in flight, or nothing open. None of them owns the
+          durable answer below — when a quote lapses this line changes and the
+          rest of the card does not, which is the whole point of keeping the two
+          apart. */}
       {representation.openQuote ? (
-        <p className="mr-openquote">
+        <p
+          className="mr-openquote"
+          data-state={
+            representation.openQuote.state === 'live'
+              ? 'live'
+              : measuring
+                ? 'checking'
+                : 'none'
+          }
+        >
           <span className="mr-lastseen-k">Now</span>
-          <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
-          {representation.openQuote.note ? (
-            <span className="cr-fact-note"> · {representation.openQuote.note}</span>
-          ) : null}
+          {representation.openQuote.state === 'live' ? (
+            <>
+              <span className="pill cr-status" data-tone="good">
+                Live quote
+              </span>
+              <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
+              {representation.openQuote.expiresInLabel ? (
+                <span className="mr-openquote-ttl mono">
+                  {representation.openQuote.expiresInLabel}
+                </span>
+              ) : null}
+            </>
+          ) : measuring ? (
+            <strong className="mr-lastseen-v">Checking live market…</strong>
+          ) : (
+            <>
+              <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
+              {representation.openQuote.note ? (
+                <span className="cr-fact-note"> · {representation.openQuote.note}</span>
+              ) : null}
+            </>
+          )}
           {representation.lastMeasuredLabel ? (
             <span className="mr-openquote-last">{representation.lastMeasuredLabel}</span>
           ) : null}
@@ -494,10 +530,18 @@ function RepresentationCard({
           answered — and the two came apart badly enough on live representations
           that the audit which found it is the reason this line exists. */}
       {representation.exit ? (
-        <FactList
-          facts={[representation.exit]}
-          label={`${representation.issuerName} round trip`}
-        />
+        <div className="mr-durable">
+          {representation.exitBasis === 'last_measured' && representation.lastMeasuredLabel ? (
+            <p className="mr-attribution">
+              <span className="mr-attribution-k">Last measured</span> this answer stays on the card
+              after a live quote expires
+            </p>
+          ) : null}
+          <FactList
+            facts={[representation.exit]}
+            label={`${representation.issuerName} round trip`}
+          />
+        </div>
       ) : null}
 
       <FactList facts={representation.numbers} label={`${representation.issuerName} outcome`} />
@@ -637,6 +681,35 @@ function RepresentationCard({
   );
 }
 
+function ChoiceButton({
+  choice,
+  selectedKey,
+  onUnderlying,
+}: {
+  choice: UnderlyingChoiceViewV1;
+  selectedKey: string | null;
+  onUnderlying: (underlyingKey: string) => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="option"
+      aria-selected={choice.underlyingKey === selectedKey}
+      className={`mr-choice${choice.underlyingKey === selectedKey ? ' on' : ''}`}
+      onClick={() => onUnderlying(choice.underlyingKey)}
+    >
+      <span className="mr-choice-name">{choice.title}</span>
+      <span className="mr-choice-sub">
+        {choice.issuerLine}
+        {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
+        {/* Kept on the row as well as in the section, so a reader who opens one
+            anyway does not read an empty contract as a broken product. */}
+        {choice.emptyNote ? <span className="pill mr-choice-tag">{choice.emptyNote}</span> : null}
+      </span>
+    </button>
+  );
+}
+
 function Chooser({
   choices,
   selectedKey,
@@ -671,6 +744,7 @@ function Chooser({
       );
     });
   }, [choices, active, search]);
+  const partitioned = useMemo(() => partitionChoicesBySupplyV1(visible), [visible]);
   if (error) return <p className="note warn">{error}</p>;
   if (choices.length === 0) {
     return (
@@ -704,30 +778,40 @@ function Chooser({
           </button>
         ))}
       </div>
-      <div className="mr-choices" role="listbox" aria-label="Reviewed stocks">
-        {visible.map((choice) => (
-          <button
+      <div className="mr-choices" role="listbox" aria-label="Markets with tokens outstanding">
+        {partitioned.live.map((choice) => (
+          <ChoiceButton
             key={choice.underlyingKey}
-            type="button"
-            role="option"
-            aria-selected={choice.underlyingKey === selectedKey}
-            className={`mr-choice${choice.underlyingKey === selectedKey ? ' on' : ''}`}
-            onClick={() => onUnderlying(choice.underlyingKey)}
-          >
-            <span className="mr-choice-name">{choice.title}</span>
-            <span className="mr-choice-sub">
-              {choice.issuerLine}
-              {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
-              {/* Ordering puts these last; this is what stops a reader who
-                  opens one anyway from reading an empty contract as a broken
-                  product. */}
-              {choice.emptyNote ? (
-                <span className="pill mr-choice-tag">{choice.emptyNote}</span>
-              ) : null}
-            </span>
-          </button>
+            choice={choice}
+            selectedKey={selectedKey}
+            onUnderlying={onUnderlying}
+          />
         ))}
       </div>
+      {/* Reviewed, and empty. Not hidden, not ranked, not a quality judgement:
+          the same denominator separation the comparison already publishes,
+          applied to the list a reader picks from. Nine of the thirteen Coinbase
+          contracts hold zero, and interleaving them made a product with four
+          working markets look like one that mostly does not work. */}
+      {partitioned.empty.length > 0 ? (
+        <details className="mcp-tech mr-choices-empty">
+          <summary>Reviewed, no tokens outstanding · {partitioned.empty.length}</summary>
+          <p className="lnote">
+            Every exact address below is reviewed and keeps all of its evidence. Supply was read and
+            came back zero, so there is nothing outstanding to buy or sell at any size.
+          </p>
+          <div className="mr-choices" role="listbox" aria-label="Reviewed, no tokens outstanding">
+            {partitioned.empty.map((choice) => (
+              <ChoiceButton
+                key={choice.underlyingKey}
+                choice={choice}
+                selectedKey={selectedKey}
+                onUnderlying={onUnderlying}
+              />
+            ))}
+          </div>
+        </details>
+      ) : null}
       {visible.length === 0 ? (
         <p className="empty">No reviewed stock matches these filters.</p>
       ) : null}
@@ -984,6 +1068,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     }
                     watching={model.watchingTokenAddress === representation.tokenAddress}
                     removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                    measuring={model.measuring}
                     inspectRouteUnavailable={
                       model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                     }
@@ -1008,6 +1093,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                         }
                         watching={model.watchingTokenAddress === representation.tokenAddress}
                         removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                        measuring={model.measuring}
                         inspectRouteUnavailable={
                           model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                         }
