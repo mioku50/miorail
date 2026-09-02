@@ -168,10 +168,50 @@ async function main(): Promise<void> {
     { apiKey: process.env.OPENFIGI_API_KEY ?? null },
   );
 
+  // ---------------------------------------------------------------------
+  // One company, one underlying, however many identifier schemes name it.
+  //
+  // Apple is already in this corpus as `security:isin:US0378331005`, declared
+  // from Coinbase's onchain metadata. Declaring Dinari's Apple as a second
+  // underlying would put one company on the chooser twice, with its
+  // representations split across two cards — which is the denominator
+  // separation this product exists to keep, inverted into a defect.
+  //
+  // So every underlying already held by ISIN is mapped to its composite FIGI by
+  // the same registry, and a Dinari stock whose FIGI matches one of them binds
+  // to THAT key. A new key is issued only for a security nobody here holds.
+  // ---------------------------------------------------------------------
+  const existing = await client`
+    SELECT underlying_key, identifier_scheme, identifier_value
+      FROM underlying_asset
+     WHERE identifier_scheme = 'isin' AND identifier_value IS NOT NULL`;
+  const isins = existing
+    .map((row) => String((row as { identifier_value?: unknown }).identifier_value ?? ''))
+    .filter((value) => value.length > 0);
+  const keyByIsin = new Map(
+    existing.map((row) => [
+      String((row as { identifier_value?: unknown }).identifier_value ?? ''),
+      String((row as { underlying_key?: unknown }).underlying_key ?? ''),
+    ]),
+  );
+  console.log(`reconciling ${isins.length} ISIN-held underlyings against OpenFIGI…`);
+  const figiByIsin = await lookupOpenFigiV1(
+    isins.map((isin) => ({ ticker: isin, idType: 'ID_ISIN' as const })),
+    { apiKey: process.env.OPENFIGI_API_KEY ?? null },
+  );
+  const existingKeyByFigi = new Map<string, string>();
+  for (const [isin, rows] of figiByIsin) {
+    const figi = rows.find((row) => row.compositeFigi)?.compositeFigi?.trim().toUpperCase();
+    const key = keyByIsin.get(isin);
+    if (figi && key) existingKeyByFigi.set(figi, key);
+  }
+  console.log(`  reconciled ${existingKeyByFigi.size} of ${isins.length} to a composite FIGI`);
+
   const repository = createDatabaseUnderlyingAssetRepository(client);
   const observedAt = new Date().toISOString();
   let declared = 0;
   let bound = 0;
+  let reusedExisting = 0;
   const rejected = new Map<string, number>();
   const seenUnderlyings = new Set<string>();
 
@@ -194,7 +234,8 @@ async function main(): Promise<void> {
       continue;
     }
 
-    const underlyingKey = dinariUnderlyingKeyV1(match.stock.id);
+    const reconciled = existingKeyByFigi.get(figi) ?? null;
+    const underlyingKey = reconciled ?? dinariUnderlyingKeyV1(match.stock.id);
     const assetClass = assetClassFromSecurityTypeV1(
       verdict.row.securityType,
       verdict.row.securityType2,
@@ -210,7 +251,9 @@ async function main(): Promise<void> {
       )
       .digest('hex');
 
-    if (!seenUnderlyings.has(underlyingKey)) {
+    // A reconciled key belongs to a source that already declared it. Declaring
+    // it again from here would rename somebody else's asset.
+    if (reconciled === null && !seenUnderlyings.has(underlyingKey)) {
       seenUnderlyings.add(underlyingKey);
       declared += 1;
       if (commit) {
@@ -230,6 +273,7 @@ async function main(): Promise<void> {
     }
 
     bound += 1;
+    if (reconciled !== null) reusedExisting += 1;
     if (commit) {
       await repository.bindRepresentation({
         chainId: CHAIN_ID_V1,
@@ -257,7 +301,7 @@ async function main(): Promise<void> {
     console.log(`  rejected ${count.toString().padStart(3)}  ${reason}`);
   }
   console.log(
-    `${commit ? 'WROTE' : 'DRY RUN'}: ${declared} underlyings, ${bound} representation bindings`,
+    `${commit ? 'WROTE' : 'DRY RUN'}: ${declared} new underlyings, ${reusedExisting} bound to an underlying already held, ${bound} representation bindings in total`,
   );
   if (!commit) console.log('re-run with --commit to write');
 }

@@ -79,7 +79,12 @@ export function openFigiVerdictV1(
 }
 
 export interface OpenFigiJobV1 {
+  /** The value to map. A ticker by default; an ISIN when `idType` says so. */
   ticker: string;
+  /** `TICKER` by default. `ID_ISIN` is how an underlying this repository
+   * already holds by ISIN is reconciled to the FIGI an issuer publishes — one
+   * company, two identifier schemes, one security. */
+  idType?: 'TICKER' | 'ID_ISIN';
   /** `US` unless a row says otherwise. A ticker without an exchange matches
    * every listing of it worldwide, which is how one name becomes four FIGIs. */
   exchCode?: string;
@@ -122,7 +127,7 @@ export async function lookupOpenFigiV1(
         headers,
         body: JSON.stringify(
           chunk.map((job) => ({
-            idType: 'TICKER',
+            idType: job.idType ?? 'TICKER',
             idValue: job.ticker,
             exchCode: job.exchCode ?? 'US',
           })),
