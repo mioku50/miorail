@@ -20,3 +20,34 @@ ALTER TABLE representation_underlying
       ARRAY['b20_asset'::text, 'rebasing_erc20'::text, 'non_rebasing_erc4626_wrapper'::text, 'dinari_dshare'::text]
     )
   );
+
+-- Three tables carry this list, not one.
+--
+-- `representation_underlying` is the binding, `underlying_identity_observation`
+-- is the append-only record of how each binding was established, and
+-- `market_reality_radar_watches` is a tenant's exact market question. A kind
+-- accepted by one and refused by the next is a write that half-lands, which is
+-- how the first run of this migration got a binding written and its own
+-- provenance row rejected.
+
+ALTER TABLE underlying_identity_observation
+  DROP CONSTRAINT IF EXISTS underlying_identity_observation_kind;
+
+ALTER TABLE underlying_identity_observation
+  ADD CONSTRAINT underlying_identity_observation_kind
+  CHECK (
+    representation_kind = ANY (
+      ARRAY['b20_asset'::text, 'rebasing_erc20'::text, 'non_rebasing_erc4626_wrapper'::text, 'dinari_dshare'::text]
+    )
+  );
+
+ALTER TABLE market_reality_radar_watches
+  DROP CONSTRAINT IF EXISTS market_reality_radar_watch_kind;
+
+ALTER TABLE market_reality_radar_watches
+  ADD CONSTRAINT market_reality_radar_watch_kind
+  CHECK (
+    representation_kind = ANY (
+      ARRAY['b20_asset'::text, 'rebasing_erc20'::text, 'non_rebasing_erc4626_wrapper'::text, 'dinari_dshare'::text]
+    )
+  );
