@@ -11,6 +11,9 @@ import {
 } from '../src/console/marketRealityHistoryView';
 import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
+  collapseLadderRungsV1,
+  splitEstablishedFactsV1,
+  utilityAnswerV1,
   sourceLabelV1,
   stockFiltersV1,
   MARKET_REALITY_SIZES_V1,
@@ -921,19 +924,26 @@ describe('the board never picks a winner', () => {
 });
 
 describe('an absent number never renders as a zero', () => {
-  test('every missing figure is an em dash with a reason', () => {
+  test('a missing figure keeps its reason and leaves the value grid', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    const numbers = view?.representations[0]?.numbers ?? [];
-    // The cash row carries the last measurement now, with its age. The three
-    // that follow need open evidence or a reference nobody established, and
-    // they still say why they are empty rather than showing a zero.
+    const card = view?.representations[0];
+    // The cash row carries the last measurement, with its age. The three that
+    // follow need open evidence or a reference nobody established — they are
+    // not values, so they no longer occupy a value column. Phase 17.1: four
+    // stacked em dashes read as a broken card, not as four absences.
+    assert.deepEqual(card?.numbers.map((fact) => fact.label), ['Cash back']);
     assert.deepEqual(
-      numbers.slice(1).map((fact) => fact.value),
-      ['—', '—', '—'],
+      card?.withheld.map((fact) => fact.label),
+      ['Effective price', 'Reference price', 'Basis withheld'],
     );
-    for (const fact of numbers) {
+    for (const fact of card?.withheld ?? []) {
       assert.ok(fact.note && fact.note.length > 0, `${fact.label} must say why it is empty`);
     }
+    assert.equal(
+      card?.numbers.some((fact) => fact.value === '—'),
+      false,
+      'no row renders a dash as if it were a value',
+    );
   });
 
   test('a measured figure fills the body, marked as history with its age', () => {
@@ -983,7 +993,10 @@ describe('an absent number never renders as a zero', () => {
       choice: null,
       now: NOW,
     });
-    const cash = wrapper?.representations[0]?.numbers[0];
+    // With no figure, the cash row is a reason rather than a value — it keeps
+    // the reason and moves out of the grid.
+    const cash = wrapper?.representations[0]?.withheld[0];
+    assert.equal(cash?.label, 'Cash back');
     assert.match(cash?.note ?? '', /does not carry this token/);
     assert.doesNotMatch(cash?.note ?? '', /did not complete/);
     assert.equal(
@@ -1010,7 +1023,7 @@ describe('an absent number never renders as a zero', () => {
       choice: null,
       now: NOW,
     });
-    assert.match(unsized?.representations[0]?.numbers[0]?.note ?? '', /at this size/);
+    assert.match(unsized?.representations[0]?.withheld[0]?.note ?? '', /at this size/);
     // One name for one outcome, shared with the chip. Phase 10B.7's rule still
     // holds — a cash size nobody could price is not a verdict on selling a
     // position already held — the words just no longer differ per row.
@@ -1134,10 +1147,10 @@ describe('an absent number never renders as a zero', () => {
       now: NOW,
     });
     const card = view!.representations[0]!;
-    assert.equal(card.openQuote.value, 'No live quote');
-    assert.equal(card.openQuote.note, null, 'the strip states NOW and nothing else');
+    assert.equal(card.openQuote!.value, 'No live quote');
+    assert.equal(card.openQuote!.note, null, 'the strip states NOW and nothing else');
     assert.match(card.lastMeasuredLabel ?? '', /^Last measured .+ ago$/);
-    for (const field of [card.openQuote.value, card.openQuote.note ?? '', card.lastMeasuredLabel ?? '']) {
+    for (const field of [card.openQuote!.value, card.openQuote!.note ?? '', card.lastMeasuredLabel ?? '']) {
       assert.doesNotMatch(field, /twenty seconds/i, 'the quote window is said once, for the board');
     }
   });
@@ -1155,7 +1168,7 @@ describe('an absent number never renders as a zero', () => {
     const card = lapsed!.representations[0]!;
     // The strip is the only field allowed to speak in the present, and it says
     // there is nothing open.
-    assert.equal(card.openQuote.value, 'No live quote');
+    assert.equal(card.openQuote!.value, 'No live quote');
     for (const row of card.numbers) {
       if (row.value === '\u2014') continue;
       // Any figure on the card carries its age and is toned as history.
@@ -1254,7 +1267,7 @@ describe('an absent number never renders as a zero', () => {
       now: NOW,
     });
     const card = view!.representations[0]!;
-    for (const text of [card.outcomeBody, card.openQuote.note ?? '', card.lastMeasuredLabel ?? '']) {
+    for (const text of [card.outcomeBody, card.openQuote!.note ?? '', card.lastMeasuredLabel ?? '']) {
       assert.doesNotMatch(text, /twenty seconds/i);
     }
     // The recovery is still named — that is what a reader acts on.
@@ -1294,8 +1307,15 @@ describe('an absent number never renders as a zero', () => {
     // whose whole subject is that nothing is outstanding.
     assert.deepEqual(card.ladder, []);
     assert.equal(card.ladderNote, null);
-    // What the last look found still reaches the reader, as one line.
-    assert.ok(card.lastSeen !== null);
+    // Phase 17.1: the route strips go with them. "No live quote" and a route
+    // reading over a contract with nothing outstanding measure our question,
+    // not this token, and both invite the reader to conclude the market
+    // refused something. The reading stays under Technical evidence.
+    assert.equal(card.lastSeen, null);
+    assert.equal(card.openQuote, null);
+    assert.equal(card.lastMeasuredLabel, null);
+    assert.deepEqual(card.withheld, []);
+    assert.ok(card.technical.length > 0, 'the measurement is still reachable');
   });
 
   test('the ladder is the caller’s, and absent until one is supplied', () => {
@@ -1495,10 +1515,10 @@ describe('an absent number never renders as a zero', () => {
     assert.equal(numbers[1]?.value, '$209.66');
     // No reference adapter answered, so both reference and basis stay absent
     // rather than comparing a cash return against a value in another unit.
-    assert.equal(numbers[2]?.value, '—');
-    assert.match(numbers[2]?.note ?? '', /not established|reference/i);
-    assert.equal(numbers[3]?.value, '—');
-    assert.match(numbers[3]?.note ?? '', /reference/i);
+    const withheld = view?.representations[0]?.withheld ?? [];
+    assert.deepEqual(withheld.map((fact) => fact.label), ['Reference price', 'Basis withheld']);
+    assert.match(withheld[0]?.note ?? '', /not established|reference/i);
+    assert.match(withheld[1]?.note ?? '', /reference/i);
   });
 
   test('the ratio convention is stated per representation, never assumed', () => {
@@ -1615,10 +1635,15 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
       choice: null,
       now: NOW,
     });
-    const basis = view?.representations[0]?.numbers.find((fact) => fact.label === 'Basis withheld');
-    assert.equal(basis?.value, '—');
-    assert.equal(basis?.note, reason);
-    assert.equal(basis?.tone, 'neutral');
+    const basis = view?.representations[0]?.withheld.find((fact) => fact.label === 'Basis withheld');
+    assert.ok(basis, 'a withheld basis is still stated, with its reason');
+    assert.equal(basis!.note, reason);
+    assert.equal(basis!.tone, 'neutral');
+    assert.equal(
+      view?.representations[0]?.numbers.some((fact) => fact.label === 'Basis withheld'),
+      false,
+      'a reason is not a value, so it does not sit in the value grid',
+    );
   });
 
   test('primary reference copy is human-readable while technical evidence keeps raw enums', () => {
@@ -2211,8 +2236,8 @@ describe('history is history, and says so', () => {
     const row = view?.representations[0];
     assert.equal(row?.lastSeen?.label, 'Last market check');
     assert.equal(row?.lastSeen?.value, 'No cash route found');
-    // And the body says why it has no figure, rather than only a dash.
-    assert.match(row?.numbers[0]?.note ?? '', /no cash route was found/i);
+    // And the card says why it has no figure — as a reason, not as a dash.
+    assert.match(row?.withheld[0]?.note ?? '', /no cash route was found/i);
   });
 
   test('an open observation is labelled open, not as history', () => {
@@ -2233,8 +2258,8 @@ describe('history is history, and says so', () => {
     // Open evidence is the strip's job now, and the body says so too. The
     // history line is for a look that produced no figure at all.
     const row = view?.representations[0];
-    assert.equal(row?.openQuote.value, '$99.95');
-    assert.match(row?.openQuote.note ?? '', /open right now/);
+    assert.equal(row?.openQuote?.value, '$99.95');
+    assert.match(row?.openQuote?.note ?? '', /open right now/);
     assert.match(row?.numbers[0]?.note ?? '', /still open/);
     assert.equal(row?.numbers[0]?.tone, 'neutral', 'a live figure is not muted');
     assert.equal(row?.lastSeen, null);
@@ -2420,5 +2445,121 @@ describe('what a round trip costs, said as money first', () => {
     assert.equal(only.value, '0.32%');
     assert.equal(only.label, 'Cost to buy and exit');
     assert.doesNotMatch(only.value, /\$/);
+  });
+});
+
+describe('Phase 17.1 — the answer, then the evidence', () => {
+  const LADDER = [
+    { label: '$100', value: 'not covered', note: 'measured 28 min ago', tone: 'warn' as const },
+    { label: '$1,000', value: 'not covered', note: 'measured 28 min ago', tone: 'warn' as const },
+    { label: '$10,000', value: 'not covered', note: 'measured 28 min ago', tone: 'warn' as const },
+    { label: '$100,000', value: 'not covered', note: 'measured 28 min ago', tone: 'warn' as const },
+  ];
+
+  test('four rungs saying one thing become one line that keeps both ends', () => {
+    const collapsed = collapseLadderRungsV1(LADDER);
+    assert.equal(collapsed.length, 1);
+    assert.equal(collapsed[0]?.label, '$100 – $100,000');
+    assert.equal(collapsed[0]?.value, 'not covered');
+    assert.equal(collapsed[0]?.note, 'measured 28 min ago');
+    assert.equal(collapsed[0]?.tone, 'warn');
+  });
+
+  test('one size differing brings every size back', () => {
+    const mixed = [...LADDER.slice(0, 3), { ...LADDER[3]!, value: '0.50%', tone: 'good' as const }];
+    assert.deepEqual(collapseLadderRungsV1(mixed), mixed);
+    // Same value, different age is still two findings.
+    const restaggered = [LADDER[0]!, { ...LADDER[1]!, note: 'measured 4h ago' }];
+    assert.equal(collapseLadderRungsV1(restaggered).length, 2);
+  });
+
+  test('a single rung and an empty ladder are left exactly as they are', () => {
+    assert.deepEqual(collapseLadderRungsV1([]), []);
+    assert.deepEqual(collapseLadderRungsV1([LADDER[0]!]), [LADDER[0]!]);
+  });
+
+  test('the ladder on a card is the collapsed one', () => {
+    const bare = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const address = bare!.representations[0]!.tokenAddress.toLowerCase();
+    const view = marketRealityViewV1({
+      wire: wire(),
+      choice: null,
+      now: NOW,
+      ladders: { [address]: { rungs: LADDER, note: 'Exact sizes only.' } },
+    });
+    assert.deepEqual(
+      view?.representations[0]?.ladder.map((rung) => rung.label),
+      ['$100 – $100,000'],
+    );
+  });
+
+  test('a withheld fact has a reason and no value field to render', () => {
+    const split = splitEstablishedFactsV1([
+      { label: 'Cash back', value: '$999.00', note: 'history', tone: 'off' },
+      { label: 'Effective price', value: '—', note: "the share ratio isn't confirmed", tone: 'neutral' },
+      { label: 'Basis withheld', value: '—', note: null, tone: 'neutral' },
+    ]);
+    assert.deepEqual(split.established.map((fact) => fact.label), ['Cash back']);
+    assert.deepEqual(split.withheld.map((fact) => fact.label), ['Effective price', 'Basis withheld']);
+    assert.equal(split.withheld[0]?.note, "the share ratio isn't confirmed");
+    // A withheld row with no reason at all would be the original defect wearing
+    // a new name, so the type has no way to carry an empty one.
+    assert.equal(split.withheld[1]?.note, 'not established');
+    for (const fact of split.withheld) {
+      assert.equal('value' in fact, false, `${fact.label} must carry no value`);
+    }
+  });
+
+  test('the utility answer buckets the same edges by the same states', () => {
+    const edge = (edgeId: string, label: string, state: string) => ({
+      edgeId, label, state, stateLabel: state, checkedAt: NOW, checkedAgo: 'just now',
+      providerLabel: null, note: '', eligibilityNote: '', sources: [],
+    });
+    const answer = utilityAnswerV1([
+      { label: 'Market reachability', edges: [edge('market_trade', 'Trade at this size', 'observed')] as never },
+      {
+        label: 'Issuer lifecycle',
+        edges: [
+          edge('issuer_primary_market', 'Primary issue and redemption', 'documented'),
+          edge('issuer_bridge', 'Bridge', 'not_established'),
+        ] as never,
+      },
+    ]);
+    assert.match(answer.headline, /Established right now/);
+    assert.deepEqual(
+      answer.buckets.map((bucket) => [bucket.label, bucket.items]),
+      [
+        ['Established right now', ['Trade at this size']],
+        ['Documented by the issuer', ['Primary issue and redemption']],
+        ['Not established', ['Bridge']],
+      ],
+    );
+  });
+
+  test('with nothing observed, the answer says so instead of leading with documents', () => {
+    const edge = (edgeId: string, label: string, state: string) => ({
+      edgeId, label, state, stateLabel: state, checkedAt: NOW, checkedAgo: 'just now',
+      providerLabel: null, note: '', eligibilityNote: '', sources: [],
+    });
+    const answer = utilityAnswerV1([
+      { label: 'Issuer lifecycle', edges: [edge('issuer_bridge', 'Bridge', 'not_established')] as never },
+    ]);
+    assert.match(answer.headline, /Nothing is established at this exact address yet/);
+    assert.match(answer.headline, /gap in evidence, not a property of the token/);
+    assert.equal(answer.buckets.length, 1);
+    // An empty bucket is not rendered as an empty heading.
+    assert.equal(answer.buckets.some((bucket) => bucket.items.length === 0), false);
+  });
+
+  test('a real card carries an answer built from its own edges', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const utility = view!.representations[0]!.utility;
+    assert.ok(utility.answer.headline.length > 0);
+    const named = new Set(utility.answer.buckets.flatMap((bucket) => bucket.items));
+    for (const group of utility.groups) {
+      for (const edge of group.edges) {
+        assert.ok(named.has(edge.label), `${edge.label} must appear in the answer`);
+      }
+    }
   });
 });

@@ -1224,6 +1224,32 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-lastseen-k { color: var(--dim); text-transform: uppercase; letter-spacing: .06em; font-size: 9.5px; }
 .mio-console .mr-lastseen-v { color: var(--muted); font-size: 12px; font-weight: 600; }
 
+/* What is NOT established, once, with no value column.
+
+   Four rows reading `Effective price  —  the share ratio isn't confirmed` gave
+   a full line each to a character that means nothing, and stacked they read as
+   a broken card rather than as four different absences. The reasons stay — they
+   are the honest part — but they stop occupying a value grid. Same vocabulary
+   as the last-check strip: this is an aside, not a measurement. */
+.mio-console .mr-withheld { margin: 8px 0 0; padding: 7px 9px; border-radius: 7px;
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .mr-withheld .mr-attribution { margin: 0 0 5px; }
+.mio-console .mr-withheld ul { margin: 0; padding: 0; list-style: none;
+  display: flex; flex-direction: column; gap: 4px; }
+.mio-console .mr-withheld li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px;
+  font-size: 11.5px; }
+.mio-console .mr-withheld-k { color: var(--muted); font-weight: 600; }
+
+/* Utility answers the question before it cites anything. The buckets are the
+   same edges regrouped by the same states, so they are styled as an aside over
+   the groups rather than as a second set of cards competing with them. */
+.mio-console .mr-utility-answer { margin: 10px 0 4px; }
+.mio-console .mr-utility-bucket { margin-top: 8px; }
+.mio-console .mr-utility-bucket .mr-attribution { margin: 0 0 4px; }
+.mio-console .mr-utility-bucket ul { margin: 0; padding: 0 0 0 14px; list-style: disc;
+  display: flex; flex-direction: column; gap: 3px; color: var(--muted); font-size: 11.5px; }
+.mio-console .mr-utility-edge .mcp-tech > summary { font-size: 10px; color: var(--dim); }
+
 /* The open-quote strip. One line, above the body, because what is true only
    inside a twenty-second window is almost never true when a reader arrives —
    and a card that gave its body to those fields rendered as a column of dashes

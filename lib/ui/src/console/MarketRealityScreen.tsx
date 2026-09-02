@@ -320,6 +320,27 @@ function RepresentationCard({
         </div>
         <p className="mr-caip mono">{representation.utility.caip10}</p>
         <p className="lnote">{representation.structureNote}</p>
+
+        {/* The answer, before any document. The panel exists to say what a
+            reader can do with THIS address; it used to open on a wall of
+            citations and make them assemble that themselves. Same edges, same
+            states — read in the order the question is asked. */}
+        <div className="mr-utility-answer">
+          <p className="cr-verdict">{representation.utility.answer.headline}</p>
+          {representation.utility.answer.buckets.map((bucket) => (
+            <div className="mr-utility-bucket" key={bucket.label}>
+              <p className="mr-attribution">
+                <span className="mr-attribution-k">{bucket.label}</span> {bucket.note}
+              </p>
+              <ul>
+                {bucket.items.map((item) => (
+                  <li key={item}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          ))}
+        </div>
+
         {representation.utility.groups.map((group) => (
           <section className="mr-utility-group" key={group.label} aria-label={group.label}>
             <h4>{group.label}</h4>
@@ -348,43 +369,54 @@ function RepresentationCard({
                   edge.edgeId === 'representation_eligibility' ? (
                     <p className="lnote">Eligibility: {edge.eligibilityNote}</p>
                   ) : null}
+                  {/* Evidence, on disclosure. The documents are what make the
+                      line above trustworthy, not what a reader came for — and a
+                      prospectus link rendered at the same weight as the answer
+                      made every card read as a bibliography. The freshness stays
+                      in the summary, because a reader deciding whether to trust
+                      the line needs the age without opening anything. */}
                   {edge.sources.length === 0 && edge.providerLabel === null ? (
                     <p className="mr-utility-meta">No reviewed exact-address evidence</p>
                   ) : (
-                    <p className="mr-utility-meta">
-                      {/* An age, with the exact instant one hover away. A reader
-                          deciding whether evidence is current needs "9m ago"; an
-                          ISO string in UTC is a conversion, not an answer. */}
-                      Checked{' '}
-                      <span className="mono" title={edge.checkedAt}>
-                        {edge.checkedAgo ?? edge.checkedAt}
-                      </span>
-                      {edge.providerLabel ? (
-                        <>
-                          {' '}
-                          · source <span className="mono">{edge.providerLabel}</span>
-                        </>
-                      ) : null}
-                    </p>
-                  )}
-                  {edge.sources.length > 0 ? (
-                    <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
-                      {edge.sources.map((source, index) =>
-                        source.href ? (
-                          <a
-                            key={`${source.label}:${index}`}
-                            href={source.href}
-                            target="_blank"
-                            rel="noreferrer"
-                          >
-                            {source.label}
-                          </a>
+                    <details className="mcp-tech">
+                      <summary>
+                        {/* An age, with the exact instant one hover away. An ISO
+                            string in UTC is a conversion, not an answer. */}
+                        Evidence{edge.sources.length > 0 ? ` (${edge.sources.length})` : ''} ·
+                        checked{' '}
+                        <span className="mono" title={edge.checkedAt}>
+                          {edge.checkedAgo ?? edge.checkedAt}
+                        </span>
+                      </summary>
+                      <p className="mr-utility-meta">
+                        {edge.providerLabel ? (
+                          <>
+                            Source <span className="mono">{edge.providerLabel}</span>
+                          </>
                         ) : (
-                          <span key={`${source.label}:${index}`}>{source.label}</span>
-                        ),
-                      )}
-                    </div>
-                  ) : null}
+                          'No route source is named for this edge.'
+                        )}
+                      </p>
+                      {edge.sources.length > 0 ? (
+                        <div className="mr-utility-sources" aria-label={`${edge.label} sources`}>
+                          {edge.sources.map((source, index) =>
+                            source.href ? (
+                              <a
+                                key={`${source.label}:${index}`}
+                                href={source.href}
+                                target="_blank"
+                                rel="noreferrer"
+                              >
+                                {source.label}
+                              </a>
+                            ) : (
+                              <span key={`${source.label}:${index}`}>{source.label}</span>
+                            ),
+                          )}
+                        </div>
+                      ) : null}
+                    </details>
+                  )}
                 </article>
               ))}
             </div>
@@ -442,16 +474,18 @@ function RepresentationCard({
           three cards taught the reader the window three times and the state
           none. The window is a property of router quotes, so the board says it
           once, above. */}
-      <p className="mr-openquote">
-        <span className="mr-lastseen-k">Now</span>
-        <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
-        {representation.openQuote.note ? (
-          <span className="cr-fact-note"> · {representation.openQuote.note}</span>
-        ) : null}
-        {representation.lastMeasuredLabel ? (
-          <span className="mr-openquote-last">{representation.lastMeasuredLabel}</span>
-        ) : null}
-      </p>
+      {representation.openQuote ? (
+        <p className="mr-openquote">
+          <span className="mr-lastseen-k">Now</span>
+          <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
+          {representation.openQuote.note ? (
+            <span className="cr-fact-note"> · {representation.openQuote.note}</span>
+          ) : null}
+          {representation.lastMeasuredLabel ? (
+            <span className="mr-openquote-last">{representation.lastMeasuredLabel}</span>
+          ) : null}
+        </p>
+      ) : null}
 
       <p className="cr-verdict">{representation.outcomeBody}</p>
 
@@ -467,6 +501,26 @@ function RepresentationCard({
       ) : null}
 
       <FactList facts={representation.numbers} label={`${representation.issuerName} outcome`} />
+
+      {/* What is not established, once, without a value column. Four rows of a
+          dash read as a broken card; the reasons are the honest part and they
+          are kept — they simply stop pretending to be values. Every one of them
+          is also stated in full under Technical evidence. */}
+      {representation.withheld.length > 0 ? (
+        <div className="mr-withheld" aria-label={`${representation.issuerName} not established`}>
+          <p className="mr-attribution">
+            <span className="mr-attribution-k">Not established</span> at this size
+          </p>
+          <ul>
+            {representation.withheld.map((fact) => (
+              <li key={fact.label}>
+                <span className="mr-withheld-k">{fact.label}</span>
+                <span className="cr-fact-note">{fact.note}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ) : null}
 
       {/* The ladder, from the same stored run. Discover has rendered this all
           along; the only reason Stocks did not was that it never read it. */}
@@ -563,7 +617,7 @@ function RepresentationCard({
               prefilled; it submits nothing and approves nothing. */}
           {actions.onInspectRoute ? (
             inspectRouteUnavailable ? (
-              <span className="cr-fact-note" title={inspectRouteUnavailable}>
+              <span className="pill cr-status" data-tone="off" title={inspectRouteUnavailable}>
                 Advanced route unavailable
               </span>
             ) : (

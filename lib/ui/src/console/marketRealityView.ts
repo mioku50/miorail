@@ -354,7 +354,13 @@ export interface RepresentationViewV1 {
    * the twenty-second window taught a reader the window three times and the
    * state zero times.
    */
-  openQuote: { value: string; note: string | null };
+  /**
+   * Null when there is nothing outstanding to quote. "No live quote" over a
+   * contract whose entire subject is that its supply is zero is not a finding —
+   * it invites the reader to conclude the market refused, when there is no
+   * position for a market to refuse.
+   */
+  openQuote: { value: string; note: string | null } | null;
   /**
    * When the last completed measurement happened, in one phrase.
    *
@@ -387,6 +393,17 @@ export interface RepresentationViewV1 {
    * Discover renders under.
    */
   numbers: FactViewV1[];
+  /**
+   * The same grid's rows that have no value, WITHOUT the dash.
+   *
+   * A row reading `Effective price  —  the share ratio isn't confirmed` spends
+   * a full line of the card on a character that means nothing, and four of them
+   * stacked read as a broken card rather than as four different absences. The
+   * reasons are kept — they are the honest part — but they leave the value grid
+   * and become one compact block, and every one of them is still stated in full
+   * under Technical evidence.
+   */
+  withheld: WithheldFactViewV1[];
   /** Round-trip cost at each reviewed size, from the same stored run. Empty
    * when nothing measured it — never a row of zeros. */
   ladder: FactViewV1[];
@@ -398,8 +415,29 @@ export interface RepresentationViewV1 {
    * eligibility and no router quote is promoted to execution. */
   utility: {
     caip10: string;
+    /**
+     * The question the panel exists to answer, answered before the evidence.
+     *
+     * The edges already carry every state; what they did not carry was a place
+     * for a reader to look first. This is a regrouping of the same edges by the
+     * same states — nothing is computed here that was not already decided.
+     */
+    answer: UtilityAnswerViewV1;
     groups: UtilityGroupViewV1[];
   };
+}
+
+/** A named absence: a label and the reason, and structurally no value. */
+export interface WithheldFactViewV1 {
+  label: string;
+  note: string;
+  tone: ToneV1;
+}
+
+/** What can be done with this exact address, before any document is opened. */
+export interface UtilityAnswerViewV1 {
+  headline: string;
+  buckets: { label: string; note: string; items: string[] }[];
 }
 
 export interface MarketRealityViewV1 {
@@ -948,6 +986,51 @@ export const MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 = Number(
  * The bound is ours and the cost is measured, so both are shown. Saying only
  * "cannot be exited" would be a verdict a reader cannot check.
  */
+/**
+ * Four rungs saying one thing become one line saying it once.
+ *
+ * `not covered` at $100, at $1,000, at $10,000 and at $100,000 is a single
+ * finding about coverage printed four times; it fills the tallest block on the
+ * card with a repetition, and the repetition is what a reader remembers instead
+ * of the finding. Collapse only on EXACT agreement — same value, same note,
+ * same tone — so the moment any size differs, every size is shown again. The
+ * label keeps both ends of the range, because "at every size we measure" and
+ * "at $1,000" are different claims.
+ */
+export function collapseLadderRungsV1(rungs: readonly FactViewV1[]): FactViewV1[] {
+  if (rungs.length < 2) return [...rungs];
+  const [first, ...rest] = rungs;
+  const uniform = rest.every(
+    (rung) => rung.value === first!.value && rung.note === first!.note && rung.tone === first!.tone,
+  );
+  if (!uniform) return [...rungs];
+  return [{ ...first!, label: `${first!.label} – ${rungs[rungs.length - 1]!.label}` }];
+}
+
+/**
+ * The value grid, split into what has a value and what does not.
+ *
+ * Nothing is discarded: a row with no value keeps its reason and moves out of
+ * the grid, where the dash it needed in order to occupy a value column was the
+ * loudest thing on the line.
+ */
+export function splitEstablishedFactsV1(
+  facts: readonly FactViewV1[],
+): { established: FactViewV1[]; withheld: WithheldFactViewV1[] } {
+  const established: FactViewV1[] = [];
+  const withheld: WithheldFactViewV1[] = [];
+  for (const fact of facts) {
+    if (fact.value === '—') {
+      // The reason is the whole content of a withheld row, so the type has no
+      // value field at all: there is no shape in which one can be rendered.
+      withheld.push({ label: fact.label, note: fact.note ?? 'not established', tone: fact.tone });
+    } else {
+      established.push(fact);
+    }
+  }
+  return { established, withheld };
+}
+
 function exitViewV1(
   exit: RepresentationExitEvidenceV1 | null | undefined,
   nowIso: string,
@@ -1226,6 +1309,58 @@ function utilityEdgeViewV1(
   };
 }
 
+/**
+ * "What can I do with this exact representation?" — answered from the edges.
+ *
+ * The panel already held every fact; what it did not hold was an answer. Each
+ * edge rendered at the same weight as every other, with its documents beneath
+ * it, so the first thing a reader met was a wall of citations to prospectuses.
+ * This buckets the SAME edges by the SAME states — nothing new is asserted, and
+ * an edge that says "not established" still says exactly that.
+ *
+ * `available` and `observed` are the only states that answer the question in
+ * the present tense, and they are kept apart from `documented`, which is a
+ * process the issuer describes and Miorail cannot perform.
+ */
+export function utilityAnswerV1(groups: readonly UtilityGroupViewV1[]): UtilityAnswerViewV1 {
+  const edges = groups.flatMap((group) => group.edges);
+  const pick = (...states: readonly UtilityEvidenceStateV1[]): string[] =>
+    edges.filter((edge) => states.includes(edge.state)).map((edge) => edge.label);
+  const now = pick('available', 'observed');
+  const documented = pick('documented');
+  const stale = pick('stale');
+  const gaps = pick('not_established');
+  const buckets = [
+    {
+      label: 'Established right now',
+      note: 'measured against this exact address, in this direction and size',
+      items: now,
+    },
+    {
+      label: 'Documented by the issuer',
+      note: 'a process the issuer describes — not something Miorail can carry out',
+      items: documented,
+    },
+    {
+      label: 'Measured before, not open now',
+      note: 'it answered once; that answer is history until it is measured again',
+      items: stale,
+    },
+    {
+      label: 'Not established',
+      note: 'no reviewed exact-address evidence — an evidence gap, never a claim that it is impossible',
+      items: gaps,
+    },
+  ].filter((bucket) => bucket.items.length > 0);
+  const headline =
+    now.length > 0
+      ? `Established right now at this exact address: ${now.join(', ').toLowerCase()}. Everything else below is documentation or a gap.`
+      : documented.length > 0
+        ? 'Nothing here is established as doable right now at this exact address. What follows is what the issuer documents, and where the evidence stops.'
+        : 'Nothing is established at this exact address yet. Every line below names a gap in evidence, not a property of the token.';
+  return { headline, buckets };
+}
+
 function utilityViewV1(
   representation: MarketRealityRepresentationWireV1,
   nowIso: string,
@@ -1334,9 +1469,7 @@ function utilityViewV1(
     ['issuer_distributions', 'issuer_corporate_actions'],
   );
   const bridge = issuerViews.find((edge) => edge.edgeId === 'issuer_bridge');
-  return {
-    caip10: map.caip10,
-    groups: [
+  const groups: UtilityGroupViewV1[] = [
       {
         label: 'Market reachability',
         edges: trade ? [trade] : [],
@@ -1349,8 +1482,8 @@ function utilityViewV1(
         ),
       },
       { label: 'Reviewed DeFi integrations', edges: defiPresentation },
-    ],
-  };
+  ];
+  return { caip10: map.caip10, answer: utilityAnswerV1(groups), groups };
 }
 
 /**
@@ -1668,6 +1801,12 @@ export function marketRealityViewV1(input: {
           : representation.routePolicyKey === null || approvedSources.length === 0
             ? 'No reviewed route source is established for this representation, so there is nothing to watch.'
             : null;
+      // Zero supply already says the whole thing in one sentence; naming four
+      // fields it does not establish only repeats it in a longer form.
+      const grid =
+        outcome === 'zero_supply'
+          ? { established: [], withheld: [] }
+          : splitEstablishedFactsV1(numbersV1(representation, direction, input.now));
       return {
         tokenAddress: representation.tokenAddress,
         issuerName: ISSUER_NAME_V1[representation.issuerId],
@@ -1682,9 +1821,13 @@ export function marketRealityViewV1(input: {
         watchUnavailableReason,
         routePolicyKey: representation.routePolicyKey,
         approvedSources,
-        lastSeen: lastSeenV1(representation, input.now),
-        openQuote: openQuoteStripV1(representation),
-        lastMeasuredLabel: lastMeasuredLabelV1(representation, input.now),
+        // The same reason the numbers grid and the ladder go: a route reading
+        // taken against a contract with nothing outstanding measures our own
+        // question, not this token.
+        lastSeen: outcome === 'zero_supply' ? null : lastSeenV1(representation, input.now),
+        openQuote: outcome === 'zero_supply' ? null : openQuoteStripV1(representation),
+        lastMeasuredLabel:
+          outcome === 'zero_supply' ? null : lastMeasuredLabelV1(representation, input.now),
         // Zero supply leaves the comparison, and a round trip through a
         // contract with nothing outstanding is not a fact about anything.
         exit:
@@ -1701,7 +1844,8 @@ export function marketRealityViewV1(input: {
         // The numbers grid answers "what did it cost". With no supply there is
         // no position to cost, and four dashes each explaining a different
         // absence buried the one fact that mattered.
-        numbers: outcome === 'zero_supply' ? [] : numbersV1(representation, direction, input.now),
+        numbers: grid.established,
+        withheld: grid.withheld,
         // Same reasoning for the ladder: four rungs of "not supported" under a
         // card whose subject is that nothing is outstanding is four ways of
         // repeating a finding that is not about this size. What the last look
@@ -1709,7 +1853,9 @@ export function marketRealityViewV1(input: {
         ladder:
           outcome === 'zero_supply'
             ? []
-            : (input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? []),
+            : collapseLadderRungsV1(
+                input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? [],
+              ),
         ladderNote:
           outcome === 'zero_supply'
             ? null

@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { Request, Response } from 'express';
-import { client as sql } from '@mioagent/db';
+import { client as databaseClientV1 } from '@mioagent/db';
 import { MCP_OAUTH_GRANT_ID_PREFIX_V1 } from '@mioagent/route-storage';
 import type { OAuthRegisteredClientsStore } from '@modelcontextprotocol/sdk/server/auth/clients.js';
 import type { OAuthServerProvider, AuthorizationParams } from '@modelcontextprotocol/sdk/server/auth/provider.js';
@@ -17,6 +17,14 @@ import {
   InvalidTargetError,
   InvalidTokenError,
 } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+
+type SqlV1 = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
+
+// The authorize handler is exercised end to end in the unit gate, where there
+// is no Postgres. Every query in this file still goes through the one client;
+// this is the single point at which a test may substitute it.
+export const mcpOAuthRuntimeV1: { sql: SqlV1 } = { sql: databaseClientV1 as unknown as SqlV1 };
+const sql: SqlV1 = (strings, ...values) => mcpOAuthRuntimeV1.sql(strings, ...values);
 
 const ACCESS_TTL_MS_V1 = 15 * 60 * 1000;
 const GRANT_TTL_MS_V1 = 30 * 24 * 60 * 60 * 1000;
@@ -147,6 +155,41 @@ function exactResourceV1(resource: URL | undefined): string {
   return expected;
 }
 
+// A consent page is the one document in Miorail whose form submission is
+// SUPPOSED to end up somewhere else: OAuth answers by redirecting the browser
+// to the client's registered callback. Helmet's default policy says
+// `form-action 'self'`, and Chrome enforces form-action across the whole
+// redirect chain of a submission — so the POST reaches us, we answer 302, and
+// the browser silently drops the navigation. Nothing is logged client-side
+// except a console line, which is why it reads as a button that does nothing.
+//
+// This widens form-action, on this one response, to the exact redirect URI the
+// SDK has ALREADY matched against the client's registered list before calling
+// us. It grants no new destination: a URI that failed that check never reaches
+// this function. Only the origin is used, because CSP ignores the path
+// component of a source expression when matching a redirect.
+export function consentFormActionPolicyV1(currentPolicy: string | null, redirectUri: string): string | null {
+  let origin: string;
+  try {
+    const url = new URL(redirectUri);
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return currentPolicy;
+    origin = url.origin;
+  } catch {
+    return currentPolicy;
+  }
+  if (origin === 'null') return currentPolicy;
+  const directives = (currentPolicy ?? '').split(';').map((part) => part.trim()).filter(Boolean);
+  const index = directives.findIndex((part) => /^form-action(\s|$)/i.test(part));
+  if (index === -1) {
+    directives.push(`form-action 'self' ${origin}`);
+    return directives.join(';');
+  }
+  const sources = directives[index]!.split(/\s+/);
+  if (sources.slice(1).some((source) => source.toLowerCase() === origin.toLowerCase())) return currentPolicy;
+  directives[index] = `${directives[index]} ${origin}`;
+  return directives.join(';');
+}
+
 const clientsStoreV1: OAuthRegisteredClientsStore = {
   async getClient(clientId) {
     const rows = await sql`
@@ -191,6 +234,15 @@ export const mcpOAuthProviderV1: OAuthServerProvider = {
 
   async authorize(clientInfo, params: AuthorizationParams, res: Response): Promise<void> {
     const req = res.req as Request;
+    // Set before every branch: the deny button and the SDK's own error
+    // redirects leave through the same blocked navigation as the allow button.
+    const policy = consentFormActionPolicyV1(
+      typeof res.getHeader('Content-Security-Policy') === 'string'
+        ? (res.getHeader('Content-Security-Policy') as string)
+        : null,
+      params.redirectUri,
+    );
+    if (policy) res.setHeader('Content-Security-Policy', policy);
     const identity = tenantFromRequestV1(req);
     if (!identity) {
       res.status(401).type('html').send(
