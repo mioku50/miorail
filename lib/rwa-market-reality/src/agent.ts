@@ -9,6 +9,7 @@ import { z } from 'zod';
 
 import { MarketRealityResponseV2Schema, type MarketRealityResponseV2 } from './contracts.js';
 import { marketRealityAgentSummaryV1 } from './agentSummary.js';
+import { discoveryAliasIsinsV1 } from './discoveryAliases.js';
 import {
   ISSUER_BY_REVIEWED_SOURCE_KIND_V1,
   canonicalReviewedBindingV1,
@@ -418,7 +419,13 @@ export const MarketRealityAgentStocksInputV1Schema = z
       .max(120)
       .optional()
       .describe(
-        'Optional. Matches the ticker, the company name or the identifier value, case-insensitively, as a substring. Omit it to list everything reviewed.',
+        'Optional. Matches the ticker, the company name or the identifier value, case-insensitively, as a substring, plus a short list of company-name aliases bound to an ISIN (so "nvidia" finds NVDA). Omit it to list everything reviewed.',
+      ),
+    assetClass: z
+      .enum(['equity', 'fund_share', 'other', 'unknown'])
+      .optional()
+      .describe(
+        'Optional. Reviewed rows are not all common stock: this corpus also holds ETF and fund shares (SPY, IBIT, GBTC) and instruments Miorail could not class. Omit it to list every reviewed row, whatever its class.',
       ),
     limit: z
       .number()
@@ -440,6 +447,19 @@ export const MarketRealityAgentStocksOutputV1Schema = z
     query: z.string().nullable(),
     /** How many reviewed underlyings exist, before the query narrowed them. */
     reviewedTotal: z.number().int().min(0),
+    /** How many reviewed rows exist per class, ALWAYS over the whole corpus and
+     * never over the filtered page. Reported because the web Stocks screen
+     * shows equities only: without this, the same question answered here and
+     * there returns two different universe sizes and nothing says why. */
+    reviewedByAssetClass: z
+      .object({
+        equity: z.number().int().min(0),
+        fund_share: z.number().int().min(0),
+        other: z.number().int().min(0),
+        unknown: z.number().int().min(0),
+      })
+      .strict(),
+    assetClass: z.enum(['equity', 'fund_share', 'other', 'unknown']).nullable(),
     returned: z.number().int().min(0),
     truncated: z.boolean(),
     stocks: z
@@ -455,6 +475,11 @@ export const MarketRealityAgentStocksOutputV1Schema = z
             issuerIds: z.array(z.string().min(1).max(60)),
             representationCount: z.number().int().min(0),
             liveRepresentationCount: z.number().int().min(0),
+            /** How this row was found. `miorail_alias` means the stored naming
+             * did not contain the query and a Miorail-maintained company-name
+             * alias, bound to this row's ISIN, did. Stated so a caller never
+             * reads an alias hit as issuer-published naming. */
+            matchedBy: z.enum(['stored_naming', 'miorail_alias', 'unfiltered']),
           })
           .strict(),
       )
@@ -475,24 +500,59 @@ export async function listReviewedStocksForAgentV1(
     limit: MARKET_REALITY_AGENT_STOCKS_MAX_V1,
   });
   const query = input.query?.toLowerCase() ?? null;
+
+  // The class breakdown is taken BEFORE any filter, because its whole job is to
+  // describe the corpus a caller is looking at a slice of.
+  const reviewedByAssetClass = { equity: 0, fund_share: 0, other: 0, unknown: 0 };
+  for (const entry of entries) reviewedByAssetClass[entry.underlying.assetClass] += 1;
+
+  const inClass = input.assetClass
+    ? entries.filter((entry) => entry.underlying.assetClass === input.assetClass)
+    : entries;
+
+  // An alias resolves to ISINs, and a row is an alias hit only when its own
+  // stored identifier is one of them. The ordinary substring match runs first
+  // and wins, so `matchedBy` reports the weaker source only when it was the
+  // one that actually found the row.
+  const aliasIsins = new Set(query ? discoveryAliasIsinsV1(query) : []);
+  const matchedBy = new Map<string, 'stored_naming' | 'miorail_alias'>();
   const matched = query
-    ? entries.filter((entry) =>
-        [
+    ? inClass.filter((entry) => {
+        const stored = [
           entry.underlying.displaySymbol,
           entry.underlying.canonicalName,
           entry.underlying.identifierValue,
         ]
           .filter((value): value is string => typeof value === 'string')
-          .some((value) => value.toLowerCase().includes(query)),
-      )
-    : entries;
+          .some((value) => value.toLowerCase().includes(query));
+        if (stored) {
+          matchedBy.set(entry.underlying.underlyingKey, 'stored_naming');
+          return true;
+        }
+        const identifier = entry.underlying.identifierValue;
+        if (
+          entry.underlying.identifierScheme === 'isin' &&
+          typeof identifier === 'string' &&
+          aliasIsins.has(identifier.toUpperCase())
+        ) {
+          matchedBy.set(entry.underlying.underlyingKey, 'miorail_alias');
+          return true;
+        }
+        return false;
+      })
+    : inClass;
   const page = matched.slice(0, limit);
+  const aliasHits = page.filter(
+    (entry) => matchedBy.get(entry.underlying.underlyingKey) === 'miorail_alias',
+  ).length;
   return MarketRealityAgentStocksOutputV1Schema.parse({
     schemaVersion: 'miorail-agent-stocks/v1',
     chain: 'base',
     chainId: 8453,
     query: input.query ?? null,
     reviewedTotal: entries.length,
+    reviewedByAssetClass,
+    assetClass: input.assetClass ?? null,
     returned: page.length,
     truncated: matched.length > page.length,
     stocks: page.map((entry) => ({
@@ -505,6 +565,7 @@ export async function listReviewedStocksForAgentV1(
       issuerIds: entry.issuerIds,
       representationCount: entry.representationCount,
       liveRepresentationCount: entry.liveRepresentationCount,
+      matchedBy: query === null ? 'unfiltered' : (matchedBy.get(entry.underlying.underlyingKey) ?? 'stored_naming'),
     })),
     selection: 'never',
     // A query that matches nothing is the one answer an assistant is most
@@ -514,8 +575,28 @@ export async function listReviewedStocksForAgentV1(
     // caller told only "0 results" concludes Miorail has no NVIDIA.
     note:
       query !== null && page.length === 0 && entries.length > 0
-        ? `No reviewed underlying matches that text. Miorail holds ${entries.length} reviewed underlyings and most of them are named by TICKER rather than by company name, so try the ticker. This is a miss in Miorail's own naming, never a statement that the instrument has no representation on Base.`
-        : 'An underlying key groups reviewed Base representations and never selects one. Pass a key to get_representations to see every exact address separately. liveRepresentationCount is a measured count of representations with tokens outstanding; zero means nothing is outstanding on any reviewed contract, not that the instrument has no representation elsewhere.',
+        ? `No reviewed underlying matches that text${
+            input.assetClass ? ` in asset class ${input.assetClass}` : ''
+          }. Miorail holds ${entries.length} reviewed underlyings (${
+            reviewedByAssetClass.equity
+          } equity, ${reviewedByAssetClass.fund_share} fund share, ${
+            reviewedByAssetClass.other + reviewedByAssetClass.unknown
+          } other or unclassed) and many are named by TICKER rather than by company name, so try the ticker. This is a miss in Miorail's own naming, never a statement that the instrument has no representation on Base.`
+        : `An underlying key groups reviewed Base representations and never selects one. Pass a key to get_representations to see every exact address separately. liveRepresentationCount is a measured count of representations with tokens outstanding; zero means nothing is outstanding on any reviewed contract, not that the instrument has no representation elsewhere.${
+            aliasHits > 0
+              ? ` ${aliasHits} row${
+                  aliasHits === 1 ? '' : 's'
+                } here matched a Miorail-maintained company-name alias bound to an ISIN rather than the issuer's own stored naming — see matchedBy.`
+              : ''
+          }${
+            input.assetClass
+              ? ''
+              : ` This corpus is not all common stock: ${reviewedByAssetClass.fund_share} of these ${entries.length} rows are fund or ETF shares and ${
+                  reviewedByAssetClass.other + reviewedByAssetClass.unknown
+                } could not be classed. Miorail's web Stocks screen shows the ${
+                  reviewedByAssetClass.equity
+                } equity rows only, so this tool's universe is deliberately the larger one; pass assetClass to narrow it.`
+          }`,
   });
 }
 

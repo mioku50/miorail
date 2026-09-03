@@ -215,7 +215,13 @@ export const OPPORTUNITY_REJECTION_COPY_V1: Record<OpportunityRejectionV1, strin
   transfers_paused: 'Transfers of this token are paused right now. A position could be bought and not sold.',
   transfer_policy_may_block:
     'A transfer policy is active on this token, so it can refuse specific addresses. Miorail cannot see who is on it — B20 offers no way to enumerate a policy — so an exit cannot be confirmed.',
-  no_entry_route: 'No route into this token exists at this size.',
+  // The sibling below was reworded on 2026-08-09 to stop claiming that no
+  // route exists anywhere; this line was left as it was, one row above it,
+  // still asserting existence. A KyberSwap 4008 is the approved sources
+  // declining to price a buy at one size at one moment — it cannot see every
+  // venue on Base, and it is not asked to.
+  no_entry_route:
+    'No supported route into this token could be priced at the measured size. Measured through Miorail’s approved sources, at one size and one moment — not proof that no route exists anywhere.',
   // Measured, 2026-08-09: the sale reverts with Uniswap v4 core's
   // `NotEnoughLiquidity(poolId)` — the pool prices a buy and has nothing to
   // sell into. That is a DEPTH condition at one size and one moment, not a

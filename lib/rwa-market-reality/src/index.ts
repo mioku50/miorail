@@ -12,3 +12,4 @@ export * from './basis.js';
 export * from './capture.js';
 export * from './referenceAdapter.js';
 export * from './agent.js';
+export * from './discoveryAliases.js';

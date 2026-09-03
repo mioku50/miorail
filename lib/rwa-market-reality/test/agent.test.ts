@@ -489,6 +489,117 @@ describe('list_reviewed_stocks', () => {
     assert.equal(result.returned, 1);
     assert.equal(result.truncated, true);
   });
+
+  // -------------------------------------------------------------------------
+  // The corpus as PRODUCTION stores it.
+  //
+  // The fixture above names its rows "NVIDIA Corporation" and "Microsoft
+  // Corporation", which is why every query above passed — and why none of them
+  // could fail. Production stores the ticker in both name fields for 17 of 63
+  // reviewed rows, NVDA and MSFT among them, so "nvidia" reached nothing on the
+  // live server while this suite was green.
+  // -------------------------------------------------------------------------
+  const tickerOnly = [
+    {
+      underlying: {
+        underlyingKey: 'security:isin:US67066G1040',
+        canonicalName: 'NVDA',
+        displaySymbol: 'NVDA',
+        assetClass: 'equity' as const,
+        identifierScheme: 'isin' as const,
+        identifierValue: 'US67066G1040',
+        sourceKind: 'coinbase_b20_metadata' as const,
+        sourceRef: 'https://docs.base.org/',
+        sourceHash: null,
+        observedAt: '2026-08-26T20:00:00.000Z',
+      },
+      representationCount: 4,
+      issuerIds: ['backed', 'coinbase', 'dinari'],
+      liveRepresentationCount: 4,
+    },
+    {
+      underlying: {
+        underlyingKey: 'dinari:stock_id:0196ea6d-b6e6-72e1-90b9-2bb5b3efb0a5',
+        canonicalName: 'State Street SPDR S&P 500 ETF Trust',
+        displaySymbol: 'SPY',
+        assetClass: 'fund_share' as const,
+        identifierScheme: 'dinari_stock_id' as const,
+        identifierValue: '0196ea6d-b6e6-72e1-90b9-2bb5b3efb0a5',
+        sourceKind: 'dinari_stock_api' as const,
+        sourceRef: 'https://api.dinari.com/',
+        sourceHash: null,
+        observedAt: '2026-08-26T20:00:00.000Z',
+      },
+      representationCount: 1,
+      issuerIds: ['dinari'],
+      liveRepresentationCount: 1,
+    },
+  ];
+  const tickerOnlyDeps = { underlyings: { listUnderlyings: async () => tickerOnly } } as never;
+
+  test('a company name reaches a row that stores only its ticker', async () => {
+    const result = await listReviewedStocksForAgentV1(tickerOnlyDeps, { query: 'nvidia' });
+    assert.equal(result.returned, 1);
+    assert.equal(result.stocks[0]?.underlyingKey, 'security:isin:US67066G1040');
+    // Said out loud: this was Miorail's own alias, not the issuer's naming.
+    assert.equal(result.stocks[0]?.matchedBy, 'miorail_alias');
+    assert.match(result.note, /Miorail-maintained company-name alias/);
+  });
+
+  test('an alias resolves a security, never a ticker or an address', async () => {
+    // The alias is keyed on the ISIN. A row carrying the same ticker under a
+    // different security does not match it, which is the property that makes
+    // the table safe to keep by hand.
+    const impostor = [
+      {
+        ...tickerOnly[0],
+        underlying: {
+          ...tickerOnly[0].underlying,
+          underlyingKey: 'security:isin:US0000000000',
+          identifierValue: 'US0000000000',
+        },
+      },
+    ];
+    const deps = { underlyings: { listUnderlyings: async () => impostor } } as never;
+    const result = await listReviewedStocksForAgentV1(deps, { query: 'nvidia' });
+    assert.deepEqual(result.stocks, []);
+    // And no address ever appears, alias hit or not.
+    assert.doesNotMatch(
+      JSON.stringify(await listReviewedStocksForAgentV1(tickerOnlyDeps, { query: 'nvidia' })),
+      /0x[0-9a-fA-F]{40}/,
+    );
+  });
+
+  test('the stored naming still wins when it is the thing that matched', async () => {
+    const result = await listReviewedStocksForAgentV1(stockDeps, { query: 'nvidia' });
+    assert.equal(result.stocks[0]?.matchedBy, 'stored_naming');
+    assert.doesNotMatch(result.note, /company-name alias/);
+  });
+
+  test('the reviewed corpus is not all common stock, and says so', async () => {
+    // The web Stocks screen filters to `equity`. This tool does not, and a
+    // caller comparing the two universes would otherwise find two different
+    // totals with nothing explaining the gap — SPY, IBIT and GBTC are fund
+    // shares, and they are among the few reviewed rows that hold a cash route.
+    const all = await listReviewedStocksForAgentV1(tickerOnlyDeps, {});
+    assert.equal(all.reviewedTotal, 2);
+    assert.deepEqual(all.reviewedByAssetClass, {
+      equity: 1,
+      fund_share: 1,
+      other: 0,
+      unknown: 0,
+    });
+    assert.equal(all.assetClass, null);
+    assert.match(all.note, /web Stocks screen shows the 1 equity rows only/);
+
+    const equities = await listReviewedStocksForAgentV1(tickerOnlyDeps, { assetClass: 'equity' });
+    assert.deepEqual(equities.stocks.map((row) => row.displaySymbol), ['NVDA']);
+    assert.equal(equities.assetClass, 'equity');
+    // The breakdown describes the CORPUS, so a filtered call still reports the
+    // rows it did not return.
+    assert.equal(equities.reviewedByAssetClass.fund_share, 1);
+    assert.equal(equities.reviewedTotal, 2);
+  });
 });
 
 describe('get_market_changes stays inside an agent context', () => {

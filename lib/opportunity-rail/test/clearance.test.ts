@@ -3,6 +3,8 @@ import test, { describe } from 'node:test';
 
 import {
   OPPORTUNITY_PROFILE_BOUNDS_V1,
+  OPPORTUNITY_REJECTION_COPY_V1,
+  OPPORTUNITY_REJECTION_COPY_V2,
   OPPORTUNITY_QUOTE_ASSET_V1,
   OpportunityProfileV2Schema,
   ROUND_TRIP_CALL_INDEX_V1,
@@ -336,5 +338,67 @@ describe('a minimum output is integer arithmetic, rounded down', () => {
 
   test('a zero tolerance is the quoted amount exactly', () => {
     assert.equal(minimumOutputV1('1000000', 0), '1000000');
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// A route refusal is bounded by what was asked, and by who was asked.
+//
+// The two tables below are what a surface — including an MCP client driving
+// this from another model — shows a person when nothing could be priced. They
+// are the last place the reading is still ours; after that it is prose in
+// somebody else's conversation.
+//
+// `no_exit_route` was reworded on 2026-08-09 to stop claiming that no route
+// exists anywhere. `no_entry_route`, one row above it in both tables, was not,
+// and went on saying "No route into this token exists at this size" — an
+// existence claim about Base, from a KyberSwap 4008 that means the approved
+// sources would not price a buy at one size at one moment.
+//
+// So the rule is pinned rather than the sentence: a refusal that reports the
+// absence of a route must bound the claim, and must not assert that none
+// exists.
+// ---------------------------------------------------------------------------
+describe('an absent route is a reading, not a fact about Base', () => {
+  const ROUTE_ABSENCE_V1 = ['no_entry_route', 'no_exit_route'] as const;
+  const BOUND_V1 = /measured size|approved sources|at one size|not proof/i;
+  const UNBOUNDED_V1 = [
+    /\bno route (into|out of|for)?\s*this token exists\b/i,
+    /\bdoes not exist\b/i,
+    /\bnobody\b/i,
+    /\bno market\b/i,
+    /\bcannot be (sold|bought|traded)\b/i,
+    /\bon Base\b/i,
+  ];
+
+  for (const [label, table] of [
+    ['V1', OPPORTUNITY_REJECTION_COPY_V1 as Record<string, string>],
+    ['V2', OPPORTUNITY_REJECTION_COPY_V2 as Record<string, string>],
+  ] as const) {
+    test(`${label} bounds every route-absence sentence`, () => {
+      for (const reason of ROUTE_ABSENCE_V1) {
+        const copy = table[reason];
+        assert.ok(copy, `${label} ${reason} has no copy`);
+        assert.match(copy, BOUND_V1, `${label} ${reason} states an unbounded absence`);
+        for (const pattern of UNBOUNDED_V1) {
+          assert.doesNotMatch(copy, pattern, `${label} ${reason} claims more than was measured`);
+        }
+      }
+    });
+  }
+
+  test('the two tables agree about what an absent entry route means', () => {
+    // Two copies of one vocabulary is how the fix reached one of them and not
+    // the other. Until they are a single table, they are checked against each
+    // other.
+    assert.equal(
+      OPPORTUNITY_REJECTION_COPY_V1.no_entry_route,
+      OPPORTUNITY_REJECTION_COPY_V2.no_entry_route,
+    );
+    assert.equal(
+      OPPORTUNITY_REJECTION_COPY_V1.no_exit_route,
+      OPPORTUNITY_REJECTION_COPY_V2.no_exit_route,
+    );
   });
 });

@@ -14,6 +14,15 @@ import {
   privateFailureV1,
 } from './tools.js';
 import { registerMiorailReadOnlyToolsV1 } from '../mcp/server.js';
+import {
+  MiorailCheckExitProfileOutputV1Schema,
+  MiorailExecutionStatusOutputV1Schema,
+  MiorailGetBaseMcpActionOutputV1Schema,
+  MiorailGetStockBaseMcpActionOutputV1Schema,
+  MiorailPrepareB20EntryOutputV1Schema,
+  MiorailPrepareStockActionOutputV1Schema,
+  MiorailRecordSubmissionOutputV1Schema,
+} from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -164,6 +173,7 @@ This creates nothing executable. There is no path from here to calldata, an appr
           .regex(/^0x[0-9a-fA-F]{64}$/)
           .describe('The reviewed router policy Miorail measured under, as it returned it.'),
       },
+      outputSchema: MiorailPrepareStockActionOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
@@ -200,7 +210,19 @@ Pass the calls to Base MCP send_calls UNCHANGED, then record the submission exac
           .max(200)
           .describe('Your idempotency handle. Reuse it on a retry; never generate a new one for the same intent.'),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      outputSchema: MiorailGetStockBaseMcpActionOutputV1Schema,
+      // NOT read-only, and the annotation is the only thing a host has to go
+      // on. This call checks the clearance, reads the token on chain, plans and
+      // prepares a route, runs the Safety Kernel, creates a blueprint, writes
+      // an `action_released` audit row and returns executable calls. A host
+      // that auto-approves low-risk tools on `readOnlyHint: true` — which is
+      // exactly what several of them do — would run all of that unattended.
+      //
+      // `openWorldHint` is true for the same reason: the route is quoted from
+      // live external routers, so two calls a minute apart are two different
+      // answers. `idempotentHint` stays true because `requestId` is a real
+      // idempotency key — the route run is stored under it and reused.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {
       try {
@@ -228,6 +250,7 @@ The token's controls must have been read on this server first; if they have not,
         maxRoundTripBps: ROUND_TRIP_ARG_V1,
         maxExitSlippageBps: SLIPPAGE_ARG_V1,
       },
+      outputSchema: MiorailCheckExitProfileOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
@@ -261,6 +284,7 @@ requestId is an idempotency handle you choose. Reusing it returns the stored pla
           .max(200)
           .describe('Your idempotency handle. Reuse it on a retry; never generate a new one for the same intent.'),
       },
+      outputSchema: MiorailPrepareB20EntryOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     },
     async (args) => {
@@ -294,7 +318,14 @@ This opens the plan's ONE submission slot. ${MIORAIL_PRIVATE_CAVEATS_V1.onePlanO
           .max(200)
           .describe('Idempotency handle for this submission attempt. Reuse it on a retry.'),
       },
-      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      outputSchema: MiorailGetBaseMcpActionOutputV1Schema,
+      // NOT read-only. This opens the plan's ONE submission slot and writes an
+      // `action_released` audit row before a single byte leaves the server —
+      // both are state changes, and the slot is the reason a plan cannot be
+      // sent twice. The bytes themselves are read from storage, so
+      // `openWorldHint` stays false; `attemptRequestId` really does dedupe the
+      // attempt, so `idempotentHint` stays true.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
@@ -333,6 +364,7 @@ submittedCallsHash must be the callsHash you were given. A mismatch means what w
           .nullish()
           .describe('The Base MCP request/batch id. Required for "submitted".'),
       },
+      outputSchema: MiorailRecordSubmissionOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
@@ -360,6 +392,7 @@ Only "entry_succeeded" means the wallet's own decoded movements show USDC spent 
       inputSchema: {
         planId: z.string().min(1).max(200),
       },
+      outputSchema: MiorailExecutionStatusOutputV1Schema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     },
     async (args) => {

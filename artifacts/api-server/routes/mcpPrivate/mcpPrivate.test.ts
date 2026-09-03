@@ -718,6 +718,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     assert.deepEqual(sources.map((entry) => entry.name).sort(), [
       'audit.ts',
       'index.ts',
+      'outputs.ts',
       'server.ts',
       'session.ts',
       'tools.ts',
@@ -846,17 +847,38 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     const tools = (await client.listTools()).tools;
     await client.close();
 
-    const readOnly = new Set([
-      'miorail_get_stock_base_mcp_action',
-      'miorail_get_base_mcp_action',
-      'miorail_get_execution_status',
-    ]);
-    const writes = new Set([
+    // Which tools are writes is DERIVED, not listed. The listed version of this
+    // test is how the bug it now catches survived: `miorail_get_stock_base_mcp_action`
+    // and `miorail_get_base_mcp_action` were both named as read-only here, and
+    // the assertion dutifully held while one of them created a blueprint from
+    // live router quotes and the other opened a plan's single submission slot.
+    // A test that repeats the declaration cannot contradict it.
+    //
+    // The derivation uses the audit vocabulary the code already owns:
+    // `action_released` is written exactly when executable bytes leave this
+    // server. Any tool that can write one is not a read, whatever it says.
+    const source = readFileSync(path.join(here, 'tools.ts'), 'utf8');
+    const releasing = new Set(
+      [...source.matchAll(/outcome:\s*'action_released',\s*\n/g)].map((match) => {
+        const before = source.slice(0, match.index ?? 0);
+        const name = [...before.matchAll(/toolName:\s*'([a-z0-9_]+)'/g)].at(-1);
+        return name?.[1] ?? '';
+      }),
+    );
+    assert.ok(releasing.size >= 2, 'the audit scan found no releasing tool, so it proves nothing');
+
+    // Writes that are not releases: they persist a clearance, a plan or a
+    // submission record without handing anything executable back.
+    const persisting = new Set([
       'miorail_prepare_stock_action',
       'miorail_check_exit_profile',
       'miorail_prepare_b20_entry',
       'miorail_record_base_mcp_submission',
     ]);
+    // The one genuine read left: it writes an audit row for the read itself and
+    // changes nothing a later call depends on.
+    const readOnly = new Set(['miorail_get_execution_status']);
+
     for (const tool of tools) {
       const annotations = tool.annotations as
         | { readOnlyHint?: boolean; destructiveHint?: boolean }
@@ -865,19 +887,35 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       // Nothing on this surface destroys anything: Miorail never signs, never
       // broadcasts, and refuses to overwrite the record of what was sent.
       assert.equal(annotations!.destructiveHint, false, `${tool.name} claims to be destructive`);
+      if (releasing.has(tool.name)) {
+        assert.equal(
+          annotations!.readOnlyHint,
+          false,
+          `${tool.name} releases executable calls and must not claim to be read-only`,
+        );
+      }
+      if (persisting.has(tool.name)) {
+        assert.equal(annotations!.readOnlyHint, false, `${tool.name} must not claim to be read-only`);
+      }
       if (readOnly.has(tool.name)) {
         assert.equal(annotations!.readOnlyHint, true, `${tool.name} should be read-only`);
-      }
-      if (writes.has(tool.name)) {
-        assert.equal(annotations!.readOnlyHint, false, `${tool.name} must not claim to be read-only`);
       }
     }
     assert.equal(
       tools.filter((tool) => (tool.annotations as { readOnlyHint?: boolean })?.readOnlyHint === false)
         .length,
-      writes.size,
-      'exactly the four writing tools declare themselves writes',
+      persisting.size + releasing.size,
+      'every persisting and releasing tool declares itself a write',
     );
+
+    // A client that receives EIP-5792 calls needs a schema to check them
+    // against, not a paragraph. Every private tool advertises one.
+    for (const tool of tools.filter((entry) => entry.name.startsWith('miorail_'))) {
+      if (!releasing.has(tool.name) && !persisting.has(tool.name) && !readOnly.has(tool.name)) {
+        continue; // a read-only tool imported from the public registry
+      }
+      assert.ok(tool.outputSchema, `${tool.name} advertises no output schema`);
+    }
   });
 
   test('§12 — generic Swap stays closed to arbitrary tokens', async () => {

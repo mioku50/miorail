@@ -22,6 +22,17 @@ const FORBIDDEN_V1 = [
   /\bcheaper\b/i,
   /\bbetter\b/i,
   /\brecommend/i,
+  // The market-existence family. A count of 0 established outcomes says that
+  // Miorail holds no fresh answer at ONE size in ONE direction through ITS
+  // approved sources; every phrase below turns that into a claim about Base.
+  // Kept separate from the words above because these are the ones a reader
+  // would accept as a finding rather than as an opinion.
+  /\bnobody\b/i,
+  /\bno market\b/i,
+  /\bno buyer/i,
+  /\bno route exists\b/i,
+  /\bcannot be exited\b/i,
+  /\bnot traded\b/i,
 ];
 
 function response(over: Record<string, unknown> = {}): MarketRealityResponseV2 {
@@ -189,5 +200,276 @@ describe('Miorail reads its own comparison', () => {
     );
     assert.match(none.summary, /nothing to compare/);
     assert.doesNotMatch(none.summary, /either/);
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// The reading that the freshness sentence alone throws away.
+//
+// Taken from production on 2026-09-03. A connected Codex asked about $1,000
+// SELL → USDC for NVDA and was told, correctly, that Miorail held no fresh
+// answer for any of the four active representations. What the payload also
+// held, and the summary did not mention: the Coinbase B20 representation had
+// priced that exact question at $999.79 four minutes earlier, and two others
+// could not be sized at all. "No fresh answer" is the same sentence for a
+// market that just priced and one that was never reached.
+// ---------------------------------------------------------------------------
+
+const OBSERVED_AT_V1 = '2026-09-03T18:51:03.000Z';
+
+function representation(over: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+    issuerId: 'coinbase',
+    issuerInstrumentKey: 'coinbase:b20_address:0xb20000000000000000000078ee7ce2fe4908108c',
+    representationKind: 'b20_asset',
+    supply: {
+      state: 'positive_supply',
+      totalSupplyAtomic: '1289408020000',
+      decimals: 8,
+      normalization: 'raw_erc20_total_supply',
+      blockNumber: '50829695',
+      blockHash: '0x53deb892b799db0310012c90e6dc20db8700d18cba93191c37f926118ec2b223',
+      observedAt: '2026-09-03T15:18:58.350Z',
+      evidenceHash: '0x3c3fc05180baf048e579d8db1e346845ade7ac005d2a393ec76e5d5177183c3c',
+      source: 'erc20_total_supply',
+      readOutcome: 'success',
+      fresh: true,
+      reason: null,
+    },
+    status: 'not_measured',
+    routePolicyKey: '0x43e565deb2d53a6bf74b607d9ce08bd77da251cc873dd1cd362ab2dc76b0c017',
+    exactTestedTokenAtomic: null,
+    normalizedExposureAtomic: null,
+    normalizedExposureDecimals: null,
+    normalization: 'not_established',
+    returnedCashAtomic: null,
+    effectivePriceAtomic: null,
+    effectivePriceDecimals: null,
+    premiumDiscountBps: null,
+    reference: {
+        "status": "fresh",
+        "session": "regular_hours",
+        "marketSession": "regular_hours",
+        "publicationMode": "live_reference",
+        "valueAtomic": "23016000000",
+        "decimals": 8,
+        "observedAt": "2026-09-03T18:55:38.619Z",
+        "referenceUpdatedAt": "2026-09-03T17:52:55.000Z",
+        "freshness": "fresh",
+        "referenceSource": "https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md",
+        "referenceAddress": "0x04689a41629776563e6822f76f2e57d148d28513",
+        "calendar": {
+              "key": "us_equities_core_2026_v1",
+              "sourceUrls": [
+                    "https://www.nyse.com/trade/hours-calendars",
+                    "https://www.nasdaq.com/market-activity/stock-market-holiday-schedule"
+              ],
+              "timeZone": "America/New_York",
+              "localDate": "2026-09-03",
+              "regularOpenMinute": 570,
+              "regularCloseMinute": 960,
+              "publicationSessionLocalDate": "2026-09-03",
+              "publicationSessionOpenMinute": 570,
+              "publicationSessionCloseMinute": 960
+        },
+        "evidence": {
+              "kind": "chainlink_feed",
+              "source": "chainlink_v3_proxy_total_return",
+              "blockNumber": "50836195",
+              "blockHash": "0x430f3d050b91d136c321d0cde757c38c96eb69a5c7756b3264fb6a42c77469c3",
+              "targetAddress": "0x04689a41629776563e6822f76f2e57d148d28513",
+              "evidenceHash": "0x78fc0eaa65afecdc84dbb5ef063fd0ba8df37aa25b5bd9ee5a24adeb32e5b7c3"
+        },
+        "comparable": false,
+        "reasonCode": "reviewed_calendar_regular_hours",
+        "reason": "The explicit observation time falls inside the reviewed core trading session."
+  },
+    basis: {
+      policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+      status: 'withheld',
+      kind: 'withheld',
+      premiumDiscountBps: null,
+      reasonCode: 'expired_quote',
+      reason: 'The exact executable quote is no longer open.',
+    },
+    sources: [],
+    observedAt: null,
+    expiresAt: null,
+    liveness: 'history_only',
+    lastObservation: {
+      source: 'kyberswap',
+      status: 'quoted',
+      errorCode: null,
+      observedAt: OBSERVED_AT_V1,
+      expiresAt: '2026-09-03T18:51:23.000Z',
+      returnedCashAtomic: '999788541',
+      open: false,
+    },
+    ...over,
+  };
+}
+
+describe('a lapsed quote is not an unreached market', () => {
+  const nvda = () =>
+    response({
+      assembledAt: '2026-09-03T18:55:00.000Z',
+      universe: {
+        reviewedRepresentationCount: 5,
+        positiveSupplyRepresentationCount: 4,
+        zeroSupplyRepresentationCount: 1,
+        unresolvedSupplyRepresentationCount: 0,
+      },
+      marketOutcomeCoverage: {
+        policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+        eligibleRepresentationCount: 4,
+        establishedOutcomeCount: 0,
+        status: 'incomplete',
+        reason: 'No positive-supply representation has a fresh exact-direction outcome.',
+      },
+      representations: [
+        representation(),
+        representation({
+          tokenAddress: '0x7e8101a1c322d394b3961498c7d40d2dfa94c392',
+          issuerId: 'backed',
+          issuerInstrumentKey: 'backed:base_address:0x7e8101a1c322d394b3961498c7d40d2dfa94c392',
+          representationKind: 'non_rebasing_erc4626_wrapper',
+          lastObservation: {
+            source: 'kyberswap',
+            status: 'measurement_failed',
+            errorCode: 'provider_unavailable',
+            observedAt: OBSERVED_AT_V1,
+            expiresAt: '2026-09-03T18:51:23.000Z',
+            returnedCashAtomic: null,
+            open: false,
+          },
+        }),
+        representation({
+          tokenAddress: '0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97',
+          issuerId: 'dinari',
+          issuerInstrumentKey: 'dinari:base_address:0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97',
+          representationKind: 'dinari_dshare',
+          lastObservation: {
+            source: 'kyberswap',
+            status: 'unsized',
+            errorCode: null,
+            observedAt: OBSERVED_AT_V1,
+            expiresAt: '2026-09-03T18:51:23.000Z',
+            returnedCashAtomic: null,
+            open: false,
+          },
+        }),
+        representation({
+          tokenAddress: '0xa34c5e0abe843e10461e2c9586ea03e55dbcc495',
+          issuerId: 'backed',
+          issuerInstrumentKey: 'backed:base_address:0xa34c5e0abe843e10461e2c9586ea03e55dbcc495',
+          representationKind: 'rebasing_erc20',
+          lastObservation: {
+            source: 'kyberswap',
+            status: 'unsized',
+            errorCode: null,
+            observedAt: OBSERVED_AT_V1,
+            expiresAt: '2026-09-03T18:51:23.000Z',
+            returnedCashAtomic: null,
+            open: false,
+          },
+        }),
+        representation({
+          tokenAddress: '0xf37e92704df29338dd09759f322fd09868dd25cc',
+          issuerId: 'dinari',
+          issuerInstrumentKey: 'dinari:base_address:0xf37e92704df29338dd09759f322fd09868dd25cc',
+          representationKind: 'dinari_dshare',
+          supply: {
+            state: 'zero_supply',
+            totalSupplyAtomic: '0',
+            decimals: 18,
+            normalization: 'raw_erc20_total_supply',
+            blockNumber: '50829695',
+            blockHash: '0x53deb892b799db0310012c90e6dc20db8700d18cba93191c37f926118ec2b223',
+            observedAt: '2026-09-03T15:18:58.350Z',
+            evidenceHash:
+              '0x3c3fc05180baf048e579d8db1e346845ade7ac005d2a393ec76e5d5177183c3c',
+            source: 'erc20_total_supply',
+            readOutcome: 'success',
+            fresh: true,
+            reason: null,
+          },
+          liveness: 'never_measured',
+          lastObservation: null,
+        }),
+      ],
+    });
+
+  test('the freshness sentence is followed by what the last look found', () => {
+    const summary = marketRealityAgentSummaryV1(nvda());
+    assert.equal(summary.currentComparisonAvailable, false);
+    // Still says the true thing about freshness first.
+    assert.match(summary.summary, /does not currently hold a fresh established market answer/);
+    // And then the thing it used to leave out.
+    assert.match(summary.summary, /The last completed look at these 4, 4 minutes ago/);
+    assert.match(summary.summary, /1 priced/);
+    assert.match(summary.summary, /2 could not be sized/);
+    assert.match(summary.summary, /1 measurement failed/);
+    assert.match(summary.summary, /history, not a current answer/);
+  });
+
+  test('the zero-supply row is not counted among the four', () => {
+    // It is outside the comparison by supply, not by freshness, and folding it
+    // into "never measured" would put a contract with nothing outstanding into
+    // a sentence about market coverage.
+    const summary = marketRealityAgentSummaryV1(nvda());
+    // The closing clause names the phrase in order to draw the distinction, so
+    // what is forbidden is a COUNT of never-measured rows, not the words.
+    assert.doesNotMatch(summary.summary, /\d+ never measured/);
+    assert.match(summary.summary, /look at these 4/);
+  });
+
+  test('each row carries its own last look, with its age', () => {
+    const summary = marketRealityAgentSummaryV1(nvda());
+    const priced = summary.representations.find(
+      (row) => row.tokenAddress === '0xb20000000000000000000078ee7ce2fe4908108c',
+    );
+    assert.match(priced!.line, /last look priced, 4 minutes ago/);
+    const zero = summary.representations.find(
+      (row) => row.tokenAddress === '0xf37e92704df29338dd09759f322fd09868dd25cc',
+    );
+    // Zero supply, never measured: the row says the supply state and claims no
+    // measurement history it does not have.
+    assert.match(zero!.line, /zero observed supply/);
+    assert.doesNotMatch(zero!.line, /last look/);
+  });
+
+  test('no cash figure reaches the summary, however recent the look was', () => {
+    // The last observation carries $999.79. It stays out of the prose: a
+    // number in a sentence is a number nobody can expire.
+    const summary = marketRealityAgentSummaryV1(nvda());
+    const spoken = [summary.summary, summary.nextSafeStep, ...summary.representations.map((row) => row.line)].join(' ');
+    assert.doesNotMatch(spoken, /999/);
+    assert.doesNotMatch(spoken, /\$9/);
+  });
+
+  test('a corpus nobody has reached yet says that instead', () => {
+    const never = marketRealityAgentSummaryV1(
+      response({
+        assembledAt: '2026-09-03T18:55:00.000Z',
+        universe: {
+          reviewedRepresentationCount: 1,
+          positiveSupplyRepresentationCount: 1,
+          zeroSupplyRepresentationCount: 0,
+          unresolvedSupplyRepresentationCount: 0,
+        },
+        marketOutcomeCoverage: {
+          policy: 'same_reviewed_router_policy_exact_size_direction_and_destination',
+          eligibleRepresentationCount: 1,
+          establishedOutcomeCount: 0,
+          status: 'incomplete',
+          reason: 'never measured',
+        },
+        representations: [representation({ liveness: 'never_measured', lastObservation: null })],
+      }),
+    );
+    assert.match(never.summary, /never completed a look at this representation/);
+    assert.doesNotMatch(never.summary, /The last completed look/);
   });
 });
