@@ -48,11 +48,14 @@ import {
 import {
   createDatabaseMarketTailRepository,
   createDatabaseOfficialAssetRepository,
+  createDatabaseRepresentationSupplyRepository,
+  createDatabaseUnderlyingAssetRepository,
   type MarketVenueTransferRowV1,
   type MarketVenueRowV1,
 } from '@mioagent/route-storage';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
+import { reviewedRepresentationTargetsV1 } from './rwaCashExitCorpus.js';
 
 const CHAIN_ID_V1 = 8453 as const;
 
@@ -94,12 +97,36 @@ async function main(): Promise<void> {
 
   // The universe is what a reviewed source still lists. A background reader
   // whose universe is a hand-kept array is a budget with no owner.
+  //
+  // It was ONE issuer's registry until Phase 13.3 — the same corpus mistake the
+  // cash-exit pass had, in the worker that answers the question the cash-exit
+  // pass cannot. Fifty Dinari dShares hold real supply and KyberSwap answers
+  // `token not found` for a dozen of them, so the aggregator can say nothing
+  // about whether they move. The ledger can: every venue moves the token, so one
+  // `eth_getLogs` over the whole corpus finds the venues by behaviour instead of
+  // asking a router that has never heard of the asset.
+  //
+  // Widening the address list does not widen the block span, so this costs the
+  // same one log read per pass it always did.
   const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 200 });
-  const tokens = assets.map((asset) => asset.tokenAddress);
+  const reviewed = await reviewedRepresentationTargetsV1({
+    underlyings: createDatabaseUnderlyingAssetRepository(client),
+    supplies: createDatabaseRepresentationSupplyRepository(client),
+    limit: 300,
+  });
+  const registryTokens = assets.map((asset) => asset.tokenAddress.toLowerCase());
+  const claimed = new Set(registryTokens);
+  const tokens = [
+    ...registryTokens,
+    ...reviewed.map((target) => target.tokenAddress).filter((address) => !claimed.has(address)),
+  ];
   if (tokens.length === 0) {
     throw new Error('no official asset is currently listed — run pnpm rwa:ingest-official first');
   }
-  console.log(`tracking ${tokens.length} official asset(s)\n`);
+  console.log(
+    `tracking ${tokens.length} token(s) — ${registryTokens.length} from the official registry, ` +
+      `${tokens.length - registryTokens.length} reviewed with tokens outstanding\n`,
+  );
 
   for (let pass = 0; pass < args.passes; pass += 1) {
     const head = await source.headBlock();

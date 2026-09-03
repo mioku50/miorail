@@ -287,9 +287,15 @@ async function main(): Promise<void> {
       `${universe.length - fromRegistry} reviewed with tokens outstanding, ${gapMs}ms between assets\n`,
   );
   let measured = 0;
-  let established = 0;
-  let noRoute = 0;
-  let failed = 0;
+  // Counted BY NAME, all five of them.
+  //
+  // The summary used to fold everything that was not a route into "unfinished",
+  // which put `no_entry_route_at_measured_sizes` — the router refusing to SELL
+  // us the token, a fact about the market — in the same word as
+  // `measurement_failed`, which is our own outage. Those must never share a
+  // sentence: it is the same mistake as a card that reports our transport
+  // failure under the asset's name.
+  const byStatus = new Map<string, number>();
   const emitted: string[] = [];
 
   for (const [index, entry] of universe.entries()) {
@@ -321,9 +327,7 @@ async function main(): Promise<void> {
     measured += 1;
     const now = new Date();
     const status = routeStatusFromPreviewV1(previewLadderFromRunV1(next));
-    if (status === 'cash_route_established') established += 1;
-    else if (status === 'no_route_at_measured_sizes') noRoute += 1;
-    else failed += 1;
+    byStatus.set(status, (byStatus.get(status) ?? 0) + 1);
     console.log(`${label} ${status}`);
 
     // Signals stay inside the vocabulary that owns them: an
@@ -348,9 +352,10 @@ async function main(): Promise<void> {
     if (index < universe.length - 1) await sleep(gapMs);
   }
 
-  console.log(
-    `\nmeasured ${measured}: ${established} with a cash route, ${noRoute} with no route at the measured sizes, ${failed} unfinished`,
-  );
+  console.log(`\nmeasured ${measured}:`);
+  for (const [status, count] of [...byStatus].sort((a, b) => b[1] - a[1])) {
+    console.log(`  ${String(count).padStart(4)}  ${status}`);
+  }
   console.log(`signals recorded: ${emitted.length}`);
 }
 

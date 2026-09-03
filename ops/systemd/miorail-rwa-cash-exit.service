@@ -18,7 +18,13 @@ Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_measure_cash_exit.ts
 
-TimeoutStartSec=1800
+# Measured on the first widened pass: about 27 seconds per representation —
+# eight router quotes plus the 2.5s politeness gap — so 84 of them is roughly
+# forty minutes. At the old 1800s the timer would have killed the pass
+# two-thirds of the way through the corpus and left the tail carrying whatever
+# it was carrying before, which reads on a card exactly like an asset nobody
+# has measured.
+TimeoutStartSec=5400
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
