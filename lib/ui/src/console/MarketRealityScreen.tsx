@@ -728,7 +728,12 @@ function ChoiceButton({
     >
       <span className="mr-choice-name">{choice.title}</span>
       <span className="mr-choice-sub">
-        {choice.issuerLine}
+        {/* The issuer list is the part that may be shortened; the tag is not.
+            As a bare text node it could not shrink, so "Backed · Coinbase ·
+            Dinari" pushed the badge out of the card and it rendered as
+            "MULTI-" — a clipped word that reads like a bug, on the one chip
+            that carries the page's whole point. */}
+        <span className="mr-choice-issuers">{choice.issuerLine}</span>
         {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
         {/* Kept on the row as well as in the section, so a reader who opens one
             anyway does not read an empty contract as a broken product. */}

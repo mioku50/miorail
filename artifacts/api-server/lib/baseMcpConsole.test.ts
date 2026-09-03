@@ -487,7 +487,7 @@ describe('what the model is fed is bounded too, not just the screen', () => {
 // ---------------------------------------------------------------------------
 
 const PORTFOLIO_INVENTORY_V1 = [
-  { providerId: 'base-mcp-dynamic', tools: [{ name: 'get_portfolio' }, { name: 'chain_rpc_request' }] },
+  { tools: [{ name: 'get_portfolio' }, { name: 'chain_rpc_request' }] },
 ];
 
 const PORTFOLIO_PAYLOAD_V1 = JSON.stringify({
@@ -557,7 +557,7 @@ describe('a balance question never leaves the address to the model', () => {
     );
     assert.equal(
       deterministicBasePortfolioReadV1('What is my USDC balance?', [
-        { providerId: 'base-mcp-dynamic', tools: [{ name: 'chain_rpc_request' }] },
+        { tools: [{ name: 'chain_rpc_request' }] },
       ]),
       null,
     );

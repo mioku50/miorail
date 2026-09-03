@@ -556,6 +556,11 @@ export function quoteAgeLabelV1(iso: string | null, nowIso: string): string | nu
   const now = Date.parse(nowIso);
   if (!Number.isFinite(then) || !Number.isFinite(now)) return null;
   const seconds = Math.max(0, Math.round((now - then) / 1000));
+  // "0s ago" is not a time a reader can act on, and it appeared on the same
+  // card as "measured 1h ago" — two ages, one of them apparently instantaneous,
+  // sitting next to each other and reading as a contradiction. Under five
+  // seconds the honest word is "just now".
+  if (seconds < 5) return 'just now';
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.round(seconds / 60);
   if (minutes < 60) return `${minutes} min ago`;
@@ -1580,25 +1585,46 @@ function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 
     label: venue.venueName,
     value:
       venue.state === 'listed'
-        ? `listed${venue.marketRef ? ` · ${venue.marketRef}` : ''}`
+        ? `listed${venue.curated === false ? ' · permissionless market' : ''}${venue.marketRef ? ` · ${venue.marketRef}` : ''}`
         : venue.state === 'unread'
           ? `unread — ${venue.reason ?? 'no reason given'}`
           : 'not listed',
   }));
+  // Did the venue put this asset on its list, or did somebody deploy a market
+  // against it?
+  //
+  // Both tokenized-stock markets that exist on Base — wbCOIN and METAc, both on
+  // Morpho — come back `listed: false`. Morpho is permissionless: anyone can
+  // create a market for any token, so an uncurated one proves a market EXISTS,
+  // not that the venue accepted the asset. Rendering the two the same way is
+  // the strongest sentence on this card resting on the weakest evidence.
+  const uncurated = (listing?.venues ?? []).filter(
+    (venue: RepresentationUseAccessV1['defi']['venues'][number]) =>
+      venue.state === 'listed' && venue.curated === false,
+  );
+  const allUncurated = uses.length > 0 && uncurated.length === (listing?.venues ?? []).filter(
+    (venue: RepresentationUseAccessV1['defi']['venues'][number]) => venue.state === 'listed',
+  ).length;
   if (uses.length > 0) {
     return {
       id: 'defi',
       label: 'DeFi',
       headline: `This exact address is used in DeFi: ${uses
         .map((entry) => `${DEFI_USE_LABEL_V1[entry.kind]} at ${entry.venues.join(', ')}`)
-        .join('; ')}.`,
-      chip: 'Integration found',
-      tone: 'good',
+        .join('; ')}.${
+        allUncurated
+          ? ' The market exists but is not on the venue’s curated list — anyone can create one.'
+          : ''
+      }`,
+      chip: allUncurated ? 'Permissionless market' : 'Integration found',
+      tone: allUncurated ? 'neutral' : 'good',
       facts: uses.map((entry) => ({
         label: DEFI_USE_LABEL_V1[entry.kind],
         value: entry.venues.join(', '),
-        note: 'the venue names this exact address',
-        tone: 'good' as const,
+        note: allUncurated
+          ? 'a market names this exact address; the venue has not listed it'
+          : 'the venue names this exact address',
+        tone: allUncurated ? ('neutral' as const) : ('good' as const),
       })),
       evidence,
       edges: [],

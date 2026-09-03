@@ -60,6 +60,23 @@ export interface DefiVenueListingV1 {
   /** Per axis, and never merged: a token accepted as collateral is not
    * necessarily one anybody can borrow. Null means the venue did not say. */
   uses: Readonly<Record<DefiUseKindV1, boolean | null>>;
+  /**
+   * Did the venue itself put this asset on its list, or did somebody deploy a
+   * market against it?
+   *
+   * On Morpho anyone can create a market for any token, and both of the two
+   * tokenized-stock markets that exist on Base come back `listed: false` — not
+   * on Morpho's curated list. That flag was queried and then never read, so an
+   * uncurated market a stranger deployed rendered exactly like an asset the
+   * venue accepted. Aave, Compound and Moonwell only carry assets their own
+   * governance added, so `true` there is a fact about the protocol, not a
+   * default.
+   *
+   * Null is a venue that does not publish the distinction; absent is a server
+   * that predates the field. Neither is `false` — an unstated curation is not
+   * a permissionless market.
+   */
+  curated?: boolean | null;
   marketRef: string | null;
   reason: string | null;
 }
@@ -154,6 +171,9 @@ export const RepresentationUseAccessV1Schema = z
                   collateral: z.boolean().nullable(),
                 })
                 .strict(),
+              // Optional so a reply from a server that predates this field
+              // still parses; absent and null both mean "not stated".
+              curated: z.boolean().nullable().optional(),
               marketRef: z.string().nullable(),
               reason: z.string().nullable(),
             })
@@ -404,6 +424,7 @@ export async function defiListingV1(
         venueName: source.venueName,
         state: 'unread',
         uses: { lend: null, borrow: null, collateral: null },
+        curated: null,
         marketRef: null,
         reason: error instanceof Error ? error.message.slice(0, 200) : 'venue read failed',
       });

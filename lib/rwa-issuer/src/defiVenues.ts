@@ -56,6 +56,7 @@ function notListedV1(venueId: string, venueName: string): DefiVenueListingV1 {
     venueName,
     state: 'not_listed',
     uses: { lend: null, borrow: null, collateral: null },
+    curated: null,
     marketRef: null,
     reason: null,
   };
@@ -67,6 +68,7 @@ function unreadV1(venueId: string, venueName: string, reason: string): DefiVenue
     venueName,
     state: 'unread',
     uses: { lend: null, borrow: null, collateral: null },
+    curated: null,
     marketRef: null,
     reason: reason.slice(0, 200),
   };
@@ -102,6 +104,9 @@ export function moonwellListingFromMarketsV1(
     venueId: 'moonwell',
     venueName: 'Moonwell',
     state: 'listed',
+    // Moonwell's market list is governance-curated; there is no permissionless
+    // market on this venue for an uncurated one to hide in.
+    curated: true,
     uses: {
       lend: !deprecated,
       borrow: borrowsUsd !== null && borrowsUsd > 0 ? true : null,
@@ -132,10 +137,17 @@ export function morphoListingFromMarketsV1(
     return value !== null && value > 0;
   });
   const first = [...asCollateral, ...asLoan][0];
+  // Anyone can deploy a Morpho market against any token. `listed` is Morpho's
+  // own curation flag, it was queried from the very first version of this
+  // parser, and it was never read — so a market a stranger deployed rendered
+  // exactly like an asset Morpho accepted. Both tokenized-stock markets that
+  // exist on Base come back false.
+  const curated = [...asCollateral, ...asLoan].some((market) => market.listed === true);
   return {
     venueId: 'morpho',
     venueName: 'Morpho',
     state: 'listed',
+    curated,
     uses: {
       lend: asLoan.length > 0 ? true : null,
       borrow: asLoan.length > 0 ? (borrowed ? true : null) : null,
@@ -314,6 +326,9 @@ export function aaveListingFromReservesV1(
     venueId: 'aave_v3',
     venueName: 'Aave v3',
     state: listed ? 'listed' : 'not_listed',
+    // A reserve exists only because Aave governance added it. There is no
+    // permissionless market here to confuse it with.
+    curated: listed ? true : null,
     uses: listed
       ? { lend: true, borrow: true, collateral: null }
       : { lend: null, borrow: null, collateral: null },
@@ -359,6 +374,8 @@ export function compoundListingFromCometsV1(
     venueId: 'compound_v3',
     venueName: 'Compound v3',
     state: listed ? 'listed' : 'not_listed',
+    // Same: a Comet's base asset and collateral set are governance decisions.
+    curated: listed ? true : null,
     uses: listed
       ? {
           // A base asset is what the market lends out, so supplying it earns

@@ -191,6 +191,7 @@ describe('DeFi listing is bounded by where we looked', () => {
         venueName: 'Venue',
         state: 'not_listed',
         uses: { lend: null, borrow: null, collateral: null },
+        curated: null,
         marketRef: null,
         reason: null,
         ...over,
@@ -438,5 +439,36 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
       reviewedDefiSourcesV1(reader).map((source) => source.venueId),
       ['moonwell', 'morpho', 'aave_v3', 'compound_v3'],
     );
+  });
+});
+
+describe('a venue that listed an asset and a market a stranger deployed', () => {
+  test('Morpho’s own curation flag is read, not just queried', () => {
+    // Both tokenized-stock markets that exist on Base — wbCOIN and METAc —
+    // come back `listed: false`. The flag was in the query from the first
+    // version of this parser and nothing read it, so an uncurated market
+    // rendered exactly like an asset Morpho accepted.
+    const curated = morphoListingFromMarketsV1([{ marketId: '0xabc', listed: true }], []);
+    assert.equal(curated.curated, true);
+    const permissionless = morphoListingFromMarketsV1([{ marketId: '0xabc', listed: false }], []);
+    assert.equal(permissionless.curated, false);
+    // Still `listed` as a STATE: the market is real and names this address.
+    assert.equal(permissionless.state, 'listed');
+    assert.equal(permissionless.uses.collateral, true);
+  });
+
+  test('the governance-only venues say so, and an absence says nothing', () => {
+    // Aave and Compound carry only what their own governance added, so there is
+    // no permissionless market for an uncurated one to hide in.
+    assert.equal(aaveListingFromReservesV1(USDC_V1, [USDC_V1]).curated, true);
+    assert.equal(
+      compoundListingFromCometsV1(USDC_V1, [
+        { marketId: 'cUSDCv3', baseToken: USDC_V1, collaterals: [] },
+      ]).curated,
+      true,
+    );
+    // Not listed is not "uncurated" — it is nothing to curate.
+    assert.equal(aaveListingFromReservesV1(NVDA, [USDC_V1]).curated, null);
+    assert.equal(aaveListingFromReservesV1(NVDA, null).curated, null);
   });
 });

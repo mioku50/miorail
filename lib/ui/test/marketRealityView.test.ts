@@ -2170,6 +2170,16 @@ describe('ages, not timestamps', () => {
     assert.equal(quoteAgeLabelV1(null, NOW), null);
   });
 
+  test('a reading taken this second says "just now", never "0s ago"', () => {
+    // Seen in production: "measured 0s ago" sat directly above "measured 1h
+    // ago" on one card. Two ages, one of them apparently instantaneous, reading
+    // as a contradiction — and "0s ago" is not a time anyone can act on.
+    assert.equal(quoteAgeLabelV1(NOW, NOW), 'just now');
+    assert.equal(quoteAgeLabelV1('2026-08-26T20:34:17.000Z', NOW), 'just now');
+    // Five seconds is where a number starts telling the reader something.
+    assert.equal(quoteAgeLabelV1('2026-08-26T20:34:14.000Z', NOW), '5s ago');
+  });
+
   test('the lapsed sentence carries the age and says the number was real', () => {
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
     const body = view?.representations[0]?.outcomeBody ?? '';
