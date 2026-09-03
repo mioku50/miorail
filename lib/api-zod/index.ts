@@ -2408,6 +2408,34 @@ export const StatusResponseSchema = z.object({
   rpc: z.object({
     status: z.enum(['connected', 'missing', 'failed']),
     provider: z.string(),
+    /**
+     * What the metered endpoint has cost this calendar month, in COMPUTE UNITS.
+     *
+     * Optional and nullable, and the two mean different things: absent is a
+     * server that predates the ledger, null is a ledger this server could not
+     * read. Neither is zero — a budget that reports zero because it forgot is
+     * the one failure a budget cannot have.
+     *
+     * It was computed and then silently dropped for a day: the route filled
+     * `rpc.meteredBudget` and this schema, which strips what it does not
+     * declare, removed it from every response. The figure existed and no
+     * surface could see it.
+     */
+    meteredBudget: z
+      .object({
+        month: z.string(),
+        spentCu: z.number(),
+        budgetCu: z.number(),
+        spendableCu: z.number(),
+        remainingCu: z.number(),
+        usedFraction: z.number(),
+        remainingEthCalls: z.number(),
+        exhausted: z.boolean(),
+        alchemyConfigured: z.boolean(),
+        fallbackCalls: z.number(),
+      })
+      .nullable()
+      .optional(),
   }),
   tokenBalances: z.object({
     status: z.enum(['connected', 'missing', 'failed', 'stale', 'disabled']),

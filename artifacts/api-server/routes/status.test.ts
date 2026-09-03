@@ -99,6 +99,23 @@ describe('Status API', () => {
     restoreEnv('TOKEN_SECURITY_PROVIDER', original);
   });
 
+  test('GET /api/status carries the metered RPC budget field, even when it is null', async () => {
+    // It was computed and then silently dropped: the route filled
+    // `rpc.meteredBudget` from the durable ledger and the response schema,
+    // which strips what it does not declare, removed it from every reply. The
+    // figure existed for a day and no surface could see it.
+    //
+    // The assertion is on the KEY, not a number. Without a database the ledger
+    // read fails and the field is null — and null is the honest answer for "we
+    // could not read the spend", which is a different sentence from zero.
+    const response = await request(app).get('/api/status');
+    assert.strictEqual(response.status, 200);
+    assert.ok(
+      Object.prototype.hasOwnProperty.call(response.body.rpc, 'meteredBudget'),
+      'rpc.meteredBudget must survive the response schema',
+    );
+  });
+
   test('GET /api/status exposes only safe migration booleans with compatibility defaults', async () => {
     const originalRoute = process.env.MIORAIL_ROUTE_INTELLIGENCE_V1;
     const originalLegacy = process.env.MIORAIL_LEGACY_TERMINAL;

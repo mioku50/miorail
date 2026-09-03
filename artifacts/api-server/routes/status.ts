@@ -304,7 +304,22 @@ statusRouter.get('/', async (req, res, next) => {
     });
     const statusData = {
       ...baseStatus,
-      rpc: await statusRouteRuntime.probeRpcStatus(baseStatus.chainId, rpcUrl, baseStatus.rpc.provider),
+      // The probe answers reachability; the ledger answers cost. They are two
+      // different readings of the same endpoint and both belong here.
+      //
+      // This used to be a bare assignment of the probe's result, which replaced
+      // `rpc` wholesale and threw away the `meteredBudget` filled in above. The
+      // figure was read from Postgres, written onto the object, and then
+      // deleted by the line that published it — for a day, on a field whose
+      // whole purpose is to say what the month has cost.
+      rpc: {
+        ...(await statusRouteRuntime.probeRpcStatus(
+          baseStatus.chainId,
+          rpcUrl,
+          baseStatus.rpc.provider,
+        )),
+        meteredBudget: baseStatus.rpc.meteredBudget,
+      },
       // Never throws and never serves a stale reading as current — see
       // lib/chainConditions.ts.
       chain: await statusRouteRuntime.readChainConditions(rpcUrl),

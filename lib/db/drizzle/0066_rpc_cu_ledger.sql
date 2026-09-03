@@ -23,3 +23,21 @@ CREATE TABLE IF NOT EXISTS rpc_cu_ledger (
   -- nobody can audit, and the fallback exists precisely so nothing has to be.
   CONSTRAINT rpc_cu_ledger_non_negative CHECK (spent_cu >= 0 AND call_count >= 0)
 );
+
+-- Owned by the application role, like the other hundred and nine tables here.
+--
+-- Applied by hand as `postgres` on 2026-09-03 and therefore unreadable by
+-- `miorail_user`, so the API's ledger read threw `permission denied`, the
+-- catch reported the month's spend as "could not read", and the budget would
+-- have run all month with a spend figure it never persisted. A budget unaware
+-- of its own spend is not within budget.
+--
+-- `DO` rather than a bare ALTER so a database that has no such role still
+-- replays this file.
+DO $$
+BEGIN
+  IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'miorail_user') THEN
+    EXECUTE 'ALTER TABLE rpc_cu_ledger OWNER TO miorail_user';
+  END IF;
+END
+$$;
