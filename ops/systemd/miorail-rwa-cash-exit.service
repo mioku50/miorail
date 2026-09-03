@@ -1,5 +1,5 @@
 [Unit]
-# The public cash-exit ladder for the whole official universe. Four exact sizes, two destinations, quoted through the approved router set. Paces itself between assets; an asset it cannot read is skipped, never reported as an asset with no market.
+# The public cash-exit ladder for the whole REVIEWED universe — every representation with tokens outstanding, across all four issuers, not one issuer's registry. Four exact sizes, two destinations, quoted through the approved router set. Paces itself between assets; an asset it cannot read is skipped, never reported as an asset with no market.
 #
 # Oneshot, driven by miorail-rwa-cash-exit.timer. Read-only outside Miorail's own
 # evidence tables: no signer, no key, no chain write, no wallet.

@@ -1,11 +1,21 @@
 [Unit]
 # Hourly.
 #
-# The cost of a pass is thirteen assets times eight router quotes, paced at
-# 2.5s between assets — about a minute of wall clock and roughly a hundred
-# requests to an aggregator we do not pay. Measured on the launch corpus, the
-# median round-trip cost moves by zero out to six hours, so a tighter interval
-# would buy noise and spend somebody else's capacity to get it.
+# The cost of a pass is every reviewed representation WITH TOKENS OUTSTANDING —
+# 63 of the 130 on file — times eight router quotes, paced at 2.5s between
+# assets: roughly six minutes of wall clock and about five hundred requests to
+# an aggregator we do not pay. It was thirteen assets until Phase 13.3, because
+# the pass read one issuer's registry while the cards came from the whole
+# corpus; ninety-six of them therefore said "not measured" about the market when
+# the sentence was about us.
+#
+# The 67 zero-supply contracts are deliberately not quoted. They have no market
+# by construction and their cards say so, which is an answer rather than an
+# absence.
+#
+# Measured on the launch corpus, the median round-trip cost moves by zero out to
+# six hours, so a tighter interval would buy noise and spend somebody else's
+# capacity to get it.
 #
 # What it does buy, hourly: the moment an asset with no route acquires one, and
 # the moment one loses it. Both are recorded against the run before, so a pass
