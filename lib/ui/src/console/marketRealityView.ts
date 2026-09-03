@@ -114,11 +114,14 @@ export interface MarketRealityIndexEntryWireV1 {
 }
 
 export interface MarketRealityIndexWireV1 {
+  scope?: 'coinbase_b20' | 'all_representations';
   entries: readonly MarketRealityIndexEntryWireV1[];
   totals: {
     underlyings: number;
     boundRepresentations: number;
     multiIssuerUnderlyings: number;
+    coinbaseUnderlyings?: number;
+    allUnderlyings?: number;
   };
   observedAt: string;
 }
@@ -421,6 +424,20 @@ export interface RepresentationViewV1 {
    * under Technical evidence.
    */
   withheld: WithheldFactViewV1[];
+  /**
+   * The ONE thing that was not established, when nothing in the grid was.
+   *
+   * Four withheld rows are four CONSEQUENCES of a single cause: a cash-worth
+   * sell is sized by first pricing the buy, so when the buy finds no route
+   * there is no token amount, and with no token amount there is no cash back,
+   * no per-share price, no basis. The card printed all four, in the order the
+   * engine computes them, and the cause — the only sentence a reader can act
+   * on — was not among them.
+   *
+   * Non-null only when the grid is entirely absent. One value established means
+   * the rows are genuinely different absences and are shown as they are.
+   */
+  withheldCause: WithheldCauseViewV1 | null;
   /** Round-trip cost at each reviewed size, from the same stored run. Empty
    * when nothing measured it — never a row of zeros. */
   ladder: FactViewV1[];
@@ -1102,6 +1119,94 @@ export function splitEstablishedFactsV1(
   return { established, withheld };
 }
 
+export interface WithheldCauseViewV1 {
+  /** The answer, in the reader's units. One sentence, no vocabulary of ours. */
+  headline: string;
+  /** What it does and does not mean. The bound always travels with the claim. */
+  detail: string;
+}
+
+/**
+ * The one cause behind a wholly withheld grid.
+ *
+ * Fires only when NOTHING in the value grid was established. With even one
+ * value present the withheld rows are independent absences and stay as they
+ * are; with none, they are all downstream of a single measurement outcome, and
+ * that outcome is what the reader came for.
+ *
+ * Every sentence is bounded the same way the route-absence copy is: it names
+ * the reviewed sources and the one size, and never claims the token does not
+ * trade. The withheld rows are not discarded — they move to Technical evidence,
+ * where the mechanics belong.
+ */
+export function withheldCauseV1(input: {
+  established: readonly FactViewV1[];
+  withheld: readonly WithheldFactViewV1[];
+  observation: MarketRealityRepresentationWireV1['lastObservation'];
+  direction: MarketRealityDirectionV1;
+  sizeLabel: string;
+}): WithheldCauseViewV1 | null {
+  if (input.established.length > 0 || input.withheld.length < 2) return null;
+  const observation = input.observation;
+  if (!observation) {
+    return {
+      headline: `Nothing has been measured at ${input.sizeLabel} yet.`,
+      detail:
+        'This representation has no completed reading at this size and direction. That is a gap in Miorail\u2019s coverage, not a finding about the token.',
+    };
+  }
+  const code = observation.errorCode ?? '';
+  if (code === 'cash_size_anchor_no_route' || observation.status === 'unsized') {
+    return input.direction === 'sell'
+      ? {
+          headline: `${input.sizeLabel} cash exit could not be sized.`,
+          detail:
+            'A cash-worth sell has no token amount until a buy is priced, and no reviewed router would price that buy at this size. Selling a position already held was never tested and is not claimed either way.',
+        }
+      : {
+          headline: `${input.sizeLabel} buy could not be priced.`,
+          detail:
+            'No reviewed router would sell this token for cash at this size, so nothing downstream of that price could be established.',
+        };
+  }
+  if (code === 'provider_unsupported_token') {
+    return {
+      headline: 'This route source does not carry this token.',
+      detail:
+        'The router answered that it does not know this contract, so it never looked for a route. That is Miorail\u2019s coverage, not the market\u2019s answer, and it says nothing about whether the token trades.',
+    };
+  }
+  if (code === 'provider_policy_refused') {
+    return {
+      headline: 'A route source that covers this token declined to quote it.',
+      detail:
+        'The venue can route this token and would not, at this size and moment. That is the venue\u2019s decision, not a property of the token and not a reading of the market.',
+    };
+  }
+  if (code === 'provider_venue_not_covered') {
+    return {
+      headline: 'The market for this token sits at a venue this route source cannot read.',
+      detail:
+        'A market exists and no price was taken from it, because the reviewed sources do not reach that venue. That is Miorail\u2019s coverage, not an absence of liquidity.',
+    };
+  }
+  if (observation.status === 'no_route') {
+    return {
+      headline: `No cash route was found at ${input.sizeLabel}.`,
+      detail:
+        'Measured through the reviewed route sources, at this one size and one moment. It is not proof that no route exists anywhere on Base.',
+    };
+  }
+  if (observation.status === 'measurement_failed') {
+    return {
+      headline: 'The measurement did not complete.',
+      detail:
+        'Miorail\u2019s own router call failed, so nothing on this card is a statement about this token. Measuring again is the next step.',
+    };
+  }
+  return null;
+}
+
 function exitViewV1(
   exit: RepresentationExitEvidenceV1 | null | undefined,
   nowIso: string,
@@ -1240,6 +1345,7 @@ function termsV1(representation: MarketRealityRepresentationWireV1): FactViewV1[
 function technicalV1(
   representation: MarketRealityRepresentationWireV1,
   nowIso: string,
+  withheldFacts: readonly WithheldFactViewV1[] = [],
 ): { label: string; value: string }[] {
   const rows: { label: string; value: string }[] = [
     { label: 'Contract', value: representation.tokenAddress },
@@ -1261,6 +1367,12 @@ function technicalV1(
   ];
   if (representation.routePolicyKey) {
     rows.push({ label: 'Route policy', value: representation.routePolicyKey });
+  }
+  // The withheld rows, in full. When the card replaces them with their single
+  // cause, this is where the four field-level absences still have to be
+  // readable — the collapse is a change of emphasis, never a loss of evidence.
+  for (const fact of withheldFacts) {
+    rows.push({ label: `Not established · ${fact.label}`, value: fact.note });
   }
   if (representation.exactTestedTokenAtomic) {
     rows.push({
@@ -2010,6 +2122,37 @@ export function partitionChoicesBySupplyV1(
   return { live, empty };
 }
 
+/**
+ * The canonical representation first, the alternatives after it.
+ *
+ * Base documents one tokenized-stock standard on this chain — B20, issued by
+ * Coinbase — and the measurements agree that it is also the one that answers:
+ * on 2026-09-04 at $1,000 SELL, 10 of 13 Coinbase representations held a cash
+ * route against 2 of 21 Backed and 0 of 96 Dinari. A board that presented all
+ * three as peers put the reader's first card on a contract that mostly cannot
+ * be priced.
+ *
+ * This is an ORDER and a heading, never a filter and never a ranking. Every
+ * representation the comparison holds is still on the page with its own exact
+ * address, because the thing this product knows that nothing else does is that
+ * one security has several representations and they are not economically the
+ * same. That claim needs the alternatives visible; it does not need them first.
+ */
+export function partitionByIssuerRoleV1(
+  representations: readonly RepresentationViewV1[],
+): { primary: RepresentationViewV1[]; others: RepresentationViewV1[] } {
+  const primary: RepresentationViewV1[] = [];
+  const others: RepresentationViewV1[] = [];
+  for (const representation of representations) {
+    (representation.issuerName === ISSUER_NAME_V1.coinbase ? primary : others).push(representation);
+  }
+  // With no Coinbase representation there is no primary and nothing to demote:
+  // the alternatives ARE the page, and heading them "other" would be measuring
+  // them against a card that is not there.
+  if (primary.length === 0) return { primary: [], others: [] };
+  return { primary, others };
+}
+
 export function stockFiltersV1(
   choices: readonly UnderlyingChoiceViewV1[],
 ): StockFilterViewV1[] {
@@ -2059,6 +2202,53 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
       tone: 'neutral',
     },
   ];
+}
+
+/**
+ * What this page is a slice of, said above the grid.
+ *
+ * A scoped list whose counters move with the scope is honest about the page and
+ * silent about the corpus: a reader has no way to tell whether thirteen is the
+ * whole world or a thirteen-of-thirty-five view. Both numbers are on the wire,
+ * so both are said, and the wider scope is named as a place to go rather than
+ * as something withheld.
+ */
+export interface StockScopeViewV1 {
+  title: string;
+  body: string;
+  /** The scope this page is NOT showing, and how big it is. Null when there is
+   * nothing else to show. */
+  other: { scope: 'coinbase_b20' | 'all_representations'; label: string } | null;
+}
+
+export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockScopeViewV1 | null {
+  if (!wire) return null;
+  const scope = wire.scope ?? 'all_representations';
+  const coinbase = wire.totals.coinbaseUnderlyings;
+  const all = wire.totals.allUnderlyings;
+  if (coinbase === undefined || all === undefined) return null;
+  const others = all - coinbase;
+  if (scope === 'coinbase_b20') {
+    return {
+      title: 'Coinbase Tokenized Stocks on Base',
+      // The B20 standard named once, because it is what every other Base
+      // surface calls these and a reader arriving from one of them should not
+      // have to work out that this is the same thing.
+      body: `${coinbase} securities, each represented by one Coinbase B20 contract.`,
+      other:
+        others > 0
+          ? {
+              scope: 'all_representations',
+              label: `All representations · ${all}`,
+            }
+          : null,
+    };
+  }
+  return {
+    title: 'Every reviewed representation on Base',
+    body: `${all} securities across Coinbase, Backed and Dinari. The same company can be represented by several contracts, and they are not economically identical.`,
+    other: { scope: 'coinbase_b20', label: `Coinbase Tokenized Stocks · ${coinbase}` },
+  };
 }
 
 /**
@@ -2288,6 +2478,16 @@ export function marketRealityViewV1(input: {
         // absence buried the one fact that mattered.
         numbers: grid.established,
         withheld: grid.withheld,
+        withheldCause:
+          outcome === 'zero_supply'
+            ? null
+            : withheldCauseV1({
+                established: grid.established,
+                withheld: grid.withheld,
+                observation: representation.lastObservation,
+                direction,
+                sizeLabel,
+              }),
         // Same reasoning for the ladder: four rungs of "not supported" under a
         // card whose subject is that nothing is outstanding is four ways of
         // repeating a finding that is not about this size. What the last look
@@ -2314,7 +2514,7 @@ export function marketRealityViewV1(input: {
           },
           ...termsV1(representation),
         ],
-        technical: technicalV1(representation, input.now),
+        technical: technicalV1(representation, input.now, grid.withheld),
         utility: utilityViewV1(representation, input.now),
       };
     }),

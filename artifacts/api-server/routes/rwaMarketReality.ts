@@ -14,6 +14,7 @@ import {
   RouteStorageConflictError,
 } from '@mioagent/route-storage';
 import {
+  MARKET_REALITY_INDEX_SCOPES_V1,
   MARKET_REALITY_WINDOWS_V1,
   MarketRealityHistoryV1Schema,
   MarketRealityIndexV1Schema,
@@ -27,6 +28,7 @@ import {
   createMarketRealityEvidenceCaptureV1,
   createMarketRealityCoordinatorV1,
   createDatabaseMarketRealityRadarRepositoryV1,
+  type MarketRealityIndexScopeV1,
   type MarketRealityWindowV1,
 } from '@mioagent/rwa-market-reality';
 import type { TenantUser } from '../middleware/tenantAuth.js';
@@ -280,6 +282,13 @@ rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
     return;
   }
   const limit = Number.parseInt(String(req.query.limit ?? '100'), 10);
+  // An unrecognised scope is the default rather than a 400: this is a read, the
+  // default is the safe corpus, and a typo in a query string should not be able
+  // to blank a consumer screen.
+  const requested = String(req.query.scope ?? '');
+  const scope = (MARKET_REALITY_INDEX_SCOPES_V1 as readonly string[]).includes(requested)
+    ? (requested as MarketRealityIndexScopeV1)
+    : undefined;
   try {
     if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
       res.status(503).json({
@@ -290,7 +299,7 @@ rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
     }
     const index = await rwaMarketRealityRuntime.assembleIndex(
       { underlyings: rwaMarketRealityRuntime.underlyings(), now: rwaMarketRealityRuntime.now },
-      { limit: Number.isFinite(limit) && limit > 0 ? Math.min(500, limit) : 100 },
+      { limit: Number.isFinite(limit) && limit > 0 ? Math.min(500, limit) : 100, scope },
     );
     res.status(200).json(MarketRealityIndexV1Schema.parse(index));
   } catch {

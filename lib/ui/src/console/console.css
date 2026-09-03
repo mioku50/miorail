@@ -42,6 +42,9 @@
   --glow-bg: radial-gradient(620px 380px at 22% -6%,rgba(106,169,255,.16),transparent 60%),
              radial-gradient(640px 400px at 88% 0%,rgba(169,139,255,.14),transparent 60%);
   --dots: none; --dots-op: 0;
+  /* The top-strip texture is a light-theme device: on the dark ground the glow
+     already does that job, and bars over it read as noise. */
+  --bars: none; --bars-h: 0px;
   --track-bg: rgba(255,255,255,.07);
   --bar-glow: 0 0 12px rgba(129,155,255,.6);
   --dot-glow: 0 0 9px rgba(95,216,164,.95);
@@ -71,50 +74,90 @@
 }
 
 /* ============ LIGHT · Base ============ */
+/*
+ * Not the dark palette inverted.
+ *
+ * The previous light theme was #f7f8fb under #0000ff — a cold blue-grey sheet
+ * with a pure-hex blue on it, which is what "light mode" looks like when it is
+ * derived from a dark one by flipping the neutrals. It read as the default
+ * state of an unstyled app while the dark theme read as a product.
+ *
+ * This palette is built from Base's own tokenized-stocks material instead:
+ * warm ivory ground, white surfaces, one saturated Base blue, and three pale
+ * secondaries — lilac, mint, soft yellow — that carry decoration and status
+ * fills. They are an ACCENT SYSTEM: active tab, selected representation, live
+ * quote, buttons, the header wash. Nothing here paints a whole surface in a
+ * secondary; a page covered in them would be a poster, not an instrument.
+ *
+ * Contrast is measured, not eyeballed. Against #f7f7f2: --ink 16.65:1,
+ * --muted 6.87:1, --faint 5.29:1, --dim 3.54:1, --blue 5.04:1, --green 4.98:1,
+ * --amber 5.52:1. `contrast.test.ts` recomputes all four neutrals and fails if
+ * any of them slips below its floor.
+ */
 [data-theme="light"] {
-  --bg: #f7f8fb; --panel: #ffffff; --panel2: #f0f2f7;
-  /* Same measurement on #f7f8fb: --faint was 4.55:1 (no margin) and --dim
-     2.48:1. Now 4.97:1 and 3.15:1. */
-  --ink: #0a0b0d; --muted: #4a5260; --faint: #656c7a; --dim: #858d9b;
-  --line: #e4e7ec; --line2: #d2d7e0;
-  --blue: #0000ff; --violet: #7b3fe4;
-  --grad: linear-gradient(120deg,#0000ff,#3b2bff 48%,#7b3fe4);
-  --gsoft: linear-gradient(120deg,rgba(0,0,255,.09),rgba(123,63,228,.09));
-  --green: #00875a; --amber: #b25e00;
+  /* Ivory, not white: the ground is warm so that white surfaces sit ON it
+     rather than dissolving into it. Every neutral below carries the same warm
+     bias, which is what stops the grey from reading as unconsidered. */
+  --bg: #f6f5ee; --panel: #ffffff; --panel2: #efeee4;
+  --ink: #17171a; --muted: #55555d; --faint: #66666f; --dim: #82828c;
+  --line: #e7e6dd; --line2: #d9d8cb;
+  --blue: #155eef; --violet: #6b3fd4;
+  /* Base blue into deep blue into lilac — the reference's own three-stop move,
+     kept to accents and never used as a surface. */
+  --grad: linear-gradient(120deg,#155eef,#1428ff 48%,#7c4dff);
+  --gsoft: linear-gradient(120deg,rgba(21,94,239,.10),rgba(217,184,255,.30));
+  --green: #0f7a52; --amber: #8a5a00;
   --on-accent: #ffffff;
 
-  --chrome-bg: rgba(255,255,255,.86); --rail-bg: #fbfcfe;
+  --chrome-bg: rgba(250,250,246,.88); --rail-bg: #fbfbf7;
   --drawer-bg: #ffffff;
-  --shadow-card: 0 1px 2px rgba(16,24,40,.05), 0 10px 26px rgba(16,24,40,.045);
-  --btn-shadow: 0 6px 16px rgba(0,0,255,.20);
-  --btn-shadow-lg: 0 8px 22px rgba(0,0,255,.22);
-  --glow-bg: radial-gradient(680px 400px at 20% -8%,rgba(0,0,255,.10),transparent 62%),
-             radial-gradient(700px 420px at 90% -2%,rgba(123,63,228,.09),transparent 62%);
-  --dots: radial-gradient(circle,rgba(0,0,255,.075) 1px,transparent 1px); --dots-op: 1;
-  --track-bg: rgba(10,11,13,.08);
+  /* Cards are almost white with a hairline and a shadow you have to look for.
+     Depth is what separates a surface from the ground here; it is not an
+     effect. */
+  --shadow-card: 0 1px 2px rgba(23,23,26,.045), 0 10px 26px rgba(23,23,26,.04);
+  --btn-shadow: 0 6px 16px rgba(21,94,239,.22);
+  --btn-shadow-lg: 0 8px 22px rgba(21,94,239,.26);
+  /* The header wash: blue on the left, lilac on the right, both weak enough
+     that the ivory still reads as the ground. */
+  --glow-bg: radial-gradient(700px 380px at 18% -10%,rgba(21,94,239,.10),transparent 62%),
+             radial-gradient(720px 420px at 88% -6%,rgba(217,184,255,.34),transparent 64%);
+  --dots: radial-gradient(circle,rgba(21,94,239,.055) 1px,transparent 1px); --dots-op: 1;
+  /* Thin vertical market bars, top corners only.
+     Four hues on four coprime periods, so the rhythm never resolves into a
+     stripe. The first attempt ran them edge to edge at even spacing and read
+     as wallpaper: the texture has to sit AT the edges, with the middle — where
+     the page title goes — left clear, or it competes with the words. */
+  --bars: repeating-linear-gradient(90deg,rgba(21,94,239,.13) 0 2px,transparent 2px 13px),
+          repeating-linear-gradient(90deg,rgba(124,77,255,.16) 0 2px,transparent 2px 19px),
+          repeating-linear-gradient(90deg,rgba(15,122,82,.13) 0 2px,transparent 2px 29px),
+          repeating-linear-gradient(90deg,rgba(190,150,0,.12) 0 2px,transparent 2px 37px);
+  --bars-h: 150px;
+  --track-bg: rgba(23,23,26,.075);
   --bar-glow: none;
-  --dot-glow: 0 0 0 3px rgba(0,135,90,.14);
+  --dot-glow: 0 0 0 3px rgba(15,122,82,.14);
 
-  --hero-bg: linear-gradient(120deg,rgba(0,0,255,.055),rgba(123,63,228,.045));
-  --hero-line: rgba(0,0,255,.16); --hero-shadow: 0 10px 30px rgba(0,0,255,.07);
-  --hero-text: linear-gradient(150deg,#0000ff 0%,#3b2bff 46%,#7b3fe4 100%);
+  --hero-bg: linear-gradient(120deg,rgba(21,94,239,.06),rgba(217,184,255,.22));
+  --hero-line: rgba(21,94,239,.18); --hero-shadow: 0 10px 30px rgba(21,94,239,.07);
+  --hero-text: linear-gradient(150deg,#155eef 0%,#1428ff 46%,#6b3fd4 100%);
   --hero-drop: none;
 
-  --br-text: #1414d6; --br-line: rgba(0,0,255,.24);
-  --g-text: #00674a; --g-bg: rgba(0,135,90,.09); --g-line: rgba(0,135,90,.25);
-  --a-text: #8a4b00; --a-bg: rgba(178,94,0,.09); --a-line: rgba(178,94,0,.25);
-  --n-bg: rgba(10,11,13,.045);
+  --br-text: #1247c4; --br-line: rgba(21,94,239,.26);
+  /* Statuses are coloured and calm: the pale secondary fills the chip, a much
+     darker relative of the same hue carries the text. */
+  --g-text: #0b5f40; --g-bg: rgba(203,239,216,.85); --g-line: rgba(15,122,82,.30);
+  --a-text: #7a4f00; --a-bg: rgba(244,231,166,.80); --a-line: rgba(138,90,0,.28);
+  --n-bg: rgba(23,23,26,.04);
 
-  --sim-bg: linear-gradient(180deg,rgba(0,135,90,.08),rgba(0,135,90,.02));
-  --sim-line: rgba(0,135,90,.26); --sim-shadow: none; --sim-head: #00674a;
+  --sim-bg: linear-gradient(180deg,rgba(203,239,216,.55),rgba(203,239,216,.14));
+  --sim-line: rgba(15,122,82,.28); --sim-shadow: none; --sim-head: #0b5f40;
 
-  --accent-line: #0000ff; --accent-line2: #7b3fe4; --chart-grid: rgba(10,11,13,.16);
-  --node-n-bg: #f2f4f8; --node-n-line: #dde1e8;
-  --node-a-bg: rgba(0,0,255,.07); --node-a-line: rgba(0,0,255,.28);
-  --node-b-bg: rgba(123,63,228,.07); --node-b-line: rgba(123,63,228,.26);
-  --node-o-bg: rgba(0,135,90,.08); --node-o-line: rgba(0,135,90,.26);
+  --accent-line: #155eef; --accent-line2: #7c4dff; --chart-grid: rgba(23,23,26,.14);
+  --node-n-bg: #f3f3ec; --node-n-line: #e2e1d6;
+  --node-a-bg: rgba(21,94,239,.07); --node-a-line: rgba(21,94,239,.30);
+  --node-b-bg: rgba(217,184,255,.30); --node-b-line: rgba(124,77,255,.30);
+  --node-o-bg: rgba(203,239,216,.50); --node-o-line: rgba(15,122,82,.28);
 
-  --field: #f4f6f9;
+  --field: #f4f4ee;
 }
 
 /* The console owns the viewport while it is mounted; the class is added and
@@ -133,6 +176,19 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console.app.no-right { grid-template-columns: 246px minmax(0,1fr); }
 .mio-glow { position: fixed; inset: 0; pointer-events: none; z-index: 0; background: var(--glow-bg); }
 .mio-glow::after { content: ""; position: absolute; inset: 0; background-image: var(--dots); background-size: 24px 24px; opacity: var(--dots-op); }
+/* Market bars, top strip only. Masked to nothing well before the first card,
+   so it is texture behind the header and never a background the content has to
+   compete with. */
+.mio-glow::before { content: ""; position: absolute; inset: 0 0 auto; height: var(--bars-h);
+  background-image: var(--bars);
+  /* Two masks, multiplied: fade down, and clear the middle. The horizontal one
+     is what keeps this a texture in the corners instead of a curtain behind
+     the header. */
+  -webkit-mask-image: linear-gradient(180deg,rgba(0,0,0,.9) 0%,rgba(0,0,0,.28) 55%,transparent 100%),
+                      linear-gradient(90deg,#000 0%,transparent 26%,transparent 74%,#000 100%);
+  mask-image: linear-gradient(180deg,rgba(0,0,0,.9) 0%,rgba(0,0,0,.28) 55%,transparent 100%),
+              linear-gradient(90deg,#000 0%,transparent 26%,transparent 74%,#000 100%);
+  -webkit-mask-composite: source-in; mask-composite: intersect; }
 .mio-console.app > * { position: relative; z-index: 1; }
 
 .mio-console header { grid-column: 1/-1; display: flex; align-items: center; gap: 16px; padding: 0 16px;
@@ -1283,6 +1339,24 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-withheld li { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 7px;
   font-size: 11.5px; }
 .mio-console .mr-withheld-k { color: var(--muted); font-weight: 600; }
+/* The single cause reads as the card's answer at this size, so it carries the
+   body weight the four consequence rows never earned. The detail under it stays
+   in note vocabulary: the bound on the claim is not the claim. */
+/* The scope band. Reads as a page heading, not as a filter bar: the title says
+   what this corpus IS, and the one control beside it names the other corpus
+   with its size rather than offering an unlabelled toggle. */
+.mio-console .mr-scope { display: flex; flex-wrap: wrap; gap: 10px 16px;
+  align-items: center; justify-content: space-between; margin: 0 0 14px; }
+.mio-console .mr-scope h3 { margin: 0 0 2px; font-size: 16px; letter-spacing: -.01em; }
+.mio-console .mr-scope .lnote { margin: 0; max-width: 62ch; }
+
+/* The role heading above the board. An eyebrow, not a title: it says which
+   representation a reader is looking at first and why, and gets out of the way. */
+.mio-console .mr-role-head { margin: 12px 0 6px; }
+
+.mio-console .mr-withheld-cause { margin: 0 0 3px; font-size: 12.5px; font-weight: 600;
+  color: var(--text); }
+.mio-console .mr-withheld .cr-fact-note { display: block; margin: 0; }
 
 /* Utility answers the question before it cites anything. The buckets are the
    same edges regrouped by the same states, so they are styled as an aside over

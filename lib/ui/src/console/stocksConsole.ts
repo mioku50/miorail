@@ -25,6 +25,7 @@ import {
   marketRealityViewV1,
   quoteAgeLabelV1,
   underlyingChoicesV1,
+  stockScopeViewV1,
   underlyingCountersV1,
   type MarketRealityDirectionV1,
   type RepresentationExitEvidenceV1,
@@ -248,9 +249,17 @@ export interface StocksConsoleResultV1 {
 export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleResultV1 {
   const { question, enabled } = input;
 
-  const index = useRwaUnderlyings({ enabled });
+  // The corpus this page opens on.
+  //
+  // `null` means "whatever the server defaults to", which is the documented
+  // Coinbase B20 standard. A reader who widens it is asking a different
+  // question — not filtering this one — so the scope is state here and a cache
+  // key in the hook.
+  const [scope, setScope] = useState<'coinbase_b20' | 'all_representations' | null>(null);
+  const index = useRwaUnderlyings({ enabled, scope: scope ?? undefined });
   const choices = useMemo(() => underlyingChoicesV1(index.data ?? null), [index.data]);
   const counters = useMemo(() => underlyingCountersV1(index.data ?? null), [index.data]);
+  const scopeView = useMemo(() => stockScopeViewV1(index.data ?? null), [index.data]);
 
   // The first security that can actually be COMPARED, falling back to the
   // first the graph has at all. Landing on a single-representation security
@@ -604,6 +613,18 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   });
 
   const model: MarketRealityScreenModelV1 = {
+    scope: scopeView,
+    // The selected key belongs to the scope it was chosen in. Widening keeps it
+    // — every scoped key is in the wide corpus — and narrowing lets the default
+    // pick again rather than stranding the board on a security the grid above
+    // it no longer lists.
+    onScope: (next) => {
+      setScope(next);
+      // The selection belongs to the scope it was made in. Clearing it lets
+      // `defaultKey` pick again from the corpus now on screen, rather than
+      // leaving the board on a security the grid above it no longer lists.
+      input.onQuestion({ underlyingKey: null });
+    },
     choices,
     choicesLoading: index.isLoading,
     choicesError:

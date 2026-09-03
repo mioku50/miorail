@@ -456,12 +456,20 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
     reference,
     controls: {
       status: wire.controls.status,
+      // Why the read came back empty is the whole content of this line when it
+      // did. Every control field here is a B20 field — pause, transfer policy,
+      // roles — and a Backed bToken or a Dinari dShare does not implement them
+      // and never claimed to. Reading "No control field could be read" over a
+      // non-B20 contract states a gap in Miorail where there is a difference of
+      // standard, and a reader takes it as "we know nothing about this token".
       note:
         wire.controls.status === 'complete'
           ? `Read at Base block ${wire.controls.blockNumber ?? '—'}. Who holds these controls is not readable: B20 exposes hasRole(role, account) and no enumeration.`
           : wire.controls.status === 'partial'
             ? 'Some fields could not be read at the anchored block. Who holds these controls is not readable either way.'
-            : 'No control field could be read at the anchored block. Nothing here is a statement about the contract.',
+            : identity.contract.isB20 === false
+              ? 'These are B20 control fields, and the pinned B20 factory does not recognise this address. Nothing is missing: this contract implements a different standard, and its own structure is described above.'
+              : 'No control field could be read at the anchored block. Nothing here is a statement about the contract.',
       rows: controlRows,
     },
     ladder,

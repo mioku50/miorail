@@ -518,6 +518,8 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     underlyings: 2,
     boundRepresentations: 4,
     multiIssuerUnderlyings: 1,
+    coinbaseUnderlyings: 2,
+    allUnderlyings: 2,
   });
   // Carried through, so the surface can order and label on it.
   assert.deepEqual(
@@ -569,4 +571,74 @@ test('a security with tokens outstanding is not ranked below an empty contract',
       ['security:isin:empty', 0],
     ],
   );
+});
+
+test('the Stocks index opens on the standard Base documents, and can widen', async () => {
+  // Three issuers represent the same securities on Base and they are not three
+  // versions of one thing. Measured 2026-09-04 at $1,000 SELL: 10 of 13
+  // Coinbase representations held a cash route, 2 of 21 Backed, 0 of 96 Dinari
+  // — so 74% of the corpus was filling the first screen of a pricing product
+  // with contracts that cannot be priced.
+  //
+  // Nothing is removed from the evidence store. The wide scope returns exactly
+  // what this endpoint returned before.
+  const row = (key: string, issuerIds: string[]) => ({
+    underlying: {
+      underlyingKey: key,
+      assetClass: 'equity' as const,
+      canonicalName: key,
+      displaySymbol: null,
+      identifierScheme: null,
+      identifierValue: null,
+      sourceKind: 'coinbase_b20_metadata' as const,
+      sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base',
+      sourceHash: 'ef'.repeat(32),
+      observedAt: '2026-09-01T12:00:00.000Z',
+    },
+    representationCount: issuerIds.length,
+    liveRepresentationCount: issuerIds.length,
+    issuerIds,
+  });
+  const rows = [
+    row('security:isin:both', ['coinbase', 'backed']),
+    row('security:isin:coinbase', ['coinbase']),
+    row('security:isin:dinari-only', ['dinari']),
+    row('security:isin:backed-only', ['backed']),
+  ];
+  const deps = {
+    underlyings: {
+      listUnderlyings: async () => rows,
+      underlyingCounts: async () => {
+        throw new Error('generic security totals must not leak into Stocks');
+      },
+    } as unknown as UnderlyingAssetRepositoryV1,
+    now: () => new Date('2026-09-01T12:00:00.000Z'),
+  };
+
+  const scoped = await assembleMarketRealityIndexV1(deps, { limit: 50 });
+  assert.equal(scoped.scope, 'coinbase_b20', 'the default scope is the documented standard');
+  assert.deepEqual(
+    scoped.entries.map((entry) => entry.underlyingKey),
+    ['security:isin:both', 'security:isin:coinbase'],
+  );
+  assert.deepEqual(
+    scoped.entries.map((entry) => entry.coinbaseIssued),
+    [true, true],
+  );
+  // The three counters above the grid describe the PAGE...
+  assert.equal(scoped.totals.underlyings, 2);
+  // ...and the corpus counts describe what the other scope holds, so the filter
+  // can name what it is not showing instead of hiding it.
+  assert.equal(scoped.totals.coinbaseUnderlyings, 2);
+  assert.equal(scoped.totals.allUnderlyings, 4);
+
+  const wide = await assembleMarketRealityIndexV1(deps, { limit: 50, scope: 'all_representations' });
+  assert.equal(wide.scope, 'all_representations');
+  assert.equal(wide.entries.length, 4, 'nothing was removed from the corpus');
+  assert.deepEqual(
+    wide.entries.map((entry) => entry.coinbaseIssued),
+    [true, true, false, false],
+  );
+  assert.equal(wide.totals.underlyings, 4);
+  assert.equal(wide.totals.coinbaseUnderlyings, 2);
 });

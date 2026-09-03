@@ -8,11 +8,13 @@ import {
 import {
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
+  partitionByIssuerRoleV1,
   partitionChoicesBySupplyV1,
   stockFiltersV1,
   useSectionsV1,
   type FactViewV1,
   type StockFilterViewV1,
+  type StockScopeViewV1,
   type MarketRealityDirectionV1,
   type MarketRealityViewV1,
   type RepresentationViewV1,
@@ -124,6 +126,11 @@ export interface MarketRealityScreenModelV1 {
   /** Why advanced execution is unavailable for an exact address, when it is.
    * Keyed by token address; absence means the action is offered. */
   inspectRouteUnavailable?: Readonly<Record<string, string>>;
+  /** Which corpus this grid is a slice of, and where the rest is. Null on an
+   * older payload that does not carry the corpus totals — the panel is not
+   * rendered rather than guessed at. */
+  scope?: StockScopeViewV1 | null;
+  onScope?: (scope: 'coinbase_b20' | 'all_representations') => void;
   choices: readonly UnderlyingChoiceViewV1[];
   choicesLoading: boolean;
   /** Why there is no chooser. Never a claim about the corpus. */
@@ -578,7 +585,21 @@ function RepresentationCard({
           dash read as a broken card; the reasons are the honest part and they
           are kept — they simply stop pretending to be values. Every one of them
           is also stated in full under Technical evidence. */}
-      {representation.withheld.length > 0 ? (
+      {representation.withheldCause ? (
+        /* One cause, not four consequences. Cash back, effective price,
+           reference and basis all go dark together because a single upstream
+           measurement did not land, and printing the four downstream absences
+           told a reader four times that something was missing without once
+           saying what. The four are still readable in full under Technical
+           evidence. */
+        <div className="mr-withheld" aria-label={`${representation.issuerName} not established`}>
+          <p className="mr-attribution">
+            <span className="mr-attribution-k">Not established</span> at this size
+          </p>
+          <p className="mr-withheld-cause">{representation.withheldCause.headline}</p>
+          <p className="cr-fact-note">{representation.withheldCause.detail}</p>
+        </div>
+      ) : representation.withheld.length > 0 ? (
         <div className="mr-withheld" aria-label={`${representation.issuerName} not established`}>
           <p className="mr-attribution">
             <span className="mr-attribution-k">Not established</span> at this size
@@ -859,8 +880,35 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
   const representations = model.view?.representations ?? [];
   const compared = representations.filter((representation) => representation.inComparison);
   const outside = representations.filter((representation) => !representation.inComparison);
+  // Order and heading, not a filter: every compared representation is still
+  // rendered. `others` is empty when there is no Coinbase card to be other
+  // than, so a Backed-only security is a board, not a demotion.
+  const { primary, others } = partitionByIssuerRoleV1(compared);
+  const board = primary.length > 0 ? primary : compared;
   return (
     <section className="mr" aria-label="Market Reality">
+      {/* What this page is, before what it counts. Coinbase B20 is the standard
+          Base documents for tokenized stocks on this chain, and it is the scope
+          a reader lands in; the wider corpus is one press away and is named
+          with its size, so nothing is hidden — only ordered. */}
+      {model.scope ? (
+        <div className="mr-scope" aria-label="Corpus scope">
+          <div>
+            <h3>{model.scope.title}</h3>
+            <p className="lnote">{model.scope.body}</p>
+          </div>
+          {model.scope.other && model.onScope ? (
+            <button
+              type="button"
+              className="btn sec"
+              onClick={() => model.onScope?.(model.scope!.other!.scope)}
+            >
+              {model.scope.other.label}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="kpis" aria-label="Reviewed securities on Base">
         {model.counters.map((counter) => (
           <div className="kpi" key={counter.label}>
@@ -1089,8 +1137,14 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                   measurement found, with its age on the card.
                 </p>
               ) : null}
+              {primary.length > 0 ? (
+                <p className="mr-attribution mr-role-head">
+                  <span className="mr-attribution-k">Primary representation</span> Coinbase B20, the
+                  standard Base documents for tokenized stocks on this chain
+                </p>
+              ) : null}
               <div className="mr-board" aria-label="Reviewed representations">
-                {compared.map((representation) => (
+                {board.map((representation) => (
                   <RepresentationCard
                     key={representation.tokenAddress}
                     representation={representation}
@@ -1110,6 +1164,41 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                   />
                 ))}
               </div>
+              {/* The same security through a different issuer's structure. This
+                  is the comparison the product exists for — kept on the page,
+                  and kept after the representation a reader can act on. */}
+              {others.length > 0 ? (
+                <section className="mr-outside" aria-label="Other representations on Base">
+                  <h4>Other representations of this security on Base</h4>
+                  <p className="lnote">
+                    Backed bTokens and Dinari dShares are separate systems, not B20. Same underlying
+                    company, different structure, supply and market access — which is exactly why
+                    they are measured separately here.
+                  </p>
+                  <div className="mr-board">
+                    {others.map((representation) => (
+                      <RepresentationCard
+                        key={representation.tokenAddress}
+                        representation={representation}
+                        actions={actions}
+                        surface={model.surface}
+                        watched={
+                          model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
+                        }
+                        watching={model.watchingTokenAddress === representation.tokenAddress}
+                        removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                        measuring={model.measuring}
+                        useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
+                        useAccessLoading={model.useAccessLoading === true}
+                        inspectRouteUnavailable={
+                          model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
+                        }
+                      />
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
               {/* Visible, and out of the comparison. Not a ranking: there is no
                   order here, only membership — a representation with nothing
                   outstanding is not being read against anything. */}

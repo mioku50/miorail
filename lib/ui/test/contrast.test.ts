@@ -147,10 +147,45 @@ describe('the text that has to be read is not on the dimmest token', () => {
 });
 
 describe('the visual identity is unchanged', () => {
-  test('the accent gradient and both brand colours are exactly what they were', () => {
+  test('the dark palette is exactly what it was', () => {
     assert.match(block(':root'), /--blue: #6aa9ff; --violet: #a98bff;/);
     assert.match(block(':root'), /--grad: linear-gradient\(120deg,#6aa9ff,#8e9bff 48%,#b98bff\)/);
     assert.match(block(':root'), /--bg: #07070b;/);
-    assert.match(block('[data-theme="light"]'), /--blue: #0000ff; --violet: #7b3fe4;/);
+  });
+
+  test('the light palette is Base blue on a warm ground', () => {
+    // Deliberately moved. #f7f8fb under #0000ff was the dark theme's neutrals
+    // flipped, which is why it read as an unstyled default beside a dark theme
+    // that reads as a product. The replacement is built from Base's own
+    // tokenized-stocks material.
+    assert.match(block('[data-theme="light"]'), /--blue: #155eef; --violet: #6b3fd4;/);
+    assert.match(block('[data-theme="light"]'), /--bg: #f6f5ee;/);
+  });
+
+  test('the light ground is warm, and that is the decision — not the hex', () => {
+    // The hex above can move; what must not is the property it was chosen for.
+    // A ground whose blue channel leads is the cold grey this replaced, and the
+    // whole palette reads as an inversion again the moment it comes back.
+    const bg = /--bg: (#[0-9a-f]{6});/.exec(block('[data-theme="light"]'))?.[1];
+    assert.ok(bg, 'the light theme declares no background');
+    const [r, g, b] = [1, 3, 5].map((i) => parseInt(bg!.slice(i, i + 2), 16));
+    assert.ok(r! >= b! + 3, `light --bg ${bg} is not warm: R ${r} vs B ${b}`);
+    assert.ok(g! >= b!, `light --bg ${bg} is cool through green`);
+  });
+
+  test('the secondaries are accents, not surfaces', () => {
+    // Lilac, mint and soft yellow carry chips, nodes and the header wash. None
+    // of them may become --bg or --panel: a page painted in a secondary is the
+    // poster this palette was explicitly told not to become.
+    const light = block('[data-theme="light"]');
+    for (const surface of ['--bg', '--panel', '--panel2', '--rail-bg', '--drawer-bg']) {
+      const value = new RegExp(`${surface}: ([^;]+);`).exec(light)?.[1] ?? '';
+      for (const secondary of ['#d9b8ff', '#cbefd8', '#f4e7a6', '217,184,255', '203,239,216', '244,231,166']) {
+        assert.ok(
+          !value.toLowerCase().includes(secondary),
+          `${surface} is painted with a secondary accent (${secondary})`,
+        );
+      }
+    }
   });
 });

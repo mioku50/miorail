@@ -13,8 +13,10 @@ import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
   collapseLadderRungsV1,
   expiresInLabelV1,
+  partitionByIssuerRoleV1,
   partitionChoicesBySupplyV1,
   splitEstablishedFactsV1,
+  stockScopeViewV1,
   utilityAnswerV1,
   useSectionsV1,
   sourceLabelV1,
@@ -947,6 +949,106 @@ describe('an absent number never renders as a zero', () => {
       false,
       'no row renders a dash as if it were a value',
     );
+  });
+
+  // -------------------------------------------------------------------------
+  // Four consequences of one cause.
+  //
+  // Production, 2026-09-03: three of the four NVDA cards read
+  //
+  //   Cash back        no reviewed router would sell this token for cash…
+  //   Effective price  the share ratio isn't confirmed…
+  //   Reference price  Market session not confirmed · How the reference price…
+  //   Basis withheld   SELL was not sized because the exact BUY sizing anchor…
+  //
+  // Every line is true, and all four are downstream of the last one. A reader
+  // is told four times that something is missing and never once what.
+  // -------------------------------------------------------------------------
+  const unsizedObservation = {
+    source: 'kyberswap',
+    status: 'unsized' as const,
+    errorCode: 'cash_size_anchor_no_route',
+    observedAt: '2026-08-26T19:55:03.000Z',
+    expiresAt: '2026-08-26T19:55:23.000Z',
+    returnedCashAtomic: null,
+    open: false,
+  };
+
+  test('a wholly withheld grid states its cause once, in the reader’s units', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({ liveness: 'history_only', lastObservation: unsizedObservation }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view?.representations[0];
+    assert.equal(card?.numbers.length, 0, 'nothing in this grid was established');
+    assert.equal(card?.withheldCause?.headline, '$100 cash exit could not be sized.');
+    // The bound travels with the claim: what was NOT tested is named.
+    assert.match(card?.withheldCause?.detail ?? '', /position already held was never tested/);
+    // And it never becomes a statement about the market.
+    for (const pattern of [/nobody/i, /\bno market\b/i, /does not trade/i, /illiquid/i]) {
+      assert.doesNotMatch(
+        `${card?.withheldCause?.headline} ${card?.withheldCause?.detail}`,
+        pattern,
+      );
+    }
+  });
+
+  test('the four absences are not lost — they move to Technical evidence', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({ liveness: 'history_only', lastObservation: unsizedObservation }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const card = view?.representations[0];
+    const technical = card?.technical.filter((row) => row.label.startsWith('Not established · '));
+    assert.deepEqual(
+      technical?.map((row) => row.label.replace('Not established · ', '')),
+      ['Cash back', 'Effective price', 'Reference price', 'Basis withheld'],
+    );
+    for (const row of technical ?? []) assert.ok(row.value.length > 0, `${row.label} lost its reason`);
+  });
+
+  test('a coverage gap is named as ours, not as the market’s answer', () => {
+    const view = marketRealityViewV1({
+      wire: wire({
+        representations: [
+          representation({
+            liveness: 'history_only',
+            lastObservation: {
+              ...unsizedObservation,
+              status: 'measurement_failed' as const,
+              errorCode: 'provider_unsupported_token',
+            },
+          }),
+        ],
+      }),
+      choice: null,
+      now: NOW,
+    });
+    const cause = view?.representations[0]?.withheldCause;
+    assert.equal(cause?.headline, 'This route source does not carry this token.');
+    assert.match(cause?.detail ?? '', /Miorail’s coverage, not the market’s answer/);
+    assert.match(cause?.detail ?? '', /says nothing about whether the token trades/);
+  });
+
+  test('one established value keeps the rows as the separate absences they are', () => {
+    // The collapse is for a grid that went dark all at once. With a cash figure
+    // present the remaining three are genuinely different absences, and folding
+    // them into one cause would assert a shared origin that does not exist.
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const card = view?.representations[0];
+    assert.equal(card?.numbers.length, 1);
+    assert.equal(card?.withheldCause, null);
+    assert.equal(card?.withheld.length, 3);
   });
 
   test('a measured figure fills the body, marked as history with its age', () => {
@@ -2911,5 +3013,92 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       assert.match(section.headline, /gap in our reading|did not check/);
       assert.doesNotMatch(section.headline, /cannot|is not allowed|no bridge exists/i);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Which representation a reader meets first.
+//
+// Three issuers put representations of the same securities on Base, and the
+// board treated them as peers. Measured 2026-09-04 at $1,000 SELL: 10 of 13
+// Coinbase representations held a cash route, 2 of 21 Backed, 0 of 96 Dinari.
+// So the first card a reader saw was usually a contract that cannot be priced,
+// on a page whose whole subject is what things cost.
+// ---------------------------------------------------------------------------
+describe('the canonical representation is met first, and the others are still there', () => {
+  const card = (issuerName: string, tokenAddress: string) =>
+    ({ issuerName, tokenAddress }) as unknown as Parameters<typeof partitionByIssuerRoleV1>[0][number];
+
+  test('Coinbase leads and Backed and Dinari follow, with nothing dropped', () => {
+    const { primary, others } = partitionByIssuerRoleV1([
+      card('Backed', '0x7e8101a1c322d394b3961498c7d40d2dfa94c392'),
+      card('Coinbase', '0xb20000000000000000000078ee7ce2fe4908108c'),
+      card('Dinari', '0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97'),
+    ]);
+    assert.deepEqual(primary.map((row) => row.issuerName), ['Coinbase']);
+    assert.deepEqual(others.map((row) => row.issuerName), ['Backed', 'Dinari']);
+    // The count is the invariant: this is an order, not a filter.
+    assert.equal(primary.length + others.length, 3);
+  });
+
+  test('with no Coinbase card there is nothing to be other than', () => {
+    // A Backed-only security is a board in its own right. Heading its
+    // representations "other" would measure them against a card that is not on
+    // the page.
+    const { primary, others } = partitionByIssuerRoleV1([
+      card('Backed', '0x7e8101a1c322d394b3961498c7d40d2dfa94c392'),
+      card('Dinari', '0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97'),
+    ]);
+    assert.deepEqual(primary, []);
+    assert.deepEqual(others, []);
+  });
+});
+
+describe('a scoped list says what it is a slice of', () => {
+  const totals = {
+    underlyings: 13,
+    boundRepresentations: 13,
+    multiIssuerUnderlyings: 0,
+    coinbaseUnderlyings: 13,
+    allUnderlyings: 35,
+  };
+
+  test('the default scope names the standard and offers the wider corpus', () => {
+    const scope = stockScopeViewV1({
+      scope: 'coinbase_b20',
+      entries: [],
+      totals,
+      observedAt: NOW,
+    });
+    assert.equal(scope?.title, 'Coinbase Tokenized Stocks on Base');
+    assert.match(scope?.body ?? '', /13 securities/);
+    // The other 22 are named as somewhere to go, not silently absent.
+    assert.equal(scope?.other?.scope, 'all_representations');
+    assert.match(scope?.other?.label ?? '', /35/);
+  });
+
+  test('the wide scope says why several contracts for one company is the point', () => {
+    const scope = stockScopeViewV1({
+      scope: 'all_representations',
+      entries: [],
+      totals,
+      observedAt: NOW,
+    });
+    assert.match(scope?.title ?? '', /Every reviewed representation/);
+    assert.match(scope?.body ?? '', /not economically identical/);
+    assert.equal(scope?.other?.scope, 'coinbase_b20');
+  });
+
+  test('a wire without the corpus totals claims no scope at all', () => {
+    // Older payloads carry neither count. Inventing "13 of 13" from a page is
+    // exactly the false floor this panel exists to prevent.
+    assert.equal(
+      stockScopeViewV1({
+        entries: [],
+        totals: { underlyings: 13, boundRepresentations: 13, multiIssuerUnderlyings: 0 },
+        observedAt: NOW,
+      }),
+      null,
+    );
   });
 });

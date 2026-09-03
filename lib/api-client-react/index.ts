@@ -1000,13 +1000,21 @@ export function useRwaSignals(options?: { enabled?: boolean; limit?: number }) {
  * publishes a new instrument, which is a daily-to-weekly event, and this is the
  * read that decides whether the surface has anything to show at all.
  */
-export function useRwaUnderlyings(options?: { enabled?: boolean; limit?: number }) {
+export function useRwaUnderlyings(options?: {
+  enabled?: boolean;
+  limit?: number;
+  /** Which corpus to page. Omitted means the server's default, which is the
+   * documented Coinbase B20 standard. The scope is part of the cache key: a
+   * scoped page and a wide one are different reads, not a filter over one. */
+  scope?: 'coinbase_b20' | 'all_representations';
+}) {
   const limit = options?.limit ?? 100;
+  const scope = options?.scope ?? null;
   return useQuery({
-    queryKey: ['rwa-underlyings', limit],
+    queryKey: ['rwa-underlyings', limit, scope],
     queryFn: async () => {
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/underlyings?limit=${limit}`,
+        `/api/route-intelligence/rwa/underlyings?limit=${limit}${scope ? `&scope=${scope}` : ''}`,
       );
       return apiSpec.MarketRealityIndexV1Schema.parse(response);
     },

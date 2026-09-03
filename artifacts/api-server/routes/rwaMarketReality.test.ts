@@ -132,6 +132,7 @@ describe('GET the reviewed-securities chooser', () => {
     rwaMarketRealityRuntime.assembleIndex = async () => ({
       schemaVersion: 'market-reality-index/v1' as const,
       chainId: 8453 as const,
+      scope: 'coinbase_b20' as const,
       entries: [
         {
           underlyingKey: UNDERLYING,
@@ -144,9 +145,16 @@ describe('GET the reviewed-securities chooser', () => {
           liveRepresentationCount: 3,
           issuerIds: ['backed' as const, 'coinbase' as const],
           multiIssuer: true,
+          coinbaseIssued: true,
         },
       ],
-      totals: { underlyings: 19, boundRepresentations: 25, multiIssuerUnderlyings: 2 },
+      totals: {
+        underlyings: 19,
+        boundRepresentations: 25,
+        multiIssuerUnderlyings: 2,
+        coinbaseUnderlyings: 13,
+        allUnderlyings: 35,
+      },
       observedAt: new Date().toISOString(),
     });
     const response = await request(app()).get('/api/route-intelligence/rwa/underlyings');

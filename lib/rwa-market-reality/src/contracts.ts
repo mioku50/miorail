@@ -344,6 +344,16 @@ export const MarketRealityIndexEntryV1Schema = z
      */
     liveRepresentationCount: z.number().int().min(0),
     issuerIds: z.array(z.enum(['coinbase', 'dinari', 'backed'])).max(8),
+    /**
+     * Whether a Coinbase B20 contract represents this security on Base.
+     *
+     * The one issuer distinction the consumer surface leads with, and it is a
+     * fact about the corpus rather than a preference: B20 is the standard Base
+     * documents, and it is the only one of the three whose representations
+     * mostly price. Measured 2026-09-04 at $1,000 SELL: 10 of 13 Coinbase
+     * representations hold a cash route, 2 of 21 Backed, and 0 of 96 Dinari.
+     */
+    coinbaseIssued: z.boolean(),
     /** True when more than one ISSUER carries it — the comparable case. */
     multiIssuer: z.boolean(),
   })
@@ -354,7 +364,16 @@ export const MarketRealityIndexV1Schema = z
   .object({
     schemaVersion: z.literal('market-reality-index/v1'),
     chainId: z.literal(8453),
-    /** Every reviewed underlying, most-represented first. */
+    /**
+     * Which corpus this page is a slice of.
+     *
+     * `coinbase_b20` is the default because it is the question Base's own
+     * documentation answers and the one a reader can act on. `all_representations`
+     * is the same corpus unfiltered — nothing is removed from the evidence
+     * store by the default, only from the first screen.
+     */
+    scope: z.enum(['coinbase_b20', 'all_representations']),
+    /** Every reviewed underlying in `scope`, most-represented first. */
     entries: z.array(MarketRealityIndexEntryV1Schema).max(500),
     /** Corpus-wide, never the page: a count beside a filter is a claim about
      * the corpus, and this surface pages. */
@@ -363,12 +382,21 @@ export const MarketRealityIndexV1Schema = z
         underlyings: z.number().int().min(0),
         boundRepresentations: z.number().int().min(0),
         multiIssuerUnderlyings: z.number().int().min(0),
+        /** Corpus-wide, whatever the scope: how many securities a Coinbase B20
+         * contract represents, and how many the whole reviewed corpus holds.
+         * Both are always reported so a scoped page can name what it is not
+         * showing instead of leaving the reader to discover it. */
+        coinbaseUnderlyings: z.number().int().min(0),
+        allUnderlyings: z.number().int().min(0),
       })
       .strict(),
     observedAt: Timestamp,
   })
   .strict();
 export type MarketRealityIndexV1 = z.infer<typeof MarketRealityIndexV1Schema>;
+
+export const MARKET_REALITY_INDEX_SCOPES_V1 = ['coinbase_b20', 'all_representations'] as const;
+export type MarketRealityIndexScopeV1 = (typeof MARKET_REALITY_INDEX_SCOPES_V1)[number];
 
 // ---------------------------------------------------------------------------
 // The series. Same exact question, moved along a time axis.

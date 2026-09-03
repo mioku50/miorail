@@ -21,6 +21,7 @@ import {
   type MarketRealityObservationV2,
   type MarketRealityReferenceStateV1,
   type MarketRealityIndexV1,
+  type MarketRealityIndexScopeV1,
   type MarketRealityResponseV2,
 } from './contracts.js';
 import { canonicalReviewedBindingV1 } from './canonicalBinding.js';
@@ -580,7 +581,7 @@ export async function assembleMarketRealityV2(
  */
 export async function assembleMarketRealityIndexV1(
   deps: Pick<MarketRealityDepsV1, 'underlyings' | 'now'>,
-  input: { limit: number },
+  input: { limit: number; scope?: MarketRealityIndexScopeV1 },
 ): Promise<MarketRealityIndexV1> {
   // This endpoint backs the consumer `Stocks` screen, not a generic securities
   // catalogue. Pull the bounded full reviewed corpus first so an `unknown` or
@@ -588,7 +589,26 @@ export async function assembleMarketRealityIndexV1(
   // class comes from reviewed identity evidence; labels never select it.
   const reviewedRows = await deps.underlyings.listUnderlyings({ chainId: 8453, limit: 500 });
   const stockRows = reviewedRows.filter((row) => row.underlying.assetClass === 'equity');
-  const rows = stockRows.slice(0, Math.max(1, Math.min(500, input.limit)));
+  // The default scope, and why it is not a preference.
+  //
+  // Three issuers put representations of the same securities on Base and they
+  // are not three versions of one thing: B20 is the standard Base documents,
+  // Backed bTokens are Swiss-law tracker certificates that rebase, and Dinari
+  // dShares are a separate system again. Measured at $1,000 SELL on
+  // 2026-09-04, 10 of 13 Coinbase representations hold a cash route, 2 of 21
+  // Backed, and 0 of 96 Dinari — so 74% of the corpus was filling the first
+  // screen with contracts that cannot answer the question the screen asks.
+  //
+  // They are not removed. `all_representations` returns exactly what this
+  // surface returned before, and the multi-issuer comparison — the same
+  // security, different representations, different market reality — is the one
+  // thing here that nothing else shows. It just stops being the opening move.
+  const scope: MarketRealityIndexScopeV1 = input.scope ?? 'coinbase_b20';
+  const scopedRows =
+    scope === 'coinbase_b20'
+      ? stockRows.filter((row) => row.issuerIds.includes('coinbase'))
+      : stockRows;
+  const rows = scopedRows.slice(0, Math.max(1, Math.min(500, input.limit)));
   const entries = rows.map((row) => ({
     underlyingKey: row.underlying.underlyingKey,
     canonicalName: row.underlying.canonicalName,
@@ -600,15 +620,23 @@ export async function assembleMarketRealityIndexV1(
     liveRepresentationCount: row.liveRepresentationCount,
     issuerIds: row.issuerIds,
     multiIssuer: row.issuerIds.length > 1,
+    coinbaseIssued: row.issuerIds.includes('coinbase'),
   }));
   return MarketRealityIndexV1Schema.parse({
     schemaVersion: 'market-reality-index/v1',
     chainId: 8453,
+    scope,
     entries,
     totals: {
-      underlyings: stockRows.length,
-      boundRepresentations: stockRows.reduce((total, row) => total + row.representationCount, 0),
-      multiIssuerUnderlyings: stockRows.filter((row) => row.issuerIds.length > 1).length,
+      // Scoped, because these three sit above a scoped grid and a total that
+      // did not move with the filter would describe a different page.
+      underlyings: scopedRows.length,
+      boundRepresentations: scopedRows.reduce((total, row) => total + row.representationCount, 0),
+      multiIssuerUnderlyings: scopedRows.filter((row) => row.issuerIds.length > 1).length,
+      // Corpus-wide, always: what the other scope holds, so the filter can say
+      // what it is hiding rather than hide it silently.
+      coinbaseUnderlyings: stockRows.filter((row) => row.issuerIds.includes('coinbase')).length,
+      allUnderlyings: stockRows.length,
     },
     observedAt: deps.now().toISOString(),
   });
