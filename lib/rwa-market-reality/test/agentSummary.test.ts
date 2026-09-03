@@ -425,6 +425,15 @@ describe('a lapsed quote is not an unreached market', () => {
     assert.match(summary.summary, /look at these 4/);
   });
 
+  test('the issuer is named once per row', () => {
+    // Production read "Dinari Dinari dShare": the issuer label and the
+    // representation kind both carried the issuer's name.
+    const summary = marketRealityAgentSummaryV1(nvda());
+    for (const row of summary.representations) {
+      assert.doesNotMatch(row.line, /\b(Dinari|Backed|Coinbase)\b.*\b\1\b/);
+    }
+  });
+
   test('each row carries its own last look, with its age', () => {
     const summary = marketRealityAgentSummaryV1(nvda());
     const priced = summary.representations.find(
