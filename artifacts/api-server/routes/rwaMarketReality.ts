@@ -202,7 +202,10 @@ export const rwaMarketRealityRuntime = {
       },
     };
   },
-  defiSources: () => reviewedDefiSourcesV1(),
+  // The chain reader is passed so Aave and Compound are checked too. Both
+  // answer from Base itself, so the negative on a card names four venues a
+  // reader recognises rather than two.
+  defiSources: () => reviewedDefiSourcesV1(rwaMarketRealityRuntime.useAccessReader()),
   reference: () =>
     createReviewedMarketRealityReferenceAdapterV1({
       official: createDatabaseOfficialAssetRepository(client),

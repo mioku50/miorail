@@ -1,6 +1,10 @@
 import { partnerFetch } from '@mioagent/security/httpAllowlist';
 
-import type { DefiListingSourceV1, DefiVenueListingV1 } from './useAccess.js';
+import type {
+  DefiListingSourceV1,
+  DefiVenueListingV1,
+  UseAccessReaderV1,
+} from './useAccess.js';
 
 // ---------------------------------------------------------------------------
 // Is this EXACT address listed at a reviewed lending venue, and for what.
@@ -212,7 +216,227 @@ export function morphoDefiSourceV1(options?: { endpoint?: string }): DefiListing
   };
 }
 
-/** The reviewed venue set, in the order the copy names them. */
-export function reviewedDefiSourcesV1(): DefiListingSourceV1[] {
-  return [moonwellDefiSourceV1(), morphoDefiSourceV1()];
+// ---------------------------------------------------------------------------
+// The two venues that answer from the chain rather than from an API.
+//
+// Aave and Compound are the names a reader reaches for first, and neither
+// needs a key, an allowlist entry or a third party staying up: the listed set
+// IS onchain state, one `eth_call` each. That makes them strictly better
+// evidence than an HTTP catalogue — and it makes the negative worth something,
+// because "not accepted at Aave, Compound, Moonwell or Morpho" is a sentence a
+// reader can act on, where "not at the two venues Miorail checked" is not.
+//
+// Measured 2026-09-03 across all 130 reviewed representations: Aave lists 15
+// reserves and Compound's three Base markets hold 17 collaterals between them,
+// and NOT ONE tokenized equity appears in either. USDC does, in both, which is
+// the control that makes the miss mean something.
+//
+// Neither is a claim that a stock is absent from DeFi. It is four named places
+// that were looked in.
+// ---------------------------------------------------------------------------
+
+/**
+ * Venue listings are read at head, not at the page's pinned anchor.
+ *
+ * A listing is a question about the protocol's current configuration, and the
+ * two HTTP venues beside these answer from their own live catalogue with no
+ * block at all. Pinning these two to a block the others cannot honour would
+ * make the four rows look like one measurement when they are four readings.
+ */
+const VENUE_BLOCK_TAG_V1 = 'latest';
+
+/** Aave v3 `Pool` on Base. */
+export const AAVE_V3_POOL_BASE_V1 = '0xa238dd80c259a72e81d7e4664a9801593f98d1c5';
+/** `getReservesList()`. */
+export const AAVE_RESERVES_SELECTOR_V1 = '0xd1946dbc';
+
+/**
+ * Compound v3 markets on Base, each its own pool with its own collateral set.
+ *
+ * A borrowable base asset and an accepted collateral are different permissions
+ * in this protocol, so the two axes are read from different places and never
+ * merged: `baseToken()` is what a market lends, `getAssetInfo(i).asset` is what
+ * it accepts against that loan.
+ */
+export const COMPOUND_V3_COMETS_BASE_V1: readonly { marketId: string; address: string }[] = [
+  { marketId: 'cUSDCv3', address: '0xb125e6687d4313864e53df431d5425969c15eb2f' },
+  { marketId: 'cWETHv3', address: '0x46e6b214b524310239732d51387075e0e70970bf' },
+  { marketId: 'cUSDbCv3', address: '0x784efeb622244d2348d4f2522f8860b96fbece89' },
+];
+/** `numAssets()`, `getAssetInfo(uint8)`, `baseToken()`. */
+export const COMET_NUM_ASSETS_SELECTOR_V1 = '0xa46fe83b';
+export const COMET_ASSET_INFO_SELECTOR_V1 = '0xc8c7fe6b';
+export const COMET_BASE_TOKEN_SELECTOR_V1 = '0xc55dae63';
+
+/** The 20 low bytes of a 32-byte word, lowercased. Null on anything else. */
+export function addressFromWordV1(raw: string): string | null {
+  if (!/^0x[0-9a-fA-F]{64}$/.test(raw)) return null;
+  return `0x${raw.slice(26).toLowerCase()}`;
+}
+
+/** A dynamic `address[]` return. Null when the encoding is not that. */
+export function addressArrayFromReturnV1(raw: string): string[] | null {
+  if (!/^0x([0-9a-fA-F]{2})*$/.test(raw) || raw.length < 130) return null;
+  const body = raw.slice(2);
+  const offset = Number.parseInt(body.slice(0, 64), 16) * 2;
+  if (!Number.isInteger(offset) || offset + 64 > body.length) return null;
+  const count = Number.parseInt(body.slice(offset, offset + 64), 16);
+  if (!Number.isInteger(count) || count < 0) return null;
+  const start = offset + 64;
+  if (start + count * 64 > body.length) return null;
+  const out: string[] = [];
+  for (let index = 0; index < count; index += 1) {
+    const word = `0x${body.slice(start + index * 64, start + (index + 1) * 64)}`;
+    const address = addressFromWordV1(word);
+    if (address === null) return null;
+    out.push(address);
+  }
+  return out;
+}
+
+/**
+ * Aave v3, from the reserve list.
+ *
+ * A reserve is lendable and borrowable by construction; whether it may also be
+ * posted as collateral is a per-reserve configuration this read does not fetch,
+ * so `collateral` stays null rather than guessing either way. Null is "the
+ * venue did not say", which is the one thing a use axis must never invent.
+ */
+export function aaveListingFromReservesV1(
+  tokenAddress: string,
+  reserves: readonly string[] | null,
+): DefiVenueListingV1 {
+  if (reserves === null) {
+    return unreadV1('aave_v3', 'Aave v3', 'aave returned an unrecognised reserve list');
+  }
+  const listed = reserves.includes(tokenAddress.toLowerCase());
+  return {
+    venueId: 'aave_v3',
+    venueName: 'Aave v3',
+    state: listed ? 'listed' : 'not_listed',
+    uses: listed
+      ? { lend: true, borrow: true, collateral: null }
+      : { lend: null, borrow: null, collateral: null },
+    marketRef: listed ? AAVE_V3_POOL_BASE_V1 : null,
+    reason: null,
+  };
+}
+
+export function aaveDefiSourceV1(reader: UseAccessReaderV1): DefiListingSourceV1 {
+  return {
+    venueId: 'aave_v3',
+    venueName: 'Aave v3',
+    async lookup(tokenAddress) {
+      if (!ADDRESS_V1.test(tokenAddress)) return unreadV1('aave_v3', 'Aave v3', 'bad address');
+      const answer = await reader.call({ to: AAVE_V3_POOL_BASE_V1, data: AAVE_RESERVES_SELECTOR_V1, blockTag: VENUE_BLOCK_TAG_V1 });
+      if (!answer.ok) return unreadV1('aave_v3', 'Aave v3', `aave read ${answer.reason}`);
+      return aaveListingFromReservesV1(tokenAddress, addressArrayFromReturnV1(answer.value));
+    },
+  };
+}
+
+/** One Compound market's answer: what it lends, and what it takes against it. */
+export interface CometReadV1 {
+  marketId: string;
+  baseToken: string | null;
+  collaterals: string[] | null;
+}
+
+export function compoundListingFromCometsV1(
+  tokenAddress: string,
+  comets: readonly CometReadV1[],
+): DefiVenueListingV1 {
+  const address = tokenAddress.toLowerCase();
+  // Every market unread is an unread venue. One unread market among readable
+  // ones is not: the token was genuinely absent from the markets that answered.
+  if (comets.length === 0 || comets.every((row) => row.baseToken === null && row.collaterals === null)) {
+    return unreadV1('compound_v3', 'Compound v3', 'no Compound market answered');
+  }
+  const lends = comets.filter((row) => row.baseToken === address);
+  const takes = comets.filter((row) => (row.collaterals ?? []).includes(address));
+  const listed = lends.length > 0 || takes.length > 0;
+  return {
+    venueId: 'compound_v3',
+    venueName: 'Compound v3',
+    state: listed ? 'listed' : 'not_listed',
+    uses: listed
+      ? {
+          // A base asset is what the market lends out, so supplying it earns
+          // and borrowing it is the market's whole purpose. A collateral is
+          // neither — it is locked, and Compound pays nothing for it.
+          lend: lends.length > 0 ? true : null,
+          borrow: lends.length > 0 ? true : null,
+          collateral: takes.length > 0 ? true : null,
+        }
+      : { lend: null, borrow: null, collateral: null },
+    marketRef: listed ? [...lends, ...takes].map((row) => row.marketId).join(', ') : null,
+    reason: null,
+  };
+}
+
+export function compoundDefiSourceV1(reader: UseAccessReaderV1): DefiListingSourceV1 {
+  return {
+    venueId: 'compound_v3',
+    venueName: 'Compound v3',
+    async lookup(tokenAddress) {
+      if (!ADDRESS_V1.test(tokenAddress)) {
+        return unreadV1('compound_v3', 'Compound v3', 'bad address');
+      }
+      const comets: CometReadV1[] = [];
+      for (const comet of COMPOUND_V3_COMETS_BASE_V1) {
+        const [base, count] = await Promise.all([
+          reader.call({ to: comet.address, data: COMET_BASE_TOKEN_SELECTOR_V1, blockTag: VENUE_BLOCK_TAG_V1 }),
+          reader.call({ to: comet.address, data: COMET_NUM_ASSETS_SELECTOR_V1, blockTag: VENUE_BLOCK_TAG_V1 }),
+        ]);
+        const numAssets = count.ok && /^0x[0-9a-fA-F]{64}$/.test(count.value)
+          ? Number(BigInt(count.value))
+          : null;
+        if (numAssets === null || numAssets < 0 || numAssets > 32) {
+          comets.push({
+            marketId: comet.marketId,
+            baseToken: base.ok ? addressFromWordV1(base.value) : null,
+            collaterals: null,
+          });
+          continue;
+        }
+        const infos = await Promise.all(
+          Array.from({ length: numAssets }, (_unused, index) =>
+            reader.call({
+              to: comet.address,
+              data: `${COMET_ASSET_INFO_SELECTOR_V1}${index.toString(16).padStart(64, '0')}`,
+              blockTag: VENUE_BLOCK_TAG_V1,
+            }),
+          ),
+        );
+        // `getAssetInfo` returns a struct whose SECOND word is the asset.
+        const collaterals: string[] = [];
+        let complete = true;
+        for (const info of infos) {
+          const word = info.ok && info.value.length >= 2 + 128 ? `0x${info.value.slice(66, 130)}` : null;
+          const address_ = word === null ? null : addressFromWordV1(word);
+          if (address_ === null) complete = false;
+          else collaterals.push(address_);
+        }
+        comets.push({
+          marketId: comet.marketId,
+          baseToken: base.ok ? addressFromWordV1(base.value) : null,
+          collaterals: complete ? collaterals : null,
+        });
+      }
+      return compoundListingFromCometsV1(tokenAddress, comets);
+    },
+  };
+}
+
+/**
+ * The reviewed venue set, in the order the copy names them.
+ *
+ * A reader is optional so a caller with no chain access still gets the two HTTP
+ * venues rather than nothing; passing one adds the two that answer from Base
+ * itself.
+ */
+export function reviewedDefiSourcesV1(reader?: UseAccessReaderV1): DefiListingSourceV1[] {
+  const sources = [moonwellDefiSourceV1(), morphoDefiSourceV1()];
+  if (reader) sources.push(aaveDefiSourceV1(reader), compoundDefiSourceV1(reader));
+  return sources;
 }

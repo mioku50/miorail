@@ -2,8 +2,15 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  AAVE_V3_POOL_BASE_V1,
+  aaveDefiSourceV1,
+  aaveListingFromReservesV1,
+  addressArrayFromReturnV1,
+  compoundDefiSourceV1,
+  compoundListingFromCometsV1,
   moonwellListingFromMarketsV1,
   morphoListingFromMarketsV1,
+  reviewedDefiSourcesV1,
 } from '../src/defiVenues.js';
 import {
   assembleUseAccessV1,
@@ -279,5 +286,157 @@ describe('the venue parsers, against the shapes those venues really return', () 
 
   test('Morpho: nothing in either role is not_listed', () => {
     assert.equal(morphoListingFromMarketsV1([], []).state, 'not_listed');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two venues that answer from the chain.
+// ---------------------------------------------------------------------------
+
+const USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const WETH_V1 = '0x4200000000000000000000000000000000000006';
+
+function addressArrayReturnV1(addresses: readonly string[]): string {
+  const head = (32).toString(16).padStart(64, '0');
+  const count = addresses.length.toString(16).padStart(64, '0');
+  const body = addresses.map((address) => address.slice(2).padStart(64, '0')).join('');
+  return `0x${head}${count}${body}`;
+}
+
+/** `getAssetInfo` returns a struct whose SECOND word is the asset. */
+function assetInfoReturnV1(asset: string): string {
+  return `0x${'0'.repeat(64)}${asset.slice(2).padStart(64, '0')}${'0'.repeat(64)}`;
+}
+
+function word32V1(value: string): string {
+  return `0x${value.slice(2).padStart(64, '0')}`;
+}
+
+describe('Aave and Compound, read from Base rather than from an API', () => {
+  test('an address[] return decodes, and anything else is refused rather than read as empty', () => {
+    assert.deepEqual(addressArrayFromReturnV1(addressArrayReturnV1([USDC_V1, WETH_V1])), [
+      USDC_V1,
+      WETH_V1,
+    ]);
+    assert.deepEqual(addressArrayFromReturnV1(addressArrayReturnV1([])), []);
+    // A shape this parser does not recognise says nothing about the token, and
+    // reading it as zero reserves is how an encoding change becomes a finding.
+    assert.equal(addressArrayFromReturnV1('0x'), null);
+    assert.equal(addressArrayFromReturnV1('0xdeadbeef'), null);
+  });
+
+  test('the check discriminates: USDC is a reserve, a tokenized stock is not', () => {
+    const reserves = [USDC_V1, WETH_V1];
+    const control = aaveListingFromReservesV1(USDC_V1, reserves);
+    assert.equal(control.state, 'listed');
+    assert.equal(control.uses.lend, true);
+    assert.equal(control.uses.borrow, true);
+    // Whether a reserve may also be POSTED as collateral is per-reserve
+    // configuration this read does not fetch. Null is "the venue did not say".
+    assert.equal(control.uses.collateral, null);
+    assert.equal(aaveListingFromReservesV1(NVDA, reserves).state, 'not_listed');
+    assert.equal(control.marketRef, AAVE_V3_POOL_BASE_V1);
+  });
+
+  test('an unreadable reserve list is unread, never not_listed', () => {
+    const listing = aaveListingFromReservesV1(NVDA, null);
+    assert.equal(listing.state, 'unread');
+    assert.deepEqual(listing.uses, { lend: null, borrow: null, collateral: null });
+  });
+
+  test('Compound keeps lending and collateral apart, because the protocol does', () => {
+    const comets = [
+      { marketId: 'cUSDCv3', baseToken: USDC_V1, collaterals: [WETH_V1] },
+      { marketId: 'cWETHv3', baseToken: WETH_V1, collaterals: [USDC_V1] },
+    ];
+    const base = compoundListingFromCometsV1(USDC_V1, comets);
+    assert.equal(base.state, 'listed');
+    // USDC is the base asset of one market and a collateral in another, and
+    // those are three different permissions on one screen.
+    assert.equal(base.uses.lend, true);
+    assert.equal(base.uses.borrow, true);
+    assert.equal(base.uses.collateral, true);
+
+    const collateralOnly = compoundListingFromCometsV1(WETH_V1, [comets[0]!]);
+    assert.equal(collateralOnly.uses.collateral, true);
+    // Compound pays nothing for a collateral and will not lend it out.
+    assert.equal(collateralOnly.uses.lend, null);
+    assert.equal(collateralOnly.uses.borrow, null);
+
+    assert.equal(compoundListingFromCometsV1(NVDA, comets).state, 'not_listed');
+  });
+
+  test('every Compound market unread is an unread venue; one unread among many is not', () => {
+    const allDark = compoundListingFromCometsV1(NVDA, [
+      { marketId: 'cUSDCv3', baseToken: null, collaterals: null },
+    ]);
+    assert.equal(allDark.state, 'unread');
+    const partial = compoundListingFromCometsV1(NVDA, [
+      { marketId: 'cUSDCv3', baseToken: USDC_V1, collaterals: [WETH_V1] },
+      { marketId: 'cWETHv3', baseToken: null, collaterals: null },
+    ]);
+    // The token was genuinely absent from the market that answered.
+    assert.equal(partial.state, 'not_listed');
+  });
+
+  test('the Aave source asks the Pool and nothing else', async () => {
+    const asked: string[] = [];
+    const reader = {
+      async readBlockAnchor() {
+        return { ok: true as const, value: { blockTag: '0x1' } };
+      },
+      async call(input: { to: string; data: string }) {
+        asked.push(`${input.to}:${input.data}`);
+        return { ok: true as const, value: addressArrayReturnV1([USDC_V1]) };
+      },
+    } satisfies UseAccessReaderV1;
+    const listing = await aaveDefiSourceV1(reader).lookup(USDC_V1);
+    assert.equal(listing.state, 'listed');
+    assert.deepEqual(asked, [`${AAVE_V3_POOL_BASE_V1}:0xd1946dbc`]);
+  });
+
+  test('the Compound source reads each market’s base asset and its collateral set', async () => {
+    const reader = {
+      async readBlockAnchor() {
+        return { ok: true as const, value: { blockTag: '0x1' } };
+      },
+      async call(input: { to: string; data: string }) {
+        if (input.data.startsWith('0xc55dae63')) {
+          return { ok: true as const, value: word32V1(USDC_V1) };
+        }
+        if (input.data.startsWith('0xa46fe83b')) {
+          return { ok: true as const, value: `0x${(1).toString(16).padStart(64, '0')}` };
+        }
+        if (input.data.startsWith('0xc8c7fe6b')) {
+          return { ok: true as const, value: assetInfoReturnV1(WETH_V1) };
+        }
+        return { ok: false as const, reason: 'unexpected call' };
+      },
+    } satisfies UseAccessReaderV1;
+    const listing = await compoundDefiSourceV1(reader).lookup(WETH_V1);
+    assert.equal(listing.state, 'listed');
+    assert.equal(listing.uses.collateral, true);
+    assert.equal(listing.uses.lend, null);
+  });
+
+  test('a caller with no chain reader still gets the two HTTP venues', () => {
+    assert.deepEqual(
+      reviewedDefiSourcesV1().map((source) => source.venueId),
+      ['moonwell', 'morpho'],
+    );
+    const reader = {
+      async readBlockAnchor() {
+        return { ok: true as const, value: { blockTag: '0x1' } };
+      },
+      async call() {
+        return { ok: false as const, reason: 'not asked' };
+      },
+    } satisfies UseAccessReaderV1;
+    // Four named places is what makes the absence worth printing: "not at the
+    // two venues Miorail checked" is not a sentence a reader can act on.
+    assert.deepEqual(
+      reviewedDefiSourcesV1(reader).map((source) => source.venueId),
+      ['moonwell', 'morpho', 'aave_v3', 'compound_v3'],
+    );
   });
 });
