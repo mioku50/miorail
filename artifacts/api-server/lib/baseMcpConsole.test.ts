@@ -8,7 +8,9 @@ import {
   baseMcpConsoleResultTextV1,
   boundedModelResultV1,
   baseMcpConsoleRuntimeV1,
+  basePortfolioReplyV1,
   deterministicBaseHistoryReadV1,
+  deterministicBasePortfolioReadV1,
   runBaseMcpConsoleV1,
 } from './baseMcpConsole.js';
 
@@ -197,6 +199,26 @@ describe('the console is Base MCP and nothing else', () => {
     await ask();
     const runtime = config.runtimeContext as { executionMode?: string };
     assert.equal(runtime.executionMode, 'read-only');
+  });
+
+  test('the model is told never to write out a contract address from memory', async () => {
+    // Measured in production: asked for a USDC balance, the model reached for
+    // `chain_rpc_request` and authored 0x833589fCD6eDb6E08f4c7C32D4f71b54bd9452d8
+    // — first ten bytes of Base USDC, zero bytes of code. The empty return is
+    // the only thing that stopped a balance for the wrong token being reported
+    // as the user's.
+    let config: Record<string, unknown> = {};
+    stubTools(BASE_MCP_INVENTORY);
+    stubAgent([{ type: 'message', content: 'ok' }], (captured) => {
+      config = captured;
+    });
+    await ask();
+    const extra = (config.systemPromptExtra as string[]).join(' ');
+    assert.match(extra, /Never write out a contract address from memory/i);
+    // And it is told what to use instead, because a prohibition with no
+    // alternative is how a model ends up guessing anyway.
+    assert.match(extra, /search_tokens/);
+    assert.match(extra, /get_portfolio/);
   });
 
   test('the model is told it has no Miorail route intelligence here', async () => {
@@ -457,5 +479,114 @@ describe('what the model is fed is bounded too, not just the screen', () => {
   test('the guard never changes whether the call failed', async () => {
     const failed = boundedModelResultV1('{"errorCode":"base_mcp_timeout"}');
     assert.equal(failed, '{"errorCode":"base_mcp_timeout"}');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A balance question goes to the tool that owns balances.
+// ---------------------------------------------------------------------------
+
+const PORTFOLIO_INVENTORY_V1 = [
+  { providerId: 'base-mcp-dynamic', tools: [{ name: 'get_portfolio' }, { name: 'chain_rpc_request' }] },
+];
+
+const PORTFOLIO_PAYLOAD_V1 = JSON.stringify({
+  address: '0x4de27ead5a3c9aeb58c7f812178ddde282670d70',
+  totalUsdValue: '2.21',
+  assets: [
+    { name: 'Ethereum', symbol: 'ETH', balance: '0.000713062868163127', usdValue: '1.7250345600315553' },
+    {
+      name: 'USDC',
+      symbol: 'USDC',
+      balance: '0.482491',
+      usdValue: '0.482491',
+      contractAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    },
+  ],
+});
+
+describe('a balance question never leaves the address to the model', () => {
+  test('the observed failure: "what is my USDC balance" now reaches get_portfolio', () => {
+    // Measured in production. Left to model tool choice, this question produced
+    // a `chain_rpc_request` to 0x833589fCD6eDb6E08f4c7C32D4f71b54bd9452d8 — the
+    // first ten bytes of Base USDC and zero bytes of code — an empty return, and
+    // "I do not know". `get_portfolio` was in the same inventory.
+    const read = deterministicBasePortfolioReadV1(
+      'What is my USDC balance on Base?',
+      PORTFOLIO_INVENTORY_V1,
+    );
+    assert.deepEqual(read, { tool: 'get_portfolio', args: { chain: 'base' }, symbol: 'USDC' });
+  });
+
+  test('the symbol comes from the user’s words, and "my balance" names none', () => {
+    assert.equal(
+      deterministicBasePortfolioReadV1('show my balance', PORTFOLIO_INVENTORY_V1)?.symbol,
+      null,
+    );
+    assert.equal(
+      deterministicBasePortfolioReadV1('Show my portfolio', PORTFOLIO_INVENTORY_V1)?.symbol,
+      null,
+    );
+    assert.equal(
+      deterministicBasePortfolioReadV1('how much WETH do I have', PORTFOLIO_INVENTORY_V1)?.symbol,
+      'WETH',
+    );
+  });
+
+  test('Russian asks the same question', () => {
+    // `\b` is ASCII-only, so a Cyrillic word boundary written that way matches
+    // nothing and the whole intent dies silently.
+    assert.equal(
+      deterministicBasePortfolioReadV1('покажи мой портфель', PORTFOLIO_INVENTORY_V1)?.tool,
+      'get_portfolio',
+    );
+    assert.equal(
+      deterministicBasePortfolioReadV1('баланс USDC', PORTFOLIO_INVENTORY_V1)?.symbol,
+      'USDC',
+    );
+    assert.equal(
+      deterministicBasePortfolioReadV1('что у меня есть на Base', PORTFOLIO_INVENTORY_V1)?.tool,
+      'get_portfolio',
+    );
+  });
+
+  test('an interpretive question still reaches the model, and a missing tool routes nothing', () => {
+    assert.equal(
+      deterministicBasePortfolioReadV1('Is Base a good chain?', PORTFOLIO_INVENTORY_V1),
+      null,
+    );
+    assert.equal(
+      deterministicBasePortfolioReadV1('What is my USDC balance?', [
+        { providerId: 'base-mcp-dynamic', tools: [{ name: 'chain_rpc_request' }] },
+      ]),
+      null,
+    );
+  });
+
+  test('the named asset is reported with the contract the TOOL returned', () => {
+    const reply = basePortfolioReplyV1(PORTFOLIO_PAYLOAD_V1, 'USDC');
+    assert.match(reply, /0\.482491 USDC/);
+    // The real Base USDC, from the tool — not the address the model recalled.
+    assert.match(reply, /0x833589fcd6edb6e08f4c7c32d4f71b54bda02913/);
+  });
+
+  test('an asset the wallet does not hold is a zero holding, not an unknown balance', () => {
+    // Base MCP answered for this wallet and the asset was not in the answer.
+    // "You hold none" and "we could not find out" are different sentences.
+    const reply = basePortfolioReplyV1(PORTFOLIO_PAYLOAD_V1, 'NVDAC');
+    assert.match(reply, /holds no NVDAC/);
+    assert.doesNotMatch(reply, /could not/i);
+  });
+
+  test('the whole portfolio lists every asset with its total', () => {
+    const reply = basePortfolioReplyV1(PORTFOLIO_PAYLOAD_V1, null);
+    assert.match(reply, /\$2\.21 total/);
+    assert.match(reply, /ETH/);
+    assert.match(reply, /USDC/);
+  });
+
+  test('a payload this parser does not recognise says so instead of inventing zero', () => {
+    const reply = basePortfolioReplyV1('not json at all', null);
+    assert.match(reply, /could not format/i);
   });
 });
