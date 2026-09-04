@@ -1427,7 +1427,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               {/* The same security through a different issuer's structure. This
                   is the comparison the product exists for — kept on the page,
                   and kept after the representation a reader can act on. */}
-              {others.length > 0 ? (
+              {others.length > 0 && !model.questionFixed ? (
                 <section className="mr-outside" aria-label="Other representations on Base">
                   <h4>Other representations of this security on Base</h4>
                   <p className="lnote">
@@ -1468,7 +1468,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               {/* Visible, and out of the comparison. Not a ranking: there is no
                   order here, only membership — a representation with nothing
                   outstanding is not being read against anything. */}
-              {outside.length > 0 ? (
+              {outside.length > 0 && !model.questionFixed ? (
                 <section className="mr-outside" aria-label="Reviewed but outside current comparison">
                   <h4>Reviewed, outside the current comparison</h4>
                   <div className="mr-compact-list">

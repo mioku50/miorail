@@ -442,10 +442,13 @@ export function StockActionReviewPage() {
                 <p className="mr-gate-detail">{transferGate.detail}</p>
               </div>
             ) : null}
-            {model ? <MarketRealityScreen model={model} /> : null}
+            {/* This used to say "continuing opens the advanced route surface",
+                which was true until 17.6 put the signing here. A page that
+                describes a step it no longer performs is the same class of
+                defect as a control wired to nothing. */}
             <p className="lnote">
-              Miorail never signs and never broadcasts. Continuing opens the advanced route surface,
-              which prepares nothing on its own — only your own Base Account can move anything.
+              Miorail never signs and never broadcasts. It builds the calls and hands them to your
+              wallet — only your own Base Account can move anything.
             </p>
 
             {/* The step this page was missing. An assistant established which
@@ -529,6 +532,13 @@ export function StockActionReviewPage() {
               </>
             )}
 
+            {/* The board comes AFTER the decision, not between the terms and
+                the button. On a page reviewing ONE exact address the comparison
+                is supporting evidence: a reader who has read the terms should
+                not have to walk past three other issuers to reach the action
+                they came for. Reported from a real review page, where Confirm
+                sat below half a screen of Backed and Dinari cards. */}
+            {model ? <MarketRealityScreen model={model} /> : null}
             <p className="mr-issuer-note">{STOCK_ISSUER_NOTICE_V1}</p>
           </>
         ) : null}

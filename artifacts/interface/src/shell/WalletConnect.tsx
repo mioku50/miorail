@@ -28,7 +28,31 @@ export function WalletConnect() {
     userAgent: typeof navigator === 'undefined' ? '' : navigator.userAgent,
     ethereum: typeof window === 'undefined' ? undefined : (window as any).ethereum,
   });
-  const injectedConnector = connectors.find((connector) => connector.type === 'injected');
+  // AN INJECTED CONNECTOR IS NOT AN INJECTED PROVIDER.
+  //
+  // `injected()` is registered unconditionally in main.tsx, so this find always
+  // succeeded and `baseAccount()` was never reached outside Base App. In a
+  // plain mobile browser there is no injected provider at all, so connecting
+  // threw `Provider not found` and the wallet could not be connected AT ALL —
+  // on the surface a link shared from a phone lands on.
+  //
+  // Found 2026-09-05: a review link prepared by ChatGPT on a phone, opened in
+  // mobile Safari. Base App works because its host injects a provider; a
+  // browser extension works because EIP-6963 announces one. Mobile Safari has
+  // neither, and that is exactly where `baseAccount()` — which needs no
+  // injection and opens its own flow — is the right connector.
+  //
+  // So the preference is by what EXISTS, not by what is configured: a
+  // provider announced through EIP-6963 (wagmi gives it the provider's rdns as
+  // its id), else the generic injected connector only when a host actually put
+  // an `ethereum` object on the page.
+  const hasWindowProviderV1 =
+    typeof window !== 'undefined' && Boolean((window as { ethereum?: unknown }).ethereum);
+  const injectedConnector =
+    connectors.find((connector) => connector.type === 'injected' && connector.id !== 'injected') ??
+    (hasWindowProviderV1
+      ? connectors.find((connector) => connector.type === 'injected')
+      : undefined);
   const baseAccountConnector = inBaseApp
     ? undefined
     : connectors.find((connector) => connector.id === 'baseAccount' || connector.type === 'baseAccount');
