@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import {
   RouteCardV1Schema,
   ZERO_HASH_V1,
@@ -9,7 +9,10 @@ import {
 } from '@mioagent/route-domain';
 import { InMemoryRouteStorageRepository } from '@mioagent/route-storage';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from '../src/blueprint.js';
-import { createTransactionComposer, TransactionComposerBindingError } from '../src/coordinator.js';
+import { createTransactionComposer, TransactionComposerBindingError,
+  simulationIsRequiredV1,
+  simulationRequirementV1,
+} from '../src/coordinator.js';
 import type { TransactionComposerDependencies, TransactionComposerPrepareInput } from '../src/types.js';
 import {
   ETH_BASE,
@@ -627,3 +630,63 @@ test('composer source never references send_calls, x402, spend permissions, or A
   }
 });
 
+
+// ---------------------------------------------------------------------------
+// An intent that demands simulation evidence must cause a simulation.
+//
+// Two things can require one — the provider (Miorail wrote or cannot read its
+// calldata) and the INTENT (somebody asked for enhanced or maximum
+// verification). Only the provider half was ever consulted, so an enhanced
+// intent on a provider nobody simulates demanded evidence that was never
+// gathered, and the kernel refused it for not having it. The refusal even said
+// so: "requires simulation evidence that no provider currently supplies".
+//
+// Found on 2026-09-04 by an owner trying to spend ten cents on a tokenized
+// stock. Every stock action pins `verificationDepth: 'enhanced'` and routes
+// through KyberSwap, so the Safety Kernel had blocked EVERY stock action,
+// always, since the path was written.
+// ---------------------------------------------------------------------------
+describe('a simulation is required by the provider OR by the intent', () => {
+  const intentAt = (verificationDepth: 'standard' | 'enhanced' | 'maximum') =>
+    ({ verificationDepth }) as never;
+
+  test('an enhanced intent requires one even on a provider that writes no calldata', () => {
+    assert.equal(simulationIsRequiredV1('kyberswap' as never, intentAt('enhanced')), true);
+    assert.equal(simulationIsRequiredV1('kyberswap' as never, intentAt('maximum')), true);
+  });
+
+  test('a standard intent on such a provider still requires none', () => {
+    // The byte-for-byte T57 behaviour: no request, no charge, and an honestly
+    // unavailable state.
+    assert.equal(simulationIsRequiredV1('kyberswap' as never, intentAt('standard')), false);
+  });
+
+  test('a server-written-calldata provider requires one at any depth', () => {
+    for (const depth of ['standard', 'enhanced', 'maximum'] as const) {
+      assert.equal(simulationIsRequiredV1('aerodrome' as never, intentAt(depth)), true);
+      assert.equal(simulationIsRequiredV1('o1-exchange' as never, intentAt(depth)), true);
+    }
+  });
+
+  test('the kernel requirement reads the same predicate the run does', () => {
+    // The defect was these two disagreeing. An unavailable state now becomes a
+    // named outcome instead of a bare "enhanced needs evidence" refusal.
+    const unavailable = {
+      status: 'unavailable' as const,
+      observedAt: null,
+      blockNumber: null,
+      requestHash: null,
+      responseHash: null,
+      errorCode: 'no_simulation_provider',
+    };
+    const enhanced = simulationRequirementV1('kyberswap' as never, intentAt('enhanced'), unavailable);
+    assert.equal(enhanced.acceptable, false);
+    assert.equal(enhanced.outcome, 'simulation_provider_unavailable');
+
+    // And a standard intent on the same provider is untouched: no outcome at
+    // all, and acceptable, exactly as before.
+    const standard = simulationRequirementV1('kyberswap' as never, intentAt('standard'), unavailable);
+    assert.equal(standard.acceptable, true);
+    assert.equal(standard.outcome, null);
+  });
+});

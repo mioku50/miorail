@@ -150,6 +150,24 @@ function buildFreshEvidenceSetV1(
   return EvidenceSetV1Schema.parse({ ...draft, evidenceSetHash: hashEvidenceSetV1(draft) });
 }
 
+/**
+ * Whether THIS plan must be simulated before the kernel will accept it.
+ *
+ * One predicate, so the decision to RUN a simulation and the decision to
+ * REQUIRE its evidence cannot disagree. They did: the run was keyed on the
+ * provider alone and the requirement on the provider alone, while the intent's
+ * own verification depth quietly demanded evidence neither of them produced.
+ */
+export function simulationIsRequiredV1(
+  provider: SwapBuildProviderId,
+  intent: RouteIntentV1,
+): boolean {
+  return (
+    PROVIDERS_REQUIRING_SIMULATION_V1.includes(provider) ||
+    intent.verificationDepth !== 'standard'
+  );
+}
+
 /** T57: exported so approval.ts can mirror the exact same simulation-honesty
  * mapping when re-validating an already-persisted Blueprint at approve time. */
 export function simulationHonesty(intent: RouteIntentV1): { acceptable: boolean; detail: string } {
@@ -190,7 +208,22 @@ export function simulationRequirementV1(
   intent: RouteIntentV1,
   simulationState: SimulationStateV1,
 ): { acceptable: boolean; detail: string; outcome: SimulationOutcomeV1 | null } {
-  if (!PROVIDERS_REQUIRING_SIMULATION_V1.includes(provider)) {
+  // TWO things can require a simulation, and only one of them was consulted.
+  //
+  // A provider requires it because Miorail wrote or cannot read its calldata.
+  // An INTENT requires it because somebody asked for enhanced or maximum
+  // verification — and that half was missing, so an intent could demand
+  // simulation evidence from a provider nobody ever simulated, and then be
+  // refused for not having it. `simulationHonesty` said so out loud in the
+  // refusal ("requires simulation evidence that no provider currently
+  // supplies") while the coordinator quietly never asked for any.
+  //
+  // Found on 2026-09-04 by an owner trying to spend ten cents. Every stock
+  // action pins `verificationDepth: 'enhanced'` and routes through KyberSwap,
+  // which is not a server-written-calldata provider — so the Safety Kernel
+  // blocked EVERY stock action, always, by construction, and had done since the
+  // path was written. Enhanced console swaps sat in the same trap.
+  if (!simulationIsRequiredV1(provider, intent)) {
     return { ...simulationHonesty(intent), outcome: null };
   }
   // One classification, quoted by the kernel here and by the Review screen
@@ -624,7 +657,10 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     // behaviour byte for byte: no request, no charge, and an honestly
     // `unavailable` state.
     let simulationState: SimulationStateV1 = unsimulatedStateV1();
-    if (providerId === 'aerodrome' || providerId === 'o1-exchange' || providerId === 'hydrex' || providerId === 'balancer') {
+    // The same predicate the kernel checks. Written as a literal provider list
+    // before, which is how the run and the requirement came to disagree about
+    // an intent that asked for enhanced verification.
+    if (simulationIsRequiredV1(providerId, intent)) {
       simulationState = this.deps.simulate
         ? await this.deps.simulate({
             chainId: 8453,
