@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test, { afterEach, describe } from 'node:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 
@@ -798,5 +800,59 @@ describe('no audit row, no executable bytes', () => {
     await assert.rejects(() =>
       miorailGetStockBaseMcpActionV1(IDENTITY, { clearance, requestId: 'r1' }),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A refusal that records nothing is a refusal nobody can fix.
+//
+// Production, 2026-09-04: a stock action was blocked, and the only thing on
+// file was `failedChecks: ["simulation_evidence"]`. That check has FIVE
+// mutually exclusive causes and the id names none of them, so diagnosing it
+// took an SSH session, an on-chain balance read and a hand-built batch
+// simulation — and still got no further than "one of four".
+//
+// What may be logged is bounded by a rule that predates this: no `blockedReason`
+// and no check `detail`, because a provider message can end up in free text.
+// The outcome enum and the simulation error code are unions this codebase
+// declares, so they carry no endpoint, key or upstream sentence.
+// ---------------------------------------------------------------------------
+describe('a blocked stock action records which simulation outcome blocked it', () => {
+  // Located the way every other api-server test locates a package file: this
+  // package builds to CommonJS, where `import.meta` is not available.
+  const cwd = process.cwd();
+  const source = readFileSync(
+    cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`)
+      ? path.join(cwd, 'routes/mcpPrivate/tools.ts')
+      : path.join(cwd, 'artifacts/api-server/routes/mcpPrivate/tools.ts'),
+    'utf8',
+  );
+
+  test('the log carries the outcome, not only the check id', () => {
+    const block = /logger\.warn\('Stock action blocked by the Safety Kernel'[\s\S]{0,600}?\}\);/.exec(
+      source,
+    )?.[0];
+    assert.ok(block, 'the blocked path must still log');
+    assert.match(block, /failedChecks/);
+    assert.match(block, /simulationOutcome/);
+    assert.match(block, /simulationErrorCode/);
+  });
+
+  test('it still refuses to log free text', () => {
+    // Comments stripped FIRST. The block explains at length which fields would
+    // leak an endpoint or a key, and matching that explanation fails the rule
+    // it states — the same trap the Phase 17.4 label test fell into.
+    const code = source
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/^\s*\/\/.*$/gm, '');
+    const block = /logger\.warn\('Stock action blocked by the Safety Kernel'[\s\S]{0,400}?\}\);/.exec(
+      code,
+    )?.[0];
+    assert.ok(block, 'the blocked path must still log');
+    // The two fields that can carry an upstream sentence.
+    assert.doesNotMatch(block, /blockedReason/);
+    assert.doesNotMatch(block, /\.detail/);
+    // And never an endpoint or a credential.
+    assert.doesNotMatch(block, /rpcUrl|endpoint|apiKey|\burl\b/i);
   });
 });

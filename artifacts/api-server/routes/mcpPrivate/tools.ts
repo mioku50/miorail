@@ -27,7 +27,10 @@ import { stockActionIntentV1 } from '../../lib/stockActionIntent.js';
 import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { RouteIntentV1 } from '@mioagent/route-domain';
-import type { TransactionPreparationResultV1 } from '@mioagent/transaction-composer';
+import {
+  classifySimulationOutcomeV1,
+  type TransactionPreparationResultV1,
+} from '@mioagent/transaction-composer';
 import type { McpPrivateIdentityV1 } from './session.js';
 
 // ---------------------------------------------------------------------------
@@ -971,10 +974,32 @@ export async function miorailGetStockBaseMcpActionV1(
           .map((check) => check.id)
           .slice(0, 8)
       : null;
+    // And WHICH simulation outcome, when that is the check that failed.
+    //
+    // `simulation_evidence` has five mutually exclusive causes — passed,
+    // reverted, insufficient funds, the call shape refused, no provider
+    // answered — and the check id names none of them. A production refusal on
+    // 2026-09-04 cost an hour of SSH, an on-chain balance read and a hand-built
+    // batch simulation to get no further than "one of four", because the id was
+    // all that was recorded.
+    //
+    // It is the OUTCOME enum, not the detail: a closed vocabulary this codebase
+    // owns, so the standing rule holds — no provider message and no free text
+    // can arrive here.
+    const simulationOutcome = prepared.simulation
+      ? classifySimulationOutcomeV1(prepared.simulation)
+      : null;
     logger.warn('Stock action blocked by the Safety Kernel', {
       tenantId: identity.tenantId,
       tokenAddress: clearance.tokenAddress,
       failedChecks,
+      simulationOutcome,
+      // The stored status and OUR failure code — `provider_rate_limited`,
+      // `provider_method_unsupported`, `provider_insufficient_funds` and the
+      // rest are a union this codebase declares, so no endpoint, key or
+      // upstream sentence can arrive through this field.
+      simulationStatus: prepared.simulation?.status ?? null,
+      simulationErrorCode: prepared.simulation?.errorCode ?? null,
     });
     throw stockActionExecutionRefusalV1('stock_action_blocked');
   }
