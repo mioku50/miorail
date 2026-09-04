@@ -2,6 +2,12 @@
 
 This document is the capability source of truth for users, developers, and coding agents.
 
+> **Predates the tokenized-stocks work (Phases 10B–17, late Aug – Sep 2026).**
+> It is accurate about what it covers and silent about Stocks, Radar and
+> Investigate, which are the product's first three surfaces now. For the
+> current shape read [README](../README.md) and
+> [DEMO_CHECKLIST](DEMO_CHECKLIST.md).
+
 A Base plugin document does **not** automatically connect a service to Miorail. Runtime claims must never exceed the recorded lifecycle stage.
 
 ## Lifecycle
