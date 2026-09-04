@@ -2025,6 +2025,25 @@ export function MiniConsole() {
     // the action is absent rather than present and inert. That is NOT the same
     // as the handoff refusing — a refusal still arrives per address in
     // `inspectRouteUnavailable` and is rendered with its reason.
+    //
+    // Phase 17.7 — `onPrepare`, which this surface was missing entirely.
+    //
+    // The web card grew Prepare buy / Prepare sell in 17.4 and Base App did
+    // not, so the surface where a wallet is ALREADY in the reader's hand was
+    // the one that could not act — and the issuer notice, which renders beside
+    // those buttons, was absent with them. On a board of tokenized stocks, the
+    // sentence naming Coinbase as the issuer and its eligibility limits is the
+    // last thing that should go missing.
+    //
+    // Preparing is a READ of the reviewed representation, exactly as on the
+    // web: it produces a goal sentence and nothing executable. Where the web
+    // hands that to Routes AI, Base App has no such surface, so the reader is
+    // taken to the B20 tab with the exact address — the wallet-bound checks
+    // live there, and an address is what they take.
+    onPrepare: ({ tokenAddress }) => {
+      setTokenInput(tokenAddress);
+      setSection("portfolio");
+    },
   });
   const radarConsole = useRadarConsoleV1({
     enabled: routeIntelligenceOn,

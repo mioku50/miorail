@@ -251,7 +251,9 @@ describe('Phase 17.5 — the issuer is named where the action starts', () => {
   const screen = read('lib/ui/src/console/MarketRealityScreen.tsx');
   const handoff = read('lib/rwa-market-reality/src/executionHandoff.ts');
   const view = read('lib/ui/src/console/marketRealityView.ts');
-  const reviewPage = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+  // 17.7 moved the review's words into the shared screen; the page is now the
+  // shell around it. The claims are unchanged, so the assertions follow them.
+  const reviewPage = read('lib/ui/src/console/StockActionReviewScreen.tsx');
 
   test('the notice states the issuer and the issuer’s own restriction', () => {
     const notice = /export const STOCK_ISSUER_NOTICE_V1 =\s*\n?\s*'([^']+)'/.exec(handoff)?.[1];
@@ -310,7 +312,11 @@ describe('Phase 17.5 — the issuer is named where the action starts', () => {
 // what it may and may not do is pinned here rather than left to review.
 // ---------------------------------------------------------------------------
 describe('Phase 17.5 — confirming is a person saying yes, and nothing more', () => {
-  const page = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+  // The copy moved into the shared screen in 17.7 and the failure sentences
+  // into the shared console. Same claims, two files.
+  const page =
+    read('lib/ui/src/console/StockActionReviewScreen.tsx') +
+    read('lib/ui/src/console/stockActionReviewConsole.ts');
   const rendered = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   test('the page can confirm, and says what confirming is not', () => {
@@ -373,7 +379,9 @@ describe('Phase 17.5 — confirming is a person saying yes, and nothing more', (
 // may do is pinned here rather than left to review.
 // ---------------------------------------------------------------------------
 describe('Phase 17.6 — the browser can sign, and still builds nothing', () => {
-  const page = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+  const page =
+    read('lib/ui/src/console/StockActionReviewScreen.tsx') +
+    read('lib/ui/src/console/stockActionReviewConsole.ts');
   const rendered = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   test('the wallet is opened, and the promise sits on the control', () => {
@@ -385,7 +393,10 @@ describe('Phase 17.6 — the browser can sign, and still builds nothing', () => 
   test('the calls are passed through, never built here', () => {
     // The batch comes from the server and reaches the wallet unchanged. This
     // browser must not encode, reorder or substitute anything.
-    assert.match(rendered, /calls: calls as never/);
+    // 17.7: the cast moved to the two host call sites, because the wallet is
+    // the host's. What the shared layer must show is that the calls it received
+    // are the calls it forwards — untouched, in one expression.
+    assert.match(rendered, /input\.sendCalls\(\{\s*calls,/);
     for (const forbidden of [
       'encodeFunctionData',
       'amountOutMin',
@@ -420,5 +431,66 @@ describe('Phase 17.6 — the browser can sign, and still builds nothing', () => 
   test('the clearance is still offered to an assistant, one fold down', () => {
     // The MCP path did not stop working because a browser gained a button.
     assert.match(rendered, /The clearance, for an assistant/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.7 — one review, two surfaces.
+//
+// Base App had no review tab at all: an assistant could prepare an action for
+// somebody sitting in the wallet, and there was nowhere to confirm it or sign
+// what it authorised. The link opened a browser, which then had to connect a
+// wallet the reader was already inside of.
+//
+// What must never differ between the two is what a reader is TOLD. That lives
+// in one screen now, and these tests hold it there.
+// ---------------------------------------------------------------------------
+describe('Phase 17.7 — the review screen is shared, and only the wallet differs', () => {
+  const screen = read('lib/ui/src/console/StockActionReviewScreen.tsx');
+  const webPage = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+  const baseApp = read('artifacts/miniapp/app/action/[draft]/page.tsx');
+  const miniConsole = read('artifacts/miniapp/app/components/MiniConsole.tsx');
+
+  test('both surfaces mount the same screen', () => {
+    for (const [name, file] of [['web', webPage], ['Base App', baseApp]] as const) {
+      assert.match(file, /StockActionReviewScreen/, `${name} must mount the shared screen`);
+      assert.match(file, /useStockActionReviewConsoleV1/, `${name} must use the shared reads`);
+    }
+  });
+
+  test('neither surface writes the review copy for itself', () => {
+    // The sentences belong to the screen. A surface that spells one out again
+    // is how two readers come to be told different things about one refusal.
+    for (const file of [webPage, baseApp]) {
+      assert.doesNotMatch(file, /Review before anything is signed/);
+      assert.doesNotMatch(file, /Confirm these terms/);
+      assert.doesNotMatch(file, /Open in your Base Account/);
+    }
+    assert.match(screen, /Review before anything is signed/);
+    assert.match(screen, /Confirm these terms/);
+    assert.match(screen, /Open in your Base Account/);
+  });
+
+  test('the shared screen still builds nothing and holds no wallet', () => {
+    // `lib/ui` has no wagmi dependency, and gaining one here would put a
+    // wallet inside a projection.
+    assert.doesNotMatch(screen, /from 'wagmi'/);
+    for (const forbidden of ['encodeFunctionData', 'amountOutMin', 'slippage', 'deadline', '0x095ea7b3']) {
+      assert.ok(!screen.includes(forbidden), `the shared screen must not contain ${forbidden}`);
+    }
+  });
+
+  test('both wallet call sites carry Builder Code attribution', () => {
+    // The repo-wide rule, checked here too because these two are the surfaces
+    // where an assistant's work becomes an onchain action.
+    for (const file of [webPage, baseApp]) {
+      assert.match(file, /dataSuffix:\s*\{\s*value:/);
+    }
+  });
+
+  test('Base App can prepare, so the issuer notice is on its board too', () => {
+    // The notice renders beside the prepare actions. Without `onPrepare` the
+    // Base App showed tokenized stocks with no statement of who issued them.
+    assert.match(miniConsole, /onPrepare:/);
   });
 });

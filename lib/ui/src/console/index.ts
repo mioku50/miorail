@@ -44,6 +44,8 @@ export * from './transferPolicyView';
 export * from './marketRealityHistoryView';
 export * from './marketRealityRadarView';
 export * from './MarketRealityScreen';
+export * from './StockActionReviewScreen';
+export * from './stockActionReviewConsole';
 export * from './MarketRealityRadarScreen';
 export * from './investigateView';
 export * from './InvestigateScreen';

@@ -20,6 +20,20 @@ The governing rule is simple:
 - Capability truth: [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md)
 - Production acceptance: [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md)
 
+### Where to go next
+
+| If you want to | Read |
+| --- | --- |
+| run it locally | [Running it yourself](#running-it-yourself) |
+| understand the subject | [Tokenized stocks on Base](#tokenized-stocks-on-base) |
+| connect an AI to the evidence | [Public Miorail MCP](#public-miorail-mcp) |
+| let an assistant prepare an action you sign | [Connected Miorail MCP](#connected-miorail-mcp) |
+| ship on the Base App surface | [Base App](#base-app) |
+| know what may never be signed | [Execution boundary](#execution-boundary) |
+| know what is NOT built | [Known gaps](#known-gaps) |
+| walk the product end to end | [DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md) |
+| read the Discover evidence layers | [B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md) |
+
 ## Running it yourself
 
 ```bash
@@ -196,141 +210,21 @@ same size on the same day. A reference price exists only where the issuer
 publishes a feed — 13 of 13 Coinbase, 0 of 21 Backed — because Backed's oracle
 path is Chainlink Data Streams, which has nothing to call.
 
-## B20 Intelligence
+## B20 and Fundamental Intelligence
 
-B20 is an evidence layer around tokens created by the B20 factory and their Base liquidity. It is **not** a generic token screener and does not predict price or profit.
+Two evidence layers behind Discover, kept apart on purpose.
 
-```text
-Base B20 launch events
-  → canonical b20_launches                 [miorail-b20-discover]
-  → Exit-First measurements
-  → b20_opportunity_observations           [miorail-b20-measure]
-  → consumer Discover projection
-  → market rails / Fundamental Intelligence / MCP / AI
-```
+**B20 Intelligence** measures tokens created by the B20 factory and their Base
+liquidity: a launch is ingested, its venue found, its exit measured at exact
+sizes, and every rejection is typed. It is not a screener and predicts nothing.
 
-The historical B20 corpus is backfilled from factory genesis while live launches remain prioritized for measurement. Index coverage and measurement coverage are deliberately separate concepts.
+**Fundamental Intelligence** is the second axis: a project claims a token from a
+domain it controls, and what survives four locks on that gate becomes verified
+evidence with a 24-hour life. `unknown` is the absence of a row, never a
+verdict, and no score is ever computed from the two together.
 
-### Consumer Discover
-
-Discover no longer exposes raw engineering states as the primary user verdict. The consumer projection distinguishes things Miorail measured about a token from things Miorail failed to measure itself.
-
-Examples:
-
-- **Both routes measured**
-- **Bought, exit not priced**
-- **No buyer activity**
-- **Needs more evidence**
-
-A `rejected` internal state is not a safety verdict. `aboutToken = false` findings describe a limit of Miorail's own measurement and are kept separate from token findings.
-
-Measurements can preserve:
-
-- supported entry and exit routes plus venue provenance;
-- measured round-trip result against the explicit reference profile;
-- tested exit-capacity lower bounds without interpolation;
-- Uniswap v4 hook address and decoded permissions;
-- completed launch-window buyer evidence;
-- transfer-control evidence, freshness, missing data, and route coverage.
-
-`provisional` does not mean `qualified`. Hook permissions do not prove hook behaviour. Launch-window buying does not prove buyer intent, current holdings, or future demand. A route miss covers Miorail's configured venues at one observation, not every venue forever.
-
-### Market rails
-
-The right rail is a measured view, not a token ranking.
-
-- **Measured exit liquidity** orders fresh comparable observations by one measured exit-capacity dimension.
-- **24h Route Cost Changes** compares compatible observations roughly one day apart. A dedicated remeasurement queue reserves worker capacity for tokens that need a second comparable observation instead of letting newest-first ingestion starve the history rail.
-- Stale measurements are visibly marked as stale.
-
-`View measurement` deep-links to the exact token on Discover:
-
-```text
-/opportunities?token=0x...&view=measurement
-```
-
-The focused view can load a token by address even when it is not present in the current 25-card feed page, and URL state survives refresh/back navigation.
-
-## Fundamental Intelligence
-
-Fundamental Intelligence is a second evidence axis beside market measurement.
-
-It answers a different question:
-
-> **Is this B20 verifiably connected to a real project, and what can Miorail actually establish about that project?**
-
-It never attaches a project to a token by matching a name or symbol.
-
-### Identity chain
-
-```text
-B20 token
-  → verified project claim
-  → domain controlled by the claimant
-  → project-declared website / product / repository / docs
-  → constrained probes
-  → versioned fundamental evidence
-```
-
-A project claim can be anchored by supported verification methods such as a domain claim file, project publication, or a direct launch-sender relationship where that relationship can be established safely. If identity is not established, downstream website/product/repository evidence cannot be attached to the token.
-
-The claim file convention is:
-
-```text
-/.well-known/miorail-b20.json
-```
-
-Project-declared URLs are treated as untrusted input: HTTPS-only rules, host restrictions, redirect limits, private-address rejection, body limits, and timeouts apply before a probe can become evidence.
-
-### Fundamental dimensions
-
-The current evidence model can represent:
-
-- verified project identity;
-- verified website;
-- live product;
-- verified Base presence;
-- repository found;
-- docs found;
-- active public development;
-- project existence before token launch.
-
-The invariants are strict:
-
-```text
-unknown ≠ no
-website exists ≠ product is live
-repository exists ≠ development is active
-symbol match ≠ project identity
-fundamental evidence ≠ investment recommendation
-```
-
-There is no overall fundamental score.
-
-A working product and weak market conditions can coexist in the same card. Miorail deliberately keeps those axes independent.
-
-### Fundamental Explore
-
-Global `Ask Miorail` supports positive, evidence-backed fundamental predicates such as:
-
-```text
-Which B20 launches are connected to verified projects?
-Which B20 launches have a verified website?
-Show B20 launches with a live product.
-Which verified projects have public docs?
-Which projects show active public development?
-Which projects existed before their token launch?
-```
-
-Fundamental-only queries read the verified project/evidence corpus directly. They do **not** page the recent 48-hour market universe and do not render unrelated market statistics.
-
-Negative predicates such as “show projects without a product” are intentionally refused because missing evidence is `unknown`, not proof of absence.
-
-The answer denominator is the verified project-claim corpus, never the entire B20 universe. Launches without a verified claim remain outside that corpus and remain unknown.
-
-#### Current coverage boundary
-
-Project claims are currently operator-registered. There is not yet a public self-serve submission flow, so Fundamental Intelligence coverage is intentionally much smaller than the full B20 index.
+Both in full, including the standing verdicts and the identity chain:
+**[docs/B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md)**.
 
 ## Ask Miorail
 
@@ -380,6 +274,85 @@ The public MCP surface has no wallet, signing, payment, approval, or execution
 tool. Its Discover projection is parity-tested against the product truth layer,
 and `ops/deploy.sh` asserts the tool names and the version by literal, so a
 renamed tool fails the deploy rather than a caller.
+
+**Connect it.** No key, no account, no allowlist:
+
+```jsonc
+// Claude Code, Claude Desktop, Cursor, or any MCP client
+{ "mcpServers": { "miorail": { "type": "http", "url": "https://miorail.xyz/mcp" } } }
+```
+
+```bash
+# or by hand
+curl -s -X POST https://miorail.xyz/mcp \
+  -H 'Content-Type: application/json' \
+  -H 'Accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{
+        "protocolVersion":"2025-06-18","capabilities":{},
+        "clientInfo":{"name":"demo","version":"1"}}}'
+```
+
+## Connected Miorail MCP
+
+`https://miorail.xyz/mcp/private` is the same read tools **plus seven bound to
+one wallet** — the one that authorised the connection. It cannot read, prepare
+or execute for any other wallet, and no argument would let it try.
+
+```jsonc
+{ "mcpServers": { "miorail": { "type": "http", "url": "https://miorail.xyz/mcp/private" } } }
+```
+
+Authorisation is OAuth 2.1 with PKCE: the client opens `/authorize`, you approve
+in your own browser under scope `miorail:connected`, and the tools appear. There
+is no `sign` scope and no `execute` scope, because the server cannot sign or
+execute. `ops/deploy.sh` checks the discovery document and that a bare request
+is refused, on every deploy.
+
+**What a connected assistant can do with a tokenized stock**, and where it
+stops:
+
+```text
+miorail_prepare_stock_action        → a review link. No price, no calldata,
+                                      no comparison — deliberately none, and a
+                                      literal on the payload says so
+   you, in your own session          read the terms this server re-established
+   Confirm these terms               a clearance: ONE exact action, minutes old
+miorail_get_stock_base_mcp_action   → the unsigned EIP-5792 batch
+   your Base Account                 the only thing that can sign it
+```
+
+Before the clearance is minted the token's own onchain transfer policy is asked
+about that exact wallet. A **measured** denial of the scope that governs the
+direction refuses, and so does a contract-wide pause; an unread policy, a
+throttled endpoint and a non-B20 contract all proceed. It is the issuer's rule
+enforced where the issuer publishes it — not a jurisdiction check, and not a
+geo-gate.
+
+An assistant cannot confirm on your behalf, and it never holds a key. Since
+2026-09-05 you do not need Base MCP either: the review page signs from the
+browser, and the clearance is still offered for an assistant that prefers to.
+
+## Base App
+
+Miorail runs as a Base App Mini App at `artifacts/miniapp`, and it is not a
+reduced copy of the web console. Both surfaces mount the **same** projections
+from `lib/ui` — the Stocks board, the review screen, the Discover rails — so a
+measurement, a refusal or a verdict cannot be worded one way in a browser and
+another way in the wallet.
+
+```text
+shared    every read, every measurement, every sentence a reader is told
+per-surface   the shell, the navigation, and the wallet itself
+```
+
+The wallet is genuinely per-surface: Base App supplies an injected provider, a
+desktop browser announces one through EIP-6963, and a plain mobile browser has
+neither — which is what `baseAccount()` is for. `lib/ui` has no wagmi
+dependency, so no projection can quietly acquire a wallet.
+
+What Base App has that the web does not is proximity: the wallet is already in
+the reader's hand, so the review tab (`/action/<draft>`) confirms and signs in
+place rather than sending anybody to a browser.
 
 ## Base MCP Extensions
 
