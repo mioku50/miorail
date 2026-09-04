@@ -58,10 +58,31 @@ const KIND_LABEL_V1: Readonly<Record<string, string>> = {
   dinari_dshare: 'dShare',
 };
 
+/**
+ * The size, as money, WITHOUT throwing away the part below a dollar.
+ *
+ * This used to keep only the whole-dollar digits. Every sub-dollar question
+ * therefore rendered as `$0` — an agent asking about $0.10 was handed the
+ * sentence "Miorail does not hold an answer at $0 BUY", which is a size nobody
+ * asked about — and every question with cents lost them silently ($1,234.56
+ * became `$1,234`).
+ *
+ * It matters here more than in most places: this string is the one part of the
+ * summary that goes into an assistant's prose, and the comment on this module
+ * already forbids quoting a cash FIGURE for exactly that reason. Quoting the
+ * user's own SIZE wrongly is the same failure, pointed at the question instead
+ * of the answer.
+ *
+ * Trailing zeros are trimmed, so a whole-dollar size keeps reading as `$100`
+ * rather than acquiring a false precision it never had.
+ */
 function moneyV1(atomic: string, decimals = 6): string {
   const digits = atomic.padStart(decimals + 1, '0');
-  const whole = digits.slice(0, digits.length - decimals).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-  return `$${whole}`;
+  const whole = digits
+    .slice(0, digits.length - decimals)
+    .replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  const fraction = decimals > 0 ? digits.slice(digits.length - decimals).replace(/0+$/, '') : '';
+  return fraction.length === 0 ? `$${whole}` : `$${whole}.${fraction}`;
 }
 
 function pluralV1(count: number, one: string, many: string): string {

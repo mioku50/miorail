@@ -482,3 +482,42 @@ describe('a lapsed quote is not an unreached market', () => {
     assert.doesNotMatch(never.summary, /The last completed look/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The size in the summary is the size that was asked about.
+//
+// `moneyV1` kept only whole-dollar digits, so every sub-dollar question read as
+// `$0` and every question with cents lost them. This is the one string in the
+// summary that goes into an assistant's prose — the module already forbids
+// quoting a cash FIGURE for that reason, and quoting the user's own SIZE wrongly
+// is the same failure pointed at the question instead of the answer.
+//
+// Caught on production while preparing a $0.10 run: the tool answered
+// "no answer at $0 BUY → USDC" for a question about ten cents.
+// ---------------------------------------------------------------------------
+describe('the question names the size the caller actually asked about', () => {
+  const at = (requestedCashAtomic: string) => {
+    const base = response();
+    return marketRealityAgentSummaryV1({
+      ...base,
+      question: { ...base.question, requestedCashAtomic },
+    }).summary;
+  };
+
+  test('a sub-dollar size is never rendered as zero', () => {
+    const summary = at('100000');
+    assert.match(summary, /\$0\.1\b/);
+    assert.doesNotMatch(summary, /\$0 /);
+  });
+
+  test('cents survive', () => {
+    assert.match(at('1234560000'), /\$1,234\.56\b/);
+  });
+
+  test('a whole-dollar size keeps reading as a whole dollar', () => {
+    // Trailing zeros would be a precision this question never had.
+    assert.match(at('100000000'), /\$100 /);
+    assert.match(at('1000000000'), /\$1,000 /);
+    assert.doesNotMatch(at('100000000'), /\$100\.0/);
+  });
+});
