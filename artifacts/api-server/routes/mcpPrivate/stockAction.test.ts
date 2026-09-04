@@ -571,7 +571,24 @@ describe('a confirmed clearance is the only way to an executable request', () =>
           chainId: 8453,
           walletAddress: WALLET,
           status: 'ready_for_review',
-          calls: [{ to: '0x00', data: '0x', value: '0x0' }],
+          // The shape a persisted Blueprint really has. It used to read
+          // `value: '0x0'` — the WIRE key — so every test here exercised a call
+          // production never produces, and the release path handed the stored
+          // record straight to a schema that wanted three different keys.
+          // `ExecutionCallV1Schema` requires `valueWei`, and it is decimal.
+          calls: [
+            {
+              index: 0,
+              callType: 'swap' as const,
+              to: '0x00',
+              valueWei: '0',
+              data: '0x',
+              asset: null,
+              amountAtomic: null,
+              recipient: null,
+              spender: null,
+            },
+          ],
         },
         review: {},
       }) as never;
@@ -757,7 +774,24 @@ describe('no audit row, no executable bytes', () => {
           chainId: 8453,
           walletAddress: WALLET,
           status: 'ready_for_review',
-          calls: [{ to: '0x00', data: '0x', value: '0x0' }],
+          // The shape a persisted Blueprint really has. It used to read
+          // `value: '0x0'` — the WIRE key — so every test here exercised a call
+          // production never produces, and the release path handed the stored
+          // record straight to a schema that wanted three different keys.
+          // `ExecutionCallV1Schema` requires `valueWei`, and it is decimal.
+          calls: [
+            {
+              index: 0,
+              callType: 'swap' as const,
+              to: '0x00',
+              valueWei: '0',
+              data: '0x',
+              asset: null,
+              amountAtomic: null,
+              recipient: null,
+              spender: null,
+            },
+          ],
         },
         review: {},
       }) as never;
@@ -854,5 +888,53 @@ describe('a blocked stock action records which simulation outcome blocked it', (
     assert.doesNotMatch(block, /\.detail/);
     // And never an endpoint or a credential.
     assert.doesNotMatch(block, /rpcUrl|endpoint|apiKey|\burl\b/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The tool's own output schema rejected its own success.
+//
+// A persisted Blueprint call carries Miorail's working fields — index,
+// callType, valueWei, asset, amountAtomic, recipient, spender — and this handed
+// the record straight out. `send_calls` takes three keys, and the declared
+// output contract says so, so a successful release failed output validation on
+// a `value` that was never there under that name.
+//
+// Nobody had seen it because the Safety Kernel blocked every stock action
+// before this line could run. Two defects, each hiding the other, and the
+// second only appeared the moment the first was fixed.
+// ---------------------------------------------------------------------------
+describe('released calls are the wire shape, not the stored record', () => {
+  const cwd = process.cwd();
+  const source = readFileSync(
+    cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`)
+      ? path.join(cwd, 'routes/mcpPrivate/tools.ts')
+      : path.join(cwd, 'artifacts/api-server/routes/mcpPrivate/tools.ts'),
+    'utf8',
+  );
+
+  test('the blueprint record is never handed out whole', () => {
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert.doesNotMatch(code, /calls: prepared\.blueprint\.calls,/);
+    assert.match(code, /calls: prepared\.blueprint\.calls\.map/);
+  });
+
+  test('value is hex on the wire, as every other submit path writes it', () => {
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    // The record stores a decimal `valueWei`; `send_calls` takes hex.
+    assert.match(code, /value: `0x\$\{BigInt\(call\.valueWei\)\.toString\(16\)\}`/);
+  });
+
+  test('the three wire keys and nothing else', () => {
+    const block = /calls: prepared\.blueprint\.calls\.map\(\(call\) => \(\{[\s\S]{0,300}?\}\)\)/.exec(
+      source,
+    )?.[0];
+    assert.ok(block, 'the projection must exist');
+    for (const forbidden of ['index', 'callType', 'asset', 'amountAtomic', 'recipient', 'spender']) {
+      assert.ok(!block.includes(`${forbidden}:`), `${forbidden} is not a wire key`);
+    }
+    for (const wire of ['to:', 'value:', 'data:']) {
+      assert.ok(block.includes(wire), `${wire} is required on the wire`);
+    }
   });
 });

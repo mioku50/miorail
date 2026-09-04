@@ -1028,7 +1028,27 @@ export async function miorailGetStockBaseMcpActionV1(
     action: {
       chainId: prepared.blueprint.chainId,
       from: prepared.blueprint.walletAddress,
-      calls: prepared.blueprint.calls,
+      /**
+       * Projected to the EIP-5792 wire shape, not handed over whole.
+       *
+       * A persisted Blueprint call carries Miorail's own working fields —
+       * `index`, `callType`, `valueWei`, `asset`, `amountAtomic`, `recipient`,
+       * `spender` — and `send_calls` takes exactly three: `to`, `value`,
+       * `data`. This handed the internal record straight out, so the tool's own
+       * output schema rejected its own success: a `value` that was never there
+       * under that name, beside seven keys the contract does not allow.
+       *
+       * It had never been seen because the Safety Kernel blocked every stock
+       * action before this line could run — two defects, each hiding the other.
+       * The same projection the B20 submit gate and the NFT route already use,
+       * so the three cannot drift: `valueWei` is decimal in the record and hex
+       * on the wire.
+       */
+      calls: prepared.blueprint.calls.map((call) => ({
+        to: call.to,
+        value: `0x${BigInt(call.valueWei).toString(16)}`,
+        data: call.data,
+      })),
       atomicRequired: true,
     },
     blueprintId: prepared.blueprint.id,
