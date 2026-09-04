@@ -360,6 +360,21 @@ export interface UnderlyingIndexEntryV1 {
   /** Distinct issuers behind those representations, sorted. */
   issuerIds: string[];
   /**
+   * How many of those representations each issuer published, keyed by issuer.
+   *
+   * `issuerIds` says WHICH issuers and `representationCount` says how many
+   * contracts; neither says how many contracts belong to one of them. A screen
+   * scoped to Coinbase counted 13 securities and 39 representations on the same
+   * band, because the 39 included every Backed and Dinari contract bound to
+   * those same 13 companies — two numbers in two different units, one label
+   * apart. A scoped total has to be summed per issuer, so the per-issuer count
+   * has to exist.
+   *
+   * Issuers with no representation are absent rather than zero: this is a
+   * tally of what is bound, not a roster.
+   */
+  representationCountsByIssuer: Record<string, number>;
+  /**
    * How many of those representations have tokens outstanding.
    *
    * The chooser used to rank on `representationCount` alone, which counts

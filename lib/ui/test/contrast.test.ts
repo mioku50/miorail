@@ -173,6 +173,54 @@ describe('the visual identity is unchanged', () => {
     assert.ok(g! >= b!, `light --bg ${bg} is cool through green`);
   });
 
+  test('a title colour is a heading, not a link', () => {
+    // The light theme sets page titles and security names in deep Base blue.
+    // That only works while the blue is dark enough to be TYPE: a bright accent
+    // in the same place reads as a link a reader can press, and fails the
+    // heading contrast bar on the ivory ground at the same time.
+    for (const [theme, selector] of [
+      ['dark', ':root'],
+      ['light', '[data-theme="light"]'],
+    ] as const) {
+      const background = hex(token(selector, 'bg'));
+      const ratio = contrast(resolve(token(selector, 'title-ink'), background), background);
+      assert.ok(ratio >= 7, `${theme}: --title-ink is ${ratio.toFixed(2)}:1, below the 7:1 heading floor`);
+    }
+  });
+
+  test('severity is legible in both themes', () => {
+    // `--red` is the only tone that means "measured, and an order of magnitude
+    // outside the bound". It carries a number, so it is body text and takes the
+    // body-text bar — a red that only works as a fill is not one.
+    for (const [theme, selector] of [
+      ['dark', ':root'],
+      ['light', '[data-theme="light"]'],
+    ] as const) {
+      const background = hex(token(selector, 'bg'));
+      const ratio = contrast(resolve(token(selector, 'red'), background), background);
+      assert.ok(ratio >= 4.5, `${theme}: --red is ${ratio.toFixed(2)}:1, below the 4.5:1 body floor`);
+    }
+  });
+
+  test('a card is separated from the ground it sits on', () => {
+    // The light board read as a wireframe because --panel2 (#efeee4) sat on
+    // #f6f5ee: four points of luminance between a card and its page, so the
+    // only thing holding a card together was a hairline. Depth is the
+    // separation here, and this pins the decision rather than the shadow.
+    const light = block('[data-theme="light"]');
+    const surface = /--rep-bg: (#[0-9a-f]{6});/.exec(light)?.[1];
+    assert.ok(surface, 'the light theme declares no card surface');
+    const ground = hex(token('[data-theme="light"]', 'bg'));
+    assert.ok(
+      contrast(hex(surface), ground) >= 1.05,
+      `the light card surface ${surface} is indistinguishable from the ground`,
+    );
+    assert.ok(
+      /--rep-shadow: 0 /.test(light),
+      'the light card has no shadow, so nothing lifts it off the ground',
+    );
+  });
+
   test('the secondaries are accents, not surfaces', () => {
     // Lilac, mint and soft yellow carry chips, nodes and the header wash. None
     // of them may become --bg or --panel: a page painted in a secondary is the

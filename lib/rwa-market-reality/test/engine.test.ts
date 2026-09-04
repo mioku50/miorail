@@ -490,6 +490,15 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     representationCount,
     liveRepresentationCount: live,
     issuerIds,
+    // Every contract past the first belongs to the FIRST issuer named, so the
+    // scoped Coinbase total is not simply the row count and the assertion below
+    // is testing arithmetic rather than a coincidence.
+    representationCountsByIssuer: Object.fromEntries(
+      issuerIds.map((issuerId, index) => [
+        issuerId,
+        index === 0 ? representationCount - (issuerIds.length - 1) : 1,
+      ]),
+    ),
   });
   const rows = [
     underlying('backed:instrument:equity', 'equity', 3, ['backed', 'coinbase']),
@@ -514,13 +523,33 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     result.entries.map((entry) => entry.assetClass),
     ['equity', 'equity'],
   );
+  // `boundRepresentations` is 2, not 4. The default scope is Coinbase, and the
+  // four contracts across these two equities include two Backed ones. The band
+  // above the grid read `Securities 13` beside `Representations 39` because
+  // this number counted every contract bound to a Coinbase-covered company —
+  // two units under two labels, and no way to tell which was which.
   assert.deepEqual(result.totals, {
     underlyings: 2,
-    boundRepresentations: 4,
+    boundRepresentations: 2,
     multiIssuerUnderlyings: 1,
     coinbaseUnderlyings: 2,
     allUnderlyings: 2,
   });
+  // The wider scope is unchanged: there, every contract counts, because every
+  // contract is on the page.
+  const wide = await assembleMarketRealityIndexV1(
+    {
+      underlyings: {
+        listUnderlyings: async () => rows,
+        underlyingCounts: async () => {
+          throw new Error('generic security totals must not leak into Stocks');
+        },
+      } as unknown as UnderlyingAssetRepositoryV1,
+      now: () => new Date('2026-09-01T12:00:00.000Z'),
+    },
+    { limit: 50, scope: 'all_representations' },
+  );
+  assert.equal(wide.totals.boundRepresentations, 4);
   // Carried through, so the surface can order and label on it.
   assert.deepEqual(
     result.entries.map((entry) => entry.liveRepresentationCount),
@@ -551,6 +580,7 @@ test('a security with tokens outstanding is not ranked below an empty contract',
     representationCount,
     liveRepresentationCount: live,
     issuerIds: ['coinbase'],
+    representationCountsByIssuer: { coinbase: representationCount },
   });
   const result = await assembleMarketRealityIndexV1(
     {
@@ -598,6 +628,13 @@ test('the Stocks index opens on the standard Base documents, and can widen', asy
     representationCount: issuerIds.length,
     liveRepresentationCount: issuerIds.length,
     issuerIds,
+    // One contract per issuer here, so the scoped total is the count of rows
+    // that name Coinbase. The fake carries the field because the repository
+    // does: a scoped count summed from a shape production does not return is a
+    // test that cannot fail.
+    representationCountsByIssuer: Object.fromEntries(
+      issuerIds.map((issuerId) => [issuerId, 1]),
+    ),
   });
   const rows = [
     row('security:isin:both', ['coinbase', 'backed']),

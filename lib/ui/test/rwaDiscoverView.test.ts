@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import {
   ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1,
+  ROUND_TRIP_SEVERE_MIN_BPS_V1,
   cashExitLadderRungsV1,
   cashSizeLabelV1,
   lookalikeFeedViewV1,
@@ -657,12 +658,20 @@ describe('the cash-exit ladder as rows', () => {
     });
     const toneAt = (bps: string) => cashExitLadderRungsV1([rung(bps)], NOW)[0]?.tone;
 
-    assert.equal(toneAt('9990'), 'warn');
-    assert.equal(toneAt('6493'), 'warn');
+    assert.equal(toneAt('9990'), 'bad');
+    assert.equal(toneAt('6493'), 'bad');
     // Exactly at the bound is still cheap; one basis point past it is not.
     assert.equal(toneAt(String(ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1)), 'good');
     assert.equal(toneAt(String(ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 + 1n)), 'warn');
     assert.equal(toneAt('32'), 'good');
+    // Three bands, and the second boundary is exact too. An AMZNc ladder read
+    // 3.86% / 28.28% / 79.75% / 97.52% in one amber down all four rungs: the
+    // first is a bad trade at that size and the last is the position
+    // evaporating, and one colour said they were the same kind of answer.
+    assert.equal(toneAt(String(ROUND_TRIP_SEVERE_MIN_BPS_V1 - 1n)), 'warn');
+    assert.equal(toneAt(String(ROUND_TRIP_SEVERE_MIN_BPS_V1)), 'bad');
+    assert.equal(toneAt('386'), 'warn');
+    assert.equal(toneAt('2828'), 'bad');
     // Money returned above what went in.
     assert.equal(toneAt('-1'), 'good');
     // The number itself is untouched — only how it is painted.

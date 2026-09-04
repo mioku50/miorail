@@ -11,6 +11,8 @@ import {
 } from '../src/console/marketRealityHistoryView';
 import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
+  MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1,
+  exitCostViewV1,
   collapseLadderRungsV1,
   expiresInLabelV1,
   partitionByIssuerRoleV1,
@@ -100,6 +102,20 @@ const LAPSED_OBSERVATION = {
   expiresAt: '2026-08-26T19:55:23.000Z',
   returnedCashAtomic: '99952618',
   open: false,
+};
+
+/**
+ * The same observation with its window still open.
+ *
+ * `open: true` over a window that closed thirty-nine minutes ago is exactly the
+ * production bug this file now guards, so a fixture that wants a live quote has
+ * to carry a live expiry — not just the flag.
+ */
+const OPEN_OBSERVATION = {
+  ...LAPSED_OBSERVATION,
+  observedAt: NOW,
+  expiresAt: '2026-08-26T20:34:39.000Z',
+  open: true,
 };
 
 /** The measured production shape: a real quote whose 20-second window closed. */
@@ -685,7 +701,7 @@ describe('the five outcomes stay apart', () => {
         representation({
           status,
           liveness: 'live',
-          lastObservation: { ...LAPSED_OBSERVATION, open: true },
+          lastObservation: OPEN_OBSERVATION,
           sources: [{ source: 'kyberswap', status: 'quoted', errorCode, quoteEvidence: null }],
         }),
         NOW,
@@ -1494,8 +1510,14 @@ describe('an absent number never renders as a zero', () => {
     });
     const bad = dust!.representations[0]!.exit!;
     assert.equal(bad.value, '99.57%');
-    // `warn`. `off` reads as "we did not look", and this is the answer.
-    assert.equal(bad.tone, 'warn');
+    // `bad`, not `warn`. `off` reads as "we did not look" and this is the
+    // answer; `warn` was carrying both this and a 4% round trip, so a reader
+    // comparing two cards saw one colour on a bad trade and on a total loss.
+    assert.equal(bad.tone, 'bad');
+    // The chip beside it grades the same number from the same evidence, so the
+    // two can never disagree about what they are grading.
+    assert.equal(dust!.representations[0]!.exitCost?.tone, 'bad');
+    assert.equal(dust!.representations[0]!.exitCost?.chip, 'Round trip 99.57%');
     // Never borrows the market's vocabulary for absence: a route existed.
     assert.doesNotMatch(bad.note ?? '', /no route/i);
     assert.match(bad.note ?? '', /Most of the money does not come back/);
@@ -1530,8 +1552,15 @@ describe('an absent number never renders as a zero', () => {
     // `warn`, never `off`: `off` is this console's word for nothing having been
     // measured, and a round trip that ate the money is a measurement.
     assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1 + 1)).tone, 'warn');
-    assert.equal(at('9990').tone, 'warn');
-    // A reader who disagrees with the bound can still see the number it read.
+    // Three bands, not two. A 4% round trip and a 99.90% one shared `warn`, and
+    // on a board where a reader compares representations at a glance that made
+    // a bad trade and a total loss the same colour. The severe band is a stated
+    // multiple of the derived bound, and the boundary is exact.
+    assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1 - 1)).tone, 'warn');
+    assert.equal(at(String(MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1)).tone, 'bad');
+    assert.equal(at('9990').tone, 'bad');
+    // A reader who disagrees with either bound can still see the number both
+    // were applied to.
     assert.equal(at('1234').value, '12.34%');
   });
 
@@ -2525,6 +2554,152 @@ describe('a venue declining to quote is its own answer', () => {
   });
 });
 
+describe('Use & access answers first and documents second', () => {
+  test('the four measured sections open, the two documentation sections fold', () => {
+    // A reader asking "can I trade this" was getting four short answers
+    // followed by several screens of eligibility and authorized-participant
+    // prose. Collapsed is not hidden: both sections keep their heading and
+    // their verdict chip, which is the whole of what they conclude.
+    const sections = useSectionsV1({
+      use: null,
+      groups: [],
+      exit: null,
+      exitBasis: null,
+      openQuote: null,
+      lastMeasuredLabel: null,
+      outcomeBody: 'A router quoted this exact size and the quote is still open.',
+      caip10: 'eip155:8453/erc20:0xb20000000000000000000078ee7ce2fe4908108c',
+    });
+    const folded = sections.filter((section) => section.collapsed).map((section) => section.id);
+    assert.deepEqual(folded, ['issuer', 'how_it_works']);
+    for (const section of sections) {
+      assert.ok(section.chip.length > 0, `${section.id} folds away without a verdict`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// One authority for whether a quote is open.
+//
+// Production, 2026-09-04: one card carried `Priced now` in its header, `NOW ·
+// No live quote` in its strip, and "A router quoted this exact size and the
+// quote is still open" in its body. Three statements about one quote, two of
+// them false, because the header read a status stamped at assembly and the
+// strip read the clock.
+// ---------------------------------------------------------------------------
+
+describe('the chip and the strip cannot disagree about a quote', () => {
+  /** A representation the server assembled as `full`, read at `readAt`. */
+  const card = (readAt: string) =>
+    marketRealityViewV1({ wire: openSellWireV1(), choice: null, now: readAt })!.representations[0]!;
+
+  test('inside the window: priced, live, and a countdown', () => {
+    const open = card(NOW);
+    assert.equal(open.outcome, 'priced');
+    assert.equal(open.outcomeChip, 'Priced now');
+    assert.equal(open.openQuote?.state, 'live');
+    assert.match(open.outcomeBody, /still open/);
+  });
+
+  test('past the window: lapsed everywhere, on the same payload', () => {
+    // Nothing about the response changed — only the clock. Twenty-two seconds
+    // is the ordinary case: a router quote lives about twenty.
+    const late = card('2026-08-26T20:35:41.000Z');
+    assert.equal(late.outcome, 'lapsed');
+    assert.equal(late.outcomeChip, 'Price expired');
+    assert.equal(late.openQuote?.state, 'none');
+    assert.doesNotMatch(late.outcomeBody, /still open/);
+    assert.match(late.outcomeBody, /has since expired/);
+  });
+
+  test('no reading of a payload puts an open chip over a closed strip', () => {
+    // The invariant itself, swept across the window rather than sampled at two
+    // points: whatever the clock says, the two halves of the card agree.
+    for (let second = 0; second <= 120; second += 1) {
+      const at = new Date(Date.parse(NOW) + second * 1000).toISOString();
+      const read = card(at);
+      assert.equal(
+        read.outcome === 'priced',
+        read.openQuote?.state === 'live',
+        `at +${second}s the header says ${read.outcomeChip} and the strip says ${read.openQuote?.state}`,
+      );
+    }
+  });
+
+  test('a stamped `open` flag never outranks the clock', () => {
+    // The flag is written when the response is assembled and cannot expire. One
+    // production representation carried `open: true` beside a window that had
+    // closed thirty-nine minutes earlier.
+    assert.equal(
+      representationOutcomeV1(
+        representation({
+          status: 'full',
+          liveness: 'live',
+          lastObservation: { ...LAPSED_OBSERVATION, open: true },
+          sources: [LAPSED_SOURCE],
+        }),
+        NOW,
+      ),
+      'lapsed',
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Availability is not quality.
+// ---------------------------------------------------------------------------
+
+describe('a card grades the answer separately from having one', () => {
+  const at = (bps: string) => {
+    const bare = marketRealityViewV1({ wire: openSellWireV1(), choice: null, now: NOW })!;
+    const address = bare.representations[0]!.tokenAddress.toLowerCase();
+    return marketRealityViewV1({
+      wire: openSellWireV1(),
+      choice: null,
+      now: NOW,
+      ladders: {
+        [address]: {
+          rungs: [],
+          note: null,
+          exit: {
+            roundTripCostBps: bps,
+            requestedCashAtomic: '1000000000',
+            returnedCashAtomic: '940000',
+            basis: 'open' as const,
+            observedAt: NOW,
+          },
+        },
+      },
+    })!.representations[0]!;
+  };
+
+  test('the availability chip is the same colour whatever the answer costs', () => {
+    // The defect, exactly: a COIN card reading `$1,000 in → $0.94 back` wore
+    // the same success green as one reading `$999.72 back`, because the one
+    // chip on the card reported that a router had answered.
+    for (const bps of ['2', '400', '9990']) {
+      assert.equal(at(bps).outcomeTone, 'neutral', `${bps} bps moved the availability chip`);
+      assert.equal(at(bps).outcomeChip, 'Priced now');
+    }
+  });
+
+  test('the cost chip is where the economics are, and it moves', () => {
+    assert.equal(at('2').exitCost?.tone, 'good');
+    assert.equal(at('400').exitCost?.tone, 'warn');
+    assert.equal(at('9990').exitCost?.tone, 'bad');
+    assert.equal(at('9990').exitCost?.chip, 'Round trip 99.90%');
+  });
+
+  test('an unmeasured round trip is never graded', () => {
+    // `off` is the word for an absence and it belongs on the withheld rows. A
+    // coloured chip over nothing measured would read as a verdict about the
+    // market.
+    const bare = marketRealityViewV1({ wire: openSellWireV1(), choice: null, now: NOW })!;
+    assert.equal(bare.representations[0]!.exitCost, null);
+    assert.equal(exitCostViewV1(null), null);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // The exit line, in money.
 // ---------------------------------------------------------------------------
@@ -2558,10 +2733,11 @@ describe('what a round trip costs, said as money first', () => {
     });
     assert.equal(bad.value, '$1,000 in → $342.80 back');
     assert.match(bad.note ?? '', /Total cost to buy and exit: 65\.72%/);
-    // `warn`, not `off`. `off` is this console's word for nothing having been
+    // `bad`, not `off`. `off` is this console's word for nothing having been
     // measured; a round trip that returned a third of the money is a
-    // measurement, and it is the tone its own ladder rung carries.
-    assert.equal(bad.tone, 'warn');
+    // measurement, and past ten times the reviewed bound it is not the same
+    // finding as a trade that costs a few percent.
+    assert.equal(bad.tone, 'bad');
     // Never "no route": a route existed and answered.
     assert.doesNotMatch(bad.note ?? '', /no route/i);
     assert.doesNotMatch(bad.note ?? '', /bps/);
@@ -3070,11 +3246,34 @@ describe('a scoped list says what it is a slice of', () => {
       totals,
       observedAt: NOW,
     });
-    assert.equal(scope?.title, 'Coinbase Tokenized Stocks on Base');
-    assert.match(scope?.body ?? '', /13 securities/);
-    // The other 22 are named as somewhere to go, not silently absent.
+    assert.equal(scope?.title, 'Coinbase Tokenized Stocks');
+    // The other 22 are named as somewhere to go, not silently absent — and
+    // named in the same unit as the counters beside them. The button used to
+    // read `All representations · 35` over a band counting securities, so the
+    // one number a reader could compare it against was in the other unit.
+    assert.match(scope?.aside ?? '', /35 companies/);
     assert.equal(scope?.other?.scope, 'all_representations');
-    assert.match(scope?.other?.label ?? '', /35/);
+    assert.equal(scope?.other?.label, 'View all issuers');
+    assert.doesNotMatch(scope?.other?.label ?? '', /\d/);
+  });
+
+  test('every number on the scope band names the unit it counts', () => {
+    // The whole defect, as one assertion: `Securities 13`, `Representations 39`
+    // and a button reading `All representations · 35` — thirteen companies,
+    // thirty-nine contracts, thirty-five companies, three headings, no units.
+    const counters = underlyingCountersV1({
+      scope: 'coinbase_b20',
+      entries: [],
+      totals: { ...totals, underlyings: 13, boundRepresentations: 13 },
+      observedAt: NOW,
+    });
+    for (const counter of counters) {
+      assert.match(
+        `${counter.label} ${counter.note ?? ''}`,
+        /companies|contracts|addresses/i,
+        `"${counter.label}" never says what it counts`,
+      );
+    }
   });
 
   test('the wide scope says why several contracts for one company is the point', () => {

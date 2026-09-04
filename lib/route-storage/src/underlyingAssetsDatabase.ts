@@ -258,7 +258,11 @@ export function createDatabaseUnderlyingAssetRepository(
         SELECT u.*,
                count(r.token_address)::int AS representation_count,
                count(*) FILTER (WHERE s.supply_state = 'positive_supply')::int AS live_count,
-               array_remove(array_agg(DISTINCT r.issuer_id), NULL) AS issuer_ids
+               array_remove(array_agg(DISTINCT r.issuer_id), NULL) AS issuer_ids,
+               -- The same issuers again, UNDISTINCTED, so a per-issuer tally
+               -- can be taken. issuer_ids answers WHICH; a scoped total needs
+               -- how many of each, and the distinct list cannot say it.
+               array_remove(array_agg(r.issuer_id), NULL) AS issuer_id_list
           FROM underlying_asset u
           LEFT JOIN representation_underlying r
             ON r.underlying_key = u.underlying_key AND r.chain_id = ${input.chainId}
@@ -271,12 +275,19 @@ export function createDatabaseUnderlyingAssetRepository(
                   u.underlying_key ASC
          LIMIT ${Math.max(1, Math.min(500, input.limit))}
       `) as Record<string, unknown>[];
-      return rows.map((row) => ({
-        underlying: rowToUnderlyingV1(row),
-        representationCount: Number(row.representation_count ?? 0),
-        liveRepresentationCount: Number(row.live_count ?? 0),
-        issuerIds: [...new Set((row.issuer_ids as string[] | null) ?? [])].sort(),
-      }));
+      return rows.map((row) => {
+        const byIssuer: Record<string, number> = {};
+        for (const issuer of ((row.issuer_id_list as string[] | null) ?? [])) {
+          byIssuer[issuer] = (byIssuer[issuer] ?? 0) + 1;
+        }
+        return {
+          underlying: rowToUnderlyingV1(row),
+          representationCount: Number(row.representation_count ?? 0),
+          liveRepresentationCount: Number(row.live_count ?? 0),
+          issuerIds: [...new Set((row.issuer_ids as string[] | null) ?? [])].sort(),
+          representationCountsByIssuer: byIssuer,
+        };
+      });
     },
 
     async underlyingCounts(input) {

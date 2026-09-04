@@ -33,8 +33,24 @@ export const RWA_DISCOVER_TAB_LABEL_V1: Readonly<Record<RwaDiscoverTabV1, string
 export type LookalikeAliasV1 = 'published_ticker' | 'underlying' | 'display_name';
 export type LookalikeAliasFilterV1 = 'all' | LookalikeAliasV1;
 
-/** Tone words the console stylesheet already knows. Never a severity. */
-export type ToneV1 = 'good' | 'warn' | 'off' | 'neutral';
+/**
+ * Tone words the console stylesheet already knows.
+ *
+ * Four of them describe a MEASUREMENT STATE and one describes a magnitude:
+ *
+ *   neutral  a fact with no valence — a count, an address, an availability
+ *   good     measured, and inside the reviewed bound
+ *   warn     measured, and outside it
+ *   bad      measured, and outside it by an order of magnitude
+ *   off      not measured
+ *
+ * `bad` exists because `warn` had to carry both a 4% round trip and a 99.9%
+ * one, and a reader comparing two cards saw the same colour on a bad trade and
+ * on a total loss. It is never used for an absence: `off` is the word for
+ * nothing measured, and painting a gap red would blame the market for our
+ * coverage.
+ */
+export type ToneV1 = 'good' | 'warn' | 'bad' | 'off' | 'neutral';
 
 // ---------------------------------------------------------------------------
 // Wire shapes.
@@ -351,6 +367,20 @@ export interface CashExitRungInputV1 {
 export const ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 = 200n;
 
 /**
+ * Ten times the bound above: past here, a fifth or more of the money is gone.
+ *
+ * A stated multiple rather than a market observation, and it exists because
+ * two bands could not tell one finding from another. A cash-exit ladder read
+ * `3.86% · 28.28% · 79.75% · 97.52%` in one amber down all four rungs: the
+ * first is a bad trade at that size, the last is the position evaporating, and
+ * the colour said they were the same kind of answer.
+ *
+ * Lives beside the bound for the same reason the bound lives here — one
+ * measurement must not be graded two ways by two surfaces.
+ */
+export const ROUND_TRIP_SEVERE_MIN_BPS_V1 = ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 * 10n;
+
+/**
  * The tone of a MEASURED round trip, decided by what it cost.
  *
  * This exists because the tone used to be decided by whether the measurement
@@ -369,7 +399,9 @@ export const ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 = 200n;
  */
 export function roundTripToneV1(bps: string | null, fallback: ToneV1): ToneV1 {
   if (bps === null || !/^-?(0|[1-9][0-9]*)$/.test(bps)) return fallback;
-  return BigInt(bps) <= ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 ? 'good' : 'warn';
+  const cost = BigInt(bps);
+  if (cost <= ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1) return 'good';
+  return cost < ROUND_TRIP_SEVERE_MIN_BPS_V1 ? 'warn' : 'bad';
 }
 
 /**

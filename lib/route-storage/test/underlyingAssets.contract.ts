@@ -10,6 +10,7 @@ import { isValidIsinV1 } from '../src/underlyingAssets.js';
 
 const DINARI_AAPL = '0x41f7a63713e76c0ab800be03bae9f17b8a356348';
 const COINBASE_AAPL = '0xb200000000000000000000c2e324d24d7eecd1fb';
+const COINBASE_AAPL_WRAPPER = '0xb200000000000000000000c2e324d24d7eecd1fc';
 const APPLE = 'dinari:stock_id:7e6a9c04-1b3e-4a2f-9f0d-2b5c8a1d4e77';
 const AMAZON = 'security:isin:US0231351067';
 const BACKED_AMZN = '0xf393d07e6ca9818a601055b4bb3c48a5bb98e701';
@@ -100,6 +101,41 @@ export function underlyingAssetContractV1(
         assert.equal(row.liveRepresentationCount, 0);
         assert.ok(row.liveRepresentationCount <= row.representationCount);
       }
+    });
+
+    test('the per-issuer tally sums to the representation count on both twins', async () => {
+      // A scoped total is summed per issuer, so the tally has to agree with the
+      // number it is a breakdown OF. Two contracts from one issuer and one from
+      // another is the shape that catches a `DISTINCT` aggregate standing in
+      // for a count: `issuerIds` would be right and the tally would say one.
+      const { repository } = await open();
+      await repository.declareUnderlying(underlying());
+      await repository.bindRepresentation({ ...binding(), tokenAddress: DINARI_AAPL });
+      await repository.bindRepresentation({
+        ...binding(),
+        tokenAddress: COINBASE_AAPL,
+        issuerId: 'coinbase',
+        issuerInstrumentKey: 'coinbase:b20:AAPL',
+        representationKind: 'b20_asset',
+      });
+      await repository.bindRepresentation({
+        ...binding(),
+        tokenAddress: COINBASE_AAPL_WRAPPER,
+        issuerId: 'coinbase',
+        issuerInstrumentKey: 'coinbase:b20:AAPLW',
+        representationKind: 'b20_asset',
+      });
+
+      const row = (await repository.listUnderlyings({ chainId: 8453, limit: 50 })).find(
+        (candidate) => candidate.underlying.underlyingKey === APPLE,
+      );
+      assert.ok(row, 'the bound underlying is missing from the index');
+      assert.deepEqual(row.representationCountsByIssuer, { coinbase: 2, dinari: 1 });
+      assert.equal(
+        Object.values(row.representationCountsByIssuer).reduce((total, one) => total + one, 0),
+        row.representationCount,
+      );
+      assert.deepEqual(row.issuerIds, ['coinbase', 'dinari']);
     });
 
     test('nothing is bound until a source declared it', async () => {

@@ -43,6 +43,7 @@ void React;
 const TONE_CLASS_V1: Readonly<Record<ToneV1, string>> = {
   good: 'good',
   warn: 'warn',
+  bad: 'bad',
   off: 'off',
   neutral: '',
 };

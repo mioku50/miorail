@@ -631,7 +631,20 @@ export async function assembleMarketRealityIndexV1(
       // Scoped, because these three sit above a scoped grid and a total that
       // did not move with the filter would describe a different page.
       underlyings: scopedRows.length,
-      boundRepresentations: scopedRows.reduce((total, row) => total + row.representationCount, 0),
+      // In the Coinbase scope this counts COINBASE contracts, not every
+      // contract bound to a Coinbase-covered company. The band read
+      // "13 securities" beside "39 representations", and the 39 were mostly
+      // Backed and Dinari addresses that the scope had just moved off the page
+      // — two numbers, two units, one heading, and no way for a reader to tell
+      // which was which.
+      boundRepresentations: scopedRows.reduce(
+        (total, row) =>
+          total +
+          (scope === 'coinbase_b20'
+            ? (row.representationCountsByIssuer?.coinbase ?? 0)
+            : row.representationCount),
+        0,
+      ),
       multiIssuerUnderlyings: scopedRows.filter((row) => row.issuerIds.length > 1).length,
       // Corpus-wide, always: what the other scope holds, so the filter can say
       // what it is hiding rather than hide it silently.

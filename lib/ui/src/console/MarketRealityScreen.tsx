@@ -57,6 +57,7 @@ void React;
 const TONE_CLASS_V1: Readonly<Record<ToneV1, string>> = {
   good: 'good',
   warn: 'warn',
+  bad: 'bad',
   off: 'off',
   neutral: '',
 };
@@ -64,6 +65,50 @@ const TONE_CLASS_V1: Readonly<Record<ToneV1, string>> = {
 function factClassV1(tone: ToneV1): string {
   const suffix = TONE_CLASS_V1[tone];
   return suffix ? `cr-v mono ${suffix}` : 'cr-v mono';
+}
+
+/**
+ * A section heading that either stands over its body or folds it away.
+ *
+ * One component rather than two branches at the call site, so an open section
+ * and a collapsed one render the same heading — the label and the verdict chip
+ * — and differ only in whether the body is behind a press.
+ */
+function SectionHead({
+  collapsed,
+  label,
+  chip,
+  tone,
+  children,
+}: {
+  collapsed: boolean;
+  label: string;
+  chip: string;
+  tone: ToneV1;
+  children: React.ReactNode;
+}) {
+  const head = (
+    <>
+      <strong>{label}</strong>
+      <span className="pill cr-status" data-tone={tone}>
+        {chip}
+      </span>
+    </>
+  );
+  if (!collapsed) {
+    return (
+      <>
+        <div className="mr-utility-edge-head">{head}</div>
+        {children}
+      </>
+    );
+  }
+  return (
+    <details className="mr-use-fold">
+      <summary className="mr-utility-edge-head">{head}</summary>
+      {children}
+    </details>
+  );
 }
 
 function FactList({ facts, label }: { facts: readonly FactViewV1[]; label: string }) {
@@ -355,13 +400,23 @@ function RepresentationCard({
             documents. The order is the order a person asks: can I trade it, can
             I move it, can I bridge it, does anything lend against it. */}
         {sections.map((section) => (
-          <section className="mr-use-section" key={section.id} aria-label={section.label}>
-            <div className="mr-utility-edge-head">
-              <strong>{section.label}</strong>
-              <span className="pill cr-status" data-tone={section.tone}>
-                {section.chip}
-              </span>
-            </div>
+          <section
+            className="mr-use-section"
+            key={section.id}
+            aria-label={section.label}
+            data-collapsed={section.collapsed ? 'yes' : 'no'}
+          >
+            {/* The four measured sections are the answer and stay open. The two
+                documentation sections keep their heading and their verdict chip
+                and fold their prose away: a reader asking "can I trade this"
+                was getting four short answers followed by several screens about
+                authorized participants. */}
+            <SectionHead
+              collapsed={section.collapsed}
+              label={section.label}
+              chip={section.chip}
+              tone={section.tone}
+            >
             <p className="cr-verdict mr-use-headline">{section.headline}</p>
             {section.facts.length > 0 ? (
               <FactList facts={section.facts} label={`${section.label} facts`} />
@@ -455,6 +510,7 @@ function RepresentationCard({
                 </dl>
               </details>
             ) : null}
+            </SectionHead>
           </section>
         ))}
 
@@ -493,8 +549,23 @@ function RepresentationCard({
             tokenAddress={representation.tokenAddress}
           />
         </span>
-        <span className="pill cr-status" data-tone={representation.outcomeTone}>
-          {representation.outcomeChip}
+        {/* Two chips, two questions. The first says whether Miorail has an
+            answer at this exact size; the second says what the answer costs.
+            They were one chip and it was green for both, which is how a card
+            reading `$1,000 in → $0.94 back` looked like a healthy market. */}
+        <span className="cr-chips">
+          <span className="pill cr-status" data-tone={representation.outcomeTone}>
+            {representation.outcomeChip}
+          </span>
+          {representation.exitCost ? (
+            <span
+              className="pill cr-status"
+              data-tone={representation.exitCost.tone}
+              title={representation.exitCost.note}
+            >
+              {representation.exitCost.chip}
+            </span>
+          ) : null}
         </span>
       </div>
 
@@ -873,6 +944,53 @@ function Chooser({
   );
 }
 
+/**
+ * A demoted representation: one line, expandable to the whole card.
+ *
+ * The sections below the primary board — the other issuers' structures, and the
+ * contracts with nothing outstanding — were rendering full cards. Three of them
+ * side by side is half a screen, and on a Coinbase-primary page all three
+ * usually say the same three things: not covered, sell not sized, nothing
+ * outstanding. That is a finding worth one line each, not worth the tallest
+ * block on the page.
+ *
+ * Nothing is removed. The summary carries the identity, the state and the cost
+ * grade — the three things a reader scans for — and the card underneath is the
+ * same card, complete, one press away.
+ */
+function CompactRepresentation({
+  representation,
+  children,
+}: {
+  representation: RepresentationViewV1;
+  children: React.ReactNode;
+}) {
+  return (
+    <details className="mr-compact" data-outcome={representation.outcome}>
+      <summary>
+        <span className="cr-name">
+          <TokenIdentityV1
+            symbol={representation.issuerName}
+            name={representation.structureLabel}
+            tokenAddress={representation.tokenAddress}
+          />
+        </span>
+        <span className="cr-chips">
+          <span className="pill cr-status" data-tone={representation.outcomeTone}>
+            {representation.outcomeChip}
+          </span>
+          {representation.exitCost ? (
+            <span className="pill cr-status" data-tone={representation.exitCost.tone}>
+              {representation.exitCost.chip}
+            </span>
+          ) : null}
+        </span>
+      </summary>
+      {children}
+    </details>
+  );
+}
+
 export function MarketRealityScreen({ model }: { model: MarketRealityScreenModelV1 }) {
   const { actions } = model;
   // Membership, not order. `inComparison` comes from the view, which reads it
@@ -896,6 +1014,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           <div>
             <h3>{model.scope.title}</h3>
             <p className="lnote">{model.scope.body}</p>
+            {model.scope.aside ? <p className="lnote">{model.scope.aside}</p> : null}
           </div>
           {model.scope.other && model.onScope ? (
             <button
@@ -1175,25 +1294,30 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     company, different structure, supply and market access — which is exactly why
                     they are measured separately here.
                   </p>
-                  <div className="mr-board">
+                  <div className="mr-compact-list">
                     {others.map((representation) => (
-                      <RepresentationCard
+                      <CompactRepresentation
                         key={representation.tokenAddress}
                         representation={representation}
-                        actions={actions}
-                        surface={model.surface}
-                        watched={
-                          model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
-                        }
-                        watching={model.watchingTokenAddress === representation.tokenAddress}
-                        removing={model.removingWatchTokenAddress === representation.tokenAddress}
-                        measuring={model.measuring}
-                        useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
-                        useAccessLoading={model.useAccessLoading === true}
-                        inspectRouteUnavailable={
-                          model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
-                        }
-                      />
+                      >
+                        <RepresentationCard
+                          representation={representation}
+                          actions={actions}
+                          surface={model.surface}
+                          watched={
+                            model.watchedTokenAddresses?.includes(representation.tokenAddress) ??
+                            false
+                          }
+                          watching={model.watchingTokenAddress === representation.tokenAddress}
+                          removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                          measuring={model.measuring}
+                          useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
+                          useAccessLoading={model.useAccessLoading === true}
+                          inspectRouteUnavailable={
+                            model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
+                          }
+                        />
+                      </CompactRepresentation>
                     ))}
                   </div>
                 </section>
@@ -1205,25 +1329,30 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               {outside.length > 0 ? (
                 <section className="mr-outside" aria-label="Reviewed but outside current comparison">
                   <h4>Reviewed, outside the current comparison</h4>
-                  <div className="mr-board">
+                  <div className="mr-compact-list">
                     {outside.map((representation) => (
-                      <RepresentationCard
+                      <CompactRepresentation
                         key={representation.tokenAddress}
                         representation={representation}
-                        actions={actions}
-                        surface={model.surface}
-                        watched={
-                          model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
-                        }
-                        watching={model.watchingTokenAddress === representation.tokenAddress}
-                        removing={model.removingWatchTokenAddress === representation.tokenAddress}
-                        measuring={model.measuring}
-                        useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
-                        useAccessLoading={model.useAccessLoading === true}
-                        inspectRouteUnavailable={
-                          model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
-                        }
-                      />
+                      >
+                        <RepresentationCard
+                          representation={representation}
+                          actions={actions}
+                          surface={model.surface}
+                          watched={
+                            model.watchedTokenAddresses?.includes(representation.tokenAddress) ??
+                            false
+                          }
+                          watching={model.watchingTokenAddress === representation.tokenAddress}
+                          removing={model.removingWatchTokenAddress === representation.tokenAddress}
+                          measuring={model.measuring}
+                          useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
+                          useAccessLoading={model.useAccessLoading === true}
+                          inspectRouteUnavailable={
+                            model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
+                          }
+                        />
+                      </CompactRepresentation>
                     ))}
                   </div>
                 </section>

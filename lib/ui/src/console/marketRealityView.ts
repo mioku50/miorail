@@ -14,7 +14,11 @@ import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
 // four fields would let the two views drift into different meanings for the
 // same word, which is exactly what the shared section table exists to stop.
-import { ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1, rwaBpsLabelV1 } from './rwaDiscoverView';
+import {
+  ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1,
+  ROUND_TRIP_SEVERE_MIN_BPS_V1,
+  rwaBpsLabelV1,
+} from './rwaDiscoverView';
 import type { FactViewV1, ToneV1 } from './rwaDiscoverView';
 
 export type { FactViewV1, ToneV1 };
@@ -398,6 +402,17 @@ export interface RepresentationViewV1 {
    */
   exitBasis: 'open' | 'last_measured' | null;
   /**
+   * What the round trip COST, graded — the second axis of the card.
+   *
+   * `outcomeChip` says whether an answer exists; this says whether the answer
+   * is worth anything. They were one chip, and the one chip was green whenever
+   * a router answered, so a representation that returns $0.94 on $1,000 wore
+   * the same colour as one that returns $999.72.
+   *
+   * Null when no round trip was measured. An absence is never graded.
+   */
+  exitCost: ExitCostViewV1 | null;
+  /**
    * Whether this representation belongs in the primary comparison.
    *
    * False for zero-supply: the card stays visible with its one fact, out of the
@@ -647,10 +662,23 @@ export function representationOutcomeV1(
   representation: MarketRealityRepresentationWireV1,
   nowIso: string,
 ): MarketRealityOutcomeV1 {
-  void nowIso;
   if (representation.supply.state === 'zero_supply') return 'zero_supply';
   if (representation.supply.state === 'supply_unknown') return 'supply_unknown';
-  if (representation.status === 'full') return 'priced';
+  // ONE authority for whether a quote is open, and it is the clock.
+  //
+  // `status: 'full'` is stamped when the server assembles the response; the
+  // strip below already refuses to claim a live quote once the expiry has
+  // passed. Reading the status here and the clock there is how one card came to
+  // render `Priced now` in the header, `No live quote` in the strip and "the
+  // quote is still open" in the body — three statements, two of them false,
+  // about a quote that had lapsed nineteen seconds after assembly.
+  //
+  // A quote that has expired is exactly `lapsed`: we did have a price, and the
+  // window closed. Nothing is lost — the durable measurement below is not
+  // sourced from the quote and does not move.
+  if (representation.status === 'full') {
+    return openQuoteExpiryV1(representation, nowIso) === null ? 'lapsed' : 'priced';
+  }
   // `liveness` is the engine's own answer and it is authoritative: it was
   // computed from the same rows that produced the status, at the same instant.
   // Re-deriving it here from timestamps was how this module and the engine
@@ -745,10 +773,24 @@ const OUTCOME_CHIP_V1: Readonly<Record<MarketRealityOutcomeV1, string>> = {
   never_measured: 'Not measured',
 };
 
+/**
+ * Availability, coloured as availability.
+ *
+ * `priced` is NOT `good`. It says a router answered at this exact size and the
+ * quote is still open — nothing at all about whether the answer is any use. A
+ * COIN card carrying `$1,000 in → $0.94 back` wore the same success green as
+ * one carrying `$999.72 back`, and a reader scanning for two seconds reads
+ * green as "this market is fine".
+ *
+ * So the two axes are separated: this chip reports whether an answer EXISTS,
+ * in the neutral tone every other availability state uses, and `exitCost`
+ * below carries the economics with its own graded colour. One card, two
+ * questions, two chips.
+ */
 const OUTCOME_TONE_V1: Readonly<Record<MarketRealityOutcomeV1, ToneV1>> = {
   zero_supply: 'neutral',
   supply_unknown: 'warn',
-  priced: 'good',
+  priced: 'neutral',
   lapsed: 'warn',
   stale_finding: 'off',
   unsupported_token: 'warn',
@@ -856,20 +898,57 @@ function outcomeBodyV1(
  * second window is a property of router quotes, not of this representation, so
  * the board says it once above the cards.
  */
+/**
+ * Is a router quote open on this representation RIGHT NOW — and for how long.
+ *
+ * The single authority. Liveness is decided by the CLOCK, not by the status the
+ * server stamped when it assembled: `full` means the quote was open at assembly
+ * time, and a reader holding that answer twenty-one seconds later holds a
+ * lapsed one.
+ *
+ * Extracted because the header chip and the NOW strip each used to decide this
+ * for themselves, from different inputs, and disagreed on screen: `Priced now`
+ * beside `No live quote`, over the same quote. There is one question here and
+ * it has one answer.
+ */
+function openQuoteExpiryV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): string | null {
+  if (representation.status !== 'full') return null;
+  // The response carries an expiry in three places — the representation's own
+  // field, the stored observation, and the source quote — and any of them can
+  // be absent on its own. The LATEST one wins, rather than a priority order:
+  // an open quote does not become closed because an older observation is also
+  // on the record, and a rule that picked by position had to justify why one
+  // field outranks another when they simply describe different measurements.
+  //
+  // `lastObservation.open` is deliberately not consulted. It is a boolean
+  // stamped at assembly, and a boolean cannot expire: one production
+  // representation carried `open: true` beside a window that had closed
+  // thirty-nine minutes earlier. An instant can be checked against the clock;
+  // a flag can only be believed.
+  const expiries = [
+    representation.expiresAt,
+    representation.lastObservation?.expiresAt ?? null,
+    latestQuoteV1(representation)?.expiresAt ?? null,
+  ].filter((value): value is string => typeof value === 'string' && value.length > 0);
+  if (expiries.length === 0) return null;
+  return expiresInLabelV1(
+    expiries.reduce((latest, one) => (Date.parse(one) > Date.parse(latest) ? one : latest)),
+    nowIso,
+  );
+}
+
 function openQuoteStripV1(
   representation: MarketRealityRepresentationWireV1,
   requestedCashAtomic: string,
   nowIso: string,
 ): OpenQuoteViewV1 {
-  // Liveness is decided by the CLOCK, not by the status the server stamped when
-  // it assembled. `full` means the quote was open at assembly time; a reader
-  // holding that answer twenty-one seconds later holds a lapsed one, and a strip
-  // that reads it off the status alone goes on claiming "open right now" over a
-  // quote nobody could execute.
-  const expiresInLabel = expiresInLabelV1(latestQuoteV1(representation)?.expiresAt ?? null, nowIso);
-  if (representation.status === 'full' && representation.returnedCashAtomic && expiresInLabel) {
+  const expiresInLabel = openQuoteExpiryV1(representation, nowIso);
+  if (expiresInLabel) {
     const paidIn = usdV1(requestedCashAtomic);
-    const cameBack = usdV1(representation.returnedCashAtomic);
+    const cameBack = usdV1(representation.returnedCashAtomic ?? null);
     return {
       state: 'live',
       // Money first, in the same words the durable answer below uses, so a
@@ -1207,6 +1286,84 @@ export function withheldCauseV1(input: {
   return null;
 }
 
+/**
+ * Ten times the reviewed bound: past here, a fifth or more of the money is gone.
+ *
+ * The first threshold is DERIVED — `MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1` is
+ * two legs of the 100 bps slippage policy every cash-exit intent is planned
+ * under, so it moves when the policy moves. This second one is a stated
+ * multiple of it rather than a market observation, and it exists for one
+ * reason: `warn` was carrying both a 4% round trip and a 99.90% one. Those are
+ * not the same finding, and on a board where a reader compares three
+ * representations at a glance, painting them the same colour is the whole
+ * mistake.
+ *
+ * Ten times the bound is 2,000 bps, which reads as a sentence a person can
+ * check against the number printed beside it: a fifth or more of the position
+ * does not come back.
+ */
+export const MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1 = Number(ROUND_TRIP_SEVERE_MIN_BPS_V1);
+
+/**
+ * The second axis of a priced card: not whether there is an answer, but what
+ * the answer costs.
+ *
+ * `within_policy` is the only one that is good news, and it is good news about
+ * a MEASUREMENT, never a recommendation — the card still names no winner.
+ */
+export type ExitCostGradeV1 = 'within_policy' | 'above_policy' | 'most_value_lost';
+
+export interface ExitCostViewV1 {
+  grade: ExitCostGradeV1;
+  /** Chip words: the cost itself, because the number is the finding. */
+  chip: string;
+  tone: ToneV1;
+  /** One clause a reader can act on, in their units, never ours. */
+  note: string;
+}
+
+export function exitCostGradeV1(bps: number): ExitCostGradeV1 {
+  if (bps <= MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1) return 'within_policy';
+  if (bps < MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1) return 'above_policy';
+  return 'most_value_lost';
+}
+
+const EXIT_COST_TONE_V1: Readonly<Record<ExitCostGradeV1, ToneV1>> = {
+  within_policy: 'good',
+  above_policy: 'warn',
+  most_value_lost: 'bad',
+};
+
+/**
+ * The cost chip, beside the availability chip.
+ *
+ * Null when no round trip was measured — an unmeasured cost is an absence, and
+ * an absence never gets a colour on this card. `off` is the console's word for
+ * that and it belongs on the withheld rows, not on a chip that would read as a
+ * verdict about the market.
+ */
+export function exitCostViewV1(
+  exit: RepresentationExitEvidenceV1 | null | undefined,
+): ExitCostViewV1 | null {
+  if (!exit) return null;
+  const label = rwaBpsLabelV1(exit.roundTripCostBps);
+  if (label === null) return null;
+  const bps = Number(exit.roundTripCostBps);
+  if (!Number.isFinite(bps)) return null;
+  const grade = exitCostGradeV1(bps);
+  return {
+    grade,
+    chip: `Round trip ${label}`,
+    tone: EXIT_COST_TONE_V1[grade],
+    note:
+      grade === 'within_policy'
+        ? 'buying in and selling straight back costs this much, inside the reviewed slippage policy'
+        : grade === 'above_policy'
+          ? 'buying in and selling straight back costs this much, above the reviewed slippage policy'
+          : 'buying in and selling straight back costs this much — most of the money does not come back',
+  };
+}
+
 function exitViewV1(
   exit: RepresentationExitEvidenceV1 | null | undefined,
   nowIso: string,
@@ -1218,7 +1375,9 @@ function exitViewV1(
   if (!Number.isFinite(bps)) return null;
   const age = quoteAgeLabelV1(exit.observedAt, nowIso);
   const when = exit.basis === 'open' ? 'on the open quote' : `measured ${age ?? 'earlier'}`;
-  const withinBound = bps <= MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1;
+  const grade = exitCostGradeV1(bps);
+  const withinBound = grade === 'within_policy';
+  const tone = EXIT_COST_TONE_V1[grade];
 
   // Money first, whenever both sides of the trip were measured.
   //
@@ -1237,11 +1396,13 @@ function exitViewV1(
         : // Never "no route": a route exists and answered. What it answered is
           // that the money does not come back, which is a fact about how much
           // sits behind this contract and not about whether anyone would quote.
-          `Total cost to buy and exit: ${cost} — ${when}. A price is available at this size; most of the money is not.`,
-      // `warn`, not `off`: this console's `off` means nothing was measured, and
-      // this was measured. It is the same tone the ladder rung beside it now
-      // carries for the same number.
-      tone: withinBound ? 'good' : 'warn',
+          `Total cost to buy and exit: ${cost} — ${when}. A price is available at this size; ${
+            grade === 'most_value_lost' ? 'most of the money is not' : 'it costs more than the reviewed slippage policy allows'
+          }.`,
+      // Never `off`: this console's `off` means nothing was measured, and this
+      // was measured. Three bands rather than two, because a 4% round trip and
+      // a 99.90% one are not the same finding and shared one colour.
+      tone,
     };
   }
 
@@ -1250,8 +1411,10 @@ function exitViewV1(
     value: cost,
     note: withinBound
       ? `what buying in and selling straight back costs at this size — ${when}`
-      : `a price is available at this size, and buying in then selling straight back costs this much — ${when}. Most of the money does not come back.`,
-    tone: withinBound ? 'good' : 'warn',
+      : grade === 'most_value_lost'
+        ? `a price is available at this size, and buying in then selling straight back costs this much — ${when}. Most of the money does not come back.`
+        : `a price is available at this size, and buying in then selling straight back costs this much — ${when}. That is above the reviewed slippage policy.`,
+    tone,
   };
 }
 
@@ -1497,6 +1660,21 @@ export interface UseSectionViewV1 {
   evidence: { label: string; value: string }[];
   /** Issuer documentation, unchanged, for the two sections that carry it. */
   edges: UtilityEdgeViewV1[];
+  /**
+   * Whether this section opens closed.
+   *
+   * The four measured sections answer the question a reader arrived with — can
+   * I trade it, move it, bridge it, does anything lend against it — in four
+   * short blocks. Underneath them sat the issuer's authenticated processes and
+   * the structure documents: several screens of prose about eligibility,
+   * authorized participants and multiplier mechanics, none of which is a thing
+   * the reader can do, all of which is true and worth keeping.
+   *
+   * So they keep their place and lose the space. Collapsed is not hidden: the
+   * heading and its chip are still on the page, and the chip is the section's
+   * whole verdict.
+   */
+  collapsed: boolean;
 }
 
 /** The LayerZero endpoint ids Miorail names, so a destination has a word. */
@@ -1540,6 +1718,7 @@ function tradeSectionV1(input: {
   }
   if (input.exit) facts.push(input.exit);
   return {
+    collapsed: false,
     id: 'trade',
     label: 'Trade',
     headline: live
@@ -1616,6 +1795,7 @@ function transferSectionV1(
     value: 'not policy gated — an approval is not permission to transfer',
   });
   return {
+    collapsed: false,
     id: 'transfer',
     label: 'Transfer',
     headline,
@@ -1631,6 +1811,7 @@ function bridgeSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
   const bridge = use?.bridge;
   if (!bridge || bridge.state === 'unread') {
     return {
+      collapsed: false,
       id: 'bridge',
       label: 'Bridge',
       headline:
@@ -1644,6 +1825,7 @@ function bridgeSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
   }
   if (bridge.state === 'none_detected') {
     return {
+      collapsed: false,
       id: 'bridge',
       label: 'Bridge',
       headline:
@@ -1659,6 +1841,7 @@ function bridgeSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
     (id: number) => BRIDGE_NETWORK_NAMES_V1[id] ?? `endpoint ${id}`,
   );
   return {
+    collapsed: false,
     id: 'bridge',
     label: 'Bridge',
     headline:
@@ -1719,6 +1902,7 @@ function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 
   ).length;
   if (uses.length > 0) {
     return {
+      collapsed: false,
       id: 'defi',
       label: 'DeFi',
       headline: `This exact address is used in DeFi: ${uses
@@ -1743,6 +1927,7 @@ function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 
     };
   }
   return {
+    collapsed: false,
     id: 'defi',
     label: 'DeFi',
     headline:
@@ -1785,6 +1970,7 @@ export function useSectionsV1(input: {
     bridgeSectionV1(input.use),
     defiSectionV1(input.use),
     {
+      collapsed: true,
       id: 'issuer',
       label: 'Issuer services',
       headline:
@@ -1796,6 +1982,7 @@ export function useSectionsV1(input: {
       edges: issuerEdges,
     },
     {
+      collapsed: true,
       id: 'how_it_works',
       label: 'How it works',
       headline:
@@ -2175,30 +2362,49 @@ export function stockFiltersV1(
   return filters;
 }
 
-/** The headline counters. Corpus-wide — every one of these is a claim about the
- * whole graph, never about the page. */
+/**
+ * The headline counters, in units a reader can tell apart.
+ *
+ * Three numbers sat on one band under three labels that never named what they
+ * counted: `Securities 13`, `Representations 39`, and a button reading `All
+ * representations · 35`. Thirteen companies, thirty-nine contracts and
+ * thirty-five companies — two units, three headings, and the only way to work
+ * out which was which was to read the engine.
+ *
+ * Two changes, and neither of them hides anything. Every label now names its
+ * own unit — a company or an exact address — and the totals are scoped, so in
+ * the Coinbase scope the contract count is Coinbase contracts rather than every
+ * contract bound to a Coinbase-covered company.
+ */
 export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): FactViewV1[] {
   if (!wire) return [];
+  const coinbaseScope = (wire.scope ?? 'all_representations') === 'coinbase_b20';
   return [
     {
-      label: 'Securities',
+      label: coinbaseScope ? 'Coinbase stocks' : 'Stocks',
       value: String(wire.totals.underlyings),
-      note: 'bound to a Base contract by a reviewed source',
+      note: coinbaseScope
+        ? 'companies with a Coinbase B20 contract'
+        : 'companies bound to a Base contract by a reviewed source',
       tone: 'neutral',
     },
     {
-      label: 'Representations',
+      label: coinbaseScope ? 'B20 contracts' : 'Contracts',
       value: String(wire.totals.boundRepresentations),
-      note: 'each identified by its own exact address',
+      note: coinbaseScope
+        ? 'exact addresses on this page, one company each'
+        : 'exact addresses across Coinbase, Backed and Dinari',
       tone: 'neutral',
     },
     {
-      label: 'Multi-issuer stocks',
+      label: coinbaseScope ? 'Also represented elsewhere' : 'Multi-issuer stocks',
       value: String(wire.totals.multiIssuerUnderlyings),
       // The only number on the page that says whether a COMPARISON exists at
       // all. Counted by distinct issuer, so one issuer's token plus its own
       // wrapper never inflates it.
-      note: 'have reviewed representations from two or more issuers',
+      note: coinbaseScope
+        ? 'companies here that also have a Backed or Dinari contract to compare against'
+        : 'companies represented by two or more issuers',
       tone: 'neutral',
     },
   ];
@@ -2216,6 +2422,9 @@ export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): Fac
 export interface StockScopeViewV1 {
   title: string;
   body: string;
+  /** The corpus this page is a slice of, said in the same unit the band counts
+   * in. Null when this scope is the whole corpus. */
+  aside: string | null;
   /** The scope this page is NOT showing, and how big it is. Null when there is
    * nothing else to show. */
   other: { scope: 'coinbase_b20' | 'all_representations'; label: string } | null;
@@ -2230,24 +2439,28 @@ export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockSc
   const others = all - coinbase;
   if (scope === 'coinbase_b20') {
     return {
-      title: 'Coinbase Tokenized Stocks on Base',
+      title: 'Coinbase Tokenized Stocks',
       // The B20 standard named once, because it is what every other Base
       // surface calls these and a reader arriving from one of them should not
       // have to work out that this is the same thing.
-      body: `${coinbase} securities, each represented by one Coinbase B20 contract.`,
-      other:
+      body: 'The standard Base documents for tokenized stocks on this chain.',
+      // The wider corpus, named in the SAME unit as the number above it. The
+      // button used to read `All representations · 35` while the band above it
+      // counted securities — so the one number a reader could compare it
+      // against was in the other unit. It says what pressing it changes: the
+      // set of issuers, not the set of companies.
+      aside:
         others > 0
-          ? {
-              scope: 'all_representations',
-              label: `All representations · ${all}`,
-            }
+          ? `Miorail also tracks ${all} companies in total, across Coinbase, Backed and Dinari.`
           : null,
+      other: others > 0 ? { scope: 'all_representations', label: 'View all issuers' } : null,
     };
   }
   return {
     title: 'Every reviewed representation on Base',
-    body: `${all} securities across Coinbase, Backed and Dinari. The same company can be represented by several contracts, and they are not economically identical.`,
-    other: { scope: 'coinbase_b20', label: `Coinbase Tokenized Stocks · ${coinbase}` },
+    body: `${all} companies across Coinbase, Backed and Dinari. The same company can be represented by several contracts, and they are not economically identical.`,
+    aside: null,
+    other: { scope: 'coinbase_b20', label: `Coinbase only · ${coinbase}` },
   };
 }
 
@@ -2468,6 +2681,15 @@ export function marketRealityViewV1(input: {
             : exitViewV1(
                 input.ladders?.[representation.tokenAddress.toLowerCase()]?.exit ?? null,
                 input.now,
+              ),
+        // The economics, as its own chip beside the availability chip. Same
+        // evidence as `exit` — one measurement, read twice — so the two can
+        // never disagree about the number they are grading.
+        exitCost:
+          outcome === 'zero_supply'
+            ? null
+            : exitCostViewV1(
+                input.ladders?.[representation.tokenAddress.toLowerCase()]?.exit ?? null,
               ),
         // Zero supply is the whole card. A representation with nothing
         // outstanding is not being compared against anything, so it leaves the

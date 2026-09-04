@@ -79,17 +79,24 @@ export function createMemoryUnderlyingAssetRepository(
     },
 
     async listUnderlyings(input) {
-      const byKey = new Map<string, { count: number; live: number; issuers: Set<string> }>();
+      const byKey = new Map<
+        string,
+        { count: number; live: number; issuers: Set<string>; perIssuer: Map<string, number> }
+      >();
       for (const row of bindings.values()) {
         if (row.chainId !== input.chainId) continue;
         const entry = byKey.get(row.underlyingKey) ?? {
           count: 0,
           live: 0,
           issuers: new Set<string>(),
+          perIssuer: new Map<string, number>(),
         };
         entry.count += 1;
         if (supplyStates.get(row.tokenAddress.toLowerCase()) === 'positive_supply') entry.live += 1;
-        if (row.issuerId) entry.issuers.add(row.issuerId);
+        if (row.issuerId) {
+          entry.issuers.add(row.issuerId);
+          entry.perIssuer.set(row.issuerId, (entry.perIssuer.get(row.issuerId) ?? 0) + 1);
+        }
         byKey.set(row.underlyingKey, entry);
       }
       return [...underlyings.values()]
@@ -100,6 +107,7 @@ export function createMemoryUnderlyingAssetRepository(
             representationCount: entry?.count ?? 0,
             liveRepresentationCount: entry?.live ?? 0,
             issuerIds: [...(entry?.issuers ?? [])].sort(),
+            representationCountsByIssuer: Object.fromEntries(entry?.perIssuer ?? []),
           };
         })
         // A security with tokens outstanding first; then most-represented,
