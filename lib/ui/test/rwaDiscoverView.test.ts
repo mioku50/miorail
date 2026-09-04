@@ -10,6 +10,8 @@ import {
   moneyLabelV1,
   officialAssetsViewV1,
   rwaAgeLabelV1,
+  roundTripReturnedMoreV1,
+  roundTripToneV1,
   rwaBpsLabelV1,
   signalFeedViewV1,
   type OfficialAssetWireV1,
@@ -672,8 +674,20 @@ describe('the cash-exit ladder as rows', () => {
     assert.equal(toneAt(String(ROUND_TRIP_SEVERE_MIN_BPS_V1)), 'bad');
     assert.equal(toneAt('386'), 'warn');
     assert.equal(toneAt('2828'), 'bad');
-    // Money returned above what went in.
-    assert.equal(toneAt('-1'), 'good');
+    // Money returned above what went in gets NO verdict colour.
+    //
+    // This assertion used to read `'good'`, on the reasoning that returning
+    // more than you took is not a cost problem. Production showed the flaw: a
+    // $0.10 review page rendered `Round trip -5.29%` in success green, because
+    // `cost <= 200` is true of every negative number. A claimed 5.29% gain on
+    // two legs of the same market is not a good trade — it is our own
+    // arithmetic, and at that size the gap between the two quotes and the
+    // token's own rounding are larger than anything the market did.
+    //
+    // Painting -1 and -529 the same way is the two-bands-hid-an-order-of-
+    // magnitude mistake, mirrored. So neither gets a verdict.
+    assert.equal(toneAt('-1'), 'off');
+    assert.equal(toneAt('-529'), 'off');
     // The number itself is untouched — only how it is painted.
     assert.equal(cashExitLadderRungsV1([rung('9990')], NOW)[0]?.value, '99.90%');
   });
@@ -872,5 +886,30 @@ describe('a stored round trip is never spoken of in the present', () => {
     assert.ok(row, 'the executable row names its size');
     assert.match(row!.label, /^\$100k cash-out$/);
     assert.doesNotMatch(JSON.stringify(view.assets[0]?.facts), /Executable value/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The same rule, on the surface that shares it.
+//
+// One rule paints Discover and Stocks. A negative round trip was green on both.
+// ---------------------------------------------------------------------------
+describe('Discover grades a returned-more round trip the same way', () => {
+  test('a negative cost gets no verdict colour', () => {
+    for (const bps of ['-1', '-529', '-10000']) {
+      assert.equal(roundTripToneV1(bps, 'neutral'), 'off', `${bps} must not read as a verdict`);
+      assert.equal(roundTripReturnedMoreV1(bps), true);
+    }
+  });
+
+  test('zero and the positive bands are unchanged', () => {
+    assert.equal(roundTripReturnedMoreV1('0'), false);
+    assert.equal(roundTripToneV1('0', 'neutral'), 'good');
+    assert.equal(roundTripToneV1('200', 'neutral'), 'good');
+    assert.equal(roundTripToneV1('201', 'neutral'), 'warn');
+    assert.equal(roundTripToneV1('2000', 'neutral'), 'bad');
+    // A missing or unreadable figure still falls back rather than deciding.
+    assert.equal(roundTripToneV1(null, 'neutral'), 'neutral');
+    assert.equal(roundTripToneV1('abc', 'neutral'), 'neutral');
   });
 });

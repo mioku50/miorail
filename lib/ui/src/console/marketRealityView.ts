@@ -1320,7 +1320,23 @@ export const MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1 = Number(ROUND_TRIP_SEVERE_
  * `within_policy` is the only one that is good news, and it is good news about
  * a MEASUREMENT, never a recommendation — the card still names no winner.
  */
-export type ExitCostGradeV1 = 'within_policy' | 'above_policy' | 'most_value_lost';
+export type ExitCostGradeV1 =
+  | 'within_policy'
+  | 'above_policy'
+  | 'most_value_lost'
+  /**
+   * The round trip returned MORE than it took.
+   *
+   * Its own grade rather than a band of the scale, because it is not a point on
+   * the scale: `bps <= 200` is true of every negative number, so a `-529` — a
+   * claimed 5.29% gain on a two-leg round trip — wore the same success green as
+   * a real 0.02%. Seen on the review page of a $0.10 draft.
+   *
+   * At that size the two legs are separate quotes taken moments apart and the
+   * token's own decimals round; whatever produced the sign, it is not a cost a
+   * reader can act on, and it must not be coloured as a good one.
+   */
+  | 'returned_more_than_taken';
 
 export interface ExitCostViewV1 {
   grade: ExitCostGradeV1;
@@ -1332,6 +1348,9 @@ export interface ExitCostViewV1 {
 }
 
 export function exitCostGradeV1(bps: number): ExitCostGradeV1 {
+  // Checked FIRST, because every comparison below it is true of a negative
+  // number and each one of them means something good.
+  if (bps < 0) return 'returned_more_than_taken';
   if (bps <= MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1) return 'within_policy';
   if (bps < MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1) return 'above_policy';
   return 'most_value_lost';
@@ -1341,6 +1360,10 @@ const EXIT_COST_TONE_V1: Readonly<Record<ExitCostGradeV1, ToneV1>> = {
   within_policy: 'good',
   above_policy: 'warn',
   most_value_lost: 'bad',
+  // No verdict colour: the figure is not a claim about the market. `off` is the
+  // console's word for that, and it is deliberately not `bad` either — nothing
+  // here says the market is worse than it is.
+  returned_more_than_taken: 'off',
 };
 
 /**
@@ -1362,14 +1385,22 @@ export function exitCostViewV1(
   const grade = exitCostGradeV1(bps);
   return {
     grade,
-    chip: `Round trip ${label}`,
+    // The number stays on screen — it was measured and hiding it would be the
+    // other failure. What it must not do is read as a cost, so the chip says so
+    // in its own words rather than leaving a grey minus sign to be interpreted.
+    chip:
+      grade === 'returned_more_than_taken'
+        ? `Round trip ${label} · not a cost reading`
+        : `Round trip ${label}`,
     tone: EXIT_COST_TONE_V1[grade],
     note:
       grade === 'within_policy'
         ? 'buying in and selling straight back costs this much, inside the reviewed slippage policy'
         : grade === 'above_policy'
           ? 'buying in and selling straight back costs this much, above the reviewed slippage policy'
-          : 'buying in and selling straight back costs this much — most of the money does not come back',
+          : grade === 'most_value_lost'
+            ? 'buying in and selling straight back costs this much — most of the money does not come back'
+            : 'the round trip returned more than it took, which is not a cost a reader can act on: the two legs are separate quotes taken moments apart, and at small sizes that gap and the token’s own rounding are larger than the market',
   };
 }
 

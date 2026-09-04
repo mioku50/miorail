@@ -221,6 +221,26 @@ export interface MarketRealityScreenModelV1 {
   useAccess?: Readonly<Record<string, RepresentationUseAccessV1 | null>>;
   useAccessLoading?: boolean;
   /**
+   * The question belongs to something else and the reader cannot change it.
+   *
+   * True on the stock-action review page, where the draft fixes the security,
+   * the direction and the exact size. Two things went wrong there without it:
+   *
+   *   * the securities chooser had nothing to choose from — that page loads no
+   *     index — and rendered its empty state, `No reviewed source has bound a
+   *     Base contract to a security yet`, on a page showing five reviewed
+   *     representations of NVDA. A sentence about OUR list, printed where a
+   *     reader takes it for a fact about the security.
+   *
+   *   * Sell/Buy, the four sizes and the history periods all rendered as live
+   *     controls wired to no-ops. Nothing broke — but a control that looks
+   *     interactive and does nothing is a promise the page cannot keep, and one
+   *     that appeared to offer changing the very question being confirmed.
+   *
+   * So neither is rendered. The question is stated in words above instead.
+   */
+  questionFixed?: boolean;
+  /**
    * Phase 17.5 — one pool's own marginal price, by representation address.
    *
    * Corroboration, not measurement: it stands beside a number an aggregator
@@ -1139,13 +1159,15 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         ))}
       </div>
 
-      <Chooser
-        choices={model.choices}
-        selectedKey={model.selectedKey}
-        loading={model.choicesLoading}
-        error={model.choicesError}
-        onUnderlying={actions.onUnderlying}
-      />
+      {model.questionFixed ? null : (
+        <Chooser
+          choices={model.choices}
+          selectedKey={model.selectedKey}
+          loading={model.choicesLoading}
+          error={model.choicesError}
+          onUnderlying={actions.onUnderlying}
+        />
+      )}
 
       <div className="mr-surface-tabs tabbar" role="tablist" aria-label="Stock views">
         <button
@@ -1169,6 +1191,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       </div>
 
       <div className="mr-question" aria-label="The question">
+        {model.questionFixed ? null : (
+        <>
         <div className="tabbar" role="tablist" aria-label="Direction">
           {MARKET_REALITY_DIRECTIONS_V1.map((direction) => (
             <button
@@ -1197,6 +1221,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
             </button>
           ))}
         </div>
+        </>
+        )}
         {/* The control that closes the twenty-second gap. Absent rather than
             disabled when the server does not offer it. */}
         {actions.onMeasure && (
@@ -1220,7 +1246,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
       ) : null}
 
-      {model.surface === 'market' ? (
+      {model.surface === 'market' && !model.questionFixed ? (
         <div
           className="tabbar mr-history-tabs"
           role="tablist"

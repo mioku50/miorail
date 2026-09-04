@@ -207,6 +207,13 @@ export function StockActionReviewPage() {
         direction: body?.question?.direction ?? 'sell',
         requestedCashAtomic: body?.question?.requestedCashAtomic ?? '0',
         surface: 'market',
+        // The draft fixes the security, the direction and the exact size, so
+        // the chooser and the question controls are not rendered at all. They
+        // were wired to no-ops here — dead controls offering to change the very
+        // question being confirmed — and the chooser, with no index to fill it,
+        // printed "No reviewed source has bound a Base contract to a security
+        // yet" over five reviewed representations.
+        questionFixed: true,
         historyPeriod: 'now',
         view,
         viewLoading: false,

@@ -397,8 +397,32 @@ export const ROUND_TRIP_SEVERE_MIN_BPS_V1 = ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1 * 1
  *
  * A negative cost is money returned above what went in. It stays `good`.
  */
+/**
+ * A round trip that returned MORE than it took.
+ *
+ * `roundTripCostBps` is `(requested - returned) / requested`, so a negative
+ * value says the money came back larger than it went out. For two legs through
+ * the same market that is not an outcome anybody can rely on: the legs are
+ * separate quotes taken at different moments, and at small sizes the gap
+ * between them and the rounding of the token's own decimals dominate whatever
+ * the market did.
+ *
+ * It is called out because the obvious comparison paints it GREEN. `cost <=
+ * 200` is true of every negative number, so `-529` — a round trip claiming a
+ * 5.29% gain — wore the success colour of a 0.02% one. That is the failure this
+ * product exists not to commit, pointed at our own arithmetic: a true number
+ * under a colour that says the opposite.
+ *
+ * So it gets no verdict colour at all. `off` is the console's word for "this
+ * figure is not a claim", which is exactly what it is.
+ */
+export function roundTripReturnedMoreV1(bps: string | null): boolean {
+  return bps !== null && /^-[1-9][0-9]*$/.test(bps);
+}
+
 export function roundTripToneV1(bps: string | null, fallback: ToneV1): ToneV1 {
   if (bps === null || !/^-?(0|[1-9][0-9]*)$/.test(bps)) return fallback;
+  if (roundTripReturnedMoreV1(bps)) return 'off';
   const cost = BigInt(bps);
   if (cost <= ROUND_TRIP_ACCEPTABLE_MAX_BPS_V1) return 'good';
   return cost < ROUND_TRIP_SEVERE_MIN_BPS_V1 ? 'warn' : 'bad';

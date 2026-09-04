@@ -3527,3 +3527,54 @@ describe('the pool’s own price is a corroboration, never a quote', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// A round trip that returned more than it took.
+//
+// Found on the review page of a live $0.10 draft: the chip read
+// `Round trip -5.29%` in SUCCESS GREEN. `bps <= 200` is true of every negative
+// number, so a claimed 5.29% gain wore the colour of a real 0.02% cost.
+//
+// This is the failure the whole two-chip design exists to prevent, pointed at
+// our own arithmetic instead of at the market.
+// ---------------------------------------------------------------------------
+describe('a round trip cannot claim a gain and wear the success colour', () => {
+  const exit = (bps: string) =>
+    exitCostViewV1({ roundTripCostBps: bps } as never);
+
+  test('a negative round trip is never good, and never bad either', () => {
+    for (const bps of ['-1', '-529', '-9999']) {
+      const view = exit(bps);
+      assert.ok(view);
+      assert.equal(view.grade, 'returned_more_than_taken');
+      // Not green: it is not an outcome to rely on.
+      assert.notEqual(view.tone, 'good');
+      // And not red: nothing here says the market is worse than it is.
+      assert.notEqual(view.tone, 'bad');
+      assert.equal(view.tone, 'off');
+    }
+  });
+
+  test('the number stays on screen, and stops reading as a cost', () => {
+    const view = exit('-529');
+    assert.ok(view);
+    // Hiding a measured number would be the other failure.
+    assert.match(view.chip, /-5\.29%/);
+    // But it must not be taken for a cost.
+    assert.match(view.chip, /not a cost reading/);
+    assert.match(view.note, /returned more than it took/);
+    // The note names the cause rather than blaming the market.
+    assert.match(view.note, /separate quotes|rounding/);
+  });
+
+  test('the positive bands are untouched', () => {
+    assert.equal(exit('2')!.grade, 'within_policy');
+    assert.equal(exit('200')!.grade, 'within_policy');
+    assert.equal(exit('201')!.grade, 'above_policy');
+    assert.equal(exit('1999')!.grade, 'above_policy');
+    assert.equal(exit('2000')!.grade, 'most_value_lost');
+    assert.equal(exit('9990')!.grade, 'most_value_lost');
+    // Zero is a real, and good, round trip.
+    assert.equal(exit('0')!.grade, 'within_policy');
+  });
+});
