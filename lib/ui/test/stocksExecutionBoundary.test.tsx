@@ -16,6 +16,40 @@ const read = (rel: string) => readFileSync(path.join(repoRoot, rel), 'utf8');
 // past it, and that the reviewed execution sequence behind it is unchanged.
 // ---------------------------------------------------------------------------
 
+describe('Phase 17.4 — the primary action is prepare, and it is still only prepare', () => {
+  const screen = read('lib/ui/src/console/MarketRealityScreen.tsx');
+
+  test('the card offers both sides without re-asking the board', () => {
+    // The measurement used to end at a number, with the only way through named
+    // `Advanced: inspect route` — third in the action row, on another surface.
+    //
+    // Asserted against the RENDERED text rather than the file, because the
+    // comment above the new buttons quotes the old label to say what it
+    // replaced, and a file-wide search cannot tell a label from its own history.
+    const rendered = screen.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    assert.match(rendered, /Prepare buy/);
+    assert.match(rendered, /Prepare sell/);
+    assert.doesNotMatch(rendered, /Advanced: inspect route/);
+  });
+
+  test('the buttons say what they do not do', () => {
+    // A primary button on a financial card has to state its own boundary where
+    // the finger is, not in a paragraph elsewhere on the page.
+    const titles = [...screen.matchAll(/title="([^"]*prepare step[^"]*)"/g)].map((m) => m[1]);
+    assert.ok(titles.length >= 2, 'the prepare buttons carry no boundary text');
+    for (const title of titles) {
+      assert.match(title!, /Nothing is approved, submitted, or signed here/);
+    }
+  });
+
+  test('the route inspector is kept, demoted, and its refusal is still stated', () => {
+    // Nothing is removed: a reader who wants the candidate list rather than a
+    // plan still has it, and a refusal is a sentence rather than a dead chip.
+    assert.match(screen, /Inspect route candidates/);
+    assert.match(screen, /inspectRouteUnavailable/);
+  });
+});
+
 describe('the Stocks screen cannot execute anything', () => {
   const screen = read('lib/ui/src/console/MarketRealityScreen.tsx');
   const page = read('artifacts/interface/src/features/rwa/MarketRealityPage.tsx');

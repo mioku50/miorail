@@ -104,21 +104,23 @@ function representation(over: Record<string, unknown> = {}) {
   };
 }
 
+const questionV1 = {
+  chainId: 8453 as const,
+  underlyingKey: UNDERLYING,
+  direction: 'buy' as const,
+  requestedCashAtomic: '1000000000',
+  cashAsset: 'USDC' as const,
+  cashAddress: HANDOFF_CASH_ADDRESS_V1,
+  cashDecimals: 6,
+  destination: 'USDC' as const,
+  exactSizeOnly: true as const,
+  baseOnly: true as const,
+};
+
 function response(over: Record<string, unknown> = {}): MarketRealityResponseV2 {
   return MarketRealityResponseV2Schema.parse({
     schemaVersion: 'market-reality/v2',
-    question: {
-      chainId: 8453,
-      underlyingKey: UNDERLYING,
-      direction: 'buy',
-      requestedCashAtomic: '1000000000',
-      cashAsset: 'USDC',
-      cashAddress: HANDOFF_CASH_ADDRESS_V1,
-      cashDecimals: 6,
-      destination: 'USDC',
-      exactSizeOnly: true,
-      baseOnly: true,
-    },
+    question: questionV1,
     universe: {
       reviewedRepresentationCount: 3,
       positiveSupplyRepresentationCount: 2,
@@ -177,6 +179,79 @@ function ready(over: Record<string, unknown> = {}, tokenAddress = COINBASE) {
   assert.ok(result.status === 'ready');
   return result.handoff;
 }
+
+describe('Phase 17.4 — the reader names a side', () => {
+  test('preparing a buy does not re-ask the board\u2019s question', () => {
+    // The card used to carry one button and take its direction from the page's
+    // Sell/Buy toggle, so a reader who wanted to buy had to change the question
+    // the WHOLE board was answering — which silently re-measured every other
+    // representation on screen.
+    const sellBoard = response({ question: { ...questionV1, direction: 'sell' } });
+    const buy = stockExecutionHandoffV1({
+      response: sellBoard,
+      tokenAddress: COINBASE,
+      direction: 'buy',
+      now: NOW,
+    });
+    assert.equal(buy.status, 'ready');
+    assert.equal(buy.status === 'ready' && buy.handoff.direction, 'buy');
+    // The size is the one already on screen; only the side moved.
+    assert.equal(
+      buy.status === 'ready' && buy.handoff.requestedCashAtomic,
+      sellBoard.question.requestedCashAtomic,
+    );
+  });
+
+  test('the size basis follows the side being prepared, not the board', () => {
+    // A BUY spends an exact number of USDC atoms and is sized before anything
+    // quotes it. A SELL of "cash worth" has no token amount until something
+    // prices it, and that quote expires in about twenty seconds — carrying it
+    // forward would be spending an expired quote as executable state.
+        const buy = stockExecutionHandoffV1({
+      response: response({ question: { ...questionV1, direction: 'sell' } }),
+      tokenAddress: COINBASE,
+      direction: 'buy',
+      now: NOW,
+    });
+    assert.equal(buy.status === 'ready' && buy.handoff.sizeBasis, 'exact_cash_in');
+    const sell = stockExecutionHandoffV1({
+      response: response({ question: { ...questionV1, direction: 'buy' } }),
+      tokenAddress: COINBASE,
+      direction: 'sell',
+      now: NOW,
+    });
+    assert.equal(sell.status === 'ready' && sell.handoff.sizeBasis, 'cash_equivalent_requires_replan');
+  });
+
+  test('naming a side is not permission to execute one', () => {
+    // Every refusal and every literal is unchanged. A prepare button on a
+    // zero-supply contract must refuse exactly as the inspector did.
+    const built = stockExecutionHandoffV1({
+      response: response({ question: { ...questionV1, direction: 'sell' } }),
+      tokenAddress: COINBASE,
+      direction: 'buy',
+      now: NOW,
+    });
+    assert.ok(built.status === 'ready');
+    if (built.status !== 'ready') return;
+    assert.equal(built.handoff.createsApproval, false);
+    assert.equal(built.handoff.createsCalldata, false);
+    assert.equal(built.handoff.createsTransaction, false);
+    assert.equal(built.handoff.quoteIsExecutionEvidence, false);
+    assert.equal(built.handoff.intent, 'inspect_route');
+  });
+
+  test('an omitted side still follows the board', () => {
+    for (const direction of ['buy', 'sell'] as const) {
+      const built = stockExecutionHandoffV1({
+        response: response({ question: { ...questionV1, direction } }),
+        tokenAddress: COINBASE,
+        now: NOW,
+      });
+      assert.equal(built.status === 'ready' && built.handoff.direction, direction);
+    }
+  });
+});
 
 describe('Phase 13.1 — Stocks to advanced execution', () => {
   // §11.1

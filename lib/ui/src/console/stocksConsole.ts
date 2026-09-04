@@ -123,6 +123,14 @@ export interface StocksConsoleInputV1 {
    * apart: a refusal is reported per address in `inspectRouteUnavailable`.
    */
   onInspectRoute?: (input: { tokenAddress: string; goal: string }) => void;
+  /**
+   * Phase 17.4 — prepare one exact side, from the card.
+   *
+   * Same handoff, same refusals, same surface: the only difference from
+   * `onInspectRoute` is that the reader named a side, so the goal sentence
+   * carries it instead of inheriting the board's direction toggle.
+   */
+  onPrepare?: (input: { tokenAddress: string; goal: string; direction: 'buy' | 'sell' }) => void;
 }
 
 /**
@@ -781,6 +789,26 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
               input.onInspectRoute?.({
                 tokenAddress: built.handoff.tokenAddress,
                 goal: stockExecutionGoalSentenceV1(built.handoff),
+              });
+            },
+          }
+        : {}),
+      // The same handoff with the side the reader pressed. Every refusal above
+      // still applies: naming a side is not permission to execute one.
+      ...(reality.data && input.onPrepare
+        ? {
+            onPrepare: (tokenAddress: string, direction: 'buy' | 'sell') => {
+              const built = stockExecutionHandoffV1({
+                response: reality.data as never,
+                tokenAddress,
+                direction,
+                now: new Date(),
+              });
+              if (built.status !== 'ready') return;
+              input.onPrepare?.({
+                tokenAddress: built.handoff.tokenAddress,
+                goal: stockExecutionGoalSentenceV1(built.handoff),
+                direction,
               });
             },
           }

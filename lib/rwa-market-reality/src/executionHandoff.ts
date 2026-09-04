@@ -163,6 +163,20 @@ export function stockExecutionHandoffV1(input: {
   response: MarketRealityResponseV2;
   tokenAddress: string;
   now: Date;
+  /**
+   * Which side to prepare, when the reader asked for one directly.
+   *
+   * Phase 17.4. The card used to carry a single `Advanced: inspect route`
+   * button, and the direction came from the page's own Sell/Buy toggle — so a
+   * reader who wanted to buy had to first change the QUESTION the whole board
+   * was answering, which silently re-measured every other representation.
+   *
+   * `Prepare buy` and `Prepare sell` name a side without touching the board.
+   * The size is unchanged: it is the cash amount already on screen, and the
+   * refusals below are unchanged too — naming a side is not permission to
+   * execute one.
+   */
+  direction?: 'buy' | 'sell';
 }): StockExecutionHandoffResultV1 {
   const response = MarketRealityResponseV2Schema.parse(input.response);
   const tokenAddress = input.tokenAddress.trim().toLowerCase();
@@ -180,6 +194,7 @@ export function stockExecutionHandoffV1(input: {
   ].sort();
   if (approvedSources.length === 0) return refuseV1('route_policy_not_established');
 
+  const direction = input.direction ?? response.question.direction;
   const expiresAt = representation.expiresAt;
   const evidenceState =
     expiresAt === null
@@ -200,7 +215,7 @@ export function stockExecutionHandoffV1(input: {
       issuerId: representation.issuerId,
       issuerInstrumentKey: representation.issuerInstrumentKey,
       representationKind: representation.representationKind,
-      direction: response.question.direction,
+      direction,
       requestedCashAtomic: response.question.requestedCashAtomic,
       cashAddress: HANDOFF_CASH_ADDRESS_V1,
       destination: 'USDC',
@@ -208,10 +223,11 @@ export function stockExecutionHandoffV1(input: {
       approvedSources,
       evidenceState,
       quoteExpiresAt: expiresAt,
-      sizeBasis:
-        response.question.direction === 'buy'
-          ? 'exact_cash_in'
-          : 'cash_equivalent_requires_replan',
+      // Follows the direction actually being prepared, never the board's. A
+      // BUY spends an exact number of USDC atoms and is sized before anything
+      // quotes it; a SELL of "cash worth" has no token amount until something
+      // prices it, and the thing that priced it here expires in seconds.
+      sizeBasis: direction === 'buy' ? 'exact_cash_in' : 'cash_equivalent_requires_replan',
       createsApproval: false,
       createsCalldata: false,
       createsTransaction: false,

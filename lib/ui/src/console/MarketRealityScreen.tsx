@@ -157,6 +157,19 @@ export interface MarketRealityActionsV1 {
    * refuses, and the reason is rendered instead of a dead control.
    */
   onInspectRoute?: (tokenAddress: string) => void;
+  /**
+   * Phase 17.4 — prepare one exact side on THIS exact address.
+   *
+   * The primary action on a priced card. It opens the prepare step, which
+   * re-plans against fresh routes; it never submits, approves, or opens a
+   * wallet, and the quote on the card is never carried into it as executable
+   * state.
+   *
+   * The side is a parameter rather than the board's own direction, so choosing
+   * to buy does not re-ask the question every other card on screen is
+   * answering.
+   */
+  onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -796,27 +809,60 @@ function RepresentationCard({
               Investigate
             </button>
           ) : null}
-          {/* Phase 13.1. Secondary and last: Stocks answers what the market
-              does, and execution is an optional capability a reader opts into.
-              Pressing this opens a route inspection with this exact address
-              prefilled; it submits nothing and approves nothing. */}
-          {actions.onInspectRoute ? (
-            inspectRouteUnavailable ? (
-              <span className="pill cr-status" data-tone="off" title={inspectRouteUnavailable}>
-                Advanced route unavailable
-              </span>
-            ) : (
+          {/* Phase 17.4 — the measurement becomes an action.
+              Stocks answered what the market does and stopped at a number; the
+              only way through was a button called `Advanced: inspect route`,
+              third in this row, leading to another surface. A person who has
+              just read what a $1,000 exit costs has one next move, and naming
+              it `Advanced` said it was not for them.
+              Both sides are offered so that choosing one does not re-ask the
+              question the whole board is answering: pressing Buy used to mean
+              flipping the page's direction toggle, which re-measured every
+              other representation on screen.
+              Neither button submits, approves, or opens a wallet. They open the
+              prepare step, which re-plans against fresh routes — the quote on
+              this card expires in about twenty seconds and is never spent as
+              executable state. */}
+          {actions.onPrepare && !inspectRouteUnavailable ? (
+            <>
               <button
                 type="button"
-                className="btn sec"
-                title="Opens a route inspection for this exact address. Nothing is approved or submitted."
-                onClick={() => actions.onInspectRoute!(representation.tokenAddress)}
+                className="btn"
+                title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
+                onClick={() => actions.onPrepare!(representation.tokenAddress, 'buy')}
               >
-                Advanced: inspect route
+                Prepare buy
               </button>
-            )
+              <button
+                type="button"
+                className="btn"
+                title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
+                onClick={() => actions.onPrepare!(representation.tokenAddress, 'sell')}
+              >
+                Prepare sell
+              </button>
+            </>
           ) : null}
         </div>
+      ) : null}
+      {/* The route inspector keeps its place and loses its prominence: a small
+          line under the actions, for a reader who wants the candidates rather
+          than the plan. And the refusal, when there is one, is stated here in
+          full rather than as a dead chip in the action row. */}
+      {actions.onInspectRoute ? (
+        <p className="mr-inspect">
+          {inspectRouteUnavailable ? (
+            <span className="mr-inspect-off">{inspectRouteUnavailable}</span>
+          ) : (
+            <button
+              type="button"
+              className="mr-inspect-link"
+              onClick={() => actions.onInspectRoute!(representation.tokenAddress)}
+            >
+              Inspect route candidates
+            </button>
+          )}
+        </p>
       ) : null}
     </article>
   );

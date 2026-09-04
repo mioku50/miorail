@@ -114,6 +114,19 @@ export function MarketRealityPage() {
       const params = new URLSearchParams({ goal, from: 'stocks', token: tokenAddress });
       navigate(`/routes?${params.toString()}`);
     },
+    // Phase 17.4 — the same surface, reached from the primary action. The goal
+    // sentence already carries the side the reader pressed, so nothing here
+    // has to re-derive it; `side` travels only so the destination can say which
+    // button was pressed if it needs to.
+    onPrepare: ({ tokenAddress, goal, direction }) => {
+      const params = new URLSearchParams({
+        goal,
+        from: 'stocks',
+        token: tokenAddress,
+        side: direction,
+      });
+      navigate(`/routes?${params.toString()}`);
+    },
   });
 
   // Written into the URL once the chooser has loaded, so a refresh keeps the
