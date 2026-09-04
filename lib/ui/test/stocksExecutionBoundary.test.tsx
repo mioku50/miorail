@@ -351,7 +351,74 @@ describe('Phase 17.5 — confirming is a person saying yes, and nothing more', (
 
   test('the clearance is presented as a credential to hand back, not as a result', () => {
     assert.match(rendered, /mr-clearance-token/);
-    assert.match(rendered, /It is not a\s*\n?\s*signature and not a transaction/);
+    // The wording moved in 17.6, when signing here became possible and the
+    // clearance stopped being the only way onward. The claim is unchanged: a
+    // clearance authorises asking, and authorises nothing else.
+    assert.match(rendered, /the clearance is not a signature and not a transaction/);
     assert.match(rendered, /expires shortly|Expires /);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.6 — the last mile, and what it is still not allowed to do.
+//
+// The chain an assistant starts ended in the air. A person could reach a
+// confirmed clearance and had nowhere to sign: the review page creates nothing
+// executable by design, the calls went to Base MCP in the ASSISTANT's
+// environment, and no screen here could pick up a blueprint minted that way.
+// So the promise this product leads with — your Base Account is the only signer
+// — had no screen where the signing happened.
+//
+// A signing button is the closest this codebase gets to a wallet, so what it
+// may do is pinned here rather than left to review.
+// ---------------------------------------------------------------------------
+describe('Phase 17.6 — the browser can sign, and still builds nothing', () => {
+  const page = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+  const rendered = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  test('the wallet is opened, and the promise sits on the control', () => {
+    assert.match(rendered, /Open in your Base Account/);
+    assert.match(rendered, /hands them to your wallet untouched/);
+    assert.match(rendered, /holds no key, signs nothing and/);
+  });
+
+  test('the calls are passed through, never built here', () => {
+    // The batch comes from the server and reaches the wallet unchanged. This
+    // browser must not encode, reorder or substitute anything.
+    assert.match(rendered, /calls: calls as never/);
+    for (const forbidden of [
+      'encodeFunctionData',
+      'amountOutMin',
+      'slippage',
+      'deadline',
+      'routerAddress',
+      '0x095ea7b3',
+    ]) {
+      assert.ok(!page.includes(forbidden), `the review page must not contain ${forbidden}`);
+    }
+  });
+
+  test('a declined prompt is not a failed transaction', () => {
+    // The two never share a sentence: one is a person saying no, the other is
+    // the chain saying no.
+    assert.match(rendered, /reject\|denied\|user cancel/);
+    assert.match(rendered, /You declined the batch in your wallet/);
+    assert.match(rendered, /Nothing was submitted, and nothing changed/);
+  });
+
+  test('a wallet that names nothing is not reported as a success', () => {
+    // An accepted batch with no id has no handle to follow up with, and saying
+    // "submitted" would be a claim nobody can check.
+    assert.match(rendered, /without returning an id/);
+  });
+
+  test('a stale plan says the market moved, not that something went wrong', () => {
+    assert.match(page, /stock_action_refresh_required/);
+    assert.match(page, /The market moved after you confirmed/);
+  });
+
+  test('the clearance is still offered to an assistant, one fold down', () => {
+    // The MCP path did not stop working because a browser gained a button.
+    assert.match(rendered, /The clearance, for an assistant/);
   });
 });

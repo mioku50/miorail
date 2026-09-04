@@ -1,6 +1,6 @@
-import { useMemo } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import { useLocation, useRoute } from 'wouter';
-import { useAccount } from 'wagmi';
+import { useAccount, useSendCalls } from 'wagmi';
 import {
   ConsoleShell,
   MarketRealityScreen,
@@ -24,9 +24,28 @@ import {
   useOfficialAssetDossier,
   useStatus,
   useStockActionConfirm,
+  useStockActionRelease,
   useStockActionReview,
 } from '@mioagent/api-client-react';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
+
+/**
+ * ERC-8021 attribution for this surface.
+ *
+ * A repo-wide test holds every `useSendCalls` site to this, and it caught the
+ * omission the moment this page grew a wallet button: a batch sent without a
+ * `dataSuffix` loses Builder Code attribution SILENTLY — no error, no warning,
+ * just a transaction nobody can attribute to the app that produced it. This is
+ * the surface where an assistant's work becomes an onchain action, so it is the
+ * last one that should go unattributed.
+ */
+const STOCK_ACTION_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(
+  builderCodeForSurfaceV1({
+    VITE_BASE_BUILDER_CODE: import.meta.env?.VITE_BASE_BUILDER_CODE as string | undefined,
+    VITE_BUILDER_CODE: import.meta.env?.VITE_BUILDER_CODE as string | undefined,
+  }),
+);
 
 // ---------------------------------------------------------------------------
 // Connected Intelligence 1 — the review a draft points at.
@@ -127,6 +146,33 @@ function confirmFailureCopyV1(error: unknown): string {
   return 'This could not be confirmed on this server. Nothing was recorded, nothing is executable, and this is not a statement about the security.';
 }
 
+/**
+ * Why the batch was not offered to the wallet.
+ *
+ * The market moving after a confirmation is the ordinary case and gets its own
+ * sentence: Miorail refuses a stale request rather than letting a wallet sign
+ * one, and a reader told "something went wrong" would retry the wrong thing.
+ */
+function releaseFailureCopyV1(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (message.includes('stock_action_refresh_required')) {
+    return 'The market moved after you confirmed, so Miorail will not offer the request it planned a moment ago. Nothing was submitted — review the current terms again.';
+  }
+  if (message.includes('stock_action_blocked')) {
+    return 'Miorail’s Safety Kernel refused this plan, so nothing executable was produced and your wallet was never asked.';
+  }
+  if (message.includes('stock_action_route_unavailable')) {
+    return 'No route was found for this exact confirmed question through the reviewed sources. Nothing was prepared.';
+  }
+  if (message.includes('stock_action_sell_requires_exact_size')) {
+    return 'A reviewed sell is "cash worth", which is not a token amount until something prices it — and that price lives about twenty seconds. Selling by exact token amount is not offered on this surface.';
+  }
+  if (message.includes('clearance') && message.includes('expired')) {
+    return 'This clearance expired. It authorises one exact action for a few minutes only — confirm again for a fresh one.';
+  }
+  return 'The batch could not be prepared on this server. Nothing was submitted, and this is not a statement about the security.';
+}
+
 export function StockActionReviewPage() {
   const [, navigate] = useLocation();
   const [, params] = useRoute('/action/:draft');
@@ -139,6 +185,69 @@ export function StockActionReviewPage() {
   const body = (review.data ?? null) as ReviewBodyV1 | null;
   const confirm = useStockActionConfirm();
   const confirmed = (confirm.data ?? null) as { clearance?: string; expiresAt?: string } | null;
+
+  // ---------------------------------------------------------------------
+  // Phase 17.6 — the last mile.
+  //
+  // The chain ended in the air: an assistant could reach a confirmed
+  // clearance, and the calls it becomes were handed to Base MCP in the
+  // ASSISTANT's environment. Somebody whose assistant has no Base MCP had
+  // nowhere to sign, so the one promise this product leads with — your Base
+  // Account is the only signer — had no screen where the signing happened.
+  //
+  // The batch is released by the server, passed to the wallet UNTOUCHED, and
+  // approved or declined there. Nothing is built, reordered or re-encoded in
+  // this browser.
+  // ---------------------------------------------------------------------
+  const release = useStockActionRelease();
+  const sendCalls = useSendCalls();
+  const [walletError, setWalletError] = useState<string | null>(null);
+  const [batchId, setBatchId] = useState<string | null>(null);
+
+  const openInWallet = useCallback(async () => {
+    setWalletError(null);
+    const clearance = confirmed?.clearance;
+    if (!clearance) return;
+    try {
+      // One handle for the whole attempt, so a retry re-plans the same intent
+      // rather than becoming a second purchase.
+      const released = (await release.mutateAsync({
+        clearance,
+        requestId: `stock-action:${params?.draft?.slice(-24) ?? 'draft'}`,
+      })) as { action?: { calls?: unknown[]; atomicRequired?: boolean } };
+      const calls = released.action?.calls;
+      if (!Array.isArray(calls) || calls.length === 0) {
+        setWalletError('The server returned no calls for this clearance, so nothing was offered to your wallet.');
+        return;
+      }
+      const result = await sendCalls.mutateAsync({
+        calls: calls as never,
+        chainId: 8453,
+        forceAtomic: released.action?.atomicRequired !== false,
+        // Optional, so a wallet that does not understand the capability still
+        // sends the batch rather than refusing it.
+        capabilities: STOCK_ACTION_BUILDER_SUFFIX_V1
+          ? { dataSuffix: { value: STOCK_ACTION_BUILDER_SUFFIX_V1, optional: true } }
+          : undefined,
+      });
+      const id = typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
+      // A wallet that accepted the batch and named nothing is not a success:
+      // there is no handle to ask about it with later.
+      setBatchId(id);
+      if (!id) {
+        setWalletError('Your wallet accepted the batch without returning an id, so its outcome cannot be followed up here.');
+      }
+    } catch (error) {
+      // A declined prompt is not a failed transaction, and the two never share
+      // a sentence.
+      const message = error instanceof Error ? error.message : String(error ?? '');
+      setWalletError(
+        /reject|denied|user cancel/i.test(message)
+          ? 'You declined the batch in your wallet. Nothing was submitted, and nothing changed.'
+          : releaseFailureCopyV1(error),
+      );
+    }
+  }, [confirmed?.clearance, params?.draft, release, sendCalls]);
 
   const nowIso = useMemo(() => new Date().toISOString(), [review.dataUpdatedAt]);
 
@@ -356,13 +465,47 @@ export function StockActionReviewPage() {
                   Confirmed. This authorises one exact action and expires shortly.
                 </p>
                 <p className="mr-gate-detail">
-                  Hand this clearance back to the assistant that prepared the review. It is not a
-                  signature and not a transaction: with it, the assistant can ask this server for an
-                  unsigned request, which your own Base Account then reviews and signs — or does
-                  not.
+                  You can sign here, or hand the clearance back to the assistant that prepared the
+                  review. Either way the batch is built by this server and approved in your own Base
+                  Account — the clearance is not a signature and not a transaction.
                 </p>
-                <code className="mr-clearance-token mono">{confirmed.clearance}</code>
-                <p className="lnote">Expires {confirmed.expiresAt}</p>
+                {batchId ? (
+                  <>
+                    <p className="cr-verdict good">Submitted from your Base Account.</p>
+                    <code className="mr-clearance-token mono">{batchId}</code>
+                    <p className="lnote">
+                      That is the batch your wallet returned. Miorail did not sign it and did not
+                      broadcast it — your Base Account did.
+                    </p>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      className="btn lg"
+                      disabled={release.isPending || sendCalls.isPending}
+                      title="Asks the server for the exact calls, then hands them to your wallet untouched. Your Base Account decides."
+                      onClick={() => void openInWallet()}
+                    >
+                      {release.isPending
+                        ? 'Preparing the exact calls…'
+                        : sendCalls.isPending
+                          ? 'Waiting for your wallet…'
+                          : 'Open in your Base Account'}
+                    </button>
+                    {walletError ? <p className="cr-verdict bad">{walletError}</p> : null}
+                    <p className="lnote">
+                      Miorail builds the calls, re-runs every check including the Safety Kernel, and
+                      hands them to your wallet unchanged. It holds no key, signs nothing and
+                      broadcasts nothing — you approve the batch, or you decline it.
+                    </p>
+                  </>
+                )}
+                <details className="mr-compact">
+                  <summary>The clearance, for an assistant</summary>
+                  <code className="mr-clearance-token mono">{confirmed.clearance}</code>
+                  <p className="lnote">Expires {confirmed.expiresAt}</p>
+                </details>
               </div>
             ) : (
               <>

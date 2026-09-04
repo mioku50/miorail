@@ -609,6 +609,88 @@ const AERODROME_SPOT_REFUSAL_COPY_V1: Readonly<Record<string, string>> = {
 };
 
 // ---------------------------------------------------------------------------
+// Phase 17.6 — the last mile, for a browser.
+//
+// The chain an assistant starts ended in the air. `miorail_prepare_stock_action`
+// produces a review, a person confirms it, and the confirmed clearance becomes
+// unsigned calls through `miorail_get_stock_base_mcp_action` — which hands them
+// to Base MCP, in the ASSISTANT's environment. A person whose assistant has no
+// Base MCP had nowhere to sign: the review page deliberately creates nothing
+// executable, and no screen in this console could pick up a blueprint minted
+// through the MCP path.
+//
+// So the headline promise — "your Base Account is the only signer" — had no
+// screen where that signing happened for this path. Found 2026-09-04, by an
+// owner who reached a valid clearance and asked the obvious question.
+//
+// This route is the SAME function the MCP tool calls, under a browser session
+// instead of an OAuth grant. Not a reimplementation: a second implementation of
+// a release path is how two callers come to disagree about what a confirmed
+// clearance may become, and this evening was spent on smaller versions of that
+// bug.
+//
+// It creates nothing the MCP tool does not create, it re-runs every check
+// including the Safety Kernel, and the calls it returns still have to be
+// approved by the wallet that owns the session.
+// ---------------------------------------------------------------------------
+rwaMarketRealityRouter.post('/rwa/stock-action/release', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const clearance = String((req.body as { clearance?: unknown } | undefined)?.clearance ?? '');
+  const requestId = String((req.body as { requestId?: unknown } | undefined)?.requestId ?? '');
+  if (clearance.length === 0 || clearance.length > 4000 || requestId.length === 0) {
+    res.status(400).json({
+      error: 'stock_action_release_arguments',
+      code: 'stock_action_release_arguments',
+      detail: 'A confirmed clearance and an idempotency handle are both required.',
+    });
+    return;
+  }
+  try {
+    const { miorailGetStockBaseMcpActionV1 } = await import('./mcpPrivate/tools.js');
+    const released = await miorailGetStockBaseMcpActionV1(
+      {
+        tenantId: user.id,
+        walletAddress: user.address as `0x${string}`,
+        chainId: 8453,
+        // Named for what it is. The audit line must not claim an OAuth grant
+        // released these bytes when a cookie did.
+        tokenId: 'session',
+        source: 'browser_session',
+      },
+      { clearance, requestId },
+    );
+    res.status(200).json(released);
+  } catch (error) {
+    // The tool's own refusals are already public sentences — a code and a
+    // detail written for a reader. Anything else becomes one sentence and no
+    // internals.
+    const refusal = error as { code?: unknown; message?: unknown };
+    const code = typeof refusal?.code === 'string' ? refusal.code : null;
+    if (code) {
+      res.status(409).json({
+        error: code,
+        code,
+        detail: typeof refusal.message === 'string' ? refusal.message : undefined,
+        confirmed: true,
+        executableActionAvailable: false,
+      });
+      return;
+    }
+    res.status(500).json({ error: 'stock_action_release_failed', code: 'stock_action_release_failed' });
+  }
+});
+
+// ---------------------------------------------------------------------------
 // Phase 17.5 — a second, independent reading of the price.
 //
 // Every `full` observation in the entire tokenized-stock corpus comes from ONE

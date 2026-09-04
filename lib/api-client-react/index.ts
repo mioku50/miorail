@@ -1078,6 +1078,29 @@ export function useStockActionConfirm() {
   });
 }
 
+/**
+ * Phase 17.6 — the confirmed clearance becomes unsigned calls, in a browser.
+ *
+ * The same server function the MCP tool calls, reached with a cookie instead of
+ * an OAuth grant. It exists because the chain an assistant starts ended in the
+ * air for anybody whose assistant has no Base MCP: the review page creates
+ * nothing executable, and no screen could pick up what the MCP path minted.
+ *
+ * What comes back is not signed and not sent. It is the batch the wallet is
+ * about to be ASKED to approve, and the wallet may decline.
+ */
+export function useStockActionRelease() {
+  return useMutation({
+    retry: false,
+    mutationFn: async (input: { clearance: string; requestId: string }) =>
+      fetchApi<unknown>('/api/route-intelligence/rwa/stock-action/release', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(input),
+      }),
+  });
+}
+
 export function useRwaMarketReality(
   input: {
     underlyingKey: string | null;
