@@ -141,7 +141,7 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     label: 'Settings',
     compactLabel: 'Settings',
     path: '/settings',
-    blurb: 'Budget & payments, route adapters, providers and network status.',
+    blurb: 'Connected apps, route adapters, providers and network status.',
   },
 };
 

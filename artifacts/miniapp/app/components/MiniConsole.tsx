@@ -904,7 +904,7 @@ export function MiniConsole() {
           spend, not from a nav entry called "x402". */}
       <div className="minipanel">
         <div className="row">
-          <span>Budget &amp; payments</span>
+          <span>Agent spending budget</span>
           <button type="button" className="btn sec" onClick={() => setBudgetOpen((open) => !open)}>
             {budgetOpen ? "Close" : "Open"}
           </button>

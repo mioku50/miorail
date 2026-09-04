@@ -13,6 +13,17 @@ void React;
 //
 // Nothing is deleted. It is one page down, in the place people already look for
 // things they configure.
+//
+// 2026-09-04 — and then one fold further. Moving the spend-permission panel to
+// Settings put it at the TOP of Settings, which is the place a person looks
+// for the plan they are on: the page opened on a monthly limit, a spent
+// figure, allowed categories, a permission recipient and three buttons, for a
+// feature almost nobody has enabled. It is an agent's spending budget, so it
+// now sits under Advanced and says so.
+//
+// The order of this page is the order of the questions people arrive with:
+// who else can act as me, is the server working, what do I quote in a bug
+// report — and then everything else.
 // ---------------------------------------------------------------------------
 
 export interface SettingsAdapterRowV1 {
@@ -29,8 +40,29 @@ export interface SettingsProviderRowV1 {
 }
 
 export interface SettingsScreenModelV1 {
-  /** The full Budget & payments panel. §2: it opens from here and nowhere else. */
+  /**
+   * Agent spending budget — the Base Spend Permission panel.
+   *
+   * It was the FIRST and largest block on this page: a monthly limit, a spent
+   * figure, a reserved figure, allowed categories, a permission recipient, two
+   * amount fields and three buttons — occupying the place where a person looks
+   * for the plan they are on. Almost nobody has a spend permission, and the
+   * ones who do set it once.
+   *
+   * So it is one fold down, under Advanced, and its state travels with the
+   * summary so a collapsed fold can never hide a charge that needs attention.
+   * Nothing is removed.
+   */
   budget: ReactNode;
+  /**
+   * The one line the Advanced fold shows while it is closed.
+   *
+   * A fold that says only "Advanced" over a permission in `Paid, not
+   * delivered` hides the one state on this page where the user has lost money.
+   * The label comes from the same view the panel inside renders, so the two
+   * cannot disagree.
+   */
+  budgetStatus?: { label: string; needsAttention: boolean } | null;
   /**
    * Connect Miorail to your AI — the grants a wallet handed to an assistant.
    *
@@ -51,8 +83,6 @@ export interface SettingsScreenModelV1 {
 export function SettingsScreen(model: SettingsScreenModelV1) {
   return (
     <>
-      {model.budget}
-
       {model.connectedApps}
 
       <div className="panel">
@@ -136,6 +166,26 @@ export function SettingsScreen(model: SettingsScreenModelV1) {
           <p className="lnote">Endpoints and credentials are deliberately not listed here.</p>
         </div>
       </div>
+
+      {/* Advanced. One fold, at the end, holding the things this page used to
+          open with. The summary names what is inside and carries its state:
+          folded is not hidden, and a permission that needs attention says so
+          from the closed row. */}
+      <details className="settings-advanced" aria-label="Advanced settings">
+        <summary>
+          <span className="settings-advanced-k">Advanced</span>
+          <span className="settings-advanced-v">Agent spending budget</span>
+          {model.budgetStatus ? (
+            <span
+              className="pill cr-status"
+              data-tone={model.budgetStatus.needsAttention ? 'warn' : 'neutral'}
+            >
+              {model.budgetStatus.label}
+            </span>
+          ) : null}
+        </summary>
+        {model.budget}
+      </details>
     </>
   );
 }

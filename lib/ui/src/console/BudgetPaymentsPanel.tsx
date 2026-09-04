@@ -118,9 +118,14 @@ export function BudgetPaymentsPanel(props: BudgetPaymentsPanelProps): React.Reac
         });
 
   return (
-    <section className="panel" aria-label="Budget and payments">
+    <section className="panel" aria-label="Agent spending budget">
       <div className="ph">
-        <h3>Budget &amp; payments</h3>
+        {/* Named for what it is, not for the mechanism. "Budget & payments"
+            reads as the place a person manages what THEY pay Miorail; this is
+            a Base Spend Permission an agent draws paid evidence against, and
+            it is the reason the panel could sit at the top of Settings without
+            anyone noticing it answered a different question. */}
+        <h3>Agent spending budget</h3>
         <span className="sub">{outcome ? outcome.label : status.label}</span>
       </div>
       <div className="pb">

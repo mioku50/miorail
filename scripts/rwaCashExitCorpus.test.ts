@@ -45,6 +45,7 @@ function underlyingsV1(input: {
         representationCount: row.addresses.length,
         issuerIds: ['dinari'],
         liveRepresentationCount: row.addresses.length,
+        representationCountsByIssuer: { dinari: row.addresses.length },
       }));
     },
     async representationsOf({ underlyingKey }) {

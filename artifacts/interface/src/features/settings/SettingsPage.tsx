@@ -195,6 +195,11 @@ export function SettingsPage() {
             onDismissIssued={() => setIssuedKey(null)}
           />
         }
+        // The one line the Advanced fold shows while it is closed, from the
+        // same view the panel inside renders. A fold that said only "Advanced"
+        // over a permission in `Paid, not delivered` would hide the one state
+        // on this page where the user has lost money.
+        budgetStatus={{ label: paidView.label, needsAttention: paidView.moneyAtRisk }}
         budget={
           <BudgetPaymentsPanel
             featureEnabled={paidIntelligenceOn}

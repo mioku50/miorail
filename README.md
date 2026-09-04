@@ -2,9 +2,11 @@
 
 > **One intent. Multiple routes. One verified plan.**
 
-Miorail is a self-hostable, non-custodial route-intelligence and execution-verification product for Base.
+Miorail is a self-hostable, non-custodial market-reality and execution-verification product for Base.
 
-A user describes an outcome in ordinary language. Miorail turns it into a typed intent, evaluates curated routes, preserves evidence and provenance, prepares one reviewable execution plan, validates the exact calls, and leaves final approval to the user's Base Account. After execution, Miorail reconciles expected and actual results into a durable Route Proof.
+Its subject is **tokenized stocks**. One security can be represented on Base by several different contracts — Coinbase's B20 tokenized stocks, Backed bTokens, Dinari dShares — and they are not economically the same thing. Miorail measures each exact address separately, at one exact size and one exact direction, and reports what a cash exit actually costs there.
+
+Under that sits the original route layer: a user describes an outcome in ordinary language, Miorail turns it into a typed intent, evaluates curated routes, preserves evidence and provenance, prepares one reviewable execution plan, validates the exact calls, and leaves final approval to the user's Base Account. After execution, Miorail reconciles expected and actual results into a durable Route Proof.
 
 The governing rule is simple:
 
@@ -88,13 +90,18 @@ contracts, not either model, decide which reads and actions are allowed.
 
 | Surface | Web path | What it owns |
 | --- | --- | --- |
+| **Stocks** | `/market` | One security, every reviewed way to hold it on Base, at one exact size: market reality, use & access, the Chainlink reference, and `Ask Miorail` over that page's own evidence. |
+| **Radar** | `/radar` | Watched representation/size/direction/destination questions, and what changed since the last look. |
+| **Investigate** | `/investigate` | Any Base address, read as deeply as the evidence allows: identity, four trust roots stated apart, controls, topology and exit. |
 | **Discover** | `/opportunities` | B20 launch measurements, market rails, Fundamental Intelligence, global `Ask Miorail`, evidence gaps, and focused measurement views. |
-| **B20** | `/portfolio` | Wallet B20 holdings, control snapshots, exit-first checks, watchlists, simulation review, and B20 entry reconciliation. |
-| **Routes** | `/routes` | Intent, provider-neutral candidates, Route Cards, Blueprint review, Safety Kernel, Base Account approval, and Route Proof. |
+| **B20 controls** | `/portfolio` | Wallet B20 holdings, control snapshots, exit-first checks, watchlists, simulation review, and B20 entry reconciliation. |
+| **Routes AI** | `/routes` | Intent, provider-neutral candidates, Route Cards, Blueprint review, Safety Kernel, Base Account approval, and Route Proof. |
 | **Activity** | `/plan/history` | Route runs and proofs, Base MCP Action Receipts, and intelligence/x402 charge history. |
 | **Base MCP Extensions** | `/extensions` | Live Base MCP reads, capability truth, deterministic Routes handoff, and released typed direct actions. |
-| **Settings** | `/settings` | Intelligence Budget, payments, adapter health, providers, and network state. |
+| **Settings** | `/settings` | Connected apps, adapter health, providers, network state, and — under Advanced — the agent spending budget. |
 | **Public Metrics** | `/metrics` | Sessionless Base telemetry with exact definitions, caveats, and a deterministic snapshot hash. |
+
+Stocks, Radar and Discover are the three tabs; the rest sit in the drawer under **Advanced evidence**.
 
 Web and Base App share the same typed product contracts so financial copy and capability state cannot silently diverge between clients.
 
@@ -111,6 +118,62 @@ Feature flags and credentials may still block a capability. Enabling a flag neve
 The current registry includes provider-neutral Swap and Earn routes, typed Base MCP actions, x402 paid intelligence, and documented/manifested extensions. Promotion to `proven` requires a real reconciled production path, not just working code.
 
 The full provider constraints and promotion gates live in [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md).
+
+## Tokenized stocks on Base
+
+Coinbase issues tokenized stocks on Base under the **B20** standard the Base
+documents describe. Two other issuers put representations of the same companies
+on the same chain — Backed bTokens (Swiss-law tracker certificates that rebase)
+and Dinari dShares — and they are separate systems, not versions of one thing.
+Measured on 2026-09-04 at a $1,000 sell into USDC, 10 of 13 Coinbase
+representations held a cash route, against 2 of 21 Backed and 0 of 96 Dinari.
+
+So the Stocks surface opens on Coinbase B20 and keeps the rest one press away
+under **Other representations of this security on Base**. Nothing is removed:
+the claim this product exists to make — *same underlying, different
+representations, different market reality* — needs the alternatives visible.
+
+```text
+reviewed issuer sources (Base docs, Coinbase, Backed API, Dinari factory)
+  → underlying_asset / representation_underlying     one company, many exact addresses
+  → supply read at an anchored block
+  → cash-exit measurement through reviewed route sources, per exact size
+  → market-reality comparison + Chainlink total-return reference
+  → Stocks card / Radar / MCP / Ask Miorail
+```
+
+**What a card answers, and what it refuses to.** Two questions, kept apart on
+purpose:
+
+- *Is there an answer right now* — one chip, in Base blue. A router quote is
+  open for about twenty seconds; past that the same card says `Price expired`,
+  because the clock decides that and not a status stamped when the response was
+  assembled.
+- *What the answer costs* — a second chip, graded. Inside the reviewed slippage
+  policy (200 bps, derived: two legs of the 100 bps every cash-exit intent is
+  planned under), above it, or an order of magnitude above it. A round trip that
+  returns $0.94 on $1,000 is a priced market and a total loss, and one colour
+  must not say both.
+
+Every absence is attributed. `No cash route found` is the market, `This route
+source does not cover this token` is Miorail's coverage, `Venue declined to
+quote` is the venue's own rule, and `Our read failed` is ours. They were once
+one word.
+
+**Onchain B20 reads**, at an anchored block: the redemption `multiplier`, the
+ISIN published at the lowercase `extraMetadata("isin")` key, the four transfer
+policies, the supply cap and the paused-feature set. The multiplier is a
+disclosure, never applied to a total-return feed — B20 publishes one, Backed
+rebases instead, and Centrifuge has none.
+
+**Coverage boundaries, stated rather than hidden.** Nine of the thirteen
+Coinbase representations hold zero supply; a contract with nothing outstanding
+keeps its exact address and all of its evidence and leaves the comparison.
+Where no route source can price a token, that is usually the market: all 79
+uncovered contracts were equally unquotable by Odos, ParaSwap and LiFi at the
+same size on the same day. A reference price exists only where the issuer
+publishes a feed — 13 of 13 Coinbase, 0 of 21 Backed — because Backed's oracle
+path is Chainlink Data Streams, which has nothing to call.
 
 ## B20 Intelligence
 
@@ -250,6 +313,12 @@ Project claims are currently operator-registered. There is not yet a public self
 
 ## Ask Miorail
 
+On a Stocks page the model is given that page's own evidence bundle and nothing
+else: no planner, no extra reads, and a verifier that rejects any number the
+bundle does not contain. The deterministic answer carries the assertions the
+narration must preserve, so "not measured" cannot be said over three thousand
+measured launches. Every failure falls back to the deterministic text.
+
 The B20 console has three scopes:
 
 - **Explore** — deterministic universe/fundamental queries;
@@ -262,18 +331,34 @@ Requests to act are handed to Routes for fresh quotes and explicit approval.
 
 ## Public Miorail MCP
 
-Miorail MCP `1.1.0` exposes exactly six read-only tools over stored B20 evidence:
+Miorail MCP `1.2.0` exposes twelve read-only tools at `https://miorail.xyz/mcp`
+— four over tokenized stocks, eight over stored B20 evidence:
 
 ```text
+list_reviewed_stocks        every reviewed security, by ticker, name or ISIN
+get_representations         every exact address that claims one security
+compare_market_reality      one size, one direction, every representation
+get_market_changes          what moved since a stored observation
+
 miorail_discover_status
 miorail_list_b20_opportunities
 miorail_summarise_b20_universe
 miorail_get_b20_opportunity
 miorail_explain_b20_rejection
-miorail_get_b20_market_leaders
+miorail_compare_b20_tokens
+miorail_find_b20_projects
+miorail_b20_market_rails
 ```
 
-The public MCP surface has no wallet, signing, payment, approval, or execution tool. Its Discover projection is parity-tested against the product truth layer.
+`get_representations` never chooses one: different issuers publish different
+contracts for the same company, and that choice is not Miorail's to make. A
+company name reaches a security through a small ISIN-bound alias table, and
+every row says whether the issuer's own naming or a Miorail alias found it.
+
+The public MCP surface has no wallet, signing, payment, approval, or execution
+tool. Its Discover projection is parity-tested against the product truth layer,
+and `ops/deploy.sh` asserts the tool names and the version by literal, so a
+renamed tool fails the deploy rather than a caller.
 
 ## Base MCP Extensions
 
@@ -350,6 +435,7 @@ This is a pnpm monorepo. The product name is Miorail; the repository name `mioag
 | `lib/security`, `lib/transaction-composer` | Safety Kernel and exact unsigned Blueprint construction. |
 | `lib/route-proof`, `lib/proof-verifier` | Expected-versus-actual reconciliation and independent integrity verification. |
 | `lib/opportunity-rail`, `lib/b20-control` | B20 measurement, controls, consumer projection, project claims, and Fundamental Intelligence. |
+| `lib/rwa-market-reality`, `lib/rwa-issuer`, `lib/rwa-dossier` | Tokenized-stock identity, per-issuer adapters, market-reality comparison, use-and-access evidence, and the address dossier. |
 | `lib/mcp`, `lib/tools` | Base MCP transport, classification, and constrained execution. |
 | `lib/x402-gateway`, `lib/paid-intelligence`, `lib/intelligence-budget` | Paid evidence, reservations, charging, and reconciliation. |
 | `lib/wallet-actions` | Base Account approval/submission and ERC-8021 attribution handling. |
@@ -406,6 +492,10 @@ miorail-b20-measure
 
 Miorail is functional but not broadly production-hardened. Important open work includes:
 
+- nine of the thirteen Coinbase tokenized stocks hold zero supply, so the comparison the product is built on is demonstrable on four securities today;
+- no reference price exists for Backed or Dinari, because neither publishes a feed a contract can read — the adapters are deliberately unwritten rather than written to return nothing;
+- the Investigate dossier is only partly polymorphic: a non-B20 contract is told so plainly, but Backed's rebasing model and Dinari's factory predicate do not yet have evidence modules of their own;
+- `compare_market_reality` reads stored evidence only, so a connected assistant cannot force a fresh measurement the way the web surface can;
 - expand Fundamental Intelligence beyond the operator-registered claim corpus and design a safe self-serve project-claim flow;
 - add more verified project/onchain/utility evidence without introducing an overall investment score;
 - capture more provider-specific small-value Route Proofs and failure-path acceptance;

@@ -543,6 +543,22 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    Wraps, because a plugin can legitimately be READ + ROUTES AI. */
 .mio-console .mcp-plugin-caps { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; flex: none; }
 /* Technical details: present, foldable, and visually quieter than the answer. */
+/* Settings' Advanced fold.
+   The spend-permission panel used to be the first and largest block on the
+   page. Folded, not hidden: the summary names what is inside and carries its
+   state, so a permission that needs attention is still readable from a closed
+   row. It reads as a section heading rather than a footnote — what it holds is
+   a whole panel, not a line of ids. */
+.mio-console .settings-advanced > summary { display: flex; align-items: center; gap: 10px;
+  cursor: pointer; list-style: none; padding: 12px 2px; }
+.mio-console .settings-advanced > summary::-webkit-details-marker { display: none; }
+.mio-console .settings-advanced > summary::before { content: '▸'; color: var(--faint); font-size: 11px; }
+.mio-console .settings-advanced[open] > summary::before { content: '▾'; }
+.mio-console .settings-advanced-k { font-size: 11px; font-weight: 650; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--faint); }
+.mio-console .settings-advanced-v { min-width: 0; font-size: 13px; color: var(--muted); overflow-wrap: anywhere; }
+.mio-console .settings-advanced > summary:hover .settings-advanced-v { color: var(--ink); }
+
 .mio-console .mcp-tech { margin: 8px 0 0; }
 .mio-console .mcp-tech > summary { cursor: pointer; font-size: 11px; color: var(--faint); padding: 4px 0; list-style: none; }
 .mio-console .mcp-tech > summary::-webkit-details-marker { display: none; }

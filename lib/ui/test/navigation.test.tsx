@@ -251,6 +251,39 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
     assert.ok(settings.includes('Technical details'));
   });
 
+  test('the spend permission is not what Settings opens with', () => {
+    // 2026-09-04. Moving it OFF Routes put it at the top of Settings, which is
+    // where a person looks for the plan they are on: the page opened on a
+    // monthly limit, a spent figure, allowed categories, a permission
+    // recipient and three buttons, for a feature almost nobody has enabled.
+    //
+    // Asserted as ORDER, because that is the defect — nothing was removed and
+    // a presence check would pass either way.
+    const settings = read('../src/console/SettingsScreen.tsx');
+    const body = settings.slice(settings.indexOf('export function SettingsScreen'));
+    const budget = body.indexOf('{model.budget}');
+    assert.ok(budget > 0, 'Settings no longer renders the spending budget at all');
+    for (const before of ['{model.connectedApps}', 'Route adapters', 'Network status']) {
+      assert.ok(
+        body.indexOf(before) < budget,
+        `the spending budget is rendered before ${before}`,
+      );
+    }
+  });
+
+  test('a closed Advanced fold still says what it is holding, and how it is', () => {
+    // Folded is not hidden. A summary reading only "Advanced" over a permission
+    // in `Paid, not delivered` would hide the one state on this page where the
+    // user has lost money.
+    const settings = read('../src/console/SettingsScreen.tsx');
+    assert.match(settings, /settings-advanced/);
+    assert.match(settings, /Agent spending budget/);
+    assert.match(settings, /budgetStatus/);
+    // The panel inside is named the same thing, so the fold and its contents
+    // cannot introduce themselves twice under two names.
+    assert.match(read('../src/console/BudgetPaymentsPanel.tsx'), /<h3>Agent spending budget<\/h3>/);
+  });
+
   test('Settings never lists an endpoint or a credential', () => {
     const settings = read('../src/console/SettingsScreen.tsx');
     assert.match(settings, /Endpoints and credentials are deliberately not listed/);
