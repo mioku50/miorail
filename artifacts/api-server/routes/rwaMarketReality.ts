@@ -1,10 +1,16 @@
 import { Router, type Request } from 'express';
 import { decodeFunctionResult, encodeFunctionData } from 'viem';
-import { callManyV1, createB20ReaderV1, readB20TransferEligibilityV1 } from '@mioagent/b20-control';
+import {
+  b20TransferGateRefusesV1,
+  b20TransferGateV1,
+  callManyV1,
+  createB20ReaderV1,
+  readB20TransferEligibilityV1,
+} from '@mioagent/b20-control';
 import { budgetedRpcConfigFromEnvV1, createBudgetedReaderV1 } from '../lib/budgetedRpc.js';
 import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
-import { KyberSwapRouteAdapter } from '@mioagent/swap-adapters';
+import { KyberSwapRouteAdapter, readAerodromeClSpotV1 } from '@mioagent/swap-adapters';
 import {
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
@@ -45,7 +51,10 @@ import {
   verifyStockActionDraftV1,
 } from '../lib/stockActionDraft.js';
 import { issueStockActionClearanceV1 } from '../lib/stockActionClearance.js';
-import { stockExecutionHandoffV1 } from '@mioagent/rwa-market-reality/execution-handoff';
+import {
+  STOCK_ISSUER_NOTICE_V1 as STOCK_ISSUER_NOTICE_COPY_V1,
+  stockExecutionHandoffV1,
+} from '@mioagent/rwa-market-reality/execution-handoff';
 import {
   assembleUseAccessV1,
   reviewedDefiSourcesV1,
@@ -204,6 +213,16 @@ export const rwaMarketRealityRuntime = {
       },
     };
   },
+  /**
+   * The same paced reader, for one pool's own state.
+   *
+   * Not a second transport. The Base public endpoint serves roughly half a
+   * call per second, this read issues seven, and the reader already carries
+   * the adaptive pacing that survives that. Null when no RPC is configured, so
+   * a server that cannot look offers no reading rather than a false one.
+   */
+  clSpotReader: (): UseAccessReaderV1 | null =>
+    rpcUrlV1() ? rwaMarketRealityRuntime.useAccessReader() : null,
   // The chain reader is passed so Aave and Compound are checked too. Both
   // answer from Base itself, so the negative on a card names four venues a
   // reader recognises rather than two.
@@ -563,6 +582,120 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
     res.status(502).json({
       error: 'use_access_unavailable',
       code: 'use_access_unavailable',
+      detail: error instanceof Error ? error.message.slice(0, 200) : 'unknown',
+    });
+  }
+});
+
+/**
+ * The sentence that must travel with every marginal price.
+ *
+ * A number with no size attached, sitting beside quotes, will be read as a
+ * quote unless it says otherwise every single time. So it says otherwise every
+ * single time, in the payload rather than only in a stylesheet.
+ */
+const AERODROME_SPOT_NOTE_V1 =
+  'This is the pool’s own marginal price at its current tick — the price of an infinitesimally small trade — computed from one onchain word. It is not a quote: no size, no slippage, no route, and no statement that a trade would succeed. A real trade walks ticks this read does not look at, so it will differ, and it will differ more the larger it is.';
+
+const AERODROME_SPOT_REFUSAL_COPY_V1: Readonly<Record<string, string>> = {
+  not_aerodrome_cl:
+    'That address does not answer as an Aerodrome concentrated-liquidity pool: either its factory is not one of Aerodrome’s two, or that factory does not name Aerodrome’s own Voter. Nothing was read from it, and no price is claimed for it.',
+  not_initialised:
+    'This pool exists and has never been initialised with a price, so it has no marginal price to read. That is a fact about the pool, not a price of zero.',
+  below_published_precision:
+    'This pool has a price and it is smaller than eighteen decimal places can show. Its own state is fine — this figure is what ran out.',
+  unreadable:
+    'The pool did not answer this read, so nothing was established. That is about Miorail’s read, never about the pool or the market.',
+};
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — a second, independent reading of the price.
+//
+// Every `full` observation in the entire tokenized-stock corpus comes from ONE
+// source. That is not a criticism of the source; it is a structural weakness of
+// the evidence, and it has never had a cross-check. Base publicly says these
+// assets have deep liquidity on Aerodrome, our own adapter walks the v2 Router
+// where these pairs hold dust, and there is no verifiable quoter for the CL
+// factory that actually holds them — measured, and it has not changed.
+//
+// What CAN be had is the pool's own current price: `slot0().sqrtPriceX96`, one
+// word, squared and shifted. It is not a quote and this route never calls it
+// one — no size, no slippage, no tick walking, no executability. It is a number
+// computed from a single onchain word that anybody can recompute at the same
+// block, standing next to a number an aggregator reported.
+//
+// Verified live before shipping, against the exact pool KyberSwap named for
+// NVDAc (0x853f5f1b…7ab9): the pool's own state said $231.878101 per NVDAc and
+// a $1,000 KyberSwap quote said $231.948403 — 3.0 bps apart, with the quote
+// worse than the marginal price, which is exactly what walking a little way up
+// the curve costs. The decimals read caught NVDAc at 8, not 18; assuming would
+// have produced a price wrong by ten orders of magnitude that still looked like
+// a price.
+//
+// Public in the sense the rest of the reviewed surface is: the session gate
+// stays, because this shares the RPC seam with everything else here.
+// ---------------------------------------------------------------------------
+rwaMarketRealityRouter.get('/rwa/pool-spot/:pool', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  if (!sessionUserV1(req)) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const pool = String(req.params.pool ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(pool)) {
+    res.status(400).json({ error: 'exact_address_required', code: 'exact_address_required' });
+    return;
+  }
+  const reader = rwaMarketRealityRuntime.clSpotReader();
+  if (!reader) {
+    res.status(503).json({
+      error: 'market_reality_chain_unavailable',
+      code: 'market_reality_chain_unavailable',
+    });
+    return;
+  }
+  try {
+    const anchor = await reader.readBlockAnchor();
+    const result = await readAerodromeClSpotV1({
+      rpc: {
+        async call(input) {
+          const read = await reader.call({ ...input, blockTag: anchor.ok ? anchor.value.blockTag : 'latest' });
+          return read.ok ? read.value : null;
+        },
+      },
+      pool: pool as `0x${string}`,
+      blockTag: anchor.ok ? anchor.value.blockTag : null,
+    });
+    if (!result.ok) {
+      // Four different findings, kept apart. `not_aerodrome_cl` is about the
+      // address somebody handed us; `unreadable` is about us.
+      res.status(200).json({
+        schemaVersion: 'aerodrome-cl-spot/v1',
+        pool,
+        outcome: 'unavailable',
+        reason: result.reason,
+        detail: AERODROME_SPOT_REFUSAL_COPY_V1[result.reason],
+      });
+      return;
+    }
+    res.status(200).json({
+      schemaVersion: 'aerodrome-cl-spot/v1',
+      outcome: 'read',
+      ...result.spot,
+      /** Said in the payload, not only in the UI. A consumer of this route that
+       * renders the number without the sentence is rendering a quote. */
+      isQuote: false,
+      note: AERODROME_SPOT_NOTE_V1,
+    });
+  } catch (error) {
+    res.status(502).json({
+      error: 'pool_spot_unavailable',
+      code: 'pool_spot_unavailable',
       detail: error instanceof Error ? error.message.slice(0, 200) : 'unknown',
     });
   }
@@ -1154,6 +1287,25 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
       return;
     }
 
+    // Read ONCE, above the response, because two things now depend on it: the
+    // sentences the reader sees and the precondition `confirm` enforces. Two
+    // calls would be two blocks, and a page that showed one verdict while the
+    // next step acted on another is exactly the disagreement Phase 17.4 spent
+    // a whole card fixing.
+    const transferEligibility = await rwaMarketRealityRuntime
+      .eligibility({
+        tokenAddress: claims.tokenAddress,
+        wallet: claims.walletAddress,
+        executor: null,
+      })
+      // Guarded HERE and not only inside the default implementation: this read
+      // is an ADDITION to the review, never a precondition for it, and the
+      // whole handler runs inside one try/catch. An unguarded throw would
+      // return a 500 and cost the reader the market answer, the evidence state
+      // and the entire board — over a question they could have gone without.
+      // Whatever implementation is installed, this stays true.
+      .catch(() => null);
+
     res.status(200).json({
       schemaVersion: 'stock-action-review/v1',
       actionDraftId: claims.actionDraftId,
@@ -1195,19 +1347,29 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
        * Never a gate. It states what the registry said and lets the reader
        * decide; a failed read is `not_established` and never a denial.
        */
-      transferEligibility: await rwaMarketRealityRuntime
-        .eligibility({
-          tokenAddress: claims.tokenAddress,
-          wallet: claims.walletAddress,
-          executor: null,
-        })
-        // Guarded HERE and not only inside the default implementation: this
-        // read is an ADDITION to the review, never a precondition for it, and
-        // the whole handler runs inside one try/catch. An unguarded throw would
-        // return a 500 and cost the reader the market answer, the evidence
-        // state and the entire board — over a question they could have gone
-        // without. Whatever implementation is installed, this stays true.
-        .catch(() => null),
+      transferEligibility,
+      /**
+       * The same read, asked as the question `confirm` will ask.
+       *
+       * Phase 17.5. The evidence above was always here and was explicitly not
+       * a gate — correct while the only thing downstream was another page.
+       * `Prepare buy` / `Prepare sell` changed that: the next step hands out a
+       * clearance, and it now refuses on a MEASURED denial of the scope that
+       * governs this direction. Publishing the verdict here means the reader
+       * learns it while they are reading, not at the moment they press the
+       * button.
+       *
+       * Only `denied` stops anything. `not_established` is rendered as itself:
+       * this gate fails open, and a surface that showed nothing would let a
+       * reader conclude somebody checked when nobody could reach the registry.
+       */
+      transferGate: b20TransferGateV1({
+        eligibility: transferEligibility,
+        direction: rebuilt.handoff.direction,
+      }),
+      /** Said where the action can start. Base did not issue this and neither
+       * did Miorail, and the issuer restricts who may hold it. */
+      issuerNotice: STOCK_ISSUER_NOTICE_COPY_V1,
       /** Established NOW. `expired_quote` is a legitimate state to review in —
        * it is never promoted to `fresh_quote`, and the reader is told to
        * measure rather than shown an old figure as a current one. */
@@ -1338,6 +1500,70 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
       return;
     }
 
+    // ------------------------------------------------------------------
+    // Phase 17.5 — the issuer's own rule, asked before authority is handed
+    // over.
+    //
+    // Everything above this line is about the MARKET: is there a route, what
+    // does it cost, is the measurement basis still the one this draft was
+    // prepared under. None of it asks the token whether this wallet may move
+    // it at all — and for a regulated asset that is a separate axis that can
+    // refuse while the market is perfectly healthy. Every reviewed Coinbase
+    // representation points all three transfer scopes at a live blocklist, so
+    // this is not hypothetical.
+    //
+    // It is enforced HERE, at confirm, and not one step earlier: the review is
+    // a read, and refusing a read would deny somebody the explanation of why
+    // they are being refused. Confirm is where a clearance is minted — the
+    // authority to ask this server for an unsigned request — and that is the
+    // narrowest place the check still means anything.
+    //
+    // ONLY A MEASURED DENIAL REFUSES. A read that did not happen, a throttled
+    // RPC, and a contract that is not a B20 all come back `not_established`
+    // and all proceed. This gate fails open by construction, because the
+    // alternative — telling a holder their address is blocked when in fact our
+    // endpoint was rate-limited — is a false positive indistinguishable from
+    // the real thing, and it would be OUR failure wearing the issuer's name.
+    //
+    // Not a jurisdiction check. Not a geo-gate. An IP address is not a
+    // jurisdiction and a VPN defeats one; this is the issuer's own per-address
+    // policy, read from the registry the issuer publishes it in, enforced for
+    // the exact wallet in this session.
+    // ------------------------------------------------------------------
+    const gate = b20TransferGateV1({
+      eligibility: await rwaMarketRealityRuntime
+        .eligibility({
+          tokenAddress: claims.tokenAddress,
+          wallet: user.address,
+          // Still null, still deliberately. No router has been chosen at this
+          // step, so the executor scope is `not_established` about a null
+          // address — and `not_established` cannot refuse. Passing the wallet
+          // in its place would answer a different question under this label.
+          executor: null,
+        })
+        .catch(() => null),
+      direction: claims.direction,
+    });
+    if (b20TransferGateRefusesV1(gate)) {
+      logger.warn('Stock action refused by the issuer transfer policy', {
+        tenantId: user.id,
+        tokenAddress: claims.tokenAddress,
+        direction: claims.direction,
+        cause: gate.cause,
+      });
+      res.status(409).json({
+        error: 'issuer_transfer_policy_denied',
+        code: 'issuer_transfer_policy_denied',
+        detail: gate.detail,
+        // The verdict travels with the refusal so a reader can check it: which
+        // scope was consulted, and at which block it answered.
+        transferGate: gate,
+        confirmed: false,
+        executableActionAvailable: false,
+      });
+      return;
+    }
+
     // The clearance is built from what was REBUILT, not from what the draft
     // remembered. What the person confirmed is what this server established
     // for them a moment ago.
@@ -1374,6 +1600,12 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
         routePolicyKey: rebuilt.handoff.routePolicyKey,
       },
       confirmed: true,
+      /** What the issuer's registry said about THIS wallet at the moment
+       * authority was granted. Recorded on the confirmation rather than merely
+       * consulted, so "nothing refused" is a stated verdict with a block behind
+       * it and not an inference from the absence of an error. */
+      transferGate: gate,
+      issuerNotice: STOCK_ISSUER_NOTICE_COPY_V1,
       /** Confirmation is not a wallet approval. Nothing here is executable, and
        * the unsigned request still has to be planned, simulated and passed
        * through the Safety Kernel before a wallet is ever asked. */

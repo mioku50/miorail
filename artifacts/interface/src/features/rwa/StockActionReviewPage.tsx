@@ -11,9 +11,11 @@ import {
   consoleSectionPathV1,
   exitEvidenceV1,
   marketRealityViewV1,
+  transferGateViewV1,
   transferPolicyViewV1,
   underlyingChoicesV1,
   useConsoleTheme,
+  STOCK_ISSUER_NOTICE_V1,
   TRANSFER_POLICY_FOOTNOTE_V1,
   type MarketRealityScreenModelV1,
   type TransferPolicyWireV1,
@@ -21,6 +23,7 @@ import {
 import {
   useOfficialAssetDossier,
   useStatus,
+  useStockActionConfirm,
   useStockActionReview,
 } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
@@ -34,9 +37,17 @@ import { useConsoleNav } from '../console/useConsoleNav';
 // evidence under this session, and what is rendered is that answer — never
 // anything the conversation carried.
 //
-// The page confirms nothing and executes nothing. It ends where every Stocks
-// card already ends: at the advanced route surface, which is itself an intent
-// to look.
+// Phase 17.5 — and it now ends one step further, because it used to end one
+// step too early. The confirm endpoint existed from the start and nothing in
+// the interface ever called it, so the chain an assistant starts stopped here:
+// a review could be prepared and a person could read it, and there was no way
+// for that person to say yes. The clearance it produces is what the assistant
+// needs to ask for an unsigned request, and it is minted only in a human's own
+// session, only for terms this server established a moment ago.
+//
+// Confirming is still not approving. Nothing on this page is executable, no
+// wallet opens here, and the clearance authorises ONE exact action and expires
+// in minutes.
 // ---------------------------------------------------------------------------
 
 function shortAddressV1(address: string | undefined): string | null {
@@ -57,6 +68,10 @@ interface ReviewBodyV1 {
   };
   reality?: unknown;
   transferEligibility?: TransferPolicyWireV1 | null;
+  /** Phase 17.5 — the same read, asked as the question `confirm` will ask.
+   * `denied` is the only state that stops anything, and this page says so
+   * BEFORE the button rather than at it. */
+  transferGate?: { state?: string; detail?: string; direction?: string } | null;
 }
 
 /** What the reader is told about freshness, in the words the rest of Stocks
@@ -88,6 +103,30 @@ function failureCopyV1(error: unknown): string {
   return 'This review could not be read on this server. Nothing here is a statement about the security.';
 }
 
+/**
+ * Why a confirmation did not happen, in the reader's words.
+ *
+ * The issuer refusal is first because it is the one cause that is not about
+ * Miorail at all, and a reader told "something went wrong" when the token's own
+ * registry refused them would go looking for a fault that does not exist.
+ */
+function confirmFailureCopyV1(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error ?? '');
+  if (message.includes('issuer_transfer_policy_denied')) {
+    return 'The token’s own policy registry refuses this wallet for this action, so no clearance was issued. That is the issuer’s rule, read on chain — Miorail does not set it and cannot lift it.';
+  }
+  if (message.includes('route_policy_changed')) {
+    return 'The reviewed measurement basis changed while this page was open, so these are no longer the terms you read. Nothing was confirmed — ask again for a current answer.';
+  }
+  if (message.includes('stock_action_draft_expired')) {
+    return 'This review link expired before it was confirmed. Drafts are deliberately short-lived, because a review confirmed later is a review of a different market.';
+  }
+  if (message.includes('zero_supply') || message.includes('representation_not_reviewed')) {
+    return 'This exact representation is no longer one this answer can carry, so nothing was confirmed and nothing was substituted for it.';
+  }
+  return 'This could not be confirmed on this server. Nothing was recorded, nothing is executable, and this is not a statement about the security.';
+}
+
 export function StockActionReviewPage() {
   const [, navigate] = useLocation();
   const [, params] = useRoute('/action/:draft');
@@ -98,6 +137,8 @@ export function StockActionReviewPage() {
 
   const review = useStockActionReview(params?.draft ?? null);
   const body = (review.data ?? null) as ReviewBodyV1 | null;
+  const confirm = useStockActionConfirm();
+  const confirmed = (confirm.data ?? null) as { clearance?: string; expiresAt?: string } | null;
 
   const nowIso = useMemo(() => new Date().toISOString(), [review.dataUpdatedAt]);
 
@@ -144,6 +185,15 @@ export function StockActionReviewPage() {
   const transferPolicy = useMemo(
     () => transferPolicyViewV1(body?.transferEligibility ?? null),
     [body?.transferEligibility],
+  );
+  // The gate, not the evidence. The lines above say what the registry answered
+  // for each scope; this says what that means for the ONE action this draft is
+  // about — and it is rendered even when nothing was established, because a
+  // gate that fails open and shows nothing lets a reader conclude somebody
+  // checked when in fact nobody could reach the registry.
+  const transferGate = useMemo(
+    () => transferGateViewV1(body?.transferGate ?? null),
+    [body?.transferGate],
   );
 
   const refused = body?.outcome === 'refused';
@@ -268,11 +318,68 @@ export function StockActionReviewPage() {
                 <p className="lnote">{TRANSFER_POLICY_FOOTNOTE_V1}</p>
               </>
             ) : null}
+            {transferGate ? (
+              <div className="mr-gate">
+                <span className="pill cr-status" data-tone={transferGate.tone}>
+                  {transferGate.label}
+                </span>
+                <p className="mr-gate-detail">{transferGate.detail}</p>
+              </div>
+            ) : null}
             {model ? <MarketRealityScreen model={model} /> : null}
             <p className="lnote">
               Miorail never signs and never broadcasts. Continuing opens the advanced route surface,
               which prepares nothing on its own — only your own Base Account can move anything.
             </p>
+
+            {/* The step this page was missing. An assistant established which
+                representation and which question; this server established what
+                they cost. Only a person, in their own session, can say yes to
+                that — and this is where they say it.
+                Absent when the issuer's own registry refused: the server would
+                refuse anyway, and offering a button that cannot work is worse
+                than saying why. */}
+            {transferGate?.blocking ? (
+              <p className="cr-verdict bad">
+                Nothing can be confirmed for this wallet while the issuer’s policy refuses it.
+              </p>
+            ) : confirmed ? (
+              <div className="mr-clearance">
+                <p className="cr-verdict good">
+                  Confirmed. This authorises one exact action and expires shortly.
+                </p>
+                <p className="mr-gate-detail">
+                  Hand this clearance back to the assistant that prepared the review. It is not a
+                  signature and not a transaction: with it, the assistant can ask this server for an
+                  unsigned request, which your own Base Account then reviews and signs — or does
+                  not.
+                </p>
+                <code className="mr-clearance-token mono">{confirmed.clearance}</code>
+                <p className="lnote">Expires {confirmed.expiresAt}</p>
+              </div>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  className="btn lg"
+                  disabled={confirm.isPending}
+                  title="Records that you agreed to these exact terms. Nothing is signed, submitted, or broadcast here."
+                  onClick={() => confirm.mutate(params?.draft ?? '')}
+                >
+                  {confirm.isPending ? 'Confirming…' : 'Confirm these terms'}
+                </button>
+                {confirm.error ? (
+                  <p className="cr-verdict bad">{confirmFailureCopyV1(confirm.error)}</p>
+                ) : null}
+                <p className="lnote">
+                  Confirming records that a person, in their own session, agreed to terms this
+                  server established just now. It signs nothing, submits nothing and opens no
+                  wallet.
+                </p>
+              </>
+            )}
+
+            <p className="mr-issuer-note">{STOCK_ISSUER_NOTICE_V1}</p>
           </>
         ) : null}
       </section>

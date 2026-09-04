@@ -1057,6 +1057,27 @@ export function useStockActionReview(draft: string | null | undefined) {
   });
 }
 
+/**
+ * Phase 17.5 — the person confirming, in their own session.
+ *
+ * The endpoint existed from the start and nothing in the interface ever called
+ * it, so the agent chain stopped one step short: an assistant could prepare a
+ * review, but the human had no way to say yes to it and no clearance came back.
+ *
+ * A POST because it is not a read, and un-retried because a retry would be a
+ * second confirmation of terms this server re-establishes on every call.
+ */
+export function useStockActionConfirm() {
+  return useMutation({
+    retry: false,
+    mutationFn: async (draft: string) =>
+      fetchApi<unknown>(
+        `/api/route-intelligence/rwa/stock-action/${encodeURIComponent(draft)}/confirm`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+      ),
+  });
+}
+
 export function useRwaMarketReality(
   input: {
     underlyingKey: string | null;
@@ -3455,5 +3476,29 @@ export function useRevokeMcpHandoff(
       void queryClient.invalidateQueries({ queryKey: ['mcp-handoff-grants'] });
       options?.onSuccess?.(data, variables, onMutateResult, context);
     },
+  });
+}
+
+/**
+ * Phase 17.5 — one Aerodrome CL pool's own marginal price.
+ *
+ * Asked ON DEMAND, for a pool an aggregator has already named. Not part of the
+ * board's own read: it is a corroboration of a number the board already has,
+ * and paying seven chain reads for it on every size or direction press would
+ * make the board slower at the question it exists for.
+ *
+ * `retry: false` and a long stale time on purpose — this is a reading at a
+ * block, and re-fetching it produces a different fact, not a fresher one.
+ */
+export function useAerodromePoolSpot(pool: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['aerodrome-pool-spot', pool?.toLowerCase() ?? null],
+    queryFn: async () =>
+      fetchApi<unknown>(
+        `/api/route-intelligence/rwa/pool-spot/${encodeURIComponent(pool!.toLowerCase())}`,
+      ),
+    retry: false,
+    staleTime: 60_000,
+    enabled: options?.enabled !== false && Boolean(pool),
   });
 }

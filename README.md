@@ -166,6 +166,27 @@ policies, the supply cap and the paused-feature set. The multiplier is a
 disclosure, never applied to a total-return feed — B20 publishes one, Backed
 rebases instead, and Centrifuge has none.
 
+**A second, independent reading of the price.** Every `full` observation on this
+corpus comes from one router. That is a structural weakness of the evidence, and
+until now it had no cross-check. There is no verifiable quoter to build one
+from: Aerodrome runs two concentrated-liquidity factories on Base, every
+tokenized-stock pool lives in the one whose deployer shipped a seven-contract
+core with **no QuoterV2 and no SwapRouter** (measured by scanning each
+contract's bytecode for `quoteExactInputSingle` and `exactInputSingle` — false
+on all of them), and the published quoter is bound to the other factory through
+a different `poolImplementation()`. Hand-rolled tick math would produce a number
+nobody could check.
+
+What can be had is the pool's own `slot0().sqrtPriceX96`, squared: the marginal
+price at the current tick, from one onchain word, reproducible by anyone at the
+same block. It is **not a quote** — no size, no slippage, no route, no claim
+that a trade would succeed — and the payload says so in every state. Verified
+live on 2026-09-04 against the exact pool the router named for NVDAc
+(`0x853f5f1b…7ab9`): the pool's own state said **$231.878101** and a $1,000
+KyberSwap quote said **$231.948403**, the quote worse by 3.0 bps, which is what
+walking a little way up the curve costs. The decimals are read, never assumed —
+NVDAc is 8, not 18.
+
 **Coverage boundaries, stated rather than hidden.** Nine of the thirteen
 Coinbase representations hold zero supply; a contract with nothing outstanding
 keeps its exact address and all of its evidence and leaves the comparison.
@@ -406,6 +427,8 @@ For app-originated user execution, Miorail's wallet-action layer attaches the pu
 - Receipt success alone is insufficient. Route Proof reconciles expected and actual asset/position changes and gas.
 - Native Base ETH swap legs are reconstructed only from canonical WETH9 evidence for the approved router target.
 - RPC URLs, secrets, approval URLs, paid response bodies, and delivery secrets do not enter public evidence or rendered traces.
+- Before a tokenized-stock clearance is minted, the token's own onchain transfer policy is asked about that exact wallet. A **measured** denial of the scope that governs the direction — receiving on a buy, sending on a sell — refuses, as does a contract-wide transfer pause. Nothing else does: an unread policy, a throttled endpoint and a non-B20 contract are all `not_established` and all proceed, because a false denial is indistinguishable from a real one. It is the issuer's own per-address rule, enforced where the issuer publishes it, and it is not a jurisdiction check or a geo-gate.
+- An assistant can prepare a review and can never confirm one. The clearance that authorises asking for an unsigned request is minted only in a person's own session, against terms this server re-established at that moment, and it expires in minutes.
 
 ## Production acceptance
 
@@ -496,6 +519,9 @@ Miorail is functional but not broadly production-hardened. Important open work i
 - no reference price exists for Backed or Dinari, because neither publishes a feed a contract can read — the adapters are deliberately unwritten rather than written to return nothing;
 - the Investigate dossier is only partly polymorphic: a non-B20 contract is told so plainly, but Backed's rebasing model and Dinari's factory predicate do not yet have evidence modules of their own;
 - `compare_market_reality` reads stored evidence only, so a connected assistant cannot force a fresh measurement the way the web surface can;
+- no owner-verified tokenized-stock trade has completed end to end; the prepare and confirm steps are built and gated, and nothing behind them has been settled on mainnet;
+- the Aerodrome corroborator reads one pool for the primary representation only, and there is still no verifiable CL quoter to price against — the marginal price is a cross-check, never a route;
+- the confirmed clearance is carried back to the assistant by the person, because no tool exists for an assistant to poll for one;
 - expand Fundamental Intelligence beyond the operator-registered claim corpus and design a safe self-serve project-claim flow;
 - add more verified project/onchain/utility evidence without introducing an overall investment score;
 - capture more provider-specific small-value Route Proofs and failure-path acceptance;

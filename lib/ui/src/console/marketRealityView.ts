@@ -2874,3 +2874,185 @@ export function routedThroughV1(
         : `${source} produced the number; the exact pools below are where it was split. Read each pool’s own factory() to check the venue.`,
   };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — who issued this, and who may hold it.
+//
+// A `Prepare buy` button changes what a page is. Everything before it was a
+// measurement, and a measurement carries no implication that the reader may
+// act on it; a primary button does. So the two facts a reader needs before
+// pressing one are stated NEXT TO IT rather than in a document:
+//
+//   1. Base did not issue this. Coinbase did. A product that measures Base and
+//      renders a Coinbase asset must not let the chain's name stand in for the
+//      issuer's.
+//
+//   2. The issuer restricts who may hold it, and Miorail is not the party that
+//      decides. Stating that is not the same as enforcing it, and this copy is
+//      careful never to imply that pressing the button means somebody checked.
+//      What IS enforced is the token's own onchain policy for the exact wallet,
+//      one step later, and that is a narrower claim said in its own words.
+//
+// Deliberately NOT an IP geo-gate. An IP address is not a jurisdiction, a VPN
+// defeats it, and a product that blocked on one would be claiming an
+// eligibility ruling it has no basis to make. The honest pair is a plain notice
+// plus the issuer's own per-address rule, enforced where the issuer publishes
+// it.
+// ---------------------------------------------------------------------------
+
+/** Said wherever an action can start, and nowhere else. Re-exported rather
+ * than restated: three surfaces show this sentence, and a sentence about who
+ * issued a security must not be able to differ between them. */
+export { STOCK_ISSUER_NOTICE_V1 } from '@mioagent/rwa-market-reality/execution-handoff';
+
+export type TransferGateStateV1 = 'authorized' | 'denied' | 'not_established';
+
+export interface TransferGateViewV1 {
+  /** The chip, in the reader's words. */
+  label: string;
+  tone: ToneV1;
+  /** The sentence under it. Always present: a gate with no explanation is a
+   * verdict the reader cannot check. */
+  detail: string;
+  /** True only for a measured denial — the one state that stops anything. */
+  blocking: boolean;
+}
+
+/**
+ * The issuer's own answer about this wallet, as one line on an action surface.
+ *
+ * `not_established` renders as itself and never as reassurance. That is the
+ * whole discipline: this gate FAILS OPEN, so a reader who is shown nothing
+ * would reasonably conclude somebody checked and found nothing wrong — when in
+ * fact nobody could reach the registry. Saying "not established" costs one line
+ * and keeps the two states apart.
+ */
+export function transferGateViewV1(
+  gate: { state?: string; detail?: string; direction?: string } | null | undefined,
+): TransferGateViewV1 | null {
+  if (!gate) return null;
+  const detail = typeof gate.detail === 'string' && gate.detail.length > 0 ? gate.detail : null;
+  if (!detail) return null;
+  const side = gate.direction === 'sell' ? 'sell' : 'buy';
+  if (gate.state === 'denied') {
+    return {
+      label: side === 'sell' ? 'The token refuses this sale' : 'The token refuses this purchase',
+      tone: 'bad',
+      detail,
+      blocking: true,
+    };
+  }
+  if (gate.state === 'authorized') {
+    return { label: 'Issuer policy allows this wallet', tone: 'good', detail, blocking: false };
+  }
+  return { label: 'Issuer policy not established', tone: 'off', detail, blocking: false };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the second reading, rendered so it can never pass for the first.
+//
+// The card already says `Priced by KyberSwap · routed through Aerodrome CL`.
+// That names the venue. This adds what the venue itself says the price is —
+// computed by us from one onchain word — beside the number the aggregator
+// reported.
+//
+// The single hazard: a price with no size attached, sitting next to prices that
+// have one, reads as a quote. So the word "quote" never appears on it, the
+// figure carries the word "marginal", and the sentence that says what it is not
+// travels with it in every state. There is no compact variant.
+// ---------------------------------------------------------------------------
+
+export interface PoolSpotViewV1 {
+  /** "Aerodrome pool says $231.878101 per NVDAc" — or the absence, in words. */
+  headline: string;
+  /** Present only when a price was actually read. */
+  price: string | null;
+  /** The raw word, so the arithmetic can be redone from the pool's own state. */
+  sqrtPriceX96: string | null;
+  blockTag: string | null;
+  /** Always present. A figure with no size attached needs this every time. */
+  note: string;
+  tone: ToneV1;
+}
+
+/**
+ * One pool's own marginal price, as a line under the venue it belongs to.
+ *
+ * `quoteTokenAddress` is the side the reader is thinking in — the token whose
+ * price they want. The pool answers in both directions and this picks the one
+ * the card is about, rather than making a reader work out which of `token0`
+ * and `token1` is theirs.
+ */
+/**
+ * The cash tokens a marginal price may be denominated in by name.
+ *
+ * Tiny and pinned, for the same reason `VENUE_NAME_V1` is: a symbol read off a
+ * contract is a string that contract chose, and a card that prints it is
+ * printing whatever a token wants it to. Anything not on this list is named by
+ * its address, which is checkable.
+ */
+const SPOT_DENOMINATION_V1: Readonly<Record<string, string>> = {
+  '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
+  '0x4200000000000000000000000000000000000006': 'WETH',
+};
+
+export function poolSpotViewV1(input: {
+  wire:
+    | {
+        outcome?: string;
+        reason?: string;
+        detail?: string;
+        note?: string;
+        token0?: string;
+        token1?: string;
+        token0PerToken1?: string;
+        token1PerToken0?: string;
+        sqrtPriceX96?: string;
+        blockTag?: string | null;
+      }
+    | null
+    | undefined;
+  /** The token being priced. Its price is expressed in the OTHER token. */
+  tokenAddress: string;
+}): PoolSpotViewV1 | null {
+  const wire = input.wire ?? null;
+  if (!wire) return null;
+  if (wire.outcome !== 'read') {
+    const detail = typeof wire.detail === 'string' && wire.detail.length > 0 ? wire.detail : null;
+    if (!detail) return null;
+    return {
+      headline: 'No second reading from the pool',
+      price: null,
+      sqrtPriceX96: null,
+      blockTag: null,
+      note: detail,
+      // Never `bad`: a reading we could not take is an absence, not a defect in
+      // the market. The severity vocabulary belongs to what a trade costs.
+      tone: 'off',
+    };
+  }
+  const token = input.tokenAddress.toLowerCase();
+  const token0 = wire.token0?.toLowerCase() ?? null;
+  const token1 = wire.token1?.toLowerCase() ?? null;
+  // The price OF this token is denominated in the other one, so the side is
+  // chosen by which slot this token occupies — never by which figure looks
+  // more like a dollar amount. A pool that does not hold this token at all
+  // renders nothing: it is somebody else's pool, and printing either figure
+  // would attach a price to the wrong asset.
+  const price =
+    token0 === token ? wire.token1PerToken0 : token1 === token ? wire.token0PerToken1 : null;
+  const counterpart = token0 === token ? token1 : token1 === token ? token0 : null;
+  if (!price || !counterpart) return null;
+  const denomination = SPOT_DENOMINATION_V1[counterpart] ?? counterpart;
+  return {
+    headline: `Aerodrome pool’s own marginal price: ${price} ${denomination} per token`,
+    price,
+    sqrtPriceX96: wire.sqrtPriceX96 ?? null,
+    blockTag: wire.blockTag ?? null,
+    note:
+      typeof wire.note === 'string' && wire.note.length > 0
+        ? wire.note
+        : 'The pool’s marginal price at its current tick. Not a quote: no size, no slippage, no route.',
+    tone: 'neutral',
+  };
+}

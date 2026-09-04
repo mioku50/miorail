@@ -60,10 +60,12 @@ import { callManyV1, type B20ReaderV1 } from './reader.js';
 //      can disagree, they are about different addresses, and one collapsed
 //      "can trade" bit would hide which of the three applies.
 //
-// This is EVIDENCE, not a gate. Nothing here decides whether a flow may
-// proceed; it states what the registry said and lets the reader decide. And it
-// says nothing about whether a route exists or what it costs — a wallet can be
-// perfectly authorized to hold something it cannot sell.
+// THE READ IS EVIDENCE. It states what the registry said and lets the reader
+// decide, and it says nothing about whether a route exists or what it costs — a
+// wallet can be perfectly authorized to hold something it cannot sell. One
+// function at the bottom of this file turns that evidence into a precondition
+// for one action; it is the only thing here that decides anything, and it can
+// only ever decide on a MEASURED denial.
 // ---------------------------------------------------------------------------
 
 /** The transfer scopes that decide whether one transfer may happen. */
@@ -323,4 +325,140 @@ export async function readB20TransferEligibilityV1(input: {
   }
 
   return { ...base, transferPause, scopes };
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the same evidence, asked as a precondition.
+//
+// Everything above is deliberately not a gate: it states what the registry said
+// and lets the reader decide. That was right while the only thing downstream of
+// it was another page. It stopped being enough the moment a Stocks card grew
+// `Prepare buy` / `Prepare sell`, because the step after those hands out a
+// clearance — the authority to ask this server for an unsigned request — and
+// that step was not asking the token whether this wallet may move it at all.
+//
+// So the read stays exactly as it is, and ONE function turns it into a verdict
+// about ONE action. Two rules decide the whole shape:
+//
+//   1. ONLY A MEASURED DENIAL REFUSES. `not_established` never does, and a read
+//      that did not happen never does. A throttled RPC telling a holder they
+//      are blocked is the worst false positive this product could produce, and
+//      it would be indistinguishable from the real thing. This gate therefore
+//      fails OPEN, and every surface that renders it has to say so — it is the
+//      issuer's own rule, enforced where the issuer publishes it, and it is not
+//      a jurisdiction check, an eligibility ruling, or a substitute for either.
+//
+//   2. ONLY THE SCOPE THAT GOVERNS THIS DIRECTION COUNTS. A buy puts the token
+//      INTO the wallet, so the receiver policy governs and the sender policy is
+//      about a transfer nobody is making. Refusing a purchase because the
+//      wallet may not SEND would be refusing on a rule that does not apply —
+//      the same error as reading a router's verdict as the wallet's.
+//
+// The executor scope can never refuse here, and that is not an oversight: at
+// this step no router has been chosen, so its verdict is `not_established`
+// about a null address. It is checked where the executor is known, or not at
+// all — never guessed.
+// ---------------------------------------------------------------------------
+
+/** Which wallet scope governs a direction. A buy receives, a sell sends. */
+export const B20_DIRECTION_SCOPE_V1: Readonly<
+  Record<'buy' | 'sell', Extract<B20EligibilityScopeV1, 'transfer_sender' | 'transfer_receiver'>>
+> = {
+  buy: 'transfer_receiver',
+  sell: 'transfer_sender',
+};
+
+export type B20TransferGateCauseV1 = 'transfers_paused' | 'wallet_not_authorized';
+
+export interface B20TransferGateV1 {
+  direction: 'buy' | 'sell';
+  /** The scope whose verdict was consulted. Named so a refusal can say which
+   * rule refused rather than asserting a general one. */
+  governingScope: 'transfer_sender' | 'transfer_receiver';
+  /**
+   * `denied` is the ONLY value that may stop anything. `not_established` is a
+   * question that was not answered, and it is a state this product renders
+   * rather than resolves.
+   */
+  state: B20EligibilityVerdictV1;
+  cause: B20TransferGateCauseV1 | null;
+  /** The block the governing verdict was read at, so a refusal is checkable. */
+  blockTag: string | null;
+  detail: string;
+}
+
+const GATE_DETAIL_V1: Readonly<Record<B20TransferGateCauseV1, Record<'buy' | 'sell', string>>> = {
+  transfers_paused: {
+    buy: 'This token’s own contract is refusing all transfers right now, so it cannot be delivered to any wallet — including one that is otherwise authorized. That is the issuer’s pause, not a Miorail rule and not a statement about you.',
+    sell: 'This token’s own contract is refusing all transfers right now, so no holder can move it — including one that is otherwise authorized. That is the issuer’s pause, not a Miorail rule and not a statement about you.',
+  },
+  wallet_not_authorized: {
+    buy: 'The issuer’s policy registry answered that this exact wallet is not authorized to receive this exact token. Miorail cannot carry an action the token itself would refuse, so nothing was prepared. This is the issuer’s rule for this address, read on chain — Miorail does not set it and cannot lift it.',
+    sell: 'The issuer’s policy registry answered that this exact wallet is not authorized to send this exact token. Miorail cannot carry an action the token itself would refuse, so nothing was prepared. This is the issuer’s rule for this address, read on chain — Miorail does not set it and cannot lift it.',
+  },
+};
+
+const GATE_OPEN_DETAIL_V1 =
+  'The issuer’s policy registry answered for this exact wallet and this exact token at one block, and it did not refuse. It says nothing about the market, about what a sale would cost, or about eligibility to hold the security.';
+
+const GATE_UNKNOWN_DETAIL_V1 =
+  'Whether the issuer’s policy permits this exact wallet was not established. Miorail does not read an unanswered question as a refusal, so nothing is blocked on it — and nothing is claimed either.';
+
+/**
+ * Turn a transfer-eligibility read into a verdict about one action.
+ *
+ * `null` — no read at all, because no RPC was reachable or the anchor failed —
+ * is `not_established`, exactly like a read that answered nothing. The absence
+ * of evidence and the absence of a restriction are the two states this product
+ * exists to keep apart, and neither of them is a denial.
+ */
+export function b20TransferGateV1(input: {
+  eligibility: B20TransferEligibilityV1 | null | undefined;
+  direction: 'buy' | 'sell';
+}): B20TransferGateV1 {
+  const governingScope = B20_DIRECTION_SCOPE_V1[input.direction];
+  const base = { direction: input.direction, governingScope };
+  const eligibility = input.eligibility ?? null;
+  if (!eligibility) {
+    return { ...base, state: 'not_established', cause: null, blockTag: null, detail: GATE_UNKNOWN_DETAIL_V1 };
+  }
+  const blockTag = eligibility.blockTag;
+
+  // A pause denies everyone at once, so it outranks every per-address verdict:
+  // an authorized wallet still cannot move a token the contract has frozen.
+  if (eligibility.transferPause.state === 'paused') {
+    return {
+      ...base,
+      state: 'denied',
+      cause: 'transfers_paused',
+      blockTag,
+      detail: GATE_DETAIL_V1.transfers_paused[input.direction],
+    };
+  }
+
+  const scope = eligibility.scopes.find((row) => row.scope === governingScope) ?? null;
+  if (scope?.verdict === 'denied') {
+    return {
+      ...base,
+      state: 'denied',
+      cause: 'wallet_not_authorized',
+      blockTag,
+      detail: GATE_DETAIL_V1.wallet_not_authorized[input.direction],
+    };
+  }
+  if (scope?.verdict === 'authorized') {
+    return { ...base, state: 'authorized', cause: null, blockTag, detail: GATE_OPEN_DETAIL_V1 };
+  }
+  return { ...base, state: 'not_established', cause: null, blockTag, detail: GATE_UNKNOWN_DETAIL_V1 };
+}
+
+/**
+ * The one comparison a caller makes.
+ *
+ * Written out rather than left to each call site: `state !== 'authorized'` is
+ * the natural thing to type and it is the bug — it turns every unread policy,
+ * every throttled RPC and every non-B20 contract into a refusal.
+ */
+export function b20TransferGateRefusesV1(gate: B20TransferGateV1): boolean {
+  return gate.state === 'denied';
 }

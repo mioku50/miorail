@@ -2,11 +2,16 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  B20_ELIGIBILITY_SCOPE_SUBJECT_V1,
   B20_POLICY_REGISTRY_V1,
   type B20BatchCallV1,
   B20_SELECTORS_V1,
+  b20TransferGateRefusesV1,
+  b20TransferGateV1,
   readB20TransferEligibilityV1,
+  type B20EligibilityVerdictV1,
   type B20ReaderV1,
+  type B20TransferEligibilityV1,
 } from '../src/index.js';
 
 // ---------------------------------------------------------------------------
@@ -218,5 +223,147 @@ describe('whether a wallet may move a B20', () => {
     });
     assert.deepEqual([...blocks], ['0xabc']);
     assert.equal(result.blockTag, '0xabc');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the same evidence, asked as a precondition.
+//
+// The read above is deliberately not a gate. This is the one function that
+// turns it into one, and every case here exists because the natural way to
+// write it is wrong: `state !== 'authorized'` refuses every unread policy, and
+// checking both wallet scopes refuses a purchase over a rule about sending.
+// ---------------------------------------------------------------------------
+
+function eligibilityV1(input: {
+  paused?: 'paused' | 'not_paused' | 'not_established';
+  sender?: B20EligibilityVerdictV1;
+  receiver?: B20EligibilityVerdictV1;
+  executor?: B20EligibilityVerdictV1;
+}): B20TransferEligibilityV1 {
+  const scope = (
+    name: 'transfer_sender' | 'transfer_receiver' | 'transfer_executor',
+    verdict: B20EligibilityVerdictV1,
+  ) => ({
+    scope: name,
+    subject: B20_ELIGIBILITY_SCOPE_SUBJECT_V1[name],
+    account: name === 'transfer_executor' ? null : WALLET,
+    verdict,
+    policyId: '5',
+    policyType: 'blocklist' as const,
+    reason: null,
+  });
+  return {
+    tokenAddress: TOKEN,
+    wallet: WALLET,
+    executor: null,
+    blockTag: '0x1234',
+    blockNumber: '4660',
+    transferPause: { state: input.paused ?? 'not_paused', reason: null },
+    scopes: [
+      scope('transfer_sender', input.sender ?? 'authorized'),
+      scope('transfer_receiver', input.receiver ?? 'authorized'),
+      scope('transfer_executor', input.executor ?? 'not_established'),
+    ],
+  };
+}
+
+describe('the issuer transfer policy as a precondition', () => {
+  test('a measured denial of the governing scope refuses', () => {
+    const sell = b20TransferGateV1({
+      eligibility: eligibilityV1({ sender: 'denied' }),
+      direction: 'sell',
+    });
+    assert.equal(sell.state, 'denied');
+    assert.equal(sell.cause, 'wallet_not_authorized');
+    assert.equal(sell.governingScope, 'transfer_sender');
+    assert.equal(b20TransferGateRefusesV1(sell), true);
+    // The block travels with the refusal, so somebody can re-read it.
+    assert.equal(sell.blockTag, '0x1234');
+
+    const buy = b20TransferGateV1({
+      eligibility: eligibilityV1({ receiver: 'denied' }),
+      direction: 'buy',
+    });
+    assert.equal(buy.state, 'denied');
+    assert.equal(buy.governingScope, 'transfer_receiver');
+  });
+
+  test('only the scope that governs the direction can refuse it', () => {
+    // A wallet that may not SEND may still buy: nobody is sending. Refusing
+    // here would be refusing on a rule about a transfer that is not happening.
+    const buy = b20TransferGateV1({
+      eligibility: eligibilityV1({ sender: 'denied', receiver: 'authorized' }),
+      direction: 'buy',
+    });
+    assert.equal(buy.state, 'authorized');
+    assert.equal(b20TransferGateRefusesV1(buy), false);
+
+    const sell = b20TransferGateV1({
+      eligibility: eligibilityV1({ sender: 'authorized', receiver: 'denied' }),
+      direction: 'sell',
+    });
+    assert.equal(sell.state, 'authorized');
+  });
+
+  test('the executor scope can never refuse, because no executor is known here', () => {
+    for (const direction of ['buy', 'sell'] as const) {
+      const gate = b20TransferGateV1({
+        eligibility: eligibilityV1({ executor: 'denied' }),
+        direction,
+      });
+      assert.equal(gate.state, 'authorized');
+      assert.equal(b20TransferGateRefusesV1(gate), false);
+    }
+  });
+
+  test('a pause denies both directions, and names the pause rather than the wallet', () => {
+    for (const direction of ['buy', 'sell'] as const) {
+      const gate = b20TransferGateV1({
+        eligibility: eligibilityV1({ paused: 'paused' }),
+        direction,
+      });
+      assert.equal(gate.state, 'denied');
+      assert.equal(gate.cause, 'transfers_paused');
+      // The reader is not told this is about them.
+      assert.match(gate.detail, /not a statement about you/);
+    }
+  });
+
+  test('nothing that failed to answer is ever a denial', () => {
+    // Every shape of "we did not learn it": no read at all, a read whose pause
+    // flag never arrived, a scope the token would not name, and a scope that is
+    // simply absent from the answer.
+    const unreadPause = eligibilityV1({ paused: 'not_established', sender: 'authorized' });
+    const unreadScope = eligibilityV1({ sender: 'not_established' });
+    const missingScope: B20TransferEligibilityV1 = {
+      ...eligibilityV1({}),
+      scopes: [],
+    };
+    for (const eligibility of [null, undefined, unreadScope, missingScope]) {
+      const gate = b20TransferGateV1({ eligibility, direction: 'sell' });
+      assert.equal(gate.state, 'not_established');
+      assert.equal(gate.cause, null);
+      assert.equal(b20TransferGateRefusesV1(gate), false);
+    }
+    // An unread pause beside an authorized wallet is authorized, not denied:
+    // unread is not paused, in the direction that matters here.
+    assert.equal(b20TransferGateV1({ eligibility: unreadPause, direction: 'sell' }).state, 'authorized');
+  });
+
+  test('every state carries a sentence, and a refusal names the issuer as its author', () => {
+    const cases = [
+      b20TransferGateV1({ eligibility: null, direction: 'buy' }),
+      b20TransferGateV1({ eligibility: eligibilityV1({}), direction: 'buy' }),
+      b20TransferGateV1({ eligibility: eligibilityV1({ receiver: 'denied' }), direction: 'buy' }),
+    ];
+    for (const gate of cases) {
+      assert.ok(gate.detail.length > 40, 'a verdict with no explanation cannot be checked');
+      // Never a provider, an endpoint or a key — the standing rule for evidence.
+      assert.doesNotMatch(gate.detail, /https?:|rpc|api[_-]?key/i);
+    }
+    // A refusal must not read as Miorail's judgement about the person.
+    assert.match(cases[2]!.detail, /issuer/i);
+    assert.match(cases[2]!.detail, /Miorail does not set it/);
   });
 });

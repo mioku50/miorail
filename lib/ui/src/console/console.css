@@ -925,6 +925,14 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    the one sentence a reader needs — the measured evidence sits under the
    `.card-evidence` control below it. */
 .mio-console .cr-verdict { margin: 10px 0 0; color: var(--ink); font-size: 13px; font-weight: 600; line-height: 1.4; overflow-wrap: anywhere; }
+/* The tones a verdict already asks for. `.cr-v` had these and `.cr-verdict` did
+   not, so every toned verdict on the review page — the transfer-policy lines
+   among them — rendered in plain ink and silently dropped the one thing the
+   tone was carrying. Same variables, so the two cannot drift apart. */
+.mio-console .cr-verdict.good { color: var(--green); }
+.mio-console .cr-verdict.warn { color: var(--amber); }
+.mio-console .cr-verdict.bad { color: var(--red); }
+.mio-console .cr-verdict.off { color: var(--muted); }
 
 /* The consumer status chip and its facts.
 
@@ -1484,6 +1492,34 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   color: var(--br-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .mio-console .mr-inspect-link:hover { color: var(--blue); }
 .mio-console .mr-inspect-off { color: var(--faint); }
+
+/* Who issued this. Sits under the board, only when a Prepare action is on it —
+   the one place a reader could otherwise take Base's name for the issuer's.
+   Deliberately quiet: it is a standing fact, not a warning about this token. */
+.mio-console .mr-issuer-note { margin: 10px 0 0; font-size: 11.5px; line-height: 1.5;
+  color: var(--muted); border-top: 1px solid var(--line); padding-top: 8px; }
+
+/* The issuer's own verdict about this wallet, on the surface nearest the
+   wallet. A denial is the one state here that stops anything, so it is the one
+   state that gets weight. */
+.mio-console .mr-gate { display: flex; flex-direction: column; gap: 4px; margin: 10px 0 0; }
+.mio-console .mr-gate-detail { margin: 0; font-size: 11.5px; line-height: 1.5; color: var(--muted); }
+
+/* The second reading. Inside the routed-through block, because it is about
+   that exact pool and nothing else. Deliberately plain: a price with no size
+   attached must never look like the priced figures above it. */
+.mio-console .mr-spot { margin: 8px 0 0; padding-top: 8px; border-top: 1px dashed var(--line); }
+.mio-console .mr-spot-head { margin: 0; font-size: 12px; color: var(--ink); }
+.mio-console .mr-spot-raw { margin: 3px 0 0; font-size: 10.5px; color: var(--faint);
+  overflow-wrap: anywhere; }
+
+/* The clearance a person just minted. It is a credential, so it is shown in
+   full and wraps rather than truncating — a token clipped by a container is a
+   token that cannot be used. */
+.mio-console .mr-clearance { display: flex; flex-direction: column; gap: 6px; margin: 10px 0 0; }
+.mio-console .mr-clearance-token { display: block; padding: 8px 10px; border-radius: var(--r);
+  background: var(--rep-bg); border: 1px solid var(--rep-line); color: var(--ink);
+  font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
 
 /* A demoted representation: one line, the whole card one press away.
    Three full cards below the primary board filled half a screen to say

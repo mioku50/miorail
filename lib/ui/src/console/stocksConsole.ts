@@ -10,6 +10,7 @@ import {
   useRwaMarketRealityHistory,
   useRwaUnderlyings,
   useRwaUseAccess,
+  useAerodromePoolSpot,
 } from '@mioagent/api-client-react';
 import {
   stockExecutionGoalSentenceV1,
@@ -23,6 +24,8 @@ import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
+  partitionByIssuerRoleV1,
+  poolSpotViewV1,
   quoteAgeLabelV1,
   underlyingChoicesV1,
   stockScopeViewV1,
@@ -476,6 +479,45 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [reality.data, choices, selectedKey, nowIso, ladders],
   );
 
+  // -------------------------------------------------------------------------
+  // Phase 17.5 — a second, independent reading of the price.
+  //
+  // Every `full` observation on this corpus comes from one source. That is a
+  // structural weakness of the evidence, not a criticism of the source, and it
+  // has never had a cross-check. The router names the exact pool it went
+  // through; that pool's own `slot0()` is a price anybody can recompute from
+  // one word at the same block.
+  //
+  // ONE hook, for the representation the reader is actually acting on. It is a
+  // corroboration of a number the board already has — paying seven chain reads
+  // per card, on every size and direction press, to annotate cards nobody
+  // pressed would make the board slower at the question it exists for.
+  //
+  // The pool comes out of the VIEW rather than the wire: the view is already
+  // the thing that decides which venue references are named and checkable, and
+  // deriving the address twice is how two surfaces come to disagree about which
+  // pool a number went through.
+  // -------------------------------------------------------------------------
+  const spotToken = useMemo(
+    () =>
+      partitionByIssuerRoleV1(view?.representations ?? []).primary.find(
+        (row) => row.routedThrough,
+      ) ?? null,
+    [view],
+  );
+  const poolSpotQuery = useAerodromePoolSpot(
+    spotToken?.routedThrough?.venues[0]?.poolAddress ?? null,
+    { enabled: enabled && question.surface !== 'utility' },
+  );
+  const poolSpotByAddress = useMemo(() => {
+    if (!spotToken) return {};
+    const spot = poolSpotViewV1({
+      wire: (poolSpotQuery.data ?? null) as never,
+      tokenAddress: spotToken.tokenAddress,
+    });
+    return spot ? { [spotToken.tokenAddress]: spot } : {};
+  }, [poolSpotQuery.data, spotToken]);
+
   const historyView = useMemo(
     () =>
       question.historyPeriod === 'now'
@@ -660,6 +702,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     measuring: measure.isPending,
     useAccess: useAccessByAddress,
     useAccessLoading,
+    poolSpot: poolSpotByAddress,
     measurementNote,
     measurementError: measure.error
       ? stocksConsoleFailureCopyV1(measure.error, 'this measurement')

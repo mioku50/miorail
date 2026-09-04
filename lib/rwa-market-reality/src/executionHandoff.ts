@@ -278,3 +278,21 @@ export function stockExecutionSizeNoteV1(handoff: StockExecutionHandoffV1): stri
     ? `Spending exactly $${usd} of USDC. That amount is exact before anything is quoted.`
     : `You were looking at $${usd} worth. A sale needs a token amount, and the quote that converted one has expired — the route step establishes it fresh.`;
 }
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — who issued this, said where the action starts.
+//
+// This constant lives beside the handoff rather than in the console because
+// three surfaces now say it — the Stocks card, the review page, and the API's
+// own review response — and a sentence about who issued a security is exactly
+// the kind that drifts when it is written out three times.
+//
+// It states two facts and claims nothing beyond them. Base did not issue these
+// and neither did Miorail; the issuer restricts who may hold them. Stating a
+// restriction is NOT enforcing one, and the wording is careful not to let a
+// reader infer that pressing a button means somebody checked their eligibility.
+// What Miorail does enforce is narrower and is said in its own words: the
+// token's own onchain policy for that exact wallet, one step later.
+// ---------------------------------------------------------------------------
+export const STOCK_ISSUER_NOTICE_V1 =
+  'Tokenized stocks on Base are issued by Coinbase, not by Base and not by Miorail, and the issuer makes them available only to eligible users outside the United States. Miorail measures the market and states the token’s own rules; it does not decide eligibility, and nothing here is an offer or a recommendation.';

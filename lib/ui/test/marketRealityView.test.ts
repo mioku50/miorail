@@ -18,8 +18,10 @@ import {
   expiresInLabelV1,
   partitionByIssuerRoleV1,
   partitionChoicesBySupplyV1,
+  poolSpotViewV1,
   splitEstablishedFactsV1,
   stockScopeViewV1,
+  transferGateViewV1,
   utilityAnswerV1,
   useSectionsV1,
   sourceLabelV1,
@@ -3384,6 +3386,143 @@ describe('a scoped list says what it is a slice of', () => {
         totals: { underlyings: 13, boundRepresentations: 13, multiIssuerUnderlyings: 0 },
         observedAt: NOW,
       }),
+      null,
+    );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the issuer's verdict about this wallet, as one line.
+//
+// The gate fails open by construction. That makes the `not_established` case
+// the important one to render: a surface that shows nothing lets a reader
+// conclude somebody checked and found nothing wrong, when in fact nobody could
+// reach the registry.
+// ---------------------------------------------------------------------------
+describe('the issuer policy line says which of the three states it is in', () => {
+  test('a denial is the only state that carries weight, and the only one that blocks', () => {
+    for (const [direction, expected] of [
+      ['buy', /refuses this purchase/],
+      ['sell', /refuses this sale/],
+    ] as const) {
+      const gate = transferGateViewV1({ state: 'denied', direction, detail: 'because the issuer said so' });
+      assert.ok(gate);
+      assert.match(gate.label, expected);
+      assert.equal(gate.tone, 'bad');
+      assert.equal(gate.blocking, true);
+    }
+  });
+
+  test('an unestablished policy renders as itself, never as reassurance', () => {
+    const gate = transferGateViewV1({ state: 'not_established', direction: 'buy', detail: 'nobody answered' });
+    assert.ok(gate, 'silence here would read as a completed check');
+    assert.match(gate.label, /not established/i);
+    assert.equal(gate.tone, 'off');
+    assert.equal(gate.blocking, false);
+    // Never borrows the vocabulary of a pass.
+    assert.doesNotMatch(gate.label, /allow|authorized|clear/i);
+  });
+
+  test('an authorized wallet is stated plainly and still blocks nothing', () => {
+    const gate = transferGateViewV1({ state: 'authorized', direction: 'sell', detail: 'the registry answered' });
+    assert.ok(gate);
+    assert.equal(gate.tone, 'good');
+    assert.equal(gate.blocking, false);
+  });
+
+  test('a verdict with no sentence behind it renders nothing at all', () => {
+    // A gate with no explanation is a verdict the reader cannot check, and an
+    // empty box says neither "no restriction" nor "we did not look".
+    assert.equal(transferGateViewV1(null), null);
+    assert.equal(transferGateViewV1(undefined), null);
+    assert.equal(transferGateViewV1({ state: 'denied', direction: 'buy' }), null);
+    assert.equal(transferGateViewV1({ state: 'denied', direction: 'buy', detail: '' }), null);
+  });
+
+  test('an unknown state is treated as not established, never as a pass', () => {
+    // A server one version ahead, or a field this build does not know. The safe
+    // reading of an unrecognised verdict is that nothing was established.
+    const gate = transferGateViewV1({ state: 'something_new', direction: 'buy', detail: 'x'.repeat(50) });
+    assert.ok(gate);
+    assert.equal(gate.tone, 'off');
+    assert.equal(gate.blocking, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the second reading, rendered so it can never pass for the first.
+// ---------------------------------------------------------------------------
+describe('the pool’s own price is a corroboration, never a quote', () => {
+  // The real NVDAc/USDC pool, read live 2026-09-04.
+  const READ = {
+    outcome: 'read',
+    token0: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    token1: '0xb20000000000000000000078ee7ce2fe4908108c',
+    token0PerToken1: '231.878101242070949243',
+    token1PerToken0: '0.00431261078404313',
+    sqrtPriceX96: '52029507624582080717065656647',
+    blockTag: '0x2222',
+    note: 'This is the pool’s own marginal price. It is not a quote.',
+  };
+
+  test('the side is chosen by which slot the token occupies', () => {
+    // Not by which figure looks more like a dollar amount. NVDAc is token1
+    // here, so its price is the token0-per-token1 figure.
+    const nvdac = poolSpotViewV1({ wire: READ, tokenAddress: READ.token1 });
+    assert.ok(nvdac);
+    assert.match(nvdac.headline, /231\.878101242070949243 USDC per token/);
+
+    const usdc = poolSpotViewV1({ wire: READ, tokenAddress: READ.token0 });
+    assert.ok(usdc);
+    assert.match(usdc.headline, /0\.00431261078404313/);
+  });
+
+  test('a pool that does not hold this token renders nothing', () => {
+    // Printing either figure would attach a price to the wrong asset.
+    assert.equal(
+      poolSpotViewV1({ wire: READ, tokenAddress: '0x1111111111111111111111111111111111111111' }),
+      null,
+    );
+  });
+
+  test('the word quote never appears, and the disclaimer always does', () => {
+    const view = poolSpotViewV1({ wire: READ, tokenAddress: READ.token1 });
+    assert.ok(view);
+    assert.doesNotMatch(view.headline, /quote/i);
+    assert.match(view.headline, /marginal/i);
+    assert.ok(view.note.length > 0, 'a figure with no size attached needs this every time');
+    // Neutral, never the success tone: it reports that a reading exists, not
+    // that the price is good. The same rule the availability chip follows.
+    assert.equal(view.tone, 'neutral');
+    // And the raw word is carried, so the arithmetic can be redone.
+    assert.equal(view.sqrtPriceX96, READ.sqrtPriceX96);
+    assert.equal(view.blockTag, '0x2222');
+  });
+
+  test('an absent reading is stated as an absence, in its own words', () => {
+    const view = poolSpotViewV1({
+      wire: {
+        outcome: 'unavailable',
+        reason: 'not_aerodrome_cl',
+        detail: 'That address does not answer as an Aerodrome pool.',
+      },
+      tokenAddress: READ.token1,
+    });
+    assert.ok(view);
+    assert.equal(view.price, null);
+    // Never `bad`: a reading we could not take is an absence, not a defect in
+    // the market. That vocabulary belongs to what a trade costs.
+    assert.equal(view.tone, 'off');
+    assert.notEqual(view.tone, 'bad');
+    assert.match(view.note, /does not answer as an Aerodrome pool/);
+  });
+
+  test('nothing at all renders nothing at all', () => {
+    assert.equal(poolSpotViewV1({ wire: null, tokenAddress: READ.token1 }), null);
+    assert.equal(poolSpotViewV1({ wire: undefined, tokenAddress: READ.token1 }), null);
+    // An unavailable reading with no explanation is a verdict nobody can check.
+    assert.equal(
+      poolSpotViewV1({ wire: { outcome: 'unavailable', reason: 'unreadable' }, tokenAddress: READ.token1 }),
       null,
     );
   });

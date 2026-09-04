@@ -239,3 +239,119 @@ describe('the manual launch check stays a read', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — who issued this, said where the action starts.
+//
+// A measurement carries no implication that the reader may act on it. A primary
+// `Prepare buy` does, and the two facts a reader needs before pressing one are
+// checked here to be ON the page rather than in a document.
+// ---------------------------------------------------------------------------
+describe('Phase 17.5 — the issuer is named where the action starts', () => {
+  const screen = read('lib/ui/src/console/MarketRealityScreen.tsx');
+  const handoff = read('lib/rwa-market-reality/src/executionHandoff.ts');
+  const view = read('lib/ui/src/console/marketRealityView.ts');
+  const reviewPage = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+
+  test('the notice states the issuer and the issuer’s own restriction', () => {
+    const notice = /export const STOCK_ISSUER_NOTICE_V1 =\s*\n?\s*'([^']+)'/.exec(handoff)?.[1];
+    assert.ok(notice, 'the canonical notice must be one exported constant');
+    assert.match(notice, /issued by Coinbase/);
+    assert.match(notice, /not by Base and not by Miorail/);
+    assert.match(notice, /outside the United States/);
+    // And it must not claim Miorail checked anything.
+    assert.match(notice, /does not decide eligibility/);
+  });
+
+  test('it is written once and read everywhere', () => {
+    // Three surfaces show this sentence. A sentence about who issued a security
+    // must not be able to differ between them, so only ONE file may spell it
+    // out and the others import it.
+    const authors = [screen, view, reviewPage].filter((file) =>
+      file.includes('issued by Coinbase'),
+    );
+    assert.deepEqual(authors, [], 'the notice text belongs to executionHandoff.ts alone');
+    for (const file of [screen, reviewPage]) {
+      assert.match(file, /STOCK_ISSUER_NOTICE_V1/);
+    }
+  });
+
+  test('the board shows it only where a prepare action exists', () => {
+    // A read-only board has nothing to disclaim, and a notice that appears
+    // everywhere is read nowhere.
+    assert.match(
+      screen,
+      /actions\.onPrepare \? \(\s*\n?\s*<p className="mr-issuer-note">\{STOCK_ISSUER_NOTICE_V1\}<\/p>/,
+    );
+  });
+
+  test('the review page renders the gate as well as the evidence', () => {
+    // The scope lines say what the registry answered. The gate says what that
+    // means for the ONE action this draft is about — and it is rendered in
+    // every state, including the one where nothing was established.
+    assert.match(reviewPage, /transferGateViewV1/);
+    assert.match(reviewPage, /className="mr-gate"/);
+  });
+
+  test('every class it introduces exists in the stylesheet', () => {
+    const css = read('lib/ui/src/console/console.css');
+    for (const className of ['mr-issuer-note', 'mr-gate', 'mr-gate-detail']) {
+      assert.ok(css.includes(`.${className} `), `${className} must be styled`);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the chain an assistant starts now reaches a person's yes.
+//
+// The confirm endpoint existed from the start and nothing in the interface ever
+// called it, so a review could be prepared and read and never agreed to. The
+// button that closes that gap is the closest thing to a wallet on this page, so
+// what it may and may not do is pinned here rather than left to review.
+// ---------------------------------------------------------------------------
+describe('Phase 17.5 — confirming is a person saying yes, and nothing more', () => {
+  const page = read('artifacts/interface/src/features/rwa/StockActionReviewPage.tsx');
+  const rendered = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  test('the page can confirm, and says what confirming is not', () => {
+    assert.match(rendered, /Confirm these terms/);
+    assert.match(rendered, /signs nothing, submits nothing and opens no/);
+    // The promise sits on the control itself, where the finger is.
+    assert.match(rendered, /Nothing is signed, submitted, or broadcast here/);
+  });
+
+  test('it still cannot sign, submit or build anything', () => {
+    for (const forbidden of [
+      'wallet_sendCalls',
+      'eth_sendTransaction',
+      'signTransaction',
+      'personal_sign',
+      'signTypedData',
+      'calldata',
+      '/execute',
+      '/blueprint',
+    ]) {
+      assert.ok(!page.includes(forbidden), `the review page must not contain ${forbidden}`);
+    }
+  });
+
+  test('a refused wallet is told why instead of being offered a dead button', () => {
+    // The server refuses regardless. Offering a control that cannot work and
+    // then explaining the failure afterwards is strictly worse than saying so.
+    assert.match(rendered, /transferGate\?\.blocking \?/);
+    assert.match(rendered, /while the issuer’s policy refuses it/);
+  });
+
+  test('the issuer refusal is its own failure sentence, not a generic one', () => {
+    // A reader told "something went wrong" when the token's own registry
+    // refused them would go looking for a fault that does not exist.
+    assert.match(page, /issuer_transfer_policy_denied/);
+    assert.match(page, /Miorail does not set it and cannot lift it/);
+  });
+
+  test('the clearance is presented as a credential to hand back, not as a result', () => {
+    assert.match(rendered, /mr-clearance-token/);
+    assert.match(rendered, /It is not a\s*\n?\s*signature and not a transaction/);
+    assert.match(rendered, /expires shortly|Expires /);
+  });
+});

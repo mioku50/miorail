@@ -238,3 +238,232 @@ export function aerodromeClReaderFromReaderV1(reader: {
     },
   });
 }
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the adapter stops being useless without becoming a quoter.
+//
+// The finding above is settled and does not change: there is no verifiable
+// quoter for the factory that holds these pools. The deployer of factory #2
+// (0x2BbFA3f31b12D7a773B2058Ac74659C8db891624) shipped three identical
+// seven-contract Slipstream cores — pool implementation, factory, gauge
+// implementation, gauge factory, a voting/rewards factory, a token descriptor
+// and the position manager — and NEITHER a QuoterV2 nor a SwapRouter is among
+// them. Measured by scanning each candidate's bytecode for
+// `quoteExactInputSingle((address,address,uint256,int24,uint160))` and
+// `exactInputSingle(...)`: false on all of them. The published QuoterV2 binds
+// factory #1 through a different `poolImplementation()`, so its init-code hash
+// cannot address a factory #2 pool. Writing tick math by hand would produce a
+// number nobody can check, which this product exists not to do.
+//
+// So the adapter is upgraded into a CORROBORATOR instead.
+//
+// `slot0().sqrtPriceX96` is the pool's own current price, one word, one read.
+// Squaring it and shifting by 2^192 is arithmetic a reader can redo on paper
+// from the same block. It is the MARGINAL price at the current tick — the
+// price of an infinitesimal trade — and it is therefore NOT a quote:
+//
+//   * no size            it is the limit as size goes to zero
+//   * no slippage        a real trade walks ticks this read never looks at
+//   * no route           one pool, not a path
+//   * no executability   nothing here says the trade would succeed
+//
+// Every one of those absences is stated in the returned value rather than left
+// to a caller's discretion, because the whole value of this reading is that it
+// is a SECOND, INDEPENDENT one. Today every `full` observation on the entire
+// tokenized-stock corpus comes from a single source; a number computed from the
+// pool's own state next to a number an aggregator reported is the only
+// cross-check this surface has ever had. A disagreement between them is itself
+// a finding.
+// ---------------------------------------------------------------------------
+
+export const AERODROME_CL_SLOT0_SELECTOR_V1 = selectorV1('slot0()');
+export const AERODROME_CL_TOKEN0_SELECTOR_V1 = selectorV1('token0()');
+export const AERODROME_CL_TOKEN1_SELECTOR_V1 = selectorV1('token1()');
+export const AERODROME_CL_FACTORY_SELECTOR_V1 = selectorV1('factory()');
+export const AERODROME_CL_VOTER_SELECTOR_V1 = selectorV1('voter()');
+export const AERODROME_CL_DECIMALS_SELECTOR_V1 = selectorV1('decimals()');
+
+/**
+ * The pool's own price, and everything needed to recompute it.
+ *
+ * `sqrtPriceX96` is carried verbatim beside the derived figure on purpose: the
+ * derived one is ours, and the raw one is the pool's. A reader who distrusts
+ * our arithmetic can redo it, and a reader who distrusts our read can call
+ * `slot0()` themselves at the same block.
+ */
+export interface AerodromeClSpotV1 {
+  pool: `0x${string}`;
+  token0: `0x${string}`;
+  token1: `0x${string}`;
+  token0Decimals: number;
+  token1Decimals: number;
+  /** Decimal string. The pool's raw Q64.96 square-root price. */
+  sqrtPriceX96: string;
+  /** Price of ONE whole token0, denominated in whole token1. */
+  token1PerToken0: string;
+  /** Price of ONE whole token1, denominated in whole token0. */
+  token0PerToken1: string;
+  /** The block every field above was read at. Two reads at two blocks are two
+   * facts, and this states one. */
+  blockTag: string | null;
+}
+
+/** How many decimal places the derived prices carry. Enough to be checkable,
+ * not so many that it implies a precision the read does not have. */
+const SPOT_SCALE_V1 = 10n ** 18n;
+const SPOT_DIGITS_V1 = 18;
+
+function fixedV1(scaled: bigint): string {
+  const whole = scaled / SPOT_SCALE_V1;
+  const fraction = (scaled % SPOT_SCALE_V1).toString().padStart(SPOT_DIGITS_V1, '0');
+  // Trailing zeros carry no information and imply a precision that is not
+  // there. A value that is exactly whole keeps no decimal point at all.
+  const trimmed = fraction.replace(/0+$/, '');
+  return trimmed.length === 0 ? whole.toString() : `${whole}.${trimmed}`;
+}
+
+/**
+ * Marginal price from a square-root price, in exact integer arithmetic.
+ *
+ * price(token1 per token0) = (sqrtPriceX96 / 2^96)^2, then adjusted for the two
+ * tokens' decimals. Done with bigints throughout: a float here would make the
+ * last digits of a "checkable" number depend on IEEE rounding, and the entire
+ * point of publishing this figure is that somebody else can arrive at it.
+ *
+ * Returns null on anything that cannot produce a price — a zero square-root
+ * price means the pool has never been initialised, which is an absence, not a
+ * price of zero.
+ */
+export function aerodromeClSpotPriceV1(input: {
+  sqrtPriceX96: bigint;
+  token0Decimals: number;
+  token1Decimals: number;
+}): { token1PerToken0: string; token0PerToken1: string } | null {
+  const { sqrtPriceX96, token0Decimals, token1Decimals } = input;
+  if (sqrtPriceX96 <= 0n) return null;
+  if (!Number.isInteger(token0Decimals) || token0Decimals < 0 || token0Decimals > 36) return null;
+  if (!Number.isInteger(token1Decimals) || token1Decimals < 0 || token1Decimals > 36) return null;
+
+  const Q192 = 1n << 192n;
+  const numerator = sqrtPriceX96 * sqrtPriceX96 * 10n ** BigInt(token0Decimals) * SPOT_SCALE_V1;
+  const denominator = Q192 * 10n ** BigInt(token1Decimals);
+  const token1PerToken0Scaled = numerator / denominator;
+  if (token1PerToken0Scaled <= 0n) return null;
+  // Inverted from the same two integers rather than from the rounded decimal
+  // above: dividing a printed string would compound our own rounding into the
+  // second figure and make the pair internally inconsistent.
+  const token0PerToken1Scaled = (denominator * SPOT_SCALE_V1) / (sqrtPriceX96 * sqrtPriceX96 * 10n ** BigInt(token0Decimals));
+  if (token0PerToken1Scaled <= 0n) return null;
+  return {
+    token1PerToken0: fixedV1(token1PerToken0Scaled),
+    token0PerToken1: fixedV1(token0PerToken1Scaled),
+  };
+}
+
+/** The first 32-byte word of a return payload, as a bigint. Null on anything
+ * too short to be one. */
+function firstWordV1(data: string): bigint | null {
+  const hex = data.replace(/^0x/, '');
+  if (hex.length < 64 || !/^[0-9a-f]+$/i.test(hex.slice(0, 64))) return null;
+  return BigInt(`0x${hex.slice(0, 64)}`);
+}
+
+export type AerodromeClSpotResultV1 =
+  | { ok: true; spot: AerodromeClSpotV1 }
+  /**
+   * Why there is no reading. Kept apart because they are different findings:
+   * a pool that is not Aerodrome's is a statement about the address somebody
+   * gave us, and a read that did not complete is a statement about us.
+   */
+  | {
+      ok: false;
+      reason:
+        | 'not_aerodrome_cl'
+        | 'not_initialised'
+        /** The pool has a price and it is smaller than eighteen decimal places
+         * can show. Its own state is fine; OURS is what ran out. Kept apart
+         * from `not_initialised` because one is a fact about the pool and the
+         * other is a fact about this function. */
+        | 'below_published_precision'
+        | 'unreadable';
+    };
+
+/**
+ * Read one pool's own marginal price, having first proved it is Aerodrome's.
+ *
+ * The proof is two reads and is not optional: an arbitrary address answering
+ * `slot0()` in the right shape would otherwise be published as an Aerodrome
+ * price. `factory()` must be one of the two pinned CL factories, and that
+ * factory must name Aerodrome's own Voter — the same check `AERODROME_VOTER_V1`
+ * exists for, applied to the pool rather than to a scan.
+ */
+export async function readAerodromeClSpotV1(input: {
+  rpc: AerodromeClRpcV1;
+  pool: `0x${string}`;
+  blockTag?: string | null;
+}): Promise<AerodromeClSpotResultV1> {
+  const call = async (to: `0x${string}`, selector: string): Promise<string | null> => {
+    try {
+      return await input.rpc.call({ to, data: `0x${selector}` as `0x${string}` });
+    } catch {
+      return null;
+    }
+  };
+
+  const factoryRaw = await call(input.pool, AERODROME_CL_FACTORY_SELECTOR_V1);
+  const factory = factoryRaw === null ? null : addressFromWordV1(factoryRaw);
+  if (!factory) return { ok: false, reason: 'unreadable' };
+  if (!AERODROME_CL_FACTORIES_V1.includes(factory)) return { ok: false, reason: 'not_aerodrome_cl' };
+  const voterRaw = await call(factory, AERODROME_CL_VOTER_SELECTOR_V1);
+  const voter = voterRaw === null ? null : addressFromWordV1(voterRaw);
+  if (voter !== AERODROME_VOTER_V1) return { ok: false, reason: 'not_aerodrome_cl' };
+
+  const [slot0Raw, token0Raw, token1Raw] = await Promise.all([
+    call(input.pool, AERODROME_CL_SLOT0_SELECTOR_V1),
+    call(input.pool, AERODROME_CL_TOKEN0_SELECTOR_V1),
+    call(input.pool, AERODROME_CL_TOKEN1_SELECTOR_V1),
+  ]);
+  const token0 = token0Raw === null ? null : addressFromWordV1(token0Raw);
+  const token1 = token1Raw === null ? null : addressFromWordV1(token1Raw);
+  const sqrtPriceX96 = slot0Raw === null ? null : firstWordV1(slot0Raw);
+  if (!token0 || !token1 || sqrtPriceX96 === null) return { ok: false, reason: 'unreadable' };
+  // A pool that exists and has never been initialised is a real state, and it
+  // is not a price of zero.
+  if (sqrtPriceX96 === 0n) return { ok: false, reason: 'not_initialised' };
+
+  const [decimals0Raw, decimals1Raw] = await Promise.all([
+    call(token0, AERODROME_CL_DECIMALS_SELECTOR_V1),
+    call(token1, AERODROME_CL_DECIMALS_SELECTOR_V1),
+  ]);
+  const decimals0 = decimals0Raw === null ? null : firstWordV1(decimals0Raw);
+  const decimals1 = decimals1Raw === null ? null : firstWordV1(decimals1Raw);
+  // Decimals are READ, never assumed. A guessed 18 against a 6-decimal USDC is
+  // a price wrong by twelve orders of magnitude that still looks like a price.
+  if (decimals0 === null || decimals1 === null || decimals0 > 36n || decimals1 > 36n) {
+    return { ok: false, reason: 'unreadable' };
+  }
+
+  const price = aerodromeClSpotPriceV1({
+    sqrtPriceX96,
+    token0Decimals: Number(decimals0),
+    token1Decimals: Number(decimals1),
+  });
+  // sqrtPriceX96 was already proved non-zero above, so a null here is our own
+  // scale running out rather than an uninitialised pool.
+  if (!price) return { ok: false, reason: 'below_published_precision' };
+
+  return {
+    ok: true,
+    spot: {
+      pool: input.pool,
+      token0,
+      token1,
+      token0Decimals: Number(decimals0),
+      token1Decimals: Number(decimals1),
+      sqrtPriceX96: sqrtPriceX96.toString(),
+      token1PerToken0: price.token1PerToken0,
+      token0PerToken1: price.token0PerToken1,
+      blockTag: input.blockTag ?? null,
+    },
+  };
+}

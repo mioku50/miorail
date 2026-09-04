@@ -1019,6 +1019,15 @@ describe('GET the review a stock action draft points at', () => {
     );
     // A policy verdict never becomes an execution gate on this response.
     assert.equal(response.body.executableActionAvailable, false);
+    // Phase 17.5 — and the same read, asked as the question `confirm` asks. The
+    // draft is a SELL, so the sender scope governs and this wallet is denied.
+    // The reader learns that here, while reading, rather than at the button.
+    assert.equal(response.body.transferGate.state, 'denied');
+    assert.equal(response.body.transferGate.governingScope, 'transfer_sender');
+    assert.equal(response.body.transferGate.cause, 'wallet_not_authorized');
+    // Still a review, still not executable: publishing the verdict is not
+    // acting on it.
+    assert.equal(response.body.outcome, 'review');
   });
 
   test('a chain that could not be read leaves the policy question unanswered, not open', async () => {
@@ -1092,5 +1101,316 @@ describe('GET the review a stock action draft points at', () => {
     // is that the review stops instead of resolving to whatever it can find.
     assert.ok(['representation_not_reviewed', 'zero_supply_representation'].includes(response.body.reason));
     assert.equal(response.body.executableActionAvailable, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — the issuer's own rule, at the step that hands over authority.
+//
+// Confirm is where a clearance is minted: the authority to ask this server for
+// an unsigned request. Everything it checked before this was about the MARKET.
+// The token's own answer about whether this wallet may move it at all was read
+// one step earlier, rendered, and then not consulted by anything.
+//
+// Two properties, and the second is the one that is easy to get wrong: a
+// measured denial refuses, and NOTHING ELSE DOES. A throttled RPC telling a
+// holder they are blocked would be our failure wearing the issuer's name.
+// ---------------------------------------------------------------------------
+describe('POST confirming a stock action asks the issuer’s policy first', () => {
+  const CASE = (id: string) => STOCKS_BENCH_CORPUS_V1.find((row) => row.id === id)!.reality;
+  const MIXED = CASE('J');
+  const COINBASE = STOCKS_BENCH_ADDRESSES_V1.COINBASE_NVDA;
+  const NOW = new Date(STOCKS_BENCH_NOW_V1);
+
+  const scope = (name: string, verdict: string) => ({
+    scope: name,
+    subject: name === 'transfer_executor' ? 'executor' : 'wallet',
+    account: name === 'transfer_executor' ? null : WALLET,
+    verdict,
+    policyId: '5',
+    policyType: 'blocklist',
+    reason: null,
+  });
+  const eligibility = (over: {
+    paused?: string;
+    sender?: string;
+    receiver?: string;
+  } = {}) => ({
+    tokenAddress: COINBASE,
+    wallet: WALLET,
+    executor: null,
+    blockTag: '0x1',
+    blockNumber: '1',
+    transferPause: { state: over.paused ?? 'not_paused', reason: null },
+    scopes: [
+      scope('transfer_sender', over.sender ?? 'authorized'),
+      scope('transfer_receiver', over.receiver ?? 'authorized'),
+      scope('transfer_executor', 'not_established'),
+    ],
+  });
+
+  const draftFor = () => {
+    const representation = MIXED.representations.find((row) => row.tokenAddress === COINBASE)!;
+    return issueStockActionDraftV1({
+      tenantId: USER.id,
+      walletAddress: WALLET,
+      secret: 'confirm-test-secret',
+      now: NOW,
+      handoff: {
+        schemaVersion: 'stock-execution-handoff/v1',
+        intent: 'inspect_route',
+        chainId: 8453,
+        tokenAddress: COINBASE,
+        caip10: `eip155:8453:${COINBASE}`,
+        underlyingKey: MIXED.question.underlyingKey,
+        issuerId: representation.issuerId,
+        issuerInstrumentKey: representation.issuerInstrumentKey,
+        representationKind: representation.representationKind,
+        direction: MIXED.question.direction,
+        requestedCashAtomic: MIXED.question.requestedCashAtomic,
+        cashAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        destination: 'USDC',
+        routePolicyKey: representation.routePolicyKey!,
+        approvedSources: ['kyberswap'],
+        evidenceState: 'fresh_quote',
+        quoteExpiresAt: new Date(NOW.getTime() + 20_000).toISOString(),
+        sizeBasis: 'cash_equivalent_requires_replan',
+        createsApproval: false,
+        createsCalldata: false,
+        createsTransaction: false,
+        quoteIsExecutionEvidence: false,
+      } as never,
+    }).draft;
+  };
+
+  const confirm = () =>
+    request(app()).post(`/api/route-intelligence/rwa/stock-action/${draftFor()}/confirm`).send({});
+
+  beforeEach(() => {
+    process.env.SESSION_SECRET = 'confirm-test-secret';
+    rwaMarketRealityRuntime.migrationAvailable = async () => true;
+    rwaMarketRealityRuntime.now = () => NOW;
+    rwaMarketRealityRuntime.assemble = (async () => MIXED) as never;
+    rwaMarketRealityRuntime.eligibility = (async () => eligibility()) as never;
+  });
+
+  test('a wallet the issuer denies gets no clearance at all', async () => {
+    // The draft is a SELL, so the sender scope governs.
+    rwaMarketRealityRuntime.eligibility = (async () => eligibility({ sender: 'denied' })) as never;
+    const response = await confirm();
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'issuer_transfer_policy_denied');
+    assert.equal(response.body.confirmed, false);
+    assert.equal(response.body.executableActionAvailable, false);
+    // No clearance is minted, so nothing downstream can be asked for a request.
+    assert.equal(response.body.clearance, undefined);
+    // The refusal names the issuer as its author and carries the block it was
+    // read at, so a reader can check it rather than take our word.
+    assert.match(response.body.detail, /issuer/i);
+    assert.equal(response.body.transferGate.blockTag, '0x1');
+  });
+
+  test('a paused contract refuses everyone, and says the pause is not about them', async () => {
+    rwaMarketRealityRuntime.eligibility = (async () => eligibility({ paused: 'paused' })) as never;
+    const response = await confirm();
+    assert.equal(response.status, 409);
+    assert.equal(response.body.transferGate.cause, 'transfers_paused');
+    assert.match(response.body.detail, /not a statement about you/);
+  });
+
+  test('only the scope that governs this direction can refuse it', async () => {
+    // A SELL, and a wallet that may not RECEIVE. Nobody is receiving. Refusing
+    // here would refuse on a rule about a transfer that is not happening.
+    rwaMarketRealityRuntime.eligibility = (async () => eligibility({ receiver: 'denied' })) as never;
+    const response = await confirm();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.confirmed, true);
+    assert.equal(response.body.transferGate.state, 'authorized');
+  });
+
+  test('a policy that was never read never refuses', async () => {
+    // Every shape of "we did not learn it". Each one proceeds: this gate fails
+    // open by construction, because a false denial is indistinguishable from a
+    // real one and would be OUR failure wearing the issuer's name.
+    const unread = [
+      async () => null,
+      async () => {
+        throw new Error('socket hang up');
+      },
+      async () => eligibility({ sender: 'not_established' }),
+      async () => ({ ...eligibility(), scopes: [] }),
+    ];
+    for (const impl of unread) {
+      rwaMarketRealityRuntime.eligibility = impl as never;
+      const response = await confirm();
+      assert.equal(response.status, 200, 'an unanswered policy must never refuse');
+      assert.equal(response.body.confirmed, true);
+      assert.equal(response.body.transferGate.state, 'not_established');
+      assert.ok(typeof response.body.clearance === 'string' && response.body.clearance.length > 0);
+    }
+  });
+
+  test('a confirmation records the verdict, and stays non-executable', async () => {
+    const response = await confirm();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.confirmed, true);
+    assert.equal(response.body.transferGate.state, 'authorized');
+    assert.equal(response.body.transferGate.governingScope, 'transfer_sender');
+    // The notice travels with the confirmation: who issued this is not a UI
+    // decoration, it is part of what was confirmed.
+    assert.match(response.body.issuerNotice, /issued by Coinbase/);
+    // Every standing literal is untouched. Confirming is not approving.
+    assert.equal(response.body.approvalRequired, true);
+    assert.equal(response.body.executableActionAvailable, false);
+    assert.equal(response.body.createsApproval, false);
+    assert.equal(response.body.createsCalldata, false);
+    assert.equal(response.body.createsTransaction, false);
+  });
+
+  test('the policy is asked about this session’s wallet and no executor', async () => {
+    const asked: { wallet?: string; executor?: unknown; tokenAddress?: string }[] = [];
+    rwaMarketRealityRuntime.eligibility = (async (input: never) => {
+      asked.push(input);
+      return eligibility();
+    }) as never;
+    await confirm();
+    assert.equal(asked.length, 1);
+    assert.equal(asked[0]!.wallet, WALLET);
+    assert.equal(asked[0]!.tokenAddress, COINBASE);
+    // No router has been chosen at this step, so the executor scope is asked
+    // about nothing rather than about the wallet — and `not_established` cannot
+    // refuse. Passing the wallet here would answer a different question.
+    assert.equal(asked[0]!.executor, null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Phase 17.5 — a second, independent reading of the price.
+//
+// Every `full` observation on the tokenized-stock corpus comes from ONE source.
+// This route is the first thing that can disagree with it. What it must never
+// do is be mistaken for it.
+// ---------------------------------------------------------------------------
+describe('GET one Aerodrome pool’s own marginal price', () => {
+  const POOL = '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9';
+  const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+  const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
+  const FACTORY = '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef';
+  const VOTER = '0x16613524e02ad97edfef371bc883f2f5d6c480a5';
+  const SQRT = 52029507624582080717065656647n;
+  const word = (value: bigint | string) =>
+    `0x${(typeof value === 'bigint' ? value.toString(16) : value.replace(/^0x/, '')).padStart(64, '0')}`;
+
+  // Keyed by target and selector, so the fake answers what was asked rather
+  // than the order the implementation happens to ask in.
+  const answers = (over: Record<string, string | null> = {}): Record<string, string | null> => ({
+    [`${POOL}:c45a0155`]: word(FACTORY), // factory()
+    [`${FACTORY}:46c96aac`]: word(VOTER), // voter()
+    [`${POOL}:3850c7bd`]: word(SQRT) + '0'.repeat(64 * 5), // slot0()
+    [`${POOL}:0dfe1681`]: word(USDC), // token0()
+    [`${POOL}:d21220a7`]: word(NVDAC), // token1()
+    [`${USDC}:313ce567`]: word(6n),
+    [`${NVDAC}:313ce567`]: word(8n),
+    ...over,
+  });
+
+  const reader = (over: Record<string, string | null> = {}) => {
+    const table = answers(over);
+    return {
+      async readBlockAnchor() {
+        return { ok: true as const, value: { blockTag: '0x2222' } };
+      },
+      async call(input: { to: string; data: string }) {
+        const value = table[`${input.to.toLowerCase()}:${input.data.slice(2, 10)}`];
+        return value ? { ok: true as const, value } : { ok: false as const, reason: 'transport' };
+      },
+      async callMany() {
+        return [];
+      },
+    };
+  };
+
+  beforeEach(() => {
+    rwaMarketRealityRuntime.clSpotReader = (() => reader()) as never;
+  });
+
+  test('a signed-out reader is refused before any chain read', async () => {
+    let called = 0;
+    rwaMarketRealityRuntime.clSpotReader = (() => {
+      called += 1;
+      return reader();
+    }) as never;
+    const response = await request(app(null)).get(
+      `/api/route-intelligence/rwa/pool-spot/${POOL}`,
+    );
+    assert.equal(response.status, 401);
+    assert.equal(called, 0);
+  });
+
+  test('only an exact address is accepted', async () => {
+    const response = await request(app()).get('/api/route-intelligence/rwa/pool-spot/NVDA');
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'exact_address_required');
+  });
+
+  test('the reading matches what the pool itself says, and carries the raw word', async () => {
+    const response = await request(app()).get(`/api/route-intelligence/rwa/pool-spot/${POOL}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'read');
+    assert.equal(response.body.token0PerToken1, '231.878101242070949243');
+    assert.equal(response.body.sqrtPriceX96, SQRT.toString());
+    // One block for every field. Two reads at two blocks are two facts.
+    assert.equal(response.body.blockTag, '0x2222');
+    // The disclaimer is in the PAYLOAD, not only in a stylesheet: a consumer
+    // that renders the number without the sentence is rendering a quote.
+    assert.equal(response.body.isQuote, false);
+    assert.match(response.body.note, /not a quote/i);
+    assert.match(response.body.note, /no size/i);
+  });
+
+  test('the payload carries nothing that would make it executable', async () => {
+    const response = await request(app()).get(`/api/route-intelligence/rwa/pool-spot/${POOL}`);
+    for (const forbidden of [
+      'amountIn',
+      'amountOut',
+      'minimumOut',
+      'slippage',
+      'route',
+      'calls',
+      'calldata',
+      'expiresAt',
+    ]) {
+      assert.equal(response.body[forbidden], undefined, `a marginal price must not carry ${forbidden}`);
+    }
+  });
+
+  test('an address that is not an Aerodrome pool is a finding about the address', async () => {
+    const response = await request(app())
+      .get(`/api/route-intelligence/rwa/pool-spot/${POOL}`)
+      .then(async () => {
+        rwaMarketRealityRuntime.clSpotReader = (() =>
+          reader({ [`${POOL}:c45a0155`]: word('0x1234567890123456789012345678901234567890') })) as never;
+        return request(app()).get(`/api/route-intelligence/rwa/pool-spot/${POOL}`);
+      });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'unavailable');
+    assert.equal(response.body.reason, 'not_aerodrome_cl');
+    // No price is claimed for it, in either direction.
+    assert.equal(response.body.token0PerToken1, undefined);
+  });
+
+  test('a read that did not complete is stated as ours, not as the market’s', async () => {
+    rwaMarketRealityRuntime.clSpotReader = (() => reader({ [`${POOL}:3850c7bd`]: null })) as never;
+    const response = await request(app()).get(`/api/route-intelligence/rwa/pool-spot/${POOL}`);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.reason, 'unreadable');
+    assert.match(response.body.detail, /about Miorail’s read/);
+  });
+
+  test('a server with no chain says so rather than offering a reading', async () => {
+    rwaMarketRealityRuntime.clSpotReader = (() => null) as never;
+    const response = await request(app()).get(`/api/route-intelligence/rwa/pool-spot/${POOL}`);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'market_reality_chain_unavailable');
   });
 });

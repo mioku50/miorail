@@ -9,6 +9,7 @@ import {
 import {
   MARKET_REALITY_DIRECTIONS_V1,
   MARKET_REALITY_SIZES_V1,
+  STOCK_ISSUER_NOTICE_V1,
   partitionByIssuerRoleV1,
   partitionChoicesBySupplyV1,
   stockFiltersV1,
@@ -18,6 +19,7 @@ import {
   type StockScopeViewV1,
   type MarketRealityDirectionV1,
   type MarketRealityViewV1,
+  type PoolSpotViewV1,
   type RepresentationViewV1,
   type ToneV1,
   type UnderlyingChoiceViewV1,
@@ -218,6 +220,14 @@ export interface MarketRealityScreenModelV1 {
    * is opened; a missing entry is "not read", never "nothing there". */
   useAccess?: Readonly<Record<string, RepresentationUseAccessV1 | null>>;
   useAccessLoading?: boolean;
+  /**
+   * Phase 17.5 — one pool's own marginal price, by representation address.
+   *
+   * Corroboration, not measurement: it stands beside a number an aggregator
+   * already produced and is never the source of one. Absent for every
+   * representation whose quote named no pool, which is most of them.
+   */
+  poolSpot?: Readonly<Record<string, PoolSpotViewV1 | null>>;
   /** What the last measurement spent, in a reader's words. Null before one. */
   measurementNote: string | null;
   measurementError: string | null;
@@ -367,6 +377,7 @@ function RepresentationCard({
   useAccess,
   useAccessLoading,
   inspectRouteUnavailable,
+  poolSpot,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
@@ -380,6 +391,9 @@ function RepresentationCard({
   useAccess: RepresentationUseAccessV1 | null;
   useAccessLoading: boolean;
   inspectRouteUnavailable: string | null;
+  /** The routed-through pool's OWN price, when one was read. Null is ordinary:
+   * no venue named, no reading taken, or the read did not complete. */
+  poolSpot: PoolSpotViewV1 | null;
 }) {
   if (surface === 'utility') {
     const sections = useSectionsV1({
@@ -606,6 +620,26 @@ function RepresentationCard({
             ))}
           </div>
           <p className="lnote">{representation.routedThrough.note}</p>
+          {/* Phase 17.5 — the second reading, under the venue it belongs to.
+              Every `full` observation on this corpus comes from one source, so
+              until now there was nothing to check the number against. This is
+              the pool's own state, read and computed by us, standing beside the
+              number the aggregator reported.
+              It is deliberately NOT compact and NOT abbreviated: a price with
+              no size attached, sitting next to prices that have one, reads as a
+              quote unless it says otherwise every single time. */}
+          {poolSpot ? (
+            <div className="mr-spot">
+              <p className="mr-spot-head">{poolSpot.headline}</p>
+              {poolSpot.sqrtPriceX96 ? (
+                <p className="mr-spot-raw mono">
+                  slot0().sqrtPriceX96 = {poolSpot.sqrtPriceX96}
+                  {poolSpot.blockTag ? ` @ ${poolSpot.blockTag}` : ''}
+                </p>
+              ) : null}
+              <p className="lnote">{poolSpot.note}</p>
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -1344,12 +1378,26 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     measuring={model.measuring}
                     useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                     useAccessLoading={model.useAccessLoading === true}
+                    poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
                     inspectRouteUnavailable={
                       model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                     }
                   />
                 ))}
               </div>
+              {/* Phase 17.5 — said once, directly under the buttons that made
+                  it necessary.
+                  A measurement carries no implication that the reader may act
+                  on it. A primary `Prepare buy` does, so the two facts a reader
+                  needs before pressing one belong on this page and not in a
+                  document: Base did not issue this, and the issuer restricts
+                  who may hold it.
+                  Rendered ONLY when a prepare action is actually offered. A
+                  read-only board has nothing to disclaim, and a notice that
+                  appears everywhere is read nowhere. */}
+              {actions.onPrepare ? (
+                <p className="mr-issuer-note">{STOCK_ISSUER_NOTICE_V1}</p>
+              ) : null}
               {/* The same security through a different issuer's structure. This
                   is the comparison the product exists for — kept on the page,
                   and kept after the representation a reader can act on. */}
@@ -1380,6 +1428,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           measuring={model.measuring}
                           useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                           useAccessLoading={model.useAccessLoading === true}
+                          poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
                           inspectRouteUnavailable={
                             model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                           }
@@ -1415,6 +1464,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           measuring={model.measuring}
                           useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                           useAccessLoading={model.useAccessLoading === true}
+                          poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
                           inspectRouteUnavailable={
                             model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                           }
