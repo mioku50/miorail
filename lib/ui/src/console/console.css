@@ -1467,6 +1467,15 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   font-weight: 650; letter-spacing: .06em; text-transform: uppercase; }
 .mio-console .mr-quote-note { margin: 0 0 9px; }
 
+/* Priced by / routed through. Two claims, and a reader must not read the
+   second as the first, so the venues sit in their own block under the line
+   that names who produced the number. */
+.mio-console .mr-routed { margin: 8px 0 2px; padding: 8px 10px; border-radius: var(--r);
+  background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .mr-routed-head { margin: 0 0 6px; font-size: 12px; font-weight: 650; color: var(--ink); }
+.mio-console .mr-routed-venues { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.mio-console .mr-routed .lnote { margin: 0; }
+
 /* A demoted representation: one line, the whole card one press away.
    Three full cards below the primary board filled half a screen to say
    "not covered" three times. */

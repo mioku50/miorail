@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
 
+import { shortAddressV1 } from './B20WatchScreen';
 import { TokenIdentityV1 } from './TokenIdentity';
 import {
   StocksAskPanel,
@@ -574,6 +575,26 @@ function RepresentationCard({
       <p className="mr-attribution">
         <span className="mr-attribution-k">Says</span> {representation.attribution}
       </p>
+
+      {/* Where the money went, by exact pool. Base's product page says these
+          stocks have deep liquidity on Aerodrome; every priced card here was
+          already routing through an Aerodrome CL pool and reporting only the
+          aggregator that answered. The pool address is on screen so the venue
+          can be checked against the chain rather than believed. */}
+      {representation.routedThrough ? (
+        <div className="mr-routed">
+          <p className="mr-routed-head">{representation.routedThrough.headline}</p>
+          <div className="mr-routed-venues">
+            {representation.routedThrough.venues.map((venue) => (
+              <span className="pill cr-status" data-tone="neutral" key={venue.poolAddress}>
+                {venue.label}
+                <span className="mono"> {shortAddressV1(venue.poolAddress!)}</span>
+              </span>
+            ))}
+          </div>
+          <p className="lnote">{representation.routedThrough.note}</p>
+        </div>
+      ) : null}
 
       {/* The narrow strip. What is true only inside a twenty-second window
           belongs on one line, not in the body: for almost every reader it is

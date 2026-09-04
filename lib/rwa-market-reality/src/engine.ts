@@ -465,6 +465,10 @@ export async function assembleMarketRealityV2(
                   observedAt: sourceQuote.observedAt,
                   expiresAt: sourceQuote.expiresAt,
                   blockNumber: sourceQuote.blockNumber,
+                  // Already on the stored quote. The venue that held the money
+                  // was measured from the first run and reported as nothing but
+                  // the aggregator's name.
+                  liquiditySources: sourceQuote.liquiditySources ?? [],
                 }
               : null,
             simulationEvidence: {

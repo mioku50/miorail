@@ -67,6 +67,25 @@ export const MarketRealityQuoteEvidenceV1Schema = z
     observedAt: Timestamp,
     expiresAt: Timestamp,
     blockNumber: Digits.nullable(),
+    /**
+     * The exact pools the priced route went through, as the router named them.
+     *
+     * `eip155:8453/aerodrome-cl-3:0x853f5f1b92b16714fe6cda67caad0856b83c7ab9` —
+     * a chain, a protocol slug and a pool address, stored since the first
+     * cash-exit run and never once shown.
+     *
+     * Base's own product page says Coinbase tokenized stocks have deep
+     * liquidity on Aerodrome, and every priced card in this product was already
+     * routing through an Aerodrome concentrated-liquidity pool. Reporting the
+     * quote as "kyberswap" and stopping there named the aggregator that
+     * answered and hid the venue that held the money — so the product looked
+     * like it had missed the one venue it was actually measuring.
+     *
+     * This is attribution, never pricing. The number stays the router's; these
+     * are the addresses that number went through, and each one can be checked
+     * against the chain by reading the pool's own `factory()`.
+     */
+    liquiditySources: z.array(z.string().min(1).max(300)).max(100).default([]),
   })
   .strict();
 

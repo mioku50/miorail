@@ -139,6 +139,9 @@ export interface MarketRealityQuoteWireV1 {
   expiresAt: string;
   evidenceHash: string;
   blockNumber: string | null;
+  /** `eip155:8453/<protocol>:<pool address>`, as the router named the route.
+   * Optional because payloads assembled before Phase 17.3 carry none. */
+  liquiditySources?: readonly string[];
 }
 
 export interface MarketRealitySourceWireV1 {
@@ -412,6 +415,12 @@ export interface RepresentationViewV1 {
    * Null when no round trip was measured. An absence is never graded.
    */
   exitCost: ExitCostViewV1 | null;
+  /**
+   * Where the priced answer went through — the venue, not the aggregator.
+   *
+   * Null when nothing priced this representation or the router named no pool.
+   */
+  routedThrough: RoutedThroughViewV1 | null;
   /**
    * Whether this representation belongs in the primary comparison.
    *
@@ -2691,6 +2700,11 @@ export function marketRealityViewV1(input: {
             : exitCostViewV1(
                 input.ladders?.[representation.tokenAddress.toLowerCase()]?.exit ?? null,
               ),
+        // The venue, from the same quote the number came from. Only over an
+        // OPEN quote: a pool a route went through forty minutes ago is not
+        // where a trade would go now, and this line sits beside a live figure.
+        routedThrough:
+          outcome === 'priced' ? routedThroughV1(latestQuoteV1(representation)) : null,
         // Zero supply is the whole card. A representation with nothing
         // outstanding is not being compared against anything, so it leaves the
         // comparison area rather than sitting in it with five dashes.
@@ -2742,5 +2756,121 @@ export function marketRealityViewV1(input: {
     }),
     scope: MARKET_REALITY_SCOPE_V1,
     assembledAge: quoteAgeLabelV1(wire.assembledAt, input.now) ?? 'just now',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Which venue the money actually went through.
+//
+// Base's own product page says Coinbase tokenized stocks have deep liquidity on
+// Aerodrome. Every priced card in this product was already routing through an
+// Aerodrome concentrated-liquidity pool — the stored quote for NVDAc names
+// `eip155:8453/aerodrome-cl-3:0x853f5f1b92b16714fe6cda67caad0856b83c7ab9` — and
+// the card reported "kyberswap" and stopped, which names the aggregator that
+// answered and hides the venue that held the money.
+//
+// The distinction is worth stating precisely, because a reader has to be able
+// to check it:
+//
+//   PRICED BY   the aggregator that answered. Its number, its route, its
+//               responsibility.
+//   ROUTED VIA  the pools that number went through, by exact address. Each one
+//               can be verified against the chain: read the pool's own
+//               `factory()` and, for an Aerodrome pool, that factory's
+//               `voter()`.
+//
+// Nothing here is a price and nothing here is derived. Miorail's own Aerodrome
+// adapter still cannot quote a concentrated-liquidity pool — it walks the v2
+// Router, which for these pairs holds dust, and it refuses rather than answer
+// for a venue it cannot see. That refusal is unchanged and correct. This says
+// where the aggregator's number came from, which is a different claim.
+// ---------------------------------------------------------------------------
+
+/** Venue names, keyed on the protocol slug the router publishes.
+ *
+ * A CODE-OWNED registry, like every other provider label in this console: a
+ * prettified slug would let a router name a venue on our screen. An unknown
+ * slug keeps its raw form rather than being guessed at. */
+const VENUE_NAME_V1: Readonly<Record<string, string>> = {
+  'aerodrome-cl': 'Aerodrome CL',
+  'aerodrome-cl-1': 'Aerodrome CL',
+  'aerodrome-cl-2': 'Aerodrome CL',
+  'aerodrome-cl-3': 'Aerodrome CL',
+  aerodrome: 'Aerodrome',
+  'aerodrome-v1': 'Aerodrome',
+  'uniswap-v3': 'Uniswap v3',
+  'uniswap-v4': 'Uniswap v4',
+  uniswapv3: 'Uniswap v3',
+  slipstream: 'Aerodrome CL',
+  'alien-base-cl': 'AlienBase CL',
+  'pancake-v3': 'PancakeSwap v3',
+  tessera: 'Tessera',
+};
+
+export interface VenueViewV1 {
+  /** The venue as a person says it, or the raw slug when we do not know it. */
+  label: string;
+  /** The exact pool, or null when the router named a venue without one. */
+  poolAddress: string | null;
+  /** Whether this console has a reviewed name for the slug. An unknown venue is
+   * shown as it arrived, never dressed up. */
+  named: boolean;
+}
+
+/** One `eip155:8453/<protocol>:<pool>` reference, split. */
+export function parseVenueRefV1(ref: string): VenueViewV1 | null {
+  const match = /^eip155:(\d+)\/([^:]+):(.+)$/.exec(ref.trim());
+  if (!match) return null;
+  const protocol = (match[2] ?? '').toLowerCase();
+  const pool = (match[3] ?? '').toLowerCase();
+  const named = Object.prototype.hasOwnProperty.call(VENUE_NAME_V1, protocol);
+  return {
+    label: named ? VENUE_NAME_V1[protocol]! : protocol,
+    poolAddress: /^0x[0-9a-f]{40}$/.test(pool) ? pool : null,
+    named,
+  };
+}
+
+export interface RoutedThroughViewV1 {
+  /** "Priced by KyberSwap · routed through Aerodrome CL" */
+  headline: string;
+  /** One row per distinct venue, with the exact pool when the router gave one. */
+  venues: VenueViewV1[];
+  /** Said once, because the two claims are different and a reader must not read
+   * the second as the first. */
+  note: string;
+}
+
+/**
+ * Where a priced answer actually came from.
+ *
+ * Null when there is no open quote or the router named no pool — an absence,
+ * never an empty "routed through nothing" line. Deduplicated by pool, because
+ * a route that crosses the same pool twice crossed one venue.
+ */
+export function routedThroughV1(
+  quote: { source: string; liquiditySources?: readonly string[] } | null,
+): RoutedThroughViewV1 | null {
+  if (!quote) return null;
+  const seen = new Map<string, VenueViewV1>();
+  for (const ref of quote.liquiditySources ?? []) {
+    const venue = parseVenueRefV1(ref);
+    // A venue the router named without a pool address is not evidence of a
+    // venue: `elfomofi:unknown` says only that the router used something it did
+    // not identify, and printing it would put an unverifiable name on screen.
+    if (!venue || venue.poolAddress === null) continue;
+    if (!seen.has(venue.poolAddress)) seen.set(venue.poolAddress, venue);
+  }
+  const venues = [...seen.values()];
+  if (venues.length === 0) return null;
+  const source = VENUE_NAME_V1[quote.source.toLowerCase()] ?? quote.source;
+  const names = [...new Set(venues.map((venue) => venue.label))];
+  return {
+    headline: `Priced by ${source} · routed through ${names.join(', ')}`,
+    venues,
+    note:
+      names.length === 1
+        ? `${source} produced the number; the exact pool below is where it went through. Read the pool’s own factory() to check the venue.`
+        : `${source} produced the number; the exact pools below are where it was split. Read each pool’s own factory() to check the venue.`,
   };
 }

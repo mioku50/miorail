@@ -13,6 +13,7 @@ import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
   MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1,
   exitCostViewV1,
+  routedThroughV1,
   collapseLadderRungsV1,
   expiresInLabelV1,
   partitionByIssuerRoleV1,
@@ -2642,6 +2643,92 @@ describe('the chip and the strip cannot disagree about a quote', () => {
       ),
       'lapsed',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The venue that held the money, not the aggregator that answered.
+// ---------------------------------------------------------------------------
+
+describe('a priced card names the pool the number went through', () => {
+  // The exact production reference, from the stored NVDAc run on 2026-09-04.
+  const AERODROME_POOL = 'eip155:8453/aerodrome-cl-3:0x853f5f1b92b16714fe6cda67caad0856b83c7ab9';
+
+  test('Aerodrome is named, with the exact pool', () => {
+    // Base's product page says these stocks have deep liquidity on Aerodrome.
+    // Every priced card here was already routing through an Aerodrome CL pool
+    // and reporting only "kyberswap", so the product looked like it had missed
+    // the one venue it was in fact measuring.
+    const view = routedThroughV1({ source: 'kyberswap', liquiditySources: [AERODROME_POOL] });
+    assert.equal(view?.headline, 'Priced by kyberswap · routed through Aerodrome CL');
+    assert.deepEqual(view?.venues, [
+      {
+        label: 'Aerodrome CL',
+        poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+        named: true,
+      },
+    ]);
+  });
+
+  test('a venue with no pool address is not evidence of a venue', () => {
+    // The same production route carried `elfomofi:unknown`. A name the router
+    // could not attach to an address cannot be checked against the chain, and
+    // printing it would put an unverifiable venue on screen.
+    assert.equal(
+      routedThroughV1({ source: 'kyberswap', liquiditySources: ['eip155:8453/elfomofi:unknown'] }),
+      null,
+    );
+    const mixed = routedThroughV1({
+      source: 'kyberswap',
+      liquiditySources: [AERODROME_POOL, 'eip155:8453/elfomofi:unknown'],
+    });
+    assert.equal(mixed?.venues.length, 1);
+  });
+
+  test('an unknown protocol keeps its slug rather than being dressed up', () => {
+    // Same rule as every other provider label in this console: the registry is
+    // code-owned, so a router cannot name a venue on our screen.
+    const view = routedThroughV1({
+      source: 'kyberswap',
+      liquiditySources: ['eip155:8453/some-new-dex:0x1111111111111111111111111111111111111111'],
+    });
+    assert.equal(view?.venues[0]?.label, 'some-new-dex');
+    assert.equal(view?.venues[0]?.named, false);
+  });
+
+  test('one pool crossed twice is one venue', () => {
+    const view = routedThroughV1({
+      source: 'kyberswap',
+      liquiditySources: [AERODROME_POOL, AERODROME_POOL],
+    });
+    assert.equal(view?.venues.length, 1);
+  });
+
+  test('nothing priced, nothing routed', () => {
+    assert.equal(routedThroughV1(null), null);
+    assert.equal(routedThroughV1({ source: 'kyberswap', liquiditySources: [] }), null);
+    // An older payload carries no field at all rather than an empty one.
+    assert.equal(routedThroughV1({ source: 'kyberswap' }), null);
+  });
+
+  test('the line is a claim about attribution, never about price', () => {
+    const view = routedThroughV1({ source: 'kyberswap', liquiditySources: [AERODROME_POOL] });
+    // It must not read as "Aerodrome quoted this". Miorail's own Aerodrome
+    // adapter still cannot quote a concentrated-liquidity pool and refuses.
+    assert.doesNotMatch(view?.headline ?? '', /Aerodrome quoted|quoted by Aerodrome/i);
+    assert.match(view?.note ?? '', /factory\(\)/);
+  });
+
+  test('a lapsed card routes through nothing', () => {
+    // The venue line sits beside a live figure. A pool a route went through
+    // forty minutes ago is not where a trade would go now.
+    const late = marketRealityViewV1({
+      wire: openSellWireV1(),
+      choice: null,
+      now: '2026-08-26T20:35:41.000Z',
+    })!.representations[0]!;
+    assert.equal(late.outcome, 'lapsed');
+    assert.equal(late.routedThrough, null);
   });
 });
 
