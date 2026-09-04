@@ -448,6 +448,32 @@ export interface OfficialCashExitRepositoryV1 {
     tokenAddress: string;
     scope: 'public_ladder' | 'tenant_position';
     tenantId?: string | null;
+    /**
+     * Prefer the newest run that actually MEASURED this size.
+     *
+     * Without it, "the newest run" and "the newest run that answers this
+     * question" are the same read, and they are not the same thing. The public
+     * ladder measures four fixed sizes; an on-demand measurement at any other
+     * size writes its own run, and the next scheduled pass then becomes the
+     * newest run and does not contain that size. The rows are still in the
+     * database and the engine can no longer see them.
+     *
+     * Measured on production 2026-09-04: a $0.10 run at 20:06 and another at
+     * 20:08 were made unreachable by the four-size ladder pass at 20:17, and
+     * `miorail_prepare_stock_action` began refusing `route_policy_not_established`
+     * — a sentence about a policy that was in fact established, in a run this
+     * read had stopped looking at.
+     *
+     * It changes nothing for the four ladder sizes: the newest run always
+     * contains them, so it wins either way. And it is a preference, not a
+     * filter — when no run has ever measured the size, the newest run is still
+     * returned and the caller refuses exactly as before.
+     *
+     * Freshness is untouched. The run carries its own `completedAt` and every
+     * quote inside carries its own expiry, so an older run presents as an
+     * expired quote, never as a current one.
+     */
+    containingRequestedCashAtomic?: string | null;
   }): Promise<CashExitMeasurementRunV1 | null>;
 
   /**

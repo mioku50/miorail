@@ -71,6 +71,11 @@ export function createDatabaseOfficialCashExitRepository(
         throw new RouteStorageTenantError('tenant position read requires tenantId');
       if (input.scope === 'public_ladder' && tenantId !== null)
         throw new RouteStorageTenantError('public ladder is not tenant scoped');
+      // A PREFERENCE, not a filter: runs that measured the asked-for size sort
+      // first, and when none did the newest run is still returned so the caller
+      // refuses exactly as it did before. Null size sorts everything equally,
+      // which is the old behaviour to the letter.
+      const wanted = input.containingRequestedCashAtomic ?? null;
       const rows = await sql`
         SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
                destinations, started_at, completed_at, observations, market_reality_snapshots
@@ -79,7 +84,16 @@ export function createDatabaseOfficialCashExitRepository(
           AND token_address = ${input.tokenAddress.toLowerCase()}
           AND scope = ${input.scope}
           AND tenant_id IS NOT DISTINCT FROM ${tenantId}
-        ORDER BY completed_at DESC, run_id DESC
+        ORDER BY
+          CASE
+            WHEN ${wanted}::text IS NULL THEN 0
+            WHEN EXISTS (
+              SELECT 1 FROM jsonb_array_elements(observations) AS o
+              WHERE o->>'requestedCashAtomic' = ${wanted}::text
+            ) THEN 1
+            ELSE 0
+          END DESC,
+          completed_at DESC, run_id DESC
         LIMIT 1`;
       return rows[0] ? runFromRowV1(rows[0]) : null;
     },

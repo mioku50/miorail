@@ -23,7 +23,21 @@ export function createMemoryOfficialCashExitRepository(): OfficialCashExitReposi
       runs.push(run);
     },
     async latestCompletedRun(input) {
-      return orderedRunsV1(input)[0] ?? null;
+      const ordered = orderedRunsV1(input);
+      // The same preference Postgres applies, written the same way round: a
+      // run that measured the asked-for size wins, and when none did the newest
+      // run is still returned. The two implementations must agree — a fake that
+      // accepts what the database refuses (or vice versa) is how three shipped
+      // bugs got past the tests.
+      const wanted = input.containingRequestedCashAtomic ?? null;
+      if (wanted === null) return ordered[0] ?? null;
+      return (
+        ordered.find((run) =>
+          run.observations.some((row) => row.requestedCashAtomic === wanted),
+        ) ??
+        ordered[0] ??
+        null
+      );
     },
 
     async previousCompletedRun(input) {

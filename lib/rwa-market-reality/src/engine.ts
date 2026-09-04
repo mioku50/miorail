@@ -334,6 +334,14 @@ export async function assembleMarketRealityV2(
         chainId: 8453,
         tokenAddress: binding.tokenAddress,
         scope: 'public_ladder',
+        // "The newest run" and "the newest run that answers this question" are
+        // not the same read. The ladder measures four fixed sizes; a size asked
+        // for on demand lives in its own run, and the next scheduled pass then
+        // becomes the newest and does not contain it — so an established policy
+        // became `route_policy_not_established` nine minutes after it was
+        // measured. Freshness is unchanged: an older run's quotes still expire
+        // on their own clock and present as expired, never as current.
+        containingRequestedCashAtomic: question.requestedCashAtomic,
       });
       const rows = exactRowsV1(run, question.requestedCashAtomic, question.destination);
       const sourceStates = rows.map((row) => ({

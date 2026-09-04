@@ -32,7 +32,9 @@ function drizzleDir(): string {
     : resolve(cwd, 'lib', 'db', 'drizzle');
 }
 
-function runV1(): CashExitMeasurementRunV1 {
+function runV1(over: { size?: string; completedAt?: string } = {}): CashExitMeasurementRunV1 {
+  const size = over.size ?? '100000000';
+  const completedAt = over.completedAt ?? NOW;
   const runId = hashCashExitRunV1({
     schemaVersion: 'official-cash-exit-run/v1',
     chainId: 8453,
@@ -42,7 +44,7 @@ function runV1(): CashExitMeasurementRunV1 {
     approvedSources: ['kyberswap'],
     destinations: ['USDC'],
     startedAt: NOW,
-    completedAt: NOW,
+    completedAt,
     observations: [] as never,
   });
   const quote = (
@@ -82,7 +84,7 @@ function runV1(): CashExitMeasurementRunV1 {
     scope: 'public_ladder' as const,
     tenantId: null,
     sizeKind: 'cash_equivalent' as const,
-    requestedCashAtomic: '100000000',
+    requestedCashAtomic: size,
     requestedTokenAtomic: null,
     testedTokenAtomic: '40000000',
     destination: 'USDC' as const,
@@ -112,7 +114,7 @@ function runV1(): CashExitMeasurementRunV1 {
     approvedSources: ['kyberswap'],
     destinations: ['USDC'],
     startedAt: NOW,
-    completedAt: NOW,
+    completedAt,
     observations: [observation],
   });
 }
@@ -163,6 +165,50 @@ if (!throwaway) {
         }),
         run,
       );
+    });
+
+    test('the newest run is not always the run that answers the question', async () => {
+      // Measured on production 2026-09-04. The public ladder measures four
+      // fixed sizes; an on-demand measurement at any other size writes its own
+      // run, and the next scheduled pass then becomes the NEWEST run without
+      // containing that size. A $0.10 policy established at 20:06 and 20:08 was
+      // made unreachable by the four-size pass at 20:17, and the agent surface
+      // began refusing `route_policy_not_established` — a sentence about a
+      // policy that was in fact established, in a run this read had stopped
+      // looking at.
+      const executor: SqlTemplateExecutor = (strings, ...values) =>
+        (
+          sql as unknown as (
+            strings: TemplateStringsArray,
+            ...values: unknown[]
+          ) => Promise<Record<string, unknown>[]>
+        )(strings, ...values);
+      const repository = createDatabaseOfficialCashExitRepository(executor);
+      await sql!.unsafe('DELETE FROM official_cash_exit_runs');
+
+      const onDemand = runV1({ size: '100000', completedAt: '2026-09-04T17:08:00.000Z' });
+      const ladderPass = runV1({ size: '100000000', completedAt: '2026-09-04T17:17:00.000Z' });
+      await repository.recordCompletedRun(onDemand);
+      await repository.recordCompletedRun(ladderPass);
+
+      const ask = (containingRequestedCashAtomic: string | null) =>
+        repository.latestCompletedRun({
+          chainId: 8453,
+          tokenAddress: TOKEN,
+          scope: 'public_ladder',
+          containingRequestedCashAtomic,
+        });
+
+      // The size that only the older run measured comes back from that run.
+      assert.equal((await ask('100000'))?.runId, onDemand.runId);
+      // A ladder size still comes from the newest pass, so nothing regressed
+      // for the four sizes the schedule always covers.
+      assert.equal((await ask('100000000'))?.runId, ladderPass.runId);
+      // A size nobody ever measured falls back to the newest run, so the caller
+      // refuses exactly as it did before rather than reaching further back.
+      assert.equal((await ask('777'))?.runId, ladderPass.runId);
+      // And with no size asked for, the read is the old one to the letter.
+      assert.equal((await ask(null))?.runId, ladderPass.runId);
     });
 
     test('the series read returns the same total order the pair reads use', async () => {
