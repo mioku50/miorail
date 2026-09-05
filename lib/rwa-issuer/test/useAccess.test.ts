@@ -13,6 +13,7 @@ import {
   reviewedDefiSourcesV1,
 } from '../src/defiVenues.js';
 import {
+  RepresentationUseAccessV1Schema,
   assembleUseAccessV1,
   defiListingV1,
   establishedDefiUsesV1,
@@ -182,9 +183,23 @@ describe('what one exact address can do, read at one block', () => {
 });
 
 describe('DeFi listing is bounded by where we looked', () => {
-  const source = (over: Partial<Awaited<ReturnType<DefiListingSourceV1['lookup']>>>): DefiListingSourceV1 => ({
+  /** A clock that moves, so "one instant on four rows" cannot pass unnoticed. */
+  const steppingClock = (startMs = 1_700_000_000_000, stepMs = 1_000) => {
+    let t = startMs - stepMs;
+    return () => {
+      t += stepMs;
+      return new Date(t);
+    };
+  };
+
+  const source = (
+    over: Partial<Awaited<ReturnType<DefiListingSourceV1['lookup']>>> & {
+      kind?: DefiListingSourceV1['kind'];
+    },
+  ): DefiListingSourceV1 => ({
     venueId: String(over.venueId ?? 'v'),
     venueName: String(over.venueName ?? 'Venue'),
+    kind: over.kind ?? 'venue_catalogue',
     async lookup() {
       return {
         venueId: 'v',
@@ -200,44 +215,213 @@ describe('DeFi listing is bounded by where we looked', () => {
   });
 
   test('the venues checked are named, so a miss can never say "not in DeFi"', async () => {
-    const listing = await defiListingV1(NVDA, [
-      source({ venueId: 'moonwell', venueName: 'Moonwell' }),
-      source({ venueId: 'morpho', venueName: 'Morpho' }),
-    ]);
+    const listing = await defiListingV1(
+      NVDA,
+      [
+        source({ venueId: 'moonwell', venueName: 'Moonwell' }),
+        source({ venueId: 'morpho', venueName: 'Morpho' }),
+      ],
+      steppingClock(),
+    );
     assert.deepEqual(listing.checkedVenues, ['Moonwell', 'Morpho']);
     assert.ok(listing.venues.every((venue) => venue.state === 'not_listed'));
     assert.deepEqual(establishedDefiUsesV1(listing), []);
   });
 
   test('a venue that threw is unread for that venue only', async () => {
-    const listing = await defiListingV1(NVDA, [
-      {
-        venueId: 'moonwell',
-        venueName: 'Moonwell',
-        async lookup() {
-          throw new Error('moonwell timed out');
+    const listing = await defiListingV1(
+      NVDA,
+      [
+        {
+          venueId: 'moonwell',
+          venueName: 'Moonwell',
+          kind: 'venue_catalogue',
+          async lookup() {
+            throw new Error('moonwell timed out');
+          },
         },
-      },
-      source({ venueId: 'morpho', venueName: 'Morpho' }),
-    ]);
+        source({ venueId: 'morpho', venueName: 'Morpho' }),
+      ],
+      steppingClock(),
+    );
     assert.equal(listing.venues[0]?.state, 'unread');
     assert.match(listing.venues[0]?.reason ?? '', /timed out/);
     assert.equal(listing.venues[1]?.state, 'not_listed');
   });
 
   test('the three axes never merge into one another', async () => {
-    const listing = await defiListingV1(NVDA, [
-      source({
-        venueId: 'moonwell',
-        venueName: 'Moonwell',
-        state: 'listed',
-        uses: { lend: true, borrow: null, collateral: true },
-      }),
-    ]);
+    const listing = await defiListingV1(
+      NVDA,
+      [
+        source({
+          venueId: 'moonwell',
+          venueName: 'Moonwell',
+          state: 'listed',
+          uses: { lend: true, borrow: null, collateral: true },
+        }),
+      ],
+      steppingClock(),
+    );
     assert.deepEqual(establishedDefiUsesV1(listing), [
       { kind: 'lend', venues: ['Moonwell'] },
       { kind: 'collateral', venues: ['Moonwell'] },
     ]);
+  });
+});
+
+// The envelope used to document `blockTag` as "the one block every onchain
+// field below was read at", and `defi` is one of the fields below. It never
+// was: Aave and Compound are read at head on purpose, and Moonwell and Morpho
+// answer from catalogues with no block at all. The reads were right and the
+// sentence describing them was wrong, which is the half of this bug class that
+// survives a code review of the reads.
+describe('a venue row says where it came from, and the envelope stops claiming it', () => {
+  const clock = (startMs = 1_700_000_000_000, stepMs = 1_000) => {
+    let t = startMs - stepMs;
+    return () => {
+      t += stepMs;
+      return new Date(t);
+    };
+  };
+
+  const src = (
+    venueId: string,
+    kind: DefiListingSourceV1['kind'],
+    lookup?: DefiListingSourceV1['lookup'],
+  ): DefiListingSourceV1 => ({
+    venueId,
+    venueName: venueId,
+    kind,
+    lookup:
+      lookup ??
+      (async () => ({
+        venueId,
+        venueName: venueId,
+        state: 'not_listed' as const,
+        uses: { lend: null, borrow: null, collateral: null },
+        curated: null,
+        marketRef: null,
+        reason: null,
+      })),
+  });
+
+  test('each row carries the kind its own source declared', async () => {
+    const listing = await defiListingV1(
+      NVDA,
+      [src('moonwell', 'venue_catalogue'), src('aave_v3', 'chain_head')],
+      clock(),
+    );
+    assert.deepEqual(
+      listing.venues.map((venue) => [venue.venueId, venue.observed?.source]),
+      [
+        ['moonwell', 'venue_catalogue'],
+        ['aave_v3', 'chain_head'],
+      ],
+    );
+  });
+
+  test('a source cannot stamp its own provenance', async () => {
+    const listing = await defiListingV1(
+      NVDA,
+      [
+        src('aave_v3', 'chain_head', async () => ({
+          venueId: 'aave_v3',
+          venueName: 'aave_v3',
+          state: 'not_listed' as const,
+          uses: { lend: null, borrow: null, collateral: null },
+          curated: null,
+          marketRef: null,
+          reason: null,
+          // A source that tries to describe itself as something it is not.
+          observed: { source: 'venue_catalogue' as const, at: '1999-01-01T00:00:00.000Z' },
+        })),
+      ],
+      clock(),
+    );
+    assert.equal(listing.venues[0]?.observed?.source, 'chain_head');
+    assert.equal(listing.venues[0]?.observed?.at, '2023-11-14T22:13:20.000Z');
+  });
+
+  test('four readings get four stamps, not one instant copied across', async () => {
+    const listing = await defiListingV1(
+      NVDA,
+      [
+        src('moonwell', 'venue_catalogue'),
+        src('morpho', 'venue_catalogue'),
+        src('aave_v3', 'chain_head'),
+        src('compound_v3', 'chain_head'),
+      ],
+      clock(),
+    );
+    const stamps = listing.venues.map((venue) => venue.observed?.at);
+    assert.equal(stamps.length, 4);
+    assert.equal(new Set(stamps).size, 4);
+  });
+
+  test('a venue that threw still says when we tried', async () => {
+    const listing = await defiListingV1(
+      NVDA,
+      [
+        src('morpho', 'venue_catalogue', async () => {
+          throw new Error('morpho timed out');
+        }),
+      ],
+      clock(),
+    );
+    assert.equal(listing.venues[0]?.state, 'unread');
+    assert.deepEqual(listing.venues[0]?.observed, {
+      source: 'venue_catalogue',
+      at: '2023-11-14T22:13:20.000Z',
+    });
+  });
+
+  test('the anchored block is never a venue row’s provenance', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1(COINBASE_LIVE_V1),
+      now: NOW,
+      defiSources: [src('aave_v3', 'chain_head')],
+      clock: clock(),
+    });
+    // The anchor governs the pinned reads.
+    assert.equal(use.blockTag, '0x3060000');
+    assert.equal(use.transfers.state, 'read');
+    // And governs nothing in the venue row, which states its own axis instead.
+    const venue = use.defi.venues[0];
+    assert.equal(venue?.observed?.source, 'chain_head');
+    assert.notEqual(venue?.observed?.at, use.blockTag);
+    assert.ok(!JSON.stringify(venue).includes('0x3060000'));
+  });
+
+  test('a reply from a server that predates the field still parses', () => {
+    const wire = {
+      schemaVersion: 'representation-use-access/v1',
+      chainId: 8453,
+      tokenAddress: NVDA,
+      caip10: `eip155:8453:${NVDA}`,
+      blockTag: '0x3060000',
+      observedAt: NOW.toISOString(),
+      transfers: { state: 'read', transfersPaused: false },
+      transferPolicies: [],
+      bridge: { state: 'none_detected' },
+      defi: {
+        checkedVenues: ['Aave v3'],
+        venues: [
+          {
+            venueId: 'aave_v3',
+            venueName: 'Aave v3',
+            state: 'not_listed',
+            uses: { lend: null, borrow: null, collateral: null },
+            marketRef: null,
+            reason: null,
+          },
+        ],
+      },
+      wallet: null,
+    };
+    const parsed = RepresentationUseAccessV1Schema.parse(wire);
+    // Absent is "not stated". It is never "read at the block above".
+    assert.equal(parsed.defi.venues[0]?.observed, undefined);
   });
 });
 

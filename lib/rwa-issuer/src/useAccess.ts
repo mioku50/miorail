@@ -52,7 +52,31 @@ export const BRIDGE_ENDPOINT_IDS_V1: Readonly<Record<number, string>> = {
 
 export type DefiUseKindV1 = 'lend' | 'borrow' | 'collateral';
 
-export interface DefiVenueListingV1 {
+/**
+ * Where one venue row came from, and when.
+ *
+ * Deliberately NOT the envelope's `blockTag`. Aave and Compound answer from
+ * chain state read at head, unpinned and on purpose; Moonwell and Morpho answer
+ * from their own catalogues, which publish no block at all. Four rows are four
+ * readings, and the only axis all four share is the wall clock — so the wall
+ * clock is the axis this states, and no block appears here to be mistaken for
+ * the one above.
+ */
+export interface DefiVenueObservationV1 {
+  /** `chain_head` — an `eth_call` at head. `venue_catalogue` — the venue's own API. */
+  source: 'chain_head' | 'venue_catalogue';
+  /** When this reading was taken. */
+  at: string;
+}
+
+/**
+ * What a venue said about one address.
+ *
+ * Carries no provenance on purpose: a pure projection of a venue's answer
+ * cannot know when the answer was fetched, so it must not be able to claim it.
+ * Only the caller that took the reading stamps that — see `DefiVenueListingV1`.
+ */
+export interface DefiVenueReadingV1 {
   venueId: string;
   venueName: string;
   /** `listed` only when the venue itself names this exact address. */
@@ -81,6 +105,17 @@ export interface DefiVenueListingV1 {
   reason: string | null;
 }
 
+export interface DefiVenueListingV1 extends DefiVenueReadingV1 {
+  /**
+   * The reading's own provenance.
+   *
+   * Optional for the same reason `curated` is: a reply from a server that
+   * predates the field still parses. Absent means "not stated" — it never
+   * means this row was read at the envelope's block, because no row ever is.
+   */
+  observed?: DefiVenueObservationV1;
+}
+
 export interface DefiListingV1 {
   /** Named in the copy, so "not found" is always bounded by where we looked. */
   checkedVenues: string[];
@@ -92,8 +127,16 @@ export interface RepresentationUseAccessV1 {
   chainId: 8453;
   tokenAddress: string;
   caip10: string;
-  /** The one block every onchain field below was read at. Null when the anchor
-   * itself could not be taken, in which case nothing onchain was read. */
+  /**
+   * The one block the PINNED onchain fields below were read at — `transfers`,
+   * `transferPolicies`, `bridge` and `wallet`. Null when the anchor itself
+   * could not be taken, in which case none of those were read.
+   *
+   * It does not cover `defi`. Venue listings are read outside this anchor by
+   * design, and two of the four venues publish no block at all; each venue row
+   * carries its own `observed` instead. A reader that attributes this block to
+   * a venue row is reading a claim nothing here makes.
+   */
   blockTag: string | null;
   observedAt: string;
   transfers: TransferPauseStateV1;
@@ -176,6 +219,15 @@ export const RepresentationUseAccessV1Schema = z
               curated: z.boolean().nullable().optional(),
               marketRef: z.string().nullable(),
               reason: z.string().nullable(),
+              // Optional for the same reason `curated` is. Absent is "not
+              // stated", never "the block above".
+              observed: z
+                .object({
+                  source: z.enum(['chain_head', 'venue_catalogue']),
+                  at: z.string().min(1),
+                })
+                .strict()
+                .optional(),
             })
             .strict(),
         ),
@@ -249,7 +301,11 @@ async function roundV1(
 export interface DefiListingSourceV1 {
   venueId: string;
   venueName: string;
-  lookup(tokenAddress: string): Promise<DefiVenueListingV1>;
+  /** How this venue answers. Declared by the source because the source is the
+   * only thing that knows, and stamped by `defiListingV1` because the source
+   * has no clock. */
+  kind: DefiVenueObservationV1['source'];
+  lookup(tokenAddress: string): Promise<DefiVenueReadingV1>;
 }
 
 const SCOPES_V1: readonly B20TransferScopeV1[] = ['sender', 'receiver', 'executor'];
@@ -289,6 +345,14 @@ export async function assembleUseAccessV1(input: {
   /** The signed-in wallet, or null. Never taken from a request field. */
   walletAddress?: string | null;
   bridgeEndpointIds?: readonly number[];
+  /**
+   * Read per venue row, so each carries the moment its own answer arrived.
+   *
+   * Defaults to the single `now` above, which is right for a caller that has no
+   * clock and wrong for nobody: it only collapses four stamps that a real clock
+   * would spread by seconds.
+   */
+  clock?: () => Date;
 }): Promise<RepresentationUseAccessV1> {
   const tokenAddress = input.tokenAddress.toLowerCase();
   const observedAt = input.now.toISOString();
@@ -297,7 +361,11 @@ export async function assembleUseAccessV1(input: {
 
   // DeFi first and independently: it does not read the chain through this
   // reader, so a chain outage must not also erase the venue answer.
-  const defi = await defiListingV1(tokenAddress, input.defiSources ?? []);
+  const defi = await defiListingV1(
+    tokenAddress,
+    input.defiSources ?? [],
+    input.clock ?? (() => input.now),
+  );
 
   const anchor = await input.reader.readBlockAnchor();
   if (!anchor.ok) {
@@ -410,14 +478,30 @@ export async function assembleUseAccessV1(input: {
  * about the token, and `checkedVenues` exists so the absence copy can never say
  * more than "the venues Miorail checked".
  */
+/**
+ * The venues, each stamped with when its own answer came back.
+ *
+ * `clock` is read once per row, after that row's lookup returns, and not once
+ * for the whole set. The sources run in sequence and two of them are network
+ * fetches, so one instant stamped on four rows would be the same overclaim this
+ * function exists to stop, only smaller.
+ */
 export async function defiListingV1(
   tokenAddress: string,
   sources: readonly DefiListingSourceV1[],
+  clock: () => Date,
 ): Promise<DefiListingV1> {
   const venues: DefiVenueListingV1[] = [];
   for (const source of sources) {
+    const observed = (): DefiVenueObservationV1 => ({
+      source: source.kind,
+      at: clock().toISOString(),
+    });
     try {
-      venues.push(await source.lookup(tokenAddress.toLowerCase()));
+      const reading = await source.lookup(tokenAddress.toLowerCase());
+      // Stamped here and nowhere else: a source cannot hand up its own
+      // provenance, so it cannot hand up a wrong one.
+      venues.push({ ...reading, observed: observed() });
     } catch (error) {
       venues.push({
         venueId: source.venueId,
@@ -427,6 +511,8 @@ export async function defiListingV1(
         curated: null,
         marketRef: null,
         reason: error instanceof Error ? error.message.slice(0, 200) : 'venue read failed',
+        // A failed reading is still a reading: it says when we tried.
+        observed: observed(),
       });
     }
   }

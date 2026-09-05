@@ -2017,6 +2017,37 @@ function venueAnnouncementEvidenceV1(
   }));
 }
 
+/**
+ * Which axis each venue row was read on, said once, in evidence.
+ *
+ * The block under Transfer governs the pinned reads and nothing here: two
+ * venues answer from chain state at head and two from their own catalogues,
+ * which publish no block at all. A reader who is not told that attributes the
+ * block above to all four rows — which is exactly what a reviewer did.
+ */
+function venueReadProvenanceEvidenceV1(
+  venues: readonly RepresentationUseAccessV1['defi']['venues'][number][],
+): { label: string; value: string }[] {
+  const named = (source: 'chain_head' | 'venue_catalogue') =>
+    venues.filter((venue) => venue.observed?.source === source).map((venue) => venue.venueName);
+  const chain = named('chain_head');
+  const catalogue = named('venue_catalogue');
+  if (chain.length === 0 && catalogue.length === 0) return [];
+  const parts: string[] = [];
+  if (chain.length > 0) parts.push(`${chain.join(', ')} — read on chain at head`);
+  if (catalogue.length > 0) {
+    parts.push(
+      `${catalogue.join(', ')} — read from the venue’s own catalogue, which publishes no block`,
+    );
+  }
+  return [
+    {
+      label: 'How these were read',
+      value: `${parts.join('. ')}. Separate readings, each at its own moment; the block under Transfer covers none of them.`,
+    },
+  ];
+}
+
 function defiSectionV1(
   use: RepresentationUseAccessV1 | null,
   issuerId: IssuerIdV1 | null,
@@ -2049,6 +2080,7 @@ function defiSectionV1(
               : 'not listed',
       }),
     ),
+    ...venueReadProvenanceEvidenceV1(listing?.venues ?? []),
   ];
   // Did the venue put this asset on its list, or did somebody deploy a market
   // against it?

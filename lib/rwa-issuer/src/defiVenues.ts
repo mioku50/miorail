@@ -2,7 +2,7 @@ import { partnerFetch } from '@mioagent/security/httpAllowlist';
 
 import type {
   DefiListingSourceV1,
-  DefiVenueListingV1,
+  DefiVenueReadingV1,
   UseAccessReaderV1,
 } from './useAccess.js';
 
@@ -50,7 +50,7 @@ export const MORPHO_MARKETS_BY_ASSET_QUERY_V1 = `query MiorailMarketsByAsset($ch
 
 const ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
 
-function notListedV1(venueId: string, venueName: string): DefiVenueListingV1 {
+function notListedV1(venueId: string, venueName: string): DefiVenueReadingV1 {
   return {
     venueId,
     venueName,
@@ -62,7 +62,7 @@ function notListedV1(venueId: string, venueName: string): DefiVenueListingV1 {
   };
 }
 
-function unreadV1(venueId: string, venueName: string, reason: string): DefiVenueListingV1 {
+function unreadV1(venueId: string, venueName: string, reason: string): DefiVenueReadingV1 {
   return {
     venueId,
     venueName,
@@ -91,7 +91,7 @@ function positiveNumberV1(value: unknown): number | null {
 export function moonwellListingFromMarketsV1(
   tokenAddress: string,
   markets: readonly Record<string, unknown>[],
-): DefiVenueListingV1 {
+): DefiVenueReadingV1 {
   const target = tokenAddress.toLowerCase();
   const market = markets.find(
     (row) => String(row.assetAddress ?? '').toLowerCase() === target,
@@ -127,7 +127,7 @@ export function moonwellListingFromMarketsV1(
 export function morphoListingFromMarketsV1(
   asCollateral: readonly Record<string, unknown>[],
   asLoan: readonly Record<string, unknown>[],
-): DefiVenueListingV1 {
+): DefiVenueReadingV1 {
   if (asCollateral.length === 0 && asLoan.length === 0) {
     return notListedV1('morpho', 'Morpho');
   }
@@ -162,6 +162,7 @@ export function moonwellDefiSourceV1(options?: { endpoint?: string }): DefiListi
   return {
     venueId: 'moonwell',
     venueName: 'Moonwell',
+    kind: 'venue_catalogue',
     async lookup(tokenAddress) {
       if (!ADDRESS_V1.test(tokenAddress)) return unreadV1('moonwell', 'Moonwell', 'bad address');
       const response = await partnerFetch(options?.endpoint ?? MOONWELL_MARKETS_URL_V1, {
@@ -190,6 +191,7 @@ export function morphoDefiSourceV1(options?: { endpoint?: string }): DefiListing
   return {
     venueId: 'morpho',
     venueName: 'Morpho',
+    kind: 'venue_catalogue',
     async lookup(tokenAddress) {
       if (!ADDRESS_V1.test(tokenAddress)) return unreadV1('morpho', 'Morpho', 'bad address');
       const response = await partnerFetch(options?.endpoint ?? MORPHO_GRAPHQL_URL_V1, {
@@ -254,6 +256,11 @@ export function morphoDefiSourceV1(options?: { endpoint?: string }): DefiListing
  * two HTTP venues beside these answer from their own live catalogue with no
  * block at all. Pinning these two to a block the others cannot honour would
  * make the four rows look like one measurement when they are four readings.
+ *
+ * That stays true, and it is why every row carries its own
+ * `DefiVenueObservationV1`: the envelope's `blockTag` governs the pinned reads
+ * and nothing here. The reading was right; for a while the envelope described
+ * it wrongly, which is the harder half of this class of bug to see.
  */
 const VENUE_BLOCK_TAG_V1 = 'latest';
 
@@ -316,7 +323,7 @@ export function addressArrayFromReturnV1(raw: string): string[] | null {
 export function aaveListingFromReservesV1(
   tokenAddress: string,
   reserves: readonly string[] | null,
-): DefiVenueListingV1 {
+): DefiVenueReadingV1 {
   if (reserves === null) {
     return unreadV1('aave_v3', 'Aave v3', 'aave returned an unrecognised reserve list');
   }
@@ -338,6 +345,7 @@ export function aaveDefiSourceV1(reader: UseAccessReaderV1): DefiListingSourceV1
   return {
     venueId: 'aave_v3',
     venueName: 'Aave v3',
+    kind: 'chain_head',
     async lookup(tokenAddress) {
       if (!ADDRESS_V1.test(tokenAddress)) return unreadV1('aave_v3', 'Aave v3', 'bad address');
       const answer = await reader.call({ to: AAVE_V3_POOL_BASE_V1, data: AAVE_RESERVES_SELECTOR_V1, blockTag: VENUE_BLOCK_TAG_V1 });
@@ -357,7 +365,7 @@ export interface CometReadV1 {
 export function compoundListingFromCometsV1(
   tokenAddress: string,
   comets: readonly CometReadV1[],
-): DefiVenueListingV1 {
+): DefiVenueReadingV1 {
   const address = tokenAddress.toLowerCase();
   // An absent match is conclusive only when every reviewed market answered.
   if (comets.length === 0 || comets.every((row) => row.baseToken === null && row.collaterals === null)) {
@@ -394,6 +402,7 @@ export function compoundDefiSourceV1(reader: UseAccessReaderV1): DefiListingSour
   return {
     venueId: 'compound_v3',
     venueName: 'Compound v3',
+    kind: 'chain_head',
     async lookup(tokenAddress) {
       if (!ADDRESS_V1.test(tokenAddress)) {
         return unreadV1('compound_v3', 'Compound v3', 'bad address');

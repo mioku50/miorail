@@ -572,6 +572,10 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
       tokenAddress,
       reader: rwaMarketRealityRuntime.useAccessReader(),
       now: rwaMarketRealityRuntime.now(),
+      // Read per venue row. The four venue reads are sequential and two of them
+      // are network fetches, so one instant across all four would be a smaller
+      // version of the overclaim this provenance exists to end.
+      clock: rwaMarketRealityRuntime.now,
       defiSources: rwaMarketRealityRuntime.defiSources(),
       walletAddress: user.address,
     });

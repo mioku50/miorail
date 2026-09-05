@@ -3272,6 +3272,73 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.doesNotMatch(JSON.stringify(defi.facts), /Borrow/);
   });
 
+  // The envelope's `blockTag` never covered these rows: two venues answer from
+  // chain state at head, two from catalogues with no block at all. A reviewer
+  // read the block as covering all four, because nothing said otherwise.
+  test('the venue rows name their own axis, and disown the block above', () => {
+    const defi = useSectionsV1({
+      ...base,
+      use: use({
+        blockTag: '0x3060000',
+        defi: {
+          checkedVenues: ['Moonwell', 'Aave v3'],
+          venues: [
+            {
+              venueId: 'moonwell',
+              venueName: 'Moonwell',
+              state: 'not_listed',
+              uses: { lend: null, borrow: null, collateral: null },
+              marketRef: null,
+              reason: null,
+              observed: { source: 'venue_catalogue', at: '2026-09-05T09:00:01.000Z' },
+            },
+            {
+              venueId: 'aave_v3',
+              venueName: 'Aave v3',
+              state: 'not_listed',
+              uses: { lend: null, borrow: null, collateral: null },
+              marketRef: null,
+              reason: null,
+              observed: { source: 'chain_head', at: '2026-09-05T09:00:02.000Z' },
+            },
+          ],
+        },
+      }),
+    })[3]!;
+    const row = defi.evidence.find((entry) => entry.label === 'How these were read');
+    assert.ok(row, 'the DeFi section states how its rows were read');
+    assert.match(row!.value, /Aave v3 — read on chain at head/);
+    assert.match(row!.value, /Moonwell — read from the venue’s own catalogue/);
+    assert.match(row!.value, /the block under Transfer covers none of them/);
+    // And the block itself never appears on this section at all.
+    assert.doesNotMatch(JSON.stringify(defi), /0x3060000/);
+  });
+
+  test('a reply with no provenance states none, rather than guessing one', () => {
+    const defi = useSectionsV1({
+      ...base,
+      use: use({
+        defi: {
+          checkedVenues: ['Moonwell'],
+          venues: [
+            {
+              venueId: 'moonwell',
+              venueName: 'Moonwell',
+              state: 'not_listed',
+              uses: { lend: null, borrow: null, collateral: null },
+              marketRef: null,
+              reason: null,
+            },
+          ],
+        },
+      }),
+    })[3]!;
+    assert.equal(
+      defi.evidence.find((entry) => entry.label === 'How these were read'),
+      undefined,
+    );
+  });
+
   // -------------------------------------------------------------------------
   // Base announced, on 24 Aug 2026, that these stocks are collateral on Aave.
   // Aave's reserve list on Base holds fifteen reserves and not one B20 address.
