@@ -412,6 +412,22 @@ USDC → ETH → Route Proof reconciled
 ETH  → USDC → Route Proof reconciled
 ```
 
+The tokenized-stock path has also settled on mainnet, owner-verified, through the
+surface it was designed for — an assistant prepared it and could not sign it:
+
+```text
+ChatGPT → private MCP → prepare → the owner's Base Account signed it
+tx    0xfa730a78719cad081ffe2b0690498858eef4efa5a61a74f05ff0166ff3e7f6fb
+block 50,884,282
+in    100,000 atoms USDC  ($0.100000)
+out    43,417 atoms NVDAc (expected 43,435, minimum 43,217)
+```
+
+One buy, of the primary representation, at ten cents. What it establishes is the
+chain of custody over the request — the assistant never held a key, never wrote
+calldata, and never broadcast — not that every direction or every representation
+has been exercised.
+
 Production acceptance also includes canonical Base MCP reads/actions and real x402 intelligence purchases. Provider-specific proof promotion remains stricter than “the shared path worked once”; the acceptance ledger keeps those claims separate.
 
 See [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md) for the detailed rollout ledger.
@@ -492,7 +508,7 @@ Miorail is functional but not broadly production-hardened. Important open work i
 - no reference price exists for Backed or Dinari, because neither publishes a feed a contract can read — the adapters are deliberately unwritten rather than written to return nothing;
 - the Investigate dossier is only partly polymorphic: a non-B20 contract is told so plainly, but Backed's rebasing model and Dinari's factory predicate do not yet have evidence modules of their own;
 - `compare_market_reality` reads stored evidence only, so a connected assistant cannot force a fresh measurement the way the web surface can;
-- no owner-verified tokenized-stock trade has completed end to end; the prepare and confirm steps are built and gated, and nothing behind them has been settled on mainnet;
+- the tokenized-stock path has settled once, as a buy of the primary representation at ten cents; selling through the assistant surface still refuses by design, because it needs an exact token amount nobody has established, so Routes AI remains the only way out;
 - the Aerodrome corroborator reads one pool for the primary representation only, and there is still no verifiable CL quoter to price against — the marginal price is a cross-check, never a route;
 - the confirmed clearance is carried back to the assistant by the person, because no tool exists for an assistant to poll for one;
 - expand Fundamental Intelligence beyond the operator-registered claim corpus and design a safe self-serve project-claim flow;
