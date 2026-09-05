@@ -381,7 +381,7 @@ export function baseMcpPluginDriftCopyV1(
   if (!drift) return `Showing the plugins Miorail has on file.${read}`;
 
   if (drift.status === 'in_sync') {
-    return `Base publishes ${drift.publishedCount ?? drift.knownCount} plugins and Miorail has all of them.${read}`;
+    return `All ${drift.publishedCount ?? drift.knownCount} published plugin names are present. This check does not compare specification contents.${read}`;
   }
   if (drift.status === 'drifted') {
     const parts: string[] = [];
@@ -407,7 +407,7 @@ const DRIFT_TONE_V1: Readonly<Record<BaseMcpPluginDriftRowV1['status'], string>>
 };
 
 const DRIFT_LABEL_V1: Readonly<Record<BaseMcpPluginDriftRowV1['status'], string>> = {
-  in_sync: 'in sync with Base',
+  in_sync: 'plugin names match Base',
   drifted: 'behind Base',
   unchecked: 'not checked',
 };

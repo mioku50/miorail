@@ -506,6 +506,12 @@ const PORTFOLIO_PAYLOAD_V1 = JSON.stringify({
 });
 
 describe('a balance question never leaves the address to the model', () => {
+  test('the Extensions starter asks get_portfolio deterministically', () => {
+    assert.deepEqual(
+      deterministicBasePortfolioReadV1('What does my Base Account hold?', PORTFOLIO_INVENTORY_V1),
+      { tool: 'get_portfolio', args: { chain: 'base' }, symbol: null },
+    );
+  });
   test('the observed failure: "what is my USDC balance" now reaches get_portfolio', () => {
     // Measured in production. Left to model tool choice, this question produced
     // a `chain_rpc_request` to 0x833589fCD6eDb6E08f4c7C32D4f71b54bd9452d8 — the

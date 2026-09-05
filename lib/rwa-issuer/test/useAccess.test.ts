@@ -330,8 +330,9 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
     const reserves = [USDC_V1, WETH_V1];
     const control = aaveListingFromReservesV1(USDC_V1, reserves);
     assert.equal(control.state, 'listed');
-    assert.equal(control.uses.lend, true);
-    assert.equal(control.uses.borrow, true);
+    assert.equal(control.uses.lend, null);
+    assert.equal(control.uses.borrow, null);
+    assert.match(control.reason!, /settings and limits not measured/);
     // Whether a reserve may also be POSTED as collateral is per-reserve
     // configuration this read does not fetch. Null is "the venue did not say".
     assert.equal(control.uses.collateral, null);
@@ -367,7 +368,7 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
     assert.equal(compoundListingFromCometsV1(NVDA, comets).state, 'not_listed');
   });
 
-  test('every Compound market unread is an unread venue; one unread among many is not', () => {
+  test('Compound cannot establish absence while any reviewed market is unread', () => {
     const allDark = compoundListingFromCometsV1(NVDA, [
       { marketId: 'cUSDCv3', baseToken: null, collaterals: null },
     ]);
@@ -376,8 +377,11 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
       { marketId: 'cUSDCv3', baseToken: USDC_V1, collaterals: [WETH_V1] },
       { marketId: 'cWETHv3', baseToken: null, collaterals: null },
     ]);
-    // The token was genuinely absent from the market that answered.
-    assert.equal(partial.state, 'not_listed');
+    assert.equal(partial.state, 'unread');
+    const positive = compoundListingFromCometsV1(USDC_V1, [
+      { marketId: 'cUSDCv3', baseToken: USDC_V1, collaterals: null },
+    ]);
+    assert.equal(positive.state, 'listed', 'a partial failure must preserve a positive membership read');
   });
 
   test('the Aave source asks the Pool and nothing else', async () => {

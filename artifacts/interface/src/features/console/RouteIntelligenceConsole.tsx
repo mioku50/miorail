@@ -907,9 +907,8 @@ export function RouteIntelligenceConsole() {
     label: paidStateView.label,
     moneyAtRisk: paidStateView.moneyAtRisk,
     needsPermission: paidStateView.action === 'create_permission',
-    // No wallet flow for granting a Base Account spend permission exists yet,
-    // so the strip says so rather than offering a button that cannot grant one.
-    permissionFlowAvailable: false,
+    // Settings owns the implemented grant flow; the strip links there.
+    permissionFlowAvailable: true,
     settingsAvailable: true,
   });
 

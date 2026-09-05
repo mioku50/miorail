@@ -14,7 +14,7 @@
  *   pnpm rwa:ingest-official            # check and record
  *   pnpm rwa:ingest-official --dry      # check and print, write nothing
  */
-import { client, closeDb } from '@mioagent/db';
+import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   OFFICIAL_SOURCES_V1,
   fetchOfficialSourceV1,
@@ -47,7 +47,7 @@ const PARSERS_V1: Record<OfficialSourceKeyV1, (body: string) => OfficialParseRes
 async function main(): Promise<void> {
   const dry = process.argv.includes('--dry');
   reportLoadedEnvFileV1(loadRootEnvFileV1());
-  const repository = createDatabaseOfficialAssetRepository(client);
+  const repository = createDatabaseOfficialAssetRepository(client, withDatabaseTransaction);
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const signals = createDatabaseRwaSignalRepository(client);
   const observedAt = new Date().toISOString();

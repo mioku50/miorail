@@ -309,10 +309,9 @@ export function addressArrayFromReturnV1(raw: string): string[] | null {
 /**
  * Aave v3, from the reserve list.
  *
- * A reserve is lendable and borrowable by construction; whether it may also be
- * posted as collateral is a per-reserve configuration this read does not fetch,
- * so `collateral` stays null rather than guessing either way. Null is "the
- * venue did not say", which is the one thing a use axis must never invent.
+ * Membership does not establish whether supply or borrowing is enabled. A
+ * listed reserve may be paused, frozen or have borrowing disabled. Those
+ * configuration flags, caps and liquidity are outside this listing read.
  */
 export function aaveListingFromReservesV1(
   tokenAddress: string,
@@ -329,11 +328,9 @@ export function aaveListingFromReservesV1(
     // A reserve exists only because Aave governance added it. There is no
     // permissionless market here to confuse it with.
     curated: listed ? true : null,
-    uses: listed
-      ? { lend: true, borrow: true, collateral: null }
-      : { lend: null, borrow: null, collateral: null },
+    uses: { lend: null, borrow: null, collateral: null },
     marketRef: listed ? AAVE_V3_POOL_BASE_V1 : null,
-    reason: null,
+    reason: listed ? 'reserve listed; current operation settings and limits not measured' : null,
   };
 }
 
@@ -362,14 +359,16 @@ export function compoundListingFromCometsV1(
   comets: readonly CometReadV1[],
 ): DefiVenueListingV1 {
   const address = tokenAddress.toLowerCase();
-  // Every market unread is an unread venue. One unread market among readable
-  // ones is not: the token was genuinely absent from the markets that answered.
+  // An absent match is conclusive only when every reviewed market answered.
   if (comets.length === 0 || comets.every((row) => row.baseToken === null && row.collaterals === null)) {
     return unreadV1('compound_v3', 'Compound v3', 'no Compound market answered');
   }
   const lends = comets.filter((row) => row.baseToken === address);
   const takes = comets.filter((row) => (row.collaterals ?? []).includes(address));
   const listed = lends.length > 0 || takes.length > 0;
+  if (!listed && comets.some((row) => row.baseToken === null || row.collaterals === null)) {
+    return unreadV1('compound_v3', 'Compound v3', 'some reviewed Compound markets did not answer; absence is not established');
+  }
   return {
     venueId: 'compound_v3',
     venueName: 'Compound v3',

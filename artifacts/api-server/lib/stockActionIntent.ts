@@ -38,12 +38,11 @@ export type StockActionIntentRefusalV1 = 'stock_action_sell_requires_exact_size'
 /**
  * The exact swap a confirmed BUY describes.
  *
- * A SELL is refused, and the refusal is the honest one rather than a gap: a
- * reviewed SELL question is "$1,000 WORTH", which is a cash equivalent and not
- * a token amount. Nothing establishes how many tokens that is except a quote,
- * and a quote lives about twenty seconds — so an executable SELL request built
- * here would be built from a number that expired before the wallet opened. The
- * handoff contract already names this: `cash_equivalent_requires_replan`.
+ * This clearance only records a cash equivalent for SELL, not an exact token
+ * input. Converting it with an expiring quote would silently change the user's
+ * approved amount. Keep refusing until the review contract can bind a separately
+ * confirmed token amount and refresh the output quote before signing. Quote
+ * expiry does not prevent exact-token SELL; that review flow is not implemented.
  */
 export function stockActionIntentV1(input: {
   clearance: StockActionClearanceClaimsV1;

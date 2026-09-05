@@ -96,6 +96,22 @@ export const client = async (
     : await sql(strings, ...values);
   return rows as unknown as Record<string, unknown>[];
 };
+
+/** Keep dependent reads and writes on one connection. Never emulate a
+ * transaction with BEGIN/COMMIT sent through the shared connection pool. */
+export async function withDatabaseTransaction<T>(
+  work: (transaction: typeof client) => Promise<T>,
+): Promise<T> {
+  if (!postgresSql) {
+    throw new Error('This write requires a direct PostgreSQL transaction.');
+  }
+  return await postgresSql.begin(async (transaction) =>
+    work(async (strings, ...values) => {
+      const rows = await transaction(strings, ...values.map(toDriverParameter));
+      return rows as unknown as Record<string, unknown>[];
+    }),
+  ) as T;
+}
 let closePromise: Promise<void> | undefined;
 export const closeDb = async () => {
   if (!postgresSql) return;

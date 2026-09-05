@@ -207,6 +207,7 @@ export function deterministicBasePortfolioReadV1(
   // nothing and fails silently. These use explicit letter classes under /u.
   const wholePortfolio =
     /\b(?:portfolio|holdings|balances)\b/i.test(normalized) ||
+    /\bwhat does my (?:base )?(?:account|wallet) (?:hold|have|contain)\b/i.test(normalized) ||
     /\bwhat\b.{0,24}\b(?:do i (?:have|hold)|is in my wallet)\b/i.test(normalized) ||
     /(?:^|[^\p{L}])(?:портфел\p{L}*|балансы|холдинг\p{L}*)(?![\p{L}])/iu.test(normalized) ||
     /(?:^|[^\p{L}])что у меня (?:есть|на кошельке)/iu.test(normalized);

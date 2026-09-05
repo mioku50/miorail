@@ -62,7 +62,14 @@ function identitiesFromRowsV1(chainId: number, rows: Record<string, unknown>[]):
   return [...byAddress.values()];
 }
 
-export function createDatabaseOfficialAssetRepository(sql: SqlTemplateExecutor): OfficialAssetRepositoryV1 {
+export type OfficialAssetTransactionV1 = <T>(
+  work: (transaction: SqlTemplateExecutor) => Promise<T>,
+) => Promise<T>;
+
+export function createDatabaseOfficialAssetRepository(
+  sql: SqlTemplateExecutor,
+  transaction?: OfficialAssetTransactionV1,
+): OfficialAssetRepositoryV1 {
   /**
    * Every asset row joined to two facts about its source: the newest check of
    * any outcome (what freshness to show) and the newest check that COMPLETED
@@ -110,76 +117,85 @@ export function createDatabaseOfficialAssetRepository(sql: SqlTemplateExecutor):
       const rows = input.assets.map((asset) => assertOfficialAssetV1(asset, 'write'));
       assertSnapshotMayCarryAssetsV1(snapshot, rows);
 
-      // The state this check is a transition FROM, read before the snapshot
-      // that will redefine "current" is stored.
-      const previousRows = snapshot.status === 'ok'
-        ? ((await sql`
-            WITH latest_ok AS (
-              SELECT DISTINCT ON (source_kind) source_kind, id
-                FROM official_asset_sources
-               WHERE status = 'ok'
-               ORDER BY source_kind, id DESC
-            )
-            SELECT a.token_address
-              FROM official_assets a
-              JOIN latest_ok ok ON ok.source_kind = a.source_kind
-             WHERE a.source_kind = ${snapshot.sourceKind}
-               AND a.source_id = ok.id`) as Record<string, unknown>[])
-        : [];
-      const previous = new Set(previousRows.map((row) => String(row.token_address)));
+      if (!transaction) throw new Error('Official snapshot writes require a transaction.');
+      return transaction(async (sql) => {
+        // Publish the source and its entire membership together. A timed-out
+        // ingestion must leave the previous complete snapshot visible. Serialize
+        // writers before reading the baseline so each pass compares against
+        // the preceding complete publication, never an in-flight membership.
+        await sql`SELECT pg_advisory_xact_lock(hashtext('miorail:official-source'), hashtext(${snapshot.sourceKind}))`;
 
-      const [inserted] = (await sql`
-        INSERT INTO official_asset_sources (
-          source_kind, source_url, observed_at, status, document_hash, corpus_hash, asset_count, detail
-        ) VALUES (
-          ${snapshot.sourceKind}, ${snapshot.sourceUrl}, ${snapshot.observedAt}::timestamptz,
-          ${snapshot.status}, ${snapshot.documentHash}, ${snapshot.corpusHash},
-          ${rows.length}, ${snapshot.detail}
-        )
-        RETURNING id`) as Record<string, unknown>[];
-      const snapshotId = String(inserted.id);
+        // The state this check is a transition FROM, read before the snapshot
+        // that will redefine "current" is stored.
+        const previousRows = snapshot.status === 'ok'
+          ? ((await sql`
+              WITH latest_ok AS (
+                SELECT DISTINCT ON (source_kind) source_kind, id
+                  FROM official_asset_sources
+                 WHERE status = 'ok'
+                 ORDER BY source_kind, id DESC
+              )
+              SELECT a.token_address
+                FROM official_assets a
+                JOIN latest_ok ok ON ok.source_kind = a.source_kind
+               WHERE a.source_kind = ${snapshot.sourceKind}
+                 AND a.source_id = ok.id`) as Record<string, unknown>[])
+          : [];
+        const previous = new Set(previousRows.map((row) => String(row.token_address)));
 
-      const outcome: OfficialSnapshotOutcomeV1 = {
-        snapshotId,
-        sourceKind: snapshot.sourceKind,
-        status: snapshot.status,
-        observedAt: snapshot.observedAt,
-        added: [],
-        stillListed: [],
-        delisted: [],
-      };
-      if (snapshot.status !== 'ok') return outcome;
-
-      const named = new Set<string>();
-      for (const asset of rows) {
-        named.add(asset.tokenAddress);
-        // first_seen_at is never overwritten: how long a source has listed an
-        // asset is a fact the next check must not reset.
-        await sql`
-          INSERT INTO official_assets (
-            chain_id, token_address, source_kind, ticker, display_name, issuer,
-            reference_feed_address, first_seen_at, last_seen_at, source_id
+        const [inserted] = (await sql`
+          INSERT INTO official_asset_sources (
+            source_kind, source_url, observed_at, status, document_hash, corpus_hash, asset_count, detail
           ) VALUES (
-            ${asset.chainId}, ${asset.tokenAddress}, ${asset.sourceKind}, ${asset.ticker},
-            ${asset.displayName}, ${asset.issuer}, ${asset.referenceFeedAddress},
-            ${snapshot.observedAt}::timestamptz, ${snapshot.observedAt}::timestamptz, ${snapshotId}::bigint
+            ${snapshot.sourceKind}, ${snapshot.sourceUrl}, ${snapshot.observedAt}::timestamptz,
+            ${snapshot.status}, ${snapshot.documentHash}, ${snapshot.corpusHash},
+            ${rows.length}, ${snapshot.detail}
           )
-          ON CONFLICT (chain_id, source_kind, token_address) DO UPDATE SET
-            ticker = EXCLUDED.ticker,
-            display_name = EXCLUDED.display_name,
-            issuer = EXCLUDED.issuer,
-            reference_feed_address = EXCLUDED.reference_feed_address,
-            last_seen_at = GREATEST(official_assets.last_seen_at, EXCLUDED.last_seen_at),
-            source_id = EXCLUDED.source_id`;
-        (previous.has(asset.tokenAddress) ? outcome.stillListed : outcome.added).push(asset.tokenAddress);
-      }
-      for (const address of previous) {
-        if (!named.has(address)) outcome.delisted.push(address);
-      }
-      outcome.added.sort();
-      outcome.stillListed.sort();
-      outcome.delisted.sort();
-      return outcome;
+          RETURNING id`) as Record<string, unknown>[];
+        const snapshotId = String(inserted.id);
+
+        const outcome: OfficialSnapshotOutcomeV1 = {
+          snapshotId,
+          sourceKind: snapshot.sourceKind,
+          status: snapshot.status,
+          observedAt: snapshot.observedAt,
+          added: [],
+          stillListed: [],
+          delisted: [],
+        };
+        if (snapshot.status !== 'ok') return outcome;
+
+        const named = new Set<string>();
+        for (const asset of rows) {
+          named.add(asset.tokenAddress);
+          // first_seen_at is never overwritten: how long a source has listed an
+          // asset is a fact the next check must not reset.
+          await sql`
+            INSERT INTO official_assets (
+              chain_id, token_address, source_kind, ticker, display_name, issuer,
+              reference_feed_address, first_seen_at, last_seen_at, source_id
+            ) VALUES (
+              ${asset.chainId}, ${asset.tokenAddress}, ${asset.sourceKind}, ${asset.ticker},
+              ${asset.displayName}, ${asset.issuer}, ${asset.referenceFeedAddress},
+              ${snapshot.observedAt}::timestamptz, ${snapshot.observedAt}::timestamptz, ${snapshotId}::bigint
+            )
+            ON CONFLICT (chain_id, source_kind, token_address) DO UPDATE SET
+              ticker = EXCLUDED.ticker,
+              display_name = EXCLUDED.display_name,
+              issuer = EXCLUDED.issuer,
+              reference_feed_address = EXCLUDED.reference_feed_address,
+              last_seen_at = GREATEST(official_assets.last_seen_at, EXCLUDED.last_seen_at),
+              source_id = EXCLUDED.source_id`;
+          (previous.has(asset.tokenAddress) ? outcome.stillListed : outcome.added).push(asset.tokenAddress);
+        }
+        for (const address of previous) {
+          if (!named.has(address)) outcome.delisted.push(address);
+        }
+        outcome.added.sort();
+        outcome.stillListed.sort();
+        outcome.delisted.sort();
+        return outcome;
+      });
     },
 
     async latestSnapshot(input) {

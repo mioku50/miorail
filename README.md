@@ -1,6 +1,8 @@
 # Miorail
 
-> **One intent. Multiple routes. One verified plan.**
+> **Miorail shows the reality behind tokenized assets.**
+>
+> Same underlying. Different representations. Different market reality.
 
 Miorail is a self-hostable, non-custodial market-reality and execution-verification product for Base.
 
@@ -40,7 +42,9 @@ The governing rule is simple:
 pnpm install
 cp .env.example .env     # every credential is optional; see below
 pnpm test:unit           # the gate
-pnpm dev
+# Start these in separate terminals:
+PORT=8080 pnpm exec tsx artifacts/api-server/index.ts
+pnpm --filter @mioagent/interface dev
 ```
 
 Node 22+, pnpm 10+.
@@ -60,7 +64,7 @@ and `pnpm test:db`; `pnpm test:unit` runs without it. When you do want it:
 
 ```bash
 pnpm db:up          # Postgres 17 in Docker, on 127.0.0.1 only
-pnpm db:migrate     # applies all 50 migrations
+pnpm db:migrate     # applies the checked-in migration history
 pnpm test:db
 ```
 
@@ -508,7 +512,7 @@ Miorail is functional but not broadly production-hardened. Important open work i
 - no reference price exists for Backed or Dinari, because neither publishes a feed a contract can read — the adapters are deliberately unwritten rather than written to return nothing;
 - the Investigate dossier is only partly polymorphic: a non-B20 contract is told so plainly, but Backed's rebasing model and Dinari's factory predicate do not yet have evidence modules of their own;
 - `compare_market_reality` reads stored evidence only, so a connected assistant cannot force a fresh measurement the way the web surface can;
-- the tokenized-stock path has settled once, as a buy of the primary representation at ten cents; selling through the assistant surface still refuses by design, because it needs an exact token amount nobody has established, so Routes AI remains the only way out;
+- the tokenized-stock path has settled once, as a buy of the primary representation at ten cents; assistant Stocks SELL still needs a review contract that binds an explicit token amount and refreshes output terms. The current cash-equivalent clearance correctly refuses execution. Exact-token SELL is a delivery gap; Routes AI is the existing alternative;
 - the Aerodrome corroborator reads one pool for the primary representation only, and there is still no verifiable CL quoter to price against — the marginal price is a cross-check, never a route;
 - the confirmed clearance is carried back to the assistant by the person, because no tool exists for an assistant to poll for one;
 - expand Fundamental Intelligence beyond the operator-registered claim corpus and design a safe self-serve project-claim flow;

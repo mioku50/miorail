@@ -228,10 +228,10 @@ describe('the drift line says whether the catalogue is current', () => {
     ...overrides,
   });
 
-  test('in sync states both numbers', () => {
+  test('matching names does not claim that specification contents are current', () => {
     const copy = baseMcpPluginDriftCopyV1(drift({}), '2026-08-09');
-    assert.match(copy, /20 plugins/);
-    assert.match(copy, /all of them/i);
+    assert.match(copy, /20 published plugin names/);
+    assert.match(copy, /does not compare specification contents/);
   });
 
   test('a new plugin at Base is named, not just counted', () => {

@@ -241,7 +241,19 @@ be presented as a supported purchase path.
 6. Feature flags, migrations, provider configuration, and startup preflights may still block a `proven` capability in production.
 7. When registry and runtime disagree, fail closed and open a scoped registry/runtime reconciliation task.
 
-## Planned route-family order
+## Current product priority
+
+Stocks / Coinbase B20 is the primary product surface. The September audit
+confirmed gaps in connected fresh measurement, MCP Use & access, exact-token
+SELL and stock submission/status reconciliation. Closing those shared flows
+precedes unrelated route-family expansion; see
+[production readiness](audits/PRODUCTION_READINESS_2026-09-05.md).
+
+Base MCP discovery currently exposes 15 tools and the committed catalogue has
+20 plugin specifications. The live drift check compares plugin names only;
+it does not establish that all specification contents or adapters are current.
+
+## Historical route-family order
 
 1. Alchemy Base simulation adapter for paid intelligence — delivered (T63B);
 2. Commerce — Bitrefill — adapter and scoring delivered (T64); promotion to
