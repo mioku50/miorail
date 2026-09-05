@@ -434,12 +434,21 @@ export async function miorailRecordBaseMcpSubmissionV1(
     batchId?: string | null;
   },
 ): Promise<Record<string, unknown>> {
+  const planId = String(args.planId ?? '');
   const loaded = await loadEntryPlanV1({
     tenantId: identity.tenantId,
     walletAddress: identity.walletAddress,
-    planId: String(args.planId ?? ''),
+    planId,
   });
-  if (!loaded.ok) refuse(loaded);
+  if (!loaded.ok) {
+    // A stock action's reference is a swap Blueprint id — same reasoning as the
+    // status tool, and the same order: B20 first and unchanged, the stock
+    // family only when B20 does not own it, and B20's own refusal when neither
+    // does.
+    const recorded = await recordStockSubmissionV1(identity, { ...args, planId });
+    if (recorded) return recorded;
+    refuse(loaded);
+  }
   const plan = loaded.body;
 
   // Checked before anything is written, and against the STORED plan.
@@ -531,16 +540,151 @@ export async function miorailRecordBaseMcpSubmissionV1(
  * `entry_succeeded`: that determination belongs to reconciliation, which
  * compares the wallet's own decoded movements against the plan.
  */
+/**
+ * Record a STOCK action's submission, through the swap family that owns it.
+ *
+ * Returns null when this reference is not a stock action, so the caller can
+ * fall back to the B20 refusal rather than this one — a wrong id must keep
+ * getting the answer it always got.
+ *
+ * The wallet reports a BATCH id. It is not a transaction hash, it has no
+ * receipt, and nothing here pretends otherwise: the hash the server can be
+ * asked about arrives later, from reconciliation re-reading the chain.
+ */
+async function recordStockSubmissionV1(
+  identity: McpPrivateIdentityV1,
+  args: {
+    planId: string;
+    submittedCallsHash: string;
+    result: McpSubmissionResultV1;
+    batchId?: string | null;
+  },
+): Promise<Record<string, unknown> | null> {
+  const stock = await stockActionRuntime.readStockProof({
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    blueprintId: args.planId,
+  });
+  if (!stock) return null;
+  const proof = (stock as { proof?: Record<string, unknown> }).proof ?? {};
+  const approvedCallsHash = typeof proof.approvedCallsHash === 'string' ? proof.approvedCallsHash : '';
+  const routeRunId = typeof proof.routeRunId === 'string' ? proof.routeRunId : '';
+  if (!approvedCallsHash || !routeRunId) {
+    throw new McpPrivateError(
+      'submission_not_recordable',
+      'Miorail has no approved record for that action, so a submission cannot be written against it. Fetch the action again.',
+    );
+  }
+  // The same check the B20 branch makes, against the same kind of stored hash:
+  // what was sent must be what was approved, or nothing is written.
+  if (String(args.submittedCallsHash ?? '').toLowerCase() !== approvedCallsHash.toLowerCase()) {
+    throw new McpPrivateError(
+      'submitted_calls_mismatch',
+      'The calls hash you reported does not match the plan Miorail prepared. Nothing was recorded. Do not send anything else for this plan — fetch the action again and check what your client submitted.',
+    );
+  }
+  const batchId = typeof args.batchId === 'string' && args.batchId.trim() ? args.batchId.trim() : null;
+  const status = MCP_RESULT_TO_SUBMISSION_STATUS_V1[args.result];
+  if (!status) {
+    throw new McpPrivateError('submission_result_unknown', 'Miorail does not recognise that submission result.');
+  }
+  await auditV1(identity, {
+    toolName: 'miorail_record_base_mcp_submission',
+    outcome: 'submission_recorded',
+    planId: args.planId,
+    callsHash: approvedCallsHash,
+    batchId,
+  });
+  const result = await stockActionRuntime.recordStockSubmission({
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    routeRunId,
+    blueprintId: args.planId,
+    approvedCallsHash,
+    status,
+    batchId,
+  });
+  return {
+    recorded: true,
+    state: STOCK_LIFECYCLE_STATE_V1[String((result as { lifecycle?: unknown })?.lifecycle ?? '')] ?? null,
+    batchId,
+    caveats: MIORAIL_PRIVATE_CAVEATS_V1,
+  };
+}
+
+/**
+ * What the assistant reports, in the words the submission store accepts.
+ *
+ * `unknown` is deliberately NOT a failure: a batch that was sent and cannot be
+ * accounted for is its own terminal state, and treating it as failed would
+ * invite a resend of a transaction that may already be on chain.
+ */
+const MCP_RESULT_TO_SUBMISSION_STATUS_V1: Readonly<Record<string, string>> = {
+  submitted: 'submitted',
+  user_rejected: 'cancelled',
+  unknown: 'submitted_unknown',
+};
+
 export async function miorailGetExecutionStatusV1(
   identity: McpPrivateIdentityV1,
   args: { planId: string },
 ): Promise<Record<string, unknown>> {
+  const planId = String(args.planId ?? '');
   const loaded = await loadEntryPlanV1({
     tenantId: identity.tenantId,
     walletAddress: identity.walletAddress,
-    planId: String(args.planId ?? ''),
+    planId,
   });
-  if (!loaded.ok) refuse(loaded);
+  if (!loaded.ok) {
+    // -----------------------------------------------------------------------
+    // Not a B20 entry plan. It may still be a STOCK action, whose reference is
+    // a swap Blueprint id — `prepareStockActionBlueprintV1` ends at the swap
+    // prepare runtime, so a stock action's bookkeeping lives in the swap
+    // family, not this one.
+    //
+    // This is the whole of the reported defect: a real, released stock
+    // blueprint came back `b20_entry_plan_not_found`, which reads as "that
+    // action does not exist" when what it meant was "this tool only knows one
+    // of the two families". An assistant asked what happened to ONE action; it
+    // should not have to know which store answers.
+    //
+    // The B20 lookup stays FIRST and unchanged, so no existing caller changes
+    // behaviour, and the original refusal is what survives when neither family
+    // owns the reference — a wrong id must not start naming other stores.
+    // -----------------------------------------------------------------------
+    const stock = await stockActionRuntime.readStockProof({
+      tenantId: identity.tenantId,
+      walletAddress: identity.walletAddress,
+      blueprintId: planId,
+    });
+    if (!stock) refuse(loaded);
+    const lifecycle = String((stock as { lifecycle?: unknown }).lifecycle ?? '');
+    const mapped = STOCK_LIFECYCLE_STATE_V1[lifecycle] ?? lifecycle;
+    const proof = (stock as { proof?: Record<string, unknown> }).proof ?? {};
+    const batchId = typeof proof.batchId === 'string' ? proof.batchId : null;
+    await auditV1(identity, {
+      toolName: 'miorail_get_execution_status',
+      outcome: STATE_AUDIT_OUTCOME_V1[mapped] ?? 'plan_read',
+      planId,
+      callsHash: typeof proof.approvedCallsHash === 'string' ? proof.approvedCallsHash : null,
+      batchId,
+    });
+    return {
+      state: mapped,
+      batchId,
+      // The wallet returns an EIP-5792 BATCH id, which is not a transaction
+      // hash and has no receipt of its own. These are the hashes the server
+      // re-read on chain, and they are the only thing here that a block
+      // explorer can be asked about.
+      transactionHashes: Array.isArray(proof.receipts)
+        ? proof.receipts
+            .map((receipt) => (receipt as { transactionHash?: unknown })?.transactionHash)
+            .filter((hash): hash is string => typeof hash === 'string')
+        : [],
+      stateMeaning: EXECUTION_STATE_COPY_V1[mapped] ?? null,
+      caveats: MIORAIL_PRIVATE_CAVEATS_V1,
+    };
+  }
 
   const status = await readEntryPlanStatusV1({ tenantId: identity.tenantId, plan: loaded.body });
   const state = (status.status as { state?: string } | undefined)?.state ?? null;
@@ -704,6 +848,88 @@ export const stockActionRuntime = {
     const { prepareStockActionBlueprintV1 } = await import('../routeIntelligence.js');
     return prepareStockActionBlueprintV1(input);
   },
+  /**
+   * The approval step — the same one the swap route runs, not a stock variant.
+   *
+   * A stock action's Blueprint IS a swap Blueprint: `prepareStockActionBlueprintV1`
+   * ends at `swapPrepareRouteRuntime.prepare`, so it goes through this kernel
+   * and this lifecycle unchanged. Adding a stock-shaped approval here would
+   * have been a second implementation of the one thing that must not have two.
+   */
+  approve: async (input: {
+    tenantId: string;
+    walletAddress: `0x${string}`;
+    routeRunId: string;
+    blueprintId: string;
+    blueprintHash: `0x${string}`;
+    now: Date;
+  }) => {
+    const { swapBlueprintRouteRuntime } = await import('../routeIntelligence.js');
+    return swapBlueprintRouteRuntime.approve(input);
+  },
+  /**
+   * What became of a stock action, read through its Route Proof.
+   *
+   * The proof id is derived from the Blueprint id alone — deliberately, so that
+   * approve and submission recover the same handle — which is why this needs no
+   * extra identifier from the caller and no new column anywhere.
+   *
+   * Returns null for a proof this tenant and wallet do not own, exactly as the
+   * web route does: a foreign reference must look identical to a missing one,
+   * or the tool becomes an existence oracle.
+   */
+  readStockProof: async (input: {
+    tenantId: string;
+    walletAddress: `0x${string}`;
+    blueprintId: string;
+  }) => {
+    const { routeProofRouteRuntime } = await import('../routeIntelligence.js');
+    const { routeProofIdV1 } = await import('@mioagent/transaction-composer');
+    return routeProofRouteRuntime.getProof({
+      tenantId: input.tenantId,
+      walletAddress: input.walletAddress,
+      proofId: routeProofIdV1(input.blueprintId),
+    });
+  },
+  recordStockSubmission: async (input: {
+    tenantId: string;
+    walletAddress: `0x${string}`;
+    routeRunId: string;
+    blueprintId: string;
+    approvedCallsHash: string;
+    status: string;
+    batchId?: string | null;
+  }) => {
+    const { swapBlueprintRouteRuntime } = await import('../routeIntelligence.js');
+    return swapBlueprintRouteRuntime.recordSubmission(input as never);
+  },
+};
+
+/**
+ * The swap lifecycle, said in the words this tool documents.
+ *
+ * Two vocabularies exist because two families do: a B20 entry plan and a swap
+ * Blueprint reach the same wallet by different bookkeeping. An assistant must
+ * not have to know which — it asked what happened to one action — so the
+ * mapping happens here, once, and states with no equivalent are passed through
+ * with no invented meaning rather than forced into the nearest word.
+ */
+export const STOCK_LIFECYCLE_STATE_V1: Readonly<Record<string, string>> = {
+  draft: 'preparing',
+  ready_for_review: 'review',
+  expired: 'expired',
+  approved: 'awaiting_wallet_approval',
+  submitted: 'submitted',
+  submitted_unknown: 'submitted_unknown',
+  // The batch is on chain; whether it did what was intended is the RECONCILER'S
+  // answer, and it has not given it yet. Calling this success here is the exact
+  // upgrade the tool's own description forbids.
+  confirmed: 'reconciling',
+  completed: 'entry_succeeded',
+  failed: 'entry_reverted',
+  partial_failure: 'reconciliation_required',
+  reconciliation_required: 'reconciliation_required',
+  cancelled: 'user_rejected',
 };
 
 export const STOCK_ACTION_REFUSAL_COPY_V1: Record<string, string> = {
@@ -1004,11 +1230,59 @@ export async function miorailGetStockBaseMcpActionV1(
     throw stockActionExecutionRefusalV1('stock_action_blocked');
   }
 
+  // -------------------------------------------------------------------------
+  // Approve before releasing. This is what makes the action recordable.
+  //
+  // A prepared Blueprint is `ready_for_review`, and the ENTIRE chain after this
+  // response — record the submission, open a Route Proof, reconcile the batch —
+  // is keyed on `approvedCallsHash`, which only the approval step writes.
+  // Releasing calls without it produced a trade nobody could write down: the
+  // wallet signed, the batch id went into a React state, and every attempt to
+  // record it met `blueprint_not_approved` from `recordBlueprintSubmissionV1`.
+  // The symptom people saw was `b20_entry_plan_not_found` from the status tool,
+  // which sent everyone looking at the wrong store.
+  //
+  // It records a fact rather than inventing one. The person pressed Confirm on
+  // the review page, this server re-established the terms at that moment, and
+  // the Safety Kernel has just run again above. What approval adds is the
+  // BINDING: `hashApprovedCallsV1` over the exact calls handed out below, so a
+  // batch that differs from what was approved cannot be recorded against it.
+  // -------------------------------------------------------------------------
+  const approved = await runtime.approve({
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    routeRunId: prepared.routeRunId,
+    blueprintId: prepared.blueprint.id,
+    blueprintHash: prepared.blueprint.blueprintHash,
+    now: runtime.now(),
+  });
+  if (approved.outcome === 'expired') {
+    // The quote died between prepare and approve. A refresh is the honest
+    // answer; offering the stale batch would be the dishonest one.
+    throw stockActionExecutionRefusalV1('stock_action_refresh_required');
+  }
+  if (approved.outcome === 'blocked') {
+    // Same discipline as the prepare-side block above: our own check ids and
+    // the closed simulation-outcome vocabulary, never a provider sentence.
+    const failedChecks = Array.isArray(approved.safety?.checks)
+      ? approved.safety.checks
+          .filter((check) => check?.status === 'failed')
+          .map((check) => check.id)
+          .slice(0, 8)
+      : null;
+    logger.warn('Stock action blocked at approval', {
+      tenantId: identity.tenantId,
+      tokenAddress: clearance.tokenAddress,
+      failedChecks,
+    });
+    throw stockActionExecutionRefusalV1('stock_action_blocked');
+  }
+
   await auditV1(identity, {
     toolName: 'miorail_get_stock_base_mcp_action',
     outcome: 'action_released',
     planId: prepared.blueprint.id,
-    callsHash: prepared.blueprint.blueprintHash,
+    callsHash: approved.payload.approvedCallsHash,
   });
 
   return {
@@ -1027,34 +1301,27 @@ export async function miorailGetStockBaseMcpActionV1(
     },
     action: {
       chainId: prepared.blueprint.chainId,
-      from: prepared.blueprint.walletAddress,
+      from: approved.payload.from,
       /**
-       * Projected to the EIP-5792 wire shape, not handed over whole.
+       * The APPROVED payload's calls, not a projection of the stored record.
        *
-       * A persisted Blueprint call carries Miorail's own working fields —
-       * `index`, `callType`, `valueWei`, `asset`, `amountAtomic`, `recipient`,
-       * `spender` — and `send_calls` takes exactly three: `to`, `value`,
-       * `data`. This handed the internal record straight out, so the tool's own
-       * output schema rejected its own success: a `value` that was never there
-       * under that name, beside seven keys the contract does not allow.
-       *
-       * It had never been seen because the Safety Kernel blocked every stock
-       * action before this line could run — two defects, each hiding the other.
-       * The same projection the B20 submit gate and the NFT route already use,
-       * so the three cannot drift: `valueWei` is decimal in the record and hex
-       * on the wire.
+       * These are the bytes `approvedCallsHash` is computed over, so what is
+       * handed out and what a submission may be recorded against are the same
+       * object by construction. The hand-rolled projection that used to live
+       * here was a fourth copy of the wire shape — it once emitted `valueWei`
+       * where the contract says `value`, and the tool's own output schema
+       * rejected its own success.
        */
-      calls: prepared.blueprint.calls.map((call) => ({
-        to: call.to,
-        value: `0x${BigInt(call.valueWei).toString(16)}`,
-        data: call.data,
-      })),
+      calls: approved.payload.calls,
       atomicRequired: true,
     },
     blueprintId: prepared.blueprint.id,
     blueprintHash: prepared.blueprint.blueprintHash,
+    approvedCallsHash: approved.payload.approvedCallsHash,
+    quoteExpiry: prepared.blueprint.quoteExpiry,
     routeRunId: prepared.routeRunId,
-    blueprintStatus: prepared.blueprint.status,
+    // The lifecycle AFTER approval, which is the state a caller should report.
+    blueprintStatus: approved.lifecycle,
     reviewConfirmed: true,
     approvalRequired: true,
     instructions:

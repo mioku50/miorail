@@ -311,6 +311,45 @@ describe('Phase 17.5 — the issuer is named where the action starts', () => {
 // button that closes that gap is the closest thing to a wallet on this page, so
 // what it may and may not do is pinned here rather than left to review.
 // ---------------------------------------------------------------------------
+// ---------------------------------------------------------------------------
+// The batch id used to stop here.
+//
+// `sendCalls` returned an id, the console put it in state, and that was the end
+// of it: a trade that reached the chain left no record anywhere in the app.
+// Route history sat at `ready`, no proof was ever opened, and asking an
+// assistant what happened returned "not found" about a purchase that settled.
+// ---------------------------------------------------------------------------
+describe('what the wallet did is written down', () => {
+  const source = read('lib/ui/src/console/stockActionReviewConsole.ts');
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+
+  test('the batch id is reported to the server, not kept on the page', () => {
+    assert.match(code, /recordSubmission/);
+    assert.match(code, /batchId: id/);
+    // The three handles the record needs, all of them from the server's own
+    // release response — the client computes none of them.
+    for (const field of ['routeRunId', 'blueprintId', 'approvedCallsHash']) {
+      assert.match(code, new RegExp(`${field}: String\\(released\\.${field}`));
+    }
+  });
+
+  test('it reports what the wallet did, never that the entry happened', () => {
+    // Only reconciliation reading the chain may say that. The console must not
+    // contain a word that upgrades a submission into an outcome.
+    for (const forbidden of ['entry_succeeded', 'confirmed:', 'succeeded']) {
+      assert.ok(!code.includes(forbidden), `the console must not claim ${forbidden}`);
+    }
+  });
+
+  test('a failure to record never reads as a failure to trade', () => {
+    // The batch is on chain either way. Telling somebody their purchase failed
+    // because our bookkeeping did is the worse of the two errors, and it
+    // invites the one action that must never follow: sending again.
+    assert.match(source, /The batch is real/);
+    assert.match(source, /Do not send it again/);
+  });
+});
+
 describe('Phase 17.5 — confirming is a person saying yes, and nothing more', () => {
   // The copy moved into the shared screen in 17.7 and the failure sentences
   // into the shared console. Same claims, two files.

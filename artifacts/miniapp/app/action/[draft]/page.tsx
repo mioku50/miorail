@@ -1,6 +1,7 @@
 "use client";
 import { useParams } from "next/navigation";
-import { useSendCalls } from "wagmi";
+import { useAccount, useSendCalls } from "wagmi";
+import { useRecordBlueprintSubmission } from "@mioagent/api-client-react";
 import {
   StockActionReviewScreen,
   useStockActionReviewConsoleV1,
@@ -33,7 +34,9 @@ const BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(
 export default function BaseAppStockActionReviewPage() {
   const params = useParams<{ draft?: string }>();
   const draft = typeof params?.draft === "string" ? decodeURIComponent(params.draft) : null;
+  const { address } = useAccount();
   const sendCalls = useSendCalls();
+  const recordSubmission = useRecordBlueprintSubmission();
 
   const reviewConsole = useStockActionReviewConsoleV1({
     draft,
@@ -48,6 +51,20 @@ export default function BaseAppStockActionReviewPage() {
           : undefined,
       });
       return typeof result === "string" ? result : ((result as { id?: string })?.id ?? null);
+    },
+    // The same submission-record route the web uses. Without it a batch signed
+    // in Base App left no record anywhere in the app — the surface nearest the
+    // wallet was the one that forgot fastest.
+    recordSubmission: async ({ routeRunId, blueprintId, approvedCallsHash, batchId }) => {
+      if (!address) return;
+      return recordSubmission.mutateAsync({
+        blueprintId,
+        routeRunId,
+        walletAddress: address,
+        approvedCallsHash: approvedCallsHash as `0x${string}`,
+        status: "submitted",
+        batchId,
+      });
     },
   });
 

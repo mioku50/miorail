@@ -24,6 +24,7 @@ import { buildEntryBlueprintV1 } from '../../lib/b20EntryPlan.js';
 import { buildPreparedPlanV1 } from '../../lib/b20EntryPlanStore.js';
 import { routeHashV1 } from '../../lib/opportunityClearance.js';
 import { b20RouteRuntime } from '../b20Control.js';
+import { stockActionRuntime } from './tools.js';
 import { mcpAuditRuntime } from './audit.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import {
@@ -179,6 +180,10 @@ beforeEach(async () => {
   mcpAuditRuntime.available = async () => true;
   mcpAuditRuntime.audit = () => audit;
   mcpAuditRuntime.revocations = () => revocations;
+  // These tests are about the B20 family. A reference this suite does not own
+  // is not a stock action either, and saying so here keeps the fallback from
+  // reaching a database this suite deliberately has none of.
+  stockActionRuntime.readStockProof = async () => null;
   mcpAuditRuntime.now = () => clock;
 
   await clearances.insertClearance(clearance());
@@ -319,6 +324,67 @@ describe('§10 — nothing happens without a proved wallet', () => {
 });
 
 describe('§11 — another wallet can neither read nor execute a plan', () => {
+  // -------------------------------------------------------------------------
+  // A stock action's reference is a swap Blueprint id, not a B20 entry plan id.
+  //
+  // Released stock blueprints came back `b20_entry_plan_not_found` — which
+  // reads as "that action does not exist" when it meant "this tool knows one of
+  // the two families". The trade had happened; the app could not say so.
+  // -------------------------------------------------------------------------
+  test('a stock action is read through its own family, not refused', async () => {
+    stockActionRuntime.readStockProof = async () => ({
+      lifecycle: 'completed',
+      proof: {
+        routeRunId: 'run-9',
+        approvedCallsHash: `0x${'ab'.repeat(32)}`,
+        batchId: '0x857297d3',
+        receipts: [{ transactionHash: `0x${'fa'.repeat(32)}` }],
+      },
+    }) as never;
+    const client = await connectedClient(IDENTITY);
+    const result = await client.callTool({
+      name: 'miorail_get_execution_status',
+      arguments: { planId: 'bp-stock-1' },
+    });
+    assert.notEqual((result as ToolResult).isError, true, errorTextOf(result));
+    const body = payloadOf(result);
+    // `completed` is the swap family's word; `entry_succeeded` is the one this
+    // tool documents. An assistant must not have to know there are two.
+    assert.equal(body.state, 'entry_succeeded');
+    // The batch id is reported as a batch id, and the hash the server re-read
+    // on chain is reported separately. They are not the same kind of thing.
+    assert.equal(body.batchId, '0x857297d3');
+    assert.deepEqual(body.transactionHashes, [`0x${'fa'.repeat(32)}`]);
+    await client.close();
+  });
+
+  test('a confirmed batch is not called a success', async () => {
+    stockActionRuntime.readStockProof = async () => ({
+      lifecycle: 'confirmed',
+      proof: { routeRunId: 'run-9', approvedCallsHash: `0x${'ab'.repeat(32)}`, batchId: 'b', receipts: [] },
+    }) as never;
+    const client = await connectedClient(IDENTITY);
+    const result = await client.callTool({
+      name: 'miorail_get_execution_status',
+      arguments: { planId: 'bp-stock-1' },
+    });
+    const body = payloadOf(result);
+    assert.equal(body.state, 'reconciling');
+    await client.close();
+  });
+
+  test('a reference no family owns keeps the answer it always had', async () => {
+    stockActionRuntime.readStockProof = async () => null;
+    const client = await connectedClient(IDENTITY);
+    const result = await client.callTool({
+      name: 'miorail_get_execution_status',
+      arguments: { planId: 'nothing-owns-this' },
+    });
+    assert.equal((result as ToolResult).isError, true);
+    assert.match(errorTextOf(result), /b20_entry_plan_not_found/);
+    await client.close();
+  });
+
   test('a stranger gets the same answer a nonexistent plan gets', async () => {
     await storePlan();
     const stranger = await connectedClient({

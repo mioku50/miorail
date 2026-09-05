@@ -121,6 +121,19 @@ export const MiorailGetStockBaseMcpActionOutputV1Schema = z
       .strict(),
     blueprintId: z.string().min(1),
     blueprintHash: Hash32V1,
+    /**
+     * The join key of everything that happens after this response.
+     *
+     * `record_base_mcp_submission` cannot write a row without it, and Route
+     * Proof cannot reconcile a row that was never written — a submission is
+     * only ever recorded against an APPROVED Blueprint. It was absent here for
+     * as long as this surface skipped the approval step, which is why a trade
+     * that reached the chain left no record on either surface.
+     */
+    approvedCallsHash: Hash32V1,
+    /** When the quote these calls were built on stops being current. The one
+     * signing path refuses to open a wallet past it. */
+    quoteExpiry: z.string().min(1),
     routeRunId: z.string().min(1),
     blueprintStatus: z.string().min(1),
     reviewConfirmed: z.literal(true),

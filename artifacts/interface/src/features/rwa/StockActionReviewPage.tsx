@@ -17,7 +17,11 @@ import {
   StockActionReviewScreen,
   type MarketRealityScreenModelV1,
 } from '@mioagent/ui';
-import { useOfficialAssetDossier, useStatus } from '@mioagent/api-client-react';
+import {
+  useOfficialAssetDossier,
+  useRecordBlueprintSubmission,
+  useStatus,
+} from '@mioagent/api-client-react';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
@@ -82,6 +86,7 @@ export function StockActionReviewPage() {
   // wagmi dependency, and which wallet is reachable is a fact about the host.
   // -------------------------------------------------------------------------
   const sendCalls = useSendCalls();
+  const recordSubmission = useRecordBlueprintSubmission();
   const reviewConsole = useStockActionReviewConsoleV1({
     draft: params?.draft ?? null,
     sendCalls: async ({ calls, atomicRequired }) => {
@@ -97,6 +102,23 @@ export function StockActionReviewPage() {
           : undefined,
       });
       return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
+    },
+    // The one submission-record route this codebase has — the same one the
+    // swap and NFT families write through. A stock action's Blueprint IS a swap
+    // Blueprint, so this needs no family of its own; it needed the release to
+    // approve first, which is what makes a record possible at all.
+    recordSubmission: async ({ routeRunId, blueprintId, approvedCallsHash, batchId }) => {
+      if (!address) return;
+      return recordSubmission.mutateAsync({
+        blueprintId,
+        routeRunId,
+        walletAddress: address,
+        approvedCallsHash: approvedCallsHash as `0x${string}`,
+        // What the WALLET did. Not a claim that the entry happened — that is
+        // reconciliation's answer, from the chain.
+        status: 'submitted',
+        batchId,
+      });
     },
   });
   const body = reviewConsole.body;

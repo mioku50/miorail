@@ -22,6 +22,7 @@ import {
 import { issueStockActionClearanceV1 } from '../../lib/stockActionClearance.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { mcpAuditRuntime } from './audit.js';
+import { MiorailGetStockBaseMcpActionOutputV1Schema } from './outputs.js';
 import { InMemoryMcpExecutionAuditRepositoryV1 } from '@mioagent/route-storage';
 import type { McpPrivateIdentityV1 } from './session.js';
 
@@ -43,6 +44,8 @@ const refusedWith = (code: string) => (error: unknown) => {
 
 const WALLET = '0x1111111111111111111111111111111111111111' as const;
 const OTHER_WALLET = '0x2222222222222222222222222222222222222222' as const;
+const ROUTER = '0x3333333333333333333333333333333333333333' as const;
+const APPROVED_CALLS_HASH = `0x${'ef'.repeat(32)}` as const;
 const SECRET = 'stock-action-test-secret';
 const NOW = new Date(STOCKS_BENCH_NOW_V1);
 
@@ -571,6 +574,7 @@ describe('a confirmed clearance is the only way to an executable request', () =>
           chainId: 8453,
           walletAddress: WALLET,
           status: 'ready_for_review',
+          quoteExpiry: new Date(NOW.getTime() + 20_000).toISOString(),
           // The shape a persisted Blueprint really has. It used to read
           // `value: '0x0'` — the WIRE key — so every test here exercised a call
           // production never produces, and the release path handed the stored
@@ -591,6 +595,26 @@ describe('a confirmed clearance is the only way to an executable request', () =>
           ],
         },
         review: {},
+      }) as never;
+    // The approval step, stubbed at the shape production really returns.
+    //
+    // `ApprovedBlueprintPayloadV1` carries the WIRE calls — three keys, value
+    // in hex — because those are the bytes `approvedCallsHash` is computed
+    // over. A fake that echoed the stored record here would hide exactly the
+    // defect this pair of shapes exists to prevent.
+    stockActionRuntime.approve = async () =>
+      ({
+        outcome: 'approved',
+        lifecycle: 'approved',
+        payload: {
+          blueprintId: 'bp-1',
+          blueprintHash: `0x${'cd'.repeat(32)}`,
+          approvedCallsHash: APPROVED_CALLS_HASH,
+          chainId: '0x2105',
+          from: WALLET,
+          calls: [{ to: ROUTER, value: '0x0', data: '0x1234' }],
+          atomicRequired: true,
+        },
       }) as never;
     Object.assign(stockActionRuntime, over);
   };
@@ -726,6 +750,51 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     assert.ok(!serialised.includes(WRAPPER));
     assert.equal(action.approvalRequired, true);
     assert.equal(action.reviewConfirmed, true);
+
+    // The released calls ARE the approved payload's calls — the same object
+    // `approvedCallsHash` is computed over — so what is handed out and what a
+    // submission may be recorded against cannot drift. Exactly three wire keys;
+    // a persisted Blueprint call has eight, and the stored record used to be
+    // handed out whole.
+    const wire = (action.action as { calls: Record<string, unknown>[] }).calls;
+    assert.equal(wire.length, 1);
+    assert.deepEqual(Object.keys(wire[0]!).sort(), ['data', 'to', 'value']);
+    assert.equal(wire[0]!.to, ROUTER);
+    assert.equal(wire[0]!.value, '0x0');
+    assert.equal(wire[0]!.data, '0x1234');
+
+    // Without this the wallet can sign and nothing can be written down: a
+    // submission is only ever recorded against an APPROVED Blueprint, and this
+    // is the key that binds the two.
+    assert.equal(action.approvedCallsHash, APPROVED_CALLS_HASH);
+    assert.equal(action.blueprintStatus, 'approved');
+
+    // The tool's OWN output contract, asserted here rather than only at the MCP
+    // boundary. A field added to the response and not to the schema — or the
+    // reverse — is invisible to a unit test that reads the object directly,
+    // which is how a release once shipped that failed its own schema.
+    MiorailGetStockBaseMcpActionOutputV1Schema.parse(action);
+  });
+
+  test('an expired quote at approval refuses instead of offering stale bytes', async () => {
+    executionStub({
+      approve: async () => ({ outcome: 'expired', reason: 'quote expired' }) as never,
+    });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      refusedWith('stock_action_refresh_required'),
+    );
+  });
+
+  test('a kernel that blocks at approval releases nothing', async () => {
+    executionStub({
+      approve: async () =>
+        ({ outcome: 'blocked', reason: 'blocked', safety: { checks: [{ id: 'wallet_balance', status: 'failed' }] } }) as never,
+    });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      refusedWith('stock_action_blocked'),
+    );
   });
 
   test('Backed stays Backed, and never becomes its wrapper', async () => {
@@ -774,6 +843,7 @@ describe('no audit row, no executable bytes', () => {
           chainId: 8453,
           walletAddress: WALLET,
           status: 'ready_for_review',
+          quoteExpiry: new Date(NOW.getTime() + 20_000).toISOString(),
           // The shape a persisted Blueprint really has. It used to read
           // `value: '0x0'` — the WIRE key — so every test here exercised a call
           // production never produces, and the release path handed the stored
@@ -904,7 +974,17 @@ describe('a blocked stock action records which simulation outcome blocked it', (
 // before this line could run. Two defects, each hiding the other, and the
 // second only appeared the moment the first was fixed.
 // ---------------------------------------------------------------------------
-describe('released calls are the wire shape, not the stored record', () => {
+describe('the released bytes are the approved bytes', () => {
+  // What this used to guard — a hand-rolled projection of the stored record —
+  // is gone, replaced by something stronger: the calls come from the approval
+  // step's own payload, which is the object `approvedCallsHash` is computed
+  // over. There is no longer a fourth copy of the wire shape to drift.
+  //
+  // A source guard remains for the one thing that must never come back: the
+  // persisted Blueprint carries eight working fields and `send_calls` takes
+  // three, so handing the record out whole makes the tool's own output schema
+  // reject its own success. Comments are stripped before matching — a rule
+  // that matched its own explanation has cost this suite twice.
   const cwd = process.cwd();
   const source = readFileSync(
     cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`)
@@ -912,29 +992,15 @@ describe('released calls are the wire shape, not the stored record', () => {
       : path.join(cwd, 'artifacts/api-server/routes/mcpPrivate/tools.ts'),
     'utf8',
   );
+  const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
-  test('the blueprint record is never handed out whole', () => {
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    assert.doesNotMatch(code, /calls: prepared\.blueprint\.calls,/);
-    assert.match(code, /calls: prepared\.blueprint\.calls\.map/);
+  test('the stored Blueprint record is never handed to a wallet', () => {
+    assert.doesNotMatch(code, /calls: prepared\.blueprint\.calls/);
   });
 
-  test('value is hex on the wire, as every other submit path writes it', () => {
-    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-    // The record stores a decimal `valueWei`; `send_calls` takes hex.
-    assert.match(code, /value: `0x\$\{BigInt\(call\.valueWei\)\.toString\(16\)\}`/);
-  });
-
-  test('the three wire keys and nothing else', () => {
-    const block = /calls: prepared\.blueprint\.calls\.map\(\(call\) => \(\{[\s\S]{0,300}?\}\)\)/.exec(
-      source,
-    )?.[0];
-    assert.ok(block, 'the projection must exist');
-    for (const forbidden of ['index', 'callType', 'asset', 'amountAtomic', 'recipient', 'spender']) {
-      assert.ok(!block.includes(`${forbidden}:`), `${forbidden} is not a wire key`);
-    }
-    for (const wire of ['to:', 'value:', 'data:']) {
-      assert.ok(block.includes(wire), `${wire} is required on the wire`);
-    }
+  test('the release goes through approval, so a submission can be recorded', () => {
+    assert.match(code, /runtime\.approve\(/);
+    assert.match(code, /approvedCallsHash: approved\.payload\.approvedCallsHash/);
+    assert.match(code, /calls: approved\.payload\.calls/);
   });
 });

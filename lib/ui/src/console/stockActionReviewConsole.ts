@@ -100,6 +100,17 @@ export function useStockActionReviewConsoleV1(input: {
   /** The host's wallet. Returns the batch id, or null when the wallet accepted
    * and named nothing. Throwing is how a decline arrives. */
   sendCalls: (batch: { calls: unknown[]; atomicRequired: boolean }) => Promise<string | null>;
+  /**
+   * Record what the wallet did, through the ONE submission route this codebase
+   * has. Optional so a host that cannot record still opens a wallet — refusing
+   * to transact over a bookkeeping failure would be the worse trade.
+   */
+  recordSubmission?: (input: {
+    routeRunId: string;
+    blueprintId: string;
+    approvedCallsHash: string;
+    batchId: string;
+  }) => Promise<unknown>;
 }): { model: StockActionReviewModelV1; body: StockActionReviewWireV1 | null } {
   const review = useStockActionReview(input.draft);
   const confirm = useStockActionConfirm();
@@ -120,7 +131,12 @@ export function useStockActionReviewConsoleV1(input: {
         // One handle for the whole attempt, so a retry re-plans the same intent
         // rather than becoming a second purchase.
         requestId: `stock-action:${(input.draft ?? 'draft').slice(-24)}`,
-      })) as { action?: { calls?: unknown[]; atomicRequired?: boolean } };
+      })) as {
+        action?: { calls?: unknown[]; atomicRequired?: boolean };
+        routeRunId?: string;
+        blueprintId?: string;
+        approvedCallsHash?: string;
+      };
       const calls = released.action?.calls;
       if (!Array.isArray(calls) || calls.length === 0) {
         setWalletError('The server returned no calls for this clearance, so nothing was offered to your wallet.');
@@ -133,6 +149,33 @@ export function useStockActionReviewConsoleV1(input: {
       setBatchId(id);
       if (!id) {
         setWalletError('Your wallet accepted the batch without returning an id, so its outcome cannot be followed up here.');
+        return;
+      }
+      // -------------------------------------------------------------------
+      // Tell the server what the wallet did.
+      //
+      // This is the step that was missing: the batch id used to land in the
+      // state above and go nowhere, so a trade that reached the chain left no
+      // record anywhere in the app — route history sat at `ready`, the proof
+      // was never opened, and asking an assistant what happened returned "not
+      // found" about a purchase that had settled.
+      //
+      // It is a report of the WALLET'S BEHAVIOUR, not a result. Nothing here
+      // claims the entry happened; only reconciliation reading the chain does
+      // that. A failure to record must not read as a failure to trade, so it
+      // is surfaced as its own sentence and never as a wallet error.
+      // -------------------------------------------------------------------
+      try {
+        await input.recordSubmission?.({
+          routeRunId: String(released.routeRunId ?? ''),
+          blueprintId: String(released.blueprintId ?? ''),
+          approvedCallsHash: String(released.approvedCallsHash ?? ''),
+          batchId: id,
+        });
+      } catch {
+        setWalletError(
+          'Your wallet submitted the batch, and this server could not write down that it did. The batch is real — check your wallet activity. Do not send it again.',
+        );
       }
     } catch (error) {
       setWalletError(stockReleaseFailureCopyV1(error));
