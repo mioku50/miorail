@@ -26,6 +26,7 @@ import {
   useSectionsV1,
   sourceLabelV1,
   stockFiltersV1,
+  stocksHeadlineV1,
   MARKET_REALITY_SIZES_V1,
   marketRealityViewV1,
   quoteAgeLabelV1,
@@ -3436,6 +3437,122 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
 // So the first card a reader saw was usually a contract that cannot be priced,
 // on a page whose whole subject is what things cost.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// The answer used to sit a full viewport below the controls that produce it:
+// title, counters, search, chips, thirteen tiles, a collapsed section, tabs,
+// two rails, a question console, a history rail -- and only then the number.
+// The card that fixed that must be a PROJECTION, or the page grows a second
+// place where a verdict can be decided.
+// ---------------------------------------------------------------------------
+describe('which corpus is a switch, not a one-way button', () => {
+  const wire = (scope: string, coinbase = 13, all = 35) =>
+    ({ scope, totals: { coinbaseUnderlyings: coinbase, allUnderlyings: all }, entries: [] }) as never;
+
+  test('both corpora are offered, in the unit the band above counts in', () => {
+    const view = stockScopeViewV1(wire('coinbase_b20'))!;
+    assert.deepEqual(view.options, [
+      { scope: 'coinbase_b20', label: 'Coinbase B20', count: 13 },
+      { scope: 'all_representations', label: 'All reviewed', count: 35 },
+    ]);
+    assert.equal(view.selected, 'coinbase_b20');
+  });
+
+  test('the switch lights the corpus actually loaded', () => {
+    assert.equal(stockScopeViewV1(wire('all_representations'))!.selected, 'all_representations');
+  });
+
+  test('with nothing outside Coinbase there is no second corpus to offer', () => {
+    // A switch with one side is not a choice; it is a label pretending to be one.
+    const view = stockScopeViewV1(wire('coinbase_b20', 13, 13))!;
+    assert.deepEqual(view.options.map((o) => o.scope), ['coinbase_b20']);
+    assert.equal(view.other, null);
+  });
+});
+
+describe('the answer card decides nothing the board has not already decided', () => {
+  const rep = (over: Record<string, unknown> = {}) =>
+    ({
+      tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      issuerName: 'Coinbase',
+      structureLabel: 'B20 asset',
+      outcomeChip: 'Tradable now',
+      outcomeTone: 'good',
+      outcomeBody: 'A router reaches this exact address at this size.',
+      attribution: 'the market',
+      inComparison: true,
+      lastSeen: { label: 'Buying in and selling back out', value: '$1,000 in → $999.12 back', note: 'measured 5 min ago' },
+      ...over,
+    }) as never;
+  const view = (representations: unknown[]) =>
+    ({
+      title: 'NVDA',
+      identifier: 'ISIN US67066G1040',
+      questionLine: 'Selling $1,000 worth into USDC',
+      representations,
+    }) as never;
+
+  test('every field is copied off the card that stays below', () => {
+    const headline = stocksHeadlineV1(view([rep()]))!;
+    assert.equal(headline.title, 'NVDA');
+    assert.equal(headline.questionLine, 'Selling $1,000 worth into USDC');
+    assert.equal(headline.representation?.chip, 'Tradable now');
+    assert.equal(headline.representation?.tone, 'good');
+    assert.equal(headline.representation?.attribution, 'the market');
+    assert.deepEqual(headline.representation?.lastSeen, {
+      label: 'Buying in and selling back out',
+      value: '$1,000 in → $999.12 back',
+      note: 'measured 5 min ago',
+    });
+  });
+
+  test('the lead is the documented standard, never the better number', () => {
+    // Backed first in the array, and with the healthier-sounding chip.
+    const headline = stocksHeadlineV1(
+      view([
+        rep({ issuerName: 'Backed', outcomeChip: 'Round trip 0.01%', tokenAddress: '0xbbb0000000000000000000000000000000000001' }),
+        rep(),
+      ]),
+    )!;
+    assert.equal(headline.representation?.issuerName, 'Coinbase');
+    assert.equal(headline.alternativeCount, 2);
+  });
+
+  test('a security with no Coinbase contract leads with nothing rather than a substitute', () => {
+    const headline = stocksHeadlineV1(
+      view([rep({ issuerName: 'Backed' }), rep({ issuerName: 'Dinari' })]),
+    )!;
+    assert.equal(headline.representation, null);
+    // The board is still the answer, and its size is still stated.
+    assert.equal(headline.alternativeCount, 2);
+  });
+
+  test('a representation outside the comparison never becomes the headline', () => {
+    const headline = stocksHeadlineV1(
+      view([rep({ inComparison: false }), rep({ issuerName: 'Backed' })]),
+    )!;
+    assert.equal(headline.representation, null);
+    assert.equal(headline.alternativeCount, 1);
+  });
+
+  test('an expired quote does not un-measure the round trip', () => {
+    // `lastSeen` is history by construction. The card carries it whatever the
+    // twenty-second quote is doing, which is the whole reason it exists.
+    const headline = stocksHeadlineV1(view([rep({ outcomeChip: 'Price expired', outcomeTone: 'warn' })]))!;
+    assert.equal(headline.representation?.chip, 'Price expired');
+    assert.match(headline.representation?.lastSeen?.value ?? '', /999\.12/);
+  });
+
+  test('nothing measured says so, rather than showing a dash', () => {
+    const headline = stocksHeadlineV1(view([rep({ lastSeen: null })]))!;
+    assert.equal(headline.representation?.lastSeen, null);
+  });
+
+  test('no view is no card', () => {
+    assert.equal(stocksHeadlineV1(null), null);
+  });
+});
+
 describe('the canonical representation is met first, and the others are still there', () => {
   const card = (issuerName: string, tokenAddress: string) =>
     ({ issuerName, tokenAddress }) as unknown as Parameters<typeof partitionByIssuerRoleV1>[0][number];

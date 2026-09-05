@@ -1324,6 +1324,51 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
  * happened. The two answers behind these words are different products; the
  * control that chooses between them is now shaped like one.
  */
+/* Which corpus, as a switch. Same shape as the surface tabs on purpose: both
+   choose what the page is about, and a reader who learns one control has
+   learned the other. The issuer chips under the search field are a different
+   shape because they do a different thing -- they filter within whichever
+   corpus this switch has chosen. */
+.mio-console .mr-scope-switch { display: inline-grid; grid-auto-flow: column;
+  grid-auto-columns: max-content; gap: 4px; padding: 4px; border-radius: calc(var(--r) + 3px);
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .mr-scope-switch button { padding: 7px 13px; border: 0; border-radius: var(--r);
+  background: transparent; color: var(--muted); font: inherit; font-size: 12px; font-weight: 650;
+  cursor: pointer; white-space: nowrap; transition: background .12s, color .12s, box-shadow .12s; }
+.mio-console .mr-scope-switch button:hover { color: var(--ink); background: var(--n-bg); }
+.mio-console .mr-scope-switch button.on { color: var(--ink); background: var(--node-a-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line); }
+.mio-console .mr-scope-switch button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+
+/* The answer card, directly under the control that chooses which answer.
+ *
+ * It carries the SECURITY, the exact primary contract, the measured round
+ * trip and its age -- and it collapses nothing that was measured. Only the
+ * explanations moved down; every number a reader can act on is here.
+ */
+.mio-console .mr-headline { margin: 12px 0 14px; padding: 15px 16px; min-width: 0;
+  border-radius: calc(var(--r) + 3px); background: var(--rep-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line), var(--rep-shadow); }
+.mio-console .mr-headline-top { display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap; }
+.mio-console .mr-headline-id { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; min-width: 0; }
+.mio-console .mr-headline-id h3 { margin: 0; color: var(--title-ink); font-size: 20px; font-weight: 750;
+  letter-spacing: -.02em; }
+.mio-console .mr-headline-q { margin: 3px 0 12px; color: var(--muted); font-size: 13.5px; }
+.mio-console .mr-headline-rep { margin: 0 0 9px; color: var(--ink); font-size: 12.5px; overflow-wrap: anywhere; }
+/* The measurement, given the size of a headline rather than of a footnote:
+   it is the number the page exists to report. */
+.mio-console .mr-headline-measure { display: grid; gap: 3px; margin: 0 0 10px; padding: 10px 12px;
+  border-radius: var(--r); background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .mr-headline-measure dt { color: var(--faint); font-size: 10px; text-transform: uppercase;
+  letter-spacing: .06em; }
+.mio-console .mr-headline-measure dd { margin: 0; color: var(--ink); font-size: 14px; line-height: 1.5;
+  overflow-wrap: anywhere; }
+.mio-console .mr-headline-body { margin: 0 0 12px; color: var(--ink); font-size: 13px; line-height: 1.55; }
+.mio-console .mr-headline-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.mio-console .mr-headline-actions .btn { margin-top: 0; }
+.mio-console .mr-headline-more { font-size: 11.5px; }
+
 .mio-console .mr-surface-tabs { justify-self: start; display: inline-grid;
   grid-auto-flow: column; grid-auto-columns: max-content; gap: 4px; padding: 4px;
   border: 0; border-radius: calc(var(--r) + 3px); background: var(--panel2);

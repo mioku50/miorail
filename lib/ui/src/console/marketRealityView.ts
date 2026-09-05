@@ -2543,6 +2543,78 @@ export function partitionByIssuerRoleV1(
   return { primary, others };
 }
 
+/**
+ * The answer, hoisted above everything that explains it.
+ *
+ * The page used to open on a title, three counters, a search field, five
+ * filter chips, thirteen tiles, a collapsed section, two tabs, two rails, a
+ * question console and a history rail -- and only then on the number a reader
+ * came for. A whole viewport spent before the answer, every time, on a screen
+ * whose entire job is to answer one question about one security.
+ *
+ * This is that answer, and it is a PROJECTION of the same view the board
+ * renders. It computes nothing: the chip, the tone, the measured result and
+ * its age all come from the representation card that is still below, so the
+ * summary and the evidence cannot disagree. Nothing here is a ranking -- the
+ * primary representation is the one Base documents as the standard, chosen by
+ * issuer role and never by which number looks better.
+ */
+export interface StocksHeadlineViewV1 {
+  title: string;
+  identifier: string | null;
+  /** The question, restated: "Selling $1,000 worth into USDC". */
+  questionLine: string;
+  /** Absent when this security has no Coinbase representation: then there is
+   * no primary to lead with, and the board itself is the answer. */
+  representation: {
+    tokenAddress: string;
+    shortAddress: string;
+    issuerName: string;
+    structureLabel: string;
+    chip: string;
+    tone: ToneV1;
+    /** One sentence a reader can act on, from the card below. */
+    body: string;
+    /** Whose fact that sentence is. */
+    attribution: RepresentationViewV1['attribution'];
+    /** The measured round trip and its age. Null when nobody has measured. */
+    lastSeen: { label: string; value: string; note: string } | null;
+  } | null;
+  /** How many representations the board holds, so the card never reads as the
+   * whole page. */
+  alternativeCount: number;
+}
+
+export function stocksHeadlineV1(
+  view: MarketRealityViewV1 | null,
+): StocksHeadlineViewV1 | null {
+  if (!view) return null;
+  const compared = view.representations.filter((row) => row.inComparison);
+  const { primary } = partitionByIssuerRoleV1(compared);
+  const lead = primary[0] ?? null;
+  return {
+    title: view.title,
+    identifier: view.identifier,
+    questionLine: view.questionLine,
+    representation: lead
+      ? {
+          tokenAddress: lead.tokenAddress,
+          shortAddress: `${lead.tokenAddress.slice(0, 8)}\u2026${lead.tokenAddress.slice(-4)}`,
+          issuerName: lead.issuerName,
+          structureLabel: lead.structureLabel,
+          chip: lead.outcomeChip,
+          tone: lead.outcomeTone,
+          body: lead.outcomeBody,
+          attribution: lead.attribution,
+          lastSeen: lead.lastSeen,
+        }
+      : null,
+    // Every compared representation, the lead included: "3 representations"
+    // is the board's size, not a count of what was left out.
+    alternativeCount: compared.length,
+  };
+}
+
 export function stockFiltersV1(
   choices: readonly UnderlyingChoiceViewV1[],
 ): StockFilterViewV1[] {
@@ -2631,6 +2703,23 @@ export interface StockScopeViewV1 {
   /** The scope this page is NOT showing, and how big it is. Null when there is
    * nothing else to show. */
   other: { scope: 'coinbase_b20' | 'all_representations'; label: string } | null;
+  /**
+   * Both corpora, as a switch rather than a one-way button.
+   *
+   * A reader standing in one corpus could not see the other was a corpus at
+   * all: the only control was "View all issuers", which looks like a link to
+   * somewhere else rather than the other half of a choice. Meanwhile the
+   * issuer chips under the search field -- All, Multi-issuer, Coinbase,
+   * Dinari, Backed -- filter WITHIN whichever corpus is loaded. Two scoping
+   * ideas, drawn identically, meaning different things.
+   */
+  options: readonly {
+    scope: 'coinbase_b20' | 'all_representations';
+    label: string;
+    /** Companies, the same unit the band above counts in. */
+    count: number;
+  }[];
+  selected: 'coinbase_b20' | 'all_representations';
 }
 
 export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockScopeViewV1 | null {
@@ -2657,6 +2746,19 @@ export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockSc
           ? `Miorail also tracks ${all} companies in total, across Coinbase, Backed and Dinari.`
           : null,
       other: others > 0 ? { scope: 'all_representations', label: 'View all issuers' } : null,
+      // Both corpora, always both visible, so a reader can see which one they
+      // are standing in. As a single "View all issuers" button it was a
+      // one-way door with no lit state: the counters said "Coinbase stocks 13"
+      // while the chips below offered All / Multi-issuer / Coinbase / Dinari /
+      // Backed, and the two scoping ideas -- which corpus, and which issuer
+      // within it -- looked identical and meant different things.
+      options: [
+        { scope: 'coinbase_b20', label: 'Coinbase B20', count: coinbase },
+        ...(others > 0
+          ? [{ scope: 'all_representations' as const, label: 'All reviewed', count: all }]
+          : []),
+      ],
+      selected: 'coinbase_b20',
     };
   }
   return {
@@ -2664,6 +2766,11 @@ export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockSc
     body: `${all} companies across Coinbase, Backed and Dinari. The same company can be represented by several contracts, and they are not economically identical.`,
     aside: null,
     other: { scope: 'coinbase_b20', label: `Coinbase only · ${coinbase}` },
+    options: [
+      { scope: 'coinbase_b20', label: 'Coinbase B20', count: coinbase },
+      { scope: 'all_representations', label: 'All reviewed', count: all },
+    ],
+    selected: 'all_representations',
   };
 }
 

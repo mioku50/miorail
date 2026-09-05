@@ -23,6 +23,8 @@ import {
   type RepresentationViewV1,
   type ToneV1,
   type UnderlyingChoiceViewV1,
+  stocksHeadlineV1,
+  type StocksHeadlineViewV1,
 } from './marketRealityView';
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 import {
@@ -1113,6 +1115,100 @@ function CompactRepresentation({
   );
 }
 
+/**
+ * The answer, before the machinery that produced it.
+ *
+ * Everything in here is read off the same view the board below renders, so
+ * the summary cannot drift from the evidence. It states a MEASUREMENT and its
+ * age -- never a ranking, and never a claim that the trade would succeed.
+ */
+function HeadlineAnswer({
+  headline,
+  measuring,
+  onMeasure,
+  onPrepare,
+  direction,
+}: {
+  headline: StocksHeadlineViewV1;
+  measuring: boolean;
+  onMeasure?: () => void;
+  onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
+  direction: 'buy' | 'sell';
+}) {
+  const lead = headline.representation;
+  return (
+    <section className="mr-headline" aria-label="What this security answers right now">
+      <div className="mr-headline-top">
+        <div className="mr-headline-id">
+          <h3>{headline.title}</h3>
+          {headline.identifier ? <span className="mono d">{headline.identifier}</span> : null}
+        </div>
+        {lead ? (
+          <span className="pill cr-status" data-tone={lead.tone}>{lead.chip}</span>
+        ) : null}
+      </div>
+      <p className="mr-headline-q">{headline.questionLine}</p>
+
+      {lead ? (
+        <>
+          <p className="mr-headline-rep">
+            <strong>{lead.issuerName}</strong> <span className="d">{lead.structureLabel}</span>
+            <span className="mono d"> · {lead.shortAddress}</span>
+          </p>
+          {/* The measurement stays on the card whatever the twenty-second quote
+              is doing. An expired quote does not un-measure a round trip. */}
+          {/* Only when there IS a measurement. The first draft printed
+              "nothing has been measured" beside a body reading "a router did
+              quote $1,000 12 min ago, and that quote has since expired" --
+              two sentences about one fact, contradicting each other, because
+              `lastSeen` carries a round trip and the body carries every other
+              way a measurement can exist. The body is the authority; this slot
+              exists to give the round trip the size it deserves, not to
+              narrate its absence. */}
+          {lead.lastSeen ? (
+            <dl className="mr-headline-measure">
+              <dt>{lead.lastSeen.label}</dt>
+              <dd>
+                <span className="mono">{lead.lastSeen.value}</span>
+                <span className="d"> {lead.lastSeen.note}</span>
+              </dd>
+            </dl>
+          ) : null}
+          <p className="mr-headline-body">
+            {lead.body} <span className="d">— {lead.attribution}</span>
+          </p>
+        </>
+      ) : (
+        <p className="mr-headline-body">
+          No Coinbase representation is on this board, so there is no primary contract to lead
+          with. Every reviewed representation is below, each on its own terms.
+        </p>
+      )}
+
+      <div className="mr-headline-actions">
+        {onMeasure ? (
+          <button type="button" className="btn" onClick={onMeasure} disabled={measuring}>
+            {measuring ? 'Measuring…' : 'Measure now'}
+          </button>
+        ) : null}
+        {lead && onPrepare ? (
+          <button
+            type="button"
+            className="btn sec"
+            onClick={() => onPrepare(lead.tokenAddress, direction)}
+          >
+            {direction === 'sell' ? 'Prepare sell' : 'Prepare buy'}
+          </button>
+        ) : null}
+        <span className="d mr-headline-more">
+          {headline.alternativeCount} representation{headline.alternativeCount === 1 ? '' : 's'} below,
+          with the evidence for each
+        </span>
+      </div>
+    </section>
+  );
+}
+
 export function MarketRealityScreen({ model }: { model: MarketRealityScreenModelV1 }) {
   const { actions } = model;
   // Membership, not order. `inComparison` comes from the view, which reads it
@@ -1125,6 +1221,13 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
   // than, so a Backed-only security is a board, not a demotion.
   const { primary, others } = partitionByIssuerRoleV1(compared);
   const board = primary.length > 0 ? primary : compared;
+  // The answer card replaces the loose Measure button rather than joining it:
+  // two controls with one label on one screen is a question about which one
+  // the reader just pressed.
+  const headline =
+    model.surface === 'market' && model.historyPeriod === 'now'
+      ? stocksHeadlineV1(model.view ?? null)
+      : null;
   return (
     <section className="mr" aria-label="Market Reality">
       {/* What this page is, before what it counts. Coinbase B20 is the standard
@@ -1138,14 +1241,23 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
             <p className="lnote">{model.scope.body}</p>
             {model.scope.aside ? <p className="lnote">{model.scope.aside}</p> : null}
           </div>
-          {model.scope.other && model.onScope ? (
-            <button
-              type="button"
-              className="btn sec"
-              onClick={() => model.onScope?.(model.scope!.other!.scope)}
-            >
-              {model.scope.other.label}
-            </button>
+          {/* Which corpus, as a switch. The issuer chips below the search
+              field filter WITHIN it; these choose which "within" means. */}
+          {model.scope.options.length > 1 && model.onScope ? (
+            <div className="mr-scope-switch" role="group" aria-label="Corpus">
+              {model.scope.options.map((option) => (
+                <button
+                  key={option.scope}
+                  type="button"
+                  aria-pressed={option.scope === model.scope!.selected}
+                  className={option.scope === model.scope!.selected ? 'on' : ''}
+                  onClick={() => model.onScope?.(option.scope)}
+                >
+                  {option.label}
+                  <span className="d"> {option.count}</span>
+                </button>
+              ))}
+            </div>
           ) : null}
         </div>
       ) : null}
@@ -1197,6 +1309,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         </button>
       </div>
 
+      {/* The answer, immediately under the control that chooses which answer.
+          Pressing a security or a tab now changes what is UNDER the reader's
+          eyes, instead of something a screen and a half further down. */}
       {model.surface === 'market' ? <div className="mr-question" aria-label="The question">
         {model.questionFixed ? null : (
         <>
@@ -1232,7 +1347,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         )}
         {/* The control that closes the twenty-second gap. Absent rather than
             disabled when the server does not offer it. */}
-        {actions.onMeasure && (
+        {actions.onMeasure && !headline && (
           <button
             type="button"
             className="btn mr-measure"
@@ -1252,6 +1367,19 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           Use &amp; access{model.view?.title ? ` · ${model.view.title}` : ''} — Transfer, Bridge and DeFi
         </p>
       )}
+
+      {/* Question, then answer, then the tools that change it. The card sits
+          directly under the rails that set the size and direction, so pressing
+          either changes what is under the reader's eyes. */}
+      {headline ? (
+        <HeadlineAnswer
+          headline={headline}
+          measuring={model.measuring}
+          onMeasure={actions.onMeasure}
+          onPrepare={actions.onPrepare}
+          direction={model.direction}
+        />
+      ) : null}
 
       {model.surface === 'market' && actions.onAsk && model.ask ? (
         <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
