@@ -54,6 +54,8 @@ export interface BaseMcpPluginRowV1 {
     id: string;
     prompt: string;
     surface: 'read' | 'action' | 'routable';
+    capabilityState?: 'released' | 'unavailable' | 'unsupported' | 'external_ui' | 'requires_input';
+    capabilityReason?: string | null;
     disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'action_in_extensions' | 'route_unavailable_here' | 'adapter_required';
   }[];
 }
@@ -129,11 +131,13 @@ export interface BaseMcpExampleBadgeV1 {
 export interface BaseMcpExampleUiV1 {
   surface: 'read' | 'action' | 'routable';
   disposition: BaseMcpExampleDispositionUiV1;
+  capabilityState?: 'released' | 'unavailable' | 'unsupported' | 'external_ui' | 'requires_input';
 }
 
 /** A display label derived from routing metadata. The prompt never carries a
  * second hand-written label that could drift from its actual disposition. */
 export function baseMcpExampleBadgeV1(example: BaseMcpExampleUiV1): BaseMcpExampleBadgeV1 {
+  if (example.capabilityState === 'unavailable') return { label: 'NOT AVAILABLE HERE', tone: 'adapter' };
   switch (example.disposition) {
     case 'handoff_to_routes':
       return { label: 'ROUTES AI', tone: 'routes' };
@@ -222,6 +226,7 @@ export function baseMcpPluginCapabilitiesV1(
 ): readonly BaseMcpPluginCapabilityV1[] {
   const found = new Set<BaseMcpPluginCapabilityV1>();
   for (const example of plugin.examples) {
+    if (example.capabilityState === 'unavailable' || example.capabilityState === 'unsupported') continue;
     switch (example.disposition) {
       case 'read_in_extensions':
         found.add('read');
@@ -320,7 +325,7 @@ function pluginMatchesFilterV1(plugin: BaseMcpPluginRowV1, filter: BaseMcpPlugin
   switch (filter) {
     case 'readable_here':
       return (reach === 'http' || reach === 'base_tools')
-        && plugin.examples.some((example) => example.disposition === 'read_in_extensions');
+        && baseMcpPluginCapabilitiesV1(plugin).includes('read');
     case 'routes_ai':
       return plugin.productSurface === 'routes'
         || plugin.examples.some((example) => example.disposition === 'handoff_to_routes');
@@ -477,7 +482,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
         type="button"
         className={`mcp-example ${className}`.trim()}
         disabled={!model.onSelectPrompt}
-        title="Fill the Base MCP AI Console — this does not execute the prompt"
+        title={example.capabilityReason ?? 'Fill the Base MCP AI Console — this does not execute the prompt'}
         onClick={() => selectBaseMcpExampleV1(model.onSelectPrompt, example.prompt)}
       >
         <span className={`mcp-disposition ${badge.tone}`}>{badge.label}</span>

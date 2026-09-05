@@ -363,6 +363,7 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
               ...example,
               disposition: downgraded ? ('route_unavailable_here' as const) : example.disposition,
               capabilityReason: capability.state === 'released' ? null : capability.reason,
+              capabilityState: capability.state,
             };
           }),
         };
@@ -582,7 +583,14 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       userId: tenantUserId(req),
       sessionSecret: secret,
     });
-    const result = reviewed ?? await mcpBaseRouteRuntime.runBaseMcpConsoleV1({
+    // An unavailable reviewed plugin read cannot turn into a model-invented
+    // recipe. The public capability matrix and this dispatcher agree.
+    const result = reviewed ?? (decision.providerId ? {
+      status: 'no_tools' as const,
+      reply: `Miorail has no reviewed read recipe for this ${decision.providerId} operation. No provider request was sent.`,
+      trace: [], toolsAvailable: 0, truncated: false, elapsedMs: 0,
+      errorCode: 'reviewed_plugin_read_unavailable', checkedAt: new Date().toISOString(),
+    } : await mcpBaseRouteRuntime.runBaseMcpConsoleV1({
       req,
       userId: tenantUserId(req),
       sessionSecret: secret,
@@ -590,7 +598,7 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       message,
       providerPrompt: decision.providerPrompt,
       enabled: baseMcpEnabledFromEnv() && Boolean(baseMcpServerUrlFromEnv()),
-    });
+    }));
     return res.json(BaseMcpConsoleResponseV1Schema.parse(result));
   } catch (error) {
     next(error);

@@ -9,6 +9,7 @@
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview",
+    "test:browser": "playwright test",
     "test": "node --import tsx --test src/**/*.test.ts src/**/**/*.test.ts"
   },
   "dependencies": {

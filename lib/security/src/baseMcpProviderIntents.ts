@@ -127,7 +127,12 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
   },
   {
     pluginId: 'gmgn', aliases: ['gmgn', 'gmgh'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
-      e('market', 'Show GMGN market intelligence for this Base token', 'read', 'read_in_extensions'),
+      // GMGN's only per-token endpoint returns swap calldata, which this
+      // surface does not release. Its market read is a LIST, so the example
+      // asks for a list -- the same correction the OpenSea drops example
+      // needed: a prompt that promises what the handler cannot fetch is a
+      // failure the reader blames on the provider.
+      e('market', 'Show trending Base tokens on GMGN', 'read', 'read_in_extensions'),
       e('quote', 'Get a GMGN quote to swap 10 USDC for this Base token', 'action', 'adapter_required'),
     ],
   },
@@ -168,7 +173,7 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
   },
   {
     pluginId: 'opensea', aliases: ['opensea', 'open sea', 'nft'], productSurface: 'routes', lifecycleStage: 'documented', examples: [
-      e('drops', 'Show upcoming NFT drops on Base from OpenSea', 'read', 'read_in_extensions'),
+      e('drops', 'Show popular NFT collections on Base from OpenSea', 'read', 'read_in_extensions'),
       e('listing', 'Show the best current listing for this NFT on OpenSea', 'read', 'read_in_extensions'),
       e('buy', 'Buy this NFT on OpenSea', 'routable', 'handoff_to_routes'),
     ],

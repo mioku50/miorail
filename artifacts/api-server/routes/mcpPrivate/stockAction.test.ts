@@ -648,21 +648,34 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     );
   });
 
-  test('a confirmed SELL is refused, and the refusal names why', async () => {
-    executionStub();
-    await assert.rejects(
-      () =>
-        miorailGetStockBaseMcpActionV1(IDENTITY, {
-          clearance: clearanceFor(COINBASE, 'sell'),
-          requestId: 'r1',
-        }),
-      (error: unknown) => {
-        assert.equal((error as { code?: string }).code, 'stock_action_sell_requires_exact_size');
-        // Not a gap and not a failure: "cash worth" is not a token amount.
-        assert.match((error as Error).message, /not a token amount/);
-        return true;
-      },
+  test('cash-worth SELL cannot issue a clearance without an exact token amount', () => {
+    // The refusal now happens before a clearance can exist. Exact-token SELL
+    // clearances are covered by the exact-token test below.
+    assert.throws(
+      () => clearanceFor(COINBASE, 'sell'),
+      /stock_clearance_sell_requires_exact_token_amount/,
     );
+  });
+
+  test('an exact-token SELL reaches the engine with the confirmed atoms unchanged', async () => {
+    let planned: Parameters<typeof stockActionRuntime.planAndPrepare>[0] | undefined;
+    executionStub();
+    const originalPlan = stockActionRuntime.planAndPrepare;
+    stockActionRuntime.planAndPrepare = async (...args) => {
+      planned = args[0];
+      return originalPlan(...args);
+    };
+    const clearance = issueStockActionClearanceV1({
+      tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET,
+      actionDraftId: 'draft-sell', handoff: handoffFor(COINBASE, 'sell'),
+      confirmedTokenAmountAtomic: '43417', secret: CLEARANCE_SECRET, now: NOW,
+    }).clearance;
+    const result = await miorailGetStockBaseMcpActionV1(IDENTITY, { clearance, requestId: 'sell-exact' });
+    assert.ok(result);
+    assert.equal(planned?.intent.amount?.amountAtomic, '43417');
+    assert.equal(planned?.intent.goal, 'swap');
+    assert.equal(planned?.intent.fromAsset?.address, COINBASE);
+    assert.equal(planned?.intent.toAsset?.symbol, 'USDC');
   });
 
   test('decimals are read, never assumed', async () => {

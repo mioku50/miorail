@@ -572,6 +572,9 @@ test('GET /api/mcp/base/plugins lists the catalogue without a Base MCP session',
   const response = await request(app).get('/api/mcp/base/plugins');
   assert.strictEqual(response.status, 200);
   assert.ok(response.body.plugins.length >= 20);
+  const unavailableRead = response.body.plugins.find((plugin: { id: string }) => plugin.id === 'aerodrome')
+    .examples.find((example: { id: string }) => example.id === 'liquidity');
+  assert.equal(unavailableRead.capabilityState, 'unavailable');
   assert.strictEqual(response.body.drift.status, 'in_sync');
   const uniswap = response.body.plugins.find((plugin: { id: string }) => plugin.id === 'uniswap');
   assert.ok(uniswap, 'uniswap must be in the catalogue');
@@ -676,6 +679,21 @@ test('POST /api/mcp/base/console rejects an empty message before running anythin
   assert.strictEqual(called, false);
 
   restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('an unavailable plugin read cannot fall back to model-chosen tools', async () => {
+  const oldSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = async () => null;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('generic read must not run'); };
+  try {
+    const response = await request(app).post('/api/mcp/base/console')
+      .send({ message: 'Show the WETH/USDC Aerodrome pool and its liquidity' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, 'no_tools');
+    assert.equal(response.body.errorCode, 'reviewed_plugin_read_unavailable');
+    assert.deepEqual(response.body.trace, []);
+  } finally { restoreEnv('SESSION_SECRET', oldSecret); }
 });
 
 const ACTION_RECEIPT = {

@@ -1176,7 +1176,10 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           role="tab"
           aria-selected={model.surface === 'market'}
           className={`item${model.surface === 'market' ? ' on' : ''}`}
-          onClick={() => actions.onSurface('market')}
+          onClick={(event) => {
+            actions.onSurface('market');
+            event.currentTarget.parentElement?.scrollIntoView({ block: 'start' });
+          }}
         >
           Market Reality
         </button>
@@ -1185,13 +1188,16 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           role="tab"
           aria-selected={model.surface === 'utility'}
           className={`item${model.surface === 'utility' ? ' on' : ''}`}
-          onClick={() => actions.onSurface('utility')}
+          onClick={(event) => {
+            actions.onSurface('utility');
+            event.currentTarget.parentElement?.scrollIntoView({ block: 'start' });
+          }}
         >
           Use & access
         </button>
       </div>
 
-      <div className="mr-question" aria-label="The question">
+      {model.surface === 'market' ? <div className="mr-question" aria-label="The question">
         {model.questionFixed ? null : (
         <>
         <div className="tabbar" role="tablist" aria-label="Direction">
@@ -1241,9 +1247,13 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
             Open Radar
           </button>
         ) : null}
-      </div>
+      </div> : (
+        <p className="cr-verdict" role="status" aria-live="polite">
+          Use &amp; access{model.view?.title ? ` · ${model.view.title}` : ''} — Transfer, Bridge and DeFi
+        </p>
+      )}
 
-      {actions.onAsk && model.ask ? (
+      {model.surface === 'market' && actions.onAsk && model.ask ? (
         <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
       ) : null}
 
@@ -1305,7 +1315,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
               {model.view.identifier ? (
                 <p className="mr-identifier mono">{model.view.identifier}</p>
               ) : null}
-              <p className="sub">{model.view.questionLine}</p>
+              {model.surface === 'market' ? <p className="sub">{model.view.questionLine}</p> : null}
             </div>
             <div className="mr-head-r">
               <span

@@ -1,3 +1,5 @@
+import { randomUUID } from 'node:crypto';
+
 import {
   baseMcpPluginModeFromEnv,
   pluginScopedFetch,
@@ -113,6 +115,10 @@ export interface BaseMcpSkillExecutor {
     /** Per-recipe bound. The caller may shorten the gateway default but can
      * never remove the timeout entirely. */
     timeoutMs?: number;
+    /** Test seam, mirroring the one `pluginHttpRequest` already takes. Without
+     * it, a test of the URL this executor BUILDS can only be written by
+     * calling the provider for real. */
+    fetchImpl?: typeof fetch;
   }): Promise<PluginHttpResponse>;
 }
 
@@ -236,7 +242,7 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
     namespace: 'printr',
     displayName: 'Printr',
     allowedIntents: ['read'],
-    requiredTools: [{ intent: 'read', anyOf: ['printr_get_quote'] }],
+    requiredTools: [{ intent: 'read', anyOf: ['printr_get_quote', 'printr_get_deployments'] }],
     argumentMapper: (_intent, input) => ({ ...input }),
     resultScreener: 'printr_quote',
     manifest: {
@@ -244,38 +250,48 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
       chains: [8453],
       allowlist: {
         hosts: ['api-preview.printr.money'],
-        methods: ['POST'],
-        pathPrefixes: ['/v0/print/quote'],
+        methods: ['GET', 'POST'],
+        pathPrefixes: ['/v0/print/quote', '/v0/tokens/'],
       },
       auth: 'none',
       risk: ['low-liquidity', 'irreversible'],
     },
     instructions: [
-      'Only the launch-cost quote is released. `POST /v0/print` builds deployment calldata and is not reachable from this manifest.',
+      'Only POST /v0/print/quote and GET /v0/tokens/{id}/deployments are released. POST /v0/print is not reachable.',
       'Printr returns text/plain on a non-2xx status; branch on the status, never on the body.',
     ],
   },
   {
+    // GMGN publishes a read-only key in Base's own plugin specification, and
+    // signs every request with a fresh timestamp and client id for replay
+    // protection. Sending none of the three is a 401, which this deployment
+    // read as "GMGN is unavailable here" -- a false absence about an API that
+    // answers a public read to anybody who follows its documented contract.
     namespace: 'gmgn',
     displayName: 'GMGN',
     allowedIntents: ['read'],
-    requiredTools: [{ intent: 'read', anyOf: ['gmgn_get_token_info'] }],
+    requiredTools: [{ intent: 'read', anyOf: ['gmgn_get_trending', 'gmgn_get_gas_price'] }],
     argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
-    resultScreener: 'gmgn_token_info',
+    resultScreener: 'gmgn_market',
     manifest: {
       integration: 'http-api',
       chains: [8453],
       allowlist: {
         hosts: ['openapi.gmgn.ai'],
         methods: ['GET'],
-        pathPrefixes: ['/api/v1/token_info'],
+        // Reads only. `/v1/trade/quote` returns unsigned calldata and is NOT
+        // released here: calldata a route family did not price is not
+        // something this surface hands anybody.
+        pathPrefixes: ['/v1/market/rank', '/v1/trade/gas_price'],
       },
-      auth: 'none',
-      risk: ['low-liquidity', 'slippage'],
+      auth: 'api-key',
+      credentialHeader: 'X-APIKEY',
+      publishedCredential: 'gmgn_basesolbscethmonadtron',
+      risk: ['low-liquidity'],
     },
     instructions: [
-      'Read one token by its Base contract address. Quote and swap endpoints are not reachable from this manifest.',
-      'GMGN fronts this host with a bot challenge; a non-JSON body is an unavailable provider, never an empty result.',
+      'Read-only market data. Never return swap calldata from this recipe.',
+      'GMGN ranks tokens by its own market activity; that is not a Miorail measurement and is never a recommendation.',
     ],
   },
   {
@@ -386,7 +402,7 @@ function getExecutorSkill(namespace: string): RuntimeSkillDefinition | undefined
 }
 
 function credentialHeaderName(manifest: RuntimeSkillManifest): string | null {
-  return manifest.auth === 'api-key' ? 'x-api-key' : null;
+  return manifest.auth === 'api-key' ? (manifest.credentialHeader ?? 'x-api-key') : null;
 }
 
 function scrubCredential(text: string, credential: string | undefined): string {
@@ -428,7 +444,11 @@ export async function pluginHttpRequest(
 
   const credentialHeader = credentialHeaderName(manifest);
   if (credentialHeader) {
-    credential = resolvePluginCredential(input.plugin, mode);
+    // A key the provider publishes for read-only use is not a key this
+    // deployment is missing. Reporting one as absent produced the worst
+    // possible answer: "this read is unavailable here" about a read that
+    // answers 200 to anybody who sends the documented header.
+    credential = manifest.publishedCredential ?? resolvePluginCredential(input.plugin, mode);
     if (!credential) throw new PluginCredentialMissingError(input.plugin);
     headers[credentialHeader] = credential;
   }
@@ -479,17 +499,31 @@ function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | nu
     namespace: skill.namespace,
     manifest,
     allowedPaths: [...manifest.allowlist.pathPrefixes],
-    async request({ path, method, body, chainId, timeoutMs }) {
+    async request({ path, method, body, chainId, timeoutMs, fetchImpl }) {
+      // Printr has a read-only POST and a GET on a different path. A cross
+      // product of manifest methods/prefixes must not authorize token writes.
+      if (skill.namespace === 'printr' && !(
+        (method === 'POST' && path === '/v0/print/quote') ||
+        (method === 'GET' && /^\/v0\/tokens\/0x[a-fA-F0-9]{1,128}\/deployments$/.test(path))
+      )) throw new SkillPathNotAllowedError(skill.namespace, path);
       if (!manifest.allowlist.pathPrefixes.some((prefix) => path.startsWith(prefix))) {
         throw new SkillPathNotAllowedError(skill.namespace, path);
       }
+      // GMGN's replay protection: a Unix timestamp valid for about five
+      // seconds and a fresh UUID per request. They are transport, not product
+      // arguments -- a caller that had to remember them would forget them, and
+      // the failure would look like the API refusing rather than us.
+      const url = skill.namespace === 'gmgn'
+        ? `https://${host}${path}${path.includes('?') ? '&' : '?'}timestamp=${Math.floor(Date.now() / 1000)}&client_id=${randomUUID()}`
+        : `https://${host}${path}`;
       return pluginHttpRequest({
         plugin: skill.namespace,
-        url: `https://${host}${path}`,
+        url,
         method,
         body,
         chainId,
         timeoutMs,
+        ...(fetchImpl ? { fetchImpl } : {}),
       });
     },
   };

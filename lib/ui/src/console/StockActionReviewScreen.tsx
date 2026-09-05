@@ -53,12 +53,18 @@ export interface StockActionReviewModelV1 {
   caip10: string | null;
   transferEligibility: TransferPolicyWireV1 | null;
   transferGate: { state?: string; detail?: string; direction?: string } | null;
+  sellAmount?: {
+    value: string; balance: string | null; atomic: string | null; error: string | null;
+    onChange: (value: string) => void; onUseBalance: () => void;
+  } | null;
   confirm: {
+    disabled?: boolean;
     pending: boolean;
     /** Why the confirmation failed, already in reader copy. */
     error: string | null;
     clearance: string | null;
     expiresAt: string | null;
+    tokenAmount?: string | null;
     onConfirm: () => void;
   };
   /**
@@ -169,6 +175,7 @@ export function StockActionReviewScreen({
               <p className="cr-verdict good">
                 Confirmed. This authorises one exact action and expires shortly.
               </p>
+              {model.confirm.tokenAmount ? <p className="cr-verdict">Confirmed sell: {model.confirm.tokenAmount}.</p> : null}
               <p className="mr-gate-detail">
                 You can sign here, or hand the clearance back to the assistant that prepared the
                 review. Either way the batch is built by this server and approved in your own Base
@@ -212,14 +219,30 @@ export function StockActionReviewScreen({
             </div>
           ) : (
             <>
+              {model.sellAmount ? (
+                <div className="mr-sell-amount">
+                  <label htmlFor="stock-sell-amount">Token amount to sell</label>
+                  <input id="stock-sell-amount" type="text" inputMode="decimal" autoComplete="off"
+                    maxLength={336} value={model.sellAmount.value} disabled={model.confirm.pending}
+                    aria-describedby="stock-sell-size-note"
+                    onChange={(event) => model.sellAmount?.onChange(event.target.value)} />
+                  <button type="button" className="btn sec" disabled={model.confirm.pending || !model.sellAmount.balance || model.sellAmount.balance === '0'}
+                    onClick={model.sellAmount.onUseBalance}>Use available balance</button>
+                  <p className="lnote">Available: {model.sellAmount.balance ?? 'not read'} tokens of the exact contract above.</p>
+                  <p id="stock-sell-size-note" className="lnote" role="status">
+                    {model.sellAmount.error ?? `You will confirm ${model.sellAmount.value} tokens (${model.sellAmount.atomic} base units).`}
+                  </p>
+                  <p className="lnote">The cash-size comparison below does not set your sell amount. The output quote is refreshed before wallet approval.</p>
+                </div>
+              ) : null}
               <button
                 type="button"
                 className="btn lg"
-                disabled={model.confirm.pending}
+                disabled={model.confirm.pending || model.confirm.disabled}
                 title="Records that you agreed to these exact terms. Nothing is signed, submitted, or broadcast here."
                 onClick={model.confirm.onConfirm}
               >
-                {model.confirm.pending ? 'Confirming…' : 'Confirm these terms'}
+                {model.confirm.pending ? 'Confirming…' : model.sellAmount ? 'Confirm token amount' : 'Confirm these terms'}
               </button>
               {model.confirm.error ? (
                 <p className="cr-verdict bad">{model.confirm.error}</p>

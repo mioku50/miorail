@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 
 import {
   useStockActionConfirm,
@@ -7,6 +7,7 @@ import {
 } from '@mioagent/api-client-react';
 
 import type { StockActionReviewModelV1 } from './StockActionReviewScreen';
+import { stockSellAmountV1, tokenDecimalV1, type StockHoldingV1 } from './stockSellAmount';
 
 // ---------------------------------------------------------------------------
 // Phase 17.7 — the review's reads and refusals, shared.
@@ -30,6 +31,7 @@ export interface StockActionReviewWireV1 {
   representation?: { tokenAddress?: string; caip10?: string; issuerId?: string };
   question?: { direction?: 'buy' | 'sell'; requestedCashAtomic?: string; destination?: 'USDC' | 'ETH' };
   reality?: unknown;
+  holding?: StockHoldingV1 | null;
   transferEligibility?: never;
   transferGate?: { state?: string; detail?: string; direction?: string } | null;
 }
@@ -59,6 +61,15 @@ export function stockConfirmFailureCopyV1(error: unknown): string {
   if (message.includes('issuer_transfer_policy_denied')) {
     return 'The token’s own policy registry refuses this wallet for this action, so no clearance was issued. That is the issuer’s rule, read on chain — Miorail does not set it and cannot lift it.';
   }
+  if (message.includes('stock_action_sell_exceeds_balance')) {
+    return 'The wallet balance changed or is below the amount entered. Refresh this review and confirm an available token amount.';
+  }
+  if (message.includes('stock_action_sell_requires_exact_size')) {
+    return 'Enter and confirm an exact token amount. A cash equivalent does not set the amount to sell.';
+  }
+  if (/stock_action_(?:balance|token_decimals)_unread|market_reality_chain_unavailable/.test(message)) {
+    return 'The server could not read the current token balance. Refresh the review before confirming again.';
+  }
   if (message.includes('route_policy_changed')) {
     return 'The reviewed measurement basis changed while this page was open, so these are no longer the terms you read. Nothing was confirmed — ask again for a current answer.';
   }
@@ -87,7 +98,7 @@ export function stockReleaseFailureCopyV1(error: unknown): string {
     return 'No route was found for this exact confirmed question through the reviewed sources. Nothing was prepared.';
   }
   if (message.includes('stock_action_sell_requires_exact_size')) {
-    return 'A reviewed sell is "cash worth", which is not a token amount until something prices it — and that price lives about twenty seconds. Selling by exact token amount is not offered on this surface.';
+    return 'This clearance does not contain a confirmed token amount. Open the sell review and confirm the exact amount again.';
   }
   if (message.includes('clearance') && message.includes('expired')) {
     return 'This clearance expired. It authorises one exact action for a few minutes only — confirm again for a fresh one.';
@@ -117,14 +128,22 @@ export function useStockActionReviewConsoleV1(input: {
   const release = useStockActionRelease();
   const [walletError, setWalletError] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
+  const [sellInput, setSellInput] = useState({ draft: input.draft, value: '' });
+  const openingWallet = useRef(false);
+  const [walletBusy, setWalletBusy] = useState(false);
 
   const body = (review.data ?? null) as StockActionReviewWireV1 | null;
-  const confirmed = (confirm.data ?? null) as { clearance?: string; expiresAt?: string } | null;
+  const confirmed = (confirm.variables?.draft === input.draft ? confirm.data ?? null : null) as { clearance?: string; expiresAt?: string } | null;
+  const sellValue = sellInput.draft === input.draft ? sellInput.value : '';
+  const isSell = body?.question?.direction === 'sell';
+  const sell = stockSellAmountV1(sellValue, body?.holding);
 
   const onOpen = useCallback(async () => {
-    setWalletError(null);
     const clearance = confirmed?.clearance;
-    if (!clearance) return;
+    if (!clearance || openingWallet.current) return;
+    openingWallet.current = true;
+    setWalletBusy(true);
+    setWalletError(null);
     try {
       const released = (await release.mutateAsync({
         clearance,
@@ -179,6 +198,9 @@ export function useStockActionReviewConsoleV1(input: {
       }
     } catch (error) {
       setWalletError(stockReleaseFailureCopyV1(error));
+    } finally {
+      openingWallet.current = false;
+      setWalletBusy(false);
     }
   }, [confirmed?.clearance, input, release]);
 
@@ -192,21 +214,35 @@ export function useStockActionReviewConsoleV1(input: {
       caip10: body?.representation?.caip10 ?? null,
       transferEligibility: (body?.transferEligibility ?? null) as never,
       transferGate: body?.transferGate ?? null,
+      sellAmount: isSell ? {
+        value: sellValue,
+        balance: sell.balance,
+        atomic: sell.atomic,
+        error: sell.error,
+        onChange: (value: string) => setSellInput({ draft: input.draft, value }),
+        onUseBalance: () => setSellInput({ draft: input.draft, value: sell.balance ?? '' }),
+      } : null,
       confirm: {
         pending: confirm.isPending,
         error: confirm.error ? stockConfirmFailureCopyV1(confirm.error) : null,
         clearance: confirmed?.clearance ?? null,
         expiresAt: confirmed?.expiresAt ?? null,
-        onConfirm: () => confirm.mutate(input.draft ?? ''),
+        tokenAmount: isSell && confirmed && confirm.variables?.tokenAmountAtomic && Number.isInteger(body?.holding?.decimals)
+          ? `${tokenDecimalV1(confirm.variables.tokenAmountAtomic, body!.holding!.decimals!)} tokens (${confirm.variables.tokenAmountAtomic} base units)` : null,
+        disabled: isSell && !sell.atomic,
+        onConfirm: () => {
+          if (isSell && !sell.atomic) return;
+          confirm.mutate({ draft: input.draft ?? '', ...(isSell ? { tokenAmountAtomic: sell.atomic! } : {}) });
+        },
       },
       wallet: {
-        pending: release.isPending,
+        pending: release.isPending || walletBusy,
         error: walletError,
         batchId,
         onOpen: () => void onOpen(),
       },
     }),
-    [review.isLoading, review.error, body, confirm, confirmed, release.isPending, walletError, batchId, onOpen, input],
+    [review.isLoading, review.error, body, confirm, confirmed, release.isPending, walletBusy, walletError, batchId, onOpen, input, isSell, sellValue, sell.atomic, sell.balance, sell.error],
   );
 
   return { model, body };

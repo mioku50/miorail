@@ -23,6 +23,16 @@ import {
   type BaseMcpPluginRowV1,
 } from '../src/console/BaseMcpPluginsCard';
 
+test('a declared read without a released runtime recipe is not advertised as readable', () => {
+  const example = { id: 'liquidity', prompt: 'Read Aerodrome liquidity', surface: 'read' as const,
+    disposition: 'read_in_extensions' as const, capabilityState: 'unavailable' as const,
+    capabilityReason: 'No reviewed recipe.' };
+  const row = plugin({ id: 'aerodrome', examples: [example] });
+  assert.equal(baseMcpExampleBadgeV1(example).label, 'NOT AVAILABLE HERE');
+  assert.deepEqual(baseMcpPluginCapabilitiesV1(row), ['unavailable']);
+  assert.deepEqual(filterBaseMcpPluginsV1([row], '', 'readable_here'), []);
+});
+
 test('the rail counts capabilities exactly once, in the header\'s own words', () => {
   const html = renderToStaticMarkup(BaseMcpSummaryRail({
     connection: 'connected',

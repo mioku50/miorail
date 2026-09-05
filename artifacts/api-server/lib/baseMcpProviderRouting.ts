@@ -35,9 +35,13 @@ function containsAlias(message: string, alias: string): boolean {
   return cleanAlias.length > 0 && (` ${message} `).includes(` ${cleanAlias} `);
 }
 
-function overlapScore(message: string, prompt: string): number {
-  const words = new Set(normalized(message).split(' ').filter((word) => word.length > 2));
-  return normalized(prompt).split(' ').reduce((score, word) => score + (words.has(word) ? 1 : 0), 0);
+function overlapScore(message: string, prompt: string, aliases: readonly string[] = []): number {
+  const ignored = new Set(['show', 'list', 'get', 'check', 'find', 'inspect', 'the', 'my', 'this', 'that', 'for', 'from', 'and', 'with', 'base',
+    ...aliases.flatMap(alias => normalized(alias).split(' '))]);
+  const meaningful = (text: string) => normalized(text).split(' ')
+    .filter(word => word.length > 2 && !ignored.has(word)).map(word => word.replace(/s$/, ''));
+  const words = new Set(meaningful(message));
+  return meaningful(prompt).reduce((score, word) => score + (words.has(word) ? 1 : 0), 0);
 }
 
 type ReviewedRouteFamilyV1 = 'swap' | 'earn' | 'commerce' | 'nft';
@@ -91,6 +95,9 @@ function inferredDisposition(
   runtime: BaseMcpRuntimeSnapshotV1,
 ): BaseMcpProviderExampleDispositionV1 {
   const lower = normalized(message);
+  // Cyrillic words are not bounded by JavaScript's ASCII \b.
+  if (provider.pluginId === 'avantis' && /(?:^|\s)(?:откр|закр|лонг|шорт|плеч)\p{L}*/iu.test(lower)) return 'handoff_to_provider_ui';
+  if (/(?:^|\s)(?:созда|запуст|отправ|установ|зарегистр|одобр)\p{L}*/iu.test(lower)) return 'adapter_required';
   const avantisWrite = /\b(open|close|long|short|take profit|stop loss|tp|sl|margin|leverage|открой|закрой|лонг|шорт|плеч)\b/iu;
   if (provider.pluginId === 'avantis' && avantisWrite.test(lower)) return 'handoff_to_provider_ui';
 
@@ -107,6 +114,10 @@ function inferredDisposition(
   const earn = /\b(yield|apy|supply|borrow|deposit|withdraw|vault|lending|liquidity|доходност|депозит|заем|ликвидност)\b/iu;
   const commerce = /\b(gift card|esim|top up|bitrefill|voucher)\b/iu;
   const nft = /\b(nft|listing|collection|opensea)\b/iu;
+
+  if (provider.pluginId === 'printr' && /\b(cost|quote|status|deployments?)\b/i.test(lower) &&
+      !/^(?:please\s+)?(?:launch|create|deploy)\b/i.test(lower)) return 'read_in_extensions';
+  if (provider.pluginId === 'moonwell' && readVerb.test(lower) && /\b(markets?|positions?|health)\b/i.test(lower)) return 'read_in_extensions';
 
   // These provider reads are released in Extensions even though adjacent
   // transaction construction remains owned by Routes or an unreleased SDK.
@@ -149,14 +160,18 @@ export function matchBaseMcpProviderIntentV1(
   if (!provider) return null;
 
   const exact = provider.examples.find((example) => normalized(example.prompt) === clean);
-  const closest = exact || [...provider.examples]
-    .map((example) => ({ example, score: overlapScore(clean, example.prompt) }))
-    .sort((left, right) => right.score - left.score)[0]?.example;
   // An exact example match still passes the runtime gate. The registry records
   // the INTENT of an example; whether this deployment can keep it is a runtime
   // question, and answering it from the registry alone is what advertised a
   // dead end as a released capability.
   const declared = exact ? exact.disposition : inferredDisposition(clean, provider, runtime);
+  // Never select a write example as the recipe for a paraphrased read.
+  const candidates = [...provider.examples]
+    .filter(example => example.disposition === declared)
+    .map(example => ({ example, score: overlapScore(clean, example.prompt, provider.aliases) }))
+    .sort((left, right) => right.score - left.score);
+  const closest = exact || (candidates[0] && candidates[0].score > 0 && candidates[0].score !== candidates[1]?.score
+    ? candidates[0].example : null);
   const routeGate = declared === 'handoff_to_routes' ? handoffToRoutesReleasedV1(provider.pluginId, runtime) : null;
   const disposition: BaseMcpProviderExampleDispositionV1 =
     routeGate && !routeGate.released ? 'route_unavailable_here' : declared;

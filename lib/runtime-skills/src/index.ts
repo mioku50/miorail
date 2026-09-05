@@ -18,6 +18,24 @@ export interface RuntimeSkillManifest {
   chains: number[];
   allowlist: { hosts: string[]; methods: ('GET' | 'POST')[]; pathPrefixes: string[] };
   auth: 'none' | 'api-key';
+  /** The header this API names its key in. Defaults to `x-api-key`; GMGN spells
+   * it `X-APIKEY`, and a header name is part of an API's contract, not a
+   * convention we get to normalise. */
+  credentialHeader?: string;
+  /**
+   * A key the PROVIDER publishes, in its own plugin specification, for
+   * read-only use.
+   *
+   * Not a secret and not a credential this process invented: it is a documented
+   * constant, like a public RPC endpoint, and it is the difference between a
+   * read that works and one this deployment reports as unavailable while it
+   * works everywhere else. It is still scrubbed from anything echoed back, and
+   * the host allowlist still pins where it may be sent.
+   *
+   * A key that must be requested, paid for or kept secret does NOT go here. It
+   * goes in the environment, through `resolvePluginCredential`.
+   */
+  publishedCredential?: string;
   risk: string[];
 }
 

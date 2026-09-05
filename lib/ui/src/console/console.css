@@ -76,7 +76,9 @@
   /* A representation card, as its own surface. On the dark ground a 5.5% white
      lift already separates a card from the page, and a shadow over it would be
      invisible; the light theme needs the opposite and gets it below. */
-  --rep-bg: rgba(255,255,255,.055); --rep-line: var(--line); --rep-shadow: none;
+  /* Used inside comma-separated shadow lists: `none` invalidates the entire
+     list, including the selected security's inset ring. */
+  --rep-bg: rgba(255,255,255,.055); --rep-line: var(--line); --rep-shadow: 0 0 0 transparent;
   /* The halo behind a selected card's accent ring. */
   --gsoft-ring: rgba(106,169,255,.16);
   /* The colour a page title and a security name are set in. Ink here: on the
@@ -1295,6 +1297,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    and it rendered clipped as "MULTI-". */
 .mio-console .mr-choice-issuers { min-width: 0; flex: 0 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mio-console .mr-choice-tag { flex: none; padding: 1px 7px; font-size: 10px; letter-spacing: .04em; text-transform: uppercase; }
+.mio-console .mr-sell-amount { display: grid; gap: 10px; margin: 14px 0; }
+.mio-console .mr-sell-amount input { min-width: 0; padding: 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel2); color: var(--ink); font: inherit; }
+.mio-console .mr-sell-amount input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.mio-console .mr-sell-amount .btn { justify-self: start; }
 .mio-console .mr-surface-tabs { justify-self: start; }
 
 /* Direction and size, two rails on one line so the question reads as one

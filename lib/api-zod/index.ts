@@ -1829,6 +1829,7 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
             ]),
             /** Why, when the runtime downgraded a declared disposition. */
             capabilityReason: z.string().min(1).max(400).nullable().optional(),
+            capabilityState: z.enum(['released', 'unavailable', 'unsupported', 'external_ui', 'requires_input']).optional(),
           }),
         )
         .min(1)

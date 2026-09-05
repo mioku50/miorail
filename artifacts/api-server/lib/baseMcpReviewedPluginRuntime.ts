@@ -20,6 +20,7 @@ import {
 } from './baseMcpPluginSessionStore.js';
 import { callVirtualsReviewedV1 } from './virtualsReviewedClient.js';
 import { resolveCommerceCatalogSourceV1 } from './commerceRouteConfig.js';
+import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
 
 // ---------------------------------------------------------------------------
 // Reviewed Base plugin recipes.
@@ -154,16 +155,6 @@ export function reviewedRowsV1(
   return rows ? { kind: 'read', rows } : { kind: 'no_rows' };
 }
 
-/** A display name for a single-object read, taken from the provider's own
- * response. Null when the payload named nothing — a CTA is then unlabelled by
- * object rather than labelled with a guess. */
-function reviewedDisplayNameV1(result: ReviewedCallResultV1 | undefined): string | null {
-  if (!result || result.payloadOutcome !== 'parsed') return null;
-  const record = providerRecordV1(normalizeProviderPayloadV1(result.data).value, ['token', 'data']);
-  if (!record) return null;
-  return firstDisplayV1(record, ['symbol', 'name', 'ticker']);
-}
-
 function firstDisplayV1(record: Record<string, unknown>, keys: readonly string[]): string | null {
   for (const key of keys) {
     const value = record[key];
@@ -182,9 +173,10 @@ function moonwellMarketsReplyV1(result: ReviewedCallResultV1 | undefined, asset:
   const rows = read.rows;
   const matched = rows.filter((row) => {
     const symbol = firstDisplayV1(row, ['symbol', 'asset', 'underlyingSymbol', 'marketSymbol']);
-    return !symbol || symbol.toUpperCase().includes(asset.toUpperCase());
+    return symbol?.toUpperCase() === asset.toUpperCase();
   });
-  const shown = (matched.length > 0 ? matched : rows).slice(0, 12).map((row, index) => {
+  if (matched.length === 0) return `Moonwell returned no identified ${asset} market in this response. Other assets were not substituted.`;
+  const shown = matched.slice(0, 12).map((row, index) => {
     const name = firstDisplayV1(row, ['symbol', 'asset', 'underlyingSymbol', 'marketSymbol', 'name']) ?? `market ${index + 1}`;
     const supply = firstDisplayV1(row, ['baseSupplyApy', 'supplyApy', 'supplyAPY', 'totalSupplyApr', 'supplyApr', 'supplyAPR', 'supplyRate']);
     const borrow = firstDisplayV1(row, ['baseBorrowApy', 'borrowApy', 'borrowAPY', 'totalBorrowApr', 'borrowApr', 'borrowAPR', 'borrowRate']);
@@ -205,8 +197,14 @@ function moonwellAccountReplyV1(payloads: readonly { label: string; data: unknow
 }
 
 function virtualsAgentsReplyV1(payload: unknown): string {
+  const decoded = normalizeProviderPayloadV1(payload).value;
+  const record = providerRecordV1(decoded);
+  if ([decoded, record?.agents, record?.data].some(value => Array.isArray(value) && value.length === 0)) {
+    return 'Virtuals returned an empty agent list for this authenticated wallet.';
+  }
   const rows = objectArrayV1(payload);
-  if (!rows) return 'Virtuals answered the reviewed agent_list request. No agents were returned for this authenticated wallet.';
+  if (!rows) return 'Virtuals answered agent_list, but Miorail could not identify an agent list in the response. The wallet’s agents were not established.';
+  if (rows.length === 0) return 'Virtuals returned an empty agent list for this authenticated wallet.';
   const shown = rows.slice(0, 25).map((row, index) => {
     const name = firstDisplayV1(row, ['name', 'agentName', 'agent_name']) ?? `agent ${index + 1}`;
     const id = firstDisplayV1(row, ['id', 'agentId', 'agent_id']);
@@ -214,6 +212,36 @@ function virtualsAgentsReplyV1(payload: unknown): string {
     return `${index + 1}. ${name}${id ? ` — ${id}` : ''}${status ? ` · ${status}` : ''}`;
   });
   return [`Virtuals agents for the authenticated Base Account:`, ...shown].join('\n');
+}
+
+/**
+ * GMGN's own trending list, read as what it is.
+ *
+ * GMGN ranks by ITS market activity, over a window it chose, on a corpus
+ * Miorail has not reviewed. Every one of those is a reason this can never be
+ * phrased as a finding: no ranking language, no safety verdict, and none of
+ * the honeypot / rug / sniper columns the payload also carries -- a provider's
+ * risk flag repeated by us reads as our judgement, and it is not one.
+ */
+function gmgnTrendingReplyV1(result: ReviewedCallResultV1 | undefined): string {
+  const read = reviewedRowsV1(result, 'GMGN', ['rank']);
+  if (read.kind === 'unread') return read.reply;
+  if (read.kind === 'no_rows') {
+    return 'GMGN answered the public trending request and the response was read, but it carries no token rows.';
+  }
+  const rows = read.rows.slice(0, 5);
+  const named = rows
+    .map((row) => {
+      const symbol = firstDisplayV1(row, ['symbol', 'name']) ?? 'unnamed';
+      const address = firstDisplayV1(row, ['address']);
+      return address ? `${symbol} (${address})` : symbol;
+    })
+    .join(', ');
+  return [
+    `GMGN's own one-hour trending list for Base, by its volume ordering: ${named}.`,
+    'These are GMGN\u2019s numbers over a window GMGN chose, on tokens Miorail has not reviewed \u2014 not a Miorail measurement, not a ranking Miorail endorses, and not a statement that any of them can be entered or exited.',
+    'To ask what one of them would actually cost, give Miorail its exact address.',
+  ].join(' ');
 }
 
 function veniceModelsReplyV1(result: ReviewedCallResultV1 | undefined): string {
@@ -633,24 +661,6 @@ function printrQuoteReplyV1(result: ReviewedCallResultV1 | undefined): string {
   ].join('\n');
 }
 
-function gmgnTokenReplyV1(result: ReviewedCallResultV1 | undefined, address: string): string {
-  if (!result) return 'GMGN was not called on this request.';
-  if (result.payloadOutcome !== 'parsed') return providerPayloadFailureCopyV1('GMGN', result.payloadOutcome);
-  const token = providerRecordV1(normalizeProviderPayloadV1(result.data).value, ['token']);
-  if (!token) return `GMGN answered for ${address} and the response was read, but it carries no token record.`;
-  const facts = [
-    `Symbol: ${firstDisplayV1(token, ['symbol']) ?? 'not reported'}`,
-    `Name: ${firstDisplayV1(token, ['name']) ?? 'not reported'}`,
-    `Price: ${firstDisplayV1(token, ['price', 'priceUsd', 'price_usd']) ?? 'not reported'}`,
-    `Liquidity: ${firstDisplayV1(token, ['liquidity']) ?? 'not reported'}`,
-    `Holders: ${firstDisplayV1(token, ['holder_count', 'holderCount', 'holders']) ?? 'not reported'}`,
-  ];
-  return [
-    `GMGN market data for ${address}:`,
-    ...facts,
-    'Provider-supplied market data, not a Miorail measurement and not a Route Card.',
-  ].join('\n');
-}
 
 function openseaCollectionsReplyV1(result: ReviewedCallResultV1 | undefined): string {
   const read = reviewedRowsV1(result, 'OpenSea', ['collections']);
@@ -816,6 +826,11 @@ async function runBitrefillReadV1(input: ReviewedPluginReadInputV1): Promise<Bas
   };
 }
 
+function readNeedsInputV1(errorCode: string, reply: string): BaseMcpConsoleResultV1 {
+  return { status: 'answered', reply, trace: [], toolsAvailable: 0, truncated: false,
+    elapsedMs: 0, errorCode, checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString() };
+}
+
 export async function runReviewedBaseMcpPluginReadV1(
   input: ReviewedPluginReadInputV1,
 ): Promise<BaseMcpConsoleResultV1 | null> {
@@ -863,6 +878,18 @@ export async function runReviewedBaseMcpPluginReadV1(
     });
   }
   if (input.providerId === 'printr' && input.exampleId === 'status') {
+    const ids = [...new Set(input.message.match(/\b0x[a-fA-F0-9]{1,128}\b/g) ?? [])];
+    if (ids.length === 1) return runSimpleReviewedReadV1({
+      namespace: 'printr',
+      calls: [{ tool: 'printr_get_deployments', path: `/v0/tokens/${ids[0]}/deployments`,
+        timeoutMs: 9_000, args: { tokenId: ids[0] } }],
+      reply: results => {
+        const result = results[0];
+        if (!result || result.payloadOutcome !== 'parsed') return 'Printr deployment status could not be read. No deployment outcome was established.';
+        return `Printr deployment response for token ${ids[0]}:\n${baseMcpConsoleResultTextV1(jsonPreviewV1(result.data))}`;
+      },
+      cta: { pluginId: 'printr' },
+    });
     // Printr indexes a deployment by the token id it returned at launch, not
     // by wallet. Without one there is nothing to look up, so the answer names
     // the id rather than reaching for an endpoint that cannot answer.
@@ -875,6 +902,9 @@ export async function runReviewedBaseMcpPluginReadV1(
     };
   }
   if (input.providerId === 'printr' && input.exampleId === 'cost') {
+    const quoteInput = printrQuoteInputV1(input.message);
+    if (!quoteInput) return readNeedsInputV1('printr_quote_inputs_required',
+      'Specify the chains, initial buy in USD, and graduation target per chain (15000–1000000 USD). Format: “Printr launch cost on Base and Arbitrum, initial buy <amount> USD, graduation target <amount> USD”. No budget or chain was substituted and no provider request was sent.');
     return runSimpleReviewedReadV1({
       namespace: 'printr',
       calls: [{
@@ -882,44 +912,27 @@ export async function runReviewedBaseMcpPluginReadV1(
         path: '/v0/print/quote',
         method: 'POST',
         timeoutMs: 12_000,
-        // The launch shape Base's own spec documents. No user input reaches
-        // this body: a cost quote answers "what would it cost", and a figure
-        // taken from the sentence would quietly change the question.
-        body: {
-          chains: ['eip155:8453'],
-          initial_buy: { spend_usd: 10 },
-          graduation_threshold_per_chain_usd: 15_000,
-        },
-        args: { chains: ['eip155:8453'], initial_buy_usd: 10, graduation_threshold_usd: 15_000 },
+        body: quoteInput,
+        args: quoteInput,
       }],
       reply: (results) => printrQuoteReplyV1(results[0]),
       cta: { pluginId: 'printr' },
     });
   }
-  if (input.providerId === 'gmgn' && input.exampleId === 'market') {
-    const address = input.message.match(/0x[a-fA-F0-9]{40}/u)?.[0] ?? null;
-    if (!address) {
-      return {
-        status: 'answered',
-        reply: 'Paste the Base token contract address (0x…) to read it in GMGN. Miorail resolves no symbol to an address on your behalf, because two tokens can share a symbol. No provider request was sent.',
-        trace: [], toolsAvailable: 1, truncated: false, elapsedMs: 0,
-        errorCode: 'gmgn_token_address_required',
-        checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString(),
-      };
-    }
+  if (input.providerId === 'gmgn') {
+    // GMGN's only per-token endpoint returns swap CALLDATA, which this surface
+    // does not release: calldata no route family priced is not something
+    // Extensions hands anybody. What it can answer is GMGN's own market list.
     return runSimpleReviewedReadV1({
       namespace: 'gmgn',
       calls: [{
-        tool: 'gmgn_get_token_info',
-        path: `/api/v1/token_info/base/${encodeURIComponent(address)}`,
-        timeoutMs: 9_000,
-        args: { chain: 'base', address },
+        tool: 'gmgn_get_trending',
+        path: '/v1/market/rank?chain=base&interval=1h&limit=10&order_by=volume',
+        timeoutMs: 12_000,
+        args: { chain: 'base', interval: '1h', limit: 10, order_by: 'volume' },
       }],
-      reply: (results) => gmgnTokenReplyV1(results[0], address),
-      // The only id here came from the USER's own message and was matched
-      // against a 40-hex address before any request was sent. Deep-linking is
-      // safe precisely because the read was about one object.
-      cta: { pluginId: 'gmgn', object: (results) => ({ id: address, name: reviewedDisplayNameV1(results[0]) }) },
+      reply: (results) => gmgnTrendingReplyV1(results[0]),
+      cta: { pluginId: 'gmgn' },
     });
   }
   if (input.providerId === 'opensea' && input.exampleId === 'listing') {
@@ -937,6 +950,8 @@ export async function runReviewedBaseMcpPluginReadV1(
     };
   }
   if (input.providerId === 'opensea' && input.exampleId === 'drops') {
+    if (/\b(?:upcoming|drops?)\b/i.test(input.message)) return readNeedsInputV1('opensea_drops_unavailable',
+      'This reviewed OpenSea read lists popular Base collections, not upcoming drops. Ask “Show popular NFT collections on Base from OpenSea” to read that catalogue.');
     return runSimpleReviewedReadV1({
       namespace: 'opensea',
       calls: [{
@@ -975,6 +990,8 @@ export async function runReviewedBaseMcpPluginReadV1(
     });
   }
   if (input.providerId === 'balancer' && input.exampleId === 'yield') {
+    if (!/\b(?:ETH|WETH)\b/i.test(input.message)) return readNeedsInputV1('balancer_asset_scope_required',
+      'This reviewed Balancer pool read supports ETH-bearing pools on Base. Name ETH or WETH to use it; another asset will not be substituted.');
     const query = `query Pools($first: Int, $orderBy: GqlPoolOrderBy, $orderDirection: GqlPoolOrderDirection, $where: GqlPoolFilter) { poolGetPools(first: $first, orderBy: $orderBy, orderDirection: $orderDirection, where: $where) { id address chain type name symbol protocolVersion dynamicData { totalLiquidity volume24h aprItems { apr type } } poolTokens { address symbol weight } } }`;
     return runSimpleReviewedReadV1({
       namespace: 'balancer',
@@ -991,6 +1008,9 @@ export async function runReviewedBaseMcpPluginReadV1(
     return runBitrefillReadV1(input);
   }
   if (input.providerId !== 'moonwell') return null;
+  const asset = input.exampleId === 'markets' ? moonwellAssetV1(input.message) : null;
+  if (input.exampleId === 'markets' && !asset) return readNeedsInputV1('moonwell_asset_required',
+    'Name one asset for the Moonwell market read, for example “Show Moonwell USDC supply markets on Base”. No asset was substituted.');
   const executor = reviewedBaseMcpPluginRuntimeV1.loadSkillExecutor('moonwell');
   if (!executor) return null;
   const startedAt = Date.now();
@@ -1011,8 +1031,8 @@ export async function runReviewedBaseMcpPluginReadV1(
     : input.exampleId === 'markets'
       ? [{
           tool: 'moonwell_get_markets',
-          path: '/v1/markets/USDC?chain=base',
-          args: { chain: 'base', asset: 'USDC' },
+          path: `/v1/markets/${encodeURIComponent(asset!)}?chain=base`,
+          args: { chain: 'base', asset: asset! },
         }]
       : null;
   if (!calls) return null;
@@ -1030,7 +1050,7 @@ export async function runReviewedBaseMcpPluginReadV1(
     status: 'answered',
     reply: input.exampleId === 'health'
       ? moonwellAccountReplyV1(called.results.map((result) => ({ label: result.tool, data: result.data })))
-      : moonwellMarketsReplyV1(called.results[0], 'USDC'),
+      : moonwellMarketsReplyV1(called.results[0], asset!),
     trace,
     toolsAvailable: calls.length,
     truncated: false,

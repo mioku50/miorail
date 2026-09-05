@@ -1070,10 +1070,10 @@ export function useStockActionReview(draft: string | null | undefined) {
 export function useStockActionConfirm() {
   return useMutation({
     retry: false,
-    mutationFn: async (draft: string) =>
+    mutationFn: async ({ draft, tokenAmountAtomic }: { draft: string; tokenAmountAtomic?: string }) =>
       fetchApi<unknown>(
         `/api/route-intelligence/rwa/stock-action/${encodeURIComponent(draft)}/confirm`,
-        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' },
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(tokenAmountAtomic ? { tokenAmountAtomic } : {}) },
       ),
   });
 }

@@ -1,0 +1,466 @@
+{
+  "schemaVersion": "market-reality/v2",
+  "question": {
+    "chainId": 8453,
+    "underlyingKey": "security:isin:US67066G1040",
+    "direction": "sell",
+    "requestedCashAtomic": "1000000000",
+    "cashAsset": "USDC",
+    "cashAddress": "0x833589fcd6edb6e08f4c7c32d4f71b54bda02913",
+    "cashDecimals": 6,
+    "destination": "USDC",
+    "exactSizeOnly": true,
+    "baseOnly": true
+  },
+  "universe": {
+    "reviewedRepresentationCount": 5,
+    "positiveSupplyRepresentationCount": 4,
+    "zeroSupplyRepresentationCount": 1,
+    "unresolvedSupplyRepresentationCount": 0
+  },
+  "marketOutcomeCoverage": {
+    "policy": "same_reviewed_router_policy_exact_size_direction_and_destination",
+    "eligibleRepresentationCount": 4,
+    "establishedOutcomeCount": 0,
+    "status": "incomplete",
+    "reason": "Every positive-supply representation must have a fresh exact-direction outcome under the same reviewed router policy."
+  },
+  "numericComparisonCoverage": {
+    "policy": "fresh_numeric_quotes_same_exact_question_and_normalization",
+    "eligibleRepresentationCount": 4,
+    "pricedRepresentationCount": 0,
+    "status": "incomplete",
+    "reason": "Every positive-supply representation needs a fresh normalized numeric quote for this exact question before numeric comparison is complete."
+  },
+  "ranking": {
+    "status": "withheld",
+    "policy": "withheld_phase_10b8",
+    "orderedTokenAddresses": [],
+    "reason": "Numeric comparison coverage is incomplete; no BEST representation is emitted."
+  },
+  "quoteEvidenceIsExecutionProof": false,
+  "representations": [
+    {
+      "tokenAddress": "0x7e8101a1c322d394b3961498c7d40d2dfa94c392",
+      "issuerId": "backed",
+      "issuerInstrumentKey": "backed:instrument_id:c1077d76-ba02-4ab1-bd91-db0d18191c1a",
+      "representationKind": "non_rebasing_erc4626_wrapper",
+      "supply": {
+        "state": "positive_supply",
+        "totalSupplyAtomic": "1136718951939381",
+        "decimals": 18,
+        "normalization": "raw_erc20_total_supply",
+        "blockNumber": "50917816",
+        "blockHash": "0xfa1122b2d581cfcdf87806ddd403a7740ebe19fe646805bd9e882983126f0f1b",
+        "observedAt": "2026-09-05T16:16:21.268Z",
+        "evidenceHash": "0xa68e5e5b12196ca11840c5ab85ae156e5136f55d36eb6a20b54193fd6e270500",
+        "source": "erc20_total_supply",
+        "readOutcome": "success",
+        "fresh": true,
+        "reason": null
+      },
+      "status": "not_measured",
+      "routePolicyKey": "0x43e565deb2d53a6bf74b607d9ce08bd77da251cc873dd1cd362ab2dc76b0c017",
+      "exactTestedTokenAtomic": null,
+      "normalizedExposureAtomic": null,
+      "normalizedExposureDecimals": null,
+      "normalization": "not_established",
+      "returnedCashAtomic": null,
+      "effectivePriceAtomic": null,
+      "effectivePriceDecimals": null,
+      "premiumDiscountBps": null,
+      "reference": {
+        "status": "unknown",
+        "session": "unknown",
+        "marketSession": "unknown",
+        "publicationMode": "unknown",
+        "valueAtomic": null,
+        "decimals": null,
+        "observedAt": "2026-09-05T19:33:51.280Z",
+        "referenceUpdatedAt": null,
+        "freshness": "unknown",
+        "referenceSource": null,
+        "referenceAddress": null,
+        "calendar": null,
+        "evidence": null,
+        "comparable": false,
+        "reasonCode": "issuer_reference_not_reviewed",
+        "reason": "No reviewed backed reference/session configuration is established."
+      },
+      "basis": {
+        "policy": "exact_normalized_price_same_quote_window_reviewed_publication_v1",
+        "status": "withheld",
+        "kind": "withheld",
+        "premiumDiscountBps": null,
+        "reasonCode": "measurement_failed",
+        "reason": "The market measurement did not complete, and an incomplete measurement is not an asset-price claim."
+      },
+      "sources": [
+        {
+          "source": "kyberswap",
+          "status": "not_measured",
+          "errorCode": "provider_unsupported_token",
+          "quoteEvidence": null,
+          "simulationEvidence": {
+            "kind": "route_simulation",
+            "status": "not_simulated",
+            "evidenceHash": null
+          }
+        }
+      ],
+      "observedAt": null,
+      "expiresAt": null,
+      "liveness": "history_only",
+      "lastObservation": {
+        "source": "kyberswap",
+        "status": "measurement_failed",
+        "errorCode": "provider_unsupported_token",
+        "observedAt": "2026-09-05T18:49:44.991Z",
+        "expiresAt": "2026-09-05T18:50:44.991Z",
+        "returnedCashAtomic": null,
+        "open": false
+      }
+    },
+    {
+      "tokenAddress": "0x92ecf64fdb76e60b76d78a29ad4bf9d38b7b1b97",
+      "issuerId": "dinari",
+      "issuerInstrumentKey": "0196ea6d-b6e0-7ccd-b848-0f4ce139af2e",
+      "representationKind": "dinari_dshare",
+      "supply": {
+        "state": "positive_supply",
+        "totalSupplyAtomic": "319489416453295630600",
+        "decimals": 18,
+        "normalization": "raw_erc20_total_supply",
+        "blockNumber": "50917816",
+        "blockHash": "0xfa1122b2d581cfcdf87806ddd403a7740ebe19fe646805bd9e882983126f0f1b",
+        "observedAt": "2026-09-05T16:16:21.268Z",
+        "evidenceHash": "0xd7b0dd859a5d13221a4785dba7a19fb7e5d8cd6ee2d156195bf24f82702ff14e",
+        "source": "erc20_total_supply",
+        "readOutcome": "success",
+        "fresh": true,
+        "reason": null
+      },
+      "status": "not_measured",
+      "routePolicyKey": "0x43e565deb2d53a6bf74b607d9ce08bd77da251cc873dd1cd362ab2dc76b0c017",
+      "exactTestedTokenAtomic": null,
+      "normalizedExposureAtomic": null,
+      "normalizedExposureDecimals": null,
+      "normalization": "not_established",
+      "returnedCashAtomic": null,
+      "effectivePriceAtomic": null,
+      "effectivePriceDecimals": null,
+      "premiumDiscountBps": null,
+      "reference": {
+        "status": "unknown",
+        "session": "unknown",
+        "marketSession": "unknown",
+        "publicationMode": "unknown",
+        "valueAtomic": null,
+        "decimals": null,
+        "observedAt": "2026-09-05T19:33:51.280Z",
+        "referenceUpdatedAt": null,
+        "freshness": "unknown",
+        "referenceSource": null,
+        "referenceAddress": null,
+        "calendar": null,
+        "evidence": null,
+        "comparable": false,
+        "reasonCode": "issuer_reference_not_reviewed",
+        "reason": "No reviewed dinari reference/session configuration is established."
+      },
+      "basis": {
+        "policy": "exact_normalized_price_same_quote_window_reviewed_publication_v1",
+        "status": "withheld",
+        "kind": "withheld",
+        "premiumDiscountBps": null,
+        "reasonCode": "unsized_sell",
+        "reason": "SELL was not sized because the exact BUY sizing anchor was not established."
+      },
+      "sources": [
+        {
+          "source": "kyberswap",
+          "status": "not_measured",
+          "errorCode": "cash_size_anchor_no_route",
+          "quoteEvidence": null,
+          "simulationEvidence": {
+            "kind": "route_simulation",
+            "status": "not_simulated",
+            "evidenceHash": null
+          }
+        }
+      ],
+      "observedAt": null,
+      "expiresAt": null,
+      "liveness": "history_only",
+      "lastObservation": {
+        "source": "kyberswap",
+        "status": "unsized",
+        "errorCode": "cash_size_anchor_no_route",
+        "observedAt": "2026-09-05T18:49:45.254Z",
+        "expiresAt": "2026-09-05T18:50:45.254Z",
+        "returnedCashAtomic": null,
+        "open": false
+      }
+    },
+    {
+      "tokenAddress": "0xa34c5e0abe843e10461e2c9586ea03e55dbcc495",
+      "issuerId": "backed",
+      "issuerInstrumentKey": "backed:instrument_id:c1077d76-ba02-4ab1-bd91-db0d18191c1a",
+      "representationKind": "rebasing_erc20",
+      "supply": {
+        "state": "positive_supply",
+        "totalSupplyAtomic": "7007869526260498662468",
+        "decimals": 18,
+        "normalization": "raw_erc20_total_supply",
+        "blockNumber": "50917816",
+        "blockHash": "0xfa1122b2d581cfcdf87806ddd403a7740ebe19fe646805bd9e882983126f0f1b",
+        "observedAt": "2026-09-05T16:16:21.268Z",
+        "evidenceHash": "0x1441929409b3656b23ebe0ec70bd31e24852a23f1cb7257cc13c7286c9440cc1",
+        "source": "erc20_total_supply",
+        "readOutcome": "success",
+        "fresh": true,
+        "reason": null
+      },
+      "status": "not_measured",
+      "routePolicyKey": "0x43e565deb2d53a6bf74b607d9ce08bd77da251cc873dd1cd362ab2dc76b0c017",
+      "exactTestedTokenAtomic": null,
+      "normalizedExposureAtomic": null,
+      "normalizedExposureDecimals": null,
+      "normalization": "not_established",
+      "returnedCashAtomic": null,
+      "effectivePriceAtomic": null,
+      "effectivePriceDecimals": null,
+      "premiumDiscountBps": null,
+      "reference": {
+        "status": "unknown",
+        "session": "unknown",
+        "marketSession": "unknown",
+        "publicationMode": "unknown",
+        "valueAtomic": null,
+        "decimals": null,
+        "observedAt": "2026-09-05T19:33:51.280Z",
+        "referenceUpdatedAt": null,
+        "freshness": "unknown",
+        "referenceSource": null,
+        "referenceAddress": null,
+        "calendar": null,
+        "evidence": null,
+        "comparable": false,
+        "reasonCode": "issuer_reference_not_reviewed",
+        "reason": "No reviewed backed reference/session configuration is established."
+      },
+      "basis": {
+        "policy": "exact_normalized_price_same_quote_window_reviewed_publication_v1",
+        "status": "withheld",
+        "kind": "withheld",
+        "premiumDiscountBps": null,
+        "reasonCode": "unsized_sell",
+        "reason": "SELL was not sized because the exact BUY sizing anchor was not established."
+      },
+      "sources": [
+        {
+          "source": "kyberswap",
+          "status": "not_measured",
+          "errorCode": "cash_size_anchor_no_route",
+          "quoteEvidence": null,
+          "simulationEvidence": {
+            "kind": "route_simulation",
+            "status": "not_simulated",
+            "evidenceHash": null
+          }
+        }
+      ],
+      "observedAt": null,
+      "expiresAt": null,
+      "liveness": "history_only",
+      "lastObservation": {
+        "source": "kyberswap",
+        "status": "unsized",
+        "errorCode": "cash_size_anchor_no_route",
+        "observedAt": "2026-09-05T18:49:45.495Z",
+        "expiresAt": "2026-09-05T18:50:45.495Z",
+        "returnedCashAtomic": null,
+        "open": false
+      }
+    },
+    {
+      "tokenAddress": "0xb20000000000000000000078ee7ce2fe4908108c",
+      "issuerId": "coinbase",
+      "issuerInstrumentKey": "coinbase:b20_address:0xb20000000000000000000078ee7ce2fe4908108c",
+      "representationKind": "b20_asset",
+      "supply": {
+        "state": "positive_supply",
+        "totalSupplyAtomic": "1373108020000",
+        "decimals": 8,
+        "normalization": "raw_erc20_total_supply",
+        "blockNumber": "50917816",
+        "blockHash": "0xfa1122b2d581cfcdf87806ddd403a7740ebe19fe646805bd9e882983126f0f1b",
+        "observedAt": "2026-09-05T16:16:21.268Z",
+        "evidenceHash": "0x71bdf574f0b651fb673b3ba0c0b7435cca4597b9970963088b80a51b0ab8f110",
+        "source": "erc20_total_supply",
+        "readOutcome": "success",
+        "fresh": true,
+        "reason": null
+      },
+      "status": "not_measured",
+      "routePolicyKey": "0x43e565deb2d53a6bf74b607d9ce08bd77da251cc873dd1cd362ab2dc76b0c017",
+      "exactTestedTokenAtomic": null,
+      "normalizedExposureAtomic": null,
+      "normalizedExposureDecimals": null,
+      "normalization": "not_established",
+      "returnedCashAtomic": null,
+      "effectivePriceAtomic": null,
+      "effectivePriceDecimals": null,
+      "premiumDiscountBps": null,
+      "reference": {
+        "status": "fresh",
+        "session": "weekend",
+        "marketSession": "weekend",
+        "publicationMode": "holding_last_close",
+        "valueAtomic": "22995730000",
+        "decimals": 8,
+        "observedAt": "2026-09-05T19:33:51.280Z",
+        "referenceUpdatedAt": "2026-09-04T18:04:15.000Z",
+        "freshness": "fresh",
+        "referenceSource": "https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md",
+        "referenceAddress": "0x04689a41629776563e6822f76f2e57d148d28513",
+        "calendar": {
+          "key": "us_equities_core_2026_v1",
+          "sourceUrls": [
+            "https://www.nyse.com/trade/hours-calendars",
+            "https://www.nasdaq.com/market-activity/stock-market-holiday-schedule"
+          ],
+          "timeZone": "America/New_York",
+          "localDate": "2026-09-05",
+          "regularOpenMinute": 570,
+          "regularCloseMinute": 960,
+          "publicationSessionLocalDate": "2026-09-04",
+          "publicationSessionOpenMinute": 570,
+          "publicationSessionCloseMinute": 960
+        },
+        "evidence": {
+          "kind": "chainlink_feed",
+          "source": "chainlink_v3_proxy_total_return",
+          "blockNumber": "50923742",
+          "blockHash": "0x837ee9768fb25edd9411ae56af6baa2b606d75fa7313076242e7177fa339eac5",
+          "targetAddress": "0x04689a41629776563e6822f76f2e57d148d28513",
+          "evidenceHash": "0xab07dd9cafbe1070a2f3d3c10000ec8a41cfd4b9f4ed08eb9b47cc5559d1f53f"
+        },
+        "comparable": false,
+        "reasonCode": "reviewed_calendar_weekend",
+        "reason": "The explicit observation time falls on a weekend in the reviewed market calendar."
+      },
+      "basis": {
+        "policy": "exact_normalized_price_same_quote_window_reviewed_publication_v1",
+        "status": "withheld",
+        "kind": "withheld",
+        "premiumDiscountBps": null,
+        "reasonCode": "expired_quote",
+        "reason": "The exact executable quote is no longer open."
+      },
+      "sources": [
+        {
+          "source": "kyberswap",
+          "status": "not_measured",
+          "errorCode": null,
+          "quoteEvidence": {
+            "kind": "router_quote",
+            "source": "kyberswap",
+            "direction": "sell",
+            "routeKey": "0x5fe9657e11ccffebcaa860f890a6de69bff27dd530f55c92d4b321a6d64ef1d2",
+            "candidateHash": "0x5fe9657e11ccffebcaa860f890a6de69bff27dd530f55c92d4b321a6d64ef1d2",
+            "evidenceHash": "0x7543d1b9f659ed42cb4e653cfcc1c8e290be2a4df388131dd06e6a0c889edd96",
+            "inputAtomic": "432704803",
+            "outputAtomic": "999516881",
+            "observedAt": "2026-09-05T18:49:45.000Z",
+            "expiresAt": "2026-09-05T18:50:05.000Z",
+            "blockNumber": null,
+            "liquiditySources": [
+              "eip155:8453/aerodrome-cl-3:0x853f5f1b92b16714fe6cda67caad0856b83c7ab9",
+              "eip155:8453/elfomofi:unknown"
+            ]
+          },
+          "simulationEvidence": {
+            "kind": "route_simulation",
+            "status": "not_simulated",
+            "evidenceHash": null
+          }
+        }
+      ],
+      "observedAt": null,
+      "expiresAt": null,
+      "liveness": "history_only",
+      "lastObservation": {
+        "source": "kyberswap",
+        "status": "quoted",
+        "errorCode": null,
+        "observedAt": "2026-09-05T18:49:45.000Z",
+        "expiresAt": "2026-09-05T18:50:05.000Z",
+        "returnedCashAtomic": "999516881",
+        "open": false
+      }
+    },
+    {
+      "tokenAddress": "0xf37e92704df29338dd09759f322fd09868dd25cc",
+      "issuerId": "dinari",
+      "issuerInstrumentKey": "0196ea6d-b6e0-7ccd-b848-0f4ce139af2e",
+      "representationKind": "dinari_dshare",
+      "supply": {
+        "state": "zero_supply",
+        "totalSupplyAtomic": "0",
+        "decimals": 18,
+        "normalization": "raw_erc20_total_supply",
+        "blockNumber": "50917816",
+        "blockHash": "0xfa1122b2d581cfcdf87806ddd403a7740ebe19fe646805bd9e882983126f0f1b",
+        "observedAt": "2026-09-05T16:16:21.268Z",
+        "evidenceHash": "0x9000d71d38744139a5de253f7b17fce44733226c3eba3507dd079f33be93f6a7",
+        "source": "erc20_total_supply",
+        "readOutcome": "success",
+        "fresh": true,
+        "reason": null
+      },
+      "status": "not_measured",
+      "routePolicyKey": null,
+      "exactTestedTokenAtomic": null,
+      "normalizedExposureAtomic": null,
+      "normalizedExposureDecimals": null,
+      "normalization": "not_established",
+      "returnedCashAtomic": null,
+      "effectivePriceAtomic": null,
+      "effectivePriceDecimals": null,
+      "premiumDiscountBps": null,
+      "reference": {
+        "status": "unknown",
+        "session": "unknown",
+        "marketSession": "unknown",
+        "publicationMode": "unknown",
+        "valueAtomic": null,
+        "decimals": null,
+        "observedAt": "2026-09-05T19:33:51.280Z",
+        "referenceUpdatedAt": null,
+        "freshness": "unknown",
+        "referenceSource": null,
+        "referenceAddress": null,
+        "calendar": null,
+        "evidence": null,
+        "comparable": false,
+        "reasonCode": "issuer_reference_not_reviewed",
+        "reason": "No reviewed dinari reference/session configuration is established."
+      },
+      "basis": {
+        "policy": "exact_normalized_price_same_quote_window_reviewed_publication_v1",
+        "status": "withheld",
+        "kind": "withheld",
+        "premiumDiscountBps": null,
+        "reasonCode": "zero_supply",
+        "reason": "Zero supply is outside the active market comparison."
+      },
+      "sources": [],
+      "observedAt": null,
+      "expiresAt": null,
+      "liveness": "never_measured",
+      "lastObservation": null
+    }
+  ],
+  "assembledAt": "2026-09-05T19:33:51.280Z"
+}
