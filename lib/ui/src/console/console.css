@@ -1067,12 +1067,25 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    its own above it. Same component: the placement is a prop, so there is no
    second console to keep true. The rail is what tells a reader this block is
    an aside inside the feed panel and not the feed itself. */
-.mio-console .ask-inline { margin: 11px 0 12px; padding: 10px 0 0 11px;
-  min-width: 0; max-width: 100%; border-top: 1px solid var(--line); border-left: 2px solid var(--line2); }
+/* Ask Miorail, as a surface rather than two hairlines.
+ *
+ * A top border and a 2px left border over the page's own ground is invisible
+ * on the dark theme, so the one control that answers a reader's question in
+ * words sat below the fold looking like a divider. It gets the representation
+ * card's own treatment: its own ground, its own edge, and a heading a reader
+ * can find without being told where to look.
+ */
+.mio-console .ask-inline { margin: 14px 0 14px; padding: 14px 15px;
+  min-width: 0; max-width: 100%; border: 0; border-radius: calc(var(--r) + 2px);
+  background: var(--rep-bg); box-shadow: inset 0 0 0 1px var(--rep-line), var(--rep-shadow); }
 .mio-console .ask-inline-head { display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
-.mio-console .ask-inline-head h4 { margin: 0; color: var(--ink); font-size: 12px; font-weight: 700;
-  letter-spacing: .01em; }
+  gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
+.mio-console .ask-inline-head h4 { display: flex; align-items: center; gap: 8px; margin: 0;
+  color: var(--title-ink); font-size: 14px; font-weight: 700; letter-spacing: -.01em; }
+/* A mark, not an emoji: it says "this one talks back" at a glance and costs
+   the layout nothing. */
+.mio-console .ask-inline-head h4::before { content: ''; width: 3px; height: 15px; flex: none;
+  border-radius: 2px; background: var(--accent-line); }
 .mio-console .ask-inline-head .rt { display: flex; align-items: center; gap: 8px; }
 /* The first control inside the strip already carries the top gap. */
 .mio-console .ask-inline > .filter-row:first-of-type { margin-top: 0; }
@@ -1301,7 +1314,27 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-sell-amount input { min-width: 0; padding: 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel2); color: var(--ink); font: inherit; }
 .mio-console .mr-sell-amount input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .mio-console .mr-sell-amount .btn { justify-self: start; }
-.mio-console .mr-surface-tabs { justify-self: start; }
+/* The page's mode switch, not a footnote.
+ *
+ * It used to inherit `.tabbar`, which is the phone's BOTTOM bar: a hairline
+ * top border, 11.5px text, and an active state shown as a 2px line above the
+ * word. At the top of a desktop page, between a grid of securities and the
+ * size rails, that reads as a minor toggle -- and a reader who misses it
+ * presses a security, sees the viewport not change, and concludes nothing
+ * happened. The two answers behind these words are different products; the
+ * control that chooses between them is now shaped like one.
+ */
+.mio-console .mr-surface-tabs { justify-self: start; display: inline-grid;
+  grid-auto-flow: column; grid-auto-columns: max-content; gap: 4px; padding: 4px;
+  border: 0; border-radius: calc(var(--r) + 3px); background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line); backdrop-filter: none; }
+.mio-console .mr-surface-tabs button { padding: 8px 16px; border: 0; border-radius: var(--r);
+  font-size: 13px; font-weight: 650; letter-spacing: -.005em; color: var(--muted);
+  background: transparent; transition: background .12s, color .12s, box-shadow .12s; }
+.mio-console .mr-surface-tabs button:hover { color: var(--ink); background: var(--n-bg); }
+.mio-console .mr-surface-tabs button.on { color: var(--ink); background: var(--node-a-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line); }
+.mio-console .mr-surface-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
 /* Direction and size, two rails on one line so the question reads as one
    sentence rather than as two unrelated controls. */
