@@ -1,0 +1,190 @@
+import assert from 'node:assert/strict';
+import test, { beforeEach, describe } from 'node:test';
+
+import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
+import { McpPublicError } from './tools.js';
+import { miorailGetUseAccessV1, resetUseAccessCacheV1 } from './useAccessTools.js';
+
+const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
+const STRANGER = '0x1111111111111111111111111111111111111111';
+
+// ---------------------------------------------------------------------------
+// A public tool that fans out to ten `eth_call`s and two HTTP fetches needs two
+// bounds, and both are behavioural rather than advisory: the key space is the
+// reviewed corpus, and one address is read once at a time.
+// ---------------------------------------------------------------------------
+
+let chainCalls = 0;
+let venueLookups = 0;
+let bindings: Record<string, boolean> = {};
+let venueFails = false;
+
+const restore = {
+  underlyings: rwaMarketRealityRuntime.underlyings,
+  useAccessReader: rwaMarketRealityRuntime.useAccessReader,
+  defiSources: rwaMarketRealityRuntime.defiSources,
+  migrationAvailable: rwaMarketRealityRuntime.migrationAvailable,
+};
+
+beforeEach(() => {
+  resetUseAccessCacheV1();
+  chainCalls = 0;
+  venueLookups = 0;
+  venueFails = false;
+  bindings = { [NVDA]: true };
+
+  rwaMarketRealityRuntime.migrationAvailable = async () => true;
+  rwaMarketRealityRuntime.underlyings = (() => ({
+    async underlyingOf({ tokenAddress }: { chainId: number; tokenAddress: string }) {
+      return bindings[tokenAddress]
+        ? {
+            binding: { underlyingKey: 'security:isin:US67066G1040', issuerId: 'coinbase' },
+            underlying: { displaySymbol: 'NVDA' },
+          }
+        : null;
+    },
+  })) as never;
+  rwaMarketRealityRuntime.useAccessReader = (() => ({
+    async readBlockAnchor() {
+      chainCalls += 1;
+      return { ok: true as const, value: { blockTag: '0x3060000' } };
+    },
+    async call() {
+      chainCalls += 1;
+      return { ok: false as const, reason: 'execution_reverted' };
+    },
+  })) as never;
+  rwaMarketRealityRuntime.defiSources = (() => [
+    {
+      venueId: 'aave_v3',
+      venueName: 'Aave v3',
+      kind: 'chain_head' as const,
+      async lookup() {
+        venueLookups += 1;
+        if (venueFails) throw new Error('aave read endpoint_unavailable');
+        // A real fan-out takes time; without it "concurrent" is not concurrent.
+        await new Promise((resolve) => setTimeout(resolve, 15));
+        return {
+          venueId: 'aave_v3',
+          venueName: 'Aave v3',
+          state: 'not_listed' as const,
+          uses: { lend: null, borrow: null, collateral: null },
+          curated: null,
+          marketRef: null,
+          reason: null,
+        };
+      },
+    },
+  ]) as never;
+});
+
+test.after(() => {
+  Object.assign(rwaMarketRealityRuntime, restore);
+});
+
+describe('the key space is the reviewed corpus, not the chain', () => {
+  test('an address Miorail never bound is refused before anything is read', async () => {
+    bindings = {};
+    await assert.rejects(
+      () => miorailGetUseAccessV1({ address: STRANGER }),
+      (error: unknown) => {
+        assert.ok(error instanceof McpPublicError);
+        assert.equal(error.code, 'representation_not_reviewed');
+        // And it says whose gap it is.
+        assert.match(error.message, /never about the token/);
+        return true;
+      },
+    );
+    assert.equal(chainCalls, 0, 'a refused address must not reach the chain');
+    assert.equal(venueLookups, 0, 'a refused address must not reach a venue');
+  });
+
+  test('a ticker is refused before the registry is even opened', async () => {
+    let opened = 0;
+    rwaMarketRealityRuntime.migrationAvailable = async () => {
+      opened += 1;
+      return true;
+    };
+    await assert.rejects(
+      () => miorailGetUseAccessV1({ address: 'NVDA' }),
+      (error: unknown) => {
+        assert.ok(error instanceof McpPublicError);
+        assert.equal(error.code, 'exact_address_required');
+        return true;
+      },
+    );
+    assert.equal(opened, 0);
+    assert.equal(chainCalls, 0);
+  });
+
+  test('a storage outage is Miorail’s gap, stated as one', async () => {
+    rwaMarketRealityRuntime.migrationAvailable = async () => false;
+    await assert.rejects(
+      () => miorailGetUseAccessV1({ address: NVDA }),
+      (error: unknown) => {
+        assert.ok(error instanceof McpPublicError);
+        assert.equal(error.code, 'market_reality_storage_unavailable');
+        assert.match(error.message, /not a statement about any address/);
+        return true;
+      },
+    );
+    assert.equal(chainCalls, 0);
+  });
+});
+
+describe('one address is read once at a time', () => {
+  test('concurrent callers share one fan-out', async () => {
+    const [a, b, c] = await Promise.all([
+      miorailGetUseAccessV1({ address: NVDA }),
+      miorailGetUseAccessV1({ address: NVDA }),
+      miorailGetUseAccessV1({ address: `eip155:8453:${NVDA}` }),
+    ]);
+    assert.equal(venueLookups, 1, 'three callers, one venue fan-out');
+    // The same reading, not three that happen to agree.
+    assert.equal(a.observedAt, b.observedAt);
+    assert.equal(b.observedAt, c.observedAt);
+    assert.equal(a.walletBound, false);
+  });
+
+  test('a second call inside the window reuses the reading, and says when it was read', async () => {
+    const first = await miorailGetUseAccessV1({ address: NVDA });
+    const second = await miorailGetUseAccessV1({ address: NVDA });
+    assert.equal(venueLookups, 1);
+    // A shared reading is not a reading pretending to be newer than it is: the
+    // caller can see exactly when it was taken.
+    assert.equal(second.observedAt, first.observedAt);
+    assert.equal(second.defi.venues[0]?.observed?.source, 'chain_head');
+  });
+
+  test('a failed reading is never held, so one outage is not a minute of them', async () => {
+    venueFails = true;
+    const failed = await miorailGetUseAccessV1({ address: NVDA });
+    // A venue that threw is unread for that venue, not a failed call.
+    assert.equal(failed.defi.venues[0]?.state, 'unread');
+    venueFails = false;
+    const retried = await miorailGetUseAccessV1({ address: NVDA });
+    // Cached: the reading itself succeeded, so it is reused. What must not be
+    // cached is a THROWN read, checked next.
+    assert.equal(retried.defi.venues[0]?.state, 'unread');
+
+    resetUseAccessCacheV1();
+    rwaMarketRealityRuntime.underlyings = (() => ({
+      async underlyingOf() {
+        throw new Error('connect ECONNREFUSED');
+      },
+    })) as never;
+    await assert.rejects(() => miorailGetUseAccessV1({ address: NVDA }));
+    let recovered = 0;
+    rwaMarketRealityRuntime.underlyings = (() => ({
+      async underlyingOf() {
+        recovered += 1;
+        return {
+          binding: { underlyingKey: 'security:isin:US67066G1040', issuerId: 'coinbase' },
+          underlying: { displaySymbol: 'NVDA' },
+        };
+      },
+    })) as never;
+    await miorailGetUseAccessV1({ address: NVDA });
+    assert.equal(recovered, 1, 'the failure was not held against the next caller');
+  });
+});

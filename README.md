@@ -250,14 +250,15 @@ Requests to act are handed to Routes for fresh quotes and explicit approval.
 
 ## Public Miorail MCP
 
-Miorail MCP `1.2.0` exposes twelve read-only tools at `https://miorail.xyz/mcp`
-— four over tokenized stocks, eight over stored B20 evidence:
+Miorail MCP `1.3.0` exposes thirteen read-only tools at `https://miorail.xyz/mcp`
+— five over tokenized stocks, eight over stored B20 evidence:
 
 ```text
 list_reviewed_stocks        every reviewed security, by ticker, name or ISIN
 get_representations         every exact address that claims one security
 compare_market_reality      one size, one direction, every representation
 get_market_changes          what moved since a stored observation
+get_use_access              what one exact address can be used for, and what gates it
 
 miorail_discover_status
 miorail_list_b20_opportunities
@@ -273,6 +274,17 @@ miorail_b20_market_rails
 contracts for the same company, and that choice is not Miorail's to make. A
 company name reaches a security through a small ISIN-bound alias table, and
 every row says whether the issuer's own naming or a Miorail alias found it.
+
+`get_use_access` exists because of a measured failure. Until it shipped, no MCP
+surface carried a single DeFi field, so an assistant asked whether a tokenized
+stock could be posted as collateral had nothing to read and answered from the
+announcement it could reach — Base published one on 24 August 2026, and Aave's
+reserve list on Base does not name those addresses. Both sentences are true.
+The tool carries the announcement and the reading joined and separate, in four
+states, where `unchecked` — a venue nobody read — is never `not_listed`. It is
+public and holds no wallet, so it can never say whether a particular address
+may transfer; and its `blockTag` names the fields it governs, because two of
+the four venues answer from catalogues that publish no block at all.
 
 The public MCP surface has no wallet, signing, payment, approval, or execution
 tool. Its Discover projection is parity-tested against the product truth layer,

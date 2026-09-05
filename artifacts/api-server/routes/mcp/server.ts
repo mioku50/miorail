@@ -36,6 +36,11 @@ import {
   miorailGetRepresentationsV1,
   miorailListReviewedStocksV1,
 } from './marketRealityTools.js';
+import {
+  UseAccessAgentInputV1Schema,
+  UseAccessAgentOutputV1Schema,
+  miorailGetUseAccessV1,
+} from './useAccessTools.js';
 
 // ---------------------------------------------------------------------------
 // T72/Phase 12B.1 — eight legacy B20 tools plus three read-only Market Reality
@@ -57,7 +62,7 @@ import {
 // ---------------------------------------------------------------------------
 
 export const MIORAIL_MCP_NAME_V1 = 'miorail';
-export const MIORAIL_MCP_VERSION_V1 = '1.2.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.3.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
@@ -78,7 +83,9 @@ Miorail measures unique buying wallets only inside a completed launch window. It
 
 An empty result is not the same as a quiet chain. Call miorail_discover_status first: the workers may be behind, unconfigured or degraded, and the status says which.
 
-The three Market Reality tools are a separate read-only product surface for reviewed tokenized-stock representations. An underlying key groups representations but never selects one. Preserve every exact Base address. A router quote is not execution evidence; provider failure is not an asset finding; an expired quote is history; ranking is withheld. get_market_changes requires an exact address or CAIP-10 and reads only public append-only market evidence — never tenant Radar watches or user metadata.`;
+The Stocks tools are a separate read-only product surface for reviewed tokenized-stock representations. An underlying key groups representations but never selects one. Preserve every exact Base address. A router quote is not execution evidence; provider failure is not an asset finding; an expired quote is history; ranking is withheld. get_market_changes requires an exact address or CAIP-10 and reads only public append-only market evidence — never tenant Radar watches or user metadata.
+
+get_use_access reports what one exact representation can be used for and what gates it. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. A venue listing an address is still not permission to act: caps, pause flags, available liquidity and risk parameters are not read. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.`;
 
 /**
  * The read-only tools, registered onto whichever server asked for them.
@@ -480,6 +487,28 @@ Evidence older than a day is labelled stale and describes what was true when it 
     async (args) => {
       try {
         return reply(await miorailGetMarketChangesV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+  // Phase 17.6 — the DeFi gap. Until this tool existed, neither MCP surface
+  // carried a single venue field, so an assistant asked whether a tokenized
+  // stock could be posted as collateral had nothing to read and answered from
+  // the announcement it could reach. Silence is what let a blog post become
+  // the answer; this is the reading that stands beside it.
+  server.registerTool(
+    'get_use_access',
+    {
+      title: 'What one exact representation can be used for, and what gates it',
+      description: 'Reports what one EXACT Base representation can be used for and what gates it, measured rather than announced. Requires an exact contract address or CAIP-10: this tool never resolves a ticker or a company name, because different issuers publish different contracts for the same company and choosing between them is not Miorail’s decision — call list_reviewed_stocks then get_representations to obtain one. Returns, for that exact address: whether transfers are paused on chain, the issuer transfer policy bound to each of the sender, receiver and executor scopes, whether an LayerZero OFT bridge is configured, and whether each reviewed lending venue names this address — with the three DeFi axes (lend, borrow, collateral) kept separate, because an asset accepted as collateral is not necessarily one anybody can borrow. READ `miorailSummary` FIRST and prefer its wording to your own: it is Miorail’s deterministic reading of the same rows, written by no model, and it names the two leaps this data invites — from "these venues did not list it" to "it cannot be used in DeFi", and from "it was announced" to "you can do it now". ANNOUNCED IS NOT LIVE. `announcements` carries dated public claims by named parties joined to what the venue itself answered, in four states: `listed`, `not_listed`, `unread`, and `unchecked`. `unchecked` is NOT `not_listed` — a venue nobody read must never be reported as a venue that refused. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave’s reserve list on Base does not name these addresses today. Both are true, and telling a user they can post this collateral now is wrong. `blockTag` covers only the fields named in `blockTagCovers`. It does NOT cover `defi`: two venues answer from chain state read at head and two from their own catalogues, which publish no block at all, so each venue row carries its own `observed` provenance instead. A listing is not permission to act: caps, pause flags, available liquidity and risk parameters are not read here, and `miorailSummary.notStated` lists every question this tool leaves open. It is public and wallet-free — `walletBound` is always false — so it can never say whether a particular wallet may transfer or use the token, and it states nothing about KYC, jurisdiction or legal eligibility. A venue that answered `unread` said nothing either way and is never a "no". An address Miorail holds no reviewed binding for is refused, which is a statement about Miorail’s corpus and never about the token.',
+      inputSchema: UseAccessAgentInputV1Schema,
+      outputSchema: UseAccessAgentOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetUseAccessV1(args));
       } catch (error) {
         return refuse(error);
       }

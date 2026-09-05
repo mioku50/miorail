@@ -10,6 +10,7 @@ export * from './dinariCandidates.js';
 export * from './utilityMap.js';
 export * from './onchainUse.js';
 export * from './useAccess.js';
+export * from './useAccessAgent.js';
 export * from './defiVenues.js';
 export * from './venueAnnouncements.js';
 export * from './openFigi.js';

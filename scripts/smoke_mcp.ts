@@ -33,6 +33,7 @@ const EXPECTED_TOOLS_V1 = [
   'compare_market_reality',
   'get_market_changes',
   'get_representations',
+  'get_use_access',
   'list_reviewed_stocks',
   'miorail_b20_market_rails',
   'miorail_compare_b20_tokens',

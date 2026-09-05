@@ -197,6 +197,7 @@ describe('§8 — tool discovery', () => {
       'compare_market_reality',
       'get_market_changes',
       'get_representations',
+      'get_use_access',
       'list_reviewed_stocks',
       'miorail_b20_market_rails',
       'miorail_compare_b20_tokens',
@@ -248,7 +249,7 @@ describe('§8 — tool discovery', () => {
   });
 
   test('the advertised server version is 1.2.0', () => {
-    assert.equal(MIORAIL_MCP_VERSION_V1, '1.2.0');
+    assert.equal(MIORAIL_MCP_VERSION_V1, '1.3.0');
   });
 
   test('§7 — the server instructions carry all five caveats', async () => {
@@ -517,6 +518,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
       'marketRealityTools.ts',
       'server.ts',
       'tools.ts',
+      'useAccessTools.ts',
     ]);
   });
 

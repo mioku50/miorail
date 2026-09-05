@@ -286,6 +286,8 @@ describe('§11 — the public MCP surface cannot reach execution', () => {
       'mcpServer.test.ts',
       'server.ts',
       'tools.ts',
+      'useAccess.test.ts',
+      'useAccessTools.ts',
     ]);
   });
 });

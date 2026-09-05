@@ -636,6 +636,7 @@ describe('§9 — the public MCP surface cannot reach the audit or the execution
       'marketRealityTools.ts',
       'server.ts',
       'tools.ts',
+      'useAccessTools.ts',
     ]);
   });
 

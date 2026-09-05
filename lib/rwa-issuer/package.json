@@ -11,6 +11,7 @@
     "./capabilities": "./src/capabilities.ts",
     "./utilityMap": "./src/utilityMap.ts",
     "./useAccess": "./src/useAccess.ts",
+    "./useAccessAgent": "./src/useAccessAgent.ts",
     "./onchainUse": "./src/onchainUse.ts",
     "./defiVenues": "./src/defiVenues.ts",
     "./venueAnnouncements": "./src/venueAnnouncements.ts",
