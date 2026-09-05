@@ -49,7 +49,32 @@ export interface StockActionClearanceClaimsV1 {
   requestedCashAtomic: string;
   cashAddress: string;
   destination: 'USDC';
-  sizeBasis: StockExecutionHandoffV1['sizeBasis'];
+  /**
+   * Which side of the trade the confirmed size is on.
+   *
+   * NOT the handoff's `sizeBasis`, and deliberately not the same union. A
+   * handoff describes a MEASUREMENT, and the board's question is always
+   * cash-shaped: "$1,000 worth". A clearance describes a CONFIRMED
+   * INSTRUCTION, and there is no such thing as an approximate one — so
+   * `cash_equivalent_requires_replan`, which is a handoff state, can never be
+   * a clearance state.
+   *
+   * A BUY spends an exact number of USDC atoms, known before anything is
+   * quoted. A SELL spends an exact number of TOKEN atoms, and nothing
+   * measured can produce that number: only the holder can say how much of
+   * their position to sell. So a SELL clearance exists only when a person has
+   * been shown a token amount and confirmed that number.
+   */
+  sizeBasis: 'exact_cash_in' | 'exact_token_in';
+  /**
+   * The exact token atoms a SELL was confirmed for. Null on a BUY.
+   *
+   * Immutable once signed into the clearance. It is never derived from a
+   * quote at fetch time — a quote that moved would silently change how much
+   * of somebody's position they are selling, which is the whole reason SELL
+   * refused for as long as it did.
+   */
+  tokenAmountAtomic: string | null;
 
   /** The measurement basis the person confirmed under. */
   routePolicyKey: string;
@@ -121,10 +146,33 @@ export function issueStockActionClearanceV1(input: {
   now: Date;
   ttlMs?: number;
   clearanceId?: string;
+  /**
+   * The token atoms the holder confirmed, for a SELL. Required on a SELL and
+   * refused on a BUY.
+   *
+   * Passed in rather than read off the handoff on purpose: the handoff is
+   * derived from measurement, and if this number could be derived too then a
+   * later edit would derive it from a quote. It cannot be derived. Somebody
+   * said it.
+   */
+  confirmedTokenAmountAtomic?: string | null;
 }): IssuedStockActionClearanceV1 {
   const wallet = input.walletAddress.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) throw new Error('stock_clearance_wallet_invalid');
   if (input.tenantId !== `eip155:8453:${wallet}`) throw new Error('stock_clearance_tenant_invalid');
+
+  const confirmedTokens = input.confirmedTokenAmountAtomic ?? null;
+  if (input.handoff.direction === 'sell') {
+    // A SELL with no confirmed token amount is the state this surface refused
+    // for months. It still refuses — it just no longer refuses every SELL.
+    if (confirmedTokens === null || !/^[1-9][0-9]*$/.test(confirmedTokens)) {
+      throw new Error('stock_clearance_sell_requires_exact_token_amount');
+    }
+  } else if (confirmedTokens !== null) {
+    // A BUY spends cash. A token amount here would be a second size nobody
+    // confirmed, sitting beside the one they did.
+    throw new Error('stock_clearance_buy_takes_no_token_amount');
+  }
 
   const ttl = input.ttlMs ?? stockActionClearanceTtlMsV1();
   const issuedAt = input.now.toISOString();
@@ -145,7 +193,8 @@ export function issueStockActionClearanceV1(input: {
     requestedCashAtomic: input.handoff.requestedCashAtomic,
     cashAddress: input.handoff.cashAddress,
     destination: 'USDC',
-    sizeBasis: input.handoff.sizeBasis,
+    sizeBasis: input.handoff.direction === 'sell' ? 'exact_token_in' : 'exact_cash_in',
+    tokenAmountAtomic: input.handoff.direction === 'sell' ? confirmedTokens : null,
     routePolicyKey: input.handoff.routePolicyKey,
     approvedSources: [...input.handoff.approvedSources],
     issuedAt,

@@ -902,7 +902,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 7);
+    assert.equal(connectedNames.size, publicNames.length + 8);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -942,6 +942,9 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'miorail_check_exit_profile',
       'miorail_prepare_b20_entry',
       'miorail_record_base_mcp_submission',
+      // Spends router calls and writes measurement rows. Nothing executable
+      // leaves, so it is not a release -- but it is emphatically not a read.
+      'miorail_measure_market_reality',
     ]);
     // The one genuine read left: it writes an audit row for the read itself and
     // changes nothing a later call depends on.

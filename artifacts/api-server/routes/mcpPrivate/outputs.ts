@@ -247,3 +247,47 @@ export const MiorailExecutionStatusOutputV1Schema = z
     caveats: CaveatsV1,
   })
   .passthrough();
+
+/**
+ * Phase 17.7 §9 — a measurement that just ran, in the shape a read returns.
+ *
+ * Deliberately the SAME envelope `compare_market_reality` returns, with one
+ * block added. An assistant that measures and then reads must not have to
+ * learn two shapes to notice that the answer changed, and a second shape is a
+ * second place for the not-established wording to go missing.
+ *
+ * `comparison` is advertised loosely for the reason its public twin is: SDK
+ * 1.29 serialises Zod's URL validator in a way AJV rejects while listing tools.
+ * The full payload is still parsed by the canonical schema before it reaches
+ * the protocol — the strictness is in the code path, not in the advertisement.
+ */
+export const MiorailMeasureMarketRealityOutputV1Schema = z
+  .object({
+    schemaVersion: z.literal('miorail-agent-market-reality/v1'),
+    chain: z.literal('base'),
+    quoteOnly: z.literal(true),
+    executionEvidenceIncluded: z.literal(false),
+    /**
+     * What this call actually cost, and what it reused.
+     *
+     * Present so a looping assistant can see that its second identical request
+     * did no work: `measured` counts representations this call really quoted,
+     * `joinedInFlight` counts those already being measured for somebody else,
+     * and `reusedCooldown` counts those measured moments ago. A caller reading
+     * `measured: 0` beside `reusedCooldown: 3` is being told the answer is
+     * fresh AND that pressing again buys nothing.
+     */
+    measurement: z
+      .object({
+        measured: z.number().int().min(0),
+        reusedOpen: z.number().int().min(0),
+        reusedCooldown: z.number().int().min(0),
+        excludedZeroSupply: z.number().int().min(0),
+        unresolved: z.number().int().min(0),
+        joinedInFlight: z.number().int().min(0),
+      })
+      .passthrough(),
+    miorailSummary: z.object({ summary: z.string() }).passthrough(),
+    comparison: z.object({ schemaVersion: z.literal('market-reality/v2') }).passthrough(),
+  })
+  .passthrough();

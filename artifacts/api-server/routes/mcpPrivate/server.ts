@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { MarketRealityAgentComparisonInputV1Schema } from '@mioagent/rwa-market-reality';
 import {
   MCP_SUBMISSION_RESULTS_V1,
   MIORAIL_PRIVATE_CAVEATS_V1,
@@ -9,6 +10,7 @@ import {
   miorailGetExecutionStatusV1,
   miorailPrepareB20EntryV1,
   miorailGetStockBaseMcpActionV1,
+  miorailMeasureMarketRealityV1,
   miorailPrepareStockActionV1,
   miorailRecordBaseMcpSubmissionV1,
   privateFailureV1,
@@ -20,6 +22,7 @@ import {
   MiorailGetBaseMcpActionOutputV1Schema,
   MiorailGetStockBaseMcpActionOutputV1Schema,
   MiorailPrepareB20EntryOutputV1Schema,
+  MiorailMeasureMarketRealityOutputV1Schema,
   MiorailPrepareStockActionOutputV1Schema,
   MiorailRecordSubmissionOutputV1Schema,
 } from './outputs.js';
@@ -48,7 +51,7 @@ import type { McpPrivateIdentityV1 } from './session.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.0.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.1.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -227,6 +230,36 @@ Pass the calls to Base MCP send_calls UNCHANGED, then record the submission exac
     async (args) => {
       try {
         return reply(await miorailGetStockBaseMcpActionV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  // -----------------------------------------------------------------------
+  // Connected Intelligence 2 — the missing verb.
+  //
+  // Every other Stocks tool reads what was already measured, so an assistant
+  // could truthfully report "no fresh answer at this size" and had no way on
+  // this surface to get one. Only the web button could measure. This is that
+  // button, with the same coordinator behind it.
+  // -----------------------------------------------------------------------
+  server.registerTool(
+    'miorail_measure_market_reality',
+    {
+      title: 'Measure one exact Market Reality question now',
+      description: "Takes a FRESH measurement of one exact Market Reality question, right now, and returns it in the same shape compare_market_reality returns.\n\nUSE THIS WHEN A READ SAYS THERE IS NO CURRENT ANSWER. compare_market_reality reads stored evidence; when it reports `currentComparisonAvailable: false` or `establishedOutcomeCount: 0`, that describes MIORAIL'S FRESHNESS at that exact size, not the market — and this is the tool that fixes it. Read first, measure only if the read has no current answer at the size the user actually asked about.\n\nTHE QUESTION IS THE SIZE. A $10,000 measurement is not a $100 measurement multiplied: a route walks liquidity, and measuring a size nobody asked about answers a question nobody asked. Pass the exact size, direction and destination the user meant, and the same values you would pass to compare_market_reality.\n\nWHAT IT COSTS. This spends real router calls and writes evidence, so it is rate limited per wallet and it is not free to repeat. Miorail measures one identical question once: a repeat joins the run already in flight or reuses one taken seconds ago, and the `measurement` block says exactly which — `measured` is what this call really quoted, `joinedInFlight` and `reusedCooldown` are what it did not. Reading `measured: 0` beside a non-zero `reusedCooldown` means the answer is fresh and pressing again buys nothing.\n\nIF IT TIMES OUT, DO NOT CALL IT AGAIN. `measure_still_running` means the measurement is being taken for you and has not been abandoned. Call compare_market_reality in a few seconds and read the answer it produced.\n\nThis is quote-only evidence. It never simulates execution, requests approval, returns calldata, signs or submits anything, and a router quote never becomes execution evidence. Provider or RPC failure stays Miorail's uncertainty: one venue missing is never universal market absence, and a failed measurement is never a finding about the representation. READ `miorailSummary` FIRST and prefer its wording to your own — it is written by no model and it is the same reading the public comparison ships.",
+      inputSchema: MarketRealityAgentComparisonInputV1Schema,
+      outputSchema: MiorailMeasureMarketRealityOutputV1Schema,
+      // Not read-only: it spends router calls and writes evidence rows. An
+      // annotation is a safety claim, and this surface has shipped a false one
+      // before -- classify by what the handler writes, never by what it feels
+      // like from the caller's side.
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailMeasureMarketRealityV1(identity, args));
       } catch (error) {
         return refuse(error);
       }

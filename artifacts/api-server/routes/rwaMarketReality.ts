@@ -25,6 +25,7 @@ import {
   MarketRealityHistoryV1Schema,
   MarketRealityIndexV1Schema,
   MarketRealityLiveResponseV2Schema,
+  type MarketRealityLiveResponseV2,
   MarketRealityRadarResponseV1Schema,
   MarketRealityRadarWatchInputV1Schema,
   MarketRealityResponseV2Schema,
@@ -90,7 +91,85 @@ const ERC20_METADATA_ABI_V1 = [
     outputs: [{ type: 'string' }],
     stateMutability: 'view',
   },
+  // Phase 17.8 — a SELL is sized in tokens, so the holding is the ceiling.
+  {
+    type: 'function',
+    name: 'balanceOf',
+    inputs: [{ type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+  },
 ] as const;
+
+export type StockSellSizeReadV1 =
+  | { ok: true; decimals: number; balanceAtomic: string; blockTag: string }
+  | { ok: false; code: string };
+
+/**
+ * What the wallet actually holds, at one block, for a SELL confirmation.
+ *
+ * Both reads are pinned to the same anchor. A balance read at one block and
+ * decimals read at another would be two facts about two moments, and the
+ * comparison between the confirmed amount and the holding would be nonsense
+ * in exactly the case that matters — a position changing while somebody is
+ * confirming how much of it to sell.
+ *
+ * Decimals are read, never assumed: a wrong decimals turns an exact size into
+ * a different size entirely, and this is the one number a person typed.
+ */
+export async function readStockSellSizeV1(input: {
+  tokenAddress: string;
+  walletAddress: string;
+}): Promise<StockSellSizeReadV1> {
+  if (!rpcUrlV1()) return { ok: false, code: 'market_reality_chain_unavailable' };
+  const reader = rwaMarketRealityRuntime.useAccessReader();
+  const anchor = await reader.readBlockAnchor();
+  if (!anchor.ok) return { ok: false, code: 'stock_action_balance_unread' };
+  const blockTag = anchor.value.blockTag;
+  const [decimalsRead, balanceRead] = await Promise.all([
+    reader.call({
+      to: input.tokenAddress,
+      data: encodeFunctionData({ abi: ERC20_METADATA_ABI_V1, functionName: 'decimals' }),
+      blockTag,
+    }),
+    reader.call({
+      to: input.tokenAddress,
+      data: encodeFunctionData({
+        abi: ERC20_METADATA_ABI_V1,
+        functionName: 'balanceOf',
+        args: [input.walletAddress as `0x${string}`],
+      }),
+      blockTag,
+    }),
+  ]);
+  if (!decimalsRead.ok) return { ok: false, code: 'stock_action_token_decimals_unread' };
+  if (!balanceRead.ok) return { ok: false, code: 'stock_action_balance_unread' };
+  let decimals: number;
+  let balanceAtomic: string;
+  try {
+    decimals = Number(
+      decodeFunctionResult({
+        abi: ERC20_METADATA_ABI_V1,
+        functionName: 'decimals',
+        data: decimalsRead.value as `0x${string}`,
+      }),
+    );
+    balanceAtomic = String(
+      decodeFunctionResult({
+        abi: ERC20_METADATA_ABI_V1,
+        functionName: 'balanceOf',
+        data: balanceRead.value as `0x${string}`,
+      }),
+    );
+  } catch {
+    return { ok: false, code: 'stock_action_balance_unread' };
+  }
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    return { ok: false, code: 'stock_action_token_decimals_unread' };
+  }
+  if (!/^[0-9]+$/.test(balanceAtomic)) return { ok: false, code: 'stock_action_balance_unread' };
+  return { ok: true, decimals, balanceAtomic, blockTag };
+}
 
 function rpcUrlV1(): string {
   return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
@@ -843,37 +922,43 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
  * Read-only outside Miorail's own evidence tables: no signer, no wallet call,
  * no allowance, no transaction. A quote is not execution and never becomes it.
  */
-rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async (req, res) => {
+/**
+ * The measurement, as one function, so there is exactly one of it.
+ *
+ * The web button and the connected MCP tool are two ways to ask the same
+ * question, and a second implementation of "measure now" would be a second
+ * single-flight map, a second cooldown and a second definition of what a run
+ * costs. There is one. Callers differ only in how they proved who they are.
+ *
+ * Read-only outside Miorail's own evidence tables: no signer, no wallet call,
+ * no allowance, no transaction. A quote is not execution and never becomes it.
+ */
+export type MarketRealityMeasureQuestionV1 = {
+  underlyingKey: string;
+  direction: 'buy' | 'sell';
+  requestedCashAtomic: string;
+  destination: 'USDC' | 'ETH';
+};
+
+export type MarketRealityMeasureResultV1 =
+  | { ok: true; payload: MarketRealityLiveResponseV2 }
+  | { ok: false; status: number; code: string };
+
+export async function measureMarketRealityV1(input: {
+  question: MarketRealityMeasureQuestionV1;
+  /** Proved by the caller's own surface. Never taken from a request field. */
+  walletAddress: string;
+  tenantId: string;
+}): Promise<MarketRealityMeasureResultV1> {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {
-    res
-      .status(404)
-      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
-    return;
-  }
-  const user = sessionUserV1(req);
-  if (!user) {
-    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
-    return;
-  }
-  const question = questionFromRequestV1(req);
-  if (!question.ok) {
-    res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
-    return;
+    return { ok: false, status: 404, code: 'route_intelligence_disabled' };
   }
   if (!rpcUrlV1()) {
-    res.status(503).json({
-      error: 'market_reality_chain_unavailable',
-      code: 'market_reality_chain_unavailable',
-    });
-    return;
+    return { ok: false, status: 503, code: 'market_reality_chain_unavailable' };
   }
   try {
     if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
-      res.status(503).json({
-        error: 'market_reality_storage_unavailable',
-        code: 'market_reality_storage_unavailable',
-      });
-      return;
+      return { ok: false, status: 503, code: 'market_reality_storage_unavailable' };
     }
     const cashExit = rwaMarketRealityRuntime.cashExit();
     const adapters = rwaMarketRealityRuntime.quoteAdapters();
@@ -957,8 +1042,8 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
               symbol: token.symbol,
               decimals: token.decimals,
             },
-            walletAddress: user.address as `0x${string}`,
-            tenantId: user.id,
+            walletAddress: input.walletAddress as `0x${string}`,
+            tenantId: input.tenantId,
             // A public-ladder run with one rung. The scope is what the evidence
             // IS — a public size, no tenant position — not how it was started.
             scope: 'public_ladder',
@@ -969,18 +1054,19 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
           }),
       },
       {
-        underlyingKey: question.underlyingKey,
-        direction: question.direction,
-        requestedCashAtomic: question.requestedCashAtomic,
-        destination: question.destination,
+        underlyingKey: input.question.underlyingKey,
+        direction: input.question.direction,
+        requestedCashAtomic: input.question.requestedCashAtomic,
+        destination: input.question.destination,
       },
     );
 
     // Parsed on the way out, envelope included: the measurement counts are the
     // only thing telling a reader whether the button did anything, so a shape
     // change there must fail here rather than render as an empty sentence.
-    res.status(200).json(
-      MarketRealityLiveResponseV2Schema.parse({
+    return {
+      ok: true,
+      payload: MarketRealityLiveResponseV2Schema.parse({
         ...result.answer,
         measurement: {
           measured: result.measured,
@@ -991,17 +1077,54 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
           joinedInFlight: result.joinedInFlight,
         },
       }),
-    );
+    };
   } catch (error) {
     // Named apart from a measurement failure. A response this build cannot
     // serialize is OUR contract drifting, and reporting it as
     // `market_reality_failed` sends whoever is debugging to look at routers.
-    const code =
-      error instanceof Error && error.name === 'ZodError'
-        ? 'market_reality_response_invalid'
-        : 'market_reality_failed';
-    res.status(500).json({ error: code, code });
+    return {
+      ok: false,
+      status: 500,
+      code:
+        error instanceof Error && error.name === 'ZodError'
+          ? 'market_reality_response_invalid'
+          : 'market_reality_failed',
+    };
   }
+}
+
+rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async (req, res) => {
+  if (!rwaMarketRealityRuntime.enabled(process.env)) {
+    res
+      .status(404)
+      .json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = sessionUserV1(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const question = questionFromRequestV1(req);
+  if (!question.ok) {
+    res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
+    return;
+  }
+  const result = await measureMarketRealityV1({
+    question: {
+      underlyingKey: question.underlyingKey,
+      direction: question.direction,
+      requestedCashAtomic: question.requestedCashAtomic,
+      destination: question.destination,
+    },
+    walletAddress: user.address,
+    tenantId: user.id,
+  });
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.code, code: result.code });
+    return;
+  }
+  res.status(200).json(result.payload);
 });
 
 /**
@@ -1392,9 +1515,41 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
       // Whatever implementation is installed, this stays true.
       .catch(() => null);
 
+    // Phase 17.8 — for a SELL, the size the reader is about to confirm is in
+    // TOKENS, and the ceiling is what they hold. Read here so the screen can
+    // show the number rather than invite one, and guarded the same way the
+    // eligibility read is: a holding this server could not read costs the
+    // reader an input, never the whole review.
+    const holding =
+      rebuilt.handoff.direction === 'sell'
+        ? await readStockSellSizeV1({
+            tokenAddress: claims.tokenAddress,
+            walletAddress: claims.walletAddress,
+          }).catch(() => null)
+        : null;
+
     res.status(200).json({
       schemaVersion: 'stock-action-review/v1',
       actionDraftId: claims.actionDraftId,
+      /**
+       * What this wallet holds of this exact token, for a SELL, at one block.
+       *
+       * Null on a BUY, and null when the read failed — and those two are not
+       * the same sentence to a reader, so the screen says which. A failed read
+       * is never rendered as a zero balance: "you hold none" and "we could not
+       * look" would refuse the same way and mean opposite things.
+       */
+      holding:
+        holding === null
+          ? null
+          : holding.ok
+            ? {
+                state: 'read' as const,
+                balanceAtomic: holding.balanceAtomic,
+                decimals: holding.decimals,
+                blockTag: holding.blockTag,
+              }
+            : { state: 'unread' as const, reason: holding.code },
       representation: {
         chainId: 8453,
         tokenAddress: rebuilt.handoff.tokenAddress,
@@ -1650,6 +1805,75 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
       return;
     }
 
+    // ------------------------------------------------------------------
+    // Phase 17.8 — a SELL is confirmed in TOKENS.
+    //
+    // The board asks a cash-shaped question, and for a BUY that question IS
+    // the size: an exact number of USDC atoms, fixed before anything is
+    // quoted. For a SELL it is not. "$1,000 worth" becomes a token amount only
+    // once something prices it, and a price that moved between confirming and
+    // signing would silently change how much of a position somebody sold.
+    //
+    // So the unit changed rather than the clock: the holder confirms an exact
+    // `tokenAmountAtomic`, and this server checks it against what the wallet
+    // actually holds, at one block, before it will mint any authority. There
+    // is no "sell everything" here — the screen resolves that to a number and
+    // sends the number. A server that accepted "all" would be deciding the
+    // size itself.
+    // ------------------------------------------------------------------
+    let confirmedTokenAmountAtomic: string | null = null;
+    if (rebuilt.handoff.direction === 'sell') {
+      const raw = String(
+        (req.body as { tokenAmountAtomic?: unknown } | undefined)?.tokenAmountAtomic ?? '',
+      ).trim();
+      if (!/^[1-9][0-9]{0,77}$/.test(raw)) {
+        res.status(400).json({
+          error: 'stock_action_sell_requires_exact_size',
+          code: 'stock_action_sell_requires_exact_size',
+          detail:
+            'A sell is confirmed as an exact number of token atoms, not as a cash equivalent. Nothing was confirmed.',
+          confirmed: false,
+          executableActionAvailable: false,
+        });
+        return;
+      }
+      const holding = await readStockSellSizeV1({
+        tokenAddress: claims.tokenAddress,
+        walletAddress: user.address,
+      });
+      if (!holding.ok) {
+        // Our read failed. That is not a statement that the holder lacks the
+        // tokens, and it must never be minted into authority either way.
+        res.status(503).json({
+          error: holding.code,
+          code: holding.code,
+          detail:
+            'Miorail could not read this wallet’s holding of that exact token, so it did not confirm a size. Nothing was confirmed; try again.',
+          confirmed: false,
+          executableActionAvailable: false,
+        });
+        return;
+      }
+      if (BigInt(raw) > BigInt(holding.balanceAtomic)) {
+        res.status(409).json({
+          error: 'stock_action_sell_exceeds_balance',
+          code: 'stock_action_sell_exceeds_balance',
+          detail:
+            'That is more of this token than this wallet holds at the block just read. Nothing was confirmed.',
+          // The reader can check the refusal rather than trust it.
+          holding: {
+            balanceAtomic: holding.balanceAtomic,
+            decimals: holding.decimals,
+            blockTag: holding.blockTag,
+          },
+          confirmed: false,
+          executableActionAvailable: false,
+        });
+        return;
+      }
+      confirmedTokenAmountAtomic = raw;
+    }
+
     // The clearance is built from what was REBUILT, not from what the draft
     // remembered. What the person confirmed is what this server established
     // for them a moment ago.
@@ -1658,6 +1882,7 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
       walletAddress: user.address,
       actionDraftId: claims.actionDraftId,
       handoff: rebuilt.handoff,
+      confirmedTokenAmountAtomic,
       secret,
       now,
     });
@@ -1666,6 +1891,18 @@ rwaMarketRealityRouter.post('/rwa/stock-action/:draft/confirm', async (req, res)
       schemaVersion: 'stock-action-confirmation/v1',
       actionDraftId: claims.actionDraftId,
       clearanceId: issued.clearanceId,
+      /**
+       * The exact size this clearance authorises, echoed back.
+       *
+       * A SELL is in token atoms and a BUY in USDC atoms, and the basis says
+       * which — so a reader can check that what was minted is what they
+       * confirmed, rather than trust that it was.
+       */
+      confirmedSize: {
+        sizeBasis: rebuilt.handoff.direction === 'sell' ? 'exact_token_in' : 'exact_cash_in',
+        tokenAmountAtomic: confirmedTokenAmountAtomic,
+        requestedCashAtomic: rebuilt.handoff.requestedCashAtomic,
+      },
       /** The credential the Connected surface needs to ask for the unsigned
        * request. It authorises ONE exact action and expires quickly. */
       clearance: issued.clearance,

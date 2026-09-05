@@ -17,14 +17,20 @@ import {
   type StockExecutionHandoffResultV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
-import { logger } from '@mioagent/utils';
+import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
 import {
   STOCK_ACTION_CLEARANCE_REFUSAL_COPY_V1,
   verifyStockActionClearanceV1,
 } from '../../lib/stockActionClearance.js';
 import { stockActionIntentV1 } from '../../lib/stockActionIntent.js';
-import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
+import { measureMarketRealityV1, rwaMarketRealityRuntime } from '../rwaMarketReality.js';
+import {
+  MarketRealityAgentComparisonInputV1Schema,
+  MarketRealityResponseV2Schema,
+  marketRealityAgentSummaryV1,
+  marketRealityUsdToAtomicV1,
+} from '@mioagent/rwa-market-reality';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { RouteIntentV1 } from '@mioagent/route-domain';
 import {
@@ -79,6 +85,19 @@ export class McpPrivateError extends Error {
  */
 export const PRIVATE_REFUSAL_COPY_V1: Record<string, string> = {
   b20_rpc_unavailable: 'This Miorail server has no Base mainnet endpoint configured, so it cannot measure anything live.',
+  // Phase 17.7 §9 — every one of these is a statement about Miorail. None is
+  // an answer about a representation, and an assistant repeating them must not
+  // let one become "this token could not be traded".
+  route_intelligence_disabled:
+    'Route intelligence is switched off on this Miorail server, so no measurement can be taken here. This says nothing about the representation.',
+  market_reality_chain_unavailable:
+    'This Miorail server has no Base endpoint configured, so it cannot quote anything right now. The stored evidence is still readable with compare_market_reality.',
+  market_reality_storage_unavailable:
+    'Miorail could not reach its own Market Reality evidence store, so a measurement could not be recorded. This is not a statement about any representation.',
+  market_reality_failed:
+    'Miorail could not complete the measurement. A failure here is Miorail’s, never a finding about the representation — do not report it as one.',
+  market_reality_response_invalid:
+    'Miorail measured but could not serialise its own answer. That is a defect in Miorail, not a property of the market.',
   b20_storage_unavailable: 'Miorail’s B20 control storage is not migrated on this server.',
   b20_clearance_unavailable: 'This Miorail server cannot store a clearance, so it cannot qualify an entry.',
   b20_entry_plan_unavailable: 'This Miorail server cannot store an entry plan, so it cannot prepare one.',
@@ -1335,4 +1354,121 @@ function stockActionExecutionRefusalV1(code: string): McpPrivateError {
     code,
     STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1[code] ?? 'Miorail refused that request.',
   );
+}
+
+// ---------------------------------------------------------------------------
+// Phase 17.7 §9 — measure now, from the assistant's side.
+//
+// Until this existed, every MCP answer about a tokenized stock read stored
+// evidence, so `compare_market_reality` truthfully said "no fresh answer at
+// this size" and had no way to get one. Only the web button could measure. An
+// assistant could describe the gap and never close it.
+//
+// It calls the SAME `measureMarketRealityV1` the web button calls. Not a
+// second measurement path: a second one would mean a second single-flight map,
+// a second cooldown and a second definition of what a run costs, and the two
+// would drift the first time either changed. What differs between the two
+// callers is only how they proved who they are.
+//
+// Three bounds, and none of them is advisory:
+//
+//  * The coordinator's own single-flight and 20-second cooldown, inherited
+//    rather than re-implemented. A repeat of the same exact question joins the
+//    run in flight or reuses the one just taken, and the reply SAYS which.
+//  * A per-tenant budget, because the cooldown is per question and twenty
+//    different sizes a minute is twenty fan-outs.
+//  * A hard wall-clock timeout, so a slow provider does not hold an assistant
+//    open indefinitely. A timeout is NOT a failed measurement: single-flight
+//    means the run continues, so the refusal says to read the answer with
+//    compare_market_reality rather than to press again.
+// ---------------------------------------------------------------------------
+
+/**
+ * How long the caller waits before being told to read the answer instead.
+ *
+ * A router quote is open about twenty seconds and the assembly issues several
+ * in sequence, so a real measurement can outlive an assistant's patience. The
+ * work is not wasted when this fires — it is already shared.
+ */
+export const MCP_MEASURE_TIMEOUT_MS_V1 = 25_000;
+
+/** Per tenant. The cooldown bounds one question; this bounds a caller. */
+export const MCP_MEASURE_PER_MINUTE_V1 = 6;
+
+const measureLimiterV1 = new InMemoryRateLimiter({
+  windowMs: 60_000,
+  max: MCP_MEASURE_PER_MINUTE_V1,
+});
+
+export const measureRuntimeV1 = {
+  measure: measureMarketRealityV1,
+  timeoutMs: () => MCP_MEASURE_TIMEOUT_MS_V1,
+};
+
+export async function miorailMeasureMarketRealityV1(
+  identity: McpPrivateIdentityV1,
+  rawArgs: unknown,
+): Promise<Record<string, unknown>> {
+  const args = MarketRealityAgentComparisonInputV1Schema.parse(rawArgs);
+
+  const allowance = await measureLimiterV1.consume(`mcp-measure:${identity.tenantId}`);
+  if (!allowance.success) {
+    throw new McpPrivateError(
+      'measure_rate_limited',
+      `Miorail measures at most ${MCP_MEASURE_PER_MINUTE_V1} times a minute for one wallet, because every measurement spends real router calls. The stored evidence is still readable right now with compare_market_reality — read it rather than waiting.`,
+    );
+  }
+
+  let timer: NodeJS.Timeout | undefined;
+  const timeout = new Promise<'timed_out'>((resolve) => {
+    timer = setTimeout(() => resolve('timed_out'), measureRuntimeV1.timeoutMs());
+  });
+  let outcome: Awaited<ReturnType<typeof measureMarketRealityV1>> | 'timed_out';
+  try {
+    outcome = await Promise.race([
+      measureRuntimeV1.measure({
+        question: {
+          underlyingKey: args.underlyingKey,
+          direction: args.direction,
+          requestedCashAtomic: marketRealityUsdToAtomicV1(args.sizeUsd),
+          destination: args.destination,
+        },
+        walletAddress: identity.walletAddress,
+        tenantId: identity.tenantId,
+      }),
+      timeout,
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+
+  if (outcome === 'timed_out') {
+    throw new McpPrivateError(
+      'measure_still_running',
+      'The measurement is still running and has not been abandoned — Miorail measures one identical question once, so it is being taken for you right now. Do not call this again for the same question: call compare_market_reality in a few seconds and read the answer it produced.',
+    );
+  }
+  if (!outcome.ok) {
+    throw new McpPrivateError(
+      outcome.code,
+      PRIVATE_REFUSAL_COPY_V1[outcome.code] ??
+        'Miorail could not take a measurement. This is a statement about Miorail, never about the representation.',
+    );
+  }
+
+  const { measurement, ...answer } = outcome.payload;
+  const parsed = MarketRealityResponseV2Schema.parse(answer);
+  return {
+    schemaVersion: 'miorail-agent-market-reality/v1',
+    chain: 'base',
+    quoteOnly: true,
+    executionEvidenceIncluded: false,
+    measurement,
+    // The same deterministic reading the public comparison ships, from the
+    // same function. A measurement that produced nothing establishes MIORAIL'S
+    // freshness at this size, never the market's depth, and that sentence has
+    // one author.
+    miorailSummary: marketRealityAgentSummaryV1(parsed),
+    comparison: parsed,
+  };
 }

@@ -310,9 +310,20 @@ curl -s -X POST https://miorail.xyz/mcp \
 
 ## Connected Miorail MCP
 
-`https://miorail.xyz/mcp/private` is the same read tools **plus seven bound to
+`https://miorail.xyz/mcp/private` is the same read tools **plus eight bound to
 one wallet** — the one that authorised the connection. It cannot read, prepare
 or execute for any other wallet, and no argument would let it try.
+
+One of the eight is the verb the read tools were missing.
+`compare_market_reality` reads stored evidence, so it could truthfully report
+"no fresh answer at this size" and had no way to get one — only the web button
+could measure. `miorail_measure_market_reality` is that button, calling the same
+coordinator, so a measurement taken from an assistant and one taken from the
+screen are the same run. It declares `readOnlyHint: false` because it spends
+router calls and writes evidence; it is budgeted per wallet; and a repeat of an
+identical question joins the run already in flight rather than starting a
+second, with the reply saying which. A timeout is not a failure — the run
+continues, and the refusal says to read the answer rather than press again.
 
 ```jsonc
 { "mcpServers": { "miorail": { "type": "http", "url": "https://miorail.xyz/mcp/private" } } }

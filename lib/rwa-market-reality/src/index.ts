@@ -12,4 +12,8 @@ export * from './basis.js';
 export * from './capture.js';
 export * from './referenceAdapter.js';
 export * from './agent.js';
+// The deterministic reading itself, not only its schema: the connected measure
+// tool must ship the SAME sentence the public comparison does, and importing it
+// is the only way that stays true when the wording changes.
+export * from './agentSummary.js';
 export * from './discoveryAliases.js';

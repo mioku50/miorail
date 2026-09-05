@@ -957,7 +957,7 @@ function ChoiceButton({
   );
 }
 
-function Chooser({
+export function Chooser({
   choices,
   selectedKey,
   loading,

@@ -1183,15 +1183,86 @@ describe('POST confirming a stock action asks the issuer’s policy first', () =
     }).draft;
   };
 
-  const confirm = () =>
-    request(app()).post(`/api/route-intelligence/rwa/stock-action/${draftFor()}/confirm`).send({});
+  // The draft under test is a SELL, and a SELL is confirmed in TOKEN atoms —
+  // so every call here carries the exact amount a holder would have confirmed
+  // on the screen, and the balance read below is what bounds it.
+  const SELL_TOKENS_V1 = '4000000000000000000';
+  const HELD_TOKENS_V1 = '9000000000000000000';
+  const confirm = (body: Record<string, unknown> = { tokenAmountAtomic: SELL_TOKENS_V1 }) =>
+    request(app()).post(`/api/route-intelligence/rwa/stock-action/${draftFor()}/confirm`).send(body);
+
+  const WORD_18_V1 = `0x${(18).toString(16).padStart(64, '0')}`;
+  const holdingReader = (balanceAtomic = HELD_TOKENS_V1) => ({
+    async readBlockAnchor() {
+      return { ok: true as const, value: { blockTag: '0x1' } };
+    },
+    async call({ data }: { to: string; data: string; blockTag: string }) {
+      // `decimals()` is 0x313ce567; `balanceOf(address)` is 0x70a08231.
+      if (data.startsWith('0x313ce567')) return { ok: true as const, value: WORD_18_V1 };
+      if (data.startsWith('0x70a08231')) {
+        return {
+          ok: true as const,
+          value: `0x${BigInt(balanceAtomic).toString(16).padStart(64, '0')}`,
+        };
+      }
+      return { ok: false as const, reason: 'execution_reverted' };
+    },
+  });
 
   beforeEach(() => {
     process.env.SESSION_SECRET = 'confirm-test-secret';
+    process.env.BASE_MAINNET_RPC_URL = 'https://mainnet.base.org';
     rwaMarketRealityRuntime.migrationAvailable = async () => true;
     rwaMarketRealityRuntime.now = () => NOW;
     rwaMarketRealityRuntime.assemble = (async () => MIXED) as never;
     rwaMarketRealityRuntime.eligibility = (async () => eligibility()) as never;
+    rwaMarketRealityRuntime.useAccessReader = (() => holdingReader()) as never;
+  });
+
+  test('a sell with no confirmed token amount mints nothing', async () => {
+    // The state this surface refused for months. It still refuses — it just no
+    // longer refuses every sell.
+    const response = await confirm({});
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'stock_action_sell_requires_exact_size');
+    assert.equal(response.body.confirmed, false);
+    assert.equal(response.body.clearance, undefined);
+    assert.match(response.body.detail, /exact number of token atoms/);
+  });
+
+  test('a sell larger than the holding is refused, with the holding shown', async () => {
+    const response = await confirm({ tokenAmountAtomic: '9000000000000000001' });
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'stock_action_sell_exceeds_balance');
+    assert.equal(response.body.clearance, undefined);
+    // Checkable rather than trustworthy: the number and the block it came from.
+    assert.equal(response.body.holding.balanceAtomic, HELD_TOKENS_V1);
+    assert.equal(response.body.holding.blockTag, '0x1');
+  });
+
+  test('selling the exact holding is allowed — "everything" is a number here', async () => {
+    const response = await confirm({ tokenAmountAtomic: HELD_TOKENS_V1 });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.confirmed, true);
+    assert.equal(response.body.confirmedSize.sizeBasis, 'exact_token_in');
+    assert.equal(response.body.confirmedSize.tokenAmountAtomic, HELD_TOKENS_V1);
+  });
+
+  test('a holding this server could not read confirms nothing either way', async () => {
+    rwaMarketRealityRuntime.useAccessReader = (() => ({
+      async readBlockAnchor() {
+        return { ok: false as const, reason: 'endpoint_unavailable' };
+      },
+      async call() {
+        return { ok: false as const, reason: 'endpoint_unavailable' };
+      },
+    })) as never;
+    const response = await confirm();
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'stock_action_balance_unread');
+    assert.equal(response.body.clearance, undefined);
+    // Our read failed. That is not "you do not hold the tokens".
+    assert.doesNotMatch(response.body.detail, /do not hold|insufficient/i);
   });
 
   test('a wallet the issuer denies gets no clearance at all', async () => {

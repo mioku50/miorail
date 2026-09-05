@@ -36,13 +36,20 @@ function decimalV1(atomic: string, decimals: number): string {
 export type StockActionIntentRefusalV1 = 'stock_action_sell_requires_exact_size';
 
 /**
- * The exact swap a confirmed BUY describes.
+ * The exact swap a confirmed action describes, in either direction.
  *
- * This clearance only records a cash equivalent for SELL, not an exact token
- * input. Converting it with an expiring quote would silently change the user's
- * approved amount. Keep refusing until the review contract can bind a separately
- * confirmed token amount and refresh the output quote before signing. Quote
- * expiry does not prevent exact-token SELL; that review flow is not implemented.
+ * SELL refused here for as long as it did because of a real defect, and the
+ * defect was never the quote's lifetime — it was the UNIT. The board asks a
+ * cash-shaped question ("$1,000 worth"), and turning that into a token amount
+ * needs a price; doing it here, at fetch time, would let a quote that moved
+ * between confirmation and signing silently change how much of somebody's
+ * position they were selling.
+ *
+ * So the unit changed instead of the clock. A SELL clearance carries an exact
+ * `tokenAmountAtomic` that a person was shown and confirmed, immutable from
+ * that moment. Nothing here converts anything: the number is spent as given,
+ * and the fresh quote sets only the OUTPUT and the minimum — which is what a
+ * quote is for.
  */
 export function stockActionIntentV1(input: {
   clearance: StockActionClearanceClaimsV1;
@@ -54,7 +61,14 @@ export function stockActionIntentV1(input: {
   now: Date;
 }): { ok: true; intent: RouteIntentV1 } | { ok: false; reason: StockActionIntentRefusalV1 } {
   const clearance = input.clearance;
-  if (clearance.direction !== 'buy' || clearance.sizeBasis !== 'exact_cash_in') {
+  const sell = clearance.direction === 'sell';
+  // Defence in depth: `issueStockActionClearanceV1` already refuses to mint a
+  // SELL without one, so reaching here means a clearance was built by some
+  // other path. Refuse rather than infer a size.
+  if (sell && (clearance.sizeBasis !== 'exact_token_in' || clearance.tokenAmountAtomic === null)) {
+    return { ok: false, reason: 'stock_action_sell_requires_exact_size' };
+  }
+  if (!sell && (clearance.direction !== 'buy' || clearance.sizeBasis !== 'exact_cash_in')) {
     return { ok: false, reason: 'stock_action_sell_requires_exact_size' };
   }
 
@@ -81,13 +95,24 @@ export function stockActionIntentV1(input: {
     status: 'ready' as const,
     intentHash: `0x${'0'.repeat(64)}`,
     goal: 'swap' as const,
-    fromAsset: USDC_V1,
-    toAsset: representation,
-    amount: {
-      asset: USDC_V1,
-      amountAtomic: clearance.requestedCashAtomic,
-      amountDecimal: decimalV1(clearance.requestedCashAtomic, USDC_V1.decimals),
-    },
+    // The direction is the whole difference. A SELL spends the representation
+    // and receives cash; a BUY does the reverse. Same engine, same adapters,
+    // same Safety Kernel — one asset pair, read the other way round.
+    fromAsset: sell ? representation : USDC_V1,
+    toAsset: sell ? USDC_V1 : representation,
+    amount: sell
+      ? {
+          asset: representation,
+          // Exactly what was confirmed. Not converted, not re-priced, not
+          // rounded: the same integer a person read on the screen.
+          amountAtomic: clearance.tokenAmountAtomic as string,
+          amountDecimal: decimalV1(clearance.tokenAmountAtomic as string, input.tokenDecimals),
+        }
+      : {
+          asset: USDC_V1,
+          amountAtomic: clearance.requestedCashAtomic,
+          amountDecimal: decimalV1(clearance.requestedCashAtomic, USDC_V1.decimals),
+        },
     optimizationMode: 'best_net_result' as const,
     verificationDepth: 'enhanced' as const,
     // The reviewed policy, expressed as the constraint the engine understands.
