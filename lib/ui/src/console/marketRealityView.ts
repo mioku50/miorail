@@ -9,6 +9,10 @@ import {
   type DefiUseKindV1,
   type RepresentationUseAccessV1,
 } from '@mioagent/rwa-issuer/useAccess';
+import {
+  venueAnnouncementReadingsV1,
+  type VenueAnnouncementReadingV1,
+} from '@mioagent/rwa-issuer/venueAnnouncements';
 
 import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
@@ -338,6 +342,10 @@ export interface RepresentationViewV1 {
   /** History, labelled as history. Null when nobody has ever measured. */
   lastSeen: { label: string; value: string; note: string } | null;
   tokenAddress: string;
+  /** The issuer id, kept beside the name because issuer-scoped evidence — a
+   * reviewed structure adapter, an announcement about one issuer's tokens —
+   * must never be shown on another issuer's card. */
+  issuerId: IssuerIdV1;
   /** The issuer, as a person says it. */
   issuerName: string;
   /** What kind of instrument this is, in one phrase. */
@@ -1542,6 +1550,11 @@ function termsV1(representation: MarketRealityRepresentationWireV1): FactViewV1[
     field('Getting out through the issuer', adapter.redemption),
     field('Distributions', adapter.distributions),
     field('Who may hold it', adapter.eligibility),
+    // The two questions a reader asks about a tokenized share before any of
+    // the above — who is holding the actual share, and who watches them —
+    // which this card recorded the claim model for and never answered.
+    field('Who holds the shares', adapter.custody),
+    field('Who supervises the structure', adapter.supervision),
   ];
 }
 
@@ -1907,7 +1920,107 @@ function bridgeSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
   };
 }
 
-function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 {
+/**
+ * A publication date, spelled out.
+ *
+ * Everything else on this card is an age — "measured 4 minutes ago" — because
+ * everything else is a reading that goes stale. An announcement does not: it
+ * was made on a day, by somebody, and stays made. Pinned month names rather
+ * than a locale so the same input renders the same string everywhere.
+ */
+// prettier-ignore
+const MONTH_V1 = [
+  'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
+] as const;
+
+export function announcementDateLabelV1(iso: string): string {
+  const match = /^(\d{4})-(\d{2})-(\d{2})/.exec(iso);
+  if (!match) return iso;
+  const month = MONTH_V1[Number(match[2]) - 1];
+  if (!month) return iso;
+  return `${Number(match[3])} ${month} ${match[1]}`;
+}
+
+const DEFI_USE_PHRASE_V1: Readonly<Record<DefiUseKindV1, string>> = {
+  lend: 'lending',
+  borrow: 'borrowing',
+  collateral: 'use as collateral',
+};
+
+/**
+ * The announcement, beside the reading, in the reader's own words.
+ *
+ * One rule holds this whole function together: nothing here may make the
+ * section sound more available than the measurement did. An announcement never
+ * sets a use, never lifts the tone above neutral, and the one case where it
+ * says nothing at all is the case where the venue already listed the address
+ * and answered the announced use — there the measurement IS the answer, and
+ * repeating it in a second voice teaches nobody anything.
+ */
+function venueAnnouncementFactsV1(readings: readonly VenueAnnouncementReadingV1[]): FactViewV1[] {
+  const facts: FactViewV1[] = [];
+  for (const reading of readings) {
+    const { announcement } = reading;
+    const when = announcementDateLabelV1(announcement.announcedAt);
+    const uses = announcement.uses.map((use) => DEFI_USE_PHRASE_V1[use]).join(' and ');
+    const said = `${announcement.announcedBy} announced ${uses} at ${announcement.venueName} on ${when}.`;
+    const label = `Announced at ${announcement.venueName}`;
+    if (reading.measured === 'not_listed') {
+      facts.push({
+        label,
+        value: 'Not there yet',
+        // The sentence the announcement layer exists for. A reader who
+        // arrived from that post must not read our "none found" as staleness.
+        note: `${said} Read just now, ${announcement.venueName} does not list this exact address. Announced is not the same as live.`,
+        tone: 'off',
+      });
+      continue;
+    }
+    if (reading.measured === 'unread') {
+      facts.push({
+        label,
+        value: 'Venue not read',
+        note: `${said} ${announcement.venueName} could not be read just now${reading.reason ? ` — ${reading.reason}` : ''}, so this is a gap in our reading, not an answer about the token.`,
+        tone: 'off',
+      });
+      continue;
+    }
+    if (reading.measured === 'unchecked') {
+      facts.push({
+        label,
+        value: 'Not checked here',
+        note: `${said} ${announcement.venueName} was not among the venues this reading checked, so nothing here confirms or denies it.`,
+        tone: 'off',
+      });
+      continue;
+    }
+    if (reading.unstatedUses.length > 0) {
+      const unstated = reading.unstatedUses.map((use) => DEFI_USE_PHRASE_V1[use]).join(' and ');
+      facts.push({
+        label,
+        value: `Listed, ${unstated} not read`,
+        note: `${said} ${announcement.venueName} lists this exact address; whether ${unstated} is enabled for it is venue configuration this reading does not cover.`,
+        tone: 'neutral',
+      });
+    }
+  }
+  return facts;
+}
+
+function venueAnnouncementEvidenceV1(
+  readings: readonly VenueAnnouncementReadingV1[],
+): { label: string; value: string }[] {
+  return readings.map((reading) => ({
+    label: `${reading.announcement.announcedBy} announcement`,
+    value: `${reading.announcement.sourceTitle} · ${announcementDateLabelV1(reading.announcement.announcedAt)} · ${reading.announcement.sourceRef}`,
+  }));
+}
+
+function defiSectionV1(
+  use: RepresentationUseAccessV1 | null,
+  issuerId: IssuerIdV1 | null,
+): UseSectionViewV1 {
   const listing = use?.defi;
   const checked = listing?.checkedVenues ?? [];
   const uses: { kind: DefiUseKindV1; venues: string[] }[] = listing
@@ -1916,15 +2029,27 @@ function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 
   const unread = (listing?.venues ?? []).filter(
     (venue: RepresentationUseAccessV1['defi']['venues'][number]) => venue.state === 'unread',
   );
-  const evidence = (listing?.venues ?? []).map((venue: RepresentationUseAccessV1['defi']['venues'][number]) => ({
-    label: venue.venueName,
-    value:
-      venue.state === 'listed'
-        ? `listed${venue.curated === false ? ' · permissionless market' : ''}${venue.marketRef ? ` · ${venue.marketRef}` : ''}`
-        : venue.state === 'unread'
-          ? `unread — ${venue.reason ?? 'no reason given'}`
-          : 'not listed',
-  }));
+  // Read even when the whole listing is missing: an announcement about a venue
+  // nobody checked is `unchecked`, which is a different sentence from silence.
+  const announcements = venueAnnouncementReadingsV1({
+    issuerId,
+    venues: listing?.venues ?? [],
+  });
+  const announcementFacts = venueAnnouncementFactsV1(announcements);
+  const evidence = [
+    ...venueAnnouncementEvidenceV1(announcements),
+    ...(listing?.venues ?? []).map(
+      (venue: RepresentationUseAccessV1['defi']['venues'][number]) => ({
+        label: venue.venueName,
+        value:
+          venue.state === 'listed'
+            ? `listed${venue.curated === false ? ' · permissionless market' : ''}${venue.marketRef ? ` · ${venue.marketRef}` : ''}`
+            : venue.state === 'unread'
+              ? `unread — ${venue.reason ?? 'no reason given'}`
+              : 'not listed',
+      }),
+    ),
+  ];
   // Did the venue put this asset on its list, or did somebody deploy a market
   // against it?
   //
@@ -1954,14 +2079,17 @@ function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 
       }`,
       chip: allUncurated ? 'Permissionless market' : 'Integration found',
       tone: allUncurated ? 'neutral' : 'good',
-      facts: uses.map((entry) => ({
-        label: DEFI_USE_LABEL_V1[entry.kind],
-        value: entry.venues.join(', '),
-        note: allUncurated
-          ? 'a market names this exact address; the venue has not listed it'
-          : 'the venue names this exact address',
-        tone: allUncurated ? ('neutral' as const) : ('good' as const),
-      })),
+      facts: [
+        ...uses.map((entry) => ({
+          label: DEFI_USE_LABEL_V1[entry.kind],
+          value: entry.venues.join(', '),
+          note: allUncurated
+            ? 'a market names this exact address; the venue has not listed it'
+            : 'the venue names this exact address',
+          tone: allUncurated ? ('neutral' as const) : ('good' as const),
+        })),
+        ...announcementFacts,
+      ],
       evidence,
       edges: [],
     };
@@ -1976,7 +2104,7 @@ function defiSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 
         : 'Miorail did not check any lending venue for this address.',
     chip: unread.length > 0 && unread.length === checked.length ? 'Not confirmed' : 'None found here',
     tone: 'off',
-    facts: [],
+    facts: announcementFacts,
     evidence,
     edges: [],
   };
@@ -1990,6 +2118,9 @@ const DEFI_USE_LABEL_V1: Readonly<Record<'lend' | 'borrow' | 'collateral', strin
 
 export function useSectionsV1(input: {
   use: RepresentationUseAccessV1 | null;
+  /** Whose token this is. Issuer-scoped evidence is filtered by it, and null
+   * shows none of it rather than the wrong issuer's. */
+  issuerId?: IssuerIdV1 | null;
   groups: readonly UtilityGroupViewV1[];
   exit: FactViewV1 | null;
   exitBasis: 'open' | 'last_measured' | null;
@@ -2008,7 +2139,7 @@ export function useSectionsV1(input: {
     tradeSectionV1(input),
     transferSectionV1(input.use),
     bridgeSectionV1(input.use),
-    defiSectionV1(input.use),
+    defiSectionV1(input.use, input.issuerId ?? null),
     {
       collapsed: true,
       id: 'issuer',
@@ -2687,6 +2818,7 @@ export function marketRealityViewV1(input: {
           : splitEstablishedFactsV1(numbersV1(representation, direction, input.now));
       return {
         tokenAddress: representation.tokenAddress,
+        issuerId: representation.issuerId,
         issuerName: ISSUER_NAME_V1[representation.issuerId],
         structureLabel: STRUCTURE_LABEL_V1[representation.representationKind],
         structureNote: adapter.structure.note,

@@ -3272,6 +3272,85 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.doesNotMatch(JSON.stringify(defi.facts), /Borrow/);
   });
 
+  // -------------------------------------------------------------------------
+  // Base announced, on 24 Aug 2026, that these stocks are collateral on Aave.
+  // Aave's reserve list on Base holds fifteen reserves and not one B20 address.
+  // Both are true, and the card used to print only the second one to a reader
+  // who had just read the first — who then concludes our data is stale.
+  // -------------------------------------------------------------------------
+  const withAave = (over: Record<string, unknown>) =>
+    use({
+      defi: {
+        checkedVenues: ['Moonwell', 'Morpho', 'Aave v3', 'Compound v3'],
+        venues: [
+          {
+            venueId: 'aave_v3',
+            venueName: 'Aave v3',
+            state: 'not_listed',
+            uses: { lend: null, borrow: null, collateral: null },
+            curated: null,
+            marketRef: null,
+            reason: null,
+            ...over,
+          },
+        ],
+      },
+    });
+
+  test('an announced venue that has not listed the address says so, with the date', () => {
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) })[3]!;
+    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
+    assert.ok(fact);
+    assert.equal(fact.value, 'Not there yet');
+    assert.match(fact.note ?? '', /Base announced use as collateral at Aave v3 on 24 Aug 2026/);
+    assert.match(fact.note ?? '', /does not list this exact address/);
+    assert.match(fact.note ?? '', /Announced is not the same as live/);
+    assert.ok(
+      defi.evidence.some(
+        (row) => row.label === 'Base announcement' && /blog\.base\.org/.test(row.value),
+      ),
+    );
+  });
+
+  test('an announcement never becomes a use, a chip or a colour', () => {
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) })[3]!;
+    assert.equal(defi.tone, 'off');
+    assert.equal(defi.chip, 'None found here');
+    assert.doesNotMatch(defi.headline, /used in DeFi/);
+    assert.deepEqual(
+      defi.facts.filter((entry) => ['Lend', 'Borrow', 'Collateral'].includes(entry.label)),
+      [],
+    );
+    for (const entry of defi.facts) assert.notEqual(entry.tone, 'good');
+  });
+
+  test('a venue nobody checked is not a venue that refused', () => {
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: use() })[3]!;
+    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
+    assert.equal(fact?.value, 'Not checked here');
+    assert.match(fact?.note ?? '', /not among the venues this reading checked/);
+    assert.doesNotMatch(fact?.note ?? '', /does not list/);
+  });
+
+  test('a listed reserve still does not say collateral is enabled', () => {
+    const defi = useSectionsV1({
+      ...base,
+      issuerId: 'coinbase',
+      use: withAave({ state: 'listed', uses: { lend: true, borrow: true, collateral: null } }),
+    })[3]!;
+    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
+    assert.equal(fact?.value, 'Listed, use as collateral not read');
+    assert.match(fact?.note ?? '', /venue configuration this reading does not cover/);
+  });
+
+  test('an announcement about Coinbase never appears on another issuer', () => {
+    for (const issuerId of ['backed', 'dinari'] as const) {
+      const defi = useSectionsV1({ ...base, issuerId, use: withAave({}) })[3]!;
+      assert.deepEqual(defi.facts, []);
+      assert.doesNotMatch(JSON.stringify(defi.evidence), /announcement/i);
+    }
+  });
+
   test('with nothing read on chain, every measured section says so and none says no', () => {
     const sections = useSectionsV1({ ...base, use: null });
     for (const section of sections.slice(1, 4)) {

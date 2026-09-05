@@ -13,6 +13,7 @@
     "./useAccess": "./src/useAccess.ts",
     "./onchainUse": "./src/onchainUse.ts",
     "./defiVenues": "./src/defiVenues.ts",
+    "./venueAnnouncements": "./src/venueAnnouncements.ts",
     "./dinariSymbolBinding": "./src/dinariSymbolBinding.ts",
     "./openFigi": "./src/openFigi.ts"
   },

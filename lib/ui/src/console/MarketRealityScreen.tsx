@@ -418,6 +418,7 @@ function RepresentationCard({
   if (surface === 'utility') {
     const sections = useSectionsV1({
       use: useAccess,
+      issuerId: representation.issuerId,
       groups: representation.utility.groups,
       exit: representation.exit,
       exitBasis: representation.exitBasis,

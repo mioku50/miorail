@@ -56,9 +56,30 @@ export interface RepresentationStructureAdapterV1 {
   referenceSource: ReviewedTypedFieldV1<
     'chainlink_total_return_feed' | 'issuer_authenticated_market_data'
   >;
+  // -------------------------------------------------------------------------
+  // The custody chain, named or absent.
+  //
+  // "A real share, held 1:1 by a regulated custodian" is the sentence the whole
+  // product rests on, and until now this adapter recorded the CLAIM MODEL — a
+  // direct senior beneficial claim — without ever naming who holds the share,
+  // how it is held, or who supervises the holding. Those are three separate
+  // facts, and a reader deciding whether a token is a real share is asking
+  // about exactly those three.
+  //
+  // Recorded the same way as everything else here: from a document, dated,
+  // quoted in the note, and `unknown` for the issuers whose reviewed material
+  // does not state it. `unknown` is the absence of a reviewed source, never a
+  // judgement about the issuer.
+  // -------------------------------------------------------------------------
+  /** Who holds the underlying, and in what structure. */
+  custody: ReviewedTypedFieldV1<'regulated_broker_custodian_bankruptcy_remote'>;
+  /** Whose regulatory authority supervises that structure. */
+  supervision: ReviewedTypedFieldV1<'adgm_regulatory_authority'>;
 }
 
 const REVIEWED_AT = '2026-09-01T00:00:00.000Z';
+/** The Base post naming the custody chain was reviewed later than the rest. */
+const REVIEWED_AT_CUSTODY = '2026-09-05T00:00:00.000Z';
 const BASE_STOCKS = 'https://docs.base.org/base-chain/specs/reference/b20/tokenized-stocks-on-base';
 const COINBASE_TOKENIZE = 'https://www.coinbase.com/tokenize';
 const DINARI_DOCS = 'https://docs.dinari.com';
@@ -66,9 +87,22 @@ const BACKED_LEGAL = 'https://assets.backed.fi/legal-documentation';
 const BACKED_PRODUCTS = 'https://assets.backed.fi/products';
 const BACKED_API = 'https://docs.xstocks.fi/_bundle/apis/@v1/openapi.json?download=';
 const BACKED_CONTRACT = 'https://github.com/backed-fi/backed-token-contract';
+/**
+ * Base, "Stocks just got updated.", 24 August 2026.
+ *
+ * The post itself refuses every non-browser client, so the ref is the
+ * publisher's blog rather than a deep link that could not be verified from
+ * here; the title and the date identify the document, and the quote is carried
+ * in the notes below.
+ */
+const BASE_STOCKS_POST = 'https://blog.base.org';
 
-function source(kind: ReviewedCapabilitySourceKindV1, ref: string): ReviewedCapabilitySourceV1 {
-  return { kind, ref, reviewedAt: REVIEWED_AT };
+function source(
+  kind: ReviewedCapabilitySourceKindV1,
+  ref: string,
+  reviewedAt: string = REVIEWED_AT,
+): ReviewedCapabilitySourceV1 {
+  return { kind, ref, reviewedAt };
 }
 
 function reviewed<T extends string>(
@@ -129,6 +163,16 @@ export const REPRESENTATION_STRUCTURE_ADAPTERS_V1: Readonly<
       'Base Docs bind exact representations to Chainlink total-return feeds; freshness and market session remain separate evidence.',
       [source('reviewed_document', BASE_STOCKS)],
     ),
+    custody: reviewed(
+      'regulated_broker_custodian_bankruptcy_remote',
+      'Authorized participants buy the shares and the shares are held by Alpaca, described as a regulated broker and custodian, in a structure described as bankruptcy-remote. This is a reviewed document, not an onchain read: nothing on Base can confirm the holding.',
+      [source('reviewed_document', BASE_STOCKS_POST, REVIEWED_AT_CUSTODY)],
+    ),
+    supervision: reviewed(
+      'adgm_regulatory_authority',
+      'That structure is described as supervised by the regulatory authority of Abu Dhabi Global Market (ADGM). Supervision of the structure is not a statement about any holder’s own eligibility, which stays a separate field.',
+      [source('reviewed_document', BASE_STOCKS_POST, REVIEWED_AT_CUSTODY)],
+    ),
   },
   dinari: {
     issuerId: 'dinari',
@@ -177,6 +221,12 @@ export const REPRESENTATION_STRUCTURE_ADAPTERS_V1: Readonly<
       'Issuer market data is authenticated and unavailable without organization credentials; another issuer feed is not a substitute.',
       [source('reviewed_machine_api', DINARI_DOCS)],
     ),
+    custody: unknown(
+      'No reviewed Dinari document naming the holder of the underlying and the holding structure is on file. A broker appearing in an order-flow diagram is not a custody statement.',
+    ),
+    supervision: unknown(
+      'No reviewed Dinari document naming a supervising authority for the holding structure is on file.',
+    ),
   },
   backed: {
     issuerId: 'backed',
@@ -220,6 +270,12 @@ export const REPRESENTATION_STRUCTURE_ADAPTERS_V1: Readonly<
     ),
     referenceSource: unknown(
       'The reviewed bTokens identity API does not by itself establish a fresh executable or reference price.',
+    ),
+    custody: unknown(
+      'The reviewed Backed legal documentation establishes a bearer debt tracker certificate; it is not read here as naming a custodian and holding structure for an underlying share.',
+    ),
+    supervision: unknown(
+      'No reviewed Backed document naming a supervising authority for a holding structure is on file. Swiss-law product documentation is a different fact and is recorded under the claim model.',
     ),
   },
 };
