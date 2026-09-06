@@ -60,12 +60,24 @@ describe('paid intelligence keeps its numbers and folds its rows', () => {
     assert.match(markup, /5 attempt\(s\) failed and are not counted/);
   });
 
-  test('development smoke is its own group, named the way the summary names it', () => {
-    const markup = render({ entries: [receipt(), receipt({ id: 'r2' })] });
-    assert.match(markup, /<summary>2 development smoke payments/);
+  test('development smoke is its own group, and its count is reconciled with the total', () => {
+    // Shipped for four minutes reading "6 development smoke payments" under a
+    // sentence reading "1 development smoke payment". Both true: the sentence
+    // totals what SETTLED, the group lists every receipt. One word, two
+    // numbers, one card.
+    const markup = render({
+      entries: [receipt(), receipt({ id: 'r2', status: 'failed' })],
+    });
+    assert.match(markup, /<summary>2 development smoke receipts · 1 settled/);
     assert.match(markup, /Real settled transactions from our own tests/);
     // And it is not passed off as a purchase.
     assert.doesNotMatch(markup, /<summary>\d+ purchase/);
+  });
+
+  test('a group where everything settled does not print a redundant second count', () => {
+    const markup = render({ entries: [receipt(), receipt({ id: 'r2' })] });
+    assert.match(markup, /<summary>2 development smoke receipts ·/);
+    assert.doesNotMatch(markup, /2 settled/);
   });
 
   test('a real purchase is its own group and does not inherit the smoke wording', () => {

@@ -272,6 +272,23 @@ export interface ActivitySpendModelV1 {
  * copy is how two lists of the same thing start disagreeing about what a
  * missing hash means.
  */
+/**
+ * How many receipts a group holds, and how many of them actually settled.
+ *
+ * A count of receipts and a count of payments are different numbers whenever
+ * anything failed, and this card carries both: the summary sentence totals what
+ * settled, the group lists everything. Naming the group after "payments" made
+ * "6 development smoke payments" sit under "1 development smoke payment".
+ */
+export function spendGroupSummaryV1(
+  noun: string,
+  entries: readonly ActivitySpendEntryV1[],
+): string {
+  const settled = entries.filter((entry) => entry.status === 'settled').length;
+  const head = `${entries.length} ${noun}${entries.length === 1 ? '' : 's'}`;
+  return settled === entries.length ? head : `${head} · ${settled} settled`;
+}
+
 function SpendReceiptRow({ entry }: { entry: ActivitySpendEntryV1 }) {
   return (
     <div>
@@ -345,9 +362,7 @@ export function ActivitySpendCard(model: ActivitySpendModelV1) {
               <>
                 {purchases.length > 0 && (
                   <details className="card-evidence">
-                    <summary>
-                      {purchases.length} purchase{purchases.length === 1 ? '' : 's'}
-                    </summary>
+                    <summary>{spendGroupSummaryV1('purchase', purchases)}</summary>
                     <div className="card-evidence-body">
                       {purchases.map((entry) => (
                         <SpendReceiptRow key={entry.id} entry={entry} />
@@ -357,10 +372,13 @@ export function ActivitySpendCard(model: ActivitySpendModelV1) {
                 )}
                 {smoke.length > 0 && (
                   <details className="card-evidence">
-                    {/* Named for what they are on the summary line, so the
-                        group and the sentence above it use one word. */}
+                    {/* Counts RECEIPTS and says how many settled, because the
+                        sentence above counts only what is in the total. Shipped
+                        for four minutes saying "6 development smoke payments"
+                        under a sentence saying "1 development smoke payment" —
+                        both true, one word, two numbers. */}
                     <summary>
-                      {smoke.length} development smoke payment{smoke.length === 1 ? '' : 's'} ·{' '}
+                      {spendGroupSummaryV1('development smoke receipt', smoke)} ·{' '}
                       {activitySpendLabelV1(model.summary?.devSmokeSpentUsdc)}
                     </summary>
                     <div className="card-evidence-body">
