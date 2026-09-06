@@ -34,6 +34,37 @@ describe('which token the card is about', () => {
     // Nothing was attempted; there is nothing to explain.
     assert.deepEqual(b20TargetForRouteV1(null), { address: null, symbol: null, skipReason: null });
   });
+
+  // 2026-09-06 — the first SELL of a tokenized stock through this console.
+  // The rule was "the token the route ACQUIRES", written when every route
+  // spent USDC. On a sell the acquired side IS USDC, so the panel read USDC's
+  // controls and printed "this address was not verified as a B20 token" where
+  // a reader looks for the controls of the token they are parting with.
+  const USDC = { address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', symbol: 'USDC' };
+  const NVDAC = { address: '0xb20000000000000000000078ee7ce2fe4908108c', symbol: 'NVDAc' };
+
+  test('a SELL inspects the token being sold, not the cash it returns', () => {
+    const target = b20TargetForRouteV1(USDC, NVDAC);
+    assert.equal(target.address, NVDAC.address);
+    assert.equal(target.symbol, 'NVDAc');
+    assert.equal(target.skipReason, null);
+  });
+
+  test('a BUY is unchanged: the acquired token is the target', () => {
+    assert.equal(b20TargetForRouteV1(NVDAC, USDC).address, NVDAC.address);
+  });
+
+  test('cash for cash, and a missing disposed side, keep the acquired one', () => {
+    // Nothing better to point at. Never leave the panel with no target at all.
+    assert.equal(b20TargetForRouteV1(USDC, USDC).address, USDC.address);
+    assert.equal(b20TargetForRouteV1(USDC, null).address, USDC.address);
+    assert.equal(b20TargetForRouteV1(USDC, { symbol: 'NVDAc' }).address, USDC.address);
+  });
+
+  test('token to token keeps the position you are left holding', () => {
+    const weth = { address: '0x4200000000000000000000000000000000000006', symbol: 'WETH' };
+    assert.equal(b20TargetForRouteV1(NVDAC, weth).address, NVDAC.address);
+  });
 });
 
 describe('why there is no card', () => {

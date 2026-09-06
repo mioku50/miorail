@@ -209,11 +209,27 @@ function metricForCandidate(
     valuation = 'output_usdc';
     gasOutput = gasUsd;
     intelligenceOutput = intelligenceUsd;
-  } else if (
-    intent.fromAsset &&
-    isUsdc(intent.fromAsset) &&
-    ['ETH', 'WETH'].includes(candidate.expectedOutput.asset.symbol.toUpperCase())
-  ) {
+  } else if (intent.fromAsset && isUsdc(intent.fromAsset) && BigInt(candidate.inputAmount.amountAtomic) > 0n) {
+    // The quote IS the price. Spending a known number of USDC atoms for a
+    // known number of output atoms gives this pair's rate directly, so a USD
+    // cost converts into output units with no external feed.
+    //
+    // This used to be gated on the output symbol being ETH or WETH. Nothing in
+    // the arithmetic below is ETH-specific — `gasUsd` and `inputAtomic` are
+    // both USDC micros, so the ratio is dimensionless and the product is
+    // output atoms — and the list was a stand-in for "the two pairs this
+    // product traded" on 2026-07-15, written where a structural property
+    // belongs. It stopped being true the moment Stocks shipped: BUYING a
+    // tokenized stock with USDC fell through to `unsupported`, every candidate
+    // came back `not_scored`, and an evaluation with three live quotes
+    // answered `degraded / insufficient_rankable_candidates` — no
+    // recommendation, no Route Card, and a Review button with nothing behind
+    // it. The SELL side worked throughout, because its output is USDC and it
+    // never needed an anchor.
+    //
+    // The condition that actually matters is structural and is the one kept:
+    // the INPUT is USDC, so the quote prices the output. A zero input carries
+    // no rate and falls through rather than dividing by it.
     valuation = 'input_usdc_quote_anchor';
     const inputAtomic = BigInt(candidate.inputAmount.amountAtomic);
     gasOutput = ceilDiv(gasUsd * expected, inputAtomic);

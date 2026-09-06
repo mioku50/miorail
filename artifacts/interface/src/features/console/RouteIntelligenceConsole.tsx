@@ -767,11 +767,16 @@ export function RouteIntelligenceConsole() {
 
   // --- T67E §1: the contextual B20 Control Card ------------------------------
   //
-  // The card is about the token the route ACQUIRES. Selling a token whose
-  // transfers are paused reverts immediately and costs only gas; acquiring one
-  // succeeds, and the constraint is discovered later by the holder.
+  // The card is about the side that HAS controls to read — the one that is not
+  // cash. On a BUY that is what the route acquires; on a SELL the acquired side
+  // is USDC, and reading USDC's controls put "this address was not verified as
+  // a B20 token" exactly where a reader looks for the controls of the token
+  // they are about to part with. See `b20TargetForRouteV1`.
   const b20GateOn = flags?.b20ControlV1 === true;
-  const b20Target = b20TargetForRouteV1(primaryRoute?.expectedOutput.asset ?? null);
+  const b20Target = b20TargetForRouteV1(
+    primaryRoute?.expectedOutput.asset ?? null,
+    result?.outcome === 'evaluated' ? result.intent.fromAsset : null,
+  );
   const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
   const b20Card = b20.data?.card ?? null;
   const b20Unavailable = b20UnavailableCopyV1({

@@ -772,7 +772,12 @@ export function MiniConsole() {
   // The official corpus lives behind the route-intelligence flag, not the B20
   // one: they are two different universes and two different switches.
   const routeIntelligenceOn = flags?.routeIntelligenceV1 === true;
-  const b20Target = b20TargetForRouteV1(primaryRoute?.expectedOutput.asset ?? null);
+  // The non-cash side — see `b20TargetForRouteV1`. On a SELL the acquired side
+  // is USDC, whose controls are a card about nothing.
+  const b20Target = b20TargetForRouteV1(
+    primaryRoute?.expectedOutput.asset ?? null,
+    result?.outcome === 'evaluated' ? result.intent.fromAsset : null,
+  );
   const b20 = useB20Inspect(b20Target.address, { enabled: b20GateOn });
   const b20Card = b20.data?.card ?? null;
   const b20Unavailable = b20UnavailableCopyV1({
