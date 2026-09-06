@@ -989,6 +989,29 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .watchrow-k { color: var(--muted); font-size: 10.5px; }
 .mio-console .watchrow-v { color: var(--ink); font-size: 12px; }
 .mio-console .watchrow-v.warn { color: var(--amber); }
+/* Phase 17.5 -- two clocks on a watched row, side by side.
+   Same shape as the Stocks card's clock row, and for the same reason: laid out
+   as columns the reader compares them, stacked as lines the reader reads them
+   as one clock disagreeing with itself. Shares its rules with `.mr-clocks`
+   below so the two surfaces cannot drift into two vocabularies for one idea. */
+.mio-console .watchrow-clocks { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1px; margin: 0 0 4px; padding: 0; list-style: none;
+  border-radius: 7px; overflow: hidden; background: var(--line); }
+.mio-console .watchrow-clocks li { display: flex; flex-direction: column; gap: 1px;
+  padding: 6px 8px; background: var(--panel); min-width: 0; }
+.mio-console .watchrow-clock-k { color: var(--faint); font-size: 9.5px; font-weight: 650;
+  letter-spacing: .07em; text-transform: uppercase; }
+.mio-console .watchrow-clock-v { color: var(--ink); font-size: 11.5px; font-weight: 600;
+  line-height: 1.25; overflow-wrap: anywhere; }
+.mio-console .watchrow-clock-d { color: var(--muted); font-size: 10.5px; line-height: 1.3;
+  font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.mio-console .watchrow-clocks li[data-tone='good'] .watchrow-clock-v { color: var(--good, var(--ink)); }
+.mio-console .watchrow-clocks li[data-tone='warn'] .watchrow-clock-v { color: var(--amber); }
+.mio-console .watchrow-clocks li[data-tone='off'] .watchrow-clock-v { color: var(--muted); }
+.mio-console .watchrow-note.warn { color: var(--amber); }
+@media (max-width: 560px) {
+  .mio-console .watchrow-clocks { grid-template-columns: minmax(0, 1fr); }
+}
 .mio-console .watchrow-note { color: var(--muted); font-size: 11px; }
 .mio-console .watchrow-acts { display: flex; gap: 6px; justify-self: end; flex-wrap: wrap; }
 .mio-console .watchrow-remove { justify-self: end; }

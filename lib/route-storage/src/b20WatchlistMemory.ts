@@ -35,6 +35,7 @@ export class InMemoryB20WatchlistRepositoryV1 implements B20WatchlistRepositoryV
       createdAt: input.now.toISOString(),
       lastSweptAt: null,
       lastOutcome: null,
+      lastReadAt: null,
     };
     this.rows.set(id, entry);
     return entry;
@@ -72,7 +73,16 @@ export class InMemoryB20WatchlistRepositoryV1 implements B20WatchlistRepositoryV
     // the user un-watched it, and the read that already happened is simply not
     // written back to a row that no longer exists.
     if (!row) return;
-    this.rows.set(input.id, { ...row, lastSweptAt: input.at.toISOString(), lastOutcome: input.outcome });
+    // Must refuse exactly what Postgres refuses: `last_read_at` moves only on a
+    // successful read, so a failure — or an address that turns out not to be
+    // B20 — leaves the evidence clock where it was. A fake that forgives this
+    // is how three production bugs got past the tests.
+    this.rows.set(input.id, {
+      ...row,
+      lastSweptAt: input.at.toISOString(),
+      lastOutcome: input.outcome,
+      lastReadAt: input.outcome === 'read' ? input.at.toISOString() : row.lastReadAt,
+    });
   }
 
   async distinctWatchedAddresses(input: { chainId: number; limit: number }): Promise<string[]> {

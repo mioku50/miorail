@@ -470,6 +470,13 @@
       "when": 1788615000000,
       "tag": "0066_rpc_cu_ledger",
       "breakpoints": true
+    },
+    {
+      "idx": 67,
+      "version": "7",
+      "when": 1788701400000,
+      "tag": "0067_b20_watchlist_last_read",
+      "breakpoints": true
     }
   ]
 }

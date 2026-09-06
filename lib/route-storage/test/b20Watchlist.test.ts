@@ -34,6 +34,7 @@ describe('the add decision is one function, so the fake cannot be kinder than th
     createdAt: NOW.toISOString(),
     lastSweptAt: null,
     lastOutcome: null,
+    lastReadAt: null,
   });
 
   test('an address already watched returns the existing row rather than a second one', () => {
@@ -202,5 +203,42 @@ describe('the two implementations agree with the schema', () => {
     // SQL cannot express "at most N rows per user" in a CHECK, so it lives in
     // one function both repositories call.
     assert.match(migration, /SQL cannot express "at most N rows[\s\S]{0,12}per user"/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The two clocks. A failed sweep costs a call and defers the next one, and it
+// must not cost the evidence its age.
+// ---------------------------------------------------------------------------
+describe('a failed sweep does not erase the last successful reading', () => {
+  const repo = () => new InMemoryB20WatchlistRepositoryV1();
+
+  test('only a read moves the evidence clock; a failure and a not_b20 do not', async () => {
+    const store = repo();
+    const added = await store.addToken({ userId: USER, tokenAddress: TOKEN, now: NOW });
+    const read = new Date('2026-08-02T12:05:00.000Z');
+    await store.recordSweep({ id: added.id, at: read, outcome: 'read' });
+    assert.equal((await store.listForUser(USER))[0]!.lastReadAt, read.toISOString());
+
+    for (const outcome of ['unreadable', 'not_b20'] as const) {
+      const later = new Date('2026-08-09T12:00:00.000Z');
+      await store.recordSweep({ id: added.id, at: later, outcome });
+      const row = (await store.listForUser(USER))[0]!;
+      // The attempt clock moves, because the endpoint was called.
+      assert.equal(row.lastSweptAt, later.toISOString(), outcome);
+      assert.equal(row.lastOutcome, outcome);
+      // The evidence clock does not, because nothing was established.
+      assert.equal(row.lastReadAt, read.toISOString(), outcome);
+    }
+  });
+
+  test('a token never read successfully has no evidence clock at all', async () => {
+    const store = repo();
+    const added = await store.addToken({ userId: USER, tokenAddress: TOKEN_TWO, now: NOW });
+    await store.recordSweep({ id: added.id, at: NOW, outcome: 'unreadable' });
+    const row = (await store.listForUser(USER))[0]!;
+    assert.equal(row.lastSweptAt, NOW.toISOString());
+    // Null, never the attempt's instant. "We tried" is not "we know".
+    assert.equal(row.lastReadAt, null);
   });
 });

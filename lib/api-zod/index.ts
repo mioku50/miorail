@@ -3623,6 +3623,11 @@ export const B20WatchlistEntryV1Schema = z
      * not render alike. */
     lastSweptAt: z.string().min(1).max(60).nullable(),
     lastOutcome: z.enum(['read', 'not_b20', 'unreadable']).nullable(),
+    /** When the controls were last actually READ, as opposed to last attempted.
+     * They were one field until migration 0067, so a token read three weeks ago
+     * and unreachable this morning reported this morning. Defaulted so a client
+     * that loads before the API restarts still parses. */
+    lastReadAt: z.string().min(1).max(60).nullable().default(null),
     schedule: B20WatchScheduleV1Schema.nullable(),
     /** Newest first. What CHANGED, never the current state repeated. */
     changes: z.array(B20WatchChangeV1Schema).max(10),

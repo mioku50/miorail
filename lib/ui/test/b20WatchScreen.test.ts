@@ -19,8 +19,8 @@ import {
   shortAddressV1,
   trackedOutcomeLabelV1,
   trackedReadAtLabelV1,
-  trackedReadLabelV1,
   trackedReadAgeV1,
+  trackedRowClocksV1,
   trackedStatusLineV1,
   trackedTokenSymbolV1,
   type B20WatchedTokenLikeV1,
@@ -295,11 +295,38 @@ describe('a B20 token can be tracked by hand', () => {
   test('the page claims background watching, and each row makes the claim checkable', () => {
     assert.match(screen, /Miorail reads these on its own/);
     assert.match(screen, /Opening this page is not what\s*\n?\s*makes that happen/);
-    // The ROW renders the timestamp. `trackedStatusLineV1` is still exported
-    // for one-line contexts, so matching its name would pass on the definition
-    // alone — the row has to be the thing asserted.
-    assert.match(screen, /trackedReadAtLabelV1\(entry\)/);
-    assert.match(screen, /trackedReadLabelV1\(entry\)/);
+    // The ROW renders the exact timestamp, not only the age. Asserted on the
+    // projection rather than on a call site: the row now reads the EVIDENCE
+    // clock, so a scan for `trackedReadAtLabelV1(entry)` would be checking that
+    // it still ages the wrong field.
+    const stamped = trackedRowClocksV1(
+      {
+        tokenAddress: `0x${'b2'.repeat(20)}`,
+        lastSweptAt: '2026-08-15T20:33:00.000Z',
+        lastOutcome: 'read',
+        lastReadAt: '2026-08-15T20:33:00.000Z',
+      },
+      new Date('2026-08-16T09:00:00.000Z'),
+    );
+    const controls = stamped.clocks.find((clock) => clock.id === 'controls')!;
+    assert.match(controls.state, /Read 12h ago/);
+    assert.match(controls.detail ?? '', /Aug 15 · 20:33 UTC/);
+    // A failed reading is not a reading — the rule `trackedReadLabelV1` used
+    // to enforce by relabelling the row "Last tried". Relabelling meant the
+    // successful reading lost its name AND its age to the failure. Now the
+    // reading keeps both and the failure gets its own line.
+    const failed = trackedRowClocksV1(
+      {
+        tokenAddress: `0x${'b2'.repeat(20)}`,
+        lastSweptAt: '2026-08-16T08:00:00.000Z',
+        lastOutcome: 'unreadable',
+        lastReadAt: '2026-08-15T20:33:00.000Z',
+      },
+      new Date('2026-08-16T09:00:00.000Z'),
+    );
+    assert.match(failed.clocks.find((clock) => clock.id === 'controls')!.state, /Read 12h ago/);
+    assert.match(failed.failure ?? '', /could not read this contract/);
+    assert.match(failed.failure ?? '', /the reading above still stands/);
   });
 
   test('never read is not the same sentence as nothing changed', () => {
@@ -657,22 +684,34 @@ describe('the price is on the control, not in a footnote', () => {
 // of them was legible.
 // ---------------------------------------------------------------------------
 describe('a watched token row keeps its parts apart', () => {
-  const entry = (over: Partial<{ lastSweptAt: string | null; lastOutcome: 'read' | 'not_b20' | 'unreadable' | null }> = {}) => ({
+  const entry = (over: Partial<{ lastSweptAt: string | null; lastOutcome: 'read' | 'not_b20' | 'unreadable' | null; lastReadAt: string | null }> = {}) => ({
     tokenAddress: '0xb2000000000000000000000578f3ae29d9e6e0101',
     lastSweptAt: '2026-08-15T20:33:12.000Z' as string | null,
     lastOutcome: 'read' as 'read' | 'not_b20' | 'unreadable' | null,
+    lastReadAt: '2026-08-15T20:33:12.000Z' as string | null,
     ...over,
   });
 
   test('the timestamp is a value, not a sentence glued to an address', () => {
     assert.equal(trackedReadAtLabelV1(entry()), 'Aug 15 · 20:33 UTC');
-    assert.equal(trackedReadLabelV1(entry()), 'Last read');
+    assert.equal(
+      trackedRowClocksV1(entry(), new Date('2026-08-16T09:00:00.000Z')).clocks[0]!.label,
+      'Controls',
+    );
   });
 
-  test('a failed reading is not a reading, and the label says so', () => {
-    // The distinction `trackedStatusLineV1` carried in the word "tried" now
-    // lives in the label, so the row can put the two on separate lines.
-    assert.equal(trackedReadLabelV1(entry({ lastOutcome: 'unreadable' })), 'Last tried');
+  test('a failed reading is not a reading, and it no longer costs the reading its name', () => {
+    // The distinction lived in the LABEL — the row said "Last tried" — which
+    // meant one failed attempt took the successful reading's name and its age
+    // at the same time. The clock keeps both now, and the failure is its own
+    // line beneath.
+    const failed = trackedRowClocksV1(
+      entry({ lastOutcome: 'unreadable', lastSweptAt: '2026-08-16T08:00:00.000Z',
+        lastReadAt: '2026-08-15T20:33:12.000Z' }),
+      new Date('2026-08-16T09:00:00.000Z'),
+    );
+    assert.match(failed.clocks[0]!.state, /^Read /);
+    assert.match(failed.failure ?? '', /could not read this contract/);
     assert.equal(trackedOutcomeLabelV1(entry({ lastOutcome: 'unreadable' })), 'could not be read');
   });
 
@@ -962,5 +1001,78 @@ describe('a tracked token states how old its reading is', () => {
     const age = trackedReadAgeV1(at('2026-08-23T00:00:00.000Z'), new Date('2026-08-22T20:33:00.000Z'));
     assert.equal(age.label, 'just now');
     assert.equal(age.stale, false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The production row, reproduced.
+// ---------------------------------------------------------------------------
+describe('two clocks on a watched row, and neither borrows the other', () => {
+  const NOW = new Date('2026-09-05T21:00:00.000Z');
+
+  test('a 21-day control reading beside a 6-minute market check reads as two facts', () => {
+    // Seen on production, stacked in one column:
+    //   Last read / 21d ago STALE / Aug 15 · 20:33 UTC / next check in 8m /
+    //   last measured 6m ago
+    // Both halves true; read as one clock they contradict, and a reader
+    // concludes the schedule is broken. It is not — nothing re-reads controls
+    // on a timer at all.
+    const { clocks, failure } = trackedRowClocksV1(
+      {
+        tokenAddress: '0xb2000000000000000000000578f3ae29d9e6e0101',
+        lastSweptAt: '2026-08-15T20:33:00.000Z',
+        lastOutcome: 'read',
+        lastReadAt: '2026-08-15T20:33:00.000Z',
+        schedule: {
+          intervalSeconds: 900,
+          nextDueAt: '2026-09-05T21:08:00.000Z',
+          lastCheckedAt: '2026-09-05T20:54:00.000Z',
+          lastCompletedAt: '2026-09-05T20:54:00.000Z',
+          lastOutcome: 'measured',
+          checks: 400,
+          completedChecks: 400,
+        },
+      },
+      NOW,
+    );
+    const controls = clocks.find((clock) => clock.id === 'controls')!;
+    const market = clocks.find((clock) => clock.id === 'market')!;
+    assert.match(controls.state, /Read 21d ago/);
+    // The sentence the row never said, and the reason the age is what it is.
+    assert.equal(controls.note, 'nothing re-reads controls on a timer');
+    assert.match(market.state, /Measured 6 min ago|Measured 6m ago/);
+    assert.match(market.detail ?? '', /next check/);
+    assert.equal(failure, null);
+    // The market's countdown must never sit under the control reading again.
+    assert.doesNotMatch(controls.detail ?? '', /next check/);
+    assert.doesNotMatch(controls.state, /measured/i);
+  });
+
+  test('a token nobody has read yet says so, and says what would read it', () => {
+    const { clocks } = trackedRowClocksV1(
+      { tokenAddress: '0xb2000000000000000000000578f3ae29d9e6e0101', lastSweptAt: null, lastOutcome: null },
+      NOW,
+    );
+    const controls = clocks.find((clock) => clock.id === 'controls')!;
+    assert.equal(controls.state, 'Not read yet');
+    assert.match(controls.note ?? '', /press Read B20 controls/);
+    // No schedule is not "scheduled and silent".
+    assert.equal(clocks.find((clock) => clock.id === 'market')!.state, 'Not scheduled');
+  });
+
+  test('not a B20 token is reported as an answer about the address, not a read', () => {
+    const { clocks, failure } = trackedRowClocksV1(
+      {
+        tokenAddress: '0xb2000000000000000000000578f3ae29d9e6e0101',
+        lastSweptAt: '2026-09-05T20:00:00.000Z',
+        lastOutcome: 'not_b20',
+        lastReadAt: null,
+      },
+      NOW,
+    );
+    // It establishes nothing about any control, so the evidence clock stays empty.
+    assert.equal(clocks.find((clock) => clock.id === 'controls')!.state, 'Not read yet');
+    assert.match(failure ?? '', /not a B20 token/);
+    assert.match(failure ?? '', /Nothing about controls was established/);
   });
 });

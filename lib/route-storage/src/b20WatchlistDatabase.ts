@@ -27,6 +27,12 @@ function rowToEntryV1(row: Record<string, unknown>): B20WatchlistEntryV1 {
     createdAt: new Date(String(row.created_at)).toISOString(),
     lastSweptAt: row.last_swept_at === null ? null : new Date(String(row.last_swept_at)).toISOString(),
     lastOutcome: row.last_outcome === null ? null : (String(row.last_outcome) as B20WatchSweepOutcomeV1),
+    // The evidence clock, separate from the attempt clock. Null means this
+    // table never recorded a successful read — which after migration 0067 is
+    // also true of rows whose last attempt had already overwritten one.
+    lastReadAt: row.last_read_at === null || row.last_read_at === undefined
+      ? null
+      : new Date(String(row.last_read_at)).toISOString(),
   };
 }
 
@@ -37,7 +43,7 @@ export function createDatabaseB20WatchlistRepository(
     async addToken(input) {
       const address = input.tokenAddress.toLowerCase();
       const existingRows = await sql`
-        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome FROM b20_watchlist
+        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome, last_read_at FROM b20_watchlist
         WHERE user_id = ${input.userId} AND token_address = ${address}
         LIMIT 1`;
       const existing = existingRows[0] ? rowToEntryV1(existingRows[0] as Record<string, unknown>) : null;
@@ -54,13 +60,13 @@ export function createDatabaseB20WatchlistRepository(
         INSERT INTO b20_watchlist (id, user_id, chain_id, token_address, created_at)
         VALUES (${b20WatchlistIdV1(input.userId, address)}, ${input.userId}, 8453, ${address}, ${input.now.toISOString()})
         ON CONFLICT DO NOTHING
-        RETURNING id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome`;
+        RETURNING id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome, last_read_at`;
       if (inserted.length > 0) return rowToEntryV1(inserted[0] as Record<string, unknown>);
 
       // Lost a race with a concurrent add of the same token. The winner wrote
       // the row this call wanted, so the row is the answer.
       const raced = await sql`
-        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome FROM b20_watchlist
+        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome, last_read_at FROM b20_watchlist
         WHERE user_id = ${input.userId} AND token_address = ${address}
         LIMIT 1`;
       if (!raced[0]) throw b20WatchlistFullV1('The token could not be added or re-read');
@@ -77,7 +83,7 @@ export function createDatabaseB20WatchlistRepository(
 
     async listForUser(userId) {
       const rows = await sql`
-        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome FROM b20_watchlist
+        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome, last_read_at FROM b20_watchlist
         WHERE user_id = ${userId}
         ORDER BY created_at ASC, id ASC`;
       return rows.map((row) => rowToEntryV1(row as Record<string, unknown>));
@@ -89,7 +95,7 @@ export function createDatabaseB20WatchlistRepository(
       // that shows nothing for it is the worst thing this table can produce.
       const capped = Math.max(1, Math.min(500, Math.trunc(input.limit)));
       const rows = await sql`
-        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome FROM b20_watchlist
+        SELECT id, user_id, chain_id, token_address, created_at, last_swept_at, last_outcome, last_read_at FROM b20_watchlist
         WHERE last_swept_at IS NULL OR last_swept_at < ${input.sweptBefore.toISOString()}
         ORDER BY last_swept_at ASC NULLS FIRST, created_at ASC, id ASC
         LIMIT ${capped}`;
@@ -97,9 +103,17 @@ export function createDatabaseB20WatchlistRepository(
     },
 
     async recordSweep(input) {
+      // Two clocks, written by one statement. `last_swept_at` moves on every
+      // attempt because the endpoint was called either way; `last_read_at`
+      // moves only when the controls were actually read, so a failure — and an
+      // address that turns out not to be B20, which establishes nothing about
+      // any control — leaves the evidence age exactly where it was.
+      const read = input.outcome === 'read' ? input.at.toISOString() : null;
       await sql`
         UPDATE b20_watchlist
-        SET last_swept_at = ${input.at.toISOString()}, last_outcome = ${input.outcome}
+        SET last_swept_at = ${input.at.toISOString()},
+            last_outcome = ${input.outcome},
+            last_read_at = COALESCE(${read}::timestamptz, last_read_at)
         WHERE id = ${input.id}`;
     },
 

@@ -46,6 +46,21 @@ export interface B20WatchlistEntryV1 {
   lastSweptAt: string | null;
   /** What that read produced. Null alongside a null `lastSweptAt`. */
   lastOutcome: B20WatchSweepOutcomeV1 | null;
+  /**
+   * When the controls were last actually READ — the age of the evidence, as
+   * opposed to the age of the last attempt.
+   *
+   * They were one field until migration 0067, so a token read three weeks ago
+   * and unreachable this morning reported this morning, and the reading still
+   * on screen had no timestamp anywhere. `not_b20` does not refresh this
+   * either: it is a true answer about the address that establishes nothing
+   * about any control.
+   *
+   * Null means no successful read is recorded. For rows that predate 0067 and
+   * whose last attempt failed, that is the honest answer — the instant was
+   * overwritten and is not recoverable.
+   */
+  lastReadAt: string | null;
 }
 
 export interface B20WatchlistRepositoryV1 {

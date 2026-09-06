@@ -3349,6 +3349,9 @@ async function watchlistBodyV1(entries: readonly B20WatchlistEntryV1[]) {
         addedAt: entry.createdAt,
         lastSweptAt: entry.lastSweptAt,
         lastOutcome: entry.lastOutcome,
+        // The evidence clock, apart from the attempt clock. The screen ages the
+        // READING; ageing the attempt reports freshness after an outage.
+        lastReadAt: entry.lastReadAt,
         schedule:
           row === null
             ? null

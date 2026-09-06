@@ -44,10 +44,13 @@ export interface B20WatchedTokenLikeV1 {
 
 export interface B20TrackedTokenLikeV1 {
   tokenAddress: string;
-  /** When a sweep last read this token — including one that ran with nobody
-   * watching. Null means never read, which is not the same as unchanged. */
+  /** When a sweep last ATTEMPTED this token — including one that ran with
+   * nobody watching, and including one that failed. Null means never tried. */
   lastSweptAt: string | null;
   lastOutcome: 'read' | 'not_b20' | 'unreadable' | null;
+  /** When the controls were last actually READ. Optional so a client rendering
+   * against an API that predates migration 0067 falls back exactly as before. */
+  lastReadAt?: string | null;
   /** Phase 8 — what is owed on this ADDRESS, shared with every other account
    * watching it. Null until the sweep has reconciled it, which is "no promise
    * has been made" rather than "never checked". */
@@ -137,11 +140,6 @@ export function trackedReadAgeV1(entry: B20TrackedTokenLikeV1, now: Date): Track
   return { label, stale: ms >= TRACKED_READ_STALE_AFTER_MS_V1 };
 }
 
-/** "Last read" — or "Last tried", because a failed reading is not a reading. */
-export function trackedReadLabelV1(entry: B20TrackedTokenLikeV1): string {
-  return entry.lastOutcome === 'unreadable' ? 'Last tried' : 'Last read';
-}
-
 /** What the last reading concluded, when that is not simply "it was read".
  * Null keeps the row to two lines in the ordinary case. */
 export function trackedOutcomeLabelV1(entry: B20TrackedTokenLikeV1): string | null {
@@ -149,6 +147,107 @@ export function trackedOutcomeLabelV1(entry: B20TrackedTokenLikeV1): string | nu
   if (entry.lastOutcome === 'not_b20') return 'not a B20 token';
   if (entry.lastOutcome === 'unreadable') return 'could not be read';
   return null;
+}
+
+/**
+ * The two clocks on a watched row, named for what each one times.
+ *
+ * The row printed five lines about time in one column, from two unrelated
+ * subjects, and the result contradicted itself on production:
+ *
+ *     Last read
+ *     21d ago  STALE
+ *     Aug 15 · 20:33 UTC
+ *     next check in 8m
+ *     last measured 6m ago
+ *
+ * A reader takes that as one clock and concludes the schedule is broken. It is
+ * two, and both are correct. NOTHING reads a token's controls on a timer — the
+ * sweep runs when a person presses the button — while the market watch runs
+ * every fifteen minutes and had measured six minutes earlier. The 21 days is
+ * not a failure; it is the honest age of a reading nobody asked for again, and
+ * the row never said so.
+ *
+ * So: two captions, each with its own subject, its own age, and — for controls —
+ * the sentence that explains why the age is what it is. The failed attempt gets
+ * its own line rather than overwriting the reading's label, because a failure
+ * is a fact about the endpoint and the reading is a fact about the token.
+ */
+export interface TrackedRowClockV1 {
+  id: 'controls' | 'market';
+  label: string;
+  state: string;
+  detail: string | null;
+  /** A second, quieter line: the exact stamp, or why nothing refreshes this. */
+  note: string | null;
+  tone: 'good' | 'neutral' | 'off' | 'warn';
+}
+
+export function trackedRowClocksV1(
+  entry: B20TrackedTokenLikeV1,
+  now: Date,
+): { clocks: TrackedRowClockV1[]; failure: string | null } {
+  // Prefer the evidence clock. Falling back to the sweep clock is correct only
+  // when the last sweep WAS the read; otherwise the instant belongs to a
+  // different event and using it would age the wrong thing.
+  const readAt =
+    entry.lastReadAt ?? (entry.lastOutcome === 'read' ? entry.lastSweptAt : null);
+  const readAge = trackedReadAgeV1({ ...entry, lastSweptAt: readAt }, now);
+  const controls: TrackedRowClockV1 =
+    readAt === null
+      ? {
+          id: 'controls',
+          label: 'Controls',
+          state: 'Not read yet',
+          detail: null,
+          note: 'read only when you press Read B20 controls',
+          tone: 'off',
+        }
+      : {
+          id: 'controls',
+          label: 'Controls',
+          state: `Read ${readAge.label ?? 'at an unknown time'}`,
+          detail: trackedReadAtLabelV1({ ...entry, lastSweptAt: readAt }),
+          // The missing sentence. An age with no explanation reads as a broken
+          // schedule; there is no schedule, and that is the explanation.
+          note: readAge.stale ? 'nothing re-reads controls on a timer' : null,
+          tone: readAge.stale ? 'warn' : 'good',
+        };
+
+  const schedule = entry.schedule ?? null;
+  const promise = schedule === null ? null : watchRowScheduleViewV1(schedule, now);
+  const market: TrackedRowClockV1 =
+    promise === null
+      ? {
+          id: 'market',
+          label: 'Market watch',
+          state: 'Not scheduled',
+          detail: null,
+          note: null,
+          tone: 'off',
+        }
+      : {
+          id: 'market',
+          label: 'Market watch',
+          // Capitalised where the schedule view returns a sentence fragment:
+          // this is a caption, not prose.
+          state: promise.lastCompleted.replace(/^last measured/, 'Measured').replace(/^nothing measured yet$/, 'Nothing measured yet'),
+          detail: promise.next,
+          note: null,
+          tone: promise.tone,
+        };
+
+  // One failure line for the row, attributed to the clock it belongs to. The
+  // controls attempt wins when it is the newer of the two, because that is the
+  // one a reader is about to misread as the reading itself.
+  const controlsFailed = entry.lastOutcome !== null && entry.lastOutcome !== 'read';
+  const failure = controlsFailed
+    ? entry.lastOutcome === 'not_b20'
+      ? `Last attempt ${trackedReadAgeV1(entry, now).label ?? ''} found this is not a B20 token. Nothing about controls was established.`.replace('  ', ' ')
+      : `Last attempt ${trackedReadAgeV1(entry, now).label ?? ''} could not read this contract. That is about the endpoint, not the token — the reading above still stands.`.replace('  ', ' ')
+    : (promise?.lastFailure ?? null);
+
+  return { clocks: [controls, market], failure };
 }
 
 /**
@@ -485,7 +584,11 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
                 // neither has seen keeps the address as its own name.
                 const symbol = trackedTokenSymbolV1(entry.tokenAddress, model);
                 const outcome = trackedOutcomeLabelV1(entry);
-                const age = trackedReadAgeV1(entry, model.now);
+                const age = trackedReadAgeV1(
+                  { ...entry, lastSweptAt: entry.lastReadAt ?? (entry.lastOutcome === 'read' ? entry.lastSweptAt : null) },
+                  model.now,
+                );
+                const { clocks, failure } = trackedRowClocksV1(entry, model.now);
                 return (
                   <li className="watchrow" key={entry.tokenAddress}>
                     <div className="watchrow-id">
@@ -499,44 +602,36 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
                       )}
                     </div>
                     <div className="watchrow-read">
-                      <span className="watchrow-k">{trackedReadLabelV1(entry)}</span>
-                      <span
-                        className={
-                          entry.lastOutcome === 'unreadable' || age.stale ? 'watchrow-v warn' : 'watchrow-v'
-                        }
-                      >
-                        {age.label ?? trackedReadAtLabelV1(entry)}
-                        {age.stale && <span className="tag a">STALE</span>}
-                      </span>
-                      {/* The exact instant keeps its place underneath: the age
-                          is what the reader needs, the stamp is what the
-                          evidence needs. */}
-                      {age.label && <span className="watchrow-note">{trackedReadAtLabelV1(entry)}</span>}
-                      {/* "not a B20 token" and "could not be read" are answers,
-                          and neither is the same as a reading that found no
-                          change. Only shown when there is one. */}
-                      {outcome && <span className="watchrow-note">{outcome}</span>}
-                      {model.watchSla &&
-                        (() => {
-                          const promise = watchRowScheduleViewV1(entry.schedule ?? null, model.now);
-                          return (
-                            <>
-                              <span
-                                className={
-                                  promise.tone === 'warn' ? 'watchrow-v warn' : 'watchrow-note'
-                                }
-                              >
-                                {promise.next}
-                              </span>
-                              {/* The COMPLETED clock. Showing the last attempt
-                                  here would report freshness after an outage. */}
-                              <span className="watchrow-note">{promise.lastCompleted}</span>
-                              {promise.lastFailure && (
-                                <span className="watchrow-note">{promise.lastFailure}</span>
-                              )}
-                            </>
-                          );
-                        })()}
+                      {/* Two clocks, named. They were five lines in one column
+                          from two unrelated subjects, and on production the
+                          stack read "Last read 21d ago STALE" directly above
+                          "last measured 6m ago" — which a reader takes as one
+                          clock contradicting itself. Both were true: nothing
+                          re-reads controls on a timer, and the market watch had
+                          run six minutes earlier. */}
+                      <ul className="watchrow-clocks" aria-label="What was read, and when">
+                        {clocks.map((clock) => (
+                          <li key={clock.id} data-tone={clock.tone}>
+                            <span className="watchrow-clock-k">{clock.label}</span>
+                            <strong className="watchrow-clock-v">
+                              {clock.state}
+                              {clock.id === 'controls' && age.stale && <span className="tag a">STALE</span>}
+                            </strong>
+                            {clock.detail && (
+                              <span className="watchrow-clock-d">{clock.detail}</span>
+                            )}
+                            {clock.note && <span className="watchrow-clock-d">{clock.note}</span>}
+                          </li>
+                        ))}
+                      </ul>
+                      {/* The failed attempt, on its own line rather than
+                          overwriting the reading's label. A failure is a fact
+                          about the endpoint; the reading is a fact about the
+                          token, and it survives. */}
+                      {failure && <span className="watchrow-note warn">{failure}</span>}
+                      {/* "not a B20 token" is an answer about the address, kept
+                          when it is not already the failure line above. */}
+                      {outcome && !failure && <span className="watchrow-note">{outcome}</span>}
                       {(entry.changes?.length ?? 0) > 0 && (
                         <span className="watchrow-note">
                           {entry.changes!.length} recorded change
