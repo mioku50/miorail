@@ -182,6 +182,15 @@ if ! [[ "$public_builder_code" =~ ^[a-z0-9_]{1,32}$ ]]; then
   echo 'FAILED: a valid BASE_BUILDER_CODE is required to build attributed production wallet calls'
   exit 1
 fi
+# PRINT IT. Every check above is a shape check, and a builder code has no shape
+# a typo can violate: `bc_22uuo4dt` and `bc_z2uuo4dt` are both valid, and for
+# months we baked the first one into every attributed call while the account
+# owned the second. Nothing on chain complained -- the ERC-8021 suffix was
+# well-formed, it just named a code nobody owned, so every payment and every
+# swap went unattributed and the dashboard read zero. The only check that can
+# catch this is a human comparing the value with base.dev, and a human cannot
+# compare a value the deploy never shows. So the deploy shows it.
+echo "  builder code   $public_builder_code  (must match base.dev exactly)"
 # Phase 15.1 — where the Base App reaches the MiniApp. NEXT_PUBLIC_* is inlined
 # at build time, so an unset value here is not a runtime warning: it is baked
 # into the distribution manifest as `http://localhost:3000`, which is what it
