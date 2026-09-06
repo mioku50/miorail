@@ -232,6 +232,16 @@ export const MarketRealityRepresentationV2Schema = z
       'reviewed_token_already_applied',
       'not_established',
     ]),
+    /** The multiplier's own clock: when it was last read, and when that read
+     * stops counting. Four things on this row expire independently — the
+     * router quote, the round trip, the reference session and this — and a
+     * surface that can only age two of them silently attaches the wrong
+     * deadline to the other two. Null where nothing is ratio-bound. */
+    /* Defaulted rather than required so the field is additive on the wire: a
+     * browser holding the new bundle can be talking to an API instance that
+     * has not restarted yet, and that window is every deploy. */
+    normalizationCheckedAt: Timestamp.nullable().default(null),
+    normalizationExpiresAt: Timestamp.nullable().default(null),
     returnedCashAtomic: Digits.nullable(),
     effectivePriceAtomic: Digits.nullable(),
     effectivePriceDecimals: z.literal(8).nullable(),
@@ -274,6 +284,31 @@ export const MarketRealityRepresentationV2Schema = z
         code: z.ZodIssueCode.custom,
         path: ['premiumDiscountBps'],
         message: 'the compatibility field must equal the authoritative typed basis decision',
+      });
+    }
+    // A reading and its deadline are one fact. Half of it would let a surface
+    // print "read 20 min ago" with no window, or a window with nothing in it.
+    if ((row.normalizationCheckedAt === null) !== (row.normalizationExpiresAt === null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['normalizationCheckedAt'],
+        message: 'a normalization reading and the instant it stops counting travel together',
+      });
+    }
+    if (row.normalization === 'fresh_ratio_applied' && row.normalizationCheckedAt === null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['normalizationCheckedAt'],
+        message: 'an applied ratio was read at a stated instant',
+      });
+    }
+    // The token already carries its own exposure, so there is no second
+    // reading to age. A clock here would be a deadline nobody set.
+    if (row.normalization === 'reviewed_token_already_applied' && row.normalizationCheckedAt !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['normalizationCheckedAt'],
+        message: 'a token that already applies its own ratio has no separate reading to age',
       });
     }
   });

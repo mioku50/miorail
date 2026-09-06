@@ -178,6 +178,10 @@ export interface MarketRealityRepresentationWireV1 {
   normalizedExposureAtomic: string | null;
   normalizedExposureDecimals: number | null;
   normalization: 'fresh_ratio_applied' | 'reviewed_token_already_applied' | 'not_established';
+  /** The multiplier's own clock. Declared here because the screen ages four
+   * independent things and could previously only age two of them. */
+  normalizationCheckedAt?: string | null;
+  normalizationExpiresAt?: string | null;
   returnedCashAtomic: string | null;
   effectivePriceAtomic: string | null;
   effectivePriceDecimals: number | null;
@@ -203,6 +207,13 @@ export interface MarketRealityRepresentationWireV1 {
     decimals: number | null;
     comparable: boolean;
     reason: string | null;
+    /** When the feed itself last published, and when WE last looked. Both have
+     * always been on the wire and neither was declared, so the card could say
+     * what the reference session was and never when that was true. They are two
+     * different clocks and are never merged: a feed that stopped publishing an
+     * hour ago is still read every minute. */
+    referenceUpdatedAt?: string | null;
+    observedAt?: string | null;
   };
   basis: {
     status: 'comparable' | 'withheld';
@@ -339,6 +350,12 @@ export interface UtilityGroupViewV1 {
 }
 
 export interface RepresentationViewV1 {
+  /** The four independent clocks on this card, shortest-lived first. Always
+   * four: a clock that has never run is a state, not an absent caption. */
+  clocks: ClockCaptionV1[];
+  /** The issuer's own restrictions, on the card rather than behind Terms.
+   * Never a statement about this wallet. */
+  accessNotices: AccessNoticeViewV1[];
   /** History, labelled as history. Null when nobody has ever measured. */
   lastSeen: { label: string; value: string; note: string } | null;
   tokenAddress: string;
@@ -662,11 +679,35 @@ const PUBLICATION_MODE_LABEL_V1: Readonly<
   unknown: 'How the reference price publishes is not confirmed',
 };
 
+/**
+ * A publication mode that names an EVENT, rather than restating freshness.
+ *
+ * The Reference clock already says whether the feed is publishing and when it
+ * last did, so `live_reference` and `stale` add a second sentence about the
+ * same fact. `holding_last_close` and `corporate_action_hold` do not: they say
+ * WHY it stopped, and a corporate-action hold in particular is a thing the
+ * reader has to know before acting. Those stay on the card; the restating ones
+ * move to Technical evidence, where the mode is still printed verbatim.
+ */
+const PUBLICATION_MODE_IS_AN_EVENT_V1: Readonly<
+  Record<MarketRealityRepresentationWireV1['reference']['publicationMode'], boolean>
+> = {
+  live_reference: false,
+  holding_last_close: true,
+  corporate_action_hold: true,
+  stale: false,
+  unknown: false,
+};
+
 function referenceNoteV1(
   reference: MarketRealityRepresentationWireV1['reference'],
 ): string {
-  const context = `${MARKET_SESSION_LABEL_V1[reference.marketSession]} · ${PUBLICATION_MODE_LABEL_V1[reference.publicationMode]}`;
-  return reference.reason ? `${context} · ${reference.reason}` : context;
+  const parts = [MARKET_SESSION_LABEL_V1[reference.marketSession]];
+  if (PUBLICATION_MODE_IS_AN_EVENT_V1[reference.publicationMode]) {
+    parts.push(PUBLICATION_MODE_LABEL_V1[reference.publicationMode]);
+  }
+  if (reference.reason) parts.push(reference.reason);
+  return parts.join(' · ');
 }
 
 /**
@@ -1056,7 +1097,10 @@ function numbersV1(
         ? {
             label: cashLabel,
             value: historyCash,
-            note: `measured ${historyAge ?? 'earlier'} — history, not a price now`,
+            // The age left this line for the Round trip clock above. What is
+            // load-bearing here is the KIND of number, not its age: a reader
+            // who mistakes it for a live price acts on it.
+            note: 'history, not a price now',
             tone: 'off' as const,
           }
         : {
@@ -1531,6 +1575,214 @@ function lastSeenV1(
           : 'Read failed'),
     note: `measured ${age}`,
   };
+}
+
+/**
+ * The four clocks, each with its own time.
+ *
+ * A card carries four facts that expire independently, and until now the screen
+ * could age exactly two of them. The other two borrowed a neighbour's deadline:
+ * the reference session printed its state with no instant at all, and the
+ * multiplier — whose freshness window the engine has always enforced — printed
+ * nothing. A reader watching a quote count down had no way to tell which of the
+ * numbers around it were also about to stop being true, and no way to tell that
+ * most of them were not.
+ *
+ * So they are stated apart, side by side, each naming what it times:
+ *
+ *   Live quote   the router's ~20 second window
+ *   Round trip   the last completed measurement, whatever its age
+ *   Reference    the issuer's feed and the session it publishes in
+ *   Multiplier   the ratio read, and the window it counts for
+ *
+ * The order is deliberate: shortest-lived first, so the one that changes while
+ * you read is where the eye starts. Reading them together is the point — an
+ * expired quote beside "Round trip · measured 13 min ago" says exactly what
+ * happened, where an expired quote alone reads as the whole card going dark.
+ */
+export interface ClockCaptionV1 {
+  id: 'quote' | 'round_trip' | 'reference' | 'multiplier';
+  /** What is being timed. Never the system's word for it. */
+  label: string;
+  /** The state, in one or two words. */
+  state: string;
+  /** The time itself — an age or a countdown. Null only when this clock has
+   * genuinely never run, which is a state and not a missing value. */
+  detail: string | null;
+  tone: ToneV1;
+}
+
+export function clocksV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): ClockCaptionV1[] {
+  const expiresInLabel = openQuoteExpiryV1(representation, nowIso);
+  const quoteCaption: ClockCaptionV1 = expiresInLabel
+    ? { id: 'quote', label: 'Live quote', state: 'Open', detail: expiresInLabel, tone: 'good' }
+    : representation.lastObservation
+      ? {
+          // Deliberately timeless. A quote expires about twenty seconds after
+          // the measurement that fetched it, so "lapsed 57s ago" beside
+          // "measured 1 min ago" is one event written twice with two numbers
+          // that do not quite agree. The age belongs to the round trip; this
+          // column owns whether anything is open, and the answer is no.
+          id: 'quote',
+          label: 'Live quote',
+          // Not "no quote": one WAS taken, which is why the round trip beside
+          // it has a number at all.
+          state: 'Expired',
+          detail: null,
+          tone: 'off',
+        }
+      : { id: 'quote', label: 'Live quote', state: 'None taken', detail: null, tone: 'off' };
+
+  // Survives the quote by design. This is the caption the whole strip exists
+  // for: the measurement stands after the price that fetched it is gone.
+  const measuredAt =
+    representation.lastObservation?.observedAt ??
+    representation.sources.find((source) => source.quoteEvidence)?.quoteEvidence?.observedAt ??
+    null;
+  const measuredAge = quoteAgeLabelV1(measuredAt, nowIso);
+  const roundTrip: ClockCaptionV1 = measuredAge
+    ? {
+        id: 'round_trip',
+        label: 'Round trip',
+        state: 'Measured',
+        detail: measuredAge,
+        // Neutral, never off: age is not a fault. A measurement forty minutes
+        // old is the answer to this question, and greying it out taught a
+        // reader to distrust the only number on the card that was real.
+        tone: 'neutral',
+      }
+    : { id: 'round_trip', label: 'Round trip', state: 'Never measured', detail: null, tone: 'off' };
+
+  const reference = representation.reference;
+  // Two instants, never merged. The feed publishes on its own schedule; we look
+  // on ours, and when the feed is not reviewed at all our look is the only
+  // clock there is — which is a fact about our coverage, stated as one.
+  const publishedAge = quoteAgeLabelV1(reference.referenceUpdatedAt ?? null, nowIso);
+  const lookedAge = quoteAgeLabelV1(reference.observedAt ?? null, nowIso);
+  const referenceCaption: ClockCaptionV1 = {
+    id: 'reference',
+    label: 'Reference',
+    state: REFERENCE_CLOCK_STATE_V1[reference.status],
+    detail: publishedAge
+      ? `published ${publishedAge}`
+      : lookedAge
+        ? `we looked ${lookedAge}`
+        : null,
+    tone: reference.status === 'fresh' ? 'good' : 'off',
+  };
+
+  const multiplier = multiplierClockV1(representation, nowIso);
+  return [quoteCaption, roundTrip, referenceCaption, multiplier];
+}
+
+const REFERENCE_CLOCK_STATE_V1: Readonly<
+  Record<MarketRealityRepresentationWireV1['reference']['status'], string>
+> = {
+  fresh: 'Publishing',
+  stale: 'Not updating',
+  paused: 'Held',
+  unavailable: 'No feed',
+  // Ours, not the issuer's: nobody has reviewed a feed for this representation.
+  unknown: 'Not reviewed',
+};
+
+function multiplierClockV1(
+  representation: MarketRealityRepresentationWireV1,
+  nowIso: string,
+): ClockCaptionV1 {
+  const label = 'Multiplier';
+  if (representation.normalization === 'reviewed_token_already_applied') {
+    // No second reading exists, so there is no clock. Saying so is better than
+    // an empty column, which reads as a value we failed to fetch.
+    return {
+      id: 'multiplier',
+      label,
+      state: 'In the token',
+      detail: 'nothing separate to age',
+      tone: 'neutral',
+    };
+  }
+  const checkedAge = quoteAgeLabelV1(representation.normalizationCheckedAt ?? null, nowIso);
+  if (!checkedAge) {
+    return { id: 'multiplier', label, state: 'Not read', detail: null, tone: 'off' };
+  }
+  const expiresAt = representation.normalizationExpiresAt ?? null;
+  const open = expiresAt !== null && Date.parse(expiresAt) > Date.parse(nowIso);
+  return representation.normalization === 'fresh_ratio_applied' && open
+    ? { id: 'multiplier', label, state: 'Applied', detail: `read ${checkedAge}`, tone: 'good' }
+    : {
+        id: 'multiplier',
+        label,
+        // The case this caption was written for. `not_established` reads as
+        // "we never knew"; what actually happened is that we knew, and the
+        // window closed. The reading and its age are still stated.
+        state: 'Window closed',
+        detail: `read ${checkedAge}`,
+        tone: 'off',
+      };
+}
+
+/**
+ * What stands between a reader and holding this, on the card, unexpanded.
+ *
+ * The terms list below grades OUR EVIDENCE — every Coinbase field reads
+ * "Reviewed", including the one whose reviewed content is that the product is
+ * not offered to US persons. Those are two different axes folded into one word,
+ * and the word that won is the one about us. A reader who cannot legally hold
+ * the token saw "Reviewed" and a collapsed section.
+ *
+ * So the restriction is read from the reviewed KIND, which is machine-readable,
+ * and stated in the reader's own terms. Anything whose kind is not in this map
+ * contributes nothing: an unmapped kind is not a licence to invent a blocker,
+ * and the full terms list is one press away either way.
+ *
+ * These are the ISSUER's terms. They are not a check on this wallet — that
+ * measurement is the transfer gate, it lives on the review screen, and merging
+ * the two would let a reviewed document answer a question only the registry can.
+ */
+export interface AccessNoticeViewV1 {
+  label: string;
+  note: string;
+}
+
+const ACCESS_NOTICE_BY_KIND_V1: Readonly<Record<string, string>> = {
+  // Who may hold it.
+  outside_us_secondary_permissionless_primary_kyc:
+    'Not offered to US persons. Eligible jurisdictions only.',
+  issuer_account_and_jurisdiction:
+    'Needs an approved account with the issuer, and some jurisdictions are excluded.',
+  restricted_jurisdictions_primary_kyc:
+    'Some jurisdictions are excluded, and issuing needs an approved account.',
+  // Whether a transfer can be stopped.
+  policy_screened_permissionless_secondary:
+    'Anyone may hold and trade it, but issuer policy can still block a specific address.',
+  blacklist_restrictor: 'The issuer can block a specific address from transferring.',
+  no_technical_restrictions: 'The contract itself stops no transfer.',
+  // Getting out through the issuer, as opposed to through the market.
+  authorized_participant_primary_market:
+    'You cannot redeem with the issuer. The only way out is the market.',
+  issuer_account_kyc: 'Redeeming needs an approved account with the issuer.',
+  existing_holders_supported_new_issuance_closed:
+    'New issuance is closed. Existing holders are still supported.',
+};
+
+export function accessNoticesV1(issuerId: IssuerIdV1): AccessNoticeViewV1[] {
+  const adapter = REPRESENTATION_STRUCTURE_ADAPTERS_V1[issuerId];
+  const rows: AccessNoticeViewV1[] = [];
+  const add = (label: string, entry: { status: string; value: string | null }) => {
+    // Only a REVIEWED value speaks here. `unknown` is the absence of evidence,
+    // and an absence rendered as a restriction is a claim nobody made.
+    if (entry.status !== 'reviewed' || entry.value === null) return;
+    const note = ACCESS_NOTICE_BY_KIND_V1[entry.value];
+    if (note) rows.push({ label, note });
+  };
+  add('Who may hold it', adapter.eligibility);
+  add('Transfers', adapter.transferRestrictions);
+  add('Getting out', adapter.redemption);
+  return rows;
 }
 
 function termsV1(representation: MarketRealityRepresentationWireV1): FactViewV1[] {
@@ -2973,6 +3225,10 @@ export function marketRealityViewV1(input: {
         // The same reason the numbers grid and the ladder go: a route reading
         // taken against a contract with nothing outstanding measures our own
         // question, not this token.
+        // Not gated on the outcome. A zero-supply wrapper has nothing to
+        // measure, and saying WHEN we established that is still the answer.
+        clocks: clocksV1(representation, input.now),
+        accessNotices: accessNoticesV1(representation.issuerId),
         lastSeen: outcome === 'zero_supply' ? null : lastSeenV1(representation, input.now),
         openQuote:
           outcome === 'zero_supply'

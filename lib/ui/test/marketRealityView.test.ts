@@ -12,6 +12,8 @@ import {
 import {
   MARKET_REALITY_ROUND_TRIP_BOUND_BPS_V1,
   MARKET_REALITY_ROUND_TRIP_SEVERE_BPS_V1,
+  accessNoticesV1,
+  clocksV1,
   exitCostViewV1,
   routedThroughV1,
   collapseLadderRungsV1,
@@ -1071,17 +1073,26 @@ describe('an absent number never renders as a zero', () => {
     assert.equal(card?.withheld.length, 3);
   });
 
-  test('a measured figure fills the body, marked as history with its age', () => {
+  test('a measured figure fills the body, marked as history, and its age is on the card', () => {
     // The defect this replaced: a card over a stored run rendered four dashes
     // and hid the measurement in a one-line strip, while Discover showed the
     // same run in full. The number is the body now; the age is what keeps it
     // honest.
+    //
+    // The age moved to the clocks row rather than leaving the card. What the
+    // note has to carry is the KIND of number — a reader who mistakes it for a
+    // live price acts on it — and the age is stated once, in the row that
+    // exists for ages, from the SAME observation this figure came from.
     const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
-    const cash = view?.representations[0]?.numbers[0];
+    const row = view?.representations[0];
+    const cash = row?.numbers[0];
     assert.equal(cash?.value, '$99.95');
     assert.match(cash?.note ?? '', /history, not a price now/);
-    assert.match(cash?.note ?? '', /ago/);
+    assert.doesNotMatch(cash?.note ?? '', /ago/, 'the age belongs to exactly one place');
     assert.equal(cash?.tone, 'off', 'history is muted, never styled as a live price');
+    const roundTrip = row?.clocks.find((clock) => clock.id === 'round_trip');
+    assert.equal(roundTrip?.state, 'Measured');
+    assert.match(roundTrip?.detail ?? '', /ago/);
   });
 
   test('the strip says whether anything is open, and only that', () => {
@@ -1793,7 +1804,12 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
     const row = view?.representations[0];
     const reference = row?.numbers.find((fact) => fact.label === 'Reference price');
     assert.match(reference?.note ?? '', /US market open/);
-    assert.match(reference?.note ?? '', /Reference price is live/);
+    // A publication mode that only restates freshness left this line: the
+    // Reference clock says whether the feed is publishing, and saying it twice
+    // in two vocabularies taught a reader neither. It is still printed raw
+    // under Technical evidence.
+    assert.doesNotMatch(reference?.note ?? '', /Reference price is live/);
+    assert.equal(row?.clocks.find((clock) => clock.id === 'reference')?.state, 'Publishing');
     assert.doesNotMatch(reference?.note ?? '', /regular_hours|live_reference/);
     assert.match(
       row?.technical.find((fact) => fact.label === 'Reference')?.value ?? '',
@@ -3839,5 +3855,224 @@ describe('a round trip cannot claim a gain and wear the success colour', () => {
     assert.equal(exit('9990')!.grade, 'most_value_lost');
     // Zero is a real, and good, round trip.
     assert.equal(exit('0')!.grade, 'within_policy');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The four clocks.
+//
+// Every one of these is a case where the card previously borrowed one clock's
+// deadline for another fact, or printed a state with no time at all.
+// ---------------------------------------------------------------------------
+describe('four clocks, four times', () => {
+  const at = (id: string, rows: ReturnType<typeof clocksV1>) => rows.find((row) => row.id === id)!;
+
+  test('an expired quote does not stop the round trip clock', () => {
+    const rows = clocksV1(
+      representation({
+        status: 'full',
+        liveness: 'history_only',
+        observedAt: LAPSED_OBSERVATION.observedAt,
+        expiresAt: LAPSED_OBSERVATION.expiresAt,
+        lastObservation: LAPSED_OBSERVATION,
+        returnedCashAtomic: LAPSED_OBSERVATION.returnedCashAtomic,
+      }),
+      NOW,
+    );
+    assert.equal(rows.length, 4);
+    // The quote is gone and says only that. Its own lapse age would be the
+    // round trip's age minus twenty seconds — the same event, written twice,
+    // with two numbers that disagree by a rounding.
+    assert.equal(at('quote', rows).state, 'Expired');
+    assert.equal(at('quote', rows).detail, null);
+    // The measurement is not gone, and is not greyed out for being old.
+    assert.equal(at('round_trip', rows).state, 'Measured');
+    assert.equal(at('round_trip', rows).detail, '39 min ago');
+    assert.equal(at('round_trip', rows).tone, 'neutral');
+  });
+
+  test('a live quote counts down while the measurement keeps its own age', () => {
+    const rows = clocksV1(
+      representation({
+        status: 'full',
+        liveness: 'live',
+        observedAt: '2026-08-26T20:34:09.000Z',
+        expiresAt: '2026-08-26T20:34:33.000Z',
+        sources: [
+          {
+            source: 'kyberswap',
+            status: 'quoted',
+            errorCode: null,
+            quoteEvidence: {
+              source: 'kyberswap',
+              direction: 'sell',
+              inputAtomic: '1000000000000000000',
+              outputAtomic: '99952618',
+              observedAt: '2026-08-26T20:34:09.000Z',
+              expiresAt: '2026-08-26T20:34:33.000Z',
+              evidenceHash: `0x${'aa'.repeat(32)}`,
+              blockNumber: '50000000',
+            },
+          },
+        ],
+        lastObservation: { ...LAPSED_OBSERVATION, observedAt: '2026-08-26T20:34:09.000Z',
+          expiresAt: '2026-08-26T20:34:33.000Z', open: true },
+      }),
+      NOW,
+    );
+    assert.equal(at('quote', rows).state, 'Open');
+    assert.match(at('quote', rows).detail ?? '', /^Expires in \d+s$/);
+    assert.equal(at('quote', rows).tone, 'good');
+    assert.equal(at('round_trip', rows).detail, '10s ago');
+  });
+
+  test('a reference nobody reviewed still reports when WE looked', () => {
+    const rows = clocksV1(
+      representation({
+        reference: {
+          status: 'unknown',
+          session: 'unknown',
+          marketSession: 'unknown',
+          publicationMode: 'unknown',
+          valueAtomic: null,
+          decimals: null,
+          comparable: false,
+          reason: 'No reviewed backed reference/session configuration is established.',
+          referenceUpdatedAt: null,
+          observedAt: '2026-08-26T20:26:19.000Z',
+        },
+      }),
+      NOW,
+    );
+    // Ours, and named as ours. The absence of a feed is our coverage, not the
+    // issuer's failure, and it still happened at a stated time.
+    assert.equal(at('reference', rows).state, 'Not reviewed');
+    assert.equal(at('reference', rows).detail, 'we looked 8 min ago');
+    assert.equal(at('reference', rows).tone, 'off');
+  });
+
+  test('a publishing feed reports the feed clock, never our own', () => {
+    const rows = clocksV1(
+      representation({
+        reference: {
+          status: 'fresh',
+          session: 'regular_hours',
+          marketSession: 'regular_hours',
+          publicationMode: 'live_reference',
+          valueAtomic: '18023000000',
+          decimals: 8,
+          comparable: false,
+          reason: null,
+          referenceUpdatedAt: '2026-08-26T20:32:19.000Z',
+          observedAt: '2026-08-26T20:34:15.000Z',
+        },
+      }),
+      NOW,
+    );
+    assert.equal(at('reference', rows).state, 'Publishing');
+    // Two instants exist and the publishing one wins: how recently we read a
+    // feed says nothing about how recently the feed moved.
+    assert.equal(at('reference', rows).detail, 'published 2 min ago');
+    assert.equal(at('reference', rows).tone, 'good');
+  });
+
+  test('a stale multiplier reports when we last knew, not that we never did', () => {
+    const rows = clocksV1(
+      representation({
+        normalization: 'not_established',
+        normalizationCheckedAt: '2026-08-26T11:34:19.000Z',
+        normalizationExpiresAt: '2026-08-26T18:34:19.000Z',
+      }),
+      NOW,
+    );
+    assert.equal(at('multiplier', rows).state, 'Window closed');
+    assert.equal(at('multiplier', rows).detail, 'read 9h ago');
+    assert.equal(at('multiplier', rows).tone, 'off');
+  });
+
+  test('an applied multiplier is open, and a token that carries its own has no clock', () => {
+    const applied = clocksV1(
+      representation({
+        normalization: 'fresh_ratio_applied',
+        normalizationCheckedAt: '2026-08-26T20:14:19.000Z',
+        normalizationExpiresAt: '2026-08-27T03:14:19.000Z',
+      }),
+      NOW,
+    );
+    assert.equal(at('multiplier', applied).state, 'Applied');
+    assert.equal(at('multiplier', applied).detail, 'read 20 min ago');
+    assert.equal(at('multiplier', applied).tone, 'good');
+
+    const inToken = clocksV1(
+      representation({ issuerId: 'backed', normalization: 'reviewed_token_already_applied' }),
+      NOW,
+    );
+    // Not an absent value: there is no second reading, so there is no clock,
+    // and an empty column would read as a fetch we failed.
+    assert.equal(at('multiplier', inToken).state, 'In the token');
+    assert.equal(at('multiplier', inToken).detail, 'nothing separate to age');
+  });
+
+  test('the row is always four captions, shortest-lived first, even unmeasured', () => {
+    const rows = clocksV1(representation(), NOW);
+    assert.deepEqual(
+      rows.map((row) => row.id),
+      ['quote', 'round_trip', 'reference', 'multiplier'],
+    );
+    assert.equal(at('quote', rows).state, 'None taken');
+    assert.equal(at('round_trip', rows).state, 'Never measured');
+    assert.equal(at('multiplier', rows).state, 'Not read');
+    // A clock that never ran states that; it never renders as a blank.
+    for (const row of rows) assert.ok(row.state.length > 0, row.id);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Access, out of the collapsed section.
+// ---------------------------------------------------------------------------
+describe('the issuer restrictions are on the card', () => {
+  test('a reviewed kind becomes a restriction in the reader\'s words', () => {
+    const rows = accessNoticesV1('coinbase');
+    assert.deepEqual(
+      rows.map((row) => row.label),
+      ['Who may hold it', 'Transfers', 'Getting out'],
+    );
+    // The defect this exists for: every Coinbase term reads "Reviewed",
+    // including the one whose reviewed content is that the product is not
+    // offered to US persons. "Reviewed" grades our evidence, and it was sitting
+    // where a reader looks for a grade of their access.
+    assert.match(rows[0]!.note, /Not offered to US persons/);
+    assert.match(rows[2]!.note, /cannot redeem with the issuer/);
+    for (const row of rows) {
+      assert.doesNotMatch(row.note, /Reviewed|reviewed|_/, row.label);
+    }
+  });
+
+  test('every reviewed issuer has all three, and each says something different', () => {
+    for (const issuer of ['coinbase', 'dinari', 'backed'] as const) {
+      const rows = accessNoticesV1(issuer);
+      assert.equal(rows.length, 3, issuer);
+      assert.equal(new Set(rows.map((row) => row.note)).size, 3, issuer);
+    }
+    // Two issuers do not share a sentence, because they do not share a term.
+    assert.notEqual(accessNoticesV1('coinbase')[0]!.note, accessNoticesV1('backed')[0]!.note);
+  });
+
+  test('the restrictions render without expanding anything, and Terms keeps all six', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    const row = view!.representations[0]!;
+    assert.equal(row.accessNotices.length, 3);
+    // The full terms list is untouched: this promotes, it does not move.
+    // Seven rows — the six structure fields plus Ratio, whose measurement is
+    // now the Multiplier clock and whose explanation stays collapsed here.
+    assert.equal(row.terms.length, 7);
+    assert.ok(
+      row.terms.every(
+        (fact) =>
+          fact.value === 'Reviewed' ||
+          fact.value === 'Not confirmed yet' ||
+          fact.value === 'Applied once',
+      ),
+    );
   });
 });

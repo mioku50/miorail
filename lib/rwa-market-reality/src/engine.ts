@@ -120,19 +120,77 @@ export function supplyEvidenceV1(row: RepresentationSupplyRowV1 | null, nowMs: n
   };
 }
 
+export interface NormalizedExposureV1 {
+  atomic: string | null;
+  decimals: number | null;
+  normalization: 'fresh_ratio_applied' | 'reviewed_token_already_applied' | 'not_established';
+  /**
+   * When the multiplier this normalization rests on was last read, and when
+   * that read stops counting.
+   *
+   * The engine has always known both and returned neither, so the screen could
+   * age a quote and a round trip and had nothing at all to say about the third
+   * number underneath them. A stale ratio is the case that most needs its own
+   * clock: `not_established` reads as "we never knew", when what actually
+   * happened is that we knew seven hours ago and the window closed.
+   *
+   * Null when nothing here is ratio-bound — a wrapper that cannot be
+   * normalized, or a token that already carries its own exposure and therefore
+   * has no separate reading to age.
+   */
+  checkedAt: string | null;
+  expiresAt: string | null;
+}
+
+/**
+ * The multiplier's clock, on its own.
+ *
+ * Separate from the exposure because the two have different lifetimes: the
+ * reading happened when it happened, whether or not a router later answered at
+ * this size. A representation with no quote still knows when its ratio was last
+ * read, and throwing that away because the quote failed is the same mistake as
+ * letting an expired quote erase a measured round trip.
+ *
+ * Only ratio-normalized representations have one. A wrapper cannot be
+ * normalized at all, and a token that already applies its own ratio has no
+ * second reading — for both, the honest answer is that there is no clock.
+ */
+export function ratioClockV1(
+  binding: RepresentationUnderlyingV1,
+  ratio: RepresentationRatioRowV1 | null,
+): { checkedAt: string | null; expiresAt: string | null } {
+  if (binding.representationKind === 'non_rebasing_erc4626_wrapper') {
+    return { checkedAt: null, expiresAt: null };
+  }
+  if (
+    binding.representationKind === 'rebasing_erc20' &&
+    ['dinari', 'backed'].includes(binding.issuerId ?? '')
+  ) {
+    return { checkedAt: null, expiresAt: null };
+  }
+  const checkedMs = ratio ? Date.parse(ratio.lastCheckedAt) : Number.NaN;
+  if (!ratio || !Number.isFinite(checkedMs)) return { checkedAt: null, expiresAt: null };
+  return {
+    checkedAt: ratio.lastCheckedAt,
+    expiresAt: new Date(checkedMs + RATIO_FRESHNESS_TTL_MS_V1).toISOString(),
+  };
+}
+
 export function normalizedExposureV1(input: {
   binding: RepresentationUnderlyingV1;
   tokenAtomic: string;
   tokenDecimals: number;
   ratio: RepresentationRatioRowV1 | null;
   nowMs: number;
-}): {
-  atomic: string | null;
-  decimals: number | null;
-  normalization: 'fresh_ratio_applied' | 'reviewed_token_already_applied' | 'not_established';
-} {
+}): NormalizedExposureV1 {
   if (input.binding.representationKind === 'non_rebasing_erc4626_wrapper') {
-    return { atomic: null, decimals: null, normalization: 'not_established' };
+    return {
+      atomic: null,
+      decimals: null,
+      normalization: 'not_established',
+      checkedAt: null,
+      expiresAt: null,
+    };
   }
   if (
     input.binding.representationKind === 'rebasing_erc20' &&
@@ -142,15 +200,22 @@ export function normalizedExposureV1(input: {
       atomic: input.tokenAtomic,
       decimals: input.tokenDecimals,
       normalization: 'reviewed_token_already_applied',
+      // Nothing to age: the token IS the exposure, so there is no separate
+      // reading that could go stale. A clock here would invent a deadline.
+      checkedAt: null,
+      expiresAt: null,
     };
   }
-  const checkedAt = input.ratio ? Date.parse(input.ratio.lastCheckedAt) : Number.NaN;
+  const checkedMs = input.ratio ? Date.parse(input.ratio.lastCheckedAt) : Number.NaN;
+  // Carried even when the ratio is refused, because WHEN we last knew is the
+  // useful half of "not established".
+  const { checkedAt, expiresAt } = ratioClockV1(input.binding, input.ratio);
   const ratioIsFresh =
-    Number.isFinite(checkedAt) &&
-    checkedAt <= input.nowMs &&
-    input.nowMs - checkedAt <= RATIO_FRESHNESS_TTL_MS_V1;
+    Number.isFinite(checkedMs) &&
+    checkedMs <= input.nowMs &&
+    input.nowMs - checkedMs <= RATIO_FRESHNESS_TTL_MS_V1;
   if (!input.ratio || input.ratio.application !== 'apply_to_raw_balance' || !ratioIsFresh) {
-    return { atomic: null, decimals: null, normalization: 'not_established' };
+    return { atomic: null, decimals: null, normalization: 'not_established', checkedAt, expiresAt };
   }
   return {
     atomic: (
@@ -159,6 +224,8 @@ export function normalizedExposureV1(input: {
     ).toString(),
     decimals: input.tokenDecimals,
     normalization: 'fresh_ratio_applied',
+    checkedAt,
+    expiresAt,
   };
 }
 
@@ -380,7 +447,14 @@ export async function assembleMarketRealityV2(
             ratio: ratioByAddress.get(binding.tokenAddress) ?? null,
             nowMs,
           })
-        : { atomic: null, decimals: null, normalization: 'not_established' as const };
+        : {
+            atomic: null,
+            decimals: null,
+            normalization: 'not_established' as const,
+            // No quote is not no reading. The multiplier was read on its own
+            // schedule and the screen is entitled to say when.
+            ...ratioClockV1(binding, ratioByAddress.get(binding.tokenAddress) ?? null),
+          };
       const returnedCashAtomic =
         best && question.direction === 'sell' && question.destination === 'USDC'
           ? (best.sellQuote?.outputAtomic ?? null)
@@ -448,6 +522,8 @@ export async function assembleMarketRealityV2(
         normalizedExposureAtomic: normalized.atomic,
         normalizedExposureDecimals: normalized.decimals,
         normalization: normalized.normalization,
+        normalizationCheckedAt: normalized.checkedAt,
+        normalizationExpiresAt: normalized.expiresAt,
         returnedCashAtomic,
         effectivePriceAtomic: price,
         effectivePriceDecimals: price ? (8 as const) : null,

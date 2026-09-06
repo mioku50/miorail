@@ -680,7 +680,12 @@ function RepresentationCard({
           durable answer below — when a quote lapses this line changes and the
           rest of the card does not, which is the whole point of keeping the two
           apart. */}
-      {representation.openQuote ? (
+      {/* Only while something IS open, or a measure is in flight. The clocks
+          row below already says the quote is closed, and "No live quote"
+          directly above "LIVE QUOTE · Expired" was the same fact twice in two
+          shapes. The strip carries the live NUMBER, which the clocks row does
+          not; with no number there is nothing for it to carry. */}
+      {representation.openQuote && (representation.openQuote.state === 'live' || measuring) ? (
         <p
           className="mr-openquote"
           data-state={
@@ -698,11 +703,6 @@ function RepresentationCard({
                 Live quote
               </span>
               <strong className="mr-lastseen-v mono">{representation.openQuote.value}</strong>
-              {representation.openQuote.expiresInLabel ? (
-                <span className="mr-openquote-ttl mono">
-                  {representation.openQuote.expiresInLabel}
-                </span>
-              ) : null}
             </>
           ) : measuring ? (
             <strong className="mr-lastseen-v">Checking live market…</strong>
@@ -714,11 +714,26 @@ function RepresentationCard({
               ) : null}
             </>
           )}
-          {representation.lastMeasuredLabel ? (
-            <span className="mr-openquote-last">{representation.lastMeasuredLabel}</span>
-          ) : null}
         </p>
       ) : null}
+
+      {/* The four clocks, side by side, shortest-lived first.
+          This row owns every time on the card, and the strip above it owns
+          every value — which is why the countdown and the "Last measured"
+          suffix left that strip. They were the same two facts said twice in
+          two shapes, and neither shape let a reader compare them.
+          Comparing them is the whole point. An expired quote beside
+          "Round trip · measured 13 min ago" says what actually happened;
+          an expired quote on its own reads as the card going dark. */}
+      <ul className="mr-clocks" aria-label={`${representation.issuerName} timing`}>
+        {representation.clocks.map((clock) => (
+          <li key={clock.id} data-tone={clock.tone}>
+            <span className="mr-clock-k">{clock.label}</span>
+            <strong className="mr-clock-v">{clock.state}</strong>
+            {clock.detail ? <span className="mr-clock-d">{clock.detail}</span> : null}
+          </li>
+        ))}
+      </ul>
 
       <p className="cr-verdict">{representation.outcomeBody}</p>
 
@@ -799,6 +814,28 @@ function RepresentationCard({
           <strong className="mr-lastseen-v mono">{representation.lastSeen.value}</strong>
           <span className="cr-fact-note"> · {representation.lastSeen.note}</span>
         </p>
+      ) : null}
+
+      {/* The issuer's restrictions, unexpanded. They were inside Terms, where
+          every one of them rendered as the word "Reviewed" — a grade of our
+          evidence, sitting where a reader looks for a grade of their access.
+          Whether Miorail read the document and whether you may hold the token
+          are two different questions and one of them was answering the other. */}
+      {representation.accessNotices.length > 0 ? (
+        <div className="mr-access" aria-label={`${representation.issuerName} access`}>
+          <p className="mr-attribution">
+            <span className="mr-attribution-k">Access</span> the issuer&rsquo;s own terms — not a
+            check on your wallet
+          </p>
+          <ul>
+            {representation.accessNotices.map((notice) => (
+              <li key={notice.label}>
+                <span className="mr-access-k">{notice.label}</span>
+                <span className="cr-fact-note">{notice.note}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
       ) : null}
 
       <p className="lnote">{representation.structureNote}</p>
