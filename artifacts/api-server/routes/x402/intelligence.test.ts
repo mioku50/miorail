@@ -9,6 +9,10 @@ import request from 'supertest';
 import { decodePaymentRequiredHeader } from '@x402/core/http';
 
 import { b20OpportunityCardV1 } from '@mioagent/opportunity-rail';
+import {
+  MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1,
+  MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1,
+} from '@mioagent/route-domain';
 import type { CreateX402MiddlewareOptions } from '@mioagent/x402-gateway';
 import { createX402IntelligenceRouterV1, sellerReceiptDetailsV1 } from './intelligence.js';
 
@@ -51,20 +55,30 @@ function unmeasuredCard() {
   });
 }
 
-test('catalog publishes three fixed 0.001 USDC services without payment', async () => {
+test('catalog publishes every fixed-price service without payment', async () => {
   const app = express();
   app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({ env: ENV, dbEnabled: false }));
   const response = await request(app).get('/api/x402/intelligence/v1/catalog').expect(200);
-  assert.equal(response.body.payment.amountAtomic, '1000');
-  assert.equal(response.body.payment.amountUsdc, '0.001');
+  // One price for every resource: the thing being sold is the same in each —
+  // a measurement Miorail already took, with what it does not establish named
+  // beside it. Read from the constant so the catalogue and the challenge
+  // cannot disagree about what a call costs.
+  assert.equal(response.body.payment.amountAtomic, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
+  assert.equal(response.body.payment.amountUsdc, MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1);
   assert.deepEqual(response.body.services.map((service: { id: string }) => service.id), [
     'b20_exit_analysis',
     'b20_liquidity_evidence',
     'enhanced_route_proof',
+    'stock_representation_choice',
+    'address_identity_check',
   ]);
+  // Every advertised path is a real mount, not a description of one.
+  for (const service of response.body.services as { path: string }[]) {
+    assert.match(service.path, /^\/api\/x402\/intelligence\/v1\//);
+  }
 });
 
-test('the official x402 challenge prices a seller resource at exactly 0.001 Base USDC', async () => {
+test('the official x402 challenge prices a seller resource at the catalogue price in Base USDC', async () => {
   const facilitator = createServer((req, res) => {
     if (req.url?.endsWith('/supported')) {
       res.writeHead(200, { 'content-type': 'application/json' });
@@ -91,7 +105,7 @@ test('the official x402 challenge prices a seller resource at exactly 0.001 Base
     assert.equal(typeof header, 'string');
     const challenge = decodePaymentRequiredHeader(header as string);
     assert.equal(challenge.x402Version, 2);
-    assert.equal(challenge.accepts[0]?.amount, '1000');
+    assert.equal(challenge.accepts[0]?.amount, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
     assert.equal(challenge.accepts[0]?.network, 'eip155:8453');
     assert.equal(challenge.accepts[0]?.asset.toLowerCase(), '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913');
   } finally {
@@ -99,7 +113,7 @@ test('the official x402 challenge prices a seller resource at exactly 0.001 Base
   }
 });
 
-test('paid B20 response is deterministic evidence and every route overrides price to 1000 atomic', async () => {
+test('paid B20 response is deterministic evidence and every route overrides price to the one constant', async () => {
   const middlewareOptions: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
   const pass: RequestHandler = (_req, _res, next) => next();
   const app = express();
@@ -123,8 +137,12 @@ test('paid B20 response is deterministic evidence and every route overrides pric
   assert.equal(response.body.payment.status, 'settled_by_middleware');
   assert.match(response.body.dataHash, /^0x[0-9a-f]{64}$/);
   assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
-  assert.equal(middlewareOptions.length, 3);
-  assert.ok(middlewareOptions.every((entry) => entry.options.amountAtomicOverride === '1000'));
+  assert.equal(middlewareOptions.length, 5);
+  assert.ok(
+    middlewareOptions.every(
+      (entry) => entry.options.amountAtomicOverride === MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1,
+    ),
+  );
 });
 
 test('invalid input and disabled feature never reach the payment middleware', async () => {
@@ -230,4 +248,243 @@ test('delivery is recorded on the request context before the receipt is looked u
     stamped < earlyReturn,
     'recording delivery after the early return is the defect: it never runs on a real sale',
   );
+});
+
+// ---------------------------------------------------------------------------
+// The two questions an agent gets wrong silently, sold.
+//
+// Both read stored evidence and measure nothing — a paid read must never be a
+// way to make Miorail spend router calls for somebody else — and both carry
+// what was NOT established beside what was.
+// ---------------------------------------------------------------------------
+
+const PASS_THROUGH_V1: RequestHandler = (_req, _res, next) => next();
+
+function boardFixtureV1(overrides: Record<string, unknown> = {}) {
+  return {
+    question: { underlyingKey: 'security:isin:US67066G1040' },
+    underlying: { isin: 'US67066G1040', assetClass: 'equity' },
+    representations: [
+      {
+        tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+        issuerId: 'coinbase',
+        issuerInstrumentKey: 'coinbase:NVDAc',
+        representationKind: 'b20_asset',
+        supply: { state: 'positive_supply', decimals: 8 },
+        routePolicyKey: `0x${'ab'.repeat(32)}`,
+        sources: [{ source: 'kyberswap', status: 'quoted' }],
+        exactTestedTokenAtomic: '55500',
+        returnedCashAtomic: '99500',
+        effectivePriceAtomic: '17927927927',
+        premiumDiscountBps: '-12',
+        observedAt: '2026-09-06T18:00:00.000Z',
+        expiresAt: '2026-09-06T18:00:20.000Z',
+        liveness: 'live',
+      },
+      {
+        // The one an agent picking by ticker would have chosen by coincidence.
+        tokenAddress: '0xcccccccccccccccccccccccccccccccccccccccc',
+        issuerId: 'backed',
+        issuerInstrumentKey: 'backed:bNVDA',
+        representationKind: 'rebasing_erc20',
+        supply: { state: 'positive_supply', decimals: 18 },
+        routePolicyKey: null,
+        sources: [],
+        exactTestedTokenAtomic: null,
+        returnedCashAtomic: null,
+        effectivePriceAtomic: null,
+        premiumDiscountBps: null,
+        observedAt: null,
+        expiresAt: null,
+        liveness: 'never_measured',
+      },
+    ],
+    ...overrides,
+  };
+}
+
+function dossierFixtureV1(overrides: Record<string, unknown> = {}) {
+  return {
+    tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+    dossierHash: `0x${'cd'.repeat(32)}`,
+    identity: {
+      standing: 'official',
+      official: {
+        ticker: 'NVDAc',
+        displayName: 'NVIDIA Corporation',
+        issuer: 'coinbase',
+        listedIn: ['base_product_list'],
+        sourceDiscrepancy: false,
+      },
+      lookalike: null,
+      origin: { status: 'relayed', deployerAddress: null, relation: 'bundler', readAt: '2026-09-01T00:00:00.000Z' },
+    },
+    established: [{ code: 'official_identity_bound' }],
+    unknown: [{ code: 'holder_concentration_not_read' }],
+    ...overrides,
+  };
+}
+
+function paidAppV1(options: Record<string, unknown>) {
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: ENV,
+    dbEnabled: false,
+    now: () => new Date('2026-09-06T18:05:00.000Z'),
+    middlewareFactory: () => PASS_THROUGH_V1,
+    ...options,
+  }));
+  return app;
+}
+
+test('the representation answer names every contract and which of them the market took', async () => {
+  const asked: unknown[] = [];
+  const app = paidAppV1({
+    loadRepresentations: async (input: unknown) => {
+      asked.push(input);
+      return boardFixtureV1();
+    },
+  });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/stocks/representations')
+    .query({ underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '100' })
+    .expect(200);
+
+  assert.equal(response.body.schemaVersion, 'x402-stock-representation-choice/v1');
+  assert.deepEqual(asked, [
+    { underlyingKey: 'security:isin:US67066G1040', direction: 'buy', requestedCashAtomic: '100000000' },
+  ]);
+  assert.equal(response.body.representations.length, 2);
+  const [coinbase, backed] = response.body.representations;
+  assert.equal(coinbase.issuerId, 'coinbase');
+  assert.equal(coinbase.routePolicyEstablished, true);
+  assert.deepEqual(coinbase.sources, [{ source: 'kyberswap', status: 'quoted' }]);
+  // The second one is the whole point: same security, no policy, nobody has
+  // measured it. An agent picking by ticker had a 50% chance of this.
+  assert.equal(backed.issuerId, 'backed');
+  assert.equal(backed.routePolicyEstablished, false);
+  assert.deepEqual(backed.sources, []);
+  assert.match(response.body.missingEvidence.join(' '), /no measurement at this exact size/);
+  assert.match(response.body.caveats.join(' '), /ticker cannot select/i);
+  assert.equal(response.body.payment.amountAtomic, MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1);
+  assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
+});
+
+test('a size nobody measured is refused rather than measured to satisfy a paid read', async () => {
+  let called = false;
+  const app = paidAppV1({
+    loadRepresentations: async () => {
+      called = true;
+      return boardFixtureV1();
+    },
+  });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/stocks/representations')
+    .query({ underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '250' })
+    .expect(400);
+  assert.equal(response.body.code, 'unmeasured_size_requested');
+  assert.equal(called, false, 'a refused size must not reach the evidence read');
+});
+
+test('an underlying this corpus does not review is absent, never invented', async () => {
+  const app = paidAppV1({ loadRepresentations: async () => null });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/stocks/representations')
+    .query({ underlyingKey: 'security:isin:XX0000000000' })
+    .expect(404);
+  assert.equal(response.body.code, 'underlying_not_reviewed');
+});
+
+test('the identity answer carries the resemblance, the origin and what was not read', async () => {
+  const app = paidAppV1({
+    loadIdentity: async () =>
+      dossierFixtureV1({
+        identity: {
+          ...dossierFixtureV1().identity,
+          standing: 'indexed_launch',
+          official: null,
+          lookalike: {
+            officialAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+            officialTicker: 'NVDAc',
+            matchKind: 'symbol_exact',
+            matchedAlias: 'published_ticker',
+            matchedValue: 'NVDAc',
+            firstFlaggedAt: '2026-09-01T00:00:00.000Z',
+          },
+        },
+      }),
+  });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/address/identity')
+    .query({ tokenAddress: '0xcccccccccccccccccccccccccccccccccccccccc' })
+    .expect(200);
+
+  assert.equal(response.body.schemaVersion, 'x402-address-identity-check/v1');
+  assert.equal(response.body.standing, 'indexed_launch');
+  assert.equal(response.body.official, null);
+  // A resemblance names the contract it resembles, so the buyer compares
+  // ADDRESSES rather than trusting that two symbols matching means anything.
+  assert.equal(response.body.lookalike.officialAddress, '0xb20000000000000000000078ee7ce2fe4908108c');
+  assert.match(response.body.caveats.join(' '), /RESEMBLANCE/);
+  // A bundler that relayed a UserOperation is not a deployer.
+  assert.equal(response.body.origin.relation, 'bundler');
+  assert.equal(response.body.origin.deployerAddress, null);
+  assert.deepEqual(response.body.unknown, ['holder_concentration_not_read']);
+  assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
+});
+
+test('an address is refused before any evidence read when it is not an address', async () => {
+  let called = false;
+  const app = paidAppV1({
+    loadIdentity: async () => {
+      called = true;
+      return dossierFixtureV1();
+    },
+  });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/address/identity')
+    .query({ tokenAddress: 'NVDA' })
+    .expect(400);
+  assert.equal(response.body.code, 'invalid_token_address');
+  assert.equal(called, false);
+});
+
+test('every paid route declares itself for the discovery list', async () => {
+  // Settling payments does not list a resource: three settled through the CDP
+  // facilitator in August and its discovery list held zero Miorail entries.
+  // A declaration on the 402 challenge is what lists it — so every route must
+  // carry one, and it must describe THAT route rather than a generic shape.
+  const seen: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: ENV,
+    dbEnabled: false,
+    middlewareFactory: (path, options) => {
+      seen.push({ path, options });
+      return PASS_THROUGH_V1;
+    },
+    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
+  }));
+  await request(app)
+    .get('/api/x402/intelligence/v1/b20/exit-analysis')
+    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
+    .expect(200);
+
+  assert.equal(seen.length, 5);
+  for (const entry of seen) {
+    const discovery = entry.options.discovery as
+      | { input?: Record<string, unknown>; inputSchema?: { required?: string[] }; output?: { example?: unknown } }
+      | undefined;
+    assert.ok(discovery, `${entry.path} must declare itself`);
+    assert.ok(discovery.output?.example, `${entry.path} must show the shape it returns`);
+    assert.ok(
+      (discovery.inputSchema?.required ?? []).length > 0,
+      `${entry.path} must name the input a caller has to send`,
+    );
+    // The declaration describes THIS route, not a template: every required
+    // input must actually appear in the example input.
+    for (const key of discovery.inputSchema?.required ?? []) {
+      assert.ok(key in (discovery.input ?? {}), `${entry.path} example must include ${key}`);
+    }
+  }
 });

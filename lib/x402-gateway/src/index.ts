@@ -32,6 +32,19 @@ import {
   declareBuilderCodeExtension,
   parseBuilderCodeSuffixFromCalldata,
 } from '@x402/extensions/builder-code';
+import {
+  BAZAAR,
+  bazaarResourceServerExtension,
+  declareDiscoveryExtension,
+  type DeclareDiscoveryExtensionInput,
+} from '@x402/extensions/bazaar';
+
+/**
+ * Re-exported so callers describe their own resources without taking a direct
+ * dependency on `@x402/extensions`. This package is the seam onto x402 and
+ * should stay the only place that imports it.
+ */
+export type { DeclareDiscoveryExtensionInput };
 import { wrapFetchWithPayment, x402Client } from '@x402/fetch';
 import { registerExactEvmScheme } from '@x402/evm/exact/client';
 import { createPublicClient, http, type Hex, type PublicClient } from 'viem';
@@ -218,6 +231,19 @@ export interface CreateX402MiddlewareOptions {
    * config.amountAtomic exactly as before this option existed.
    */
   amountAtomicOverride?: string;
+  /**
+   * What this route IS, declared for the facilitator's discovery list.
+   *
+   * Absent means the route is paid but unlisted, which is where every Miorail
+   * resource sat: built, priced, settled three times, and findable by nobody.
+   * Present means the 402 challenge carries a Bazaar declaration — the input a
+   * caller must send and an example of what comes back — so an agent can tell
+   * whether the resource answers its question before paying for it.
+   *
+   * It is a description, never a capability: nothing here changes what the
+   * route does, what it costs, or who may call it.
+   */
+  discovery?: DeclareDiscoveryExtensionInput;
 }
 
 export interface X402MiddlewareDiagnostics {
@@ -712,7 +738,10 @@ export function createX402RoutesConfig(
   config: X402RuntimeConfig,
   routePath = '/paid-resource',
   serviceName = 'Miorail',
-  options: Pick<CreateX402MiddlewareOptions, 'onSettlementFailure' | 'amountAtomicOverride'> = {},
+  options: Pick<
+    CreateX402MiddlewareOptions,
+    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery'
+  > = {},
 ): RoutesConfig {
   if (!config.configured || !config.payTo || !config.network || !config.asset) {
     throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
@@ -770,11 +799,18 @@ export function createX402RoutesConfig(
         },
       };
     },
-    extensions: config.builderCode
-      ? {
-          [BUILDER_CODE]: declareBuilderCodeExtension(config.builderCode),
-        }
-      : undefined,
+    // Two declarations, and only the second one is new.
+    //
+    // The builder code says WHO built this. The Bazaar declaration says the
+    // resource exists at all: the CDP facilitator's discovery list indexes what
+    // a 402 challenge declares, and settling payments does not put you in it.
+    // Three real settlements went through this facilitator in August and the
+    // list still held zero Miorail entries — the capability was built, priced
+    // and paid for, and no agent could find it.
+    extensions: {
+      ...(config.builderCode ? { [BUILDER_CODE]: declareBuilderCodeExtension(config.builderCode) } : {}),
+      ...(options.discovery ? { [BAZAAR.key]: declareDiscoveryExtension(options.discovery) } : {}),
+    },
   };
 
   return {
@@ -1053,6 +1089,14 @@ function createOfficialX402HttpServer(
 
   if (config.builderCode) {
     resourceServer.registerExtension(builderCodeResourceServerExtension);
+  }
+
+  // Registered only when this route declares one. A resource server that
+  // announces discovery for a route with nothing to declare would publish an
+  // empty entry, which is worse than no entry: an agent would find us and learn
+  // nothing.
+  if (options.discovery) {
+    resourceServer.registerExtension(bazaarResourceServerExtension);
   }
 
   if (options.onSettlement) {

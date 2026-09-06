@@ -14,6 +14,7 @@ import {
 import {
   assembleAddressDossierV1,
   AddressDossierV1Schema,
+  type AddressDossierV1,
   type AddressDossierDepsV1,
 } from '@mioagent/rwa-dossier';
 import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.js';
@@ -95,6 +96,26 @@ function sessionUserV1(req: Request): TenantUser | null {
     return null;
   }
   return user;
+}
+
+/**
+ * The same dossier the Investigate screen reads, for the paid agent surface.
+ *
+ * Exported rather than re-derived: an agent buying an identity check must get
+ * the answer this product already computes, not a second opinion assembled
+ * beside it. Null only when the address is malformed or the evidence tables
+ * are not migrated — an address nothing knows still returns a dossier, because
+ * "no reviewed source lists it" is the answer and the most common one.
+ */
+export async function readAddressDossierForX402V1(
+  tokenAddress: string,
+): Promise<AddressDossierV1 | null> {
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) return null;
+  if (!(await rwaInvestigateRuntime.migrationAvailable())) return null;
+  return rwaInvestigateRuntime.assemble(rwaInvestigateRuntime.deps(), {
+    chainId: 8453,
+    tokenAddress,
+  });
 }
 
 rwaInvestigateRouter.get('/rwa/investigate/:tokenAddress', async (req: Request, res: Response) => {

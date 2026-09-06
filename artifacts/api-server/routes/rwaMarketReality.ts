@@ -1697,6 +1697,44 @@ rwaMarketRealityRouter.get('/rwa/stock-action/:draft', async (req, res) => {
   }
 });
 
+/**
+ * The reviewed board for ONE underlying, for the paid agent surface.
+ *
+ * The same assembly the Stocks screen renders, so an agent buying "which of
+ * these three contracts actually trades" gets this product's answer rather
+ * than a second one computed beside it. Read-only and stored-evidence only: it
+ * measures nothing and spends no router call, so a paid read cannot be used to
+ * make Miorail quote on somebody else's behalf.
+ */
+export async function readMarketRealityForX402V1(input: {
+  underlyingKey: string;
+  direction: 'buy' | 'sell';
+  requestedCashAtomic: string;
+}): Promise<unknown | null> {
+  if (!(await rwaMarketRealityRuntime.migrationAvailable())) return null;
+  try {
+    return await rwaMarketRealityRuntime.assemble(
+      {
+        underlyings: rwaMarketRealityRuntime.underlyings(),
+        cashExit: rwaMarketRealityRuntime.cashExit(),
+        ratios: rwaMarketRealityRuntime.ratios(),
+        supplies: rwaMarketRealityRuntime.supplies(),
+        now: rwaMarketRealityRuntime.now,
+        reference: rwaMarketRealityRuntime.reference(),
+      },
+      {
+        underlyingKey: input.underlyingKey,
+        direction: input.direction,
+        requestedCashAtomic: input.requestedCashAtomic,
+        destination: 'USDC',
+      },
+    );
+  } catch {
+    // An underlying this corpus does not review. Absent, never invented.
+    return null;
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Phase 17.9 — the terms for the size actually being sold.
 //
