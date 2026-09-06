@@ -4,7 +4,12 @@ import express from 'express';
 import request from 'supertest';
 import { InMemoryMarketRealityRadarRepositoryV1 } from '@mioagent/rwa-market-reality';
 
-import { rwaMarketRealityRouter, rwaMarketRealityRuntime } from './rwaMarketReality.js';
+import {
+  rwaMarketRealityRouter,
+  rwaMarketRealityRuntime,
+  stockSellTermsLimiterV1,
+  STOCK_SELL_TERMS_PER_MINUTE_V1,
+} from './rwaMarketReality.js';
 import { issueStockActionDraftV1 } from '../lib/stockActionDraft.js';
 import {
   STOCKS_BENCH_ADDRESSES_V1,
@@ -1153,7 +1158,7 @@ describe('POST confirming a stock action asks the issuer’s policy first', () =
     ],
   });
 
-  const draftFor = () => {
+  const draftFor = (overrides: Record<string, unknown> = {}) => {
     const representation = MIXED.representations.find((row) => row.tokenAddress === COINBASE)!;
     return issueStockActionDraftV1({
       tenantId: USER.id,
@@ -1183,6 +1188,8 @@ describe('POST confirming a stock action asks the issuer’s policy first', () =
         createsCalldata: false,
         createsTransaction: false,
         quoteIsExecutionEvidence: false,
+        ...(overrides.direction === 'buy' ? { sizeBasis: 'exact_cash_in', exactTokenAtomic: null } : {}),
+        ...overrides,
       } as never,
     }).draft;
   };
@@ -1213,6 +1220,58 @@ describe('POST confirming a stock action asks the issuer’s policy first', () =
     },
   });
 
+  // ------------------------------------------------------------------
+  // Phase 17.9 — the routers, asked about the exact amount being confirmed.
+  //
+  // Stubbed as a seam so a test can make them refuse this size, or fail to
+  // answer at all, and assert which of those two sentences the reader gets.
+  // They are opposite claims: one is about the market, one is about us.
+  // ------------------------------------------------------------------
+  const rungFor = (tokenAmountAtomic: string, status = 'full') => ({
+    sizeKind: 'actual_position' as const,
+    requestedCashAtomic: null,
+    requestedTokenAtomic: tokenAmountAtomic,
+    tokenDecimals: 18,
+    destination: 'USDC' as const,
+    destinationAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    destinationDecimals: 6 as const,
+    status,
+    exactTestedTokenAtomic: tokenAmountAtomic,
+    exactExecutableTokenAtomic: tokenAmountAtomic,
+    returnedAtomic: status === 'full' ? '412500' : null,
+    roundTripCostBps: null,
+    lowerBoundRequestedCashAtomic: null,
+    derivedFromExactRung: false,
+    interpolated: false as const,
+    evidenceStrength: 'router_quote' as const,
+    executionProven: false as const,
+    approvedSources: ['kyberswap'],
+    sources: [
+      {
+        source: 'kyberswap',
+        status: status === 'full' ? 'full' : 'unavailable',
+        errorCode: null,
+        observedAt: NOW.toISOString(),
+        expiresAt: new Date(NOW.getTime() + 20_000).toISOString(),
+        buyEvidenceHash: null,
+        sellEvidenceHash: null,
+      },
+    ],
+    quoteEvidence: [],
+    simulationEvidence: {
+      status: 'not_simulated',
+      kind: 'route_simulation',
+      candidateHash: null,
+      evidenceHash: null,
+      observedAt: null,
+      blockNumber: null,
+    },
+    observedAt: NOW.toISOString(),
+    expiresAt: new Date(NOW.getTime() + 20_000).toISOString(),
+    lastMeasured: null,
+  });
+  let askedAmounts: string[] = [];
+
   beforeEach(() => {
     process.env.SESSION_SECRET = 'confirm-test-secret';
     process.env.BASE_MAINNET_RPC_URL = 'https://mainnet.base.org';
@@ -1221,6 +1280,104 @@ describe('POST confirming a stock action asks the issuer’s policy first', () =
     rwaMarketRealityRuntime.assemble = (async () => MIXED) as never;
     rwaMarketRealityRuntime.eligibility = (async () => eligibility()) as never;
     rwaMarketRealityRuntime.useAccessReader = (() => holdingReader()) as never;
+    askedAmounts = [];
+    stockSellTermsLimiterV1.reset();
+    rwaMarketRealityRuntime.sellTerms = (async (input: { tokenAmountAtomic: string }) => {
+      askedAmounts.push(input.tokenAmountAtomic);
+      return { status: 'established', rung: rungFor(input.tokenAmountAtomic) };
+    }) as never;
+    rwaMarketRealityRuntime.cashExit = (() => ({})) as never;
+    rwaMarketRealityRuntime.quoteAdapters = (() => []) as never;
+    rwaMarketRealityRuntime.capture = (() => undefined) as never;
+  });
+
+  test('the routers are asked about the amount being confirmed, not the draft’s cash size', async () => {
+    // The defect this closes. The board is assembled at the draft's CASH size
+    // and cannot answer a token question; confirming against it approved a
+    // picture of a different trade. `Use available balance` made that the
+    // easiest path on the screen.
+    const response = await confirm({ tokenAmountAtomic: HELD_TOKENS_V1 });
+    assert.equal(response.status, 200);
+    assert.deepEqual(askedAmounts, [HELD_TOKENS_V1]);
+    // And the answer travels with the confirmation, so a reader can check that
+    // the size they approved is the size that was priced.
+    assert.equal(response.body.confirmedTerms.tokenAmountAtomic, HELD_TOKENS_V1);
+    assert.equal(response.body.confirmedTerms.status, 'established');
+    assert.equal(response.body.confirmedTerms.createsTransaction, false);
+  });
+
+  test('a size the routers will not take mints nothing, and says it is about the size', async () => {
+    rwaMarketRealityRuntime.sellTerms = (async (input: { tokenAmountAtomic: string }) => ({
+      status: 'no_route',
+      rung: rungFor(input.tokenAmountAtomic, 'unavailable'),
+    })) as never;
+    const response = await confirm();
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'stock_action_sell_size_unroutable');
+    assert.equal(response.body.clearance, undefined);
+    // A market fact about THIS size. Never about the token or the holder.
+    assert.match(response.body.detail, /this size/i);
+    assert.doesNotMatch(response.body.detail, /cannot be sold|no market for/i);
+  });
+
+  test('terms Miorail could not establish are ours, and never a verdict on the market', async () => {
+    rwaMarketRealityRuntime.sellTerms = (async () => ({
+      status: 'not_established',
+      code: 'stock_sell_terms_measurement_failed',
+    })) as never;
+    const response = await confirm();
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'stock_sell_terms_measurement_failed');
+    assert.equal(response.body.clearance, undefined);
+    assert.match(response.body.detail, /about Miorail/i);
+    assert.doesNotMatch(response.body.detail, /no route|unavailable market/i);
+  });
+
+  test('a buy carries no second size, so it establishes no terms', async () => {
+    const response = await request(app())
+      .post(`/api/route-intelligence/rwa/stock-action/${draftFor({ direction: 'buy' })}/sell-terms`)
+      .send({ tokenAmountAtomic: SELL_TOKENS_V1 });
+    assert.equal(response.status, 400);
+    assert.equal(response.body.code, 'stock_action_terms_sell_only');
+  });
+
+  test('the sell-terms call answers for one exact amount and authorises nothing', async () => {
+    const response = await request(app())
+      .post(`/api/route-intelligence/rwa/stock-action/${draftFor()}/sell-terms`)
+      .send({ tokenAmountAtomic: SELL_TOKENS_V1 });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.terms.tokenAmountAtomic, SELL_TOKENS_V1);
+    assert.equal(response.body.terms.status, 'established');
+    assert.equal(response.body.holding.balanceAtomic, HELD_TOKENS_V1);
+    // Measuring is not confirming.
+    assert.equal(response.body.confirmed, false);
+    assert.equal(response.body.executableActionAvailable, false);
+    assert.equal(response.body.createsCalldata, false);
+  });
+
+  test('establishing terms is bounded, because every one spends router calls', async () => {
+    const ask = () =>
+      request(app())
+        .post(`/api/route-intelligence/rwa/stock-action/${draftFor()}/sell-terms`)
+        .send({ tokenAmountAtomic: SELL_TOKENS_V1 });
+    for (let i = 0; i < STOCK_SELL_TERMS_PER_MINUTE_V1; i += 1) {
+      assert.equal((await ask()).status, 200);
+    }
+    const refused = await ask();
+    assert.equal(refused.status, 429);
+    assert.equal(refused.body.code, 'stock_sell_terms_rate_limited');
+    // The point: the refusal happens before it spends, so the budget bounds
+    // router calls rather than merely reporting on them.
+    assert.equal(askedAmounts.length, STOCK_SELL_TERMS_PER_MINUTE_V1);
+  });
+
+  test('an amount above the holding is refused before any router is asked', async () => {
+    const response = await request(app())
+      .post(`/api/route-intelligence/rwa/stock-action/${draftFor()}/sell-terms`)
+      .send({ tokenAmountAtomic: '9000000000000000001' });
+    assert.equal(response.status, 409);
+    assert.equal(response.body.code, 'stock_action_sell_exceeds_balance');
+    assert.deepEqual(askedAmounts, []);
   });
 
   test('a sell with no confirmed token amount mints nothing', async () => {

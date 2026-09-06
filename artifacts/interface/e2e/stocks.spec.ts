@@ -11,6 +11,7 @@ const TOKEN = '0xb20000000000000000000078ee7ce2fe4908108c';
  * wallet provider, production cookie, live network or signature is needed. */
 async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAtomic: '43417', decimals: 8, blockTag: '0x308c458' }) {
   const confirmations: unknown[] = [];
+  const termsAsked: unknown[] = [];
   const forbiddenWrites: string[] = [];
   await page.route('**/RequireSession.tsx*', route => route.fulfill({
     contentType: 'application/javascript',
@@ -26,11 +27,32 @@ async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAt
     else if (path.endsWith('/stock-action/test-sell/confirm')) {
       confirmations.push(request.postDataJSON());
       json = { clearance: 'fixture-clearance', expiresAt: '2026-09-05T22:00:00Z' };
+    } else if (path.endsWith('/stock-action/test-sell/sell-terms')) {
+      // Phase 17.9 — the routers, asked about the exact amount in the box.
+      const body = request.postDataJSON() as { tokenAmountAtomic: string };
+      termsAsked.push(body);
+      json = {
+        holding,
+        terms: {
+          status: 'established', sizeMeasured: true,
+          tokenAmountAtomic: body.tokenAmountAtomic, tokenDecimals: 8,
+          destination: 'USDC', destinationDecimals: 6, returnedAtomic: '90000',
+          sources: [{ source: 'kyberswap', status: 'full', errorCode: null }],
+          approvedSources: ['kyberswap'],
+          observedAt: '2026-09-06T18:00:00.000Z', expiresAt: '2026-09-06T18:00:20.000Z',
+          createsApproval: false, createsCalldata: false, createsTransaction: false,
+        },
+      };
     } else if (path.endsWith('/stock-action/test-sell')) {
       json = {
         outcome: 'review', evidenceState: 'expired_quote', holding,
         representation: { tokenAddress: TOKEN, caip10: `eip155:8453:${TOKEN}`, issuerId: 'coinbase' },
         question: { direction: 'sell', requestedCashAtomic: '1000000000', destination: 'USDC' },
+        sizeContext: {
+          boardSizeBasis: 'cash_equivalent', boardRequestedCashAtomic: '1000000000',
+          saleSizeBasis: 'exact_token_in', termsEstablished: false,
+          detail: 'The market figures below were measured for the cash size this draft was prepared with.',
+        },
         reality: fixture('nvda-market'),
       };
     } else if (path.includes('/rwa/market-reality/') && !/\/(measure|history|ask)$/.test(path)) {
@@ -38,7 +60,7 @@ async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAt
     } else if (/\/(release|submission|approve)$/.test(path)) forbiddenWrites.push(path);
     return json ? route.fulfill({ json }) : route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });
-  return { confirmations, forbiddenWrites };
+  return { confirmations, termsAsked, forbiddenWrites };
 }
 
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
@@ -79,7 +101,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
 }
 
 test('SELL confirms exact token atoms without opening a wallet', async ({ page }) => {
-  const { confirmations, forbiddenWrites } = await stubApi(page);
+  const { confirmations, termsAsked, forbiddenWrites } = await stubApi(page);
   await page.goto('/action/test-sell');
   const amount = page.getByLabel('Token amount to sell');
   const confirm = page.getByRole('button', { name: 'Confirm token amount', exact: true });
@@ -92,6 +114,18 @@ test('SELL confirms exact token atoms without opening a wallet', async ({ page }
   await expect(confirm).toBeDisabled();
   await page.getByRole('button', { name: 'Use available balance' }).click();
   await expect(amount).toHaveValue('0.00043417');
+  // Phase 17.9 — a valid amount is not yet a confirmable one. The board above
+  // answers the draft's CASH question; until the routers are asked about THIS
+  // amount, confirming would approve a picture of a different trade.
+  await expect(confirm).toBeDisabled();
+  await page.getByRole('button', { name: 'Check this amount', exact: true }).click();
+  await expect.poll(() => termsAsked).toEqual([{ tokenAmountAtomic: '43417' }]);
+  await expect(confirm).toBeEnabled();
+  // Edit it again and the terms no longer describe what is in the box.
+  await amount.fill('0.00043416');
+  await expect(confirm).toBeDisabled();
+  await page.getByRole('button', { name: 'Use available balance' }).click();
+  await page.getByRole('button', { name: 'Check this amount', exact: true }).click();
   await expect(confirm).toBeEnabled();
   await confirm.click();
   await expect.poll(() => confirmations).toEqual([{ tokenAmountAtomic: '43417' }]);
@@ -124,6 +158,7 @@ test('one wallet attempt stays pending until the wallet resolves', async ({ page
   });
   await page.goto('/action/test-sell');
   await page.getByRole('button', { name: 'Use available balance' }).click();
+  await page.getByRole('button', { name: 'Check this amount', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm token amount', exact: true }).click();
   await page.getByRole('button', { name: 'Open in your Base Account', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { walletAttempts: number }).walletAttempts)).toBe(1);

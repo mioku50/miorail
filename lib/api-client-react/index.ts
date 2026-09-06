@@ -1079,6 +1079,33 @@ export function useStockActionConfirm() {
 }
 
 /**
+ * Phase 17.9 — what the reviewed routers do at ONE exact token amount.
+ *
+ * A separate call from the review, because the review cannot answer this: at
+ * the moment the page loads nobody has said how many tokens they mean. The
+ * board it renders answers the draft's cash question, and confirming a token
+ * amount against that board is approving a picture of a different trade.
+ *
+ * A POST, and never fired while somebody types — it spends real router calls.
+ * `confirm` establishes the same terms again for itself and does not trust that
+ * this ran.
+ */
+export function useStockActionSellTerms() {
+  return useMutation({
+    retry: false,
+    mutationFn: async ({ draft, tokenAmountAtomic }: { draft: string; tokenAmountAtomic: string }) =>
+      fetchApi<unknown>(
+        `/api/route-intelligence/rwa/stock-action/${encodeURIComponent(draft)}/sell-terms`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tokenAmountAtomic }),
+        },
+      ),
+  });
+}
+
+/**
  * Phase 17.6 — the confirmed clearance becomes unsigned calls, in a browser.
  *
  * The same server function the MCP tool calls, reached with a cookie instead of

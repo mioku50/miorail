@@ -41,3 +41,51 @@ export function stockSellAmountV1(value: string, holding?: StockHoldingV1 | null
   }
   return { atomic, balance, error: null };
 }
+
+// ---------------------------------------------------------------------------
+// Phase 17.9 — terms belong to ONE amount, and the amount can change.
+//
+// Extracted as pure functions because this is the rule that decides whether a
+// confirm button is live, and a rule that decides that should be readable and
+// testable on its own rather than inline in a hook.
+// ---------------------------------------------------------------------------
+
+export type StockSellTermsStateV1 =
+  /** No amount, or the terms on hand are for a different one. */
+  | 'unasked'
+  | 'pending'
+  /** Routers answered for THIS amount and offered a route. */
+  | 'established'
+  /** Routers answered for THIS amount and none offered a route. Market. */
+  | 'no_route'
+  /** The measurement did not complete. Ours. */
+  | 'not_established';
+
+export function stockSellTermsStateV1(input: {
+  /** The amount currently in the box, in atoms, or null when it is not valid. */
+  amountAtomic: string | null;
+  /** The amount the terms on hand were established for. */
+  askedFor: string | null;
+  pending: boolean;
+  status: 'established' | 'no_route' | 'not_established' | null;
+}): StockSellTermsStateV1 {
+  if (input.pending) return 'pending';
+  // Edit the amount and the match stops holding — which is exactly the truth:
+  // those terms are for a different size. Nothing has to invalidate anything.
+  if (!input.amountAtomic || input.askedFor !== input.amountAtomic) return 'unasked';
+  return input.status ?? 'not_established';
+}
+
+/**
+ * Whether a sell may be confirmed.
+ *
+ * Only `established` — for this exact amount — opens the button. The server
+ * refuses the same way and does not trust this; the gate exists so a reader is
+ * never offered a button whose meaning the page cannot yet state.
+ */
+export function stockSellConfirmAllowedV1(
+  state: StockSellTermsStateV1,
+  amountAtomic: string | null,
+): boolean {
+  return Boolean(amountAtomic) && state === 'established';
+}

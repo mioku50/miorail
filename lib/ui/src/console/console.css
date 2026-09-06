@@ -1359,6 +1359,12 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-sell-amount input { min-width: 0; padding: 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel2); color: var(--ink); font: inherit; }
 .mio-console .mr-sell-amount input:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 .mio-console .mr-sell-amount .btn { justify-self: start; }
+/* Phase 17.9 — the terms for the exact amount, kept visually with the input it
+ * is about rather than with the board below, which answers the draft's cash
+ * question and is a different size until this panel says otherwise. */
+.mio-console .mr-sell-terms { display: grid; gap: 8px; margin: 0 0 14px; padding: 12px; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel2); }
+.mio-console .mr-sell-terms .btn { justify-self: start; }
+.mio-console .mr-sell-terms-sources { margin: 0; padding-left: 18px; display: grid; gap: 4px; font-size: 12px; color: var(--ink2); }
 /* The page's mode switch, not a footnote.
  *
  * It used to inherit `.tabbar`, which is the phone's BOTTOM bar: a hairline

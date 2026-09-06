@@ -57,6 +57,26 @@ export interface StockActionReviewModelV1 {
     value: string; balance: string | null; atomic: string | null; error: string | null;
     onChange: (value: string) => void; onUseBalance: () => void;
   } | null;
+  /**
+   * Phase 17.9 — what the reviewed routers do at the exact amount in the box.
+   *
+   * Null on a buy, whose cash question IS its size. On a sell it is always
+   * present, because "nobody has asked yet" is the state this screen most
+   * needs to be able to show: without it the board's figures sit directly
+   * above a confirm button and are read as the terms of the sale.
+   */
+  sellTerms?: {
+    state: 'unasked' | 'pending' | 'established' | 'no_route' | 'not_established';
+    canEstablish: boolean;
+    boardDetail: string | null;
+    boardRequestedCashAtomic: string | null;
+    returned: string | null;
+    sources: { source: string; status: string }[];
+    observedAt: string | null;
+    expiresAt: string | null;
+    error: string | null;
+    onEstablish: () => void;
+  } | null;
   confirm: {
     disabled?: boolean;
     pending: boolean;
@@ -233,6 +253,43 @@ export function StockActionReviewScreen({
                     {model.sellAmount.error ?? `You will confirm ${model.sellAmount.value} tokens (${model.sellAmount.atomic} base units).`}
                   </p>
                   <p className="lnote">The cash-size comparison below does not set your sell amount. The output quote is refreshed before wallet approval.</p>
+                </div>
+              ) : null}
+              {model.sellTerms ? (
+                <div className="mr-sell-terms">
+                  {/* The board answers the draft's cash question. Saying so
+                      here, above the button, is the difference between a
+                      reader who knows which size they are looking at and one
+                      who assumes. */}
+                  {model.sellTerms.boardDetail ? (
+                    <p className="lnote">{model.sellTerms.boardDetail}</p>
+                  ) : null}
+                  <button type="button" className="btn sec"
+                    disabled={!model.sellTerms.canEstablish || model.confirm.pending}
+                    onClick={model.sellTerms.onEstablish}>
+                    {model.sellTerms.state === 'pending' ? 'Asking the routers…' : 'Check this amount'}
+                  </button>
+                  <p className="lnote" role="status">
+                    {model.sellTerms.error ??
+                      (model.sellTerms.state === 'unasked'
+                        ? 'The reviewed routers have not been asked about this amount yet. Check it before confirming.'
+                        : model.sellTerms.state === 'pending'
+                          ? 'Asking the reviewed routers about this exact amount.'
+                          : model.sellTerms.state === 'established'
+                            ? `At this exact amount the reviewed routers return ${model.sellTerms.returned ?? 'an amount they did not state'} USDC. Measured ${model.sellTerms.observedAt ?? 'at an unstated time'}; this quote expires ${model.sellTerms.expiresAt ?? 'on its own clock'}. What it fetches is priced again before your wallet is asked — the amount is what you chose.`
+                            : model.sellTerms.state === 'no_route'
+                              ? 'The reviewed routers were asked about this exact amount and none offered a route for it. That is about this size right now — a smaller amount may route.'
+                              : 'Miorail could not establish what the routers do at this amount. That is about Miorail, not about the market or your position.')}
+                  </p>
+                  {model.sellTerms.sources.length > 0 ? (
+                    <ul className="mr-sell-terms-sources">
+                      {model.sellTerms.sources.map((source) => (
+                        <li key={source.source}>
+                          <span className="mono">{source.source}</span> — {source.status}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
                 </div>
               ) : null}
               <button
