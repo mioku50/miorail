@@ -129,7 +129,15 @@ function structuredApiKeyV1(baseUrl: string): string {
  * fallback broken while the fallback was fine — which is worse than no smoke
  * test, because an operator acts on it.
  */
-export function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: string }) | null {
+export function fallbackLinkV1(
+  prefix: string,
+  /** The structured lane asks for `jsonMode`, because its callers parse a
+   * strict contract and reject prose. Without this a spare answered in the
+   * narrator's voice and the extractor refused it — a fallback that exists on
+   * paper and fails every time it is reached. The primary lane passes nothing,
+   * because JSON mode is wrong for a narrator. */
+  options: { jsonMode?: boolean } = {},
+): (NamedLlmProviderV1 & { model: string }) | null {
   const baseUrl = trimmed(`${prefix}_BASE_URL`);
   const model = trimmed(`${prefix}_MODEL`);
   const apiKey = baseUrl
@@ -155,6 +163,7 @@ export function fallbackLinkV1(prefix: string): (NamedLlmProviderV1 & { model: s
       baseUrl,
       defaultModel: model,
       headers: providerHeadersV1(baseUrl),
+      ...(options.jsonMode ? { jsonMode: true } : {}),
     }),
   };
 }
@@ -281,6 +290,43 @@ export function createLlmProvider(): LlmProvider {
  * path, while silently sending the same financial request to a different model
  * would make role-level metrics lie about which model made the classification.
  */
+/**
+ * The structured lane's own chain — the thing this lane did not have.
+ *
+ * `createStructuredLlmProvider` returned ONE client. So on 2026-09-06 a single
+ * Mistral 429 ("Rate limit exceeded", token-per-minute) at
+ * `extractSwapIntentV2` threw straight out of the coordinator, the route
+ * returned `route_plan_evaluation_failed`, and the console drew every adapter
+ * as `not reached` with `Sources 0` — our provider's quota rendered as the
+ * market having no route. The primary lane has had `withFallbackV1` all along;
+ * this lane was simply never wrapped in it.
+ *
+ * Spares are read from `LLM_STRUCTURED_FALLBACK*` first. With none configured
+ * it borrows the PRIMARY lane's spares, deliberately: this lane carries a
+ * short, closed JSON contract that any competent instruct model can satisfy,
+ * and the alternative — the behaviour above — is that one provider's minute
+ * budget takes the whole plan path down.
+ */
+function withStructuredFallbackV1(primary: NamedLlmProviderV1 & { model?: string }): LlmProvider {
+  const json = { jsonMode: true };
+  const own = [
+    fallbackLinkV1('LLM_STRUCTURED_FALLBACK', json),
+    fallbackLinkV1('LLM_STRUCTURED_FALLBACK_2', json),
+  ].filter((link): link is NamedLlmProviderV1 & { model: string } => link !== null);
+  const spares =
+    own.length > 0
+      ? own
+      : [fallbackLinkV1('LLM_FALLBACK', json), fallbackLinkV1('LLM_FALLBACK_2', json)].filter(
+          (link): link is NamedLlmProviderV1 & { model: string } => link !== null,
+        );
+  if (spares.length === 0) return primary.provider;
+  return new LlmProviderChainV1(disambiguateLabelsV1([primary, ...spares]), {
+    onFallover: ({ from, to, reason }) => {
+      console.warn(`[llm:structured] ${from} failed, falling over to ${to}: ${reason}`);
+    },
+  });
+}
+
 export function createStructuredLlmProvider(): LlmProvider {
   const providerType = trimmed('LLM_STRUCTURED_PROVIDER').toLowerCase();
   const baseUrl = trimmed('LLM_STRUCTURED_BASE_URL');
@@ -297,11 +343,16 @@ export function createStructuredLlmProvider(): LlmProvider {
         'LLM_STRUCTURED_PROVIDER is openai but LLM_STRUCTURED_API_KEY or OPENAI_API_KEY is not set',
       );
     }
-    return new OpenAiCompatibleClient({
-      apiKey,
-      baseUrl: 'https://api.openai.com',
-      defaultModel: model || trimmed('OPENAI_MODEL') || 'gpt-4o-mini',
-      jsonMode: true,
+    const openAiModel = model || trimmed('OPENAI_MODEL') || 'gpt-4o-mini';
+    return withStructuredFallbackV1({
+      label: providerLabelV1('https://api.openai.com'),
+      model: openAiModel,
+      provider: new OpenAiCompatibleClient({
+        apiKey,
+        baseUrl: 'https://api.openai.com',
+        defaultModel: openAiModel,
+        jsonMode: true,
+      }),
     });
   }
 
@@ -318,12 +369,16 @@ export function createStructuredLlmProvider(): LlmProvider {
           ' (Mistral, OpenRouter and AgentRouter may reuse only their own host-scoped shared key)',
       );
     }
-    return new OpenAiCompatibleClient({
-      apiKey,
-      baseUrl,
-      defaultModel: model,
-      headers: providerHeadersV1(baseUrl),
-      jsonMode: true,
+    return withStructuredFallbackV1({
+      label: providerLabelV1(baseUrl),
+      model,
+      provider: new OpenAiCompatibleClient({
+        apiKey,
+        baseUrl,
+        defaultModel: model,
+        headers: providerHeadersV1(baseUrl),
+        jsonMode: true,
+      }),
     });
   }
 

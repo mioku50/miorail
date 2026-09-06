@@ -6,8 +6,8 @@ import {
   providerHeadersV1,
   providerLabelV1,
 } from './factory.js';
-import { LlmProviderChainV1 } from './fallback.js';
-import { OpenAiCompatibleClient } from './openai.js';
+import { LlmProviderChainV1, shouldFallOverV1 } from './fallback.js';
+import { LlmHttpError, OpenAiCompatibleClient } from './openai.js';
 
 /** Clears every fallback variable so one subtest cannot configure another. */
 function clearFallbackEnv(): void {
@@ -23,6 +23,12 @@ function clearFallbackEnv(): void {
 }
 
 function clearStructuredEnv(): void {
+  delete process.env.LLM_STRUCTURED_FALLBACK_BASE_URL;
+  delete process.env.LLM_STRUCTURED_FALLBACK_API_KEY;
+  delete process.env.LLM_STRUCTURED_FALLBACK_MODEL;
+  delete process.env.LLM_STRUCTURED_FALLBACK_2_BASE_URL;
+  delete process.env.LLM_STRUCTURED_FALLBACK_2_API_KEY;
+  delete process.env.LLM_STRUCTURED_FALLBACK_2_MODEL;
   delete process.env.LLM_STRUCTURED_PROVIDER;
   delete process.env.LLM_STRUCTURED_BASE_URL;
   delete process.env.LLM_STRUCTURED_API_KEY;
@@ -456,4 +462,63 @@ test('a configured header cannot replace the credential or the content type', as
   assert.equal(sent['User-Agent'], 'cline/3.1.0');
   assert.equal(sent.Authorization, 'Bearer real-key');
   assert.equal(sent['Content-Type'], 'application/json');
+});
+
+// ---------------------------------------------------------------------------
+// The structured lane had no spare, and on 2026-09-06 that took the whole
+// plan path down: Mistral answered `x-ratelimit-limit-req-minute: 0`, the
+// extractor threw, and the console drew every adapter as `not reached` with
+// `Sources 0` — a provider quota rendered as the market having no route.
+// ---------------------------------------------------------------------------
+test('the structured lane falls over, and borrows the primary spares when it has none', async (t) => {
+  await t.test('a configured structured spare builds a chain', () => {
+    clearFallbackEnv();
+    clearStructuredEnv();
+    process.env.LLM_STRUCTURED_PROVIDER = 'openai-compatible';
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://structured.example/v1';
+    process.env.LLM_STRUCTURED_API_KEY = 'structured-key';
+    process.env.LLM_STRUCTURED_MODEL = 'mistral-small';
+    process.env.LLM_STRUCTURED_FALLBACK_BASE_URL = 'https://spare.example/v1';
+    process.env.LLM_STRUCTURED_FALLBACK_API_KEY = 'spare-key';
+    process.env.LLM_STRUCTURED_FALLBACK_MODEL = 'spare-model';
+    assert.ok(createStructuredLlmProvider() instanceof LlmProviderChainV1);
+    clearStructuredEnv();
+  });
+
+  await t.test('with no structured spare it uses the primary lane spares', () => {
+    clearFallbackEnv();
+    clearStructuredEnv();
+    process.env.LLM_STRUCTURED_PROVIDER = 'openai-compatible';
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://structured.example/v1';
+    process.env.LLM_STRUCTURED_API_KEY = 'structured-key';
+    process.env.LLM_STRUCTURED_MODEL = 'mistral-small';
+    process.env.LLM_FALLBACK_BASE_URL = 'https://openrouter.ai/api';
+    process.env.LLM_FALLBACK_API_KEY = 'or-key';
+    process.env.LLM_FALLBACK_MODEL = 'deepseek/deepseek-v4-flash';
+    // The production shape exactly: one lane configured, one spare, and until
+    // this change the spare was invisible to the structured lane.
+    assert.ok(createStructuredLlmProvider() instanceof LlmProviderChainV1);
+    clearStructuredEnv();
+    clearFallbackEnv();
+  });
+
+  await t.test('no spare anywhere still returns a working single provider', () => {
+    clearFallbackEnv();
+    clearStructuredEnv();
+    process.env.LLM_STRUCTURED_PROVIDER = 'openai-compatible';
+    process.env.LLM_STRUCTURED_BASE_URL = 'https://structured.example/v1';
+    process.env.LLM_STRUCTURED_API_KEY = 'structured-key';
+    process.env.LLM_STRUCTURED_MODEL = 'mistral-small';
+    const provider = createStructuredLlmProvider();
+    assert.ok(provider instanceof OpenAiCompatibleClient);
+    assert.ok(!(provider instanceof LlmProviderChainV1));
+    clearStructuredEnv();
+  });
+
+  await t.test('a 429 is a reason to ask somebody else', () => {
+    // The exact status Mistral returned. If this ever stops falling over, the
+    // outage above comes straight back.
+    assert.equal(shouldFallOverV1(new LlmHttpError(429, 'Rate limit exceeded')), true);
+    assert.equal(shouldFallOverV1(new LlmHttpError(400, 'bad request')), false);
+  });
 });
