@@ -223,3 +223,72 @@ test('Uniswap build adapter is not_configured without an API key or transport ov
     if (previous !== undefined) process.env.UNISWAP_API_KEY = previous;
   }
 });
+
+// ---------------------------------------------------------------------------
+// 2026-09-06 — the flag that removed the permit.
+//
+// `generatePermitAsTransaction: true` on the QUOTE request suppresses the
+// permit instead of emitting it. Measured against the live API with the same
+// body: with the flag, `permitData: false` and a batch of one call; without it,
+// two — `Permit2.approve` then the swap. A wallet whose standing Permit2
+// allowance had expired therefore signed a batch that could not pull its own
+// USDC, and the bundler reported the revert as "failed to estimate gas".
+//
+// Pinned as the request body, because that is where the defect lived: every
+// call downstream was correct about the calls it was given.
+// ---------------------------------------------------------------------------
+test('the quote request asks for an exact permit and never suppresses it', async () => {
+  let quoteBody: Record<string, unknown> | null = null;
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      quote: (body) => {
+        quoteBody = body as Record<string, unknown>;
+        return {
+          status: 200,
+          payload: {
+            routing: 'CLASSIC',
+            quote: { routing: 'CLASSIC', output: { amount: '38000000000000000' } },
+          },
+        };
+      },
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent({ toAsset: WETH_BASE })));
+  assert.equal(result.outcome, 'built');
+  assert.ok(quoteBody);
+  // The permit must be written for exactly the input amount: the Safety Kernel
+  // refuses any approval that is not the stored intent amount, so a permit for
+  // 2^160-1 would trade one refusal for another.
+  assert.equal(quoteBody!.permitAmount, 'EXACT');
+  assert.ok(
+    !('generatePermitAsTransaction' in quoteBody!),
+    'the quote request must not carry generatePermitAsTransaction — there it removes the permit',
+  );
+});
+
+test('a batch carrying a Permit2 approval beside the swap is built, not refused', async () => {
+  const PERMIT2 = '0x000000000022d473030f116ddee9f6b43ac78ba3';
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      swap: () => ({
+        status: 200,
+        payload: {
+          from: WALLET,
+          chainId: 8453,
+          requestId: 'swap-req-permit',
+          calls: [
+            { to: PERMIT2, value: '0', data: '0x87517c45' },
+            { to: ROUTER, value: '0', data: '0x12345678' },
+          ],
+        },
+      }),
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent({ toAsset: WETH_BASE })));
+  assert.equal(result.outcome, 'built');
+  if (result.outcome !== 'built') return;
+  assert.equal(result.calls.length, 2);
+  // Exactly one call goes to the pinned router; the other is the permit.
+  assert.equal(result.calls.filter((call) => call.to.toLowerCase() === ROUTER).length, 1);
+  assert.equal(result.calls[0]!.to.toLowerCase(), PERMIT2);
+});

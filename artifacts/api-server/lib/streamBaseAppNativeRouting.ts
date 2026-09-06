@@ -272,7 +272,11 @@ export async function prepareUniswap5792(intent: SwapIntent, walletAddress: stri
     protocols: ['V2', 'V3', 'V4'],
     routingPreference: 'BEST_PRICE',
     autoSlippage: 'DEFAULT',
-    generatePermitAsTransaction: true,
+    // See the note in the Uniswap swap-build adapter: on the quote request
+    // `generatePermitAsTransaction` SUPPRESSES the permit rather than emitting
+    // it, so this surface was building the same one-call batch that reverts the
+    // moment a standing Permit2 allowance lapses. `EXACT` keeps the approval
+    // equal to the input amount.
     permitAmount: 'EXACT',
   });
   if (quoteResult.outcome !== 'quote') throw new Error('uniswap_quote_invalid');

@@ -89,7 +89,25 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       // It goes as a JSON number: the decimal string is a 400 here, which is
       // why this build path never once produced a transaction.
       slippageTolerance: uniswapSlippageToleranceV1(intent.slippageConstraint.maxBps),
-      generatePermitAsTransaction: true,
+      // `permitAmount: 'EXACT'` and NOT `generatePermitAsTransaction`.
+      //
+      // The flag reads as "give me the permit as a transaction". On the QUOTE
+      // request it does the opposite: it suppresses the permit entirely. Sent
+      // here it returned `permitData: false` and a batch of exactly one call —
+      // the bare `execute(V3_SWAP_EXACT_IN)` — which can only work while a
+      // standing Permit2 allowance happens to be alive.
+      //
+      // Measured 2026-09-06 against the live API, same body, four ways: with
+      // the flag, 1 call; without it, 2 — `Permit2.approve` then the swap.
+      // The operator's own allowance had expired on 09-01 (amount still
+      // unlimited, EXPIRATION lapsed), so every Uniswap route from that wallet
+      // reverted inside `Permit2.transferFrom`. The bundler reported that as
+      // "failed to estimate gas for user operation", and the holder read a
+      // wallet with 0.0007 ETH in it and concluded they were out of gas.
+      //
+      // `permitAmount: 'EXACT'` is what keeps the approval equal to the input:
+      // without it the permit is written for 2^160-1, and the Safety Kernel
+      // rejects any approval that is not exactly the stored intent amount.
       permitAmount: 'EXACT',
     };
     // `partnerFetch` THROWS on a transport failure — DNS, reset connection, or
