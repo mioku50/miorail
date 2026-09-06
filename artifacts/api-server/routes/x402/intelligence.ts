@@ -6,6 +6,7 @@ import { eq } from 'drizzle-orm';
 import { db, x402Receipts } from '@mioagent/db';
 import {
   MIORAIL_X402_INTELLIGENCE_PRICE_ATOMIC_V1,
+  MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1,
   X402AddressIdentityCheckV1Schema,
   X402B20IntelligenceV1Schema,
   X402EnhancedRouteProofV1Schema,
@@ -343,7 +344,7 @@ function sellerCatalogV1(env: NodeJS.ProcessEnv) {
       },
     ],
     constraints: [
-      'Every paid resource costs exactly 0.001 USDC on Base.',
+      `Every paid resource costs exactly ${MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1} USDC on Base.`,
       'B20 intelligence reports stored evidence and missing evidence; it is not a recommendation or executable quote.',
       'A position is compared only with the exact stored reference size. Miorail never interpolates between capacity probes.',
       'Enhanced proofs require an already published, non-revoked Route Proof share.',

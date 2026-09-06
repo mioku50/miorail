@@ -76,6 +76,16 @@ test('catalog publishes every fixed-price service without payment', async () => 
   for (const service of response.body.services as { path: string }[]) {
     assert.match(service.path, /^\/api\/x402\/intelligence\/v1\//);
   }
+  // The prose is a price claim too. It shipped once saying 0.001 while the
+  // challenge charged 0.002 — a schema literal guards the field and nothing
+  // guarded the sentence, so a buyer read one number and paid another.
+  const priced = (response.body.constraints as string[]).filter((line) => /USDC/.test(line));
+  assert.ok(priced.length > 0, 'the catalogue must state its price in words');
+  for (const line of priced) {
+    const quoted = line.match(/(\d+\.\d+) USDC/);
+    if (!quoted) continue;
+    assert.equal(quoted[1], MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1);
+  }
 });
 
 test('the official x402 challenge prices a seller resource at the catalogue price in Base USDC', async () => {

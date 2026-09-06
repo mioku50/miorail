@@ -116,7 +116,10 @@ export class PaidActionError extends Error {
 }
 
 export const PAID_ACTION_LABELS: Record<PaidActionState, string> = {
-  idle: 'Pay 0.001 USDC & Run',
+  // The price belongs to the 402 challenge, not to this table: callers reach
+  // idle through paidActionButtonLabel(state, costLabel), which writes the cost
+  // the server actually asked for. A number frozen here would outlive it.
+  idle: 'Pay & Run',
   preparing_payment: 'Preparing payment',
   awaiting_wallet_confirmation: 'Confirm in Base Account',
   awaiting_wallet: 'Confirm in Base Account',
