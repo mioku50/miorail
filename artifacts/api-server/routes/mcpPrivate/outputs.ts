@@ -271,20 +271,30 @@ export const MiorailMeasureMarketRealityOutputV1Schema = z
      * What this call actually cost, and what it reused.
      *
      * Present so a looping assistant can see that its second identical request
-     * did no work: `measured` counts representations this call really quoted,
-     * `joinedInFlight` counts those already being measured for somebody else,
-     * and `reusedCooldown` counts those measured moments ago. A caller reading
-     * `measured: 0` beside `reusedCooldown: 3` is being told the answer is
-     * fresh AND that pressing again buys nothing.
+     * did no work: `measured` NAMES the representations this call really
+     * quoted, `reusedCooldown` those measured moments ago, `reusedOpen` those
+     * whose evidence was still open, and `joinedInFlight` says whether this
+     * caller shared a run already under way. A caller reading `measured: []`
+     * beside a non-empty `reusedCooldown` is being told the answer is fresh
+     * AND that pressing again buys nothing.
+     *
+     * These are LISTS of addresses and one boolean — not counts. They were
+     * declared as counts here and nowhere else: `MarketRealityLiveResultV1`
+     * has always returned `string[]` and a `boolean`, the HTTP route has
+     * always passed them straight through, and only this schema disagreed.
+     * Every call to the tool therefore failed MCP output validation with
+     * `-32602` and never reached the caller — while the unit test's fake
+     * returned counts, agreed with the schema, and stayed green. A fake that
+     * produces what production cannot is not a test of production.
      */
     measurement: z
       .object({
-        measured: z.number().int().min(0),
-        reusedOpen: z.number().int().min(0),
-        reusedCooldown: z.number().int().min(0),
-        excludedZeroSupply: z.number().int().min(0),
-        unresolved: z.number().int().min(0),
-        joinedInFlight: z.number().int().min(0),
+        measured: z.array(z.string()),
+        reusedOpen: z.array(z.string()),
+        reusedCooldown: z.array(z.string()),
+        excludedZeroSupply: z.array(z.string()),
+        unresolved: z.array(z.object({ tokenAddress: z.string(), reason: z.string() }).passthrough()),
+        joinedInFlight: z.boolean(),
       })
       .passthrough(),
     miorailSummary: z.object({ summary: z.string() }).passthrough(),

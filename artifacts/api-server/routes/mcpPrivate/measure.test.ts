@@ -8,6 +8,8 @@ import {
   miorailMeasureMarketRealityV1,
 } from './tools.js';
 import type { McpPrivateIdentityV1 } from './session.js';
+import { MiorailMeasureMarketRealityOutputV1Schema } from './outputs.js';
+import type { MarketRealityLiveResultV1 } from '@mioagent/rwa-market-reality';
 
 // ---------------------------------------------------------------------------
 // The measure tool is the only thing on either MCP surface that spends money's
@@ -86,13 +88,27 @@ const ANSWER = {
   assembledAt: '2026-09-05T12:00:00.000Z',
 };
 
-const MEASUREMENT = {
-  measured: 0,
-  reusedOpen: 0,
-  reusedCooldown: 3,
-  excludedZeroSupply: 0,
-  unresolved: 0,
-  joinedInFlight: 0,
+// Typed against the REAL producer, so a fake cannot invent a shape production
+// never returns. It did exactly that: counts here, `string[]` and a boolean in
+// `MarketRealityLiveResultV1`. The output schema agreed with this fixture, the
+// suite stayed green, and every live call to the tool failed MCP output
+// validation with `-32602` and reached no caller at all.
+type MeasurementEnvelopeV1 = Pick<
+  MarketRealityLiveResultV1,
+  'measured' | 'reusedOpen' | 'reusedCooldown' | 'excludedZeroSupply' | 'unresolved' | 'joinedInFlight'
+>;
+
+const MEASUREMENT: MeasurementEnvelopeV1 = {
+  measured: [],
+  reusedOpen: [],
+  reusedCooldown: [
+    '0xb20000000000000000000078ee7ce2fe4908108c',
+    '0x1111111111111111111111111111111111111111',
+    '0x2222222222222222222222222222222222222222',
+  ],
+  excludedZeroSupply: [],
+  unresolved: [],
+  joinedInFlight: false,
 };
 
 const original = { measure: measureRuntimeV1.measure, timeoutMs: measureRuntimeV1.timeoutMs };
@@ -201,8 +217,12 @@ describe('a failure is Miorail’s, and says so', () => {
 describe('what the caller is told about the work it caused', () => {
   test('the measurement envelope is passed through, not summarised away', async () => {
     const result = await miorailMeasureMarketRealityV1(identity(), QUESTION);
-    // measured: 0 beside reusedCooldown: 3 is the sentence that stops a loop.
+    // An empty `measured` beside three in `reusedCooldown` is the sentence
+    // that stops a loop.
     assert.deepEqual(result.measurement, MEASUREMENT);
+    // And it must SURVIVE the wire. The envelope was a shape the output schema
+    // rejected, so the tool answered a protocol error on every real call.
+    MiorailMeasureMarketRealityOutputV1Schema.parse(result);
     assert.equal(result.quoteOnly, true);
     assert.equal(result.executionEvidenceIncluded, false);
     assert.equal(result.schemaVersion, 'miorail-agent-market-reality/v1');
