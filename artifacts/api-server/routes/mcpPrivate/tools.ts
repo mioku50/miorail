@@ -972,6 +972,13 @@ export const STOCK_ACTION_REFUSAL_COPY_V1: Record<string, string> = {
     'Outstanding supply for that representation is not established, so Miorail will not prepare an action against it.',
   route_policy_not_established:
     'No reviewed route policy is established for that representation at that question.',
+  // 2026-09-06. This case used to answer with the line above, which names the
+  // one thing that IS established — an assistant read it and told its user
+  // Miorail has no reviewed route policy for selling tokenized stocks. It is
+  // not about selling: a BUY at the same size refuses identically, and the
+  // remedy is one call away.
+  size_not_measured:
+    'A reviewed route policy IS established for that representation — what is missing is a measurement at that exact size. The public ladder measures $100, $1k, $10k and $100k on a schedule; every other size is measured on demand. Call miorail_measure_market_reality for this exact underlying, direction and size, then prepare against the result. This is not a statement about the direction: the same size refuses the same way whichever way you ask it.',
   destination_not_supported: 'Only USDC-denominated reviewed questions can be prepared.',
   stock_action_identity_mismatch:
     'One of the identity fields you supplied does not match Miorail’s reviewed evidence for that exact address. Nothing was prepared. Re-read the representation and pass the fields exactly as Miorail returned them.',

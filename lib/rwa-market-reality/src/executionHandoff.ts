@@ -43,6 +43,7 @@ export const STOCK_EXECUTION_HANDOFF_REFUSALS_V1 = [
   'zero_supply_representation',
   'supply_not_established',
   'route_policy_not_established',
+  'size_not_measured',
   'destination_not_supported',
 ] as const;
 export type StockExecutionHandoffRefusalV1 =
@@ -200,6 +201,8 @@ const REFUSAL_DETAIL_V1: Readonly<Record<StockExecutionHandoffRefusalV1, string>
     'Supply for this exact representation could not be established, so Miorail cannot say there is anything to route.',
   route_policy_not_established:
     'No reviewed router policy has been recorded for this exact representation, so there is nothing to carry into a route.',
+  size_not_measured:
+    'A reviewed router policy exists for this representation, but nobody has measured this exact size yet, so there are no approved sources to carry. The ladder measures four fixed sizes ($100, $1k, $10k, $100k) on a schedule; any other size is measured on demand. Measure this exact size and direction, then ask again.',
   destination_not_supported:
     'Advanced execution is carried for the reviewed USDC cash question only.',
 };
@@ -246,10 +249,20 @@ export function stockExecutionHandoffV1(input: {
   if (representation.supply.state !== 'positive_supply') return refuseV1('supply_not_established');
   if (representation.routePolicyKey === null) return refuseV1('route_policy_not_established');
 
+  // Two different situations used to answer with ONE word, and the word named
+  // the thing that was fine. A policy IS established here — the hash is right
+  // there on the row — and what is missing is a measurement AT THIS SIZE.
+  //
+  // 2026-09-06: an assistant asked to sell a holding worth about $0.09, got
+  // `route_policy_not_established`, and reported to its user that Miorail has
+  // no reviewed route policy for selling tokenized stocks. It read the word
+  // and drew the only conclusion the word supports. The refusal is
+  // direction-blind — a BUY at the same size refuses identically — and the
+  // remedy it never mentioned is one call away: measure this exact size.
   const approvedSources = [
     ...new Set(representation.sources.map((row) => row.source)),
   ].sort();
-  if (approvedSources.length === 0) return refuseV1('route_policy_not_established');
+  if (approvedSources.length === 0) return refuseV1('size_not_measured');
 
   const direction = input.direction ?? response.question.direction;
   // The token quantity this board established for the cash size on screen.

@@ -525,6 +525,45 @@ describe('Phase 13.1 — Stocks to advanced execution', () => {
     assert.equal(result.reason, 'route_policy_not_established');
   });
 
+  // 2026-09-06. An assistant asked to sell a holding worth about $0.09 — a
+  // size the public ladder has never measured — and got
+  // `route_policy_not_established`. A policy WAS established; the hash was on
+  // the row. What was missing was a measurement at that size. The assistant
+  // read the word it was given and told its user that Miorail has no reviewed
+  // route policy for selling tokenized stocks.
+  test('an unmeasured SIZE is not a missing policy, and says which it is', () => {
+    const result = stockExecutionHandoffV1({
+      // A policy, and no sources: exactly what production returns for a size
+      // nobody has measured.
+      response: response({ representations: [representation({ sources: [] })] }),
+      tokenAddress: COINBASE,
+      now: NOW,
+    });
+    assert.ok(result.status === 'refused');
+    assert.equal(result.reason, 'size_not_measured');
+    assert.match(result.detail, /reviewed router policy exists/);
+    assert.match(result.detail, /this exact size/);
+    // The remedy, because the refusal without one sent an assistant to the
+    // wrong conclusion about the whole product.
+    assert.match(result.detail, /Measure this exact size/);
+  });
+
+  test('the size refusal is blind to direction, because the cause is', () => {
+    // A BUY at the same size refuses identically. Reporting it as a fact about
+    // SELL is what actually happened.
+    for (const direction of ['buy', 'sell'] as const) {
+      const result = stockExecutionHandoffV1({
+        response: response({ representations: [representation({ sources: [] })] }),
+        tokenAddress: COINBASE,
+        direction,
+        now: NOW,
+      });
+      assert.ok(result.status === 'refused');
+      assert.equal(result.reason, 'size_not_measured', direction);
+      assert.doesNotMatch(result.detail, /\bsell\b|\bbuy\b/i);
+    }
+  });
+
   test('the sentence names addresses only, in both directions', () => {
     for (const handoff of [ready()]) {
       const sentence = stockExecutionGoalSentenceV1(handoff);
