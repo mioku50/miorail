@@ -61,8 +61,16 @@ export const MIORAIL_PRIVATE_CAVEATS_V1 = {
     'ONLY A LIVE WALLET-BOUND SIMULATION QUALIFIES A TOKEN. A provisional Discover measurement is not executable and cannot be turned into a plan. Call miorail_check_exit_profile first; nothing else produces a clearance.',
   onePlanOneSubmission:
     'A PLAN HAS ONE SUBMISSION. If a submission’s result is unknown, do not prepare again, do not fetch the action again and do not send again — call miorail_get_execution_status. Resending is how somebody buys the same token twice.',
+  // Scoped to the B20 ENTRY PLAN, which is what it has always been about: an
+  // entry is executed and its exit is only simulated. It used to be phrased as
+  // a fact about Miorail — "nothing here sells it" — and it rides on every
+  // private response, the reviewed stock action's included. When sell-in-tokens
+  // shipped for tokenized stocks (2026-09-05) this sentence stayed, and an
+  // assistant reading it took the whole product for buy-only and routed a real
+  // sale elsewhere. A caveat that outlives its subject is a false claim wearing
+  // the authority of a standing rule.
   entryOnly:
-    'THE EXIT IS SIMULATED, NOT EXECUTED. These calls buy the token. Nothing here sells it, and Miorail will not exit a position for the user.',
+    'A B20 ENTRY PLAN EXECUTES THE ENTRY ONLY; ITS EXIT IS SIMULATED, NOT EXECUTED. Those calls buy the token and Miorail will not exit a B20 position for the user. This says nothing about the reviewed tokenized-stock action, which the holder sizes and confirms on the review page in either direction.',
 } as const;
 
 /** §6/§10 — errors an assistant may repeat verbatim to a stranger. */
@@ -1120,7 +1128,7 @@ export async function miorailPrepareStockActionV1(
 
 export const STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1: Record<string, string> = {
   stock_action_sell_requires_exact_size:
-    'A reviewed SELL question is "cash worth", which is not a token amount — nothing establishes how many tokens that is except a quote, and a quote is open for about twenty seconds. Miorail will not build an executable request from a number that expired before the wallet opened. Sell sizing by exact token amount is not offered on this surface.',
+    'This clearance names a SELL with no exact token amount. A reviewed sell question is "cash worth", which is not a token amount, and Miorail will not turn one into the other from a quote that expired before the wallet opened. The holder states the exact number of token atoms on the review page; a clearance minted there carries it. Send the user back to the review link rather than proposing a size.',
   stock_action_token_unreadable:
     'Miorail could not read this representation’s decimals and symbol on chain, and it will not assume them: a wrong decimals turns an exact size into a different size entirely.',
   stock_action_route_unavailable:

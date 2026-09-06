@@ -198,7 +198,7 @@ Nothing about this is a price. Do not describe the terms, restate a figure from 
 
 Miorail plans, simulates and runs its Safety Kernel over this before returning anything, and refuses rather than offering a stale request if the market moved after the confirmation.
 
-A confirmed SELL is refused on this surface. A reviewed sell question is "cash worth", which is not a token amount, and the only thing that turns one into the other is a quote that lives about twenty seconds.
+A SELL is confirmed as an exact number of TOKEN atoms, and the user states that number on the review page — a reviewed sell question is "cash worth", and no quote may be spent as the size. You do not supply it and cannot: hand over the review link, and the clearance that comes back already carries what the holder confirmed. A clearance minted without one is refused here.
 
 Pass the calls to Base MCP send_calls UNCHANGED, then record the submission exactly once.`,
       inputSchema: {

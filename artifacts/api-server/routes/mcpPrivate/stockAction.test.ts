@@ -1018,3 +1018,67 @@ describe('the released bytes are the approved bytes', () => {
     assert.match(code, /calls: approved\.payload\.calls/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// 2026-09-06 — what a tool SAYS is the contract an assistant plans against.
+//
+// `A confirmed SELL is refused on this surface` was written on 2026-08-30, when
+// it was true. Sell-in-tokens shipped 2026-09-05 and the sentence stayed. On
+// 2026-09-06 an external assistant read it, concluded correctly that Miorail
+// could not execute the sale, and routed a real user's sell to another
+// provider — which then carried that provider's builder code onto the chain.
+//
+// The code was never the blocker: `stockActionIntentV1` accepts a SELL whose
+// clearance carries `exact_token_in` and a token amount. A description that
+// outlives its subject sends working traffic away, silently, and no test
+// failed. These pin the words to the behaviour.
+// ---------------------------------------------------------------------------
+describe('a description that outlived its subject sent a real sale elsewhere', () => {
+  const cwd = process.cwd();
+  const at = (rel: string) =>
+    readFileSync(
+      cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`)
+        ? path.join(cwd, rel)
+        : path.join(cwd, 'artifacts/api-server', rel),
+      'utf8',
+    );
+  const server = at('routes/mcpPrivate/server.ts');
+  const tools = at('routes/mcpPrivate/tools.ts');
+
+  test('no surface claims a confirmed SELL is refused outright', () => {
+    for (const [name, source] of [
+      ['server.ts', server],
+      ['tools.ts', tools],
+    ] as const) {
+      assert.doesNotMatch(source, /A confirmed SELL is refused/, name);
+      assert.doesNotMatch(source, /not offered on this surface/, name);
+    }
+  });
+
+  test('the refusal names the missing SIZE, never the direction', () => {
+    const copy = tools.slice(tools.indexOf('stock_action_sell_requires_exact_size:'));
+    const sentence = copy.slice(0, copy.indexOf("',") + 1);
+    // It fires when a clearance carries no token amount — see
+    // `stockActionIntentV1` — and a sized SELL passes.
+    assert.match(sentence, /no exact token amount/);
+    assert.match(sentence, /review page/);
+  });
+
+  test('the standing caveat scopes itself to the B20 entry plan', () => {
+    // It rides on EVERY private response, the reviewed stock action's
+    // included, so an unscoped "nothing here sells it" is a false claim
+    // wearing the authority of a standing rule.
+    const caveat = tools.slice(tools.indexOf('entryOnly:'));
+    const sentence = caveat.slice(0, caveat.indexOf("',") + 1);
+    assert.match(sentence, /B20 ENTRY PLAN/);
+    assert.doesNotMatch(sentence, /Nothing here sells it/);
+  });
+
+  test('the sell path the words describe is the one the code takes', () => {
+    const intent = at('lib/stockActionIntent.ts');
+    // A SELL is refused for a missing SIZE, never for being a sell.
+    assert.match(intent, /sizeBasis !== 'exact_token_in' \|\| clearance\.tokenAmountAtomic === null/);
+    const clearance = at('lib/stockActionClearance.ts');
+    assert.match(clearance, /it just no longer refuses every SELL/);
+  });
+});
