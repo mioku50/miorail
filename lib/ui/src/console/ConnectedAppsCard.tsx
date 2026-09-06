@@ -131,11 +131,89 @@ function shortV1(value: string): string {
   return value.length > 14 ? `${value.slice(0, 8)}…${value.slice(-4)}` : value;
 }
 
+/**
+ * One grant, drawn identically whether it is live or history.
+ *
+ * The split is about WEIGHT, not about drawing two different things: a revoked
+ * grant is the same record with a different status, and rendering it a second
+ * way would invite the two to drift.
+ */
+function GrantCard(props: {
+  grant: ConnectedAppGrantViewV1;
+  now: Date;
+  revokingTokenId: string | null;
+  onRevoke: (tokenId: string) => void;
+}) {
+  const { grant, now } = props;
+  return (
+    <article
+      className={grant.status === 'current' || grant.status === 'unknown' ? 'cardrow' : 'cardrow off'}
+    >
+      <div className="cr-top">
+        <span className="cr-name">{grant.clientName ?? connectedAppLabelV1(grant.clientKind)}</span>
+        <span
+          className="pill cr-status"
+          data-tone={grant.status === 'current' ? 'measured' : grant.status === 'unknown' ? 'neutral' : 'off'}
+        >
+          {grant.status === 'revoked'
+            ? `Revoked ${ageV1(grant.revokedAt, now)}`
+            : grant.status === 'expired'
+              ? `Expired ${ageV1(grant.expiresAt, now)}`
+              : grant.status === 'unknown'
+                ? 'Expiry not recorded'
+                : grant.lastUsedAt
+                  ? `Last used ${ageV1(grant.lastUsedAt, now)}`
+                  : 'Never used'}
+        </span>
+      </div>
+      <p className="lnote">
+        {grant.grantKind === 'oauth' ? 'OAuth grant' : 'Temporary bearer key'}
+        {' · '}
+        {grant.walletAddress ? `${shortV1(grant.walletAddress)} · ` : ''}
+        {grant.issuedAt ? `issued ${ageV1(grant.issuedAt, now)}` : 'issued before this list began'}
+        {grant.expiresAt ? ` · ${expiryV1(grant.expiresAt, grant.status, now)}` : ''}
+        {grant.useCount > 0 ? ` · ${grant.useCount} calls` : ''}
+      </p>
+      {grant.status === 'revoked' || grant.status === 'expired' ? null : (
+        <div className="card-actions">
+          <button
+            type="button"
+            className="btn sec"
+            disabled={props.revokingTokenId === grant.tokenId}
+            onClick={() => props.onRevoke(grant.tokenId)}
+          >
+            {props.revokingTokenId === grant.tokenId ? 'Revoking…' : 'Revoke'}
+          </button>
+        </div>
+      )}
+    </article>
+  );
+}
+
+/**
+ * Which grants can still be used, and which are only history.
+ *
+ * `unknown` counts as live: its expiry was never recorded, so nothing here can
+ * prove it has lapsed, and folding it into history would claim otherwise.
+ */
+export function splitConnectedGrantsV1(grants: readonly ConnectedAppGrantViewV1[]): {
+  live: ConnectedAppGrantViewV1[];
+  history: ConnectedAppGrantViewV1[];
+} {
+  const live: ConnectedAppGrantViewV1[] = [];
+  const history: ConnectedAppGrantViewV1[] = [];
+  for (const grant of grants) {
+    (grant.status === 'revoked' || grant.status === 'expired' ? history : live).push(grant);
+  }
+  return { live, history };
+}
+
 export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
   const [pressed, setPressed] = useState<ConnectedAppClientKindV1 | null>(null);
   const now = new Date();
   const usableNow = model.grants.filter((grant) => grant.status === 'current').length;
   const uncertain = model.grants.filter((grant) => grant.status === 'unknown').length;
+  const { live, history } = splitConnectedGrantsV1(model.grants);
 
   return (
     <div className="panel">
@@ -276,60 +354,57 @@ export function ConnectedAppsCard(model: ConnectedAppsCardModelV1) {
                 No grants have been issued for this wallet.
               </p>
             ) : (
-              /* One card per grant, with its action as a SIBLING of the text.
+              /* Live grants at full weight; history folded behind one line.
+                 Four revoked bearer keys rendered exactly like three working
+                 OAuth grants, so the half of the list that can still be used
+                 took up less of the page than the half that cannot. Nothing is
+                 dropped — a revoked grant is evidence, and the summary counts
+                 them so the count is readable without a press.
+
+                 One card per grant, with its action as a SIBLING of the text.
                  The first version put Revoke inside the <dd> of a definition
                  list, so the button sat on top of "connected 18s ago". This is
                  the shape Radar already uses for a watch. */
-              <div className="console-card-grid" aria-label="Connected apps">
-                {model.grants.map((grant) => (
-                  <article
-                    className={grant.status === 'current' || grant.status === 'unknown' ? 'cardrow' : 'cardrow off'}
-                    key={grant.tokenId}
-                  >
-                    <div className="cr-top">
-                      <span className="cr-name">
-                        {grant.clientName ?? connectedAppLabelV1(grant.clientKind)}
-                      </span>
-                      <span
-                        className="pill cr-status"
-                        data-tone={grant.status === 'current' ? 'measured' : grant.status === 'unknown' ? 'neutral' : 'off'}
-                      >
-                        {grant.status === 'revoked'
-                          ? `Revoked ${ageV1(grant.revokedAt, now)}`
-                          : grant.status === 'expired'
-                            ? `Expired ${ageV1(grant.expiresAt, now)}`
-                            : grant.status === 'unknown'
-                              ? 'Expiry not recorded'
-                              : grant.lastUsedAt
-                            ? `Last used ${ageV1(grant.lastUsedAt, now)}`
-                            : 'Never used'}
-                      </span>
-                    </div>
-                    <p className="lnote">
-                      {grant.grantKind === 'oauth' ? 'OAuth grant' : 'Temporary bearer key'}
-                      {' · '}
-                      {grant.walletAddress ? `${shortV1(grant.walletAddress)} · ` : ''}
-                      {grant.issuedAt
-                        ? `issued ${ageV1(grant.issuedAt, now)}`
-                        : 'issued before this list began'}
-                      {grant.expiresAt ? ` · ${expiryV1(grant.expiresAt, grant.status, now)}` : ''}
-                      {grant.useCount > 0 ? ` · ${grant.useCount} calls` : ''}
-                    </p>
-                    {grant.status === 'revoked' || grant.status === 'expired' ? null : (
-                      <div className="card-actions">
-                        <button
-                          type="button"
-                          className="btn sec"
-                          disabled={model.revokingTokenId === grant.tokenId}
-                          onClick={() => model.onRevoke(grant.tokenId)}
-                        >
-                          {model.revokingTokenId === grant.tokenId ? 'Revoking…' : 'Revoke'}
-                        </button>
+              <>
+                {live.length === 0 ? (
+                  <p className="empty">
+                    No grant on this wallet can be used right now. The history below says what
+                    happened to the ones that could.
+                  </p>
+                ) : (
+                  <div className="console-card-grid" aria-label="Connected apps">
+                    {live.map((grant) => (
+                      <GrantCard
+                        key={grant.tokenId}
+                        grant={grant}
+                        now={now}
+                        revokingTokenId={model.revokingTokenId}
+                        onRevoke={model.onRevoke}
+                      />
+                    ))}
+                  </div>
+                )}
+                {history.length > 0 ? (
+                  <details className="card-evidence">
+                    <summary>
+                      {history.length} revoked or expired grant{history.length === 1 ? '' : 's'}
+                    </summary>
+                    <div className="card-evidence-body">
+                      <div className="console-card-grid" aria-label="Past connected apps">
+                        {history.map((grant) => (
+                          <GrantCard
+                            key={grant.tokenId}
+                            grant={grant}
+                            now={now}
+                            revokingTokenId={model.revokingTokenId}
+                            onRevoke={model.onRevoke}
+                          />
+                        ))}
                       </div>
-                    )}
-                  </article>
-                ))}
-              </div>
+                    </div>
+                  </details>
+                ) : null}
+              </>
             )}
 
             <p className="lnote">

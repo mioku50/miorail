@@ -1,3 +1,11 @@
+import React from 'react';
+
+// Referenced so the classic JSX transform the test runner uses finds it. Vite
+// and Next compile this file with the automatic runtime and need no import, so
+// without this line the component builds and renders in the app while being
+// unrenderable by the only suite that proves it renders at all.
+void React;
+
 // ---------------------------------------------------------------------------
 // Activity — what has actually happened, including the parts that did not.
 //
@@ -257,10 +265,64 @@ export interface ActivitySpendModelV1 {
   unavailableReason: string | null;
 }
 
+/**
+ * One receipt, drawn the same way wherever it appears.
+ *
+ * Extracted because the dev-smoke group renders the identical row and a second
+ * copy is how two lists of the same thing start disagreeing about what a
+ * missing hash means.
+ */
+function SpendReceiptRow({ entry }: { entry: ActivitySpendEntryV1 }) {
+  return (
+    <div>
+      <div className="qrow">
+        <span className="mono">{entry.category ?? entry.actionType}</span>
+        <span className="v mono">{activitySpendLabelV1(entry.cost)}</span>
+      </div>
+      <p className="lnote">
+        {entry.status ?? 'unknown'} · {new Date(entry.createdAt).toLocaleString()}
+      </p>
+      {entry.txHash ? (
+        <p className="lnote">
+          <a
+            className="mono"
+            href={activityBaseScanTxUrlV1(entry.txHash)}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            {activityShortHashV1(entry.txHash)}
+          </a>
+        </p>
+      ) : (
+        // A charge with no hash is not a charge anybody can check.
+        <p className="lnote">No transaction hash, so this one cannot be verified onchain.</p>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Paid intelligence, below the wallet's own actions and grouped.
+ *
+ * On production this card opened the page with six `dev_smoke` receipts of
+ * $0.001, five of them failed — so the first thing a reader met was a list of
+ * our own test transactions, above the result of a real one. Development smoke
+ * is real settled USDC and belongs in the ledger; it is not what somebody came
+ * to Activity to read.
+ *
+ * The two groups fold. The NUMBERS do not: the header total and the summary
+ * sentence — which already names the dev-smoke share, the failed attempts and
+ * the pending ones — sit outside both, so nothing measured needs a press to be
+ * seen. What folds is six near-identical rows.
+ */
 export function ActivitySpendCard(model: ActivitySpendModelV1) {
   // Seller-side diagnostics are not money this account spent, and mixing them
   // into a spend list is how a ledger stops meaning anything.
   const outgoing = model.entries.filter((entry) => entry.direction !== 'incoming_seller_smoke');
+  // The same marker the server totals on, so the card and the summary sentence
+  // can never disagree about which receipts are ours.
+  const smoke = outgoing.filter((entry) => entry.category === 'dev_smoke');
+  const purchases = outgoing.filter((entry) => entry.category !== 'dev_smoke');
 
   return (
     <div className="rp">
@@ -275,36 +337,43 @@ export function ActivitySpendCard(model: ActivitySpendModelV1) {
           <p className="empty">{model.unavailableReason}</p>
         ) : (
           <>
+            {/* Every number the page has, unexpanded. */}
             <p className="lnote">{activitySpendSummaryCopyV1(model.summary)}</p>
             {outgoing.length === 0 ? (
               <p className="empty">Nothing has been paid for from this account.</p>
             ) : (
-              outgoing.map((entry) => (
-                <div key={entry.id}>
-                  <div className="qrow">
-                    <span className="mono">{entry.category ?? entry.actionType}</span>
-                    <span className="v mono">{activitySpendLabelV1(entry.cost)}</span>
-                  </div>
-                  <p className="lnote">
-                    {entry.status ?? 'unknown'} · {new Date(entry.createdAt).toLocaleString()}
-                  </p>
-                  {entry.txHash ? (
-                    <p className="lnote">
-                      <a
-                        className="mono"
-                        href={activityBaseScanTxUrlV1(entry.txHash)}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                      >
-                        {activityShortHashV1(entry.txHash)}
-                      </a>
-                    </p>
-                  ) : (
-                    // A charge with no hash is not a charge anybody can check.
-                    <p className="lnote">No transaction hash, so this one cannot be verified onchain.</p>
-                  )}
-                </div>
-              ))
+              <>
+                {purchases.length > 0 && (
+                  <details className="card-evidence">
+                    <summary>
+                      {purchases.length} purchase{purchases.length === 1 ? '' : 's'}
+                    </summary>
+                    <div className="card-evidence-body">
+                      {purchases.map((entry) => (
+                        <SpendReceiptRow key={entry.id} entry={entry} />
+                      ))}
+                    </div>
+                  </details>
+                )}
+                {smoke.length > 0 && (
+                  <details className="card-evidence">
+                    {/* Named for what they are on the summary line, so the
+                        group and the sentence above it use one word. */}
+                    <summary>
+                      {smoke.length} development smoke payment{smoke.length === 1 ? '' : 's'} ·{' '}
+                      {activitySpendLabelV1(model.summary?.devSmokeSpentUsdc)}
+                    </summary>
+                    <div className="card-evidence-body">
+                      <p className="lnote">
+                        Real settled transactions from our own tests. Not a purchase anybody made.
+                      </p>
+                      {smoke.map((entry) => (
+                        <SpendReceiptRow key={entry.id} entry={entry} />
+                      ))}
+                    </div>
+                  </details>
+                )}
+              </>
             )}
           </>
         )}

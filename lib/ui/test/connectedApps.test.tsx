@@ -10,6 +10,7 @@ import {
   CONNECTED_APP_CHOICES_V1,
   ConnectedAppsCard,
   connectedAppLabelV1,
+  splitConnectedGrantsV1,
   type ConnectedAppsCardModelV1,
 } from '../src/console/ConnectedAppsCard';
 
@@ -218,5 +219,51 @@ describe('Connect Miorail to your AI', () => {
         assert.equal(definedConsoleClasses.has(name), true, `console.css defines no .${name}`);
       }
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Live grants first, history folded.
+// ---------------------------------------------------------------------------
+describe('what can still be used outweighs what cannot', () => {
+  const at = (status: 'current' | 'revoked' | 'expired' | 'unknown', id: string) => ({
+    ...GRANT,
+    tokenId: id,
+    status,
+    revokedAt: status === 'revoked' ? '2026-09-01T09:00:00.000Z' : null,
+    expiresAt: status === 'expired' ? '2026-09-01T09:00:00.000Z' : GRANT.expiresAt,
+  });
+
+  test('revoked and expired go to history; an unrecorded expiry does not', () => {
+    const { live, history } = splitConnectedGrantsV1([
+      at('current', 'a'),
+      at('revoked', 'b'),
+      at('expired', 'c'),
+      at('unknown', 'd'),
+    ]);
+    assert.deepEqual(live.map((grant) => grant.tokenId), ['a', 'd']);
+    assert.deepEqual(history.map((grant) => grant.tokenId), ['b', 'c']);
+  });
+
+  test('four revoked keys no longer render at the weight of three working grants', () => {
+    // The production shape: three OAuth grants that work, four revoked bearer
+    // keys drawn identically beneath them, so the unusable half took more of
+    // the page than the usable one.
+    const markup = render({
+      grants: [at('current', 'a'), at('current', 'b'), at('current', 'c'),
+        at('revoked', 'd'), at('revoked', 'e'), at('revoked', 'f'), at('revoked', 'g')],
+    });
+    // The count is readable without a press: nothing is hidden, it is folded.
+    assert.match(markup, /4 revoked or expired grants/);
+    // The live list is the one drawn open, and it is the one with the action.
+    assert.match(markup, /aria-label="Connected apps"/);
+    assert.match(markup, /aria-label="Past connected apps"/);
+    assert.match(markup, /Revoking takes effect immediately/);
+  });
+
+  test('a wallet whose grants are all revoked is told so, not shown an empty page', () => {
+    const markup = render({ grants: [at('revoked', 'd'), at('expired', 'e')] });
+    assert.match(markup, /No grant on this wallet can be used right now/);
+    assert.match(markup, /2 revoked or expired grants/);
   });
 });

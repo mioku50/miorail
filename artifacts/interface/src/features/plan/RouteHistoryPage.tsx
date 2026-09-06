@@ -146,11 +146,13 @@ export function RouteHistoryPage() {
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
       onSelectProof={() => undefined}
     >
-      {/* The ledger first: it is the part of this page that currently has
-          content, and burying it under twenty unsigned runs was the old
-          ordering's mistake. */}
-      <ActivitySpendCard {...spend} />
-
+      {/* Wallet actions first. The ledger used to open this page, on the rule
+          that it was the only part with content — true when it was written and
+          not true now: Base App action receipts exist, and the first thing a
+          reader met was six of our own $0.001 test transactions, five of them
+          failed, above the result of a real one.
+          The ledger keeps every number it had; it moved below the actions and
+          its receipt lists fold. */}
       <BaseMcpActionReceiptsCard
         loading={extensionActions.isPending}
         receipts={extensionActions.data?.receipts ?? []}
@@ -188,6 +190,11 @@ export function RouteHistoryPage() {
           }
         />
       )}
+
+      {/* Below the wallet's own actions, where a ledger of what we spent on
+          intelligence belongs. Its total and its summary sentence are still
+          unexpanded; only the repeated rows fold. */}
+      <ActivitySpendCard {...spend} />
 
       {publishable && (
         <ShareProofPanel

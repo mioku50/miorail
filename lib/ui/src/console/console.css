@@ -981,7 +981,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    the address, the timestamp and the button ran together as one string:
    `0xb20000…0101read 2026-08-15 20:33 UTC Remove`. */
 .mio-console .watchrows { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
-.mio-console .watchrow { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+/* The identity column is bounded rather than an equal share: a symbol and a
+   shortened address need about 12rem and no more, while the clocks beside them
+   carry four lines each and were breaking "Read 21d ago" across two of them. */
+.mio-console .watchrow { display: grid; grid-template-columns: minmax(0, 13rem) minmax(0, 1fr) auto; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .watchrow-id { min-width: 0; display: grid; gap: 1px; }
 .mio-console .watchrow-name { color: var(--ink); font-size: 13px; font-weight: 650; overflow-wrap: anywhere; }
 .mio-console .watchrow-addr { color: var(--muted); font-size: 11px; overflow-wrap: anywhere; }
@@ -1002,7 +1005,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .watchrow-clock-k { color: var(--faint); font-size: 9.5px; font-weight: 650;
   letter-spacing: .07em; text-transform: uppercase; }
 .mio-console .watchrow-clock-v { color: var(--ink); font-size: 11.5px; font-weight: 600;
-  line-height: 1.25; overflow-wrap: anywhere; }
+  line-height: 1.25; overflow-wrap: anywhere; display: flex; flex-wrap: wrap;
+  align-items: baseline; gap: 4px; }
 .mio-console .watchrow-clock-d { color: var(--muted); font-size: 10.5px; line-height: 1.3;
   font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
 .mio-console .watchrow-clocks li[data-tone='good'] .watchrow-clock-v { color: var(--good, var(--ink)); }
