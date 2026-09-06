@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
+import test, { describe } from 'node:test';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
 import {
   InMemoryRouteStorageRepository,
@@ -16,7 +16,7 @@ import {
   routeCardIntentFixture,
   routeCardQuotedAdapterFixture,
 } from '../../../lib/route-card/test/fixtures.js';
-import { RoutePlanCoordinator } from './routePlanCoordinator.js';
+import { raiseVerificationDepthV1, RoutePlanCoordinator } from './routePlanCoordinator.js';
 
 const input = {
   tenantId: 'tenant-card',
@@ -348,4 +348,31 @@ test('a broken pending-intent store degrades the next turn, never this one', asy
   // The clarification is the product; the continuation is a convenience.
   const result = await coordinator.evaluate({ ...input, requestId: 'broken-store' });
   assert.equal(result.outcome, 'needs_clarification');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-06 — the verification floor, and why it is safe to accept from a
+// client on a request that otherwise accepts nothing.
+//
+// It moves in one direction. There is no value of it that asks for less
+// checking, it reaches the plan only after the intent is grounded in the
+// user's own words, and it names no asset, no amount and no route.
+// ---------------------------------------------------------------------------
+describe('a verification floor raises and never lowers', () => {
+  test('a standard intent is raised to the floor', () => {
+    assert.equal(raiseVerificationDepthV1('standard', 'enhanced'), 'enhanced');
+  });
+
+  test('a depth the reader already asked for is kept', () => {
+    // Somebody who wrote "thoroughly" and got `maximum` must not be quietly
+    // dropped to `enhanced` because a link carried a floor.
+    assert.equal(raiseVerificationDepthV1('maximum', 'enhanced'), 'maximum');
+    assert.equal(raiseVerificationDepthV1('enhanced', 'enhanced'), 'enhanced');
+  });
+
+  test('no floor changes nothing', () => {
+    for (const depth of ['standard', 'enhanced', 'maximum'] as const) {
+      assert.equal(raiseVerificationDepthV1(depth, undefined), depth);
+    }
+  });
 });

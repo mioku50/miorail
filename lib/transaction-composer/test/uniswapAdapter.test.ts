@@ -238,11 +238,11 @@ test('Uniswap build adapter is not_configured without an API key or transport ov
 // call downstream was correct about the calls it was given.
 // ---------------------------------------------------------------------------
 test('the quote request asks for an exact permit and never suppresses it', async () => {
-  let quoteBody: Record<string, unknown> | null = null;
+  const captured: { body: Record<string, unknown> | null } = { body: null };
   const adapter = new UniswapSwapBuildAdapter({
     transport: transportOf({
       quote: (body) => {
-        quoteBody = body as Record<string, unknown>;
+        captured.body = body as Record<string, unknown>;
         return {
           status: 200,
           payload: {
@@ -255,13 +255,13 @@ test('the quote request asks for an exact permit and never suppresses it', async
   });
   const result = await adapter.build(buildInput(makeIntent({ toAsset: WETH_BASE })));
   assert.equal(result.outcome, 'built');
-  assert.ok(quoteBody);
+  assert.ok(captured.body);
   // The permit must be written for exactly the input amount: the Safety Kernel
   // refuses any approval that is not the stored intent amount, so a permit for
   // 2^160-1 would trade one refusal for another.
-  assert.equal(quoteBody!.permitAmount, 'EXACT');
+  assert.equal(captured.body.permitAmount, 'EXACT');
   assert.ok(
-    !('generatePermitAsTransaction' in quoteBody!),
+    !('generatePermitAsTransaction' in captured.body),
     'the quote request must not carry generatePermitAsTransaction — there it removes the permit',
   );
 });

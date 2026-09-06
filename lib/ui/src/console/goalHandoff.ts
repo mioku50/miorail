@@ -36,9 +36,40 @@ export interface GoalHandoffV1 {
   /** Whether to start the comparison without waiting for a click. True only
    * for a handoff this app itself wrote. */
   autoCompare: boolean;
+  /**
+   * The verification depth this comparison must not go below.
+   *
+   * A FLOOR, and only ever `enhanced` — which is why it is safe to read from a
+   * URL a stranger could write. The one thing it can do is ask the server to
+   * check harder: simulate the batch and read the contract risk. It cannot
+   * lower a depth the reader asked for, cannot select a route, cannot name an
+   * asset, and cannot make anything executable.
+   *
+   * It exists because the same purchase had two doors with two answers. A
+   * clearance minted on the review page pins `enhanced`; `Prepare buy` handed
+   * a sentence to Routes AI, where depth comes from the reader's own words and
+   * defaults to `standard`. So the door the card actually puts in front of
+   * people was the one that skipped the simulation.
+   */
+  minimumVerification: 'enhanced' | null;
 }
 
-const NOTHING_V1: GoalHandoffV1 = { goal: null, autoCompare: false };
+const NOTHING_V1: GoalHandoffV1 = { goal: null, autoCompare: false, minimumVerification: null };
+
+/** The query parameter that carries the floor, and the only value it accepts. */
+export const VERIFICATION_FLOOR_PARAM_V1 = 'verify';
+
+/**
+ * Read the floor, accepting exactly one word.
+ *
+ * An allow-list of one rather than a parse: `maximum` is not offered here
+ * because nothing in this product asks for it, and an unrecognised value is
+ * null rather than an error — a link with a typo in it should behave like a
+ * link without the parameter, not refuse to open.
+ */
+export function verificationFloorV1(raw: string | null | undefined): 'enhanced' | null {
+  return typeof raw === 'string' && raw.trim().toLowerCase() === 'enhanced' ? 'enhanced' : null;
+}
 
 /**
  * Control characters are stripped and the result bounded. Everything else is
@@ -79,7 +110,11 @@ export function goalHandoffV1(input: {
   const goal = sanitizeHandoffGoalV1(params.get('goal'));
   if (!goal) return NOTHING_V1;
   const token = sanitizeHandoffGoalV1(input.handoffToken);
-  return { goal, autoCompare: token !== null && token === goal };
+  return {
+    goal,
+    autoCompare: token !== null && token === goal,
+    minimumVerification: verificationFloorV1(params.get(VERIFICATION_FLOOR_PARAM_V1)),
+  };
 }
 
 /**

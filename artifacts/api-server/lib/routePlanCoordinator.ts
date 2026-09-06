@@ -19,7 +19,7 @@ import {
 import type { TokenIdentityReaderV1 } from '@mioagent/intent-core';
 import type { LlmProvider } from '@mioagent/llm';
 import type { ProviderReliabilityAssessmentV1 } from '@mioagent/route-outcomes';
-import type { RouteCandidateV1 } from '@mioagent/route-domain';
+import type { RouteCandidateV1, RouteIntentV1 } from '@mioagent/route-domain';
 
 export type ReliabilityLoaderV1 = (
   candidates: readonly RouteCandidateV1[],
@@ -54,6 +54,37 @@ export interface RoutePlanCoordinatorInput {
   message: string;
   requestId: string;
   now: Date;
+  /**
+   * The verification depth this plan must not go below.
+   *
+   * Applied AFTER the intent is grounded, so it changes how hard the plan is
+   * checked and nothing about what the plan is: not the pair, not the amount,
+   * not the slippage, none of which this field can reach.
+   *
+   * It exists because one purchase had two doors. A stock action minted on the
+   * review page pins `enhanced` and is simulated; `Prepare buy` hands a
+   * sentence to the console, where depth comes from the reader's own words and
+   * defaults to `standard` — so the door the card puts in front of people was
+   * the one that skipped the simulation, and a batch that reverted on chain
+   * reached the wallet with eight green checks behind it.
+   */
+  minimumVerification?: 'enhanced';
+}
+
+/**
+ * Raise a depth to a floor, never lower it.
+ *
+ * Ordered, so a reader who wrote "thoroughly" and got `maximum` keeps it. The
+ * one-way direction is the whole safety argument for accepting this field from
+ * a client at all.
+ */
+export function raiseVerificationDepthV1(
+  current: RouteIntentV1['verificationDepth'],
+  floor: 'enhanced' | undefined,
+): RouteIntentV1['verificationDepth'] {
+  if (!floor) return current;
+  const rank = { standard: 0, enhanced: 1, maximum: 2 } as const;
+  return rank[current] >= rank[floor] ? current : floor;
 }
 
 /** Built per run, because the snapshot bound depends on when THAT run started. */
@@ -149,7 +180,17 @@ export class RoutePlanCoordinator {
       });
     }
 
-    const intent = resolution.routeIntent;
+    // Raised here, before the run is created: the idempotency key, the evidence
+    // requirements and the Safety Kernel must all see one depth. Raising it
+    // after the run existed would leave a run recorded at one depth and checked
+    // at another.
+    const intent = {
+      ...resolution.routeIntent,
+      verificationDepth: raiseVerificationDepthV1(
+        resolution.routeIntent.verificationDepth,
+        input.minimumVerification,
+      ),
+    };
     const routeRun = await this.dependencies.repository.createRouteRun(
       intent,
       routeEngineV1IdempotencyKey(intent, input.requestId),

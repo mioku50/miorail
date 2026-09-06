@@ -9,6 +9,7 @@ import {
   shouldRevealResultV1,
   swapTokenGoalV1,
   swapTokenHrefV1,
+  verificationFloorV1,
 } from '../src/console';
 
 // ---------------------------------------------------------------------------
@@ -49,6 +50,7 @@ describe('a goal from a link is filled in; a goal from a click is run', () => {
     assert.deepEqual(goalHandoffV1({ search: '', handoffToken: swapTokenGoalV1(MIO) }), {
       goal: null,
       autoCompare: false,
+      minimumVerification: null,
     });
   });
 
@@ -179,5 +181,56 @@ describe('the page moves only when it has just answered a question', () => {
       }),
       false,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-06 — one purchase had two doors and two answers.
+//
+// A clearance minted on the review page pins `enhanced` and is simulated.
+// `Prepare buy` handed a sentence to Routes AI, where depth comes from the
+// reader's own words and defaults to `standard` — so the door the card puts in
+// front of people was the one that skipped the simulation, and a batch that
+// reverted on chain reached the wallet behind eight green checks.
+//
+// The floor travels in the URL because the goal does. That is safe for exactly
+// one reason, asserted below: it can only ask for MORE checking.
+// ---------------------------------------------------------------------------
+describe('the verification floor a handoff carries', () => {
+  const handoff = (search: string) => goalHandoffV1({ search, handoffToken: null });
+
+  test('a stocks handoff carries the floor through the URL', () => {
+    const read = handoff('?goal=Swap%201%200xaaa%20to%200xbbb%20on%20Base&verify=enhanced');
+    assert.equal(read.minimumVerification, 'enhanced');
+  });
+
+  test('a goal with no floor asks for nothing extra', () => {
+    assert.equal(handoff('?goal=swap%20my%20USDC').minimumVerification, null);
+  });
+
+  test('only one word is accepted, and an unknown one is simply absent', () => {
+    // Not an error: a link with a typo should open like a link without the
+    // parameter, not refuse.
+    for (const value of ['standard', 'maximum', 'ENHANCED ', 'true', '1', '']) {
+      const read = handoff(`?goal=swap%20my%20USDC&verify=${encodeURIComponent(value)}`);
+      assert.equal(
+        read.minimumVerification,
+        value.trim().toLowerCase() === 'enhanced' ? 'enhanced' : null,
+        `verify=${JSON.stringify(value)}`,
+      );
+    }
+  });
+
+  test('the floor cannot lower anything — `standard` is not expressible', () => {
+    // The whole safety argument for reading this from a URL a stranger can
+    // write. There is no value of this parameter that asks for less checking.
+    assert.equal(verificationFloorV1('standard'), null);
+    assert.equal(verificationFloorV1('none'), null);
+    assert.equal(verificationFloorV1('enhanced'), 'enhanced');
+  });
+
+  test('a floor without a goal hands over nothing at all', () => {
+    assert.equal(handoff('?verify=enhanced').goal, null);
+    assert.equal(handoff('?verify=enhanced').minimumVerification, null);
   });
 });

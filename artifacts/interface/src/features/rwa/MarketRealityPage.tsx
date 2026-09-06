@@ -15,6 +15,7 @@ import {
   consoleSectionPathV1,
   useConsoleTheme,
   useStocksConsoleV1,
+  VERIFICATION_FLOOR_PARAM_V1,
   type MarketRealityDirectionV1,
   type MarketRealityHistoryPeriodV1,
   type MarketRealitySurfaceV1,
@@ -110,20 +111,29 @@ export function MarketRealityPage() {
       navigate(`/market?${searchFromPatchV1(search, stocks.selectedKey, patch)}`),
     onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
     onOpenRadar: () => navigate('/radar'),
-    onInspectRoute: ({ tokenAddress, goal }) => {
-      const params = new URLSearchParams({ goal, from: 'stocks', token: tokenAddress });
+    onInspectRoute: ({ tokenAddress, goal, minimumVerification }) => {
+      const params = new URLSearchParams({
+        goal,
+        from: 'stocks',
+        token: tokenAddress,
+        [VERIFICATION_FLOOR_PARAM_V1]: minimumVerification,
+      });
       navigate(`/routes?${params.toString()}`);
     },
     // Phase 17.4 — the same surface, reached from the primary action. The goal
     // sentence already carries the side the reader pressed, so nothing here
     // has to re-derive it; `side` travels only so the destination can say which
     // button was pressed if it needs to.
-    onPrepare: ({ tokenAddress, goal, direction }) => {
+    onPrepare: ({ tokenAddress, goal, direction, minimumVerification }) => {
       const params = new URLSearchParams({
         goal,
         from: 'stocks',
         token: tokenAddress,
         side: direction,
+        // The floor travels in the URL because the goal does. It can only ask
+        // the destination to check harder, so a link a stranger writes with it
+        // is a link that gets MORE verification, never less.
+        [VERIFICATION_FLOOR_PARAM_V1]: minimumVerification,
       });
       navigate(`/routes?${params.toString()}`);
     },

@@ -553,6 +553,10 @@ export function RouteIntelligenceConsole() {
       {
         message: requestGoal,
         walletAddress: wallet,
+        // A floor, never a ceiling. It can only ask the server to check harder
+        // than the sentence alone would; a reader who wrote "thoroughly" still
+        // gets what they asked for.
+        ...(verificationFloor ? { minimumVerification: verificationFloor } : {}),
         // A new id ⟹ a new route run, new quotes and a new evidence set. The
         // previous Route Card is untouched in storage; it is simply no longer
         // the one on screen.
@@ -582,6 +586,16 @@ export function RouteIntelligenceConsole() {
    * before wagmi has resolved the account is the normal case, not the edge one.
    */
   const [pendingAutoCompare, setPendingAutoCompare] = useState<string | null>(null);
+  /**
+   * The verification floor a handoff asked for, held for the whole visit.
+   *
+   * Not cleared with the goal: a reader who edits the sentence they arrived
+   * with is still comparing the purchase that sent them here, and quietly
+   * dropping back to `standard` on the first keystroke would put the two doors
+   * out of step again — silently, which is how they got out of step the first
+   * time.
+   */
+  const [verificationFloor, setVerificationFloor] = useState<'enhanced' | null>(null);
   useEffect(() => {
     if (handoffConsumed.current) return;
     const handoff = goalHandoffV1({
@@ -591,6 +605,7 @@ export function RouteIntelligenceConsole() {
     if (!handoff.goal) return;
     handoffConsumed.current = true;
     setGoal(handoff.goal);
+    setVerificationFloor(handoff.minimumVerification);
     if (handoff.autoCompare) setPendingAutoCompare(handoff.goal);
   }, []);
 

@@ -123,6 +123,42 @@ describe('POST /api/route-intelligence/swap/evaluate', () => {
     assert.equal(mismatch.body.code, 'wallet_mismatch');
   });
 
+  test('the verification floor reaches the coordinator, and only that one word does', async () => {
+    // Phase 17.9. The floor is the ONE field on this request that touches how
+    // a plan is checked, and it is a literal so it can only ask for more.
+    let seen: unknown = 'not-called';
+    routePlanRouteRuntime.coordinate = async (input) => {
+      seen = (input as { minimumVerification?: unknown }).minimumVerification;
+      return {
+        outcome: 'needs_clarification',
+        clarification: { code: 'amount_required', message: 'How much?', missingFields: ['amount'], locale: 'en' },
+      };
+    };
+    const ok = await request(routeApp()).post('/api/route-intelligence/swap/evaluate').send({
+      message: 'Swap 1 0xaaa to 0xbbb on Base', walletAddress: WALLET, requestId: 'floor-1',
+      minimumVerification: 'enhanced',
+    });
+    assert.equal(ok.status, 200);
+    assert.equal(seen, 'enhanced');
+
+    // Absent stays absent — no floor is not a floor of `standard`.
+    seen = 'not-called';
+    await request(routeApp()).post('/api/route-intelligence/swap/evaluate').send({
+      message: 'Swap 1 0xaaa to 0xbbb on Base', walletAddress: WALLET, requestId: 'floor-2',
+    });
+    assert.equal(seen, undefined);
+
+    // And there is no way to ask for LESS: the schema admits one word.
+    for (const value of ['standard', 'maximum', 'none']) {
+      const refused = await request(routeApp()).post('/api/route-intelligence/swap/evaluate').send({
+        message: 'Swap 1 0xaaa to 0xbbb on Base', walletAddress: WALLET, requestId: `floor-${value}`,
+        minimumVerification: value,
+      });
+      assert.equal(refused.status, 400, `minimumVerification=${value} must be refused`);
+      assert.equal(refused.body.code, 'invalid_route_plan_request');
+    }
+  });
+
   test('strictly rejects extra request fields and Sepolia runtime context', async () => {
     const extra = await request(routeApp()).post('/api/route-intelligence/swap/evaluate').send({
       message: 'Swap 100 USDC to ETH', walletAddress: WALLET, requestId: 'strict-1', score: 100,

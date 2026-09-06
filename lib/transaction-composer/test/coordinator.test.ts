@@ -547,19 +547,33 @@ test('standard verification depth prepares with an honest simulation-unavailable
   }
 });
 
-test('enhanced verification depth blocks because required simulation evidence is unavailable', async () => {
+// ---------------------------------------------------------------------------
+// 2026-09-06 — WHO required the simulation decides what an absent one means.
+//
+// These two tests asserted the opposite rule, and the opposite rule is the bug
+// class this codebase keeps unlearning: a simulator WE could not reach became a
+// refusal to trade, wearing the shape of a safety verdict about the route.
+//
+// The distinction is now the one `simulationIsRequiredV1` already drew and
+// nobody read. A PROVIDER requires simulation because Miorail wrote the
+// calldata or cannot read it — unsimulated there is genuinely unknown, and it
+// still blocks. An INTENT requires it because somebody asked to be careful;
+// answering that with a refusal caused by our own outage is not care.
+//
+// A revert blocks either way. That is the chain answering, not us failing.
+// ---------------------------------------------------------------------------
+test('an unreachable simulator does not block an enhanced intent on provider-built calldata', async () => {
   const { scenario, deps } = await defaultScenarioDeps({ verificationDepth: 'enhanced' });
   const composer = createTransactionComposer(deps);
   const result = await composer.prepare(prepareInput(scenario));
-  assert.equal(result.outcome, 'blocked');
-  if (result.outcome === 'blocked') assert.equal(result.safety.verdict, 'blocked');
+  assert.equal(result.outcome, 'prepared');
 });
 
-test('maximum verification depth blocks because required simulation evidence is unavailable', async () => {
+test('the same is true at maximum depth — depth is a request, not a hard gate', async () => {
   const { scenario, deps } = await defaultScenarioDeps({ verificationDepth: 'maximum' });
   const composer = createTransactionComposer(deps);
   const result = await composer.prepare(prepareInput(scenario));
-  assert.equal(result.outcome, 'blocked');
+  assert.equal(result.outcome, 'prepared');
 });
 
 test('Safety Kernel rejection (unlimited approval from a malicious build) blocks with the full result', async () => {
@@ -680,13 +694,53 @@ describe('a simulation is required by the provider OR by the intent', () => {
       errorCode: 'no_simulation_provider',
     };
     const enhanced = simulationRequirementV1('kyberswap' as never, intentAt('enhanced'), unavailable);
-    assert.equal(enhanced.acceptable, false);
+    // Named, and reported — but not a block. The intent asked for the
+    // assurance; our missing simulator is our gap, not a verdict on the route.
     assert.equal(enhanced.outcome, 'simulation_provider_unavailable');
+    assert.equal(enhanced.acceptable, true);
 
     // And a standard intent on the same provider is untouched: no outcome at
     // all, and acceptable, exactly as before.
     const standard = simulationRequirementV1('kyberswap' as never, intentAt('standard'), unavailable);
     assert.equal(standard.acceptable, true);
     assert.equal(standard.outcome, null);
+  });
+
+  test('the same absent simulator DOES block where Miorail wrote the calldata', () => {
+    // Aerodrome is on `PROVIDERS_REQUIRING_SIMULATION_V1` because we compose
+    // its calls ourselves. Unsimulated there is unknown, and unknown calldata
+    // is not signable at any verification depth.
+    const unavailable = {
+      status: 'unavailable' as const,
+      observedAt: null,
+      blockNumber: null,
+      requestHash: null,
+      responseHash: null,
+      errorCode: 'no_simulation_provider',
+    };
+    for (const depth of ['standard', 'enhanced', 'maximum'] as const) {
+      const verdict = simulationRequirementV1('aerodrome' as never, intentAt(depth), unavailable);
+      assert.equal(verdict.acceptable, false, `aerodrome must block at ${depth}`);
+    }
+  });
+
+  test('a revert blocks whoever asked for the simulation', () => {
+    // The chain answered. That is evidence about the route, and it refuses on
+    // a provider-built batch exactly as it does on a server-written one.
+    const reverted = {
+      status: 'failed' as const,
+      observedAt: '2026-09-06T18:00:00.000Z',
+      blockNumber: '50964317',
+      requestHash: null,
+      responseHash: null,
+      errorCode: 'execution_reverted',
+    };
+    const enhanced = simulationRequirementV1('kyberswap' as never, intentAt('enhanced'), reverted);
+    assert.equal(enhanced.outcome, 'simulation_reverted');
+    assert.equal(enhanced.acceptable, false);
+    assert.equal(
+      simulationRequirementV1('aerodrome' as never, intentAt('standard'), reverted).acceptable,
+      false,
+    );
   });
 });

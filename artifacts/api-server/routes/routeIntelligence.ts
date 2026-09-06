@@ -514,6 +514,12 @@ routeIntelligenceRouter.post('/swap/evaluate', async (req, res) => {
       walletAddress: user.address,
       message: parsed.data.message,
       requestId: parsed.data.requestId,
+      // A floor the caller may raise and can never lower. It reaches the plan
+      // only after the intent is grounded in the user's own words, so it
+      // changes how hard the plan is checked and nothing about what it is.
+      ...(parsed.data.minimumVerification
+        ? { minimumVerification: parsed.data.minimumVerification }
+        : {}),
       now: routePlanRouteRuntime.now(),
     });
     res.json(RoutePlanResponseV1Schema.parse(response));

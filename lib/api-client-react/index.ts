@@ -57,6 +57,16 @@ export interface EvaluateSwapRouteInput {
   message: string;
   walletAddress: `0x${string}`;
   requestId?: string;
+  /**
+   * The verification depth this plan must not go below.
+   *
+   * A floor, and the only value is `enhanced`. It can ask the server to check
+   * harder — simulate the batch, read the contract risk — and it can do
+   * nothing else: it names no asset, selects no route, sets no amount and
+   * makes nothing executable. A caller cannot use it to lower a depth the
+   * message itself asked for.
+   */
+  minimumVerification?: 'enhanced';
 }
 
 export class RoutePlanRequestIdentity {
@@ -90,6 +100,7 @@ export function useEvaluateSwapRoute(
         message: input.message,
         walletAddress: input.walletAddress,
         requestId: identity.current!.resolve(input),
+        ...(input.minimumVerification ? { minimumVerification: input.minimumVerification } : {}),
       });
       const response = await fetchApi<unknown>('/api/route-intelligence/swap/evaluate', {
         method: 'POST',

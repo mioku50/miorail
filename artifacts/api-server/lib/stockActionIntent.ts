@@ -1,5 +1,7 @@
 import { hashRouteIntentV1, RouteIntentV1Schema, type RouteIntentV1 } from '@mioagent/route-domain';
 
+import { STOCK_EXECUTION_VERIFICATION_DEPTH_V1 } from '@mioagent/rwa-market-reality/execution-handoff';
+
 import type { StockActionClearanceClaimsV1 } from './stockActionClearance.js';
 
 // ---------------------------------------------------------------------------
@@ -114,7 +116,9 @@ export function stockActionIntentV1(input: {
           amountDecimal: decimalV1(clearance.requestedCashAtomic, USDC_V1.decimals),
         },
     optimizationMode: 'best_net_result' as const,
-    verificationDepth: 'enhanced' as const,
+    // The same constant the `Prepare` door quotes, so the two paths into one
+    // purchase cannot drift apart again.
+    verificationDepth: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
     // The reviewed policy, expressed as the constraint the engine understands.
     // A confirmed action may only be planned through the sources the person
     // confirmed under; a route found somewhere else is a different measurement.

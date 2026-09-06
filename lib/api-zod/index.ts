@@ -552,6 +552,18 @@ export const RoutePlanRequestV1Schema = z
       .min(1)
       .max(200)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid route plan request ID'),
+    /**
+     * A verification FLOOR, and the one field on this request that touches how
+     * the plan is checked.
+     *
+     * It is a literal rather than the depth enum on purpose. A client may ask
+     * for MORE checking than its own sentence implies — that is the whole
+     * point, and it is why this stays inside a contract that otherwise accepts
+     * no provider artifacts, candidates, scores, execution calls or chain
+     * overrides. It cannot lower a depth, cannot select a route and cannot
+     * name an asset, so there is nothing here for a caller to gain by lying.
+     */
+    minimumVerification: z.literal('enhanced').optional(),
   })
   .strict();
 

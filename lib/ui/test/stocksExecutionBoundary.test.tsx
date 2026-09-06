@@ -545,3 +545,36 @@ describe('Phase 17.7 — the review screen is shared, and only the wallet differ
     assert.match(miniConsole, /onPrepare:/);
   });
 });
+
+describe('Phase 17.9 — one purchase, two doors, one verification depth', () => {
+  const stocksConsole = read('lib/ui/src/console/stocksConsole.ts');
+  const handoff = read('lib/rwa-market-reality/src/executionHandoff.ts');
+  const intent = read('artifacts/api-server/lib/stockActionIntent.ts');
+
+  test('both doors quote one constant instead of writing the depth out twice', () => {
+    // They disagreed. A clearance minted on the review page pinned `enhanced`
+    // and was simulated; `Prepare buy` handed a sentence to Routes AI, where
+    // depth comes from the reader's own words and defaults to `standard` — so
+    // the button the card actually shows was the one that skipped the check.
+    assert.match(handoff, /STOCK_EXECUTION_VERIFICATION_DEPTH_V1 = 'enhanced'/);
+    assert.match(stocksConsole, /minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1/);
+    assert.match(intent, /verificationDepth: STOCK_EXECUTION_VERIFICATION_DEPTH_V1/);
+    // The literal must be gone from the intent: two spellings is how they
+    // drifted the first time.
+    assert.doesNotMatch(intent, /verificationDepth: 'enhanced'/);
+  });
+
+  test('the prepare handoff carries it on both callbacks', () => {
+    // Sliced to each call's own closing brace rather than a character count:
+    // the comment above the field is part of the call and would push the field
+    // out of a fixed window.
+    const callBody = (marker: string) => {
+      const from = stocksConsole.indexOf(marker);
+      assert.ok(from > 0, `${marker} must exist`);
+      const rest = stocksConsole.slice(from);
+      return rest.slice(0, rest.indexOf('});') + 3);
+    };
+    assert.match(callBody('onPrepare?.('), /minimumVerification/);
+    assert.match(callBody('onInspectRoute?.('), /minimumVerification/);
+  });
+});

@@ -14,6 +14,7 @@ import {
 } from '@mioagent/api-client-react';
 import {
   stockExecutionGoalSentenceV1,
+  STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
   stockExecutionHandoffV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
 
@@ -125,7 +126,13 @@ export interface StocksConsoleInputV1 {
    * path — which is not the same as the handoff refusing, and the two stay
    * apart: a refusal is reported per address in `inspectRouteUnavailable`.
    */
-  onInspectRoute?: (input: { tokenAddress: string; goal: string }) => void;
+  onInspectRoute?: (input: {
+    tokenAddress: string;
+    goal: string;
+    /** The depth this comparison must not go below. See
+     * `STOCK_EXECUTION_VERIFICATION_DEPTH_V1` — one value, two doors. */
+    minimumVerification: typeof STOCK_EXECUTION_VERIFICATION_DEPTH_V1;
+  }) => void;
   /**
    * Phase 17.4 — prepare one exact side, from the card.
    *
@@ -133,7 +140,12 @@ export interface StocksConsoleInputV1 {
    * `onInspectRoute` is that the reader named a side, so the goal sentence
    * carries it instead of inheriting the board's direction toggle.
    */
-  onPrepare?: (input: { tokenAddress: string; goal: string; direction: 'buy' | 'sell' }) => void;
+  onPrepare?: (input: {
+    tokenAddress: string;
+    goal: string;
+    direction: 'buy' | 'sell';
+    minimumVerification: typeof STOCK_EXECUTION_VERIFICATION_DEPTH_V1;
+  }) => void;
 }
 
 /**
@@ -832,6 +844,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
               input.onInspectRoute?.({
                 tokenAddress: built.handoff.tokenAddress,
                 goal: stockExecutionGoalSentenceV1(built.handoff),
+                minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
               });
             },
           }
@@ -852,6 +865,10 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
                 tokenAddress: built.handoff.tokenAddress,
                 goal: stockExecutionGoalSentenceV1(built.handoff),
                 direction,
+                // A reviewed purchase is checked the same way whichever door
+                // it came through. Without this the card's own button was the
+                // one that skipped the simulation.
+                minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
               });
             },
           }

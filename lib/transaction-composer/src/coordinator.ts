@@ -21,6 +21,7 @@ import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
 import {
   classifySimulationOutcomeV1,
   simulationBlockedDetailV1,
+  simulationWasExecutedV1,
   type SimulationOutcomeV1,
 } from './simulationOutcome.js';
 import { runSafetyKernel, swapTokenSecurityAddressesV1, type RunSafetyKernelInput } from './safetyKernel.js';
@@ -231,8 +232,25 @@ export function simulationRequirementV1(
   // separate response and printed "no simulation provider answered" over a
   // refusal that said the swap had reverted.
   const outcome = classifySimulationOutcomeV1(simulationState);
+  // WHO required it decides what an ABSENT simulator means. The two reasons in
+  // `simulationIsRequiredV1` are not the same claim:
+  //
+  //   * A PROVIDER requires simulation because Miorail wrote the calldata, or
+  //     cannot read it. Unsimulated there is genuinely unknown, and unknown
+  //     calldata is not signable. It blocks, and that is the whole point of
+  //     the list.
+  //
+  //   * An INTENT requires it because somebody asked to be careful. Refusing
+  //     to trade because OUR simulator was unreachable answers their request
+  //     for extra assurance with a refusal caused by us — the same shape as
+  //     every failure this codebase keeps having to unlearn. It reports.
+  //
+  // A REVERT blocks either way: that is the chain answering, not us failing.
+  // So does `insufficient_funds`, for the same reason.
+  const providerRequires = PROVIDERS_REQUIRING_SIMULATION_V1.includes(provider);
+  const ourGap = !simulationWasExecutedV1(outcome);
   return {
-    acceptable: outcome === 'simulation_passed',
+    acceptable: outcome === 'simulation_passed' || (ourGap && !providerRequires),
     detail: simulationBlockedDetailV1(provider, outcome),
     outcome,
   };

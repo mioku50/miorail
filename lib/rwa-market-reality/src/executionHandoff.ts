@@ -38,6 +38,22 @@ const Timestamp = z.string().datetime();
 /** Base USDC. The cash side of every reviewed Market Reality question. */
 export const HANDOFF_CASH_ADDRESS_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
 
+/**
+ * How thoroughly a reviewed stock question must be verified before signing.
+ *
+ * One value, quoted by both doors into the same purchase. There are two, and
+ * they disagreed: a clearance minted on the review page pins this depth and is
+ * simulated; `Prepare buy` hands a goal sentence to Routes AI, whose depth
+ * comes from the reader's own words and defaults to `standard` — so the same
+ * purchase was checked one way and not the other, and the unchecked door is
+ * the one the card puts in front of people.
+ *
+ * `enhanced` adds `simulation` and `contract_risk` to the required evidence.
+ * It is a FLOOR, never a ceiling: a reader who asks for more still gets more,
+ * and nothing here can lower what somebody asked for.
+ */
+export const STOCK_EXECUTION_VERIFICATION_DEPTH_V1 = 'enhanced' as const;
+
 export const STOCK_EXECUTION_HANDOFF_REFUSALS_V1 = [
   'representation_not_reviewed',
   'zero_supply_representation',
