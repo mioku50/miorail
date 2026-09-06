@@ -3990,6 +3990,25 @@ describe('four clocks, four times', () => {
     assert.equal(at('multiplier', rows).tone, 'off');
   });
 
+  test('an open window with nothing to normalize is not an expired window', () => {
+    // Found on production: "Window closed · read 4h ago" against a seven-hour
+    // window. Nothing had expired — there was no quote, so nothing asked the
+    // ratio to normalize anything, and the fallback wrote the reading off as
+    // stale. Two states, one word, and the word blamed the wrong one.
+    const rows = clocksV1(
+      representation({
+        normalization: 'not_established',
+        normalizationCheckedAt: '2026-08-26T16:34:19.000Z',
+        normalizationExpiresAt: '2026-08-26T23:34:19.000Z',
+      }),
+      NOW,
+    );
+    const multiplier = at('multiplier', rows);
+    assert.equal(multiplier.state, 'Read, not applied');
+    assert.equal(multiplier.detail, 'read 4h ago');
+    assert.equal(multiplier.tone, 'neutral', 'a live reading is not a fault');
+  });
+
   test('an applied multiplier is open, and a token that carries its own has no clock', () => {
     const applied = clocksV1(
       representation({

@@ -1711,14 +1711,28 @@ function multiplierClockV1(
   }
   const expiresAt = representation.normalizationExpiresAt ?? null;
   const open = expiresAt !== null && Date.parse(expiresAt) > Date.parse(nowIso);
-  return representation.normalization === 'fresh_ratio_applied' && open
-    ? { id: 'multiplier', label, state: 'Applied', detail: `read ${checkedAge}`, tone: 'good' }
-    : {
+  if (representation.normalization === 'fresh_ratio_applied' && open) {
+    return { id: 'multiplier', label, state: 'Applied', detail: `read ${checkedAge}`, tone: 'good' };
+  }
+  // Two different things were wearing one word. Caught on production: a card
+  // read "Window closed · read 4h ago" against a seven-hour window. The window
+  // was open; there was simply no quote, so nothing asked the ratio to
+  // normalize anything. Saying the reading expired when it had not is the same
+  // class of error as our own failure wearing the token's name.
+  return open
+    ? {
         id: 'multiplier',
         label,
+        state: 'Read, not applied',
+        detail: `read ${checkedAge}`,
+        tone: 'neutral',
+      }
+    : {
         // The case this caption was written for. `not_established` reads as
         // "we never knew"; what actually happened is that we knew, and the
         // window closed. The reading and its age are still stated.
+        id: 'multiplier',
+        label,
         state: 'Window closed',
         detail: `read ${checkedAge}`,
         tone: 'off',
