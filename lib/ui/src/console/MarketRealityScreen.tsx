@@ -959,6 +959,17 @@ function RepresentationCard({
           ) : null}
         </div>
       ) : null}
+      {/* What a sale is sized by, said before the button is pressed.
+          The reader is looking at dollars and a sale is sized in TOKENS, so
+          the prepare step used to open on "what exact amount should be
+          swapped?" — a question this card had already answered, put to someone
+          with no way to convert by hand. The number now travels; this line
+          says where it came from, and that the price is established again.
+          Only the sell side gets it: a buy spends an exact number of USDC
+          atoms and has no surprise to warn about. */}
+      {actions.onPrepare && !inspectRouteUnavailable && direction === 'sell' && representation.prepareSellSizeNote ? (
+        <p className="mr-prepare-size">{representation.prepareSellSizeNote}</p>
+      ) : null}
       {/* The route inspector keeps its place and loses its prominence: a small
           line under the actions, for a reader who wants the candidates rather
           than the plan. And the refusal, when there is one, is stated here in

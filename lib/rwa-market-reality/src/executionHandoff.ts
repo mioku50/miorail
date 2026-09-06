@@ -84,12 +84,47 @@ export const StockExecutionHandoffV1Schema = z
      * Whether the advanced path can size this question without pricing it.
      *
      * A BUY spends an exact number of USDC atoms, so the size is exact before
-     * anything is quoted. A SELL is "$1,000 worth", which is a token amount
-     * only once something prices it — and the thing that priced it here has
-     * expired. Carrying the tested amount forward would be spending an expired
-     * quote as executable state, so it is not carried at all.
+     * anything is quoted.
+     *
+     * A SELL is "$1,000 worth", which is a token amount only once something
+     * prices it. When this board HAS priced it, that token amount travels as
+     * `observed_token_amount` — see `exactTokenAtomic` for why that is a size
+     * and not a price. When nothing has priced it, nothing is carried and the
+     * planner asks.
      */
-    sizeBasis: z.enum(['exact_cash_in', 'cash_equivalent_requires_replan']),
+    sizeBasis: z.enum([
+      'exact_cash_in',
+      'observed_token_amount',
+      'cash_equivalent_requires_replan',
+    ]),
+    /**
+     * The token quantity a SELL is for, when this board established one.
+     *
+     * This is the number the card was already showing: the exact amount tested
+     * against the routers for the cash size on screen. It is carried BECAUSE
+     * it is a size and not a price. Two different things were being conflated
+     * before, and only one of them is unsafe to carry:
+     *
+     *   * The quote's OUTPUT — what those tokens fetch — is a price with a
+     *     twenty-second life. It is never carried, and the advanced path
+     *     re-establishes it against fresh routes.
+     *   * The quote's INPUT — how many tokens the reader pointed at — is the
+     *     question's size. A price that moves changes what the sale returns,
+     *     which the re-plan shows before anything is signed; it does not
+     *     change how many tokens the reader meant.
+     *
+     * Refusing to carry it made the planner ask "what exact amount should be
+     * swapped?" — a question this screen had already answered, put to a reader
+     * who has no way to convert dollars into tokens by hand. Null when nothing
+     * priced this representation, and then the question is the honest outcome.
+     */
+    exactTokenAtomic: Digits.nullable().default(null),
+    /** Decimals for `exactTokenAtomic`. Travels with it: an atomic amount with
+     * no scale is not an amount. */
+    tokenDecimals: z.number().int().min(0).max(36).nullable().default(null),
+    /** When that amount was established. A size does not expire the way a
+     * price does, but the reader is still owed its age. */
+    sizeObservedAt: Timestamp.nullable().default(null),
     /** Literals, so a reader of the payload can check them rather than trust
      * a description of them. */
     createsApproval: z.literal(false),
@@ -120,11 +155,33 @@ export const StockExecutionHandoffV1Schema = z
         message: 'a BUY spends an exact cash amount',
       });
     }
-    if (row.direction === 'sell' && row.sizeBasis !== 'cash_equivalent_requires_replan') {
+    if (row.direction === 'buy' && row.exactTokenAtomic !== null) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['exactTokenAtomic'],
+        message: 'a BUY is sized in cash, so it carries no token amount',
+      });
+    }
+    if (
+      row.direction === 'sell' &&
+      row.sizeBasis !== (row.exactTokenAtomic === null ? 'cash_equivalent_requires_replan' : 'observed_token_amount')
+    ) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ['sizeBasis'],
-        message: 'a SELL of "cash worth" has no exact token amount until something prices it',
+        message:
+          'a SELL is sized by the token amount this board established, or by nothing at all — the basis must say which',
+      });
+    }
+    // An amount, its scale and its age are one fact. Any one of them alone
+    // would let a surface print a number with no scale, or a scale with no
+    // number, or an amount whose age nobody can state.
+    const sizeParts = [row.exactTokenAtomic, row.tokenDecimals, row.sizeObservedAt];
+    if (sizeParts.some((part) => part === null) && sizeParts.some((part) => part !== null)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['exactTokenAtomic'],
+        message: 'a carried token amount travels with its decimals and the instant it was established',
       });
     }
   });
@@ -195,6 +252,20 @@ export function stockExecutionHandoffV1(input: {
   if (approvedSources.length === 0) return refuseV1('route_policy_not_established');
 
   const direction = input.direction ?? response.question.direction;
+  // The token quantity this board established for the cash size on screen.
+  // Whichever side the board measured, the number means the same thing: how
+  // many tokens the reader's dollar figure comes to. On a BUY board it is what
+  // the cash buys; on a SELL board it is what was tested to return the cash.
+  // Only a SELL needs it — a BUY already knows its size in USDC atoms.
+  const tokenDecimals = representation.supply.decimals;
+  const carriedTokenAtomic =
+    direction === 'sell' &&
+    representation.exactTestedTokenAtomic !== null &&
+    tokenDecimals !== null &&
+    representation.observedAt !== null &&
+    BigInt(representation.exactTestedTokenAtomic) > 0n
+      ? representation.exactTestedTokenAtomic
+      : null;
   const expiresAt = representation.expiresAt;
   const evidenceState =
     expiresAt === null
@@ -225,9 +296,18 @@ export function stockExecutionHandoffV1(input: {
       quoteExpiresAt: expiresAt,
       // Follows the direction actually being prepared, never the board's. A
       // BUY spends an exact number of USDC atoms and is sized before anything
-      // quotes it; a SELL of "cash worth" has no token amount until something
-      // prices it, and the thing that priced it here expires in seconds.
-      sizeBasis: direction === 'buy' ? 'exact_cash_in' : 'cash_equivalent_requires_replan',
+      // quotes it. A SELL is sized by the token amount this board established,
+      // when it established one — the price it fetches is re-established by
+      // the advanced path and is never carried from here.
+      sizeBasis:
+        direction === 'buy'
+          ? 'exact_cash_in'
+          : carriedTokenAtomic === null
+            ? 'cash_equivalent_requires_replan'
+            : 'observed_token_amount',
+      exactTokenAtomic: carriedTokenAtomic,
+      tokenDecimals: carriedTokenAtomic === null ? null : tokenDecimals,
+      sizeObservedAt: carriedTokenAtomic === null ? null : representation.observedAt,
       createsApproval: false,
       createsCalldata: false,
       createsTransaction: false,
@@ -255,28 +335,73 @@ function usdLabelV1(atomic: string): string {
  * A BUY carries its amount, because a BUY spends an exact number of USDC atoms
  * and that is true before anything is quoted.
  *
- * A SELL carries NO amount. "$1,000 worth" is a token quantity only once
- * something prices it, and the thing that priced it on the Stocks card has a
- * twenty-second life. Writing the tested amount into this sentence would spend
- * an expired quote as executable state. The planner asking how much to sell is
- * the correct outcome, not a gap to paper over.
+ * A SELL carries the token amount this board established for the cash size on
+ * screen, when it established one. That is the question's SIZE, not its price:
+ * what those tokens fetch is re-established against fresh routes and never
+ * taken from here. Leaving it out made the planner ask "what exact amount
+ * should be swapped?" — a question this screen had already answered, put to a
+ * reader with no way to convert dollars into tokens by hand.
+ *
+ * A SELL of a representation nothing has priced still carries no amount, and
+ * the planner asking is then the honest outcome rather than a gap.
  */
 export function stockExecutionGoalSentenceV1(handoff: StockExecutionHandoffV1): string {
   const parsed = StockExecutionHandoffV1Schema.parse(handoff);
   if (parsed.direction === 'buy') {
     return `Swap ${usdLabelV1(parsed.requestedCashAtomic)} ${parsed.cashAddress} to ${parsed.tokenAddress} on Base`;
   }
-  return `Swap ${parsed.tokenAddress} to ${parsed.cashAddress} on Base`;
+  const amount = tokenLabelV1(parsed.exactTokenAtomic, parsed.tokenDecimals);
+  return amount === null
+    ? `Swap ${parsed.tokenAddress} to ${parsed.cashAddress} on Base`
+    : `Swap ${amount} ${parsed.tokenAddress} to ${parsed.cashAddress} on Base`;
 }
 
 /** What the reader is told about the size before they plan. Reader copy, so the
- * SELL case names the reason rather than leaving an amount silently missing. */
+ * SELL case names where its number came from rather than presenting a carried
+ * amount as something freshly true. */
 export function stockExecutionSizeNoteV1(handoff: StockExecutionHandoffV1): string {
   const parsed = StockExecutionHandoffV1Schema.parse(handoff);
-  const usd = usdLabelV1(parsed.requestedCashAtomic);
-  return parsed.direction === 'buy'
-    ? `Spending exactly $${usd} of USDC. That amount is exact before anything is quoted.`
-    : `You were looking at $${usd} worth. A sale needs a token amount, and the quote that converted one has expired — the route step establishes it fresh.`;
+  return stockSizeNoteV1({
+    direction: parsed.direction,
+    requestedCashAtomic: parsed.requestedCashAtomic,
+    exactTokenAtomic: parsed.exactTokenAtomic,
+    tokenDecimals: parsed.tokenDecimals,
+  });
+}
+
+/**
+ * The same sentence, from the parts a screen already holds.
+ *
+ * The Stocks card says this BEFORE the button is pressed and the prepare step
+ * says it after, and a sentence about what a sale is sized by is exactly the
+ * kind that drifts when it is written out twice.
+ */
+export function stockSizeNoteV1(input: {
+  direction: 'buy' | 'sell';
+  requestedCashAtomic: string;
+  exactTokenAtomic?: string | null;
+  tokenDecimals?: number | null;
+}): string {
+  const usd = usdLabelV1(input.requestedCashAtomic);
+  if (input.direction === 'buy') {
+    return `Spending exactly $${usd} of USDC. That amount is exact before anything is quoted.`;
+  }
+  const amount = tokenLabelV1(input.exactTokenAtomic ?? null, input.tokenDecimals ?? null);
+  return amount === null
+    ? `Nothing has priced this representation at $${usd}, so there is no token amount to sell yet. The prepare step asks for one.`
+    : `Selling ${amount} tokens — the amount $${usd} came to when this was last measured. What that fetches is priced again on fresh routes; the amount is what you chose.`;
+}
+
+/** An atomic amount as a decimal string, or null when either half is missing.
+ * Exact — never rounded, because a rounded size is a different size. */
+export function tokenLabelV1(atomic: string | null, decimals: number | null): string | null {
+  if (atomic === null || decimals === null) return null;
+  if (decimals === 0) return atomic;
+  const scale = 10n ** BigInt(decimals);
+  const value = BigInt(atomic);
+  const whole = value / scale;
+  const fraction = (value % scale).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return fraction === '' ? whole.toString() : `${whole}.${fraction}`;
 }
 
 // ---------------------------------------------------------------------------

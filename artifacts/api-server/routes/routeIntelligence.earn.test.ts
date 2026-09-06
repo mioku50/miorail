@@ -251,8 +251,25 @@ describe('POST /api/route-intelligence/earn/compare', () => {
     };
     const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
     assert.equal(response.status, 500);
-    assert.deepEqual(response.body, { error: 'earn_compare_failed', code: 'earn_compare_failed' });
+    assert.equal(response.body.error, 'earn_compare_failed');
+    assert.equal(response.body.code, 'earn_compare_failed');
     assert.equal(JSON.stringify(response.body).includes('secret detail'), false);
+    assert.match(response.body.detail, /Nothing here is a finding about this pair/);
+  });
+
+  // The earn comparison reads its goal with the same language model, so its
+  // failure must not read as a verdict on the lending market either.
+  test('a language-model failure is named as ours, not as the lending market’s', async () => {
+    const llm = new Error('OpenAI API error (429): Rate limit exceeded');
+    llm.name = 'LlmHttpError';
+    earnCompareRouteRuntime.compare = async () => {
+      throw llm;
+    };
+    const response = await request(routeApp()).post('/api/route-intelligence/earn/compare').send(BODY);
+    assert.equal(response.status, 503);
+    assert.equal(response.body.code, 'route_planner_unavailable');
+    assert.match(response.body.detail, /language model did not answer/);
+    assert.equal(JSON.stringify(response.body).includes('429'), false);
   });
 
   test('end-to-end through the REAL offline seam produces a schema-valid Earn Route Card', async () => {

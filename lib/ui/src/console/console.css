@@ -424,6 +424,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .latbar { height: 3px; border-radius: 3px; background: var(--track-bg); overflow: hidden; }
 .mio-console .latbar span { display: block; height: 100%; background: var(--grad); }
 .mio-console .lsteps li.pending .lb { color: var(--dim); }
+/* A stage the run never entered. Dimmed like pending, but marked with a dash
+   rather than a dot: pending means "still to come", and this one never will. */
+.mio-console .lsteps li.skipped .lb { color: var(--dim); }
+.mio-console .skip { width: 13px; height: 13px; display: inline-flex; align-items: center;
+  justify-content: center; color: var(--faint); font-size: 12px; line-height: 1; }
 
 .mio-console .call { display: flex; gap: 12px; padding: 13px 0; border-bottom: 1px solid var(--line); }
 .mio-console .call:last-child { border-bottom: 0; }
@@ -1659,6 +1664,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   color: var(--br-text); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .mio-console .mr-inspect-link:hover { color: var(--blue); }
 .mio-console .mr-inspect-off { color: var(--faint); }
+
+/* What the prepare step will be sized by, on the sell side only. Quiet: it is
+   a statement about the size the reader already chose, not a warning. */
+.mio-console .mr-prepare-size { margin: 6px 0 0; font-size: 11.5px; line-height: 1.5;
+  color: var(--muted); }
 
 /* Who issued this. Sits under the board, only when a Prepare action is on it —
    the one place a reader could otherwise take Base's name for the issuer's.

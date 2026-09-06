@@ -52,6 +52,8 @@ import {
   UpdateIntelligenceBudgetRequestV1Schema,
 } from '@mioagent/api-zod';
 import { createStructuredLlmProvider } from '@mioagent/llm';
+
+import { routePlanFaultV1 } from '../lib/routePlanFault.js';
 import { createSwapRouteEngine } from '@mioagent/route-engine';
 import { createChainTokenIdentityReaderV1 } from '@mioagent/intent-core';
 import {
@@ -521,12 +523,21 @@ routeIntelligenceRouter.post('/swap/evaluate', async (req, res) => {
     // router whose key had run out of credits answered 500 here for a week,
     // and neither side of the wire said why. Provider messages are redacted by
     // the client that produced them, so a key cannot reach this log.
+    // Whose failure it was decides what the reader is told. Our language model
+    // answering 429 and the market having no route are drawn identically by
+    // the console — every adapter "not reached", zero sources — and only one
+    // of them is a fact about this token. See `routePlanFault.ts`.
+    const fault = routePlanFaultV1(error, {
+      planner: 'route_planner_unavailable',
+      server: 'route_plan_evaluation_failed',
+    });
     logger.error('Route plan evaluation failed', {
       error: error instanceof Error ? error.message : String(error),
       stack: error instanceof Error ? error.stack : undefined,
       wallet: user.address,
+      fault: fault.stage,
     });
-    res.status(500).json({ error: 'route_plan_evaluation_failed', code: 'route_plan_evaluation_failed' });
+    res.status(fault.status).json({ error: fault.code, code: fault.code, detail: fault.detail });
   }
 });
 
@@ -658,8 +669,15 @@ routeIntelligenceRouter.post('/earn/compare', async (req, res) => {
       }),
     );
   } catch (cause) {
-    logger.error('Earn compare failed', safeFailureMetaV1(cause));
-    res.status(500).json({ error: 'earn_compare_failed', code: 'earn_compare_failed' });
+    // Same lane, same rule: the earn comparison reads a goal with the same
+    // language model, and its failure must not read as a verdict on the
+    // lending market either.
+    const fault = routePlanFaultV1(cause, {
+      planner: 'route_planner_unavailable',
+      server: 'earn_compare_failed',
+    });
+    logger.error('Earn compare failed', { ...safeFailureMetaV1(cause), fault: fault.stage });
+    res.status(fault.status).json({ error: fault.code, code: fault.code, detail: fault.detail });
   }
 });
 

@@ -201,8 +201,28 @@ describe('POST /api/route-intelligence/swap/evaluate', () => {
       message: 'Swap 100 USDC to ETH', walletAddress: WALLET, requestId: 'storage-1',
     });
     assert.equal(failed.status, 500);
-    assert.deepEqual(failed.body, { error: 'route_plan_evaluation_failed', code: 'route_plan_evaluation_failed' });
+    assert.equal(failed.body.error, 'route_plan_evaluation_failed');
+    assert.equal(failed.body.code, 'route_plan_evaluation_failed');
     assert.equal(JSON.stringify(failed.body).includes('storage failed'), false);
+    // The detail is a constant written for a reader. It names no provider and
+    // states no finding about the market — a code alone was drawn by the
+    // console as every venue asked and empty.
+    assert.match(failed.body.detail, /Nothing here is a finding about this pair/);
+
+    // 2026-09-06: our own language model answered 429 with a ZERO allowance,
+    // and this endpoint reported it with the same code as a market that had
+    // nothing. Our failure gets its own code and asks to be retried.
+    const llm = new Error('OpenAI API error (429): Rate limit exceeded');
+    llm.name = 'LlmHttpError';
+    routePlanRouteRuntime.coordinate = async () => { throw llm; };
+    const planner = await request(routeApp()).post('/api/route-intelligence/swap/evaluate').send({
+      message: 'Swap 100 USDC to ETH', walletAddress: WALLET, requestId: 'planner-1',
+    });
+    assert.equal(planner.status, 503);
+    assert.equal(planner.body.code, 'route_planner_unavailable');
+    assert.match(planner.body.detail, /language model did not answer/);
+    // A provider's own message can carry a host, a model or an upstream body.
+    assert.equal(JSON.stringify(planner.body).includes('429'), false);
   });
 });
 

@@ -415,27 +415,94 @@ describe('Phase 13.1 — Stocks to advanced execution', () => {
     }
   });
 
-  // §11.6 — a SELL cannot borrow the expired quote's token amount.
-  test('a SELL carries no token amount, and the sentence names none', () => {
-    const sell = ready({
-      question: {
-        chainId: 8453,
-        underlyingKey: UNDERLYING,
-        direction: 'sell',
-        requestedCashAtomic: '1000000000',
-        cashAsset: 'USDC',
-        cashAddress: HANDOFF_CASH_ADDRESS_V1,
-        cashDecimals: 6,
-        destination: 'USDC',
-        exactSizeOnly: true,
-        baseOnly: true,
-      },
-    });
+  const SELL_QUESTION = {
+    chainId: 8453,
+    underlyingKey: UNDERLYING,
+    direction: 'sell' as const,
+    requestedCashAtomic: '1000000000',
+    cashAsset: 'USDC' as const,
+    cashAddress: HANDOFF_CASH_ADDRESS_V1,
+    cashDecimals: 6,
+    destination: 'USDC' as const,
+    exactSizeOnly: true,
+    baseOnly: true,
+  };
+
+  // §11.6 — a SELL nothing has priced still carries no token amount, and the
+  // planner asking is then the honest outcome.
+  test('a SELL nothing priced carries no token amount, and the sentence names none', () => {
+    const sell = ready({ question: SELL_QUESTION });
     assert.equal(sell.sizeBasis, 'cash_equivalent_requires_replan');
+    assert.equal(sell.exactTokenAtomic, null);
+    assert.equal(sell.tokenDecimals, null);
+    assert.equal(sell.sizeObservedAt, null);
     const sentence = stockExecutionGoalSentenceV1(sell);
     assert.equal(sentence, `Swap ${COINBASE} to ${HANDOFF_CASH_ADDRESS_V1} on Base`);
     assert.doesNotMatch(sentence, /1000|worth/);
-    assert.match(stockExecutionSizeNoteV1(sell), /expired/);
+    assert.match(stockExecutionSizeNoteV1(sell), /no token amount to sell yet/);
+  });
+
+  // The defect this replaces: the planner answered `amount_required` — "what
+  // exact amount should be swapped?" — to a reader whose screen had already
+  // established the number, and who cannot convert dollars into tokens by hand.
+  test('a SELL carries the token amount this board established', () => {
+    const sell = ready({
+      question: SELL_QUESTION,
+      representations: [
+        representation({
+          exactTestedTokenAtomic: '3114520000000000000',
+          observedAt: '2026-08-29T11:59:50.000Z',
+          expiresAt: '2026-08-29T12:00:10.000Z',
+        }),
+      ],
+    });
+    assert.equal(sell.sizeBasis, 'observed_token_amount');
+    assert.equal(sell.exactTokenAtomic, '3114520000000000000');
+    assert.equal(sell.tokenDecimals, 18);
+    assert.equal(sell.sizeObservedAt, '2026-08-29T11:59:50.000Z');
+    assert.equal(
+      stockExecutionGoalSentenceV1(sell),
+      `Swap 3.11452 ${COINBASE} to ${HANDOFF_CASH_ADDRESS_V1} on Base`,
+    );
+    // The SIZE travels; the PRICE does not. What those tokens fetch is
+    // re-established against fresh routes, and the sentence never states it.
+    assert.doesNotMatch(stockExecutionGoalSentenceV1(sell), /\$|worth|USD/);
+    assert.match(stockExecutionSizeNoteV1(sell), /Selling 3\.11452 tokens/);
+    assert.match(stockExecutionSizeNoteV1(sell), /priced again on fresh routes/);
+  });
+
+  test('a BUY is sized in cash and may not carry a token amount', () => {
+    assert.equal(ready().exactTokenAtomic, null);
+    assert.equal(
+      StockExecutionHandoffV1Schema.safeParse({
+        ...ready(),
+        exactTokenAtomic: '1',
+        tokenDecimals: 18,
+        sizeObservedAt: '2026-08-29T11:59:50.000Z',
+      }).success,
+      false,
+      'a BUY carrying a token amount must be refused',
+    );
+  });
+
+  test('a carried amount travels with its decimals and its instant', () => {
+    const sell = ready({
+      question: SELL_QUESTION,
+      representations: [
+        representation({
+          exactTestedTokenAtomic: '3114520000000000000',
+          observedAt: '2026-08-29T11:59:50.000Z',
+          expiresAt: '2026-08-29T12:00:10.000Z',
+        }),
+      ],
+    });
+    for (const half of ['tokenDecimals', 'sizeObservedAt'] as const) {
+      assert.equal(
+        StockExecutionHandoffV1Schema.safeParse({ ...sell, [half]: null }).success,
+        false,
+        `${half} must travel with the amount`,
+      );
+    }
   });
 
   test('a BUY spends an exact cash amount, and the sentence carries it', () => {

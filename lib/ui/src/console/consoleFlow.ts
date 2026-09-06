@@ -631,7 +631,13 @@ function gatedAdaptersV1(status: ConsoleServerStatusV1 | null): AdapterStateSour
 
 export interface ComparingProgressStepV1 {
   label: string;
-  state: 'done' | 'running' | 'pending' | 'failed';
+  /**
+   * `skipped` is the one that had to be added: a stage the run never entered
+   * because it ended first. `pending` reads as "still to come" and `failed`
+   * reads as "we tried" — and on a venue row, "we tried" is a claim about the
+   * market that a failure of OURS is not entitled to make.
+   */
+  state: 'done' | 'running' | 'pending' | 'failed' | 'skipped';
   value: string;
   latencyPercent: number;
 }
@@ -651,6 +657,25 @@ const FAMILY_STAGE_LABELS_V1: Record<RouteFamilyV1, FamilyStageLabelsV1> = {
   unknown: { adapter: (name) => `${name} quote`, evidence: 'Evidence collected', scoring: 'Scoring against your goal' },
 };
 
+/**
+ * WHERE a finished run stopped, which decides what every later row may claim.
+ *
+ * The defect this replaces: every terminal reason drew the same picture —
+ * intent extraction failed, each adapter "failed / not reached", zero sources.
+ * That is the picture of a market that was asked and had nothing. It was drawn
+ * on 2026-09-06 while the market was fine and OUR language model was returning
+ * 429, and two readers took it to mean the pair could not be routed on Base.
+ *
+ *   * `planner` — our own lane did not answer. The goal was never read, so
+ *     nothing downstream happened and nothing here is about the market.
+ *   * `intent`  — the goal WAS read and the run stopped on its own terms: a
+ *     question we need answered, or a pair this product does not support. No
+ *     venue was asked either, but extraction worked and must not read failed.
+ *   * `market`  — the venues were asked and produced no usable route. The only
+ *     stage where "not reached" is a true thing to print.
+ */
+export type ComparingTerminalStageV1 = 'planner' | 'intent' | 'market';
+
 export interface ComparingProgressInputV1 {
   family: RouteFamilyV1;
   adapters: readonly { name: string; label: string; live: boolean; usable: boolean }[];
@@ -663,6 +688,9 @@ export interface ComparingProgressInputV1 {
   /** Non-null once the run is over WITHOUT a route card: needs_clarification,
    * unsupported, a blocked gate, or a transport error. */
   terminalReason: string | null;
+  /** Where it stopped. Defaults to `intent`, the conservative reading: a run
+   * that ended without saying where it ended cannot claim the market answered. */
+  terminalStage?: ComparingTerminalStageV1;
   /** Null until evidence has actually been collected. */
   evidenceCount: number | null;
   scored: boolean;
@@ -679,10 +707,21 @@ export interface ComparingProgressInputV1 {
 export function comparingProgressV1(input: ComparingProgressInputV1): ComparingProgressStepV1[] {
   const labels = FAMILY_STAGE_LABELS_V1[input.family];
   const terminal = input.terminalReason !== null;
+  const stage = input.terminalStage ?? 'intent';
+  // Whether the venues were actually called. Only then may a row about them
+  // say anything at all about the market.
+  const marketWasAsked = !terminal || stage === 'market';
   const familyAdapters = input.adapters.filter((adapter) => ADAPTER_FAMILY_V1[adapter.name] === input.family);
 
   const rows: ComparingProgressStepV1[] = [
-    { label: 'Intent extraction', state: terminal ? 'failed' : 'done', value: input.family, latencyPercent: 8 },
+    {
+      label: 'Intent extraction',
+      // Only OUR lane failing makes this stage a failure. A question we asked
+      // and a pair we do not support are both extraction working correctly.
+      state: terminal && stage === 'planner' ? 'failed' : 'done',
+      value: terminal && stage === 'planner' ? 'planner unavailable' : input.family,
+      latencyPercent: 8,
+    },
   ];
 
   for (const adapter of familyAdapters) {
@@ -700,6 +739,13 @@ export function comparingProgressV1(input: ComparingProgressInputV1): ComparingP
       rows.push({ label: labels.adapter(adapter.name), state: 'failed', value: adapter.label, latencyPercent: 0 });
       continue;
     }
+    if (terminal && !marketWasAsked) {
+      // The run ended before this venue was called. "Not reached" says we
+      // tried; a red row says the attempt failed. Neither happened, and this
+      // is the row a reader reads as "no route on Base".
+      rows.push({ label: labels.adapter(adapter.name), state: 'skipped', value: 'not asked', latencyPercent: 0 });
+      continue;
+    }
     rows.push({
       label: labels.adapter(adapter.name),
       // A finished run that produced nothing means this adapter was never
@@ -712,17 +758,56 @@ export function comparingProgressV1(input: ComparingProgressInputV1): ComparingP
 
   rows.push({
     label: labels.evidence,
-    state: input.evidenceCount !== null ? 'done' : terminal ? 'failed' : 'pending',
+    state:
+      input.evidenceCount !== null
+        ? 'done'
+        : terminal
+          ? marketWasAsked
+            ? 'failed'
+            : 'skipped'
+          : 'pending',
     value: input.evidenceCount !== null ? `${input.evidenceCount} source${input.evidenceCount === 1 ? '' : 's'}` : '',
     latencyPercent: input.evidenceCount !== null ? 18 : 0,
   });
   rows.push({
     label: labels.scoring,
-    state: input.scored ? 'done' : terminal ? 'failed' : 'pending',
+    state: input.scored ? 'done' : terminal ? (marketWasAsked ? 'failed' : 'skipped') : 'pending',
     value: '',
     latencyPercent: 0,
   });
   return rows;
+}
+
+/**
+ * The terminal card for a comparison that threw on the wire.
+ *
+ * The server names the fault now — `route_planner_unavailable` when its own
+ * language model did not answer — and `fetchApi` puts `${code}: ${detail}` in
+ * the error message. Reading the code back out here is what lets the screen
+ * say whose failure it was instead of printing a bare identifier over a rail
+ * that has already drawn the market as empty.
+ */
+export const ROUTE_PLANNER_UNAVAILABLE_CODE_V1 = 'route_planner_unavailable';
+
+export function comparingTransportFailureV1(error: { message: string } | null | undefined): {
+  title: string;
+  detail: string;
+  stage: ComparingTerminalStageV1;
+  canCompareAgain: boolean;
+} | null {
+  if (!error) return null;
+  const ours = error.message.startsWith(ROUTE_PLANNER_UNAVAILABLE_CODE_V1);
+  // The server's detail follows the code and a colon. It is written for a
+  // reader; the code in front of it is not.
+  const detail = ours
+    ? error.message.slice(ROUTE_PLANNER_UNAVAILABLE_CODE_V1.length + 1).trim()
+    : `${error.message} Nothing was signed or spent.`;
+  return ours
+    ? { title: 'Miorail could not read your goal', detail, stage: 'planner', canCompareAgain: true }
+    : // A failure we could not classify says nothing about the venues, so it
+      // takes the conservative stage. Claiming the market answered is the one
+      // thing an unknown failure must never do.
+      { title: 'The comparison could not be completed', detail, stage: 'intent', canCompareAgain: true };
 }
 
 /** What a finished run says when it produced no route card. */

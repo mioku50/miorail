@@ -11,6 +11,7 @@ import {
   completeStageV1,
   commerceCheckoutAvailableV1,
   comparingProgressV1,
+  comparingTransportFailureV1,
   coverageFromStatusV1,
   deriveStageTimingsV1,
   dispatchRouteFamilyV1,
@@ -428,13 +429,103 @@ describe('Comparing is route-family aware and terminal', () => {
       adapters: ALL_ADAPTERS,
       answered: [],
       terminalReason: 'Say the card value, for example “$5”.',
+      terminalStage: 'market',
       evidenceCount: null,
       scored: false,
     });
     assert.equal(rows.some((row) => row.state === 'running'), false, 'nothing may keep spinning after the run ends');
     assert.equal(rows.some((row) => row.state === 'pending'), false, 'nothing may stay pending after the run ends');
-    assert.equal(rows.every((row) => row.state === 'failed'), true);
+    // Extraction is `done`: the market WAS asked, which means the goal was
+    // read. Every stage after it failed.
+    assert.equal(rows.find((row) => row.label === 'Intent extraction')?.state, 'done');
+    assert.equal(
+      rows.filter((row) => row.label !== 'Intent extraction').every((row) => row.state === 'failed'),
+      true,
+    );
     assert.equal(rows.find((row) => row.label === 'Bitrefill catalogue')?.value, 'not reached');
+  });
+
+  // 2026-09-06. Our own language model answered 429 with a ZERO allowance, so
+  // no goal was ever read into an intent and no venue was called — and this
+  // rail drew every adapter "failed / not reached" with 0 sources, which two
+  // readers took to mean the pair could not be routed on Base.
+  test('a planner outage never draws the market as asked and empty', () => {
+    const rows = comparingProgressV1({
+      family: 'swap',
+      adapters: [
+        { name: 'Uniswap', label: 'live', live: true, usable: true },
+        { name: 'KyberSwap', label: 'live', live: true, usable: true },
+      ],
+      answered: [],
+      terminalReason: 'Miorail’s own language model did not answer.',
+      terminalStage: 'planner',
+      evidenceCount: null,
+      scored: false,
+    });
+    const intent = rows.find((row) => row.label === 'Intent extraction')!;
+    assert.equal(intent.state, 'failed', 'the stage that actually failed is ours');
+    assert.equal(intent.value, 'planner unavailable');
+    for (const label of ['Uniswap quote', 'KyberSwap quote']) {
+      const row = rows.find((item) => item.label === label)!;
+      assert.equal(row.state, 'skipped', `${label} was never called`);
+      assert.equal(row.value, 'not asked');
+      assert.notEqual(row.value, 'not reached', 'not reached claims we tried');
+    }
+    // Nothing may still read as working, and nothing may read as a finding.
+    assert.equal(rows.some((row) => row.state === 'running' || row.state === 'pending'), false);
+    assert.equal(
+      rows.filter((row) => row.state === 'failed').length,
+      1,
+      'exactly one stage failed, and it was ours',
+    );
+  });
+
+  // A question we asked and a pair we do not support are extraction WORKING.
+  // Marking that stage failed was a second small lie in the same rail.
+  test('a question the server asked leaves extraction done and the venues unasked', () => {
+    const rows = comparingProgressV1({
+      family: 'swap',
+      adapters: [{ name: 'Uniswap', label: 'live', live: true, usable: true }],
+      answered: [],
+      terminalReason: 'What exact amount should be swapped?',
+      terminalStage: 'intent',
+      evidenceCount: null,
+      scored: false,
+    });
+    const intent = rows.find((row) => row.label === 'Intent extraction')!;
+    assert.equal(intent.state, 'done');
+    assert.equal(intent.value, 'swap');
+    assert.equal(rows.find((row) => row.label === 'Uniswap quote')?.state, 'skipped');
+    assert.equal(rows.some((row) => row.state === 'failed'), false, 'nothing failed — we asked a question');
+  });
+
+  test('the server’s own fault code becomes a card that names us', () => {
+    const ours = comparingTransportFailureV1({
+      message:
+        'route_planner_unavailable: Miorail’s own language model did not answer, so your goal was never read.',
+    })!;
+    assert.equal(ours.stage, 'planner');
+    assert.equal(ours.title, 'Miorail could not read your goal');
+    // The code is an identifier for an operator, not a sentence for a reader.
+    assert.doesNotMatch(ours.detail, /route_planner_unavailable/);
+    assert.match(ours.detail, /language model did not answer/);
+
+    const unknown = comparingTransportFailureV1({ message: 'API error: 502 Bad Gateway' })!;
+    assert.equal(unknown.stage, 'intent', 'an unclassified failure claims nothing about the venues');
+    assert.match(unknown.detail, /Nothing was signed or spent\./);
+    assert.equal(comparingTransportFailureV1(null), null);
+  });
+
+  test('an unstated stage never claims the market answered', () => {
+    const rows = comparingProgressV1({
+      family: 'swap',
+      adapters: [{ name: 'Uniswap', label: 'live', live: true, usable: true }],
+      answered: [],
+      terminalReason: 'something went wrong',
+      evidenceCount: null,
+      scored: false,
+    });
+    assert.equal(rows.find((row) => row.label === 'Uniswap quote')?.value, 'not asked');
   });
 
   test('a catalogue that answered with no match is never shown as not reached', () => {
@@ -548,9 +639,10 @@ describe('a swap that the server answered with a question is terminal', () => {
       evidenceCount: null,
       scored: false,
     });
-    // Every row is resolved. Not one of them may still read as running.
+    // Every row is resolved. Not one of them may still read as running or as
+    // waiting — `skipped` is resolved: the run ended before that stage.
     assert.equal(rows.some((row) => row.state === 'running'), false, JSON.stringify(rows));
-    assert.ok(rows.every((row) => row.state === 'failed' || row.state === 'done'));
+    assert.ok(rows.every((row) => ['failed', 'done', 'skipped'].includes(row.state)));
   });
 });
 

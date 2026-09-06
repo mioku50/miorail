@@ -14,6 +14,8 @@ import {
   type VenueAnnouncementReadingV1,
 } from '@mioagent/rwa-issuer/venueAnnouncements';
 
+import { stockSizeNoteV1 } from '@mioagent/rwa-market-reality/execution-handoff';
+
 import { formatAtomicAmount } from '../formatAtomicAmount';
 // One vocabulary across the RWA surfaces. A second FactViewV1 with the same
 // four fields would let the two views drift into different meanings for the
@@ -356,6 +358,15 @@ export interface RepresentationViewV1 {
   /** The issuer's own restrictions, on the card rather than behind Terms.
    * Never a statement about this wallet. */
   accessNotices: AccessNoticeViewV1[];
+  /**
+   * What size the prepare step will be working with, said before it is pressed.
+   *
+   * A BUY spends an exact number of USDC atoms and there is no surprise to
+   * warn about; only the SELL side gets a line, because a sale is sized in
+   * TOKENS and the reader is looking at dollars. Null when the board is not
+   * asking a sell question — the note belongs to the action, not the card.
+   */
+  prepareSellSizeNote: string | null;
   /** History, labelled as history. Null when nobody has ever measured. */
   lastSeen: { label: string; value: string; note: string } | null;
   tokenAddress: string;
@@ -3275,6 +3286,14 @@ export function marketRealityViewV1(input: {
         // measure, and saying WHEN we established that is still the answer.
         clocks: clocksV1(representation, input.now),
         accessNotices: accessNoticesV1(representation.issuerId),
+        // Written from the SAME parts the handoff carries, so the sentence on
+        // the card and the sentence in the prepare step cannot drift apart.
+        prepareSellSizeNote: stockSizeNoteV1({
+          direction: 'sell',
+          requestedCashAtomic: wire.question.requestedCashAtomic,
+          exactTokenAtomic: representation.exactTestedTokenAtomic,
+          tokenDecimals: representation.supply.decimals,
+        }),
         lastSeen: outcome === 'zero_supply' ? null : lastSeenV1(representation, input.now),
         openQuote:
           outcome === 'zero_supply'

@@ -23,6 +23,7 @@ import {
   ageLabelV1,
   chainLabelV1,
   comparingProgressV1,
+  comparingTransportFailureV1,
   completeStageV1,
   consoleFailureCopyV1,
   chainBlockNumberV1,
@@ -861,12 +862,11 @@ export function RouteIntelligenceConsole() {
       commerceCompare.error ??
       nftCompare.error ??
       aiCompare.error) as Error | null;
-  const transportFailure = transportError
-    ? {
-        title: 'The comparison could not be completed',
-        detail: `${transportError.message} Nothing was signed or spent.`,
-      }
-    : null;
+  // Whose failure it was. Our own language model answering 429 and the market
+  // having nothing to offer used to render identically — every adapter
+  // "not reached", zero sources — so a provider outage read as a verdict about
+  // the token. The server names its own fault now; this reads it back.
+  const transportFailure = comparingTransportFailureV1(transportError);
   // A run that produced a route card is not a failure, whatever the current
   // goal text now dispatches to. An NFT card counts: `unavailable` still names
   // the token and says why there is nothing to buy.
@@ -1106,6 +1106,10 @@ export function RouteIntelligenceConsole() {
           answered,
           answeredDetails,
           terminalReason: comparingFailure?.detail ?? null,
+          // Where it stopped decides what the venue rows may claim. Nothing
+          // that ends here has asked a venue: a clarification, an unsupported
+          // pair and a planner outage all stop before the first quote call.
+          terminalStage: transportFailure?.stage ?? 'intent',
           evidenceCount: projection ? evidenceRows.length : null,
           scored: Boolean(projection?.pathScore),
         })}

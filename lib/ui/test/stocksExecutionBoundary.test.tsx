@@ -42,6 +42,18 @@ describe('Phase 17.4 — the primary action is prepare, and it is still only pre
     }
   });
 
+  // The prepare step used to open on "what exact amount should be swapped?" —
+  // a question this card had already answered, put to a reader looking at
+  // dollars who cannot convert them into tokens by hand.
+  test('the sell side says what it will be sized by, before it is pressed', () => {
+    assert.match(screen, /prepareSellSizeNote/);
+    assert.match(screen, /direction === 'sell' && representation\.prepareSellSizeNote/);
+    // Only the sell side. A buy spends an exact number of USDC atoms and has
+    // no surprise to warn about; a line on both would be noise on one of them.
+    const buyNote = screen.match(/direction === 'buy'[^\n]*prepareSellSizeNote/);
+    assert.equal(buyNote, null, 'the buy side must not carry the sell note');
+  });
+
   test('the route inspector is kept, demoted, and its refusal is still stated', () => {
     // Nothing is removed: a reader who wants the candidate list rather than a
     // plan still has it, and a refusal is a sentence rather than a dead chip.

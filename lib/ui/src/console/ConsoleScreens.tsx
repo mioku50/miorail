@@ -329,7 +329,8 @@ export function RouteScreen(model: RouteScreenModelV1) {
 
 export interface ComparingStepV1 {
   label: string;
-  state: 'done' | 'running' | 'pending' | 'failed';
+  /** See `ComparingProgressStepV1` for why `skipped` exists. */
+  state: 'done' | 'running' | 'pending' | 'failed' | 'skipped';
   value: string;
   latencyPercent: number;
 }
@@ -483,7 +484,12 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
         <div className="pb">
           <ul className="lsteps">
             {model.progress.map((step) => (
-              <li key={step.label} className={step.state === 'pending' ? 'pending' : undefined}>
+              <li
+                key={step.label}
+                className={
+                  step.state === 'pending' ? 'pending' : step.state === 'skipped' ? 'skipped' : undefined
+                }
+              >
                 <span className="mk">
                   {step.state === 'done' ? (
                     <span className="ok">✓</span>
@@ -491,6 +497,12 @@ export function ComparingScreen(model: ComparingScreenModelV1) {
                     <span className="spin" />
                   ) : step.state === 'failed' ? (
                     <span className="fail">!</span>
+                  ) : step.state === 'skipped' ? (
+                    /* Not a spinner, not a cross. The run ended before this
+                       stage, so it neither ran nor failed — and a cross here
+                       is what made a provider outage read as a market with no
+                       route. */
+                    <span className="skip">–</span>
                   ) : (
                     <span className="pend" />
                   )}

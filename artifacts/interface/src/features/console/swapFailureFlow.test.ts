@@ -87,6 +87,19 @@ describe('a failed swap comparison is reported, not navigated away from', () => 
   test('the failure names the server, and says nothing was spent', () => {
     // "The server did not answer" gave the operator nothing to act on. The
     // server's own code — route_plan_evaluation_failed — points at one log line.
-    assert.match(source, /\$\{transportError\.message\} Nothing was signed or spent\./);
+    // The sentence moved into `comparingTransportFailureV1`, which also reads
+    // the code back so a failure of OURS can be named as ours.
+    assert.match(source, /comparingTransportFailureV1\(transportError\)/);
+  });
+
+  // 2026-09-06 — our own language model answered 429 and this rail drew every
+  // adapter "not reached" with 0 sources, which reads as a market with no
+  // route. Where the run stopped now decides what the venue rows may claim.
+  test('a planner outage is not drawn as a market that was asked', () => {
+    assert.match(
+      source,
+      /terminalStage: transportFailure\?\.stage \?\? 'intent'/,
+      'the stage must reach the rail, and default to claiming nothing',
+    );
   });
 });
