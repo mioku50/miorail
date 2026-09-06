@@ -47,11 +47,11 @@ describe('Phase 17.4 — the primary action is prepare, and it is still only pre
   // dollars who cannot convert them into tokens by hand.
   test('the sell side says what it will be sized by, before it is pressed', () => {
     assert.match(screen, /prepareSellSizeNote/);
-    assert.match(screen, /direction === 'sell' && representation\.prepareSellSizeNote/);
-    // Only the sell side. A buy spends an exact number of USDC atoms and has
-    // no surprise to warn about; a line on both would be noise on one of them.
-    const buyNote = screen.match(/direction === 'buy'[^\n]*prepareSellSizeNote/);
-    assert.equal(buyNote, null, 'the buy side must not carry the sell note');
+    // It belongs to the SELL BUTTON, not to the board's direction: both
+    // buttons sit on every card, so a reader on a buy board pressing sell is
+    // exactly the one who would otherwise never see it.
+    assert.doesNotMatch(screen, /direction === 'sell' && representation\.prepareSellSizeNote/);
+    assert.match(screen, /!inspectRouteUnavailable && representation\.prepareSellSizeNote/);
   });
 
   test('the route inspector is kept, demoted, and its refusal is still stated', () => {

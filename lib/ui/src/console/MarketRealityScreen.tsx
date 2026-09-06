@@ -400,7 +400,6 @@ function RepresentationCard({
   useAccessLoading,
   inspectRouteUnavailable,
   poolSpot,
-  direction,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
@@ -417,9 +416,6 @@ function RepresentationCard({
   /** The routed-through pool's OWN price, when one was read. Null is ordinary:
    * no venue named, no reading taken, or the read did not complete. */
   poolSpot: PoolSpotViewV1 | null;
-  /** Which way the page is currently asking. Sets which prepare button is the
-   * filled one — see the comment on the pair below. */
-  direction: MarketRealityDirectionV1;
 }) {
   if (surface === 'utility') {
     const sections = useSectionsV1({
@@ -900,13 +896,19 @@ function RepresentationCard({
           ) : null}
           {actions.onInvestigate ? (
             /* The deepest reading on the product for this exact address, and
-               it sat in the same grey as Remove. It carries the accent in its
-               text and edge rather than a third filled button: a row of three
-               equally loud accents has no hierarchy left, and this is not the
-               action the card is about. */
+               the one thing in this row that is a READING rather than a move.
+               It gets the accent filled.
+               The previous arrangement gave the fill to whichever prepare
+               button matched the board's toggle, which cost twice. Investigate
+               and `Prepare buy` came out identical — same accent, same
+               outline, no way to tell a reading from an action — and the
+               loudest thing on a card that withholds ranking was a side. Which
+               way the board is asking is already stated by the Sell/Buy toggle
+               above it; spending the fill on saying it again is what left this
+               row with no hierarchy at all. */
             <button
               type="button"
-              className="btn sec accent"
+              className="btn"
               onClick={() => actions.onInvestigate!(representation.tokenAddress)}
             >
               Investigate
@@ -926,22 +928,23 @@ function RepresentationCard({
               prepare step, which re-plans against fresh routes — the quote on
               this card expires in about twenty seconds and is never spent as
               executable state. */}
-          {/* Two weights of ONE accent, never two sentiments.
+          {/* ONE accent, never two sentiments, and the two sides at EQUAL
+              weight.
               Green buy and red sell were proposed and are the wrong tool here:
               this board withholds ranking on purpose — it never says which side
               is better — and green/red says exactly that. Red also already has
               a job on this surface, on the transfer gate that reads "the token
               refuses this sale"; spending it on a routine button costs the one
               colour that must mean stop.
-              What the pair actually needed was to stop being identical. The
-              direction the page is already asking is the filled one; the other
-              is the same accent, outlined. Same consequence, different weight,
-              and which way you are looking is legible without reading. */}
+              Weighting one side by the board's toggle was the same mistake in
+              quieter clothes: it made a side the loudest thing on the card. The
+              toggle above already says which way the question runs. Both sides
+              are outlined, identical, and neither is urged. */}
           {actions.onPrepare && !inspectRouteUnavailable ? (
             <>
               <button
                 type="button"
-                className={direction === 'buy' ? 'btn' : 'btn alt'}
+                className="btn alt"
                 title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
                 onClick={() => actions.onPrepare!(representation.tokenAddress, 'buy')}
               >
@@ -949,7 +952,7 @@ function RepresentationCard({
               </button>
               <button
                 type="button"
-                className={direction === 'sell' ? 'btn' : 'btn alt'}
+                className="btn alt"
                 title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
                 onClick={() => actions.onPrepare!(representation.tokenAddress, 'sell')}
               >
@@ -965,9 +968,11 @@ function RepresentationCard({
           swapped?" — a question this card had already answered, put to someone
           with no way to convert by hand. The number now travels; this line
           says where it came from, and that the price is established again.
-          Only the sell side gets it: a buy spends an exact number of USDC
-          atoms and has no surprise to warn about. */}
-      {actions.onPrepare && !inspectRouteUnavailable && direction === 'sell' && representation.prepareSellSizeNote ? (
+          It is about the SELL button, not about the board's direction: both
+          buttons are offered on every card, so a reader on a buy board who
+          presses sell is exactly the one who would otherwise never see it.
+          A buy needs no such line — it spends an exact number of USDC atoms. */}
+      {actions.onPrepare && !inspectRouteUnavailable && representation.prepareSellSizeNote ? (
         <p className="mr-prepare-size">{representation.prepareSellSizeNote}</p>
       ) : null}
       {/* The route inspector keeps its place and loses its prominence: a small
@@ -1195,13 +1200,11 @@ function HeadlineAnswer({
   measuring,
   onMeasure,
   onPrepare,
-  direction,
 }: {
   headline: StocksHeadlineViewV1;
   measuring: boolean;
   onMeasure?: () => void;
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
-  direction: 'buy' | 'sell';
 }) {
   const lead = headline.representation;
   return (
@@ -1259,14 +1262,30 @@ function HeadlineAnswer({
             {measuring ? 'Measuring…' : 'Measure now'}
           </button>
         ) : null}
+        {/* Both sides, like every card below.
+            This summary used to offer ONE button, the side the board's toggle
+            happened to be on — so a reader looking at a sell board was shown
+            `Prepare sell` and nothing else, while every representation beneath
+            it offered both. A summary that silently drops one of two available
+            actions reads as a recommendation of the one it kept, which is the
+            single thing this board must never do. */}
         {lead && onPrepare ? (
-          <button
-            type="button"
-            className="btn sec"
-            onClick={() => onPrepare(lead.tokenAddress, direction)}
-          >
-            {direction === 'sell' ? 'Prepare sell' : 'Prepare buy'}
-          </button>
+          <>
+            <button
+              type="button"
+              className="btn alt"
+              onClick={() => onPrepare(lead.tokenAddress, 'buy')}
+            >
+              Prepare buy
+            </button>
+            <button
+              type="button"
+              className="btn alt"
+              onClick={() => onPrepare(lead.tokenAddress, 'sell')}
+            >
+              Prepare sell
+            </button>
+          </>
         ) : null}
         <span className="d mr-headline-more">
           {headline.alternativeCount} representation{headline.alternativeCount === 1 ? '' : 's'} below,
@@ -1445,7 +1464,6 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           measuring={model.measuring}
           onMeasure={actions.onMeasure}
           onPrepare={actions.onPrepare}
-          direction={model.direction}
         />
       ) : null}
 
@@ -1612,7 +1630,6 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                     useAccessLoading={model.useAccessLoading === true}
                     poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
-                    direction={model.direction}
                     inspectRouteUnavailable={
                       model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                     }
@@ -1663,7 +1680,6 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                           useAccessLoading={model.useAccessLoading === true}
                           poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
-                          direction={model.direction}
                           inspectRouteUnavailable={
                             model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                           }
@@ -1700,7 +1716,6 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                           useAccessLoading={model.useAccessLoading === true}
                           poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
-                          direction={model.direction}
                           inspectRouteUnavailable={
                             model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                           }

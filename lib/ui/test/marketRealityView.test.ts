@@ -4108,13 +4108,24 @@ describe('the issuer restrictions are on the card', () => {
 // The action row: two weights of one accent, and a read that earns the accent
 // without becoming a third loud button.
 // ---------------------------------------------------------------------------
-describe('the prepare pair says which way you are looking, not which side is better', () => {
+describe('the action row has one reading and two equal sides', () => {
   const css = readFileSync(new URL('../src/console/console.css', import.meta.url), 'utf8');
   const screen = readFileSync(new URL('../src/console/MarketRealityScreen.tsx', import.meta.url), 'utf8');
 
-  test('the page direction picks the filled button; the other is outlined', () => {
-    assert.match(screen, /direction === 'buy' \? 'btn' : 'btn alt'/);
-    assert.match(screen, /direction === 'sell' \? 'btn' : 'btn alt'/);
+  // Weighting a prepare button by the board's toggle cost twice: Investigate
+  // and the outlined prepare button came out identical, and the loudest thing
+  // on a board that withholds ranking was a SIDE. The toggle above already
+  // says which way the question runs.
+  test('neither side is weighted by the board direction', () => {
+    assert.doesNotMatch(screen, /direction === 'buy' \? 'btn' : 'btn alt'/);
+    assert.doesNotMatch(screen, /direction === 'sell' \? 'btn' : 'btn alt'/);
+    const row = screen.slice(screen.indexOf('actions.onPrepare && !inspectRouteUnavailable'));
+    const prepare = row.slice(0, row.indexOf('</>'));
+    assert.equal(
+      (prepare.match(/className="btn alt"/g) ?? []).length,
+      2,
+      'both prepare buttons are the same outlined weight',
+    );
   });
 
   test('neither prepare button wears a sentiment colour, and red keeps its one job', () => {
@@ -4130,11 +4141,25 @@ describe('the prepare pair says which way you are looking, not which side is bet
     assert.doesNotMatch(alt, /var\(--accent[,)]/);
   });
 
-  test('Investigate takes the accent in text and edge, not a third filled button', () => {
-    assert.match(screen, /className="btn sec accent"/);
-    const rule = css.slice(css.indexOf('.mio-console .btn.sec.accent'));
-    assert.match(rule.slice(0, 200), /--accent-line/);
-    // It is still a secondary button: no gradient fill.
-    assert.doesNotMatch(rule.slice(0, 200), /--grad/);
+  // The one thing in the row that is a READING rather than a move, and the
+  // one the reader asked to be able to find.
+  test('Investigate is the filled button, and the only one', () => {
+    const row = screen.slice(screen.indexOf('actions.onInvestigate ? ('));
+    // To the end of the ELEMENT, not to the word — the comment above it
+    // quotes the labels it replaced.
+    const investigate = row.slice(0, row.indexOf('</button>'));
+    assert.match(investigate, /className="btn"/);
+    assert.doesNotMatch(investigate, /className="btn sec accent"/);
+    assert.doesNotMatch(investigate, /className="btn alt"/);
+  });
+
+  test('the summary card offers both sides, like every card below it', () => {
+    // It used to offer ONE — whichever side the toggle was on — so a summary
+    // above a board of two-sided cards read as a recommendation.
+    const headline = screen.slice(screen.indexOf('function HeadlineAnswer('));
+    const actions = headline.slice(headline.indexOf('mr-headline-actions'));
+    assert.match(actions, /onPrepare\(lead\.tokenAddress, 'buy'\)/);
+    assert.match(actions, /onPrepare\(lead\.tokenAddress, 'sell'\)/);
+    assert.doesNotMatch(actions, /direction === 'sell' \? 'Prepare sell' : 'Prepare buy'/);
   });
 });
