@@ -400,6 +400,7 @@ function RepresentationCard({
   useAccessLoading,
   inspectRouteUnavailable,
   poolSpot,
+  direction,
 }: {
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
@@ -416,6 +417,9 @@ function RepresentationCard({
   /** The routed-through pool's OWN price, when one was read. Null is ordinary:
    * no venue named, no reading taken, or the read did not complete. */
   poolSpot: PoolSpotViewV1 | null;
+  /** Which way the page is currently asking. Sets which prepare button is the
+   * filled one — see the comment on the pair below. */
+  direction: MarketRealityDirectionV1;
 }) {
   if (surface === 'utility') {
     const sections = useSectionsV1({
@@ -895,9 +899,14 @@ function RepresentationCard({
             </button>
           ) : null}
           {actions.onInvestigate ? (
+            /* The deepest reading on the product for this exact address, and
+               it sat in the same grey as Remove. It carries the accent in its
+               text and edge rather than a third filled button: a row of three
+               equally loud accents has no hierarchy left, and this is not the
+               action the card is about. */
             <button
               type="button"
-              className="btn sec"
+              className="btn sec accent"
               onClick={() => actions.onInvestigate!(representation.tokenAddress)}
             >
               Investigate
@@ -917,11 +926,22 @@ function RepresentationCard({
               prepare step, which re-plans against fresh routes — the quote on
               this card expires in about twenty seconds and is never spent as
               executable state. */}
+          {/* Two weights of ONE accent, never two sentiments.
+              Green buy and red sell were proposed and are the wrong tool here:
+              this board withholds ranking on purpose — it never says which side
+              is better — and green/red says exactly that. Red also already has
+              a job on this surface, on the transfer gate that reads "the token
+              refuses this sale"; spending it on a routine button costs the one
+              colour that must mean stop.
+              What the pair actually needed was to stop being identical. The
+              direction the page is already asking is the filled one; the other
+              is the same accent, outlined. Same consequence, different weight,
+              and which way you are looking is legible without reading. */}
           {actions.onPrepare && !inspectRouteUnavailable ? (
             <>
               <button
                 type="button"
-                className="btn"
+                className={direction === 'buy' ? 'btn' : 'btn alt'}
                 title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
                 onClick={() => actions.onPrepare!(representation.tokenAddress, 'buy')}
               >
@@ -929,7 +949,7 @@ function RepresentationCard({
               </button>
               <button
                 type="button"
-                className="btn"
+                className={direction === 'sell' ? 'btn' : 'btn alt'}
                 title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
                 onClick={() => actions.onPrepare!(representation.tokenAddress, 'sell')}
               >
@@ -1581,6 +1601,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                     useAccessLoading={model.useAccessLoading === true}
                     poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
+                    direction={model.direction}
                     inspectRouteUnavailable={
                       model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                     }
@@ -1631,6 +1652,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                           useAccessLoading={model.useAccessLoading === true}
                           poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
+                          direction={model.direction}
                           inspectRouteUnavailable={
                             model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                           }
@@ -1667,6 +1689,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           useAccess={model.useAccess?.[representation.tokenAddress] ?? null}
                           useAccessLoading={model.useAccessLoading === true}
                           poolSpot={model.poolSpot?.[representation.tokenAddress] ?? null}
+                          direction={model.direction}
                           inspectRouteUnavailable={
                             model.inspectRouteUnavailable?.[representation.tokenAddress] ?? null
                           }

@@ -383,6 +383,19 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .btn:hover { filter: brightness(1.08); }
 .mio-console .btn.sec { background: var(--panel); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line2); }
 .mio-console .btn.sec:hover { background: var(--panel2); filter: none; }
+/* Phase 17.5 -- the accent at two weights, and a third weight for a read.
+   `alt` is the SAME action as `.btn` with the same consequence, drawn lighter:
+   the pair of prepare buttons was two identical accents side by side, and the
+   proposal to fix that with green buy / red sell would have had the board take
+   a position it withholds on purpose -- and would have spent red, which on this
+   surface already means the token refuses the transfer.
+   `sec accent` is neither: it opens a reading, not an action, and it earns the
+   accent in its text and edge without becoming a third loud button. */
+.mio-console .btn.alt { background: var(--panel); color: var(--accent-line);
+  box-shadow: inset 0 0 0 1.5px var(--accent-line); }
+.mio-console .btn.alt:hover { background: var(--panel2); filter: none; }
+.mio-console .btn.sec.accent { color: var(--accent-line);
+  box-shadow: inset 0 0 0 1px var(--accent-line); }
 .mio-console .btn.lg { padding: 11px 22px; font-size: 14px; border-radius: 10px; }
 /* T67E — the section tabs. `.on` already existed for the theme toggle and the
    session list, and neither rule reaches a .btn, so an active tab would have

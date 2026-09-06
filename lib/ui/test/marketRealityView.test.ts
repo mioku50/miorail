@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
@@ -2190,7 +2191,7 @@ describe('Phase 11 utility and eligibility map', () => {
       [...markup.matchAll(/<section class="mr-use-section" aria-label="([^"]+)"/g)].map(
         (match) => match[1],
       ),
-      ['Trade', 'Transfer', 'Bridge', 'DeFi', 'Issuer services', 'How it works'],
+      ['Trade', 'Transfer', 'Bridge', 'Lend and borrow', 'Issuer services', 'How it works'],
     );
     assert.match(markup, /No reviewed exact-address evidence/);
     // `approve()` is an Evidence line, never a headline card of its own.
@@ -3258,11 +3259,18 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.match(established.headline, /configured at this exact address to Ethereum/);
   });
 
-  test('a DeFi miss names the venues, and never says "not in DeFi"', () => {
+  test('a lending miss names the venues, and never claims the token is out of DeFi', () => {
+    // The section checked four LENDING venues and was labelled "DeFi", so a
+    // screen whose Trade section read "Tradable now" said "DeFi · none found
+    // here" two sections below it. Both true of what they measured; the one
+    // with the broader word measured the narrower thing.
     const defi = useSectionsV1({ ...base, use: use() })[3]!;
-    assert.match(defi.headline, /No reviewed integration found in the venues Miorail checked \(Moonwell, Morpho\)/);
+    assert.equal(defi.label, 'Lend and borrow');
+    assert.match(defi.headline, /No reviewed lending venue lists this exact address \(Moonwell, Morpho were checked\)/);
     assert.match(defi.headline, /Other venues exist and were not checked/);
     assert.doesNotMatch(defi.headline, /not in DeFi|no DeFi|unavailable/i);
+    // Bounded to the question asked, not a verdict on the token.
+    assert.equal(defi.chip, 'Not on these venues');
   });
 
   test('a found integration leads with the use, per axis', () => {
@@ -3399,7 +3407,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
   test('an announcement never becomes a use, a chip or a colour', () => {
     const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) })[3]!;
     assert.equal(defi.tone, 'off');
-    assert.equal(defi.chip, 'None found here');
+    assert.equal(defi.chip, 'Not on these venues');
     assert.doesNotMatch(defi.headline, /used in DeFi/);
     assert.deepEqual(
       defi.facts.filter((entry) => ['Lend', 'Borrow', 'Collateral'].includes(entry.label)),
@@ -4093,5 +4101,40 @@ describe('the issuer restrictions are on the card', () => {
           fact.value === 'Applied once',
       ),
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The action row: two weights of one accent, and a read that earns the accent
+// without becoming a third loud button.
+// ---------------------------------------------------------------------------
+describe('the prepare pair says which way you are looking, not which side is better', () => {
+  const css = readFileSync(new URL('../src/console/console.css', import.meta.url), 'utf8');
+  const screen = readFileSync(new URL('../src/console/MarketRealityScreen.tsx', import.meta.url), 'utf8');
+
+  test('the page direction picks the filled button; the other is outlined', () => {
+    assert.match(screen, /direction === 'buy' \? 'btn' : 'btn alt'/);
+    assert.match(screen, /direction === 'sell' \? 'btn' : 'btn alt'/);
+  });
+
+  test('neither prepare button wears a sentiment colour, and red keeps its one job', () => {
+    // Green buy / red sell was proposed. The board withholds ranking on
+    // purpose, so colouring the two directions would state the thing it
+    // refuses to state — and red on this surface already means the issuer's
+    // policy refuses the transfer.
+    const alt = css.slice(css.indexOf('.mio-console .btn.alt {'), css.indexOf('.mio-console .btn.sec.accent'));
+    assert.doesNotMatch(alt, /green|red|#0?[0-9a-f]*(?:00ff00|ff0000)/i);
+    assert.match(alt, /--accent-line/);
+    // `--accent` does not exist in this stylesheet; using it would fall back
+    // silently and produce no accent at all.
+    assert.doesNotMatch(alt, /var\(--accent[,)]/);
+  });
+
+  test('Investigate takes the accent in text and edge, not a third filled button', () => {
+    assert.match(screen, /className="btn sec accent"/);
+    const rule = css.slice(css.indexOf('.mio-console .btn.sec.accent'));
+    assert.match(rule.slice(0, 200), /--accent-line/);
+    // It is still a secondary button: no gradient fill.
+    assert.doesNotMatch(rule.slice(0, 200), /--grad/);
   });
 });

@@ -2314,9 +2314,30 @@ function venueReadProvenanceEvidenceV1(
   ];
 }
 
+/**
+ * Lending, and named for lending.
+ *
+ * This section was called "DeFi" and checked four venues — Moonwell, Morpho,
+ * Aave v3 and Compound v3 — every one of them a LENDING protocol. So on a
+ * screen whose Trade section reads "Tradable now · a router reaches this exact
+ * address and the quote is open", the section two below it read "DeFi · none
+ * found here". Both sentences were about the same token, both were true of what
+ * they measured, and the one with the broader word measured the narrower thing.
+ *
+ * Trading through an AMM is DeFi. The label is the fix: six sections that do
+ * not overlap, each claiming exactly its own scope. The body already bounded
+ * itself correctly — it named the four venues and said other venues were not
+ * checked — and it keeps doing that.
+ *
+ * What this does NOT do is add an LP or vault reader. Aerodrome, Beefy, Euler
+ * and the rest are real and unchecked, and `unchecked` is not `not_listed`.
+ */
 function defiSectionV1(
   use: RepresentationUseAccessV1 | null,
   issuerId: IssuerIdV1 | null,
+  /** Whether the Trade section established a live route at this size. The one
+   * cross-reference this section makes, and only when it is true. */
+  tradeEstablished = false,
 ): UseSectionViewV1 {
   const listing = use?.defi;
   const checked = listing?.checkedVenues ?? [];
@@ -2367,7 +2388,7 @@ function defiSectionV1(
     return {
       collapsed: false,
       id: 'defi',
-      label: 'DeFi',
+      label: 'Lend and borrow',
       headline: `This exact address is used in DeFi: ${uses
         .map((entry) => `${DEFI_USE_LABEL_V1[entry.kind]} at ${entry.venues.join(', ')}`)
         .join('; ')}.${
@@ -2395,12 +2416,21 @@ function defiSectionV1(
   return {
     collapsed: false,
     id: 'defi',
-    label: 'DeFi',
+    label: 'Lend and borrow',
     headline:
       checked.length > 0
-        ? `No reviewed integration found in the venues Miorail checked (${checked.join(', ')}). Other venues exist and were not checked.`
+        ? `No reviewed lending venue lists this exact address (${checked.join(', ')} were checked). Other venues exist and were not checked.${
+            // Said only when we measured it ourselves, one section above. A
+            // reader who takes "none found here" for a verdict about DeFi has
+            // been told the opposite of what the same screen just proved.
+            tradeEstablished
+              ? ' Trading it on an AMM is DeFi too, and that is measured under Trade above.'
+              : ''
+          }`
         : 'Miorail did not check any lending venue for this address.',
-    chip: unread.length > 0 && unread.length === checked.length ? 'Not confirmed' : 'None found here',
+    // Bounded to what was actually asked. "None found here" read as a verdict
+    // on the token rather than an answer from four lending venues.
+    chip: unread.length > 0 && unread.length === checked.length ? 'Not confirmed' : 'Not on these venues',
     tone: 'off',
     facts: announcementFacts,
     evidence,
@@ -2437,7 +2467,9 @@ export function useSectionsV1(input: {
     tradeSectionV1(input),
     transferSectionV1(input.use),
     bridgeSectionV1(input.use),
-    defiSectionV1(input.use, input.issuerId ?? null),
+    // The trade verdict travels into the lending section, because the two are
+    // both DeFi and the screen used to say so in only one of them.
+    defiSectionV1(input.use, input.issuerId ?? null, tradeSectionV1(input).tone === 'good'),
     {
       collapsed: true,
       id: 'issuer',
