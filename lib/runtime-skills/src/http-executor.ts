@@ -408,6 +408,20 @@ export function publishedPluginCredentialV1(namespace: string): string | undefin
   return getExecutorSkill(namespace)?.manifest?.publishedCredential;
 }
 
+/**
+ * How the EXECUTOR authenticates, which is not what the plugin's spec says.
+ *
+ * Base's frontmatter describes a whole plugin. Venice's says `siwe-jwt` because
+ * inference needs an account — and the one call our recipe makes, the model
+ * catalogue, answers 200 to nobody in particular. Reading the spec's label
+ * instead of the manifest put "sign in first" on a read that needs no sign-in:
+ * a false absence, which is the same failure as a false promise pointed the
+ * other way. Undefined when no HTTP executor exists for this namespace.
+ */
+export function pluginExecutorAuthV1(namespace: string): string | undefined {
+  return getExecutorSkill(namespace)?.manifest?.auth;
+}
+
 function getExecutorSkill(namespace: string): RuntimeSkillDefinition | undefined {
   const registered = getRuntimeSkill(namespace);
   if (registered?.manifest) return registered;

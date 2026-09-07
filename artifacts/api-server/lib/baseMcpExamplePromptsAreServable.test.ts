@@ -8,7 +8,7 @@ import {
 
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
-import { REVIEWED_READ_SHAPES_V1, reviewedReadShapeV1 } from './baseMcpReadShapes.js';
+import { REVIEWED_READ_FACTS_V1, reviewedReadShapeV1 } from './baseMcpReadShapes.js';
 
 /**
  * An example prompt is a CLAIM about what happens when it is clicked.
@@ -108,7 +108,7 @@ describe('an example prompt is servable by the handler it points at', () => {
         plugin.examples.map((example) => `${plugin.pluginId}:${example.id}`),
       ),
     );
-    for (const key of Object.keys(REVIEWED_READ_SHAPES_V1)) {
+    for (const key of Object.keys(REVIEWED_READ_FACTS_V1)) {
       assert.ok(known.has(key), `${key} describes a read that no example points at`);
     }
   });
@@ -132,6 +132,17 @@ describe('an example prompt is servable by the handler it points at', () => {
     // A requirement about the read, never a claim about this reader: the
     // catalogue is public and unauthenticated by design.
     assert.match(cell.reason, /after you sign in/);
+  });
+
+  test('a spec label is not the recipe: Venice needs no sign-in here', () => {
+    // Venice's spec says `siwe-jwt` because inference needs an account. The one
+    // call this recipe makes is the model catalogue, and it answers 200 with no
+    // credential at all — measured 2026-09-08. Reading the label instead of the
+    // recipe put "sign in first" on a read that needs none, which is a false
+    // absence: the same failure as a false promise, pointed the other way.
+    assert.ok(!runtime.readPluginsNeedingSignIn.includes('venice'));
+    assert.ok(!runtime.readPluginsNeedingSignIn.includes('bitrefill'));
+    assert.deepEqual([...runtime.readPluginsNeedingSignIn], ['virtuals']);
   });
 
   test('a key a plugin spec publishes is not a missing key', () => {

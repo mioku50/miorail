@@ -1,6 +1,7 @@
-import { BASE_MCP_PLUGIN_CATALOGUE_V1, type BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
+import type { BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
 import { resolvePluginCredential } from '@mioagent/security/httpAllowlist';
-import { publishedPluginCredentialV1 } from '@mioagent/runtime-skills';
+import { pluginExecutorAuthV1, publishedPluginCredentialV1 } from '@mioagent/runtime-skills';
+import { reviewedReadsNeedingSignInV1 } from './baseMcpReadShapes.js';
 import { PROVIDERS_REQUIRING_SIMULATION_V1 } from '@mioagent/transaction-composer';
 import { swapSimulationCapabilityV1 } from './swapSimulation.js';
 
@@ -90,17 +91,17 @@ function readCredentialStateV1(reviewed: readonly string[]): {
   missing: string[];
   signIn: string[];
 } {
+  const signIn = reviewedReadsNeedingSignInV1().filter((id) => reviewed.includes(id));
   const missing: string[] = [];
-  const signIn: string[] = [];
-  for (const plugin of BASE_MCP_PLUGIN_CATALOGUE_V1) {
-    if (!reviewed.includes(plugin.id)) continue;
-    if (plugin.auth === 'siwe-jwt') {
-      signIn.push(plugin.id);
-      continue;
-    }
-    if (plugin.auth !== 'api-key') continue;
-    if (publishedPluginCredentialV1(plugin.id)) continue;
-    if (!resolvePluginCredential(plugin.id)) missing.push(plugin.id);
+  for (const id of reviewed) {
+    if (signIn.includes(id)) continue;
+    // The EXECUTOR's contract, not the plugin spec's label. A first pass read
+    // `auth:` off Base's frontmatter and put "sign in first" on Venice's model
+    // catalogue, which answers 200 to nobody in particular — the spec describes
+    // a whole plugin, and the recipe is one call inside it.
+    if (pluginExecutorAuthV1(id) !== 'api-key') continue;
+    if (publishedPluginCredentialV1(id)) continue;
+    if (!resolvePluginCredential(id)) missing.push(id);
   }
   return { missing, signIn };
 }
