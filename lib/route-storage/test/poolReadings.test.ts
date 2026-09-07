@@ -6,7 +6,9 @@ import {
   POOL_VENUE_IDS_V1,
   POOL_VENUE_NAMES_V1,
   POOL_VENUE_TIERS_V1,
+  poolExplorerUrlV1,
   poolVenueNamesTheExchangeV1,
+  poolVenuePageUrlV1,
   assertMarketPoolReadingV1,
   createMemoryMarketPoolReadingRepository,
   type MarketPoolReadingV1,
@@ -152,6 +154,37 @@ describe('a pool reading is about one token, and carries both sides', () => {
       assert.match(POOL_VENUE_NAMES_V1[id], /not named/, id);
     }
     assert.doesNotMatch(POOL_VENUE_NAMES_V1.aerodrome_cl, /not named/);
+  });
+
+  test('only a protocol tier gets an exchange page, and only a verified one', () => {
+    const POOL = '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9';
+    // Opened in a browser against this pool and against a fabricated address:
+    // the first showed "Showing 1 out of 1 pools · USDC / NVDAc 0.05%
+    // Concentrated 10", the second "No results found".
+    assert.equal(
+      poolVenuePageUrlV1('aerodrome_cl', POOL),
+      `https://aerodrome.finance/liquidity?query=${POOL}`,
+    );
+    assert.equal(
+      poolVenuePageUrlV1('uniswap_v3', POOL),
+      `https://app.uniswap.org/explore/pools/base/${POOL}`,
+    );
+    // PancakeSwap's canonical pool URL has not been opened and read back, so it
+    // gets none. A guessed URL landing on a marketing page is the same failure
+    // as a prompt no handler can serve.
+    assert.equal(poolVenuePageUrlV1('pancakeswap_v3', POOL), null);
+    // An engine names machinery with no front end of its own; a shape names no
+    // protocol at all.
+    assert.equal(poolVenuePageUrlV1('algebra_cl', POOL), null);
+    assert.equal(poolVenuePageUrlV1('unnamed_cl', POOL), null);
+    assert.equal(poolVenuePageUrlV1(null, POOL), null);
+  });
+
+  test('the explorer link always resolves, because an address always does', () => {
+    assert.equal(
+      poolExplorerUrlV1('0x853F5F1B92B16714FE6CDA67CAAD0856B83C7AB9'),
+      'https://basescan.org/address/0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+    );
   });
 
   test('every venue id has a label, and a shape says it is a shape', () => {

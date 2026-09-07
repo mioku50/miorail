@@ -2408,6 +2408,27 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
     return fraction ? `${grouped}.${fraction.slice(0, 2)}` : grouped;
   };
 
+  // Where a reader can open the exact thing that was measured. The explorer
+  // link is unconditional because an address always resolves; the exchange's
+  // own page appears only for a venue whose URL shape was opened in a browser
+  // and read back, which today is Aerodrome and Uniswap v3. An `engine` tier
+  // names machinery with no front end of its own and a `shape` names no
+  // protocol, so neither gets one — a guessed URL landing on a marketing page
+  // is the same failure as a prompt no handler can serve.
+  const poolRowLinksV1 = (row: (typeof pools.rows)[number]) => [
+    {
+      label: `${row.poolAddress.slice(0, 8)}\u2026${row.poolAddress.slice(-4)}`,
+      href: `https://basescan.org/address/${row.poolAddress}`,
+      title: `${row.poolAddress} on BaseScan — the exact contract this balance was read from`,
+    },
+    // Built on the server, where the venue tier lives: an `engine` or a `shape`
+    // has no exchange page to point at, and a URL nobody opened and read back
+    // is a guess. Null here means the explorer link is the whole truth we have.
+    ...(row.venuePageUrl && row.venueName
+      ? [{ label: 'Pool', href: row.venuePageUrl, title: `This pool on ${row.venueName}` }]
+      : []),
+  ];
+
   const rows = pools.rows;
   const lead = rows[0]!;
   // Only a `protocol` id names the exchange. An `engine` id pins the AMM
@@ -2453,10 +2474,14 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
   const facts: FactViewV1[] = rows.slice(0, 6).map((row) => ({
     label: row.venueName ?? 'Venue not identified',
     value: `${amount(row.tokenBalanceAtomic, row.tokenDecimals)} held`,
+    // The address moved out of the note and into a link, shown in full-shortened
+    // form rather than behind an icon: it is the fact that Miorail measured one
+    // onchain object and not "Aerodrome" as a brand.
     note:
       row.pairedBalanceAtomic !== null && row.pairedDecimals !== null
-        ? `against ${amount(row.pairedBalanceAtomic, row.pairedDecimals)} ${row.pairedSymbol ?? 'of the other side'} · ${row.poolAddress.slice(0, 8)}\u2026${row.poolAddress.slice(-4)}`
-        : `the other side was not read · ${row.poolAddress.slice(0, 8)}\u2026${row.poolAddress.slice(-4)}`,
+        ? `against ${amount(row.pairedBalanceAtomic, row.pairedDecimals)} ${row.pairedSymbol ?? 'of the other side'}`
+        : 'the other side was not read',
+    links: poolRowLinksV1(row),
     // Neutral for every row. A balance is a size, not a quality, and colouring
     // the deepest pool green would make the section a recommendation about
     // where to trade — which is the one thing this board must never be.

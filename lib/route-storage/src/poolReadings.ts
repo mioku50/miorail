@@ -125,6 +125,51 @@ export function poolVenueNamesTheExchangeV1(id: PoolVenueIdV1 | null): boolean {
   return id !== null && POOL_VENUE_TIERS_V1[id] === 'protocol';
 }
 
+/** The block explorer page for the exact contract that holds the balance. */
+export function poolExplorerUrlV1(poolAddress: string): string {
+  return `https://basescan.org/address/${poolAddress.toLowerCase()}`;
+}
+
+/**
+ * The exchange's own page for THIS pool, where one exists that we have opened
+ * and read back.
+ *
+ * A URL is a claim like any other. Each of these was rendered in a browser
+ * against a real pool and against a fabricated address, and kept only when the
+ * first showed the measured pool and the second showed nothing:
+ *
+ *   aerodrome  /liquidity?query=<pool>            → "Showing 1 out of 1 pools",
+ *              "USDC / NVDAc 0.05% Concentrated 10"; a made-up address gives
+ *              "No results found".
+ *   uniswap v3 /explore/pools/base/<pool>         → "NVDAc / KUMA Base v3 1%".
+ *
+ * Two shapes were tried and dropped. Aerodrome's `/deposit` deep link renders
+ * the pool, but it opens an ADD-LIQUIDITY form, and this board measures a
+ * market rather than suggesting a trade in it; `/pools/<address>` is a 404.
+ *
+ * Everything else returns null on purpose. PancakeSwap's canonical pool URL is
+ * unverified here, an `engine` tier names machinery and not a venue with a
+ * front end, and a `shape` names no protocol at all — for those the explorer
+ * link is the whole truth we have. A guessed URL that lands on a marketing page
+ * is the same failure as a prompt the handler cannot serve.
+ */
+export function poolVenuePageUrlV1(
+  venueId: PoolVenueIdV1 | null,
+  poolAddress: string,
+): string | null {
+  if (venueId === null || POOL_VENUE_TIERS_V1[venueId] !== 'protocol') return null;
+  const pool = poolAddress.toLowerCase();
+  switch (venueId) {
+    case 'aerodrome_cl':
+    case 'aerodrome_v2':
+      return `https://aerodrome.finance/liquidity?query=${pool}`;
+    case 'uniswap_v3':
+      return `https://app.uniswap.org/explore/pools/base/${pool}`;
+    default:
+      return null;
+  }
+}
+
 export const MarketPoolReadingV1Schema = z
   .object({
     chainId: z.literal(8453),

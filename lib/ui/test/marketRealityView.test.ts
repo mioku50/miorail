@@ -3177,6 +3177,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     venueId: 'aerodrome_cl',
     venueName: 'Aerodrome CL',
     factoryAddress: '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef',
+    venuePageUrl: 'https://aerodrome.finance/liquidity?query=0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
     tokenBalanceAtomic: '373998650000',
     tokenDecimals: 8,
     pairedTokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
@@ -3316,6 +3317,34 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       section.evidence.find((row) => row.label === 'Engine or shape only')?.value ?? '',
       /^1 · /,
     );
+  });
+
+  test('each row links to the exact contract it measured', () => {
+    // The address is shown rather than hidden behind an icon: it says the
+    // measurement is of one onchain object, not of a brand. It also left the
+    // note, so the note is only about the other side of the pair.
+    const section = pooled();
+    const links = section.facts[0]?.links ?? [];
+    assert.equal(links[0]?.label, '0x853f5f…7ab9');
+    assert.equal(links[0]?.href, 'https://basescan.org/address/0x853f5f1b92b16714fe6cda67caad0856b83c7ab9');
+    assert.doesNotMatch(section.facts[0]?.note ?? '', /0x853f5f/);
+    assert.equal(links[1]?.label, 'Pool');
+    assert.match(links[1]?.href ?? '', /aerodrome\.finance\/liquidity\?query=0x853f5f/);
+  });
+
+  test('a venue with no verified page carries only the explorer link', () => {
+    // An engine names machinery with no front end, a shape names no protocol,
+    // and an unread factory names nothing — none of them gets a second link.
+    for (const patch of [
+      { venueId: 'algebra_cl', venueName: 'Algebra CL engine, DEX not named', venuePageUrl: null },
+      { venueId: 'unnamed_cl', venueName: 'Concentrated pool, venue not named', venuePageUrl: null },
+      { venueId: null, venueName: null, venuePageUrl: null },
+    ]) {
+      const section = pooled({ rows: [poolRow(patch)] });
+      const links = section.facts[0]?.links ?? [];
+      assert.equal(links.length, 1, JSON.stringify(patch));
+      assert.match(links[0]?.href ?? '', /^https:\/\/basescan\.org\/address\//);
+    }
   });
 
   test('no row wears a quality colour', () => {

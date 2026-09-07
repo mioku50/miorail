@@ -13,6 +13,7 @@ import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter, readAerodromeClSpotV1 } from '@mioagent/swap-adapters';
 import {
   POOL_VENUE_NAMES_V1,
+  poolVenuePageUrlV1,
   createDatabaseMarketPoolReadingRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
@@ -704,6 +705,10 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
         // one we cannot name. A prettified factory address would let an
         // unknown protocol label itself on our screen.
         venueName: row.venueId ? (POOL_VENUE_NAMES_V1[row.venueId] ?? null) : null,
+        // Same rule as the name, and stricter: only a venue whose tier names an
+        // exchange gets a page, and only where that URL shape was opened in a
+        // browser and read back against a real pool and a fabricated one.
+        venuePageUrl: poolVenuePageUrlV1(row.venueId, row.poolAddress),
         factoryAddress: row.factoryAddress,
         tokenBalanceAtomic: row.tokenBalanceAtomic,
         tokenDecimals: row.tokenDecimals,

@@ -120,12 +120,32 @@ function FactList({ facts, label }: { facts: readonly FactViewV1[]; label: strin
   if (facts.length === 0) return null;
   return (
     <dl className="cr-facts" aria-label={label}>
-      {facts.map((fact) => (
-        <div key={fact.label}>
+      {/* Keyed by position as well as label: a pooled list holds two rows both
+          labelled "Aerodrome CL", and a duplicate React key reconciles two
+          different pools into one. */}
+      {facts.map((fact, index) => (
+        <div key={`${fact.label}:${index}`}>
           <dt>{fact.label}</dt>
           <dd>
             <strong className={factClassV1(fact.tone)}>{fact.value}</strong>
             {fact.note ? <span className="cr-fact-note"> · {fact.note}</span> : null}
+            {/* The address is shown, not hidden behind an icon: it says the
+                measurement is of one onchain object, not of a brand. */}
+            {fact.links?.map((link) => (
+              <span key={link.href} className="cr-fact-note">
+                {' · '}
+                <a
+                  className="mr-fact-link"
+                  href={link.href}
+                  title={link.title}
+                  target="_blank"
+                  rel="noreferrer noopener"
+                >
+                  {link.label}
+                  <span aria-hidden="true"> ↗</span>
+                </a>
+              </span>
+            ))}
           </dd>
         </div>
       ))}

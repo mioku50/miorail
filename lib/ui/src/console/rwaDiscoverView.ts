@@ -600,11 +600,26 @@ export interface CounterViewV1 {
   tone: ToneV1;
 }
 
+/**
+ * A link out of a fact, to the exact object the fact is about.
+ *
+ * `label` is shown, not an icon: on a pooled row the contract address IS the
+ * point — it says Miorail measured one onchain object and not "Aerodrome" in
+ * general. Only ever built from an address that was read; never from a symbol.
+ */
+export interface FactLinkV1 {
+  label: string;
+  href: string;
+  title: string;
+}
+
 export interface FactViewV1 {
   label: string;
   value: string;
   note: string | null;
   tone: ToneV1;
+  /** Optional, so every existing fact list renders unchanged. */
+  links?: readonly FactLinkV1[];
 }
 
 export interface OfficialAssetCardViewV1 {

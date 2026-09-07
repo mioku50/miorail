@@ -192,6 +192,15 @@ export interface PooledLiquidityRowV1 {
    * answer without a label. */
   venueId: string | null;
   venueName: string | null;
+  /**
+   * The exchange's own page for this exact pool, or null.
+   *
+   * Built on the server from the venue tier, because only a `protocol` tier has
+   * an exchange to point at and only a URL shape somebody opened and read back
+   * may be built at all. Null is the common case and means the block explorer
+   * is the whole link this row can honestly carry.
+   */
+  venuePageUrl: string | null;
   factoryAddress: string | null;
   /** Atomic, with its own decimals. Never a float: 1,614,910.95 USDC is
    * 1614910950000 and rounding it once rounds it forever. */
@@ -296,6 +305,10 @@ export const RepresentationUseAccessV1Schema = z
               poolAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
               venueId: z.string().nullable(),
               venueName: z.string().nullable(),
+              // Optional for the same reason `pools` is: a rolling deploy has
+              // one side newer than the other, and a missing link must read as
+              // "no page to point at" rather than fail the whole parse.
+              venuePageUrl: z.string().url().nullable().default(null),
               factoryAddress: z.string().regex(/^0x[0-9a-f]{40}$/).nullable(),
               tokenBalanceAtomic: z.string().regex(/^\d+$/),
               tokenDecimals: z.number().int().min(0).max(36),
