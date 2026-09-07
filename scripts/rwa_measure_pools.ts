@@ -125,7 +125,14 @@ async function main(): Promise<void> {
     return;
   }
   const anchor = anchorRead.value;
-  console.log(`  anchored at block ${anchor.blockNumber}`);
+  // The anchor carries its block as a decimal STRING, and the reading stores a
+  // number: converting here rather than at the store keeps the store strict.
+  const blockNumber = Number.parseInt(anchor.blockNumber, 10);
+  if (!Number.isSafeInteger(blockNumber) || blockNumber < 0) {
+    console.log(`  block anchor is not a number (${anchor.blockNumber}) — nothing stored`);
+    return;
+  }
+  console.log(`  anchored at block ${blockNumber}`);
   if (dry) {
     console.log('  --dry: nothing read, nothing stored');
     return;
@@ -185,7 +192,7 @@ async function main(): Promise<void> {
       tokenAddress: token,
       tokenDecimals: decimals,
       pools,
-      blockNumber: anchor.blockNumber,
+      blockNumber,
       blockTag: anchor.blockTag,
       readAt,
       factoryIdentity,
