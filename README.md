@@ -18,9 +18,9 @@ The governing rule is simple:
 - Live web console: [miorail.xyz](https://miorail.xyz)
 - Public read-only MCP: `https://miorail.xyz/mcp`
 - Public product metrics: [miorail.xyz/metrics](https://miorail.xyz/metrics)
-- Product direction: [MIORAIL_VISION.md](docs/MIORAIL_VISION.md)
 - Capability truth: [PLUGIN_REGISTRY.md](docs/PLUGIN_REGISTRY.md)
-- Production acceptance: [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md)
+- Architecture: [ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- Execution boundary: [SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
 
 ### Where to go next
 
@@ -33,7 +33,6 @@ The governing rule is simple:
 | ship on the Base App surface | [Base App](#base-app) |
 | know what may never be signed | [Execution boundary](#execution-boundary) |
 | know what is NOT built | [Known gaps](#known-gaps) |
-| walk the product end to end | [DEMO_CHECKLIST.md](docs/DEMO_CHECKLIST.md) |
 | read the Discover evidence layers | [B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md) |
 
 ## Running it yourself
@@ -457,7 +456,7 @@ has been exercised.
 
 Production acceptance also includes canonical Base MCP reads/actions and real x402 intelligence purchases. Provider-specific proof promotion remains stricter than “the shared path worked once”; the acceptance ledger keeps those claims separate.
 
-See [PRODUCTION_UI_VERIFICATION.md](docs/PRODUCTION_UI_VERIFICATION.md) for the detailed rollout ledger.
+The detailed rollout ledger that backs these claims is kept outside this repository.
 
 ## Repository map
 

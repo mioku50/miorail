@@ -7,7 +7,7 @@ import type { B20VariantV1 } from './contracts.js';
 // ---------------------------------------------------------------------------
 // T67C — everything about B20 that is fixed, and nothing that is not.
 //
-// Every constant here traces to docs/B20_INTERFACE_RESEARCH.md, which records
+// Every constant here traces to the B20 interface research, which records
 // the official source and version for each one. Anything the research marked
 // Unconfirmed, Conflicting or Not found is absent from this file on purpose —
 // there is no partial support and no best guess.

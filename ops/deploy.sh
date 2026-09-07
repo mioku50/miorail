@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Deploy Miorail to ritual-vps. Run as root on the host.
+# Deploy Miorail to the production host. Run as root on that host.
 #
 # This exists because the step that publishes the frontend lived nowhere but
 # in someone's memory. On 2026-08-08 the API was redeployed twice and the

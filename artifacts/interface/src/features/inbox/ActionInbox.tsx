@@ -8,7 +8,7 @@ import { filterInboxActions } from './actionDisplay';
 /**
  * LEGACY / MIGRATION (T49): Action Inbox and recommendation presentation remain
  * temporarily for compatibility; do not add new product features here. Their
- * replacement follows docs/MIORAIL_VISION.md. Wallet binding, safety checks,
+ * replacement follows the product direction. Wallet binding, safety checks,
  * receipts, and execution invariants must survive removal of this UI.
  */
 

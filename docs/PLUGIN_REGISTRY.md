@@ -5,8 +5,7 @@ This document is the capability source of truth for users, developers, and codin
 > **Predates the tokenized-stocks work (Phases 10B–17, late Aug – Sep 2026).**
 > It is accurate about what it covers and silent about Stocks, Radar and
 > Investigate, which are the product's first three surfaces now. For the
-> current shape read [README](../README.md) and
-> [DEMO_CHECKLIST](DEMO_CHECKLIST.md).
+> current shape read [README](../README.md).
 
 A Base plugin document does **not** automatically connect a service to Miorail. Runtime claims must never exceed the recorded lifecycle stage.
 
@@ -247,7 +246,7 @@ Stocks / Coinbase B20 is the primary product surface. The September audit
 confirmed gaps in connected fresh measurement, MCP Use & access, exact-token
 SELL and stock submission/status reconciliation. Closing those shared flows
 precedes unrelated route-family expansion; see
-[production readiness](audits/PRODUCTION_READINESS_2026-09-05.md).
+the production readiness audit, which is kept outside this repository.
 
 Base MCP discovery currently exposes 15 tools and the committed catalogue has
 20 plugin specifications. The live drift check compares plugin names only;

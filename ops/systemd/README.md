@@ -1,7 +1,7 @@
 # Production units
 
 `miorail-miniapp.service` serves the built Base App on `127.0.0.1:3020`. The
-`miorail-b20-*` units are the canonical ritual-vps workers. `ops/deploy.sh`
+`miorail-b20-*` units are the canonical production workers. `ops/deploy.sh`
 installs all three on every deploy, including their checked-in runtime
 drop-ins.
 

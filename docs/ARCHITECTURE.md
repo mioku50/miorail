@@ -1,9 +1,8 @@
 # Miorail architecture
 
 Current map, checked against the repository and VPS on 5 September 2026.
-Product direction: [MIORAIL_VISION](MIORAIL_VISION.md). Execution boundaries:
-[SECURITY-MODEL](SECURITY-MODEL.md). Delivery gaps and audit evidence:
-[production audit](audits/PRODUCTION_READINESS_2026-09-05.md).
+Execution boundaries: [SECURITY-MODEL](SECURITY-MODEL.md). Capability stages:
+[PLUGIN_REGISTRY](PLUGIN_REGISTRY.md).
 
 ## Product and surfaces
 

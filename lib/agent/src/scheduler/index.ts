@@ -7,7 +7,7 @@ import { randomUUID } from 'crypto';
 /**
  * LEGACY / MIGRATION (T49): Scanner scheduling remains temporarily for
  * compatibility; do not add new product features here. Its replacement follows
- * docs/MIORAIL_VISION.md. Wallet binding, safety checks, receipts, and execution
+ * the product direction. Wallet binding, safety checks, receipts, and execution
  * invariants must survive removal of the legacy scanner UI and workflow.
  */
 

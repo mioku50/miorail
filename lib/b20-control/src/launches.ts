@@ -5,7 +5,7 @@ import { keccakWordV1, B20_FACTORY_V1, B20_CHAIN_ID_V1 } from './pinned.js';
 //
 // The signature below is DERIVED, not documented. It was recovered by matching
 // keccak-256 candidates against the topic0 actually observed on Base
-// (docs/B20_INTERFACE_RESEARCH.md §4.1.1): the hash match is exact, so the
+// (B20 interface research §4.1.1): the hash match is exact, so the
 // signature is certain, but the parameter NAMES are inferred from the types and
 // from what the decoded values plainly are. Base documents no event here.
 //

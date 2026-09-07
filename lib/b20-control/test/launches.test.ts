@@ -21,7 +21,7 @@ import { B20_FACTORY_V1, keccakWordV1 } from '../src/pinned.js';
 // produce a token with a guessed field.
 //
 // The fixture below reproduces a launch actually seen on Base
-// (docs/B20_INTERFACE_RESEARCH.md §4.1.1): "o1 mascot" / "DINo1", ASSET,
+// (B20 interface research §4.1.1): "o1 mascot" / "DINo1", ASSET,
 // 18 decimals, at block 49,401,482.
 // ---------------------------------------------------------------------------
 
