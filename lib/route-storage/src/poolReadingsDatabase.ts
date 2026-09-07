@@ -75,21 +75,31 @@ export function createDatabaseMarketPoolReadingRepository(
           -- it win would age the screen by replacing a fresh fact with a stale
           -- one that looks identical.
           WHERE market_pool_readings.block_number <= EXCLUDED.block_number
-            -- And it never gets LESS complete. A throttled pass reads the token
-            -- balance and loses the pair, and because its block is newer it
-            -- would replace a complete reading with a half one: measured on
-            -- 2026-09-07, a run against a rate-limited endpoint turned
-            -- "3,774.69 against 1,629,587.32 USDC" into "the other side was not
-            -- read" on a third of the rows. A newer half-answer is not a better
-            -- answer, and the row already carries its own block, so the older
-            -- complete reading stays and says how old it is.
+            -- And it never LOSES a fact the stored row already has.
             --
-            -- A pair that is genuinely gone reads as 0, not as null: null means
-            -- the call failed, so this cannot hide a pool that emptied.
-            AND (
-              EXCLUDED.paired_balance_atomic IS NOT NULL
-              OR market_pool_readings.paired_balance_atomic IS NULL
-            )`;
+            -- Measured twice on 2026-09-07, both times within minutes of
+            -- shipping. First a rate-limited pass read each token balance and
+            -- lost the other side, turning "3,774.69 against 1,629,587.32 USDC"
+            -- into "the other side was not read" on a third of the live rows.
+            -- Guarding the pair alone was not enough: the next pass read the
+            -- pair and lost the FACTORY, and a pool that had been labelled
+            -- Uniswap v3 came back as "Venue not identified". Both are the same
+            -- failure — a newer partial answer beating an older whole one
+            -- because the only thing compared was the block.
+            --
+            -- So each optional fact is guarded on its own. The row keeps its own
+            -- block and the screen already says how old it is, which is the
+            -- honest trade: a slightly older complete reading beats a fresh one
+            -- with holes in it.
+            --
+            -- A pair that genuinely emptied reads as 0, not as null — null means
+            -- the call failed — so none of this can hide a pool that drained.
+            AND (EXCLUDED.paired_balance_atomic IS NOT NULL
+                 OR market_pool_readings.paired_balance_atomic IS NULL)
+            AND (EXCLUDED.factory_address IS NOT NULL
+                 OR market_pool_readings.factory_address IS NULL)
+            AND (EXCLUDED.venue_id IS NOT NULL
+                 OR market_pool_readings.venue_id IS NULL)`;
         written += 1;
       }
       return { written };

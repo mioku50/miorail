@@ -12,6 +12,14 @@ import {
  * 500. So this validates on write, keys on the same unique triple, and applies
  * the same never-move-backwards rule as the ON CONFLICT clause.
  */
+/** True when `next` would drop something `stored` already knows. */
+function losesAFactV1(stored: MarketPoolReadingV1, next: MarketPoolReadingV1): boolean {
+  if (stored.pairedBalanceAtomic !== null && next.pairedBalanceAtomic === null) return true;
+  if (stored.factoryAddress !== null && next.factoryAddress === null) return true;
+  if (stored.venueId !== null && next.venueId === null) return true;
+  return false;
+}
+
 export function createMemoryMarketPoolReadingRepository(): MarketPoolReadingRepositoryV1 {
   const rows = new Map<string, MarketPoolReadingV1>();
   const key = (reading: Pick<MarketPoolReadingV1, 'chainId' | 'poolAddress' | 'tokenAddress'>) =>
@@ -27,16 +35,10 @@ export function createMemoryMarketPoolReadingRepository(): MarketPoolReadingRepo
       for (const reading of readings) {
         const existing = rows.get(key(reading));
         if (existing && existing.blockNumber > reading.blockNumber) continue;
-        // Never LESS complete, matching the ON CONFLICT clause: a throttled
-        // pass that lost the pair must not replace a reading that has it just
-        // because its block is newer.
-        if (
-          existing &&
-          existing.pairedBalanceAtomic !== null &&
-          reading.pairedBalanceAtomic === null
-        ) {
-          continue;
-        }
+        // Never LOSES a fact, matching the ON CONFLICT clause: a throttled pass
+        // that dropped the pair, the factory or the venue must not replace a
+        // reading that has it just because its block is newer.
+        if (existing && losesAFactV1(existing, reading)) continue;
         rows.set(key(reading), reading);
         written += 1;
       }

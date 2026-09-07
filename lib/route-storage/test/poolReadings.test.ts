@@ -186,6 +186,59 @@ describe('the store ranks by what was measured, never by count', () => {
     assert.equal(rows[0]?.blockNumber, 51004615, 'and the row keeps the block it was read at');
   });
 
+  test('a throttled pass cannot erase the venue it failed to read', async () => {
+    // The second half of the same failure, seen minutes after guarding the pair:
+    // a pass read the pair and lost the FACTORY, and a pool that had been
+    // labelled Uniswap v3 came back as "Venue not identified" on the live
+    // screen. Every optional fact is guarded on its own for this reason.
+    const repo = createMemoryMarketPoolReadingRepository();
+    await repo.recordReadings({
+      readings: [
+        reading({
+          poolAddress: MEME_POOL,
+          venueId: 'uniswap_v3',
+          factoryAddress: UNI_V3_FACTORY,
+        }),
+      ],
+    });
+    await repo.recordReadings({
+      readings: [
+        reading({
+          poolAddress: MEME_POOL,
+          blockNumber: 51009999,
+          venueId: null,
+          factoryAddress: null,
+        }),
+      ],
+    });
+    const rows = await repo.readingsForToken({ chainId: 8453, tokenAddress: NVDA, limit: 10 });
+    assert.equal(rows[0]?.venueId, 'uniswap_v3', 'the venue survives');
+    assert.equal(rows[0]?.factoryAddress, UNI_V3_FACTORY);
+  });
+
+  test('a pass that keeps every fact still wins', async () => {
+    // The rule must not freeze the row: a complete newer reading replaces a
+    // complete older one, which is the ordinary case.
+    const repo = createMemoryMarketPoolReadingRepository();
+    await repo.recordReadings({ readings: [reading()] });
+    await repo.recordReadings({
+      readings: [reading({ blockNumber: 51009999, tokenBalanceAtomic: '380000000000' })],
+    });
+    const rows = await repo.readingsForToken({ chainId: 8453, tokenAddress: NVDA, limit: 10 });
+    assert.equal(rows[0]?.tokenBalanceAtomic, '380000000000');
+    assert.equal(rows[0]?.blockNumber, 51009999);
+  });
+
+  test('a pass that ADDS a fact wins even where one is still missing', async () => {
+    // A row stored without a venue accepts one; nothing here requires the new
+    // reading to be complete, only that it lose nothing.
+    const repo = createMemoryMarketPoolReadingRepository();
+    await repo.recordReadings({ readings: [reading({ venueId: null })] });
+    await repo.recordReadings({ readings: [reading({ blockNumber: 51009999 })] });
+    const rows = await repo.readingsForToken({ chainId: 8453, tokenAddress: NVDA, limit: 10 });
+    assert.equal(rows[0]?.venueId, 'aerodrome_cl');
+  });
+
   test('a pair that genuinely emptied still lands', async () => {
     // Zero is a READ value; null is a failed call. The rule above must not hide
     // a pool that actually drained.
