@@ -74,7 +74,22 @@ export function createDatabaseMarketPoolReadingRepository(
           -- than the stored one is a retry that raced a newer pass, and letting
           -- it win would age the screen by replacing a fresh fact with a stale
           -- one that looks identical.
-          WHERE market_pool_readings.block_number <= EXCLUDED.block_number`;
+          WHERE market_pool_readings.block_number <= EXCLUDED.block_number
+            -- And it never gets LESS complete. A throttled pass reads the token
+            -- balance and loses the pair, and because its block is newer it
+            -- would replace a complete reading with a half one: measured on
+            -- 2026-09-07, a run against a rate-limited endpoint turned
+            -- "3,774.69 against 1,629,587.32 USDC" into "the other side was not
+            -- read" on a third of the rows. A newer half-answer is not a better
+            -- answer, and the row already carries its own block, so the older
+            -- complete reading stays and says how old it is.
+            --
+            -- A pair that is genuinely gone reads as 0, not as null: null means
+            -- the call failed, so this cannot hide a pool that emptied.
+            AND (
+              EXCLUDED.paired_balance_atomic IS NOT NULL
+              OR market_pool_readings.paired_balance_atomic IS NULL
+            )`;
         written += 1;
       }
       return { written };

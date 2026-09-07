@@ -67,13 +67,30 @@ async function main(): Promise<void> {
   const maxTokens = numericArgV1('--max-tokens', 100);
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 
-  const rpcUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
-  if (!rpcUrl) throw new Error('BASE_MAINNET_RPC_URL is required to read a pool balance');
+  // A lane of its own, when the operator gives it one.
+  //
+  // This worker makes four reads per pool and there are a hundred and
+  // twenty-eight of them, which is a different shape of load from the one-read
+  // evidence workers that share the API's endpoint. Measured on 2026-09-07: the
+  // same pass answered 121 complete readings against one endpoint and 64 with a
+  // third of the pairs unread against another, purely on rate limits. The
+  // endpoint is a deployment decision, so it is an env var rather than a choice
+  // made here.
+  const rpcUrl = (
+    process.env.MIORAIL_POOLS_RPC_URL ||
+    process.env.BASE_MAINNET_RPC_URL ||
+    process.env.BASE_RPC_URL ||
+    ''
+  ).trim();
+  if (!rpcUrl) throw new Error('a Base RPC endpoint is required to read a pool balance');
 
   const tail = createDatabaseMarketTailRepository(client);
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const readings = createDatabaseMarketPoolReadingRepository(client);
-  const reader = createB20ReaderV1({ rpcUrl });
+  // Retries are the difference between "the other side was not read" and a
+  // complete row: every failure this worker saw in production was a rate-limit
+  // response, which the next attempt answers.
+  const reader = createB20ReaderV1({ rpcUrl, maxRetries: 5, timeoutMs: 15_000 });
 
   // The corpus is the REVIEWED representations, never every token that ever
   // appeared in a pool. A pool holding a token nobody reviewed has nothing to

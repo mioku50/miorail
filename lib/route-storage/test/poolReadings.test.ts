@@ -162,6 +162,60 @@ describe('the store ranks by what was measured, never by count', () => {
     assert.equal(rows[0]?.blockNumber, 51004999);
   });
 
+  test('a throttled pass cannot erase the pair it failed to read', async () => {
+    // Measured 2026-09-07: a run against a rate-limited endpoint read the token
+    // balance and lost the pair on a third of the rows, and because its block
+    // was newer it replaced "3,774.69 against 1,629,587.32 USDC" with "the
+    // other side was not read". A newer half-answer is not a better answer.
+    const repo = createMemoryMarketPoolReadingRepository();
+    await repo.recordReadings({ readings: [reading()] });
+    await repo.recordReadings({
+      readings: [
+        reading({
+          blockNumber: 51009999,
+          tokenBalanceAtomic: '380000000000',
+          pairedTokenAddress: null,
+          pairedBalanceAtomic: null,
+          pairedDecimals: null,
+          pairedSymbol: null,
+        }),
+      ],
+    });
+    const rows = await repo.readingsForToken({ chainId: 8453, tokenAddress: NVDA, limit: 10 });
+    assert.equal(rows[0]?.pairedBalanceAtomic, '1614910950000', 'the pair survives');
+    assert.equal(rows[0]?.blockNumber, 51004615, 'and the row keeps the block it was read at');
+  });
+
+  test('a pair that genuinely emptied still lands', async () => {
+    // Zero is a READ value; null is a failed call. The rule above must not hide
+    // a pool that actually drained.
+    const repo = createMemoryMarketPoolReadingRepository();
+    await repo.recordReadings({ readings: [reading()] });
+    await repo.recordReadings({
+      readings: [reading({ blockNumber: 51009999, pairedBalanceAtomic: '0' })],
+    });
+    const rows = await repo.readingsForToken({ chainId: 8453, tokenAddress: NVDA, limit: 10 });
+    assert.equal(rows[0]?.pairedBalanceAtomic, '0');
+    assert.equal(rows[0]?.blockNumber, 51009999);
+  });
+
+  test('a first reading with no pair is still stored', async () => {
+    const repo = createMemoryMarketPoolReadingRepository();
+    await repo.recordReadings({
+      readings: [
+        reading({
+          pairedTokenAddress: null,
+          pairedBalanceAtomic: null,
+          pairedDecimals: null,
+          pairedSymbol: null,
+        }),
+      ],
+    });
+    const rows = await repo.readingsForToken({ chainId: 8453, tokenAddress: NVDA, limit: 10 });
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]?.pairedBalanceAtomic, null);
+  });
+
   test('the fake refuses what the database refuses', async () => {
     // A fake that accepts a row Postgres would reject turns a schema violation
     // into a production-only 500.

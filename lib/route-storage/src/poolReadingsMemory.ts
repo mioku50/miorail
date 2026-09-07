@@ -27,6 +27,16 @@ export function createMemoryMarketPoolReadingRepository(): MarketPoolReadingRepo
       for (const reading of readings) {
         const existing = rows.get(key(reading));
         if (existing && existing.blockNumber > reading.blockNumber) continue;
+        // Never LESS complete, matching the ON CONFLICT clause: a throttled
+        // pass that lost the pair must not replace a reading that has it just
+        // because its block is newer.
+        if (
+          existing &&
+          existing.pairedBalanceAtomic !== null &&
+          reading.pairedBalanceAtomic === null
+        ) {
+          continue;
+        }
         rows.set(key(reading), reading);
         written += 1;
       }
