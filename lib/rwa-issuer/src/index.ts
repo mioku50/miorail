@@ -15,3 +15,4 @@ export * from './defiVenues.js';
 export * from './venueAnnouncements.js';
 export * from './openFigi.js';
 export * from './dinariSymbolBinding.js';
+export * from './pooledLiquidity.js';

@@ -477,6 +477,13 @@
       "when": 1788701400000,
       "tag": "0067_b20_watchlist_last_read",
       "breakpoints": true
+    },
+    {
+      "idx": 68,
+      "version": "7",
+      "when": 1788787800000,
+      "tag": "0068_market_pool_readings",
+      "breakpoints": true
     }
   ]
 }
