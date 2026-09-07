@@ -96,6 +96,24 @@ export interface BaseMcpRuntimeSnapshotV1 {
   /** Plugin ids whose write path needs a typed x402 prepare Miorail has not
    * built. Recognised, refused, and told apart from `unsupported`. */
   typedX402Plugins: readonly string[];
+  /**
+   * Reviewed reads that authenticate with a key this deployment does not hold.
+   *
+   * `released` used to be read off a build-time list, so an OpenSea read stayed
+   * advertised on a server with no OpenSea key and failed at the provider. The
+   * set is DERIVED — Base's own `auth:` frontmatter, minus the keys a spec
+   * publishes, minus the keys this process resolves — so another deployment,
+   * or a rotated key, changes the answer without changing any list.
+   */
+  readPluginsMissingCredential: readonly string[];
+  /**
+   * Reviewed reads that run as the READER, after they sign in to the provider.
+   *
+   * A requirement, never a claim about whether this person is signed in: the
+   * catalogue is public and unauthenticated by design, so it can say what the
+   * read needs and must not say what the reader has.
+   */
+  readPluginsNeedingSignIn: readonly string[];
 }
 
 /**
@@ -158,6 +176,22 @@ function readCapabilityV1(
     return { operation: 'read', state: 'unsupported', reason: 'This plugin declares no read in its Base spec.' };
   }
   if (runtime.reviewedReadPlugins.includes(plugin.pluginId)) {
+    // A recipe existing is not a recipe that can run. Both of these were
+    // `released` on a screen that could not deliver them.
+    if (runtime.readPluginsMissingCredential.includes(plugin.pluginId)) {
+      return {
+        operation: 'read',
+        state: 'unavailable',
+        reason: 'This read authenticates with a key this deployment does not hold, so nothing is called.',
+      };
+    }
+    if (runtime.readPluginsNeedingSignIn.includes(plugin.pluginId)) {
+      return {
+        operation: 'read',
+        state: 'requires_input',
+        reason: 'This read runs as you, after you sign in to the provider — Miorail holds no account of its own here.',
+      };
+    }
     return { operation: 'read', state: 'released', reason: 'A reviewed, host-pinned HTTP read runs here.' };
   }
   return {

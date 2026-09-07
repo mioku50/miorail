@@ -18,6 +18,7 @@ import {
 import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
 import { baseMcpRuntimeSnapshotV1 } from '../lib/baseMcpRuntimeSnapshot.js';
 import { runBaseMcpConsoleV1 } from '../lib/baseMcpConsole.js';
+import { reviewedReadShapeV1 } from '../lib/baseMcpReadShapes.js';
 import { runReviewedBaseMcpPluginReadV1 } from '../lib/baseMcpReviewedPluginRuntime.js';
 import {
   classifyBaseMcpExtensionIntentV1,
@@ -364,6 +365,13 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
               disposition: downgraded ? ('route_unavailable_here' as const) : example.disposition,
               capabilityReason: capability.state === 'released' ? null : capability.reason,
               capabilityState: capability.state,
+              // Only for a read that actually runs here. Describing the shape
+              // of an answer nobody is going to get would be a second promise
+              // on top of the one the capability state just withdrew.
+              returns:
+                example.disposition === 'read_in_extensions' && capability.state === 'released'
+                  ? reviewedReadShapeV1(plugin.id, example.id)
+                  : null,
             };
           }),
         };

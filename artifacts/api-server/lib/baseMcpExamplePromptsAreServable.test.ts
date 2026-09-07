@@ -8,6 +8,7 @@ import {
 
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
+import { REVIEWED_READ_SHAPES_V1, reviewedReadShapeV1 } from './baseMcpReadShapes.js';
 
 /**
  * An example prompt is a CLAIM about what happens when it is clicked.
@@ -79,6 +80,64 @@ describe('an example prompt is servable by the handler it points at', () => {
     // mismatch that made "Base and Arbitrum" arrive as Base.
     assert.deepEqual(parsed.chains, ['eip155:8453', 'eip155:42161']);
     assert.ok(parsed.graduation_threshold_per_chain_usd >= 15_000);
+  });
+
+  test('every released read says what it comes back with', () => {
+    // The GMGN failure in full: the prompt promised a per-token report, the
+    // handler returned a list, and the reader had no way to know which was
+    // coming until it arrived. The shape is written beside the recipe, so a
+    // recipe that changes what it fetches cannot keep an old promise.
+    const missing: string[] = [];
+    for (const plugin of BASE_MCP_PROVIDER_INTENTS_V1) {
+      for (const example of plugin.examples) {
+        if (example.disposition !== 'read_in_extensions') continue;
+        if (exampleCapabilityStateV1(plugin, example, runtime).state !== 'released') continue;
+        if (!reviewedReadShapeV1(plugin.pluginId, example.id)) {
+          missing.push(`${plugin.pluginId}:${example.id}`);
+        }
+      }
+    }
+    assert.deepEqual(missing, [], `released reads with no stated shape: ${missing.join(', ')}`);
+  });
+
+  test('a stated shape belongs to a read that exists', () => {
+    // The other direction: a leftover sentence describing a recipe nobody runs
+    // any more would sit on the screen looking measured.
+    const known = new Set(
+      BASE_MCP_PROVIDER_INTENTS_V1.flatMap((plugin) =>
+        plugin.examples.map((example) => `${plugin.pluginId}:${example.id}`),
+      ),
+    );
+    for (const key of Object.keys(REVIEWED_READ_SHAPES_V1)) {
+      assert.ok(known.has(key), `${key} describes a read that no example points at`);
+    }
+  });
+
+  test('a read whose credential this deployment lacks is not advertised', () => {
+    // Derived, not listed: the same code answers differently on a server
+    // without the key, which is the whole point.
+    const withoutKey = {
+      ...runtime,
+      readPluginsMissingCredential: ['opensea'],
+      readPluginsNeedingSignIn: ['bitrefill'],
+    };
+    const opensea = BASE_MCP_PROVIDER_INTENTS_V1.find((plugin) => plugin.pluginId === 'opensea')!;
+    const drops = opensea.examples.find((example) => example.id === 'drops')!;
+    assert.equal(exampleCapabilityStateV1(opensea, drops, withoutKey).state, 'unavailable');
+
+    const bitrefill = BASE_MCP_PROVIDER_INTENTS_V1.find((plugin) => plugin.pluginId === 'bitrefill')!;
+    const browse = bitrefill.examples.find((example) => example.id === 'browse')!;
+    const cell = exampleCapabilityStateV1(bitrefill, browse, withoutKey);
+    assert.equal(cell.state, 'requires_input');
+    // A requirement about the read, never a claim about this reader: the
+    // catalogue is public and unauthenticated by design.
+    assert.match(cell.reason, /after you sign in/);
+  });
+
+  test('a key a plugin spec publishes is not a missing key', () => {
+    // GMGN's read key ships in Base's own spec. Counting it absent would have
+    // labelled a read "unavailable here" while it answered 200 everywhere.
+    assert.ok(!runtime.readPluginsMissingCredential.includes('gmgn'));
   });
 
   test('a read that needs an address the reader owns says so in the prompt', () => {

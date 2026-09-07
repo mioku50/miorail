@@ -395,6 +395,19 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
   },
 ];
 
+/**
+ * The credential a plugin's own spec PUBLISHES, if it publishes one.
+ *
+ * A published read key is not a missing key: GMGN's ships in Base's spec, and
+ * a deployment that treated it as absent was one commit from labelling a read
+ * "unavailable here" while it answered 200 everywhere. Exported so the runtime
+ * snapshot can tell "needs a key nobody gave us" apart from "needs a key that
+ * came with the spec".
+ */
+export function publishedPluginCredentialV1(namespace: string): string | undefined {
+  return getExecutorSkill(namespace)?.manifest?.publishedCredential;
+}
+
 function getExecutorSkill(namespace: string): RuntimeSkillDefinition | undefined {
   const registered = getRuntimeSkill(namespace);
   if (registered?.manifest) return registered;

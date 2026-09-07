@@ -55,6 +55,8 @@ export interface BaseMcpPluginRowV1 {
     prompt: string;
     surface: 'read' | 'action' | 'routable';
     capabilityState?: 'released' | 'unavailable' | 'unsupported' | 'external_ui' | 'requires_input';
+    /** What this read comes back with, when it runs here. */
+    returns?: string | null;
     capabilityReason?: string | null;
     disposition: 'read_in_extensions' | 'handoff_to_routes' | 'handoff_to_provider_ui' | 'typed_x402_required' | 'action_in_extensions' | 'route_unavailable_here' | 'adapter_required';
   }[];
@@ -498,6 +500,10 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
       >
         <span className={`mcp-disposition ${badge.tone}`}>{badge.label}</span>
         <span>{example.prompt}</span>
+        {/* The shape of the answer, before the click rather than after it. A
+            prompt sets an expectation on its own, and the reader has no way to
+            tell a list from a per-token report until one arrives. */}
+        {example.returns ? <span className="mcp-example-returns">{example.returns}</span> : null}
       </button>
     );
   };

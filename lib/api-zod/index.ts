@@ -1843,6 +1843,17 @@ export const BaseMcpPluginCatalogueResponseSchema = z.object({
             /** Why, when the runtime downgraded a declared disposition. */
             capabilityReason: z.string().min(1).max(400).nullable().optional(),
             capabilityState: z.enum(['released', 'unavailable', 'unsupported', 'external_ui', 'requires_input']).optional(),
+            /**
+             * What this read comes back with, in one sentence, written beside
+             * the recipe that produces it.
+             *
+             * A prompt sets an expectation and the answer either meets it or
+             * contradicts it — GMGN advertised a per-token report its API does
+             * not have, and the reader blamed the provider. Naming the shape
+             * before the click is how that stops being possible. Null for
+             * anything that is not a released read here.
+             */
+            returns: z.string().min(1).max(240).nullable().optional(),
           }),
         )
         .min(1)

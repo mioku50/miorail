@@ -1,4 +1,6 @@
-import type { BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
+import { BASE_MCP_PLUGIN_CATALOGUE_V1, type BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
+import { resolvePluginCredential } from '@mioagent/security/httpAllowlist';
+import { publishedPluginCredentialV1 } from '@mioagent/runtime-skills';
 import { PROVIDERS_REQUIRING_SIMULATION_V1 } from '@mioagent/transaction-composer';
 import { swapSimulationCapabilityV1 } from './swapSimulation.js';
 
@@ -74,11 +76,43 @@ const ROUTE_ADAPTER_PROVIDERS_V1: readonly string[] = [
  * constructs providers only to see whether they can be constructed and issues
  * no network call — so callers need no cache and tests need no clock.
  */
+/**
+ * Which reviewed reads cannot authenticate here, and which run as the reader.
+ *
+ * Derived on every call, from three facts that are already true somewhere else:
+ * Base's own `auth:` frontmatter in the catalogue, the credentials a plugin
+ * spec PUBLISHES (GMGN's read key ships in Base's spec and is not a missing
+ * key), and what `resolvePluginCredential` resolves in this process. Nothing
+ * here is a list somebody has to remember to update when a key is rotated or
+ * a second deployment runs without one.
+ */
+function readCredentialStateV1(reviewed: readonly string[]): {
+  missing: string[];
+  signIn: string[];
+} {
+  const missing: string[] = [];
+  const signIn: string[] = [];
+  for (const plugin of BASE_MCP_PLUGIN_CATALOGUE_V1) {
+    if (!reviewed.includes(plugin.id)) continue;
+    if (plugin.auth === 'siwe-jwt') {
+      signIn.push(plugin.id);
+      continue;
+    }
+    if (plugin.auth !== 'api-key') continue;
+    if (publishedPluginCredentialV1(plugin.id)) continue;
+    if (!resolvePluginCredential(plugin.id)) missing.push(plugin.id);
+  }
+  return { missing, signIn };
+}
+
 export function baseMcpRuntimeSnapshotV1(
   env: NodeJS.ProcessEnv = process.env,
 ): BaseMcpRuntimeSnapshotV1 {
   const simulation = swapSimulationCapabilityV1(env);
+  const credentials = readCredentialStateV1(REVIEWED_READ_PLUGINS_V1);
   return {
+    readPluginsMissingCredential: credentials.missing,
+    readPluginsNeedingSignIn: credentials.signIn,
     reviewedReadPlugins: REVIEWED_READ_PLUGINS_V1,
     releasedRouteProviders: ROUTE_ADAPTER_PROVIDERS_V1,
     simulationRequiredProviders: PROVIDERS_REQUIRING_SIMULATION_V1,

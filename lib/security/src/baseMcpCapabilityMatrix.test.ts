@@ -17,6 +17,8 @@ function runtimeV1(overrides: Partial<BaseMcpRuntimeSnapshotV1> = {}): BaseMcpRu
     releasedActionPlugins: [],
     providerUiPlugins: ['avantis'],
     typedX402Plugins: ['brickken'],
+    readPluginsMissingCredential: [],
+    readPluginsNeedingSignIn: [],
     ...overrides,
   };
 }
