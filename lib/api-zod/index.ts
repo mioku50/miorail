@@ -27,6 +27,7 @@ import {
   SimulationStateV1Schema,
   TransactionReceiptV1Schema,
 } from '@mioagent/route-domain';
+import { B20_PIPELINE_STATES_V1 } from '@mioagent/opportunity-rail';
 import { SwapRouteEvaluationV1Schema } from '@mioagent/route-engine/contracts';
 import { RoutePlanProjectionV1Schema } from '@mioagent/route-card/contracts';
 import { TransactionReviewProjectionV1Schema } from '@mioagent/route-card/transactionReview';
@@ -4160,18 +4161,16 @@ export const B20EntryReconcileSubmissionRequestV1Schema = z
 // an unmeasured token is a lie with a decimal point in it.
 // ---------------------------------------------------------------------------
 
-export const B20PipelineStateV1Schema = z.enum([
-  'configuration_required',
-  'ingestion_not_started',
-  'ingestion_catching_up',
-  'measurement_pending',
-  'healthy',
-  'degraded',
-  /** T73-LIVE §8 — nobody has advanced the cursor recently. */
-  'worker_stale',
-  'decoder_mismatch',
-  'storage_unavailable',
-]);
+// Derived, never retyped. This list used to be a second copy of
+// B20_PIPELINE_STATES_V1, and the copies drifted: `feed_frozen` was added to
+// the producer, to the console vocabulary and to the route, but not here. The
+// result was a server that could not serialise its own answer — every request
+// to /opportunities/b20 and /opportunities/b20/market/rails returned 500 with
+// `invalid_enum_value` for the whole time the launch feed was frozen, and the
+// screen blamed storage for a schema that had simply never been told about the
+// state. A wire enum that is a hand-kept copy of a producer enum is one commit
+// away from that every time a state is added, so it is no longer a copy.
+export const B20PipelineStateV1Schema = z.enum(B20_PIPELINE_STATES_V1);
 
 /** §1 — why the feed looks the way it does. Public-safe facts only: no URL, no
  * credential, no raw worker error. */

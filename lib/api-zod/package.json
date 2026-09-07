@@ -6,11 +6,12 @@
   "type": "module",
   "main": "index.ts",
   "dependencies": {
-    "@mioagent/rwa-issuer": "workspace:*",
+    "@mioagent/opportunity-rail": "workspace:*",
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-engine": "workspace:*",
     "@mioagent/rwa-dossier": "workspace:*",
+    "@mioagent/rwa-issuer": "workspace:*",
     "@mioagent/rwa-market-reality": "workspace:*",
     "zod": "^3.25.76"
   }
