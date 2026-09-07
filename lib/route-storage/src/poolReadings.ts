@@ -44,15 +44,64 @@ const Digits = z.string().regex(/^\d+$/, 'expected a decimal integer string');
  * concentrated-liquidity and one v2-style pool factory — and the published
  * Aerodrome CL address is NOT the one most tokenized-stock pools sit in, which
  * is exactly why the discriminator has to be a read and not a list.
+ *
+ * Five factories answered and stayed unnamed for a while, and the fix was more
+ * reading rather than a longer address list. A protocol's own ABI is as good a
+ * discriminator as its Voter: PancakeSwap v2's factory publishes
+ * `INIT_CODE_PAIR_HASH()`, PancakeSwap v3's publishes `lmPoolDeployer()` for
+ * its liquidity-mining pools, and Algebra's publishes `defaultPluginFactory()`
+ * for the plugin architecture that only Algebra has. None of those methods
+ * exists on Uniswap's factories or on each other's.
+ *
+ * The last two ids name a SHAPE, not a protocol, and say so in their own
+ * label. A pool whose factory answers nothing can still be read as
+ * concentrated-liquidity or as a constant-product pair, and telling the reader
+ * which one it is beats "not identified" — as long as the words never suggest
+ * we know whose it is. A brand is never inferred from a string the pool hands
+ * us: a pool naming itself `MineSwap LP` proves only what it wrote there.
  */
-export const POOL_VENUE_IDS_V1 = ['aerodrome_cl', 'aerodrome_v2', 'uniswap_v3'] as const;
+export const POOL_VENUE_IDS_V1 = [
+  'aerodrome_cl',
+  'aerodrome_v2',
+  'uniswap_v3',
+  'pancakeswap_v2',
+  'pancakeswap_v3',
+  'algebra_cl',
+  'unnamed_cl',
+  'unnamed_pair',
+] as const;
 export type PoolVenueIdV1 = (typeof POOL_VENUE_IDS_V1)[number];
 
+/**
+ * The label the screen shows. Code-owned: a pool can call itself anything, and
+ * a contract-supplied string rendered as our label is a venue a stranger gets
+ * to name. The two shape labels carry their own caveat, because a name shown
+ * on its own is read as an identification.
+ */
 export const POOL_VENUE_NAMES_V1: Readonly<Record<PoolVenueIdV1, string>> = {
   aerodrome_cl: 'Aerodrome CL',
   aerodrome_v2: 'Aerodrome',
   uniswap_v3: 'Uniswap v3',
+  pancakeswap_v2: 'PancakeSwap v2',
+  pancakeswap_v3: 'PancakeSwap v3',
+  algebra_cl: 'Algebra CL',
+  unnamed_cl: 'Concentrated pool, venue not named',
+  unnamed_pair: 'AMM pair, venue not named',
 };
+
+/**
+ * The ids that describe a SHAPE rather than a protocol.
+ *
+ * A caller that treats every id as a venue name will write "on Concentrated
+ * pool, venue not named" into a sentence and count it among the venues it
+ * identified. Both are false in the same way, so the distinction is exported
+ * with the ids rather than re-derived by each surface.
+ */
+export const POOL_VENUE_SHAPE_IDS_V1 = ['unnamed_cl', 'unnamed_pair'] as const;
+
+export function poolVenueIsShapeV1(id: PoolVenueIdV1 | null): boolean {
+  return id !== null && (POOL_VENUE_SHAPE_IDS_V1 as readonly string[]).includes(id);
+}
 
 export const MarketPoolReadingV1Schema = z
   .object({

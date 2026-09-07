@@ -3256,6 +3256,51 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     );
   });
 
+  test('a shape is placed in the sentence without being called a venue', () => {
+    // Measured: one factory holding tokenized-stock pools publishes no method
+    // that pins a protocol, and its pools are minimal-proxy clones. Reading the
+    // pool's own shape beats "not identified" — but "on Concentrated pool,
+    // venue not named" would claim we identified it.
+    const section = pooled({
+      rows: [poolRow({ venueId: 'unnamed_cl', venueName: 'Concentrated pool, venue not named' })],
+    });
+    assert.match(section.headline, /in a concentrated pool whose venue is not named/);
+    assert.doesNotMatch(section.headline, / on Concentrated pool/);
+    // And it is not counted among the venues we named.
+    assert.equal(section.chip, 'Measured');
+    assert.equal(section.evidence.find((row) => row.label === 'Venues named')?.value, 'none identified');
+    assert.match(
+      section.evidence.find((row) => row.label === 'Shape only')?.value ?? '',
+      /^1 · read as a pool, no protocol pinned$/,
+    );
+    assert.equal(section.evidence.find((row) => row.label === 'Not identified')?.value, '0');
+  });
+
+  test('a pair shape reads as a pair, not as a concentrated pool', () => {
+    const section = pooled({
+      rows: [poolRow({ venueId: 'unnamed_pair', venueName: 'AMM pair, venue not named' })],
+    });
+    assert.match(section.headline, /in an AMM pair whose venue is not named/);
+  });
+
+  test('a named protocol still reads as a venue next to a shape', () => {
+    const section = pooled({
+      rows: [
+        poolRow({ venueId: 'pancakeswap_v3', venueName: 'PancakeSwap v3' }),
+        poolRow({
+          poolAddress: '0xa6f55795c696130b48feea45eb600620e24559b9',
+          venueId: 'unnamed_cl',
+          venueName: 'Concentrated pool, venue not named',
+          tokenBalanceAtomic: '100000000',
+        }),
+      ],
+    });
+    assert.match(section.headline, / on PancakeSwap v3\./);
+    assert.equal(section.chip, 'PancakeSwap v3');
+    assert.equal(section.evidence.find((row) => row.label === 'Venues named')?.value, 'PancakeSwap v3');
+    assert.match(section.evidence.find((row) => row.label === 'Shape only')?.value ?? '', /^1 · /);
+  });
+
   test('no row wears a quality colour', () => {
     // A balance is a size, not a quality. Colouring the deepest pool green
     // would make the section a recommendation about where to trade.

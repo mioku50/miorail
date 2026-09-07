@@ -2410,8 +2410,22 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
 
   const rows = pools.rows;
   const lead = rows[0]!;
-  const named = rows.filter((row) => row.venueName !== null);
+  // A SHAPE is not a venue. `unnamed_cl`/`unnamed_pair` say what kind of pool
+  // this is when the factory publishes nothing we can pin a protocol to, and
+  // counting them among "venues named" — or dropping one into "… on <venue>" —
+  // would claim an identification we did not make.
+  const isShape = (row: (typeof rows)[number]): boolean =>
+    row.venueId === 'unnamed_cl' || row.venueId === 'unnamed_pair';
+  const named = rows.filter((row) => row.venueName !== null && !isShape(row));
+  const shaped = rows.filter((row) => isShape(row));
   const venues = [...new Set(named.map((row) => row.venueName as string))];
+  const leadPlace = lead.venueName === null
+    ? ''
+    : isShape(lead)
+      ? lead.venueId === 'unnamed_cl'
+        ? ' in a concentrated pool whose venue is not named'
+        : ' in an AMM pair whose venue is not named'
+      : ` on ${lead.venueName}`;
   // How concentrated the pooled amount is, as a MEASURED share rather than a
   // threshold somebody chose. A first draft called every pool below a
   // hundredth of the largest "noise", which is a judgement wearing a number: on
@@ -2446,7 +2460,7 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
       (lead.pairedBalanceAtomic !== null && lead.pairedDecimals !== null
         ? ` against ${amount(lead.pairedBalanceAtomic, lead.pairedDecimals)} ${lead.pairedSymbol ?? 'of the other side'}`
         : '') +
-      `${lead.venueName ? ` on ${lead.venueName}` : ''}. ` +
+      `${leadPlace}. ` +
       // The count is bounded the moment it is said, because a count is the one
       // number here that flatters a market that does not exist: thirty-nine
       // pools hold NVDAc and one of them holds ninety-one per cent of it.
@@ -2454,6 +2468,8 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
         ? `That one pool holds ${leadShare}% of everything measured in pools, so a pool is not a market. `
         : '') +
       'These are balances the contracts hold, not what a trade of a given size would get — that is measured under Trade.',
+    // The chip takes a NAMED venue or nothing. A shape label in a chip reads
+    // as the venue's name at a glance, which is the whole thing it must not do.
     chip: venues.length > 0 ? (venues[0] as string) : 'Measured',
     tone: 'neutral',
     facts,
@@ -2464,8 +2480,15 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
         value: venues.length > 0 ? venues.join(', ') : 'none identified',
       },
       {
+        label: 'Shape only',
+        value:
+          shaped.length === 0
+            ? '0'
+            : `${shaped.length} · read as a pool, no protocol pinned`,
+      },
+      {
         label: 'Not identified',
-        value: String(rows.length - named.length),
+        value: String(rows.length - named.length - shaped.length),
       },
       { label: 'Block', value: pools.blockNumber === null ? 'not stated' : String(pools.blockNumber) },
       { label: 'Read at', value: pools.readAt ?? 'not stated' },

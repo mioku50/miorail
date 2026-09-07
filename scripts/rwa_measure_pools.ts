@@ -39,7 +39,9 @@ import {
 import {
   POOL_SELECTORS_V1,
   measurePoolsV1,
+  poolVenueFromIdentityV1,
   readFactoryIdentityV1,
+  readPoolShapesV1,
 } from '@mioagent/rwa-issuer';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -183,6 +185,28 @@ async function main(): Promise<void> {
       `${[...factoryIdentity.values()].filter((identity) => identity.voter).length} answering an Aerodrome voter`,
   );
 
+  // The pools their factory could not place, asked about their own shape. A
+  // factory answer covers every pool it made, so this is the remainder — three
+  // pools today, minimal-proxy clones behind a factory with no public ABI.
+  const unplaced = new Map<string, string>();
+  for (const [index, pool] of allPools.entries()) {
+    const result = factoryReads[index];
+    if (!result?.ok) continue;
+    const word = result.value.replace(/^0x/, '');
+    if (word.length !== 64 || !/^0{24}/.test(word)) continue;
+    const identity = factoryIdentity.get(`0x${word.slice(24)}`.toLowerCase());
+    if (identity && poolVenueFromIdentityV1(identity) === null) unplaced.set(pool.toLowerCase(), pool);
+  }
+  const poolShapes = await readPoolShapesV1({
+    reader,
+    pools: [...unplaced.values()],
+    blockTag: anchor.blockTag,
+  });
+  console.log(
+    `  ${unplaced.size} pool(s) their factory could not place, ` +
+      `${[...poolShapes.values()].filter((shape) => shape.concentrated || shape.pair).length} answered a shape`,
+  );
+
   const readAt = new Date().toISOString();
   let tokensMeasured = 0;
   let rowsWritten = 0;
@@ -213,6 +237,7 @@ async function main(): Promise<void> {
       blockTag: anchor.blockTag,
       readAt,
       factoryIdentity,
+      poolShapes,
     });
     const written = await readings.recordReadings({ readings: outcome.readings });
     tokensMeasured += 1;

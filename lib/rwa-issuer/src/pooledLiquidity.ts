@@ -38,6 +38,29 @@ export const POOL_SELECTORS_V1 = {
   symbol: selectorV1('symbol()'),
   /** Answers on an Aerodrome factory and nowhere else. */
   voter: selectorV1('voter()'),
+  // --- protocol discriminators, all read on the FACTORY -------------------
+  /** Aerodrome's Slipstream factories enumerate their tick spacings; the v2
+   * pool factory does not. Separates concentrated from constant-product
+   * without asking a pool. */
+  tickSpacings: selectorV1('tickSpacings()'),
+  /** PancakeSwap v2's factory publishes the pair init-code hash. Uniswap v2
+   * and the plain forks of it do not. */
+  initCodePairHash: selectorV1('INIT_CODE_PAIR_HASH()'),
+  /** PancakeSwap v3's factory deploys the liquidity-mining pool that its CL
+   * pools point back at. Uniswap v3 has no such thing. */
+  lmPoolDeployer: selectorV1('lmPoolDeployer()'),
+  /** Algebra's plugin architecture. Only Algebra factories answer. */
+  defaultPluginFactory: selectorV1('defaultPluginFactory()'),
+  /** A v2-style pool factory enumerates its pairs. */
+  allPairsLength: selectorV1('allPairsLength()'),
+  // --- shape discriminators, read on the POOL ------------------------------
+  /** Concentrated liquidity, Uniswap-v3 lineage. */
+  slot0: selectorV1('slot0()'),
+  /** Constant-product pair. NOTE: an Algebra pool answers this too, so the
+   * concentrated check has to come first. */
+  getReserves: selectorV1('getReserves()'),
+  /** Concentrated liquidity, whatever the lineage. */
+  tickSpacing: selectorV1('tickSpacing()'),
 } as const;
 
 /**
@@ -62,6 +85,27 @@ export interface PoolIdentityV1 {
   /** True when the factory exposes `tickSpacing`-style concentrated liquidity.
    * Decided by the caller from the pool, not guessed here. */
   concentrated: boolean;
+  /** PancakeSwap v2: the factory answers `INIT_CODE_PAIR_HASH()`. */
+  initCodePairHash: boolean;
+  /** PancakeSwap v3: the factory answers `lmPoolDeployer()`. */
+  lmPoolDeployer: boolean;
+  /** Algebra: the factory answers `defaultPluginFactory()`. */
+  defaultPluginFactory: boolean;
+  /** A v2-style pool factory: it enumerates its pairs. */
+  enumeratesPairs: boolean;
+}
+
+/**
+ * What a POOL says about its own shape, read only when its factory said
+ * nothing. One factory serves many pools, so the factory answers first and
+ * this is the fallback for the handful it cannot cover — today, pools deployed
+ * as minimal-proxy clones behind a factory with no public ABI at all.
+ */
+export interface PoolShapeV1 {
+  /** Answers `slot0()` or `tickSpacing()`. */
+  concentrated: boolean;
+  /** Answers `getReserves()`. */
+  pair: boolean;
 }
 
 /**
@@ -71,12 +115,26 @@ export interface PoolIdentityV1 {
  * Unidentified is a state: a pool holding real money must not vanish from the
  * answer because we could not label it.
  */
-export function poolVenueFromIdentityV1(identity: PoolIdentityV1): PoolVenueIdV1 | null {
+export function poolVenueFromIdentityV1(
+  identity: PoolIdentityV1,
+  shape?: PoolShapeV1,
+): PoolVenueIdV1 | null {
   if (!identity.factory) return null;
+  // Named venues first, each by a method only that protocol publishes.
   if (identity.voter && identity.voter.toLowerCase() === AERODROME_VOTER_V1) {
     return identity.concentrated ? 'aerodrome_cl' : 'aerodrome_v2';
   }
   if (identity.factory.toLowerCase() === UNISWAP_V3_FACTORY_BASE_V1) return 'uniswap_v3';
+  if (identity.defaultPluginFactory) return 'algebra_cl';
+  if (identity.lmPoolDeployer) return 'pancakeswap_v3';
+  if (identity.initCodePairHash) return 'pancakeswap_v2';
+  // Then the shape, which says less but is still an answer. Concentrated is
+  // tested before pair: an Algebra pool answers `getReserves()` as well, and a
+  // concentrated pool called a pair would misdescribe how its liquidity sits.
+  if (identity.concentrated) return 'unnamed_cl';
+  if (identity.enumeratesPairs) return 'unnamed_pair';
+  if (shape?.concentrated) return 'unnamed_cl';
+  if (shape?.pair) return 'unnamed_pair';
   return null;
 }
 
@@ -94,6 +152,10 @@ export interface PoolMeasurementInputV1 {
    * pools and asking it once per pool would pay for the same answer thirty
    * times. */
   factoryIdentity: ReadonlyMap<string, PoolIdentityV1>;
+  /** Shape per pool, for the pools whose factory placed them nowhere. Optional:
+   * a caller that has not read shapes gets exactly the venues the factories
+   * prove, never a guess. */
+  poolShapes?: ReadonlyMap<string, PoolShapeV1>;
 }
 
 export interface PoolMeasurementOutcomeV1 {
@@ -218,7 +280,9 @@ export async function measurePoolsV1(
     const pairedComplete = row.paired !== null && pairedBalance !== null && decimals !== null;
 
     const identity = row.factory ? input.factoryIdentity.get(row.factory) : undefined;
-    const venueId = identity ? poolVenueFromIdentityV1(identity) : null;
+    const venueId = identity
+      ? poolVenueFromIdentityV1(identity, input.poolShapes?.get(row.pool))
+      : null;
 
     readings.push({
       chainId: input.chainId,
@@ -250,6 +314,15 @@ export async function measurePoolsV1(
  * its v2 pool factory. A factory that answers neither is still recorded, with
  * its identity unknown, because dropping it would drop its pools.
  */
+const FACTORY_PROBES_V1 = [
+  POOL_SELECTORS_V1.voter,
+  POOL_SELECTORS_V1.tickSpacings,
+  POOL_SELECTORS_V1.initCodePairHash,
+  POOL_SELECTORS_V1.lmPoolDeployer,
+  POOL_SELECTORS_V1.defaultPluginFactory,
+  POOL_SELECTORS_V1.allPairsLength,
+] as const;
+
 export async function readFactoryIdentityV1(input: {
   reader: B20ReaderV1;
   factories: readonly string[];
@@ -257,24 +330,65 @@ export async function readFactoryIdentityV1(input: {
 }): Promise<Map<string, PoolIdentityV1>> {
   const factories = [...new Set(input.factories.map(lower))];
   if (factories.length === 0) return new Map();
-  const tickSpacings = selectorV1('tickSpacings()');
+  const width = FACTORY_PROBES_V1.length;
   const results = await callManyV1(
     input.reader,
-    factories.flatMap((factory) => [
-      { to: factory, data: encodeNoArgsV1(POOL_SELECTORS_V1.voter), blockTag: input.blockTag },
-      { to: factory, data: encodeNoArgsV1(tickSpacings), blockTag: input.blockTag },
-    ]),
+    factories.flatMap((factory) =>
+      FACTORY_PROBES_V1.map((selector) => ({
+        to: factory,
+        data: encodeNoArgsV1(selector),
+        blockTag: input.blockTag,
+      })),
+    ),
   );
   const identity = new Map<string, PoolIdentityV1>();
   for (const [index, factory] of factories.entries()) {
-    const voterResult = results[index * 2];
-    const tickResult = results[index * 2 + 1];
+    const base = index * width;
+    const voterResult = results[base];
     const voter = voterResult?.ok ? decodeAddressWordV1(voterResult.value) : null;
     identity.set(factory, {
       factory,
       voter: voter ? lower(voter) : null,
-      concentrated: Boolean(tickResult?.ok),
+      concentrated: Boolean(results[base + 1]?.ok),
+      initCodePairHash: Boolean(results[base + 2]?.ok),
+      lmPoolDeployer: Boolean(results[base + 3]?.ok),
+      defaultPluginFactory: Boolean(results[base + 4]?.ok),
+      enumeratesPairs: Boolean(results[base + 5]?.ok),
     });
   }
   return identity;
+}
+
+/**
+ * Ask the pools their own shape — only the ones their factory could not place.
+ *
+ * A factory answer covers every pool it made, so this runs on the remainder:
+ * three pools today, deployed as minimal-proxy clones behind a factory that
+ * publishes no method at all. Reading every pool would pay nine calls per pool
+ * for an answer six of them already have.
+ */
+export async function readPoolShapesV1(input: {
+  reader: B20ReaderV1;
+  pools: readonly string[];
+  blockTag: string;
+}): Promise<Map<string, PoolShapeV1>> {
+  const pools = [...new Set(input.pools.map(lower))];
+  if (pools.length === 0) return new Map();
+  const results = await callManyV1(
+    input.reader,
+    pools.flatMap((pool) => [
+      { to: pool, data: encodeNoArgsV1(POOL_SELECTORS_V1.slot0), blockTag: input.blockTag },
+      { to: pool, data: encodeNoArgsV1(POOL_SELECTORS_V1.tickSpacing), blockTag: input.blockTag },
+      { to: pool, data: encodeNoArgsV1(POOL_SELECTORS_V1.getReserves), blockTag: input.blockTag },
+    ]),
+  );
+  const shapes = new Map<string, PoolShapeV1>();
+  for (const [index, pool] of pools.entries()) {
+    const base = index * 3;
+    shapes.set(pool, {
+      concentrated: Boolean(results[base]?.ok) || Boolean(results[base + 1]?.ok),
+      pair: Boolean(results[base + 2]?.ok),
+    });
+  }
+  return shapes;
 }

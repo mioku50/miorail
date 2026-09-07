@@ -4,6 +4,7 @@ import test, { describe } from 'node:test';
 import {
   MarketPoolReadingV1Schema,
   POOL_VENUE_IDS_V1,
+  POOL_VENUE_NAMES_V1,
   assertMarketPoolReadingV1,
   createMemoryMarketPoolReadingRepository,
   type MarketPoolReadingV1,
@@ -110,7 +111,32 @@ describe('a pool reading is about one token, and carries both sides', () => {
   });
 
   test('the venue list is the one the reader can name', () => {
-    assert.deepEqual([...POOL_VENUE_IDS_V1], ['aerodrome_cl', 'aerodrome_v2', 'uniswap_v3']);
+    assert.deepEqual(
+      [...POOL_VENUE_IDS_V1],
+      [
+        'aerodrome_cl',
+        'aerodrome_v2',
+        'uniswap_v3',
+        'pancakeswap_v2',
+        'pancakeswap_v3',
+        'algebra_cl',
+        'unnamed_cl',
+        'unnamed_pair',
+      ],
+    );
+  });
+
+  test('every venue id has a label, and a shape says it is a shape', () => {
+    // A name shown on its own is read as an identification, so the two shape
+    // ids carry their caveat in the label itself rather than relying on the
+    // screen to add it.
+    for (const id of POOL_VENUE_IDS_V1) {
+      assert.equal(typeof POOL_VENUE_NAMES_V1[id], 'string');
+      assert.ok(POOL_VENUE_NAMES_V1[id].length > 0, id);
+    }
+    assert.match(POOL_VENUE_NAMES_V1.unnamed_cl, /not named/);
+    assert.match(POOL_VENUE_NAMES_V1.unnamed_pair, /not named/);
+    assert.doesNotMatch(POOL_VENUE_NAMES_V1.aerodrome_cl, /not named/);
   });
 });
 
