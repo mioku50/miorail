@@ -2410,22 +2410,35 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
 
   const rows = pools.rows;
   const lead = rows[0]!;
-  // A SHAPE is not a venue. `unnamed_cl`/`unnamed_pair` say what kind of pool
-  // this is when the factory publishes nothing we can pin a protocol to, and
-  // counting them among "venues named" — or dropping one into "… on <venue>" —
+  // Only a `protocol` id names the exchange. An `engine` id pins the AMM
+  // machinery and not whose front end runs it — Algebra licenses its engine to
+  // many DEXes — and a `shape` id says no more than what kind of pool this is.
+  // Counting either among "venues named", or dropping one into "… on <venue>",
   // would claim an identification we did not make.
-  const isShape = (row: (typeof rows)[number]): boolean =>
-    row.venueId === 'unnamed_cl' || row.venueId === 'unnamed_pair';
-  const named = rows.filter((row) => row.venueName !== null && !isShape(row));
-  const shaped = rows.filter((row) => isShape(row));
+  const tierOf = (row: (typeof rows)[number]): 'protocol' | 'engine' | 'shape' | null =>
+    row.venueId === null
+      ? null
+      : row.venueId === 'unnamed_cl' || row.venueId === 'unnamed_pair'
+        ? 'shape'
+        : row.venueId === 'algebra_cl'
+          ? 'engine'
+          : 'protocol';
+  const named = rows.filter((row) => tierOf(row) === 'protocol');
+  const partly = rows.filter((row) => {
+    const tier = tierOf(row);
+    return tier === 'engine' || tier === 'shape';
+  });
   const venues = [...new Set(named.map((row) => row.venueName as string))];
-  const leadPlace = lead.venueName === null
-    ? ''
-    : isShape(lead)
-      ? lead.venueId === 'unnamed_cl'
+  const leadPlace =
+    lead.venueName === null
+      ? ''
+      : lead.venueId === 'unnamed_cl'
         ? ' in a concentrated pool whose venue is not named'
-        : ' in an AMM pair whose venue is not named'
-      : ` on ${lead.venueName}`;
+        : lead.venueId === 'unnamed_pair'
+          ? ' in an AMM pair whose venue is not named'
+          : lead.venueId === 'algebra_cl'
+            ? ' in an Algebra concentrated pool, on a DEX we cannot name'
+            : ` on ${lead.venueName}`;
   // How concentrated the pooled amount is, as a MEASURED share rather than a
   // threshold somebody chose. A first draft called every pool below a
   // hundredth of the largest "noise", which is a judgement wearing a number: on
@@ -2480,15 +2493,15 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
         value: venues.length > 0 ? venues.join(', ') : 'none identified',
       },
       {
-        label: 'Shape only',
+        label: 'Engine or shape only',
         value:
-          shaped.length === 0
+          partly.length === 0
             ? '0'
-            : `${shaped.length} · read as a pool, no protocol pinned`,
+            : `${partly.length} · the machinery is readable, the exchange is not`,
       },
       {
         label: 'Not identified',
-        value: String(rows.length - named.length - shaped.length),
+        value: String(rows.length - named.length - partly.length),
       },
       { label: 'Block', value: pools.blockNumber === null ? 'not stated' : String(pools.blockNumber) },
       { label: 'Read at', value: pools.readAt ?? 'not stated' },

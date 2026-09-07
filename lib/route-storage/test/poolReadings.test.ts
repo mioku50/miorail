@@ -5,6 +5,8 @@ import {
   MarketPoolReadingV1Schema,
   POOL_VENUE_IDS_V1,
   POOL_VENUE_NAMES_V1,
+  POOL_VENUE_TIERS_V1,
+  poolVenueNamesTheExchangeV1,
   assertMarketPoolReadingV1,
   createMemoryMarketPoolReadingRepository,
   type MarketPoolReadingV1,
@@ -124,6 +126,32 @@ describe('a pool reading is about one token, and carries both sides', () => {
         'unnamed_pair',
       ],
     );
+  });
+
+  test('every id has a tier, and only a protocol tier names the exchange', () => {
+    // The tier is the thing that keeps this safe. Algebra licenses its engine
+    // to many DEXes, so pinning the engine is not pinning the venue, and a
+    // surface that re-derives this distinction gets to be wrong on its own.
+    for (const id of POOL_VENUE_IDS_V1) {
+      assert.ok(['protocol', 'engine', 'shape'].includes(POOL_VENUE_TIERS_V1[id]), id);
+    }
+    assert.equal(POOL_VENUE_TIERS_V1.algebra_cl, 'engine');
+    assert.equal(POOL_VENUE_TIERS_V1.aerodrome_cl, 'protocol');
+    assert.equal(POOL_VENUE_TIERS_V1.unnamed_cl, 'shape');
+    assert.equal(poolVenueNamesTheExchangeV1('pancakeswap_v3'), true);
+    assert.equal(poolVenueNamesTheExchangeV1('algebra_cl'), false);
+    assert.equal(poolVenueNamesTheExchangeV1('unnamed_pair'), false);
+    assert.equal(poolVenueNamesTheExchangeV1(null), false);
+  });
+
+  test('a label that does not name the exchange says so in the label', () => {
+    // A name shown on its own is read as an identification, so the caveat
+    // travels with the string rather than relying on the screen to add it.
+    for (const id of POOL_VENUE_IDS_V1) {
+      if (POOL_VENUE_TIERS_V1[id] === 'protocol') continue;
+      assert.match(POOL_VENUE_NAMES_V1[id], /not named/, id);
+    }
+    assert.doesNotMatch(POOL_VENUE_NAMES_V1.aerodrome_cl, /not named/);
   });
 
   test('every venue id has a label, and a shape says it is a shape', () => {

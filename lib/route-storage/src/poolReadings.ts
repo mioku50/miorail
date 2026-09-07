@@ -84,23 +84,45 @@ export const POOL_VENUE_NAMES_V1: Readonly<Record<PoolVenueIdV1, string>> = {
   uniswap_v3: 'Uniswap v3',
   pancakeswap_v2: 'PancakeSwap v2',
   pancakeswap_v3: 'PancakeSwap v3',
-  algebra_cl: 'Algebra CL',
+  algebra_cl: 'Algebra CL engine, DEX not named',
   unnamed_cl: 'Concentrated pool, venue not named',
   unnamed_pair: 'AMM pair, venue not named',
 };
 
 /**
- * The ids that describe a SHAPE rather than a protocol.
+ * How much a venue id actually establishes. Three tiers, not two.
  *
- * A caller that treats every id as a venue name will write "on Concentrated
- * pool, venue not named" into a sentence and count it among the venues it
- * identified. Both are false in the same way, so the distinction is exported
- * with the ids rather than re-derived by each surface.
+ * `protocol` — the exchange itself is pinned. Aerodrome by its Voter, Uniswap
+ *   v3 by its factory, PancakeSwap by methods it publishes for its own
+ *   products. Naming it names where the money is.
+ * `engine` — the AMM engine is pinned and the exchange running it is NOT.
+ *   Algebra licenses its engine to many DEXes, so `defaultPluginFactory()`
+ *   proves the machinery and nothing about whose front end sits on it.
+ *   Printed beside `Aerodrome CL` with no qualifier, an engine name is read as
+ *   an exchange name — a true fact placed where the reader infers a false one.
+ * `shape` — only the KIND of pool is readable: concentrated liquidity or a
+ *   constant-product pair, from the pool's own `slot0()`/`getReserves()`.
+ *
+ * The tier is exported with the ids because every surface needs the same
+ * answer to "may I print this as the venue?", and a surface that re-derives it
+ * gets to be wrong on its own.
  */
-export const POOL_VENUE_SHAPE_IDS_V1 = ['unnamed_cl', 'unnamed_pair'] as const;
+export type PoolVenueTierV1 = 'protocol' | 'engine' | 'shape';
 
-export function poolVenueIsShapeV1(id: PoolVenueIdV1 | null): boolean {
-  return id !== null && (POOL_VENUE_SHAPE_IDS_V1 as readonly string[]).includes(id);
+export const POOL_VENUE_TIERS_V1: Readonly<Record<PoolVenueIdV1, PoolVenueTierV1>> = {
+  aerodrome_cl: 'protocol',
+  aerodrome_v2: 'protocol',
+  uniswap_v3: 'protocol',
+  pancakeswap_v2: 'protocol',
+  pancakeswap_v3: 'protocol',
+  algebra_cl: 'engine',
+  unnamed_cl: 'shape',
+  unnamed_pair: 'shape',
+};
+
+/** True only for a tier that names the exchange itself. */
+export function poolVenueNamesTheExchangeV1(id: PoolVenueIdV1 | null): boolean {
+  return id !== null && POOL_VENUE_TIERS_V1[id] === 'protocol';
 }
 
 export const MarketPoolReadingV1Schema = z

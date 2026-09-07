@@ -3270,8 +3270,8 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.equal(section.chip, 'Measured');
     assert.equal(section.evidence.find((row) => row.label === 'Venues named')?.value, 'none identified');
     assert.match(
-      section.evidence.find((row) => row.label === 'Shape only')?.value ?? '',
-      /^1 · read as a pool, no protocol pinned$/,
+      section.evidence.find((row) => row.label === 'Engine or shape only')?.value ?? '',
+      /^1 · the machinery is readable, the exchange is not$/,
     );
     assert.equal(section.evidence.find((row) => row.label === 'Not identified')?.value, '0');
   });
@@ -3298,7 +3298,24 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.match(section.headline, / on PancakeSwap v3\./);
     assert.equal(section.chip, 'PancakeSwap v3');
     assert.equal(section.evidence.find((row) => row.label === 'Venues named')?.value, 'PancakeSwap v3');
-    assert.match(section.evidence.find((row) => row.label === 'Shape only')?.value ?? '', /^1 · /);
+    assert.match(section.evidence.find((row) => row.label === 'Engine or shape only')?.value ?? '', /^1 · /);
+  });
+
+  test('an engine is named without being called the exchange', () => {
+    // Algebra licenses its engine to many DEXes, so `defaultPluginFactory()`
+    // proves the machinery and nothing about whose front end sits on it. Beside
+    // "Aerodrome CL" with no qualifier, an engine name is read as an exchange.
+    const section = pooled({
+      rows: [poolRow({ venueId: 'algebra_cl', venueName: 'Algebra CL engine, DEX not named' })],
+    });
+    assert.match(section.headline, /in an Algebra concentrated pool, on a DEX we cannot name/);
+    assert.doesNotMatch(section.headline, / on Algebra/);
+    assert.equal(section.chip, 'Measured');
+    assert.equal(section.evidence.find((row) => row.label === 'Venues named')?.value, 'none identified');
+    assert.match(
+      section.evidence.find((row) => row.label === 'Engine or shape only')?.value ?? '',
+      /^1 · /,
+    );
   });
 
   test('no row wears a quality colour', () => {
