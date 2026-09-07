@@ -180,8 +180,20 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
   },
   {
     pluginId: 'printr', aliases: ['printr'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
-      e('cost', 'Show the Printr launch cost for Base and Arbitrum', 'read', 'read_in_extensions'),
-      e('status', 'Show my Printr deployment status on all chains', 'read', 'read_in_extensions'),
+      // An example prompt is a CLAIM about what happens when it is clicked, and
+      // both of these used to be claims the handler had to refuse on arrival.
+      // `printr_get_quote` needs chains AND an initial buy AND a graduation
+      // target, so "launch cost for Base and Arbitrum" parsed to nothing and
+      // came back asking for two numbers it had never mentioned. Deployments
+      // are indexed by the token id Printr returned at launch and not by
+      // wallet, so "my … on all chains" could never be looked up at all.
+      //
+      // The prompt now carries every input the handler requires, in the shape
+      // it parses. Where an input can only come from the reader, it appears as
+      // a placeholder they can see and replace — which is why the Bankr and
+      // OpenSea reads say "this token address" and work.
+      e('cost', 'Printr launch cost on Base and Arbitrum, initial buy 500 USD, graduation target 15000 USD', 'read', 'read_in_extensions'),
+      e('status', 'Show Printr deployment status for token id 0x…', 'read', 'read_in_extensions'),
       e('launch', 'Launch a token named Deep Supply with symbol DSUP on Base using Printr', 'action', 'adapter_required'),
     ],
   },

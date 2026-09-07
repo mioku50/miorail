@@ -250,13 +250,24 @@ export function baseMcpPluginCapabilitiesV1(
 
 export function baseMcpPluginReachV1(plugin: BaseMcpPluginRowV1): BaseMcpPluginReachV1 {
   // A CLI-only upstream plugin may still have a narrower Miorail-reviewed
-  // server adapter for one read. Balancer is the first such case: pool
+  // server adapter for one read. Balancer was the first such case: pool
   // discovery is a pinned GraphQL POST, while SDK/calldata actions remain
-  // shell-only. The adapter lifecycle plus READ disposition is the runtime
-  // truth; it does not imply the whole upstream plugin became web-executable.
+  // shell-only. It does not imply the whole upstream plugin became
+  // web-executable.
+  //
+  // The test used to be the LIFECYCLE STAGE, and that is a label about how far
+  // our integration was taken, not about what runs. GMGN has a reviewed market
+  // read that answers here and sits at stage `documented`, so the card head
+  // badged it READ while Technical details said "works in a CLI client and not
+  // on this surface" — the same screen, both ways, about the same plugin.
+  //
+  // So the test is the released read itself, which the router already put on
+  // the wire. A stage cannot drift from it because it is no longer consulted.
   if (
-    plugin.lifecycleStage === 'adapter'
-    && plugin.examples.some((example) => example.disposition === 'read_in_extensions')
+    plugin.examples.some(
+      (example) =>
+        example.disposition === 'read_in_extensions' && example.capabilityState === 'released',
+    )
   ) {
     return 'http';
   }
