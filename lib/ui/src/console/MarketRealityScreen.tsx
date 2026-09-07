@@ -1455,7 +1455,16 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         ) : null}
       </div> : (
         <p className="cr-verdict" role="status" aria-live="polite">
-          Use &amp; access{model.view?.title ? ` · ${model.view.title}` : ''} — Transfer, Bridge and DeFi
+          {/* Names the sections that are actually below it. This line promised
+              "DeFi" long after the section itself stopped claiming that word:
+              the lending check was renamed "Lend and borrow" precisely because
+              it reads four lending venues and nothing else, and a reader whose
+              page is headed DeFi takes "Not on these venues" for a verdict on
+              the token's whole onchain use. Trading through an AMM is DeFi, it
+              is the largest use these tokens have, and it is measured under
+              Trade — which this heading did not even mention. */}
+          Use &amp; access{model.view?.title ? ` · ${model.view.title}` : ''} — Trade, Transfer,
+          Bridge and Lending
         </p>
       )}
 
