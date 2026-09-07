@@ -1974,7 +1974,14 @@ function latestQuoteV1(
 // simply stops being the first screen.
 // ---------------------------------------------------------------------------
 
-export type UseSectionIdV1 = 'trade' | 'transfer' | 'bridge' | 'defi' | 'issuer' | 'how_it_works';
+export type UseSectionIdV1 =
+  | 'trade'
+  | 'transfer'
+  | 'bridge'
+  | 'pooled'
+  | 'defi'
+  | 'issuer'
+  | 'how_it_works';
 
 export interface UseSectionViewV1 {
   id: UseSectionIdV1;
@@ -2343,6 +2350,136 @@ function venueReadProvenanceEvidenceV1(
  * What this does NOT do is add an LP or vault reader. Aerodrome, Beefy, Euler
  * and the rest are real and unchecked, and `unchecked` is not `not_listed`.
  */
+/**
+ * The pools that hold this exact address, and what was measured in them.
+ *
+ * This is the section the screen was missing. "Lend and borrow" reads four
+ * lending venues and says so honestly, and for these tokens the honest answer
+ * there is almost always no — while an Aerodrome concentrated-liquidity pool
+ * holds 3,740 NVDAc against $1.61m of USDC. Trading through an AMM is the
+ * largest onchain use these tokens have, and until now the only place it
+ * appeared was the Trade section's router quote, which answers a different
+ * question.
+ *
+ * RANKED BY BALANCE, NEVER BY COUNT. Thirty-nine pools hold NVDAc and
+ * twenty-four of them pair it against a memecoin — 71 NVDAc against 212
+ * million KUMA. "39 pools" is true arithmetic about a market that does not
+ * exist, so the section leads with the deepest and says how many are tiny.
+ *
+ * NOT DEPTH, and the copy has to keep saying so. A balance is what the contract
+ * holds; what a trade of a given size would actually get is measured by a
+ * router quote at that exact size, in Trade, and a reader who takes this for
+ * that has been told the wrong thing by a true number.
+ */
+function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 {
+  const pools = use?.pools;
+  if (!pools || pools.state !== 'measured' || pools.rows.length === 0) {
+    return {
+      collapsed: false,
+      id: 'pooled',
+      label: 'Pooled liquidity',
+      // Both branches say it as OUR gap. "This deployment does not measure
+      // pooled liquidity" is a fact about us stated as if it were a property of
+      // the token, and a reader takes an empty section for an empty market —
+      // which is the whole failure that put this section on the screen.
+      headline:
+        pools && pools.state === 'not_measured'
+          ? 'Miorail did not check the pools holding this address. Not checked is not the same as none: pools may exist and hold real amounts.'
+          : 'Miorail did not check the pools holding this address.',
+      chip: 'Not checked',
+      tone: 'off',
+      facts: [],
+      evidence: [],
+      edges: [],
+    };
+  }
+
+  const amount = (atomic: string, decimals: number): string => {
+    // Decimal-string arithmetic. A balance parsed through a float loses its
+    // last digits, and those digits are the difference between a pool holding
+    // $1,614,910.95 and one holding $1,614,910.
+    const negative = atomic.startsWith('-');
+    const digits = negative ? atomic.slice(1) : atomic;
+    const padded = digits.padStart(decimals + 1, '0');
+    const whole = padded.slice(0, padded.length - decimals) || '0';
+    const grouped = whole.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+    if (decimals === 0) return grouped;
+    const fraction = padded.slice(padded.length - decimals).replace(/0+$/, '');
+    return fraction ? `${grouped}.${fraction.slice(0, 2)}` : grouped;
+  };
+
+  const rows = pools.rows;
+  const lead = rows[0]!;
+  const named = rows.filter((row) => row.venueName !== null);
+  const venues = [...new Set(named.map((row) => row.venueName as string))];
+  // How concentrated the pooled amount is, as a MEASURED share rather than a
+  // threshold somebody chose. A first draft called every pool below a
+  // hundredth of the largest "noise", which is a judgement wearing a number: on
+  // the real corpus the memecoin pairs sit at about a fiftieth and the line
+  // silently stopped firing. A share of the total says the same thing — one
+  // pool is the market — and says it from the measurements themselves.
+  const leadBalance = BigInt(lead.tokenBalanceAtomic);
+  const totalBalance = rows.reduce((sum, row) => sum + BigInt(row.tokenBalanceAtomic), 0n);
+  const leadShare =
+    totalBalance > 0n ? Number((leadBalance * 1000n) / totalBalance) / 10 : null;
+
+  const facts: FactViewV1[] = rows.slice(0, 6).map((row) => ({
+    label: row.venueName ?? 'Venue not identified',
+    value: `${amount(row.tokenBalanceAtomic, row.tokenDecimals)} held`,
+    note:
+      row.pairedBalanceAtomic !== null && row.pairedDecimals !== null
+        ? `against ${amount(row.pairedBalanceAtomic, row.pairedDecimals)} ${row.pairedSymbol ?? 'of the other side'} · ${row.poolAddress.slice(0, 8)}\u2026${row.poolAddress.slice(-4)}`
+        : `the other side was not read · ${row.poolAddress.slice(0, 8)}\u2026${row.poolAddress.slice(-4)}`,
+    // Neutral for every row. A balance is a size, not a quality, and colouring
+    // the deepest pool green would make the section a recommendation about
+    // where to trade — which is the one thing this board must never be.
+    tone: 'neutral',
+  }));
+
+  return {
+    collapsed: false,
+    id: 'pooled',
+    label: 'Pooled liquidity',
+    headline:
+      `${rows.length} pool${rows.length === 1 ? '' : 's'} on Base hold this exact address. ` +
+      `The deepest holds ${amount(lead.tokenBalanceAtomic, lead.tokenDecimals)}` +
+      (lead.pairedBalanceAtomic !== null && lead.pairedDecimals !== null
+        ? ` against ${amount(lead.pairedBalanceAtomic, lead.pairedDecimals)} ${lead.pairedSymbol ?? 'of the other side'}`
+        : '') +
+      `${lead.venueName ? ` on ${lead.venueName}` : ''}. ` +
+      // The count is bounded the moment it is said, because a count is the one
+      // number here that flatters a market that does not exist: thirty-nine
+      // pools hold NVDAc and one of them holds ninety-one per cent of it.
+      (leadShare !== null && rows.length > 1
+        ? `That one pool holds ${leadShare}% of everything measured in pools, so a pool is not a market. `
+        : '') +
+      'These are balances the contracts hold, not what a trade of a given size would get — that is measured under Trade.',
+    chip: venues.length > 0 ? (venues[0] as string) : 'Measured',
+    tone: 'neutral',
+    facts,
+    evidence: [
+      { label: 'Pools measured', value: String(rows.length) },
+      {
+        label: 'Venues named',
+        value: venues.length > 0 ? venues.join(', ') : 'none identified',
+      },
+      {
+        label: 'Not identified',
+        value: String(rows.length - named.length),
+      },
+      { label: 'Block', value: pools.blockNumber === null ? 'not stated' : String(pools.blockNumber) },
+      { label: 'Read at', value: pools.readAt ?? 'not stated' },
+      ...rows
+        .slice(0, 10)
+        .map((row) => ({
+          label: row.poolAddress,
+          value: `${row.venueId ?? 'unidentified'} · factory ${row.factoryAddress ?? 'none'}`,
+        })),
+    ],
+    edges: [],
+  };
+}
+
 function defiSectionV1(
   use: RepresentationUseAccessV1 | null,
   issuerId: IssuerIdV1 | null,
@@ -2478,6 +2615,10 @@ export function useSectionsV1(input: {
     tradeSectionV1(input),
     transferSectionV1(input.use),
     bridgeSectionV1(input.use),
+    // Pooled liquidity sits ABOVE lending, because for these tokens it is the
+    // larger answer by orders of magnitude and the screen read as if it did
+    // not exist.
+    pooledSectionV1(input.use),
     // The trade verdict travels into the lending section, because the two are
     // both DeFi and the screen used to say so in only one of them.
     defiSectionV1(input.use, input.issuerId ?? null, tradeSectionV1(input).tone === 'good'),

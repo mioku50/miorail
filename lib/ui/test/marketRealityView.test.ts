@@ -2185,13 +2185,21 @@ describe('Phase 11 utility and eligibility map', () => {
     assert.match(markup, /eip155:8453:/);
     assert.match(markup, /Documented/);
     assert.match(markup, /Not established/);
-    // Phase 17.4 — the six sections, in the order a person asks. The structure
+    // Phase 17.4 — the sections, in the order a person asks. The structure
     // rows still exist; they are the last two sections rather than the page.
     assert.deepEqual(
       [...markup.matchAll(/<section class="mr-use-section" aria-label="([^"]+)"/g)].map(
         (match) => match[1],
       ),
-      ['Trade', 'Transfer', 'Bridge', 'Lend and borrow', 'Issuer services', 'How it works'],
+      [
+        'Trade',
+        'Transfer',
+        'Bridge',
+        'Pooled liquidity',
+        'Lend and borrow',
+        'Issuer services',
+        'How it works',
+      ],
     );
     assert.match(markup, /No reviewed exact-address evidence/);
     // `approve()` is an Evidence line, never a headline card of its own.
@@ -3139,16 +3147,146 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       ...over,
     }) as never;
 
-  test('the six sections are in the order a person asks', () => {
+  test('the seven sections are in the order a person asks', () => {
+    // Pooled liquidity sits above lending because for these tokens it is the
+    // larger answer by orders of magnitude, and the screen read as if it did
+    // not exist: "Lend and borrow" honestly reported four lending venues while
+    // an Aerodrome pool held 3,740 NVDAc against $1.61m of USDC.
     const sections = useSectionsV1({ ...base, use: use() });
     assert.deepEqual(sections.map((section) => section.id), [
       'trade',
       'transfer',
       'bridge',
+      'pooled',
       'defi',
       'issuer',
       'how_it_works',
     ]);
+  });
+
+  // -------------------------------------------------------------------------
+  // Pooled liquidity.
+  //
+  // The section that was missing. "Lend and borrow" honestly reads four lending
+  // venues and for these tokens the honest answer is almost always no — while
+  // an Aerodrome concentrated-liquidity pool held 3,740 NVDAc against
+  // $1,614,910.95 of USDC. Measured 2026-09-07 at block 51,004,615.
+  // -------------------------------------------------------------------------
+  const poolRow = (over: Record<string, unknown> = {}) => ({
+    poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+    venueId: 'aerodrome_cl',
+    venueName: 'Aerodrome CL',
+    factoryAddress: '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef',
+    tokenBalanceAtomic: '373998650000',
+    tokenDecimals: 8,
+    pairedTokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    pairedBalanceAtomic: '1614910950000',
+    pairedDecimals: 6,
+    pairedSymbol: 'USDC',
+    ...over,
+  });
+  const pooled = (over: Record<string, unknown> = {}) =>
+    useSectionsV1({
+      ...base,
+      use: use({
+        pools: {
+          state: 'measured',
+          blockNumber: 51004615,
+          readAt: '2026-09-07T16:30:00.000Z',
+          rows: [poolRow()],
+          ...over,
+        },
+      }),
+    }).find((section) => section.id === 'pooled')!;
+
+  test('the deepest pool leads, with both sides and the venue', () => {
+    const section = pooled();
+    assert.equal(section.label, 'Pooled liquidity');
+    assert.match(section.headline, /3,739\.98/);
+    assert.match(section.headline, /1,614,910\.95 USDC/);
+    assert.match(section.headline, /Aerodrome CL/);
+    assert.equal(section.chip, 'Aerodrome CL');
+  });
+
+  test('a balance is never presented as depth', () => {
+    // The one sentence that must survive every edit: a number that looks like
+    // depth will be read as depth, and what a trade of a given size would
+    // actually get is measured under Trade by a router quote at that size.
+    assert.match(
+      pooled().headline,
+      /not what a trade of a given size would get/,
+    );
+  });
+
+  test('a memecoin pair is counted as noise, in the same breath as the count', () => {
+    // 71 NVDAc against 212 million KUMA is real and is not a market. The count
+    // is the one number here that flatters a market that does not exist, so it
+    // is bounded the moment it is said.
+    const section = pooled({
+      rows: [
+        poolRow(),
+        poolRow({
+          poolAddress: '0xa6350e8d7988b97ce9ef991349083d6c503e2061',
+          venueId: 'uniswap_v3',
+          venueName: 'Uniswap v3',
+          tokenBalanceAtomic: '7119280000',
+          pairedSymbol: 'KUMA',
+          pairedDecimals: 18,
+          pairedBalanceAtomic: '212701444430000000000000000',
+        }),
+      ],
+    });
+    assert.match(section.headline, /2 pools on Base hold this exact address/);
+    // A measured share, not a threshold somebody chose: 3,739.98 of 3,811.17.
+    assert.match(section.headline, /That one pool holds 98\.1% of everything measured in pools/);
+    assert.match(section.headline, /a pool is not a market/);
+  });
+
+  test('an unidentified venue keeps its pool in the answer', () => {
+    // Two factories holding NVDAc answered and are not ones we can name.
+    // Dropping their pools would delete real money from the answer.
+    const section = pooled({
+      rows: [poolRow({ venueId: null, venueName: null })],
+    });
+    assert.equal(section.facts[0]?.label, 'Venue not identified');
+    assert.match(section.headline, /3,739\.98/);
+    assert.equal(
+      section.evidence.find((row) => row.label === 'Not identified')?.value,
+      '1',
+    );
+  });
+
+  test('no row wears a quality colour', () => {
+    // A balance is a size, not a quality. Colouring the deepest pool green
+    // would make the section a recommendation about where to trade.
+    for (const fact of pooled().facts) assert.equal(fact.tone, 'neutral');
+  });
+
+  test('an unread pair says so rather than showing a zero', () => {
+    const section = pooled({
+      rows: [poolRow({ pairedBalanceAtomic: null, pairedDecimals: null, pairedSymbol: null })],
+    });
+    assert.match(section.facts[0]?.note ?? '', /the other side was not read/);
+    assert.doesNotMatch(section.headline, /against 0/);
+  });
+
+  test('nothing measured is our gap, never the token\'s property', () => {
+    const section = useSectionsV1({
+      ...base,
+      use: use({ pools: { state: 'not_measured', blockNumber: null, readAt: null, rows: [] } }),
+    }).find((s) => s.id === 'pooled')!;
+    assert.match(section.headline, /Miorail did not check/);
+    assert.match(section.headline, /Not checked is not the same as none/);
+    assert.equal(section.chip, 'Not checked');
+  });
+
+  test('the block and the clock are carried, not implied', () => {
+    const section = pooled();
+    assert.equal(section.evidence.find((row) => row.label === 'Block')?.value, '51004615');
+    assert.equal(
+      section.evidence.find((row) => row.label === 'Read at')?.value,
+      '2026-09-07T16:30:00.000Z',
+    );
   });
 
   test('an expired quote does not un-measure a trade', () => {
@@ -3264,7 +3402,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     // screen whose Trade section read "Tradable now" said "DeFi · none found
     // here" two sections below it. Both true of what they measured; the one
     // with the broader word measured the narrower thing.
-    const defi = useSectionsV1({ ...base, use: use() })[3]!;
+    const defi = useSectionsV1({ ...base, use: use() }).find((section) => section.id === 'defi')!;
     assert.equal(defi.label, 'Lend and borrow');
     assert.match(defi.headline, /No reviewed lending venue lists this exact address \(Moonwell, Morpho were checked\)/);
     assert.match(defi.headline, /Other venues exist and were not checked/);
@@ -3291,7 +3429,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
           ],
         },
       }),
-    })[3]!;
+    }).find((section) => section.id === 'defi')!;
     assert.equal(defi.chip, 'Integration found');
     assert.deepEqual(defi.facts.map((fact) => fact.label), ['Lend', 'Collateral']);
     assert.doesNotMatch(JSON.stringify(defi.facts), /Borrow/);
@@ -3329,7 +3467,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
           ],
         },
       }),
-    })[3]!;
+    }).find((section) => section.id === 'defi')!;
     const row = defi.evidence.find((entry) => entry.label === 'How these were read');
     assert.ok(row, 'the DeFi section states how its rows were read');
     assert.match(row!.value, /Aave v3 — read on chain at head/);
@@ -3357,7 +3495,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
           ],
         },
       }),
-    })[3]!;
+    }).find((section) => section.id === 'defi')!;
     assert.equal(
       defi.evidence.find((entry) => entry.label === 'How these were read'),
       undefined,
@@ -3390,7 +3528,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     });
 
   test('an announced venue that has not listed the address says so, with the date', () => {
-    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) })[3]!;
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) }).find((section) => section.id === 'defi')!;
     const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
     assert.ok(fact);
     assert.equal(fact.value, 'Not there yet');
@@ -3405,7 +3543,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
   });
 
   test('an announcement never becomes a use, a chip or a colour', () => {
-    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) })[3]!;
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) }).find((section) => section.id === 'defi')!;
     assert.equal(defi.tone, 'off');
     assert.equal(defi.chip, 'Not on these venues');
     assert.doesNotMatch(defi.headline, /used in DeFi/);
@@ -3417,7 +3555,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
   });
 
   test('a venue nobody checked is not a venue that refused', () => {
-    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: use() })[3]!;
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: use() }).find((section) => section.id === 'defi')!;
     const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
     assert.equal(fact?.value, 'Not checked here');
     assert.match(fact?.note ?? '', /not among the venues this reading checked/);
@@ -3429,7 +3567,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       ...base,
       issuerId: 'coinbase',
       use: withAave({ state: 'listed', uses: { lend: true, borrow: true, collateral: null } }),
-    })[3]!;
+    }).find((section) => section.id === 'defi')!;
     const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
     assert.equal(fact?.value, 'Listed, use as collateral not read');
     assert.match(fact?.note ?? '', /venue configuration this reading does not cover/);
@@ -3437,7 +3575,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
 
   test('an announcement about Coinbase never appears on another issuer', () => {
     for (const issuerId of ['backed', 'dinari'] as const) {
-      const defi = useSectionsV1({ ...base, issuerId, use: withAave({}) })[3]!;
+      const defi = useSectionsV1({ ...base, issuerId, use: withAave({}) }).find((section) => section.id === 'defi')!;
       assert.deepEqual(defi.facts, []);
       assert.doesNotMatch(JSON.stringify(defi.evidence), /announcement/i);
     }

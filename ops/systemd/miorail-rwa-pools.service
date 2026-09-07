@@ -1,0 +1,48 @@
+[Unit]
+# What is actually IN the pools that hold each reviewed representation, read
+# and stored. Use & access could only answer a LENDING question — Moonwell,
+# Morpho, Aave v3, Compound v3 — so a token whose largest onchain use is an
+# Aerodrome concentrated-liquidity pool read as a token with almost no DeFi
+# presence.
+#
+# Oneshot, driven by miorail-rwa-pools.timer. Every venue is decided by reading
+# the chain — the pool's own factory(), and for Aerodrome that factory's
+# voter() — never from an address list, because the published Aerodrome CL
+# factory is not the one the deepest tokenized-stock pools sit in. Read-only
+# outside Miorail's own evidence tables: no signer, no key, no chain write, no
+# wallet.
+Description=Miorail pooled-liquidity measurement
+Documentation=https://github.com/mioku50/miorail
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+EnvironmentFile=/home/miorail/mioagent/.env
+# Second on purpose, exactly as the other evidence readers do it: this file's
+# BASE_MAINNET_RPC_URL overrides the repository fallback without copying
+# provider credentials into git.
+EnvironmentFile=/etc/miorail/api-rpc.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_measure_pools.ts
+
+# Ten tokens, a hundred and twenty-eight pools, four reads each and a pace
+# between tokens. Generous rather than tight: a run cut off halfway leaves half
+# the corpus carrying a stale block while the other half moved.
+TimeoutStartSec=1200
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/miorail/mioagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-rwa-pools

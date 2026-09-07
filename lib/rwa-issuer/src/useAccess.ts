@@ -151,6 +151,56 @@ export interface RepresentationUseAccessV1 {
    * read as one.
    */
   wallet: { address: string; checks: WalletPolicyCheckV1[] } | null;
+  /**
+   * What the pools holding this exact address were MEASURED to contain.
+   *
+   * Stored, not read here: the balances come from a paced worker that pins
+   * every pool and its pair to one block, and this route would otherwise pay
+   * for thirty-nine chain reads on a page load. So the rows carry their own
+   * block and clock, exactly like every other stored measurement, and
+   * `state: 'not_measured'` is a real answer — a token nobody has measured yet
+   * is not a token with no pools.
+   *
+   * Optional in the TYPE for the same reason it is optional in the schema: a
+   * reply from a server that predates this field must still parse during a
+   * rolling deploy. The assembler always sets it, so absent means "an older
+   * deployment answered", never "no pools".
+   */
+  pools?: PooledLiquidityV1;
+}
+
+/**
+ * Ranked by measured balance, deepest first, and never by count.
+ *
+ * Thirty-nine pools hold NVDAc and twenty-four of them pair it against a
+ * memecoin — 71 NVDAc against 212 million KUMA. A count is true arithmetic
+ * about a market that does not exist.
+ */
+export interface PooledLiquidityV1 {
+  state: 'measured' | 'not_measured';
+  /** The block the rows were read at. Null when nothing has been measured. */
+  blockNumber: number | null;
+  readAt: string | null;
+  rows: PooledLiquidityRowV1[];
+}
+
+export interface PooledLiquidityRowV1 {
+  poolAddress: string;
+  /** Null when the factory answered and is not one we can name, and null when
+   * the address answers no factory at all. `factoryAddress` tells the two
+   * apart, and neither is an absence: a pool holding real money stays in the
+   * answer without a label. */
+  venueId: string | null;
+  venueName: string | null;
+  factoryAddress: string | null;
+  /** Atomic, with its own decimals. Never a float: 1,614,910.95 USDC is
+   * 1614910950000 and rounding it once rounds it forever. */
+  tokenBalanceAtomic: string;
+  tokenDecimals: number;
+  pairedTokenAddress: string | null;
+  pairedBalanceAtomic: string | null;
+  pairedDecimals: number | null;
+  pairedSymbol: string | null;
 }
 
 /**
@@ -233,6 +283,32 @@ export const RepresentationUseAccessV1Schema = z
         ),
       })
       .strict(),
+    // Optional so a reply from a server that predates this field still parses.
+    // Absent is "this deployment does not measure pools", never "no pools".
+    pools: z
+      .object({
+        state: z.enum(['measured', 'not_measured']),
+        blockNumber: z.number().int().nonnegative().nullable(),
+        readAt: z.string().min(1).nullable(),
+        rows: z.array(
+          z
+            .object({
+              poolAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+              venueId: z.string().nullable(),
+              venueName: z.string().nullable(),
+              factoryAddress: z.string().regex(/^0x[0-9a-f]{40}$/).nullable(),
+              tokenBalanceAtomic: z.string().regex(/^\d+$/),
+              tokenDecimals: z.number().int().min(0).max(36),
+              pairedTokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/).nullable(),
+              pairedBalanceAtomic: z.string().regex(/^\d+$/).nullable(),
+              pairedDecimals: z.number().int().min(0).max(36).nullable(),
+              pairedSymbol: z.string().nullable(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
     wallet: z
       .object({
         address: z.string().regex(/^0x[0-9a-f]{40}$/),
@@ -316,6 +392,10 @@ function unreadEverythingV1(
   reason: string,
   defi: DefiListingV1,
   walletAddress: string | null,
+  // Pools survive a chain outage: they were measured earlier, by a different
+  // worker, at a block of their own. Blanking them because THIS read failed
+  // would delete a good measurement to report a bad one.
+  pools: PooledLiquidityV1 = { state: 'not_measured', blockNumber: null, readAt: null, rows: [] },
 ): RepresentationUseAccessV1 {
   return {
     schemaVersion: 'representation-use-access/v1',
@@ -328,6 +408,7 @@ function unreadEverythingV1(
     transferPolicies: SCOPES_V1.map((scope) => ({ scope, state: 'unread' as const, reason })),
     bridge: { state: 'unread', reason },
     defi,
+    pools,
     wallet: walletAddress
       ? {
           address: walletAddress,
@@ -353,6 +434,12 @@ export async function assembleUseAccessV1(input: {
    * would spread by seconds.
    */
   clock?: () => Date;
+  /**
+   * Measured pool balances, already stored. Passed in rather than read here:
+   * this is one database row set, not thirty-nine chain calls on a page load,
+   * and the caller owns the repository.
+   */
+  pools?: PooledLiquidityV1;
 }): Promise<RepresentationUseAccessV1> {
   const tokenAddress = input.tokenAddress.toLowerCase();
   const observedAt = input.now.toISOString();
@@ -367,9 +454,16 @@ export async function assembleUseAccessV1(input: {
     input.clock ?? (() => input.now),
   );
 
+  const pools: PooledLiquidityV1 = input.pools ?? {
+    state: 'not_measured',
+    blockNumber: null,
+    readAt: null,
+    rows: [],
+  };
+
   const anchor = await input.reader.readBlockAnchor();
   if (!anchor.ok) {
-    return unreadEverythingV1(tokenAddress, observedAt, anchor.reason, defi, walletAddress);
+    return unreadEverythingV1(tokenAddress, observedAt, anchor.reason, defi, walletAddress, pools);
   }
   const blockTag = anchor.value.blockTag;
   const call = (to: string, data: string): UseAccessCallV1 => ({ to, data, blockTag });
@@ -466,6 +560,7 @@ export async function assembleUseAccessV1(input: {
     transferPolicies,
     bridge,
     defi,
+    pools,
     wallet,
   };
 }

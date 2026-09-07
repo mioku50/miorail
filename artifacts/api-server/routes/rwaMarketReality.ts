@@ -12,6 +12,8 @@ import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter, readAerodromeClSpotV1 } from '@mioagent/swap-adapters';
 import {
+  POOL_VENUE_NAMES_V1,
+  createDatabaseMarketPoolReadingRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
   createDatabaseRepresentationRatioRepository,
@@ -222,6 +224,7 @@ export const rwaMarketRealityRuntime = {
   cashExit: () => createDatabaseOfficialCashExitRepository(client),
   ratios: () => createDatabaseRepresentationRatioRepository(client),
   supplies: () => createDatabaseRepresentationSupplyRepository(client),
+  poolReadings: () => createDatabaseMarketPoolReadingRepository(client),
   now: () => new Date(),
   /**
    * The narrator, or null when none is configured.
@@ -683,8 +686,37 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
     return;
   }
   try {
+    // Stored, and read BEFORE the chain calls. The balances were measured by a
+    // paced worker at a block of their own, so a chain outage here must leave
+    // them on the screen rather than blank a good measurement to report a bad
+    // one — which is exactly what the unread path does with them.
+    const stored = await rwaMarketRealityRuntime
+      .poolReadings()
+      .readingsForToken({ chainId: 8453, tokenAddress, limit: 60 });
+    const pools = {
+      state: (stored.length > 0 ? 'measured' : 'not_measured') as 'measured' | 'not_measured',
+      blockNumber: stored[0]?.blockNumber ?? null,
+      readAt: stored[0]?.readAt ?? null,
+      rows: stored.map((row) => ({
+        poolAddress: row.poolAddress,
+        venueId: row.venueId,
+        // The NAME is ours, from a code-owned map, and null when the venue is
+        // one we cannot name. A prettified factory address would let an
+        // unknown protocol label itself on our screen.
+        venueName: row.venueId ? (POOL_VENUE_NAMES_V1[row.venueId] ?? null) : null,
+        factoryAddress: row.factoryAddress,
+        tokenBalanceAtomic: row.tokenBalanceAtomic,
+        tokenDecimals: row.tokenDecimals,
+        pairedTokenAddress: row.pairedTokenAddress,
+        pairedBalanceAtomic: row.pairedBalanceAtomic,
+        pairedDecimals: row.pairedDecimals,
+        pairedSymbol: row.pairedSymbol,
+      })),
+    };
+
     const use = await assembleUseAccessV1({
       tokenAddress,
+      pools,
       reader: rwaMarketRealityRuntime.useAccessReader(),
       now: rwaMarketRealityRuntime.now(),
       // Read per venue row. The four venue reads are sequential and two of them

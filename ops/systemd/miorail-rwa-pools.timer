@@ -1,0 +1,19 @@
+[Unit]
+# Every two hours.
+#
+# A pool balance moves with every swap and every liquidity change, so this is
+# the fastest-moving evidence in the RWA set — but it is NOT a quote, and the
+# screen must not let it be read as one. Two hours keeps the number honest as
+# a standing fact about the venue while staying far away from the twenty-second
+# quote that answers "what would a trade get", which is measured elsewhere and
+# on demand.
+Description=Measure what the pools holding reviewed representations contain
+
+[Timer]
+OnBootSec=14min
+OnUnitActiveSec=2h
+Persistent=true
+RandomizedDelaySec=8min
+
+[Install]
+WantedBy=timers.target
