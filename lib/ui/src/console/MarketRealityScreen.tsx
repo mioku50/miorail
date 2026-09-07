@@ -1251,8 +1251,12 @@ function HeadlineAnswer({
         </>
       ) : (
         <p className="mr-headline-body">
-          No Coinbase representation is on this board, so there is no primary contract to lead
-          with. Every reviewed representation is below, each on its own terms.
+          {headline.primaryAbsence?.shortAddress ? (
+            <>
+              <span className="mono d">{headline.primaryAbsence.shortAddress}</span>{' '}
+            </>
+          ) : null}
+          {headline.primaryAbsence?.sentence}
         </p>
       )}
 

@@ -2892,6 +2892,25 @@ export interface StocksHeadlineViewV1 {
   /** How many representations the board holds, so the card never reads as the
    * whole page. */
   alternativeCount: number;
+  /**
+   * Why there is no primary card, when there is none. Null when there is one.
+   *
+   * Two different facts used to share one sentence. "No Coinbase
+   * representation is on this board" is true when Coinbase never issued this
+   * security, and it is ALSO what a reader saw for COIN, where Coinbase issued
+   * a contract that holds no tokens. On the same screen the tile grid counts
+   * COIN among "13 companies with a Coinbase B20 contract", so the page said
+   * the contract exists and then said there is no representation. Both
+   * sentences were true and the pair reads as a contradiction, with the reason
+   * -- zero supply -- folded away inside a collapsed disclosure that does not
+   * name which representation it means.
+   */
+  primaryAbsence: {
+    kind: 'no_primary_representation' | 'primary_has_no_tokens_outstanding';
+    /** The contract the reader was told about, when there is one. */
+    shortAddress: string | null;
+    sentence: string;
+  } | null;
 }
 
 export function stocksHeadlineV1(
@@ -2901,6 +2920,13 @@ export function stocksHeadlineV1(
   const compared = view.representations.filter((row) => row.inComparison);
   const { primary } = partitionByIssuerRoleV1(compared);
   const lead = primary[0] ?? null;
+  // The board excludes a representation for exactly one reason -- zero supply,
+  // see `inComparison` -- so a primary that is reviewed but not compared is a
+  // contract with no tokens outstanding, and the page can say which fact it is
+  // instead of reporting the absence of the card as the absence of the issuer.
+  const reviewedPrimary = lead
+    ? null
+    : (partitionByIssuerRoleV1(view.representations).primary[0] ?? null);
   return {
     title: view.title,
     identifier: view.identifier,
@@ -2921,6 +2947,25 @@ export function stocksHeadlineV1(
     // Every compared representation, the lead included: "3 representations"
     // is the board's size, not a count of what was left out.
     alternativeCount: compared.length,
+    primaryAbsence: lead
+      ? null
+      : reviewedPrimary
+        ? {
+            kind: 'primary_has_no_tokens_outstanding',
+            shortAddress: `${reviewedPrimary.tokenAddress.slice(0, 8)}\u2026${reviewedPrimary.tokenAddress.slice(-4)}`,
+            sentence:
+              `${reviewedPrimary.issuerName} has a contract for this security, but no tokens are ` +
+              'outstanding, so there is nothing to price and nothing to lead with. Every reviewed ' +
+              'representation is below, each on its own terms.',
+          }
+        : {
+            kind: 'no_primary_representation',
+            shortAddress: null,
+            sentence:
+              `No ${ISSUER_NAME_V1.coinbase} representation is on this board, so there is no ` +
+              'primary contract to lead with. Every reviewed representation is below, each on ' +
+              'its own terms.',
+          },
   };
 }
 

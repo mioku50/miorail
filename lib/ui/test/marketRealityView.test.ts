@@ -3559,6 +3559,39 @@ describe('the answer card decides nothing the board has not already decided', ()
     assert.equal(headline.alternativeCount, 1);
   });
 
+  test('a Coinbase contract with no tokens outstanding says so, not "no representation"', () => {
+    // COIN on 2026-09-07: Coinbase issued 0xb200…ecfb and nothing is minted.
+    // The same screen counts COIN among "13 companies with a Coinbase B20
+    // contract", so reporting the missing card as a missing representation
+    // made the page contradict itself.
+    const headline = stocksHeadlineV1(
+      view([
+        rep({ inComparison: false, tokenAddress: '0xb200000000000000000000c85a31389d71f3ecfb' }),
+        rep({ issuerName: 'Backed', tokenAddress: '0xbbb0000000000000000000000000000000000001' }),
+      ]),
+    )!;
+    assert.equal(headline.representation, null);
+    assert.equal(headline.primaryAbsence?.kind, 'primary_has_no_tokens_outstanding');
+    assert.equal(headline.primaryAbsence?.shortAddress, '0xb20000\u2026ecfb');
+    assert.match(headline.primaryAbsence?.sentence ?? '', /no tokens are outstanding/);
+    // The contract is NOT denied.
+    assert.doesNotMatch(headline.primaryAbsence?.sentence ?? '', /No Coinbase representation/);
+  });
+
+  test('a security Coinbase never issued still says exactly that', () => {
+    const headline = stocksHeadlineV1(
+      view([rep({ issuerName: 'Backed' }), rep({ issuerName: 'Dinari' })]),
+    )!;
+    assert.equal(headline.primaryAbsence?.kind, 'no_primary_representation');
+    assert.equal(headline.primaryAbsence?.shortAddress, null);
+    assert.match(headline.primaryAbsence?.sentence ?? '', /No Coinbase representation/);
+  });
+
+  test('a headline that has a lead claims no absence', () => {
+    const headline = stocksHeadlineV1(view([rep()]))!;
+    assert.equal(headline.primaryAbsence, null);
+  });
+
   test('an expired quote does not un-measure the round trip', () => {
     // `lastSeen` is history by construction. The card carries it whatever the
     // twenty-second quote is doing, which is the whole reason it exists.
