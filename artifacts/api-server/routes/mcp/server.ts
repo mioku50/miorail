@@ -37,6 +37,11 @@ import {
   miorailListReviewedStocksV1,
 } from './marketRealityTools.js';
 import {
+  RwaRecordedChangesAgentInputV1Schema,
+  RwaRecordedChangesAgentOutputV1Schema,
+  miorailGetRecordedChangesV1,
+} from './recordedChangesTool.js';
+import {
   UseAccessAgentInputV1Schema,
   UseAccessAgentOutputV1Schema,
   miorailGetUseAccessV1,
@@ -84,6 +89,8 @@ Miorail measures unique buying wallets only inside a completed launch window. It
 An empty result is not the same as a quiet chain. Call miorail_discover_status first: the workers may be behind, unconfigured or degraded, and the status says which.
 
 The Stocks tools are a separate read-only product surface for reviewed tokenized-stock representations. An underlying key groups representations but never selects one. Preserve every exact Base address. A router quote is not execution evidence; provider failure is not an asset finding; an expired quote is history; ranking is withheld. get_market_changes requires an exact address or CAIP-10 and reads only public append-only market evidence — never tenant Radar watches or user metadata.
+
+get_recorded_changes is the only read here that needs no subject: it answers "did anything change?" across the whole reviewed universe, so it is the one to call on a schedule when the user has not named an asset. Its empty result is TWO different facts and they must never share a sentence — a kind listed in \`notWatched\` has never had an emitter run, so an empty feed for it means nobody looked, never that the market was quiet. Only a kind present in \`watching\` can support "nothing changed", and only back to its \`watchingSince\`. \`truncated: true\` makes every count a floor.
 
 get_use_access reports what one exact representation can be used for and what gates it, including the POOLS that hold it — a question about LP or liquidity is answered from \`pools\`, never from the lending venues in \`defi\`. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. A venue listing an address is still not permission to act: caps, pause flags, available liquidity and risk parameters are not read. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.`;
 
@@ -509,6 +516,29 @@ Evidence older than a day is labelled stale and describes what was true when it 
     async (args) => {
       try {
         return reply(await miorailGetUseAccessV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+  // Phase 17.7 -- the daily question. Every read on this server made the caller
+  // name an exact address before it would answer, so an assistant asked "did
+  // anything change today" had no tool that could take the question and either
+  // guessed a subject or said nothing. The screen has had this feed since
+  // Phase 2; the protocol had no market-wide read at all.
+  server.registerTool(
+    'get_recorded_changes',
+    {
+      title: 'What changed across the whole reviewed market, no subject required',
+      description:
+        'Answers \u201cdid anything change?\u201d across the WHOLE reviewed tokenized-stock universe on Base, with no address, ticker or size supplied \u2014 it is the one Miorail read that needs no subject, and the one to call on a schedule. Every other Market Reality tool makes you name an exact contract first, which cannot express a daily check because it would mean guessing which of a hundred and thirty addresses to ask about. CALL IT WITH `detail: \"summary\"` FIRST: that returns the tally, the span and the counts with no rows at all, and a busy day records over a hundred transitions. READ `miorailSummary` FIRST and prefer its wording to your own. AN EMPTY FEED IS TWO DIFFERENT FACTS AND THEY MUST NOT SHARE A SENTENCE. `watching` says when each kind of change became observable and `notWatched` lists the kinds no emitter has ever opened \u2014 for those, an empty result means NOBODY LOOKED, never that the market was quiet, and reporting calm from them is a false statement about the asset. Only when a kind appears in `watching` does its absence from `changes` mean nothing changed, and only back to its `watchingSince`. `truncated: true` means the page filled and older changes inside the same window were not returned, so every count is a floor. Each row is a stored TRANSITION between two comparable measurements at the same size, direction and destination \u2014 never a quote, never a trade, and never interpolated across a gap. A cost change had to move more than the stored threshold, which travels in `facts` beside both costs. `notReported` names what this feed deliberately never carries: trades and price moves are absent by design and their absence must not be read as quiet. `subjectCount` must travel with `changeCount` \u2014 five changes on one asset is a quieter day than five on five. For the history of ONE representation at an exact size, call get_market_changes instead.',
+      inputSchema: RwaRecordedChangesAgentInputV1Schema,
+      outputSchema: RwaRecordedChangesAgentOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetRecordedChangesV1(args));
       } catch (error) {
         return refuse(error);
       }

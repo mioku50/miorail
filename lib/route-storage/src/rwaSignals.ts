@@ -288,6 +288,21 @@ export interface RwaSignalRepositoryV1 {
     chainId: number;
     kinds?: readonly RwaSignalKindV1[];
     limit: number;
+    /**
+     * Only what occurred at or after this instant.
+     *
+     * "The newest fifty changes" and "what changed today" are different
+     * questions, and a limit alone can only answer the first. On a busy day
+     * this table records over a hundred transitions, so a caller asking about
+     * today and reading a bare page of fifty would see two thirds of a day and
+     * have no way to tell that from a quiet one. The window makes the span of
+     * the answer a fact the caller supplied rather than one it has to infer
+     * from the oldest row it happened to receive.
+     *
+     * Omitted means every recorded signal, which is what the rolling feed on
+     * the screen asks for.
+     */
+    since?: string;
   }): Promise<RwaSignalRowV1[]>;
 
   /** One asset's own history, for the card that shows it. */

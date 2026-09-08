@@ -434,6 +434,7 @@ printf '%s' "$mcp_tools" | jq -e '
   == [
     "compare_market_reality",
     "get_market_changes",
+    "get_recorded_changes",
     "get_representations",
     "get_use_access",
     "list_reviewed_stocks",

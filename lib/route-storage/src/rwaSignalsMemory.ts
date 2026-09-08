@@ -80,8 +80,15 @@ export function createMemoryRwaSignalRepository(): RwaSignalRepositoryV1 {
     async recentSignals(input) {
       const limit = Math.max(1, Math.min(200, input.limit));
       const kinds = input.kinds && input.kinds.length > 0 ? new Set(input.kinds) : null;
+      // Inclusive on the lower edge, matching `occurred_at >= since` in SQL.
+      const since = input.since === undefined ? null : Date.parse(input.since);
       return signals
-        .filter((row) => row.chainId === input.chainId && (kinds === null || kinds.has(row.kind)))
+        .filter(
+          (row) =>
+            row.chainId === input.chainId &&
+            (kinds === null || kinds.has(row.kind)) &&
+            (since === null || Date.parse(row.occurredAt) >= since),
+        )
         // The same total order the database produces: newest occurrence first,
         // then newest insertion, so two transitions stamped alike stay stable.
         .sort(

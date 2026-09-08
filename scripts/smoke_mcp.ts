@@ -32,6 +32,7 @@ const REQUIRED_CAVEATS_V1 = [
 const EXPECTED_TOOLS_V1 = [
   'compare_market_reality',
   'get_market_changes',
+  'get_recorded_changes',
   'get_representations',
   'get_use_access',
   'list_reviewed_stocks',

@@ -111,11 +111,16 @@ export function createDatabaseRwaSignalRepository(sql: SqlTemplateExecutor): Rwa
     async recentSignals(input) {
       const limit = Math.max(1, Math.min(200, input.limit));
       const kinds = input.kinds && input.kinds.length > 0 ? [...input.kinds] : null;
+      const since = input.since ?? null;
       const rows = (await sql`
         SELECT id, chain_id, kind, subject_address, official_address, occurred_at, recorded_at, facts
           FROM rwa_signals
          WHERE chain_id = ${input.chainId}
            AND (${kinds}::text[] IS NULL OR kind = ANY(${kinds}::text[]))
+           -- Inclusive on the lower edge, and on occurred_at rather than
+           -- recorded_at: the caller is asking when the market moved, not
+           -- when a pass got around to noticing it.
+           AND (${since}::timestamptz IS NULL OR occurred_at >= ${since}::timestamptz)
          ORDER BY occurred_at DESC, id DESC
          LIMIT ${limit}`) as Record<string, unknown>[];
       return rows.map(rowToSignalV1);

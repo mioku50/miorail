@@ -204,6 +204,36 @@ export function rwaSignalContractV1(
         limit: 10,
       });
       assert.deepEqual(forAsset.map((row) => row.kind), ['official_asset_market_became_active']);
+
+      // "The newest N changes" and "what changed since T" are different
+      // questions. The window is inclusive on its lower edge and cuts on when
+      // the market moved, not on when a pass recorded the move -- the two
+      // signals above were written in the same batch and are an hour apart.
+      const sinceLate = await repository.recentSignals({
+        chainId: 8453,
+        limit: 10,
+        since: '2026-08-25T17:00:00.000Z',
+      });
+      assert.deepEqual(sinceLate.map((row) => row.kind), ['official_asset_market_became_active']);
+
+      const sinceAll = await repository.recentSignals({
+        chainId: 8453,
+        limit: 10,
+        since: '2026-08-25T00:00:00.000Z',
+      });
+      assert.equal(sinceAll.length, 2);
+
+      // An empty window is a fact about the window, and it must not be
+      // reachable by accident: a window after everything returns nothing
+      // rather than falling back to the newest rows.
+      assert.deepEqual(
+        await repository.recentSignals({
+          chainId: 8453,
+          limit: 10,
+          since: '2026-08-26T00:00:00.000Z',
+        }),
+        [],
+      );
     });
 
     test('a signal cannot name one contract as both the subject and the official', async () => {

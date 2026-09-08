@@ -12,6 +12,7 @@ import type {
   OfficialCashExitRepositoryV1,
   OfficialLookalikeRepositoryV1,
   OfficialSourceKindV1,
+  RwaSignalKindV1,
   RwaSignalRepositoryV1,
 } from '@mioagent/route-storage';
 import { isOfficialV1 } from '@mioagent/route-storage';
@@ -570,12 +571,17 @@ export async function assembleOfficialLookalikeFeedV1(
 
 export async function assembleRwaSignalFeedV1(
   deps: OfficialDiscoverDepsV1,
-  input?: { limit?: number },
+  input?: { limit?: number; kinds?: readonly RwaSignalKindV1[]; since?: string },
 ): Promise<RwaSignalFeedV1> {
   const now = deps.now();
   const limit = Math.max(1, Math.min(200, input?.limit ?? 50));
   const [cards, watching, universe] = await Promise.all([
-    deps.signals.recentSignals({ chainId: 8453, limit }),
+    deps.signals.recentSignals({
+      chainId: 8453,
+      limit,
+      ...(input?.kinds && input.kinds.length > 0 ? { kinds: input.kinds } : {}),
+      ...(input?.since === undefined ? {} : { since: input.since }),
+    }),
     deps.signals.signalWatch({ chainId: 8453 }),
     deps.official.officialAssets({ chainId: 8453, limit: 64, currentlyListedOnly: false }),
   ]);

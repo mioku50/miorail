@@ -190,12 +190,13 @@ function payloadOf(result: unknown): Record<string, unknown> {
 }
 
 describe('§8 — tool discovery', () => {
-  test('a client sees the eight legacy tools and four Market Reality tools', async () => {
+  test('a client sees the eight legacy tools and five Market Reality tools', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
       'compare_market_reality',
       'get_market_changes',
+      'get_recorded_changes',
       'get_representations',
       'get_use_access',
       'list_reviewed_stocks',
@@ -516,6 +517,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     assert.deepEqual(sources.map((entry) => entry.name).sort(), [
       'index.ts',
       'marketRealityTools.ts',
+      'recordedChangesTool.ts',
       'server.ts',
       'tools.ts',
       'useAccessTools.ts',
