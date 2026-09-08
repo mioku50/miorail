@@ -141,7 +141,7 @@ export function ActivityRunsCard(model: ActivityRunsModelV1) {
           <>
             <p className="lnote">{activityRunsSummaryV1(model.runs)}</p>
             {model.runs.map((run) => (
-              <div key={run.routeRunId}>
+              <div key={run.routeRunId} className="rcpt">
                 <div className="qrow">
                   <button
                     type="button"

@@ -521,6 +521,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
  * a progress bar, which is the first thing the eye lands on and the last thing
  * the row means. The pill sizes to its word. */
 .mio-console .qrow > .pill { justify-self: start; }
+/* Same rule, same reason, for a control: a button that stretches to 560px and
+ * centres "swap 0.1 USDC to NVDAc" inside it stops reading as a button and
+ * starts reading as a filled-in form field. Rail tokens keep their own
+ * `max-width: 100%` rule below — they are nested, not direct children. */
+.mio-console .qrow > .btn { justify-self: start; }
 
 /* One receipt is one object.
  *

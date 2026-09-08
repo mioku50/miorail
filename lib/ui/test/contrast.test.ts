@@ -207,6 +207,9 @@ describe('the visual identity is unchanged', () => {
     // `.qrow` is a two-column grid, so a pill placed in it stretched to the
     // whole 0.75fr track — about 560px — and read as a progress bar.
     assert.match(css, /\.mio-console \.qrow > \.pill \{[^}]*justify-self: start/);
+    // And a control in the same grid: a 560px-wide button with its label
+    // centred reads as a form field, not as something to press.
+    assert.match(css, /\.mio-console \.qrow > \.btn \{[^}]*justify-self: start/);
   });
 
   test('the console uses the webfonts both surfaces already download', () => {
