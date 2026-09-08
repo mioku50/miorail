@@ -31,6 +31,10 @@
   --on-accent: #0a0a11;
   --r: 10px;
 
+  /* The active rail entry. On the dark ground a lifted surface is enough to
+     read as "you are here"; on the light one it is not — see the light block. */
+  --nav-on-bg: rgba(255,255,255,.055); --nav-on-text: #f3f4fa; --nav-on-line: rgba(255,255,255,.15);
+
   --chrome-bg: rgba(10,10,16,.72); --rail-bg: rgba(255,255,255,.012);
   /* The rail as an OVERLAY. --rail-bg is 1.2% white: correct for a grid column
      with the page behind it, and fully see-through once the rail becomes a
@@ -84,7 +88,14 @@
   /* The colour a page title and a security name are set in. Ink here: on the
      dark ground the blue is an accent that would read as a link. */
   --title-ink: #f3f4fa;
-  --font: -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  /* Inter and JetBrains Mono, which BOTH surfaces already download.
+     The console asked for the system stack while index.html and the miniapp
+     layout were loading three webfonts, so on Windows every screen rendered in
+     Segoe UI with Consolas addresses — the most generic pairing available, and
+     paid for in bytes without being used. The system stack stays as the
+     fallback, so nothing regresses if the font request fails. */
+  --font: "Inter",-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --mono: "JetBrains Mono","SF Mono",Menlo,Consolas,ui-monospace,monospace;
   --track-radius: 5px;
 }
 
@@ -123,6 +134,14 @@
   --gsoft: linear-gradient(120deg,rgba(21,94,239,.10),rgba(217,184,255,.30));
   --green: #0f7a52; --amber: #8a5a00;
   --on-accent: #ffffff;
+
+  /* The active rail entry, tinted rather than lifted.
+     `--panel2` on `--rail-bg` is #efeee4 on #fbfbf7 — a two-percent step that
+     the eye loses on a bright screen, so the one control telling a reader where
+     they are was the faintest thing on the page. Base blue at 7% with the deep
+     blue as type reads instantly and still sits quieter than the primary
+     button. */
+  --nav-on-bg: rgba(21,94,239,.07); --nav-on-text: #1247c4; --nav-on-line: rgba(21,94,239,.22);
 
   --chrome-bg: rgba(250,250,246,.88); --rail-bg: #fbfbf7;
   --drawer-bg: #ffffff;
@@ -202,7 +221,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   font-family: var(--font); -webkit-font-smoothing: antialiased;
   transition: background .25s, color .25s;
 }
-.mio-console .mono { font-family: "SF Mono",Menlo,Consolas,monospace; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+.mio-console .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
 
 .mio-console.app { display: grid; grid-template-columns: 246px minmax(0,1fr) 330px; grid-template-rows: 52px minmax(0,1fr) 34px; height: 100vh; }
 .mio-console.app.no-right { grid-template-columns: 246px minmax(0,1fr); }
@@ -253,7 +272,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .item { display: block; width: 100%; text-align: left; border: 0; background: transparent; cursor: pointer;
   padding: 9px 10px; border-radius: 8px; color: var(--muted); font: inherit; font-size: 13px; line-height: 1.35; }
 .mio-console .item:hover { background: var(--panel2); color: var(--ink); }
-.mio-console .item.on { background: var(--panel2); color: var(--ink); box-shadow: inset 0 0 0 1px var(--line2); }
+.mio-console .item.on { background: var(--nav-on-bg); color: var(--nav-on-text); box-shadow: inset 0 0 0 1px var(--nav-on-line); font-weight: 600; }
 .mio-console .item .t { display: block; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .mio-console .item .m { display: flex; gap: 7px; align-items: center; font-size: 11px; color: var(--faint); margin-top: 3px; }
 .mio-console .tag { padding: 1px 6px; border-radius: 5px; font-size: 10.5px; font-weight: 600; }
@@ -493,6 +512,27 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .donutwrap { display: flex; align-items: center; gap: 14px; }
 .mio-console .qrow { display: grid; grid-template-columns: minmax(72px,.75fr) minmax(0,1.25fr); gap: 10px; align-items: start; padding: 8px 0; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
 .mio-console .qrow:last-child { border-bottom: 0; }
+/* A pill in a qrow is a STATUS, not a column.
+ *
+ * `.qrow` is a two-column grid built for label/value pairs, so a `.pill` placed
+ * in it becomes a grid item with `width: auto` and stretches to fill the whole
+ * 0.75fr track — about 560px on a desktop card. On the dark ground the low
+ * contrast fill hid the shape; on the light one a mint block that wide reads as
+ * a progress bar, which is the first thing the eye lands on and the last thing
+ * the row means. The pill sizes to its word. */
+.mio-console .qrow > .pill { justify-self: start; }
+
+/* One receipt is one object.
+ *
+ * The rows below a status describe THAT status, but the divider lived on the
+ * `.qrow`, so the hairline fell between a receipt's headline and its own
+ * detail lines — grouping each block with the receipt above it and reading, on
+ * a long page, as one continuous list of unrelated facts. The rule moves to the
+ * receipt, which is the thing that actually ends. */
+.mio-console .rcpt { padding: 12px 0; border-bottom: 1px solid var(--line); }
+.mio-console .rcpt:first-of-type { padding-top: 4px; }
+.mio-console .rcpt:last-child { border-bottom: 0; padding-bottom: 0; }
+.mio-console .rcpt > .qrow { border-bottom: 0; padding: 0; align-items: center; }
 .mio-console .qrow > span { min-width: 0; }
 .mio-console .qrow .rail-token .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .mio-console .qrow .v { color: var(--ink); font-weight: 500; text-align: right; }

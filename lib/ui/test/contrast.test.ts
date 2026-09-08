@@ -188,6 +188,36 @@ describe('the visual identity is unchanged', () => {
     }
   });
 
+  test('the active rail entry is legible on the rail it sits on', () => {
+    // The one control that says "you are here". In light it was --panel2 on
+    // --rail-bg, a two-percent step, which is how the primary orientation cue
+    // became the faintest element on the page.
+    for (const [theme, selector] of [
+      ['dark', ':root'],
+      ['light', '[data-theme="light"]'],
+    ] as const) {
+      const rail = resolve(token(selector, 'rail-bg'), hex(token(selector, 'bg')));
+      const fill = resolve(token(selector, 'nav-on-bg'), rail);
+      const ratio = contrast(resolve(token(selector, 'nav-on-text'), fill), fill);
+      assert.ok(ratio >= 4.5, `${theme}: --nav-on-text is ${ratio.toFixed(2)}:1 on its own fill`);
+    }
+  });
+
+  test('a status pill sizes to its word, not to its grid column', () => {
+    // `.qrow` is a two-column grid, so a pill placed in it stretched to the
+    // whole 0.75fr track — about 560px — and read as a progress bar.
+    assert.match(css, /\.mio-console \.qrow > \.pill \{[^}]*justify-self: start/);
+  });
+
+  test('the console uses the webfonts both surfaces already download', () => {
+    // index.html and the miniapp layout load Inter and JetBrains Mono; the
+    // console asked for the system stack, so every screen rendered in Segoe UI
+    // with Consolas addresses on Windows.
+    assert.match(block(':root'), /--font: "Inter"/);
+    assert.match(block(':root'), /--mono: "JetBrains Mono"/);
+    assert.match(css, /\.mio-console \.mono \{[^}]*font-family: var\(--mono\)/);
+  });
+
   test('severity is legible in both themes', () => {
     // `--red` is the only tone that means "measured, and an order of magnitude
     // outside the bound". It carries a number, so it is body text and takes the

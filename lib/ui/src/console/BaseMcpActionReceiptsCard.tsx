@@ -48,7 +48,7 @@ export function BaseMcpActionReceiptsCard(model: {
           <p className="empty">No Base MCP actions have been prepared for this account.</p>
         ) : (
           model.receipts.map((receipt) => (
-            <div key={receipt.id}>
+            <div key={receipt.id} className="rcpt">
               <div className="qrow">
                 <span className={`pill ${tone(receipt.status)}`}>{receipt.status}</span>
                 <span className="v mono">
