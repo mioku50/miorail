@@ -212,6 +212,51 @@ describe('the visual identity is unchanged', () => {
     assert.match(css, /\.mio-console \.qrow > \.btn \{[^}]*justify-self: start/);
   });
 
+  test('every size in the console comes from the scale', () => {
+    // Twenty-one sizes became ten. The half-steps are what this guards: 9.5,
+    // 10.5, 11.5, 12.5 and 13.5 each sat beside a whole-pixel neighbour the eye
+    // cannot tell them apart from, so no two panels shared a rhythm.
+    const declarations = [...css.matchAll(/font-size:\s*([^;]+);/g)].map((match) => match[1]!.trim());
+    assert.ok(declarations.length > 200, 'the scan found no font sizes');
+    for (const value of declarations) {
+      const allowed =
+        value.startsWith('var(--fs-') ||
+        value === '0' ||
+        // The public-metrics page is a marketing surface with its own fluid
+        // display ramp; the console's one fluid heading is clamped BETWEEN two
+        // scale steps rather than to numbers of its own.
+        value.startsWith('clamp(');
+      assert.ok(allowed, `font-size: ${value} is not on the scale`);
+    }
+    for (const name of ['micro', 'meta', 'sm', 'body', 'base', 'lg', 'xl', 'title', 'hero', 'hero-lg']) {
+      assert.match(block(':root'), new RegExp(`--fs-${name}: \\d+px;`), `--fs-${name} is undefined`);
+    }
+  });
+
+  test('the scale rises, and every step is a whole pixel', () => {
+    const steps = ['micro', 'meta', 'sm', 'body', 'base', 'lg', 'xl', 'title', 'hero', 'hero-lg'].map(
+      (name) => {
+        const match = new RegExp(`--fs-${name}: (\\d+(?:\\.\\d+)?)px;`).exec(block(':root'));
+        assert.ok(match, `--fs-${name} is undefined`);
+        return Number.parseFloat(match[1]!);
+      },
+    );
+    for (const [index, size] of steps.entries()) {
+      assert.equal(size, Math.round(size), `step ${index} is ${size}px — half pixels are what this replaced`);
+      if (index > 0) assert.ok(size > steps[index - 1]!, `step ${index} does not rise`);
+    }
+  });
+
+  test('body text uses one of three line heights', () => {
+    const declarations = [...css.matchAll(/line-height:\s*([^;]+);/g)].map((match) => match[1]!.trim());
+    for (const value of declarations) {
+      const numeric = Number.parseFloat(value);
+      // Below 1.2 a line height is a layout device on a figure or a button.
+      const allowed = value.startsWith('var(--lh-') || (Number.isFinite(numeric) && numeric < 1.2);
+      assert.ok(allowed, `line-height: ${value} is neither a token nor a display value`);
+    }
+  });
+
   test('the console uses the webfonts both surfaces already download', () => {
     // index.html and the miniapp layout load Inter and JetBrains Mono; the
     // console asked for the system stack, so every screen rendered in Segoe UI
