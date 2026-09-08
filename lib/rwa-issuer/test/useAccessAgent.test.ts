@@ -4,8 +4,10 @@ import test, { describe } from 'node:test';
 import {
   USE_ACCESS_NOT_STATED_V1,
   UseAccessAgentOutputV1Schema,
+  agentPoolsV1,
   exactUseAccessAddressV1,
   reviewedIssuerIdOrNullV1,
+  useAccessAgentSummaryV1,
   useAccessForAgentV1,
 } from '../src/useAccessAgent.js';
 import type { ReviewedVenueAnnouncementV1 } from '../src/venueAnnouncements.js';
@@ -225,5 +227,89 @@ describe('an exact address, or nothing', () => {
     assert.equal(reviewedIssuerIdOrNullV1('coinbase'), 'coinbase');
     assert.equal(reviewedIssuerIdOrNullV1(null), null);
     assert.equal(reviewedIssuerIdOrNullV1('robinhood'), null);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pools, for an assistant.
+//
+// `defi` answers a LENDING question and for tokenized stocks the honest answer
+// is almost always no — while an Aerodrome pool held 3,715 NVDAc against $1.6M
+// of USDC. An assistant given only the lending venues reports "no DeFi use",
+// which is false and is our omission. Measured 2026-09-08.
+// ---------------------------------------------------------------------------
+describe('the agent projection carries the pools', () => {
+  const poolRow = (over: Record<string, unknown> = {}) => ({
+    poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+    venueId: 'aerodrome_cl',
+    venueName: 'Aerodrome CL',
+    venuePageUrl: 'https://aerodrome.finance/liquidity?query=0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+    factoryAddress: '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef',
+    tokenBalanceAtomic: '371504000000',
+    tokenDecimals: 8,
+    pairedTokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    pairedBalanceAtomic: '1645701470000',
+    pairedDecimals: 6,
+    pairedSymbol: 'USDC',
+    ...over,
+  });
+
+  test('a measured reading ranks deepest first and bounds its own count', () => {
+    const pools = agentPoolsV1({
+      state: 'measured',
+      blockNumber: 51_012_269,
+      readAt: '2026-09-08T09:00:00.000Z',
+      rows: [
+        poolRow(),
+        poolRow({ poolAddress: '0xa6350e8d7988b97ce9ef991349083d6c503e2061', venueId: 'uniswap_v3', venueName: 'Uniswap v3', tokenBalanceAtomic: '7376000000', venuePageUrl: null }),
+      ],
+    } as never);
+    assert.equal(pools.state, 'measured');
+    if (pools.state !== 'measured') return;
+    assert.equal(pools.poolCount, 2);
+    // The number that stops a count from lying: 3,715.04 of 3,788.80.
+    assert.equal(pools.deepestSharePercent, 98);
+    assert.equal(pools.rows[0]?.venueTier, 'protocol');
+    assert.equal(pools.rows[0]?.explorerUrl, 'https://basescan.org/address/0x853f5f1b92b16714fe6cda67caad0856b83c7ab9');
+  });
+
+  test('an engine is not reported as an exchange', () => {
+    // Algebra licenses its engine to many DEXes, so an assistant reading
+    // `venueName` alone would name a venue nobody established.
+    const pools = agentPoolsV1({
+      state: 'measured', blockNumber: 1, readAt: 'x',
+      rows: [poolRow({ venueId: 'algebra_cl', venueName: 'Algebra CL engine, DEX not named', venuePageUrl: null })],
+    } as never);
+    if (pools.state !== 'measured') throw new Error('expected measured');
+    assert.equal(pools.rows[0]?.venueTier, 'engine');
+    assert.equal(pools.rows[0]?.venuePageUrl, null);
+  });
+
+  test('not measured says it is our gap, never "no pools"', () => {
+    const pools = agentPoolsV1(undefined);
+    assert.equal(pools.state, 'not_measured');
+    if (pools.state !== 'not_measured') return;
+    assert.match(pools.reason, /Not checked is not the same as none/);
+  });
+
+  test('the deterministic summary names the pools and refuses to call them depth', () => {
+    const summary = useAccessAgentSummaryV1({
+      displaySymbol: 'NVDAc',
+      tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      uses: [],
+      checkedVenues: ['Moonwell', 'Morpho', 'Aave v3', 'Compound v3'],
+      announcements: [],
+      answeredVenues: ['Moonwell', 'Morpho', 'Aave v3', 'Compound v3'],
+      unreadVenues: [],
+      pools: agentPoolsV1({
+        state: 'measured', blockNumber: 1, readAt: 'x', rows: [poolRow()],
+      } as never),
+    });
+    assert.match(summary, /held by 1 pool on Base/);
+    assert.match(summary, /Aerodrome CL/);
+    assert.match(summary, /not depth and not a quote/);
+    // And the lending sentence still stands beside it rather than being
+    // replaced: both are true and only together are they honest.
+    assert.match(summary, /None of the venues that answered/);
   });
 });

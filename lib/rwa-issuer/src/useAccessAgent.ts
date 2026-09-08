@@ -1,9 +1,16 @@
 import { z } from 'zod';
 
+import {
+  POOL_VENUE_TIERS_V1,
+  poolExplorerUrlV1,
+  type PoolVenueIdV1,
+} from '@mioagent/route-storage';
+
 import { REVIEWED_ISSUERS_V1, type ReviewedIssuerIdV1 } from './issuers.js';
 import {
   establishedDefiUsesV1,
   type DefiUseKindV1,
+  type PooledLiquidityV1,
   type RepresentationUseAccessV1,
 } from './useAccess.js';
 import {
@@ -53,9 +60,41 @@ export const USE_ACCESS_NOT_STATED_V1: readonly string[] = [
   'Eligibility of any kind — KYC, jurisdiction, or legal permission to hold or trade a security.',
   'Any venue outside the ones named in `checkedVenues`. A miss is bounded by where Miorail looked and is never a statement about DeFi as a whole.',
   'What a future integration will do. An announcement is a dated claim by a named party, never a measurement.',
+  'What a trade of a given size would actually get. A pool balance is every position the contract holds, in range or out, plus uncollected fees — it is not depth and not a quote.',
 ] as const;
 
 const DefiUseKindSchemaV1 = z.enum(['lend', 'borrow', 'collateral']);
+
+/**
+ * One pool, as an assistant needs it: which contract, whose venue, how much of
+ * each side, and where a reader can open it.
+ *
+ * `venueTier` is the part that must not be dropped. `protocol` names the
+ * exchange; `engine` names the AMM machinery and NOT whose front end runs on it
+ * — Algebra licenses its engine to many DEXes — and `shape` says only whether
+ * the pool is concentrated or a constant-product pair. An assistant that reads
+ * `venueName` alone will call an engine an exchange, which is why the name
+ * carries its own caveat too.
+ */
+const PoolRowSchemaV1 = z
+  .object({
+    poolAddress: z.string(),
+    venueId: z.string().nullable(),
+    venueName: z.string().nullable(),
+    venueTier: z.enum(['protocol', 'engine', 'shape']).nullable(),
+    /** The exchange's own page for this exact pool, where one is verified. */
+    venuePageUrl: z.string().nullable(),
+    explorerUrl: z.string(),
+    /** Atomic plus its decimals. Never a float — the last digits are the
+     * difference between $1,614,910.95 and $1,614,910. */
+    tokenBalanceAtomic: z.string(),
+    tokenDecimals: z.number().int().min(0).max(36),
+    pairedTokenAddress: z.string().nullable(),
+    pairedBalanceAtomic: z.string().nullable(),
+    pairedDecimals: z.number().int().min(0).max(36).nullable(),
+    pairedSymbol: z.string().nullable(),
+  })
+  .strict();
 
 const VenueRowSchemaV1 = z
   .object({
@@ -174,6 +213,38 @@ export const UseAccessAgentOutputV1Schema = z
     defi: z
       .object({ checkedVenues: z.array(z.string()), venues: z.array(VenueRowSchemaV1) })
       .strict(),
+    /**
+     * The pools that hold this exact address.
+     *
+     * `defi` answers a LENDING question, and for these tokens the honest answer
+     * is almost always no — while an Aerodrome concentrated-liquidity pool held
+     * 3,715 NVDAc against $1.6M of USDC. An assistant asked about LP or pools
+     * and given only the lending venues will report that the token has no DeFi
+     * use, which is false and is our omission rather than the token's property.
+     *
+     * `not_measured` is a statement about Miorail and never about the token: it
+     * means nobody checked, which is not the same as none.
+     */
+    pools: z.discriminatedUnion('state', [
+      z
+        .object({
+          state: z.literal('measured'),
+          blockNumber: z.number().int().nonnegative().nullable(),
+          readAt: z.string().nullable(),
+          poolCount: z.number().int().nonnegative(),
+          /**
+           * The deepest pool's share of everything measured in pools, 0-100.
+           *
+           * The number that stops a COUNT from lying: thirty-nine pools hold
+           * NVDAc and one of them holds about 88% of it, while twenty-four of
+           * the rest are memecoin pairs. Null when nothing is pooled at all.
+           */
+          deepestSharePercent: z.number().min(0).max(100).nullable(),
+          rows: z.array(PoolRowSchemaV1),
+        })
+        .strict(),
+      z.object({ state: z.literal('not_measured'), reason: z.string() }).strict(),
+    ]),
     announcements: z.array(AnnouncementRowSchemaV1),
   })
   .strict();
@@ -217,6 +288,51 @@ function useSentenceV1(uses: readonly { kind: DefiUseKindV1; venues: string[] }[
  * cannot be used in DeFi", and from "Base announced it" to "you can do it now".
  * Both leaps are pre-empted in words the caller may repeat verbatim.
  */
+/**
+ * The pooled reading, projected for an assistant.
+ *
+ * Ranked by MEASURED balance and never by count, and the deepest pool's share
+ * travels with the count so the two cannot be read apart. A count on its own is
+ * true arithmetic about a market that does not exist.
+ */
+export function agentPoolsV1(
+  pools: PooledLiquidityV1 | undefined,
+): UseAccessAgentOutputV1['pools'] {
+  if (!pools || pools.state !== 'measured' || pools.rows.length === 0) {
+    return {
+      state: 'not_measured',
+      reason:
+        'Miorail did not check the pools holding this address. Not checked is not the same as none: pools may exist and hold real amounts.',
+    };
+  }
+  const total = pools.rows.reduce((sum, row) => sum + BigInt(row.tokenBalanceAtomic), 0n);
+  const lead = BigInt(pools.rows[0]!.tokenBalanceAtomic);
+  return {
+    state: 'measured',
+    blockNumber: pools.blockNumber,
+    readAt: pools.readAt,
+    poolCount: pools.rows.length,
+    deepestSharePercent: total > 0n ? Number((lead * 1000n) / total) / 10 : null,
+    rows: pools.rows.map((row) => ({
+      poolAddress: row.poolAddress,
+      venueId: row.venueId,
+      venueName: row.venueName,
+      venueTier:
+        row.venueId && row.venueId in POOL_VENUE_TIERS_V1
+          ? POOL_VENUE_TIERS_V1[row.venueId as PoolVenueIdV1]
+          : null,
+      venuePageUrl: row.venuePageUrl,
+      explorerUrl: poolExplorerUrlV1(row.poolAddress),
+      tokenBalanceAtomic: row.tokenBalanceAtomic,
+      tokenDecimals: row.tokenDecimals,
+      pairedTokenAddress: row.pairedTokenAddress,
+      pairedBalanceAtomic: row.pairedBalanceAtomic,
+      pairedDecimals: row.pairedDecimals,
+      pairedSymbol: row.pairedSymbol,
+    })),
+  };
+}
+
 export function useAccessAgentSummaryV1(input: {
   displaySymbol: string | null;
   tokenAddress: string;
@@ -227,6 +343,9 @@ export function useAccessAgentSummaryV1(input: {
    * list nor the established uses, and must never be counted as a refusal. */
   answeredVenues: readonly string[];
   unreadVenues: readonly string[];
+  /** The pooled reading, so the summary can name the use these tokens actually
+   * have. Optional so a caller that measured no pools reads unchanged. */
+  pools?: UseAccessAgentOutputV1['pools'];
 }): string {
   const name = input.displaySymbol ?? input.tokenAddress;
   const parts: string[] = [];
@@ -284,6 +403,36 @@ export function useAccessAgentSummaryV1(input: {
     }
   }
 
+  // Pools come LAST in the paragraph and first in importance, because the
+  // lending sentences above are the ones that mislead on their own: an
+  // assistant asked "does this token have any DeFi use?" and given four lending
+  // venues that all said no will answer "none", while the token's largest
+  // onchain use by a wide margin is an AMM position.
+  if (input.pools) {
+    if (input.pools.state === 'not_measured') {
+      parts.push(
+        `Miorail did not check the pools holding ${name} on this call. That is a gap in this reading, not an absence of pools.`,
+      );
+    } else {
+      const deepest = input.pools.rows[0];
+      const venue = deepest?.venueTier === 'protocol' && deepest.venueName ? ` on ${deepest.venueName}` : '';
+      parts.push(
+        `${name} is held by ${input.pools.poolCount} pool${input.pools.poolCount === 1 ? '' : 's'} on Base`
+          + (input.pools.deepestSharePercent === null
+            ? '.'
+            : `, and the deepest one${venue} holds ${input.pools.deepestSharePercent}% of everything measured in pools — a pool count is not a market.`),
+      );
+      parts.push(
+        'These are balances the pool contracts hold, in range or out, plus uncollected fees. They are not depth and not a quote: what a trade of a given size would get is a separate measurement.',
+      );
+      if (deepest && deepest.venueTier !== 'protocol' && deepest.venueName) {
+        parts.push(
+          `The deepest pool's venue is ${deepest.venueTier === 'engine' ? 'only identified as far as its AMM engine' : 'not identified beyond the kind of pool it is'}, so name the pool by its address rather than by an exchange.`,
+        );
+      }
+    }
+  }
+
   return parts.join(' ');
 }
 
@@ -323,6 +472,7 @@ export function useAccessForAgentV1(input: {
   const answeredVenues = use.defi.venues
     .filter((venue) => venue.state !== 'unread')
     .map((venue) => venue.venueName);
+  const pools = agentPoolsV1(use.pools);
 
   return UseAccessAgentOutputV1Schema.parse({
     schemaVersion: USE_ACCESS_AGENT_SCHEMA_VERSION_V1,
@@ -342,6 +492,7 @@ export function useAccessForAgentV1(input: {
         announcements,
         answeredVenues,
         unreadVenues,
+        pools,
       }),
       checkedVenues: [...use.defi.checkedVenues],
       establishedUses: uses,
@@ -379,6 +530,7 @@ export function useAccessForAgentV1(input: {
         observed: venue.observed ?? null,
       })),
     },
+    pools,
     announcements,
   });
 }

@@ -12,8 +12,7 @@ import { client } from '@mioagent/db';
 import { measureOfficialCashExitV1 } from '@mioagent/rwa-cash-exit';
 import { KyberSwapRouteAdapter, readAerodromeClSpotV1 } from '@mioagent/swap-adapters';
 import {
-  POOL_VENUE_NAMES_V1,
-  poolVenuePageUrlV1,
+
   createDatabaseMarketPoolReadingRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
@@ -68,6 +67,7 @@ import {
   assembleUseAccessV1,
   reviewedDefiSourcesV1,
   type UseAccessReaderV1,
+  pooledLiquidityFromReadingsV1,
 } from '@mioagent/rwa-issuer';
 
 export const rwaMarketRealityRouter = Router();
@@ -694,30 +694,7 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
     const stored = await rwaMarketRealityRuntime
       .poolReadings()
       .readingsForToken({ chainId: 8453, tokenAddress, limit: 60 });
-    const pools = {
-      state: (stored.length > 0 ? 'measured' : 'not_measured') as 'measured' | 'not_measured',
-      blockNumber: stored[0]?.blockNumber ?? null,
-      readAt: stored[0]?.readAt ?? null,
-      rows: stored.map((row) => ({
-        poolAddress: row.poolAddress,
-        venueId: row.venueId,
-        // The NAME is ours, from a code-owned map, and null when the venue is
-        // one we cannot name. A prettified factory address would let an
-        // unknown protocol label itself on our screen.
-        venueName: row.venueId ? (POOL_VENUE_NAMES_V1[row.venueId] ?? null) : null,
-        // Same rule as the name, and stricter: only a venue whose tier names an
-        // exchange gets a page, and only where that URL shape was opened in a
-        // browser and read back against a real pool and a fabricated one.
-        venuePageUrl: poolVenuePageUrlV1(row.venueId, row.poolAddress),
-        factoryAddress: row.factoryAddress,
-        tokenBalanceAtomic: row.tokenBalanceAtomic,
-        tokenDecimals: row.tokenDecimals,
-        pairedTokenAddress: row.pairedTokenAddress,
-        pairedBalanceAtomic: row.pairedBalanceAtomic,
-        pairedDecimals: row.pairedDecimals,
-        pairedSymbol: row.pairedSymbol,
-      })),
-    };
+    const pools = pooledLiquidityFromReadingsV1(stored);
 
     const use = await assembleUseAccessV1({
       tokenAddress,

@@ -142,16 +142,27 @@ export function poolExplorerUrlV1(poolAddress: string): string {
  *              "USDC / NVDAc 0.05% Concentrated 10"; a made-up address gives
  *              "No results found".
  *   uniswap v3 /explore/pools/base/<pool>         → "NVDAc / KUMA Base v3 1%".
+ *   pancake v3 /info/v3/base/pairs/<pool>         → "USDC / GOOGLc 0.05%"; a
+ *              made-up address gives "Pair not found — We couldn't find
+ *              on-chain data for this pair address".
+ *   pancake v2 /info/base/pairs/<pool>            → "TREX / GOOGLc"; a made-up
+ *              address falls back to the info overview and names no pair.
  *
- * Two shapes were tried and dropped. Aerodrome's `/deposit` deep link renders
+ * The two PancakeSwap paths are not interchangeable: the v2 path handed a v3
+ * pool renders the overview, and `/info/v2/base/pairs/<pool>` is a hard 404. So
+ * the version the classifier read decides the path, and getting it from the
+ * pool's own factory is what makes that safe.
+ *
+ * Three shapes were tried and dropped. Aerodrome's `/deposit` deep link renders
  * the pool, but it opens an ADD-LIQUIDITY form, and this board measures a
- * market rather than suggesting a trade in it; `/pools/<address>` is a 404.
+ * market rather than suggesting a trade in it; `/pools/<address>` is a 404; and
+ * PancakeSwap's `/liquidity/pool/base/<pool>` works but is the farm page rather
+ * than the pair's own reading.
  *
- * Everything else returns null on purpose. PancakeSwap's canonical pool URL is
- * unverified here, an `engine` tier names machinery and not a venue with a
- * front end, and a `shape` names no protocol at all — for those the explorer
- * link is the whole truth we have. A guessed URL that lands on a marketing page
- * is the same failure as a prompt the handler cannot serve.
+ * Everything else returns null on purpose. An `engine` tier names machinery and
+ * not a venue with a front end, and a `shape` names no protocol at all — for
+ * those the explorer link is the whole truth we have. A guessed URL that lands
+ * on a marketing page is the same failure as a prompt the handler cannot serve.
  */
 export function poolVenuePageUrlV1(
   venueId: PoolVenueIdV1 | null,
@@ -165,6 +176,10 @@ export function poolVenuePageUrlV1(
       return `https://aerodrome.finance/liquidity?query=${pool}`;
     case 'uniswap_v3':
       return `https://app.uniswap.org/explore/pools/base/${pool}`;
+    case 'pancakeswap_v3':
+      return `https://pancakeswap.finance/info/v3/base/pairs/${pool}`;
+    case 'pancakeswap_v2':
+      return `https://pancakeswap.finance/info/base/pairs/${pool}`;
     default:
       return null;
   }

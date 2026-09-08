@@ -169,10 +169,17 @@ describe('a pool reading is about one token, and carries both sides', () => {
       poolVenuePageUrlV1('uniswap_v3', POOL),
       `https://app.uniswap.org/explore/pools/base/${POOL}`,
     );
-    // PancakeSwap's canonical pool URL has not been opened and read back, so it
-    // gets none. A guessed URL landing on a marketing page is the same failure
-    // as a prompt no handler can serve.
-    assert.equal(poolVenuePageUrlV1('pancakeswap_v3', POOL), null);
+    // The two PancakeSwap paths are not interchangeable — the v2 path handed a
+    // v3 pool renders the overview and names no pair, and `/info/v2/base/pairs`
+    // is a hard 404 — so the version the classifier read picks the path.
+    assert.equal(
+      poolVenuePageUrlV1('pancakeswap_v3', POOL),
+      `https://pancakeswap.finance/info/v3/base/pairs/${POOL}`,
+    );
+    assert.equal(
+      poolVenuePageUrlV1('pancakeswap_v2', POOL),
+      `https://pancakeswap.finance/info/base/pairs/${POOL}`,
+    );
     // An engine names machinery with no front end of its own; a shape names no
     // protocol at all.
     assert.equal(poolVenuePageUrlV1('algebra_cl', POOL), null);

@@ -1,4 +1,5 @@
 import { assembleUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
+import { pooledLiquidityFromReadingsV1 } from '@mioagent/rwa-issuer';
 import {
   UseAccessAgentInputV1Schema,
   UseAccessAgentOutputV1Schema,
@@ -67,8 +68,16 @@ async function readV1(tokenAddress: string): Promise<UseAccessAgentOutputV1> {
       'Miorail holds no reviewed binding for that exact Base address, so it has nothing measured to report about it. This is a statement about Miorail’s corpus, never about the token.',
     );
   }
+  // Stored, and read BEFORE the chain calls, exactly as the screen does. This
+  // was missing entirely, so an assistant asked about LP was handed four
+  // lending venues that all said no — the same false "no DeFi use" the pooled
+  // section was built to end, reappearing one surface over.
+  const stored = await rwaMarketRealityRuntime
+    .poolReadings()
+    .readingsForToken({ chainId: 8453, tokenAddress, limit: 60 });
   const use = await assembleUseAccessV1({
     tokenAddress,
+    pools: pooledLiquidityFromReadingsV1(stored),
     reader: rwaMarketRealityRuntime.useAccessReader(),
     now: rwaMarketRealityRuntime.now(),
     // Per venue row: four sequential readings, two of them network fetches.

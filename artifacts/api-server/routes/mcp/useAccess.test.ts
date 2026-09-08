@@ -18,12 +18,15 @@ let chainCalls = 0;
 let venueLookups = 0;
 let bindings: Record<string, boolean> = {};
 let venueFails = false;
+let poolRowsRead = 0;
+let storedPools: unknown[] = [];
 
 const restore = {
   underlyings: rwaMarketRealityRuntime.underlyings,
   useAccessReader: rwaMarketRealityRuntime.useAccessReader,
   defiSources: rwaMarketRealityRuntime.defiSources,
   migrationAvailable: rwaMarketRealityRuntime.migrationAvailable,
+  poolReadings: rwaMarketRealityRuntime.poolReadings,
 };
 
 beforeEach(() => {
@@ -32,6 +35,17 @@ beforeEach(() => {
   venueLookups = 0;
   venueFails = false;
   bindings = { [NVDA]: true };
+  // The pooled reading is a DB read on the production path, so the stub must
+  // carry one too — a fake that omits a dependency turns a real call into a
+  // test-only success.
+  poolRowsRead = 0;
+  rwaMarketRealityRuntime.poolReadings = (() => ({
+    async recordReadings() { return { written: 0 }; },
+    async readingsForToken() {
+      poolRowsRead += 1;
+      return storedPools;
+    },
+  })) as typeof rwaMarketRealityRuntime.poolReadings;
 
   rwaMarketRealityRuntime.migrationAvailable = async () => true;
   rwaMarketRealityRuntime.underlyings = (() => ({
@@ -80,6 +94,49 @@ beforeEach(() => {
 
 test.after(() => {
   Object.assign(rwaMarketRealityRuntime, restore);
+});
+
+describe('an assistant asking about LP is answered from the pools', () => {
+  test('the stored pools reach the agent output and the summary', async () => {
+    // `defi` answers a LENDING question, and for these tokens it almost always
+    // answers no — while an Aerodrome pool held 3,715 NVDAc against $1.6M of
+    // USDC. This tool carried no pools at all, so an assistant asked about LP
+    // read four refusals and reported "no DeFi use".
+    storedPools = [{
+      chainId: 8453,
+      poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+      tokenAddress: NVDA,
+      venueId: 'aerodrome_cl',
+      factoryAddress: '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef',
+      tokenBalanceAtomic: '371504000000',
+      tokenDecimals: 8,
+      pairedTokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+      pairedBalanceAtomic: '1645701470000',
+      pairedDecimals: 6,
+      pairedSymbol: 'USDC',
+      blockNumber: 51012269,
+      readAt: '2026-09-08T09:00:00.000Z',
+    }];
+    const out = await miorailGetUseAccessV1({ address: NVDA });
+    assert.equal(poolRowsRead, 1);
+    assert.equal(out.pools.state, 'measured');
+    if (out.pools.state !== 'measured') return;
+    assert.equal(out.pools.poolCount, 1);
+    assert.equal(out.pools.rows[0]?.venueName, 'Aerodrome CL');
+    assert.equal(out.pools.rows[0]?.venueTier, 'protocol');
+    assert.match(out.pools.rows[0]?.venuePageUrl ?? '', /aerodrome\.finance\/liquidity\?query=/);
+    assert.match(out.miorailSummary.summary, /held by 1 pool on Base/);
+    assert.match(out.miorailSummary.summary, /not depth and not a quote/);
+  });
+
+  test('no stored reading says it is our gap, never that there are no pools', async () => {
+    storedPools = [];
+    const out = await miorailGetUseAccessV1({ address: NVDA });
+    assert.equal(out.pools.state, 'not_measured');
+    if (out.pools.state !== 'not_measured') return;
+    assert.match(out.pools.reason, /Not checked is not the same as none/);
+    assert.match(out.miorailSummary.summary, /did not check the pools/);
+  });
 });
 
 describe('the key space is the reviewed corpus, not the chain', () => {

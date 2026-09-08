@@ -9,7 +9,14 @@ import {
   selectorV1,
   type B20ReaderV1,
 } from '@mioagent/b20-control';
-import type { MarketPoolReadingV1, PoolVenueIdV1 } from '@mioagent/route-storage';
+import {
+  POOL_VENUE_NAMES_V1,
+  poolVenuePageUrlV1,
+  type MarketPoolReadingV1,
+  type PoolVenueIdV1,
+} from '@mioagent/route-storage';
+
+import type { PooledLiquidityV1 } from './useAccess.js';
 
 // ---------------------------------------------------------------------------
 // Reading what a pool holds, and deciding which venue it belongs to.
@@ -391,4 +398,41 @@ export async function readPoolShapesV1(input: {
     });
   }
   return shapes;
+}
+
+
+/**
+ * Stored readings, shaped for `assembleUseAccessV1`.
+ *
+ * One builder for both surfaces. The screen and the MCP tool each mapped these
+ * rows themselves, and the MCP one simply did not — so an assistant asked about
+ * LP got four lending venues that all said no, which is the exact failure the
+ * pooled section was built to end, reappearing one surface over.
+ *
+ * The NAME and the exchange PAGE are ours, from code-owned maps keyed by the
+ * venue the chain established. A prettified factory address would let an
+ * unknown protocol label itself, and a URL shape nobody opened would point at
+ * whatever the exchange happens to serve.
+ */
+export function pooledLiquidityFromReadingsV1(
+  stored: readonly MarketPoolReadingV1[],
+): PooledLiquidityV1 {
+  return {
+    state: stored.length > 0 ? 'measured' : 'not_measured',
+    blockNumber: stored[0]?.blockNumber ?? null,
+    readAt: stored[0]?.readAt ?? null,
+    rows: stored.map((row) => ({
+      poolAddress: row.poolAddress,
+      venueId: row.venueId,
+      venueName: row.venueId ? (POOL_VENUE_NAMES_V1[row.venueId] ?? null) : null,
+      venuePageUrl: poolVenuePageUrlV1(row.venueId, row.poolAddress),
+      factoryAddress: row.factoryAddress,
+      tokenBalanceAtomic: row.tokenBalanceAtomic,
+      tokenDecimals: row.tokenDecimals,
+      pairedTokenAddress: row.pairedTokenAddress,
+      pairedBalanceAtomic: row.pairedBalanceAtomic,
+      pairedDecimals: row.pairedDecimals,
+      pairedSymbol: row.pairedSymbol,
+    })),
+  };
 }
