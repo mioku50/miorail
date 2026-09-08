@@ -179,6 +179,100 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
+    test('a wallet holding more than fifteen tokens keeps the ones that sort last', async () => {
+        // The exact shape of the 2026-09-08 report. Alchemy orders these by
+        // contract address, and every B20 token begins with 0xb2, so the old
+        // `slice(0, 15)` cut off precisely the tokenized stocks this product
+        // exists to show. NVDAc sat nineteenth in a 22-token wallet and the
+        // screen said the wallet did not hold it, minutes after a confirmed buy.
+        const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
+        const held = [
+            ...Array.from({ length: 21 }, (_unused, index) =>
+                '0x' + (index + 1).toString(16).padStart(2, '0') + 'a'.repeat(38),
+            ),
+            NVDAC,
+        ];
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            const body = JSON.parse(String(options?.body || '{}'));
+            if (body.method === 'alchemy_getTokenBalances') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        result: {
+                            tokenBalances: held.map((contractAddress) => ({
+                                contractAddress,
+                                tokenBalance: '0xabcd',
+                            })),
+                        },
+                    }),
+                } as Response;
+            }
+            const address = String(body.params?.[0] ?? '');
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({
+                    result:
+                        address === NVDAC
+                            ? { symbol: 'NVDAc', name: 'Coinbase NVDA', decimals: 8 }
+                            : { symbol: 'OTHER', name: 'Other', decimals: 18 },
+                }),
+            } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new AlchemyTokenBalancesProvider('alchemy-key');
+        const balances = await provider.getTokenBalances({ address: '0xabc', chainId: 8453 });
+
+        assert.strictEqual(balances.length, 22);
+        const nvda = balances.find((row) => row.address === NVDAC);
+        assert.ok(nvda, 'the token that sorts last was dropped');
+        assert.strictEqual(nvda!.symbol, 'NVDAc');
+        // Its own decimals, not the 18 default: 0xabcd at 8 decimals is
+        // 0.0004, and reading it as 18 would render 0.0000 and look like dust.
+        assert.strictEqual(nvda!.decimals, 8);
+        mock.restoreAll();
+    });
+
+    test('a metadata read that fails drops one token, not the rest of the wallet', async () => {
+        const good = '0x' + '11'.repeat(20);
+        const bad = '0x' + '22'.repeat(20);
+        const mockFetch = mock.fn(async (_url: string | URL | Request, options?: RequestInit) => {
+            const body = JSON.parse(String(options?.body || '{}'));
+            if (body.method === 'alchemy_getTokenBalances') {
+                return {
+                    ok: true,
+                    status: 200,
+                    json: async () => ({
+                        result: {
+                            tokenBalances: [good, bad].map((contractAddress) => ({
+                                contractAddress,
+                                tokenBalance: '0x64',
+                            })),
+                        },
+                    }),
+                } as Response;
+            }
+            if (String(body.params?.[0] ?? '') === bad) {
+                return { ok: false, status: 500, statusText: 'Server Error', json: async () => ({}) } as Response;
+            }
+            return {
+                ok: true,
+                status: 200,
+                json: async () => ({ result: { symbol: 'GOOD', name: 'Good', decimals: 18 } }),
+            } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+
+        const provider = new AlchemyTokenBalancesProvider('alchemy-key');
+        const balances = await provider.getTokenBalances({ address: '0xabc', chainId: 8453 });
+
+        assert.strictEqual(balances.length, 1);
+        assert.strictEqual(balances[0].symbol, 'GOOD');
+        mock.restoreAll();
+    });
+
     test('AlchemyTokenBalancesProvider classifies HTTP 429 as rate_limited', async () => {
         const mockFetch = mock.fn(async () => ({
             ok: false,

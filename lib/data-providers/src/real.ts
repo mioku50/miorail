@@ -499,6 +499,19 @@ export class NoneTokenBalancesProvider implements TokenBalancesProvider {
   }
 }
 
+/**
+ * The bound on how many held tokens one wallet read will describe.
+ *
+ * Not a display limit: it exists only so a wallet carrying hundreds of dust
+ * airdrops cannot turn a page load into hundreds of provider calls. Any wallet
+ * a person actually uses sits far below it, so in practice nothing is cut.
+ */
+export const MAX_TOKEN_BALANCES_READ_V1 = 120;
+
+/** Metadata reads in flight at once. One round trip per token is what forced
+ * the old cap of fifteen; batching removes the reason for it. */
+export const TOKEN_METADATA_CONCURRENCY_V1 = 10;
+
 export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
   constructor(private readonly apiKey?: string, private readonly customRpcUrl?: string) {}
 
@@ -549,40 +562,67 @@ export class AlchemyTokenBalancesProvider implements TokenBalancesProvider {
     const rawBalances = data.result?.tokenBalances || [];
     const nonZero = rawBalances.filter(b => b.tokenBalance && b.tokenBalance !== '0x0000000000000000000000000000000000000000000000000000000000000000' && b.tokenBalance !== '0x0' && b.tokenBalance !== '0');
 
+    // Every non-zero balance, read concurrently.
+    //
+    // This used to be `nonZero.slice(0, 15)` around a SEQUENTIAL metadata
+    // fetch: one HTTP round trip per token, so the cap was really a latency
+    // budget. It was also a silent lie about the wallet. Alchemy returns these
+    // ordered by contract address, so the cut is decided by hex sort — and
+    // every B20 token starts with `0xb2`, which puts all of them at the end.
+    //
+    // Measured 2026-09-08 on a wallet holding 22 non-zero tokens: NVDAc sat at
+    // position 18 and was dropped, so minutes after a confirmed purchase landed
+    // 0.00043931 NVDAc in the wallet the screen listed fifteen other tokens and
+    // not that one. The user read "the token is not in my wallet"; the truth
+    // was "our list stops at fifteen and yours sorts nineteenth". Miorail's
+    // own limit was wearing the token's name.
+    //
+    // Concurrency makes the old cap unnecessary rather than merely larger. The
+    // remaining bound is a real one — a wallet with hundreds of dust airdrops
+    // should not turn one page load into hundreds of provider calls — and it is
+    // far above any wallet this product serves.
+    const bounded = nonZero.slice(0, MAX_TOKEN_BALANCES_READ_V1);
     const results: TokenBalance[] = [];
-    for (const item of nonZero.slice(0, 15)) {
-      try {
-        const metaRes = await fetch(rpcUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            jsonrpc: '2.0',
-            id: 1,
-            method: 'alchemy_getTokenMetadata',
-            params: [item.contractAddress]
-          })
-        });
-        const metaData = await this.parseAlchemyResponse<{ result?: { symbol?: string; name?: string; decimals?: number; logo?: string } }>(metaRes, 'token metadata');
-        const meta = metaData.result || {};
-        const decimals = typeof meta.decimals === 'number' ? meta.decimals : 18;
-        const balanceBigInt = BigInt(item.tokenBalance);
-        const symbol = meta.symbol || 'ERC20';
-        const balanceFormatted = (Number(balanceBigInt) / Math.pow(10, decimals)).toFixed(4);
-        results.push({
-          symbol,
-          name: meta.name || symbol,
-          address: item.contractAddress,
-          balance: balanceBigInt.toString(),
-          balanceFormatted,
-          decimals,
-          logoUrl: meta.logo || undefined,
-          verified: false,
-          possibleSpam: false
-        });
-      } catch (err) {
-        if (isProviderRateLimitError(err)) throw err;
-        // ignore individual metadata fetch error
-      }
+    for (let start = 0; start < bounded.length; start += TOKEN_METADATA_CONCURRENCY_V1) {
+      const batch = bounded.slice(start, start + TOKEN_METADATA_CONCURRENCY_V1);
+      const settled = await Promise.all(
+        batch.map(async (item): Promise<TokenBalance | null> => {
+          try {
+            const metaRes = await fetch(rpcUrl, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                jsonrpc: '2.0',
+                id: 1,
+                method: 'alchemy_getTokenMetadata',
+                params: [item.contractAddress]
+              })
+            });
+            const metaData = await this.parseAlchemyResponse<{ result?: { symbol?: string; name?: string; decimals?: number; logo?: string } }>(metaRes, 'token metadata');
+            const meta = metaData.result || {};
+            const decimals = typeof meta.decimals === 'number' ? meta.decimals : 18;
+            const balanceBigInt = BigInt(item.tokenBalance);
+            const symbol = meta.symbol || 'ERC20';
+            const balanceFormatted = (Number(balanceBigInt) / Math.pow(10, decimals)).toFixed(4);
+            return {
+              symbol,
+              name: meta.name || symbol,
+              address: item.contractAddress,
+              balance: balanceBigInt.toString(),
+              balanceFormatted,
+              decimals,
+              logoUrl: meta.logo || undefined,
+              verified: false,
+              possibleSpam: false
+            };
+          } catch (err) {
+            if (isProviderRateLimitError(err)) throw err;
+            // A metadata read that failed drops that ONE token, not the page.
+            return null;
+          }
+        })
+      );
+      for (const row of settled) if (row) results.push(row);
     }
     return results;
   }
