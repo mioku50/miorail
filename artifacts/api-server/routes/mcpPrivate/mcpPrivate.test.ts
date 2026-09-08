@@ -284,6 +284,7 @@ describe('§11 — the public MCP surface cannot reach execution', () => {
       'index.ts',
       'marketRealityTools.ts',
       'mcpServer.test.ts',
+      'recordedChangesTool.ts',
       'server.ts',
       'tools.ts',
       'useAccess.test.ts',
