@@ -111,7 +111,8 @@ async function classifyB20QuestionV1(input: {
       timer = setTimeout(() => resolve(null), input.timeoutMs ?? SEMANTIC_TIMEOUT_MS_V1);
     });
     const generated = input.provider
-      .generate({ messages, temperature: 0 })
+      // Extraction from a closed vocabulary: nothing here rewards thinking.
+      .generate({ messages, temperature: 0, reasoningEffort: 'none' })
       .then((response) => parseB20SemanticIntentV1(response.message.content || ''))
       .catch(() => null);
     return await Promise.race([generated, timeout]);

@@ -144,7 +144,8 @@ export async function extractSemanticIntent(input: {
       content: `<conversation_context>${sanitizeSemanticConversationContext(input.context)}</conversation_context>\n<user_request>${JSON.stringify(input.message.slice(0, 4_000))}</user_request>`,
     },
   ];
-  const response = await input.llm.generate({ messages, temperature: 0 });
+  // Extraction against a strict schema, so the model is not asked to reason.
+  const response = await input.llm.generate({ messages, temperature: 0, reasoningEffort: 'none' });
   return parseSemanticIntentExtraction(response.message.content || '');
 }
 

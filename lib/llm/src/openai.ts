@@ -78,6 +78,10 @@ export class OpenAiCompatibleClient implements LlmProvider {
         model,
         messages: request.messages,
         temperature: request.temperature,
+        // Sent only when a caller asked for it. A provider that does not know
+        // the field ignores it; one that does stops charging for thinking on a
+        // task that is transcription. See LlmRequest.reasoningEffort.
+        ...(request.reasoningEffort ? { reasoning_effort: request.reasoningEffort } : {}),
         ...(this.config.jsonMode ? { response_format: { type: 'json_object' } } : {}),
         ...(request.tools && request.tools.length > 0 ? { tools: request.tools } : {})
       })

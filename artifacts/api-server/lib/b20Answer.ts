@@ -153,6 +153,10 @@ export async function narrateB20AnswerV1(input: {
         // Zero, because this is transcription with grammar. Sampling here buys
         // variety in a place where variety is the defect.
         temperature: 0,
+        // And no thinking, for the same reason: every fact this call may state
+        // is in the bundle above it. On a reasoning model the 12s budget below
+        // was unreachable, so this narrator never ran either.
+        reasoningEffort: 'none',
       }),
       new Promise<never>((_resolve, reject) =>
         setTimeout(() => reject(new Error('narrator timed out')), input.timeoutMs ?? 12_000),
