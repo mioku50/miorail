@@ -189,9 +189,22 @@ export function planB20AnswerV1(input: {
 // Deliberately without a bare `in`: it appears in almost every English
 // sentence, and an entry word that is always present turns the conjunction
 // below into a two-word rule.
-const ENTRY_WORD_V1 = /\b(bought|buy|buys|buying|purchase[ds]?|got in|entry|entered|enter|entering)\b|(купи|покуп|приобре|вошл|вход|заход)/u;
-const EXIT_WORD_V1 = /\b(sell|sells|selling|sold|sale|sales|exit|exits|exiting|get out|got out|cash out|unload|dump)\b|(прода|выход|выйти|вышел|сбро)/u;
-const NEGATION_WORD_V1 = /\b(not|cannot|can'?t|could ?n'?t|could not|would ?n'?t|would not|did ?n'?t|did not|does ?n'?t|does not|is ?n'?t|are ?n'?t|no|none|never|unable|without|fail|failed|fails|unpriced|impossible|stuck|trapped)\b|(нельзя|невозможно|не смог|не удал|не получ|нет|без|застрял)/u;
+const ENTRY_WORD_V1 = /\b(bought|buy|buys|buying|purchase[ds]?|got in|entry|entered|enter|entering)\b|(купи|покуп|приобре|вошл|вход|заход|зашл|зашёл|зашел)/u;
+const EXIT_WORD_V1 = /\b(sell|sells|selling|sold|sale|sales|exit|exits|exiting|get out|got out|cash out|unload|dump)\b|(прода|выход|выйти|выйд|вышел|сбро)/u;
+/**
+ * Words that turn a question about entry and exit into a question about a
+ * failure. Required by the bought-not-sellable matcher, and disqualifying for
+ * the two-sided one, so a missing form silently sends a question to the
+ * opposite intent.
+ *
+ * `не мо[гж]` was the missing one, and `невозможно` was written as one
+ * inflection rather than a stem, so «невозможна» read as no negation at all. On prod «Какие запуски купили, но НЕ МОГУТ
+ * продать?» classified as find_two_sided three runs out of three, while «…но
+ * продать НЕ СМОГЛИ?» — one verb over, and `не смог` was listed — classified
+ * correctly. The reader got a well-formed, verified answer to the opposite
+ * question, with nothing on screen to say so.
+ */
+const NEGATION_WORD_V1 = /\b(not|cannot|can'?t|could ?n'?t|could not|would ?n'?t|would not|did ?n'?t|did not|does ?n'?t|does not|is ?n'?t|are ?n'?t|no|none|never|unable|without|fail|failed|fails|unpriced|impossible|stuck|trapped)\b|(нельзя|невозможн|не смог|не удал|не получ|не мо[гж]|не выйд|не продад|нет|без|застрял)/u;
 
 /**
  * Whether the question asks for the product's headline finding.

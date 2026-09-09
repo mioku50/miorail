@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 
 import {
   B20_UNSUPPORTED_QUESTIONS_V1,
+  b20UniverseIntentV1,
   b20UnsupportedRefusalV1,
   questionIsRussianV1,
 } from './b20AnswerPlan.js';
@@ -74,4 +75,48 @@ test('the classifier prompt makes the two priced intents mutually exclusive', as
   assert.match(bought, /did NOT|cannot sell|cannot exit/, 'the failing side is stated as the deciding fact');
   assert.match(twoSided, /BOTH/, 'the succeeding side is stated as both');
   assert.match(twoSided, /Never choose this when/, 'and it names the case it must not take');
+});
+
+// ---------------------------------------------------------------------------
+// A missing negation form sends a question to the opposite intent.
+//
+// The bought-not-sellable matcher REQUIRES a negation and the two-sided one is
+// disqualified by it, so the two live or die on the same vocabulary. On prod
+// «Какие запуски купили, но НЕ МОГУТ продать?» resolved to find_two_sided
+// three runs out of three, while «…но продать НЕ СМОГЛИ?» — one verb over,
+// and `не смог` was in the list — resolved correctly. The reader was given a
+// well-formed, verified answer to the opposite question.
+// ---------------------------------------------------------------------------
+
+describe('the two priced intents share one negation vocabulary', () => {
+  test('a Russian question about a failed sale is never two-sided', () => {
+    const failed = [
+      'какие запуски купили, но не могут продать?',
+      'какие токены купили, но не может продать никто?',
+      'купили, а продать не смогли',
+      'вошли, но выйти нельзя',
+      'покупка прошла, продажа невозможна',
+      'зашли и не выйдут',
+    ];
+    for (const question of failed) {
+      assert.equal(b20UniverseIntentV1(question).intent, 'find_bought_not_sellable', question);
+    }
+  });
+
+  test('a question about both sides pricing stays two-sided', () => {
+    for (const question of [
+      'which b20 tokens priced both entry and exit?',
+      'какие токены оценили и вход, и выход?',
+      'round trip priced',
+    ]) {
+      assert.equal(b20UniverseIntentV1(question).intent, 'find_two_sided', question);
+    }
+  });
+
+  test('the English side keeps working', () => {
+    assert.equal(
+      b20UniverseIntentV1('which b20 tokens were bought but cannot sell?').intent,
+      'find_bought_not_sellable',
+    );
+  });
 });
