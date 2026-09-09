@@ -102,10 +102,22 @@ export interface StocksNarrationVerdictV1 {
 // and is not one.
 // ---------------------------------------------------------------------------
 
-/** Judgements. The product measures an exit at a size; none of these are
- * measurements, and "liquid" is the one that sounds most like one. */
+/**
+ * Judgements. The product measures an exit at a size; none of these are
+ * measurements, and "liquid" is the one that sounds most like one.
+ *
+ * The Russian half used the bare stem `ликвид`, which has no word boundary and
+ * therefore also matched **ликвидность** — the neutral noun that names the
+ * measurement itself, and the one word a Russian answer about pooled depth
+ * cannot avoid. Every such answer was discarded as a judgement. The English
+ * half never had the bug because `\bliquid\b` does not match "liquidity".
+ *
+ * So the stem is split the way the language does: the adjective and its
+ * negations judge (ликвидный, ликвиден, неликвидный, малоликвидный), the noun
+ * in `-ность` names a thing that was read.
+ */
 const JUDGEMENT_VOCABULARY_V1 =
-  /\b(illiquid|liquid|liquidity is (good|bad|poor|deep|thin|low|high)|best|worst|bad|cheap|expensive|attractive|favou?rable|superior|inferior)\b|(ликвид|лучш|худш|плох|дешев|дорог|выгодн)/iu;
+  /\b(illiquid|liquid|liquidity is (good|bad|poor|deep|thin|low|high)|best|worst|bad|cheap|expensive|attractive|favou?rable|superior|inferior)\b|(неликвид|малоликвид|низколиквид|высоколиквид|ликвиден|ликвидн(?!ост)|лучш|худш|плох|дешев|дорог|выгодн)/iu;
 
 /**
  * A claim about the whole market drawn from one router's answer. Miorail asks

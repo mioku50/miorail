@@ -936,6 +936,34 @@ describe('stocks evidence: pooled liquidity', () => {
     assert.ok(bundle.missing.some((entry) => entry.includes('every one of them held none of it')));
   });
 
+  test('the Russian noun for the measurement is not the Russian adjective that judges', () => {
+    // `ликвидность` names what the pooled section measures; `ликвидный` judges
+    // it. The stem matched both, so every Russian answer about pooled depth was
+    // discarded as a judgement — on a console where Russian is first-class and
+    // the English half of the same rule had never had the bug.
+    const bundle = bundleWithPoolsV1('A', poolsFor(COINBASE_NVDA, [poolRowV1()]));
+    const judged = (explanation: string): boolean =>
+      verifyStocksNarrationV1({
+        raw: JSON.stringify({ ...goodNarration(bundle), explanation }),
+        bundle,
+      }).violations.some((violation) => violation.code === 'judgement_vocabulary');
+
+    for (const neutral of [
+      'Ликвидность измерена в одном пуле.',
+      'В пуле нет данных о ликвидности.',
+    ]) {
+      assert.equal(judged(neutral), false, neutral);
+    }
+    for (const judgement of [
+      'Этот токен ликвидный.',
+      'Токен ликвиден на этом размере.',
+      'Это неликвидный актив.',
+      'Малоликвидный инструмент.',
+    ]) {
+      assert.equal(judged(judgement), true, judgement);
+    }
+  });
+
   test('the narrator prompt states the pool venues, separately from the routers', () => {
     const bundle = bundleWithPoolsV1('A', poolsFor(COINBASE_NVDA, [poolRowV1()]));
     const prompt = bundleAsPromptV1(bundle);
