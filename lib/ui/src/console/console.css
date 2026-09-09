@@ -85,7 +85,7 @@
   --rep-bg: rgba(255,255,255,.055); --rep-line: var(--line); --rep-shadow: 0 0 0 transparent;
   /* Ask Miorail's own ground. The one surface on the page that answers
      back reads as an instrument, not as one more representation card. */
-  --ask-tint: rgba(143,182,255,.10); --ask-line: rgba(143,182,255,.22);
+  --ask-tint: rgba(143,182,255,.17); --ask-line: rgba(143,182,255,.26);
   /* The halo behind a selected card's accent ring. */
   --gsoft-ring: rgba(106,169,255,.16);
   /* The colour a page title and a security name are set in. Ink here: on the
@@ -1217,7 +1217,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
  */
 .mio-console .ask-inline { margin: 18px 0; padding: 15px 16px 16px 18px;
   min-width: 0; max-width: 100%; border: 0; border-radius: calc(var(--r) + 2px);
-  background: linear-gradient(103deg, var(--ask-tint), var(--rep-bg) 54%);
+  background: linear-gradient(103deg, var(--ask-tint), var(--rep-bg) 42%);
   box-shadow: inset 3px 0 0 var(--accent-line), inset 0 0 0 1px var(--ask-line), var(--rep-shadow); }
 .mio-console .ask-inline-head { display: flex; align-items: flex-start; justify-content: space-between;
   gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
