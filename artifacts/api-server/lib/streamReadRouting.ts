@@ -155,6 +155,18 @@ function schemaProperties(tool: ToolDef): Record<string, any> {
     : {};
 }
 
+/**
+ * A page size the wallet actually fits in.
+ *
+ * `get_portfolio` pages, and this builder never said how big a page it wanted,
+ * so the provider used its own default of 15. A wallet holding 22 tokens was
+ * reported as 15 — the same failure class as the balance cap our own provider
+ * had, one surface over — and the payload printed underneath it even carried
+ * `hasMore: false`. Asking for a bounded page we can show is the difference
+ * between a truncated answer and a complete one.
+ */
+export const BASE_READ_PAGE_LIMIT_V1 = 100;
+
 function buildBaseReadArgs(tool: ToolDef, walletAddress?: string): Record<string, unknown> {
   const properties = schemaProperties(tool);
   const args: Record<string, unknown> = {};
@@ -164,6 +176,8 @@ function buildBaseReadArgs(tool: ToolDef, walletAddress?: string): Record<string
       args[key] = walletAddress;
     } else if (normalized === 'chainid') {
       args[key] = 8453;
+    } else if (normalized === 'limit' || normalized === 'pagesize') {
+      args[key] = BASE_READ_PAGE_LIMIT_V1;
     } else if (normalized === 'chain' || normalized === 'network') {
       const values = Array.isArray(properties[key]?.enum) ? properties[key].enum : [];
       args[key] = values.includes('base') ? 'base' : values.includes('eip155:8453') ? 'eip155:8453' : 'base';

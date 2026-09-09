@@ -393,7 +393,14 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
 // action modules. The generic model still receives read-only tools only.
 mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFunction) => {
   try {
-    const { message, requestId } = BaseMcpConsoleRequestV1Schema.parse(req.body);
+    // safeParse, because `parse` throws into the generic error handler and a
+    // client typo came back as 500 "Internal Server Error" — a request the
+    // caller could fix, reported as a fault on our side.
+    const parsedBody = BaseMcpConsoleRequestV1Schema.safeParse(req.body);
+    if (!parsedBody.success) {
+      return res.status(400).json({ error: 'invalid_console_request', code: 'invalid_console_request' });
+    }
+    const { message, requestId } = parsedBody.data;
     const secret = process.env.SESSION_SECRET;
     if (!secret) {
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
