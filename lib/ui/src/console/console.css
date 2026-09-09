@@ -83,6 +83,9 @@
   /* Used inside comma-separated shadow lists: `none` invalidates the entire
      list, including the selected security's inset ring. */
   --rep-bg: rgba(255,255,255,.055); --rep-line: var(--line); --rep-shadow: 0 0 0 transparent;
+  /* Ask Miorail's own ground. The one surface on the page that answers
+     back reads as an instrument, not as one more representation card. */
+  --ask-tint: rgba(143,182,255,.10); --ask-line: rgba(143,182,255,.22);
   /* The halo behind a selected card's accent ring. */
   --gsoft-ring: rgba(106,169,255,.16);
   /* The colour a page title and a security name are set in. Ink here: on the
@@ -237,6 +240,7 @@
   --rep-bg: #ffffff; --rep-line: #e2e1d4;
   --gsoft-ring: rgba(21,94,239,.13);
   --rep-shadow: 0 1px 1px rgba(23,23,26,.05), 0 6px 18px rgba(23,23,26,.055);
+  --ask-tint: rgba(21,94,239,.055); --ask-line: rgba(21,94,239,.20);
   /* Titles in deep Base blue. This is the one place the accent is allowed to
      carry type rather than decoration, and it is what makes a security name
      read as the subject of the page instead of as body copy in bold. Deep
@@ -1187,16 +1191,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .observation-stamp { flex: none; padding: 4px 7px; border-radius: 5px; background: var(--track-bg);
   color: var(--faint); font-size: var(--fs-micro); box-shadow: inset 0 0 0 1px var(--line); }
 .mio-console .b20-prompt-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-.mio-console .b20-prompt-chips button { border: 0; border-radius: 999px; padding: 5px 8px; cursor: pointer;
-  background: var(--panel2); color: var(--muted); font: inherit; font-size: var(--fs-micro); text-align: left;
+.mio-console .b20-prompt-chips button { border: 0; border-radius: 999px; padding: 6px 11px; cursor: pointer;
+  background: var(--panel2); color: var(--muted); font: inherit; font-size: var(--fs-meta); text-align: left;
   max-width: 100%; overflow-wrap: anywhere; box-shadow: inset 0 0 0 1px var(--line2); }
 .mio-console .b20-prompt-chips button:hover,
 .mio-console .b20-prompt-chips button:focus-visible { color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
 .mio-console .b20-ask-form { margin-top: 11px; }
 .mio-console .b20-ask-form label { display: block; margin-bottom: 5px; color: var(--faint); font-size: var(--fs-micro); }
 .mio-console .b20-ask-form > div { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 7px; align-items: stretch; }
-.mio-console .b20-ask-form input { min-width: 0; width: 100%; border: 0; border-radius: 7px; padding: 8px 9px;
-  background: var(--panel2); color: var(--ink); font: inherit; font-size: var(--fs-sm); box-shadow: inset 0 0 0 1px var(--line2); }
+.mio-console .b20-ask-form input { min-width: 0; width: 100%; border: 0; border-radius: 8px; padding: 9px 11px;
+  background: var(--panel2); color: var(--ink); font: inherit; font-size: var(--fs-body); box-shadow: inset 0 0 0 1px var(--line2); }
 .mio-console .b20-ask-form input:focus { outline: 2px solid var(--accent-line); outline-offset: 1px; }
 .mio-console .b20-ask-form .btn { margin-top: 0; }
 /* The console as a strip inside the Discover panel, rather than as a panel of
@@ -1211,18 +1215,18 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
  * card's own treatment: its own ground, its own edge, and a heading a reader
  * can find without being told where to look.
  */
-.mio-console .ask-inline { margin: 14px 0 14px; padding: 14px 15px;
+.mio-console .ask-inline { margin: 18px 0; padding: 15px 16px 16px 18px;
   min-width: 0; max-width: 100%; border: 0; border-radius: calc(var(--r) + 2px);
-  background: var(--rep-bg); box-shadow: inset 0 0 0 1px var(--rep-line), var(--rep-shadow); }
-.mio-console .ask-inline-head { display: flex; align-items: center; justify-content: space-between;
-  gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
-.mio-console .ask-inline-head h4 { display: flex; align-items: center; gap: 8px; margin: 0;
-  color: var(--title-ink); font-size: var(--fs-base); font-weight: 700; letter-spacing: -.01em; }
-/* A mark, not an emoji: it says "this one talks back" at a glance and costs
-   the layout nothing. */
-.mio-console .ask-inline-head h4::before { content: ''; width: 3px; height: 15px; flex: none;
-  border-radius: 2px; background: var(--accent-line); }
-.mio-console .ask-inline-head .rt { display: flex; align-items: center; gap: 8px; }
+  background: linear-gradient(103deg, var(--ask-tint), var(--rep-bg) 54%);
+  box-shadow: inset 3px 0 0 var(--accent-line), inset 0 0 0 1px var(--ask-line), var(--rep-shadow); }
+.mio-console .ask-inline-head { display: flex; align-items: flex-start; justify-content: space-between;
+  gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+/* The rail on the left already says "this one talks back", so the heading no
+   longer carries its own 3px mark: two marks for one idea read as clutter.
+   No eyebrow either — the only true one would repeat the note below it. */
+.mio-console .ask-inline-head h4 { display: block; margin: 0;
+  color: var(--title-ink); font-size: var(--fs-lg); font-weight: 700; letter-spacing: -.01em; }
+.mio-console .ask-inline-head .rt { display: flex; align-items: center; gap: 8px; padding-top: 2px; }
 /* The first control inside the strip already carries the top gap. */
 .mio-console .ask-inline > .filter-row:first-of-type { margin-top: 0; }
 .mio-console .b20-answer { min-width: 0; max-width: 100%; margin-top: 11px; padding-top: 11px; border-top: 1px solid var(--line); }
@@ -1291,7 +1295,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .b20-copilot-head { flex-direction: column; }
   .mio-console .b20-ask-form > div { grid-template-columns: minmax(0,1fr); }
   .mio-console .b20-answer-facts { grid-template-columns: minmax(0,1fr); }
-  .mio-console .ask-inline { padding-left: 8px; }
+  .mio-console .ask-inline { padding-left: 12px; }
 }
 
 /* Commerce used these two from the day it shipped and neither had a rule, so
@@ -1584,7 +1588,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    controls, and the ask field above its button rather than beside it. */
 .mio-console.mini .cr-facts > div { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 .mio-console.mini .b20-ask-form > div { grid-template-columns: minmax(0, 1fr); }
-.mio-console.mini .ask-inline { padding-left: 8px; }
+.mio-console.mini .ask-inline { padding-left: 12px; }
 .mio-console.mini .mr-head { flex-direction: column; }
 .mio-console.mini .mr-head-r { justify-items: start; text-align: left; }
 @media (max-width: 720px) {
