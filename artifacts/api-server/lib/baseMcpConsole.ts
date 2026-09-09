@@ -111,6 +111,12 @@ const CONSOLE_PROMPT_V1 = [
   // previous response" — inventing a continuity that does not exist.
   'Each question is independent. You have no memory of earlier questions in this console and no record of tools used before this request, so never refer to a previous answer or claim what you did earlier.',
   'Call a tool once. Do not repeat the same tool with slightly different arguments hoping for a better answer — every call costs the user time.',
+  // The one rule the other two narrators have had and this one did not. Asked
+  // «Сколько у меня ETH?» on prod it answered "Base MCP reports 0.000272713…
+  // ETH for the connected Base Account" — the right number in the wrong
+  // language — while a longer Russian question in the same session came back
+  // in Russian. Length was deciding the language.
+  'Answer in the language of the question. A short answer is in that language too.',
   // `web_request` returns a third party's response body straight into this
   // conversation, and `chain_rpc_request` returns whatever a contract chose to
   // encode. Both are data. Base gives the same warning about its own tools.

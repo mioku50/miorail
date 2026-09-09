@@ -221,6 +221,23 @@ describe('the console is Base MCP and nothing else', () => {
     assert.match(extra, /get_portfolio/);
   });
 
+  test('the model is told to answer in the language of the question', async () => {
+    // The Stocks and B20 narrators have carried this rule since they were
+    // written; this console never had it. On prod «Сколько у меня ETH?» came
+    // back as "Base MCP reports 0.000272713… ETH" — the right number in the
+    // wrong language — while a longer Russian question in the same session
+    // answered in Russian, so length was deciding it.
+    let config: Record<string, unknown> = {};
+    stubTools(BASE_MCP_INVENTORY);
+    stubAgent([{ type: 'message', content: 'ok' }], (captured) => {
+      config = captured;
+    });
+    await ask();
+    const extra = (config.systemPromptExtra as string[]).join(' ');
+    assert.match(extra, /Answer in the language of the question/i);
+    assert.match(extra, /short answer is in that language too/i);
+  });
+
   test('the model is told it has no Miorail route intelligence here', async () => {
     let config: Record<string, unknown> = {};
     stubTools(BASE_MCP_INVENTORY);
