@@ -112,7 +112,20 @@ digest_before_pull=$(file_digest "$DEPLOY_SOURCE")
 # names. Never let branch tracking or the on-disk directory name select the
 # deployment source implicitly: `origin` is normalized to the canonical
 # mioku50/miorail repository before this script is allowed to run.
-as_service_user git pull --ff-only origin main
+#
+# Fetch-then-reset rather than a pull, because the source is now the PRIVATE
+# repository and its main is REBASED on every release: the operator-only
+# commits are replayed on top of public main, so every hash after the fork
+# point is new and a fast-forward is impossible by construction. `git pull
+# --ff-only` aborted with "Not possible to fast-forward" on 2026-09-09 and
+# needed a manual reset before each deploy.
+#
+# `--ff-only` was protecting against a silent merge, not against a rewrite.
+# Resetting to the fetched ref keeps that protection — the deployed tree is
+# exactly the remote's, never a merge nobody reviewed — and a local commit on
+# the server was never a thing this checkout is allowed to carry.
+as_service_user git fetch --quiet origin main
+as_service_user git reset --quiet --hard FETCH_HEAD
 if [ "$(file_digest "$DEPLOY_SOURCE")" != "$digest_before_pull" ]; then
   # A second change can only mean something other than this pull is writing to
   # the working tree. Looping would hide that; stop instead.
@@ -482,6 +495,26 @@ oauth_authorize=$(curl -sS --max-time 15 "$oauth_origin/authorize" 2>/dev/null) 
 printf '%s' "$oauth_authorize" | jq -e 'has("error")' >/dev/null \
   || { echo 'FAILED: /authorize did not answer as an OAuth endpoint (the SPA is still serving it)'; exit 1; }
 printf '  mcp oauth      %-28s %s\n' "$oauth_origin/authorize" 'discovery + PKCE, refuses a bare request'
+
+# The language lane, asked to answer.
+#
+# On 2026-09-09 the configured primary had been returning 402 on every call for
+# an unknown number of days and nothing said so: an unreachable model is not an
+# error on any surface, it is a fallback, and Ask Miorail answered 200 with the
+# deterministic text after waiting out its budget. The failure was found by a
+# person asking a question, which is the worst available detector.
+#
+# One trivial completion, through the real chain, with the real credentials.
+# It costs a fraction of a cent and it is the only check here that can tell a
+# configured lane from a working one. A warning rather than a failure: a dead
+# model must not block a deploy that fixes something else, and every surface
+# that uses it already degrades honestly.
+llm_probe=$(cd "$REPO" && as_service_user npx tsx scripts/probe_llm_lane.ts 2>/dev/null | tail -1) \
+  || llm_probe='dead the probe did not run'
+case "$llm_probe" in
+  ok*) printf '  llm lane       %-28s %s\n' "$(grep -E '^LLM_MODEL=' "$REPO/.env" | cut -d= -f2)" 'answered' ;;
+  *)   printf '  llm lane       WARNING: no configured model answered — %s\n' "${llm_probe#dead }" ;;
+esac
 
 echo
 # Counted from the response, not typed in. The literal said "5 tools" for a
