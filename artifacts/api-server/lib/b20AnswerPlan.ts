@@ -68,14 +68,37 @@ function matchesV1(value: string, patterns: readonly RegExp[]): boolean {
  * pipeline that read evidence first and then declined would burn a metered
  * call to say so. Russian is first-class here: the console is used in it.
  */
-export const B20_UNSUPPORTED_QUESTIONS_V1: readonly { patterns: readonly RegExp[]; refusal: string }[] = [
+/**
+ * Is this question written in Russian?
+ *
+ * One Cyrillic letter is enough: a question is asked in one language, and the
+ * alternative — a bilingual reader typing an English word inside a Russian
+ * sentence — still wants the Russian answer.
+ */
+export function questionIsRussianV1(asked: string): boolean {
+  return /[\u0400-\u04FF]/.test(asked);
+}
+
+export const B20_UNSUPPORTED_QUESTIONS_V1: readonly {
+  patterns: readonly RegExp[];
+  refusal: string;
+  /** The same refusal in Russian. The patterns above have always been
+   * bilingual — every rule carries a Cyrillic alternative — but the refusals
+   * were English only, so a Russian question was correctly identified as out
+   * of scope and then answered in the wrong language. */
+  refusalRu: string;
+}[] = [
   {
     patterns: [/\bprice\b.*\b(predict|forecast|will|target)/i, /\bmoon\b/i, /прогноз/iu, /предскаж/iu, /вырастет/iu],
     refusal: 'Miorail does not measure price or predict it. It measures what it cost to get in and out of a pool at one block.',
+    refusalRu:
+      'Miorail не измеряет цену и не предсказывает её. Он измеряет, во сколько обошёлся вход в пул и выход из него на одном блоке.',
   },
   {
     patterns: [/\bshould i (buy|sell|ape|invest)/i, /\bis it (a )?(good|bad) (buy|investment)/i, /стоит ли (покупать|брать)/iu],
     refusal: 'Miorail does not recommend buying or selling anything. It reports measurements, and the decision is not one it can take for you.',
+    refusalRu:
+      'Miorail ничего не советует покупать или продавать. Он сообщает измерения, а решение — не то, что он может принять за вас.',
   },
   {
     patterns: [/\bwho (is|are) (the )?(dev|team|owner|founder)/i, /\bsniper/i, /\binsider/i, /кто (стоит|владелец|разработ)/iu],
@@ -85,10 +108,14 @@ export const B20_UNSUPPORTED_QUESTIONS_V1: readonly { patterns: readonly RegExp[
     // called the factory directly does it establish even that much.
     refusal:
       'Miorail does not identify people, teams or intent. It can show which address sent the launch transaction — and only when that address called the B20 factory directly, because a relayed launch names a bundler instead — and it counts unique buying wallets inside a completed launch window. Neither of those is a person.',
+    refusalRu:
+      'Miorail не устанавливает людей, команды и намерения. Он может показать, какой адрес отправил транзакцию запуска — и только если этот адрес вызвал фабрику B20 напрямую, потому что при запуске через релей в транзакции стоит бандлер, — и он считает уникальные кошельки, купившие внутри завершённого окна запуска. Ни то, ни другое не является человеком.',
   },
   {
     patterns: [/\brug\b/i, /\bscam\b/i, /\bhoneypot\b/i, /скам/iu, /обман/iu],
     refusal: 'Miorail does not label tokens as scams. It measures whether a sale priced, and a sale that did not price has several causes — most of them are not fraud.',
+    refusalRu:
+      'Miorail не помечает токены как скам. Он измеряет, оценилась ли продажа, а у неоценившейся продажи есть несколько причин — большинство из них не мошенничество.',
   },
 ];
 
@@ -100,8 +127,9 @@ export const B20_UNSUPPORTED_QUESTIONS_V1: readonly { patterns: readonly RegExp[
  * it would be the only place in the product where it is answerable.
  */
 export function b20UnsupportedRefusalV1(question: string): string | null {
+  const russian = questionIsRussianV1(question);
   for (const rule of B20_UNSUPPORTED_QUESTIONS_V1) {
-    if (matchesV1(question, rule.patterns)) return rule.refusal;
+    if (matchesV1(question, rule.patterns)) return russian ? rule.refusalRu : rule.refusal;
   }
   return null;
 }

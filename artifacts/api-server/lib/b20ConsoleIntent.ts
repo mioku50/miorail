@@ -1,6 +1,7 @@
 import type { LlmMessage, LlmProvider } from '@mioagent/llm';
 import { parseStrictJsonObject } from '@mioagent/intent-core';
 
+import { questionIsRussianV1 } from './b20AnswerPlan.js';
 import {
   b20ConsolePlanNeedsSemanticResolutionV1,
   planB20ConsoleAnswerV1,
@@ -81,6 +82,12 @@ const CANONICAL_QUESTION_V1: Record<Exclude<B20SemanticIntentV1, 'unsupported' |
 const UNRESOLVED_COPY_V1 =
   'Miorail could not map that sentence to one bounded B20 evidence read without guessing. Paste one or more Base token addresses, or ask for a measured-universe count, bought-but-not-sellable launches, two-sided pricing, missing evidence, measured changes, verified projects, or notable research cases.';
 
+/** The same refusal, in the language it was earned in. This console understands
+ * Russian and answered a Russian question in English, which reads as a surface
+ * that did not understand rather than one that declined. */
+const UNRESOLVED_COPY_RU_V1 =
+  'Miorail не смог сопоставить это предложение ни с одним ограниченным чтением доказательств B20, не гадая. Вставьте один или несколько адресов токенов Base — или спросите про число измеренных запусков, про купленные, но непродаваемые запуски, про двустороннее ценообразование, про нехватку доказательств, про зафиксированные изменения, про подтверждённые проекты или про заметные исследовательские случаи.';
+
 export function parseB20SemanticIntentV1(content: string): B20SemanticIntentExtractionV1 | null {
   const object = parseStrictJsonObject(content, OUTPUT_KEYS_V1);
   if (!object || !B20_SEMANTIC_INTENTS_V1.includes(object.intent as B20SemanticIntentV1)) return null;
@@ -130,7 +137,7 @@ function explicitFallbackPlanV1(input: {
     intent: 'unsupported',
     steps: [],
     tokenAddresses: [],
-    refusal: UNRESOLVED_COPY_V1,
+    refusal: questionIsRussianV1(input.question) ? UNRESOLVED_COPY_RU_V1 : UNRESOLVED_COPY_V1,
   };
 }
 

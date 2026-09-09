@@ -45,7 +45,7 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 import { createLlmProvider, type LlmProvider } from '@mioagent/llm';
 import { StocksAskResponseV1Schema } from '@mioagent/rwa-market-reality/narration-contract';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
-import { B20_UNSUPPORTED_QUESTIONS_V1 } from '../lib/b20AnswerPlan.js';
+import { B20_UNSUPPORTED_QUESTIONS_V1, questionIsRussianV1 } from '../lib/b20AnswerPlan.js';
 import { stocksEvidenceBundleV1 } from '../lib/stocksEvidence.js';
 import { narrateStocksAnswerV1 } from '../lib/stocksNarration.js';
 import { createReviewedMarketRealityReferenceAdapterV1 } from '../lib/rwaReferenceSession.js';
@@ -1286,8 +1286,11 @@ const STOCKS_ASK_MAX_QUESTION_V1 = 1_000;
  * saying so costs nothing here rather than a metered call after the fact.
  */
 function stocksAskRefusalV1(asked: string): string | null {
+  const russian = questionIsRussianV1(asked);
   for (const rule of B20_UNSUPPORTED_QUESTIONS_V1) {
-    if (rule.patterns.some((pattern) => pattern.test(asked))) return rule.refusal;
+    if (rule.patterns.some((pattern) => pattern.test(asked))) {
+      return russian ? rule.refusalRu : rule.refusal;
+    }
   }
   return null;
 }
