@@ -6,6 +6,11 @@ import test, { describe } from 'node:test';
 import { LlmProviderChainV1, OpenAiCompatibleClient } from '@mioagent/llm';
 import type { LlmProvider, LlmRequest, LlmResponse } from '@mioagent/llm';
 
+import type {
+  PooledLiquidityMeasurementV1,
+  PooledRowMeasurementV1,
+} from '@mioagent/rwa-market-reality/contracts';
+
 import {
   STOCKS_BENCH_ADDRESSES_V1,
   STOCKS_BENCH_CORPUS_V1,
@@ -14,6 +19,7 @@ import {
 } from './stocksBenchCorpus.js';
 import { stocksEvidenceBundleV1, type StocksEvidenceBundleV1 } from './stocksEvidence.js';
 import {
+  bundleAsPromptV1,
   deterministicStocksNarrationV1,
   narrateStocksAnswerV1,
   parseStocksNarrationV1,
@@ -605,7 +611,7 @@ describe('a reasoning model that answered with nothing', () => {
 // ---------------------------------------------------------------------------
 
 describe('the Stocks narrator has no actions', () => {
-  test('the provider is handed messages and a temperature, and no capability', async () => {
+  test('the provider is handed messages and two settings, and no capability', async () => {
     const bundle = bundleOf('A');
     let seen: LlmRequest | null = null;
     const provider: LlmProvider = {
@@ -617,7 +623,11 @@ describe('the Stocks narrator has no actions', () => {
     await narrateStocksAnswerV1({ bundle, provider });
     const request = seen as unknown as LlmRequest;
     assert.ok(request, 'the provider was called');
-    assert.deepEqual(Object.keys(request).sort(), ['messages', 'temperature']);
+    // Two generation settings and nothing else. `reasoningEffort` is the same
+    // class of thing as `temperature` — how the model writes, not what it may
+    // reach — and this pin exists to catch the day a capability joins them.
+    assert.deepEqual(Object.keys(request).sort(), ['messages', 'reasoningEffort', 'temperature']);
+    assert.equal(request.reasoningEffort, 'none');
     assert.equal(request.tools, undefined);
     assert.equal(request.messages.length, 2);
     assert.deepEqual(
@@ -679,7 +689,10 @@ describe('the Stocks narrator has no actions', () => {
     assert.equal(answered.answerSource, 'verified_narration');
     const sent = body as unknown as Record<string, unknown>;
     assert.ok(sent, 'a request was sent');
-    assert.deepEqual(Object.keys(sent).sort(), ['messages', 'model', 'temperature']);
+    assert.deepEqual(
+      Object.keys(sent).sort(),
+      ['messages', 'model', 'reasoning_effort', 'temperature'],
+    );
     for (const forbidden of ['tools', 'tool_choice', 'functions', 'function_call']) {
       assert.equal(forbidden in sent, false, `the body carries ${forbidden}`);
     }
@@ -793,5 +806,140 @@ describe('parsing', () => {
     assert.ok(bundle.subjects.some((subject) => subject.tokenAddress === BACKED_WRAPPER));
     assert.ok(bundle.subjects.some((subject) => subject.tokenAddress === BACKED_NVDA));
     assert.notEqual(BACKED_WRAPPER, BACKED_NVDA);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Pooled liquidity in the bundle.
+//
+// Until 2026-09-09 the bundle had no pool row of any kind, so a reader who
+// asked where a token's liquidity sits got supply, quotes and references — and
+// the only honest answer available was silence. The rows below are the same
+// ones the Use & access board renders, through the same builder.
+// ---------------------------------------------------------------------------
+
+function poolRowV1(over: Partial<PooledRowMeasurementV1> = {}): PooledRowMeasurementV1 {
+  return {
+    poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+    venueId: 'aerodrome_cl',
+    venueName: 'Aerodrome CL',
+    tokenBalanceAtomic: '900',
+    tokenDecimals: 2,
+    pairedBalanceAtomic: '1000000',
+    pairedDecimals: 6,
+    pairedSymbol: 'USDC',
+    ...over,
+  };
+}
+
+function poolsFor(address: string, rows: PooledRowMeasurementV1[]): Map<string, PooledLiquidityMeasurementV1> {
+  return new Map([
+    [
+      address.toLowerCase(),
+      { state: 'measured' as const, blockNumber: 51_072_277, readAt: '2026-09-09T06:05:02.693Z', rows },
+    ],
+  ]);
+}
+
+function bundleWithPoolsV1(
+  id: StocksBenchCaseV1['id'],
+  pools: Map<string, PooledLiquidityMeasurementV1> | null,
+): StocksEvidenceBundleV1 {
+  const entry = caseOf(id);
+  return stocksEvidenceBundleV1({
+    question: entry.question,
+    reality: entry.reality,
+    history: entry.history,
+    pools,
+    now: STOCKS_BENCH_NOW_V1,
+  });
+}
+
+describe('stocks evidence: pooled liquidity', () => {
+  test('a measured pool becomes two rows, and the count never travels alone', () => {
+    const bundle = bundleWithPoolsV1(
+      'A',
+      poolsFor(COINBASE_NVDA, [
+        poolRowV1(),
+        poolRowV1({ poolAddress: '0x20e5fad2661ee9eb0c04824524030af31943b62d', tokenBalanceAtomic: '100' }),
+      ]),
+    );
+    const rows = bundle.items.filter((item) => item.kind === 'pool' && item.subject === COINBASE_NVDA);
+    assert.equal(rows.length, 2);
+    // The share is measured from the balances, not chosen: 900 of 1000.
+    assert.ok(rows.some((row) => row.value.includes('90% of everything pooled')));
+    assert.ok(rows.some((row) => row.value.includes('2 pools on Base hold this address')));
+  });
+
+  test('a representation the caller asked about, with no reading, is an absence', () => {
+    const bundle = bundleWithPoolsV1(
+      'A',
+      new Map([[COINBASE_NVDA.toLowerCase(), { state: 'not_measured' as const, blockNumber: null, readAt: null, rows: [] }]]),
+    );
+    assert.equal(bundle.items.filter((item) => item.kind === 'pool').length, 0);
+    assert.ok(
+      bundle.missing.some((entry) => entry.includes('has not measured pooled liquidity')),
+      'an unread pool must be named as an absence',
+    );
+  });
+
+  test('a caller that did not ask about pools gets the bundle it always got', () => {
+    const withoutInput = bundleWithPoolsV1('A', null);
+    const before = bundleOf('A');
+    assert.equal(withoutInput.items.filter((item) => item.kind === 'pool').length, 0);
+    assert.deepEqual(withoutInput.missing, before.missing);
+    assert.deepEqual(withoutInput.caveats, before.caveats);
+    assert.deepEqual(withoutInput.pooledVenues, []);
+  });
+
+  test('a venue the chain named may be narrated; one it did not may not', () => {
+    const bundle = bundleWithPoolsV1('A', poolsFor(COINBASE_NVDA, [poolRowV1()]));
+    assert.deepEqual(bundle.pooledVenues, ['Aerodrome CL']);
+    const named = verifyStocksNarrationV1({
+      raw: JSON.stringify({
+        ...goodNarration(bundle),
+        explanation: 'The deepest pool sits on Aerodrome CL.',
+      }),
+      bundle,
+    });
+    assert.equal(
+      named.violations.some((violation) => violation.code === 'invented_venue'),
+      false,
+      'the exchange whose pool the bundle carries is not an invention',
+    );
+    const invented = verifyStocksNarrationV1({
+      raw: JSON.stringify({
+        ...goodNarration(bundle),
+        explanation: 'The deepest pool sits on PancakeSwap.',
+      }),
+      bundle,
+    });
+    assert.ok(invented.violations.some((violation) => violation.code === 'invented_venue'));
+  });
+
+  test('pooled depth is never allowed to read as a route', () => {
+    const bundle = bundleWithPoolsV1('A', poolsFor(COINBASE_NVDA, [poolRowV1()]));
+    assert.ok(
+      bundle.caveats.some((caveat) => caveat.includes('not a route Miorail can price')),
+      'the caveat separating depth from cost must survive any paraphrase',
+    );
+    // A pool venue is read, never asked. It must not appear as a router.
+    assert.equal(bundle.approvedSources.includes('Aerodrome CL'), false);
+  });
+
+  test('pools whose balances are all zero are an absence, not a division', () => {
+    const bundle = bundleWithPoolsV1(
+      'A',
+      poolsFor(COINBASE_NVDA, [poolRowV1({ tokenBalanceAtomic: '0' })]),
+    );
+    assert.equal(bundle.items.filter((item) => item.kind === 'pool').length, 0);
+    assert.ok(bundle.missing.some((entry) => entry.includes('every one of them held none of it')));
+  });
+
+  test('the narrator prompt states the pool venues, separately from the routers', () => {
+    const bundle = bundleWithPoolsV1('A', poolsFor(COINBASE_NVDA, [poolRowV1()]));
+    const prompt = bundleAsPromptV1(bundle);
+    assert.match(prompt, /POOL VENUES READ: Aerodrome CL/);
+    assert.match(prompt, /ROUTERS ASKED: /);
   });
 });

@@ -591,3 +591,87 @@ export const MarketRealityLiveResponseV2Schema = MarketRealityResponseV2Schema.e
   measurement: MarketRealityMeasurementV1Schema,
 }).strict();
 export type MarketRealityLiveResponseV2 = z.infer<typeof MarketRealityLiveResponseV2Schema>;
+
+// ---------------------------------------------------------------------------
+// Pooled liquidity, as a fact two surfaces state.
+//
+// The measurement itself is taken elsewhere and stored; what lives here is the
+// one derivation over it, because the Use & access board and the Stocks
+// evidence bundle both publish this number and must not be able to disagree
+// about it.
+//
+// The row is structural on purpose. It is the subset of a stored reading that
+// a concentration figure needs, so this module — which the narrator runtime is
+// allowed to import — never has to reach the package that can read a chain.
+// ---------------------------------------------------------------------------
+
+export interface PooledRowMeasurementV1 {
+  poolAddress: string;
+  /** Null when the chain named no venue for this pool. */
+  venueId: string | null;
+  venueName: string | null;
+  tokenBalanceAtomic: string;
+  tokenDecimals: number;
+  pairedBalanceAtomic: string | null;
+  pairedDecimals: number | null;
+  pairedSymbol: string | null;
+}
+
+export interface PooledLiquidityMeasurementV1 {
+  state: 'measured' | 'not_measured';
+  blockNumber: number | null;
+  readAt: string | null;
+  rows: readonly PooledRowMeasurementV1[];
+}
+
+export interface PooledConcentrationV1 {
+  lead: PooledRowMeasurementV1;
+  poolCount: number;
+  totalAtomic: string;
+  /** The deepest pool's share of the pooled total, to one decimal place. */
+  leadSharePercent: number;
+  /** Venues the chain named, deduplicated. Never includes an unnamed row. */
+  namedVenues: string[];
+}
+
+/**
+ * How concentrated a token's pooled amount is, from the balances alone.
+ *
+ * A count is the dangerous figure here. "39 pools hold NVDAc" is true
+ * arithmetic about a market that does not exist: one Aerodrome pool held about
+ * 89% of it and two dozen of the rest were pairs against memecoins. So the
+ * deepest pool's share is derived here and travels wherever the count does.
+ *
+ * The share is measured, never a threshold somebody chose. An earlier draft
+ * called everything below a hundredth of the largest "noise" and silently
+ * stopped firing, because on the real corpus those pairs sit at about a
+ * fiftieth.
+ *
+ * Null when nothing was read, or when every row read zero — an absence to
+ * state, not a zero to divide by.
+ */
+export function pooledConcentrationV1(
+  rows: readonly PooledRowMeasurementV1[],
+): PooledConcentrationV1 | null {
+  if (rows.length === 0) return null;
+  const total = rows.reduce((sum, row) => sum + BigInt(row.tokenBalanceAtomic), 0n);
+  if (total <= 0n) return null;
+  let lead = rows[0]!;
+  for (const row of rows) {
+    if (BigInt(row.tokenBalanceAtomic) > BigInt(lead.tokenBalanceAtomic)) lead = row;
+  }
+  return {
+    lead,
+    poolCount: rows.length,
+    totalAtomic: total.toString(),
+    leadSharePercent: Number((BigInt(lead.tokenBalanceAtomic) * 1000n) / total) / 10,
+    namedVenues: [
+      ...new Set(
+        rows
+          .filter((row) => row.venueId !== null && row.venueName !== null)
+          .filter((row) => row.venueId !== 'unnamed_cl' && row.venueId !== 'unnamed_pair')
+          .map((row) => row.venueName as string),
+      ),
+    ],
+  };
+}

@@ -1,7 +1,9 @@
-import type {
-  MarketRealityHistoryV1,
-  MarketRealityRepresentationV2,
-  MarketRealityResponseV2,
+import {
+  pooledConcentrationV1,
+  type MarketRealityHistoryV1,
+  type MarketRealityRepresentationV2,
+  type MarketRealityResponseV2,
+  type PooledLiquidityMeasurementV1,
 } from '@mioagent/rwa-market-reality/contracts';
 import type {
   StocksEvidenceItemV1,
@@ -56,6 +58,15 @@ export interface StocksEvidenceBundleV1 {
   /** Router names this bundle mentions. A narration naming any other venue is
    * describing a market nobody measured. */
   approvedSources: readonly string[];
+  /**
+   * Exchanges the chain named as holding a pool of one of these tokens.
+   *
+   * Separate from `approvedSources` because they answer different questions.
+   * A router was ASKED what this size would cost; a pool venue was READ as
+   * holding the token. Folding them together would let a narration say
+   * Aerodrome quoted a price it was never asked for.
+   */
+  pooledVenues: readonly string[];
   /** True while at least one representation carries evidence inside its own
    * validity window. False makes every present-tense price claim a lie. */
   hasOpenEvidence: boolean;
@@ -328,10 +339,88 @@ function historyItemsV1(
  * two series measured at different sizes are not comparable with each other,
  * and the assembler already refuses to mix them.
  */
+/**
+ * What a token's pooled liquidity says, as citable rows.
+ *
+ * Two rows, never one. The count alone is the figure that misleads here — a
+ * token can sit in forty pools where one holds nine tenths of it and the rest
+ * are memecoin pairs — so the deepest pool's measured share is pushed beside
+ * the count and cannot be cited without it.
+ *
+ * A venue this reads is a venue the CHAIN named, through the pool's own
+ * `factory()`. An unnamed pool keeps its money and loses its label rather than
+ * borrowing one.
+ */
+function poolItemsV1(
+  state: BuilderStateV1,
+  address: string,
+  pools: PooledLiquidityMeasurementV1 | undefined,
+  now: Date,
+): { missing: string[]; venues: string[]; sentence: string | null } {
+  if (!pools || pools.state !== 'measured' || pools.rows.length === 0) {
+    return {
+      missing: [`Miorail has not measured pooled liquidity for ${address}.`],
+      venues: [],
+      sentence: null,
+    };
+  }
+  const concentration = pooledConcentrationV1(pools.rows);
+  if (concentration === null) {
+    return {
+      missing: [
+        `Miorail read pools for ${address} and every one of them held none of it, so there is no pooled amount to divide.`,
+      ],
+      venues: [],
+      sentence: null,
+    };
+  }
+  const { lead, poolCount, totalAtomic, leadSharePercent, namedVenues } = concentration;
+  const total = scaledDecimalV1(totalAtomic, lead.tokenDecimals);
+  const at =
+    pools.blockNumber === null
+      ? 'block not recorded'
+      : `block ${pools.blockNumber}${pools.readAt ? `, ${ageMinutesV1(pools.readAt, now)} minutes ago` : ''}`;
+  push(
+    state,
+    'pool',
+    address,
+    `pooled liquidity of ${address}`,
+    `${poolCount} pool${poolCount === 1 ? '' : 's'} on Base hold this address, ${total} tokens pooled in total, read at ${at}`,
+  );
+  const leadAmount = scaledDecimalV1(lead.tokenBalanceAtomic, lead.tokenDecimals);
+  const other =
+    lead.pairedBalanceAtomic !== null && lead.pairedDecimals !== null
+      ? ` against ${scaledDecimalV1(lead.pairedBalanceAtomic, lead.pairedDecimals)} ${lead.pairedSymbol ?? 'of the other side'}`
+      : ', with the other side not read';
+  push(
+    state,
+    'pool',
+    address,
+    `deepest pool for ${address}`,
+    `${lead.venueName ?? 'a pool whose venue the chain did not name'} ${lead.poolAddress} holds ${leadAmount}${other} — ${leadSharePercent}% of everything pooled`,
+  );
+  return {
+    missing: [],
+    venues: namedVenues,
+    sentence:
+      `${poolCount} pool${poolCount === 1 ? '' : 's'} hold ${address}, and the deepest holds ${leadAmount}, ` +
+      `${leadSharePercent}% of the pooled total`,
+  };
+}
+
 export function stocksEvidenceBundleV1(input: {
   question: string;
   reality: MarketRealityResponseV2;
   history?: MarketRealityHistoryV1 | null;
+  /**
+   * Pooled liquidity per representation, keyed by lowercase token address.
+   *
+   * Optional, and an absent entry is not an empty one: a representation with
+   * no entry was never read, and says so in `missing`. The rows themselves
+   * come from the same builder the Use & access board renders, so the two
+   * surfaces cannot state different depths for the same pool.
+   */
+  pools?: ReadonlyMap<string, PooledLiquidityMeasurementV1> | null;
   now: Date;
 }): StocksEvidenceBundleV1 {
   const { reality, now } = input;
@@ -371,6 +460,7 @@ export function stocksEvidenceBundleV1(input: {
   const subjects: StocksSubjectV1[] = [];
   const sentences: string[] = [];
   const approvedSources = new Set<string>();
+  const pooledVenues = new Set<string>();
 
   for (const row of reality.representations) {
     subjects.push({
@@ -391,9 +481,24 @@ export function stocksEvidenceBundleV1(input: {
     const supply = supplyItemsV1(state, row);
     const quote = quoteItemsV1(state, row, reality, now);
     const reference = referenceItemsV1(state, row);
-    missing.push(...supply.missing, ...quote.missing, ...reference.missing);
+    // Pools are read only when the caller asked for them, and only for a
+    // representation that exists.
+    //
+    // Both halves are load-bearing. A caller that did not ask gets the bundle
+    // it always got: an unconditional "pooled liquidity not measured" on every
+    // representation would make every answer carry a withheld fact about a
+    // question nobody asked, and would leave no bundle in which nothing is
+    // withheld. And a zero-supply address has nothing to pool, so reporting
+    // "no pools" for it would state a property of the market where the fact is
+    // a property of the supply.
+    const pool =
+      input.pools && row.supply.state === 'positive_supply'
+        ? poolItemsV1(state, row.tokenAddress, input.pools.get(row.tokenAddress.toLowerCase()), now)
+        : { missing: [] as string[], venues: [] as string[], sentence: null };
+    for (const venue of pool.venues) pooledVenues.add(venue);
+    missing.push(...supply.missing, ...quote.missing, ...reference.missing, ...pool.missing);
     sentences.push(
-      `${row.tokenAddress} (${row.issuerId}, ${shortKindV1(row.representationKind)}): ${supply.sentence}; ${quote.sentence}; ${reference.sentence}.`,
+      `${row.tokenAddress} (${row.issuerId}, ${shortKindV1(row.representationKind)}): ${supply.sentence}; ${quote.sentence}; ${reference.sentence}${pool.sentence ? `; ${pool.sentence}` : ''}.`,
     );
   }
 
@@ -430,6 +535,11 @@ export function stocksEvidenceBundleV1(input: {
       'A read of Miorail’s that did not complete is a gap in Miorail, and must not be reported as a property of the token.',
     );
   }
+  if (pooledVenues.size > 0 || state.items.some((item) => item.kind === 'pool')) {
+    caveats.push(
+      'A pool holding a token is not a route Miorail can price. Pooled depth says where the token sits, never what an exit would cost.',
+    );
+  }
 
   return {
     question: input.question,
@@ -439,6 +549,7 @@ export function stocksEvidenceBundleV1(input: {
     missing,
     caveats,
     approvedSources: [...approvedSources].sort(),
+    pooledVenues: [...pooledVenues].sort(),
     hasOpenEvidence: reality.representations.some((row) => row.status === 'full'),
     deterministic: sentences.join(' '),
     assertions: {

@@ -716,10 +716,12 @@ describe('POST Ask Miorail about the exact question on screen', () => {
     };
   }
 
-  function ready() {
+  function ready(poolRows: unknown[] = []) {
     rwaMarketRealityRuntime.migrationAvailable = async () => true;
     rwaMarketRealityRuntime.assemble = async () => assembled() as never;
     rwaMarketRealityRuntime.narrator = () => null;
+    rwaMarketRealityRuntime.poolReadings = () =>
+      ({ readingsForToken: async () => poolRows }) as never;
   }
 
   test('requires a session before it reads anything', async () => {
@@ -820,7 +822,61 @@ describe('POST Ask Miorail about the exact question on screen', () => {
     assert.equal(response.body.answerSource, 'deterministic_evidence');
     const text = JSON.stringify(response.body.answer);
     assert.equal(text.includes('4321.99'), false, 'an invented figure never reaches the reader');
-    assert.equal(text.includes('liquid'), false, 'a judgement never reaches the reader');
+    // Word-boundary, matching the verifier's own rule rather than being
+    // stricter than it. "liquid" as a verdict is the judgement; "pooled
+    // liquidity" is the name of a measurement the board publishes, and a
+    // substring test rejected the second while meaning the first.
+    assert.equal(/\bliquid\b/i.test(text), false, 'a judgement never reaches the reader');
+    assert.equal(text.includes('safe'), false, 'nor a reassurance');
+  });
+
+  test('a pooled-liquidity read that fails still answers the question asked', async () => {
+    // The question is what an exit costs. A pool read is context beside it, so
+    // its failure must degrade to an absence rather than to a 500 — the whole
+    // point of a board that separates what Miorail could not do from what the
+    // market did not offer.
+    ready();
+    rwaMarketRealityRuntime.poolReadings = () =>
+      ({
+        readingsForToken: async () => {
+          throw new Error('pool readings are unavailable');
+        },
+      }) as never;
+    const response = await request(app()).post(ASK).send({ question: 'what does it cost?' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.refused, false);
+    assert.ok(response.body.answer.established.length > 0);
+    assert.ok(
+      response.body.answer.notEstablished.some((entry: string) =>
+        entry.includes('has not measured pooled liquidity'),
+      ),
+      'the unread pool is named as an absence, not omitted',
+    );
+  });
+
+  test('a pool the chain measured travels with the answer', async () => {
+    ready([
+      {
+        poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+        venueId: 'aerodrome_cl',
+        factoryAddress: '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef',
+        tokenBalanceAtomic: '900',
+        tokenDecimals: 2,
+        pairedTokenAddress: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+        pairedBalanceAtomic: '1000000',
+        pairedDecimals: 6,
+        pairedSymbol: 'USDC',
+        blockNumber: 51_072_277,
+        readAt: '2026-08-29T17:59:40.000Z',
+      },
+    ]);
+    const response = await request(app()).post(ASK).send({ question: 'where does it sit?' });
+    assert.equal(response.status, 200);
+    const rows = (response.body.evidence as Array<{ kind: string; value: string }>).filter(
+      (row) => row.kind === 'pool',
+    );
+    assert.equal(rows.length, 2, 'the count and the concentration, never one without the other');
+    assert.ok(rows.some((row) => row.value.includes('100% of everything pooled')));
   });
 
   test('a provider that fails costs the reader nothing', async () => {

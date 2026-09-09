@@ -539,9 +539,20 @@ export function verifyStocksNarrationV1(input: {
       });
     }
   }
-  const bundleVenues = new Set(bundle.approvedSources.map((source) => source.toLowerCase()));
+  // A venue is permitted when a router by that name was asked, OR when the
+  // chain named it as holding a pool of one of these tokens. Both are things
+  // Miorail measured; neither authorises the other's claim, and the caveat the
+  // bundle carries keeps a pool from being narrated as a price.
+  //
+  // Substring, not equality: a pool venue arrives as the name the chain
+  // established — "Aerodrome CL", "Uniswap v3" — and an equality test against
+  // the bare word would have refused an answer for naming the exchange whose
+  // pool the bundle had just handed it.
+  const bundleVenues = [...bundle.approvedSources, ...bundle.pooledVenues]
+    .map((source) => source.toLowerCase())
+    .join(' ');
   for (const venue of KNOWN_VENUES_V1) {
-    if (bundleVenues.has(venue)) continue;
+    if (bundleVenues.includes(venue)) continue;
     if (new RegExp(`\\b${venue.replace('1inch', '1inch')}\\b`, 'i').test(text)) {
       violations.push({
         code: 'invented_venue',
@@ -634,11 +645,12 @@ Rules, all enforced automatically after you answer:
 10. Zero outstanding supply means there is no position to size. It never means dead, delisted or worthless.
 11. When a read of Miorail's did not complete, say it is Miorail's gap. Never report it as a property of the token.
 12. An expired quote is history. Say when it was measured; never state it as a current cost.
-13. Answer in the language of the question. Keep "explanation" under ${STOCKS_EXPLANATION_MAX_CHARS_V1} characters.
+13. A pool holding a token is not a route. A [pool] row says where the token sits and how concentrated it is; it never says what an exit costs, and a pool venue was never asked for a price.
+14. Answer in the language of the question. Keep "explanation" under ${STOCKS_EXPLANATION_MAX_CHARS_V1} characters.
 
 Write only the JSON object. No preamble, no code fence, no commentary.`;
 
-function bundleAsPromptV1(bundle: StocksEvidenceBundleV1): string {
+export function bundleAsPromptV1(bundle: StocksEvidenceBundleV1): string {
   const lines: string[] = [`QUESTION: ${bundle.question}`, '', 'EVIDENCE ROWS:'];
   for (const item of bundle.items) {
     lines.push(`- ${item.id} [${item.kind}${item.subject ? ` ${item.subject}` : ''}] ${item.label}: ${item.value}`);
@@ -652,6 +664,7 @@ function bundleAsPromptV1(bundle: StocksEvidenceBundleV1): string {
   lines.push(
     '',
     `ROUTERS ASKED: ${bundle.approvedSources.join(', ') || 'none'}`,
+    `POOL VENUES READ: ${bundle.pooledVenues.join(', ') || 'none'}`,
     `OPEN EVIDENCE: ${bundle.hasOpenEvidence ? 'yes' : 'no'}`,
   );
   return lines.join('\n');
@@ -696,6 +709,11 @@ export async function narrateStocksAnswerV1(input: {
         ],
         // Zero: this is transcription with grammar, and variety is the defect.
         temperature: 0,
+        // And for the same reason, no thinking. Every claim this call may make
+        // is already in the bundle above it; there is nothing here to reason
+        // about. Measured against this exact prompt on deepseek-v4-flash:
+        // 120.5s with thinking, 6.7s without.
+        reasoningEffort: 'none',
       }),
       new Promise<never>((_resolve, reject) =>
         setTimeout(() => reject(new Error('narrator timed out')), input.timeoutMs ?? 30_000),

@@ -14,6 +14,7 @@ import {
   type VenueAnnouncementReadingV1,
 } from '@mioagent/rwa-issuer/venueAnnouncements';
 
+import { pooledConcentrationV1 } from '@mioagent/rwa-market-reality/contracts';
 import { stockSizeNoteV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 
 import { formatAtomicAmount } from '../formatAtomicAmount';
@@ -2461,15 +2462,10 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
             ? ' in an Algebra concentrated pool, on a DEX we cannot name'
             : ` on ${lead.venueName}`;
   // How concentrated the pooled amount is, as a MEASURED share rather than a
-  // threshold somebody chose. A first draft called every pool below a
-  // hundredth of the largest "noise", which is a judgement wearing a number: on
-  // the real corpus the memecoin pairs sit at about a fiftieth and the line
-  // silently stopped firing. A share of the total says the same thing — one
-  // pool is the market — and says it from the measurements themselves.
-  const leadBalance = BigInt(lead.tokenBalanceAtomic);
-  const totalBalance = rows.reduce((sum, row) => sum + BigInt(row.tokenBalanceAtomic), 0n);
-  const leadShare =
-    totalBalance > 0n ? Number((leadBalance * 1000n) / totalBalance) / 10 : null;
+  // threshold somebody chose. Derived in the contract module rather than here,
+  // because the Stocks evidence bundle publishes this same share to a narrator
+  // and two implementations of one number is two numbers.
+  const leadShare = pooledConcentrationV1(rows)?.leadSharePercent ?? null;
 
   const facts: FactViewV1[] = rows.slice(0, 6).map((row) => ({
     label: row.venueName ?? 'Venue not identified',

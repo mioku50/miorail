@@ -662,6 +662,21 @@ function questionFromRequestV1(req: Request): QuestionParseV1 {
 // that accepted an address would answer for a wallet nobody proved, and the
 // answer is about permission.
 // ---------------------------------------------------------------------------
+/**
+ * A token's pooled liquidity, from stored readings alone.
+ *
+ * Two surfaces read this now — the Use & access board and the Stocks evidence
+ * bundle — so the read and its shaping live in one place. The balances were
+ * measured by a paced worker at a block of their own; nothing here calls a
+ * chain, which is why an ask can afford to do it per representation.
+ */
+async function poolsForTokenV1(tokenAddress: string) {
+  const stored = await rwaMarketRealityRuntime
+    .poolReadings()
+    .readingsForToken({ chainId: 8453, tokenAddress, limit: 60 });
+  return pooledLiquidityFromReadingsV1(stored);
+}
+
 rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {
     res
@@ -691,10 +706,7 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
     // paced worker at a block of their own, so a chain outage here must leave
     // them on the screen rather than blank a good measurement to report a bad
     // one — which is exactly what the unread path does with them.
-    const stored = await rwaMarketRealityRuntime
-      .poolReadings()
-      .readingsForToken({ chainId: 8453, tokenAddress, limit: 60 });
-    const pools = pooledLiquidityFromReadingsV1(stored);
+    const pools = await poolsForTokenV1(tokenAddress);
 
     const use = await assembleUseAccessV1({
       tokenAddress,
@@ -1371,7 +1383,31 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/ask', async (req
       },
     );
     const reality = MarketRealityResponseV2Schema.parse(assembled);
-    const bundle = stocksEvidenceBundleV1({ question: asked, reality, now });
+
+    // Pooled liquidity, per representation that has any supply to pool.
+    //
+    // Stored readings only — the same rows the Use & access board renders,
+    // through the same builder, so the two surfaces cannot disagree about how
+    // deep a pool is. Nothing here reaches a chain: an ask must not be able to
+    // hang on an RPC, and a reading that has not been taken is an absence the
+    // bundle already knows how to state.
+    //
+    // Until this existed the bundle had no pool row at all, so an assistant
+    // asked "where does this token's liquidity sit" got supply, quotes and
+    // references — and could only answer by saying nothing.
+    const pools = new Map<string, Awaited<ReturnType<typeof poolsForTokenV1>>>();
+    for (const row of reality.representations) {
+      if (row.supply.state !== 'positive_supply') continue;
+      try {
+        pools.set(row.tokenAddress.toLowerCase(), await poolsForTokenV1(row.tokenAddress));
+      } catch {
+        // A pooled-liquidity read that did not complete is a gap in Miorail,
+        // and it must not take down an answer about what an exit costs. Left
+        // unset, the bundle names it as an absence — which is what it is.
+      }
+    }
+
+    const bundle = stocksEvidenceBundleV1({ question: asked, reality, pools, now });
 
     const narrated = await narrateStocksAnswerV1({
       bundle,

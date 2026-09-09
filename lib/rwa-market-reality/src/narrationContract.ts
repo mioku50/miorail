@@ -24,6 +24,7 @@ export const STOCKS_EVIDENCE_KINDS_V1 = [
   'observation',
   'reference',
   'basis',
+  'pool',
   'provider_failure',
   'history',
 ] as const;
