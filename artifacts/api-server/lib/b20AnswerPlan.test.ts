@@ -54,3 +54,24 @@ describe('B20 scope refusals', () => {
     assert.equal(questionIsRussianV1('Стоит ли брать NVDA prediction?'), true);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The two "priced" intents must not be describable in the same words.
+//
+// «Какие запуски купили, но не могут продать?» classified as find_two_sided
+// three times out of three on prod, while the same question with "токены" in
+// place of "запуски" classified correctly. Both definitions named entry and
+// exit and neither made the NEGATION the distinguishing fact, so the reader
+// got a well-formed, verified answer to a question they had not asked — which
+// is worse than a refusal.
+// ---------------------------------------------------------------------------
+
+test('the classifier prompt makes the two priced intents mutually exclusive', async () => {
+  const { B20_CONSOLE_INTENT_SYSTEM_PROMPT_V1 } = await import('./b20ConsoleIntent.js');
+  const bought = /- find_bought_not_sellable: ([^\n]+)/.exec(B20_CONSOLE_INTENT_SYSTEM_PROMPT_V1)?.[1] ?? '';
+  const twoSided = /- find_two_sided: ([^\n]+)/.exec(B20_CONSOLE_INTENT_SYSTEM_PROMPT_V1)?.[1] ?? '';
+  assert.ok(bought.length > 0 && twoSided.length > 0, 'both intents are defined');
+  assert.match(bought, /did NOT|cannot sell|cannot exit/, 'the failing side is stated as the deciding fact');
+  assert.match(twoSided, /BOTH/, 'the succeeding side is stated as both');
+  assert.match(twoSided, /Never choose this when/, 'and it names the case it must not take');
+});

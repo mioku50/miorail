@@ -49,7 +49,7 @@ const OUTPUT_KEYS_V1 = ['intent', 'confidence'] as const;
 const SEMANTIC_TIMEOUT_MS_V1 = 20_000;
 const MIN_CONFIDENCE_V1 = 0.72;
 
-const SYSTEM_PROMPT_V1 = `You classify multilingual questions for Miorail's read-only B20 evidence console.
+export const B20_CONSOLE_INTENT_SYSTEM_PROMPT_V1 = `You classify multilingual questions for Miorail's read-only B20 evidence console.
 Return exactly one JSON object with exactly two keys: intent and confidence. No markdown, prose, tool calls or extra keys.
 confidence MUST be a JSON decimal number from 0 to 1 (example: 0.95). Never use a percentage or a 0-100 scale.
 intent must be one of: ${B20_SEMANTIC_INTENTS_V1.join(', ')}.
@@ -57,8 +57,8 @@ intent must be one of: ${B20_SEMANTIC_INTENTS_V1.join(', ')}.
 Meanings:
 - universe_counts: counts, overview or breakdown of measured B20 launches.
 - find_verified_projects: B20 launches connected to a project, product, website, repository, docs or Base presence.
-- find_bought_not_sellable: entry/purchase priced but a supported sale/exit did not price.
-- find_two_sided: both entry and exit priced.
+- find_bought_not_sellable: ONE side priced. The entry/purchase priced and the sale/exit did NOT. Choose this whenever the question says a sale failed, is impossible, did not work, or that someone cannot sell or cannot exit.
+- find_two_sided: BOTH sides priced — the entry priced AND the exit priced. Never choose this when the question says a sale did not price or cannot happen; that is find_bought_not_sellable.
 - find_not_searched: ONLY an explicit question about incomplete route search, venue search or route coverage.
 - find_needs_evidence: a general question about weak/missing/insufficient evidence, uncertainty, absent or incomplete measurements, or what Miorail has not established. Use this unless the user specifically names route/venue/search coverage.
 - find_research_candidates: notable measured cases worth investigating, without recommendation or ranking.
@@ -106,7 +106,7 @@ async function classifyB20QuestionV1(input: {
   timeoutMs?: number;
 }): Promise<B20SemanticIntentExtractionV1 | null> {
   const messages: LlmMessage[] = [
-    { role: 'system', content: SYSTEM_PROMPT_V1 },
+    { role: 'system', content: B20_CONSOLE_INTENT_SYSTEM_PROMPT_V1 },
     {
       role: 'user',
       content: `<user_request>${JSON.stringify(input.question.slice(0, 2_000))}</user_request>`,
