@@ -195,9 +195,40 @@ function screenMoonwell(content: string): PartnerToolResultScreened {
   };
 }
 
+/**
+ * A payload that reports its own failure, whatever the protocol said.
+ *
+ * MCP carries an `isError` flag, and a provider is free not to set it. Morpho
+ * answered `{"error":"NOT_FOUND","message":"Unknown tool: morpho_get_positions"}`
+ * with the flag clear, so the screener wrapped it as a screened READ and the
+ * chat printed "Live screened Morpho read result on Base" above the words
+ * "Unknown tool". A reader was told a provider had answered about their money
+ * when it had refused to answer at all.
+ *
+ * Top-level only, and only the shapes a provider uses to say "this failed":
+ * a non-empty `error`, an explicit `success: false`, or an `isError` of its
+ * own. Anything deeper is data — a vault record may legitimately carry a field
+ * called `error`, and rejecting the whole read for it would turn this guard
+ * into the second failure.
+ */
+export function payloadReportsProviderErrorV1(payload: unknown): boolean {
+  const root = asRecord(payload);
+  if (!root) return false;
+  if (root.success === false || root.isError === true) return true;
+  const reported = root.error;
+  if (typeof reported === 'string') return reported.trim().length > 0;
+  if (reported && typeof reported === 'object') return Object.keys(reported).length > 0;
+  return false;
+}
+
 export function screenPartnerToolResult(input: PartnerToolResultScreenInput): PartnerToolResultScreened {
   if (input.isError) return { content: JSON.stringify(sanitize(unwrap(input.content))), isError: true };
   const provider = input.providerNamespace?.toLowerCase() || providerFromToolName(input.toolName);
+  // Before any provider screener, because every one of them ends in a
+  // fallthrough that wraps whatever it was handed as a successful read.
+  if (payloadReportsProviderErrorV1(unwrap(input.content))) {
+    return error(`${provider || 'partner'}_provider_reported_error`);
+  }
   if (!provider) return { content: input.content, isError: false };
   const screener = getRuntimeSkill(provider)?.resultScreener;
   if (screener === 'morpho') return screenMorpho(input.toolName, input.content);

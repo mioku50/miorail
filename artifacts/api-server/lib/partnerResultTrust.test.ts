@@ -73,3 +73,47 @@ test('partners without a provider-specific screener fail closed without raw data
   assert.deepEqual(JSON.parse(result.content), { errorCode: 'unknown_result_screening_unavailable' });
   assert.doesNotMatch(result.content, /unscreened raw opportunity/);
 });
+
+// ---------------------------------------------------------------------------
+// A payload that reports its own failure.
+//
+// Morpho answered `{"error":"NOT_FOUND","message":"Unknown tool: …"}` with the
+// MCP error flag clear. The screener's fallthrough wrapped it as a screened
+// read, and the chat printed "Live screened Morpho read result on Base" above
+// the words "Unknown tool" — a reader told a provider had answered about their
+// money when it had refused to answer at all.
+// ---------------------------------------------------------------------------
+
+test('an error inside a successful-looking payload is an error', () => {
+  const result = screenPartnerToolResult({
+    toolName: 'morpho_get_positions',
+    content: JSON.stringify({ error: 'NOT_FOUND', message: 'Unknown tool: morpho_get_positions' }),
+    isError: false,
+    providerNamespace: 'morpho',
+  });
+  assert.equal(result.isError, true);
+  assert.deepEqual(JSON.parse(result.content), { errorCode: 'morpho_provider_reported_error' });
+  assert.doesNotMatch(result.content, /Unknown tool/);
+});
+
+test('success: false is a failure even with no error field', () => {
+  const result = screenPartnerToolResult({
+    toolName: 'morpho_query_vaults',
+    content: JSON.stringify({ success: false, vaults: [] }),
+    isError: false,
+    providerNamespace: 'morpho',
+  });
+  assert.equal(result.isError, true);
+});
+
+test('a record that merely carries a field named error is still data', () => {
+  // Narrow on purpose: rejecting a whole read because one nested record has a
+  // key called `error` would make this guard the second failure.
+  const result = screenPartnerToolResult({
+    toolName: 'morpho_query_vaults',
+    content: JSON.stringify({ chain: 'base', vaults: [{ ...market(), error: null }] }),
+    isError: false,
+    providerNamespace: 'morpho',
+  });
+  assert.notEqual(JSON.parse(result.content).errorCode, 'morpho_provider_reported_error');
+});
