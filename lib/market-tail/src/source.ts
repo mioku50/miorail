@@ -69,6 +69,32 @@ export interface MarketTailSourceV1 {
     toBlock: number;
   }): Promise<MarketSourceResultV1<RawLogV1[]>>;
   /**
+   * One call for every tracked token, filtered to an explicit set of topic0s.
+   *
+   * A SEPARATE question from the transfer tail, not a widening of it. The two
+   * read different events, advance different cursors and fail independently:
+   * an announcement read that does not complete must not stop the ledger from
+   * advancing, and vice versa. Sharing one call would make each the other's
+   * outage.
+   */
+  eventLogs(input: {
+    tokens: readonly string[];
+    topics: readonly string[];
+    fromBlock: number;
+    toBlock: number;
+  }): Promise<MarketSourceResultV1<RawLogV1[]>>;
+  /**
+   * When a block was mined, by number.
+   *
+   * Spent only on blocks that carried something worth dating. An event's own
+   * time is the one fact the log does not carry, and using the pass's clock
+   * instead would date a catch-up run's findings to the moment it caught up --
+   * a bug this repository has already shipped once under another name.
+   */
+  blockTimes(
+    blockNumbers: readonly number[],
+  ): Promise<MarketSourceResultV1<Map<number, string>>>;
+  /**
    * `token0()` and `token1()`, the calls that identify a pool.
    *
    * Null for a side the address did not answer with -- which is an ANSWER, and
@@ -158,6 +184,66 @@ export function createMarketTailSourceV1(config: {
     return `0x${word.slice(26)}`;
   };
 
+  /** The one `eth_getLogs` both public readers are built on. A local function
+   * rather than a method, so a caller that destructures the source still gets
+   * the same read instead of a `this` that is gone. */
+  const eventLogsV1 = async (input: {
+    tokens: readonly string[];
+    topics: readonly string[];
+    fromBlock: number;
+    toBlock: number;
+  }): Promise<MarketSourceResultV1<RawLogV1[]>> => {
+    if (input.tokens.length === 0 || input.topics.length === 0) return { ok: true, value: [] };
+    const tokens = input.tokens.map((token) => token.toLowerCase());
+    const topics = input.topics.map((topic) => topic.toLowerCase());
+
+    const readV1 = async (
+      fromBlock: number,
+      toBlock: number,
+    ): Promise<MarketSourceResultV1<RawLogV1[]>> => {
+      const result = await rpcV1('eth_getLogs', [
+        {
+          address: tokens,
+          // A list at position zero is an OR over topic0: one call covers
+          // every event this reader knows, for every tracked token.
+          topics: [topics.length === 1 ? topics[0]! : topics],
+          fromBlock: hexV1(fromBlock),
+          toBlock: hexV1(toBlock),
+        },
+      ]);
+      if (!result.ok) {
+        // Ask for less rather than give up. The endpoint's bound is on the
+        // response, so it moves with how busy the assets are — and a pass
+        // that stops here leaves the cursor where it was and re-reads the
+        // same oversized range on the next one, forever.
+        //
+        // The requested range is still fully covered when this returns: the
+        // caller advances the cursor to `toBlock`, so a partial read that
+        // reported success would silently skip blocks.
+        if (!result.oversize || fromBlock >= toBlock) return result;
+        const middle = fromBlock + Math.floor((toBlock - fromBlock) / 2);
+        const left = await readV1(fromBlock, middle);
+        if (!left.ok) return left;
+        const right = await readV1(middle + 1, toBlock);
+        if (!right.ok) return right;
+        return { ok: true, value: [...left.value, ...right.value] };
+      }
+      if (!Array.isArray(result.value)) return { ok: false, reason: 'logs were not a list' };
+      // A malformed entry stops the pass: the cursor must not advance past a
+      // range that was only partly readable.
+      const logs: RawLogV1[] = [];
+      for (const entry of result.value) {
+        if (typeof entry !== 'object' || entry === null) {
+          return { ok: false, reason: 'a log entry was not an object' };
+        }
+        logs.push(entry as RawLogV1);
+      }
+      return { ok: true, value: logs };
+    };
+
+    return readV1(input.fromBlock, input.toBlock);
+  };
+
   return {
     async headBlock() {
       const result = await rpcV1('eth_blockNumber', []);
@@ -170,52 +256,35 @@ export function createMarketTailSourceV1(config: {
     },
 
     async transferLogs(input) {
-      if (input.tokens.length === 0) return { ok: true, value: [] };
-      const tokens = input.tokens.map((token) => token.toLowerCase());
+      return eventLogsV1({ ...input, topics: [ERC20_TRANSFER_TOPIC_V1] });
+    },
 
-      const readV1 = async (
-        fromBlock: number,
-        toBlock: number,
-      ): Promise<MarketSourceResultV1<RawLogV1[]>> => {
-        const result = await rpcV1('eth_getLogs', [
-          {
-            address: tokens,
-            topics: [ERC20_TRANSFER_TOPIC_V1],
-            fromBlock: hexV1(fromBlock),
-            toBlock: hexV1(toBlock),
-          },
-        ]);
-        if (!result.ok) {
-          // Ask for less rather than give up. The endpoint's bound is on the
-          // response, so it moves with how busy the assets are — and a pass
-          // that stops here leaves the cursor where it was and re-reads the
-          // same oversized range on the next one, forever.
-          //
-          // The requested range is still fully covered when this returns: the
-          // caller advances the cursor to `toBlock`, so a partial read that
-          // reported success would silently skip blocks.
-          if (!result.oversize || fromBlock >= toBlock) return result;
-          const middle = fromBlock + Math.floor((toBlock - fromBlock) / 2);
-          const left = await readV1(fromBlock, middle);
-          if (!left.ok) return left;
-          const right = await readV1(middle + 1, toBlock);
-          if (!right.ok) return right;
-          return { ok: true, value: [...left.value, ...right.value] };
+    async blockTimes(blockNumbers) {
+      const times = new Map<number, string>();
+      for (const blockNumber of [...new Set(blockNumbers)].sort((a, b) => a - b)) {
+        // `false` — the transaction list is not wanted and it is most of the
+        // response. A block header is the whole question.
+        const result = await rpcV1('eth_getBlockByNumber', [hexV1(blockNumber), false]);
+        if (!result.ok) return result;
+        const header = result.value as { timestamp?: unknown } | null;
+        const raw = typeof header?.timestamp === 'string' ? header.timestamp : null;
+        if (raw === null || !/^0x[0-9a-fA-F]+$/.test(raw)) {
+          // A block we asked for and could not date is a failure of ours, not
+          // an event without a time. Reporting it as either would be worse
+          // than stopping.
+          return { ok: false, reason: 'a block header carried no timestamp' };
         }
-        if (!Array.isArray(result.value)) return { ok: false, reason: 'logs were not a list' };
-        // A malformed entry stops the pass: the cursor must not advance past a
-        // range that was only partly readable.
-        const logs: RawLogV1[] = [];
-        for (const entry of result.value) {
-          if (typeof entry !== 'object' || entry === null) {
-            return { ok: false, reason: 'a log entry was not an object' };
-          }
-          logs.push(entry as RawLogV1);
+        const seconds = Number(BigInt(raw));
+        if (!Number.isSafeInteger(seconds) || seconds <= 0) {
+          return { ok: false, reason: 'a block timestamp was out of range' };
         }
-        return { ok: true, value: logs };
-      };
+        times.set(blockNumber, new Date(seconds * 1_000).toISOString());
+      }
+      return { ok: true, value: times };
+    },
 
-      return readV1(input.fromBlock, input.toBlock);
+    async eventLogs(input) {
+      return eventLogsV1(input);
     },
 
     async pairReads(address) {

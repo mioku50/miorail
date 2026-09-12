@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  RWA_SIGNAL_KINDS_V1,
+  createMemoryB20CorporateActionRepository,
   createMemoryRwaSignalRepository,
   type RwaSignalV1,
 } from '@mioagent/route-storage';
@@ -62,6 +64,7 @@ async function depsV1(): Promise<OfficialDiscoverDepsV1> {
     marketTail: {} as OfficialDiscoverDepsV1['marketTail'],
     lookalikes: {} as OfficialDiscoverDepsV1['lookalikes'],
     reader: {} as OfficialDiscoverDepsV1['reader'],
+    corporateActions: createMemoryB20CorporateActionRepository(),
     now: () => NOW,
   };
 }
@@ -78,10 +81,77 @@ describe('the market-wide recorded-change read', () => {
     assert.equal(out.changeCount, 0);
     assert.deepEqual(out.watching, []);
     // Every kind this build can emit is unwatched, so every one of them is a
-    // statement about Miorail rather than about the market.
-    assert.equal(out.notWatched.length, 6);
+    // statement about Miorail rather than about the market. Counted against
+    // the list itself: the number grew to eight when the corporate-action tail
+    // shipped, and a hardcoded six would have started quietly under-reporting
+    // exactly what nobody is watching.
+    assert.equal(out.notWatched.length, RWA_SIGNAL_KINDS_V1.length);
     assert.match(out.miorailSummary.summary, /No emitter has ever opened a watch/);
     assert.doesNotMatch(out.miorailSummary.summary, /Nothing Miorail watches changed/);
+  });
+
+  test('the onchain record is a second fact, and it is never the watch date', async () => {
+    // The watch opens when an emitter first runs. The corporate-action tail
+    // reads back to before the first tokenized stock existed, so a summary that
+    // offered only `watchingSince` would understate a two-month record to the
+    // point of being wrong.
+    const deps = await depsV1();
+    await deps.corporateActions.recordPass({
+      chainId: 8453,
+      fromBlock: 49_145_000,
+      toBlock: 51_212_000,
+      observedAt: '2026-09-12T12:00:00.000Z',
+      logCalls: 1,
+      rows: [],
+    });
+    const out = await rwaRecordedChangesForAgentV1(deps, {
+      window: '24h',
+      detail: 'summary',
+      limit: 25,
+    });
+    assert.deepEqual(out.corporateActionRecord, {
+      fromBlock: 49_145_000,
+      toBlock: 51_212_000,
+      actions: 0,
+      sinceFirstStock: true,
+    });
+    assert.match(out.miorailSummary.summary, /No onchain corporate action is recorded/);
+    assert.match(out.miorailSummary.summary, /49145000-51212000/);
+    assert.match(out.miorailSummary.summary, /every block since the first of them existed/);
+  });
+
+  test('a record that opened late is never described as complete', async () => {
+    // "Never announced anything" is a claim about a range. A tail pointed at
+    // last week can say nothing about the month before it, and an assistant
+    // quoting this sentence must not be able to turn it into "never".
+    const deps = await depsV1();
+    await deps.corporateActions.recordPass({
+      chainId: 8453,
+      fromBlock: 51_000_000,
+      toBlock: 51_212_000,
+      observedAt: '2026-09-12T12:00:00.000Z',
+      logCalls: 1,
+      rows: [],
+    });
+    const out = await rwaRecordedChangesForAgentV1(deps, {
+      window: '24h',
+      detail: 'summary',
+      limit: 25,
+    });
+    assert.equal(out.corporateActionRecord!.sinceFirstStock, false);
+    assert.match(out.miorailSummary.summary, /the record starts there/);
+    assert.doesNotMatch(out.miorailSummary.summary, /every block since/);
+  });
+
+  test('a tail that has never run says nothing is known, not that nothing happened', async () => {
+    const out = await rwaRecordedChangesForAgentV1(await depsV1(), {
+      window: '24h',
+      detail: 'summary',
+      limit: 25,
+    });
+    assert.equal(out.corporateActionRecord, null);
+    assert.match(out.miorailSummary.summary, /No blocks have been read for onchain corporate actions/);
+    assert.doesNotMatch(out.miorailSummary.summary, /has ever been recorded/);
   });
 
   test('an empty feed WITH a watch may say nothing changed', async () => {
@@ -125,7 +195,7 @@ describe('the market-wide recorded-change read', () => {
       detail: 'summary',
       limit: 25,
     });
-    assert.equal(wide.notWatched.length, 5);
+    assert.equal(wide.notWatched.length, RWA_SIGNAL_KINDS_V1.length - 1);
     assert.ok(!wide.notWatched.includes('official_asset_cash_exit_changed'));
   });
 

@@ -1,3 +1,4 @@
+import { RWA_SIGNAL_KINDS_V1 } from '@mioagent/route-storage';
 import { z } from 'zod';
 
 import {
@@ -289,14 +290,11 @@ export type OfficialLookalikeFeedV1 = z.infer<typeof OfficialLookalikeFeedV1Sche
 // Signals
 // ---------------------------------------------------------------------------
 
-export const RWA_SIGNAL_KINDS_V1 = [
-  'official_source_added_asset',
-  'official_source_removed_asset',
-  'official_asset_lookalike_created',
-  'official_asset_market_became_active',
-  'official_asset_market_became_unreachable',
-  'official_asset_cash_exit_changed',
-] as const;
+// The kinds are NOT re-declared here. They were, until a new kind was added to
+// the store and this list stayed behind: the wire schema then refused the very
+// rows the repository had just written, and the failure surfaced as a signal
+// feed that had silently stopped growing. One list, in the package that
+// defines what a signal is.
 
 export const RwaSignalCardV1Schema = z
   .object({
@@ -330,6 +328,33 @@ export const RwaSignalFeedV1Schema = z
     watching: z
       .array(z.object({ kind: z.enum(RWA_SIGNAL_KINDS_V1), watchingSince: Timestamp }).strict())
       .max(16),
+    /**
+     * The blocks the onchain corporate-action tail has actually read.
+     *
+     * A second date, and it is not the same date as `watching`. The watch opens
+     * when an emitter first runs; this range is what was read, and it reaches
+     * back behind the watch to before the first tokenized stock existed. Saying
+     * only `watchingSince` over a two-month backfill would understate the
+     * record to the point of being wrong: "nothing before today can appear
+     * here" is false when the blocks before today were read and were empty.
+     *
+     * Null until the tail has ever run — and a surface must then say "nobody
+     * has looked", never "nothing happened".
+     */
+    corporateActionRecord: z
+      .object({
+        fromBlock: z.number().int().positive(),
+        toBlock: z.number().int().positive(),
+        actions: z.number().int().min(0),
+        /** Whether the range reaches back to before the first tokenized stock
+         * existed. Decided here, where the genesis block is pinned, rather than
+         * by a surface comparing numbers it has no source for — a range that
+         * started later is still a range, and it must not be described as
+         * complete. */
+        sinceFirstStock: z.boolean(),
+      })
+      .strict()
+      .nullable(),
     /** What is deliberately NOT reported here, so its absence is not read as
      * quiet. Rendered by the surface, not written by it. */
     notReported: z.array(z.string().min(1).max(200)).max(8),

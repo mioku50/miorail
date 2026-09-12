@@ -319,4 +319,77 @@ describe('the endpoint seam', () => {
     // those blocks for good: the cursor never rewinds.
     assert.equal(logs.ok, false);
   });
+  test('an event read asks for every topic0 at once, for every tracked token', async () => {
+    // One call covers the whole vertical: a list at topic position zero is an
+    // OR, so four events over every asset cost the same round trip as one.
+    let asked: { address: string[]; topics: unknown[] } | null = null;
+    const source = createMarketTailSourceV1({
+      rpcUrl: RPC,
+      callGapMs: 0,
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String((init as RequestInit).body)) as {
+          params: [{ address: string[]; topics: unknown[] }];
+        };
+        asked = body.params[0];
+        return respond({ jsonrpc: '2.0', id: 1, result: [] });
+      },
+    });
+    const result = await source.eventLogs({
+      tokens: ['0xAAAA000000000000000000000000000000000001'],
+      topics: [`0x${'1'.repeat(64)}`, `0x${'2'.repeat(64)}`],
+      fromBlock: 10,
+      toBlock: 20,
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(asked!.address, ['0xaaaa000000000000000000000000000000000001']);
+    assert.deepEqual(asked!.topics, [[`0x${'1'.repeat(64)}`, `0x${'2'.repeat(64)}`]]);
+  });
+
+  test('a transfer read is still a single topic, not a one-element list', async () => {
+    let topics: unknown[] | null = null;
+    const source = createMarketTailSourceV1({
+      rpcUrl: RPC,
+      callGapMs: 0,
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String((init as RequestInit).body)) as { params: [{ topics: unknown[] }] };
+        topics = body.params[0].topics;
+        return respond({ jsonrpc: '2.0', id: 1, result: [] });
+      },
+    });
+    await source.transferLogs({ tokens: ['0xAAAA000000000000000000000000000000000001'], fromBlock: 1, toBlock: 2 });
+    assert.deepEqual(topics, ['0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef']);
+  });
+
+  test('a block is dated once, from its own header', async () => {
+    const asked: string[] = [];
+    const source = createMarketTailSourceV1({
+      rpcUrl: RPC,
+      callGapMs: 0,
+      fetchImpl: async (_url, init) => {
+        const body = JSON.parse(String((init as RequestInit).body)) as {
+          method: string;
+          params: [string, boolean];
+        };
+        asked.push(body.params[0]);
+        // `false` matters: the transaction list is most of the response and
+        // none of the question.
+        assert.equal(body.params[1], false);
+        return respond({ jsonrpc: '2.0', id: 1, result: { timestamp: '0x68c3f100' } });
+      },
+    });
+    const times = await source.blockTimes([0x20, 0x10, 0x20]);
+    assert.equal(times.ok, true);
+    assert.deepEqual(asked, ['0x10', '0x20'], 'deduplicated and ordered');
+    assert.equal(times.ok && times.value.get(0x10), new Date(0x68c3f100 * 1_000).toISOString());
+  });
+
+  test('a header with no timestamp is a failure of ours, not an event without a time', async () => {
+    const source = createMarketTailSourceV1({
+      rpcUrl: RPC,
+      callGapMs: 0,
+      fetchImpl: async () => respond({ jsonrpc: '2.0', id: 1, result: { number: '0x10' } }),
+    });
+    const times = await source.blockTimes([0x10]);
+    assert.equal(times.ok, false);
+  });
 });

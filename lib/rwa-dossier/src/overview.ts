@@ -1,4 +1,7 @@
-import type { B20ReaderV1 } from '@mioagent/b20-control';
+import {
+  B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1,
+  type B20ReaderV1,
+} from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import type {
@@ -14,6 +17,7 @@ import type {
   OfficialLookalikeRepositoryV1,
   OfficialSourceKindV1,
   RwaSignalKindV1,
+  B20CorporateActionRepositoryV1,
   RwaSignalRepositoryV1,
 } from '@mioagent/route-storage';
 import { isOfficialV1 } from '@mioagent/route-storage';
@@ -63,6 +67,7 @@ export interface OfficialDiscoverDepsV1 {
   marketTail: MarketTailRepositoryV1;
   lookalikes: OfficialLookalikeRepositoryV1;
   signals: RwaSignalRepositoryV1;
+  corporateActions: B20CorporateActionRepositoryV1;
   reader: B20ReaderV1;
   now: () => Date;
 }
@@ -584,7 +589,7 @@ export async function assembleRwaSignalFeedV1(
 ): Promise<RwaSignalFeedV1> {
   const now = deps.now();
   const limit = Math.max(1, Math.min(200, input?.limit ?? 50));
-  const [cards, watching, universe] = await Promise.all([
+  const [cards, watching, universe, coverage] = await Promise.all([
     deps.signals.recentSignals({
       chainId: 8453,
       limit,
@@ -593,6 +598,7 @@ export async function assembleRwaSignalFeedV1(
     }),
     deps.signals.signalWatch({ chainId: 8453 }),
     deps.official.officialAssets({ chainId: 8453, limit: 64, currentlyListedOnly: false }),
+    deps.corporateActions.coverage({ chainId: 8453 }),
   ]);
   const named = new Map(
     universe.map((identity) => [identity.tokenAddress, currentTickerV1(identity)]),
@@ -603,6 +609,20 @@ export async function assembleRwaSignalFeedV1(
     chainId: 8453,
     observedAt: now.toISOString(),
     watching: watching.map((row) => ({ kind: row.kind, watchingSince: row.watchingSince })),
+    // The onchain record covers more than the watch does, and saying so is the
+    // point of having opened it early. `watchingSince` is when an emitter
+    // started; this range is what was actually read, including the blocks
+    // behind it. Without it the screen would say "nothing before today can
+    // appear here" over a record that covers two months.
+    corporateActionRecord:
+      coverage.firstBlock === null || coverage.lastBlock === null
+        ? null
+        : {
+            fromBlock: coverage.firstBlock,
+            toBlock: coverage.lastBlock,
+            actions: coverage.actions,
+            sinceFirstStock: coverage.firstBlock <= B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1 + 1,
+          },
     notReported: [...RWA_SIGNALS_NOT_REPORTED_V1],
     cards: cards.map((row) => ({
       signalId: row.signalId,

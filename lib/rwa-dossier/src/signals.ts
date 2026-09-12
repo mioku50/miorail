@@ -1,6 +1,8 @@
+import type { B20CorporateActionObservationV1 } from '@mioagent/b20-control';
 import type { CashExitMeasurementRunV1 } from '@mioagent/route-storage';
 import {
   RWA_CASH_EXIT_CHANGE_THRESHOLD_BPS_V1,
+  type RwaOnchainSignalKindV1,
   type OfficialSnapshotOutcomeV1,
   type OfficialLookalikeRowV1,
   type RwaSignalV1,
@@ -256,4 +258,90 @@ export function cashExitSignalsV1(input: {
       },
     } as RwaSignalV1,
   ];
+}
+
+/**
+ * What a corporate-action pass observed, as transitions.
+ *
+ * Unlike every other emitter in this file, this one is not comparing two
+ * stored states: Base emits `Announcement` precisely so an integrator can
+ * catch a corporate action as it executes, so the log IS the transition. What
+ * stays identical is the discipline around it.
+ *
+ * THREE RULES, EACH ONE A BUG SOMEWHERE ELSE IN THIS PRODUCT
+ *
+ *   * Nothing older than the watch. A tail may be pointed at any range -- and
+ *     it should be, once, to establish that the record was empty before it
+ *     started -- but history is stored and never announced. The repository
+ *     refuses a signal dated before its watch, and an emitter that made it
+ *     raise that refusal would be a worker crashing on correct data.
+ *
+ *   * `EndAnnouncement` is not a transition. It closes the bracket the opening
+ *     event already reported; emitting both would put one corporate action on
+ *     the feed twice, in two sentences a reader cannot reconcile.
+ *
+ *   * An unreadable payload still reports the event. `topic_only` means the
+ *     action executed and its words were somewhere this build cannot read --
+ *     a gap in our reading, not an absence of news, and the feed says which.
+ */
+export function corporateActionSignalsV1(input: {
+  observations: readonly B20CorporateActionObservationV1[];
+  /** When each kind's watch opened. A kind absent from the map is not being
+   * watched, and emits nothing at all. */
+  watchingSince: ReadonlyMap<RwaOnchainSignalKindV1, string>;
+}): RwaSignalV1[] {
+  const signals: RwaSignalV1[] = [];
+  for (const observation of input.observations) {
+    const { action } = observation;
+    if (action.event === 'end_announcement') continue;
+    const multiplierEvent = action.event === 'announcement' ? null : action.event;
+    const kind =
+      action.event === 'announcement'
+        ? 'official_asset_corporate_action_announced'
+        : 'official_asset_multiplier_changed';
+    const since = input.watchingSince.get(kind);
+    if (since === undefined) continue;
+    if (Date.parse(observation.blockTime) < Date.parse(since)) continue;
+
+    // One log, one transition, forever. The transaction and the log index
+    // identify it for all time, so a re-read of the same range writes nothing.
+    const dedupeKey = `${kind}:${observation.transactionHash}:${observation.logIndex}`;
+    const blockNumber = String(observation.blockNumber);
+    if (kind === 'official_asset_corporate_action_announced') {
+      signals.push({
+        kind,
+        chainId: 8453,
+        subjectAddress: observation.tokenAddress,
+        officialAddress: null,
+        occurredAt: observation.blockTime,
+        dedupeKey,
+        facts: {
+          event: 'announcement',
+          announcementId: action.announcementId,
+          description: action.description,
+          uri: action.uri,
+          payloadState: action.payload,
+          transactionHash: observation.transactionHash,
+          blockNumber,
+        },
+      });
+      continue;
+    }
+    signals.push({
+      kind,
+      chainId: 8453,
+      subjectAddress: observation.tokenAddress,
+      officialAddress: null,
+      occurredAt: observation.blockTime,
+      dedupeKey,
+      facts: {
+        event: multiplierEvent!,
+        multiplierWad: action.multiplierWad,
+        payloadState: action.payload,
+        transactionHash: observation.transactionHash,
+        blockNumber,
+      },
+    });
+  }
+  return signals;
 }

@@ -381,6 +381,10 @@ function SignalsTab({
       {/* The date is the point. "No signals" and "nothing has been watched yet"
           are the same empty list and opposite facts. */}
       {view.watching ? <p className="lnote">{view.watching}</p> : null}
+      {/* A second line, never folded into the first. The watch says when an
+          emitter started; this says which blocks were actually read, and it
+          reaches back behind the watch. */}
+      {view.corporateRecord ? <p className="lnote">{view.corporateRecord}</p> : null}
 
       {view.cards.length === 0 ? (
         <p className="empty">{view.emptyNote}</p>

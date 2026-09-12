@@ -6,6 +6,7 @@ import {
   createDatabaseOfficialAssetRepository,
   createDatabaseOfficialCashExitRepository,
   createDatabaseOfficialLookalikeRepository,
+  createDatabaseB20CorporateActionRepository,
   createDatabaseRwaSignalRepository,
   LOOKALIKE_ALIAS_KINDS_V1,
   type LookalikeAliasKindV1,
@@ -49,6 +50,7 @@ export const rwaDiscoverRuntime = {
     marketTail: createDatabaseMarketTailRepository(client),
     lookalikes: createDatabaseOfficialLookalikeRepository(client),
     signals: createDatabaseRwaSignalRepository(client),
+    corporateActions: createDatabaseB20CorporateActionRepository(client),
     reader: createB20ReaderV1({ rpcUrl: rpcUrlV1() }),
     now: () => new Date(),
   }),
@@ -65,7 +67,8 @@ export const rwaDiscoverRuntime = {
         to_regclass('public.market_venues') AS venues,
         to_regclass('public.market_tail_cursors') AS cursors,
         to_regclass('public.rwa_signals') AS signals,
-        to_regclass('public.rwa_signal_watch') AS watch`;
+        to_regclass('public.rwa_signal_watch') AS watch,
+        to_regclass('public.b20_corporate_actions') AS corporate_actions`;
     const row = rows[0];
     return Boolean(
       row?.sources &&
@@ -75,7 +78,12 @@ export const rwaDiscoverRuntime = {
         row.venues &&
         row.cursors &&
         row.signals &&
-        row.watch,
+        row.watch &&
+        // Listed here rather than defended at the read: the signal feed asks
+        // this table what range the corporate-action record covers, and a
+        // surface that answered without it would print a watch date over a
+        // record it could not see. The migration goes on before the deploy.
+        row.corporate_actions,
     );
   },
 };

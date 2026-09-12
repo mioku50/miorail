@@ -1,5 +1,13 @@
 [Unit]
-# The venue-agnostic ledger tail. One eth_getLogs over every tracked asset's Transfer topic sees every venue, because every venue moves the token.
+# Two tails, one timer, two cursors.
+#
+# The venue-agnostic ledger tail: one eth_getLogs over every tracked asset's Transfer topic sees
+# every venue, because every venue moves the token.
+#
+# The corporate-action tail: a second eth_getLogs over the four events Base publishes on IB20Asset
+# (Announcement, EndAnnouncement and the two multiplier setters). Its own cursor, so a read that
+# fails on one side leaves the other where it was. Nothing has fired yet, and running it now is how
+# that emptiness becomes a measured range rather than an assumption.
 #
 # Oneshot, driven by miorail-rwa-market-tail.timer. Read-only outside Miorail's own
 # evidence tables: no signer, no key, no chain write, no wallet.
@@ -16,7 +24,7 @@ WorkingDirectory=/home/miorail/mioagent
 EnvironmentFile=/home/miorail/mioagent/.env
 Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/market_tail.ts --passes 4
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/market_tail.ts --passes 4 --actions-passes 2
 
 TimeoutStartSec=900
 NoNewPrivileges=true

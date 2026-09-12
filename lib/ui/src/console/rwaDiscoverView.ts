@@ -184,6 +184,14 @@ export interface RwaSignalCardWireV1 {
 export interface RwaSignalFeedWireV1 {
   observedAt: string;
   watching: readonly { kind: string; watchingSince: string }[];
+  /** The blocks the onchain corporate-action tail has read. Null until it has
+   * ever run. See the wire schema for why this is a second, different date. */
+  corporateActionRecord?: {
+    fromBlock: number;
+    toBlock: number;
+    actions: number;
+    sinceFirstStock: boolean;
+  } | null;
   notReported: readonly string[];
   cards: readonly RwaSignalCardWireV1[];
 }
@@ -238,6 +246,22 @@ export function rwaBpsLabelV1(bps: string | null): string | null {
   const whole = padded.slice(0, -2);
   const fraction = padded.slice(-2);
   return `${negative ? '-' : ''}${whole}.${fraction}%`;
+}
+
+/**
+ * A WAD-scaled multiplier as a decimal, exactly.
+ *
+ * Decimal-string arithmetic, never a float: a WAD has eighteen places and the
+ * last of them are the difference between a share count that reconciles and
+ * one that does not. Trailing zeros are trimmed, so a ratio that is still one
+ * reads `1` rather than `1.000000000000000000`.
+ */
+export function rwaMultiplierLabelV1(wad: string | null): string | null {
+  if (wad === null || !/^[1-9][0-9]*$/.test(wad)) return null;
+  const padded = wad.padStart(19, '0');
+  const whole = padded.slice(0, -18).replace(/^0+(?=\d)/, '');
+  const fraction = padded.slice(-18).replace(/0+$/, '');
+  return fraction.length === 0 ? whole : `${whole}.${fraction}`;
 }
 
 /** A money value at its own decimals. Null stays null — never a zero. */
@@ -641,6 +665,8 @@ const SIGNAL_TITLE_V1: Readonly<Record<string, string>> = {
   official_asset_market_became_active: 'A cash route appeared',
   official_asset_market_became_unreachable: 'The cash route is gone',
   official_asset_cash_exit_changed: 'Round-trip cost moved',
+  official_asset_corporate_action_announced: 'The issuer announced a corporate action',
+  official_asset_multiplier_changed: 'Shares per token changed',
 };
 
 // ---------------------------------------------------------------------------
@@ -1097,6 +1123,10 @@ export interface SignalCardViewV1 {
 
 export interface SignalFeedViewV1 {
   watching: string | null;
+  /** What the onchain record covers, in blocks, when it covers anything. It is
+   * printed beside `watching` and never merged into it: one is when an emitter
+   * started, the other is which blocks were read. */
+  corporateRecord: string | null;
   notReported: string[];
   cards: SignalCardViewV1[];
   /** What an empty feed means, in words. Never "nothing is happening". */
@@ -1155,6 +1185,26 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
         after ?? 'a new reading'
       }.`;
     }
+    case 'official_asset_corporate_action_announced': {
+      const ticker = card.subjectTicker ?? 'an asset';
+      const id = text('announcementId');
+      const said = text('description');
+      // The issuer's words, in quotes, because they are the issuer's. What
+      // Miorail knows is that the bracket opened, in this transaction; what it
+      // is about is what the contract said, verbatim or not at all.
+      if (said) {
+        return `${ticker} announced onchain${id ? ` (${id})` : ''}: “${said}”. The action executed inside this announcement; Miorail reports the event, not its consequences.`;
+      }
+      return `${ticker} announced a corporate action onchain${id ? ` (${id})` : ''}. Its description was published in a form this build cannot read, so the event is recorded and its words are not.`;
+    }
+    case 'official_asset_multiplier_changed': {
+      const ticker = card.subjectTicker ?? 'an asset';
+      const wad = text('multiplierWad');
+      const ratio = wad === null ? null : rwaMultiplierLabelV1(wad);
+      return ratio === null
+        ? `${ticker} changed the number of underlying shares one token redeems for. The new value was published in a form this build cannot read, so the card's own multiplier reading is the one to trust.`
+        : `${ticker} now redeems ${ratio} underlying share${ratio === '1' ? '' : 's'} per token. One token has not permanently equalled one share since this changed.`;
+    }
     default:
       return 'This build does not know how to describe this signal.';
   }
@@ -1172,8 +1222,21 @@ export function signalFeedViewV1(wire: RwaSignalFeedWireV1, now: Date): SignalFe
           rwaAgeLabelV1(oldest ?? null, now) ?? 'an unknown time'
         }. Nothing before that can appear here.`;
 
+  const record = wire.corporateActionRecord ?? null;
+  const corporateRecord =
+    record === null
+      ? null
+      : `Corporate actions: ${
+          record.actions === 0 ? 'none' : `${record.actions} recorded`
+        } across blocks ${record.fromBlock.toLocaleString('en-US')}–${record.toBlock.toLocaleString('en-US')}${
+          // Only said when it is true. A record that opened later is still a
+          // record, and calling it complete would be the claim doing the work.
+          record.sinceFirstStock ? ', every block since the first tokenized stock existed' : ''
+        }.`;
+
   return {
     watching,
+    corporateRecord,
     notReported: [...wire.notReported],
     cards: wire.cards.map((card) => ({
       signalId: card.signalId,

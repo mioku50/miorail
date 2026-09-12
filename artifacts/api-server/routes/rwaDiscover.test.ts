@@ -192,12 +192,23 @@ describe('GET the signal feed', () => {
           watchingSince: '2026-08-25T10:00:00.000Z',
         },
       ],
+      // The blocks actually read, beside the date the watch opened. Two facts,
+      // and the route must carry both: a client given only the watch date would
+      // print "nothing before today can appear here" over a two-month record.
+      corporateActionRecord: {
+        fromBlock: 49_145_001,
+        toBlock: 51_212_000,
+        actions: 0,
+        sinceFirstStock: true,
+      },
       notReported: ['Trades.'],
       cards: [],
     });
     const response = await request(app()).get('/api/route-intelligence/rwa/signals');
     assert.equal(response.status, 200);
     assert.deepEqual(response.body.cards, []);
+    assert.equal(response.body.corporateActionRecord.actions, 0);
+    assert.equal(response.body.corporateActionRecord.fromBlock, 49_145_001);
     // Without this, "no signals" and "nothing has ever been watched" are the
     // same empty list and opposite facts.
     assert.equal(response.body.watching[0].watchingSince, '2026-08-25T10:00:00.000Z');

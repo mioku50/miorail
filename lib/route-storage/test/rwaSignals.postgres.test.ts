@@ -37,8 +37,13 @@ before(async () => {
   sql = postgres(url!, { max: 1, onnotice: () => {} });
   await sql.unsafe('DROP TABLE IF EXISTS rwa_signals CASCADE');
   await sql.unsafe('DROP TABLE IF EXISTS rwa_signal_watch CASCADE');
-  const migration = await readFile(resolve(drizzleDir(), '0055_rwa_signals.sql'), 'utf8');
-  await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  // Both migrations, in order. 0069 widens the kind CHECK that 0055 created,
+  // so replaying the pair is also the proof that its ALTER lands on the
+  // constraint that actually exists rather than on one this file invented.
+  for (const name of ['0055_rwa_signals.sql', '0069_b20_corporate_actions.sql']) {
+    const migration = await readFile(resolve(drizzleDir(), name), 'utf8');
+    await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
+  }
 });
 
 after(async () => {

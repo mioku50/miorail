@@ -266,5 +266,66 @@ export function rwaSignalContractV1(
         ['official_source_added_asset', 'official_source_removed_asset'],
       );
     });
+
+    test('an onchain corporate action is a kind both the code and the store accept', async () => {
+      // The risk this covers is narrow and has bitten: a kind the emitter can
+      // produce and the database refuses is a worker that crashes on correct
+      // data, and it only shows up against real Postgres.
+      const { repository } = await open();
+      await repository.openSignalWatch({
+        chainId: 8453,
+        kinds: ['official_asset_corporate_action_announced', 'official_asset_multiplier_changed'],
+        at: '2026-09-12T09:00:00.000Z',
+      });
+      const outcome = await repository.recordSignals({
+        chainId: 8453,
+        recordedAt: '2026-09-12T10:05:00.000Z',
+        signals: [
+          {
+            kind: 'official_asset_corporate_action_announced',
+            chainId: 8453,
+            subjectAddress: AAPL,
+            officialAddress: null,
+            occurredAt: '2026-09-12T10:00:00.000Z',
+            dedupeKey: `official_asset_corporate_action_announced:0x${'a'.repeat(64)}:3`,
+            facts: {
+              event: 'announcement',
+              announcementId: '2026-01',
+              description: 'cash dividend',
+              uri: 'https://example.test/2026-01',
+              payloadState: 'decoded',
+              transactionHash: `0x${'a'.repeat(64)}`,
+              blockNumber: '50430000',
+            },
+          },
+          {
+            kind: 'official_asset_multiplier_changed',
+            chainId: 8453,
+            subjectAddress: AAPL,
+            officialAddress: null,
+            occurredAt: '2026-09-12T10:00:00.000Z',
+            dedupeKey: `official_asset_multiplier_changed:0x${'a'.repeat(64)}:4`,
+            facts: {
+              event: 'multiplier_updated',
+              multiplierWad: '1057380318816778075',
+              payloadState: 'decoded',
+              transactionHash: `0x${'a'.repeat(64)}`,
+              blockNumber: '50430000',
+            },
+          },
+        ] as RwaSignalV1[],
+      });
+      assert.equal(outcome.recorded.length, 2);
+      const feed = await repository.signalsForSubject({
+        chainId: 8453,
+        subjectAddress: AAPL,
+        limit: 10,
+      });
+      assert.deepEqual(
+        feed.map((row) => row.kind).sort(),
+        ['official_asset_corporate_action_announced', 'official_asset_multiplier_changed'],
+      );
+      assert.equal(feed.find((row) => row.kind.endsWith('announced'))!.facts.announcementId, '2026-01');
+    });
   });
 }

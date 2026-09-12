@@ -17,6 +17,8 @@ import { RouteStorageIntegrityError } from './types.js';
 // ---------------------------------------------------------------------------
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-byte address');
+const TxHash = z.string().regex(/^0x[0-9a-f]{64}$/, 'expected a lowercase 32-byte transaction hash');
+const PositiveDigits = z.string().regex(/^[1-9][0-9]*$/, 'expected a positive integer string');
 
 /**
  * Every kind, and what each one requires somebody to have observed.
@@ -32,8 +34,24 @@ export const RWA_SIGNAL_KINDS_V1 = [
   'official_asset_market_became_active',
   'official_asset_market_became_unreachable',
   'official_asset_cash_exit_changed',
+  // The two onchain kinds. Unlike every kind above them, these are not a
+  // comparison against a state we had stored -- the log IS the transition, and
+  // Base emits it precisely so integrators can catch a corporate action as it
+  // executes. The watch rule still applies unchanged: the tail opens its watch
+  // before it reads, so a backfill over older blocks records history in
+  // `b20_corporate_actions` and reports none of it as news.
+  'official_asset_corporate_action_announced',
+  'official_asset_multiplier_changed',
 ] as const;
 export type RwaSignalKindV1 = (typeof RWA_SIGNAL_KINDS_V1)[number];
+
+/** The kinds an onchain log produces. Named as a set because one emitter owns
+ * both of them and opens one watch for the pair. */
+export const RWA_ONCHAIN_SIGNAL_KINDS_V1 = [
+  'official_asset_corporate_action_announced',
+  'official_asset_multiplier_changed',
+] as const;
+export type RwaOnchainSignalKindV1 = (typeof RWA_ONCHAIN_SIGNAL_KINDS_V1)[number];
 
 /**
  * The move that makes a cost change worth a row.
@@ -92,6 +110,50 @@ const CostFactsV1Schema = z
     changeBps: z.string().regex(/^-?(0|[1-9][0-9]*)$/),
     thresholdBps: z.literal(RWA_CASH_EXIT_CHANGE_THRESHOLD_BPS_V1),
     approvedSources: z.array(z.string().min(1).max(100)).min(1).max(16),
+  })
+  .strict();
+
+/**
+ * An announcement, as the issuer bracketed it.
+ *
+ * Three fields are nullable and the fourth says why: Base publishes topic0 for
+ * `Announcement` and does not publish which of its parameters are indexed, so
+ * a layout this build cannot read arrives as `topic_only` -- the action
+ * executed, in this transaction, and its words were somewhere we could not
+ * read them. The raw log is kept in `b20_corporate_actions` either way.
+ *
+ * `EndAnnouncement` is deliberately not a signal. It closes a bracket the
+ * opening event already reported; recording both would report one corporate
+ * action twice.
+ */
+const CorporateActionFactsV1Schema = z
+  .object({
+    event: z.literal('announcement'),
+    announcementId: z.string().min(1).max(200).nullable(),
+    description: z.string().min(1).max(2_000).nullable(),
+    uri: z.string().min(1).max(2_000).nullable(),
+    payloadState: z.enum(['decoded', 'topic_only']),
+    transactionHash: TxHash,
+    blockNumber: PositiveDigits,
+  })
+  .strict();
+
+/**
+ * The number of underlying shares one token unit redeems for, changed.
+ *
+ * Both setters are reported. Which one an issuer used -- the deprecated
+ * `updateMultiplier` or the scheduled `updateUIMultiplier` -- is not the
+ * holder's problem, and a feed that carried only one of them would be silent
+ * on a dividend that happened to use the other.
+ */
+const MultiplierChangeFactsV1Schema = z
+  .object({
+    event: z.enum(['multiplier_updated', 'ui_multiplier_updated']),
+    /** WAD-scaled, never pre-divided. Null when the log's layout was unread. */
+    multiplierWad: PositiveDigits.nullable(),
+    payloadState: z.enum(['decoded', 'topic_only']),
+    transactionHash: TxHash,
+    blockNumber: PositiveDigits,
   })
   .strict();
 
@@ -169,6 +231,31 @@ export const RwaSignalV1Schema = z
         occurredAt: z.string().datetime(),
         dedupeKey: z.string().min(1).max(200),
         facts: CostFactsV1Schema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('official_asset_corporate_action_announced'),
+        chainId: z.literal(8453),
+        subjectAddress: Address,
+        officialAddress: z.null(),
+        /** The BLOCK's own time. Not when we read it: an announcement executed
+         * when it executed, and a tail catching up must not date it to the
+         * moment it caught up. */
+        occurredAt: z.string().datetime(),
+        dedupeKey: z.string().min(1).max(200),
+        facts: CorporateActionFactsV1Schema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('official_asset_multiplier_changed'),
+        chainId: z.literal(8453),
+        subjectAddress: Address,
+        officialAddress: z.null(),
+        occurredAt: z.string().datetime(),
+        dedupeKey: z.string().min(1).max(200),
+        facts: MultiplierChangeFactsV1Schema,
       })
       .strict(),
   ])

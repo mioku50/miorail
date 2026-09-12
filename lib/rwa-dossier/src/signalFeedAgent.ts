@@ -112,6 +112,26 @@ export const RwaRecordedChangesAgentOutputV1Schema = z
     /** Kinds this build can emit that no emitter has ever opened a watch for.
      * Their absence from the feed is a fact about Miorail, not the market. */
     notWatched: z.array(z.enum(RWA_SIGNAL_KINDS_V1)).max(16),
+    /**
+     * The blocks the onchain corporate-action tail has read.
+     *
+     * A different fact from `watching`, and the one an assistant needs before
+     * it says a stock has never announced anything. The watch opens when an
+     * emitter first runs; this range reaches back behind it, to before the
+     * first tokenized stock existed. Null means the tail has never run, and
+     * then nothing at all is known about corporate actions.
+     */
+    corporateActionRecord: z
+      .object({
+        fromBlock: z.number().int().positive(),
+        toBlock: z.number().int().positive(),
+        actions: z.number().int().min(0),
+        /** Whether the range reaches back to before the first tokenized stock
+         * existed. An assistant may say "never" only when this is true. */
+        sinceFirstStock: z.boolean(),
+      })
+      .strict()
+      .nullable(),
     notReported: z.array(z.string().min(1).max(200)).max(8),
     changes: z.array(RwaRecordedChangeV1Schema).max(RWA_RECORDED_CHANGES_MAX_PAGE_V1),
     miorailSummary: z.object({ summary: z.string().min(1).max(1200) }).strict(),
@@ -127,6 +147,8 @@ const KIND_PHRASE_V1: Readonly<Record<RwaSignalKindV1, string>> = {
   official_asset_market_became_active: 'market opened',
   official_asset_market_became_unreachable: 'market closed',
   official_asset_cash_exit_changed: 'exit cost moved',
+  official_asset_corporate_action_announced: 'corporate action announced onchain',
+  official_asset_multiplier_changed: 'shares per token changed',
 };
 
 /** The sentence an assistant reads first.
@@ -141,6 +163,12 @@ function recordedChangesSummaryV1(input: {
   notWatched: readonly RwaSignalKindV1[];
   truncated: boolean;
   watchingCount: number;
+  corporateActionRecord: {
+    fromBlock: number;
+    toBlock: number;
+    actions: number;
+    sinceFirstStock: boolean;
+  } | null;
 }): string {
   const span = input.window === '24h' ? 'the last 24 hours' : `the last ${input.window}`;
   const sentences: string[] = [];
@@ -162,6 +190,28 @@ function recordedChangesSummaryV1(input: {
       `${input.changeCount} recorded change${input.changeCount === 1 ? '' : 's'} over ${span} across ${input.subjectCount} asset${
         input.subjectCount === 1 ? '' : 's'
       }: ${tally}.`,
+    );
+  }
+
+  // Said whatever the window contained. An assistant asked "has NVDAc ever
+  // paid a dividend" is not asking about the last 24 hours, and the honest
+  // answer is a range of blocks that were read — or that none were.
+  if (input.corporateActionRecord === null) {
+    sentences.push(
+      'No blocks have been read for onchain corporate actions, so nothing is known about announcements, dividends or splits either way.',
+    );
+  } else {
+    const record = input.corporateActionRecord;
+    sentences.push(
+      record.actions === 0
+        ? `No onchain corporate action is recorded on any reviewed tokenized stock across blocks ${record.fromBlock}-${record.toBlock}${
+            record.sinceFirstStock
+              ? ', which is every block since the first of them existed'
+              : ' — the record starts there, so nothing is known about earlier blocks'
+          }.`
+        : `${record.actions} onchain corporate action${record.actions === 1 ? '' : 's'} are on record across blocks ${record.fromBlock}-${record.toBlock}${
+            record.sinceFirstStock ? ', every block since the first tokenized stock existed' : ''
+          }.`,
     );
   }
 
@@ -224,6 +274,7 @@ export async function rwaRecordedChangesForAgentV1(
     truncated,
     watching: feed.watching,
     notWatched,
+    corporateActionRecord: feed.corporateActionRecord,
     notReported: feed.notReported,
     changes:
       input.detail === 'summary'
@@ -248,6 +299,7 @@ export async function rwaRecordedChangesForAgentV1(
         notWatched,
         truncated,
         watchingCount: feed.watching.length,
+        corporateActionRecord: feed.corporateActionRecord,
       }),
     },
     assembledAt: now.toISOString(),

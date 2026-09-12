@@ -34,6 +34,13 @@
  */
 import { client, closeDb } from '@mioagent/db';
 import {
+  B20_CORPORATE_ACTION_TOPIC_LIST_V1,
+  B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1,
+  b20CorporateActionBlocksV1,
+  b20CorporateActionObservationsV1,
+} from '@mioagent/b20-control';
+import { corporateActionSignalsV1 } from '@mioagent/rwa-dossier';
+import {
   MARKET_TAIL_MAX_SPAN_V1,
   OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
   UNISWAP_V4_SINGLETON_V1,
@@ -46,12 +53,18 @@ import {
   type VenueV1,
 } from '@mioagent/market-tail';
 import {
+  B20_CORPORATE_ACTION_TAIL_KEY_V1,
+  createDatabaseB20CorporateActionRepository,
   createDatabaseMarketTailRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseRepresentationSupplyRepository,
+  createDatabaseRwaSignalRepository,
   createDatabaseUnderlyingAssetRepository,
+  RWA_ONCHAIN_SIGNAL_KINDS_V1,
+  type B20CorporateActionRowV1,
   type MarketVenueTransferRowV1,
   type MarketVenueRowV1,
+  type RwaOnchainSignalKindV1,
 } from '@mioagent/route-storage';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
@@ -65,6 +78,17 @@ interface ArgsV1 {
   maxIdentity: number;
   /** Where a first-ever run starts, counted back from the head. */
   fromHead: number;
+  /** Passes of the corporate-action stage. Separate from the ledger's, because
+   * a backfill over a year of blocks is ordinary for a topic filter that
+   * matches almost nothing and ruinous for the transfer tail. */
+  actionPasses: number;
+  actionBlocks: number;
+  /** Overrides where a first-ever corporate-action run starts. The default is
+   * the block before the first tokenized stock existed, which is what makes
+   * the empty record a measured range rather than an assumption. */
+  actionFrom: number | null;
+  actionsOnly: boolean;
+  skipActions: boolean;
   dry: boolean;
 }
 
@@ -76,13 +100,206 @@ function parseArgsV1(argv: readonly string[]): ArgsV1 {
     if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${flag} takes a positive whole number`);
     return parsed;
   };
+  const optional = (flag: string): number | null => {
+    const index = argv.indexOf(flag);
+    if (index < 0) return null;
+    const parsed = Number.parseInt(argv[index + 1] ?? '', 10);
+    if (!Number.isFinite(parsed) || parsed <= 0) throw new Error(`${flag} takes a positive whole number`);
+    return parsed;
+  };
   return {
     passes: number('--passes', 1),
     blocks: number('--blocks', MARKET_TAIL_MAX_SPAN_V1),
     maxIdentity: number('--max-identity', 10),
     fromHead: number('--from-head', MARKET_TAIL_MAX_SPAN_V1),
+    actionPasses: number('--actions-passes', 1),
+    // Ten thousand rather than two: mainnet.base.org serves that span, and a
+    // filter on four topic0s over a market where none has ever fired returns
+    // an empty list. The response bound that shapes the transfer tail does not
+    // apply to a read that matches nothing.
+    actionBlocks: number('--actions-blocks', 10_000),
+    actionFrom: optional('--actions-from'),
+    actionsOnly: argv.includes('--actions-only'),
+    skipActions: argv.includes('--skip-actions'),
     dry: argv.includes('--dry'),
   };
+}
+
+// ---------------------------------------------------------------------------
+// The corporate-action tail.
+//
+// A second `eth_getLogs` per pass, filtered to the four events Base publishes
+// on `IB20Asset`: `Announcement`, `EndAnnouncement` and the two multiplier
+// setters. Its own cursor, so a read that fails here leaves the ledger tail
+// where it was and the other way round -- sharing one would make each the
+// other's outage.
+//
+// WHY IT IS WORTH RUNNING WITH NOTHING TO FIND
+//
+// Nothing has fired. Every Coinbase tokenized stock still reads a multiplier
+// of exactly 1.0 and no announcement has been emitted on any of them. A feed
+// started on the day of the first dividend can report that dividend and cannot
+// say whether it was the first; this one can, because the silence before it is
+// a stored range rather than an assumption. `--actions-from` is how that range
+// is established: point it at a block before any of these tokens existed and
+// let it walk forward.
+//
+// The address list is every reviewed representation, not just the B20 ones.
+// The topics are B20's, so a Dinari or Backed contract simply never matches --
+// and an issuer we did not expect emitting one is exactly the thing worth
+// catching rather than filtering out in advance.
+// ---------------------------------------------------------------------------
+async function corporateActionStageV1(input: {
+  args: ArgsV1;
+  source: ReturnType<typeof createMarketTailSourceV1>;
+  tail: ReturnType<typeof createDatabaseMarketTailRepository>;
+  tokens: readonly string[];
+}): Promise<void> {
+  const { args, source, tail, tokens } = input;
+  const actions = createDatabaseB20CorporateActionRepository(client);
+  const signals = createDatabaseRwaSignalRepository(client);
+
+  // Opened BEFORE the first read, and the pass that opens it reports nothing.
+  // An announcement found in a backfilled range is history: it is stored, and
+  // the feed says the watch did not cover it rather than announcing a dividend
+  // from last month as news.
+  const watch = args.dry
+    ? []
+    : await signals.openSignalWatch({
+        chainId: CHAIN_ID_V1,
+        kinds: [...RWA_ONCHAIN_SIGNAL_KINDS_V1],
+        at: new Date().toISOString(),
+      });
+  const watching = new Map<RwaOnchainSignalKindV1, string>();
+  for (const row of watch) {
+    // A watch this pass opened covers nothing this pass can find: every block
+    // it reads is older than the moment the watch opened.
+    if (row.openedNow) continue;
+    watching.set(row.kind as RwaOnchainSignalKindV1, row.watchingSince);
+  }
+  if (watch.some((row) => row.openedNow)) {
+    console.log('\ncorporate actions: watch opened — this pass records history and reports no news');
+  }
+
+  for (let pass = 0; pass < args.actionPasses; pass += 1) {
+    const head = await source.headBlock();
+    if (!head.ok) {
+      console.log(`corporate actions pass ${pass + 1}: ${head.reason}`);
+      return;
+    }
+    const cursor = await tail.readCursor({ tailKey: B20_CORPORATE_ACTION_TAIL_KEY_V1 });
+    // A first-ever run starts before the first tokenized stock existed, not at
+    // the head. The cursor cannot rewind, so starting at the head would make
+    // the history behind it permanently unreadable — and "nothing has ever been
+    // announced" would stay an assumption. Backfilling it is one run of a few
+    // hundred passes over a filter that matches nothing; after that the hourly
+    // timer keeps up in one pass.
+    const lastBlock =
+      cursor?.lastBlock ?? args.actionFrom ?? B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1;
+    if (cursor === null) {
+      // Printed rather than implied. An empty feed is evidence of quiet only
+      // across a range somebody can name, and this is where the range opens.
+      console.log(`corporate actions: record opens at block ${lastBlock}`);
+    }
+    const range = tailRangeV1({ lastBlock, headBlock: head.value, maxSpan: args.actionBlocks });
+    if (!range.ok) {
+      console.log(`corporate actions pass ${pass + 1}: caught up at block ${lastBlock}`);
+      return;
+    }
+
+    const logs = await source.eventLogs({
+      tokens,
+      topics: B20_CORPORATE_ACTION_TOPIC_LIST_V1,
+      fromBlock: range.fromBlock,
+      toBlock: range.toBlock,
+    });
+    if (!logs.ok) {
+      console.log(
+        `corporate actions pass ${pass + 1}: ${range.fromBlock}-${range.toBlock} — ${logs.reason}`,
+      );
+      return;
+    }
+
+    // Dated from the chain, never from our clock, and only for blocks that
+    // carried something. An empty range costs nothing beyond the one log read.
+    const blocks = b20CorporateActionBlocksV1(logs.value);
+    const times = blocks.length === 0
+      ? ({ ok: true, value: new Map<number, string>() } as const)
+      : await source.blockTimes(blocks);
+    if (!times.ok) {
+      console.log(`corporate actions pass ${pass + 1}: ${times.reason}`);
+      return;
+    }
+    const reading = b20CorporateActionObservationsV1({
+      logs: logs.value,
+      blockTimes: times.value,
+      tokens,
+    });
+    if (reading.undated > 0) {
+      // The cursor stays put. An action we could not date would otherwise be
+      // dropped AND passed over, which is the one outcome worse than stopping.
+      console.log(
+        `corporate actions pass ${pass + 1}: ${reading.undated} log(s) could not be dated — cursor held at ${lastBlock}`,
+      );
+      return;
+    }
+
+    const observedAt = new Date().toISOString();
+    const rows: B20CorporateActionRowV1[] = reading.observations.map((observation) => ({
+      chainId: CHAIN_ID_V1,
+      tokenAddress: observation.tokenAddress,
+      event: observation.action.event,
+      payloadState: observation.action.payload,
+      announcementId: observation.action.announcementId,
+      caller: observation.action.caller,
+      description: observation.action.description,
+      uri: observation.action.uri,
+      multiplierWad: observation.action.multiplierWad,
+      topics: observation.topics,
+      data: observation.data,
+      blockNumber: observation.blockNumber,
+      blockTime: observation.blockTime,
+      transactionHash: observation.transactionHash,
+      logIndex: observation.logIndex,
+      observedAt,
+    }));
+
+    const span = range.toBlock - range.fromBlock + 1;
+    console.log(
+      `corporate actions pass ${pass + 1}: blocks ${range.fromBlock}-${range.toBlock} (${span})  ` +
+        `events ${rows.length}${reading.foreign > 0 ? `  foreign ${reading.foreign}` : ''}  ` +
+        `calls 1 log + ${blocks.length} block`,
+    );
+    if (args.dry) continue;
+
+    const outcome = await actions.recordPass({
+      chainId: CHAIN_ID_V1,
+      fromBlock: range.fromBlock,
+      toBlock: range.toBlock,
+      observedAt,
+      logCalls: 1 + blocks.length,
+      rows,
+    });
+    if (rows.length > 0) {
+      console.log(
+        `  stored ${outcome.inserted} new, ${outcome.duplicates} already seen; cursor at ${outcome.lastBlock}`,
+      );
+    }
+
+
+    const transitions = corporateActionSignalsV1({
+      observations: reading.observations,
+      watchingSince: watching,
+    });
+    if (transitions.length > 0) {
+      const recorded = await signals.recordSignals({
+        chainId: CHAIN_ID_V1,
+        recordedAt: observedAt,
+        signals: transitions,
+      });
+      for (const key of recorded.recorded) console.log(`  signal ${key.split(':')[0]}`);
+    }
+  }
 }
 
 async function main(): Promise<void> {
@@ -128,7 +345,7 @@ async function main(): Promise<void> {
       `${tokens.length - registryTokens.length} reviewed with tokens outstanding\n`,
   );
 
-  for (let pass = 0; pass < args.passes; pass += 1) {
+  for (let pass = 0; args.actionsOnly ? false : pass < args.passes; pass += 1) {
     const head = await source.headBlock();
     if (!head.ok) {
       console.log(`pass ${pass + 1}: ${head.reason}`);
@@ -294,7 +511,9 @@ async function main(): Promise<void> {
     );
   }
 
-  if (!args.dry) {
+  if (!args.skipActions) await corporateActionStageV1({ args, source, tail, tokens });
+
+  if (!args.dry && !args.actionsOnly) {
     const activity = await tail.venueActivity({
       chainId: CHAIN_ID_V1,
       tokenAddresses: tokens,

@@ -17,6 +17,7 @@ import {
   type OfficialAssetWireV1,
   type OfficialAssetsOverviewWireV1,
   roundTripHeadlineV1,
+  rwaMultiplierLabelV1,
 } from '../src/console/rwaDiscoverView';
 
 const NOW = new Date('2026-08-25T12:00:00.000Z');
@@ -496,6 +497,59 @@ describe('rwa discover view — signals', () => {
     assert.match(watched.emptyNote!, /Nothing has changed since/);
   });
 
+  test('the record range is its own line, never folded into the watch date', () => {
+    // Two dates, two facts. The watch says when an emitter started; the record
+    // says which blocks were read, and it reaches back behind the watch.
+    const view = signalFeedViewV1(
+      {
+        observedAt: NOW.toISOString(),
+        watching: [
+          { kind: 'official_asset_corporate_action_announced', watchingSince: '2026-09-12T09:00:00.000Z' },
+        ],
+        corporateActionRecord: {
+          fromBlock: 49_145_000,
+          toBlock: 51_212_000,
+          actions: 0,
+          sinceFirstStock: true,
+        },
+        notReported: [],
+        cards: [],
+      },
+      NOW,
+    );
+    assert.match(view.watching!, /Nothing before that can appear here/);
+    assert.match(view.corporateRecord!, /Corporate actions: none across blocks 49,145,000–51,212,000/);
+    assert.match(view.corporateRecord!, /every block since the first tokenized stock existed/);
+    assert.notEqual(view.corporateRecord, view.watching);
+
+    // A record that opened later is still a record, and the completeness clause
+    // is the claim doing the work — so it is only said when it is true.
+    const late = signalFeedViewV1(
+      {
+        observedAt: NOW.toISOString(),
+        watching: [],
+        corporateActionRecord: {
+          fromBlock: 51_000_000,
+          toBlock: 51_212_000,
+          actions: 2,
+          sinceFirstStock: false,
+        },
+        notReported: [],
+        cards: [],
+      },
+      NOW,
+    );
+    assert.match(late.corporateRecord!, /Corporate actions: 2 recorded across blocks/);
+    assert.doesNotMatch(late.corporateRecord!, /every block since/);
+
+    const never = signalFeedViewV1(
+      { observedAt: NOW.toISOString(), watching: [], notReported: [], cards: [] },
+      NOW,
+    );
+    // Never a sentence claiming quiet over a record nobody opened.
+    assert.equal(never.corporateRecord, null);
+  });
+
   test('a Backed source transition is never mislabeled as Coinbase evidence', () => {
     const view = signalFeedViewV1(
       {
@@ -527,6 +581,113 @@ describe('rwa discover view — signals', () => {
     );
     assert.match(view.cards[0]!.detail, /Backed bTokens API/);
     assert.doesNotMatch(view.cards[0]!.detail, /Base docs corpus/);
+  });
+
+  test('an onchain announcement is quoted, and an unreadable one says so', () => {
+    const card = (facts: Record<string, unknown>) => ({
+      signalId: 'ann-1',
+      kind: 'official_asset_corporate_action_announced' as const,
+      subjectAddress: AAPL,
+      subjectTicker: 'AAPLc',
+      officialAddress: null,
+      officialTicker: null,
+      occurredAt: '2026-08-25T11:00:00.000Z',
+      recordedAt: '2026-08-25T11:00:05.000Z',
+      facts,
+    });
+    const wire = (facts: Record<string, unknown>) => ({
+      observedAt: NOW.toISOString(),
+      watching: [
+        {
+          kind: 'official_asset_corporate_action_announced' as const,
+          watchingSince: '2026-08-20T10:00:00.000Z',
+        },
+      ],
+      notReported: [],
+      cards: [card(facts)],
+    });
+
+    const read = signalFeedViewV1(
+      wire({
+        event: 'announcement',
+        announcementId: '2026-01',
+        description: 'cash dividend of 0.24 per share',
+        uri: 'https://example.test/2026-01',
+        payloadState: 'decoded',
+        transactionHash: `0x${'a'.repeat(64)}`,
+        blockNumber: '50430000',
+      }),
+      NOW,
+    );
+    assert.equal(read.cards[0]!.title, 'The issuer announced a corporate action');
+    // The issuer's words, in quotes, because they are the issuer's.
+    assert.match(read.cards[0]!.detail, /“cash dividend of 0.24 per share”/);
+    assert.match(read.cards[0]!.detail, /\(2026-01\)/);
+
+    const unread = signalFeedViewV1(
+      wire({
+        event: 'announcement',
+        announcementId: null,
+        description: null,
+        uri: null,
+        payloadState: 'topic_only',
+        transactionHash: `0x${'a'.repeat(64)}`,
+        blockNumber: '50430000',
+      }),
+      NOW,
+    );
+    // A gap in OUR reading, said as one — never an announcement with no content.
+    assert.match(unread.cards[0]!.detail, /a form this build cannot read/);
+    assert.doesNotMatch(unread.cards[0]!.detail, /“/);
+  });
+
+  test('a multiplier change is rendered exactly, never as a float', () => {
+    const view = signalFeedViewV1(
+      {
+        observedAt: NOW.toISOString(),
+        watching: [
+          {
+            kind: 'official_asset_multiplier_changed' as const,
+            watchingSince: '2026-08-20T10:00:00.000Z',
+          },
+        ],
+        notReported: [],
+        cards: [
+          {
+            signalId: 'mult-1',
+            kind: 'official_asset_multiplier_changed',
+            subjectAddress: AAPL,
+            subjectTicker: 'AAPLc',
+            officialAddress: null,
+            officialTicker: null,
+            occurredAt: '2026-08-25T11:00:00.000Z',
+            recordedAt: '2026-08-25T11:00:05.000Z',
+            facts: {
+              event: 'multiplier_updated',
+              multiplierWad: '1057380318816778075',
+              payloadState: 'decoded',
+              transactionHash: `0x${'a'.repeat(64)}`,
+              blockNumber: '50430000',
+            },
+          },
+        ],
+      },
+      NOW,
+    );
+    assert.equal(view.cards[0]!.title, 'Shares per token changed');
+    // Every digit of the WAD. A float loses the last of them, and those are the
+    // difference between a share count that reconciles and one that does not.
+    assert.match(view.cards[0]!.detail, /1\.057380318816778075 underlying shares/);
+  });
+
+  test('a WAD is a decimal string, trimmed, and a bad one is not a number', () => {
+    assert.equal(rwaMultiplierLabelV1('1000000000000000000'), '1');
+    assert.equal(rwaMultiplierLabelV1('2000000000000000000'), '2');
+    assert.equal(rwaMultiplierLabelV1('1057380318816778075'), '1.057380318816778075');
+    assert.equal(rwaMultiplierLabelV1('500000000000000000'), '0.5');
+    assert.equal(rwaMultiplierLabelV1(null), null);
+    assert.equal(rwaMultiplierLabelV1('0'), null, 'a zero multiplier is not a ratio');
+    assert.equal(rwaMultiplierLabelV1('1.5'), null);
   });
 
   test('a market signal names the size it was decided on', () => {
