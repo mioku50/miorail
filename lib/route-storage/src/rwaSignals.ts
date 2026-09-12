@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import type { RwaSignalKindV1 } from './rwaSignalKinds.js';
 import { RouteStorageIntegrityError } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -20,38 +21,16 @@ const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-by
 const TxHash = z.string().regex(/^0x[0-9a-f]{64}$/, 'expected a lowercase 32-byte transaction hash');
 const PositiveDigits = z.string().regex(/^[1-9][0-9]*$/, 'expected a positive integer string');
 
-/**
- * Every kind, and what each one requires somebody to have observed.
- *
- * There is no `trade` kind. A movement through a venue is not a swap -- 2 of
- * 34 measured transactions were not -- so the two market kinds below are
- * driven by a cash-exit round trip that either completed or did not.
- */
-export const RWA_SIGNAL_KINDS_V1 = [
-  'official_source_added_asset',
-  'official_source_removed_asset',
-  'official_asset_lookalike_created',
-  'official_asset_market_became_active',
-  'official_asset_market_became_unreachable',
-  'official_asset_cash_exit_changed',
-  // The two onchain kinds. Unlike every kind above them, these are not a
-  // comparison against a state we had stored -- the log IS the transition, and
-  // Base emits it precisely so integrators can catch a corporate action as it
-  // executes. The watch rule still applies unchanged: the tail opens its watch
-  // before it reads, so a backfill over older blocks records history in
-  // `b20_corporate_actions` and reports none of it as news.
-  'official_asset_corporate_action_announced',
-  'official_asset_multiplier_changed',
-] as const;
-export type RwaSignalKindV1 = (typeof RWA_SIGNAL_KINDS_V1)[number];
-
-/** The kinds an onchain log produces. Named as a set because one emitter owns
- * both of them and opens one watch for the pair. */
-export const RWA_ONCHAIN_SIGNAL_KINDS_V1 = [
-  'official_asset_corporate_action_announced',
-  'official_asset_multiplier_changed',
-] as const;
-export type RwaOnchainSignalKindV1 = (typeof RWA_ONCHAIN_SIGNAL_KINDS_V1)[number];
+// The kinds live in their own leaf module so the browser-facing Discover
+// contract can import them without dragging every repository behind this index
+// into a webpack bundle. Re-exported here so nothing that already imports them
+// from this file has to change.
+export {
+  RWA_SIGNAL_KINDS_V1,
+  RWA_ONCHAIN_SIGNAL_KINDS_V1,
+  type RwaSignalKindV1,
+  type RwaOnchainSignalKindV1,
+} from './rwaSignalKinds.js';
 
 /**
  * The move that makes a cost change worth a row.

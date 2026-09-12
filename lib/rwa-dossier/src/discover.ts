@@ -1,4 +1,7 @@
-import { RWA_SIGNAL_KINDS_V1 } from '@mioagent/route-storage';
+// The leaf module, not the package index: the index pulls every repository
+// behind it, one of which imports `node:crypto`, and this file is compiled into
+// the browser bundle through `@mioagent/api-zod`.
+import { RWA_SIGNAL_KINDS_V1 } from '@mioagent/route-storage/rwa-signal-kinds';
 import { z } from 'zod';
 
 import {

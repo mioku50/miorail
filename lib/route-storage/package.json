@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./market-reality-contracts": "./src/marketRealitySnapshot.ts",
+    "./rwa-signal-kinds": "./src/rwaSignalKinds.ts",
     "./official-cash-exit": "./src/officialCashExit.ts"
   },
   "scripts": {
