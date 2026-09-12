@@ -21,6 +21,12 @@ import {
   type WalletPolicyCheckV1,
 } from './onchainUse.js';
 
+import {
+  ecosystemBlockV1,
+  type EcosystemEvidenceV1,
+  type RepresentationEcosystemV1,
+} from './ecosystemClaims.js';
+
 // ---------------------------------------------------------------------------
 // Use & access, assembled for one exact address.
 //
@@ -167,6 +173,16 @@ export interface RepresentationUseAccessV1 {
    * deployment answered", never "no pools".
    */
   pools?: PooledLiquidityV1;
+  /**
+   * Who Base says supports these stocks, against who Miorail can see
+   * supporting THIS address.
+   *
+   * Optional like `pools`, and for the same rolling-deploy reason. Absent
+   * means the caller supplied no ecosystem evidence — never that nobody
+   * supports the address, which is why an app Miorail cannot read is carried
+   * as an `unchecked` ROW rather than dropped from the list.
+   */
+  ecosystem?: RepresentationEcosystemV1;
 }
 
 /**
@@ -322,6 +338,56 @@ export const RepresentationUseAccessV1Schema = z
       })
       .strict()
       .optional(),
+    /**
+     * Who Base says supports these stocks, against who Miorail can see
+     * supporting THIS address.
+     *
+     * Optional so a browser that loads a cached bundle against a newer server
+     * -- and a server that predates the field -- both still parse. The outer
+     * object is strict, so this line is what lets the field exist at all: the
+     * same reason `pools` carries one.
+     */
+    ecosystem: z
+      .object({
+        listedBy: z.string().min(1).max(80),
+        sourceTitle: z.string().min(1).max(200),
+        sourceRef: z.string().url().startsWith('https://'),
+        reviewedAt: z.string().min(1).max(40),
+        tally: z
+          .object({
+            named: z.number().int().nonnegative(),
+            namesIt: z.number().int().nonnegative(),
+            doesNot: z.number().int().nonnegative(),
+            unread: z.number().int().nonnegative(),
+            unchecked: z.number().int().nonnegative(),
+          })
+          .strict(),
+        rows: z.array(
+          z
+            .object({
+              appId: z.string().min(1).max(60),
+              appName: z.string().min(1).max(80),
+              claim: z.string().min(1).max(300),
+              category: z.enum([
+                'issuance',
+                'oracle',
+                'exchange',
+                'routing',
+                'lending',
+                'yield',
+                'analytics',
+                'wallet',
+              ]),
+              measured: z.enum(['listed', 'not_listed', 'unread', 'unchecked']),
+              evidence: z.string().max(300).nullable(),
+              detail: z.string().max(300).nullable(),
+              reason: z.string().max(300).nullable(),
+            })
+            .strict(),
+        ),
+      })
+      .strict()
+      .optional(),
     wallet: z
       .object({
         address: z.string().regex(/^0x[0-9a-f]{40}$/),
@@ -409,8 +475,12 @@ function unreadEverythingV1(
   // worker, at a block of their own. Blanking them because THIS read failed
   // would delete a good measurement to report a bad one.
   pools: PooledLiquidityV1 = { state: 'not_measured', blockNumber: null, readAt: null, rows: [] },
+  // Survives a chain outage for the same reason pools do: the venue answers
+  // and the stored pool rows it reads were gathered without this anchor.
+  ecosystem?: RepresentationEcosystemV1,
 ): RepresentationUseAccessV1 {
   return {
+    ...(ecosystem ? { ecosystem } : {}),
     schemaVersion: 'representation-use-access/v1',
     chainId: 8453,
     tokenAddress,
@@ -453,6 +523,15 @@ export async function assembleUseAccessV1(input: {
    * and the caller owns the repository.
    */
   pools?: PooledLiquidityV1;
+  /**
+   * The evidence the ecosystem card needs and this assembly does not read:
+   * whose representation this is, which routers were asked and which answered,
+   * and the reference feed a reviewed source binds to the address.
+   *
+   * Omitted by a caller that has none, and then the card is omitted whole
+   * rather than rendered as thirty apps that do not support the token.
+   */
+  ecosystem?: Omit<EcosystemEvidenceV1, 'venues' | 'poolRows'>;
 }): Promise<RepresentationUseAccessV1> {
   const tokenAddress = input.tokenAddress.toLowerCase();
   const observedAt = input.now.toISOString();
@@ -474,9 +553,27 @@ export async function assembleUseAccessV1(input: {
     rows: [],
   };
 
+  // Built from the venue answers and the stored pool rows, both of which exist
+  // before the chain is touched -- so the card survives an anchor failure.
+  const ecosystem = input.ecosystem
+    ? ecosystemBlockV1({
+        ...input.ecosystem,
+        venues: defi.venues,
+        poolRows: pools.state === 'measured' ? pools.rows : null,
+      })
+    : undefined;
+
   const anchor = await input.reader.readBlockAnchor();
   if (!anchor.ok) {
-    return unreadEverythingV1(tokenAddress, observedAt, anchor.reason, defi, walletAddress, pools);
+    return unreadEverythingV1(
+      tokenAddress,
+      observedAt,
+      anchor.reason,
+      defi,
+      walletAddress,
+      pools,
+      ecosystem,
+    );
   }
   const blockTag = anchor.value.blockTag;
   const call = (to: string, data: string): UseAccessCallV1 => ({ to, data, blockTag });
@@ -563,6 +660,7 @@ export async function assembleUseAccessV1(input: {
   }
 
   return {
+    ...(ecosystem ? { ecosystem } : {}),
     schemaVersion: 'representation-use-access/v1',
     chainId: 8453,
     tokenAddress,

@@ -10,7 +10,7 @@ import {
   type UseAccessAgentOutputV1,
 } from '@mioagent/rwa-issuer/useAccessAgent';
 
-import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
+import { ecosystemEvidenceForV1, rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpPublicError } from './tools.js';
 
 export { UseAccessAgentInputV1Schema, UseAccessAgentOutputV1Schema };
@@ -75,8 +75,15 @@ async function readV1(tokenAddress: string): Promise<UseAccessAgentOutputV1> {
   const stored = await rwaMarketRealityRuntime
     .poolReadings()
     .readingsForToken({ chainId: 8453, tokenAddress, limit: 60 });
+  // The same evidence the screen uses, from the same function. An assistant
+  // that read Base's page and asked "does Aave support this?" is exactly the
+  // caller this block was built for.
+  const ecosystem = await ecosystemEvidenceForV1(tokenAddress, {
+    issuerId: reviewedIssuerIdOrNullV1(identity.binding.issuerId),
+  });
   const use = await assembleUseAccessV1({
     tokenAddress,
+    ecosystem,
     pools: pooledLiquidityFromReadingsV1(stored),
     reader: rwaMarketRealityRuntime.useAccessReader(),
     now: rwaMarketRealityRuntime.now(),

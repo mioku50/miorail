@@ -1981,6 +1981,7 @@ export type UseSectionIdV1 =
   | 'bridge'
   | 'pooled'
   | 'defi'
+  | 'ecosystem'
   | 'issuer'
   | 'how_it_works';
 
@@ -2649,6 +2650,113 @@ const DEFI_USE_LABEL_V1: Readonly<Record<'lend' | 'borrow' | 'collateral', strin
   collateral: 'Collateral',
 };
 
+const ECOSYSTEM_VERDICT_V1: Readonly<
+  Record<'listed' | 'not_listed' | 'unread' | 'unchecked', { value: string; tone: ToneV1 }>
+> = {
+  listed: { value: 'Names this address', tone: 'good' },
+  not_listed: { value: 'Does not name this address', tone: 'off' },
+  unread: { value: 'Could not be read', tone: 'warn' },
+  unchecked: { value: 'Miorail does not read it', tone: 'neutral' },
+};
+
+const ECOSYSTEM_CATEGORY_LABEL_V1: Readonly<Record<string, string>> = {
+  issuance: 'Issuer',
+  oracle: 'Price feed',
+  exchange: 'Exchange',
+  routing: 'Routing',
+  lending: 'Lending',
+  yield: 'Yield',
+  analytics: 'Analytics',
+  wallet: 'Wallet',
+};
+
+/**
+ * Who Base says supports this stock, against who can be seen supporting THIS
+ * address.
+ *
+ * The card a reader arrives wanting. They have read a page naming thirty apps,
+ * three of them lenders, and every other section on this screen answers about
+ * the four venues Miorail checks — correctly, and about a different question.
+ *
+ * Two rules decide everything rendered here. A claim never colours a verdict:
+ * being on Base's list is not evidence about a contract. And an app Miorail
+ * does not read is `neutral`, never `off` with the refusals — twenty-four of
+ * the thirty are in that state, and colouring them as absences would publish
+ * the limit of our reach as a fact about somebody else's product.
+ */
+function ecosystemSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV1 {
+  const ecosystem = use?.ecosystem;
+  if (!ecosystem) {
+    // Open, like every other measured section with nothing to show. The two
+    // folded sections on this page are the documentation ones; a measured
+    // section that could not be read says so in the open, because "not read"
+    // is the answer and hiding it behind a chip is how it reads as "none".
+    return {
+      collapsed: false,
+      id: 'ecosystem',
+      label: 'Who supports it',
+      headline:
+        'Miorail did not read the published app list for this address on this call. That is a gap in this reading, not an absence of support.',
+      chip: 'Not read',
+      tone: 'neutral',
+      facts: [],
+      evidence: [],
+      edges: [],
+    };
+  }
+  const { tally } = ecosystem;
+  const read = tally.namesIt + tally.doesNot + tally.unread;
+  const facts: FactViewV1[] = ecosystem.rows
+    .filter((row) => row.measured !== 'unchecked')
+    .map((row) => {
+      const verdict = ECOSYSTEM_VERDICT_V1[row.measured];
+      return {
+        label: row.appName,
+        value: verdict.value,
+        // Base's own sentence, so the row says what the app claims to do and
+        // what was found, side by side and attributed. `evidence` is the
+        // reader's half; the market key or feed address behind it is `detail`
+        // and stays in the drawer below.
+        note: row.evidence ? `${row.claim} — ${row.evidence}` : row.claim,
+        tone: verdict.tone,
+      };
+    });
+  if (tally.unchecked > 0) {
+    facts.push({
+      label: 'Not read by Miorail',
+      value: `${tally.unchecked} of ${tally.named} apps`,
+      note: `${ecosystem.listedBy} names them and Miorail reads none of their data. That is the limit of Miorail’s reach — it is not a statement that they refused this token.`,
+      tone: 'neutral',
+    });
+  }
+  return {
+    collapsed: false,
+    id: 'ecosystem',
+    label: 'Who supports it',
+    headline: `${ecosystem.listedBy} names ${tally.named} apps for tokenized stocks. Miorail reads ${read} of them for this exact address: ${
+      tally.namesIt > 0
+        ? `${tally.namesIt} name${tally.namesIt === 1 ? 's' : ''} it`
+        : 'none names it'
+    }${tally.doesNot > 0 ? `, ${tally.doesNot} do not` : ''}.`,
+    chip: `${read} of ${tally.named} read`,
+    // Never `good`. This card is a ledger of claims against readings, and a
+    // green chip on it would be a verdict nothing here measured.
+    tone: 'neutral',
+    facts,
+    evidence: [
+      { label: 'Published list', value: `${ecosystem.sourceTitle} · ${ecosystem.sourceRef}` },
+      { label: 'List reviewed', value: ecosystem.reviewedAt },
+      ...ecosystem.rows.map((row) => ({
+        label: row.appName,
+        value: `${ECOSYSTEM_CATEGORY_LABEL_V1[row.category] ?? row.category} · ${row.measured}${
+          row.detail ? ` · ${row.detail}` : ''
+        }${row.reason ? ` · ${row.reason}` : ''}`,
+      })),
+    ],
+    edges: [],
+  };
+}
+
 export function useSectionsV1(input: {
   use: RepresentationUseAccessV1 | null;
   /** Whose token this is. Issuer-scoped evidence is filtered by it, and null
@@ -2679,6 +2787,10 @@ export function useSectionsV1(input: {
     // The trade verdict travels into the lending section, because the two are
     // both DeFi and the screen used to say so in only one of them.
     defiSectionV1(input.use, input.issuerId ?? null, tradeSectionV1(input).tone === 'good'),
+    // After the measured sections and before the documents: it is a ledger of
+    // other people's claims read against our measurements, so it belongs where
+    // the reader has already seen what Miorail itself established.
+    ecosystemSectionV1(input.use),
     {
       collapsed: true,
       id: 'issuer',

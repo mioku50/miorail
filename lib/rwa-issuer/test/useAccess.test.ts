@@ -425,6 +425,52 @@ describe('a venue row says where it came from, and the envelope stops claiming i
   });
 });
 
+describe('the claim ledger rides the same wire the screen parses', () => {
+  test('an assembled reading carrying the ledger still parses, strictly', async () => {
+    // The bug this test exists for, caught before it shipped: the wire schema
+    // is `.strict()`, and the browser parses every reply through it. A field
+    // added to the payload and not to the schema does not degrade — it throws,
+    // and the whole Use & access tab renders as an error.
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1(COINBASE_LIVE_V1),
+      now: NOW,
+      ecosystem: { issuerId: 'coinbase', referenceFeedAddress: '0x787f13de' },
+    });
+    const parsed = RepresentationUseAccessV1Schema.parse(JSON.parse(JSON.stringify(use)));
+    assert.ok(parsed.ecosystem);
+    assert.equal(parsed.ecosystem.listedBy, 'Base');
+    assert.equal(parsed.ecosystem.rows.length, parsed.ecosystem.tally.named);
+    assert.equal(parsed.ecosystem.rows.find((row) => row.appId === 'coinbase')?.measured, 'listed');
+    assert.equal(parsed.ecosystem.rows.find((row) => row.appId === 'chainlink')?.measured, 'listed');
+    // No venue reader was given, so the lenders are unchecked rather than
+    // refusing — the distinction the whole card rests on.
+    assert.equal(parsed.ecosystem.rows.find((row) => row.appId === 'aave')?.measured, 'unchecked');
+  });
+
+  test('a caller that supplies no ecosystem evidence omits the block entirely', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1(COINBASE_LIVE_V1),
+      now: NOW,
+    });
+    assert.equal(use.ecosystem, undefined);
+    assert.equal(RepresentationUseAccessV1Schema.parse(JSON.parse(JSON.stringify(use))).ecosystem, undefined);
+  });
+
+  test('a chain outage keeps the ledger, because nothing in it was read at that block', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1({}, { anchor: false }),
+      now: NOW,
+      ecosystem: { issuerId: 'coinbase' },
+    });
+    assert.equal(use.blockTag, null);
+    assert.ok(use.ecosystem, 'the ledger was blanked by an unrelated failure');
+    assert.equal(use.ecosystem.rows.find((row) => row.appId === 'coinbase')?.measured, 'listed');
+  });
+});
+
 describe('the venue parsers, against the shapes those venues really return', () => {
   // Field names from a live read of api.moonwell.fi on 2026-09-02.
   const MOONWELL_USDC = {

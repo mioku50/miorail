@@ -13,6 +13,7 @@ export * from './useAccess.js';
 export * from './useAccessAgent.js';
 export * from './defiVenues.js';
 export * from './venueAnnouncements.js';
+export * from './ecosystemClaims.js';
 export * from './openFigi.js';
 export * from './dinariSymbolBinding.js';
 export * from './pooledLiquidity.js';

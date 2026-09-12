@@ -2197,6 +2197,10 @@ describe('Phase 11 utility and eligibility map', () => {
         'Bridge',
         'Pooled liquidity',
         'Lend and borrow',
+        // The claim ledger sits after everything Miorail measured itself and
+        // before the documents: it reads other parties' claims against those
+        // measurements, so the measurements have to be on the page first.
+        'Who supports it',
         'Issuer services',
         'How it works',
       ],
@@ -3147,7 +3151,107 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       ...over,
     }) as never;
 
-  test('the seven sections are in the order a person asks', () => {
+  const ecosystem = (over: Record<string, unknown> = {}) => ({
+    listedBy: 'Base',
+    sourceTitle: 'Coinbase Tokenized Stocks',
+    sourceRef: 'https://brand.base.org/stocks',
+    reviewedAt: '2026-09-12',
+    tally: { named: 4, namesIt: 1, doesNot: 1, unread: 0, unchecked: 2 },
+    rows: [
+      {
+        appId: 'morpho',
+        appName: 'Morpho',
+        claim: 'Lend and borrow tokenized stocks with optimized rates.',
+        category: 'lending',
+        measured: 'listed',
+        evidence: 'the venue names this address',
+        detail: 'market 0xce98',
+        reason: null,
+      },
+      {
+        appId: 'aave',
+        appName: 'Aave',
+        claim: 'Lend and borrow against tokenized stock positions.',
+        category: 'lending',
+        measured: 'not_listed',
+        evidence: null,
+        detail: null,
+        reason: null,
+      },
+      {
+        appId: 'euler',
+        appName: 'Euler',
+        claim: 'Modular lending and borrowing for tokenized stocks.',
+        category: 'lending',
+        measured: 'unchecked',
+        evidence: null,
+        detail: null,
+        reason: null,
+      },
+      {
+        appId: 'fomo',
+        appName: 'Fomo',
+        claim: 'Mobile-first wallet for tokenized stocks.',
+        category: 'wallet',
+        measured: 'unchecked',
+        evidence: null,
+        detail: null,
+        reason: null,
+      },
+    ],
+    ...over,
+  });
+
+  test('the claim ledger shows what was read and refuses to colour what was not', () => {
+    // The card exists because a reader arrives having read a page that names
+    // thirty apps, three of them lenders, while every other section on this
+    // screen answers about the four venues Miorail checks.
+    const section = useSectionsV1({ ...base, use: use({ ecosystem: ecosystem() }) }).find(
+      (row) => row.id === 'ecosystem',
+    )!;
+    assert.equal(section.label, 'Who supports it');
+    assert.equal(section.chip, '2 of 4 read');
+    // Never good: a ledger of other parties' claims is not a verdict.
+    assert.equal(section.tone, 'neutral');
+    assert.match(section.headline, /Base names 4 apps/);
+
+    const morpho = section.facts.find((fact) => fact.label === 'Morpho')!;
+    assert.equal(morpho.value, 'Names this address');
+    assert.equal(morpho.tone, 'good');
+    // Base's own sentence travels with the reading, attributed and unrewritten.
+    assert.match(morpho.note ?? '', /optimized rates/);
+    // The market key belongs in the drawer, never on the line a reader reads.
+    assert.doesNotMatch(morpho.note ?? '', /0xce98/);
+    assert.ok(section.evidence.some((row) => row.value.includes('0xce98')));
+
+    const aave = section.facts.find((fact) => fact.label === 'Aave')!;
+    assert.equal(aave.value, 'Does not name this address');
+    assert.equal(aave.tone, 'off');
+
+    // The two apps nobody read are one neutral line, never two refusals.
+    assert.equal(section.facts.some((fact) => fact.label === 'Euler'), false);
+    const unread = section.facts.find((fact) => fact.label === 'Not read by Miorail')!;
+    assert.equal(unread.value, '2 of 4 apps');
+    assert.equal(unread.tone, 'neutral');
+    assert.match(unread.note ?? '', /not a statement that they refused/);
+
+    // Every row is still citable, including the ones with no reading.
+    assert.equal(
+      section.evidence.filter((row) => ['Morpho', 'Aave', 'Euler', 'Fomo'].includes(row.label)).length,
+      4,
+    );
+    assert.ok(section.evidence.some((row) => row.value.includes('brand.base.org/stocks')));
+  });
+
+  test('an address with no ledger says it was not read, in the open', () => {
+    const section = useSectionsV1({ ...base, use: use() }).find((row) => row.id === 'ecosystem')!;
+    assert.equal(section.collapsed, false);
+    assert.equal(section.chip, 'Not read');
+    assert.match(section.headline, /not an absence of support/);
+    assert.deepEqual(section.facts, []);
+  });
+
+  test('the eight sections are in the order a person asks', () => {
     // Pooled liquidity sits above lending because for these tokens it is the
     // larger answer by orders of magnitude, and the screen read as if it did
     // not exist: "Lend and borrow" honestly reported four lending venues while
@@ -3159,6 +3263,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       'bridge',
       'pooled',
       'defi',
+      'ecosystem',
       'issuer',
       'how_it_works',
     ]);

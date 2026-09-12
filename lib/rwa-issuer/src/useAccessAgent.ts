@@ -17,6 +17,7 @@ import {
   venueAnnouncementReadingsV1,
   type ReviewedVenueAnnouncementV1,
 } from './venueAnnouncements.js';
+import { ecosystemSummaryV1, type RepresentationEcosystemV1 } from './ecosystemClaims.js';
 
 // ---------------------------------------------------------------------------
 // Use & access, for an assistant rather than for a screen.
@@ -144,6 +145,51 @@ const AnnouncementRowSchemaV1 = z
   })
   .strict();
 
+const EcosystemBlockSchemaV1 = z
+  .object({
+    listedBy: z.string(),
+    sourceTitle: z.string(),
+    sourceRef: z.string(),
+    reviewedAt: z.string(),
+    tally: z
+      .object({
+        named: z.number().int().nonnegative(),
+        namesIt: z.number().int().nonnegative(),
+        doesNot: z.number().int().nonnegative(),
+        unread: z.number().int().nonnegative(),
+        unchecked: z.number().int().nonnegative(),
+      })
+      .strict(),
+    rows: z.array(
+      z
+        .object({
+          appId: z.string(),
+          appName: z.string(),
+          claim: z.string(),
+          category: z.enum([
+            'issuance',
+            'oracle',
+            'exchange',
+            'routing',
+            'lending',
+            'yield',
+            'analytics',
+            'wallet',
+          ]),
+          measured: z.enum(['listed', 'not_listed', 'unread', 'unchecked']),
+          /** What was read, in a reader's words. Never an id. */
+          evidence: z.string().nullable(),
+          /** The id behind it, for a caller that wants to check the claim. */
+          detail: z.string().nullable(),
+          reason: z.string().nullable(),
+        })
+        .strict(),
+    ),
+    /** Miorail's own reading of the tally, written by no model. */
+    summary: z.string(),
+  })
+  .strict();
+
 export const UseAccessAgentInputV1Schema = z
   .object({
     address: z
@@ -246,6 +292,17 @@ export const UseAccessAgentOutputV1Schema = z
       z.object({ state: z.literal('not_measured'), reason: z.string() }).strict(),
     ]),
     announcements: z.array(AnnouncementRowSchemaV1),
+    /**
+     * Who Base says supports these stocks, against who Miorail can see
+     * supporting THIS address.
+     *
+     * `measured` here carries the SAME four words the announcements above use,
+     * and `unchecked` is load-bearing in both: most of the apps Base names are
+     * apps Miorail does not read, and an assistant that reports them as
+     * refusals publishes our reach under their names. Null when the caller
+     * supplied no ecosystem evidence at all.
+     */
+    ecosystem: EcosystemBlockSchemaV1.nullable(),
   })
   .strict();
 export type UseAccessAgentOutputV1 = z.infer<typeof UseAccessAgentOutputV1Schema>;
@@ -333,6 +390,41 @@ export function agentPoolsV1(
   };
 }
 
+/**
+ * The ecosystem card, projected for an assistant.
+ *
+ * The deterministic summary travels WITH the rows rather than being left for
+ * the caller to compose: the sentence that must not be lost is the last one —
+ * that most of the list was never read — and a model handed thirty rows and no
+ * sentence will write "only six of thirty support it" every time.
+ */
+export function agentEcosystemV1(
+  ecosystem: RepresentationEcosystemV1 | undefined,
+  subject: { displaySymbol: string | null; tokenAddress: string },
+): UseAccessAgentOutputV1['ecosystem'] {
+  if (!ecosystem) return null;
+  return {
+    ...ecosystem,
+    summary: ecosystemSummaryV1({
+      displaySymbol: subject.displaySymbol,
+      tokenAddress: subject.tokenAddress,
+      readings: ecosystem.rows.map((row) => ({
+        app: {
+          appId: row.appId,
+          appName: row.appName,
+          claim: row.claim,
+          category: row.category,
+          binding: { kind: 'none' },
+        },
+        measured: row.measured,
+        evidence: row.evidence,
+        detail: row.detail,
+        reason: row.reason,
+      })),
+    }),
+  };
+}
+
 export function useAccessAgentSummaryV1(input: {
   displaySymbol: string | null;
   tokenAddress: string;
@@ -346,6 +438,15 @@ export function useAccessAgentSummaryV1(input: {
   /** The pooled reading, so the summary can name the use these tokens actually
    * have. Optional so a caller that measured no pools reads unchanged. */
   pools?: UseAccessAgentOutputV1['pools'];
+  /**
+   * The ecosystem card's own sentence, appended verbatim.
+   *
+   * Here rather than only in the block, because an assistant told to read
+   * `miorailSummary` first will answer from it alone — and the question this
+   * card exists for ("Base says Aave supports these") is asked against a page
+   * the user has already read.
+   */
+  ecosystem?: UseAccessAgentOutputV1['ecosystem'];
 }): string {
   const name = input.displaySymbol ?? input.tokenAddress;
   const parts: string[] = [];
@@ -433,6 +534,8 @@ export function useAccessAgentSummaryV1(input: {
     }
   }
 
+  if (input.ecosystem) parts.push(input.ecosystem.summary);
+
   return parts.join(' ');
 }
 
@@ -473,6 +576,10 @@ export function useAccessForAgentV1(input: {
     .filter((venue) => venue.state !== 'unread')
     .map((venue) => venue.venueName);
   const pools = agentPoolsV1(use.pools);
+  const ecosystem = agentEcosystemV1(use.ecosystem, {
+    displaySymbol: input.displaySymbol,
+    tokenAddress: use.tokenAddress,
+  });
 
   return UseAccessAgentOutputV1Schema.parse({
     schemaVersion: USE_ACCESS_AGENT_SCHEMA_VERSION_V1,
@@ -493,6 +600,7 @@ export function useAccessForAgentV1(input: {
         answeredVenues,
         unreadVenues,
         pools,
+        ecosystem,
       }),
       checkedVenues: [...use.defi.checkedVenues],
       establishedUses: uses,
@@ -532,5 +640,6 @@ export function useAccessForAgentV1(input: {
     },
     pools,
     announcements,
+    ecosystem,
   });
 }

@@ -96,6 +96,31 @@ test.after(() => {
   Object.assign(rwaMarketRealityRuntime, restore);
 });
 
+describe('an assistant asking what Base said is answered from both sides', () => {
+  test('the claim ledger reaches the agent output and its summary', async () => {
+    // The failure this block exists for: an assistant that had read Base's
+    // page and asked "does Aave support NVDAc?" had nothing on this surface
+    // naming Aave's own answer, so it answered from the page.
+    const reading = await miorailGetUseAccessV1({ address: NVDA });
+    const ecosystem = reading.ecosystem!;
+    assert.equal(ecosystem.listedBy, 'Base');
+    assert.equal(ecosystem.rows.length, ecosystem.tally.named);
+
+    const aave = ecosystem.rows.find((row) => row.appId === 'aave')!;
+    assert.equal(aave.measured, 'not_listed');
+    // The issuer of record is established by the binding this tool already
+    // resolved, so one row is always read even with no venue at all.
+    const coinbase = ecosystem.rows.find((row) => row.appId === 'coinbase')!;
+    assert.equal(coinbase.measured, 'listed');
+    // Nothing here reads Euler, and a reader must not be told it refused.
+    assert.equal(ecosystem.rows.find((row) => row.appId === 'euler')!.measured, 'unchecked');
+
+    assert.match(ecosystem.summary, /apps Miorail does not read at all/);
+    // And the sentence is in the summary an assistant is told to read first.
+    assert.match(reading.miorailSummary.summary, /apps Miorail does not read at all/);
+  });
+});
+
 describe('an assistant asking about LP is answered from the pools', () => {
   test('the stored pools reach the agent output and the summary', async () => {
     // `defi` answers a LENDING question, and for these tokens it almost always

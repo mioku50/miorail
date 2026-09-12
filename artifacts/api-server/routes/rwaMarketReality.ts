@@ -63,6 +63,8 @@ import {
   STOCK_ISSUER_NOTICE_V1 as STOCK_ISSUER_NOTICE_COPY_V1,
   stockExecutionHandoffV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
+import { type EcosystemEvidenceV1 } from '@mioagent/rwa-issuer/ecosystemClaims';
+import { reviewedIssuerIdOrNullV1 } from '@mioagent/rwa-issuer/useAccessAgent';
 import {
   assembleUseAccessV1,
   reviewedDefiSourcesV1,
@@ -226,6 +228,9 @@ export const rwaMarketRealityRuntime = {
   ratios: () => createDatabaseRepresentationRatioRepository(client),
   supplies: () => createDatabaseRepresentationSupplyRepository(client),
   poolReadings: () => createDatabaseMarketPoolReadingRepository(client),
+  // Reads only. The write path needs a transaction and is the ingest worker's
+  // alone; nothing on this router publishes a snapshot.
+  official: () => createDatabaseOfficialAssetRepository(client),
   now: () => new Date(),
   /**
    * The narrator, or null when none is configured.
@@ -677,6 +682,64 @@ async function poolsForTokenV1(tokenAddress: string) {
   return pooledLiquidityFromReadingsV1(stored);
 }
 
+/**
+ * The three facts the ecosystem card needs and the chain read does not make.
+ *
+ * Whose representation this is, which routers were asked and which came back
+ * with a route, and the reference feed a reviewed source binds to this exact
+ * address. Every one of them degrades to a missing field rather than to an
+ * error: an app Miorail could not read renders as `unchecked`, which is the
+ * honest word, and none of these reads may take the page down. Shared with the
+ * MCP tool so the screen and an assistant answer from one computation.
+ */
+export async function ecosystemEvidenceForV1(
+  tokenAddress: string,
+  /**
+   * What the caller already read, so it is not read twice.
+   *
+   * The MCP path resolves the binding before it can refuse an unreviewed
+   * address, and re-reading it here would double every reading's cheapest
+   * query for nothing.
+   */
+  known?: { issuerId?: EcosystemEvidenceV1['issuerId'] },
+): Promise<Omit<EcosystemEvidenceV1, 'venues' | 'poolRows'>> {
+  // The call itself is inside the guard, not just its promise: a repository
+  // that throws while being built would otherwise escape a trailing `.catch`
+  // and take the page with it.
+  const read = async <T>(work: () => Promise<T>): Promise<T | null> => {
+    try {
+      return await work();
+    } catch {
+      return null;
+    }
+  };
+  const [identity, run, official] = await Promise.all([
+    known?.issuerId === undefined
+      ? read(() =>
+          rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress }),
+        )
+      : null,
+    read(() =>
+      rwaMarketRealityRuntime
+        .cashExit()
+        .latestCompletedRun({ chainId: 8453, tokenAddress, scope: 'public_ladder' }),
+    ),
+    read(() => rwaMarketRealityRuntime.official().officialIdentity({ chainId: 8453, tokenAddress })),
+  ]);
+  const quoted = new Set(
+    (run?.observations ?? []).filter((row) => row.status === 'full').map((row) => row.source),
+  );
+  return {
+    issuerId: known?.issuerId ?? reviewedIssuerIdOrNullV1(identity?.binding.issuerId),
+    // Null, not an empty pair: a token nobody has measured has no router that
+    // declined it, and `asked: []` would read as exactly that.
+    routeSources: run ? { asked: run.approvedSources, quoted: [...quoted] } : null,
+    referenceFeedAddress:
+      official?.listings.find((listing) => listing.referenceFeedAddress !== null)
+        ?.referenceFeedAddress ?? null,
+  };
+}
+
 rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {
     res
@@ -707,10 +770,12 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
     // them on the screen rather than blank a good measurement to report a bad
     // one — which is exactly what the unread path does with them.
     const pools = await poolsForTokenV1(tokenAddress);
+    const ecosystem = await ecosystemEvidenceForV1(tokenAddress);
 
     const use = await assembleUseAccessV1({
       tokenAddress,
       pools,
+      ecosystem,
       reader: rwaMarketRealityRuntime.useAccessReader(),
       now: rwaMarketRealityRuntime.now(),
       // Read per venue row. The four venue reads are sequential and two of them
