@@ -1201,9 +1201,14 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
       const ticker = card.subjectTicker ?? 'an asset';
       const wad = text('multiplierWad');
       const ratio = wad === null ? null : rwaMultiplierLabelV1(wad);
+      // What the contract DID, not what it means for the holder. The first two
+      // of these ever recorded were Backed tokens, not Coinbase's — the same
+      // event name on an issuer whose multiplier is a rebase rather than a
+      // redemption ratio. Naming the meaning here would put Coinbase's
+      // semantics on somebody else's token.
       return ratio === null
-        ? `${ticker} changed the number of underlying shares one token redeems for. The new value was published in a form this build cannot read, so the card's own multiplier reading is the one to trust.`
-        : `${ticker} now redeems ${ratio} underlying share${ratio === '1' ? '' : 's'} per token. One token has not permanently equalled one share since this changed.`;
+        ? `${ticker} published a new multiplier onchain. The value came in a form this build cannot read, so the card's own multiplier reading is the one to trust.`
+        : `${ticker} published a new multiplier of ${ratio}. What a multiplier means is the issuer's: on Coinbase's B20 assets it is how many underlying shares one token redeems for.`;
     }
     default:
       return 'This build does not know how to describe this signal.';
@@ -1231,7 +1236,12 @@ export function signalFeedViewV1(wire: RwaSignalFeedWireV1, now: Date): SignalFe
         } across blocks ${record.fromBlock.toLocaleString('en-US')}–${record.toBlock.toLocaleString('en-US')}${
           // Only said when it is true. A record that opened later is still a
           // record, and calling it complete would be the claim doing the work.
-          record.sinceFirstStock ? ', every block since the first tokenized stock existed' : ''
+          // Scoped to Coinbase on purpose: that is the cohort the genesis block
+          // was measured against, and the Backed representations in the same
+          // tracked set are older than it.
+          record.sinceFirstStock
+            ? ', every block since the first Coinbase tokenized stock existed'
+            : ''
         }.`;
 
   return {

@@ -519,7 +519,7 @@ describe('rwa discover view — signals', () => {
     );
     assert.match(view.watching!, /Nothing before that can appear here/);
     assert.match(view.corporateRecord!, /Corporate actions: none across blocks 49,145,000–51,212,000/);
-    assert.match(view.corporateRecord!, /every block since the first tokenized stock existed/);
+    assert.match(view.corporateRecord!, /every block since the first Coinbase tokenized stock existed/);
     assert.notEqual(view.corporateRecord, view.watching);
 
     // A record that opened later is still a record, and the completeness clause
@@ -677,7 +677,10 @@ describe('rwa discover view — signals', () => {
     assert.equal(view.cards[0]!.title, 'Shares per token changed');
     // Every digit of the WAD. A float loses the last of them, and those are the
     // difference between a share count that reconciles and one that does not.
-    assert.match(view.cards[0]!.detail, /1\.057380318816778075 underlying shares/);
+    assert.match(view.cards[0]!.detail, /new multiplier of 1\.057380318816778075/);
+    // ...and no claim about what it means: the first two of these ever recorded
+    // were Backed tokens, whose multiplier is a rebase, not a redemption ratio.
+    assert.match(view.cards[0]!.detail, /What a multiplier means is the issuer's/);
   });
 
   test('a WAD is a decimal string, trimmed, and a bad one is not a number', () => {

@@ -117,7 +117,7 @@ describe('the market-wide recorded-change read', () => {
     });
     assert.match(out.miorailSummary.summary, /No onchain corporate action is recorded/);
     assert.match(out.miorailSummary.summary, /49145000-51212000/);
-    assert.match(out.miorailSummary.summary, /every block since the first of them existed/);
+    assert.match(out.miorailSummary.summary, /every block since the first Coinbase tokenized stock existed/);
   });
 
   test('a record that opened late is never described as complete', async () => {

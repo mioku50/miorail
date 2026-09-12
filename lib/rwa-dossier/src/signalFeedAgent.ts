@@ -206,11 +206,13 @@ function recordedChangesSummaryV1(input: {
       record.actions === 0
         ? `No onchain corporate action is recorded on any reviewed tokenized stock across blocks ${record.fromBlock}-${record.toBlock}${
             record.sinceFirstStock
-              ? ', which is every block since the first of them existed'
+              ? ', which is every block since the first Coinbase tokenized stock existed'
               : ' — the record starts there, so nothing is known about earlier blocks'
           }.`
         : `${record.actions} onchain corporate action${record.actions === 1 ? '' : 's'} are on record across blocks ${record.fromBlock}-${record.toBlock}${
-            record.sinceFirstStock ? ', every block since the first tokenized stock existed' : ''
+            record.sinceFirstStock
+              ? ', every block since the first Coinbase tokenized stock existed'
+              : ''
           }.`,
     );
   }
