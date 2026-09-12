@@ -8,6 +8,9 @@ import {
   addressArrayFromReturnV1,
   compoundDefiSourceV1,
   compoundListingFromCometsV1,
+  EULER_VISIBILITIES_V1,
+  eulerDefiSourceV1,
+  eulerListingFromVaultsV1,
   moonwellListingFromMarketsV1,
   morphoListingFromMarketsV1,
   reviewedDefiSourcesV1,
@@ -654,10 +657,10 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
     assert.equal(listing.uses.lend, null);
   });
 
-  test('a caller with no chain reader still gets the two HTTP venues', () => {
+  test('a caller with no chain reader still gets the three HTTP venues', () => {
     assert.deepEqual(
       reviewedDefiSourcesV1().map((source) => source.venueId),
-      ['moonwell', 'morpho'],
+      ['moonwell', 'morpho', 'euler'],
     );
     const reader = {
       async readBlockAnchor() {
@@ -667,12 +670,170 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
         return { ok: false as const, reason: 'not asked' };
       },
     } satisfies UseAccessReaderV1;
-    // Four named places is what makes the absence worth printing: "not at the
-    // two venues Miorail checked" is not a sentence a reader can act on.
+    // Five named places is what makes the absence worth printing: "not at the
+    // two venues Miorail checked" is not a sentence a reader can act on. Three
+    // of these five are the lenders Base's own stocks page names; the other two
+    // are ours, and they stay for the same reason — a wider bounded miss is
+    // worth more than a narrow one.
     assert.deepEqual(
       reviewedDefiSourcesV1(reader).map((source) => source.venueId),
-      ['moonwell', 'morpho', 'aave_v3', 'compound_v3'],
+      ['moonwell', 'morpho', 'euler', 'aave_v3', 'compound_v3'],
     );
+  });
+});
+
+describe('five venues, asked together', () => {
+  test('the venues come back in the published order, not the order they answered', async () => {
+    // Sorting by who replied first would put our own network on the card as if
+    // it were the ecosystem's shape — and asking them one at a time made the
+    // section's worst case the sum of five timeouts.
+    const slow = (venueId: string, ms: number): DefiListingSourceV1 => ({
+      venueId,
+      venueName: venueId,
+      kind: 'venue_catalogue',
+      async lookup() {
+        await new Promise((done) => setTimeout(done, ms));
+        return {
+          venueId,
+          venueName: venueId,
+          state: 'not_listed' as const,
+          uses: { lend: null, borrow: null, collateral: null },
+          curated: null,
+          marketRef: null,
+          reason: null,
+        };
+      },
+    });
+    const started = Date.now();
+    const listing = await defiListingV1(
+      '0xb2000000000000000000002d0ba3164cc74f58b7',
+      [slow('first', 120), slow('second', 10), slow('third', 60)],
+      () => new Date('2026-09-12T12:00:00.000Z'),
+    );
+    assert.deepEqual(listing.venues.map((venue) => venue.venueId), ['first', 'second', 'third']);
+    // Together, not one after another: sequential would be at least 190ms.
+    assert.ok(Date.now() - started < 190, 'the reads overlapped');
+  });
+});
+
+describe('Euler, the third lender Base names', () => {
+  // Every fixture below is the shape the public v3 API actually returned on
+  // 2026-09-12, trimmed to the fields this parser reads.
+  const vault = (over: Record<string, unknown> = {}) => ({
+    chainId: 8453,
+    address: '0x4f74918c5ede7a06a3128f09b540ff7881b76f60',
+    symbol: 'eGOOGLc-2',
+    vaultType: 'evk',
+    asset: { address: '0xb2000000000000000000002d0ba3164cc74f58b7', symbol: 'GOOGLc' },
+    totalAssets: '621891117',
+    totalBorrows: '0',
+    visibility: { status: 'pending_review', decidedBy: 'unclaimed', explorableLend: false, explorableBorrow: false },
+    ...over,
+  });
+
+  test('a vault nobody at Euler has claimed is listed, and is not curated', () => {
+    // The distinction this row exists to keep. Anyone may deploy an EVK vault,
+    // so a vault existing proves a vault exists — not that Euler accepted the
+    // asset. Euler publishes its own answer as a visibility status, and that
+    // is what `curated` is read from.
+    const reading = eulerListingFromVaultsV1([
+      vault(),
+      vault({ symbol: 'eGOOGLc-1', address: '0xaa0f1191c9c2d0b5098088ca3c0630121b8ce9b9', totalAssets: '0' }),
+    ]);
+    assert.equal(reading.state, 'listed');
+    assert.equal(reading.curated, false);
+    assert.equal(reading.uses.lend, true);
+    assert.equal(reading.uses.borrow, false);
+    // Not `false`: this document says what a vault holds, never which other
+    // vaults accept it. A `false` here would be a claim the payload does not
+    // contain.
+    assert.equal(reading.uses.collateral, null);
+    assert.equal(reading.marketRef, 'eGOOGLc-1, eGOOGLc-2');
+  });
+
+  test('the control discriminates: USDC comes back curated and borrowable', () => {
+    // A check that cannot come back positive has not been shown to work. USDC
+    // returned a hundred and twenty Base vaults, several of them visible with
+    // real borrows; the stocks returned two each, all unclaimed.
+    const reading = eulerListingFromVaultsV1([
+      vault({
+        symbol: 'eUSDC-100',
+        asset: { address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', symbol: 'USDC' },
+        totalAssets: '612691934438',
+        totalBorrows: '553495160955',
+        visibility: { status: 'visible', decidedBy: 'verified', explorableLend: true, explorableBorrow: true },
+      }),
+    ]);
+    assert.equal(reading.curated, true);
+    assert.equal(reading.uses.borrow, true);
+  });
+
+  test('a borrow that happened counts even where Euler does not offer one', () => {
+    const reading = eulerListingFromVaultsV1([vault({ totalBorrows: '102039' })]);
+    assert.equal(reading.uses.borrow, true);
+  });
+
+  test('no vault for this asset is not listed, and it is not an error', () => {
+    // COINc, delisted with zero supply, returned exactly this.
+    const reading = eulerListingFromVaultsV1([]);
+    assert.equal(reading.state, 'not_listed');
+    assert.equal(reading.curated, null);
+  });
+
+  test('the read asks for every visibility Euler publishes', async () => {
+    // THE trap. The endpoint defaults to `visible,warning`, which on Base
+    // returns 62 vaults and not one tokenized stock — a confident `not_listed`
+    // on an asset with a live vault holding real deposits.
+    let asked: string | null = null;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (url: string) => {
+      asked = String(url);
+      return new Response(JSON.stringify({ data: [vault()] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as typeof fetch;
+    try {
+      const reading = await eulerDefiSourceV1().lookup('0xb2000000000000000000002d0ba3164cc74f58b7');
+      assert.equal(reading.state, 'listed');
+    } finally {
+      globalThis.fetch = original;
+    }
+    const query = new URL(asked!).searchParams;
+    assert.equal(query.get('visibility'), EULER_VISIBILITIES_V1);
+    assert.equal(query.get('chainId'), '8453');
+    // The address is BOUND, never searched for locally in a page of the whole
+    // universe: a miss must not depend on where the page stopped.
+    assert.equal(query.get('asset'), '0xb2000000000000000000002d0ba3164cc74f58b7');
+  });
+
+  test('a vault for another asset is unread, never quietly dropped', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ data: [vault({ asset: { address: '0x' + '1'.repeat(40) } })] }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })) as typeof fetch;
+    try {
+      const reading = await eulerDefiSourceV1().lookup('0xb2000000000000000000002d0ba3164cc74f58b7');
+      assert.equal(reading.state, 'unread');
+      assert.match(reading.reason ?? '', /another asset/);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+
+  test('an envelope this build does not recognise says nothing about the token', async () => {
+    const original = globalThis.fetch;
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ vaults: [] }), { status: 200, headers: { 'content-type': 'application/json' } })) as typeof fetch;
+    try {
+      const reading = await eulerDefiSourceV1().lookup('0xb2000000000000000000002d0ba3164cc74f58b7');
+      // NOT `not_listed`: a shape change must never become a finding.
+      assert.equal(reading.state, 'unread');
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });
 

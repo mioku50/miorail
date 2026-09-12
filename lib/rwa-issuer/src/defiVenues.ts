@@ -31,6 +31,23 @@ import type {
 
 export const MOONWELL_MARKETS_URL_V1 = 'https://api.moonwell.fi/v1/markets?chain=base';
 export const MORPHO_GRAPHQL_URL_V1 = 'https://api.morpho.org/graphql';
+export const EULER_VAULTS_URL_V1 = 'https://v3.euler.finance/v3/evk/vaults';
+
+/**
+ * Every visibility Euler publishes, asked for explicitly.
+ *
+ * The default is `visible,warning`, and that default is the whole reason this
+ * parameter is pinned here. Measured 2026-09-12: the default returns 62 Base
+ * vaults and NOT ONE of them holds a tokenized stock, while the same endpoint
+ * with all four visibilities returns 415 — the exact number the factory has
+ * deployed — including twenty vaults across ten of the thirteen Coinbase
+ * stocks, one of them holding real deposits.
+ *
+ * Asking for the default would have produced a confident `not_listed` on an
+ * asset with a live vault. What Euler does not SHOW is not what Euler does not
+ * HAVE, and the difference travels as `curated` rather than as absence.
+ */
+export const EULER_VISIBILITIES_V1 = 'visible,warning,hidden,pending_review';
 
 /**
  * Both roles in one document, by exact address.
@@ -183,6 +200,115 @@ export function moonwellDefiSourceV1(options?: { endpoint?: string }): DefiListi
         tokenAddress,
         markets.filter((row): row is Record<string, unknown> => typeof row === 'object' && row !== null),
       );
+    },
+  };
+}
+
+/**
+ * Euler's vaults for one exact asset, as a reading.
+ *
+ * WHAT A EULER VAULT IS, AND WHY `curated` CARRIES THE WEIGHT
+ *
+ * Anyone may deploy an EVK vault for any token, exactly as anyone may create a
+ * Morpho market — so a vault EXISTING proves a vault exists, not that Euler
+ * accepted the asset. Euler publishes the difference itself, as a visibility
+ * status decided by a reviewer, and that is what `curated` is set from: a vault
+ * Euler shows is `true`, a vault sitting unclaimed in `pending_review` or
+ * `hidden` is `false`.
+ *
+ * Measured 2026-09-12 on Base: all twenty tokenized-stock vaults are
+ * `pending_review`, decided by `unclaimed`, with `explorableLend` and
+ * `explorableBorrow` both false — while USDC returns a hundred and twenty
+ * vaults, several `visible` with real borrows and a seven per cent supply APY.
+ * A check that cannot come back positive has not been shown to discriminate,
+ * and this one can.
+ *
+ * THE THREE AXES
+ *
+ *   lend        A vault exists for this exact asset. Supplying into it is an
+ *               onchain action nobody gates; whether Euler's own surface shows
+ *               it is what `curated` says.
+ *   borrow      Whether any vault OFFERS borrowing of this asset. Measured as
+ *               `explorableBorrow` or a non-zero borrow — every stock vault is
+ *               false on both, and separately the chain says their collateral
+ *               lists are empty, so nothing can be borrowed from them at all.
+ *   collateral  NULL. This document says what a vault holds, not which other
+ *               vaults accept it, and that is a different question with a
+ *               different endpoint. `null` is "the venue did not say", which is
+ *               the truth; a `false` here would be a claim from a document that
+ *               does not contain the answer.
+ */
+export function eulerListingFromVaultsV1(vaults: readonly Record<string, unknown>[]): DefiVenueReadingV1 {
+  if (vaults.length === 0) return notListedV1('euler', 'Euler');
+  const visibilityOf = (row: Record<string, unknown>) =>
+    typeof row.visibility === 'object' && row.visibility !== null
+      ? (row.visibility as Record<string, unknown>)
+      : {};
+  const borrowOffered = vaults.some((row) => {
+    const visible = visibilityOf(row);
+    if (visible.explorableBorrow === true) return true;
+    const borrows = row.totalBorrows;
+    return typeof borrows === 'string' && /^[0-9]+$/.test(borrows) && BigInt(borrows) > 0n;
+  });
+  // Curated only if Euler shows at least one of them. One reviewed vault among
+  // several unclaimed ones is still an asset Euler has put in front of a user.
+  const curated = vaults.some((row) => visibilityOf(row).explorableLend === true);
+  const names = vaults
+    .map((row) => (typeof row.symbol === 'string' ? row.symbol : null))
+    .filter((symbol): symbol is string => symbol !== null && symbol.length > 0)
+    .sort();
+  return {
+    venueId: 'euler',
+    venueName: 'Euler',
+    state: 'listed',
+    uses: { lend: true, borrow: borrowOffered, collateral: null },
+    curated,
+    marketRef: names.length > 0 ? names.join(', ').slice(0, 120) : null,
+    reason: null,
+  };
+}
+
+export function eulerDefiSourceV1(options?: { endpoint?: string }): DefiListingSourceV1 {
+  return {
+    venueId: 'euler',
+    venueName: 'Euler',
+    kind: 'venue_catalogue',
+    async lookup(tokenAddress) {
+      if (!ADDRESS_V1.test(tokenAddress)) return unreadV1('euler', 'Euler', 'bad address');
+      const url = new URL(options?.endpoint ?? EULER_VAULTS_URL_V1);
+      url.searchParams.set('chainId', '8453');
+      // The address is a BOUND parameter, never a local search over a page of
+      // the whole universe: a miss must not depend on where the page stopped.
+      url.searchParams.set('asset', tokenAddress);
+      url.searchParams.set('visibility', EULER_VISIBILITIES_V1);
+      url.searchParams.set('limit', '50');
+      const response = await partnerFetch(url.toString(), { headers: { accept: 'application/json' } });
+      if (!response.ok) return unreadV1('euler', 'Euler', `euler answered HTTP ${response.status}`);
+      const body = (await response.json()) as { data?: unknown; meta?: unknown };
+      if (!Array.isArray(body.data)) {
+        // Not "no vaults": an envelope this parser does not recognise says
+        // nothing about the token, and reading it as zero is how a shape change
+        // becomes a finding about an asset.
+        return unreadV1('euler', 'Euler', 'euler returned an unrecognised envelope');
+      }
+      const rows = body.data.filter(
+        (row): row is Record<string, unknown> => typeof row === 'object' && row !== null,
+      );
+      if (rows.length !== body.data.length) {
+        return unreadV1('euler', 'Euler', 'euler returned a vault row this build cannot read');
+      }
+      // Every row must be about the asset we asked for. A server that answered
+      // with somebody else's vault is a server this build does not understand,
+      // and filtering it away silently would hide that.
+      const wanted = tokenAddress.toLowerCase();
+      const mismatched = rows.some((row) => {
+        const asset = row.asset;
+        const address =
+          typeof asset === 'object' && asset !== null ? (asset as Record<string, unknown>).address : null;
+        return typeof address !== 'string' || address.toLowerCase() !== wanted;
+      });
+      if (mismatched) return unreadV1('euler', 'Euler', 'euler returned a vault for another asset');
+      return eulerListingFromVaultsV1(rows);
     },
   };
 }
@@ -461,7 +587,11 @@ export function compoundDefiSourceV1(reader: UseAccessReaderV1): DefiListingSour
  * itself.
  */
 export function reviewedDefiSourcesV1(reader?: UseAccessReaderV1): DefiListingSourceV1[] {
-  const sources = [moonwellDefiSourceV1(), morphoDefiSourceV1()];
+  // Base's own stocks page names three lenders — Morpho, Aave and Euler — and
+  // this list read two of them until Euler was added. Moonwell and Compound are
+  // ours, not Base's, and they stay because a bounded "not at these five" is
+  // worth more than a bounded "not at these four".
+  const sources = [moonwellDefiSourceV1(), morphoDefiSourceV1(), eulerDefiSourceV1()];
   if (reader) sources.push(aaveDefiSourceV1(reader), compoundDefiSourceV1(reader));
   return sources;
 }

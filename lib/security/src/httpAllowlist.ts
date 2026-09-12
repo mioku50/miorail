@@ -32,6 +32,13 @@ export const ALLOWED_PARTNER_HOSTS = [
   // gated behind, and which one is used is decided by configuration, not here.
   'api-enterprise.sbt.dinari.com',
   'api-enterprise.sandbox.dinari.com',
+  // Phase 13.8: Euler's public v3 read API, for the one question the chain
+  // answers only by walking 415 vault proxies — "is there a vault for this
+  // exact asset". Read-only, no key, and the only path requested is
+  // /v3/evk/vaults. It is a SECOND opinion on an onchain fact, never the only
+  // one: the same reading was taken from the factory before this host was
+  // trusted with it.
+  'v3.euler.finance',
   // The registry that ISSUES composite FIGIs. Every FIGI taken from an issuer
   // catalogue is put to it before it becomes an underlying key, and the same
   // answer carries the security type the asset class is read from.

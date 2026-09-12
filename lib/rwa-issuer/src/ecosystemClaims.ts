@@ -146,10 +146,12 @@ export const BASE_STOCKS_ECOSYSTEM_V1: readonly ReviewedEcosystemAppV1[] = [
     appName: 'Euler',
     claim: 'Modular lending and borrowing for tokenized stocks.',
     category: 'lending',
-    // Base names three lenders and Miorail reads two of them. Leaving this
-    // `none` is what makes that sentence true on the screen instead of only in
-    // a backlog.
-    binding: { kind: 'none' },
+    // Read since 2026-09-12. Base named three lenders and Miorail read two;
+    // this is the third. What it reports is deliberately not a yes/no about
+    // the claim above: Euler has vaults for ten of the thirteen and shows none
+    // of them, so the row comes back `listed` with `curated: false` — a vault
+    // exists, and Euler has not put the asset in front of anybody.
+    binding: { kind: 'defi_venue', venueId: 'euler' },
   },
   {
     appId: 'kyberswap',

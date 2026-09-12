@@ -112,7 +112,10 @@ describe('an assistant asking what Base said is answered from both sides', () =>
     // resolved, so one row is always read even with no venue at all.
     const coinbase = ecosystem.rows.find((row) => row.appId === 'coinbase')!;
     assert.equal(coinbase.measured, 'listed');
-    // Nothing here reads Euler, and a reader must not be told it refused.
+    // Euler IS bound now, and this reading carries no Euler row — a venue that
+    // was not in the answer is `unchecked`, never `not_listed`. The difference
+    // is the whole point of the four states: a reader must not be told a venue
+    // refused when nobody asked it.
     assert.equal(ecosystem.rows.find((row) => row.appId === 'euler')!.measured, 'unchecked');
 
     assert.match(ecosystem.summary, /apps Miorail does not read at all/);

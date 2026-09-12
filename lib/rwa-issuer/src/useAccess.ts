@@ -697,31 +697,43 @@ export async function defiListingV1(
   sources: readonly DefiListingSourceV1[],
   clock: () => Date,
 ): Promise<DefiListingV1> {
-  const venues: DefiVenueListingV1[] = [];
-  for (const source of sources) {
-    const observed = (): DefiVenueObservationV1 => ({
-      source: source.kind,
-      at: clock().toISOString(),
-    });
-    try {
-      const reading = await source.lookup(tokenAddress.toLowerCase());
-      // Stamped here and nowhere else: a source cannot hand up its own
-      // provenance, so it cannot hand up a wrong one.
-      venues.push({ ...reading, observed: observed() });
-    } catch (error) {
-      venues.push({
-        venueId: source.venueId,
-        venueName: source.venueName,
-        state: 'unread',
-        uses: { lend: null, borrow: null, collateral: null },
-        curated: null,
-        marketRef: null,
-        reason: error instanceof Error ? error.message.slice(0, 200) : 'venue read failed',
-        // A failed reading is still a reading: it says when we tried.
-        observed: observed(),
+  // Asked together, reported in the published order.
+  //
+  // These five are independent questions to five different places, and asking
+  // them one after another made the section's worst case the SUM of five
+  // timeouts. Nothing here depends on an earlier answer, and the fifth venue
+  // was added the day this changed — a reader should not pay in latency for
+  // Miorail checking one more place.
+  //
+  // `Promise.all` keeps the input order, so the venues still come back in the
+  // order the sources were declared rather than the order they happened to
+  // answer. A surface that sorted by speed would be reporting our network.
+  const venues: DefiVenueListingV1[] = await Promise.all(
+    sources.map(async (source): Promise<DefiVenueListingV1> => {
+      const observed = (): DefiVenueObservationV1 => ({
+        source: source.kind,
+        at: clock().toISOString(),
       });
-    }
-  }
+      try {
+        const reading = await source.lookup(tokenAddress.toLowerCase());
+        // Stamped here and nowhere else: a source cannot hand up its own
+        // provenance, so it cannot hand up a wrong one.
+        return { ...reading, observed: observed() };
+      } catch (error) {
+        return {
+          venueId: source.venueId,
+          venueName: source.venueName,
+          state: 'unread',
+          uses: { lend: null, borrow: null, collateral: null },
+          curated: null,
+          marketRef: null,
+          reason: error instanceof Error ? error.message.slice(0, 200) : 'venue read failed',
+          // A failed reading is still a reading: it says when we tried.
+          observed: observed(),
+        };
+      }
+    }),
+  );
   return { checkedVenues: sources.map((source) => source.venueName), venues };
 }
 

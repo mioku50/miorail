@@ -67,6 +67,10 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     // verification form; which one is used is configuration, not this list.
     'api-enterprise.sbt.dinari.com',
     'api-enterprise.sandbox.dinari.com',
+    // Phase 13.8 — Euler's public v3 read API. The only host added for the
+    // third lender Base names, and it is a second opinion on a reading taken
+    // from the vault factory first, never the only source for it.
+    'v3.euler.finance',
     'api.openfigi.com',
   ]);
 });

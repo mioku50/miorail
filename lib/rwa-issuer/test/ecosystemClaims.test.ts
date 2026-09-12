@@ -49,14 +49,16 @@ describe('the reviewed ecosystem registry', () => {
     }
   });
 
-  test('the three lenders Base names are three, and Miorail reads two of them', () => {
-    // The sentence this card exists to publish. If a third lender ever gains a
-    // binding, this test is where that is recorded.
+  test('the three lenders Base names are three, and Miorail reads all three', () => {
+    // The sentence this card exists to publish. Euler was the one left `none`
+    // when this shipped; it was bound on 2026-09-12 once its vaults had been
+    // read from the factory AND from its own API, and this test is where that
+    // is recorded.
     const lenders = BASE_STOCKS_ECOSYSTEM_V1.filter((entry) => entry.category === 'lending');
     assert.deepEqual(lenders.map((entry) => entry.appName).sort(), ['Aave', 'Euler', 'Morpho']);
     assert.deepEqual(
       lenders.filter((entry) => entry.binding.kind !== 'none').map((entry) => entry.appName).sort(),
-      ['Aave', 'Morpho'],
+      ['Aave', 'Euler', 'Morpho'],
     );
   });
 
