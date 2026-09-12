@@ -20,9 +20,11 @@ import {
   fetchOfficialSourceV1,
   officialCorpusHashV1,
   officialDocumentHashV1,
+  officialSourceRegressionsV1,
   parseBaseDocsCorpusV1,
   parseBaseProductListV1,
   type OfficialParseResultV1,
+  type OfficialSourceCheckV1,
   type OfficialSourceKeyV1,
 } from '@mioagent/rwa-official';
 import { BACKED_BTOKENS_SOURCE_URL_V1, fetchBackedBaseTokensV1 } from '@mioagent/rwa-issuer';
@@ -51,6 +53,10 @@ async function main(): Promise<void> {
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const signals = createDatabaseRwaSignalRepository(client);
   const observedAt = new Date().toISOString();
+  /** One row per reviewed source, read at the end to decide this pass's exit
+   * code. Recording it here rather than reacting in place keeps a failure from
+   * skipping the sources that come after it. */
+  const checks: OfficialSourceCheckV1[] = [];
 
   // Opened before the first source is fetched, and the pass that opens it says
   // nothing. Coinbase issued these thirteen equities well before Miorail first
@@ -123,6 +129,12 @@ async function main(): Promise<void> {
     }
 
     const previous = await repository.latestSnapshot({ sourceKind: kind, successfulOnly: true });
+    checks.push({
+      sourceKind: kind,
+      status: snapshot.status,
+      detail: snapshot.detail,
+      lastSuccessAt: previous?.observedAt ?? null,
+    });
     const corpusMoved =
       snapshot.corpusHash !== null && previous?.corpusHash !== snapshot.corpusHash;
 
@@ -219,6 +231,16 @@ async function main(): Promise<void> {
         referenceFeedAddress: null,
       }))
     : [];
+  const backedPrevious = await repository.latestSnapshot({
+    sourceKind: 'backed_assets_api',
+    successfulOnly: true,
+  });
+  checks.push({
+    sourceKind: 'backed_assets_api',
+    status: backedSnapshot.status,
+    detail: backedSnapshot.detail,
+    lastSuccessAt: backedPrevious?.observedAt ?? null,
+  });
   console.log(`\nbacked_assets_api`);
   console.log(
     `  ${backedSnapshot.status}${backedSnapshot.detail ? ` — ${backedSnapshot.detail}` : ''}`,
@@ -275,6 +297,17 @@ async function main(): Promise<void> {
     console.log(
       `  underlying identity: ${byInstrument.size} stable instruments, ${backed.representations.length} exact address bindings`,
     );
+  }
+
+  // A source Miorail could not read is stored as exactly that and withdraws
+  // nothing, which is right for the corpus and silent for the operator: the
+  // technical document went unparsable on 2026-09-10 and eight green passes
+  // said so to a log nobody reads. The pass fails so the unit does.
+  const regressions = officialSourceRegressionsV1({ checks, now: observedAt });
+  if (regressions.length > 0) {
+    console.error('\nSOURCE NOT READ — membership unchanged, nothing withdrawn');
+    for (const line of regressions) console.error(`  ${line}`);
+    process.exitCode = 1;
   }
 
   if (!dry) {
