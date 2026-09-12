@@ -3214,6 +3214,8 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     // Never good: a ledger of other parties' claims is not a verdict.
     assert.equal(section.tone, 'neutral');
     assert.match(section.headline, /Base names 4 apps/);
+    // One app on either side reads as one app: "1 do not" shipped once.
+    assert.match(section.headline, /1 names it, 1 does not/);
 
     const morpho = section.facts.find((fact) => fact.label === 'Morpho')!;
     assert.equal(morpho.value, 'Names this address');

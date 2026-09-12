@@ -209,6 +209,25 @@ describe('the summary a reader may repeat', () => {
     }
   });
 
+  test('one app on either side reads as one app, not as several', () => {
+    // "Aave do not" shipped to production for about twenty minutes.
+    const one = ecosystemSummaryV1({
+      displaySymbol: 'NVDAc',
+      tokenAddress: NVDA,
+      readings: ecosystemClaimReadingsV1(
+        evidence({
+          apps: [
+            app({ appId: 'a', appName: 'Alpha', binding: { kind: 'issuer_of_record', issuerId: 'coinbase' } }),
+            app({ appId: 'b', appName: 'Beta', binding: { kind: 'issuer_of_record', issuerId: 'backed' } }),
+          ],
+        }),
+      ),
+    });
+    assert.match(one, /Alpha names this exact address/);
+    assert.match(one, /Beta does not/);
+    assert.doesNotMatch(one, /Alpha name this|Beta do not/);
+  });
+
   test('reading nothing says so instead of reporting an empty ecosystem', () => {
     const readings = ecosystemClaimReadingsV1(evidence({ issuerId: null }));
     const summary = ecosystemSummaryV1({ displaySymbol: 'NVDAc', tokenAddress: NVDA, readings });

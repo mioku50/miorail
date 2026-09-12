@@ -2737,7 +2737,7 @@ function ecosystemSectionV1(use: RepresentationUseAccessV1 | null): UseSectionVi
       tally.namesIt > 0
         ? `${tally.namesIt} name${tally.namesIt === 1 ? 's' : ''} it`
         : 'none names it'
-    }${tally.doesNot > 0 ? `, ${tally.doesNot} do not` : ''}.`,
+    }${tally.doesNot > 0 ? `, ${tally.doesNot} ${tally.doesNot === 1 ? 'does' : 'do'} not` : ''}.`,
     chip: `${read} of ${tally.named} read`,
     // Never `good`. This card is a ledger of claims against readings, and a
     // green chip on it would be a verdict nothing here measured.

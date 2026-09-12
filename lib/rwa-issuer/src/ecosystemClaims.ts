@@ -529,8 +529,10 @@ export function ecosystemSummaryV1(input: {
   const not = input.readings.filter((row) => row.measured === 'not_listed').map((row) => row.app.appName);
   parts.push(
     `Miorail reads ${read} of them for ${name}: ${
-      named.length > 0 ? `${named.join(', ')} name this exact address` : 'none of them names this exact address'
-    }${not.length > 0 ? `, ${not.join(', ')} do not` : ''}.`,
+      named.length > 0
+        ? `${named.join(', ')} ${named.length === 1 ? 'names' : 'name'} this exact address`
+        : 'none of them names this exact address'
+    }${not.length > 0 ? `, ${not.join(', ')} ${not.length === 1 ? 'does not' : 'do not'}` : ''}.`,
   );
   if (tally.unread > 0) {
     const unread = input.readings.filter((row) => row.measured === 'unread').map((row) => row.app.appName);
