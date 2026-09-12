@@ -3725,6 +3725,88 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       },
     });
 
+  test('a venue that listed it and one that did not are not described the same way', () => {
+    // The flag used to be all-or-nothing over the whole section, which was
+    // right while every listed venue was uncurated. The day a second lender was
+    // read it stopped being: Morpho lists GOOGL, Euler has two vaults nobody at
+    // Euler has claimed, and one flag printed "the venue names this exact
+    // address" over both — the exact sentence the flag exists to prevent.
+    const mixed = use({
+      defi: {
+        checkedVenues: ['Morpho', 'Euler'],
+        venues: [
+          {
+            venueId: 'morpho',
+            venueName: 'Morpho',
+            state: 'listed',
+            uses: { lend: null, borrow: null, collateral: true },
+            curated: true,
+            marketRef: '0xabc',
+            reason: null,
+          },
+          {
+            venueId: 'euler',
+            venueName: 'Euler',
+            state: 'listed',
+            uses: { lend: true, borrow: false, collateral: null },
+            curated: false,
+            marketRef: 'eGOOGLc-1, eGOOGLc-2',
+            reason: null,
+          },
+        ],
+      },
+    });
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: mixed }).find((s) => s.id === 'defi')!;
+    const lend = defi.facts.find((entry) => entry.label === 'Lend')!;
+    const collateral = defi.facts.find((entry) => entry.label === 'Collateral')!;
+    assert.equal(lend.value, 'Euler');
+    assert.equal(lend.note, 'a market names this exact address; the venue has not listed it');
+    assert.equal(lend.tone, 'neutral');
+    // ...and the one the venue really listed keeps its own sentence.
+    assert.equal(collateral.value, 'Morpho');
+    assert.equal(collateral.note, 'the venue names this exact address');
+    assert.equal(collateral.tone, 'good');
+    // The section still says which venue is the loose one, by name.
+    assert.match(defi.headline, /At Euler the market exists and is not on the venue’s own list/);
+    assert.doesNotMatch(defi.headline, /At Morpho/);
+  });
+
+  test('two venues on one row, one of them loose, are told apart by name', () => {
+    const mixed = use({
+      defi: {
+        checkedVenues: ['Morpho', 'Euler'],
+        venues: [
+          {
+            venueId: 'morpho',
+            venueName: 'Morpho',
+            state: 'listed',
+            uses: { lend: true, borrow: null, collateral: null },
+            curated: true,
+            marketRef: '0xabc',
+            reason: null,
+          },
+          {
+            venueId: 'euler',
+            venueName: 'Euler',
+            state: 'listed',
+            uses: { lend: true, borrow: null, collateral: null },
+            curated: false,
+            marketRef: 'eGOOGLc-2',
+            reason: null,
+          },
+        ],
+      },
+    });
+    const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: mixed }).find((s) => s.id === 'defi')!;
+    const lend = defi.facts.find((entry) => entry.label === 'Lend')!;
+    assert.equal(lend.value, 'Morpho, Euler');
+    assert.equal(
+      lend.note,
+      'Morpho lists this address; at Euler a market names it and the venue has not',
+    );
+    assert.equal(lend.tone, 'neutral');
+  });
+
   test('an announced venue that has not listed the address says so, with the date', () => {
     const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) }).find((section) => section.id === 'defi')!;
     const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');

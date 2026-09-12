@@ -2598,6 +2598,36 @@ function defiSectionV1(
   const allUncurated = uses.length > 0 && uncurated.length === (listing?.venues ?? []).filter(
     (venue: RepresentationUseAccessV1['defi']['venues'][number]) => venue.state === 'listed',
   ).length;
+  // Which of the listed venues put the asset there THEMSELVES, by name.
+  //
+  // This used to be one all-or-nothing flag over the whole section, and it was
+  // right while every listed venue was uncurated. The day a second lender was
+  // read it stopped being right: Morpho lists GOOGL and Euler has two vaults
+  // nobody at Euler has claimed, and one flag printed "the venue names this
+  // exact address" over both. That is the exact sentence the flag exists to
+  // prevent, moved from the section down to a row.
+  const uncuratedNames = new Set(uncurated.map((venue) => venue.venueName));
+  const useFactV1 = (entry: { kind: 'lend' | 'borrow' | 'collateral'; venues: string[] }) => {
+    const loose = entry.venues.filter((name) => uncuratedNames.has(name));
+    const listedByVenue = entry.venues.filter((name) => !uncuratedNames.has(name));
+    if (loose.length === 0) {
+      return {
+        label: DEFI_USE_LABEL_V1[entry.kind],
+        value: entry.venues.join(', '),
+        note: 'the venue names this exact address',
+        tone: 'good' as const,
+      };
+    }
+    return {
+      label: DEFI_USE_LABEL_V1[entry.kind],
+      value: entry.venues.join(', '),
+      note:
+        listedByVenue.length === 0
+          ? 'a market names this exact address; the venue has not listed it'
+          : `${listedByVenue.join(', ')} lists this address; at ${loose.join(', ')} a market names it and the venue has not`,
+      tone: 'neutral' as const,
+    };
+  };
   if (uses.length > 0) {
     return {
       collapsed: false,
@@ -2608,21 +2638,13 @@ function defiSectionV1(
         .join('; ')}.${
         allUncurated
           ? ' The market exists but is not on the venue’s curated list — anyone can create one.'
-          : ''
+          : uncurated.length > 0
+            ? ` At ${uncurated.map((venue) => venue.venueName).join(', ')} the market exists and is not on the venue’s own list — anyone can create one.`
+            : ''
       }`,
       chip: allUncurated ? 'Permissionless market' : 'Integration found',
       tone: allUncurated ? 'neutral' : 'good',
-      facts: [
-        ...uses.map((entry) => ({
-          label: DEFI_USE_LABEL_V1[entry.kind],
-          value: entry.venues.join(', '),
-          note: allUncurated
-            ? 'a market names this exact address; the venue has not listed it'
-            : 'the venue names this exact address',
-          tone: allUncurated ? ('neutral' as const) : ('good' as const),
-        })),
-        ...announcementFacts,
-      ],
+      facts: [...uses.map(useFactV1), ...announcementFacts],
       evidence,
       edges: [],
     };
