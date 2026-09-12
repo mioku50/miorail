@@ -49,8 +49,20 @@ function roundData(input: {
   return `0x${word(roundId)}${word(input.answer)}${word(input.updatedAt - 60n)}${word(input.updatedAt)}${word(input.answeredInRound ?? roundId)}`;
 }
 
+/** Coinbase's onchain registry, at the pinned address and the pinned
+ * selector. Two words: a WAD multiplier and a pause flag. */
+const REGISTRY_V1 = '0x3f3e8cf41cdd3b1d118c16471ab0113dfddd5cad';
+const REGISTRY_CALL_V1 = `0xd4197e82${word(BigInt(TOKEN))}`;
+
 function reader(
-  input: { answer?: bigint; updatedAt?: bigint; answeredInRound?: bigint } = {},
+  input: {
+    answer?: bigint;
+    updatedAt?: bigint;
+    answeredInRound?: bigint;
+    /** What the registry answers for this token. Omitted, it reverts — which
+     * is what a reader must report as `unknown`, never as "not paused". */
+    registry?: { multiplierWad?: bigint; paused?: boolean };
+  } = {},
 ): B20ReaderV1 {
   const ok = (value: string): B20RpcResultV1<string> => ({ ok: true, value, raw: value });
   const updatedAt = input.updatedAt ?? BigInt(NOW.getTime() / 1_000 - 3_600);
@@ -75,6 +87,14 @@ function reader(
       return { ok: true, value: true, raw: `0x${word(1n)}` };
     },
     async call(call) {
+      if (call.to === REGISTRY_V1 && call.data === REGISTRY_CALL_V1) {
+        if (!input.registry) return { ok: false, reason: 'reverted', revertSelector: null };
+        return ok(
+          `0x${word(input.registry.multiplierWad ?? 10n ** 18n)}${word(
+            input.registry.paused ? 1n : 0n,
+          )}`,
+        );
+      }
       if (call.to === FEED && call.data === '0x313ce567') return ok(`0x${word(8n)}`);
       if (call.to === FEED && call.data === '0xfeaf968c') {
         return ok(
@@ -591,29 +611,133 @@ describe('official asset dossier assembly', () => {
   });
 });
 
+describe('the registry pause flag, bound', () => {
+  // Base Docs name the registry in one sentence and publish no interface for
+  // it. The selector was disassembled rather than guessed and the shape was
+  // measured; until this was bound, every card said `unknown` and a feed that
+  // had not published in a day was indistinguishable from a feed that had been
+  // frozen. Those are two different reasons the price on screen is old, and
+  // only the flag tells them apart.
+  test('the dossier reads the flag rather than reporting unknown', async () => {
+    const result = await assembleOfficialAssetDossierV1(
+      {
+        official: await corpus(),
+        marketTail: await tail(),
+        reader: reader({ registry: { paused: false } }),
+        now: () => NOW,
+      },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+    assert.equal(result.dossier.referenceValue.registryPause, 'not_paused');
+    assert.equal(result.dossier.referenceValue.status, 'fresh');
+  });
+
+  test('a registry that will not answer leaves the flag unknown and the card intact', async () => {
+    // The failure mode this whole file is organised against: an endpoint's bad
+    // minute rendering as a statement about the asset.
+    const result = await assembleOfficialAssetDossierV1(
+      { official: await corpus(), marketTail: await tail(), reader: reader(), now: () => NOW },
+      { chainId: 8453, tokenAddress: TOKEN },
+    );
+    assert.equal(result.outcome, 'dossier');
+    if (result.outcome !== 'dossier') return;
+    assert.equal(result.dossier.referenceValue.registryPause, 'unknown');
+    assert.equal(result.dossier.referenceValue.comparisonEligible, true);
+  });
+
+  test('a read pause separates a held price from a market that is merely closed', async () => {
+    const closed = await readTokenizedStockReferenceV1(
+      reader({ updatedAt: BigInt(NOW.getTime() / 1_000 - 27 * 60 * 60), registry: { paused: false } }),
+      {
+        feedAddress: FEED,
+        anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+        now: NOW,
+        registryToken: TOKEN,
+      },
+    );
+    assert.equal(closed.status, 'stale');
+    assert.equal(closed.registryPause, 'not_paused');
+    assert.equal(closed.withheldReason, 'reference_stale');
+
+    const held = await readTokenizedStockReferenceV1(
+      reader({ updatedAt: BigInt(NOW.getTime() / 1_000 - 27 * 60 * 60), registry: { paused: true } }),
+      {
+        feedAddress: FEED,
+        anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+        now: NOW,
+        registryToken: TOKEN,
+      },
+    );
+    // Same age, same feed, opposite sentence.
+    assert.equal(held.ageSeconds, closed.ageSeconds);
+    assert.equal(held.status, 'paused');
+    assert.equal(held.withheldReason, 'reference_paused');
+  });
+
+  test('the registry is asked about the token, never about the feed', async () => {
+    const asked: string[] = [];
+    const probe = reader({ registry: { paused: false } });
+    const call = probe.call.bind(probe);
+    probe.call = async (input) => {
+      if (input.to === REGISTRY_V1) asked.push(input.data);
+      return call(input);
+    };
+    await readTokenizedStockReferenceV1(probe, {
+      feedAddress: FEED,
+      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+      now: NOW,
+      registryToken: TOKEN,
+    });
+    assert.deepEqual(asked, [REGISTRY_CALL_V1]);
+  });
+
+  test('nothing is asked of the registry for a representation it does not document', async () => {
+    const asked: string[] = [];
+    const probe = reader({ registry: { paused: false } });
+    const call = probe.call.bind(probe);
+    probe.call = async (input) => {
+      if (input.to === REGISTRY_V1) asked.push(input.data);
+      return call(input);
+    };
+    const value = await readTokenizedStockReferenceV1(probe, {
+      feedAddress: FEED,
+      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+      now: NOW,
+      registryToken: null,
+    });
+    assert.deepEqual(asked, []);
+    assert.equal(value.registryPause, 'unknown');
+  });
+});
+
 describe('tokenized stock reference boundary', () => {
   test('an unread pause flag reports unknown and still compares; a read pause withholds', async () => {
-    // The registry publishes no callable ABI, so `registryPause` is null on
-    // every production read. Requiring a positive `not_paused` withheld the
-    // comparison on every card forever — a refusal about us wearing the feed's
-    // name. Publication is the evidence: a paused registry stops the feed.
+    // A registry that did not answer says NOTHING about whether the feed is
+    // frozen, so it reports `unknown` and does not withhold: requiring a
+    // positive `not_paused` withheld the comparison on every card forever, and
+    // publication is itself evidence — a paused registry stops the feed.
     const unknown = await readTokenizedStockReferenceV1(reader({ answer: 10_000_000_000n }), {
       feedAddress: FEED,
       anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
       now: NOW,
-      registryPause: null,
+      registryToken: TOKEN,
     });
     assert.equal(unknown.registryPause, 'unknown', 'unknown is reported, never guessed');
     assert.equal(unknown.status, 'fresh');
     assert.equal(unknown.comparisonEligible, true);
     assert.equal(unknown.withheldReason, null);
 
-    const paused = await readTokenizedStockReferenceV1(reader({ answer: 10_000_000_000n }), {
-      feedAddress: FEED,
-      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
-      now: NOW,
-      registryPause: true,
-    });
+    const paused = await readTokenizedStockReferenceV1(
+      reader({ answer: 10_000_000_000n, registry: { paused: true } }),
+      {
+        feedAddress: FEED,
+        anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+        now: NOW,
+        registryToken: TOKEN,
+      },
+    );
     assert.equal(paused.registryPause, 'paused');
     assert.equal(paused.status, 'paused');
     assert.equal(paused.comparisonEligible, false);
@@ -621,12 +745,16 @@ describe('tokenized stock reference boundary', () => {
   });
 
   test('carries the feed total-return value unchanged and compares only when pause state is known', async () => {
-    const value = await readTokenizedStockReferenceV1(reader({ answer: 10_000_000_000n }), {
-      feedAddress: FEED,
-      anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
-      now: NOW,
-      registryPause: false,
-    });
+    const value = await readTokenizedStockReferenceV1(
+      reader({ answer: 10_000_000_000n, registry: { paused: false } }),
+      {
+        feedAddress: FEED,
+        anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
+        now: NOW,
+        registryToken: TOKEN,
+      },
+    );
+    assert.equal(value.registryPause, 'not_paused');
     assert.equal(value.valueAtomic, '10000000000');
     assert.equal(value.decimals, 8);
     assert.equal(value.totalReturnValue, true);
@@ -656,11 +784,11 @@ describe('tokenized stock reference boundary', () => {
     // The Discover list carries the cash a sized rung handed back. Against a
     // per-share feed that renders as a five-figure percentage, so the basis
     // must be absent rather than approximated.
-    const value = await readTokenizedStockReferenceV1(reader({}), {
+    const value = await readTokenizedStockReferenceV1(reader({ registry: {} }), {
       feedAddress: FEED,
       anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
       now: NOW,
-      registryPause: false,
+      registryToken: TOKEN,
     });
     assert.equal(value.comparisonEligible, true);
     const cashTotal: ExecutableValueV1 = {
@@ -685,12 +813,12 @@ describe('tokenized stock reference boundary', () => {
 
   test('withholds divergence for stale data even if an executable value is present', async () => {
     const stale = await readTokenizedStockReferenceV1(
-      reader({ updatedAt: BigInt(NOW.getTime() / 1_000 - 27 * 60 * 60) }),
+      reader({ updatedAt: BigInt(NOW.getTime() / 1_000 - 27 * 60 * 60), registry: {} }),
       {
         feedAddress: FEED,
         anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
         now: NOW,
-        registryPause: false,
+        registryToken: TOKEN,
       },
     );
     assert.equal(stale.status, 'stale');
@@ -717,7 +845,7 @@ describe('tokenized stock reference boundary', () => {
       feedAddress: FEED,
       anchor: { blockNumber: '5000', blockHash: BLOCK_HASH, blockTag: '0x1388' },
       now: NOW,
-      registryPause: false,
+      registryToken: TOKEN,
     });
     assert.equal(invalid.status, 'invalid');
     assert.equal(invalid.valueAtomic, null);

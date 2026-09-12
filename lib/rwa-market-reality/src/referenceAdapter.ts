@@ -95,7 +95,9 @@ export function createReviewedMarketRealityReferenceAdapterV1(deps: {
         feedAddress: referenceAddress,
         anchor: anchor.value,
         now: input.now,
-        registryPause: null,
+        // The listing above is Coinbase's own technical corpus, so the registry
+        // is being asked about an address it documents.
+        registryToken: tokenAddress,
         maxAgeSeconds: TOKENIZED_STOCK_REFERENCE_MAX_AGE_SECONDS_V1,
       });
     } catch {

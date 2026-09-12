@@ -541,10 +541,10 @@ export async function assembleOfficialAssetDossierV1(
           feedAddress: feed.address,
           anchor,
           now,
-          // Base Docs names this state but does not publish a callable registry
-          // ABI. Unknown is safer than guessing a selector or treating fresh as
-          // proof that no pause just began.
-          registryPause: null,
+          // Read, not assumed. The registry entry for this exact token comes
+          // back in the same batch as the feed round, so the answer is about
+          // the block the round was read at.
+          registryToken: tokenAddress,
         });
   // A disclosure, never an adjustment: the feed above is total-return and has
   // already applied this. Read at the same anchor so the two facts describe

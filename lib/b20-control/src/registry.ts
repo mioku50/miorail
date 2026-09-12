@@ -3,6 +3,7 @@ import {
   B20_REGISTRY_TOKEN_STATE_SELECTOR_V1,
   encodeAddressArgV1,
 } from './pinned.js';
+import type { B20BatchCallV1 } from './reader.js';
 
 // ---------------------------------------------------------------------------
 // The Coinbase onchain registry, read for one exact token address.
@@ -51,6 +52,36 @@ export type B20RegistryStateV1 =
 /** Calldata for one token's registry entry. */
 export function encodeRegistryStateCallV1(tokenAddress: string): `0x${string}` {
   return encodeAddressArgV1(B20_REGISTRY_TOKEN_STATE_SELECTOR_V1, tokenAddress);
+}
+
+/**
+ * The registry read as one pinned call, ready to travel in a batch.
+ *
+ * Shaped for `callMany` on purpose. The pause flag is read beside the feed it
+ * explains, and a second round trip to ask "was the feed paused when it
+ * published that?" would be two different blocks answering one question.
+ */
+export function registryStateCallV1(tokenAddress: string, blockTag: string): B20BatchCallV1 {
+  return {
+    to: B20_ONCHAIN_REGISTRY_V1,
+    data: encodeRegistryStateCallV1(tokenAddress),
+    blockTag,
+  };
+}
+
+/**
+ * The pause flag alone, as the reference reader wants it.
+ *
+ * `null` is "we did not read it", and it is what every failure produces: an
+ * endpoint that did not answer says nothing about whether the feed is frozen.
+ * The multiplier in the same answer is deliberately dropped here — a caller
+ * that wants it decodes the read itself rather than receiving it in a field
+ * named for something else.
+ */
+export function registryPauseFromReadV1(read: { ok: boolean; value?: string }): boolean | null {
+  if (!read.ok || typeof read.value !== 'string') return null;
+  const state = decodeRegistryStateV1(read.value);
+  return state.state === 'read' ? state.paused : null;
 }
 
 /**

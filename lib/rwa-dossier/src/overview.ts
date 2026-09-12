@@ -387,9 +387,10 @@ export async function assembleOfficialAssetsOverviewV1(
             feedAddress,
             anchor,
             now,
-            // Base Docs names the registry's pause state but publishes no
-            // callable ABI for it. Unknown, never inferred from a fresh answer.
-            registryPause: null,
+            // Coinbase's registry answers for this address, and the call rides
+            // in the same batch as the feed read — one extra call per board,
+            // not one extra round trip per asset.
+            registryToken: identity.tokenAddress,
           });
 
     const run = await deps.cashExit.latestCompletedRun({

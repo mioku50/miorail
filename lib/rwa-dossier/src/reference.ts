@@ -1,5 +1,11 @@
 import { stableHashV1 } from '@mioagent/route-domain';
-import type { B20BlockAnchorV1, B20ReaderV1, B20RpcReasonV1 } from '@mioagent/b20-control';
+import {
+  registryPauseFromReadV1,
+  registryStateCallV1,
+  type B20BlockAnchorV1,
+  type B20ReaderV1,
+  type B20RpcReasonV1,
+} from '@mioagent/b20-control';
 
 import {
   ReferenceExecutableComparisonV1Schema,
@@ -86,9 +92,20 @@ export async function readTokenizedStockReferenceV1(
     feedAddress: string | null;
     anchor: B20BlockAnchorV1;
     now: Date;
-    /** Null until a reviewed registry ABI exists — reported as `unknown`, never
-     * guessed. Unknown does not withhold the comparison; `true` does. */
-    registryPause: boolean | null;
+    /**
+     * The token whose entry in Coinbase's onchain registry carries the pause
+     * flag, or null not to ask.
+     *
+     * An ADDRESS rather than a boolean, so the flag is read at the same block
+     * as the round it explains. Passing null still produces `unknown`, which
+     * is what every non-Coinbase representation gets: the registry answers for
+     * addresses outside Coinbase's thirteen and what those answers mean is not
+     * established by anything reviewed.
+     *
+     * Unknown does not withhold the comparison; a flag we read that says
+     * `paused` does.
+     */
+    registryToken: string | null;
     maxAgeSeconds?: number;
   },
 ): Promise<ReferenceValueV1> {
@@ -99,27 +116,23 @@ export async function readTokenizedStockReferenceV1(
     });
   }
   const feedAddress = input.feedAddress.toLowerCase();
-  const [decimalsRead, roundRead] = await (reader.callMany
-    ? reader.callMany([
-        { to: feedAddress, data: CHAINLINK_DECIMALS_SELECTOR_V1, blockTag: input.anchor.blockTag },
-        {
-          to: feedAddress,
-          data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1,
-          blockTag: input.anchor.blockTag,
-        },
-      ])
-    : Promise.all([
-        reader.call({
-          to: feedAddress,
-          data: CHAINLINK_DECIMALS_SELECTOR_V1,
-          blockTag: input.anchor.blockTag,
-        }),
-        reader.call({
-          to: feedAddress,
-          data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1,
-          blockTag: input.anchor.blockTag,
-        }),
-      ]));
+  // One batch, one block. The registry entry rides along with the feed read
+  // rather than following it, because "was it paused when it published this
+  // round" is a question about ONE moment and two round trips are two.
+  const calls = [
+    { to: feedAddress, data: CHAINLINK_DECIMALS_SELECTOR_V1, blockTag: input.anchor.blockTag },
+    {
+      to: feedAddress,
+      data: CHAINLINK_LATEST_ROUND_DATA_SELECTOR_V1,
+      blockTag: input.anchor.blockTag,
+    },
+    ...(input.registryToken === null
+      ? []
+      : [registryStateCallV1(input.registryToken, input.anchor.blockTag)]),
+  ];
+  const [decimalsRead, roundRead, registryRead] = await (reader.callMany
+    ? reader.callMany(calls)
+    : Promise.all(calls.map((call) => reader.call(call))));
 
   if (!decimalsRead?.ok || !roundRead?.ok) {
     return unavailableTokenizedStockReferenceV1({ feedAddress, reason: 'reference_unavailable' });
@@ -161,17 +174,22 @@ export async function readTokenizedStockReferenceV1(
   }
   const ageSeconds = Math.max(0, Math.floor((input.now.getTime() - updatedMs) / 1_000));
   const stale = ageSeconds > (input.maxAgeSeconds ?? TOKENIZED_STOCK_REFERENCE_MAX_AGE_SECONDS_V1);
-  const registryPause =
-    input.registryPause === null ? 'unknown' : input.registryPause ? 'paused' : 'not_paused';
+  const pauseFlag =
+    input.registryToken === null ? null : registryPauseFromReadV1(registryRead ?? { ok: false });
+  const registryPause = pauseFlag === null ? 'unknown' : pauseFlag ? 'paused' : 'not_paused';
   const status = registryPause === 'paused' ? 'paused' : stale ? 'stale' : 'fresh';
   // An unread pause flag is not a reason to withhold the comparison, and
-  // requiring a positive `not_paused` withheld it on every card forever —
-  // no code path can produce that value while the registry publishes no ABI.
-  // Base's own documentation makes the pause observable through publication:
-  // while the registry's pause flag is set, the feed stops publishing and holds
-  // its last value. So a round published inside the feed's heartbeat is itself
-  // the evidence that it was published unpaused, and the heartbeat is the thing
-  // we actually read. A flag we CAN read and that says `paused` still withholds.
+  // requiring a positive `not_paused` withheld it on every card forever, back
+  // when no code path could produce that value. Base's own documentation makes
+  // the pause observable through publication anyway: while the registry's
+  // pause flag is set, the feed stops publishing and holds its last value. So a
+  // round published inside the feed's heartbeat is itself evidence that it was
+  // published unpaused, and the heartbeat is the thing we actually read.
+  //
+  // The flag is readable now, and it earns its place on the OTHER side of that
+  // sentence: a feed that has not published in a day is either a market that is
+  // closed or a feed that was frozen, and only this read tells those apart.
+  // A flag that says `paused` still withholds.
   const comparisonEligible = status === 'fresh';
   const withheldReason = comparisonEligible
     ? null

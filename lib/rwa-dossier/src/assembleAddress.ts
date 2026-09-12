@@ -428,6 +428,14 @@ export async function assembleAddressDossierV1(
 
   const listed = official?.listings.filter((row) => row.currentlyListed) ?? [];
   const feedAddress = listed.find((row) => row.referenceFeedAddress !== null)?.referenceFeedAddress ?? null;
+  // The registry is asked only about the addresses a Coinbase source names.
+  // It answers for other issuers' tokens too, and what those answers mean is
+  // established by nothing we have reviewed.
+  const registryToken = listed.some(
+    (row) => row.sourceKind === 'base_docs_technical' || row.sourceKind === 'base_product_list',
+  )
+    ? tokenAddress
+    : null;
   const referenceValue =
     official === null || feedAddress === null
       ? null
@@ -437,9 +445,7 @@ export async function assembleAddressDossierV1(
             feedAddress,
             anchor,
             now,
-            // Base Docs names the registry pause but publishes no callable
-            // ABI. Unknown, never inferred from a fresh answer.
-            registryPause: null,
+            registryToken,
           });
 
   const [latestRun, previousRun] = await Promise.all([
