@@ -5,9 +5,13 @@
 //
 //   base_docs_technical  the complete issuance corpus, published for
 //                        integrators. Thirteen tokenized equities on
-//                        2026-08-25, plus the oracle registry.
+//                        2026-08-25, plus the oracle registry; ten on
+//                        2026-09-10, when Base dropped COINc, CRCLc and INTCc
+//                        -- three addresses that have never held supply.
 //   base_product_list    what the product surface is currently offering.
-//                        Four of the same thirteen on the same day.
+//                        Four of the same thirteen on 2026-08-25, and ten from
+//                        2026-09-04, when AMZNc, MSFTc, MSTRc, SNDKc, SPCXc and
+//                        TSLAc went on offer.
 //
 // Neither is wrong and neither supersedes the other. "Officially issued" and
 // "currently offered" are different claims, and an asset can be the first
@@ -15,16 +19,23 @@
 // deciding what a thin market means.
 //
 // The technical source is read as markdown rather than as the rendered page.
-// It is the same document at the same path; the difference is that a markdown
+// It is the same document a human reads; the difference is that a markdown
 // table is a contract and a rendered DOM is a layout, and only one of those
 // stays stable when the site is restyled.
+//
+// The path below is not the one Miorail first read. Base moved the document
+// from `base-chain/asset-issuance/tokenized-stocks-on-base` to
+// `build-on-base/integrate-defi/list-tokenized-stocks` on 2026-09-10; the old
+// path still redirects here, and the redirect is followed, but a stored
+// `source_url` should name the document that exists rather than the one that
+// used to.
 // ---------------------------------------------------------------------------
 
 export const OFFICIAL_SOURCES_V1 = {
   base_docs_technical: {
-    url: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md',
+    url: 'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks.md',
     /** Where a human reads the same document. Shown, never fetched. */
-    humanUrl: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base',
+    humanUrl: 'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks',
     issuer: 'coinbase',
   },
   base_product_list: {

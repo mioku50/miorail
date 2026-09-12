@@ -66,9 +66,13 @@ export interface OfficialDiscoverDepsV1 {
   now: () => Date;
 }
 
+// The reviewed sources, and where each would be read. Every stored snapshot
+// carries its own `sourceUrl`, so these are reached only for a source that has
+// never been checked once -- a label for an empty row, never the provenance of
+// a reading. The ingest worker owns the URLs it actually fetches.
 const SOURCE_URLS_V1: Readonly<Record<OfficialSourceKindV1, string>> = {
   base_docs_technical:
-    'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md',
+    'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks.md',
   base_product_list: 'https://brand.base.org/stocks',
   backed_assets_api: 'https://api.xstocks.fi/api/v1/token?type=btokens',
 };

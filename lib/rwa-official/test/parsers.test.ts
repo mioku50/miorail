@@ -10,6 +10,8 @@ import { officialCorpusHashV1, officialDocumentHashV1 } from '../src/snapshot.js
 const fixture = (name: string) => readFileSync(resolve(import.meta.dirname, 'fixtures', name), 'utf8');
 
 const DOCS = fixture('tokenized-stocks-on-base.md');
+/** The same corpus after Base moved the page on 2026-09-10. */
+const DOCS_TODAY = fixture('list-tokenized-stocks.md');
 const LIST = fixture('brand-base-stocks.html');
 
 const AAPL = '0xb200000000000000000000c2e324d24d7eecd1fb';
@@ -66,6 +68,49 @@ describe('the technical corpus', () => {
     const parsed = parseBaseDocsCorpusV1('# Tokenized Stocks on Base\n\nNothing here.\n');
     assert.equal(parsed.ok, false);
     assert.equal(parsed.ok === false && parsed.refusal, 'contract_address_table_missing');
+  });
+
+  test('the document as Base publishes it today reads ten assets', () => {
+    // The page moved from base-chain/asset-issuance to build-on-base/integrate-defi
+    // and lost COINc, CRCLc and INTCc. Ten is asserted for the same reason
+    // thirteen is asserted above: a silent disappearance must fail here.
+    const parsed = parseBaseDocsCorpusV1(DOCS_TODAY);
+    assert.ok(parsed.ok);
+    assert.equal(parsed.assets.length, 10);
+    assert.deepEqual(
+      parsed.assets.map((asset) => asset.ticker).sort(),
+      ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'MSTRc', 'NVDAc', 'SNDKc', 'SPCXc', 'TSLAc'],
+    );
+    assert.deepEqual(parsed.otherEntries, [{ label: 'Onchain Registry', address: REGISTRY }]);
+    assert.equal(parsed.assets.filter((asset) => asset.referenceFeedAddress === null).length, 0);
+    const apple = parsed.assets.find((asset) => asset.tokenAddress === AAPL);
+    assert.equal(apple?.referenceFeedAddress, '0x787f13dea48db0897cbcdd985de77809d837f988');
+  });
+
+  test('the heading is prose: its case never decides whether the corpus is read', () => {
+    // The regression this file exists to prevent. `## Contract addresses`
+    // became `## Contract Addresses` when the page moved, and the corpus was
+    // unreadable for two days on that one capital letter alone.
+    const restyled = DOCS.replace('## Contract addresses', '## CONTRACT ADDRESSES');
+    const parsed = parseBaseDocsCorpusV1(restyled);
+    assert.ok(parsed.ok);
+    assert.equal(parsed.assets.length, 13);
+  });
+
+  test('the table is found without any heading at all', () => {
+    const unheaded = DOCS_TODAY.replace('## Contract Addresses', 'The addresses are:');
+    const parsed = parseBaseDocsCorpusV1(unheaded);
+    assert.ok(parsed.ok);
+    assert.equal(parsed.assets.length, 10);
+  });
+
+  test('a renamed header row falls back to the heading', () => {
+    // Both anchors would have to go before the parser gives up, and giving up
+    // is still a refusal rather than an empty corpus.
+    const renamed = DOCS.replace('| Ticker           | Contract address ', '| Symbol           | Address          ');
+    const parsed = parseBaseDocsCorpusV1(renamed);
+    assert.ok(parsed.ok);
+    assert.equal(parsed.assets.length, 13);
   });
 
   test('the same address twice is a refusal', () => {

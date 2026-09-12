@@ -19,8 +19,17 @@ import {
 // otherwise be indistinguishable from the truth.
 // ---------------------------------------------------------------------------
 
-/** The heading above the asset table, and the one above the feeds. */
-const ADDRESS_HEADING_V1 = '## Contract addresses';
+// The asset table is found by its OWN header row first, and only then by the
+// heading above it. That order exists because the heading has already been
+// renamed once: when Base moved this document from `base-chain/asset-issuance/`
+// to `build-on-base/integrate-defi/` the heading became `## Contract
+// Addresses`, and that one capital letter left the corpus unparsable for two
+// days -- long enough to have missed an issuance. A table's header row names
+// its own columns, which is the part an integrator reads and the part a
+// restyle cannot move; the heading stays as the fallback for a document that
+// drops the header row instead.
+const ADDRESS_TABLE_HEADER_V1 = /^[ \t]*\|[ \t]*Ticker[ \t]*\|[ \t]*Contract address[ \t]*\|/im;
+const ADDRESS_HEADING_V1 = /^[ \t]*##[ \t]+Contract addresses[ \t]*$/im;
 const FEED_TABLE_MARKER_V1 = '| Feed';
 
 interface TableRowV1 {
@@ -45,12 +54,18 @@ function tableRowsV1(block: string): TableRowV1[] {
   return rows;
 }
 
-function sectionV1(markdown: string, heading: string): string | null {
-  const start = markdown.indexOf(heading);
-  if (start < 0) return null;
-  const rest = markdown.slice(start + heading.length);
-  const end = rest.search(/\n## /);
-  return end < 0 ? rest : rest.slice(0, end);
+/** Where the asset table begins, and the block that carries it. The block runs
+ * to the next heading, so a table that is followed by prose keeps its rows and
+ * a table that is followed by another section cannot absorb it. */
+function addressSectionV1(markdown: string): { start: number; block: string } | null {
+  for (const anchor of [ADDRESS_TABLE_HEADER_V1, ADDRESS_HEADING_V1]) {
+    const found = anchor.exec(markdown);
+    if (!found) continue;
+    const rest = markdown.slice(found.index);
+    const end = rest.search(/\n## /);
+    return { start: found.index, block: end < 0 ? rest : rest.slice(0, end) };
+  }
+  return null;
 }
 
 /**
@@ -70,13 +85,13 @@ function feedForTickerV1(ticker: string, feeds: Map<string, string>): string | n
 }
 
 export function parseBaseDocsCorpusV1(markdown: string): OfficialParseResultV1 {
-  const addressHeadingAt = markdown.indexOf(ADDRESS_HEADING_V1);
-  const addressSection = sectionV1(markdown, ADDRESS_HEADING_V1);
-  if (addressSection === null) {
+  const section = addressSectionV1(markdown);
+  if (section === null) {
     return {
       ok: false,
       refusal: 'contract_address_table_missing',
-      detail: `the document has no "${ADDRESS_HEADING_V1}" section`,
+      detail:
+        'the document carries neither a "| Ticker | Contract address |" table nor a contract-address heading',
     };
   }
 
@@ -85,10 +100,10 @@ export function parseBaseDocsCorpusV1(markdown: string): OfficialParseResultV1 {
   // found by its own header row rather than by a heading, because the heading
   // around it is prose that has been reworded before.
   const feedStart = markdown.indexOf(FEED_TABLE_MARKER_V1);
-  if (feedStart >= 0 && feedStart < addressHeadingAt) {
+  if (feedStart >= 0 && feedStart < section.start) {
     // Bounded at the address heading, so the asset table cannot leak into the
     // feed map and bind an asset to its own address.
-    for (const row of tableRowsV1(markdown.slice(feedStart, addressHeadingAt))) {
+    for (const row of tableRowsV1(markdown.slice(feedStart, section.start))) {
       if (!feeds.has(row.label)) feeds.set(row.label, row.address.toLowerCase());
     }
   }
@@ -98,7 +113,7 @@ export function parseBaseDocsCorpusV1(markdown: string): OfficialParseResultV1 {
   const seenAddresses = new Set<string>();
   const seenTickers = new Set<string>();
 
-  for (const row of tableRowsV1(addressSection)) {
+  for (const row of tableRowsV1(section.block)) {
     const tokenAddress = row.address.toLowerCase();
     if (!TICKER_SHAPE_V1.test(row.label)) {
       otherEntries.push({ label: row.label, address: tokenAddress });
