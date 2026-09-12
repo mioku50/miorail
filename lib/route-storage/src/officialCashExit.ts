@@ -474,6 +474,24 @@ export interface OfficialCashExitRepositoryV1 {
      * expired quote, never as a current one.
      */
     containingRequestedCashAtomic?: string | null;
+    /**
+     * Prefer the newest run that measured EVERY one of these sizes.
+     *
+     * The mirror of the preference above, and it exists for the mirror bug.
+     * That one hid an on-demand size behind the scheduled ladder; this one hid
+     * the LADDER behind an on-demand size. The public ladder writes four sizes
+     * once an hour, and every page view that measures one size writes its own
+     * run under the same scope — so "the newest run" was, most of the time, a
+     * single rung, and the four-size curve that had been measured all day was
+     * unreachable. Measured on production 2026-09-12: the 10:13 pass held all
+     * four sizes, two page views at 10:45 and 11:08 each wrote one, and the
+     * Stocks card rendered a one-rung ladder.
+     *
+     * A PREFERENCE, not a filter: when no run has ever covered the whole set
+     * the newest run is still returned, and the caller renders exactly what it
+     * rendered before.
+     */
+    containingAllRequestedCashAtomic?: readonly string[] | null;
   }): Promise<CashExitMeasurementRunV1 | null>;
 
   /**

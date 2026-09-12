@@ -1,5 +1,6 @@
 import type { B20ReaderV1 } from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
+import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import type {
   CashExitMeasurementRunV1,
   CashExitSourceObservationV1,
@@ -395,6 +396,9 @@ export async function assembleOfficialAssetsOverviewV1(
       chainId: 8453,
       tokenAddress: identity.tokenAddress,
       scope: 'public_ladder',
+      // Same reason as the dossier: the board renders a ladder, so it must ask
+      // for the run that measured one.
+      containingAllRequestedCashAtomic: CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
     });
     const preview = previewLadderFromRunV1(run);
     const routeStatus = routeStatusFromPreviewV1(preview);

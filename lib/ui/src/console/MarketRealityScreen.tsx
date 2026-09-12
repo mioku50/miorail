@@ -819,6 +819,14 @@ function RepresentationCard({
           <p className="mr-attribution">
             <span className="mr-attribution-k">Round trip</span> at each reviewed size
           </p>
+          {/* The comparison between the ends, said once. Four costs at four
+              sizes leave the reader to do it, and for these tokens that
+              comparison is the whole finding: within twelve basis points of
+              each other at $10,000, and eleven to a hundred and forty-four at
+              $100,000. */}
+          {representation.ladderHeadline ? (
+            <p className="cr-verdict mr-ladder-headline">{representation.ladderHeadline}</p>
+          ) : null}
           <FactList facts={representation.ladder} label={`${representation.issuerName} ladder`} />
           {representation.ladderNote ? <p className="lnote">{representation.ladderNote}</p> : null}
         </div>

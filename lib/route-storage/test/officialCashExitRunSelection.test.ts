@@ -32,7 +32,8 @@ import { ZERO_HASH_V1 } from '@mioagent/route-domain';
 const TOKEN = '0xb20000000000000000000078ee7ce2fe4908108c';
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 
-function runV1(size: string, completedAt: string) {
+function runV1(size: string | readonly string[], completedAt: string) {
+  const sizes = typeof size === 'string' ? [size] : [...size];
   // An expiry must follow its observation, so the schema is given a real
   // twenty-second window rather than the same instant twice.
   const expiresAt = new Date(Date.parse(completedAt) + 20_000).toISOString();
@@ -73,7 +74,7 @@ function runV1(size: string, completedAt: string) {
     scope: 'public_ladder' as const,
     tenantId: null,
     sizeKind: 'cash_equivalent' as const,
-    requestedCashAtomic: size,
+    requestedCashAtomic: sizes[0]!,
     requestedTokenAtomic: null,
     testedTokenAtomic: '40000000',
     destination: 'USDC' as const,
@@ -83,8 +84,8 @@ function runV1(size: string, completedAt: string) {
     status: 'full' as const,
     evidenceStrength: 'router_quote' as const,
     executionProven: false as const,
-    buyQuote: quote('buy', size, '40000000'),
-    sellQuote: quote('sell', '40000000', size),
+    buyQuote: quote('buy', sizes[0]!, '40000000'),
+    sellQuote: quote('sell', '40000000', sizes[0]!),
     errorCode: null,
     observedAt: completedAt,
     expiresAt,
@@ -100,12 +101,21 @@ function runV1(size: string, completedAt: string) {
     destinations: ['USDC'],
     startedAt: completedAt,
     completedAt,
-    observations: [
-      CashExitSourceObservationV1Schema.parse({
+    // One observation per rung, each with its own size in its own quotes: a
+    // buy leg that spends a different size than the rung asks for is not the
+    // rung's evidence, and the schema says so.
+    observations: sizes.map((rung) => {
+      const row = {
         ...draft,
-        observationHash: hashCashExitObservationV1(draft),
-      }),
-    ],
+        requestedCashAtomic: rung,
+        buyQuote: quote('buy', rung, '40000000'),
+        sellQuote: quote('sell', '40000000', rung),
+      };
+      return CashExitSourceObservationV1Schema.parse({
+        ...row,
+        observationHash: hashCashExitObservationV1(row),
+      });
+    }),
   });
 }
 
@@ -148,5 +158,86 @@ describe('the run that answers the question, not merely the newest one', () => {
   test('with no size asked for, the read is the old one to the letter', async () => {
     assert.equal(await ask(null), ladderPass.runId);
     assert.equal(await ask(undefined as never), ladderPass.runId);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// And the mirror of it, found on 2026-09-12.
+//
+// The same scope carries both kinds of run, so the preference above solved one
+// direction and left the other open: an on-demand measurement of ONE size is
+// newer than the hourly four-size pass, so "the newest run" was a single rung
+// and the whole cost curve — measured all day, sitting in the database —
+// could not be read. Two page views were enough to hide it.
+// ---------------------------------------------------------------------------
+describe('the run that measured the whole ladder, not merely the newest one', () => {
+  const LADDER = ['100000000', '1000000000', '10000000000', '100000000000'] as const;
+  const ladderPass = runV1(LADDER, '2026-09-12T10:13:39.000Z');
+  const oneSizeA = runV1('1000000000', '2026-09-12T10:45:26.000Z');
+  const oneSizeB = runV1('1000000000', '2026-09-12T11:08:13.000Z');
+
+  async function repositoryV1() {
+    const repository = createMemoryOfficialCashExitRepository();
+    for (const run of [ladderPass, oneSizeA, oneSizeB]) await repository.recordCompletedRun(run);
+    return repository;
+  }
+
+  const ask = async (input: {
+    containingRequestedCashAtomic?: string | null;
+    containingAllRequestedCashAtomic?: readonly string[] | null;
+  }) =>
+    (
+      await (await repositoryV1()).latestCompletedRun({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        scope: 'public_ladder',
+        ...input,
+      })
+    )?.runId;
+
+  test('asking for the whole set reaches the pass that measured it', async () => {
+    assert.equal(await ask({ containingAllRequestedCashAtomic: LADDER }), ladderPass.runId);
+  });
+
+  test('asking for nothing still returns the newest run', async () => {
+    // The preference changes no existing caller.
+    assert.equal(await ask({}), oneSizeB.runId);
+    assert.equal(await ask({ containingAllRequestedCashAtomic: null }), oneSizeB.runId);
+  });
+
+  test('a run that answers both questions outranks a newer one that answers half', async () => {
+    // Postgres sorts by the exact-size CASE, then the set one, then time. The
+    // ladder pass holds this size AND the whole set, so it wins over the newer
+    // single-rung runs that hold only the size.
+    assert.equal(
+      await ask({
+        containingRequestedCashAtomic: '1000000000',
+        containingAllRequestedCashAtomic: LADDER,
+      }),
+      ladderPass.runId,
+    );
+  });
+
+  test('a size outside the ladder still beats the ladder, as it did before', async () => {
+    // The 2026-09-04 fix, unchanged: an on-demand size nobody else measured is
+    // reached even when the caller would also like the whole set.
+    const repository = await repositoryV1();
+    const odd = runV1('100000', '2026-09-12T09:00:00.000Z');
+    await repository.recordCompletedRun(odd);
+    const chosen = await repository.latestCompletedRun({
+      chainId: 8453,
+      tokenAddress: TOKEN,
+      scope: 'public_ladder',
+      containingRequestedCashAtomic: '100000',
+      containingAllRequestedCashAtomic: LADDER,
+    });
+    assert.equal(chosen?.runId, odd.runId);
+  });
+
+  test('a set nobody has ever covered falls back to the newest run', async () => {
+    assert.equal(
+      await ask({ containingAllRequestedCashAtomic: ['777', '888'] }),
+      oneSizeB.runId,
+    );
   });
 });

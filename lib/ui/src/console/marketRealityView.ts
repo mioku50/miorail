@@ -502,6 +502,14 @@ export interface RepresentationViewV1 {
   /** Round-trip cost at each reviewed size, from the same stored run. Empty
    * when nothing measured it — never a row of zeros. */
   ladder: FactViewV1[];
+  /**
+   * The ladder in one sentence, above the rows.
+   *
+   * The rows are four costs at four sizes, and the comparison between the ends
+   * is the finding — a reader should not have to do it themselves to learn
+   * what this market does as the size grows.
+   */
+  ladderHeadline: string | null;
   ladderNote: string | null;
   /** Holding, redeeming and distributions — from the reviewed adapters. */
   terms: FactViewV1[];
@@ -3481,6 +3489,9 @@ function coverageBodyV1(input: {
  */
 export interface RepresentationLadderInputV1 {
   rungs: FactViewV1[];
+  /** The ladder in one sentence. Optional: a caller that has only rows still
+   * renders exactly what it rendered before. */
+  headline?: string | null;
   note: string | null;
   /**
    * Whether the position can be CLOSED at the size being asked — not merely
@@ -3712,6 +3723,10 @@ export function marketRealityViewV1(input: {
             : collapseLadderRungsV1(
                 input.ladders?.[representation.tokenAddress.toLowerCase()]?.rungs ?? [],
               ),
+        ladderHeadline:
+          outcome === 'zero_supply'
+            ? null
+            : (input.ladders?.[representation.tokenAddress.toLowerCase()]?.headline ?? null),
         ladderNote:
           outcome === 'zero_supply'
             ? null

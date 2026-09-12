@@ -16,6 +16,7 @@ import {
   signalFeedViewV1,
   type OfficialAssetWireV1,
   type OfficialAssetsOverviewWireV1,
+  roundTripHeadlineV1,
 } from '../src/console/rwaDiscoverView';
 
 const NOW = new Date('2026-08-25T12:00:00.000Z');
@@ -911,5 +912,86 @@ describe('Discover grades a returned-more round trip the same way', () => {
     // A missing or unreadable figure still falls back rather than deciding.
     assert.equal(roundTripToneV1(null, 'neutral'), 'neutral');
     assert.equal(roundTripToneV1('abc', 'neutral'), 'neutral');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// The ladder, said before it is shown.
+//
+// Four costs at four sizes leave the comparison to the reader, and for these
+// tokens the comparison IS the finding: the ten Coinbase stocks sat within
+// twelve basis points of each other at $10,000 on 2026-09-12 and spread from
+// eleven to a hundred and forty-four at $100,000.
+// ---------------------------------------------------------------------------
+describe('the round trip in one sentence', () => {
+  const rung = (
+    requestedCashAtomic: string,
+    roundTripCostBps: string | null,
+    over: Partial<Parameters<typeof roundTripHeadlineV1>[0][number]> = {},
+  ) => ({
+    requestedCashAtomic,
+    destination: 'USDC' as const,
+    status: (roundTripCostBps === null ? 'unavailable' : 'full') as 'full' | 'unavailable',
+    roundTripCostBps,
+    derivedFromExactRung: false,
+    lowerBoundRequestedCashAtomic: null,
+    ...over,
+  });
+
+  test('it names both ends and the bound on what was measured', () => {
+    const headline = roundTripHeadlineV1([
+      rung('100000000', '9'),
+      rung('1000000000', '9'),
+      rung('10000000000', '12'),
+      rung('100000000000', '144'),
+    ]);
+    assert.equal(
+      headline,
+      'A round trip costs 0.09% at $100 and 1.44% at $100,000. Only these sizes were measured; a size between them was not.',
+    );
+    // No grade, ever: the sentence states two measured costs and stops.
+    assert.doesNotMatch(headline ?? '', /cheap|expensive|good|bad|liquid/i);
+  });
+
+  test('a size that never completed is named rather than dropped off the end', () => {
+    // Ending at the last PRICED rung would quietly present $10,000 as the
+    // largest size anybody asked about.
+    const headline = roundTripHeadlineV1([
+      rung('100000000', '9'),
+      rung('10000000000', '12'),
+      rung('100000000000', null, { entryRouteRefused: true }),
+    ]);
+    assert.match(headline ?? '', /0\.09% at \$100 and 0\.12% at \$10,000\./);
+    assert.match(headline ?? '', /no approved router would buy at \$100,000/);
+  });
+
+  test('one measured size says so instead of comparing with itself', () => {
+    assert.equal(
+      roundTripHeadlineV1([rung('1000000000', '9')]),
+      'A round trip costs 0.09% at $1,000. That is the only size measured.',
+    );
+  });
+
+  test('a rung whose quote expired still counts, through its last measurement', () => {
+    // The single-rung case the Stocks card actually renders: the run is old, so
+    // the rung reads `not_measured` and carries what the last run found.
+    const headline = roundTripHeadlineV1([
+      {
+        ...rung('1000000000', null),
+        status: 'not_measured',
+        lastMeasured: {
+          status: 'full',
+          errorCode: null,
+          observedAt: '2026-09-12T10:13:39.000Z',
+          roundTripCostBps: '9',
+        },
+      },
+    ]);
+    assert.match(headline ?? '', /0\.09% at \$1,000/);
+  });
+
+  test('nothing priced is no sentence at all', () => {
+    assert.equal(roundTripHeadlineV1([rung('100000000', null)]), null);
+    assert.equal(roundTripHeadlineV1([]), null);
   });
 });

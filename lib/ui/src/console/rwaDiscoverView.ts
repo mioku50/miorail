@@ -446,6 +446,60 @@ export function roundTripToneV1(bps: string | null, fallback: ToneV1): ToneV1 {
  * arrived later than that. The open figure wins when there is one; otherwise
  * the rung says what the run found, and when.
  */
+/**
+ * The ladder, said in a sentence before it is shown as a table.
+ *
+ * The rows are four costs at four sizes and a reader has to do the comparison
+ * themselves; the comparison IS the finding, and for these tokens it is the
+ * one that decides what a position can be. On 2026-09-12 the ten Coinbase
+ * stocks were all within twelve basis points at $10,000 and spread from eleven
+ * to a hundred and forty-four at $100,000 — the same market at one size and
+ * ten different markets at the other.
+ *
+ * It names the two ENDS and nothing between them, because nothing between them
+ * was measured. No verdict, no grade, no "good up to": the sentence states two
+ * measured costs and the bound on what was measured, and stops.
+ */
+export function roundTripHeadlineV1(rungs: readonly CashExitRungInputV1[]): string | null {
+  const cash = rungs.filter(
+    (rung): rung is CashExitRungInputV1 & { requestedCashAtomic: string } =>
+      rung.destination === 'USDC' && rung.requestedCashAtomic !== null,
+  );
+  if (cash.length === 0) return null;
+  const costOf = (rung: CashExitRungInputV1): string | null =>
+    rung.status === 'not_measured'
+      ? (rung.lastMeasured?.roundTripCostBps ?? null)
+      : rung.roundTripCostBps;
+  const priced = cash.filter((rung) => rwaBpsLabelV1(costOf(rung)) !== null);
+  if (priced.length === 0) return null;
+  const sized = [...priced].sort((left, right) =>
+    BigInt(left.requestedCashAtomic) < BigInt(right.requestedCashAtomic) ? -1 : 1,
+  );
+  const small = sized[0]!;
+  const large = sized[sized.length - 1]!;
+  const measuredBound =
+    cash.length > 1
+      ? ' Only these sizes were measured; a size between them was not.'
+      : ' That is the only size measured.';
+  if (small === large) {
+    return `A round trip costs ${rwaBpsLabelV1(costOf(small))} at ${cashSizeLabelV1(small.requestedCashAtomic)}.${measuredBound}`;
+  }
+  // The largest size that was PRICED is not always the largest size asked. When
+  // a bigger rung exists and carries no cost, the sentence says what happened
+  // there rather than quietly ending at the last number.
+  const biggest = [...cash].sort((left, right) =>
+    BigInt(left.requestedCashAtomic) < BigInt(right.requestedCashAtomic) ? -1 : 1,
+  )[cash.length - 1]!;
+  const opening = `A round trip costs ${rwaBpsLabelV1(costOf(small))} at ${cashSizeLabelV1(
+    small.requestedCashAtomic,
+  )} and ${rwaBpsLabelV1(costOf(large))} at ${cashSizeLabelV1(large.requestedCashAtomic)}.`;
+  if (biggest === large) return `${opening}${measuredBound}`;
+  const unpriced = biggest.entryRouteRefused === true
+    ? `no approved router would buy at ${cashSizeLabelV1(biggest.requestedCashAtomic)}`
+    : `${cashSizeLabelV1(biggest.requestedCashAtomic)} carried no completed round trip`;
+  return `${opening} At the largest size asked, ${unpriced}.${measuredBound}`;
+}
+
 export function cashExitLadderRungsV1(
   rungs: readonly CashExitRungInputV1[],
   now?: Date,

@@ -1825,6 +1825,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 
 .mio-console .mr-ladder { margin-top: 10px; padding-top: 8px;
   border-top: 1px solid var(--line); }
+/* The ladder said in a sentence, between its label and its rows. Tighter than
+   a section verdict because it belongs to the block it opens. */
+.mio-console .mr-ladder-headline { margin: 6px 0 8px; font-size: var(--fs-body); }
 
 /* Phase 12.1 — historical observations stay visually factual. No green/red
    direction semantics: a wider cost is a number, not an investment verdict. */

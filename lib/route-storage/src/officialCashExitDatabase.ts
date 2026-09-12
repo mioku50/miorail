@@ -76,6 +76,12 @@ export function createDatabaseOfficialCashExitRepository(
       // refuses exactly as it did before. Null size sorts everything equally,
       // which is the old behaviour to the letter.
       const wanted = input.containingRequestedCashAtomic ?? null;
+      // The set preference, applied AFTER the single-size one so a caller that
+      // asks for both still gets the run that answers its exact question.
+      const covered =
+        input.containingAllRequestedCashAtomic && input.containingAllRequestedCashAtomic.length > 0
+          ? [...input.containingAllRequestedCashAtomic]
+          : null;
       const rows = await sql`
         SELECT run_id, chain_id, token_address, scope, tenant_id, approved_sources,
                destinations, started_at, completed_at, observations, market_reality_snapshots
@@ -90,6 +96,18 @@ export function createDatabaseOfficialCashExitRepository(
             WHEN EXISTS (
               SELECT 1 FROM jsonb_array_elements(observations) AS o
               WHERE o->>'requestedCashAtomic' = ${wanted}::text
+            ) THEN 1
+            ELSE 0
+          END DESC,
+          CASE
+            WHEN ${covered}::text[] IS NULL THEN 0
+            WHEN NOT EXISTS (
+              SELECT 1
+                FROM unnest(${covered}::text[]) AS want(size)
+               WHERE NOT EXISTS (
+                 SELECT 1 FROM jsonb_array_elements(observations) AS o
+                  WHERE o->>'requestedCashAtomic' = want.size
+               )
             ) THEN 1
             ELSE 0
           END DESC,

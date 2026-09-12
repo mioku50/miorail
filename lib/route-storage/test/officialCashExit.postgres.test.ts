@@ -32,8 +32,11 @@ function drizzleDir(): string {
     : resolve(cwd, 'lib', 'db', 'drizzle');
 }
 
-function runV1(over: { size?: string; completedAt?: string } = {}): CashExitMeasurementRunV1 {
-  const size = over.size ?? '100000000';
+function runV1(
+  over: { size?: string; sizes?: readonly string[]; completedAt?: string } = {},
+): CashExitMeasurementRunV1 {
+  const sizes = over.sizes ?? [over.size ?? '100000000'];
+  const size = sizes[0]!;
   const completedAt = over.completedAt ?? NOW;
   const runId = hashCashExitRunV1({
     schemaVersion: 'official-cash-exit-run/v1',
@@ -100,9 +103,20 @@ function runV1(over: { size?: string; completedAt?: string } = {}): CashExitMeas
     observedAt: NOW,
     expiresAt: '2026-08-25T12:01:00.000Z',
   };
-  const observation = CashExitSourceObservationV1Schema.parse({
-    ...draft,
-    observationHash: hashCashExitObservationV1(draft),
+  // One observation per rung, each spending its own size on the buy leg: a
+  // quote that spends a different amount than the rung asks for is not that
+  // rung's evidence, and the schema refuses it.
+  const observations = sizes.map((rung) => {
+    const row = {
+      ...draft,
+      requestedCashAtomic: rung,
+      buyQuote: quote('buy', USDC, TOKEN, rung, '40000000'),
+      sellQuote: quote('sell', TOKEN, USDC, '40000000', rung),
+    };
+    return CashExitSourceObservationV1Schema.parse({
+      ...row,
+      observationHash: hashCashExitObservationV1(row),
+    });
   });
   return CashExitMeasurementRunV1Schema.parse({
     schemaVersion: 'official-cash-exit-run/v1',
@@ -115,7 +129,7 @@ function runV1(over: { size?: string; completedAt?: string } = {}): CashExitMeas
     destinations: ['USDC'],
     startedAt: NOW,
     completedAt,
-    observations: [observation],
+    observations,
   });
 }
 
@@ -209,6 +223,53 @@ if (!throwaway) {
       assert.equal((await ask('777'))?.runId, ladderPass.runId);
       // And with no size asked for, the read is the old one to the letter.
       assert.equal((await ask(null))?.runId, ladderPass.runId);
+    });
+
+    test('the whole ladder is reachable behind newer single-size runs', async () => {
+      // The mirror bug, 2026-09-12: every page view writes a one-size run under
+      // this same scope, so the newest run was a single rung and the four-size
+      // curve could not be read at all.
+      const executor: SqlTemplateExecutor = (strings, ...values) =>
+        (
+          sql as unknown as (
+            strings: TemplateStringsArray,
+            ...values: unknown[]
+          ) => Promise<Record<string, unknown>[]>
+        )(strings, ...values);
+      const repository = createDatabaseOfficialCashExitRepository(executor);
+      await sql!.unsafe('DELETE FROM official_cash_exit_runs');
+
+      const LADDER = ['100000000', '1000000000', '10000000000', '100000000000'] as const;
+      const ladderPass = runV1({ sizes: LADDER, completedAt: '2026-09-12T10:13:39.000Z' });
+      const pageView = runV1({ size: '1000000000', completedAt: '2026-09-12T11:08:13.000Z' });
+      await repository.recordCompletedRun(ladderPass);
+      await repository.recordCompletedRun(pageView);
+
+      const whole = await repository.latestCompletedRun({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        scope: 'public_ladder',
+        containingAllRequestedCashAtomic: LADDER,
+      });
+      assert.equal(whole?.runId, ladderPass.runId);
+      assert.equal(whole?.observations.length, 4);
+
+      // Unasked, the read is unchanged: the newest run, single rung and all.
+      const newest = await repository.latestCompletedRun({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        scope: 'public_ladder',
+      });
+      assert.equal(newest?.runId, pageView.runId);
+
+      // A set nobody covered falls back rather than reaching further back.
+      const missing = await repository.latestCompletedRun({
+        chainId: 8453,
+        tokenAddress: TOKEN,
+        scope: 'public_ladder',
+        containingAllRequestedCashAtomic: ['777', '888'],
+      });
+      assert.equal(missing?.runId, pageView.runId);
     });
 
     test('the series read returns the same total order the pair reads use', async () => {

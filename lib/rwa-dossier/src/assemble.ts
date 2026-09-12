@@ -10,6 +10,7 @@ import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import { stableHashV1 } from '@mioagent/route-domain';
 import { assembleCashExitLadderV1, type CashExitLadderRungV1 } from '@mioagent/rwa-cash-exit';
 import {
+  CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
   isOfficialV1,
   type MarketTailRepositoryV1,
   type OfficialCashExitRepositoryV1,
@@ -555,7 +556,16 @@ export async function assembleOfficialAssetDossierV1(
       : await readB20MultiplierV1(deps.reader, { tokenAddress, anchor, now });
   const [publicExitRun, positionExitRun] = deps.cashExit
     ? await Promise.all([
-        deps.cashExit.latestCompletedRun({ chainId: 8453, tokenAddress, scope: 'public_ladder' }),
+        deps.cashExit.latestCompletedRun({
+          chainId: 8453,
+          tokenAddress,
+          scope: 'public_ladder',
+          // The LADDER, not merely the newest run. Both kinds of run share this
+          // scope, and an on-demand measurement of one size is newer than the
+          // hourly four-size pass — so without this the curve collapses to the
+          // single rung somebody last asked about.
+          containingAllRequestedCashAtomic: CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
+        }),
         deps.tenantId
           ? deps.cashExit.latestCompletedRun({
               chainId: 8453,

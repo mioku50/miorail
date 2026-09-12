@@ -20,7 +20,7 @@ import {
 
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
-import { cashExitLadderRungsV1 } from './rwaDiscoverView';
+import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
   MARKET_REALITY_SIZES_V1,
@@ -439,6 +439,8 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       string,
       {
         rungs: ReturnType<typeof cashExitLadderRungsV1>;
+        /** The same measurement, said once before the table repeats it. */
+        headline: string | null;
         note: string | null;
         exit: RepresentationExitEvidenceV1 | null;
       }
@@ -456,6 +458,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       if (rungs.length === 0) continue;
       built[response.dossier.tokenAddress.toLowerCase()] = {
         rungs,
+        // From the SAME rungs the rows are built from, so the sentence and the
+        // table cannot disagree about what was measured.
+        headline: roundTripHeadlineV1(ladder.rungs),
         // The router's NAME, not its adapter id. This line read "quoted
         // through kyberswap" on a consumer card — an internal identifier, in
         // the one place a reader looks to find out who answered.

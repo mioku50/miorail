@@ -30,14 +30,32 @@ export function createMemoryOfficialCashExitRepository(): OfficialCashExitReposi
       // accepts what the database refuses (or vice versa) is how three shipped
       // bugs got past the tests.
       const wanted = input.containingRequestedCashAtomic ?? null;
-      if (wanted === null) return ordered[0] ?? null;
-      return (
-        ordered.find((run) =>
-          run.observations.some((row) => row.requestedCashAtomic === wanted),
-        ) ??
-        ordered[0] ??
-        null
-      );
+      const covered =
+        input.containingAllRequestedCashAtomic && input.containingAllRequestedCashAtomic.length > 0
+          ? [...input.containingAllRequestedCashAtomic]
+          : null;
+      if (wanted === null && covered === null) return ordered[0] ?? null;
+      // Scored rather than searched twice, because Postgres orders by both
+      // CASE expressions before `completed_at`: among the runs that answer the
+      // exact size, one that also covers the whole set still sorts first. Two
+      // sequential `find`s would quietly disagree with that.
+      const score = (run: CashExitMeasurementRunV1): number => {
+        const has = (size: string) =>
+          run.observations.some((row) => row.requestedCashAtomic === size);
+        return (wanted !== null && has(wanted) ? 2 : 0) + (covered?.every(has) ? 1 : 0);
+      };
+      // `ordered` is newest first, so a stable max keeps the newest of a tie —
+      // the same total order the database produces.
+      let best = ordered[0] ?? null;
+      let bestScore = best ? score(best) : -1;
+      for (const run of ordered) {
+        const current = score(run);
+        if (current > bestScore) {
+          best = run;
+          bestScore = current;
+        }
+      }
+      return best;
     },
 
     async previousCompletedRun(input) {
