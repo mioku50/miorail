@@ -205,6 +205,7 @@ function defaultMarketRealitySnapshotsV1(input: {
           session: 'unknown',
           marketSession: 'unknown',
           publicationMode: 'unknown',
+          publicationPlacement: 'not_classified',
           valueAtomic: null,
           decimals: null,
           observedAt: input.capturedAt,

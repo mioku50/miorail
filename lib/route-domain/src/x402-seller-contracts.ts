@@ -176,6 +176,18 @@ const X402StockRepresentationV1Schema = z
     returnedCashAtomic: z.string().regex(/^\d+$/).nullable(),
     effectivePriceAtomic: z.string().regex(/^\d+$/).nullable(),
     premiumDiscountBps: z.string().regex(/^-?\d+$/).nullable(),
+    /**
+     * WHICH reference that premium is against, in the buyer's hands beside the
+     * number. `current_reference` is the session open at the time, `last_close_reference`
+     * a feed that had printed nothing since the bell, `off_session_reference`
+     * an overnight print — these feeds publish through the overnight session,
+     * measured 2026-09-16. Three different denominators; a bare bps figure
+     * cannot be compared across them, and a buyer had no way to tell.
+     * `withheld` where no premium was published.
+     */
+    premiumDiscountAgainst: z
+      .enum(['current_reference', 'last_close_reference', 'off_session_reference', 'withheld'])
+      .nullable(),
     observedAt: TimestampV1Schema.nullable(),
     expiresAt: TimestampV1Schema.nullable(),
     /** `live`, `history_only` or `never_measured` — about Miorail's coverage

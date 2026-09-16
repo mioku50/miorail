@@ -85,14 +85,29 @@ export interface ReviewedReferenceObservationV1 {
   };
 }
 
+type ReviewedSessionV1 = { localDate: string; open: number; close: number };
+
+/** The placement as this module produces it: always one of the five, never
+ * absent. Absence is reserved for evidence stored before the axis existed. */
+export type ReferencePublicationPlacementV1 = NonNullable<
+  MarketRealityReferenceStateV1['publicationPlacement']
+>;
+
 type CalendarClassificationV1 = {
   kind: 'regular_hours' | 'after_hours' | 'weekend';
   localDate: string;
+  minuteOfDay: number;
   regularOpenMinute: number;
   regularCloseMinute: number;
   publicationSessionLocalDate: string;
   publicationSessionOpenMinute: number;
   publicationSessionCloseMinute: number;
+  /** The session that is open at this instant, or null outside one. */
+  openSession: ReviewedSessionV1 | null;
+  /** The most recent session whose close is already in the past. Distinct from
+   * the publication session above, which is the most recent session INCLUDING
+   * one that is still open. */
+  lastClosedSession: ReviewedSessionV1 | null;
 };
 
 function dateShiftV1(localDate: string, days: number): string {
@@ -104,7 +119,7 @@ function dateShiftV1(localDate: string, days: number): string {
 function reviewedOpenSessionV1(
   localDate: string,
   calendar: ReviewedReferenceCalendarV1,
-): { localDate: string; open: number; close: number } | null {
+): ReviewedSessionV1 | null {
   if (localDate < calendar.validFrom || localDate > calendar.validThrough) return null;
   const day = new Date(`${localDate}T12:00:00.000Z`).getUTCDay();
   if (day === 0 || day === 6 || calendar.closedDates.includes(localDate)) return null;
@@ -121,6 +136,82 @@ function publicationSessionV1(localDate: string, calendar: ReviewedReferenceCale
     if (session) return session;
   }
   return null;
+}
+
+/**
+ * The most recent session whose close has already happened.
+ *
+ * Today's own session counts only once its close is behind us; otherwise the
+ * walk continues backwards. This is the boundary a publication is placed
+ * against, and it is deliberately NOT `publicationSessionV1`: during a live
+ * session that function returns the session we are inside, and everything
+ * printed overnight would then read as older than a close that has not
+ * happened yet.
+ */
+function lastClosedSessionV1(
+  localDate: string,
+  minuteOfDay: number,
+  calendar: ReviewedReferenceCalendarV1,
+): ReviewedSessionV1 | null {
+  const today = reviewedOpenSessionV1(localDate, calendar);
+  if (today && minuteOfDay >= today.close) return today;
+  for (let offset = 1; offset <= 10; offset += 1) {
+    const session = reviewedOpenSessionV1(dateShiftV1(localDate, -offset), calendar);
+    if (session) return session;
+  }
+  return null;
+}
+
+/** Lexicographic on (local date, minute of day); both are ET wall-clock, so
+ * this is a total order over instants the calendar can name. */
+function isAfterV1(
+  point: { localDate: string; minute: number },
+  boundary: { localDate: string; minute: number },
+): boolean {
+  if (point.localDate !== boundary.localDate) return point.localDate > boundary.localDate;
+  return point.minute > boundary.minute;
+}
+
+/**
+ * Place the feed's own last publication against the reviewed sessions.
+ *
+ * This is the whole of the off-session basis: the value on screen is named by
+ * WHEN THE FEED PUBLISHED IT, not by a configured belief about when this feed
+ * publishes. Measured 2026-09-16 over sixty rounds, the Coinbase feeds print
+ * overnight with a new value each time and go quiet only across the weekend,
+ * so a policy that assumed "holds the last close after 16:00" was naming an
+ * overnight print a close, and refusing the comparison precisely when the
+ * reference was at its freshest.
+ */
+export function placeReferencePublicationV1(input: {
+  referenceUpdatedAt: string;
+  calendar: CalendarClassificationV1;
+  timeZone: 'America/New_York';
+}): ReferencePublicationPlacementV1 {
+  const published = localPartsV1(new Date(input.referenceUpdatedAt), input.timeZone);
+  if (!published) return 'not_classified';
+  const point = { localDate: published.localDate, minute: published.minuteOfDay };
+  const open = input.calendar.openSession;
+  if (
+    open &&
+    point.localDate === open.localDate &&
+    point.minute >= open.open &&
+    point.minute <= input.calendar.minuteOfDay
+  ) {
+    return 'inside_open_session';
+  }
+  const closed = input.calendar.lastClosedSession;
+  if (!closed) return 'not_classified';
+  if (
+    point.localDate === closed.localDate &&
+    point.minute >= closed.open &&
+    point.minute <= closed.close
+  ) {
+    return 'last_closed_session';
+  }
+  return isAfterV1(point, { localDate: closed.localDate, minute: closed.close })
+    ? 'after_last_close'
+    : 'before_last_close';
 }
 
 function localPartsV1(now: Date, timeZone: 'America/New_York') {
@@ -176,16 +267,20 @@ function classifyReviewedCalendarV1(
   const close = calendar.earlyCloseMinutes[local.localDate] ?? calendar.regularCloseMinute;
   const publicationSession = publicationSessionV1(local.localDate, calendar);
   if (!publicationSession) return null;
+  const lastClosedSession = lastClosedSessionV1(local.localDate, local.minuteOfDay, calendar);
   const weekend = local.weekday === 'Sat' || local.weekday === 'Sun';
   if (weekend) {
     return {
       kind: 'weekend',
       localDate: local.localDate,
+      minuteOfDay: local.minuteOfDay,
       regularOpenMinute: calendar.regularOpenMinute,
       regularCloseMinute: close,
       publicationSessionLocalDate: publicationSession.localDate,
       publicationSessionOpenMinute: publicationSession.open,
       publicationSessionCloseMinute: publicationSession.close,
+      openSession: null,
+      lastClosedSession,
     };
   }
   const closed = calendar.closedDates.includes(local.localDate);
@@ -194,11 +289,16 @@ function classifyReviewedCalendarV1(
   return {
     kind: regular ? 'regular_hours' : 'after_hours',
     localDate: local.localDate,
+    minuteOfDay: local.minuteOfDay,
     regularOpenMinute: calendar.regularOpenMinute,
     regularCloseMinute: close,
     publicationSessionLocalDate: publicationSession.localDate,
     publicationSessionOpenMinute: publicationSession.open,
     publicationSessionCloseMinute: publicationSession.close,
+    openSession: regular
+      ? { localDate: local.localDate, open: calendar.regularOpenMinute, close }
+      : null,
+    lastClosedSession,
   };
 }
 
@@ -221,6 +321,7 @@ export function unknownMarketRealityReferenceV1(input: {
     session: 'unknown',
     marketSession: 'unknown',
     publicationMode: 'unknown',
+    publicationPlacement: 'not_classified',
     valueAtomic: null,
     decimals: null,
     observedAt: input.observedAt ?? null,
@@ -240,6 +341,7 @@ function observedStateV1(input: {
   configuration: ReviewedReferenceConfigurationV1;
   observation: ReviewedReferenceObservationV1;
   calendar: CalendarClassificationV1 | null;
+  placement: ReferencePublicationPlacementV1;
   session: MarketRealityReferenceStateV1['session'];
   marketSession: MarketRealityReferenceStateV1['marketSession'];
   publicationMode: MarketRealityReferenceStateV1['publicationMode'];
@@ -254,6 +356,7 @@ function observedStateV1(input: {
     session: input.session,
     marketSession: input.marketSession,
     publicationMode: input.publicationMode,
+    publicationPlacement: input.placement,
     valueAtomic: observation.valueAtomic,
     decimals: observation.decimals,
     observedAt: observation.observedAt,
@@ -320,6 +423,7 @@ export function classifyMarketRealityReferenceV1(input: {
       configuration,
       observation,
       calendar: null,
+      placement: 'not_classified',
       session: 'unknown',
       marketSession: 'unknown',
       publicationMode: 'unknown',
@@ -340,6 +444,7 @@ export function classifyMarketRealityReferenceV1(input: {
       configuration,
       observation,
       calendar: null,
+      placement: 'not_classified',
       session: 'unknown',
       marketSession: 'unknown',
       publicationMode: 'unknown',
@@ -359,6 +464,7 @@ export function classifyMarketRealityReferenceV1(input: {
       configuration,
       observation,
       calendar: null,
+      placement: 'not_classified',
       session: 'unknown',
       marketSession: 'unknown',
       publicationMode: 'unknown',
@@ -374,11 +480,20 @@ export function classifyMarketRealityReferenceV1(input: {
     });
   }
 
+  // Placed once, above every branch below. A held or stale feed still has a
+  // last publication and where it sits is still evidence — that is exactly
+  // how a reader tells a closed market from a frozen feed.
+  const placement = placeReferencePublicationV1({
+    referenceUpdatedAt: observation.referenceUpdatedAt,
+    calendar,
+    timeZone: configuration.calendar.timeZone,
+  });
   if (observation.status === 'corporate_action_hold') {
     return observedStateV1({
       configuration,
       observation,
       calendar,
+      placement,
       session: 'corporate_action_hold',
       marketSession: calendar.kind,
       publicationMode: 'corporate_action_hold',
@@ -393,6 +508,7 @@ export function classifyMarketRealityReferenceV1(input: {
       configuration,
       observation,
       calendar,
+      placement,
       session: 'stale',
       marketSession: calendar.kind,
       publicationMode: 'stale',
@@ -402,47 +518,26 @@ export function classifyMarketRealityReferenceV1(input: {
       reason: 'The reviewed reference observation is outside its explicit freshness policy.',
     });
   }
-  if (calendar.kind === 'weekend') {
+  // Everything below is decided by WHERE THE FEED'S OWN LAST PUBLICATION SITS,
+  // not by a configured belief about when this feed publishes. The reviewed
+  // configuration is consulted for one thing only: whether an off-session
+  // print means anything for this issuer at all.
+  //
+  // `session` is the legacy presentation blend and `marketSession` is the
+  // market's own clock. The market clock never bends to the feed: a Saturday
+  // stays a Saturday whatever the feed last printed.
+  const session =
+    placement === 'last_closed_session' && calendar.kind !== 'weekend'
+      ? ('reference_holding_last_close' as const)
+      : calendar.kind;
+  if (configuration.outsideRegularHours === 'unknown' && placement !== 'inside_open_session') {
     return observedStateV1({
       configuration,
       observation,
       calendar,
-      session: 'weekend',
-      marketSession: 'weekend',
-      publicationMode:
-        configuration.outsideRegularHours === 'holds_last_close'
-          ? 'holding_last_close'
-          : configuration.outsideRegularHours === 'publishes'
-            ? 'live_reference'
-            : 'unknown',
-      status: 'fresh',
-      freshness: 'fresh',
-      reasonCode: 'reviewed_calendar_weekend',
-      reason: 'The explicit observation time falls on a weekend in the reviewed market calendar.',
-    });
-  }
-  if (calendar.kind === 'after_hours' && configuration.outsideRegularHours === 'holds_last_close') {
-    return observedStateV1({
-      configuration,
-      observation,
-      calendar,
-      session: 'reference_holding_last_close',
-      marketSession: 'after_hours',
-      publicationMode: 'holding_last_close',
-      status: 'fresh',
-      freshness: 'fresh',
-      reasonCode: 'reviewed_feed_holding_last_close',
-      reason:
-        'The reviewed feed holds its last published value outside the reference core session.',
-    });
-  }
-  if (calendar.kind === 'after_hours' && configuration.outsideRegularHours === 'unknown') {
-    return observedStateV1({
-      configuration,
-      observation,
-      calendar,
-      session: 'unknown',
-      marketSession: 'after_hours',
+      placement,
+      session,
+      marketSession: calendar.kind,
       publicationMode: 'unknown',
       status: 'fresh',
       freshness: 'fresh',
@@ -451,22 +546,46 @@ export function classifyMarketRealityReferenceV1(input: {
         'The calendar is reviewed, but this reference’s outside-session publication behavior is not.',
     });
   }
+  const placed = {
+    inside_open_session: {
+      publicationMode: 'live_reference' as const,
+      reasonCode: 'reviewed_calendar_regular_hours' as const,
+      reason: 'The feed last published inside the reviewed core session that is open now.',
+    },
+    after_last_close: {
+      publicationMode: 'live_reference' as const,
+      reasonCode: 'reviewed_feed_publishing_off_session' as const,
+      reason: 'The feed last published after the most recent reviewed session closed.',
+    },
+    last_closed_session: {
+      publicationMode: 'holding_last_close' as const,
+      reasonCode:
+        calendar.kind === 'weekend'
+          ? ('reviewed_calendar_weekend' as const)
+          : ('reviewed_feed_holding_last_close' as const),
+      reason: 'The feed has published nothing since the most recent reviewed session closed.',
+    },
+    before_last_close: {
+      publicationMode: 'unknown' as const,
+      reasonCode: 'reviewed_publication_precedes_last_close' as const,
+      reason:
+        'The feed’s last publication predates the most recent reviewed session, which has since closed.',
+    },
+    not_classified: {
+      publicationMode: 'unknown' as const,
+      reasonCode: 'calendar_classification_failed' as const,
+      reason: 'The reviewed calendar could not place the feed’s own publication time.',
+    },
+  }[placement];
   return observedStateV1({
     configuration,
     observation,
     calendar,
-    session: calendar.kind,
+    placement,
+    session,
     marketSession: calendar.kind,
-    publicationMode: 'live_reference',
     status: 'fresh',
     freshness: 'fresh',
-    reasonCode:
-      calendar.kind === 'regular_hours'
-        ? 'reviewed_calendar_regular_hours'
-        : 'reviewed_calendar_after_hours',
-    reason:
-      calendar.kind === 'regular_hours'
-        ? 'The explicit observation time falls inside the reviewed core trading session.'
-        : 'The explicit observation time falls outside the reviewed core trading session.',
+    ...placed,
   });
 }

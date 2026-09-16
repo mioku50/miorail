@@ -380,6 +380,35 @@ test('the representation answer names every contract and which of them the marke
   assert.equal(response.headers['x-miorail-data-hash'], response.body.dataHash);
 });
 
+test('a paid premium says which reference it is against, because three are possible', async () => {
+  // These feeds publish through the overnight session, so a bare bps figure
+  // can be against the open session, against a close, or against a 03:00
+  // print. A buyer comparing two of those is subtracting two denominators.
+  const app = paidAppV1({
+    loadRepresentations: async () => {
+      const board = boardFixtureV1() as { representations: Record<string, unknown>[] };
+      board.representations[0]!.basis = {
+        status: 'comparable',
+        kind: 'off_session_reference',
+        premiumDiscountBps: '-12',
+        reason: 'Comparable with the feed’s own off-session publication.',
+      };
+      return board;
+    },
+  });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/stocks/representations')
+    .query({ underlyingKey: 'security:isin:US67066G1040', sizeUsdc: '100' })
+    .expect(200);
+  const [coinbase, backed] = response.body.representations;
+  assert.equal(coinbase.premiumDiscountBps, '-12');
+  assert.equal(coinbase.premiumDiscountAgainst, 'off_session_reference');
+  // No basis recorded at all is null, and null is not a fourth kind.
+  assert.equal(backed.premiumDiscountBps, null);
+  assert.equal(backed.premiumDiscountAgainst, null);
+  assert.match(response.body.caveats.join(' '), /only comparable against the same/i);
+});
+
 test('a size nobody measured is refused rather than measured to satisfy a paid read', async () => {
   let called = false;
   const app = paidAppV1({

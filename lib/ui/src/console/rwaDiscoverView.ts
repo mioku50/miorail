@@ -933,9 +933,12 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     facts.push({
       label: 'Reference vs executable',
       value: difference,
-      // The feed's age travels with the comparison. A US equity feed holds the
-      // last close overnight and at weekends, so a difference read without it
-      // would be taken for a live spread.
+      // The feed's age travels with the comparison, and it is the only thing
+      // that says what the comparison is against. The old note here claimed
+      // these feeds hold the last close overnight; measured 2026-09-16, they
+      // do not — they print through the overnight session with a new value
+      // each time and go quiet only across the weekend. So the age is not
+      // decoration around a known state, it IS the state.
       note: referenceAge
         ? `Against a feed that last published ${referenceAge}`
         : 'What a round trip costs against the feed',

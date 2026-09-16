@@ -24,6 +24,7 @@ function reference(): MarketRealityReferenceStateV1 {
     session: 'regular_hours',
     marketSession: 'regular_hours',
     publicationMode: 'live_reference',
+    publicationPlacement: 'inside_open_session',
     valueAtomic: '10000000000',
     decimals: 8,
     observedAt: '2026-08-27T14:00:05.000Z',

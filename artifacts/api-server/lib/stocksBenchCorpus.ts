@@ -100,6 +100,7 @@ function referenceUnknown(reasonCode: 'issuer_reference_not_reviewed' | 'referen
     session: 'unknown' as const,
     marketSession: 'unknown' as const,
     publicationMode: 'unknown' as const,
+    publicationPlacement: 'not_classified' as const,
     valueAtomic: null,
     decimals: null,
     observedAt: null,

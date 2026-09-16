@@ -77,6 +77,22 @@ export interface StocksEvidenceBundleV1 {
 
 const USDC_DECIMALS_V1 = 6;
 
+/**
+ * What the basis was measured against, in words the narrator may repeat.
+ *
+ * `withheld` is unreachable beside a comparable status — the stored contract
+ * refuses that pair — and it is spelled out anyway so that adding a fourth
+ * kind is a compile error here rather than a wrong noun in a sentence.
+ */
+const BASIS_KIND_PHRASE_V1: Readonly<
+  Record<MarketRealityRepresentationV2['basis']['kind'], string>
+> = {
+  current_reference: 'current',
+  last_close_reference: 'last close',
+  off_session_reference: 'post-close',
+  withheld: 'unavailable',
+};
+
 /** Atomic to a decimal string, exact — no float ever touches a cash figure. */
 export function scaledDecimalV1(atomic: string, decimals: number): string {
   const negative = atomic.startsWith('-');
@@ -282,7 +298,11 @@ function referenceItemsV1(
       'basis',
       address,
       `premium or discount for ${address}`,
-      `${row.basis.premiumDiscountBps} bps against the ${row.basis.kind === 'current_reference' ? 'current' : 'last close'} reference`,
+      // The narrator gets the kind spelled out rather than a two-way guess.
+      // A ternary that fell through to "last close" would have handed the
+      // model that phrase for an overnight print, and the model would have
+      // repeated it — our own default wearing the feed's authority.
+      `${row.basis.premiumDiscountBps} bps against the ${BASIS_KIND_PHRASE_V1[row.basis.kind]} reference`,
     );
     return {
       missing,

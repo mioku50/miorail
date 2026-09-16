@@ -204,6 +204,7 @@ function snapshot(input: {
       session: 'unknown',
       marketSession: 'unknown',
       publicationMode: 'unknown',
+      publicationPlacement: 'not_classified',
       valueAtomic: null,
       decimals: null,
       observedAt: null,

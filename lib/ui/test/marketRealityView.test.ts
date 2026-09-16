@@ -309,6 +309,47 @@ function historyWireV1(
 }
 
 describe('Phase 12.1 comparable market history', () => {
+  test('two bases subtract only when they were measured against the same kind of reference', () => {
+    // The BUY path is where a basis change is shown. The current wire's basis
+    // is a `current_reference`. A stored point whose basis was taken against
+    // an overnight print is a different denominator, and their difference is
+    // the reference moving between two sessions, not the token's premium
+    // changing. A point stored before the kind existed carries none, and is
+    // not assumed to match either.
+    const basisChange = (
+      kind: 'current_reference' | 'off_session_reference' | undefined,
+    ): boolean => {
+      const sell = openSellWireV1();
+      const buyWire: MarketRealityWireV1 = {
+        ...sell,
+        question: { ...sell.question, direction: 'buy' },
+      };
+      const point = historyPointV1();
+      const history = historyWireV1([
+        {
+          ...point,
+          marketReality: {
+            ...point.marketReality!,
+            direction: 'buy',
+            basis: { ...point.marketReality!.basis, ...(kind ? { kind } : {}) },
+          },
+        },
+      ]);
+      const view = comparableMarketHistoryViewV1({
+        wire: buyWire,
+        history: { ...history, direction: 'buy' },
+        period: '1h',
+        now: NOW,
+      });
+      return (view?.representations[0]?.changesToNow ?? []).some(
+        (row) => row.label === 'Reference basis',
+      );
+    };
+    assert.equal(basisChange('current_reference'), true);
+    assert.equal(basisChange('off_session_reference'), false);
+    assert.equal(basisChange(undefined), false);
+  });
+
   test('SELL history derives cash-back and exit-cost changes with exact integer math', () => {
     assert.equal(marketExitCostBpsV1('10000000000', '9973400000'), '27');
     assert.equal(marketExitCostBpsV1('10000000000', '9958200000'), '42');
@@ -1844,6 +1885,36 @@ describe('numeric Market Reality facts stay factual and neutral', () => {
     assert.match(reference?.note ?? '', /US market closed \/ after hours/);
     assert.match(reference?.note ?? '', /Reference price is holding its last published value/);
     assert.doesNotMatch(reference?.note ?? '', /after_hours|holding_last_close/);
+  });
+
+  test('an overnight print is not called a last close, and a last close is not called live', () => {
+    // The feeds publish through the overnight session — measured 2026-09-16 —
+    // so "outside regular hours" is two different states and the Basis row is
+    // where a reader finds out which one they are looking at.
+    const base = comparableRepresentation('11');
+    const noteFor = (
+      kind: 'current_reference' | 'last_close_reference' | 'off_session_reference',
+      publicationMode: 'live_reference' | 'holding_last_close',
+    ) => {
+      const row = representation({
+        ...base,
+        reference: { ...base.reference, marketSession: 'after_hours', publicationMode },
+        basis: { ...base.basis, kind },
+      });
+      const view = marketRealityViewV1({
+        wire: wire({ representations: [row] }),
+        choice: null,
+        now: NOW,
+      });
+      return view?.representations[0]?.numbers.find((fact) => fact.label === 'Basis')?.note ?? '';
+    };
+    const offSession = noteFor('off_session_reference', 'live_reference');
+    const lastClose = noteFor('last_close_reference', 'holding_last_close');
+    assert.match(offSession, /published after the last close/);
+    assert.doesNotMatch(offSession, /last close —|published nothing since/);
+    assert.match(lastClose, /the feed has published nothing since/);
+    assert.notEqual(offSession, lastClose);
+    assert.match(noteFor('current_reference', 'live_reference'), /session open now/);
   });
 
   test('ranking remains withheld after numeric facts become present', () => {

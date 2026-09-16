@@ -217,10 +217,18 @@ export interface MarketRealityRepresentationWireV1 {
      * hour ago is still read every minute. */
     referenceUpdatedAt?: string | null;
     observedAt?: string | null;
+    /** Where that publication sits relative to the reviewed sessions. Optional
+     * on the wire because evidence stored before this axis existed has none. */
+    publicationPlacement?:
+      | 'inside_open_session'
+      | 'last_closed_session'
+      | 'after_last_close'
+      | 'before_last_close'
+      | 'not_classified';
   };
   basis: {
     status: 'comparable' | 'withheld';
-    kind: 'current_reference' | 'last_close_reference' | 'withheld';
+    kind: 'current_reference' | 'last_close_reference' | 'off_session_reference' | 'withheld';
     premiumDiscountBps: string | null;
     reason: string;
   };
@@ -677,6 +685,23 @@ function bpsLabelV1(bps: string | null): string | null {
   if (percent === null) return `${sign}${value.toString()} bps`;
   return `${sign}${percent} · ${sign}${value.toString()} bps`;
 }
+
+/**
+ * What the basis was measured against, named by when the feed published it.
+ *
+ * These feeds do not go quiet at 16:00 — measured 2026-09-16, they print
+ * overnight with a new value each time and stop only across the weekend. So
+ * "last close" is a real, separate state (the feed has printed nothing since
+ * the bell) and it is not the same sentence as an overnight print.
+ */
+const BASIS_KIND_NOTE_V1: Readonly<
+  Record<MarketRealityRepresentationWireV1['basis']['kind'], string>
+> = {
+  current_reference: 'vs the reference published in the session open now',
+  last_close_reference: 'vs the last close — the feed has published nothing since',
+  off_session_reference: 'vs the reference published after the last close, with the market shut',
+  withheld: 'no comparable reference',
+};
 
 const MARKET_SESSION_LABEL_V1: Readonly<
   Record<MarketRealityRepresentationWireV1['reference']['marketSession'], string>
@@ -1152,12 +1177,14 @@ function numbersV1(
     {
       label: premium === null ? 'Basis withheld' : 'Basis',
       value: premium ?? '—',
+      // Three different things a basis can be against, and the reader has to
+      // be told which. "vs last published reference value" was one sentence
+      // doing the work of two: it read as a close, and the feed's newest
+      // publication is very often an overnight print instead.
       note:
         premium === null
           ? representation.basis.reason
-          : representation.basis.kind === 'last_close_reference'
-            ? 'vs last published reference value'
-            : 'vs current reviewed reference',
+          : BASIS_KIND_NOTE_V1[representation.basis.kind],
       // The sign describes direction relative to the named reference. It does
       // not describe investment quality and never selects a green/red tone.
       tone: 'neutral',

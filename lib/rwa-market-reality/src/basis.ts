@@ -17,15 +17,21 @@ export interface MarketRealityBasisInputV1 {
   reference: MarketRealityReferenceStateV1;
 }
 
+/** Every decision this module makes now carries v2. v1 rows stay v1: a stored
+ * decision keeps the policy it was decided by. */
+const BASIS_POLICY_V2 = 'exact_normalized_price_same_quote_window_placed_publication_v2' as const;
+
 function withheldV1(
   reasonCode: Exclude<
     MarketRealityBasisDecisionV1['reasonCode'],
-    'current_reference_comparable' | 'last_close_reference_comparable'
+    | 'current_reference_comparable'
+    | 'last_close_reference_comparable'
+    | 'off_session_reference_comparable'
   >,
   reason: string,
 ): MarketRealityBasisDecisionV1 {
   return MarketRealityBasisDecisionV1Schema.parse({
-    policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+    policy: BASIS_POLICY_V2,
     status: 'withheld',
     kind: 'withheld',
     premiumDiscountBps: null,
@@ -34,43 +40,22 @@ function withheldV1(
   });
 }
 
-function localDateAndMinuteV1(timestamp: string): { localDate: string; minute: number } | null {
-  const date = new Date(timestamp);
-  if (!Number.isFinite(date.getTime())) return null;
-  try {
-    const parts = new Intl.DateTimeFormat('en-CA', {
-      timeZone: 'America/New_York',
-      year: 'numeric',
-      month: '2-digit',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit',
-      hourCycle: 'h23',
-    }).formatToParts(date);
-    const value = (kind: Intl.DateTimeFormatPartTypes) =>
-      parts.find((part) => part.type === kind)?.value ?? null;
-    const year = value('year');
-    const month = value('month');
-    const day = value('day');
-    const hour = Number(value('hour'));
-    const minute = Number(value('minute'));
-    if (!year || !month || !day || !Number.isInteger(hour) || !Number.isInteger(minute)) {
-      return null;
-    }
-    return { localDate: `${year}-${month}-${day}`, minute: hour * 60 + minute };
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Deterministic Phase 10C.2A basis gate.
+ * Deterministic basis gate, v2.
  *
  * Health is read, never redefined here. Comparability additionally requires:
  * an exact normalized USDC price, positive reviewed supply, an open quote,
- * reference evidence observed inside that quote's own window, and a source
- * publication timestamp inside the explicitly reviewed regular session. The
- * 26-hour feed-health TTL is deliberately absent from this policy.
+ * reference evidence observed inside that quote's own window, and a feed
+ * publication the reviewed calendar can place. The 26-hour feed-health TTL is
+ * deliberately absent from this policy.
+ *
+ * v1 required that publication to fall INSIDE a reviewed regular session, on
+ * the configured belief that these feeds hold their last close outside one.
+ * Sixty measured rounds (2026-09-16) say they do not: they print overnight
+ * with a new value each time. So v1 withheld the comparison exactly when the
+ * reference was freshest, and would have labelled an overnight print a close.
+ * v2 places the publication instead and lets the placement name the kind —
+ * the number is never published without saying which of the three it is.
  */
 export function evaluateMarketRealityBasisV1(
   input: MarketRealityBasisInputV1,
@@ -211,26 +196,38 @@ export function evaluateMarketRealityBasisV1(
     );
   }
 
-  const publication = localDateAndMinuteV1(reference.referenceUpdatedAt);
+  // The placement is computed where the reviewed calendar lives, against the
+  // feed's own `referenceUpdatedAt`. Reading it here rather than recomputing a
+  // timezone is deliberate: one definition of "which session did this value
+  // come from", used both by the label and by this gate.
   if (
-    !publication ||
-    publication.localDate !== reference.calendar.publicationSessionLocalDate ||
-    publication.minute < reference.calendar.publicationSessionOpenMinute ||
-    publication.minute > reference.calendar.publicationSessionCloseMinute
+    reference.publicationPlacement === undefined ||
+    reference.publicationPlacement === 'not_classified'
   ) {
     return withheldV1(
       'reference_publication_outside_reviewed_session',
-      'The feed publication is not proved to belong to the required reviewed regular session.',
+      'The reviewed calendar could not place the feed publication in any session.',
+    );
+  }
+  if (reference.publicationPlacement === 'before_last_close') {
+    return withheldV1(
+      'reference_publication_precedes_last_close',
+      'A whole reviewed session has opened and closed since the feed last published.',
     );
   }
 
   const kind =
-    reference.marketSession === 'regular_hours' && reference.publicationMode === 'live_reference'
+    reference.publicationPlacement === 'inside_open_session' &&
+    reference.marketSession === 'regular_hours' &&
+    reference.publicationMode === 'live_reference'
       ? 'current_reference'
-      : ['after_hours', 'weekend'].includes(reference.marketSession) &&
+      : reference.publicationPlacement === 'last_closed_session' &&
           reference.publicationMode === 'holding_last_close'
         ? 'last_close_reference'
-        : null;
+        : reference.publicationPlacement === 'after_last_close' &&
+            reference.publicationMode === 'live_reference'
+          ? 'off_session_reference'
+          : null;
   if (!kind) {
     return withheldV1(
       'unsupported_semantics',
@@ -246,18 +243,22 @@ export function evaluateMarketRealityBasisV1(
   const denominator = referenceValue * priceScale;
   const premiumDiscountBps = ((numerator * 10_000n) / denominator).toString();
   return MarketRealityBasisDecisionV1Schema.parse({
-    policy: 'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+    policy: BASIS_POLICY_V2,
     status: 'comparable',
     kind,
     premiumDiscountBps,
     reasonCode:
       kind === 'current_reference'
         ? 'current_reference_comparable'
-        : 'last_close_reference_comparable',
+        : kind === 'last_close_reference'
+          ? 'last_close_reference_comparable'
+          : 'off_session_reference_comparable',
     reason:
       kind === 'current_reference'
         ? 'Exact normalized execution price is comparable with the current reviewed publication.'
-        : 'Exact normalized execution price is comparable with the reviewed last-close publication.',
+        : kind === 'last_close_reference'
+          ? 'Exact normalized execution price is comparable with the reviewed last-close publication.'
+          : 'Exact normalized execution price is comparable with the feed’s own off-session publication.',
   });
 }
 

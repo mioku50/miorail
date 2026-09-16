@@ -141,7 +141,18 @@ export function createReviewedMarketRealityReferenceAdapterV1(deps: {
         referenceAddress,
         referenceSource: listing.sourceUrl,
         calendar: REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
-        outsideRegularHours: 'holds_last_close',
+        // MEASURED, not assumed. Sixty consecutive rounds of the AAPLc feed
+        // read on 2026-09-16 carry prints at 04:35, 17:47, 20:00 and 23:57 ET,
+        // each with a different value, and one 56-hour gap from Friday midday
+        // to Sunday 20:00 — the hour the overnight US equity session opens.
+        // Five more feeds agree. These feeds publish outside the core session;
+        // what they hold is the weekend, and a weekend older than a day is
+        // already refused by the freshness policy.
+        //
+        // This setting no longer decides what an off-session value is called.
+        // It only says an off-session print from THIS issuer means something,
+        // and the placement of the print says which of the three kinds it is.
+        outsideRegularHours: 'publishes',
       },
       observation: {
         chainId: 8453,

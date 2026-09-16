@@ -666,6 +666,13 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
           returnedCashAtomic: (row.returnedCashAtomic as string | null) ?? null,
           effectivePriceAtomic: (row.effectivePriceAtomic as string | null) ?? null,
           premiumDiscountBps: (row.premiumDiscountBps as string | null) ?? null,
+          premiumDiscountAgainst:
+            ((row.basis as { kind?: string } | undefined)?.kind as
+              | 'current_reference'
+              | 'last_close_reference'
+              | 'off_session_reference'
+              | 'withheld'
+              | undefined) ?? null,
           observedAt: (row.observedAt as string | null) ?? null,
           expiresAt: (row.expiresAt as string | null) ?? null,
           liveness: String(row.liveness ?? 'never_measured'),
@@ -676,6 +683,7 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
         'An empty `sources` list means nobody has measured THIS exact size and direction. It is never a statement that no route exists.',
         'A zero-supply representation is a real contract with nothing outstanding; a supply that is not established is a Miorail read that failed. They are different facts.',
         'Figures are the stored measurement with its own two clocks. This response prepares no call and obtains no fresh quote.',
+      'A premium is only comparable against the same `premiumDiscountAgainst`. The reference feeds publish through the overnight session, so a figure taken at 03:00 ET is against an overnight print, not against the last close.',
       ],
       missingEvidence: rows.some((row) => ((row.sources ?? []) as unknown[]).length === 0)
         ? ['at least one reviewed representation has no measurement at this exact size and direction']

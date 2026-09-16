@@ -21,11 +21,41 @@ export const MARKET_REALITY_PUBLICATION_MODES_V1 = [
   'unknown',
 ] as const;
 
+/**
+ * Where the feed's own last publication sits relative to the reviewed regular
+ * sessions. MEASURED from the publication timestamp, never asserted from a
+ * policy about when the feed is supposed to publish.
+ *
+ * Sixty consecutive rounds of the Coinbase AAPLc feed, read 2026-09-16, put
+ * prints at 04:35, 17:47, 20:00 and 23:57 ET with a different value each time,
+ * and one gap of 56 hours across a weekend. "Outside regular hours the feed
+ * holds its last close" was the configured claim and it is false on both
+ * halves: it publishes overnight, and what it holds across a weekend is not a
+ * close either. This axis is what separates the two.
+ */
+export const MARKET_REALITY_PUBLICATION_PLACEMENTS_V1 = [
+  /** Inside the regular session that is open right now. */
+  'inside_open_session',
+  /** Inside the most recent regular session, which has since closed — the one
+   * case where "last close" is literally what the value is. */
+  'last_closed_session',
+  /** After that session's close: an overnight or weekend print. */
+  'after_last_close',
+  /** Older than the last close, with a whole session having come and gone
+   * since. Not current, and not the last close either. */
+  'before_last_close',
+  /** No reviewed calendar could place it. Also what a row stored before this
+   * axis existed reads as. */
+  'not_classified',
+] as const;
+
 export const MARKET_REALITY_REFERENCE_REASON_CODES_V1 = [
   'reviewed_calendar_regular_hours',
   'reviewed_calendar_after_hours',
   'reviewed_calendar_weekend',
   'reviewed_feed_holding_last_close',
+  'reviewed_feed_publishing_off_session',
+  'reviewed_publication_precedes_last_close',
   'reviewed_registry_corporate_action_hold',
   'reviewed_reference_stale',
   'reference_adapter_not_configured',
@@ -87,6 +117,18 @@ export const MarketRealityReferenceStateV1Schema = z
     ]),
     marketSession: z.enum(MARKET_REALITY_MARKET_SESSIONS_V1),
     publicationMode: z.enum(MARKET_REALITY_PUBLICATION_MODES_V1),
+    /**
+     * OPTIONAL, and deliberately not defaulted.
+     *
+     * A stored snapshot proves itself by a hash over its own content, so a
+     * default is not a harmless convenience here: zod writes the key in on
+     * parse, the recomputed hash no longer matches the stored one, and every
+     * snapshot taken before this axis existed fails to read. Measured, not
+     * reasoned about — the probe that caught it is the regression test beside
+     * this schema. Absent stays absent, and absent is its own answer: this row
+     * was written before anyone placed a publication.
+     */
+    publicationPlacement: z.enum(MARKET_REALITY_PUBLICATION_PLACEMENTS_V1).optional(),
     valueAtomic: SignedDigits.nullable(),
     decimals: z.number().int().min(0).max(36).nullable(),
     observedAt: Timestamp.nullable(),
@@ -156,9 +198,24 @@ export const MarketRealityReferenceStateV1Schema = z
   });
 export type MarketRealityReferenceStateV1 = z.infer<typeof MarketRealityReferenceStateV1Schema>;
 
+/**
+ * The policy a basis decision was made under, kept as a set because a stored
+ * decision keeps the policy it was decided by. v1 required the feed's
+ * publication to fall inside a reviewed regular session; v2 places the
+ * publication instead and lets the placement name the kind, because the
+ * measured feeds publish overnight and v1 withheld hardest exactly when the
+ * reference was freshest.
+ */
+export const MARKET_REALITY_BASIS_POLICIES_V1 = [
+  'exact_normalized_price_same_quote_window_reviewed_publication_v1',
+  'exact_normalized_price_same_quote_window_placed_publication_v2',
+] as const;
+
 export const MARKET_REALITY_BASIS_REASON_CODES_V1 = [
   'current_reference_comparable',
   'last_close_reference_comparable',
+  'off_session_reference_comparable',
+  'reference_publication_precedes_last_close',
   'reference_unknown',
   'reference_read_failed',
   'reference_identity_mismatch',
@@ -181,9 +238,14 @@ export const MARKET_REALITY_BASIS_REASON_CODES_V1 = [
 
 export const MarketRealityBasisDecisionV1Schema = z
   .object({
-    policy: z.literal('exact_normalized_price_same_quote_window_reviewed_publication_v1'),
+    policy: z.enum(MARKET_REALITY_BASIS_POLICIES_V1),
     status: z.enum(['comparable', 'withheld']),
-    kind: z.enum(['current_reference', 'last_close_reference', 'withheld']),
+    kind: z.enum([
+      'current_reference',
+      'last_close_reference',
+      'off_session_reference',
+      'withheld',
+    ]),
     premiumDiscountBps: SignedDigits.nullable(),
     reasonCode: z.enum(MARKET_REALITY_BASIS_REASON_CODES_V1),
     reason: z.string().min(1).max(300),
@@ -195,7 +257,9 @@ export const MarketRealityBasisDecisionV1Schema = z
         ? 'current_reference_comparable'
         : row.kind === 'last_close_reference'
           ? 'last_close_reference_comparable'
-          : null;
+          : row.kind === 'off_session_reference'
+            ? 'off_session_reference_comparable'
+            : null;
     const validComparable =
       row.status === 'comparable' &&
       expectedComparableReason !== null &&
@@ -205,9 +269,11 @@ export const MarketRealityBasisDecisionV1Schema = z
       row.status === 'withheld' &&
       row.kind === 'withheld' &&
       row.premiumDiscountBps === null &&
-      !['current_reference_comparable', 'last_close_reference_comparable'].includes(
-        row.reasonCode,
-      );
+      ![
+        'current_reference_comparable',
+        'last_close_reference_comparable',
+        'off_session_reference_comparable',
+      ].includes(row.reasonCode);
     if (!validComparable && !validWithheld) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,

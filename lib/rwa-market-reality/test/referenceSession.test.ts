@@ -65,14 +65,91 @@ test('classifies an explicit timestamp inside reviewed regular hours', () => {
   assert.equal(result.referenceAddress, FEED);
 });
 
-test('classifies reviewed weekday time outside core hours as after-hours for a publishing feed', () => {
+test('after hours with nothing printed since the bell is a held last close, whatever the feed is configured to do', () => {
+  // The fixture publishes at 09:59 ET and we look at 18:00 ET. The old answer
+  // read the configuration and said "after hours, publishing" — a claim about
+  // the feed's habits over an observation of the feed's behaviour. It has not
+  // published since the close, so at this instant it is holding one.
   const result = classifyMarketRealityReferenceV1({
     now: new Date('2026-08-27T22:00:00.000Z'),
     configuration: configuration(),
     observation: observation({ observedAt: '2026-08-27T22:00:00.000Z' }),
   });
-  assert.equal(result.session, 'after_hours');
-  assert.equal(result.reasonCode, 'reviewed_calendar_after_hours');
+  assert.equal(result.marketSession, 'after_hours');
+  assert.equal(result.publicationPlacement, 'last_closed_session');
+  assert.equal(result.publicationMode, 'holding_last_close');
+  assert.equal(result.reasonCode, 'reviewed_feed_holding_last_close');
+});
+
+test('after hours with a print since the bell is an off-session publication', () => {
+  // Measured 2026-09-16: six of ten Coinbase feeds had printed between 20:00
+  // and 03:13 ET, each with a value that had moved. This is that state.
+  const result = classifyMarketRealityReferenceV1({
+    now: new Date('2026-08-28T07:15:00.000Z'),
+    configuration: configuration(),
+    observation: observation({
+      observedAt: '2026-08-28T07:15:00.000Z',
+      referenceUpdatedAt: '2026-08-28T07:04:11.000Z',
+    }),
+  });
+  assert.equal(result.marketSession, 'after_hours');
+  assert.equal(result.publicationPlacement, 'after_last_close');
+  assert.equal(result.publicationMode, 'live_reference');
+  assert.equal(result.reasonCode, 'reviewed_feed_publishing_off_session');
+});
+
+test('the market clock never bends to the feed', () => {
+  // A Saturday is a Saturday whether the feed printed on Friday afternoon or
+  // at 20:00 on Sunday. Only the publication axis moves.
+  const held = classifyMarketRealityReferenceV1({
+    now: new Date('2026-08-29T14:00:00.000Z'),
+    configuration: configuration(),
+    observation: observation({
+      observedAt: '2026-08-29T14:00:00.000Z',
+      referenceUpdatedAt: '2026-08-28T15:56:09.000Z',
+    }),
+  });
+  const printed = classifyMarketRealityReferenceV1({
+    now: new Date('2026-08-29T14:00:00.000Z'),
+    configuration: configuration(),
+    observation: observation({
+      observedAt: '2026-08-29T14:00:00.000Z',
+      referenceUpdatedAt: '2026-08-29T00:40:35.000Z',
+    }),
+  });
+  assert.equal(held.marketSession, 'weekend');
+  assert.equal(printed.marketSession, 'weekend');
+  assert.equal(held.publicationPlacement, 'last_closed_session');
+  assert.equal(printed.publicationPlacement, 'after_last_close');
+  assert.equal(held.publicationMode, 'holding_last_close');
+  assert.equal(printed.publicationMode, 'live_reference');
+});
+
+test('a publication with a whole closed session behind it is placed, and not called a close', () => {
+  // Thursday's print, read on Saturday, with Friday's session in between. It
+  // is neither current nor the last close, and the mode refuses to name it.
+  const result = classifyMarketRealityReferenceV1({
+    now: new Date('2026-08-29T14:00:00.000Z'),
+    configuration: configuration(),
+    observation: observation({ observedAt: '2026-08-29T14:00:00.000Z' }),
+  });
+  assert.equal(result.publicationPlacement, 'before_last_close');
+  assert.equal(result.publicationMode, 'unknown');
+  assert.equal(result.reasonCode, 'reviewed_publication_precedes_last_close');
+});
+
+test('an unreviewed off-hours publication policy still refuses to name the value', () => {
+  const result = classifyMarketRealityReferenceV1({
+    now: new Date('2026-08-28T07:15:00.000Z'),
+    configuration: configuration({ outsideRegularHours: 'unknown' }),
+    observation: observation({
+      observedAt: '2026-08-28T07:15:00.000Z',
+      referenceUpdatedAt: '2026-08-28T07:04:11.000Z',
+    }),
+  });
+  assert.equal(result.publicationPlacement, 'after_last_close');
+  assert.equal(result.publicationMode, 'unknown');
+  assert.equal(result.reasonCode, 'calendar_semantics_missing');
 });
 
 test('classifies a reviewed Saturday as weekend without using the browser timezone', () => {

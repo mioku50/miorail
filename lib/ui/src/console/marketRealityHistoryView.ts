@@ -64,6 +64,9 @@ interface HistorySnapshotWireV1 {
   effectivePriceDecimals: number | null;
   basis: {
     status: 'comparable' | 'withheld';
+    /** Optional: snapshots stored before the kind existed carry none, and a
+     * missing kind is never assumed to match the current one. */
+    kind?: 'current_reference' | 'last_close_reference' | 'off_session_reference' | 'withheld';
     premiumDiscountBps: string | null;
     reason: string;
   };
@@ -443,7 +446,14 @@ function changesToNowV1(input: {
     before.basis.status === 'comparable' &&
     before.basis.premiumDiscountBps !== null &&
     input.current.basis.status === 'comparable' &&
-    input.current.basis.premiumDiscountBps !== null
+    input.current.basis.premiumDiscountBps !== null &&
+    // Two bases subtract only if they were measured against the same kind of
+    // reference. A close and an overnight print are different denominators,
+    // and their difference is not a change in the token's premium — it is the
+    // reference moving between two sessions. An older snapshot with no kind
+    // recorded is not assumed to match.
+    before.basis.kind !== undefined &&
+    before.basis.kind === input.current.basis.kind
   ) {
     const oldBasis = BigInt(before.basis.premiumDiscountBps);
     const nowBasis = BigInt(input.current.basis.premiumDiscountBps);

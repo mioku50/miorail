@@ -110,6 +110,7 @@ function withRecordedMarketReality(
         session: 'regular_hours',
         marketSession: 'regular_hours',
         publicationMode: 'live_reference',
+        publicationPlacement: 'inside_open_session',
         valueAtomic: referenceValueAtomic,
         decimals: 8,
         observedAt: observation.observedAt,
