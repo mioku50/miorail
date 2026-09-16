@@ -462,3 +462,118 @@ export function b20TransferGateV1(input: {
 export function b20TransferGateRefusesV1(gate: B20TransferGateV1): boolean {
   return gate.state === 'denied';
 }
+
+// ---------------------------------------------------------------------------
+// The executor gate — the check that has an address to ask about.
+//
+// `b20TransferGateV1` above runs where the router is not yet chosen, so it
+// consults the wallet's own scope and says so. One step later the router IS
+// chosen: it is the spender in the approval the holder is about to sign, and
+// it is the contract that will call `transferFrom`. That is the moment the
+// executor scope has a subject, and it is the last moment before a signature.
+//
+// WHY THIS IS NOT COVERED BY THE APPROVAL ITSELF. `approve()` is not policy
+// gated — Base Docs states it separately, and it is the kind of true fact a
+// reader turns into a false one. An allowance to a router will be granted to
+// an executor the policy refuses, and the revert arrives on the transfer,
+// after the wallet has signed twice and paid for both.
+//
+// MEASURED 2026-09-16: all thirteen Coinbase representations bind policy 5 to
+// all three transfer scopes, and policy 5 authorizes every address tried —
+// including the zero address and USDC. So this gate has nothing to refuse
+// today. That is the finding, not a reason to skip the read: a bound policy
+// whose contents can change is exactly the thing you check before signing, and
+// `isAuthorized` on a policy id that does NOT exist also answers `true`, which
+// is why `policyExists` stays in the read above and why an unread policy here
+// is never an allowance.
+// ---------------------------------------------------------------------------
+
+/** `approve(address,uint256)`. The only call whose spender this module reads. */
+const ERC20_APPROVE_SELECTOR_V1 = '0x095ea7b3';
+
+/**
+ * The executor, taken from the approval the holder is about to sign.
+ *
+ * Only an approval ON THE REVIEWED TOKEN establishes one. A sell approves the
+ * token and the spender is the contract that will call `transferFrom`; a buy
+ * approves the CASH asset, and the contract that delivers the token is not
+ * named anywhere in the batch. So a buy returns null, and null is
+ * `not_established` rather than a guess — the same rule the scope read has
+ * followed since it was written.
+ */
+export function b20ExecutorFromApprovalV1(input: {
+  tokenAddress: string;
+  calls: readonly { to?: unknown; data?: unknown }[];
+}): string | null {
+  const token = input.tokenAddress.toLowerCase();
+  if (!ADDRESS_V1.test(token)) return null;
+  const spenders = new Set<string>();
+  for (const call of input.calls) {
+    const to = typeof call?.to === 'string' ? call.to.toLowerCase() : null;
+    const data = typeof call?.data === 'string' ? call.data.toLowerCase() : null;
+    if (to !== token || data === null) continue;
+    if (!data.startsWith(ERC20_APPROVE_SELECTOR_V1) || data.length !== 10 + 128) continue;
+    const spender = `0x${data.slice(10 + 24, 10 + 64)}`;
+    if (ADDRESS_V1.test(spender)) spenders.add(spender);
+  }
+  // Two different spenders in one batch is not a question this can answer with
+  // one verdict, and answering the first one would label the second's risk
+  // with the first one's result.
+  return spenders.size === 1 ? [...spenders][0]! : null;
+}
+
+export interface B20ExecutorGateV1 {
+  /** The address the verdict is about, or null when the batch established none. */
+  executor: string | null;
+  state: B20EligibilityVerdictV1;
+  cause: 'executor_not_authorized' | null;
+  blockTag: string | null;
+  detail: string;
+}
+
+const EXECUTOR_GATE_DENIED_V1 =
+  'The issuer’s policy registry answered that the contract this batch would authorize to move the token is not itself authorized to move it. The approval would be granted and the transfer would then revert, after the wallet had signed. Nothing was released. This is the issuer’s rule for that contract, read on chain — Miorail does not set it and cannot lift it.';
+
+const EXECUTOR_GATE_OPEN_V1 =
+  'The issuer’s policy registry answered for the exact contract this batch authorizes, at one block, and it did not refuse. It says nothing about whether the route will fill or what it will cost.';
+
+const EXECUTOR_GATE_UNKNOWN_V1 =
+  'Which contract will move the token was not established by this batch, or the issuer’s policy for it was not read. Miorail does not read an unanswered question as a refusal, so nothing is blocked on it — and nothing is claimed either. An approval is not policy gated, so a granted allowance proves nothing here.';
+
+/**
+ * Turn the executor scope of one read into a verdict about one release.
+ *
+ * Same two rules as the wallet gate, for the same reasons: only a MEASURED
+ * denial refuses, and only the scope that governs this question is consulted.
+ * A wallet verdict may never arrive here — it is about a different address.
+ */
+export function b20ExecutorGateV1(input: {
+  eligibility: B20TransferEligibilityV1 | null | undefined;
+}): B20ExecutorGateV1 {
+  const eligibility = input.eligibility ?? null;
+  if (!eligibility) {
+    return {
+      executor: null,
+      state: 'not_established',
+      cause: null,
+      blockTag: null,
+      detail: EXECUTOR_GATE_UNKNOWN_V1,
+    };
+  }
+  const scope = eligibility.scopes.find((row) => row.scope === 'transfer_executor') ?? null;
+  const base = { executor: eligibility.executor, blockTag: eligibility.blockTag };
+  if (scope?.verdict === 'denied') {
+    return { ...base, state: 'denied', cause: 'executor_not_authorized', detail: EXECUTOR_GATE_DENIED_V1 };
+  }
+  if (scope?.verdict === 'authorized' && eligibility.executor !== null) {
+    return { ...base, state: 'authorized', cause: null, detail: EXECUTOR_GATE_OPEN_V1 };
+  }
+  return { ...base, state: 'not_established', cause: null, detail: EXECUTOR_GATE_UNKNOWN_V1 };
+}
+
+/** The one comparison a caller makes. Written out for the same reason
+ * `b20TransferGateRefusesV1` is: `!== 'authorized'` is the natural thing to
+ * type and it turns every unread policy into a refusal. */
+export function b20ExecutorGateRefusesV1(gate: B20ExecutorGateV1): boolean {
+  return gate.state === 'denied';
+}

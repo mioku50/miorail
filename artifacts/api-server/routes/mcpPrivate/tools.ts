@@ -16,6 +16,12 @@ import {
   stockExecutionHandoffV1,
   type StockExecutionHandoffResultV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
+import {
+  b20ExecutorFromApprovalV1,
+  b20ExecutorGateRefusesV1,
+  b20ExecutorGateV1,
+  type B20ExecutorGateV1,
+} from '@mioagent/b20-control';
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
@@ -846,6 +852,18 @@ export const stockActionRuntime = {
   verifyClearance: verifyStockActionClearanceV1,
   intent: stockActionIntentV1,
   /**
+   * The issuer's rule for the contract this batch is about to authorize.
+   *
+   * A seam like every other read here: a gate a test cannot stub is a gate no
+   * test can prove fails open. Null on any failure, which the gate reads as
+   * `not_established` — never as permission and never as a refusal.
+   */
+  executorEligibility: async (input: {
+    tokenAddress: string;
+    wallet: string;
+    executor: string | null;
+  }) => rwaMarketRealityRuntime.eligibility(input),
+  /**
    * `decimals()` and `symbol()` for the exact representation, read on chain.
    *
    * A representation binding does not carry them, and a wrong decimals turns an
@@ -1144,6 +1162,8 @@ export const STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1: Record<string, string> = {
     'The market moved after this was confirmed. Miorail will not offer the old request — review the current terms again.',
   stock_action_blocked:
     'Miorail’s Safety Kernel refused this plan. Nothing executable was produced.',
+  stock_action_executor_not_authorized:
+    'The issuer’s policy registry refuses the exact contract this batch would authorize to move the token. The approval would have been granted — `approve()` is not policy gated — and the transfer would then have reverted, after the wallet had signed twice and paid for both. Nothing executable was produced. This is the issuer’s rule for that contract, read on chain; Miorail does not set it and cannot lift it.',
 };
 
 export interface StockActionExecutionArgsV1 {
@@ -1312,6 +1332,45 @@ export async function miorailGetStockBaseMcpActionV1(
     throw stockActionExecutionRefusalV1('stock_action_blocked');
   }
 
+  // -------------------------------------------------------------------------
+  // The last check that has an address to ask about.
+  //
+  // `b20TransferGateV1` ran at confirm, against the WALLET's scope, because no
+  // router had been chosen yet. Now one has: it is the spender in the approval
+  // below, and it is the contract that will call `transferFrom`. Base Docs
+  // states separately that `approve()` is NOT policy gated, so the allowance
+  // the holder is about to grant proves nothing about whether that contract
+  // may move the token — the revert would arrive on the transfer, after two
+  // signatures.
+  //
+  // Read against the APPROVED bytes rather than the stored record, because the
+  // question is about what will actually be signed. Fails open, by the same
+  // rule as every other gate here: only a measured `denied` refuses, and an
+  // unread policy is rendered as unread. Measured 2026-09-16, the Coinbase
+  // thirteen bind a policy that authorizes every address tried, so this has
+  // nothing to refuse today — which is the state a check exists to notice
+  // changing.
+  // -------------------------------------------------------------------------
+  const executorGate = b20ExecutorGateV1({
+    eligibility: await runtime.executorEligibility({
+      tokenAddress: clearance.tokenAddress,
+      wallet: identity.walletAddress,
+      executor: b20ExecutorFromApprovalV1({
+        tokenAddress: clearance.tokenAddress,
+        calls: approved.payload.calls,
+      }),
+    }),
+  });
+  if (b20ExecutorGateRefusesV1(executorGate)) {
+    logger.warn('Stock action refused by the issuer executor policy', {
+      tenantId: identity.tenantId,
+      tokenAddress: clearance.tokenAddress,
+      executor: executorGate.executor,
+      blockTag: executorGate.blockTag,
+    });
+    throw stockActionExecutionRefusalV1('stock_action_executor_not_authorized');
+  }
+
   await auditV1(identity, {
     toolName: 'miorail_get_stock_base_mcp_action',
     outcome: 'action_released',
@@ -1358,6 +1417,13 @@ export async function miorailGetStockBaseMcpActionV1(
     blueprintStatus: approved.lifecycle,
     reviewConfirmed: true,
     approvalRequired: true,
+    /** Authorized or unread — a denial never gets this far. */
+    executorPolicy: {
+      executor: executorGate.executor,
+      state: executorGate.state as Exclude<B20ExecutorGateV1['state'], 'denied'>,
+      blockTag: executorGate.blockTag,
+      detail: executorGate.detail,
+    },
     instructions:
       'Pass these calls to Base MCP send_calls UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute your own recipient, amount or router — a modified batch no longer matches what Miorail simulated. Do not describe the terms: the review surface established them and is the only place they are current.',
     caveats: MIORAIL_PRIVATE_CAVEATS_V1,

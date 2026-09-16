@@ -138,6 +138,26 @@ export const MiorailGetStockBaseMcpActionOutputV1Schema = z
     blueprintStatus: z.string().min(1),
     reviewConfirmed: z.literal(true),
     approvalRequired: z.literal(true),
+    /**
+     * The issuer's verdict on the contract these calls authorize.
+     *
+     * `denied` never reaches a caller — it refuses upstream — so the two
+     * states here are `authorized` and `not_established`, and they are not the
+     * same claim. Published rather than swallowed for the reason every gate on
+     * this surface is: a response that showed nothing would let a reader
+     * conclude somebody checked, when a throttled RPC means nobody did.
+     *
+     * `approve()` is not policy gated. The allowance in `calls` is therefore
+     * not evidence about this, and a caller must not narrate it as any.
+     */
+    executorPolicy: z
+      .object({
+        executor: AddressV1.nullable(),
+        state: z.enum(['authorized', 'not_established']),
+        blockTag: z.string().min(1).max(80).nullable(),
+        detail: z.string().min(1).max(600),
+      })
+      .strict(),
     instructions: z.string().min(1),
     caveats: CaveatsV1,
   })

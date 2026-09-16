@@ -154,6 +154,12 @@ export function stockReleaseFailureCopyV1(error: unknown): string {
   if (message.includes('stock_action_blocked')) {
     return 'Miorail’s Safety Kernel refused this plan, so nothing executable was produced and your wallet was never asked.';
   }
+  if (message.includes('stock_action_executor_not_authorized')) {
+    // The refusal a reader is most likely to take personally, so it names the
+    // contract rather than them — and it names the trap that made this check
+    // necessary, because the wallet would happily have granted the allowance.
+    return 'The issuer’s policy refuses the exact contract this trade would have used to move the token. Your wallet was never asked. An approval would have gone through — approving is not policy gated — and the transfer itself would then have failed, so nothing was submitted. This is the issuer’s rule for that contract, not a statement about you.';
+  }
   if (message.includes('stock_action_route_unavailable')) {
     return 'No route was found for this exact confirmed question through the reviewed sources. Nothing was prepared.';
   }

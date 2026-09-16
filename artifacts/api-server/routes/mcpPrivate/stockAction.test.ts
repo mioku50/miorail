@@ -747,6 +747,69 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     }
   });
 
+  test('the contract the batch authorizes is checked against the issuer policy before release', async () => {
+    // `approve()` is not policy gated, so the allowance in these calls is not
+    // evidence about this. A measured denial of the executor refuses, and the
+    // refusal names the issuer rather than the holder.
+    const approveToRouter = `0x095ea7b3${'0'.repeat(24)}${ROUTER.slice(2)}${'f'.repeat(64)}`;
+    executionStub({
+      approve: async () =>
+        ({
+          outcome: 'approved',
+          lifecycle: 'approved',
+          payload: {
+            blueprintId: 'bp-1',
+            blueprintHash: `0x${'cd'.repeat(32)}`,
+            approvedCallsHash: APPROVED_CALLS_HASH,
+            chainId: '0x2105',
+            from: WALLET,
+            calls: [
+              { to: COINBASE, value: '0x0', data: approveToRouter },
+              { to: ROUTER, value: '0x0', data: '0x1234' },
+            ],
+            atomicRequired: true,
+          },
+        }) as never,
+      executorEligibility: async (input: { executor: string | null }) => ({
+        tokenAddress: COINBASE,
+        wallet: WALLET,
+        executor: input.executor,
+        blockTag: '0x1234',
+        blockNumber: '4660',
+        transferPause: { state: 'not_paused' as const, reason: null },
+        scopes: [
+          { scope: 'transfer_sender' as const, subject: 'wallet' as const, account: WALLET, verdict: 'authorized' as const, policyId: '5', policyType: 'blocklist' as const, reason: null },
+          { scope: 'transfer_receiver' as const, subject: 'wallet' as const, account: WALLET, verdict: 'authorized' as const, policyId: '5', policyType: 'blocklist' as const, reason: null },
+          { scope: 'transfer_executor' as const, subject: 'executor' as const, account: input.executor, verdict: 'denied' as const, policyId: '5', policyType: 'blocklist' as const, reason: null },
+        ],
+      }),
+    });
+    await assert.rejects(
+      () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'r1' }),
+      (error: { code?: string; message?: string }) => {
+        assert.equal(error.code, 'stock_action_executor_not_authorized');
+        assert.match(String(error.message), /issuer/i);
+        assert.match(String(error.message), /not policy gated/i);
+        return true;
+      },
+    );
+  });
+
+  test('an unread issuer policy releases, and says it was unread rather than passing', async () => {
+    // The gate fails open like every other one here, and the response carries
+    // the state so a caller cannot report a check that never happened.
+    executionStub({ executorEligibility: async () => null });
+    const action = await miorailGetStockBaseMcpActionV1(IDENTITY, {
+      clearance: clearanceFor(),
+      requestId: 'r1',
+    });
+    const policy = action.executorPolicy as Record<string, unknown>;
+    assert.equal(policy.state, 'not_established');
+    assert.equal(policy.executor, null);
+    assert.match(String(policy.detail), /approval is not policy gated/i);
+    MiorailGetStockBaseMcpActionOutputV1Schema.parse(action);
+  });
+
   test('the exact representation survives to the executable request', async () => {
     executionStub();
     const action = await miorailGetStockBaseMcpActionV1(IDENTITY, {
