@@ -25,4 +25,5 @@ export * from './ExecutionProof';
 export * from './RouteHistoryList';
 export * from './IntelligenceBudgetPanel';
 export * from './PublicMetricsDashboard';
+export * from './PublicIdentityCheck';
 export * from './console';

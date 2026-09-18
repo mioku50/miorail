@@ -76,6 +76,9 @@ const MarketRealityRadarPage = lazy(() =>
 const SettingsPage = lazy(() =>
   import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
+const PublicIdentityPage = lazy(() =>
+  import('../features/identity/PublicIdentityPage').then((m) => ({ default: m.PublicIdentityPage })),
+);
 const PublicMetricsPage = lazy(() =>
   import('../features/metrics/PublicMetricsPage').then((m) => ({ default: m.PublicMetricsPage })),
 );
@@ -186,6 +189,18 @@ export function App() {
             only its owner can open is not a proof anybody else can check. */}
         <Route path="/proof/:publicId">
           <PublicProofPage />
+        </Route>
+
+        {/* "Is this the real one" — no session, for the same reason. The reader
+            holding an address they do not trust is precisely the reader with no
+            account here, and a login would make this unreachable by the only
+            people it exists for. The linkable form is declared FIRST: wouter
+            matches in order. */}
+        <Route path="/is-it-real/:tokenAddress">
+          {(params) => <PublicIdentityPage tokenAddress={params.tokenAddress} />}
+        </Route>
+        <Route path="/is-it-real">
+          <PublicIdentityPage />
         </Route>
 
         {/* Phase 6 — Discover opens on the official corpus: assets an issuer

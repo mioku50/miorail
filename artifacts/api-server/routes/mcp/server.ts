@@ -1,4 +1,9 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import {
+  AddressIdentityCheckInputV1Schema,
+  AddressIdentityCheckOutputV1Schema,
+  miorailCheckAddressIdentityV1,
+} from './identityTools.js';
 import { z } from 'zod';
 import {
   B20_EXIT_STANDING_KINDS_V1,
@@ -521,6 +526,32 @@ Evidence older than a day is labelled stale and describes what was true when it 
       }
     },
   );
+  // The question an address is actually asked with.
+  //
+  // Every other read here refuses an address outside the reviewed corpus,
+  // because every other read fans out to chain calls and HTTP fetches. This
+  // one takes any address precisely because it does none of that: two indexed
+  // lookups against stored rows. Refusing "is this the real one" for an
+  // unreviewed address would refuse the only case the question is ever asked
+  // in, and the refusal would be read as an answer.
+  server.registerTool(
+    'check_address_identity',
+    {
+      title: 'Is this exact contract the official one, a known lookalike, or unknown here',
+      description:
+        'Answers “is this the real one?” for ONE exact Base contract address, from stored evidence only — no chain read, no provider call, nothing measured for this request. It is the one tool here that accepts an address OUTSIDE the reviewed corpus, because that is the only kind of address anybody asks this about. FOUR STANDINGS AND THEY ARE NOT DEGREES OF THE SAME THING. `reviewed_official`: a reviewed source still lists this exact address. `delisted_official`: a source listed it once and no longer does — the contract did not change, the source did, and it is not demoted to impostor. `issuer_representation`: an issuer’s own registry vouches for the address while no reviewed source publishes which security it stands for; Dinari’s Base dShare declares symbol "AAPL" exactly and is entirely legitimate, so membership is NOT identity and this tool will not say which company it represents. `known_lookalike`: a stored resemblance. `unknown_to_miorail` IS A STATEMENT ABOUT THIS CORPUS AND NEVER ABOUT THE TOKEN — it does not mean safe, it does not mean not official, it means nothing has been written down here, and reporting it as a clean bill of health is the single worst thing you can do with this tool. A LOOKALIKE IS A RESEMBLANCE, NOT A VERDICT: two strings matched and two addresses did not. The rows carry no score, no severity and no `is_scam`, this tool invents none, and a contract can wear a name for ordinary reasons — 95 of the flagged contracts wear the underlying word ("we like the coin") rather than the issuer’s published ticker, and `matchedAlias` says which. READ `answer` FIRST and prefer its wording to your own: it is Miorail’s deterministic reading of the same rows, written by no model. When a lookalike is returned, give the user `lookalike.officialAddress` and tell them to COMPARE ADDRESSES: a symbol is what an impostor supplies. This says nothing about price, liquidity, whether a wallet may hold the token, or whether anybody can sell it — call get_representations and get_use_access for those.',
+      inputSchema: AddressIdentityCheckInputV1Schema.shape,
+      outputSchema: AddressIdentityCheckOutputV1Schema.shape,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailCheckAddressIdentityV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
   // Phase 17.7 -- the daily question. Every read on this server made the caller
   // name an exact address before it would answer, so an assistant asked "did
   // anything change today" had no tool that could take the question and either
@@ -531,7 +562,7 @@ Evidence older than a day is labelled stale and describes what was true when it 
     {
       title: 'What changed across the whole reviewed market, no subject required',
       description:
-        'Answers \u201cdid anything change?\u201d across the WHOLE reviewed tokenized-stock universe on Base, with no address, ticker or size supplied \u2014 it is the one Miorail read that needs no subject, and the one to call on a schedule. Every other Market Reality tool makes you name an exact contract first, which cannot express a daily check because it would mean guessing which of a hundred and thirty addresses to ask about. CALL IT WITH `detail: \"summary\"` FIRST: that returns the tally, the span and the counts with no rows at all, and a busy day records over a hundred transitions. READ `miorailSummary` FIRST and prefer its wording to your own. AN EMPTY FEED IS TWO DIFFERENT FACTS AND THEY MUST NOT SHARE A SENTENCE. `watching` says when each kind of change became observable and `notWatched` lists the kinds no emitter has ever opened \u2014 for those, an empty result means NOBODY LOOKED, never that the market was quiet, and reporting calm from them is a false statement about the asset. Only when a kind appears in `watching` does its absence from `changes` mean nothing changed, and only back to its `watchingSince`. `truncated: true` means the page filled and older changes inside the same window were not returned, so every count is a floor. Each row is a stored TRANSITION between two comparable measurements at the same size, direction and destination \u2014 never a quote, never a trade, and never interpolated across a gap. A cost change had to move more than the stored threshold, which travels in `facts` beside both costs. `notReported` names what this feed deliberately never carries: trades and price moves are absent by design and their absence must not be read as quiet. `subjectCount` must travel with `changeCount` \u2014 five changes on one asset is a quieter day than five on five. For the history of ONE representation at an exact size, call get_market_changes instead.',
+        'Answers \u201cdid anything change?\u201d across the WHOLE reviewed tokenized-stock universe on Base, with no address, ticker or size supplied \u2014 it is the one Miorail read that needs no subject, and the one to call on a schedule. Every other Market Reality tool makes you name an exact contract first, which cannot express a daily check because it would mean guessing which of a hundred and thirty addresses to ask about. CALL IT WITH `detail: "summary"` FIRST: that returns the tally, the span and the counts with no rows at all, and a busy day records over a hundred transitions. READ `miorailSummary` FIRST and prefer its wording to your own. AN EMPTY FEED IS TWO DIFFERENT FACTS AND THEY MUST NOT SHARE A SENTENCE. `watching` says when each kind of change became observable and `notWatched` lists the kinds no emitter has ever opened \u2014 for those, an empty result means NOBODY LOOKED, never that the market was quiet, and reporting calm from them is a false statement about the asset. Only when a kind appears in `watching` does its absence from `changes` mean nothing changed, and only back to its `watchingSince`. `truncated: true` means the page filled and older changes inside the same window were not returned, so every count is a floor. Each row is a stored TRANSITION between two comparable measurements at the same size, direction and destination \u2014 never a quote, never a trade, and never interpolated across a gap. A cost change had to move more than the stored threshold, which travels in `facts` beside both costs. `notReported` names what this feed deliberately never carries: trades and price moves are absent by design and their absence must not be read as quiet. `subjectCount` must travel with `changeCount` \u2014 five changes on one asset is a quieter day than five on five. For the history of ONE representation at an exact size, call get_market_changes instead.',
       inputSchema: RwaRecordedChangesAgentInputV1Schema,
       outputSchema: RwaRecordedChangesAgentOutputV1Schema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

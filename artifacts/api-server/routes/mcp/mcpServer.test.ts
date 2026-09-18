@@ -190,10 +190,11 @@ function payloadOf(result: unknown): Record<string, unknown> {
 }
 
 describe('§8 — tool discovery', () => {
-  test('a client sees the eight legacy tools and five Market Reality tools', async () => {
+  test('a client sees the eight legacy tools, five Market Reality tools and the identity check', async () => {
     const client = await connectedClient();
     const { tools } = await client.listTools();
     assert.deepEqual(tools.map((tool) => tool.name).sort(), [
+      'check_address_identity',
       'compare_market_reality',
       'get_market_changes',
       'get_recorded_changes',
@@ -515,6 +516,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     // below passes vacuously — which is exactly what happened once, and it cost
     // nothing to notice only because the total test count moved.
     assert.deepEqual(sources.map((entry) => entry.name).sort(), [
+      'identityTools.ts',
       'index.ts',
       'marketRealityTools.ts',
       'recordedChangesTool.ts',

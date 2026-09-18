@@ -1905,3 +1905,45 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .radar-watch-grid,
   .mio-console .console-card-grid { grid-template-columns: minmax(0,1fr); }
 }
+
+/* ---------------------------------------------------------------------------
+   The public "is this the real one" page.
+
+   Outside the console shell: no rail, no header, no session. It borrows the
+   console vocabulary (.panel, .pill, .cr-facts, .lnote) because a reader who
+   later opens the product should recognise the same surface, and adds only
+   what a single-question page needs.
+
+   The compare block is deliberately the largest type on the page. The reader's
+   whole job on a lookalike verdict is a character-by-character comparison of
+   two addresses, and every other element is context for that one.
+   --------------------------------------------------------------------------- */
+.mio-console.pi-page { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; display: grid; gap: 20px; }
+.mio-console .pi-head h1 { margin: 4px 0 8px; font-size: var(--fs-title); letter-spacing: -0.01em; color: var(--ink); }
+.mio-console .pi-eyebrow { margin: 0; color: var(--muted); font-size: var(--fs-meta);
+  text-transform: uppercase; letter-spacing: 0.08em; }
+.mio-console .pi-form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 10px;
+  align-items: end; }
+.mio-console .pi-label { grid-column: 1 / -1; color: var(--muted); font-size: var(--fs-meta); }
+.mio-console .pi-input { width: 100%; padding: 10px 12px; border-radius: var(--r);
+  border: 0; background: var(--panel); color: var(--ink); font-size: var(--fs-body);
+  box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .pi-input:focus-visible { outline: 2px solid var(--br-line); outline-offset: 1px; }
+.mio-console .pi-verdict .cr-top { align-items: center; }
+.mio-console .pi-compare { margin: 14px 0 0; padding: 14px; border-radius: var(--r);
+  background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .pi-compare-label { margin: 0; color: var(--muted); font-size: var(--fs-meta); }
+/* One step above everything else on the card. The reader's whole job here is
+   comparing two addresses character by character. */
+.mio-console .pi-compare-address { margin: 6px 0 8px; font-size: var(--fs-xl);
+  line-height: var(--lh-relaxed); color: var(--ink); overflow-wrap: anywhere; }
+.mio-console .pi-caveats { margin: 14px 0 0; padding-left: 18px; display: grid; gap: 6px;
+  color: var(--muted); font-size: var(--fs-meta); }
+
+/* One column under a phone: the address must never force a horizontal scroll,
+   because an address the reader cannot see all of is an address they cannot
+   compare. */
+@media (max-width: 560px) {
+  .mio-console .pi-form { grid-template-columns: minmax(0, 1fr); }
+  .mio-console .pi-compare-address { font-size: var(--fs-lg); }
+}

@@ -445,6 +445,7 @@ printf '%s' "$mcp_tools" | jq -e '
   | map(.name)
   | sort
   == [
+    "check_address_identity",
     "compare_market_reality",
     "get_market_changes",
     "get_recorded_changes",

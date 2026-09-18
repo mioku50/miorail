@@ -30,6 +30,7 @@ const REQUIRED_CAVEATS_V1 = [
 // ignore the colour. `deploy.sh` asserts the same names; `mcpServer.test.ts`
 // asserts that these two lists and the server agree.
 const EXPECTED_TOOLS_V1 = [
+  'check_address_identity',
   'compare_market_reality',
   'get_market_changes',
   'get_recorded_changes',

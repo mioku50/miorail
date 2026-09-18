@@ -17,6 +17,7 @@ import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
 import { publicProofRouter } from './publicProof';
 import { publicMetricsRouter } from './publicMetrics';
+import { publicIdentityRouter } from './publicIdentity';
 import { x402IntelligenceRouterV1 } from './x402/intelligence';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
@@ -28,6 +29,9 @@ routes.use('/auth', authRouter);
 // would make it unreadable by the only people it exists for.
 routes.use('/public', publicProofRouter);
 routes.use('/public', publicMetricsRouter);
+// "Is this the real one" opens with no session for the same reason a proof
+// does: the reader holding an unknown address is the reader with no account.
+routes.use('/public', publicIdentityRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
 routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);
