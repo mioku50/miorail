@@ -632,6 +632,7 @@ describe('§9 — the public MCP surface cannot reach the audit or the execution
 
   test('the scan found the public files it claims to check', () => {
     assert.deepEqual(publicSources.map((entry) => entry.name).sort(), [
+      'identityTools.ts',
       'index.ts',
       'marketRealityTools.ts',
       'recordedChangesTool.ts',
