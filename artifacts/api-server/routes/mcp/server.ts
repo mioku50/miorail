@@ -72,7 +72,20 @@ import {
 // ---------------------------------------------------------------------------
 
 export const MIORAIL_MCP_NAME_V1 = 'miorail';
-export const MIORAIL_MCP_VERSION_V1 = '1.3.0';
+/**
+ * The advertised server version — and the only fingerprint a client has for
+ * "the tool list I cached is still the tool list you publish".
+ *
+ * It sat at 1.3.0 from 2026-08-05 while the registry grew from nineteen tools
+ * to twenty-three. On 2026-09-19 an assistant on a connected surface reported
+ * nineteen tools and no `get_use_access` — exactly the registry as it stood on
+ * 2026-09-04 — and concluded the capability was unbuilt. It had been shipped
+ * for two weeks. A cache with no changing key never expires.
+ *
+ * So this moves whenever the published tool list moves, and
+ * `mcpServer.test.ts` refuses a registry change that leaves it behind.
+ */
+export const MIORAIL_MCP_VERSION_V1 = '1.4.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.

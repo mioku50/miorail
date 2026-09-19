@@ -430,7 +430,7 @@ done
 
 mcp_initialize="$mcp_ready"
 printf '%s' "$mcp_initialize" | jq -e \
-  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.3.0" and .result.protocolVersion == "2025-03-26"' \
+  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.4.0" and .result.protocolVersion == "2025-03-26"' \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
 printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.3.0'
 
@@ -461,8 +461,12 @@ printf '%s' "$mcp_tools" | jq -e '
     "miorail_list_b20_opportunities",
     "miorail_summarise_b20_universe"
   ]
-' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed thirteen-tool surface'; exit 1; }
-printf '  mcp tools/list %-28s %s\n' "$MCP_PUBLIC_URL" '13 read-only tools'
+' >/dev/null || { echo 'FAILED: public MCP tool registry is not the reviewed read-only surface'; exit 1; }
+# Counted from the answer, not typed here. This line read '13 read-only tools'
+# while the same script's closing line printed the measured 15 — a verification
+# stating a number nobody measured, in the output an operator trusts.
+printf '  mcp tools/list %-28s %s read-only tools\n' "$MCP_PUBLIC_URL" \
+  "$(printf '%s' "$mcp_tools" | jq -r '.result.tools | length')"
 
 # MCP OAuth discovery, checked through Nginx rather than against the app.
 #

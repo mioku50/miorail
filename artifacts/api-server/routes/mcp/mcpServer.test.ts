@@ -189,6 +189,26 @@ function payloadOf(result: unknown): Record<string, unknown> {
   return JSON.parse(typed.content?.[0]?.text ?? '{}') as Record<string, unknown>;
 }
 
+/** The read-only surface, sorted, in one place: the discovery test and the
+ * version binding below must be talking about the same list. */
+const PUBLIC_TOOL_NAMES_V1 = [
+  'check_address_identity',
+  'compare_market_reality',
+  'get_market_changes',
+  'get_recorded_changes',
+  'get_representations',
+  'get_use_access',
+  'list_reviewed_stocks',
+  'miorail_b20_market_rails',
+  'miorail_compare_b20_tokens',
+  'miorail_discover_status',
+  'miorail_explain_b20_rejection',
+  'miorail_find_b20_projects',
+  'miorail_get_b20_opportunity',
+  'miorail_list_b20_opportunities',
+  'miorail_summarise_b20_universe',
+];
+
 describe('§8 — tool discovery', () => {
   test('a client sees the eight legacy tools, five Market Reality tools and the identity check', async () => {
     const client = await connectedClient();
@@ -250,8 +270,47 @@ describe('§8 — tool discovery', () => {
     }
   });
 
-  test('the advertised server version is 1.2.0', () => {
-    assert.equal(MIORAIL_MCP_VERSION_V1, '1.3.0');
+  test('the version moves when the tool list moves, because that is the cache key', () => {
+    // 2026-09-19: an assistant on a connected surface listed NINETEEN tools and
+    // no `get_use_access`, and reported the capability as unavailable. Nineteen
+    // with no `get_use_access` is exactly this registry as it stood on
+    // 2026-09-04 — the client was holding a two-week-old list. The server had
+    // answered `tools/list` correctly the whole time; nothing in its reply had
+    // changed shape, so nothing told the client to look again.
+    //
+    // `serverInfo.version` is the one fingerprint a caching client can key on,
+    // and it had not moved since 2026-08-05 while four tools were added. This
+    // test binds the two: change the published list above and this fails until
+    // MIORAIL_MCP_VERSION_V1 is bumped in the same edit.
+    const PUBLISHED_AT_V1 = {
+      '1.4.0': [
+        'check_address_identity',
+        'compare_market_reality',
+        'get_market_changes',
+        'get_recorded_changes',
+        'get_representations',
+        'get_use_access',
+        'list_reviewed_stocks',
+        'miorail_b20_market_rails',
+        'miorail_compare_b20_tokens',
+        'miorail_discover_status',
+        'miorail_explain_b20_rejection',
+        'miorail_find_b20_projects',
+        'miorail_get_b20_opportunity',
+        'miorail_list_b20_opportunities',
+        'miorail_summarise_b20_universe',
+      ],
+    } as const satisfies Record<string, readonly string[]>;
+    const known = PUBLISHED_AT_V1[MIORAIL_MCP_VERSION_V1 as keyof typeof PUBLISHED_AT_V1];
+    assert.ok(
+      known,
+      `MIORAIL_MCP_VERSION_V1 is ${MIORAIL_MCP_VERSION_V1}; add its tool list to PUBLISHED_AT_V1`,
+    );
+    assert.deepEqual(
+      [...known].sort(),
+      PUBLIC_TOOL_NAMES_V1,
+      `the published tool list changed under version ${MIORAIL_MCP_VERSION_V1} — bump MIORAIL_MCP_VERSION_V1, or a client that cached the old list will never ask again`,
+    );
   });
 
   test('§7 — the server instructions carry all five caveats', async () => {
