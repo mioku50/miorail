@@ -17,7 +17,9 @@
     "./venueAnnouncements": "./src/venueAnnouncements.ts",
     "./dinariSymbolBinding": "./src/dinariSymbolBinding.ts",
     "./openFigi": "./src/openFigi.ts",
-    "./ecosystemClaims": "./src/ecosystemClaims.ts"
+    "./ecosystemClaims": "./src/ecosystemClaims.ts",
+    "./morphoBorrowMath": "./src/morphoBorrowMath.ts",
+    "./morphoBorrowReading": "./src/morphoBorrowReading.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

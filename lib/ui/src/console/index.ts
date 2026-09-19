@@ -43,6 +43,7 @@ export * from './marketRealityView';
 export * from './transferPolicyView';
 export * from './seizeView';
 export * from './lendingMarketsView';
+export * from './borrowReviewView';
 export * from './multiplierScheduleView';
 export * from './marketRealityHistoryView';
 export * from './marketRealityRadarView';

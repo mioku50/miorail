@@ -17,3 +17,5 @@ export * from './ecosystemClaims.js';
 export * from './openFigi.js';
 export * from './dinariSymbolBinding.js';
 export * from './pooledLiquidity.js';
+export * from './morphoBorrowMath.js';
+export * from './morphoBorrowReading.js';
