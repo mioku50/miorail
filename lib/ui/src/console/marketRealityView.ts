@@ -27,6 +27,11 @@ import {
   rwaBpsLabelV1,
 } from './rwaDiscoverView';
 import type { FactViewV1, ToneV1 } from './rwaDiscoverView';
+import {
+  LENDING_PERSONAL_CAVEAT_V1,
+  lendingMarketsHeadlineV1,
+  lendingMarketsViewV1,
+} from './lendingMarketsView';
 
 export type { FactViewV1, ToneV1 };
 
@@ -2573,6 +2578,68 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
   };
 }
 
+/**
+ * The per-market rows, for every venue that published them.
+ *
+ * Until this existed the section answered at venue level: one `curated` flag
+ * and one market id for a token that sits in four markets, which is how
+ * `curated: true` came to stand beside the id of an empty uncurated market.
+ *
+ * Every rule lives in `lendingMarketsView` and none of them is restated here —
+ * a summary that cannot contradict its own list, absence claimed only where
+ * absence was measured, a figure under a dollar kept as money, and claim (3)
+ * refused by name. This maps those rows onto the section's fact shape and adds
+ * nothing of its own, so the web console and the Base App miniapp — which
+ * mount this same screen — cannot drift apart by a sentence.
+ */
+function lendingMarketFactsV1(
+  venues: readonly RepresentationUseAccessV1['defi']['venues'][number][],
+): FactViewV1[] {
+  const facts: FactViewV1[] = [];
+  let published = false;
+  for (const venue of venues) {
+    const view = lendingMarketsViewV1({ venueName: venue.venueName, markets: venue.markets });
+    if (view === null) continue;
+    published = true;
+    const headline = lendingMarketsHeadlineV1(view);
+    if (headline !== null) {
+      facts.push({
+        label: `${venue.venueName} markets`,
+        value: headline,
+        note: null,
+        tone: 'neutral',
+      });
+    }
+    for (const row of view.rows) {
+      facts.push({
+        label: `${venue.venueName} · ${row.label}`,
+        // Terms and standing on one line, each one the venue's own figure and
+        // a dash where it published none.
+        value: [
+          row.lltv === null ? 'terms not stated' : `${row.lltv} LLTV`,
+          `collateral ${row.collateral ?? '—'}`,
+          `borrowed ${row.borrowed ?? '—'}`,
+          `available ${row.available ?? '—'}`,
+        ].join(' · '),
+        note: row.note,
+        tone: row.tone,
+      });
+    }
+  }
+  // Said once for the whole section rather than once per row, and never
+  // switched off by a deep market: no amount of liquidity anywhere is evidence
+  // that this reader could draw it.
+  if (published) {
+    facts.push({
+      label: 'Whether you could borrow',
+      value: LENDING_PERSONAL_CAVEAT_V1,
+      note: null,
+      tone: 'neutral',
+    });
+  }
+  return facts;
+}
+
 function defiSectionV1(
   use: RepresentationUseAccessV1 | null,
   issuerId: IssuerIdV1 | null,
@@ -2655,6 +2722,7 @@ function defiSectionV1(
       tone: 'neutral' as const,
     };
   };
+  const marketFacts = lendingMarketFactsV1(listing?.venues ?? []);
   if (uses.length > 0) {
     return {
       collapsed: false,
@@ -2671,7 +2739,7 @@ function defiSectionV1(
       }`,
       chip: allUncurated ? 'Permissionless market' : 'Integration found',
       tone: allUncurated ? 'neutral' : 'good',
-      facts: [...uses.map(useFactV1), ...announcementFacts],
+      facts: [...uses.map(useFactV1), ...marketFacts, ...announcementFacts],
       evidence,
       edges: [],
     };
@@ -2689,13 +2757,21 @@ function defiSectionV1(
             tradeEstablished
               ? ' Trading it on an AMM is DeFi too, and that is measured under Trade above.'
               : ''
+          }${
+            // "No venue lists it" and "no market exists against it" are
+            // different facts, and the rows below prove the second one false.
+            // Existence only: how much is in them is each row's own sentence,
+            // so this cannot contradict any of them.
+            marketFacts.length > 0
+              ? ' Markets against this exact address exist anyway — anyone can deploy one — and they are listed below.'
+              : ''
           }`
         : 'Miorail did not check any lending venue for this address.',
     // Bounded to what was actually asked. "None found here" read as a verdict
     // on the token rather than an answer from four lending venues.
     chip: unread.length > 0 && unread.length === checked.length ? 'Not confirmed' : 'Not on these venues',
     tone: 'off',
-    facts: announcementFacts,
+    facts: [...marketFacts, ...announcementFacts],
     evidence,
     edges: [],
   };

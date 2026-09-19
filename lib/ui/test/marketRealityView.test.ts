@@ -3704,6 +3704,167 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.doesNotMatch(JSON.stringify(defi.facts), /Borrow/);
   });
 
+  // -------------------------------------------------------------------------
+  // The four NVDAc markets reach the screen, on both surfaces at once.
+  //
+  // `lendingMarketsViewV1` was written, tested and exported while no screen
+  // imported it, so the per-market reading lived on the wire and nowhere a
+  // reader could see it. The web console and the Base App miniapp mount this
+  // same `MarketRealityScreen`, so wiring it here is what puts it on both —
+  // and is why there is nothing to duplicate into the miniapp.
+  // -------------------------------------------------------------------------
+  const NVDA_MORPHO_MARKETS = [
+    { marketId: '0xfef5641f70e19a87e369304daa9ba823754f3db1e6481d757fcae0442cffe479', curated: false, role: 'collateral' as const, collateralAssetSymbol: 'NVDAc', loanAssetSymbol: 'USDC', lltvBps: 7700, collateralUsd: 0, supplyUsd: 0, borrowUsd: 0, liquidityUsd: 0 },
+    { marketId: '0xb4b42dd66cef2561000000000000000000000000000000000000000000000000', curated: true, role: 'collateral' as const, collateralAssetSymbol: 'NVDAc', loanAssetSymbol: 'USDC', lltvBps: 6250, collateralUsd: 15_440, supplyUsd: 8_388, borrowUsd: 7_605, liquidityUsd: 783 },
+    { marketId: '0x91360eea2686000000000000000000000000000000000000000000000000ffff', curated: false, role: 'collateral' as const, collateralAssetSymbol: 'NVDAc', loanAssetSymbol: 'USDC', lltvBps: 7700, collateralUsd: 11, supplyUsd: 98, borrowUsd: 1, liquidityUsd: 97 },
+    { marketId: '0x5c800e8607e9000000000000000000000000000000000000000000000000aaaa', curated: false, role: 'collateral' as const, collateralAssetSymbol: 'NVDAc', loanAssetSymbol: 'USDC', lltvBps: 7700, collateralUsd: 0, supplyUsd: 0, borrowUsd: 0, liquidityUsd: 0 },
+  ];
+
+  const withMorphoMarkets = (overrides: { curated?: boolean; uses?: Record<string, boolean | null> } = {}) =>
+    use({
+      defi: {
+        checkedVenues: ['Moonwell', 'Morpho'],
+        venues: [
+          {
+            venueId: 'morpho',
+            venueName: 'Morpho',
+            state: 'listed',
+            uses: overrides.uses ?? { lend: null, borrow: null, collateral: true },
+            curated: overrides.curated ?? true,
+            marketRef: '0xb4b42dd66cef2561000000000000000000000000000000000000000000000000',
+            reason: null,
+            markets: NVDA_MORPHO_MARKETS,
+          },
+        ],
+      },
+    });
+
+  test('every market is a row, with the venue’s own terms and standing', () => {
+    const defi = useSectionsV1({ ...base, use: withMorphoMarkets() }).find((s) => s.id === 'defi')!;
+    const rows = defi.facts.filter((fact) => fact.label.startsWith('Morpho · '));
+    assert.equal(rows.length, 4);
+    // The curated one is first and carries the terms at the precision the
+    // venue published them — 62.5, not 62.
+    assert.match(rows[0]!.value, /62\.5% LLTV/);
+    assert.match(rows[0]!.value, /collateral \$15,440/);
+    assert.match(rows[0]!.value, /available \$783/);
+    assert.match(rows[0]!.note!, /On the venue’s list/);
+    // A stranger's market says who made it, and is not dressed as a warning.
+    const stranger = rows.find((row) => /Deployed by anyone/.test(row.note ?? ''))!;
+    assert.notEqual(stranger, undefined);
+    assert.notEqual(stranger.tone, 'bad');
+  });
+
+  test('the section’s summary of the markets cannot contradict the rows under it', () => {
+    const defi = useSectionsV1({ ...base, use: withMorphoMarkets() }).find((s) => s.id === 'defi')!;
+    const summary = defi.facts.find((fact) => fact.label === 'Morpho markets')!;
+    // Quantified over the whole list, and naming the deepest market in it.
+    assert.match(summary.value, /^4 markets here, 1 on the venue’s list\./);
+    assert.match(summary.value, /The most available to borrow right now is \$783/);
+    assert.doesNotMatch(summary.value, /nothing/i);
+    const rows = defi.facts.filter((fact) => fact.label.startsWith('Morpho · '));
+    assert.equal(rows.some((row) => /available \$783/.test(row.value)), true);
+
+    // And the other direction: a dry curated market beside a funded stranger
+    // is the shape that used to print "nothing available" over a row holding
+    // money, because the summary was computed over the curated subset alone.
+    const mixed = useSectionsV1({
+      ...base,
+      use: use({
+        defi: {
+          checkedVenues: ['Moonwell', 'Morpho'],
+          venues: [
+            {
+              venueId: 'morpho',
+              venueName: 'Morpho',
+              state: 'listed',
+              uses: { lend: null, borrow: null, collateral: true },
+              curated: true,
+              marketRef: '0xb4b4',
+              reason: null,
+              markets: [
+                { ...NVDA_MORPHO_MARKETS[1]!, liquidityUsd: 0 },
+                NVDA_MORPHO_MARKETS[2]!,
+              ],
+            },
+          ],
+        },
+      }),
+    }).find((s) => s.id === 'defi')!;
+    const mixedSummary = mixed.facts.find((fact) => fact.label === 'Morpho markets')!;
+    assert.doesNotMatch(mixedSummary.value, /nothing/i);
+    assert.match(mixedSummary.value, /\$97/);
+    assert.match(mixedSummary.value, /the venue did not list/);
+  });
+
+  test('a venue that lists nothing still shows the markets deployed against the address', () => {
+    // "No reviewed lending venue lists this exact address" and "no market
+    // exists against it" are different facts. wbCOIN and METAc are the second
+    // one being false while the first is true.
+    const defi = useSectionsV1({
+      ...base,
+      use: use({
+        defi: {
+          checkedVenues: ['Moonwell', 'Morpho'],
+          venues: [
+            {
+              venueId: 'morpho',
+              venueName: 'Morpho',
+              state: 'listed',
+              uses: { lend: null, borrow: null, collateral: null },
+              curated: false,
+              marketRef: '0xfef5',
+              reason: null,
+              markets: [NVDA_MORPHO_MARKETS[0]!, NVDA_MORPHO_MARKETS[2]!],
+            },
+          ],
+        },
+      }),
+    }).find((s) => s.id === 'defi')!;
+    assert.match(defi.headline, /No reviewed lending venue lists this exact address/);
+    assert.match(defi.headline, /Markets against this exact address exist anyway/);
+    assert.equal(defi.facts.filter((fact) => fact.label.startsWith('Morpho · ')).length, 2);
+    const summary = defi.facts.find((fact) => fact.label === 'Morpho markets')!;
+    assert.match(summary.value, /^2 markets here, none on the venue’s own list\./);
+  });
+
+  test('claim three is refused once, and no market is deep enough to switch it off', () => {
+    const defi = useSectionsV1({
+      ...base,
+      use: use({
+        defi: {
+          checkedVenues: ['Moonwell', 'Morpho'],
+          venues: [
+            {
+              venueId: 'morpho',
+              venueName: 'Morpho',
+              state: 'listed',
+              uses: { lend: null, borrow: null, collateral: true },
+              curated: true,
+              marketRef: '0xb4b4',
+              reason: null,
+              markets: [{ ...NVDA_MORPHO_MARKETS[1]!, liquidityUsd: 10_000_000 }],
+            },
+          ],
+        },
+      }),
+    }).find((s) => s.id === 'defi')!;
+    const caveats = defi.facts.filter((fact) => fact.label === 'Whether you could borrow');
+    assert.equal(caveats.length, 1);
+    assert.match(caveats[0]!.value, /Miorail does not read your position and does not answer that/);
+    assert.match(defi.facts.find((f) => f.label === 'Morpho markets')!.value, /\$10,000,000/);
+  });
+
+  test('a venue that published no markets adds no rows and no caveat', () => {
+    // The caveat answers a question the section only raises once it shows
+    // market-level figures. Printed with nothing under it, it would be a
+    // disclaimer about a table that is not there.
+    const defi = useSectionsV1({ ...base, use: use() }).find((s) => s.id === 'defi')!;
+    assert.equal(defi.facts.some((fact) => fact.label === 'Whether you could borrow'), false);
+    assert.equal(defi.facts.some((fact) => fact.label.startsWith('Morpho · ')), false);
+    assert.doesNotMatch(defi.headline, /Markets against this exact address exist anyway/);
+  });
+
   // The envelope's `blockTag` never covered these rows: two venues answer from
   // chain state at head, two from catalogues with no block at all. A reviewer
   // read the block as covering all four, because nothing said otherwise.
