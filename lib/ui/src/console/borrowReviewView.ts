@@ -100,6 +100,14 @@ export const BORROW_REVIEW_REFUSALS_V1 = {
     'The market does not hold this much to lend right now. This is a fact about the market, not about this wallet’s collateral.',
   nothing_to_borrow:
     'There is nothing to borrow here right now — either the collateral supports none or the market holds none. The rows above say which.',
+  // The three the simulation produces. A review may not reach
+  // `ready_for_your_approval` without a measured execution behind it.
+  simulation_not_run:
+    'No provider executed these calls, so nothing about them has been measured. That is a gap in Miorail’s reading rather than a finding about the transaction — and it is not a pass.',
+  simulation_reverted:
+    'These calls revert when executed against current state. Signing them would spend gas to achieve nothing.',
+  simulation_delivered_something_else:
+    'The calls execute, and what reaches this wallet is not what this review describes. Nothing is being offered for approval on that basis.',
 } as const;
 export type BorrowReviewRefusalV1 = keyof typeof BORROW_REVIEW_REFUSALS_V1;
 

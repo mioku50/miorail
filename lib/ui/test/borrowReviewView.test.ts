@@ -172,6 +172,21 @@ describe('what a review refuses to put in front of a reader', () => {
     assert.match(view.refusal!, /about the market, not about this wallet’s collateral/);
   });
 
+  test('a review cannot be ready for approval without a measured execution behind it', () => {
+    // The three the simulation produces, each in its own words. "No provider
+    // answered" and "it reverts" are opposite facts and must never share a
+    // sentence.
+    for (const refusal of ['simulation_not_run', 'simulation_reverted', 'simulation_delivered_something_else'] as const) {
+      const view = borrowReviewV1({ ...base, after: null, refusal });
+      assert.equal(view.verdict, 'refused');
+      assert.equal(view.refusal, BORROW_REVIEW_REFUSALS_V1[refusal]);
+    }
+    assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_not_run, /not a pass/);
+    assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_not_run, /gap in Miorail’s reading/);
+    assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_reverted, /revert when executed/);
+    assert.doesNotMatch(BORROW_REVIEW_REFUSALS_V1.simulation_not_run, /revert/);
+  });
+
   test('nothing here is ever an approval', () => {
     const ready = borrowReviewV1(base);
     assert.equal(ready.verdict, 'ready_for_your_approval');

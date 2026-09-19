@@ -19,3 +19,4 @@ export * from './dinariSymbolBinding.js';
 export * from './pooledLiquidity.js';
 export * from './morphoBorrowMath.js';
 export * from './morphoBorrowReading.js';
+export * from './morphoBorrowPlan.js';
