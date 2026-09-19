@@ -24,6 +24,7 @@ function announcementV1(overrides: Partial<B20CorporateActionRowV1> = {}): B20Co
     description: 'cash dividend',
     uri: 'https://example.test/2026-01',
     multiplierWad: null,
+    effectiveAt: null,
     topics: ['0x' + 'c'.repeat(64)],
     data: '0xabcdef',
     blockNumber: 50_430_000,
@@ -193,6 +194,84 @@ export function b20CorporateActionContractV1(
         RouteStorageIntegrityError,
         'a multiplier event with a description is two events in one row',
       );
+    });
+
+    test('a scheduled multiplier event carries its date, or it is not a decoded row', async () => {
+      // The schedule is what separates a plan from an event. A row that names a
+      // new multiplier with no date beside it reads, everywhere downstream, as
+      // a change that has already happened — which is the exact sentence this
+      // column was added to stop being written.
+      const { repository } = await open();
+      await assert.rejects(
+        repository.recordPass({
+          chainId: 8453,
+          fromBlock: 50_420_000,
+          toBlock: 50_430_100,
+          observedAt: '2026-09-12T10:05:00.000Z',
+          logCalls: 1,
+          rows: [
+            announcementV1({
+              event: 'ui_multiplier_updated',
+              announcementId: null,
+              caller: null,
+              description: null,
+              uri: null,
+              multiplierWad: '2000000000000000000',
+              effectiveAt: null,
+            }),
+          ],
+        }),
+        RouteStorageIntegrityError,
+        'a scheduled change with no date is a change that looks executed',
+      );
+
+      // The deprecated instant setter declares no schedule at all, so carrying
+      // one would be inventing an argument the event does not have.
+      await assert.rejects(
+        repository.recordPass({
+          chainId: 8453,
+          fromBlock: 50_420_000,
+          toBlock: 50_430_100,
+          observedAt: '2026-09-12T10:05:00.000Z',
+          logCalls: 1,
+          rows: [
+            announcementV1({
+              event: 'multiplier_updated',
+              announcementId: null,
+              caller: null,
+              description: null,
+              uri: null,
+              multiplierWad: '2000000000000000000',
+              effectiveAt: '2026-10-05T14:00:00.000Z',
+            }),
+          ],
+        }),
+        RouteStorageIntegrityError,
+        'the deprecated setter publishes no schedule',
+      );
+
+      // And the pair stores and reads back intact.
+      await repository.recordPass({
+        chainId: 8453,
+        fromBlock: 50_420_000,
+        toBlock: 50_430_100,
+        observedAt: '2026-09-12T10:05:00.000Z',
+        logCalls: 1,
+        rows: [
+          announcementV1({
+            event: 'ui_multiplier_update_cancelled',
+            announcementId: null,
+            caller: null,
+            description: null,
+            uri: null,
+            multiplierWad: '2000000000000000000',
+            effectiveAt: '2026-10-05T14:00:00.000Z',
+          }),
+        ],
+      });
+      const [stored] = await repository.actionsFor({ chainId: 8453, tokenAddress: AAPL, limit: 10 });
+      assert.equal(stored!.event, 'ui_multiplier_update_cancelled');
+      assert.equal(stored!.effectiveAt, '2026-10-05T14:00:00.000Z');
     });
 
     test('an action cannot have been read before the block that carried it', async () => {

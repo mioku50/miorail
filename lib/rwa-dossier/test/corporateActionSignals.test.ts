@@ -14,6 +14,8 @@ const WATCH_OPENED = '2026-09-12T09:00:00.000Z';
 const watching = new Map<RwaOnchainSignalKindV1, string>([
   ['official_asset_corporate_action_announced', WATCH_OPENED],
   ['official_asset_multiplier_changed', WATCH_OPENED],
+  ['official_asset_multiplier_change_scheduled', WATCH_OPENED],
+  ['official_asset_multiplier_change_cancelled', WATCH_OPENED],
 ]);
 
 function observationV1(
@@ -32,6 +34,7 @@ function observationV1(
       description: 'cash dividend of 0.24 per share',
       uri: 'https://example.test/2026-01',
       multiplierWad: null,
+      effectiveAt: null,
       ...action,
     },
     blockNumber: 50_430_000,
@@ -127,7 +130,10 @@ describe('corporate action signals', () => {
     assert.equal(signal.facts.transactionHash, TX);
   });
 
-  test('both multiplier setters land on one kind', () => {
+  test('a change already in force is the only one called a change', () => {
+    // `multiplier_updated` declares no schedule; `ui_multiplier_updated` with
+    // `effectiveAt` at its own block is the emergency setter, in force when the
+    // log was written. Both moved the token, so both are news of a change.
     for (const event of ['multiplier_updated', 'ui_multiplier_updated'] as const) {
       const [signal] = corporateActionSignalsV1({
         observations: [
@@ -139,6 +145,8 @@ describe('corporate action signals', () => {
               description: null,
               uri: null,
               multiplierWad: '1057380318816778075',
+              // The instant setter dates itself to its own block.
+              effectiveAt: event === 'ui_multiplier_updated' ? '2026-09-12T10:00:00.000Z' : null,
             },
           }),
         ],
@@ -158,5 +166,59 @@ describe('corporate action signals', () => {
     const again = corporateActionSignalsV1({ observations: [observationV1()], watchingSince: watching });
     assert.equal(once[0]!.dedupeKey, again[0]!.dedupeKey);
     assert.match(once[0]!.dedupeKey, /:0xa{64}:3$/);
+  });
+
+  test('a change dated ahead is scheduled, and is not reported as a change', () => {
+    // The feed this lands on answers "did anything change today". A plan the
+    // issuer published for next week is not an answer to that question, and
+    // the number it carries is not what a token converts with today.
+    const [signal] = corporateActionSignalsV1({
+      observations: [
+        observationV1({
+          action: {
+            event: 'ui_multiplier_updated',
+            announcementId: null,
+            caller: null,
+            description: null,
+            uri: null,
+            multiplierWad: '2000000000000000000',
+            effectiveAt: '2026-10-05T14:00:00.000Z',
+          },
+        }),
+      ],
+      watchingSince: watching,
+    });
+    assert.ok(signal);
+    assert.equal(signal.kind, 'official_asset_multiplier_change_scheduled');
+    assert.notEqual(signal.kind, 'official_asset_multiplier_changed');
+    if (signal.kind !== 'official_asset_multiplier_change_scheduled') return;
+    // The date travels with it. Without the date a reader has a number and no
+    // reason to think it is not current.
+    assert.equal(signal.facts.effectiveAt, '2026-10-05T14:00:00.000Z');
+    assert.doesNotThrow(() => assertRwaSignalV1(signal, 'write'));
+  });
+
+  test('a withdrawal is its own news, and never a change', () => {
+    const [signal] = corporateActionSignalsV1({
+      observations: [
+        observationV1({
+          action: {
+            event: 'ui_multiplier_update_cancelled',
+            announcementId: null,
+            caller: null,
+            description: null,
+            uri: null,
+            multiplierWad: '2000000000000000000',
+            effectiveAt: '2026-10-05T14:00:00.000Z',
+          },
+        }),
+      ],
+      watchingSince: watching,
+    });
+    assert.ok(signal);
+    assert.equal(signal.kind, 'official_asset_multiplier_change_cancelled');
+    if (signal.kind !== 'official_asset_multiplier_change_cancelled') return;
+    assert.equal(signal.facts.multiplierWad, '2000000000000000000');
+    assert.doesNotThrow(() => assertRwaSignalV1(signal, 'write'));
   });
 });

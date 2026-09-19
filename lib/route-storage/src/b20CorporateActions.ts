@@ -31,6 +31,7 @@ export const B20_CORPORATE_ACTION_EVENT_KINDS_V1 = [
   'end_announcement',
   'multiplier_updated',
   'ui_multiplier_updated',
+  'ui_multiplier_update_cancelled',
 ] as const;
 export type B20CorporateActionEventKindV1 = (typeof B20_CORPORATE_ACTION_EVENT_KINDS_V1)[number];
 
@@ -50,6 +51,16 @@ export const B20CorporateActionRowV1Schema = z
     description: z.string().min(1).max(2_000).nullable(),
     uri: z.string().min(1).max(2_000).nullable(),
     multiplierWad: PositiveDigits.nullable(),
+    /**
+     * When the multiplier this row names becomes the effective one.
+     *
+     * The field that separates a plan from an event. Null on the announcement
+     * bracket and on the deprecated `MultiplierUpdated`, which declares no
+     * schedule — a null means "this event has no schedule", never "we could
+     * not read one". A row we could not read is `topic_only` and carries
+     * nothing at all.
+     */
+    effectiveAt: z.string().datetime().nullable(),
     topics: z.array(Topic).min(1).max(4),
     data: HexData,
     blockNumber: z.number().int().positive(),
@@ -76,7 +87,8 @@ export const B20CorporateActionRowV1Schema = z
       row.caller !== null ||
       row.description !== null ||
       row.uri !== null ||
-      row.multiplierWad !== null;
+      row.multiplierWad !== null ||
+      row.effectiveAt !== null;
     if (row.payloadState === 'topic_only') {
       if (carried) refuse('a row that read no arguments must carry none');
       return;
@@ -93,11 +105,18 @@ export const B20CorporateActionRowV1Schema = z
         refuse('a decoded announcement carries its id, its caller, its description and its uri');
       }
       if (row.multiplierWad !== null) refuse('an announcement does not publish a multiplier');
+      if (row.effectiveAt !== null) refuse('an announcement does not publish a schedule');
       return;
     }
     if (row.event === 'end_announcement') {
       if (row.announcementId === null) refuse('a decoded end of announcement carries its id');
-      if (row.caller !== null || row.description !== null || row.uri !== null || row.multiplierWad !== null) {
+      if (
+        row.caller !== null ||
+        row.description !== null ||
+        row.uri !== null ||
+        row.multiplierWad !== null ||
+        row.effectiveAt !== null
+      ) {
         refuse('the closing bracket carries only the id it closes');
       }
       return;
@@ -105,6 +124,19 @@ export const B20CorporateActionRowV1Schema = z
     if (row.multiplierWad === null) refuse('a decoded multiplier event carries the multiplier');
     if (row.announcementId !== null || row.caller !== null || row.description !== null || row.uri !== null) {
       refuse('a multiplier event carries no announcement text');
+    }
+    // The two ERC-8056 events carry the pair. A multiplier with no date beside
+    // it reads as a change that has already happened, which is the one thing
+    // the schedule exists to stop being said.
+    if (row.event === 'ui_multiplier_updated' || row.event === 'ui_multiplier_update_cancelled') {
+      if (row.effectiveAt === null) {
+        refuse('a decoded scheduled multiplier event carries the date it takes effect');
+      }
+      return;
+    }
+    // The deprecated instant setter declares no schedule to read.
+    if (row.effectiveAt !== null) {
+      refuse('the deprecated multiplier setter publishes no schedule');
     }
   });
 

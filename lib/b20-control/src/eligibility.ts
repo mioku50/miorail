@@ -631,7 +631,20 @@ export function b20ExecutorGateV1(input: {
   if (scope?.verdict === 'authorized' && eligibility.executor !== null) {
     return { ...base, state: 'authorized', cause: null, detail: EXECUTOR_GATE_OPEN_V1 };
   }
-  return { ...base, state: 'not_established', cause: null, detail: EXECUTOR_GATE_UNKNOWN_V1 };
+  // `not_established` has more than one cause, and they are different facts.
+  // A throttled endpoint, an executor this step does not know yet, and a token
+  // pointing at a policy the registry does not have would all have produced the
+  // same sentence — which reads as one situation and is three. The measured
+  // reason is appended when the scope carries one, so an operator can tell
+  // "nobody answered" from "there is nothing there to answer".
+  const measured = scope?.reason ?? null;
+  return {
+    ...base,
+    state: 'not_established',
+    cause: null,
+    detail:
+      measured === null ? EXECUTOR_GATE_UNKNOWN_V1 : `${EXECUTOR_GATE_UNKNOWN_V1} ${measured}`,
+  };
 }
 
 /** The one comparison a caller makes. Written out for the same reason

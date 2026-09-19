@@ -137,6 +137,28 @@ const MultiplierChangeFactsV1Schema = z
   .strict();
 
 /**
+ * A multiplier change the issuer PUBLISHED but has not made yet.
+ *
+ * Its own facts type, carrying the date, because the date is the whole
+ * difference between this and the one above. A reader handed
+ * `multiplierWad` without `effectiveAt` has everything needed to state a
+ * number that is not in force as though it were.
+ */
+const MultiplierScheduleFactsV1Schema = z
+  .object({
+    event: z.enum(['ui_multiplier_updated', 'ui_multiplier_update_cancelled']),
+    /** The multiplier the plan names — scheduled, or called off. Never the one
+     * the token converts with today. */
+    multiplierWad: PositiveDigits.nullable(),
+    /** When it would take effect. Null only on an unreadable payload. */
+    effectiveAt: z.string().datetime().nullable(),
+    payloadState: z.enum(['decoded', 'topic_only']),
+    transactionHash: TxHash,
+    blockNumber: PositiveDigits,
+  })
+  .strict();
+
+/**
  * One recorded transition.
  *
  * `occurredAt` is when the emitter observed the change; `recordedAt` is when
@@ -235,6 +257,28 @@ export const RwaSignalV1Schema = z
         occurredAt: z.string().datetime(),
         dedupeKey: z.string().min(1).max(200),
         facts: MultiplierChangeFactsV1Schema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('official_asset_multiplier_change_scheduled'),
+        chainId: z.literal(8453),
+        subjectAddress: Address,
+        officialAddress: z.null(),
+        occurredAt: z.string().datetime(),
+        dedupeKey: z.string().min(1).max(200),
+        facts: MultiplierScheduleFactsV1Schema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('official_asset_multiplier_change_cancelled'),
+        chainId: z.literal(8453),
+        subjectAddress: Address,
+        officialAddress: z.null(),
+        occurredAt: z.string().datetime(),
+        dedupeKey: z.string().min(1).max(200),
+        facts: MultiplierScheduleFactsV1Schema,
       })
       .strict(),
   ])

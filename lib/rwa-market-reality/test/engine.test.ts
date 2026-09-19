@@ -11,7 +11,11 @@ import type {
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
-import { assembleMarketRealityIndexV1, assembleMarketRealityV2 } from '../src/engine.js';
+import {
+  assembleMarketRealityIndexV1,
+  assembleMarketRealityV2,
+  effectivePriceV1,
+} from '../src/engine.js';
 
 const H = `0x${'11'.repeat(32)}` as const;
 const CANDIDATE = `0x${'22'.repeat(32)}` as const;
@@ -678,4 +682,30 @@ test('the Stocks index opens on the standard Base documents, and can widen', asy
   );
   assert.equal(wide.totals.underlyings, 4);
   assert.equal(wide.totals.coinbaseUnderlyings, 2);
+});
+
+// ---------------------------------------------------------------------------
+// The denominator every cross-time comparison rests on.
+//
+// Cobalt makes scheduled multiplier changes the canonical path for splits and
+// reinvested dividends, so the number of shares one token carries will start
+// moving. Everything the history view subtracts across a corporate action is
+// safe for exactly one reason: this function divides by NORMALIZED EXPOSURE,
+// not by token count. Pinned here rather than at the call site, because the
+// call site cannot defend a property of the arithmetic.
+// ---------------------------------------------------------------------------
+
+test('the effective price is per underlying share, not per token', () => {
+  const eight = 10n ** 8n;
+  // Same $1,000, same 4 shares of exposure, before and after a 2:1 split. The
+  // token count doubles; the price does not move.
+  const exposure = (4n * eight).toString();
+  assert.equal(effectivePriceV1('1000000000', exposure, 8), effectivePriceV1('1000000000', exposure, 8));
+
+  // And what the screen WOULD have published if the denominator were tokens:
+  // 4 tokens before, 8 after, for the same money — a 50% crash that never
+  // happened.
+  const perTokenBefore = effectivePriceV1('1000000000', (4n * eight).toString(), 8);
+  const perTokenAfter = effectivePriceV1('1000000000', (8n * eight).toString(), 8);
+  assert.equal(BigInt(perTokenBefore) / BigInt(perTokenAfter), 2n);
 });

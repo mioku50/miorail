@@ -62,6 +62,21 @@ interface HistorySnapshotWireV1 {
   marketObservedAt: string;
   effectivePriceAtomic: string | null;
   effectivePriceDecimals: number | null;
+  /**
+   * The shares-per-token ratio this point was NORMALIZED under, WAD-scaled.
+   *
+   * The effective price above is cash per unit of normalized exposure — per
+   * underlying SHARE, not per token — so two points normalized under different
+   * multipliers are still measuring the same thing and subtract correctly. That
+   * is a property of the denominator, not an accident, and the test beside this
+   * file pins it.
+   *
+   * Carried so a later change can disclose that the token count moved under a
+   * reader whose per-share price stayed flat. NOTHING READS IT YET — the
+   * current point is a live representation with no ratio on it, and comparing
+   * against a value only one side has would be a check in name only.
+   */
+  multiplierWad?: string | null;
   basis: {
     status: 'comparable' | 'withheld';
     /** Optional: snapshots stored before the kind existed carry none, and a
@@ -433,6 +448,17 @@ function changesToNowV1(input: {
     input.current.effectivePriceDecimals !== null &&
     before.effectivePriceDecimals === input.current.effectivePriceDecimals
   ) {
+    // Both sides are cash per unit of NORMALIZED EXPOSURE — per underlying
+    // SHARE, not per token — so a multiplier change between them does not break
+    // the subtraction. Each point was divided by its own ratio, and the pin for
+    // that property lives beside `effectivePriceV1` in `rwa-market-reality`,
+    // because a call site cannot defend the arithmetic it calls.
+    //
+    // NOT DONE HERE, deliberately: saying "and a corporate action happened in
+    // between" would need the ratio on the CURRENT point too, and the current
+    // point is a live representation rather than a stored snapshot. Carrying it
+    // is an API change, not a comment, so the field below is read by nothing
+    // yet and this note says so rather than implying a check that is absent.
     rows.push({
       label: 'Effective price',
       value: `${groupedUsdV1(before.effectivePriceAtomic, before.effectivePriceDecimals)} → ${groupedUsdV1(input.current.effectivePriceAtomic, input.current.effectivePriceDecimals)}`,

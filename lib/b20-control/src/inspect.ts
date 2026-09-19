@@ -198,11 +198,15 @@ function formatPolicyV1(raw: string): string | null {
   // reader picture members this policy does not hold. Cobalt documents both
   // combining rules; an id whose top byte is neither simple nor composite is
   // still undocumented and stays unnamed.
+  // "does" is carried over from the UNION line by a reader's eye, and there it
+  // stands for "authorizes" — so "refuses when ANY referenced policy does"
+  // reads as refusing when a child ALLOWS, which is the opposite of INTERSECT.
+  // Each verb is written out.
   const label =
     type === 'union'
-      ? 'union policy — authorizes when ANY referenced policy does'
+      ? 'union policy — authorizes when ANY referenced policy authorizes'
       : type === 'intersect'
-        ? 'intersect policy — refuses when ANY referenced policy does'
+        ? 'intersect policy — refuses when ANY referenced policy denies'
         : type === 'unknown'
           ? 'policy type not documented'
           : `${type} policy`;

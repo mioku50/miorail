@@ -62,6 +62,7 @@ export const B20_CORPORATE_ACTION_EVENTS_V1 = [
   'end_announcement',
   'multiplier_updated',
   'ui_multiplier_updated',
+  'ui_multiplier_update_cancelled',
 ] as const;
 export type B20CorporateActionEventV1 = (typeof B20_CORPORATE_ACTION_EVENTS_V1)[number];
 
@@ -72,6 +73,11 @@ export type B20CorporateActionEventV1 = (typeof B20_CORPORATE_ACTION_EVENTS_V1)[
  * is the scheduled one; both are read, because a token that emits either has
  * changed the number of shares one unit redeems for, and which setter the
  * issuer used is not the holder's problem.
+ *
+ * `UIMultiplierUpdateCancelled` is the third one, and it exists because a
+ * scheduled change is a PLAN rather than an event. Without it a plan that was
+ * withdrawn stays on the record looking exactly like one that will happen, and
+ * the record would be stating a future the issuer has already called off.
  */
 export const B20_CORPORATE_ACTION_SIGNATURES_V1: Readonly<
   Record<B20CorporateActionEventV1, string>
@@ -80,6 +86,7 @@ export const B20_CORPORATE_ACTION_SIGNATURES_V1: Readonly<
   end_announcement: 'EndAnnouncement(string)',
   multiplier_updated: 'MultiplierUpdated(uint256)',
   ui_multiplier_updated: 'UIMultiplierUpdated(uint256,uint256,uint256)',
+  ui_multiplier_update_cancelled: 'UIMultiplierUpdateCancelled(uint256,uint256)',
 };
 
 /** topic0 for each event, computed from the signature above. Base publishes
@@ -93,6 +100,9 @@ export const B20_CORPORATE_ACTION_TOPICS_V1: Readonly<
   end_announcement: keccakWordV1(B20_CORPORATE_ACTION_SIGNATURES_V1.end_announcement),
   multiplier_updated: keccakWordV1(B20_CORPORATE_ACTION_SIGNATURES_V1.multiplier_updated),
   ui_multiplier_updated: keccakWordV1(B20_CORPORATE_ACTION_SIGNATURES_V1.ui_multiplier_updated),
+  ui_multiplier_update_cancelled: keccakWordV1(
+    B20_CORPORATE_ACTION_SIGNATURES_V1.ui_multiplier_update_cancelled,
+  ),
 };
 
 /** Every topic0 this tail asks a node for, in one list. */
@@ -127,8 +137,29 @@ export interface B20CorporateActionV1 {
   caller: string | null;
   description: string | null;
   uri: string | null;
-  /** WAD-scaled, as the contract published it. Never pre-divided. */
+  /** WAD-scaled, as the contract published it. Never pre-divided.
+   *
+   * On `ui_multiplier_update_cancelled` this is the multiplier that was
+   * CALLED OFF, not one that ever took effect. The pair (`multiplierWad`,
+   * `effectiveAt`) is what identifies which pending update a cancellation
+   * refers to, so both travel together or neither does. */
   multiplierWad: string | null;
+  /**
+   * Unix seconds, as the contract published it — when the new multiplier
+   * becomes the effective one.
+   *
+   * This is the field that separates a plan from an event, and it is the whole
+   * reason the lifecycle can be stated at all. `effectiveAt > blockTime` is a
+   * SCHEDULED change: nothing about the token has moved yet, and the
+   * multiplier a holder converts with is still the old one. `effectiveAt <=
+   * blockTime` is the instant setter, which took effect in the block that
+   * carried it.
+   *
+   * Null on the two announcement events and on the deprecated
+   * `MultiplierUpdated`, which declares no such argument — a null here means
+   * "this event has no schedule", never "we could not read one".
+   */
+  effectiveAt: string | null;
 }
 
 export interface RawEventLogV1 {
@@ -196,7 +227,23 @@ function topicOnlyV1(event: B20CorporateActionEventV1): B20CorporateActionV1 {
     description: null,
     uri: null,
     multiplierWad: null,
+    effectiveAt: null,
   };
+}
+
+/** Unix seconds as the contract published them, as an ISO instant.
+ *
+ * Bounded rather than trusted: a schedule a thousand years out is not a date,
+ * it is a word this build read wrongly, and turning it into a `Date` anyway
+ * would put that misreading on a screen as a corporate action. Out of range is
+ * `null`, which makes the row `topic_only` — the event happened and its
+ * schedule was unreadable, which is the honest pair. */
+function scheduleAtV1(seconds: bigint | null): string | null {
+  if (seconds === null || seconds <= 0n) return null;
+  // 2100-01-01. The B20 setter itself refuses `effectiveAt > type(uint64).max`,
+  // which is far looser than anything a corporate action uses.
+  if (seconds > 4_102_444_800n) return null;
+  return new Date(Number(seconds) * 1000).toISOString();
 }
 
 /**
@@ -240,14 +287,40 @@ export function decodeB20CorporateActionLogV1(log: RawEventLogV1): B20CorporateA
     // `ui_multiplier_updated` rows — but it would have fired on the first
     // scheduled corporate action after 2026-09-30.
     //
-    // `effectiveAt` is still not carried into a typed column. That is a real
-    // limit and not a silent one: nothing fires at maturation, so a row written
-    // from a SCHEDULED update describes a change that has not happened yet. The
-    // raw topics and data are stored for exactly this case, so the timestamp is
-    // recoverable by a reader that learns to want it.
-    const value = indexed === 0 && words.length === 3 ? unsignedV1(words[1]) : null;
-    if (value === null || value <= 0n) return topicOnlyV1(event);
-    return { ...topicOnlyV1(event), payload: 'decoded', multiplierWad: value.toString() };
+    // Word 2 is `effectiveAt`, and it is read because NOTHING FIRES AT
+    // MATURATION. A row without it says a corporate action happened; with it,
+    // the same row can say a corporate action is scheduled for a date, which is
+    // a different sentence and the only true one until that date arrives.
+    // Both must decode or the row is `topic_only`: a multiplier with no
+    // schedule beside it is exactly the half-read that would be published as
+    // executed.
+    const shape = indexed === 0 && words.length === 3;
+    const value = shape ? unsignedV1(words[1]) : null;
+    const effectiveAt = shape ? scheduleAtV1(unsignedV1(words[2])) : null;
+    if (value === null || value <= 0n || effectiveAt === null) return topicOnlyV1(event);
+    return {
+      ...topicOnlyV1(event),
+      payload: 'decoded',
+      multiplierWad: value.toString(),
+      effectiveAt,
+    };
+  }
+
+  if (event === 'ui_multiplier_update_cancelled') {
+    // `UIMultiplierUpdateCancelled(cancelledMultiplier, cancelledEffectiveAt)`.
+    // Neither word describes the token's current state — together they name the
+    // PLAN that will not happen, which is how a cancellation is matched to the
+    // scheduled change it calls off.
+    const shape = indexed === 0 && words.length === 2;
+    const value = shape ? unsignedV1(words[0]) : null;
+    const effectiveAt = shape ? scheduleAtV1(unsignedV1(words[1])) : null;
+    if (value === null || value <= 0n || effectiveAt === null) return topicOnlyV1(event);
+    return {
+      ...topicOnlyV1(event),
+      payload: 'decoded',
+      multiplierWad: value.toString(),
+      effectiveAt,
+    };
   }
 
   if (event === 'end_announcement') {
@@ -267,6 +340,7 @@ export function decodeB20CorporateActionLogV1(log: RawEventLogV1): B20CorporateA
   return {
     event,
     payload: 'decoded',
+    effectiveAt: null,
     announcementId: id,
     caller,
     description,

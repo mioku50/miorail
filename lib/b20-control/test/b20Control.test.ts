@@ -339,8 +339,12 @@ describe('fields', () => {
     });
     const valueOf = (result: typeof union) =>
       result.snapshot.fields.find((f) => f.key === 'transfer_sender_policy')?.value ?? '';
-    assert.match(valueOf(union), /union policy — authorizes when ANY referenced policy does/);
-    assert.match(valueOf(intersect), /intersect policy — refuses when ANY referenced policy does/);
+    assert.match(valueOf(union), /union policy — authorizes when ANY referenced policy authorizes/);
+    // Each verb written out. "refuses when ANY referenced policy does" invites
+    // the reader to carry "authorizes" down from the UNION line, which inverts
+    // the rule.
+    assert.match(valueOf(intersect), /intersect policy — refuses when ANY referenced policy denies/);
+    assert.doesNotMatch(valueOf(intersect), /policy does$/);
   });
 
   test('who holds the admin role is always an explicit gap, never a guess', async () => {

@@ -41,6 +41,8 @@ export * from './rwaDiscoverView';
 export * from './RwaDiscoverScreen';
 export * from './marketRealityView';
 export * from './transferPolicyView';
+export * from './seizeView';
+export * from './multiplierScheduleView';
 export * from './marketRealityHistoryView';
 export * from './marketRealityRadarView';
 export * from './MarketRealityScreen';

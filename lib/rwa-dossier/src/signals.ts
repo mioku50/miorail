@@ -294,11 +294,32 @@ export function corporateActionSignalsV1(input: {
   for (const observation of input.observations) {
     const { action } = observation;
     if (action.event === 'end_announcement') continue;
+    // A multiplier event is one of three different pieces of news, and the
+    // difference is the schedule the log carries.
+    //
+    //   in force   the deprecated instant setter, or an ERC-8056 update whose
+    //              `effectiveAt` is at or before its own block. The token
+    //              already converts with this number.
+    //   scheduled  an ERC-8056 update dated ahead. NOTHING about the token has
+    //              moved, and the holder still converts with the old value.
+    //   cancelled  the issuer withdrew a plan. Reporting this as a change
+    //              would be reporting a change that is now never happening.
+    //
+    // This feed answers "did anything change today", so all three would reach
+    // an agent as a statement about the asset. Only the first one is one.
+    const scheduledAhead =
+      action.event === 'ui_multiplier_updated' &&
+      action.effectiveAt !== null &&
+      Date.parse(action.effectiveAt) > Date.parse(observation.blockTime);
     const multiplierEvent = action.event === 'announcement' ? null : action.event;
     const kind =
       action.event === 'announcement'
         ? 'official_asset_corporate_action_announced'
-        : 'official_asset_multiplier_changed';
+        : action.event === 'ui_multiplier_update_cancelled'
+          ? 'official_asset_multiplier_change_cancelled'
+          : scheduledAhead
+            ? 'official_asset_multiplier_change_scheduled'
+            : 'official_asset_multiplier_changed';
     const since = input.watchingSince.get(kind);
     if (since === undefined) continue;
     if (Date.parse(observation.blockTime) < Date.parse(since)) continue;
@@ -327,6 +348,30 @@ export function corporateActionSignalsV1(input: {
       });
       continue;
     }
+    if (
+      kind === 'official_asset_multiplier_change_scheduled' ||
+      kind === 'official_asset_multiplier_change_cancelled'
+    ) {
+      signals.push({
+        kind,
+        chainId: 8453,
+        subjectAddress: observation.tokenAddress,
+        officialAddress: null,
+        occurredAt: observation.blockTime,
+        dedupeKey,
+        facts: {
+          event: multiplierEvent as 'ui_multiplier_updated' | 'ui_multiplier_update_cancelled',
+          multiplierWad: action.multiplierWad,
+          // Carried, because a plan without its date is a number a reader will
+          // treat as current.
+          effectiveAt: action.effectiveAt,
+          payloadState: action.payload,
+          transactionHash: observation.transactionHash,
+          blockNumber,
+        },
+      });
+      continue;
+    }
     signals.push({
       kind,
       chainId: 8453,
@@ -335,7 +380,7 @@ export function corporateActionSignalsV1(input: {
       occurredAt: observation.blockTime,
       dedupeKey,
       facts: {
-        event: multiplierEvent!,
+        event: multiplierEvent as 'multiplier_updated' | 'ui_multiplier_updated',
         multiplierWad: action.multiplierWad,
         payloadState: action.payload,
         transactionHash: observation.transactionHash,

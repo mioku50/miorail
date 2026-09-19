@@ -21,7 +21,18 @@ const PUBLISHED_V1 = {
   end_announcement: '0x96d64dafe2c790596430196b982ad1da3221cb3b0f4e6e2df77f2e4f71a90037',
   multiplier_updated: '0x4dbe4840d7465bd162f67814cea0b519567a2e0e578bcde61e7f4ced361e5a3d',
   ui_multiplier_updated: '0x2205df4534432b2f60654a3fdb48737ffdaf3e9edb1a498bd985bc026b15b055',
+  // The Cobalt changelog prints this one ABBREVIATED -- `topic0 0x8838...1cad`
+  // -- and nowhere in full. So the full value below is computed, and the
+  // separate assertion underneath checks it against the two ends Base actually
+  // published. That is the whole of what can be verified, and pretending
+  // otherwise by listing it beside four values that ARE published in full would
+  // be the kind of borrowed confidence this file exists to prevent.
+  ui_multiplier_update_cancelled:
+    '0x883856335ba5f60c18b9817c4505d3c7d3f6223dcf39516b30c508c46a5e1cad',
 } as const;
+
+/** What the changelog actually prints for the cancellation topic. */
+const PUBLISHED_ABBREVIATED_V1 = { prefix: '0x8838', suffix: '1cad' } as const;
 
 const word = (value: bigint) => value.toString(16).padStart(64, '0');
 
@@ -57,7 +68,16 @@ describe('B20 corporate action topics', () => {
         `${event} (${B20_CORPORATE_ACTION_SIGNATURES_V1[event as keyof typeof PUBLISHED_V1]})`,
       );
     }
-    assert.equal(B20_CORPORATE_ACTION_TOPIC_LIST_V1.length, 4);
+    assert.equal(B20_CORPORATE_ACTION_TOPIC_LIST_V1.length, 5);
+  });
+
+  test('the cancellation topic is checked against the abbreviation Base published', () => {
+    const topic = B20_CORPORATE_ACTION_TOPICS_V1.ui_multiplier_update_cancelled;
+    assert.ok(topic.startsWith(PUBLISHED_ABBREVIATED_V1.prefix), topic);
+    assert.ok(topic.endsWith(PUBLISHED_ABBREVIATED_V1.suffix), topic);
+    // 64 hex characters: an abbreviation that matched a shorter string would
+    // match a value that is not a topic at all.
+    assert.equal(topic.length, 66);
   });
 
   test('a log this build does not recognise is not a corporate action', () => {

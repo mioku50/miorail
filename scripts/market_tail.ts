@@ -255,6 +255,10 @@ async function corporateActionStageV1(input: {
       description: observation.action.description,
       uri: observation.action.uri,
       multiplierWad: observation.action.multiplierWad,
+      // The date a scheduled change takes effect. Carried from the log rather
+      // than derived: nothing fires at maturation, so this is the only record
+      // that a change had not happened yet when it was written.
+      effectiveAt: observation.action.effectiveAt,
       topics: observation.topics,
       data: observation.data,
       blockNumber: observation.blockNumber,

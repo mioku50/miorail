@@ -577,3 +577,53 @@ describe('a policy the registry does not have', () => {
     assert.equal(new Set(blocks).size, 1, 'two facts from two blocks are two facts');
   });
 });
+
+describe('the two ways nothing was established', () => {
+  test('a phantom policy and an unanswered registry do not share a sentence', async () => {
+    const phantom = b20ExecutorGateV1({
+      eligibility: await read(
+        readerV1({ exists: () => ok(word(0n)), authorized: () => ok(word(1n)) }),
+        { executor: EXECUTOR },
+      ),
+    });
+    const silent = b20ExecutorGateV1({
+      eligibility: await read(readerV1({ authorized: () => fail }), { executor: EXECUTOR }),
+    });
+    assert.equal(phantom.state, 'not_established');
+    assert.equal(silent.state, 'not_established');
+    // Same state, different facts. An operator reading "nobody answered" when
+    // the truth is "there is nothing there to answer" would go looking for an
+    // outage that does not exist.
+    assert.notEqual(phantom.detail, silent.detail);
+    assert.match(phantom.detail, /not in the registry/i);
+    assert.match(silent.detail, /did not answer/i);
+    // Neither is ever a claim that the address passed.
+    for (const gate of [phantom, silent]) {
+      assert.equal(b20ExecutorGateRefusesV1(gate), false);
+      assert.match(gate.detail, /nothing is claimed either/);
+      assert.doesNotMatch(gate.detail, /allowed|permitted|cleared/i);
+    }
+  });
+
+  test('every detail fits the field the MCP publishes it in', async () => {
+    // `executorPolicy.detail` is capped at 600 characters on the private MCP
+    // output. A sentence that grew past it would fail the response schema at
+    // release time, which is the worst possible moment to find out.
+    const gates = [
+      b20ExecutorGateV1({ eligibility: null }),
+      b20ExecutorGateV1({
+        eligibility: await read(readerV1({ exists: () => ok(word(0n)) }), { executor: EXECUTOR }),
+      }),
+      b20ExecutorGateV1({
+        eligibility: await read(readerV1({ authorized: () => fail }), { executor: EXECUTOR }),
+      }),
+      b20ExecutorGateV1({
+        eligibility: await read(readerV1({}), { executor: EXECUTOR }),
+      }),
+    ];
+    for (const gate of gates) {
+      assert.ok(gate.detail.length <= 600, `${gate.detail.length} characters`);
+      assert.doesNotMatch(gate.detail, /https?:|rpc|api[_-]?key/i);
+    }
+  });
+});

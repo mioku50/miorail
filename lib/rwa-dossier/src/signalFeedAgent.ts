@@ -149,6 +149,13 @@ const KIND_PHRASE_V1: Readonly<Record<RwaSignalKindV1, string>> = {
   official_asset_cash_exit_changed: 'exit cost moved',
   official_asset_corporate_action_announced: 'corporate action announced onchain',
   official_asset_multiplier_changed: 'shares per token changed',
+  // These two are read by assistants, so the tense carries the whole meaning.
+  // "Changed" and "is scheduled to change" are different answers to "what
+  // happened today", and a withdrawal is not a change at all — it is the
+  // retraction of one. An assistant that quoted the first phrase for any of the
+  // three would tell a holder their token converts differently than it does.
+  official_asset_multiplier_change_scheduled: 'shares per token scheduled to change — not yet in force',
+  official_asset_multiplier_change_cancelled: 'a scheduled change to shares per token was withdrawn',
 };
 
 /** The sentence an assistant reads first.

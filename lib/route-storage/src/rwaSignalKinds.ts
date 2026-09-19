@@ -35,7 +35,15 @@ export const RWA_SIGNAL_KINDS_V1 = [
   // before it reads, so a backfill over older blocks records history in
   // `b20_corporate_actions` and reports none of it as news.
   'official_asset_corporate_action_announced',
+  // Three kinds for the multiplier, not one, because Cobalt gives an issuer a
+  // way to publish a change that has NOT happened. `changed` is a value now in
+  // force; `scheduled` is a dated plan and the token still converts with the
+  // old number; `cancelled` is that plan withdrawn. Collapsing them would put
+  // a future -- or a retracted one -- on the feed that answers "did anything
+  // change today".
   'official_asset_multiplier_changed',
+  'official_asset_multiplier_change_scheduled',
+  'official_asset_multiplier_change_cancelled',
 ] as const;
 export type RwaSignalKindV1 = (typeof RWA_SIGNAL_KINDS_V1)[number];
 
@@ -44,5 +52,7 @@ export type RwaSignalKindV1 = (typeof RWA_SIGNAL_KINDS_V1)[number];
 export const RWA_ONCHAIN_SIGNAL_KINDS_V1 = [
   'official_asset_corporate_action_announced',
   'official_asset_multiplier_changed',
+  'official_asset_multiplier_change_scheduled',
+  'official_asset_multiplier_change_cancelled',
 ] as const;
 export type RwaOnchainSignalKindV1 = (typeof RWA_ONCHAIN_SIGNAL_KINDS_V1)[number];

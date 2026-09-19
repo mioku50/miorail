@@ -19,6 +19,10 @@ function rowFromDatabaseV1(row: Record<string, unknown>): B20CorporateActionRowV
       description: (row.description as string | null) ?? null,
       uri: (row.uri as string | null) ?? null,
       multiplierWad: row.multiplier_wad === null ? null : String(row.multiplier_wad),
+      effectiveAt:
+        row.effective_at === null || row.effective_at === undefined
+          ? null
+          : new Date(row.effective_at as string).toISOString(),
       topics: (row.topics ?? []) as string[],
       data: String(row.data),
       blockNumber: Number(row.block_number),
@@ -56,11 +60,12 @@ export function createDatabaseB20CorporateActionRepository(
         const written = (await sql`
           INSERT INTO b20_corporate_actions (
             chain_id, token_address, event, announcement_id, caller, description, uri,
-            multiplier_wad, payload_state, topics, data, block_number, block_time,
+            multiplier_wad, effective_at, payload_state, topics, data, block_number, block_time,
             transaction_hash, log_index, observed_at
           ) VALUES (
             ${row.chainId}, ${row.tokenAddress}, ${row.event}, ${row.announcementId},
             ${row.caller}, ${row.description}, ${row.uri}, ${row.multiplierWad},
+            ${row.effectiveAt}::timestamptz,
             ${row.payloadState}, ${JSON.stringify(row.topics)}::text::jsonb, ${row.data},
             ${row.blockNumber}::bigint, ${row.blockTime}::timestamptz,
             ${row.transactionHash}, ${row.logIndex}, ${row.observedAt}::timestamptz
