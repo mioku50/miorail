@@ -7,7 +7,7 @@ import {
   borrowReviewV1,
   type BorrowReviewMarketWireV1,
   type BorrowReviewPositionWireV1,
-} from '../src/console/borrowReviewView';
+} from '../src/borrowReview.js';
 
 // ---------------------------------------------------------------------------
 // The live curated NVDAc market at block 51,521,606: 8-decimal collateral,
@@ -176,7 +176,12 @@ describe('what a review refuses to put in front of a reader', () => {
     // The three the simulation produces, each in its own words. "No provider
     // answered" and "it reverts" are opposite facts and must never share a
     // sentence.
-    for (const refusal of ['simulation_not_run', 'simulation_reverted', 'simulation_delivered_something_else'] as const) {
+    for (const refusal of [
+      'simulation_not_run',
+      'simulation_reverted',
+      'simulation_effect_unread',
+      'simulation_delivered_something_else',
+    ] as const) {
       const view = borrowReviewV1({ ...base, after: null, refusal });
       assert.equal(view.verdict, 'refused');
       assert.equal(view.refusal, BORROW_REVIEW_REFUSALS_V1[refusal]);
@@ -185,6 +190,13 @@ describe('what a review refuses to put in front of a reader', () => {
     assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_not_run, /gap in Miorail’s reading/);
     assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_reverted, /revert when executed/);
     assert.doesNotMatch(BORROW_REVIEW_REFUSALS_V1.simulation_not_run, /revert/);
+    // A run that happened but could not be read is not a run that did not
+    // happen, and neither is a delivery of the wrong amount.
+    assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_effect_unread, /The calls execute/);
+    assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_effect_unread, /gap in Miorail’s reading/);
+    assert.doesNotMatch(BORROW_REVIEW_REFUSALS_V1.simulation_effect_unread, /No provider/);
+    assert.match(BORROW_REVIEW_REFUSALS_V1.simulation_delivered_something_else, /was read/);
+    assert.doesNotMatch(BORROW_REVIEW_REFUSALS_V1.simulation_delivered_something_else, /gap in Miorail/);
   });
 
   test('nothing here is ever an approval', () => {

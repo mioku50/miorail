@@ -46,6 +46,8 @@
 import { selectorV1 } from '@mioagent/b20-control';
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
 
+import type { MorphoBorrowSimulationV1 } from './morphoBorrowSimulation.js';
+
 /** Morpho Blue on Base, read from the venue's own API rather than remembered. */
 export const MORPHO_BLUE_BASE_V1 = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
 
@@ -269,22 +271,10 @@ export function morphoBorrowPlanV1(input: {
  * ---------------------------------------------------------------------- */
 
 /**
- * Three states, and they are not degrees of one another.
- *
- * `not_simulated` is OUR gap — no provider answered — and must never be read
- * as a pass. `reverted` is a measured fact about the batch. Only `executed`
- * can support putting a transaction in front of a reader.
+ * The measurement itself lives in `morphoBorrowSimulation`, which owns the one
+ * distinction this verdict cannot be allowed to blur: an arrival that was read
+ * and found to be nothing, versus an arrival nobody established.
  */
-export type MorphoBorrowSimulationV1 =
-  | {
-      state: 'executed';
-      blockNumber: number;
-      /** Loan asset that arrived at the wallet, measured. Null when the
-       * provider reported no asset changes to read. */
-      loanReceivedAssets: bigint | null;
-    }
-  | { state: 'reverted'; failedCallIndex: number | null; reason: string | null }
-  | { state: 'not_simulated'; reason: string };
 
 export const MORPHO_BORROW_VERDICT_REFUSALS_V1 = {
   not_simulated:
@@ -293,8 +283,10 @@ export const MORPHO_BORROW_VERDICT_REFUSALS_V1 = {
     'These calls revert when executed against current state. Signing them would spend gas to achieve nothing.',
   venue_and_miorail_disagree:
     'The venue’s own simulation and Miorail’s disagree about whether these calls execute. Until they agree, neither answer is being relied on.',
+  arrival_unread:
+    'The simulation executed and Miorail could not establish what reached this wallet. That is a gap in Miorail’s reading, not a finding about the transaction, and it is not a pass.',
   nothing_arrived:
-    'The simulation executed and no loan asset reached this wallet. Whatever these calls do, they do not put the borrowed amount here.',
+    'The simulation executed, what moved was read, and no loan asset reached this wallet. Whatever these calls do, they do not put the borrowed amount here.',
   wrong_amount_arrived:
     'The simulation executed and the amount that reached this wallet is not the amount under review.',
 } as const;
@@ -330,14 +322,20 @@ export function morphoBorrowVerdictV1(input: {
       detail: plan.venueSimulation.reason,
     };
   }
-  if (simulation.loanReceivedAssets === null || simulation.loanReceivedAssets === 0n) {
+  // Unread and zero are opposite facts, and the earlier shape of this check
+  // reported the first in the words of the second — a measured-sounding
+  // refusal resting on no measurement.
+  if (!simulation.arrival.read) {
+    return { ok: false, refusal: 'arrival_unread', detail: simulation.arrival.reason };
+  }
+  if (simulation.arrival.assets === 0n) {
     return { ok: false, refusal: 'nothing_arrived', detail: null };
   }
-  if (simulation.loanReceivedAssets !== expectedAssets) {
+  if (simulation.arrival.assets !== expectedAssets) {
     return {
       ok: false,
       refusal: 'wrong_amount_arrived',
-      detail: `${simulation.loanReceivedAssets.toString()} arrived, ${expectedAssets.toString()} was under review`,
+      detail: `${simulation.arrival.assets.toString()} arrived, ${expectedAssets.toString()} was under review`,
     };
   }
   return { ok: true };

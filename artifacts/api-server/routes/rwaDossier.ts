@@ -26,6 +26,7 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 // identity this read-only evidence surface requires.
 import type { TenantUser } from '../middleware/tenantAuth.js';
 import { rwaMarketRealityRouter } from './rwaMarketReality.js';
+import { rwaBorrowRouter } from './rwaBorrow.js';
 
 export const rwaDossierRouter = Router();
 
@@ -330,3 +331,4 @@ rwaDossierRouter.post('/rwa/official/:tokenAddress/dossier/measure', async (req,
 // mount here avoids widening the root route coordinator with product-specific
 // projection code.
 rwaDossierRouter.use(rwaMarketRealityRouter);
+rwaDossierRouter.use(rwaBorrowRouter);

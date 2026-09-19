@@ -70,6 +70,9 @@ const StockActionReviewPage = lazy(() =>
     default: m.StockActionReviewPage,
   })),
 );
+const BorrowReviewPage = lazy(() =>
+  import('../features/rwa/BorrowReviewPage').then((m) => ({ default: m.BorrowReviewPage })),
+);
 const MarketRealityRadarPage = lazy(() =>
   import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
 );
@@ -239,6 +242,16 @@ export function App() {
         <Route path="/action/:draft">
           <RequireSession>
             <StockActionReviewPage />
+          </RequireSession>
+        </Route>
+
+        {/* The borrow review an assistant's link points at. Behind the session
+            gate for the same reason as the action review: the link names one
+            wallet, and only that wallet may see its own position. Opening it
+            measures again — the link carries no number to go stale. */}
+        <Route path="/borrow/:draft">
+          <RequireSession>
+            <BorrowReviewPage />
           </RequireSession>
         </Route>
 

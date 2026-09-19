@@ -321,3 +321,126 @@ export const MiorailMeasureMarketRealityOutputV1Schema = z
     comparison: z.object({ schemaVersion: z.literal('market-reality/v2') }).passthrough(),
   })
   .passthrough();
+
+// ---------------------------------------------------------------------------
+// Borrow — the calculation and the review.
+//
+// Neither output carries a call, and the schema is where that is enforceable
+// rather than promised: there is no field on either object that calldata could
+// be read out of. `createsCalldata: false` is a literal a client can check.
+// ---------------------------------------------------------------------------
+
+const BorrowMarketRowV1 = z
+  .object({
+    marketId: Hash32V1,
+    curated: z.boolean().nullable(),
+    lltv: z.string().min(1),
+    collateralSymbol: z.string().nullable(),
+    loanSymbol: z.string().nullable(),
+    /** What could actually be drawn, bounded by BOTH constraints. */
+    availableToBorrowAtomic: z.string().regex(/^[0-9]+$/).nullable(),
+    /** Which fact set that figure. Never merged into one number. */
+    bound: z.string().nullable(),
+    collateralHeadroomAtomic: z.string().regex(/^[0-9]+$/).nullable(),
+    marketLiquidityAtomic: z.string().regex(/^[0-9]+$/).nullable(),
+    healthFactor: z.string().nullable(),
+    blockNumber: z.number().int().nullable(),
+  })
+  .strict();
+
+export const MiorailReadBorrowCapacityOutputV1Schema = z
+  .object({
+    schemaVersion: z.literal('borrow-capacity/v1'),
+    collateralTokenAddress: AddressV1,
+    readAt: z.string().min(1),
+    markets: z.array(BorrowMarketRowV1).max(20),
+    /** Present exactly when nothing could be read. */
+    refusal: z.string().nullable(),
+    personalCaveat: z.string().min(1),
+    createsApproval: z.literal(false),
+    createsCalldata: z.literal(false),
+    createsTransaction: z.literal(false),
+    nextStep: z.string().min(1),
+    caveats: CaveatsV1,
+  })
+  .strict();
+
+const BorrowReviewLineV1 = z
+  .object({
+    collateral: z.string().min(1),
+    debt: z.string().min(1),
+    health: z.string().min(1),
+    liquidationPrice: z.string().min(1),
+  })
+  .strict();
+
+export const MiorailReviewBorrowOutputV1Schema = z
+  .object({
+    schemaVersion: z.literal('borrow-review/v1'),
+    /** Present only when the run reached a reviewable state. */
+    borrowDraftId: z.string().min(1).nullable(),
+    marketId: Hash32V1.nullable(),
+    verdict: z.enum(['ready_for_your_approval', 'refused']),
+    /** The precise code, for branching. Null when the verdict is ready. */
+    refusal: z.string().nullable(),
+    /** The sentence a person reads. Null when the verdict is ready. */
+    refusalText: z.string().nullable(),
+    /** Where the run stopped. Null when it did not stop. */
+    stage: z.string().nullable(),
+    review: z
+      .object({
+        title: z.string().min(1),
+        market: z
+          .object({
+            id: z.string().min(1),
+            shortId: z.string().min(1),
+            pair: z.string().min(1),
+            standing: z.string().min(1),
+            lltv: z.string().min(1),
+            rate: z.string().min(1),
+          })
+          .strict(),
+        ask: z.string().min(1),
+        before: BorrowReviewLineV1,
+        after: BorrowReviewLineV1.nullable(),
+        warnings: z.array(z.string().min(1)).max(20),
+        notStated: z.array(z.string().min(1)).max(20),
+        measuredAt: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+    /** What was executed, and against which block. Null when nothing was. */
+    measured: z
+      .object({
+        blockNumber: z.number().int().positive(),
+        arrivedAtomic: z.string().regex(/^[0-9]+$/),
+        provider: z.string().min(1),
+      })
+      .strict()
+      .nullable(),
+    /** Every contract the prepared batch touches, and what Miorail could read
+     * of each. An assistant that summarises this must not drop a row. */
+    steps: z
+      .array(
+        z
+          .object({
+            index: z.number().int().nonnegative(),
+            to: AddressV1,
+            selector: HexDataV1,
+            venueDescription: z.string().nullable(),
+            readByMiorail: z.boolean(),
+            reading: z.string().min(1),
+          })
+          .strict(),
+      )
+      .max(20),
+    reviewRequired: z.literal(true),
+    reviewUrl: z.string().nullable(),
+    expiresAt: z.string().nullable(),
+    createsApproval: z.literal(false),
+    createsCalldata: z.literal(false),
+    createsTransaction: z.literal(false),
+    nextStep: z.string().min(1),
+    caveats: CaveatsV1,
+  })
+  .strict();

@@ -25,6 +25,9 @@ import {
 import { getMiorailProductMigrationFlags } from '../../lib/productMigrationConfig.js';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
+import { issueBorrowDraftV1 } from '../../lib/borrowDraft.js';
+import { runMorphoBorrowV1 } from '../../lib/morphoBorrowRunner.js';
+import { readMorphoBorrowStandingV1 } from '@mioagent/rwa-issuer';
 import {
   STOCK_ACTION_CLEARANCE_REFUSAL_COPY_V1,
   verifyStockActionClearanceV1,
@@ -1551,5 +1554,265 @@ export async function miorailMeasureMarketRealityV1(
     // one author.
     miorailSummary: marketRealityAgentSummaryV1(parsed),
     comparison: parsed,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Borrow — the calculation, and the review that must precede any execution.
+//
+// Two tools, and the split is the whole design. The first reads and computes
+// and touches nothing; the second runs the full gate — the venue writes the
+// calldata, Miorail executes it once against real state, and only a batch that
+// delivers the reviewed amount to this wallet produces something reviewable.
+//
+// NEITHER RETURNS A CALL. There is no field on either response that calldata
+// could be read out of, and the output schemas pin that rather than describing
+// it. What a successful review produces is a short-lived draft and a link: the
+// user opens it, sees the position this transaction would create, and decides.
+//
+// This is also the ONE surface in Miorail permitted to answer "could YOU borrow
+// here". Everywhere else that question is refused by name, because a listing
+// and a market and a personal permission are three different claims. Here the
+// position WAS read, so the answer is exactly as wide as the reading, and the
+// review names the block it was read at.
+// ---------------------------------------------------------------------------
+
+export const BORROW_REFUSAL_COPY_V1: Record<string, string> = {
+  borrow_disabled: 'Borrow is not enabled on this deployment.',
+  borrow_secret_unavailable: 'Miorail cannot mint a review link right now, so there is nothing to show the user.',
+  no_market_for_this_address: 'The venue holds no lending market where this token is the collateral.',
+  oracle_did_not_answer:
+    'The market exists and its oracle published no price for the collateral, so nothing here can be computed. That is a gap in what could be read, not a measurement that the collateral is worthless.',
+  venue_unread: 'The venue could not be read, so nothing about this market has been established.',
+  no_wallet_given: 'This surface answers about one wallet, and no wallet was proved.',
+  position_unread:
+    'Nobody read this wallet’s position in this market, so no claim about what it could borrow is supported.',
+  market_not_named:
+    'This collateral has more than one market, and they have different terms. Name the exact market id; Miorail will not choose one on the user’s behalf.',
+  no_such_market_here: 'The venue holds no such market for this collateral.',
+  loan_asset_unread:
+    'The venue did not publish the loan asset exactly, so what a borrow delivers could not be measured. Nothing is offered on that basis.',
+  nothing_asked_for: 'No amount was asked for.',
+  nothing_to_borrow: 'There is nothing to borrow in this market right now.',
+  over_capacity: 'More was asked for than can actually be drawn here.',
+  would_not_be_healthy: 'That amount would leave the position under the liquidation threshold, so it would revert.',
+};
+
+function borrowRefusalV1(code: string): McpPrivateError {
+  return new McpPrivateError(code, BORROW_REFUSAL_COPY_V1[code] ?? 'Miorail refused that request.');
+}
+
+/** Everything the borrow tools reach outside themselves, in one place, so a
+ * test replaces the venue and the simulator without touching process state. */
+export const borrowRuntimeV1 = {
+  read: readMorphoBorrowStandingV1,
+  run: runMorphoBorrowV1,
+  issue: issueBorrowDraftV1,
+  now: () => new Date(),
+  secret: (): string | null => {
+    const secret = (process.env.SESSION_SECRET ?? '').trim();
+    return secret.length > 0 ? secret : null;
+  },
+  origin: (): string =>
+    (process.env.MIORAIL_PUBLIC_ORIGIN ?? 'https://miorail.xyz').replace(/\/+$/, ''),
+};
+
+const BORROW_PERSONAL_CAVEAT_V1 =
+  'These figures are this wallet’s, at the block named beside them. They are not a statement about anyone else, and the venue’s own checks apply again at the moment a transaction is sent.';
+
+function lltvTextV1(bps: number): string {
+  return `${(bps / 100).toFixed(bps % 100 === 0 ? 0 : 1)}%`;
+}
+
+function healthTextV1(wad: bigint | null): string | null {
+  if (wad === null) return null;
+  const whole = wad / 10n ** 18n;
+  const hundredths = ((wad % 10n ** 18n) * 100n) / 10n ** 18n;
+  return `${whole}.${hundredths.toString().padStart(2, '0')}`;
+}
+
+/**
+ * What this wallet could borrow against one tokenized security, market by
+ * market.
+ *
+ * Reads only. No preparation, no simulation, nothing executable, and every row
+ * states which of the two constraints set its figure — the collateral or the
+ * market's own liquidity. Merging them into one number tells a reader to add
+ * collateral when the market is simply empty.
+ */
+export async function miorailReadBorrowCapacityV1(
+  identity: McpPrivateIdentityV1,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const token = String(args.collateralTokenAddress ?? '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(token)) throw borrowRefusalV1('no_market_for_this_address');
+
+  const reading = await borrowRuntimeV1.read({
+    tokenAddress: token,
+    walletAddress: identity.walletAddress,
+  });
+
+  const base = {
+    schemaVersion: 'borrow-capacity/v1' as const,
+    collateralTokenAddress: token,
+    personalCaveat: BORROW_PERSONAL_CAVEAT_V1,
+    createsApproval: false as const,
+    createsCalldata: false as const,
+    createsTransaction: false as const,
+    caveats: MIORAIL_PRIVATE_CAVEATS_V1,
+  };
+
+  if (reading.state === 'refused') {
+    return {
+      ...base,
+      readAt: reading.readAt,
+      markets: [],
+      refusal: reading.refusal,
+      nextStep:
+        'Say which fact is missing, in the venue’s own terms, and stop. Do not substitute a figure from a public feed or from an earlier message: a number from somewhere else is not this wallet’s position here.',
+    };
+  }
+
+  return {
+    ...base,
+    readAt: reading.readAt,
+    refusal: null,
+    markets: reading.markets.map((entry) => ({
+      marketId: entry.market.marketId,
+      curated: entry.market.curated,
+      lltv: lltvTextV1(entry.market.lltvBps),
+      collateralSymbol: entry.market.collateral.symbol,
+      loanSymbol: entry.market.loan.symbol,
+      availableToBorrowAtomic: entry.capacity?.assets.toString() ?? null,
+      bound: entry.capacity?.bound ?? null,
+      collateralHeadroomAtomic: entry.capacity?.collateralHeadroomAssets.toString() ?? null,
+      marketLiquidityAtomic: entry.capacity?.marketLiquidityAssets.toString() ?? null,
+      healthFactor: healthTextV1(entry.health?.healthFactorWad ?? null),
+      blockNumber: entry.market.state.blockNumber,
+    })),
+    nextStep:
+      'Give every market its own row and never summarise them into one figure: two markets on the same collateral have different terms, and a maximum taken across them describes none of them. `bound` says whether the collateral or the market’s liquidity set each number. Nothing here is executable; miorail_review_borrow is what produces something a user can look at.',
+  };
+}
+
+/**
+ * The full gate: read, compute, have the venue write the calldata, execute it
+ * once against real state, and return a review — never a call.
+ *
+ * A review reaches `ready_for_your_approval` only when the simulated batch
+ * delivered the reviewed amount of the loan asset to this exact wallet. Every
+ * other outcome is a refusal that names itself, and the four the simulation
+ * produces are four different sentences: nobody ran it, it reverts, its effects
+ * could not be read, and it delivered something else.
+ */
+export async function miorailReviewBorrowV1(
+  identity: McpPrivateIdentityV1,
+  args: Record<string, unknown>,
+): Promise<Record<string, unknown>> {
+  const token = String(args.collateralTokenAddress ?? '').trim().toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(token)) throw borrowRefusalV1('no_market_for_this_address');
+  const rawAmount = String(args.borrowAmountAtomic ?? '').trim();
+  if (!/^[1-9][0-9]*$/.test(rawAmount)) throw borrowRefusalV1('nothing_asked_for');
+  const marketId = args.marketId === undefined || args.marketId === null
+    ? null
+    : String(args.marketId).trim().toLowerCase();
+
+  const run = await borrowRuntimeV1.run({
+    collateralTokenAddress: token,
+    walletAddress: identity.walletAddress,
+    borrowAssets: BigInt(rawAmount),
+    marketId,
+  });
+
+  const steps =
+    run.state === 'ready'
+      ? run.plan.steps.map((step) => ({
+          index: step.index,
+          to: step.to,
+          selector: step.selector,
+          venueDescription: step.venueDescription,
+          readByMiorail: step.decodedByMiorail,
+          reading: step.reading,
+        }))
+      : [];
+
+  const base = {
+    schemaVersion: 'borrow-review/v1' as const,
+    steps,
+    reviewRequired: true as const,
+    createsApproval: false as const,
+    createsCalldata: false as const,
+    createsTransaction: false as const,
+    caveats: MIORAIL_PRIVATE_CAVEATS_V1,
+  };
+
+  if (run.state === 'refused') {
+    return {
+      ...base,
+      borrowDraftId: null,
+      marketId: run.marketId,
+      verdict: 'refused' as const,
+      refusal: run.refusal,
+      refusalText: run.review?.refusal ?? BORROW_REFUSAL_COPY_V1[run.refusal] ?? 'Miorail refused that request.',
+      stage: run.stage,
+      review: run.review
+        ? {
+            title: run.review.title,
+            market: run.review.market,
+            ask: run.review.ask,
+            before: run.review.before,
+            after: run.review.after,
+            warnings: run.review.warnings,
+            notStated: run.review.notStated,
+            measuredAt: run.review.measuredAt,
+          }
+        : null,
+      measured: null,
+      reviewUrl: null,
+      expiresAt: null,
+      nextStep:
+        'Read the refusal out as it is written and stop. Do not retry with a smaller amount unless the user asks for one, do not describe the position from an earlier message, and do not present any of this as a reason to borrow or not to borrow.',
+    };
+  }
+
+  const secret = borrowRuntimeV1.secret();
+  if (!secret) throw borrowRefusalV1('borrow_secret_unavailable');
+  const issued = borrowRuntimeV1.issue({
+    tenantId: identity.tenantId,
+    walletAddress: identity.walletAddress,
+    collateralTokenAddress: token,
+    marketId: run.marketId,
+    borrowAssets: BigInt(rawAmount),
+    secret,
+    now: borrowRuntimeV1.now(),
+  });
+
+  return {
+    ...base,
+    borrowDraftId: issued.borrowDraftId,
+    marketId: run.marketId,
+    verdict: 'ready_for_your_approval' as const,
+    refusal: null,
+    refusalText: null,
+    stage: null,
+    review: {
+      title: run.review.title,
+      market: run.review.market,
+      ask: run.review.ask,
+      before: run.review.before,
+      after: run.review.after,
+      warnings: run.review.warnings,
+      notStated: run.review.notStated,
+      measuredAt: run.review.measuredAt,
+    },
+    measured: {
+      blockNumber: run.measured.blockNumber,
+      arrivedAtomic: run.measured.arrivedAssets,
+      provider: run.measured.providerId,
+    },
+    reviewUrl: `${borrowRuntimeV1.origin()}/borrow/${encodeURIComponent(issued.draft)}`,
+    expiresAt: issued.expiresAt,
+    nextStep:
+      'Give the user the review link and the warnings verbatim, then stop. The figures above were measured at one block and the collateral price moves without anyone’s involvement; do not restate them later in the conversation as if they were still current. Nothing here is executable, and a borrow is only ever sent by the user from their own wallet.',
   };
 }

@@ -6,6 +6,8 @@ import {
   createSimulationProviderFromConfigV1,
   resolveSimulationProviderConfigV1,
   type SimulationProvider,
+  type SimulationProviderRequestV1,
+  type SimulationProviderResponseV1,
   type SimulationProviderResultV1,
 } from '@mioagent/paid-intelligence';
 import {
@@ -166,7 +168,7 @@ const SIMULATION_RETRYABLE_CODES_V1: ReadonlySet<string> = new Set([
   'provider_method_unsupported',
 ]);
 
-interface SimulationChainV1 {
+export interface SimulationChainV1 {
   /** Ordered, de-duplicated by provider id. */
   providers: readonly SimulationProvider[];
   /** Those among them that execute an ordered batch. */
@@ -175,7 +177,7 @@ interface SimulationChainV1 {
 
 /** Orders and de-duplicates the chain. One function so the production wiring
  * and the test wiring cannot drift into two different orders. */
-function orderSimulationChainV1(
+export function orderSimulationChainV1(
   configured: SimulationProvider | null,
   batchRpc: SimulationProvider | null,
   publicBatchRpc: SimulationProvider | null,
@@ -197,7 +199,7 @@ function orderSimulationChainV1(
   return { providers, batchCapableIds };
 }
 
-function buildSimulationChainV1(env: NodeJS.ProcessEnv): SimulationChainV1 {
+export function buildSimulationChainV1(env: NodeJS.ProcessEnv): SimulationChainV1 {
   return orderSimulationChainV1(
     createSimulationProviderFromConfigV1(resolveSimulationProviderConfigV1(env)),
     createBaseRpcBatchSimulationProviderFromEnvV1(env),
@@ -205,6 +207,101 @@ function buildSimulationChainV1(env: NodeJS.ProcessEnv): SimulationChainV1 {
     createBaseRpcSwapSimulationProviderFromEnvV1(env),
   );
 }
+
+/**
+ * What the chain established, or why nothing was established.
+ *
+ * A caller gets a parsed response or a reason, never a half-read body — and a
+ * simulated REVERT is a successful answer here, because a revert is a fact
+ * about the transaction rather than a failure of the reading.
+ */
+export type SimulationChainAnswerV1 =
+  | { ok: true; providerId: string; response: SimulationProviderResponseV1 }
+  | { ok: false; errorCode: string };
+
+/**
+ * Runs an ordered provider chain once and returns what it established.
+ *
+ * One function, so a second consumer cannot drift into a different order, a
+ * different retry rule, or a different idea of what counts as an answer. The
+ * batch-health bookkeeping lives here for the same reason: a deployment is
+ * batch-capable or not as a whole, and every caller must see the same verdict.
+ */
+export async function runSimulationChainV1(input: {
+  chain: SimulationChainV1;
+  request: SimulationProviderRequestV1;
+  nowIso: string;
+  /** Prefix for the operator log lines. Never a URL, never a user's words. */
+  label: string;
+  /** Identifiers a diagnosis needs. Never calldata, never a wallet's holdings. */
+  logContext: Record<string, unknown>;
+}): Promise<SimulationChainAnswerV1> {
+  const { chain, request, nowIso, label, logContext } = input;
+  if (chain.providers.length === 0) return { ok: false, errorCode: 'provider_not_configured' };
+
+  let transport: SimulationProviderResultV1 | null = null;
+  let answeredBy: SimulationProvider | null = null;
+  let firstErrorCode: string | null = null;
+  let batchRefusals = 0;
+  let lastBatchErrorCode: string | null = null;
+
+  for (const provider of chain.providers) {
+    const isBatch = chain.batchCapableIds.has(provider.providerId);
+    const result = await provider.simulate(request);
+    transport = result;
+    if (result.ok) {
+      answeredBy = provider;
+      break;
+    }
+    if (firstErrorCode === null) firstErrorCode = result.errorCode;
+    if (isBatch && BATCH_CANNOT_SERVE_CODES_V1.has(result.errorCode)) {
+      batchRefusals += 1;
+      lastBatchErrorCode = result.errorCode;
+    }
+    // Without this an operator saw an error code on screen and nothing in the
+    // log, for the one gate that decides whether a transaction may be signed.
+    logger.warn(`${label} did not answer`, {
+      provider: provider.providerId,
+      errorCode: result.errorCode,
+      detail: result.detail,
+      providerMessage: result.providerMessage,
+      ...logContext,
+    });
+    // A provider that declined this call SHAPE has still answered, and the next
+    // one may execute it. Refusing to ask turned a recoverable shape mismatch
+    // into "no provider answered".
+    if (!SIMULATION_RETRYABLE_CODES_V1.has(result.errorCode)) break;
+  }
+
+  // Batch health is the CHAIN's verdict, never the first provider's. A primary
+  // that is out of capacity while a second batch provider answers leaves this
+  // deployment batch-capable, and claiming otherwise is exactly what took the
+  // server-written-calldata routes offline.
+  if (answeredBy && chain.batchCapableIds.has(answeredBy.providerId)) {
+    noteSimulationHealthV1(null, nowIso, answeredBy.providerId);
+  } else if (lastBatchErrorCode && batchRefusals === chain.batchCapableIds.size) {
+    noteSimulationHealthV1(lastBatchErrorCode, nowIso);
+  }
+
+  if (!transport || !transport.ok || !answeredBy) {
+    return { ok: false, errorCode: transport?.ok === false ? transport.errorCode : 'provider_not_configured' };
+  }
+  if (answeredBy.providerId !== chain.providers[0]?.providerId) {
+    logger.info(`${label} recovered through a reviewed fallback provider`, {
+      primaryErrorCode: firstErrorCode,
+      answeredBy: answeredBy.providerId,
+      ...logContext,
+    });
+  }
+
+  const parsed = SimulationProviderResponseV1Schema.safeParse(transport.body);
+  if (!parsed.success) return { ok: false, errorCode: 'invalid_response' };
+  // A block number is what lets a review name the state it was measured
+  // against. Without one there is a result and nothing to cite it to.
+  if (!(parsed.data.blockNumber > 0)) return { ok: false, errorCode: 'invalid_response' };
+  return { ok: true, providerId: answeredBy.providerId, response: parsed.data };
+}
+
 
 /**
  * One cheap read against the configured primary, to learn at BOOT whether it
@@ -373,13 +470,13 @@ export async function simulateSwapCallsV1(
   // perfectly good Base RPC URL still reported "no simulation provider
   // answered" for a call it could have executed. A reviewed provider that can
   // prove this call shape IS a production simulation path.
-  const { providers: chain, batchCapableIds } = orderSimulationChainV1(
+  const chain = orderSimulationChainV1(
     configured ?? null,
     batchFallback,
     publicBatchFallback,
     narrowFallback ?? null,
   );
-  if (chain.length === 0) return unavailable(requestHash, nowIso, 'provider_not_configured');
+  if (chain.providers.length === 0) return unavailable(requestHash, nowIso, 'provider_not_configured');
 
   const simulationRequest = {
     chainId: 8453,
@@ -393,67 +490,15 @@ export async function simulateSwapCallsV1(
     calls: request.calls,
   } as const;
 
-  let transport: SimulationProviderResultV1 | null = null;
-  let answeredBy: SimulationProvider | null = null;
-  let firstErrorCode: string | null = null;
-  let batchRefusals = 0;
-  let lastBatchErrorCode: string | null = null;
-
-  for (const provider of chain) {
-    const isBatch = batchCapableIds.has(provider.providerId);
-    const result = await provider.simulate(simulationRequest);
-    transport = result;
-    if (result.ok) {
-      answeredBy = provider;
-      break;
-    }
-    if (firstErrorCode === null) firstErrorCode = result.errorCode;
-    if (isBatch && BATCH_CANNOT_SERVE_CODES_V1.has(result.errorCode)) {
-      batchRefusals += 1;
-      lastBatchErrorCode = result.errorCode;
-    }
-    // Without this an operator saw an error code on screen and nothing in the
-    // log, for the one gate that decides whether a swap may be signed.
-    logger.warn('Swap simulation did not answer', {
-      provider: provider.providerId,
-      errorCode: result.errorCode,
-      detail: result.detail,
-      providerMessage: result.providerMessage,
-      blueprintId: request.blueprintId,
-      callsHash: request.callsHash,
-    });
-    // A provider that declined this call SHAPE has still answered, and the next
-    // one may execute it. Refusing to ask turned a recoverable shape mismatch
-    // into "no provider answered".
-    if (!SIMULATION_RETRYABLE_CODES_V1.has(result.errorCode)) break;
-  }
-
-  // Batch health is the CHAIN's verdict, never the first provider's. A primary
-  // that is out of capacity while a second batch provider answers leaves this
-  // deployment batch-capable, and claiming otherwise is exactly what took the
-  // server-written-calldata routes offline.
-  if (answeredBy && batchCapableIds.has(answeredBy.providerId)) {
-    noteSimulationHealthV1(null, nowIso, answeredBy.providerId);
-  } else if (lastBatchErrorCode && batchRefusals === batchCapableIds.size) {
-    noteSimulationHealthV1(lastBatchErrorCode, nowIso);
-  }
-
-  if (!transport || !transport.ok) {
-    return unavailable(requestHash, nowIso, transport?.errorCode ?? 'provider_not_configured');
-  }
-  if (answeredBy && answeredBy.providerId !== chain[0]?.providerId) {
-    logger.info('Swap simulation recovered through a reviewed fallback provider', {
-      primaryErrorCode: firstErrorCode,
-      answeredBy: answeredBy.providerId,
-      blueprintId: request.blueprintId,
-      callsHash: request.callsHash,
-    });
-  }
-
-  const parsed = SimulationProviderResponseV1Schema.safeParse(transport.body);
-  if (!parsed.success) return unavailable(requestHash, nowIso, 'invalid_response');
-  const response = parsed.data;
-  if (!(response.blockNumber > 0)) return unavailable(requestHash, nowIso, 'invalid_response');
+  const answer = await runSimulationChainV1({
+    chain,
+    request: simulationRequest,
+    nowIso,
+    label: 'Swap simulation',
+    logContext: { blueprintId: request.blueprintId, callsHash: request.callsHash },
+  });
+  if (!answer.ok) return unavailable(requestHash, nowIso, answer.errorCode);
+  const response = answer.response;
 
   const responseHash = stableHashV1('swap-simulation-response/v1', response);
   const blockNumber = String(response.blockNumber);

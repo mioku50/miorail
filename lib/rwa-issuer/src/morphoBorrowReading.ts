@@ -65,8 +65,10 @@ export interface MorphoBorrowMarketV1 {
   curated: boolean | null;
   /** Integer basis points: 6250 is 62.5%. */
   lltvBps: number;
-  collateral: { symbol: string | null; decimals: number | null };
-  loan: { symbol: string | null; decimals: number | null };
+  /** The exact contract, so an arrival can be measured against the right token
+   * rather than against a symbol two contracts may share. */
+  collateral: { address: string | null; symbol: string | null; decimals: number | null };
+  loan: { address: string | null; symbol: string | null; decimals: number | null };
   /** The borrow rate the venue published, WAD-scaled, or null when it did not. */
   borrowApyWad: bigint | null;
   state: MorphoMarketStateV1;
@@ -105,8 +107,8 @@ export const MORPHO_BORROW_MARKETS_QUERY_V1 = `query MiorailBorrowMarkets($chain
   markets(first: 20, where: { chainId_in: $chainId, collateralAssetAddress_in: $address }) {
     items {
       marketId lltv listed
-      collateralAsset { symbol decimals }
-      loanAsset { symbol decimals }
+      collateralAsset { address symbol decimals }
+      loanAsset { address symbol decimals }
       state {
         blockNumber price supplyAssets borrowAssets borrowShares borrowApy
       }
@@ -129,6 +131,14 @@ const ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
 function apyWadV1(value: unknown): bigint | null {
   if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) return null;
   return BigInt(Math.round(value * 1e18));
+}
+
+/** An exact address or nothing. A half-read address is worse than none: it
+ * would be compared against a simulated transfer and quietly never match. */
+function addressOrNullV1(value: unknown): string | null {
+  if (typeof value !== 'string') return null;
+  const address = value.trim().toLowerCase();
+  return ADDRESS_V1.test(address) ? address : null;
 }
 
 function bigOrNullV1(value: unknown): bigint | null {
@@ -243,10 +253,12 @@ export async function readMorphoBorrowStandingV1(input: {
       curated: typeof row.listed === 'boolean' ? row.listed : null,
       lltvBps,
       collateral: {
+        address: addressOrNullV1(row.collateralAsset?.address),
         symbol: typeof row.collateralAsset?.symbol === 'string' ? row.collateralAsset.symbol : null,
         decimals: Number.isInteger(row.collateralAsset?.decimals) ? row.collateralAsset.decimals : null,
       },
       loan: {
+        address: addressOrNullV1(row.loanAsset?.address),
         symbol: typeof row.loanAsset?.symbol === 'string' ? row.loanAsset.symbol : null,
         decimals: Number.isInteger(row.loanAsset?.decimals) ? row.loanAsset.decimals : null,
       },

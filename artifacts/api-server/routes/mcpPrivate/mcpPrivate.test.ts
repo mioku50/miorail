@@ -886,7 +886,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry plus seven', async () => {
+  test('the connected surface is exactly the public registry plus ten', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -904,7 +904,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 8);
+    assert.equal(connectedNames.size, publicNames.length + 10);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -947,10 +947,14 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       // Spends router calls and writes measurement rows. Nothing executable
       // leaves, so it is not a release -- but it is emphatically not a read.
       'miorail_measure_market_reality',
+      // Asks the venue to prepare calldata, executes it against real state and
+      // mints a short-lived review draft. Nothing executable leaves, and it is
+      // not a read of anything.
+      'miorail_review_borrow',
     ]);
     // The one genuine read left: it writes an audit row for the read itself and
     // changes nothing a later call depends on.
-    const readOnly = new Set(['miorail_get_execution_status']);
+    const readOnly = new Set(['miorail_get_execution_status', 'miorail_read_borrow_capacity']);
 
     for (const tool of tools) {
       const annotations = tool.annotations as

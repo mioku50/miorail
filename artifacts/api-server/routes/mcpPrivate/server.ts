@@ -12,7 +12,9 @@ import {
   miorailGetStockBaseMcpActionV1,
   miorailMeasureMarketRealityV1,
   miorailPrepareStockActionV1,
+  miorailReadBorrowCapacityV1,
   miorailRecordBaseMcpSubmissionV1,
+  miorailReviewBorrowV1,
   privateFailureV1,
 } from './tools.js';
 import { registerMiorailReadOnlyToolsV1 } from '../mcp/server.js';
@@ -24,7 +26,9 @@ import {
   MiorailPrepareB20EntryOutputV1Schema,
   MiorailMeasureMarketRealityOutputV1Schema,
   MiorailPrepareStockActionOutputV1Schema,
+  MiorailReadBorrowCapacityOutputV1Schema,
   MiorailRecordSubmissionOutputV1Schema,
+  MiorailReviewBorrowOutputV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 
@@ -51,13 +55,13 @@ import type { McpPrivateIdentityV1 } from './session.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.1.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.2.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound seven below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound ten below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
 The order is fixed and every step exists for a reason:
 
@@ -72,6 +76,11 @@ The order is fixed and every step exists for a reason:
 ${MIORAIL_PRIVATE_CAVEATS_V1.onePlanOneSubmission}
 
 ${MIORAIL_PRIVATE_CAVEATS_V1.entryOnly}
+
+BORROWING AGAINST A TOKENIZED SECURITY IS A SEPARATE, SHORTER PATH, and it is the only place in Miorail that answers "could YOU borrow here":
+
+a. miorail_read_borrow_capacity — every market for that exact collateral, each with its own row. Never merge them, and always say whether the wallet's collateral or the market's own liquidity set each figure.
+b. miorail_review_borrow — reads, has the VENUE write the calldata, executes it once against real state, and checks the loan asset actually arrives here in the reviewed amount. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
 
 This surface buys B20 tokens through a route Miorail certified. It is not a general swap tool: there is no path here to an arbitrary token, an arbitrary router or calldata of your own.`;
 
@@ -110,7 +119,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the seven below can be called at all. A client that connected
+  // before any of the ten below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -431,6 +440,85 @@ Only "entry_succeeded" means the wallet's own decoded movements show USDC spent 
     async (args) => {
       try {
         return reply(await miorailGetExecutionStatusV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  // -------------------------------------------------------------------------
+  // Borrow — the calculation, then the review.
+  //
+  // The only surface in Miorail permitted to answer "could YOU borrow here".
+  // Everywhere else that question is refused by name, because a listing, a
+  // market with liquidity and a personal permission are three different claims.
+  // -------------------------------------------------------------------------
+  server.registerTool(
+    'miorail_read_borrow_capacity',
+    {
+      title: 'What THIS wallet could borrow against one tokenized security',
+      description: `Reads every lending market where an exact Base token is the collateral, and computes what this wallet could actually draw from each — by mirroring the lending contract's own arithmetic, not by repeating the venue's headline.
+
+GIVE EVERY MARKET ITS OWN ROW. Two markets on the same collateral have different terms, and a maximum taken across them describes none of them. Never merge them into one figure.
+
+READ \`bound\` OUT LOUD. Every row says which of two facts set its number: the wallet's collateral, or the market's own liquidity. They are facts about different parties. Telling a user to add collateral when the market is simply empty is the failure this field exists to prevent — and a venue's published "max borrowable" is the collateral constraint alone, which is why Miorail does not repeat it.
+
+An absent number is not a zero. A market whose oracle published no price is refused by name rather than reported as nothing available.
+
+This reads. It prepares nothing, simulates nothing and creates nothing executable.`,
+      inputSchema: {
+        collateralTokenAddress: ADDRESS_ARG_V1.describe(
+          'The EXACT token being used as collateral, on Base. Never a ticker or a symbol.',
+        ),
+      },
+      outputSchema: MiorailReadBorrowCapacityOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailReadBorrowCapacityV1(identity, args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  server.registerTool(
+    'miorail_review_borrow',
+    {
+      title: 'Measure one exact borrow and produce a review for the user',
+      description: `Runs the whole gate for ONE borrow: reads the market and this wallet's position in it, has the VENUE write the calldata, executes that calldata once against real Base state, and checks that the loan asset actually reaches this wallet in the reviewed amount.
+
+RETURNS A REVIEW, NEVER A CALL. There is no field here that calldata could be read out of. What a successful run produces is a short-lived link the user opens and decides on.
+
+READ THE WARNINGS VERBATIM. They are computed — how far the collateral price may fall before liquidation, what a liquidation costs on top of the debt, whether this takes most of what the market has left. Do not paraphrase them into reassurance, and do not add a recommendation: Miorail has no opinion on whether anyone should borrow.
+
+CARRY THE STEPS. One of the prepared calls authorises an adapter to act for this wallet inside the lending protocol until it is revoked. That outlives the borrow, and a user who approves "a borrow" without being told about it has approved something wider than they were told. Miorail marks which calls it read itself and which it did not.
+
+REFUSALS ARE NOT DEGREES OF ONE ANOTHER. "No provider executed this" is a gap in Miorail's own reading and is never a pass. "It reverts" is a measured fact. "Its effects could not be read" is a third thing. "It delivered something else" is a fourth. Report the one you were given, in its own words.
+
+THE FIGURES EXPIRE. They were measured at one block. The collateral price moves without anyone's involvement, so do not restate them later in the conversation as if they were still current.`,
+      inputSchema: {
+        collateralTokenAddress: ADDRESS_ARG_V1.describe(
+          'The EXACT token being used as collateral, on Base.',
+        ),
+        borrowAmountAtomic: POSITION_ARG_V1.describe(
+          'The exact amount to borrow, in the LOAN asset\u2019s atomic units.',
+        ),
+        marketId: z
+          .string()
+          .regex(/^0x[0-9a-fA-F]{64}$/)
+          .optional()
+          .describe(
+            'The exact market. Required whenever the collateral has more than one; Miorail will not choose on the user\u2019s behalf.',
+          ),
+      },
+      outputSchema: MiorailReviewBorrowOutputV1Schema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailReviewBorrowV1(identity, args));
       } catch (error) {
         return refuse(error);
       }

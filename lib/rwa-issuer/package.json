@@ -20,7 +20,10 @@
     "./ecosystemClaims": "./src/ecosystemClaims.ts",
     "./morphoBorrowMath": "./src/morphoBorrowMath.ts",
     "./morphoBorrowReading": "./src/morphoBorrowReading.ts",
-    "./morphoBorrowPlan": "./src/morphoBorrowPlan.ts"
+    "./morphoBorrowPlan": "./src/morphoBorrowPlan.ts",
+    "./morphoBorrowSimulation": "./src/morphoBorrowSimulation.ts",
+    "./morphoBorrowVenue": "./src/morphoBorrowVenue.ts",
+    "./borrowReview": "./src/borrowReview.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

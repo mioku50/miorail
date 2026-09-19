@@ -1053,6 +1053,43 @@ export function useRwaUnderlyings(options?: {
  * re-establishes the current terms, and serving a remembered answer here would
  * put the conversational number back that the draft deliberately left out.
  */
+/**
+ * A borrow review, measured by THIS request.
+ *
+ * `gcTime: 0` and `staleTime: 0` are load-bearing rather than cautious: every
+ * figure on that screen is bound to a block, and a cached borrow review is a
+ * health factor being shown as current after the collateral price moved. There
+ * is no correct age for one, so there is no cache.
+ */
+export function useBorrowReview(draft: string | null | undefined) {
+  return useQuery({
+    queryKey: ['borrow-review', draft ?? 'none'],
+    queryFn: async () =>
+      fetchApi<unknown>(`/api/route-intelligence/rwa/borrow/review/${encodeURIComponent(draft ?? '')}`),
+    enabled: typeof draft === 'string' && draft.length > 0,
+    retry: false,
+    gcTime: 0,
+    staleTime: 0,
+    refetchInterval: false,
+  });
+}
+
+/** What this wallet could borrow against one exact token, market by market. */
+export function useBorrowCapacity(tokenAddress: string | null | undefined) {
+  return useQuery({
+    queryKey: ['borrow-capacity', tokenAddress ?? 'none'],
+    queryFn: async () =>
+      fetchApi<unknown>(
+        `/api/route-intelligence/rwa/borrow/capacity?token=${encodeURIComponent(tokenAddress ?? '')}`,
+      ),
+    enabled: typeof tokenAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(tokenAddress),
+    retry: false,
+    gcTime: 0,
+    staleTime: 0,
+    refetchInterval: false,
+  });
+}
+
 export function useStockActionReview(draft: string | null | undefined) {
   return useQuery({
     queryKey: ['stock-action-review', draft ?? 'none'],

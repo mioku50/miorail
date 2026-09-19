@@ -7,9 +7,9 @@ import {
   MORPHO_PLAN_SELECTORS_V1,
   morphoBorrowPlanV1,
   morphoBorrowVerdictV1,
-  type MorphoBorrowSimulationV1,
   type PreparedTransactionV1,
 } from '../src/morphoBorrowPlan.js';
+import type { MorphoBorrowSimulationV1 } from '../src/morphoBorrowSimulation.js';
 
 // ---------------------------------------------------------------------------
 // The two transactions Morpho actually returned for a 10 USDC borrow on the
@@ -144,7 +144,7 @@ describe('the verdict is bound to the measurement, not to the calldata', () => {
   const executed: MorphoBorrowSimulationV1 = {
     state: 'executed',
     blockNumber: 51_521_606,
-    loanReceivedAssets: 10_000_000n,
+    arrival: { read: true, assets: 10_000_000n },
   };
 
   test('a batch that executes and delivers the reviewed amount passes', () => {
@@ -200,7 +200,7 @@ describe('the verdict is bound to the measurement, not to the calldata', () => {
     // what the review said.
     const wrong = morphoBorrowVerdictV1({
       plan,
-      simulation: { ...executed, loanReceivedAssets: 9_000_000n },
+      simulation: { ...executed, arrival: { read: true, assets: 9_000_000n } },
       expectedAssets: 10_000_000n,
     });
     assert.equal(wrong.ok, false);
@@ -209,18 +209,32 @@ describe('the verdict is bound to the measurement, not to the calldata', () => {
 
     const nothing = morphoBorrowVerdictV1({
       plan,
-      simulation: { ...executed, loanReceivedAssets: 0n },
+      simulation: { ...executed, arrival: { read: true, assets: 0n } },
       expectedAssets: 10_000_000n,
     });
     assert.equal(nothing.ok, false);
     if (nothing.ok) return;
     assert.equal(nothing.refusal, 'nothing_arrived');
+  });
 
+  test('an arrival nobody read is refused in its OWN words, not a measured zero\u2019s', () => {
+    // These are opposite facts. An earlier shape of the verdict reported the
+    // first in the words of the second, which is a measured-sounding refusal
+    // resting on no measurement \u2014 the failure this whole surface exists to
+    // avoid, pointing inward.
     const unread = morphoBorrowVerdictV1({
       plan,
-      simulation: { ...executed, loanReceivedAssets: null },
+      simulation: { ...executed, arrival: { read: false, reason: 'no logs were emitted' } },
       expectedAssets: 10_000_000n,
     });
     assert.equal(unread.ok, false);
+    if (unread.ok) return;
+    assert.equal(unread.refusal, 'arrival_unread');
+    assert.equal(unread.detail, 'no logs were emitted');
+    assert.match(MORPHO_BORROW_VERDICT_REFUSALS_V1.arrival_unread, /gap in Miorail\u2019s reading/);
+    assert.match(MORPHO_BORROW_VERDICT_REFUSALS_V1.arrival_unread, /not a pass/);
+    // And the measured zero does not borrow the unread one's excuse.
+    assert.match(MORPHO_BORROW_VERDICT_REFUSALS_V1.nothing_arrived, /what moved was read/);
+    assert.doesNotMatch(MORPHO_BORROW_VERDICT_REFUSALS_V1.nothing_arrived, /gap in Miorail/);
   });
 });

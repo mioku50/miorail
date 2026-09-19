@@ -20,3 +20,6 @@ export * from './pooledLiquidity.js';
 export * from './morphoBorrowMath.js';
 export * from './morphoBorrowReading.js';
 export * from './morphoBorrowPlan.js';
+export * from './morphoBorrowSimulation.js';
+export * from './morphoBorrowVenue.js';
+export * from './borrowReview.js';

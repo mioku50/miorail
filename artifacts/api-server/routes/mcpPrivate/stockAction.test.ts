@@ -467,7 +467,9 @@ describe('the existing execution boundary is unchanged', () => {
         'miorail_measure_market_reality',
         'miorail_prepare_b20_entry',
         'miorail_prepare_stock_action',
+        'miorail_read_borrow_capacity',
         'miorail_record_base_mcp_submission',
+        'miorail_review_borrow',
       ],
     );
 
