@@ -33,7 +33,6 @@ import {
   parseBuilderCodeSuffixFromCalldata,
 } from '@x402/extensions/builder-code';
 import {
-  BAZAAR,
   bazaarResourceServerExtension,
   declareDiscoveryExtension,
   type DeclareDiscoveryExtensionInput,
@@ -809,7 +808,13 @@ export function createX402RoutesConfig(
     // and paid for, and no agent could find it.
     extensions: {
       ...(config.builderCode ? { [BUILDER_CODE]: declareBuilderCodeExtension(config.builderCode) } : {}),
-      ...(options.discovery ? { [BAZAAR.key]: declareDiscoveryExtension(options.discovery) } : {}),
+      // `declareDiscoveryExtension` returns the extensions MAP, already keyed
+      // — so keying it again produced `extensions.bazaar.bazaar`, and the
+      // official middleware refused it on every request with "declares a bazaar
+      // extension but it is malformed (expected an object with info and schema
+      // fields)". It said so in the production log for thirteen days while the
+      // declaration this line exists to publish reached nobody.
+      ...(options.discovery ? declareDiscoveryExtension(options.discovery) : {}),
     },
   };
 

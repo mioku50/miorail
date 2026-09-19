@@ -488,6 +488,91 @@ test('an address is refused before any evidence read when it is not an address',
   assert.equal(called, false);
 });
 
+// ---------------------------------------------------------------------------
+// "What does this cost?" is not a malformed request for the answer.
+//
+// Every route validated its arguments before the paywall, so a request with no
+// query string — exactly what an index, a crawler or an agent meeting the
+// resource for the first time sends — got 400 and never saw a price. Measured
+// on production 2026-09-19: all five answered 400 bare, CDP's validator
+// reported `returns_402: false` with every later check skipped, and a full scan
+// of the discovery list held 15,383 resources from 1,331 sellers and none of
+// ours. The declaration underneath was correct the whole time; nothing ever
+// reached it.
+// ---------------------------------------------------------------------------
+test('a request that asks for nothing is answered with the price, not a 400', async () => {
+  const priced: string[] = [];
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: ENV,
+    dbEnabled: false,
+    middlewareFactory: (path) => (_req, res, _next) => {
+      priced.push(path);
+      res.status(402).json({ x402Version: 2, error: 'Payment Required' });
+    },
+    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
+  }));
+
+  for (const path of [
+    '/b20/exit-analysis',
+    '/b20/liquidity-evidence',
+    '/stocks/representations',
+    '/address/identity',
+    '/route-proofs/enhanced',
+  ]) {
+    await request(app).get(`/api/x402/intelligence/v1${path}`).expect(402);
+  }
+  assert.deepEqual(priced.sort(), [
+    '/address/identity',
+    '/b20/exit-analysis',
+    '/b20/liquidity-evidence',
+    '/route-proofs/enhanced',
+    '/stocks/representations',
+  ]);
+});
+
+test('pricing a bare request reads nothing and promises nothing', async () => {
+  // The 402 is the cheapest thing this surface can do: no evidence read, no
+  // proof lookup, no answer implied. A price that costs a database query is a
+  // free denial-of-service with extra steps.
+  let reads = 0;
+  let proofLookups = 0;
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: ENV,
+    dbEnabled: false,
+    middlewareFactory: () => (_req, res) => res.status(402).json({ x402Version: 2 }),
+    loadB20: async () => { reads += 1; return { card: unmeasuredCard(), history: [] }; },
+    loadBundle: async () => { proofLookups += 1; return null; },
+  }));
+  await request(app).get('/api/x402/intelligence/v1/b20/exit-analysis').expect(402);
+  await request(app).get('/api/x402/intelligence/v1/route-proofs/enhanced').expect(402);
+  assert.equal(reads, 0);
+  assert.equal(proofLookups, 0);
+});
+
+test('a request that names an input is still validated before it is billed', async () => {
+  // The other half. Pricing a bare request must not turn a malformed ask into
+  // a charge for an answer nobody can deliver.
+  let paymentCalls = 0;
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: ENV,
+    dbEnabled: false,
+    middlewareFactory: () => (_req, _res, next) => { paymentCalls += 1; next(); },
+    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
+  }));
+  await request(app)
+    .get('/api/x402/intelligence/v1/b20/exit-analysis')
+    .query({ tokenAddress: 'not-an-address' })
+    .expect(400);
+  await request(app)
+    .get('/api/x402/intelligence/v1/route-proofs/enhanced')
+    .query({ publicId: 'not a public id' })
+    .expect(400);
+  assert.equal(paymentCalls, 0);
+});
+
 test('every paid route declares itself for the discovery list', async () => {
   // Settling payments does not list a resource: three settled through the CDP
   // facilitator in August and its discovery list held zero Miorail entries.

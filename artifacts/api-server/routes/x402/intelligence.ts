@@ -470,7 +470,37 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     },
   };
 
-  function paidMiddleware(service: X402IntelligenceServiceV1, routePath: string): RequestHandler[] {
+  /**
+   * The paid chain for one route: price it, load it, charge for it.
+   *
+   * The preload travels THROUGH here rather than being typed beside it at each
+   * `router.get`, because the order of these three is the whole correctness of
+   * the surface and it was a per-route decision written out five times.
+   *
+   * "WHAT DOES THIS COST?" IS NOT A MALFORMED REQUEST FOR THE ANSWER.
+   *
+   * Every route ran its argument check first, so a request with no query
+   * string — which is exactly what a crawler, an index or an agent meeting the
+   * resource for the first time sends — got `400
+   * invalid_x402_intelligence_request` and never saw a price. Measured
+   * 2026-09-19: all five resources answered 400 bare, and CDP's own validator
+   * reported `returns_402: false — Endpoint returned HTTP 400 instead of 402`
+   * with every later check skipped. A full scan of the discovery list that day
+   * held 15,383 resources from 1,331 sellers and not one of ours.
+   *
+   * So a request that names none of the required inputs is answered with the
+   * 402 challenge: the price, the network, the payTo and the Bazaar
+   * declaration saying what to send and what comes back. It performs no read,
+   * promises no answer and charges nothing.
+   *
+   * A request that DOES name an input keeps the old order — validated first,
+   * so a malformed ask is refused rather than billed.
+   */
+  function paidMiddleware(
+    service: X402IntelligenceServiceV1,
+    routePath: string,
+    preload: RequestHandler,
+  ): RequestHandler[] {
     const middlewareOptions: CreateX402MiddlewareOptions = {
       routePath,
       serviceName: `Miorail ${service}`,
@@ -492,7 +522,20 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
     const gateway = options.middlewareFactory
       ? options.middlewareFactory(routePath, middlewareOptions)
       : createX402MiddlewareFromEnv(middlewareOptions, env);
+    const requiredInputs: readonly string[] =
+      (DISCOVERY_V1[service].inputSchema?.required as readonly string[] | undefined) ?? [];
     return [
+      (req: Request, res: Response, next: NextFunction) => {
+        // Already paying, or already asking a real question: the old path.
+        if (req.header('x-payment') !== undefined) return next();
+        if (requiredInputs.some((name) => req.query[name] !== undefined)) return next();
+        // Nothing asked. Answer with the price.
+        requestContext.run(
+          { service, requestHash: '', receiptId: null, delivery: null },
+          () => gateway(req, res, next),
+        );
+      },
+      preload,
       (req: Request, res: Response, next: NextFunction) => {
         const requestHash = String(res.locals.x402IntelligenceRequestHash ?? '');
         requestContext.run(
@@ -802,37 +845,33 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   router.get(
     '/b20/exit-analysis',
     featureGate,
-    preloadB20('b20_exit_analysis'),
-    ...paidMiddleware('b20_exit_analysis', '/b20/exit-analysis'),
+    ...paidMiddleware('b20_exit_analysis', '/b20/exit-analysis', preloadB20('b20_exit_analysis')),
     sendB20('b20_exit_analysis'),
   );
   router.get(
     '/b20/liquidity-evidence',
     featureGate,
-    preloadB20('b20_liquidity_evidence'),
-    ...paidMiddleware('b20_liquidity_evidence', '/b20/liquidity-evidence'),
+    ...paidMiddleware('b20_liquidity_evidence', '/b20/liquidity-evidence', preloadB20('b20_liquidity_evidence')),
     sendB20('b20_liquidity_evidence'),
   );
 
   router.get(
     '/stocks/representations',
     featureGate,
-    preloadRepresentations,
-    ...paidMiddleware('stock_representation_choice', '/stocks/representations'),
+    ...paidMiddleware('stock_representation_choice', '/stocks/representations', preloadRepresentations),
     sendRepresentations,
   );
   router.get(
     '/address/identity',
     featureGate,
-    preloadIdentity,
-    ...paidMiddleware('address_identity_check', '/address/identity'),
+    ...paidMiddleware('address_identity_check', '/address/identity', preloadIdentity),
     sendIdentity,
   );
 
   router.get(
     '/route-proofs/enhanced',
     featureGate,
-    async (req, res, next) => {
+    ...paidMiddleware('enhanced_route_proof', '/route-proofs/enhanced', async (req, res, next) => {
       try {
         const publicId = String(req.query.publicId ?? '').toLowerCase();
         if (!PUBLIC_ID_V1.test(publicId)) {
@@ -860,8 +899,7 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
       } catch {
         res.status(503).json({ error: 'public_route_proof_unavailable', code: 'public_route_proof_unavailable' });
       }
-    },
-    ...paidMiddleware('enhanced_route_proof', '/route-proofs/enhanced'),
+    }),
     async (_req, res: Response) => {
       const bundle = res.locals.x402IntelligenceBundle as Extract<PublicProofBundleV1, { proofFamily: 'route' }>;
       const verification = res.locals.x402IntelligenceVerification as ReturnType<typeof verifyPublicProofBundleV1>;

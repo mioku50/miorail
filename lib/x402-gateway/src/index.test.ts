@@ -484,6 +484,43 @@ describe('x402-gateway', () => {
     assert.strictEqual(route.accepts.price.asset, '0x036CbD53842c5426634e7929541eC2318f3dCF7e');
   });
 
+  it('publishes the Bazaar declaration where the spec puts it, not one level deeper', () => {
+    // `declareDiscoveryExtension` returns the extensions MAP, already keyed, so
+    // keying it again produced `extensions.bazaar.bazaar`. The official
+    // middleware refused it on every single request — "declares a bazaar
+    // extension but it is malformed (expected an object with info and schema
+    // fields)" — and said so in the production log for thirteen days while the
+    // declaration this option exists to publish reached nobody.
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+    });
+    const routes = createX402RoutesConfig(config, '/paid-resource', 'Miorail', {
+      discovery: {
+        input: { tokenAddress: '0xb200000000000000000000000000000000000001' },
+        inputSchema: {
+          properties: { tokenAddress: { type: 'string', description: 'Exact Base contract address' } },
+          required: ['tokenAddress'],
+        },
+        output: { example: { service: 'test', ok: true } },
+      },
+    });
+    const route = (routes as Record<string, any>)['GET /paid-resource'];
+    const bazaar = route.extensions.bazaar;
+    assert.ok(bazaar, 'the route must carry a bazaar extension');
+    // The two fields the validator looks for, at the top of the extension.
+    assert.ok(bazaar.info, 'extensions.bazaar.info is what the facilitator reads');
+    assert.ok(bazaar.schema, 'extensions.bazaar.schema is what the facilitator reads');
+    // And nothing wrapped around them.
+    assert.equal(
+      'bazaar' in bazaar,
+      false,
+      'extensions.bazaar.bazaar is the double-keyed shape the middleware refuses',
+    );
+    assert.equal(bazaar.info.input.queryParams.tokenAddress, '0xb200000000000000000000000000000000000001');
+  });
+
   it('leaves route price at global config.amountAtomic when no override is given', () => {
     const config = x402ConfigFromEnv({
       X402_FACILITATOR_URL: 'https://facilitator.example.test',
