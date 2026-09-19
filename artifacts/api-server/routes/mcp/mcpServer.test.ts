@@ -268,6 +268,18 @@ describe('§8 — tool discovery', () => {
     for (const name of published) {
       assert.ok(deploy.includes(`"${name}"`), `ops/deploy.sh does not assert ${name}`);
     }
+
+    // And it must not PRINT a number it did not read. The verification lines
+    // said 'Miorail 1.3.0' and '13 read-only tools' while the assertions beside
+    // them demanded 1.4.0 and fifteen names — the assertions were right and the
+    // sentence an operator reads was wrong, which is the worse half. Both now
+    // come out of the response.
+    const printed = deploy.split('\n').filter((line) => /^printf .+mcp (initialize|tools\/list)/.test(line.trim()));
+    assert.equal(printed.length, 2, 'expected one printed line each for initialize and tools/list');
+    for (const line of printed) {
+      assert.doesNotMatch(line, /Miorail [0-9]+\.[0-9]+\.[0-9]+/, `deploy.sh prints a hardcoded version: ${line.trim()}`);
+      assert.doesNotMatch(line, /'[0-9]+ read-only/, `deploy.sh prints a hardcoded tool count: ${line.trim()}`);
+    }
   });
 
   test('the version moves when the tool list moves, because that is the cache key', () => {

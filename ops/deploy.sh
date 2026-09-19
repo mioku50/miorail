@@ -432,7 +432,12 @@ mcp_initialize="$mcp_ready"
 printf '%s' "$mcp_initialize" | jq -e \
   '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.4.0" and .result.protocolVersion == "2025-03-26"' \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
-printf '  mcp initialize %-28s %s\n' "$MCP_PUBLIC_URL" 'Miorail 1.3.0'
+# Printed from the answer, like the tool count below it. This line said
+# 'Miorail 1.3.0' while the assertion above it demanded 1.4.0 and the server
+# served 1.4.0 — a deploy reporting a version nobody read, in the one place an
+# operator goes to confirm what shipped.
+printf '  mcp initialize %-28s Miorail %s\n' "$MCP_PUBLIC_URL" \
+  "$(printf '%s' "$mcp_initialize" | jq -r '.result.serverInfo.version')"
 
 # Same hazard as the readiness probe, one line down: a failed request here would
 # abort under `set -e` with no message at all. The request failing IS a deploy

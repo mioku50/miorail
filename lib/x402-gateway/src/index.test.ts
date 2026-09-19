@@ -484,6 +484,28 @@ describe('x402-gateway', () => {
     assert.strictEqual(route.accepts.price.asset, '0x036CbD53842c5426634e7929541eC2318f3dCF7e');
   });
 
+  it('publishes an address for the resource, or an honest path — never half of one', () => {
+    // CDP's discovery refused every submission with `resource must start with
+    // "https://" when protocol type is http`: the challenge carried the route
+    // path Express knows, with no host, and an index cannot come back to that.
+    const config = x402ConfigFromEnv({
+      X402_FACILITATOR_URL: 'https://facilitator.example.test',
+      X402_PAYTO_ADDRESS: '0x1111111111111111111111111111111111111111',
+      X402_NETWORK: 'eip155:84532',
+    });
+    const withOrigin = (origin?: string) =>
+      ((createX402RoutesConfig(config, '/paid-resource', 'Miorail', { resourceOrigin: origin }) as Record<string, any>)['GET /paid-resource']).resource;
+
+    assert.equal(withOrigin('https://miorail.xyz/api/x402/intelligence/v1'), 'https://miorail.xyz/api/x402/intelligence/v1/paid-resource');
+    // A trailing slash does not become a double one.
+    assert.equal(withOrigin('https://miorail.xyz/api/'), 'https://miorail.xyz/api/paid-resource');
+    // Anything that is not an https origin is ignored rather than concatenated:
+    // a relative path is honest, a malformed absolute one looks like it works.
+    assert.equal(withOrigin('miorail.xyz'), '/paid-resource');
+    assert.equal(withOrigin('http://miorail.xyz'), '/paid-resource');
+    assert.equal(withOrigin(undefined), '/paid-resource');
+  });
+
   it('publishes the Bazaar declaration where the spec puts it, not one level deeper', () => {
     // `declareDiscoveryExtension` returns the extensions MAP, already keyed, so
     // keying it again produced `extensions.bazaar.bazaar`. The official

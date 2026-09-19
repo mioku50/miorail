@@ -91,6 +91,26 @@ interface CreateX402IntelligenceRouterOptionsV1 {
 
 const requestContext = new AsyncLocalStorage<SellerRequestContextV1>();
 
+/**
+ * Where these routes actually live, so the 402 can name an address rather than
+ * a path.
+ *
+ * CDP's discovery refused every submission with `resource must start with
+ * 'https://' when protocol type is http`, because the challenge carried
+ * `resource: "/b20/exit-analysis"` — the path as Express knows it, with no
+ * host. An index cannot come back to that.
+ *
+ * Pinned against `routes/index.ts` by `intelligence.test.ts`: move the mount
+ * and the test fails rather than the listing silently going stale.
+ */
+export const X402_INTELLIGENCE_MOUNT_V1 = '/api/x402/intelligence/v1';
+
+function resourceOriginV1(env: NodeJS.ProcessEnv): string | undefined {
+  const base = env.PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+  if (!base || !/^https:\/\//.test(base)) return undefined;
+  return `${base}${X402_INTELLIGENCE_MOUNT_V1}`;
+}
+
 function sellerEnabledV1(env: NodeJS.ProcessEnv): boolean {
   return env.MIORAIL_X402_SELLER_INTELLIGENCE_V1?.trim().toLowerCase() === 'true';
 }
@@ -509,6 +529,9 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
       // three settled in August and the list held zero Miorail entries. A
       // declaration does.
       discovery: DISCOVERY_V1[service],
+      // An address, not a path. Without it the discovery submission is refused
+      // and nothing downstream ever runs.
+      resourceOrigin: resourceOriginV1(env),
       onSettlement: async (record) => {
         try {
           await persistSellerSettlementV1(record, dbEnabled);

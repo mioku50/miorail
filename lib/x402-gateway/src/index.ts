@@ -243,6 +243,19 @@ export interface CreateX402MiddlewareOptions {
    * route does, what it costs, or who may call it.
    */
   discovery?: DeclareDiscoveryExtensionInput;
+  /**
+   * The absolute https origin this route is reachable at, including any mount
+   * prefix — e.g. `https://miorail.xyz/api/x402/intelligence/v1`.
+   *
+   * The 402 challenge carried `resource: "/b20/exit-analysis"`, the route path
+   * as Express knows it, and CDP's discovery refused every submission with
+   * `resource must start with 'https://' when protocol type is http`. A
+   * relative path is not an address: the index has no way to reach back to a
+   * path it was handed with no host.
+   *
+   * Omitted, the resource stays the bare route path exactly as before.
+   */
+  resourceOrigin?: string;
 }
 
 export interface X402MiddlewareDiagnostics {
@@ -733,13 +746,25 @@ export function paymentRequiredFromRuntimeConfig(config: X402RuntimeConfig): X40
   };
 }
 
+/** The address an index can come back to, or the path we had before.
+ *
+ * Anything that is not an https origin is ignored rather than concatenated:
+ * half an address is worse than an honest relative path, because it looks
+ * like one that works. */
+function absoluteResourceV1(routePath: string, origin?: string): string {
+  if (!origin) return routePath;
+  const trimmed = origin.trim().replace(/\/+$/, '');
+  if (!/^https:\/\/[^\s/]+/.test(trimmed)) return routePath;
+  return `${trimmed}${routePath.startsWith('/') ? routePath : `/${routePath}`}`;
+}
+
 export function createX402RoutesConfig(
   config: X402RuntimeConfig,
   routePath = '/paid-resource',
   serviceName = 'Miorail',
   options: Pick<
     CreateX402MiddlewareOptions,
-    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery'
+    'onSettlementFailure' | 'amountAtomicOverride' | 'discovery' | 'resourceOrigin'
   > = {},
 ): RoutesConfig {
   if (!config.configured || !config.payTo || !config.network || !config.asset) {
@@ -767,7 +792,7 @@ export function createX402RoutesConfig(
       maxTimeoutSeconds: 300,
       extra: extraDomain,
     },
-    resource: routePath,
+    resource: absoluteResourceV1(routePath, options.resourceOrigin),
     description: 'Miorail x402 paid resource',
     mimeType: 'application/json',
     serviceName,

@@ -14,7 +14,11 @@ import {
   MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1,
 } from '@mioagent/route-domain';
 import type { CreateX402MiddlewareOptions } from '@mioagent/x402-gateway';
-import { createX402IntelligenceRouterV1, sellerReceiptDetailsV1 } from './intelligence.js';
+import {
+  X402_INTELLIGENCE_MOUNT_V1,
+  createX402IntelligenceRouterV1,
+  sellerReceiptDetailsV1,
+} from './intelligence.js';
 
 /** This package declares no `"type"`, so `module: NodeNext` typechecks it as
  * CommonJS and rejects `import.meta`. */
@@ -500,6 +504,61 @@ test('an address is refused before any evidence read when it is not an address',
 // ours. The declaration underneath was correct the whole time; nothing ever
 // reached it.
 // ---------------------------------------------------------------------------
+test('the 402 names an address, not a path, and it is the path this router is mounted at', async () => {
+  // CDP's discovery refused every submission: `resource must start with
+  // "https://" when protocol type is http`. The challenge carried
+  // `resource: "/b20/exit-analysis"` — the route as Express knows it, with no
+  // host — and an index cannot come back to that. Every preflight check passed
+  // and the extension was read; the submission died one step later.
+  const seen: Array<{ path: string; options: CreateX402MiddlewareOptions }> = [];
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' },
+    dbEnabled: false,
+    middlewareFactory: (path, options) => { seen.push({ path, options }); return PASS_THROUGH_V1; },
+    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
+  }));
+  await request(app)
+    .get('/api/x402/intelligence/v1/b20/exit-analysis')
+    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
+    .expect(200);
+
+  assert.equal(seen.length, 5);
+  for (const entry of seen) {
+    assert.equal(
+      entry.options.resourceOrigin,
+      `https://miorail.xyz${X402_INTELLIGENCE_MOUNT_V1}`,
+      `${entry.path} must publish an absolute https resource`,
+    );
+  }
+
+  // And the mount constant is the mount. Move the router and this fails rather
+  // than the listing going quietly stale.
+  const mounted = readFileSync(packageFileV1('routes/index.ts'), 'utf8');
+  assert.ok(
+    mounted.includes(`'${X402_INTELLIGENCE_MOUNT_V1.replace('/api', '')}'`),
+    `routes/index.ts does not mount the router at ${X402_INTELLIGENCE_MOUNT_V1}`,
+  );
+});
+
+test('half an address is not published at all', async () => {
+  // A base that is not https is ignored rather than concatenated: a relative
+  // path is honest, and a malformed absolute one looks like it works.
+  const seen: CreateX402MiddlewareOptions[] = [];
+  const app = express();
+  app.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({
+    env: { ...ENV, PUBLIC_API_BASE_URL: 'miorail.xyz' },
+    dbEnabled: false,
+    middlewareFactory: (_path, options) => { seen.push(options); return PASS_THROUGH_V1; },
+    loadB20: async () => ({ card: unmeasuredCard(), history: [] }),
+  }));
+  await request(app)
+    .get('/api/x402/intelligence/v1/b20/exit-analysis')
+    .query({ tokenAddress: '0xb200000000000000000000000000000000000001' })
+    .expect(200);
+  assert.equal(seen[0]?.resourceOrigin, undefined);
+});
+
 test('a request that asks for nothing is answered with the price, not a 400', async () => {
   const priced: string[] = [];
   const app = express();
