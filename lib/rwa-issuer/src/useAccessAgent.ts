@@ -56,7 +56,7 @@ export const USE_ACCESS_AGENT_SCHEMA_VERSION_V1 = 'miorail-agent-use-access/v1';
  * true on every call.
  */
 export const USE_ACCESS_NOT_STATED_V1: readonly string[] = [
-  'Whether a listed asset can be borrowed, supplied or posted as collateral RIGHT NOW: caps, pause flags, available liquidity and risk parameters are not read here.',
+  'Whether a listed asset can be borrowed, supplied or posted as collateral RIGHT NOW BY THE PERSON ASKING: caps and pause flags are not read, and a borrower’s own position is not read at all. Where a venue publishes them, each market’s terms and what is available to borrow in it are in `defi.venues[].markets` — a figure there is a fact about the market and never a permission.',
   'Whether any particular wallet may transfer or use this token. This is a public read and holds no wallet.',
   'Eligibility of any kind — KYC, jurisdiction, or legal permission to hold or trade a security.',
   'Any venue outside the ones named in `checkedVenues`. A miss is bounded by where Miorail looked and is never a statement about DeFi as a whole.',
@@ -111,6 +111,43 @@ const VenueRowSchemaV1 = z
       .strict(),
     curated: z.boolean().nullable(),
     marketRef: z.string().nullable(),
+    /**
+     * Every market this venue published for this address, not just the one
+     * `marketRef` points at.
+     *
+     * "Listed" is three claims — a market exists, it has money in it, and YOU
+     * could borrow — and one flag beside one id answers none of them apart.
+     * NVDAc sits in four Morpho markets: one curated at 62.5% LLTV holding
+     * $783 of borrowable liquidity, three that anyone deployed, two of them
+     * empty. A venue that publishes no per-market detail sends `null`, which
+     * is "not stated" and never "no markets".
+     *
+     * The third claim stays unanswered here on purpose: no figure in this
+     * array is evidence that the person asking could draw it, because their
+     * own position is not read.
+     */
+    markets: z
+      .array(
+        z
+          .object({
+            marketId: z.string(),
+            curated: z.boolean().nullable(),
+            role: z.enum(['collateral', 'loan']),
+            loanAssetSymbol: z.string().nullable(),
+            collateralAssetSymbol: z.string().nullable(),
+            /** Integer basis points — 6250 is 62.5%, because 62.5 rounded to
+             * 62 is the kind of small wrong number a reader acts on. */
+            lltvBps: z.number().int().nullable(),
+            collateralUsd: z.number().nullable(),
+            supplyUsd: z.number().nullable(),
+            borrowUsd: z.number().nullable(),
+            /** What could be borrowed out of THIS market right now. The field
+             * that separates a market that exists from one anybody can use. */
+            liquidityUsd: z.number().nullable(),
+          })
+          .strict(),
+      )
+      .nullable(),
     reason: z.string().nullable(),
     /** Where this row came from, and when. Never the envelope's block. */
     observed: z
@@ -458,7 +495,7 @@ export function useAccessAgentSummaryV1(input: {
       `At the venues Miorail checked (${input.checkedVenues.join(', ')}), ${name} can be ${useSentenceV1(input.uses)}.`,
     );
     parts.push(
-      'A venue listing this address is not a statement that the operation would succeed right now: caps, pause flags, liquidity and risk parameters were not read.',
+      'A venue listing this address is not a statement that the operation would succeed right now: caps and pause flags were not read, and whether a particular wallet could borrow depends on the position it already holds, which this tool does not read. Where a venue publishes per-market figures they are in `defi.venues[].markets`, one row per market.',
     );
     if (input.unreadVenues.length > 0) {
       parts.push(
@@ -634,6 +671,9 @@ export function useAccessForAgentV1(input: {
         uses: venue.uses,
         curated: venue.curated ?? null,
         marketRef: venue.marketRef,
+        // Absent is "the venue published none", which is not an empty market
+        // list. Both travel as null rather than as [].
+        markets: venue.markets === undefined ? null : venue.markets.map((market) => ({ ...market })),
         reason: venue.reason,
         observed: venue.observed ?? null,
       })),

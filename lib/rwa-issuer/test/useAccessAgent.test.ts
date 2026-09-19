@@ -178,6 +178,97 @@ describe('announced is not live, all the way to the assistant', () => {
     assert.deepEqual(projected.announcements[0]?.unstatedUses, ['collateral']);
   });
 
+  // -------------------------------------------------------------------------
+  // What an assistant sees is what we serve.
+  //
+  // The reader measured four Morpho markets for NVDAc and this projection
+  // rebuilt each venue field by field, so the per-market rows never left the
+  // building. An assistant asking get_use_access got one `curated` flag and
+  // one market id for an address that sits in four markets — the venue-level
+  // answer the screen had already stopped giving.
+  // -------------------------------------------------------------------------
+  const MORPHO_MARKETS = [
+    { marketId: '0xb4b42dd66cef2561', curated: true, role: 'collateral' as const, collateralAssetSymbol: 'NVDAc', loanAssetSymbol: 'USDC', lltvBps: 6250, collateralUsd: 15_440, supplyUsd: 8_388, borrowUsd: 7_605, liquidityUsd: 783 },
+    { marketId: '0xfef5641f70e19a87', curated: false, role: 'collateral' as const, collateralAssetSymbol: 'NVDAc', loanAssetSymbol: 'USDC', lltvBps: 7700, collateralUsd: 0, supplyUsd: 0, borrowUsd: 0, liquidityUsd: 0 },
+  ];
+
+  test('every market the venue published reaches the assistant, not just the one marketRef names', () => {
+    const projected = project({
+      defi: {
+        checkedVenues: ['Morpho'],
+        venues: [
+          venue({
+            venueId: 'morpho',
+            venueName: 'Morpho',
+            state: 'listed',
+            curated: true,
+            marketRef: '0xb4b42dd66cef2561',
+            uses: { lend: null, borrow: null, collateral: true },
+            markets: MORPHO_MARKETS,
+          }),
+        ],
+      },
+    });
+    const row = projected.defi.venues[0]!;
+    assert.equal(row.markets?.length, 2);
+    // Curation is per MARKET, and the terms keep the precision the venue used.
+    assert.equal(row.markets![0]!.curated, true);
+    assert.equal(row.markets![0]!.lltvBps, 6250);
+    assert.equal(row.markets![1]!.curated, false);
+    // The figure that separates a market that exists from one anybody can use.
+    assert.equal(row.markets![0]!.liquidityUsd, 783);
+    // And the whole payload still satisfies its own schema.
+    assert.doesNotThrow(() => UseAccessAgentOutputV1Schema.parse(projected));
+  });
+
+  test('a venue that publishes no per-market detail sends null, not an empty list', () => {
+    // `[]` would read as "this venue has no markets for the address", which is
+    // a measurement nobody took.
+    const projected = project({
+      defi: { checkedVenues: ['Aave v3'], venues: [venue({ state: 'listed', marketRef: '0xpool' })] },
+    });
+    assert.equal(projected.defi.venues[0]!.markets, null);
+    assert.doesNotThrow(() => UseAccessAgentOutputV1Schema.parse(projected));
+  });
+
+  test('the summary never derives a personal permission from a market’s liquidity', () => {
+    const projected = project({
+      defi: {
+        checkedVenues: ['Morpho'],
+        venues: [
+          venue({
+            venueId: 'morpho',
+            venueName: 'Morpho',
+            state: 'listed',
+            curated: true,
+            marketRef: '0xb4b42dd66cef2561',
+            uses: { lend: null, borrow: null, collateral: true },
+            markets: [{ ...MORPHO_MARKETS[0]!, liquidityUsd: 10_000_000 }],
+          }),
+        ],
+      },
+    });
+    const summary = projected.miorailSummary.summary;
+    // The deterministic sentence states a listing and refuses the leap from it
+    // to "you can do this now" — at any size of market.
+    assert.match(summary, /not a statement that the operation would succeed right now/);
+    assert.match(summary, /the position it already holds, which this tool does not read/);
+    assert.doesNotMatch(summary, /you can borrow|you could borrow/i);
+    // It also makes no aggregate availability claim of its own, so it cannot
+    // disagree with the per-market rows shipped beside it.
+    assert.doesNotMatch(summary, /\$10,000,000|available to borrow/);
+  });
+
+  test('what this tool does not read is stated as of today, not as of last release', () => {
+    // "available liquidity and risk parameters are not read" stayed in this
+    // list after both became fields in the payload. A stale statement of our
+    // own reach tells an assistant we lack something we ship.
+    const notStated = USE_ACCESS_NOT_STATED_V1.join(' ');
+    assert.doesNotMatch(notStated, /available liquidity and risk parameters are not read/);
+    assert.match(notStated, /caps and pause flags are not read/);
+    assert.match(notStated, /defi\.venues\[\]\.markets/);
+  });
+
   test('an unknown issuer carries no announcement at all', () => {
     const projected = useAccessForAgentV1({
       use: use(),
