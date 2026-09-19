@@ -22,7 +22,7 @@ The governing rule is simple:
 - Architecture: [ARCHITECTURE.md](docs/ARCHITECTURE.md)
 - Execution boundary: [SECURITY-MODEL.md](docs/SECURITY-MODEL.md)
 
-### Where to go next
+## Where to go next
 
 | If you want to | Read |
 | --- | --- |
