@@ -107,8 +107,69 @@ export interface DefiVenueReadingV1 {
    * a permissionless market.
    */
   curated?: boolean | null;
+  /**
+   * One identifier, kept for readers that only want a pointer.
+   *
+   * It USED TO BE the first market the venue returned, whatever that was. On
+   * NVDAc that meant `curated: true` beside the id of an empty, uncurated
+   * market — the flag describing one market and the pointer another, which is
+   * precisely the confusion `curated` was added to remove. It now names the
+   * market a reader would actually go to: curated first, then the deepest.
+   */
   marketRef: string | null;
+  /**
+   * Every market this exact address appears in, separately.
+   *
+   * A venue-level `listed` answers "does a market exist". It cannot answer
+   * "could I borrow here", because on a permissionless venue those are
+   * different questions with different answers in the same reply: on
+   * 2026-09-19 NVDAc sat in four Base markets, three of them empty and
+   * uncurated, and the one that mattered held $15,440 of collateral against
+   * $825 of borrowable liquidity.
+   *
+   * Optional: a venue that publishes no per-market detail carries none, and a
+   * reply from a server that predates the field still parses. Absent is "not
+   * stated", never "no markets".
+   */
+  markets?: readonly DefiMarketV1[];
   reason: string | null;
+}
+
+/**
+ * One lending market, as the venue published it.
+ *
+ * THREE CLAIMS, THREE FIELDS. "A market exists" is this row existing. "There is
+ * money in it" is `liquidityUsd`. "You could borrow" is neither — it needs the
+ * reader's own position, which this product does not hold — so nothing here
+ * says it, and the screen says so out loud.
+ *
+ * Every number is nullable because a venue answering partially is ordinary,
+ * and a missing figure must never render as a zero.
+ */
+export interface DefiMarketV1 {
+  /** The venue's own identifier for this market. */
+  marketId: string;
+  /** The venue's curation flag for THIS market, not for the asset. */
+  curated: boolean | null;
+  /** Which side our token sits on. Never derived from the other. */
+  role: 'collateral' | 'loan';
+  loanAssetSymbol: string | null;
+  collateralAssetSymbol: string | null;
+  /** Liquidation loan-to-value, in basis points — 6250 is 62.5%. Integer bps
+   * rather than a percentage string, because 62.5 rounded to 62 is the kind of
+   * small wrong number a reader acts on. */
+  lltvBps: number | null;
+  collateralUsd: number | null;
+  supplyUsd: number | null;
+  borrowUsd: number | null;
+  /**
+   * What could be borrowed out of this market right now.
+   *
+   * The number that separates "a market exists" from "a market you could use".
+   * A market with $15,440 of collateral and $825 of liquidity is real and
+   * nearly empty at the same time, and only this field says the second half.
+   */
+  liquidityUsd: number | null;
 }
 
 export interface DefiVenueListingV1 extends DefiVenueReadingV1 {
@@ -293,6 +354,27 @@ export const RepresentationUseAccessV1Schema = z
               // still parses; absent and null both mean "not stated".
               curated: z.boolean().nullable().optional(),
               marketRef: z.string().nullable(),
+              // Optional for the same reason `curated` is. Absent is "this
+              // venue publishes no per-market detail", never "no markets".
+              markets: z
+                .array(
+                  z
+                    .object({
+                      marketId: z.string().min(1).max(200),
+                      curated: z.boolean().nullable(),
+                      role: z.enum(['collateral', 'loan']),
+                      loanAssetSymbol: z.string().min(1).max(40).nullable(),
+                      collateralAssetSymbol: z.string().min(1).max(40).nullable(),
+                      lltvBps: z.number().int().min(0).max(100_000).nullable(),
+                      collateralUsd: z.number().min(0).nullable(),
+                      supplyUsd: z.number().min(0).nullable(),
+                      borrowUsd: z.number().min(0).nullable(),
+                      liquidityUsd: z.number().min(0).nullable(),
+                    })
+                    .strict(),
+                )
+                .max(20)
+                .optional(),
               reason: z.string().nullable(),
               // Optional for the same reason `curated` is. Absent is "not
               // stated", never "the block above".

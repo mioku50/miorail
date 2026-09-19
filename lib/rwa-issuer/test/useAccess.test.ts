@@ -521,6 +521,71 @@ describe('the venue parsers, against the shapes those venues really return', () 
   test('Morpho: nothing in either role is not_listed', () => {
     assert.equal(morphoListingFromMarketsV1([], []).state, 'not_listed');
   });
+
+  test('Morpho: the pointer names the market a reader would go to, not index zero', () => {
+    // MEASURED on Base 2026-09-19. Morpho returned NVDAc's four markets with the
+    // EMPTY, uncurated one first. Taking `[0]` put `curated: true` beside that
+    // id — the flag describing one market and the pointer another, which is the
+    // exact confusion `curated` was added to remove. It shipped that way.
+    const reading = morphoListingFromMarketsV1(
+      [
+        { marketId: '0xempty', listed: false, lltv: '770000000000000000', state: { collateralAssetsUsd: 0, liquidityAssetsUsd: 0 } },
+        {
+          marketId: '0xcurated',
+          listed: true,
+          lltv: '625000000000000000',
+          loanAsset: { symbol: 'USDC' },
+          collateralAsset: { symbol: 'NVDAc' },
+          state: { collateralAssetsUsd: 15_425, supplyAssetsUsd: 8_440, borrowAssetsUsd: 7_605, liquidityAssetsUsd: 835 },
+        },
+      ],
+      [],
+    );
+    assert.equal(reading.curated, true);
+    assert.equal(reading.marketRef, '0xcurated');
+    assert.notEqual(reading.marketRef, '0xempty');
+  });
+
+  test('Morpho: every market travels separately, with the terms and what is in it', () => {
+    const reading = morphoListingFromMarketsV1(
+      [
+        {
+          marketId: '0xcurated',
+          listed: true,
+          lltv: '625000000000000000',
+          loanAsset: { symbol: 'USDC' },
+          collateralAsset: { symbol: 'NVDAc' },
+          state: { collateralAssetsUsd: 15_425, supplyAssetsUsd: 8_440, borrowAssetsUsd: 7_605, liquidityAssetsUsd: 835 },
+        },
+        { marketId: '0xstranger', listed: false, lltv: '770000000000000000', state: {} },
+      ],
+      [],
+    );
+    assert.equal(reading.markets?.length, 2);
+    const curated = reading.markets!.find((market) => market.marketId === '0xcurated')!;
+    // 625000000000000000 WAD is 62.5%, which is 6250 bps. Truncating to 62
+    // would be a small wrong number a reader acts on.
+    assert.equal(curated.lltvBps, 6250);
+    assert.equal(curated.liquidityUsd, 835);
+    assert.equal(curated.collateralUsd, 15_425);
+    assert.equal(curated.role, 'collateral');
+    assert.equal(curated.collateralAssetSymbol, 'NVDAc');
+    assert.equal(curated.loanAssetSymbol, 'USDC');
+
+    // A venue that published no state publishes no numbers. Null, never zero:
+    // an unread market and an empty one are different facts.
+    const stranger = reading.markets!.find((market) => market.marketId === '0xstranger')!;
+    assert.equal(stranger.curated, false);
+    assert.equal(stranger.liquidityUsd, null);
+    assert.equal(stranger.collateralUsd, null);
+    assert.equal(stranger.lltvBps, 7700);
+  });
+
+  test('Morpho: a market with no id is not a market', () => {
+    const reading = morphoListingFromMarketsV1([{ listed: true }, { marketId: '0xreal' }], []);
+    assert.equal(reading.markets?.length, 1);
+    assert.equal(reading.marketRef, '0xreal');
+  });
 });
 
 // ---------------------------------------------------------------------------

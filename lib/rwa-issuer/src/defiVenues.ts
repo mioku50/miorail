@@ -2,6 +2,7 @@ import { partnerFetch } from '@mioagent/security/httpAllowlist';
 
 import type {
   DefiListingSourceV1,
+  DefiMarketV1,
   DefiVenueReadingV1,
   UseAccessReaderV1,
 } from './useAccess.js';
@@ -56,12 +57,28 @@ export const EULER_VISIBILITIES_V1 = 'visible,warning,hidden,pending_review';
  * by symbol, and paging the whole Base universe to search it locally would make
  * a miss depend on where the page happened to stop.
  */
+// `lltv` and `liquidityAssetsUsd` are the two fields that turn "a market
+// exists" into something a reader can act on: the first is the terms, the
+// second is whether there is anything in it to borrow. Measured 2026-09-19,
+// NVDAc sat in four Base markets — three empty and uncurated, and the curated
+// one held $15,440 of collateral against $825 of borrowable liquidity. Without
+// these two the four rows are indistinguishable.
 export const MORPHO_MARKETS_BY_ASSET_QUERY_V1 = `query MiorailMarketsByAsset($chainId: [Int!], $address: [String!]) {
   asCollateral: markets(first: 20, where: { chainId_in: $chainId, collateralAssetAddress_in: $address }) {
-    items { marketId listed state { supplyAssetsUsd borrowAssetsUsd } }
+    items {
+      marketId listed lltv
+      loanAsset { symbol }
+      collateralAsset { symbol }
+      state { supplyAssetsUsd borrowAssetsUsd collateralAssetsUsd liquidityAssetsUsd }
+    }
   }
   asLoan: markets(first: 20, where: { chainId_in: $chainId, loanAssetAddress_in: $address }) {
-    items { marketId listed state { supplyAssetsUsd borrowAssetsUsd } }
+    items {
+      marketId listed lltv
+      loanAsset { symbol }
+      collateralAsset { symbol }
+      state { supplyAssetsUsd borrowAssetsUsd collateralAssetsUsd liquidityAssetsUsd }
+    }
   }
 }`;
 
@@ -153,13 +170,16 @@ export function morphoListingFromMarketsV1(
     const value = positiveNumberV1(state?.borrowAssetsUsd);
     return value !== null && value > 0;
   });
-  const first = [...asCollateral, ...asLoan][0];
   // Anyone can deploy a Morpho market against any token. `listed` is Morpho's
   // own curation flag, it was queried from the very first version of this
   // parser, and it was never read — so a market a stranger deployed rendered
-  // exactly like an asset Morpho accepted. Both tokenized-stock markets that
-  // exist on Base come back false.
+  // exactly like an asset Morpho accepted.
   const curated = [...asCollateral, ...asLoan].some((market) => market.listed === true);
+  const markets = [
+    ...asCollateral.map((market) => morphoMarketV1(market, 'collateral')),
+    ...asLoan.map((market) => morphoMarketV1(market, 'loan')),
+  ].filter((market): market is DefiMarketV1 => market !== null);
+
   return {
     venueId: 'morpho',
     venueName: 'Morpho',
@@ -170,8 +190,65 @@ export function morphoListingFromMarketsV1(
       borrow: asLoan.length > 0 ? (borrowed ? true : null) : null,
       collateral: asCollateral.length > 0 ? true : null,
     },
-    marketRef: typeof first?.marketId === 'string' ? first.marketId : null,
+    // The market a reader would actually go to, not whichever the API listed
+    // first. The old `[0]` put NVDAc's `curated: true` beside the id of an
+    // empty uncurated market — the flag describing one market and the pointer
+    // another, which is the exact confusion `curated` exists to remove.
+    marketRef: principalMorphoMarketV1(markets),
+    markets,
     reason: null,
+  };
+}
+
+/** Curated first, then deepest by borrowable liquidity, then by collateral. A
+ * pointer has to name ONE market, so it names the one somebody could use. */
+function principalMorphoMarketV1(markets: readonly DefiMarketV1[]): string | null {
+  if (markets.length === 0) return null;
+  const ranked = [...markets].sort((a, b) => {
+    if (a.curated !== b.curated) return a.curated === true ? -1 : 1;
+    const liquidity = (b.liquidityUsd ?? -1) - (a.liquidityUsd ?? -1);
+    if (liquidity !== 0) return liquidity;
+    return (b.collateralUsd ?? -1) - (a.collateralUsd ?? -1);
+  });
+  return ranked[0]!.marketId;
+}
+
+/** `lltv` arrives WAD-scaled (`625000000000000000` is 62.5%). Converted to
+ * integer basis points rather than a percentage, because 62.5 rounded to 62 is
+ * the kind of small wrong number a reader acts on. */
+function lltvBpsV1(raw: unknown): number | null {
+  if (typeof raw !== 'string' || !/^[0-9]+$/.test(raw)) return null;
+  const bps = Number((BigInt(raw) * 10_000n) / 10n ** 18n);
+  return Number.isSafeInteger(bps) && bps >= 0 && bps <= 100_000 ? bps : null;
+}
+
+function symbolV1(asset: unknown): string | null {
+  const symbol = (asset as { symbol?: unknown } | undefined)?.symbol;
+  return typeof symbol === 'string' && symbol.length > 0 && symbol.length <= 40 ? symbol : null;
+}
+
+function usdV1(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function morphoMarketV1(
+  market: Record<string, unknown>,
+  role: 'collateral' | 'loan',
+): DefiMarketV1 | null {
+  if (typeof market.marketId !== 'string' || market.marketId.length === 0) return null;
+  const state = (market.state ?? {}) as Record<string, unknown>;
+  return {
+    marketId: market.marketId,
+    // Morpho's own flag for THIS market. Absent is not `false`.
+    curated: typeof market.listed === 'boolean' ? market.listed : null,
+    role,
+    loanAssetSymbol: symbolV1(market.loanAsset),
+    collateralAssetSymbol: symbolV1(market.collateralAsset),
+    lltvBps: lltvBpsV1(market.lltv),
+    collateralUsd: usdV1(state.collateralAssetsUsd),
+    supplyUsd: usdV1(state.supplyAssetsUsd),
+    borrowUsd: usdV1(state.borrowAssetsUsd),
+    liquidityUsd: usdV1(state.liquidityAssetsUsd),
   };
 }
 
