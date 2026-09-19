@@ -2612,10 +2612,13 @@ function lendingMarketFactsV1(
     }
     for (const row of view.rows) {
       facts.push({
-        label: `${venue.venueName} · ${row.label}`,
+        // Named by the market, not by the pair: four markets called
+        // "NVDAc / USDC" are four rows a reader cannot tell apart.
+        label: `${venue.venueName} · ${row.shortId}`,
         // Terms and standing on one line, each one the venue's own figure and
         // a dash where it published none.
         value: [
+          row.label,
           row.lltv === null ? 'terms not stated' : `${row.lltv} LLTV`,
           `collateral ${row.collateral ?? '—'}`,
           `borrowed ${row.borrowed ?? '—'}`,

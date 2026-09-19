@@ -66,8 +66,17 @@ export interface LendingMarketWireV1 {
 }
 
 export interface LendingMarketRowV1 {
-  /** Short, for a table cell. The full id travels in `marketId`. */
+  /** The asset pair, for a table cell. The full id travels in `marketId`. */
   label: string;
+  /**
+   * The market's own short id, because the pair does not identify it.
+   *
+   * On a permissionless venue the same pair names every market anyone chose to
+   * deploy: NVDAc sits in four markets and all four are "NVDAc / USDC". A list
+   * whose rows cannot be told apart is a list a reader cannot act on, and the
+   * row they act on is the one thing that has to be unambiguous.
+   */
+  shortId: string;
   marketId: string;
   /** The venue's own curation of THIS market. */
   curated: boolean | null;
@@ -195,6 +204,7 @@ export function lendingMarketsViewV1(input: {
 
     return {
       label: pair,
+      shortId: shortIdV1(market.marketId),
       marketId: market.marketId,
       curated: typeof market.curated === 'boolean' ? market.curated : null,
       lltv: lltvV1(market.lltvBps),

@@ -3755,6 +3755,19 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.notEqual(stranger.tone, 'bad');
   });
 
+  test('four markets with the same pair are four rows a reader can tell apart', () => {
+    // Every NVDAc market is "NVDAc / USDC". Naming the rows by the pair gave
+    // four identical labels over four different sets of terms and figures.
+    const defi = useSectionsV1({ ...base, use: withMorphoMarkets() }).find((s) => s.id === 'defi')!;
+    const labels = defi.facts.filter((f) => f.label.startsWith('Morpho · ')).map((f) => f.label);
+    assert.equal(labels.length, 4);
+    assert.equal(new Set(labels).size, 4);
+    // The pair is still on the row, in the value, where it says what is being
+    // borrowed against what.
+    const rows = defi.facts.filter((f) => f.label.startsWith('Morpho · '));
+    assert.equal(rows.every((row) => row.value.startsWith('NVDAc / USDC · ')), true);
+  });
+
   test('the section’s summary of the markets cannot contradict the rows under it', () => {
     const defi = useSectionsV1({ ...base, use: withMorphoMarkets() }).find((s) => s.id === 'defi')!;
     const summary = defi.facts.find((fact) => fact.label === 'Morpho markets')!;
