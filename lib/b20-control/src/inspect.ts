@@ -193,10 +193,19 @@ function formatPolicyV1(raw: string): string | null {
   if (value === B20_ALWAYS_ALLOW_V1) return 'ALWAYS_ALLOW (no restriction configured)';
   if (value === B20_ALWAYS_BLOCK_V1) return 'ALWAYS_BLOCK (every account denied)';
   const type = policyTypeFromIdV1(value);
+  // A composite is not a longer list — it REFERENCES two to four simple
+  // policies and evaluates them live, so "intersect policy" alone would let a
+  // reader picture members this policy does not hold. Cobalt documents both
+  // combining rules; an id whose top byte is neither simple nor composite is
+  // still undocumented and stays unnamed.
   const label =
-    type === 'unknown'
-      ? 'policy type not documented in the Beryl spec'
-      : `${type} policy`;
+    type === 'union'
+      ? 'union policy — authorizes when ANY referenced policy does'
+      : type === 'intersect'
+        ? 'intersect policy — refuses when ANY referenced policy does'
+        : type === 'unknown'
+          ? 'policy type not documented'
+          : `${type} policy`;
   return `#${value.toString()} — ${label}`;
 }
 

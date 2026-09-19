@@ -43,11 +43,21 @@ function readerV1(input: {
   scope?: (index: number) => unknown;
   policyId?: bigint | null;
   authorized?: (data: string) => unknown;
+  /** Whether the registry has the policy at all. Defaults to yes, because a
+   * token naming a policy that exists is the ordinary case and every test
+   * about a VERDICT wants to get past this read to reach it. */
+  exists?: (data: string) => unknown;
   paused?: unknown;
 }): B20ReaderV1 {
   let scopeIndex = 0;
   const answer = (call: { to: string; data: string }) => {
     if (call.to.toLowerCase() === B20_POLICY_REGISTRY_V1) {
+      // Two different questions reach the registry, and answering them from one
+      // branch is how a `denied` fixture would silently start reading "no such
+      // policy" instead.
+      if (call.data.startsWith(`0x${B20_SELECTORS_V1.policyExists}`)) {
+        return input.exists?.(call.data) ?? ok(word(1n));
+      }
       return input.authorized?.(call.data) ?? ok(word(1n));
     }
     if (call.data.startsWith(`0x${B20_SELECTORS_V1.isPaused}`)) {
@@ -497,5 +507,73 @@ describe('the contract that will move the token', () => {
     assert.match(cases[2]!.detail, /Miorail does not set it/);
     // The fact a reader turns into a false one, written where it applies.
     assert.match(cases[0]!.detail, /approval is not policy gated/i);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A policy the registry does not have.
+//
+// MEASURED on Base mainnet 2026-09-18: of policy ids 1 through 6, only 2 and 5
+// exist — and all six answer `isAuthorized` with `true`. Both built-in
+// sentinels are real rows: `policyExists(0)` and `policyExists((1 << 56) | 1)`
+// both answer `true`, so an unrestricted token is not caught by this.
+//
+// Cobalt (2026-09-30) makes it worse and says so: an INTERSECT id that was
+// never created has no children and returns `true` for everyone.
+// ---------------------------------------------------------------------------
+
+describe('a policy the registry does not have', () => {
+  test('a phantom policy is not an allowance, however loudly isAuthorized agrees', async () => {
+    const result = await read(
+      readerV1({ exists: () => ok(word(0n)), authorized: () => ok(word(1n)) }),
+    );
+    const sender = byScope(result, 'transfer_sender');
+    assert.equal(sender.verdict, 'not_established');
+    assert.match(sender.reason ?? '', /not in the registry/i);
+    // The policy id is still reported: the token DID name one, and which one is
+    // the operator's first question.
+    assert.equal(sender.policyId, '5');
+  });
+
+  test('it refuses nothing — the gate only ever refuses a measured denial', async () => {
+    const eligibility = await read(
+      readerV1({ exists: () => ok(word(0n)), authorized: () => ok(word(1n)) }),
+      { executor: EXECUTOR },
+    );
+    const gate = b20ExecutorGateV1({ eligibility });
+    assert.equal(gate.state, 'not_established');
+    assert.equal(b20ExecutorGateRefusesV1(gate), false);
+  });
+
+  test('an unreadable existence answer is not an allowance either', async () => {
+    const result = await read(readerV1({ exists: () => fail, authorized: () => ok(word(1n)) }));
+    const sender = byScope(result, 'transfer_sender');
+    assert.equal(sender.verdict, 'not_established');
+    assert.match(sender.reason ?? '', /whether that policy exists/i);
+  });
+
+  test('a policy that does exist still reaches its verdict, in both directions', async () => {
+    const allowed = await read(readerV1({ exists: () => ok(word(1n)), authorized: () => ok(word(1n)) }));
+    const denied = await read(readerV1({ exists: () => ok(word(1n)), authorized: () => ok(word(0n)) }));
+    assert.equal(byScope(allowed, 'transfer_sender').verdict, 'authorized');
+    assert.equal(byScope(denied, 'transfer_sender').verdict, 'denied');
+  });
+
+  test('the existence question is asked at the same block as the verdict', async () => {
+    const blocks: string[] = [];
+    const base = readerV1({});
+    const inner = base.callMany!.bind(base);
+    const spy = {
+      ...base,
+      callMany: async (calls: readonly B20BatchCallV1[]) => {
+        for (const call of calls) {
+          if (call.to.toLowerCase() === B20_POLICY_REGISTRY_V1) blocks.push(call.blockTag);
+        }
+        return inner(calls);
+      },
+    } as never as B20ReaderV1;
+    await read(spy);
+    assert.ok(blocks.length >= 2);
+    assert.equal(new Set(blocks).size, 1, 'two facts from two blocks are two facts');
   });
 });

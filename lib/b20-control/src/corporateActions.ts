@@ -228,10 +228,24 @@ export function decodeB20CorporateActionLogV1(log: RawEventLogV1): B20CorporateA
   }
 
   if (event === 'ui_multiplier_updated') {
-    // Three words: the scheduled multiplier and the schedule around it. Only
-    // the multiplier is carried; `effectiveAt` is a promise about the future
-    // and the feed reports what executed.
-    const value = indexed === 0 && words.length === 3 ? unsignedV1(words[0]) : null;
+    // `UIMultiplierUpdated(old, new, effectiveAt)`. The Cobalt changelog spells
+    // the order out for the instant setter — "emits ... the ERC-8056
+    // `UIMultiplierUpdated(old, new, block.timestamp)`" — so the multiplier
+    // this action RESULTS IN is the second word, not the first.
+    //
+    // Reading word 0 would have published the value the token held BEFORE the
+    // action as the action's outcome: a real number, from the right log, on the
+    // right token, naming the wrong side of the change. It is latent rather
+    // than historical — Cobalt is not live, and the stored feed holds zero
+    // `ui_multiplier_updated` rows — but it would have fired on the first
+    // scheduled corporate action after 2026-09-30.
+    //
+    // `effectiveAt` is still not carried into a typed column. That is a real
+    // limit and not a silent one: nothing fires at maturation, so a row written
+    // from a SCHEDULED update describes a change that has not happened yet. The
+    // raw topics and data are stored for exactly this case, so the timestamp is
+    // recoverable by a reader that learns to want it.
+    const value = indexed === 0 && words.length === 3 ? unsignedV1(words[1]) : null;
     if (value === null || value <= 0n) return topicOnlyV1(event);
     return { ...topicOnlyV1(event), payload: 'decoded', multiplierWad: value.toString() };
   }

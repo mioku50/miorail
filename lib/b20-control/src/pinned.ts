@@ -147,21 +147,33 @@ export const B20_ALWAYS_ALLOW_V1 = 0n;
 /** `(uint64(ALLOWLIST) << 56) | 1` — denies every account. */
 export const B20_ALWAYS_BLOCK_V1 = (1n << 56n) | 1n;
 
-export type B20PolicyTypeV1 = 'blocklist' | 'allowlist' | 'unknown';
+export type B20PolicyTypeV1 = 'blocklist' | 'allowlist' | 'union' | 'intersect' | 'unknown';
 
 /**
  * The policy type encoded in the top byte of a policy ID.
  *
- * `2` and `3` decode to UNION and INTERSECT in base-std's `main` branch, which
- * the published Beryl spec does not document. That conflict is recorded in the
- * research note, and it resolves to `unknown` here: reporting a composite
- * policy as though its semantics were settled would be inventing a fact.
+ * `2` and `3` used to resolve to `unknown` here: base-std's `main` branch
+ * decoded them as UNION and INTERSECT, the published Beryl spec did not
+ * document them, and naming a composite whose semantics were unsettled would
+ * have been inventing a fact.
+ *
+ * The Cobalt changelog settles it (mainnet 2026-09-30). `PolicyType` is
+ * append-only — `UNION = 2`, `INTERSECT = 3` — a composite holds two to four
+ * SIMPLE children, so evaluation is capped at depth one, and `isAuthorized`
+ * dispatches it on the same `0x55a1179e` selector we already dial. UNION
+ * authorizes when any child does; INTERSECT refuses when any child does not.
+ *
+ * Naming the type is all this does. The dangerous half of a composite is an id
+ * that was never created — an empty INTERSECT authorizes everyone — and that is
+ * caught by the `policyExists` read in `eligibility.ts`, not here.
  */
 export function policyTypeFromIdV1(policyId: bigint): B20PolicyTypeV1 {
   if (policyId < 0n) return 'unknown';
   const top = policyId >> 56n;
   if (top === 0n) return 'blocklist';
   if (top === 1n) return 'allowlist';
+  if (top === 2n) return 'union';
+  if (top === 3n) return 'intersect';
   return 'unknown';
 }
 

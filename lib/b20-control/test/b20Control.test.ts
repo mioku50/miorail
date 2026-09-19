@@ -168,9 +168,12 @@ describe('decoding refuses to guess', () => {
   test('an undocumented policy type stays unknown rather than being named', () => {
     assert.equal(policyTypeFromIdV1(0n), 'blocklist');
     assert.equal(policyTypeFromIdV1(B20_ALWAYS_BLOCK_V1), 'allowlist');
-    // UNION / INTERSECT exist in base-std main but not in the published spec.
-    assert.equal(policyTypeFromIdV1(2n << 56n), 'unknown');
-    assert.equal(policyTypeFromIdV1(3n << 56n), 'unknown');
+    // The Cobalt changelog documents the composite types, so they are named
+    // now. `4` and above are still nothing the spec describes.
+    assert.equal(policyTypeFromIdV1(2n << 56n), 'union');
+    assert.equal(policyTypeFromIdV1(3n << 56n), 'intersect');
+    assert.equal(policyTypeFromIdV1(4n << 56n), 'unknown');
+    assert.equal(policyTypeFromIdV1(255n << 56n), 'unknown');
   });
 
   test('the variant byte is read at index 10, and an odd address yields null', () => {
@@ -315,11 +318,29 @@ describe('fields', () => {
   });
 
   test('an undocumented policy type is labelled as undocumented rather than named', async () => {
+    // `4` is past the end of the enum Cobalt appended to, so it is still a byte
+    // no spec describes. `2` and `3` used to sit here and no longer do.
     const { snapshot } = await inspect(TOKEN, {
-      overrides: { [B20_SELECTORS_V1.policyId]: { ok: true, value: `0x${word(2n << 56n)}`, raw: '' } },
+      overrides: { [B20_SELECTORS_V1.policyId]: { ok: true, value: `0x${word(4n << 56n)}`, raw: '' } },
     });
     const scope = snapshot.fields.find((f) => f.key === 'transfer_sender_policy');
-    assert.match(scope?.value ?? '', /not documented in the Beryl spec/);
+    assert.match(scope?.value ?? '', /not documented/);
+  });
+
+  test('a composite policy is named with the rule that combines its children', async () => {
+    // "intersect policy" on its own invites a reader to picture members this
+    // policy does not hold — a composite REFERENCES two to four others and
+    // evaluates them live.
+    const union = await inspect(TOKEN, {
+      overrides: { [B20_SELECTORS_V1.policyId]: { ok: true, value: `0x${word(2n << 56n)}`, raw: '' } },
+    });
+    const intersect = await inspect(TOKEN, {
+      overrides: { [B20_SELECTORS_V1.policyId]: { ok: true, value: `0x${word(3n << 56n)}`, raw: '' } },
+    });
+    const valueOf = (result: typeof union) =>
+      result.snapshot.fields.find((f) => f.key === 'transfer_sender_policy')?.value ?? '';
+    assert.match(valueOf(union), /union policy — authorizes when ANY referenced policy does/);
+    assert.match(valueOf(intersect), /intersect policy — refuses when ANY referenced policy does/);
   });
 
   test('who holds the admin role is always an explicit gap, never a guess', async () => {

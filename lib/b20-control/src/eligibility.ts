@@ -150,6 +150,10 @@ function encodeIsAuthorizedV1(policyId: bigint, account: string): string {
   return `0x${B20_SELECTORS_V1.isAuthorized}${id}${padded}`;
 }
 
+function encodePolicyExistsV1(policyId: bigint): string {
+  return `0x${B20_SELECTORS_V1.policyExists}${policyId.toString(16).padStart(64, '0')}`;
+}
+
 function unresolvedV1(
   scope: B20EligibilityScopeV1,
   account: string | null,
@@ -171,8 +175,10 @@ function unresolvedV1(
  * contract would let anyone.
  *
  * Four round trips at one block: the pause flag, the scope keys off the token,
- * the policy id each scope points at, then the registry's verdict for the
- * address that scope is about. The scope keys are READ rather than hardcoded
+ * the policy id each scope points at, then — in one parallel step — whether
+ * that policy exists and the registry's verdict for the address that scope is
+ * about. Existence is read because `isAuthorized` answers `true` for a policy
+ * that was never created. The scope keys are READ rather than hardcoded
  * for the same reason the inspector reads them — they are view functions, and a
  * guessed constant queries the wrong scope while looking entirely correct.
  */
@@ -296,18 +302,70 @@ export async function readB20TransferEligibilityV1(input: {
 
   if (resolved.length === 0) return { ...base, transferPause, scopes };
 
-  const verdicts = await callManyV1(
-    input.reader,
-    resolved.map((entry) => ({
-      to: B20_POLICY_REGISTRY_V1,
-      data: encodeIsAuthorizedV1(entry.policyId, entry.account),
-      blockTag: input.blockTag,
-    })),
-  );
+  // `policyExists` is asked alongside the verdict, at the same block, and it is
+  // DECIDED first: no answer from `isAuthorized` is read until the registry has
+  // said it has the policy at all. Both go out together because one extra
+  // serial round trip before every review is a cost with no benefit — the two
+  // reads do not depend on each other, only their interpretation does.
+  //
+  // `isAuthorized` answers `true` for a policy the registry has never heard of.
+  // Measured on Base mainnet 2026-09-18: of policy ids 1 through 6, only 2 and
+  // 5 exist, and all six authorize every address tried. So without this read a
+  // token pointing at a phantom policy reads exactly like a token pointing at a
+  // live one that happens to allow you.
+  //
+  // Cobalt (mainnet 2026-09-30) widens it and says so in the spec: a
+  // well-formed but never-created INTERSECT id has no children and returns
+  // `true` — "Consumers that store policy IDs must call `policyExists(policyId)`
+  // before storing them. Otherwise, an invalid INTERSECT ID can behave like
+  // ALWAYS_ALLOW."
+  //
+  // A missing policy is NOT a denial. The token naming a policy the registry
+  // does not have is a configuration fact, not the issuer refusing this wallet,
+  // so it lands on `not_established` and refuses nothing. What it does stop is
+  // the opposite failure: claiming the issuer's policy cleared an address when
+  // there was no policy to clear it.
+  //
+  // Both sentinels are real rows — `policyExists(0)` (ALWAYS_ALLOW) and
+  // `policyExists((1 << 56) | 1)` (ALWAYS_BLOCK) both answer `true` — so an
+  // unrestricted token keeps its ordinary verdict.
+  const [existence, verdicts] = await Promise.all([
+    callManyV1(
+      input.reader,
+      resolved.map((entry) => ({
+        to: B20_POLICY_REGISTRY_V1,
+        data: encodePolicyExistsV1(entry.policyId),
+        blockTag: input.blockTag,
+      })),
+    ),
+    callManyV1(
+      input.reader,
+      resolved.map((entry) => ({
+        to: B20_POLICY_REGISTRY_V1,
+        data: encodeIsAuthorizedV1(entry.policyId, entry.account),
+        blockTag: input.blockTag,
+      })),
+    ),
+  ]);
 
   for (const [index, entry] of resolved.entries()) {
     const target = scopes.find((row) => row.scope === entry.scope);
     if (!target) continue;
+    const existsRead = existence[index];
+    if (!existsRead?.ok) {
+      target.reason = 'The policy registry did not answer whether that policy exists.';
+      continue;
+    }
+    const exists = decodeBoolV1(existsRead.value);
+    if (exists === null) {
+      target.reason = 'The policy registry answered in a shape this build cannot read.';
+      continue;
+    }
+    if (!exists) {
+      target.reason =
+        'The policy this token names for that scope is not in the registry, so nothing about this address was established.';
+      continue;
+    }
     const read = verdicts[index];
     if (!read?.ok) {
       // The registry is documented never to revert, so reaching here means the
@@ -483,9 +541,14 @@ export function b20TransferGateRefusesV1(gate: B20TransferGateV1): boolean {
 // including the zero address and USDC. So this gate has nothing to refuse
 // today. That is the finding, not a reason to skip the read: a bound policy
 // whose contents can change is exactly the thing you check before signing, and
-// `isAuthorized` on a policy id that does NOT exist also answers `true`, which
-// is why `policyExists` stays in the read above and why an unread policy here
-// is never an allowance.
+// `isAuthorized` on a policy id that does NOT exist also answers `true`.
+//
+// CORRECTED 2026-09-18. This comment used to say `policyExists` "stays in the
+// read above". It did not: the selector was pinned and never dialled here, and
+// the only call site was the use-access reader in another package. The read
+// above now makes the call, and a policy the registry does not have is
+// `not_established` rather than an allowance. The comment asserting a guard
+// that was not there is the reason nobody found it for two phases.
 // ---------------------------------------------------------------------------
 
 /** `approve(address,uint256)`. The only call whose spender this module reads. */

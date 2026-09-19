@@ -148,13 +148,31 @@ describe('B20 multiplier events', () => {
     assert.equal(deprecated.payload, 'decoded');
     assert.equal(deprecated.multiplierWad, '1057380318816778075');
 
+    // `UIMultiplierUpdated(old, new, effectiveAt)` — a 2:1 split scheduled from
+    // a multiplier of exactly 1.0. The two multiplier words are DIFFERENT and
+    // both plausible, so reading the wrong one produces a valid-looking number
+    // rather than a failure; that is the whole reason this asserts both.
     const scheduled = decodeB20CorporateActionLogV1({
       topics: [PUBLISHED_V1.ui_multiplier_updated],
-      data: `0x${word(2n * 10n ** 18n)}${word(0n)}${word(1_800_000_000n)}`,
+      data: `0x${word(10n ** 18n)}${word(2n * 10n ** 18n)}${word(1_800_000_000n)}`,
     });
     assert.ok(scheduled);
     assert.equal(scheduled.payload, 'decoded');
     assert.equal(scheduled.multiplierWad, '2000000000000000000');
+    assert.notEqual(scheduled.multiplierWad, '1000000000000000000');
+  });
+
+  test('a scheduled update that lowers the multiplier is read from the second word', () => {
+    // The direction matters: with `old > new`, reading word 0 would report a
+    // RISE where the issuer published a fall. Nothing about the log's shape
+    // would object.
+    const row = decodeB20CorporateActionLogV1({
+      topics: [PUBLISHED_V1.ui_multiplier_updated],
+      data: `0x${word(2n * 10n ** 18n)}${word(10n ** 18n)}${word(1_800_000_000n)}`,
+    });
+    assert.ok(row);
+    assert.equal(row.payload, 'decoded');
+    assert.equal(row.multiplierWad, '1000000000000000000');
   });
 
   test('a zero multiplier is not a ratio and is not carried', () => {
