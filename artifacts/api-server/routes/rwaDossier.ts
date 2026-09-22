@@ -94,6 +94,32 @@ export const rwaDossierRuntime = {
   },
 };
 
+/**
+ * The dossier for one exact address, as one function.
+ *
+ * `tenantId` is null on the public stock pages. It only ever selects the
+ * reader's OWN position run beside the public ladder, so without it the
+ * dossier is the public ladder alone — never somebody else's position.
+ */
+export async function readOfficialAssetDossierV1(input: {
+  tokenAddress: string;
+  tenantId: string | null;
+}) {
+  const result = await rwaDossierRuntime.assemble(
+    {
+      official: rwaDossierRuntime.official(),
+      marketTail: rwaDossierRuntime.marketTail(),
+      cashExit: rwaDossierRuntime.cashExit(),
+      underlying: rwaDossierRuntime.underlying(),
+      reader: rwaDossierRuntime.reader(),
+      now: rwaDossierRuntime.now,
+      ...(input.tenantId ? { tenantId: input.tenantId } : {}),
+    },
+    { chainId: 8453, tokenAddress: input.tokenAddress },
+  );
+  return OfficialAssetDossierResponseV1Schema.parse(result);
+}
+
 function sessionUserV1(req: Request): TenantUser | null {
   const user = req.session?.user;
   if (
@@ -136,19 +162,10 @@ rwaDossierRouter.get('/rwa/official/:tokenAddress/dossier', async (req, res) => 
       });
       return;
     }
-    const result = await rwaDossierRuntime.assemble(
-      {
-        official: rwaDossierRuntime.official(),
-        marketTail: rwaDossierRuntime.marketTail(),
-        cashExit: rwaDossierRuntime.cashExit(),
-        underlying: rwaDossierRuntime.underlying(),
-        reader: rwaDossierRuntime.reader(),
-        now: rwaDossierRuntime.now,
-        tenantId: user.id,
-      },
-      { chainId: 8453, tokenAddress: supplied.toLowerCase() },
-    );
-    const response = OfficialAssetDossierResponseV1Schema.parse(result);
+    const response = await readOfficialAssetDossierV1({
+      tokenAddress: supplied.toLowerCase(),
+      tenantId: user.id,
+    });
     // Absence from the reviewed corpus is a typed evidence outcome, not a
     // transport failure. The clients must be able to render that distinction.
     res.status(200).json(response);

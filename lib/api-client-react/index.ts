@@ -755,20 +755,36 @@ export function useMarketSnapshot(
   });
 }
 
+/**
+ * Who is reading the Stocks board: a signed-in session, or anybody.
+ *
+ * `public` reads the same evidence through `/api/public/stocks`, which exists
+ * so a visitor with no wallet sees the board instead of a sign-in wall. It is
+ * part of every cache key below: a public dossier carries no position run and
+ * a public Use & access carries no wallet checks, so the two must never answer
+ * for each other.
+ */
+export type StocksReadAccessV1 = 'session' | 'public';
+
+function stocksReadBaseV1(access: StocksReadAccessV1 | undefined): string {
+  return access === 'public' ? '/api/public/stocks' : '/api/route-intelligence/rwa';
+}
+
 /** Phase 3 official-asset dossier shared by Web and Base App. Read-only: the
  * endpoint assembles stored source/market evidence plus pinned Base reads and
  * returns no quote, call, approval or execution payload. */
 export function useOfficialAssetDossier(
   tokenAddress: string | null | undefined,
-  options?: { enabled?: boolean },
+  options?: { enabled?: boolean; access?: StocksReadAccessV1 },
 ) {
   const address = typeof tokenAddress === 'string' ? tokenAddress.toLowerCase() : null;
   const addressIsExact = address !== null && /^0x[0-9a-f]{40}$/.test(address);
+  const access = options?.access ?? 'session';
   return useQuery({
-    queryKey: ['official-asset-dossier', address ?? 'none'],
+    queryKey: ['official-asset-dossier', address ?? 'none', access],
     queryFn: async () => {
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/official/${encodeURIComponent(address ?? '')}/dossier`,
+        `${stocksReadBaseV1(access)}/official/${encodeURIComponent(address ?? '')}/dossier`,
       );
       return apiSpec.OfficialAssetDossierResponseV1Schema.parse(response);
     },
@@ -1018,14 +1034,16 @@ export function useRwaUnderlyings(options?: {
    * documented Coinbase B20 standard. The scope is part of the cache key: a
    * scoped page and a wide one are different reads, not a filter over one. */
   scope?: 'coinbase_b20' | 'all_representations';
+  access?: StocksReadAccessV1;
 }) {
   const limit = options?.limit ?? 100;
   const scope = options?.scope ?? null;
+  const access = options?.access ?? 'session';
   return useQuery({
-    queryKey: ['rwa-underlyings', limit, scope],
+    queryKey: ['rwa-underlyings', limit, scope, access],
     queryFn: async () => {
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/underlyings?limit=${limit}${scope ? `&scope=${scope}` : ''}`,
+        `${stocksReadBaseV1(access)}/underlyings?limit=${limit}${scope ? `&scope=${scope}` : ''}`,
       );
       return apiSpec.MarketRealityIndexV1Schema.parse(response);
     },
@@ -1183,9 +1201,10 @@ export function useRwaMarketReality(
     requestedCashAtomic: string;
     destination?: 'USDC' | 'ETH';
   },
-  options?: { enabled?: boolean },
+  options?: { enabled?: boolean; access?: StocksReadAccessV1 },
 ) {
   const destination = input.destination ?? 'USDC';
+  const access = options?.access ?? 'session';
   return useQuery({
     queryKey: [
       'rwa-market-reality',
@@ -1193,6 +1212,7 @@ export function useRwaMarketReality(
       input.direction,
       input.requestedCashAtomic,
       destination,
+      access,
     ],
     queryFn: async () => {
       const query = new URLSearchParams({
@@ -1201,7 +1221,7 @@ export function useRwaMarketReality(
         destination,
       });
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey!)}?${query.toString()}`,
+        `${stocksReadBaseV1(access)}/market-reality/${encodeURIComponent(input.underlyingKey!)}?${query.toString()}`,
       );
       return apiSpec.MarketRealityResponseV2Schema.parse(response);
     },
@@ -1315,6 +1335,9 @@ export function useMeasureRwaMarketReality(
       // measuring on open and made it happen to everyone. What the measurement
       // spent is still on `measure.data`, which is where the note reads it.
       const { measurement: _measurement, ...comparison } = data;
+      // The exact key the read uses, access included. Only a session can
+      // measure, so this is the session's entry; a key one element short would
+      // write a cache entry no hook reads, and the board would sit unchanged.
       queryClient.setQueryData(
         [
           'rwa-market-reality',
@@ -1322,6 +1345,7 @@ export function useMeasureRwaMarketReality(
           variables.direction,
           variables.requestedCashAtomic,
           variables.destination ?? 'USDC',
+          'session' satisfies StocksReadAccessV1,
         ],
         comparison,
       );
@@ -1356,9 +1380,10 @@ export function useRwaMarketRealityHistory(
     destination?: 'USDC' | 'ETH';
     window: '1h' | '6h' | '24h' | '7d';
   },
-  options?: { enabled?: boolean },
+  options?: { enabled?: boolean; access?: StocksReadAccessV1 },
 ) {
   const destination = input.destination ?? 'USDC';
+  const access = options?.access ?? 'session';
   return useQuery({
     queryKey: [
       'rwa-market-reality-history',
@@ -1367,6 +1392,7 @@ export function useRwaMarketRealityHistory(
       input.requestedCashAtomic,
       destination,
       input.window,
+      access,
     ],
     queryFn: async () => {
       const query = new URLSearchParams({
@@ -1376,7 +1402,7 @@ export function useRwaMarketRealityHistory(
         window: input.window,
       });
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/market-reality/${encodeURIComponent(input.underlyingKey!)}/history?${query.toString()}`,
+        `${stocksReadBaseV1(access)}/market-reality/${encodeURIComponent(input.underlyingKey!)}/history?${query.toString()}`,
       );
       return apiSpec.MarketRealityHistoryV1Schema.parse(response);
     },
@@ -1396,13 +1422,14 @@ export function useRwaMarketRealityHistory(
  */
 export function useRwaUseAccess(
   tokenAddress: string | null,
-  options?: { enabled?: boolean },
+  options?: { enabled?: boolean; access?: StocksReadAccessV1 },
 ) {
+  const access = options?.access ?? 'session';
   return useQuery({
-    queryKey: ['rwa-use-access', tokenAddress?.toLowerCase() ?? null],
+    queryKey: ['rwa-use-access', tokenAddress?.toLowerCase() ?? null, access],
     queryFn: async () => {
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/use-access/${encodeURIComponent(tokenAddress!.toLowerCase())}`,
+        `${stocksReadBaseV1(access)}/use-access/${encodeURIComponent(tokenAddress!.toLowerCase())}`,
       );
       return apiSpec.RepresentationUseAccessV1Schema.parse(response);
     },

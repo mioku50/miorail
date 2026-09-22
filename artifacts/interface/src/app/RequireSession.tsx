@@ -9,7 +9,15 @@ import { WalletConnect } from '../shell/WalletConnect';
 // screen: it always renders a compact, actionable prompt instead of the
 // gated content.
 
-export function RequireSession({ children }: { children: ReactNode }) {
+export function RequireSession({
+  children,
+  copy,
+}: {
+  children: ReactNode;
+  /** What this gate is for, when it is not the private area. The sign-in door
+   * says so: a reader who pressed "Connect wallet" is not entering one. */
+  copy?: { eyebrow: string; body: string };
+}) {
   const gate = useAuthGate();
   const { switchChainAsync, isPending: switchPending } = useSwitchChain();
 
@@ -18,10 +26,11 @@ export function RequireSession({ children }: { children: ReactNode }) {
   return (
     <div className="flex-1 flex items-center justify-center p-6">
       <section className="w-full max-w-sm border border-line bg-panel p-6 text-center rounded-xl">
-        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">Private area</p>
+        <p className="font-mono text-[11px] uppercase tracking-[0.2em] text-accent">{copy?.eyebrow ?? 'Private area'}</p>
         <h2 className="mt-2 text-lg font-semibold text-ink">Continue with your wallet</h2>
         <p className="mt-2 text-sm text-muted">
-          One signature binds chats, actions, fuel and safety limits to this wallet. It does not send a transaction.
+          {copy?.body ??
+            'One signature binds chats, actions, fuel and safety limits to this wallet. It does not send a transaction.'}
         </p>
 
         {gate.phase === 'disconnected' && (

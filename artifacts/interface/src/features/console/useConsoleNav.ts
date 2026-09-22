@@ -50,12 +50,19 @@ export function useConsoleNav(active: ConsoleSectionV1 | null): ConsoleNavV1 {
   // The one section that can be mounted and still have nothing behind it. The
   // server flag is the honest source: when it is off the endpoint refuses, and
   // a tab that leads to a refusal should say so before the click, not after.
-  const discoverOn =
-    status.data?.productMigration?.routeIntelligenceV1 === true ||
-    status.data?.productMigration?.b20ControlV1 === true;
+  //
+  // Only when the flags were READ. `/status` sits behind the tenant gate, so a
+  // signed-out reader gets a 401 and every flag reads false — and once the
+  // Stocks board opened to visitors (2026-09-22), every first visit showed
+  // "Discover is off on this server" in the rail, a claim about the deployment
+  // made from nothing. Unread says nothing; the tab leads to the sign-in gate.
+  const discoverOff =
+    status.isSuccess &&
+    status.data?.productMigration?.routeIntelligenceV1 !== true &&
+    status.data?.productMigration?.b20ControlV1 !== true;
   const unavailable = useMemo(
-    () => (discoverOn ? undefined : { opportunities: DISCOVER_OFF_COPY_V1 }),
-    [discoverOn],
+    () => (discoverOff ? { opportunities: DISCOVER_OFF_COPY_V1 } : undefined),
+    [discoverOff],
   );
 
   const header = useMemo(

@@ -1347,8 +1347,22 @@ describe('Phase 15.1 — a signed-out reader is told about the session, not the 
       '../../../artifacts/interface/src/features/rwa/MarketRealityRadarPage.tsx',
       '../../../artifacts/miniapp/app/components/MiniConsole.tsx',
     ]) {
-      assert.match(read(rel), /configurationRead: status\.isSuccess/, rel);
+      // A session's reading still comes from `/status` and nothing else.
+      assert.match(read(rel), /configurationRead:[^,\n]*status\.isSuccess/, rel);
     }
+  });
+
+  test('since 2026-09-22 a signed-out Stocks reader gets the public board, not the sentence', () => {
+    // The sentence above stays true, and the Radar — a tenant's own watches —
+    // still says it. Stocks no longer needs to: signed out, both surfaces read
+    // the public door, which answers for itself, so there is no configuration
+    // left unread to warn about.
+    const web = read('../../../artifacts/interface/src/features/rwa/MarketRealityPage.tsx');
+    assert.match(web, /configurationRead: access === 'public' \? true : status\.isSuccess/);
+    assert.match(web, /const access = gate\.showPrivateSurfaces \? 'session' : 'public';/);
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    assert.match(mini, /access: stocksSignedOut \? "public" : "session"/);
+    assert.match(mini, /configurationRead: stocksSignedOut \? true : status\.isSuccess/);
   });
 });
 

@@ -116,6 +116,7 @@ app.use(
 import { routes } from './routes';
 import { mcpServerRouter } from './routes/mcp/index.js';
 import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
+import { stockPagesRouter } from './routes/stockPages.js';
 
 // T72-B §1 — the AUTHENTICATED MCP endpoint, mounted before the public one.
 //
@@ -138,6 +139,11 @@ app.use('/mcp', mcpServerRouter);
 
 // API Routes
 app.use('/api', routes);
+
+// `/stocks/<ticker>` and `/sitemap.xml`. Documents, not API: nginx sends these
+// paths here only so the head of the page can name one stock, and falls back to
+// the static index.html when this cannot answer.
+app.use(stockPagesRouter);
 
 // Health route
 app.get('/health', (_req: Request, res: Response) => {

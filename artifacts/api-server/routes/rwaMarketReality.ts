@@ -211,6 +211,11 @@ function rpcUrlV1(): string {
   return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
 }
 
+/** Whether a chain endpoint is configured, without handing its URL to anyone. */
+export function marketRealityChainConfiguredV1(): boolean {
+  return rpcUrlV1() !== '';
+}
+
 /**
  * One coordinator for the process, created once.
  *
@@ -424,14 +429,6 @@ rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
     res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
     return;
   }
-  const limit = Number.parseInt(String(req.query.limit ?? '100'), 10);
-  // An unrecognised scope is the default rather than a 400: this is a read, the
-  // default is the safe corpus, and a typo in a query string should not be able
-  // to blank a consumer screen.
-  const requested = String(req.query.scope ?? '');
-  const scope = (MARKET_REALITY_INDEX_SCOPES_V1 as readonly string[]).includes(requested)
-    ? (requested as MarketRealityIndexScopeV1)
-    : undefined;
   try {
     if (!(await rwaMarketRealityRuntime.migrationAvailable())) {
       res.status(503).json({
@@ -440,11 +437,7 @@ rwaMarketRealityRouter.get('/rwa/underlyings', async (req, res) => {
       });
       return;
     }
-    const index = await rwaMarketRealityRuntime.assembleIndex(
-      { underlyings: rwaMarketRealityRuntime.underlyings(), now: rwaMarketRealityRuntime.now },
-      { limit: Number.isFinite(limit) && limit > 0 ? Math.min(500, limit) : 100, scope },
-    );
-    res.status(200).json(MarketRealityIndexV1Schema.parse(index));
+    res.status(200).json(await readMarketRealityIndexV1(indexQueryFromRequestV1(req)));
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }
@@ -630,7 +623,7 @@ type QuestionParseV1 =
     }
   | { ok: false; code: string; detail?: string };
 
-function questionFromRequestV1(req: Request): QuestionParseV1 {
+export function questionFromRequestV1(req: Request): QuestionParseV1 {
   const underlyingKey = String(req.params.underlyingKey ?? '');
   const direction = String(req.query.direction ?? '').toLowerCase();
   const requestedCashAtomic = String(req.query.requestedCashAtomic ?? '');
@@ -653,6 +646,128 @@ function questionFromRequestV1(req: Request): QuestionParseV1 {
     requestedCashAtomic,
     destination: destination as 'USDC' | 'ETH',
   };
+}
+
+/** `?limit=&scope=` for the chooser. */
+export function indexQueryFromRequestV1(req: Request): {
+  limit: number;
+  scope?: MarketRealityIndexScopeV1;
+} {
+  const limit = Number.parseInt(String(req.query.limit ?? '100'), 10);
+  // An unrecognised scope is the default rather than a 400: this is a read, the
+  // default is the safe corpus, and a typo in a query string should not be able
+  // to blank a consumer screen.
+  const requested = String(req.query.scope ?? '');
+  const scope = (MARKET_REALITY_INDEX_SCOPES_V1 as readonly string[]).includes(requested)
+    ? (requested as MarketRealityIndexScopeV1)
+    : undefined;
+  return { limit: Number.isFinite(limit) && limit > 0 ? Math.min(500, limit) : 100, scope };
+}
+
+export function historyWindowFromRequestV1(
+  req: Request,
+): { ok: true; window: MarketRealityWindowV1 } | { ok: false; detail: string } {
+  const window = String(req.query.window ?? '24h');
+  if (!Object.keys(MARKET_REALITY_WINDOWS_V1).includes(window)) {
+    return {
+      ok: false,
+      detail: `window must be one of ${Object.keys(MARKET_REALITY_WINDOWS_V1).join(', ')}.`,
+    };
+  }
+  return { ok: true, window: window as MarketRealityWindowV1 };
+}
+
+// ---------------------------------------------------------------------------
+// The four reads, as functions, so there is exactly one of each.
+//
+// The session routes here and the public stock pages (`publicStocks.ts`) are
+// two doors onto the same evidence. A second assembly behind the public door
+// would be a second idea of what the board says, and the two would drift the
+// way the MCP tool and the screen once did about pooled liquidity.
+// ---------------------------------------------------------------------------
+
+export async function readMarketRealityIndexV1(input: {
+  limit: number;
+  scope?: MarketRealityIndexScopeV1;
+}) {
+  const index = await rwaMarketRealityRuntime.assembleIndex(
+    { underlyings: rwaMarketRealityRuntime.underlyings(), now: rwaMarketRealityRuntime.now },
+    input,
+  );
+  return MarketRealityIndexV1Schema.parse(index);
+}
+
+export async function readMarketRealityV1(question: MarketRealityMeasureQuestionV1) {
+  const result = await rwaMarketRealityRuntime.assemble(
+    {
+      underlyings: rwaMarketRealityRuntime.underlyings(),
+      cashExit: rwaMarketRealityRuntime.cashExit(),
+      ratios: rwaMarketRealityRuntime.ratios(),
+      supplies: rwaMarketRealityRuntime.supplies(),
+      now: rwaMarketRealityRuntime.now,
+      reference: rwaMarketRealityRuntime.reference(),
+    },
+    {
+      underlyingKey: question.underlyingKey,
+      direction: question.direction,
+      requestedCashAtomic: question.requestedCashAtomic,
+      destination: question.destination,
+    },
+  );
+  return MarketRealityResponseV2Schema.parse(result);
+}
+
+export async function readMarketRealityHistoryV1(
+  question: MarketRealityMeasureQuestionV1,
+  window: MarketRealityWindowV1,
+) {
+  const history = await rwaMarketRealityRuntime.assembleHistory(
+    {
+      underlyings: rwaMarketRealityRuntime.underlyings(),
+      cashExit: rwaMarketRealityRuntime.cashExit(),
+      now: rwaMarketRealityRuntime.now,
+    },
+    {
+      underlyingKey: question.underlyingKey,
+      direction: question.direction,
+      requestedCashAtomic: question.requestedCashAtomic,
+      destination: question.destination,
+      window,
+    },
+  );
+  return MarketRealityHistoryV1Schema.parse(history);
+}
+
+/**
+ * Use & access for one exact address, for the session's wallet or for none.
+ *
+ * The public door passes null, and that is the only difference: the assembly
+ * then runs no wallet checks at all and says so with `wallet: null`, rather
+ * than reporting a wallet that passed checks nobody ran.
+ */
+export async function readUseAccessV1(input: {
+  tokenAddress: string;
+  walletAddress: string | null;
+}) {
+  // Stored, and read BEFORE the chain calls. The balances were measured by a
+  // paced worker at a block of their own, so a chain outage here must leave
+  // them on the screen rather than blank a good measurement to report a bad
+  // one — which is exactly what the unread path does with them.
+  const pools = await poolsForTokenV1(input.tokenAddress);
+  const ecosystem = await ecosystemEvidenceForV1(input.tokenAddress);
+  return assembleUseAccessV1({
+    tokenAddress: input.tokenAddress,
+    pools,
+    ecosystem,
+    reader: rwaMarketRealityRuntime.useAccessReader(),
+    now: rwaMarketRealityRuntime.now(),
+    // Read per venue row. The four venue reads are sequential and two of them
+    // are network fetches, so one instant across all four would be a smaller
+    // version of the overclaim this provenance exists to end.
+    clock: rwaMarketRealityRuntime.now,
+    defiSources: rwaMarketRealityRuntime.defiSources(),
+    walletAddress: input.walletAddress,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -765,27 +880,7 @@ rwaMarketRealityRouter.get('/rwa/use-access/:tokenAddress', async (req, res) => 
     return;
   }
   try {
-    // Stored, and read BEFORE the chain calls. The balances were measured by a
-    // paced worker at a block of their own, so a chain outage here must leave
-    // them on the screen rather than blank a good measurement to report a bad
-    // one — which is exactly what the unread path does with them.
-    const pools = await poolsForTokenV1(tokenAddress);
-    const ecosystem = await ecosystemEvidenceForV1(tokenAddress);
-
-    const use = await assembleUseAccessV1({
-      tokenAddress,
-      pools,
-      ecosystem,
-      reader: rwaMarketRealityRuntime.useAccessReader(),
-      now: rwaMarketRealityRuntime.now(),
-      // Read per venue row. The four venue reads are sequential and two of them
-      // are network fetches, so one instant across all four would be a smaller
-      // version of the overclaim this provenance exists to end.
-      clock: rwaMarketRealityRuntime.now,
-      defiSources: rwaMarketRealityRuntime.defiSources(),
-      walletAddress: user.address,
-    });
-    res.json(use);
+    res.json(await readUseAccessV1({ tokenAddress, walletAddress: user.address }));
   } catch (error) {
     // Named, not swallowed: 23 bare catches once meant a production 500
     // recorded nothing at all.
@@ -1017,23 +1112,7 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey', async (req, res
       });
       return;
     }
-    const result = await rwaMarketRealityRuntime.assemble(
-      {
-        underlyings: rwaMarketRealityRuntime.underlyings(),
-        cashExit: rwaMarketRealityRuntime.cashExit(),
-        ratios: rwaMarketRealityRuntime.ratios(),
-        supplies: rwaMarketRealityRuntime.supplies(),
-        now: rwaMarketRealityRuntime.now,
-        reference: rwaMarketRealityRuntime.reference(),
-      },
-      {
-        underlyingKey: question.underlyingKey,
-        direction: question.direction,
-        requestedCashAtomic: question.requestedCashAtomic,
-        destination: question.destination,
-      },
-    );
-    res.status(200).json(MarketRealityResponseV2Schema.parse(result));
+    res.status(200).json(await readMarketRealityV1(question));
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }
@@ -1277,12 +1356,12 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey/history', async (
     res.status(400).json({ error: question.code, code: question.code, detail: question.detail });
     return;
   }
-  const window = String(req.query.window ?? '24h');
-  if (!Object.keys(MARKET_REALITY_WINDOWS_V1).includes(window)) {
+  const window = historyWindowFromRequestV1(req);
+  if (!window.ok) {
     res.status(400).json({
       error: 'invalid_history_window',
       code: 'invalid_history_window',
-      detail: `window must be one of ${Object.keys(MARKET_REALITY_WINDOWS_V1).join(', ')}.`,
+      detail: window.detail,
     });
     return;
   }
@@ -1294,21 +1373,7 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey/history', async (
       });
       return;
     }
-    const history = await rwaMarketRealityRuntime.assembleHistory(
-      {
-        underlyings: rwaMarketRealityRuntime.underlyings(),
-        cashExit: rwaMarketRealityRuntime.cashExit(),
-        now: rwaMarketRealityRuntime.now,
-      },
-      {
-        underlyingKey: question.underlyingKey,
-        direction: question.direction,
-        requestedCashAtomic: question.requestedCashAtomic,
-        destination: question.destination,
-        window: window as MarketRealityWindowV1,
-      },
-    );
-    res.status(200).json(MarketRealityHistoryV1Schema.parse(history));
+    res.status(200).json(await readMarketRealityHistoryV1(question, window.window));
   } catch {
     res.status(500).json({ error: 'market_reality_failed', code: 'market_reality_failed' });
   }

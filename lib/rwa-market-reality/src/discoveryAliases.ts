@@ -44,6 +44,46 @@ export const REVIEWED_DISCOVERY_ALIASES_V1: readonly DiscoveryAliasV1[] = [
 ] as const;
 
 /**
+ * How a company is written on a page, for the rows stored under a ticker.
+ *
+ * The aliases above are what a person TYPES, lowercased and several per
+ * security. A page title needs the one name a reader recognises, cased — and
+ * "NVDA on Base" is a title nobody searching for NVIDIA finds. The same rule
+ * binds it: keyed by ISIN, used only when the row's own identifier is that ISIN
+ * and its stored name is nothing but the ticker. A row that carries a real
+ * company name keeps it.
+ */
+export const REVIEWED_COMPANY_DISPLAY_NAMES_V1: Readonly<Record<string, string>> = {
+  US67066G1040: 'NVIDIA', // NVDA
+  US88160R1014: 'Tesla', // TSLA
+  US5949181045: 'Microsoft', // MSFT
+  US02079K3059: 'Alphabet', // GOOGL
+  US19260Q1076: 'Coinbase', // COIN
+  US36467W1099: 'GameStop', // GME
+  US5949724083: 'Strategy', // MSTR
+};
+
+/**
+ * The company name to print, or null when only the ticker is known.
+ *
+ * Null rather than the ticker, so a caller never writes "NVDA (NVDA)".
+ */
+export function companyDisplayNameV1(row: {
+  canonicalName: string;
+  displaySymbol: string | null;
+  identifierScheme: string | null;
+  identifierValue: string | null;
+}): string | null {
+  const stored = row.canonicalName.trim();
+  const symbol = (row.displaySymbol ?? '').trim();
+  if (stored.length > 0 && stored.toUpperCase() !== symbol.toUpperCase()) return stored;
+  if (row.identifierScheme?.toLowerCase() === 'isin' && row.identifierValue) {
+    return REVIEWED_COMPANY_DISPLAY_NAMES_V1[row.identifierValue.toUpperCase()] ?? null;
+  }
+  return null;
+}
+
+/**
  * The shortest query an alias will answer.
  *
  * Two characters can be inside almost any word, and an alias firing on "st"

@@ -176,3 +176,75 @@ test('Metrics is sessionless on web and shared with the Base App', () => {
   assert.match(dashboard, /snapshot\.snapshotHash/);
   assert.match(dashboard, /not page views/);
 });
+
+// ---------------------------------------------------------------------------
+// 2026-09-22 — the Stocks board with no wallet.
+//
+// Rendered with no wallet, miorail.xyz was one "Continue with your wallet"
+// card, and a shared Stocks link previewed as the bare word "Miorail". Four
+// pieces make the fix, and each one alone would look done while the others
+// silently undid it: the routes, the edge, the deploy's check and the file a
+// crawler reads first.
+// ---------------------------------------------------------------------------
+
+test('Stocks is sessionless on web, at an address worth sharing', () => {
+  const app = source('artifacts/interface/src/app/App.tsx');
+  const ticker = app.indexOf('<Route path="/stocks/:symbol">');
+  const list = app.indexOf('<Route path="/stocks">');
+  // wouter matches in order: the ticker form first, or `/stocks` swallows it.
+  assert.ok(ticker >= 0 && list > ticker, '/stocks/:symbol must be declared before /stocks');
+  assert.ok(app.includes('<Route path="/signin">'), 'the session-only controls need a door to lead to');
+  const market = app.slice(app.indexOf('<Route path="/market">'));
+  assert.doesNotMatch(
+    market.slice(0, market.indexOf('</Route>')),
+    /RequireSession/,
+    '/market must not be gated: the page chooses the public door itself',
+  );
+  const home = source('artifacts/interface/src/features/console/HomeRoute.tsx');
+  assert.match(home, /Redirect to=\{`\/stocks\$\{window\.location\.search\}`\}/);
+  // The redirect is unreachable if "/" itself sits behind the gate — which is
+  // exactly how the first local render of this change still showed the wall.
+  const root = app.slice(app.indexOf('<Route path="/">'));
+  assert.doesNotMatch(root.slice(0, root.indexOf('</Route>')), /RequireSession/);
+});
+
+test('the edge sends stock pages to the API for their head, and falls back to the file', () => {
+  const nginx = source('ops/nginx/miorail-app.conf');
+  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {']) {
+    const at = nginx.indexOf(location);
+    assert.ok(at >= 0, `Nginx has no ${location}`);
+    const block = nginx.slice(at, nginx.indexOf('\n}', at));
+    assert.match(block, /proxy_pass http:\/\/127\.0\.0\.1:8080;/);
+    // An API outage must serve the static document, never an error page...
+    assert.match(block, /error_page 500 502 503 504 =200 \/index\.html;/);
+    // ...while an unknown ticker keeps its real 404.
+    assert.doesNotMatch(block, /error_page[^;]*\b404\b/);
+  }
+  const sitemap = nginx.slice(nginx.indexOf('location = /sitemap.xml {'));
+  assert.match(sitemap.slice(0, 400), /proxy_pass http:\/\/127\.0\.0\.1:8080;/);
+});
+
+test('the deploy proves a stock page left with its own head', () => {
+  const deploy = source('ops/deploy.sh');
+  assert.match(deploy, /\/api\/public\/stocks\/underlyings/);
+  assert.match(deploy, /property=\\"og:title\\"/);
+  assert.match(deploy, /nginx served the static file/);
+});
+
+test('robots.txt is a file, and it names the sitemap', () => {
+  // Before this, /robots.txt fell through to the SPA and answered 200 with the
+  // app's HTML — a crawler's first read of the site was a page, not rules.
+  const robots = source('artifacts/interface/public/robots.txt');
+  assert.match(robots, /^Sitemap: https:\/\/miorail\.xyz\/sitemap\.xml$/m);
+  assert.match(robots, /^Disallow: \/api\/$/m);
+});
+
+test('an unread configuration is never reported as a switched-off section', () => {
+  // With the board open to visitors, the rail is on every first view — and a
+  // signed-out `/status` reads every flag false. Both navs may only say "off
+  // on this server" about flags they actually read.
+  const web = source('artifacts/interface/src/features/console/useConsoleNav.ts');
+  assert.match(web, /const discoverOff =\s*\n\s*status\.isSuccess &&/);
+  const mini = source('artifacts/miniapp/app/components/MiniConsole.tsx');
+  assert.match(mini, /unavailable: !status\.isSuccess\s*\n\s*\? undefined/);
+});

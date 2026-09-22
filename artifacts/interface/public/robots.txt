@@ -1,0 +1,9 @@
+# The Stocks board is public and meant to be found; the API behind it is data,
+# not pages, and the sign-in door is not a destination.
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /mcp
+Disallow: /signin
+
+Sitemap: https://miorail.xyz/sitemap.xml

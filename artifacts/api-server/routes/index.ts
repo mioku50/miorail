@@ -18,6 +18,7 @@ import { routeIntelligenceRouter } from './routeIntelligence';
 import { publicProofRouter } from './publicProof';
 import { publicMetricsRouter } from './publicMetrics';
 import { publicIdentityRouter } from './publicIdentity';
+import { publicStocksRouter } from './publicStocks';
 import { x402IntelligenceRouterV1 } from './x402/intelligence';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
@@ -32,6 +33,11 @@ routes.use('/public', publicMetricsRouter);
 // "Is this the real one" opens with no session for the same reason a proof
 // does: the reader holding an unknown address is the reader with no account.
 routes.use('/public', publicIdentityRouter);
+// The Stocks board, read-only, for a visitor with no wallet. Until this, the
+// first thing anybody saw at miorail.xyz was "Continue with your wallet" —
+// while the public MCP served the same evidence to any bot. Measuring,
+// watching and the narrator stay below the tenant gate.
+routes.use('/public/stocks', publicStocksRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
 routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);

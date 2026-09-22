@@ -11,6 +11,7 @@ import {
   useRwaUnderlyings,
   useRwaUseAccess,
   useAerodromePoolSpot,
+  type StocksReadAccessV1,
 } from '@mioagent/api-client-react';
 import {
   stockExecutionGoalSentenceV1,
@@ -40,7 +41,11 @@ import {
 } from './marketRealityHistoryView';
 import { marketRealityRadarViewV1 } from './marketRealityRadarView';
 import type { MarketRealityRadarScreenModelV1 } from './MarketRealityRadarScreen';
-import type { MarketRealityScreenModelV1, MarketRealitySurfaceV1 } from './MarketRealityScreen';
+import type {
+  MarketRealityScreenModelV1,
+  MarketRealitySurfaceV1,
+  StocksVisitorNoticeV1,
+} from './MarketRealityScreen';
 
 // ---------------------------------------------------------------------------
 // Phase 15.1 — the Stocks console, once, for both surfaces.
@@ -116,6 +121,27 @@ export interface StocksConsoleInputV1 {
    * for. False means we do not know, and the copy says so instead.
    */
   configurationRead?: boolean;
+  /**
+   * Who is reading. `public` is a visitor with no session: the board reads the
+   * same evidence through the public door, and everything a session pays for —
+   * measuring, watching, the narrator, the pool's own spot price — is off.
+   * Defaults to `session`, which is everything this hook did before.
+   */
+  access?: StocksReadAccessV1;
+  /**
+   * Where a signed-out reader goes when they press something only a session
+   * can do. With it, Measure, Watch and Ask stay on the board and lead to the
+   * wallet; without it they are absent, the same as on a surface that mounts
+   * no advanced path.
+   */
+  onSignInRequired?: () => void;
+  /**
+   * A ticker from a public address (`/stocks/nvda`). It selects the security
+   * whose display symbol it is — and nothing else: a ticker the corpus does
+   * not hold selects no security at all, rather than the default one, so a
+   * link to one stock can never open on another.
+   */
+  preferredSymbol?: string | null;
   /** Open the full dossier for one address. Omitted where there is no surface. */
   onInvestigate?: (tokenAddress: string) => void;
   /** Open the tenant's Radar feed. */
@@ -257,11 +283,31 @@ export function autoMeasureDecisionV1(input: {
   return 'measure';
 }
 
+/**
+ * The one sentence a signed-out reader gets, and the one button.
+ *
+ * It names what is missing — measuring again, a watch, buying and selling —
+ * because those are the controls a reader would otherwise press and find
+ * refused. Everything else on the board is the same evidence a session sees.
+ */
+export function stocksVisitorNoticeV1(onSignIn?: () => void): StocksVisitorNoticeV1 {
+  return {
+    title: 'Reading without a wallet',
+    body: 'Everything on this board is public: the last measured prices, what it cost to get back out, and which contract is official, each with its age. Connect a wallet to measure again now, watch a price, or buy and sell.',
+    action: 'Connect wallet',
+    ...(onSignIn ? { onSignIn } : {}),
+  };
+}
+
 export interface StocksConsoleResultV1 {
   model: MarketRealityScreenModelV1;
   /** The security actually on screen: the question's, or the first comparable
    * one the graph has. The caller persists it if its surface can. */
   selectedKey: string | null;
+  /** The selected security's display symbol, for a public address. */
+  selectedSymbol: string | null;
+  /** Any security's display symbol, from the chooser already read. */
+  symbolOf: (underlyingKey: string) => string | null;
   /** How many representations this read put on the board. */
   representationCount: number;
 }
@@ -271,6 +317,8 @@ export interface StocksConsoleResultV1 {
  */
 export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleResultV1 {
   const { question, enabled } = input;
+  const access: StocksReadAccessV1 = input.access ?? 'session';
+  const session = access === 'session';
 
   // The corpus this page opens on.
   //
@@ -279,7 +327,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // question — not filtering this one — so the scope is state here and a cache
   // key in the hook.
   const [scope, setScope] = useState<'coinbase_b20' | 'all_representations' | null>(null);
-  const index = useRwaUnderlyings({ enabled, scope: scope ?? undefined });
+  const index = useRwaUnderlyings({ enabled, scope: scope ?? undefined, access });
   const choices = useMemo(() => underlyingChoicesV1(index.data ?? null), [index.data]);
   const counters = useMemo(() => underlyingCountersV1(index.data ?? null), [index.data]);
   const scopeView = useMemo(() => stockScopeViewV1(index.data ?? null), [index.data]);
@@ -295,7 +343,33 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       null,
     [choices],
   );
-  const selectedKey = question.underlyingKey ?? defaultKey;
+
+  // The ticker a public address carries, resolved against the chooser this
+  // hook already read. Coinbase first when two securities share a symbol,
+  // because that is the corpus the board opens on.
+  const preferredSymbol = input.preferredSymbol?.trim().toLowerCase() || null;
+  const symbolKey = useMemo(() => {
+    if (!preferredSymbol || !index.data) return null;
+    const matches = index.data.entries.filter(
+      (entry) => entry.displaySymbol?.toLowerCase() === preferredSymbol,
+    );
+    return (matches.find((entry) => entry.coinbaseIssued) ?? matches[0])?.underlyingKey ?? null;
+  }, [preferredSymbol, index.data]);
+  // Not in the scope the board opened on: widen once before saying "not held",
+  // because a Backed-only security is still a security Miorail reviewed.
+  const symbolMissingInScope = Boolean(preferredSymbol && index.data && !symbolKey);
+  useEffect(() => {
+    if (symbolMissingInScope && index.data?.scope !== 'all_representations') {
+      setScope('all_representations');
+    }
+  }, [symbolMissingInScope, index.data?.scope]);
+  const symbolNotHeld =
+    symbolMissingInScope && index.data?.scope === 'all_representations' ? preferredSymbol : null;
+
+  const selectedKey = question.underlyingKey ?? (preferredSymbol ? symbolKey : defaultKey);
+  const symbolOf = (underlyingKey: string): string | null =>
+    index.data?.entries.find((entry) => entry.underlyingKey === underlyingKey)?.displaySymbol ??
+    null;
 
   const reality = useRwaMarketReality(
     {
@@ -304,7 +378,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       requestedCashAtomic: question.requestedCashAtomic,
       destination: question.destination,
     },
-    { enabled },
+    { enabled, access },
   );
   const history = useRwaMarketRealityHistory(
     {
@@ -316,9 +390,13 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       // selects the nearest exact captured point and never interpolates it.
       window: '7d',
     },
-    { enabled: enabled && question.surface === 'market' && question.historyPeriod !== 'now' },
+    {
+      enabled: enabled && question.surface === 'market' && question.historyPeriod !== 'now',
+      access,
+    },
   );
-  const radar = useMarketRealityRadar({ enabled });
+  // Watches belong to a tenant, so a public reader has none to match against.
+  const radar = useMarketRealityRadar({ enabled: enabled && session });
   const addWatch = useAddMarketRealityRadarWatch();
   const removeWatch = useRemoveMarketRealityRadarWatch();
   const measure = useMeasureRwaMarketReality();
@@ -428,11 +506,11 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     () => (reality.data?.representations ?? []).map((row) => row.tokenAddress),
     [reality.data],
   );
-  const dossierA = useOfficialAssetDossier(representationAddresses[0] ?? null);
-  const dossierB = useOfficialAssetDossier(representationAddresses[1] ?? null);
-  const dossierC = useOfficialAssetDossier(representationAddresses[2] ?? null);
-  const dossierD = useOfficialAssetDossier(representationAddresses[3] ?? null);
-  const dossierE = useOfficialAssetDossier(representationAddresses[4] ?? null);
+  const dossierA = useOfficialAssetDossier(representationAddresses[0] ?? null, { access });
+  const dossierB = useOfficialAssetDossier(representationAddresses[1] ?? null, { access });
+  const dossierC = useOfficialAssetDossier(representationAddresses[2] ?? null, { access });
+  const dossierD = useOfficialAssetDossier(representationAddresses[3] ?? null, { access });
+  const dossierE = useOfficialAssetDossier(representationAddresses[4] ?? null, { access });
 
   const ladders = useMemo(() => {
     const built: Record<
@@ -522,9 +600,13 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       ) ?? null,
     [view],
   );
+  // A second opinion, and the one read here with no public door: it is a
+  // chain read aimed at a pool address, and that address is not ours to let
+  // an anonymous caller choose. Without a session the board shows the router's
+  // price and no corroboration, which is what a card with no spot read says.
   const poolSpotQuery = useAerodromePoolSpot(
     spotToken?.routedThrough?.venues[0]?.poolAddress ?? null,
-    { enabled: enabled && question.surface !== 'utility' },
+    { enabled: enabled && session && question.surface !== 'utility' },
   );
   const poolSpotByAddress = useMemo(() => {
     if (!spotToken) return {};
@@ -612,7 +694,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   const autoMeasuredQuestion = useRef<string | null>(null);
   const measureMutate = measure.mutate;
   useEffect(() => {
-    if (!enabled || !selectedKey || !questionKey) return;
+    // A measurement spends router calls, so a visitor with no session never
+    // starts one. The public board shows the stored ladder and says its age.
+    if (!enabled || !session || !selectedKey || !questionKey) return;
     if (autoMeasuredQuestion.current === questionKey) return;
     const representations = reality.data?.representations;
     if (!representations) return;
@@ -633,6 +717,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     });
   }, [
     enabled,
+    session,
     selectedKey,
     questionKey,
     reality.data,
@@ -654,11 +739,11 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // rather than rendering as negative.
   // -------------------------------------------------------------------------
   const useAccessEnabled = enabled && question.surface === 'utility';
-  const useAccess0 = useRwaUseAccess(representationAddresses[0] ?? null, { enabled: useAccessEnabled });
-  const useAccess1 = useRwaUseAccess(representationAddresses[1] ?? null, { enabled: useAccessEnabled });
-  const useAccess2 = useRwaUseAccess(representationAddresses[2] ?? null, { enabled: useAccessEnabled });
-  const useAccess3 = useRwaUseAccess(representationAddresses[3] ?? null, { enabled: useAccessEnabled });
-  const useAccess4 = useRwaUseAccess(representationAddresses[4] ?? null, { enabled: useAccessEnabled });
+  const useAccess0 = useRwaUseAccess(representationAddresses[0] ?? null, { enabled: useAccessEnabled, access });
+  const useAccess1 = useRwaUseAccess(representationAddresses[1] ?? null, { enabled: useAccessEnabled, access });
+  const useAccess2 = useRwaUseAccess(representationAddresses[2] ?? null, { enabled: useAccessEnabled, access });
+  const useAccess3 = useRwaUseAccess(representationAddresses[3] ?? null, { enabled: useAccessEnabled, access });
+  const useAccess4 = useRwaUseAccess(representationAddresses[4] ?? null, { enabled: useAccessEnabled, access });
   const useAccessByAddress = useMemo(() => {
     const entries: [string, RepresentationUseAccessV1 | null][] = [];
     for (const [index, query] of [useAccess0, useAccess1, useAccess2, useAccess3, useAccess4].entries()) {
@@ -680,6 +765,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   });
 
   const model: MarketRealityScreenModelV1 = {
+    visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     scope: scopeView,
     // The selected key belongs to the scope it was chosen in. Widening keeps it
     // — every scoped key is in the wide corpus — and narrowing lets the default
@@ -709,6 +795,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     viewLoading: reality.isLoading,
     viewError:
       disabledNotice ??
+      (symbolNotHeld
+        ? `Miorail holds no reviewed security under the ticker ${symbolNotHeld.toUpperCase()}. That is a statement about Miorail’s corpus, not about what exists on Base.`
+        : null) ??
       (reality.error ? stocksConsoleFailureCopyV1(reality.error, 'this comparison') : null),
     history: historyView,
     historyLoading: history.isLoading,
@@ -771,12 +860,24 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       answer: ask.data ?? null,
       asking: ask.isPending,
       error: ask.error ? stocksConsoleFailureCopyV1(ask.error, 'this question') : null,
-      available: Boolean(enabled && selectedKey),
+      // The narrator is a metered model call, so it answers sessions only. A
+      // public reader still sees the box when there is a door to sign in by.
+      available: Boolean(enabled && selectedKey && (session || input.onSignInRequired)),
     },
 
     actions: {
       onUnderlying: (underlyingKey) => input.onQuestion({ underlyingKey }),
-      ...(enabled && selectedKey
+      // Signed out, the four things only a session can do lead to the wallet
+      // instead of calling an endpoint that would refuse them.
+      ...(enabled && selectedKey && !session && input.onSignInRequired
+        ? {
+            onMeasure: input.onSignInRequired,
+            onAsk: () => input.onSignInRequired?.(),
+            onWatch: () => input.onSignInRequired?.(),
+            onUnwatch: () => input.onSignInRequired?.(),
+          }
+        : {}),
+      ...(enabled && selectedKey && session
         ? {
             onMeasure: () =>
               measure.mutate({
@@ -881,7 +982,13 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     },
   };
 
-  return { model, selectedKey, representationCount: reality.data?.representations.length ?? 0 };
+  return {
+    model,
+    selectedKey,
+    selectedSymbol: selectedKey ? symbolOf(selectedKey) : null,
+    symbolOf,
+    representationCount: reality.data?.representations.length ?? 0,
+  };
 }
 
 /** Why Radar could not be read. Same rule as above: about our request. */

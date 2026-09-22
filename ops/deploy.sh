@@ -506,6 +506,25 @@ printf '%s' "$oauth_authorize" | jq -e 'has("error")' >/dev/null \
   || { echo 'FAILED: /authorize did not answer as an OAuth endpoint (the SPA is still serving it)'; exit 1; }
 printf '  mcp oauth      %-28s %s\n' "$oauth_origin/authorize" 'discovery + PKCE, refuses a bare request'
 
+# The Stocks board with no wallet, and the page a shared link opens.
+#
+# On 2026-09-22 the site, rendered with no wallet, was one "Continue with your
+# wallet" card, and a shared Stocks link previewed as the bare word "Miorail".
+# Both are public GETs, so both are checked from outside: the public board must
+# answer without a session, and /stocks/<ticker> must come back with a head
+# written for that stock. HTML without it means nginx fell back to the static
+# file — the page still works, and the preview is lost again, silently.
+public_stocks=$(curl -fsS --max-time 20 "$oauth_origin/api/public/stocks/underlyings" 2>/dev/null) \
+  || { echo 'FAILED: the public Stocks board does not answer without a session'; exit 1; }
+stock_symbol=$(printf '%s' "$public_stocks" \
+  | jq -r '[.entries[] | select(.displaySymbol != null) | .displaySymbol][0] // empty')
+[ -n "$stock_symbol" ] || { echo 'FAILED: the public Stocks board answered with no security in it'; exit 1; }
+stock_path="/stocks/$(printf '%s' "$stock_symbol" | tr '[:upper:]' '[:lower:]')"
+stock_page=$(curl -fsS --max-time 20 "$oauth_origin$stock_path" 2>/dev/null) || stock_page=''
+printf '%s' "$stock_page" | grep -q "property=\"og:title\" content=\"[^\"]*$stock_symbol" \
+  || { echo "FAILED: $stock_path came back without its own head (nginx served the static file)"; exit 1; }
+printf '  stocks         %-28s %s\n' "$oauth_origin$stock_path" 'public board + a head naming the stock'
+
 # The language lane, asked to answer.
 #
 # On 2026-09-09 the configured primary had been returning 402 on every call for

@@ -1981,8 +1981,12 @@ export function MiniConsole() {
     // Discover now opens on the official corpus, which is gated separately.
     // The tab is only unusable when BOTH universes are switched off; with one
     // of them on, the section works and says which half is missing inside.
-    unavailable:
-      b20GateOn || routeIntelligenceOn
+    // Only when `/status` was READ. Signed out it answers 401 and every flag
+    // reads false, so "off on this server" would be a claim about the
+    // deployment made from nothing — the same mistake the Stocks tab once made.
+    unavailable: !status.isSuccess
+      ? undefined
+      : b20GateOn || routeIntelligenceOn
         ? b20GateOn
           ? undefined
           : { portfolio: "B20 inspection is off on this server, so your tokens were not read." }
@@ -2011,13 +2015,21 @@ export function MiniConsole() {
     surface: "market",
     historyPeriod: "now",
   });
+  // Signed out, `/status` answers 401. Until 2026-09-22 that left this tab
+  // with two orange "you are not signed in" banners over an empty board; the
+  // board now reads the public door instead, the same evidence minus what only
+  // a session can do. Measure, Watch and Ask are absent here rather than
+  // leading anywhere: this surface signs in through its own header.
+  const stocksSignedOut =
+    status.isError && String((status.error as Error | null)?.message ?? "").includes("authentication_required");
   const stocks = useStocksConsoleV1({
     question: stocksQuestion,
-    enabled: routeIntelligenceOn,
+    enabled: stocksSignedOut ? true : routeIntelligenceOn,
+    access: stocksSignedOut ? "public" : "session",
     // Signed out, `/status` answers 401 and every flag reads false. The Base
     // App told those visitors the server had route intelligence switched off,
-    // which it had no way to know.
-    configurationRead: status.isSuccess,
+    // which it had no way to know. The public door answers for itself.
+    configurationRead: stocksSignedOut ? true : status.isSuccess,
     onQuestion: (patch) => setStocksQuestion((current) => ({ ...current, ...patch })),
     // Base App has no URL bar, so every handoff is a section switch. The B20
     // tab owns the wallet-bound checks, which is where an address belongs.

@@ -23,6 +23,7 @@ import {
 } from '@mioagent/ui';
 import { useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
+import { useAuthGate } from '../../app/AuthProvider';
 
 // ---------------------------------------------------------------------------
 // Phase 10B — Market Reality, on the web.
@@ -42,6 +43,17 @@ import { useConsoleNav } from '../console/useConsoleNav';
 // the part that is genuinely the web's: a URL, a shell and a header.
 //
 // This page holds no clearance, prepares no plan and opens no wallet.
+//
+// 2026-09-22 — and it opens without one. Rendered with no wallet, miorail.xyz
+// was a single "Continue with your wallet" card: nothing said what Miorail is,
+// while the public MCP served this same board to any bot. A reader with no
+// session now reads it through the public door (`access: 'public'`); the
+// session adds measuring, watching, the narrator and acting, and the buttons
+// for those lead to the wallet instead of to a refusal.
+//
+// Two addresses reach it. `/market?key=…` is the console's own. `/stocks/<ticker>`
+// is the one worth sharing: the server writes that stock into the page head, so
+// a link previews as the stock and not as the bare word "Miorail".
 // ---------------------------------------------------------------------------
 
 function shortAddressV1(address: string | undefined): string | null {
@@ -90,25 +102,52 @@ function searchFromPatchV1(
   return params.toString();
 }
 
-export function MarketRealityPage() {
-  const [, navigate] = useLocation();
+export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
+  const [location, navigate] = useLocation();
   const search = useSearch();
   const { address } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
   const status = useStatus();
+  const gate = useAuthGate();
   const nav = useConsoleNav('market');
 
   const question = useMemo(() => questionFromSearchV1(search), [search]);
-  const enabled = status.data?.productMigration?.routeIntelligenceV1 === true;
+  // Public until a session is PROVEN, not until one is ruled out: a visitor
+  // must never look at an empty board while the session check is in flight.
+  const access = gate.showPrivateSurfaces ? 'session' : 'public';
+  const enabled =
+    access === 'public' ? true : status.data?.productMigration?.routeIntelligenceV1 === true;
+  // `/stocks` with no ticker is a page of its own: the board opens on its
+  // default security and the address stays the list's.
+  const onStocksPath = location === '/stocks' || location.startsWith('/stocks/');
 
   const stocks = useStocksConsoleV1({
     question,
     enabled,
+    access,
+    preferredSymbol: symbol ?? null,
     // `/status` is behind the tenant gate: signed out, every flag reads false.
     // Saying "switched off on this server" then is a claim we cannot support.
-    configurationRead: status.isSuccess,
-    onQuestion: (patch) =>
-      navigate(`/market?${searchFromPatchV1(search, stocks.selectedKey, patch)}`),
+    // The public door answers for itself — a 404 from it is the switch.
+    configurationRead: access === 'public' ? true : status.isSuccess,
+    onSignInRequired: () =>
+      navigate(`/signin?next=${encodeURIComponent(`${location}${search ? `?${search}` : ''}`)}`),
+    onQuestion: (patch) => {
+      const nextKey = patch.underlyingKey ?? stocks.selectedKey;
+      const nextSymbol = nextKey ? stocks.symbolOf(nextKey) : null;
+      // On a shareable address the ticker is the path, so the query never
+      // carries the key: one security, one way to write its address.
+      if (onStocksPath && nextSymbol) {
+        const params = new URLSearchParams(
+          searchFromPatchV1(search, null, { ...patch, underlyingKey: undefined }),
+        );
+        params.delete('key');
+        const query = params.toString();
+        navigate(`/stocks/${nextSymbol.toLowerCase()}${query ? `?${query}` : ''}`);
+        return;
+      }
+      navigate(`/market?${searchFromPatchV1(search, stocks.selectedKey, patch)}`);
+    },
     onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
     onOpenRadar: () => navigate('/radar'),
     onInspectRoute: ({ tokenAddress, goal, minimumVerification }) => {
@@ -140,13 +179,15 @@ export function MarketRealityPage() {
   });
 
   // Written into the URL once the chooser has loaded, so a refresh keeps the
-  // security a reader is looking at instead of silently re-picking.
+  // security a reader is looking at instead of silently re-picking. Not on a
+  // `/stocks` address: there the path already names the security, or names
+  // the list, and rewriting it would turn a shared link into a different one.
   useEffect(() => {
-    if (question.underlyingKey || !stocks.selectedKey) return;
+    if (onStocksPath || question.underlyingKey || !stocks.selectedKey) return;
     const params = new URLSearchParams(search);
     params.set('key', stocks.selectedKey);
     navigate(`/market?${params.toString()}`, { replace: true });
-  }, [stocks.selectedKey, question.underlyingKey, navigate, search]);
+  }, [onStocksPath, stocks.selectedKey, question.underlyingKey, navigate, search]);
 
   return (
     <ConsoleShell

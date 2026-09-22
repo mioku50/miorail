@@ -203,7 +203,23 @@ export interface MarketRealityActionsV1 {
 
 export type MarketRealitySurfaceV1 = 'market' | 'utility';
 
+/**
+ * A reader with no wallet, told so once and offered the way in.
+ *
+ * Not a warning. Everything on the board is still true and still dated; what
+ * the reader cannot do yet is spend a router call, keep a watch or act, and the
+ * sentence names exactly those so nothing on the page looks broken for them.
+ */
+export interface StocksVisitorNoticeV1 {
+  title: string;
+  body: string;
+  action: string;
+  onSignIn?: () => void;
+}
+
 export interface MarketRealityScreenModelV1 {
+  /** Null for a signed-in reader. */
+  visitor?: StocksVisitorNoticeV1 | null;
   /** Phase 13.2. Null until a reader has asked. */
   ask?: StocksAskPanelModelV1;
   /** Why advanced execution is unavailable for an exact address, when it is.
@@ -1349,6 +1365,19 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       : null;
   return (
     <section className="mr" aria-label="Market Reality">
+      {model.visitor ? (
+        <div className="mr-scope" aria-label="Reading without a wallet">
+          <div>
+            <h3>{model.visitor.title}</h3>
+            <p className="lnote">{model.visitor.body}</p>
+          </div>
+          {model.visitor.onSignIn ? (
+            <button type="button" className="btn" onClick={model.visitor.onSignIn}>
+              {model.visitor.action}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       {/* What this page is, before what it counts. Coinbase B20 is the standard
           Base documents for tokenized stocks on this chain, and it is the scope
           a reader lands in; the wider corpus is one press away and is named

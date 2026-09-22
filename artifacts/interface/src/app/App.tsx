@@ -12,6 +12,7 @@ import {
   type BaseMcpOAuthMessageV1,
 } from './baseMcpPopupHandoff';
 import { RequireSession } from './RequireSession';
+import { SignInPage } from './SignInPage';
 import { HomeRoute } from '../features/console/HomeRoute';
 
 
@@ -206,6 +207,23 @@ export function App() {
           <PublicIdentityPage />
         </Route>
 
+        {/* The Stocks board at an address worth sharing. No session: the board
+            reads the public door until a wallet signs in, and the server has
+            already written this stock into the page head for link previews.
+            The ticker form first — wouter matches in order. */}
+        <Route path="/stocks/:symbol">
+          {(params) => <MarketRealityPage symbol={params.symbol} />}
+        </Route>
+        <Route path="/stocks">
+          <MarketRealityPage />
+        </Route>
+
+        {/* Where a button that needs a session sends a signed-out reader, and
+            back again once the wallet has signed. */}
+        <Route path="/signin">
+          <SignInPage />
+        </Route>
+
         {/* Phase 6 — Discover opens on the official corpus: assets an issuer
             publishes, what it costs to get back out of one, what has changed,
             and which contracts are wearing an official name.
@@ -229,11 +247,11 @@ export function App() {
 
         {/* Phase 10B — one security, every reviewed way to hold it on Base.
             The whole question lives in the query string, so a refresh, a Back
-            press and a shared link all restore the same comparison. */}
+            press and a shared link all restore the same comparison. Readable
+            without a session since 2026-09-22: the page picks the public door
+            itself, and only its session-only controls lead to the wallet. */}
         <Route path="/market">
-          <RequireSession>
-            <MarketRealityPage />
-          </RequireSession>
+          <MarketRealityPage />
         </Route>
 
         {/* Connected Intelligence 1 — the review an external assistant's draft
@@ -365,11 +383,15 @@ export function App() {
 
         {/* "/" resolves to a section rather than BEING one. Everything else
             falls through to the flow, which is the safe surface: it needs no
-            wallet, no Discover and no stored evidence to be useful. */}
+            wallet, no Discover and no stored evidence to be useful.
+
+            Not behind the session gate since 2026-09-22. The gate here meant a
+            visitor's whole first view of miorail.xyz was "Continue with your
+            wallet"; HomeRoute now sends a reader with no session to the public
+            Stocks board, and every section it sends a session to carries its
+            own gate. */}
         <Route path="/">
-          <RequireSession>
-            <HomeRoute />
-          </RequireSession>
+          <HomeRoute />
         </Route>
         <Route>
           <RequireSession>
