@@ -10,7 +10,7 @@ import {
 } from '@mioagent/route-domain';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
 import { reconstructAssetChangesV1 } from './assetChanges.js';
-import { ROUTE_PROOF_TERMINAL_FINAL_STATUSES } from './constants.js';
+import { CANONICAL_BASE_USDC, CANONICAL_BASE_WETH, ROUTE_PROOF_TERMINAL_FINAL_STATUSES } from './constants.js';
 import { computeRouteProofDeviationV1 } from './deviation.js';
 import {
   RouteProofReconciliationResultV1Schema,
@@ -140,17 +140,26 @@ function deriveLifecycleAfterReconcileV1(proof: RouteProofV1, events: readonly R
   return pendingLifecycleV1(proof.receipts, events);
 }
 
+/** An asset an older reconstruction could not read: Base's native asset
+ * before T74, and any ERC-20 but canonical USDC and WETH before 2026-09-23. */
+function assetUnreadableBeforeV1(asset: RouteProofV1['expectedResult']['assetChanges'][number]['asset']): boolean {
+  if (asset.kind === 'native') return true;
+  const address = asset.address?.toLowerCase();
+  return address !== CANONICAL_BASE_USDC && address !== CANONICAL_BASE_WETH;
+}
+
 /** T74: old native ETH proofs entered manual review solely because the first
- * reconciler knew ERC-20 Transfer logs only. They may be retried exactly once
- * under the new WETH9-event reconstruction, but a receipt conflict or any
- * other asset remains sticky manual review. */
-function nativeReconstructionRetryEligibleV1(
+ * reconciler knew ERC-20 Transfer logs only; on 2026-09-23 the same was found
+ * for every tokenized-stock trade, because the ERC-20 side knew USDC and WETH
+ * only. Such a proof may be retried under the current reconstruction, but a
+ * receipt conflict remains sticky manual review. */
+function legacyReconstructionRetryEligibleV1(
   proof: RouteProofV1,
   events: readonly RouteProofEventV1[],
 ): boolean {
   if (proof.finalStatus !== 'reconciliation_required' || proof.reconciliationState !== 'manual_review') return false;
   if (proof.actualResult !== null) return false;
-  if (!proof.expectedResult.assetChanges.some((change) => change.asset.kind === 'native')) return false;
+  if (!proof.expectedResult.assetChanges.some((change) => assetUnreadableBeforeV1(change.asset))) return false;
   if (proof.receipts.length === 0 || proof.receipts.some((receipt) => receipt.status !== 'success')) return false;
   const hasReceiptConflict = events.some((event) => {
     const conflicts = event.payload.receiptConflicts;
@@ -278,12 +287,13 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
 
       // --- Idempotent no-op for an already-finalized proof ----------------
       // `manual_review` is sticky for conflicts and unknown assets. The only
-      // narrow retry is a legacy Base native-ETH proof: older code lacked the
-      // canonical WETH9 event reconstruction now available below. A conflict
+      // narrow retry is a proof whose assets older code could not read: native
+      // ETH before the canonical WETH9 event reconstruction, and any ERC-20 but
+      // USDC and WETH before the Transfer reading was made general. A conflict
       // can therefore never be "washed" clean by a flapping RPC.
       if (
         (ROUTE_PROOF_TERMINAL_FINAL_STATUSES as readonly string[]).includes(proof.finalStatus) ||
-        (proof.reconciliationState === 'manual_review' && !nativeReconstructionRetryEligibleV1(proof, events))
+        (proof.reconciliationState === 'manual_review' && !legacyReconstructionRetryEligibleV1(proof, events))
       ) {
         return RouteProofReconciliationResultV1Schema.parse({
           outcome: 'already_finalized',

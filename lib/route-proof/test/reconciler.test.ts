@@ -1,11 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { buildRouteProofEventV1 } from '@mioagent/route-domain';
+import { RouteProofV1Schema, ZERO_HASH_V1, buildRouteProofEventV1, hashRouteProofV1 } from '@mioagent/route-domain';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
+import { CANONICAL_BASE_USDC } from '../src/constants.js';
+import type { VerifiedReceiptSourceV1 } from '../src/receipts.js';
 import { RouteProofReconcileBindingError, createRouteProofReconciler } from '../src/reconciler.js';
 import {
+  ARBITRARY_TOKEN,
   ETH_BASE,
   NOW,
+  POOL,
   ROUTER,
   TENANT,
   TX_HASH_1,
@@ -15,6 +19,7 @@ import {
   revertedReceiptSource,
   seedRouteProofFixture,
   successSwapReceiptSource,
+  transferLog,
   weth9MovementLog,
 } from './fixtures.js';
 
@@ -320,6 +325,64 @@ test('reconcile: a legacy native-output manual review can be retried when WETH9 
   assert.equal(second.proof.finalStatus, 'completed');
   assert.equal(second.proof.reconciliationState, 'matched');
   assert.equal(second.proof.actualOutput, '38000000000000000');
+});
+
+/** A USDC → stock swap as Uniswap settles it: USDC from the wallet to the
+ * pool, the stock from the pool to the wallet, each logged by its own token. */
+function stockReceiptSource(seeded: Awaited<ReturnType<typeof seedRouteProofFixture>>): VerifiedReceiptSourceV1 {
+  const expectedOutput = seeded.proof.expectedResult.outputAmountAtomic;
+  assert.ok(expectedOutput, 'the fixture expects an output');
+  return {
+    ...successSwapReceiptSource({ transactionHash: TX_HASH_1, usdcAmountAtomic: seeded.intent.amount.amountAtomic, wethAmountAtomic: '0' }),
+    logs: [
+      transferLog(CANONICAL_BASE_USDC as `0x${string}`, WALLET, POOL, BigInt(seeded.intent.amount.amountAtomic)),
+      transferLog(ARBITRARY_TOKEN.address as `0x${string}`, POOL, WALLET, BigInt(expectedOutput)),
+    ],
+  };
+}
+
+test('reconcile: a tokenized-stock output is completed from the stock’s own Transfer to the wallet', async () => {
+  const seeded = await seedRouteProofFixture({ toAsset: ARBITRARY_TOKEN, transactionHashes: [TX_HASH_1] });
+  const result = await reconcilerFor(seeded, mockReceiptReader({ [TX_HASH_1]: stockReceiptSource(seeded) })).reconcile({
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    routeRunId: seeded.intent.id,
+    routeProofId: seeded.proof.id,
+    now: LATER,
+  });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.proof.finalStatus, 'completed');
+  assert.equal(result.proof.reconciliationState, 'matched');
+  assert.equal(result.proof.actualOutput, seeded.proof.expectedResult.outputAmountAtomic);
+});
+
+test('reconcile: a stock proof that older code sent to manual review is retried and completed', async () => {
+  // Production on 2026-09-23: a successful receipt, no actual result, manual
+  // review — because the reconstruction then knew USDC and WETH only.
+  const seeded = await seedRouteProofFixture({ toAsset: ARBITRARY_TOKEN, transactionHashes: [TX_HASH_1] });
+  const stuck = {
+    ...seeded.proof,
+    finalStatus: 'reconciliation_required' as const,
+    status: 'reconciliation_required' as const,
+    reconciliationState: 'manual_review' as const,
+    receipts: [{ transactionHash: TX_HASH_1, status: 'success' as const, blockNumber: '33123499', gasUsed: '185000' }],
+    actualResult: null,
+    proofHash: ZERO_HASH_V1,
+  };
+  await seeded.repository.upsertProofProjection(
+    seeded.intent.id,
+    RouteProofV1Schema.parse({ ...stuck, proofHash: hashRouteProofV1(stuck) }),
+  );
+  const result = await reconcilerFor(seeded, mockReceiptReader({ [TX_HASH_1]: stockReceiptSource(seeded) })).reconcile({
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    routeRunId: seeded.intent.id,
+    routeProofId: seeded.proof.id,
+    now: LATER,
+  });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.proof.reconciliationState, 'matched');
+  assert.equal(result.proof.actualOutput, seeded.proof.expectedResult.outputAmountAtomic);
 });
 
 test('reconcile: native ETH output is completed from an approved-router WETH9 withdrawal', async () => {

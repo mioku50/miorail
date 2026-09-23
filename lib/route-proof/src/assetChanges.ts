@@ -1,7 +1,6 @@
 import { decodeEventLog, erc20Abi, type Hex } from 'viem';
 import type { ExecutionResultV1, ExpectedAssetChangeV1 } from '@mioagent/route-domain';
 import {
-  CANONICAL_BASE_USDC,
   CANONICAL_BASE_WETH,
   ERC20_TRANSFER_TOPIC0,
   WETH_DEPOSIT_TOPIC0,
@@ -110,17 +109,27 @@ function nativeMovementV1(
   };
 }
 
+/**
+ * Base's native asset, or any ERC-20 on Base named by its address.
+ *
+ * Until 2026-09-23 the ERC-20 side was canonical USDC and WETH only — written
+ * when swaps were USDC↔ETH — so every tokenized-stock trade was sent to manual
+ * review with "not verifiable" on its proof, while its receipt held the stock's
+ * own Transfer to the wallet. An ERC-20 is read the same way whatever it is:
+ * Transfer events that the token's own contract emitted, netted for the wallet.
+ */
 function supportedAssetV1(asset: ExpectedAssetChangeV1['asset']): boolean {
-  if (asset.kind === 'native') return asset.chainId === 8453;
-  const address = asset.address?.toLowerCase();
-  return address === CANONICAL_BASE_USDC || address === CANONICAL_BASE_WETH;
+  if (asset.chainId !== 8453) return false;
+  if (asset.kind === 'native') return true;
+  return typeof asset.address === 'string' && /^0x[0-9a-fA-F]{40}$/.test(asset.address);
 }
 
 /**
  * Reconstructs the actual Base swap movement from verified receipt logs only.
- * ERC-20 sides use wallet-net Transfer events. Native sides use the canonical
- * WETH9 Deposit/Withdrawal amount, additionally bound to an approved call
- * target. No balance-delta guess and no trace-provider dependency is used.
+ * ERC-20 sides use wallet-net Transfer events emitted by that token's own
+ * contract. Native sides use the canonical WETH9 Deposit/Withdrawal amount,
+ * additionally bound to an approved call target. No balance-delta guess and no
+ * trace-provider dependency is used.
  */
 export function reconstructAssetChangesV1(input: {
   walletAddress: `0x${string}`;
@@ -137,8 +146,6 @@ export function reconstructAssetChangesV1(input: {
 
   const wallet = input.walletAddress.toLowerCase();
   const transfers = decodeTransferLogsV1(input.successReceiptLogs);
-  const usdc = netForToken(transfers, CANONICAL_BASE_USDC, wallet);
-  const weth = netForToken(transfers, CANONICAL_BASE_WETH, wallet);
   const native = nativeMovementV1(input.successReceiptLogs, input.approvedCallTargets ?? []);
 
   const amountForV1 = (change: ExpectedAssetChangeV1, direction: 'debit' | 'credit'): bigint | null => {
@@ -146,7 +153,7 @@ export function reconstructAssetChangesV1(input: {
       if (!native) return null;
       return direction === 'debit' ? native.debit : native.credit;
     }
-    const net = change.asset.address?.toLowerCase() === CANONICAL_BASE_USDC ? usdc : weth;
+    const net = netForToken(transfers, (change.asset.address as string).toLowerCase(), wallet);
     return direction === 'debit'
       ? (net.out > net.in ? net.out - net.in : 0n)
       : (net.in > net.out ? net.in - net.out : 0n);

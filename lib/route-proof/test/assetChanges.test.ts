@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { reconstructAssetChangesV1 } from '../src/assetChanges.js';
-import { ARBITRARY_TOKEN, ETH_BASE, ROUTER, USDC_BASE, WALLET, WETH_BASE, transferLog, weth9MovementLog } from './fixtures.js';
+import { ARBITRARY_TOKEN, ETH_BASE, POOL, ROUTER, USDC_BASE, WALLET, WETH_BASE, transferLog, weth9MovementLog } from './fixtures.js';
 
 const EXPECTED_WETH_CHANGES = [
   { asset: USDC_BASE, direction: 'debit' as const, amountAtomic: '100000000', minimumAmountAtomic: '100000000', maximumAmountAtomic: '100000000' },
@@ -125,7 +125,38 @@ test('assetChanges: ignores a WETH9 movement whose actor was not an approved cal
   assert.deepEqual(outcome, { kind: 'unsupported', reason: 'native_output_unverifiable' });
 });
 
-test('assetChanges: a non-USDC erc20 debit leg is equally unsupported', () => {
+// A tokenized stock, as on 2026-09-23: 0.1 USDC for 0.00044227 NVDAc (8
+// decimals) through Uniswap. Until then only USDC and WETH were read, and the
+// proof said "not verifiable" over a receipt holding the stock's own Transfer.
+const STOCK_BASE = {
+  assetId: 'eip155:8453/erc20:0xb20000000000000000000078ee7ce2fe4908108c',
+  chainId: 8453 as const,
+  kind: 'erc20' as const,
+  address: '0xb20000000000000000000078ee7ce2fe4908108c' as `0x${string}`,
+  symbol: 'NVDAc',
+  decimals: 8,
+};
+
+test('assetChanges: a tokenized stock bought for USDC is read from its own Transfer logs', () => {
+  const outcome = reconstructAssetChangesV1({
+    walletAddress: WALLET,
+    expectedAssetChanges: [
+      { asset: USDC_BASE, direction: 'debit', amountAtomic: '100000', minimumAmountAtomic: '100000', maximumAmountAtomic: '100000' },
+      { asset: STOCK_BASE, direction: 'credit', amountAtomic: '44227', minimumAmountAtomic: '44006', maximumAmountAtomic: null },
+    ],
+    successReceiptLogs: [
+      transferLog(STOCK_BASE.address, POOL, WALLET, 44227n),
+      transferLog(USDC_BASE.address as `0x${string}`, WALLET, POOL, 100000n),
+    ],
+  });
+  assert.equal(outcome.kind, 'reconstructed');
+  if (outcome.kind !== 'reconstructed') throw new Error('unreachable');
+  assert.equal(outcome.actualResult.outputAmountAtomic, '44227');
+  assert.deepEqual(outcome.actualResult.outputAsset, STOCK_BASE);
+  assert.equal(outcome.actualResult.assetChanges.find((c) => c.direction === 'debit')!.amountAtomic, '100000');
+});
+
+test('assetChanges: any Base erc20 debit leg is read the same way (selling one)', () => {
   const outcome = reconstructAssetChangesV1({
     walletAddress: WALLET,
     expectedAssetChanges: [
@@ -133,18 +164,41 @@ test('assetChanges: a non-USDC erc20 debit leg is equally unsupported', () => {
       EXPECTED_WETH_CHANGES[1]!,
     ],
     successReceiptLogs: [
+      transferLog(ARBITRARY_TOKEN.address as `0x${string}`, WALLET, POOL, 1000n),
       transferLog(WETH_BASE.address as `0x${string}`, ROUTER, WALLET, BigInt(38000000000000000)),
     ],
   });
-  assert.deepEqual(outcome, { kind: 'unsupported', reason: 'unsupported_asset' });
+  assert.equal(outcome.kind, 'reconstructed');
+  if (outcome.kind !== 'reconstructed') throw new Error('unreachable');
+  assert.equal(outcome.actualResult.assetChanges.find((c) => c.direction === 'debit')!.amountAtomic, '1000');
+  assert.equal(outcome.actualResult.outputAmountAtomic, '38000000000000000');
 });
 
-test('assetChanges: an output asset outside {USDC, WETH,native ETH} is unsupported', () => {
+test('assetChanges: a Transfer another contract emitted is not the token’s', () => {
+  // Same topics, same numbers, wrong emitter: a pool (or anything) can log a
+  // "Transfer" naming the wallet. Only the token's own contract speaks for it.
+  const outcome = reconstructAssetChangesV1({
+    walletAddress: WALLET,
+    expectedAssetChanges: [
+      { asset: USDC_BASE, direction: 'debit', amountAtomic: '100000', minimumAmountAtomic: '100000', maximumAmountAtomic: '100000' },
+      { asset: STOCK_BASE, direction: 'credit', amountAtomic: '44227', minimumAmountAtomic: '44006', maximumAmountAtomic: null },
+    ],
+    successReceiptLogs: [
+      { ...transferLog(STOCK_BASE.address, POOL, WALLET, 44227n), address: POOL },
+      transferLog(USDC_BASE.address as `0x${string}`, WALLET, POOL, 100000n),
+    ],
+  });
+  assert.equal(outcome.kind, 'reconstructed');
+  if (outcome.kind !== 'reconstructed') throw new Error('unreachable');
+  assert.equal(outcome.actualResult.outputAmountAtomic, '0', 'nothing the stock contract logged arrived');
+});
+
+test('assetChanges: an asset off Base mainnet is unsupported', () => {
   const outcome = reconstructAssetChangesV1({
     walletAddress: WALLET,
     expectedAssetChanges: [
       EXPECTED_WETH_CHANGES[0]!,
-      { asset: ARBITRARY_TOKEN, direction: 'credit', amountAtomic: '1000000000000000000', minimumAmountAtomic: null, maximumAmountAtomic: null },
+      { asset: { ...ARBITRARY_TOKEN, chainId: 84532 }, direction: 'credit', amountAtomic: '1', minimumAmountAtomic: null, maximumAmountAtomic: null },
     ],
     successReceiptLogs: [],
   });
