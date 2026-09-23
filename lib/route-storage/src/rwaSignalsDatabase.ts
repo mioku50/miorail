@@ -9,7 +9,7 @@ import {
 } from './rwaSignals.js';
 import type { SqlTemplateExecutor } from './types.js';
 
-function rowToSignalV1(row: Record<string, unknown>): RwaSignalRowV1 {
+export function rowToSignalV1(row: Record<string, unknown>): RwaSignalRowV1 {
   const kind = String(row.kind) as RwaSignalKindV1;
   if (!RWA_SIGNAL_KINDS_V1.includes(kind)) {
     // The CHECK constraint already refuses this on write. Reaching it on read

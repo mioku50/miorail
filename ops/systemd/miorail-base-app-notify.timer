@@ -1,0 +1,16 @@
+[Unit]
+# Every five minutes.
+#
+# A change reaches a phone within about five minutes of being recorded, and
+# changes recorded in the same five minutes arrive as one push. A pass with
+# nothing new costs two queries and asks Base nothing.
+Description=Send what Base App subscribers are owed
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=30s
+
+[Install]
+WantedBy=timers.target

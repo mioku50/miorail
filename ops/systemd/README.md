@@ -50,6 +50,19 @@ looked at, and running it more often than the promise is what keeps a
 fifteen-minute schedule near fifteen minutes instead of drifting by a tick. A
 pass with nothing due exits in milliseconds.
 
+## Base App notifications
+
+`miorail-base-app-notify` is a oneshot on a 5-minute timer, installed by the
+same loop in `ops/deploy.sh`. It turns what the workers above record into Base
+App pushes: issuer events to every wallet that pinned Miorail in Base App and
+turned notifications on, market transitions to the wallets that watch the
+token, Radar events to the watch's owner — at most one push per wallet per pass
+and four per day. It needs `BASE_DEV_API` (the Base Dashboard key) in the env
+file and reports `off` without it; `MIORAIL_BASE_APP_NOTIFICATIONS_V1=off`
+stops it with the key in place. Its first pass only opens its cursors, so
+nothing recorded before it existed is ever sent. Migration 0071 must be applied
+before the first deploy that enables it.
+
 The order matters once, on a new host: nothing else can run usefully until
 `miorail-rwa-official` has recorded a corpus, because the other three read the
 official universe to decide what to look at.

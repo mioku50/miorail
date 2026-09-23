@@ -105,3 +105,6 @@ export * from './watchSchedule.js';
 export * from './watchScheduleDatabase.js';
 export * from './watchScheduleMemory.js';
 export * from './rpcCuLedger.js';
+export * from './baseAppNotifications.js';
+export * from './baseAppNotificationsMemory.js';
+export * from './baseAppNotificationsDatabase.js';

@@ -286,7 +286,7 @@ install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 # and nobody can restore. Each pair is (service, timer) with the same stem, and
 # the loop refuses a pair that is missing half of itself rather than leaving a
 # timer pointing at a unit that is not there.
-for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools; do
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools base-app-notify; do
   unit_source="$REPO/ops/systemd/miorail-$stem.service"
   timer_source="$REPO/ops/systemd/miorail-$stem.timer"
   if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then
@@ -539,6 +539,15 @@ gas_cors=$(curl -sS -o /dev/null -D - --max-time 20 -X OPTIONS "$oauth_origin/ap
   -H 'Access-Control-Request-Headers: content-type' 2>/dev/null | tr -d '\r' | grep -i '^access-control-allow-origin:' || true)
 [ -n "$gas_cors" ] || { echo 'FAILED: the paymaster preflight came back with no allowed origin; a wallet cannot reach it'; exit 1; }
 printf '  sponsored gas  %-28s %s\n' "$oauth_origin/api/paymaster" "$gas_state (limit/wallet/day: $(printf '%s' "$gas_status" | jq -r '.dailyLimitPerWallet // "-"'))"
+
+# Base App notifications: whether the key is there — read with grep -q, so the
+# value never reaches this output — and whether the timer that sends them runs.
+# Informational: a missing key means the notifier reports "off" and sends
+# nothing, which is a state, not a broken deploy.
+notify_key=off
+grep -qE '^(BASE_DEV_API|BASE_DASHBOARD_API_KEY)=.+' "$REPO/.env" && notify_key=on
+notify_timer=$(systemctl is-active miorail-base-app-notify.timer 2>/dev/null || true)
+printf '  base app push  %-28s %s\n' "key $notify_key" "timer ${notify_timer:-unknown}"
 
 # The language lane, asked to answer.
 #

@@ -60,7 +60,8 @@
     "rwa:read-ratio": "node --import tsx scripts/rwa_read_representation_ratio.ts",
     "rwa:verify-issuer": "node --import tsx scripts/rwa_verify_issuer_membership.ts",
     "rwa:enrich-underlying": "node --import tsx scripts/rwa_enrich_underlying_identity.ts",
-    "rwa:watchlist-sweep": "tsx scripts/rwa_watchlist_sweep.ts"
+    "rwa:watchlist-sweep": "tsx scripts/rwa_watchlist_sweep.ts",
+    "base-app:notify": "tsx scripts/base_app_notify.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
