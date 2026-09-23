@@ -535,9 +535,12 @@ export function deriveSimulationViewV1(
       detail: passed
         ? ''
         : `${copy.detail}${simulation.outcome === 'simulation_provider_unavailable' ? '' : ' Route comparison and the calls above are unchanged.'}`,
+      // A run the server made names no provider; its block is what it has.
       subLabel: passed && simulation.provider
         ? `${simulation.provider} · ${ageLabelV1(simulation.ageSeconds)} ago`
-        : copy.subLabel,
+        : passed && simulation.blockNumber
+          ? `block ${simulation.blockNumber} · ${ageLabelV1(simulation.ageSeconds)} ago`
+          : copy.subLabel,
       canSign: passed ? true : serverAllowsSigning && simulation.outcome === 'simulation_provider_unavailable',
       disabledReason: passed
         ? null

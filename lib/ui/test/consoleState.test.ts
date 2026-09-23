@@ -1,5 +1,9 @@
 import test, { describe } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+import url from 'node:url';
+import { simulationSourceFromResponseV1 } from '../src/console/consoleAdapters';
 import {
   CONSOLE_COPY_V1,
   CONSOLE_RAIL_V1,
@@ -463,5 +467,63 @@ describe('the Review screen states exactly one simulation outcome', () => {
     );
     assert.match(view.headline, /passed/i);
     assert.equal(view.canSign, true);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-23, the first sponsored-fee stock buy: prepare simulated the batch at
+// block 51695422 twenty seconds before it was signed, and the Review said
+// "Simulation not available — no simulation provider answered" while the proof
+// said "Simulation not run". The run was on the prepared Blueprint all along.
+// ---------------------------------------------------------------------------
+
+describe('a prepared route states the simulation its own prepare ran', () => {
+  const prepared = (simulationState: Record<string, unknown>) => ({
+    outcome: 'prepared',
+    routeRunId: 'run-1',
+    blueprint: { simulationState },
+  });
+
+  test('a passed run is read from the Blueprint, with its block', () => {
+    const observedAt = new Date(Date.now() - 20_000).toISOString();
+    const source = simulationSourceFromResponseV1(
+      prepared({ status: 'passed', observedAt, blockNumber: '51695422', requestHash: '0x1', responseHash: '0x2', errorCode: null }),
+    );
+    assert.equal(source?.status, 'passed');
+    assert.equal(source?.outcome, 'simulation_passed');
+    const view = deriveSimulationViewV1(source, true);
+    assert.equal(view.passed, true);
+    assert.equal(view.headline, 'Simulation passed on Base mainnet 8453');
+    assert.match(view.subLabel, /^block 51695422 · \d+s ago$/);
+  });
+
+  test('a reverted run on a prepared Blueprint is still a revert', () => {
+    const source = simulationSourceFromResponseV1(
+      prepared({ status: 'failed', observedAt: null, blockNumber: '1', requestHash: null, responseHash: null, errorCode: 'execution_reverted' }),
+    );
+    assert.equal(deriveSimulationViewV1(source, true).canSign, false);
+  });
+
+  test('a run that never happened is not stated as one', () => {
+    // Nothing to report: the old reading stands — no source, the server's
+    // verdict decides signing, and no provider is said to have answered.
+    for (const status of ['not_requested', 'pending', 'unavailable']) {
+      assert.equal(
+        simulationSourceFromResponseV1(prepared({ status, observedAt: null, blockNumber: null, requestHash: null, responseHash: null, errorCode: null })),
+        null,
+        status,
+      );
+    }
+  });
+
+  test('both consoles fall back to the prepared Blueprint when no paid simulation ran', () => {
+    const here = path.dirname(url.fileURLToPath(import.meta.url));
+    for (const file of [
+      '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx',
+      '../../../artifacts/miniapp/app/components/MiniConsole.tsx',
+    ]) {
+      const source = readFileSync(path.join(here, file), 'utf8');
+      assert.match(source, /simulationSourceFromResponseV1\(\s*prepare\.data\?\.outcome === 'blocked' \? prepare\.data : \(simulateResponse \?\? budgetResponse \?\? prepare\.data\),/, file);
+    }
   });
 });

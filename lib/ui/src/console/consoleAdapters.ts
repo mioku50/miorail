@@ -591,6 +591,9 @@ export function simulationSourceFromResponseV1(response: unknown): SimulationSou
     reason?: string;
     simulation?: { status?: string; blockNumber?: string | null; observedAt?: string | null; errorCode?: string | null } | null;
     evidence?: { provider?: { displayName?: string }; gasUsed?: string | null };
+    blueprint?: {
+      simulationState?: { status?: string; blockNumber?: string | null; observedAt?: string | null; errorCode?: string | null } | null;
+    } | null;
   };
   if (value.outcome === 'simulated' || value.outcome === 'cached' || value.outcome === 'charged') {
     const status = value.simulation?.status;
@@ -615,6 +618,25 @@ export function simulationSourceFromResponseV1(response: unknown): SimulationSou
       gasUsed: null,
       reason: value.simulation.errorCode ?? null,
       outcome: simulationOutcomeFromStateV1(value.simulation),
+    };
+  }
+  // A prepared route carries, on its Blueprint, the simulation its own prepare
+  // ran — the state the Safety Kernel judged. It was not read here until
+  // 2026-09-23, so a swap simulated twenty seconds before it was signed said
+  // "Simulation not available" on its Review and "Simulation not run" on its
+  // proof. Only a run that happened is stated; anything else keeps the old
+  // reading, which is no source at all.
+  if (value.outcome === 'prepared') {
+    const state = value.blueprint?.simulationState;
+    if (state?.status !== 'passed' && state?.status !== 'failed') return null;
+    return {
+      status: state.status,
+      provider: null,
+      blockNumber: state.blockNumber ?? null,
+      ageSeconds: state.observedAt ? Math.max(0, Math.round((Date.now() - Date.parse(state.observedAt)) / 1000)) : null,
+      gasUsed: null,
+      reason: state.errorCode ?? null,
+      outcome: simulationOutcomeFromStateV1(state),
     };
   }
   if (value.outcome) {
