@@ -812,11 +812,13 @@ export const SwapBlueprintApproveRequestV1Schema = z
  * Where a wallet asks for its gas to be paid (ERC-7677 `paymasterService`),
  * and the opaque context that ties the request to one approval. The URL is
  * always Miorail's own proxy — never the upstream paymaster's, which carries a
- * billable key.
+ * billable key — and it carries the same token in its path, because Base
+ * Account does not forward the capability's `context` to the paymaster. Hence
+ * the length: the token alone may be 2,000 characters.
  */
 export const SponsoredGasOfferV1Schema = z
   .object({
-    paymasterUrl: z.string().url().max(300).startsWith('https://'),
+    paymasterUrl: z.string().url().max(2200).startsWith('https://'),
     context: z.object({ sponsorship: z.string().min(1).max(2000) }).strict(),
   })
   .strict();

@@ -20,8 +20,11 @@ import {
 // Mounted BEFORE the app's CORS and session middleware, on purpose: the wallet
 // calls this from its own origin with no Miorail cookie, so neither would help
 // and the CORS one would answer the preflight with no allowed origin. What
-// authorises a request is the sponsorship token in its context — see
-// `lib/sponsoredGas.ts` for the whole policy.
+// authorises a request is the sponsorship token in the URL the offer named
+// (`/api/paymaster/sponsorship/<token>`), or in the ERC-7677 context for a
+// wallet that forwards one — see `lib/sponsoredGas.ts` for the whole policy.
+// Mounted before the request logger too, so the token is not written to our
+// log; nginx does not log this location either.
 // ---------------------------------------------------------------------------
 
 export const sponsoredGasRuntime = {
@@ -48,9 +51,13 @@ export const sponsorshipLedgerV1 = createSponsorshipLedgerV1({
 });
 
 export interface SponsorshipOfferV1 {
-  /** Where the wallet sends `pm_*` requests: this server, never Coinbase's URL. */
+  /**
+   * Where the wallet sends `pm_*` requests: this server, never Coinbase's URL.
+   * The token is in the path, because Base Account does not pass the
+   * capability's `context` on to the paymaster.
+   */
   paymasterUrl: string;
-  /** Passed through by the wallet as the ERC-7677 `context`. */
+  /** The same token, as the ERC-7677 `context`, for a wallet that forwards it. */
   context: { sponsorship: string };
 }
 
@@ -89,7 +96,7 @@ export function offerSponsorshipV1(input: {
     key,
   );
   return {
-    paymasterUrl: `${sponsoredGasRuntime.origin().replace(/\/+$/, '')}/api/paymaster`,
+    paymasterUrl: `${sponsoredGasRuntime.origin().replace(/\/+$/, '')}/api/paymaster/sponsorship/${token}`,
     context: { sponsorship: token },
   };
 }
@@ -132,7 +139,7 @@ sponsoredGasRouter.use((_req: Request, res: Response, next) => {
   next();
 });
 
-sponsoredGasRouter.options('/', (_req: Request, res: Response) => {
+sponsoredGasRouter.options(['/', '/sponsorship/:token'], (_req: Request, res: Response) => {
   res.status(204).end();
 });
 
@@ -152,7 +159,13 @@ sponsoredGasRouter.get('/status', (_req: Request, res: Response) => {
   });
 });
 
-sponsoredGasRouter.post('/', express.json({ limit: '64kb' }), async (req: Request, res: Response) => {
+/** A JSON-RPC method name is ours to log only when it is one: it may name what
+ * a wallet asks for, never carry what it sent. */
+function loggableMethodV1(method: unknown): string | null {
+  return typeof method === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(method) ? method : null;
+}
+
+sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64kb' }), async (req: Request, res: Response) => {
   const body = req.body as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown } | undefined;
   const id = typeof body?.id === 'number' || typeof body?.id === 'string' ? body.id : null;
   const reply = (payload: { result: unknown } | { error: { code: number; message: string; data?: unknown } }) => {
@@ -171,15 +184,24 @@ sponsoredGasRouter.post('/', express.json({ limit: '64kb' }), async (req: Reques
     return;
   }
 
+  const urlToken = typeof req.params.token === 'string' ? req.params.token : null;
   const decision = decideSponsoredGasV1({
     method: body.method,
     params: body.params,
+    urlToken,
     key,
     nowMs: sponsoredGasRuntime.now().getTime(),
     ledger: sponsorshipLedgerV1,
   });
   if (!decision.ok) {
-    logger.info('Sponsored gas refused', { reason: decision.code });
+    // Which method a wallet asked for is what showed Base Account opens with
+    // one we do not serve; whether the request came in on a token URL is what
+    // tells an old offer from a lost token.
+    logger.info('Sponsored gas refused', {
+      reason: decision.code,
+      method: decision.code === 'method_not_supported' ? loggableMethodV1(body.method) : undefined,
+      tokenUrl: urlToken !== null,
+    });
     reply({
       error: {
         code: SPONSORED_GAS_RPC_ERROR_CODE_V1[decision.code],
@@ -232,7 +254,7 @@ sponsoredGasRouter.post('/', express.json({ limit: '64kb' }), async (req: Reques
   // estimate, and an operation the upstream refused was never sponsored.
   if (decision.method === 'pm_getPaymasterData') {
     sponsorshipLedgerV1.record(decision.wallet, decision.nonce);
-    logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId });
+    logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource });
   }
   reply({ result: answer.result });
 });

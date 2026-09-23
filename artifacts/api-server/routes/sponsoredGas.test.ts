@@ -1,4 +1,6 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
 import request from 'supertest';
@@ -87,7 +89,11 @@ function rpc(method: string, context: unknown, over: Partial<{ nonce: string; se
 test('an approved operation is forwarded, and the wallet gets the paymaster’s answer', async (t) => {
   const forwarded = stubV1(t);
   const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
-  assert.equal(offer.paymasterUrl, 'https://miorail.xyz/api/paymaster', 'the wallet is sent to us, never upstream');
+  assert.equal(
+    offer.paymasterUrl,
+    `https://miorail.xyz/api/paymaster/sponsorship/${offer.context.sponsorship}`,
+    'the wallet is sent to us, never upstream, with the token in the path',
+  );
   const response = await request(routerApp())
     .post('/api/paymaster')
     .send(rpc('pm_getPaymasterData', offer.context))
@@ -102,6 +108,59 @@ test('an approved operation is forwarded, and the wallet gets the paymaster’s 
   assert.equal(forwarded[0]!.body.method, 'pm_getPaymasterData');
   // Our token stays here; the upstream gets an empty context.
   assert.deepEqual(forwarded[0]!.body.params[3], {});
+});
+
+/** The path of the URL the offer told the wallet to call. */
+function offerPath(offer: { paymasterUrl: string }): string {
+  return new URL(offer.paymasterUrl).pathname;
+}
+
+test('the offer’s own URL is enough: a wallet that writes its own context is still sponsored', async (t) => {
+  // What Base Account did on 2026-09-23: our URL, its context. The token in
+  // the path is what makes the request ours.
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  for (const context of [{}, { erc20: USDC }]) {
+    const stub = await request(routerApp()).post(offerPath(offer)).send(rpc('pm_getPaymasterStubData', context)).expect(200);
+    assert.ok(stub.body.result, JSON.stringify(context));
+  }
+  const final = await request(routerApp()).post(offerPath(offer)).send(rpc('pm_getPaymasterData', {})).expect(200);
+  assert.ok(final.body.result);
+  assert.equal(forwarded.length, 3);
+  // Neither the token nor the wallet's context goes upstream.
+  for (const call of forwarded) assert.deepEqual(call.body.params[3], {});
+});
+
+test('a token URL that was not minted here is refused before the paymaster is asked', async (t) => {
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  const [payload] = offer.context.sponsorship.split('.');
+  const response = await request(routerApp())
+    .post(`/api/paymaster/sponsorship/${payload}.${'A'.repeat(43)}`)
+    .send(rpc('pm_getPaymasterData', {}))
+    .expect(200);
+  assert.equal(response.body.error.data.reason, 'sponsorship_invalid');
+  assert.equal(forwarded.length, 0);
+  const otherWallet = await request(routerApp())
+    .post(offerPath(offer))
+    .send(rpc('pm_getPaymasterData', {}, { sender: '0x2222222222222222222222222222222222222222' }))
+    .expect(200);
+  assert.equal(otherWallet.body.error.data.reason, 'wrong_sender');
+  assert.equal(forwarded.length, 0);
+});
+
+test('an ERC-7677 method we do not serve is refused as one', async (t) => {
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  // Base Account opens with this before the stub; the sponsor has no token to
+  // accept, and the refusal is what let the wallet carry on to the stub.
+  const response = await request(routerApp())
+    .post(offerPath(offer))
+    .send({ jsonrpc: '2.0', id: 3, method: 'pm_getAcceptedPaymentTokens', params: [SPONSORED_GAS_ENTRY_POINT_V1, '0x2105', {}] })
+    .expect(200);
+  assert.equal(response.body.error.code, -32601);
+  assert.equal(response.body.error.data.reason, 'method_not_supported');
+  assert.equal(forwarded.length, 0);
 });
 
 test('a refusal never reaches the paymaster, and never names its URL', async (t) => {
@@ -217,6 +276,25 @@ test('the real app serves the paymaster without a session', async (t) => {
   assert.equal(response.headers['set-cookie'], undefined, 'no session is started for a wallet');
 });
 
+test('the real app serves the token URL too, preflight included', async (t) => {
+  stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  const preflight = await request(app)
+    .options(offerPath(offer))
+    .set('Origin', 'https://keys.coinbase.com')
+    .set('Access-Control-Request-Method', 'POST')
+    .set('Access-Control-Request-Headers', 'content-type')
+    .expect(204);
+  assert.equal(preflight.headers['access-control-allow-origin'], '*');
+  const response = await request(app)
+    .post(offerPath(offer))
+    .set('Origin', 'https://keys.coinbase.com')
+    .send(rpc('pm_getPaymasterStubData', {}))
+    .expect(200);
+  assert.ok(response.body.result);
+  assert.equal(response.headers['set-cookie'], undefined);
+});
+
 test('only a swap that touches a reviewed stock is offered sponsored gas', async (t) => {
   stubV1(t);
   const NVDA_B20 = '0xb20000000000000000000078ee7ce2fe4908108c';
@@ -262,4 +340,15 @@ test('the public status says on or off and nothing about the upstream', async (t
   const off = await request(app).get('/api/paymaster/status').expect(200);
   assert.equal(off.body.sponsoredGas, 'off');
   assert.equal(off.body.dailyLimitPerWallet, null);
+});
+
+test('nginx keeps the token URL out of its access log, and still forwards it', () => {
+  const cwd = process.cwd();
+  const root = cwd.endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(cwd, '../..') : cwd;
+  const nginx = readFileSync(path.join(root, 'ops/nginx/miorail-app.conf'), 'utf8');
+  const at = nginx.indexOf('location ^~ /api/paymaster {');
+  assert.ok(at >= 0, 'nginx has no location of its own for the paymaster');
+  const block = nginx.slice(at, nginx.indexOf('\n}', at));
+  assert.match(block, /access_log off;/);
+  assert.match(block, /proxy_pass http:\/\/127\.0\.0\.1:8080;/);
 });

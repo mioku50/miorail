@@ -288,7 +288,15 @@ export type SponsoredGasRefusalCodeV1 =
   | 'daily_limit_reached';
 
 export type SponsoredGasDecisionV1 =
-  | { ok: true; method: SponsoredGasMethodV1; wallet: string; nonce: string; claim: SponsorshipClaimV1 }
+  | {
+      ok: true;
+      method: SponsoredGasMethodV1;
+      wallet: string;
+      nonce: string;
+      claim: SponsorshipClaimV1;
+      /** Where the token came from: the offer's URL, or the ERC-7677 context. */
+      tokenSource: 'url' | 'context';
+    }
   | { ok: false; code: SponsoredGasRefusalCodeV1; message: string };
 
 /** JSON-RPC error codes, per ERC-7677's use of the standard ranges. */
@@ -308,6 +316,8 @@ export const SPONSORED_GAS_RPC_ERROR_CODE_V1: Readonly<Record<SponsoredGasRefusa
 export function decideSponsoredGasV1(input: {
   method: unknown;
   params: unknown;
+  /** The token in the offer's URL path, when the request came in on it. */
+  urlToken?: string | null;
   key: Buffer;
   nowMs: number;
   ledger: SponsorshipLedgerV1;
@@ -334,8 +344,16 @@ export function decideSponsoredGasV1(input: {
   if (!op || typeof op.sender !== 'string' || typeof op.nonce !== 'string' || typeof op.callData !== 'string') {
     return refuse('invalid_request', 'The user operation is missing its sender, nonce or calldata.');
   }
-  const token = (context as { sponsorship?: unknown } | null | undefined)?.sponsorship;
-  if (token === undefined) {
+  // Base Account writes its own ERC-7677 context into these requests (`{}`, or
+  // `{erc20}` when the person pays gas in a token), so a token put in the
+  // capability's `context` never arrives: on 2026-09-23 the first real
+  // sponsored buy was refused `no_sponsorship` twice and the person paid the
+  // fee. The offer's URL carries the token now; the context is still read for
+  // a wallet that forwards it, and the URL wins when both are present.
+  const contextToken = (context as { sponsorship?: unknown } | null | undefined)?.sponsorship;
+  const urlToken = typeof input.urlToken === 'string' && input.urlToken !== '' ? input.urlToken : null;
+  const token = urlToken ?? contextToken;
+  if (token === undefined || token === null) {
     return refuse('no_sponsorship', 'This request carries no Miorail sponsorship.');
   }
   const verified = verifySponsorshipTokenV1(token, input.key, input.nowMs);
@@ -355,5 +373,12 @@ export function decideSponsoredGasV1(input: {
   if (!input.ledger.allows(claim.wallet, op.nonce)) {
     return refuse('daily_limit_reached', "Today's sponsored gas for this wallet is used up; the wallet can still pay it.");
   }
-  return { ok: true, method: input.method as SponsoredGasMethodV1, wallet: claim.wallet, nonce: op.nonce, claim };
+  return {
+    ok: true,
+    method: input.method as SponsoredGasMethodV1,
+    wallet: claim.wallet,
+    nonce: op.nonce,
+    claim,
+    tokenSource: urlToken !== null ? 'url' : 'context',
+  };
 }

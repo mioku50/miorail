@@ -92,6 +92,7 @@ function decide(
     nonce: string;
     callData: string;
     context: unknown;
+    urlToken: string;
     ledger: ReturnType<typeof ledger>;
   }> = {},
 ) {
@@ -104,6 +105,7 @@ function decide(
       over.chainId ?? '0x2105',
       over.context === undefined ? { sponsorship: tokenFor(calls) } : over.context,
     ],
+    urlToken: over.urlToken,
     key: KEY,
     nowMs: NOW_MS,
     ledger: over.ledger ?? ledger(),
@@ -114,6 +116,35 @@ test('the approved calls from the approved wallet are sponsored', () => {
   const decision = decide();
   assert.equal(decision.ok, true);
   assert.equal(decision.ok && decision.wallet, WALLET);
+  assert.equal(decision.ok && decision.tokenSource, 'context');
+});
+
+test('Base Account writes its own context, so the token rides in the URL', () => {
+  // 2026-09-23: the first real sponsored buy reached this paymaster three
+  // times, and the two ERC-7677 calls carried no Miorail token — the wallet
+  // had put its own context there — so the person paid the fee. The offer's
+  // URL now carries the token, and that is what is read.
+  const token = tokenFor(buyCalls());
+  for (const context of [{}, { erc20: USDC }]) {
+    const decision = decide({ context, urlToken: token });
+    assert.equal(decision.ok, true, JSON.stringify(context));
+    assert.equal(decision.ok && decision.tokenSource, 'url');
+  }
+  const bare = decide({ context: {} });
+  assert.deepEqual(bare.ok ? null : bare.code, 'no_sponsorship', 'the same request without the URL token');
+});
+
+test('the URL token wins over a context token, and is checked just as hard', () => {
+  const approved = tokenFor(buyCalls());
+  const forOtherCalls = tokenFor(buyCalls(1n));
+  const decision = decide({ context: { sponsorship: forOtherCalls }, urlToken: approved });
+  assert.equal(decision.ok && decision.tokenSource, 'url');
+  const swapped = decide({ context: { sponsorship: approved }, urlToken: forOtherCalls });
+  assert.deepEqual(swapped.ok ? null : swapped.code, 'calls_not_approved');
+  const forged = decide({ context: {}, urlToken: 'nonsense' });
+  assert.deepEqual(forged.ok ? null : forged.code, 'sponsorship_invalid');
+  const expired = decide({ context: {}, urlToken: tokenFor(buyCalls(), { expiresAt: NOW_MS - 1 }) });
+  assert.deepEqual(expired.ok ? null : expired.code, 'sponsorship_expired');
 });
 
 test('a wallet cannot spend another wallet’s sponsorship', () => {
