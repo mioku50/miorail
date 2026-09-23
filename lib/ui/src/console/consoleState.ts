@@ -92,6 +92,7 @@ export const CONSOLE_COPY_V1 = {
   readOnly: 'Read-only until you approve',
   nothingSigned: 'Still nothing signed.',
   prepared: 'Miorail prepared these calls. Base Account executes them.',
+  nothingToApprove: 'Nothing was prepared for signing, so there is nothing to approve. The reason is above.',
   nothingPrepared: 'nothing prepared',
   planHint: 'Miorail reads quotes and simulates. No transaction is prepared.',
   /** One adapter answered out of two. */

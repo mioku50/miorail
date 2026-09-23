@@ -360,6 +360,18 @@ describe('the signing button is the real one', () => {
     assert.match(rendered, /Approve in Base Account/);
     assert.match(rendered, /"disabled":true/);
   });
+
+  test('with no slot the placeholder is off even when the simulation passed, and says why', () => {
+    // 2026-09-23: the Safety Kernel refused the batch, the simulation had
+    // passed, and this button lit up over "Miorail prepared these calls" —
+    // pressing it did nothing. No slot means nothing was prepared to sign.
+    const rendered = JSON.stringify(ReviewScreen(review()));
+    assert.equal(review().simulation.canSign, true);
+    assert.match(rendered, /Approve in Base Account/);
+    assert.match(rendered, /"disabled":true/);
+    assert.match(rendered, /Nothing was prepared for signing, so there is nothing to approve\. The reason is above\./);
+    assert.doesNotMatch(rendered, /Miorail prepared these calls/);
+  });
 });
 
 describe('a degraded route can become an explicit provider constraint', () => {

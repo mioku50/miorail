@@ -69,6 +69,7 @@ import {
   type StoredBlueprintV1,
 } from '@mioagent/route-storage';
 import { approvedStockSponsorshipV1, sponsoredGasConfiguredV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
+import { swapPrepareOutcomeMetaV1 } from '../lib/swapPrepareLog.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
 import { createReliabilityLookupV1 } from '../lib/reliabilityLookup.js';
 import {
@@ -1003,6 +1004,9 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
       result.outcome === 'prepared'
         ? { ...result, simulationPriceUsdc: simulationPriceUsdcForPrepareResponseV1(process.env) }
         : result;
+    // A prepare that produced no calls used to leave no line: its reason went
+    // to the browser only. Closed codes, never a detail string.
+    if (result.outcome !== 'prepared') logger.warn('Swap prepare produced no calls', swapPrepareOutcomeMetaV1(result));
     res.json(SwapPrepareResponseV1Schema.parse(withSimulationPrice));
   } catch (cause) {
     logger.error('Swap prepare failed', safeFailureMetaV1(cause));

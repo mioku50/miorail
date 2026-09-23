@@ -892,20 +892,23 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
             button did nothing and the working one was under the fold. A CTA
             that looks like the action and is not the action is a lie about
             what the screen does. */}
+        {/* No slot means nothing was prepared that this screen can sign — a
+            refusal, or a prepare still running — so the placeholder is never
+            live. 2026-09-23: it was enabled by a passed simulation alone, while
+            the Safety Kernel had refused the batch; it looked like the action,
+            said "Miorail prepared these calls", and pressing it did nothing. */}
         {model.signSlot ?? (
-          <button
-            type="button"
-            className="btn lg"
-            onClick={model.onApprove}
-            disabled={!model.simulation.canSign || model.approvePending}
-          >
+          <button type="button" className="btn lg" onClick={model.onApprove} disabled>
             {model.approvePending ? 'Waiting for Base Account…' : 'Approve in Base Account'}
           </button>
         )}
         <button type="button" className="btn sec lg" onClick={model.onBack}>
           Back to routes
         </button>
-        <span className="nt">{model.simulation.disabledReason ?? CONSOLE_COPY_V1.prepared}</span>
+        <span className="nt">
+          {model.simulation.disabledReason ??
+            (model.signSlot || model.approvePending ? CONSOLE_COPY_V1.prepared : CONSOLE_COPY_V1.nothingToApprove)}
+        </span>
       </div>
     </section>
   );
