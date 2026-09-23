@@ -65,8 +65,10 @@ import {
   type IntelligenceBudgetRecord,
   type RouteStorageRepository,
   createDatabaseProviderOutcomeRepository,
+  createDatabaseUnderlyingAssetRepository,
   type StoredBlueprintV1,
 } from '@mioagent/route-storage';
+import { approvedStockSponsorshipV1, sponsoredGasConfiguredV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
 import { createReliabilityLookupV1 } from '../lib/reliabilityLookup.js';
 import {
@@ -1030,6 +1032,35 @@ export const swapBlueprintRouteRuntime = {
   recordSubmission: async (input: RecordBlueprintSubmissionInput) =>
     recordBlueprintSubmissionV1({ repository: createDatabaseRouteStorageRepository(client) }, input),
   attemptRepository: () => createDatabaseSubmissionAttemptRepository(client),
+  /**
+   * Growth plan step 2: gas paid by Miorail, for a reviewed stock only.
+   *
+   * Offered after the Safety Kernel approved the exact calls, for those calls
+   * and this wallet alone. "A reviewed stock" is read from the stored
+   * Blueprint's own asset changes against the reviewed corpus, never from
+   * anything the client sent, so a swap of two memecoins cannot ask for it.
+   */
+  sponsorship: async (input: {
+    tenantId: string;
+    routeRunId: string;
+    blueprintId: string;
+    payload: { from: string; calls: { to: string; value: string; data: string }[] };
+  }): Promise<SponsorshipOfferV1 | null> => {
+    if (!sponsoredGasConfiguredV1()) return null;
+    const stored = (
+      await createDatabaseRouteStorageRepository(client).listBlueprints(input.routeRunId, input.tenantId)
+    ).find((entry) => entry.blueprint.id === input.blueprintId);
+    if (!stored) return null;
+    const underlyings = createDatabaseUnderlyingAssetRepository(client);
+    return approvedStockSponsorshipV1({
+      assets: stored.blueprint.expectedAssetChanges.map((change) => change.asset.address),
+      isReviewedStock: async (tokenAddress) =>
+        (await underlyings.underlyingOf({ chainId: 8453, tokenAddress })) !== null,
+      wallet: input.payload.from,
+      blueprintId: input.blueprintId,
+      calls: input.payload.calls,
+    });
+  },
   now: () => new Date(),
 };
 
@@ -1071,7 +1102,25 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/approve', async (req
       blueprintHash: parsed.data.blueprintHash,
       now: swapBlueprintRouteRuntime.now(),
     });
-    res.json(SwapBlueprintApproveResponseV1Schema.parse(result));
+    if (result.outcome !== 'approved') {
+      res.json(SwapBlueprintApproveResponseV1Schema.parse(result));
+      return;
+    }
+    // A sponsorship that cannot be worked out is no sponsorship. It must never
+    // turn an approval the Safety Kernel granted into a failure: the person
+    // can still pay their own gas.
+    let sponsorship: SponsorshipOfferV1 | null = null;
+    try {
+      sponsorship = await swapBlueprintRouteRuntime.sponsorship({
+        tenantId: user.id,
+        routeRunId: parsed.data.routeRunId,
+        blueprintId: String(req.params.blueprintId),
+        payload: result.payload,
+      });
+    } catch (cause) {
+      logger.warn('Sponsored gas offer failed', safeFailureMetaV1(cause));
+    }
+    res.json(SwapBlueprintApproveResponseV1Schema.parse({ ...result, sponsorship }));
   } catch (cause) {
     logger.error('Blueprint approve failed', safeFailureMetaV1(cause));
     res.status(500).json({ error: 'blueprint_approve_failed', code: 'blueprint_approve_failed' });

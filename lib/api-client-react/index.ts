@@ -719,6 +719,31 @@ export function usePortfolio(
 }
 
 /**
+ * Growth plan step 2 — whether this server pays the network fee on reviewed
+ * stock trades from Base Account wallets. Public and cheap; a page reads it
+ * only to decide whether it may SAY so before anything is approved. The fee
+ * itself is decided per approval, on the server.
+ */
+export interface SponsoredGasStatusV1 {
+  schemaVersion: 'sponsored-gas-status/v1';
+  sponsoredGas: 'on' | 'off';
+  dailyLimitPerWallet: number | null;
+  scope: 'reviewed_stock_swaps';
+  wallets: 'base_account';
+}
+
+export function useSponsoredGasStatus(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['sponsored-gas-status'],
+    queryFn: () => fetchApi<SponsoredGasStatusV1>('/api/paymaster/status'),
+    enabled: options?.enabled ?? true,
+    staleTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
+}
+
+/**
  * `authentication_required` is an answer, not a fault, so it is not retried.
  *
  * Retried like a fault — the default three times, with backoff — it kept a

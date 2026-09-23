@@ -31,6 +31,7 @@ import {
   type BuilderAttributionOutcomeV1,
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
+import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
 import {
   browserMarkerStorageV1,
   clearRecoveryMarkerV1,
@@ -210,6 +211,9 @@ export interface UseSubmitApprovedBlueprintResult {
    * Never says `included` on the strength of having passed the capability;
    * only the wallet's own dataSuffix support can raise it that far. */
   builderAttribution: BuilderAttributionOutcomeV1 | null;
+  /** Who pays the network fee on the latest attempt. Null until an approval
+   * has been read — before that nothing is known about the fee. */
+  sponsoredGas: SponsoredGasStateV1 | null;
   /** Mount this to poll wallet batch status once a batchId exists. */
   poller: ReactNode;
 }
@@ -255,6 +259,11 @@ export function useSubmitApprovedBlueprint({
   const [recordedFinalStatus, setRecordedFinalStatus] = useState<string | null>(null);
   const [attemptId, setAttemptId] = useState<string | null>(null);
   const [builderAttribution, setBuilderAttribution] = useState<BuilderAttributionOutcomeV1 | null>(null);
+  const [sponsoredGas, setSponsoredGas] = useState<SponsoredGasStateV1 | null>(null);
+  // Set once a send WITH the sponsor failed for any reason other than the
+  // person refusing: the next attempt goes without it, so a paymaster that
+  // will not pay can never be the reason a trade cannot be made.
+  const sponsorDeclinedRef = useRef(false);
   const attemptRef = useRef<string | null>(null);
   const inFlightRef = useRef(false);
   const finalizedRef = useRef(false);
@@ -421,6 +430,20 @@ export function useSubmitApprovedBlueprint({
       }
 
       const suffix = builderCodeToDataSuffix(builderCode);
+      // Growth plan step 2: the fee, paid by Miorail when the approval offered
+      // it — swap approvals of a reviewed stock only; earn and NFT approvals
+      // carry no offer and behave exactly as before.
+      const offer =
+        'sponsorship' in approval
+          ? ((approval as { sponsorship?: SponsoredGasOfferV1 | null }).sponsorship ?? null)
+          : null;
+      const gas = sponsoredGasPlanV1({
+        offer,
+        capabilities: walletCapabilities,
+        declinedBefore: sponsorDeclinedRef.current,
+        chainId: base.id,
+      });
+      setSponsoredGas(gas.state);
       setStatus('submitting');
       let result: { id: string };
       try {
@@ -434,7 +457,14 @@ export function useSubmitApprovedBlueprint({
           forceAtomic: true,
           // `optional: true` so a wallet without dataSuffix support still sends
           // the batch. The user asked for the transaction, not for attribution.
-          capabilities: suffix ? { dataSuffix: { value: suffix, optional: true } } : undefined,
+          // The same for the fee sponsor: optional, and only when offered.
+          capabilities:
+            suffix || gas.capability
+              ? {
+                  ...(suffix ? { dataSuffix: { value: suffix, optional: true } } : {}),
+                  ...(gas.capability ?? {}),
+                }
+              : undefined,
         });
       } catch (cause) {
         if (isWalletRejectionError(cause)) {
@@ -454,6 +484,11 @@ export function useSubmitApprovedBlueprint({
           });
         } else {
           const message = cause instanceof Error ? cause.message : 'Wallet submission failed';
+          if (gas.capability) {
+            // Whatever failed, the retry must not depend on the sponsor.
+            sponsorDeclinedRef.current = true;
+            setSponsoredGas('declined');
+          }
           setStatus('failed');
           setError(message);
           await recordSafely({
@@ -547,6 +582,7 @@ export function useSubmitApprovedBlueprint({
     recordedFinalStatus,
     attemptId,
     builderAttribution,
+    sponsoredGas,
     poller,
   };
 }

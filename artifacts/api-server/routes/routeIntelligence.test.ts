@@ -617,6 +617,50 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/approve', ()
     assert.equal(/send_calls|x402/i.test(serialized), false);
   });
 
+  test('an approval of a reviewed stock carries the gas offer for exactly those calls', async () => {
+    const asked: unknown[] = [];
+    swapBlueprintRouteRuntime.sponsorship = async (input) => {
+      asked.push(input);
+      return { paymasterUrl: 'https://miorail.xyz/api/paymaster', context: { sponsorship: 'signed-token' } };
+    };
+    const response = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'approved');
+    assert.deepEqual(response.body.sponsorship, {
+      paymasterUrl: 'https://miorail.xyz/api/paymaster',
+      context: { sponsorship: 'signed-token' },
+    });
+    // Asked about THIS session's approved Blueprint and the calls the wallet
+    // is about to receive — nothing the request body could have chosen.
+    assert.deepEqual(asked, [
+      { tenantId: USER.id, routeRunId: APPROVE_BODY.routeRunId, blueprintId: BLUEPRINT_ID, payload: APPROVED_PAYLOAD },
+    ]);
+  });
+
+  test('a gas offer that fails is an approval without one, never a failed approval', async () => {
+    swapBlueprintRouteRuntime.sponsorship = async () => {
+      throw new Error('corpus unreachable: secret detail');
+    };
+    const response = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(response.status, 200);
+    assert.equal(response.body.outcome, 'approved');
+    assert.equal(response.body.sponsorship, null);
+    assert.equal(JSON.stringify(response.body).includes('secret detail'), false);
+  });
+
+  test('an expired or blocked approval is not offered gas', async () => {
+    let asked = 0;
+    swapBlueprintRouteRuntime.sponsorship = async () => {
+      asked += 1;
+      return { paymasterUrl: 'https://miorail.xyz/api/paymaster', context: { sponsorship: 'signed-token' } };
+    };
+    swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'expired', reason: 'Blueprint quote has expired' });
+    const expired = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(expired.body.outcome, 'expired');
+    assert.equal(expired.body.sponsorship, undefined);
+    assert.equal(asked, 0);
+  });
+
   test('returns validated expired and blocked outcomes', async () => {
     swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'expired', reason: 'Blueprint quote has expired' });
     const expired = await request(routeApp()).post(url).send(APPROVE_BODY);

@@ -21,7 +21,7 @@ import {
   type MarketRealitySurfaceV1,
   type StocksConsoleQuestionV1,
 } from '@mioagent/ui';
-import { useStatus } from '@mioagent/api-client-react';
+import { useSponsoredGasStatus, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 import { useAuthGate } from '../../app/AuthProvider';
 import { expectedChainId } from '../../lib/chain';
@@ -122,11 +122,19 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
   // default security and the address stays the list's.
   const onStocksPath = location === '/stocks' || location.startsWith('/stocks/');
 
+  // Growth plan step 2. Read only to decide whether the card may mention the
+  // fee; whether a given buy is sponsored is decided by the server when it is
+  // approved.
+  const sponsoredGas = useSponsoredGasStatus();
   const stocks = useStocksConsoleV1({
     question,
     enabled,
     access,
     preferredSymbol: symbol ?? null,
+    starterBuy: {
+      sponsoredGas: sponsoredGas.data?.sponsoredGas === 'on',
+      dailyLimitPerWallet: sponsoredGas.data?.dailyLimitPerWallet ?? null,
+    },
     // `/status` is behind the tenant gate: signed out, every flag reads false.
     // Saying "switched off on this server" then is a claim we cannot support.
     // The public door answers for itself — a 404 from it is the switch.

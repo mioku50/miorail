@@ -17,6 +17,7 @@ import {
   stockExecutionGoalSentenceV1,
   STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
   stockExecutionHandoffV1,
+  stockStarterBuyGoalV1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
 
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
@@ -172,6 +173,23 @@ export interface StocksConsoleInputV1 {
     direction: 'buy' | 'sell';
     minimumVerification: typeof STOCK_EXECUTION_VERIFICATION_DEPTH_V1;
   }) => void;
+  /**
+   * Growth plan step 2 — offer "Buy $10" on the answer card, through the same
+   * `onPrepare` handoff as every other buy. Absent: no such button. The Base
+   * App leaves it out because it has no sign-in to carry a buy through.
+   * `sponsoredGas` only decides whether the card may mention the fee.
+   */
+  starterBuy?: { sponsoredGas: boolean; dailyLimitPerWallet: number | null } | null;
+}
+
+/** What the card says under "Buy $10" — an offer, never a promise: the fee is
+ * decided per approval, and a spent allowance falls back to the wallet paying. */
+export function starterBuyNoteV1(input: { sponsoredGas: boolean; dailyLimitPerWallet: number | null }): string | null {
+  if (!input.sponsoredGas) return null;
+  const limit = input.dailyLimitPerWallet;
+  return `Base Account wallets: Miorail offers to pay the network fee${
+    limit ? `, up to ${limit} trade${limit === 1 ? '' : 's'} a day` : ''
+  }.`;
 }
 
 /**
@@ -778,6 +796,10 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
 
   const model: MarketRealityScreenModelV1 = {
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
+    starterBuy:
+      input.starterBuy && input.onPrepare && reality.data
+        ? { label: 'Buy $10', note: starterBuyNoteV1(input.starterBuy) }
+        : null,
     scope: scopeView,
     // The selected key belongs to the scope it was chosen in. Widening keeps it
     // — every scoped key is in the wide corpus — and narrowing lets the default
@@ -962,6 +984,29 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
               input.onInspectRoute?.({
                 tokenAddress: built.handoff.tokenAddress,
                 goal: stockExecutionGoalSentenceV1(built.handoff),
+                minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
+              });
+            },
+          }
+        : {}),
+      // Growth plan step 2 — the same buy handoff at $10. Every check the handoff
+      // makes (a reviewed address, supply outstanding, a reviewed router policy)
+      // still applies; only the size is the starter one, and the route is
+      // planned, quoted and simulated again at that size before anything is
+      // signed.
+      ...(reality.data && input.onPrepare && input.starterBuy
+        ? {
+            onStarterBuy: (tokenAddress: string) => {
+              const built = stockStarterBuyGoalV1({
+                response: reality.data as never,
+                tokenAddress,
+                now: new Date(),
+              });
+              if (built.status !== 'ready') return;
+              input.onPrepare?.({
+                tokenAddress: built.handoff.tokenAddress,
+                goal: built.goal,
+                direction: 'buy',
                 minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
               });
             },

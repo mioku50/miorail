@@ -14,6 +14,7 @@ import {
   type BlueprintSubmitStatus,
 } from './useSubmitApprovedBlueprint';
 import { BUILDER_ATTRIBUTION_LABELS_V1, type BuilderAttributionOutcomeV1 } from './attribution';
+import { SPONSORED_GAS_LABELS_V1, type SponsoredGasStateV1 } from './sponsoredGas';
 
 export interface BlueprintSubmitButtonProps
   extends Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick'> {
@@ -41,6 +42,8 @@ export interface BlueprintSubmitButtonProps
      * batch exists. Carried alongside the submission, never inside it — see the
      * note in useSubmitApprovedBlueprint. */
     builderAttribution: BuilderAttributionOutcomeV1 | null;
+    /** Growth plan step 2: who pays the network fee on the latest attempt. */
+    sponsoredGas: SponsoredGasStateV1 | null;
   }) => void;
 }
 
@@ -98,7 +101,7 @@ export function BlueprintSubmitButton({
   ...rest
 }: BlueprintSubmitButtonProps) {
   const { address, chainId } = useAccount();
-  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, poller } =
+  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, sponsoredGas, poller } =
     useSubmitApprovedBlueprint({
       routeRunId,
       blueprintId,
@@ -109,12 +112,12 @@ export function BlueprintSubmitButton({
 
   const lastReported = useRef<string>('');
   useEffect(() => {
-    const snapshot = `${status}:${batchId ?? ''}:${txHashes.join(',')}:${error ?? ''}:${proofId ?? ''}:${recordedFinalStatus ?? ''}:${builderAttribution?.status ?? ''}`;
+    const snapshot = `${status}:${batchId ?? ''}:${txHashes.join(',')}:${error ?? ''}:${proofId ?? ''}:${recordedFinalStatus ?? ''}:${builderAttribution?.status ?? ''}:${sponsoredGas ?? ''}`;
     if (snapshot !== lastReported.current && onStateChange) {
       lastReported.current = snapshot;
-      onStateChange({ status, batchId, txHashes, error, proofId, recordedFinalStatus, builderAttribution });
+      onStateChange({ status, batchId, txHashes, error, proofId, recordedFinalStatus, builderAttribution, sponsoredGas });
     }
-  }, [status, batchId, txHashes, error, proofId, recordedFinalStatus, builderAttribution, onStateChange]);
+  }, [status, batchId, txHashes, error, proofId, recordedFinalStatus, builderAttribution, sponsoredGas, onStateChange]);
 
   const disabledReason =
     status === 'idle' || status === 'cancelled' || status === 'failed'
@@ -153,6 +156,12 @@ export function BlueprintSubmitButton({
           noise; the two other outcomes are the ones nobody would otherwise
           discover, because unattributed activity looks exactly like attributed
           activity everywhere else. */}
+      {/* Growth plan step 2: who pays the network fee. Known only once the
+          approval has been read, so it appears as the wallet opens — never as
+          a promise before the server has made one. */}
+      {sponsoredGas && SPONSORED_GAS_LABELS_V1[sponsoredGas] && (
+        <p className="mt-2 text-xs text-ink-3">{SPONSORED_GAS_LABELS_V1[sponsoredGas]}</p>
+      )}
       {builderAttribution && builderAttribution.status !== 'included' && (
         <p className="mt-2 text-xs text-ink-3">
           {BUILDER_ATTRIBUTION_LABELS_V1[builderAttribution.status]}. The transaction itself is unaffected.

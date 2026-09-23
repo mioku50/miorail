@@ -40,6 +40,10 @@ app.use(helmet({
   // for the popup without relaxing frame, content or transport protections.
   crossOriginOpenerPolicy: { policy: 'same-origin-allow-popups' },
 }));
+// Before CORS and sessions: the wallet calls the paymaster from its own origin
+// with no Miorail cookie, and the app's CORS would answer its preflight with no
+// allowed origin. The router authorises each request by a signed token instead.
+app.use('/api/paymaster', sponsoredGasRouter);
 const corsOrigins = process.env.CORS_ORIGIN
   || (process.env.NODE_ENV === 'test' ? 'https://miorail.xyz' : '');
 const allowedCorsOrigins = corsOrigins
@@ -117,6 +121,7 @@ import { routes } from './routes';
 import { mcpServerRouter } from './routes/mcp/index.js';
 import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
 import { stockPagesRouter } from './routes/stockPages.js';
+import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 
 // T72-B §1 — the AUTHENTICATED MCP endpoint, mounted before the public one.
 //

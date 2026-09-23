@@ -525,6 +525,21 @@ printf '%s' "$stock_page" | grep -q "property=\"og:title\" content=\"[^\"]*$stoc
   || { echo "FAILED: $stock_path came back without its own head (nginx served the static file)"; exit 1; }
 printf '  stocks         %-28s %s\n' "$oauth_origin$stock_path" 'public board + a head naming the stock'
 
+# Sponsored gas (growth plan step 2). The wallet calls /api/paymaster from its
+# own origin, so the preflight must come back with an allowed origin — the
+# app's CORS would answer it with none, which is why the route is mounted
+# before it. Only on/off is printed: the upstream URL carries a billable key.
+gas_status=$(curl -fsS --max-time 20 "$oauth_origin/api/paymaster/status" 2>/dev/null) \
+  || { echo 'FAILED: /api/paymaster/status did not answer'; exit 1; }
+gas_state=$(printf '%s' "$gas_status" | jq -r '.sponsoredGas // empty' 2>/dev/null)
+[ "$gas_state" = on ] || [ "$gas_state" = off ] \
+  || { echo 'FAILED: /api/paymaster/status is not the sponsorship status (the SPA may be answering it)'; exit 1; }
+gas_cors=$(curl -sS -o /dev/null -D - --max-time 20 -X OPTIONS "$oauth_origin/api/paymaster" \
+  -H 'Origin: https://keys.coinbase.com' -H 'Access-Control-Request-Method: POST' \
+  -H 'Access-Control-Request-Headers: content-type' 2>/dev/null | tr -d '\r' | grep -i '^access-control-allow-origin:' || true)
+[ -n "$gas_cors" ] || { echo 'FAILED: the paymaster preflight came back with no allowed origin; a wallet cannot reach it'; exit 1; }
+printf '  sponsored gas  %-28s %s\n' "$oauth_origin/api/paymaster" "$gas_state (limit/wallet/day: $(printf '%s' "$gas_status" | jq -r '.dailyLimitPerWallet // "-"'))"
+
 # The language lane, asked to answer.
 #
 # On 2026-09-09 the configured primary had been returning 402 on every call for

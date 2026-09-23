@@ -24,6 +24,14 @@ export type { ConfirmFlowStatus, UseWalletConfirmActionResult, UseWalletConfirmA
 export { WalletConfirmButton } from './src/WalletConfirmButton';
 export type { WalletConfirmButtonProps, WalletConfirmAction } from './src/WalletConfirmButton';
 
+// Growth plan step 2: the ERC-7677 fee sponsor an approval may offer.
+export {
+  SPONSORED_GAS_LABELS_V1,
+  paymasterServiceSupportV1,
+  sponsoredGasPlanV1,
+} from './src/sponsoredGas';
+export type { SponsoredGasOfferV1, SponsoredGasStateV1 } from './src/sponsoredGas';
+
 // T57: approved-blueprint submission flow (server approve → Base Account
 // wallet → idempotent submission record). Shares CallsStatusPoller,
 // normalizeCall, and builder-code attribution with the T19 flow.

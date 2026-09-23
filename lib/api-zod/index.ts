@@ -808,6 +808,20 @@ export const SwapBlueprintApproveRequestV1Schema = z
   })
   .strict();
 
+/**
+ * Where a wallet asks for its gas to be paid (ERC-7677 `paymasterService`),
+ * and the opaque context that ties the request to one approval. The URL is
+ * always Miorail's own proxy — never the upstream paymaster's, which carries a
+ * billable key.
+ */
+export const SponsoredGasOfferV1Schema = z
+  .object({
+    paymasterUrl: z.string().url().max(300).startsWith('https://'),
+    context: z.object({ sponsorship: z.string().min(1).max(2000) }).strict(),
+  })
+  .strict();
+export type SponsoredGasOfferV1 = z.infer<typeof SponsoredGasOfferV1Schema>;
+
 export const SwapBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({
@@ -835,6 +849,10 @@ export const SwapBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcom
         })
         .strict(),
       lifecycle: BlueprintLifecycleStateV1Schema,
+      // Growth plan step 2: gas paid by Miorail for these exact calls, when the
+      // server offers it. Absent or null means the wallet pays, as before. No
+      // `.default()`: parsing must not write a key the server never sent.
+      sponsorship: SponsoredGasOfferV1Schema.nullable().optional(),
     })
     .strict(),
   z

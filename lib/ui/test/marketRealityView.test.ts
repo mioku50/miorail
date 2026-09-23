@@ -5000,3 +5000,73 @@ describe('a visitor reads the last measurement, not an expired price', () => {
     assert.doesNotMatch(headline.representation?.lastSeen?.value ?? '', /back/);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Growth plan step 2 — "Buy $10" on the answer card.
+// ---------------------------------------------------------------------------
+
+describe('the starter buy on the answer card', () => {
+  const render = (over: { starterBuy?: { label: string; note: string | null } | null; onStarterBuy?: (a: string) => void }) => {
+    const wire = openSellWireV1();
+    return renderToStaticMarkup(
+      React.createElement(MarketRealityScreen, {
+        model: {
+          choices: [],
+          choicesLoading: false,
+          choicesError: null,
+          counters: [],
+          selectedKey: wire.question.underlyingKey,
+          direction: 'sell',
+          requestedCashAtomic: wire.question.requestedCashAtomic,
+          surface: 'market',
+          historyPeriod: 'now',
+          view: marketRealityViewV1({ wire, choice: null, now: NOW }),
+          viewLoading: false,
+          viewError: null,
+          history: null,
+          historyLoading: false,
+          historyError: null,
+          measuring: false,
+          measurementNote: null,
+          measurementError: null,
+          watchedTokenAddresses: [],
+          watchingTokenAddress: null,
+          removingWatchTokenAddress: null,
+          watchError: null,
+          ...(over.starterBuy !== undefined ? { starterBuy: over.starterBuy } : {}),
+          actions: {
+            onUnderlying: () => undefined,
+            onDirection: () => undefined,
+            onSize: () => undefined,
+            onSurface: () => undefined,
+            onHistoryPeriod: () => undefined,
+            onPrepare: () => undefined,
+            ...(over.onStarterBuy ? { onStarterBuy: over.onStarterBuy } : {}),
+          },
+        },
+      }),
+    );
+  };
+
+  test('the card offers it, first, with what may be said about the fee', () => {
+    const markup = render({
+      starterBuy: { label: 'Buy $10', note: 'Base Account wallets: Miorail offers to pay the network fee, up to 3 trades a day.' },
+      onStarterBuy: () => undefined,
+    });
+    const actions = markup.slice(markup.indexOf('mr-headline-actions'));
+    assert.match(actions, /^mr-headline-actions"><button type="button" class="btn">Buy \$10<\/button>/);
+    assert.match(markup, /<p class="lnote">Base Account wallets: Miorail offers to pay the network fee/);
+  });
+
+  test('no note is printed when the fee is not on offer', () => {
+    const markup = render({ starterBuy: { label: 'Buy $10', note: null }, onStarterBuy: () => undefined });
+    assert.match(markup, />Buy \$10</);
+    assert.doesNotMatch(markup, /network fee/);
+  });
+
+  test('a surface that cannot carry a buy through shows no such button', () => {
+    // The Base App passes no starter buy: it has no sign-in to finish one.
+    assert.doesNotMatch(render({}), /Buy \$10/);
+    assert.doesNotMatch(render({ starterBuy: { label: 'Buy $10', note: null } }), /Buy \$10/, 'a label with no action is no button');
+  });
+});

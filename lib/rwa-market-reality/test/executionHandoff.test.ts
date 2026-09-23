@@ -3,10 +3,12 @@ import test, { describe } from 'node:test';
 
 import {
   HANDOFF_CASH_ADDRESS_V1,
+  STOCK_STARTER_BUY_CASH_ATOMIC_V1,
   StockExecutionHandoffV1Schema,
   stockExecutionGoalSentenceV1,
   stockExecutionHandoffV1,
   stockExecutionSizeNoteV1,
+  stockStarterBuyGoalV1,
 } from '../src/executionHandoff.js';
 import { MarketRealityResponseV2Schema, type MarketRealityResponseV2 } from '../src/contracts.js';
 
@@ -572,5 +574,46 @@ describe('Phase 13.1 — Stocks to advanced execution', () => {
       assert.ok(addresses.includes(COINBASE));
       assert.ok(addresses.includes(HANDOFF_CASH_ADDRESS_V1));
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Growth plan step 2 — "Buy $10" is the same buy, at the starter size.
+// ---------------------------------------------------------------------------
+
+describe('the starter buy', () => {
+  test('is a $10 USDC buy of the exact address the card shows', () => {
+    const built = stockStarterBuyGoalV1({ response: response(), tokenAddress: COINBASE, now: NOW });
+    assert.equal(built.status, 'ready');
+    assert.ok(built.status === 'ready');
+    assert.equal(STOCK_STARTER_BUY_CASH_ATOMIC_V1, '10000000');
+    assert.equal(built.handoff.direction, 'buy');
+    assert.equal(built.handoff.requestedCashAtomic, '10000000');
+    assert.equal(built.goal, `Swap 10 ${HANDOFF_CASH_ADDRESS_V1} to ${COINBASE} on Base`);
+    // The same rule every buy obeys: an address, never a name.
+    assert.doesNotMatch(built.goal, /NVDA|nvidia|coinbase/i);
+  });
+
+  test('keeps every refusal a buy gets', () => {
+    // A zero-supply wrapper is not quietly swapped for what it wraps just
+    // because the size is small.
+    const wrapper = stockStarterBuyGoalV1({ response: response(), tokenAddress: BACKED_WRAPPER, now: NOW });
+    assert.equal(wrapper.status, 'refused');
+    assert.ok(wrapper.status === 'refused');
+    assert.equal(wrapper.reason, 'zero_supply_representation');
+    const stranger = stockStarterBuyGoalV1({
+      response: response(),
+      tokenAddress: '0x9999999999999999999999999999999999999999',
+      now: NOW,
+    });
+    assert.equal(stranger.status === 'refused' && stranger.reason, 'representation_not_reviewed');
+  });
+
+  test('is a buy even on a board asking about a sale', () => {
+    const sellBoard = response({ question: { ...questionV1, direction: 'sell' } });
+    const built = stockStarterBuyGoalV1({ response: sellBoard, tokenAddress: COINBASE, now: NOW });
+    assert.ok(built.status === 'ready');
+    assert.equal(built.handoff.direction, 'buy');
+    assert.match(built.goal, /^Swap 10 /);
   });
 });

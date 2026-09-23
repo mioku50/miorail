@@ -334,3 +334,22 @@ test('every dossier the board fetches can reach its ladder', () => {
     assert.ok(deps.includes(`${hook}.data`), `${hook} is read but not a dependency, so its ladder can go unseen`);
   }
 });
+
+test('what the starter buy may say about the fee is an offer, never a promise', async () => {
+  const { starterBuyNoteV1 } = await import('../src/console/stocksConsole');
+  assert.equal(
+    starterBuyNoteV1({ sponsoredGas: true, dailyLimitPerWallet: 3 }),
+    'Base Account wallets: Miorail offers to pay the network fee, up to 3 trades a day.',
+  );
+  assert.equal(
+    starterBuyNoteV1({ sponsoredGas: true, dailyLimitPerWallet: 1 }),
+    'Base Account wallets: Miorail offers to pay the network fee, up to 1 trade a day.',
+  );
+  assert.equal(starterBuyNoteV1({ sponsoredGas: false, dailyLimitPerWallet: null }), null);
+  // The web offers it; the Base App, which cannot sign a reader in, does not.
+  const root = path.resolve(here, '..', '..', '..');
+  const web = readFileSync(path.join(root, 'artifacts/interface/src/features/rwa/MarketRealityPage.tsx'), 'utf8');
+  const mini = readFileSync(path.join(root, 'artifacts/miniapp/app/components/MiniConsole.tsx'), 'utf8');
+  assert.match(web, /starterBuy: \{\s*sponsoredGas: sponsoredGas\.data\?\.sponsoredGas === 'on',/);
+  assert.doesNotMatch(mini, /starterBuy/);
+});

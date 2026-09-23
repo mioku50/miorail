@@ -385,6 +385,39 @@ export function stockExecutionGoalSentenceV1(handoff: StockExecutionHandoffV1): 
     : `Swap ${amount} ${parsed.tokenAddress} to ${parsed.cashAddress} on Base`;
 }
 
+/**
+ * Growth plan step 2 — the starter purchase: $10 of USDC.
+ *
+ * Small enough that anyone can try one, and exact before anything is quoted,
+ * because a BUY spends an exact number of USDC atoms.
+ */
+export const STOCK_STARTER_BUY_CASH_ATOMIC_V1 = '10000000';
+
+/**
+ * The same BUY handoff for one exact reviewed address, at the starter size.
+ *
+ * Built from the board's own answer, so every refusal a buy gets still
+ * applies — an address outside this answer, no supply outstanding, no
+ * reviewed router policy. Only the size differs, and nothing about the size
+ * the board measured travels with it: the planner quotes, simulates and asks
+ * again at $10 before anything is signed.
+ */
+export function stockStarterBuyGoalV1(input: {
+  response: MarketRealityResponseV2;
+  tokenAddress: string;
+  now: Date;
+}):
+  | { status: 'ready'; handoff: StockExecutionHandoffV1; goal: string }
+  | Extract<StockExecutionHandoffResultV1, { status: 'refused' }> {
+  const built = stockExecutionHandoffV1({ ...input, direction: 'buy' });
+  if (built.status !== 'ready') return built;
+  const handoff = StockExecutionHandoffV1Schema.parse({
+    ...built.handoff,
+    requestedCashAtomic: STOCK_STARTER_BUY_CASH_ATOMIC_V1,
+  });
+  return { status: 'ready', handoff, goal: stockExecutionGoalSentenceV1(handoff) };
+}
+
 /** What the reader is told about the size before they plan. Reader copy, so the
  * SELL case names where its number came from rather than presenting a carried
  * amount as something freshly true. */

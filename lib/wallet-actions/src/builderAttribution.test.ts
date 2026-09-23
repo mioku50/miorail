@@ -100,7 +100,9 @@ describe('T67X-B6: attribution touches nothing financial', () => {
     // If the suffix were spliced into call data, it would change the calls the
     // server approved and the hash bound to them. It is passed beside the
     // batch, and the wallet appends it to the outer UserOperation callData.
-    assert.match(source, /capabilities: suffix \? \{ dataSuffix: \{ value: suffix, optional: true \} \} : undefined/);
+    // Since growth plan step 2 the object may also carry the fee sponsor, so the
+    // suffix is spread into it — still only ever as `dataSuffix`, optional.
+    assert.match(source, /\.\.\.\(suffix \? \{ dataSuffix: \{ value: suffix, optional: true \} \} : \{\}\)/);
     assert.equal(/payload\.calls[\s\S]{0,200}suffix/.test(source), false, 'the suffix must never be mixed into calls');
   });
 

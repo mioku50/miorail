@@ -39,7 +39,12 @@ test('dataSuffix is attached only as an optional capability derived from the bui
   const source = mod.useSubmitApprovedBlueprint.toString();
   assert.ok(/builderCodeToDataSuffix/.test(source), 'attribution must come from builderCodeToDataSuffix');
   assert.ok(/optional:\s*(true|!0)/.test(source), 'the dataSuffix capability must be optional');
-  assert.ok(/capabilities:\s*suffix\s*\?/.test(source), 'no capability may be attached without a suffix');
+  // A capability object is sent only when there is something to put in it: the
+  // suffix, or a fee sponsor the approval offered (growth plan step 2).
+  assert.ok(
+    /capabilities:\s*suffix\s*\|\|\s*gas\.capability\s*\?/.test(source),
+    'no capability may be attached without a suffix or a sponsor offer',
+  );
 });
 
 test('preflight fails closed on a from-address mismatch without opening the wallet', () => {

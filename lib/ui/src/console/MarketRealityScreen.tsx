@@ -194,6 +194,8 @@ export interface MarketRealityActionsV1 {
    * answering.
    */
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
+  /** Growth plan step 2 — "Buy $10" on the answer card. */
+  onStarterBuy?: (tokenAddress: string) => void;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -220,6 +222,9 @@ export interface StocksVisitorNoticeV1 {
 export interface MarketRealityScreenModelV1 {
   /** Null for a signed-in reader. */
   visitor?: StocksVisitorNoticeV1 | null;
+  /** Growth plan step 2 — the starter buy on the answer card, and what may be
+   * said about its fee. Absent where the surface cannot carry a buy through. */
+  starterBuy?: { label: string; note: string | null } | null;
   /** Phase 13.2. Null until a reader has asked. */
   ask?: StocksAskPanelModelV1;
   /** Why advanced execution is unavailable for an exact address, when it is.
@@ -1244,11 +1249,15 @@ function HeadlineAnswer({
   measuring,
   onMeasure,
   onPrepare,
+  starterBuy,
+  onStarterBuy,
 }: {
   headline: StocksHeadlineViewV1;
   measuring: boolean;
   onMeasure?: () => void;
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
+  starterBuy?: { label: string; note: string | null } | null;
+  onStarterBuy?: (tokenAddress: string) => void;
 }) {
   const lead = headline.representation;
   return (
@@ -1305,6 +1314,15 @@ function HeadlineAnswer({
       )}
 
       <div className="mr-headline-actions">
+        {/* Growth plan step 2 — the first thing a reader can do with a stock
+            they have just read about, at a size anyone can try. It opens the
+            same planner every buy goes through, at $10; nothing is signed on
+            this page. */}
+        {lead && starterBuy && onStarterBuy ? (
+          <button type="button" className="btn" onClick={() => onStarterBuy(lead.tokenAddress)}>
+            {starterBuy.label}
+          </button>
+        ) : null}
         {onMeasure ? (
           <button type="button" className="btn" onClick={onMeasure} disabled={measuring}>
             {measuring ? 'Measuring…' : 'Measure now'}
@@ -1340,6 +1358,7 @@ function HeadlineAnswer({
           with the evidence for each
         </span>
       </div>
+      {lead && starterBuy?.note && onStarterBuy ? <p className="lnote">{starterBuy.note}</p> : null}
     </section>
   );
 }
@@ -1534,6 +1553,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           measuring={model.measuring}
           onMeasure={actions.onMeasure}
           onPrepare={actions.onPrepare}
+          starterBuy={model.starterBuy ?? null}
+          onStarterBuy={actions.onStarterBuy}
         />
       ) : null}
 
