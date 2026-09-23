@@ -323,3 +323,54 @@ test('every request that carries a JSON body declares one', () => {
   const call = helper.indexOf('await fetch(url');
   assert.ok(guard > -1 && call > -1 && guard < call, 'the default must precede the fetch');
 });
+
+// ---------------------------------------------------------------------------
+// A signed-out status is an answer, not a fault.
+//
+// Measured on production 2026-09-23: the Base App switches its Stocks board to
+// the public door on the status query's ERROR, and with React Query's default
+// three retries that error arrived after the fourth 401 — nine seconds of "you
+// are not signed in" banners before a visitor saw a single stock.
+// ---------------------------------------------------------------------------
+
+function answeringV1(t: test.TestContext, status: number, body: unknown): string[] {
+  const calls: string[] = [];
+  t.mock.method(globalThis, 'fetch', async (input: string | URL | Request) => {
+    calls.push(String(input));
+    return new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } });
+  });
+  return calls;
+}
+
+// fetchApi is not exported; logoutWalletSession is the one plain function that
+// goes through it, so it stands in for the transport and its error wording.
+function statusLikeReadV1(client: QueryClient) {
+  return client.fetchQuery({
+    queryKey: ['status'],
+    queryFn: () => mod.logoutWalletSession(),
+    retry: mod.retryUnlessSignedOutV1,
+    retryDelay: 0,
+  });
+}
+
+test('a signed-out status is read once, not retried into a nine-second wait', async (t) => {
+  const calls = answeringV1(t, 401, { error: 'authentication_required', code: 'authentication_required' });
+  await assert.rejects(statusLikeReadV1(new QueryClient()), /^Error: authentication_required$/);
+  assert.equal(calls.length, 1);
+});
+
+test('a status that failed for any other reason is still retried', async (t) => {
+  // A 502 while the API restarts can succeed a second later; a 401 cannot.
+  const calls = answeringV1(t, 502, { error: 'bad_gateway' });
+  await assert.rejects(statusLikeReadV1(new QueryClient()), /bad_gateway/);
+  assert.equal(calls.length, 4, 'the first attempt and the default three retries');
+});
+
+test('useStatus is the query that carries that rule', () => {
+  const source = readFileSync(path.join(here, 'index.ts'), 'utf8');
+  const hook = source.slice(source.indexOf('export function useStatus('));
+  const body = hook.slice(0, hook.indexOf('\n}\n'));
+  assert.match(body, /retry: retryUnlessSignedOutV1,/);
+  // Before the caller's options, so a caller can still choose otherwise.
+  assert.ok(body.indexOf('retry: retryUnlessSignedOutV1') < body.indexOf('...options'));
+});

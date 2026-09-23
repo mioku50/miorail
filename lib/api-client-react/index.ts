@@ -718,6 +718,20 @@ export function usePortfolio(
   });
 }
 
+/**
+ * `authentication_required` is an answer, not a fault, so it is not retried.
+ *
+ * Retried like a fault — the default three times, with backoff — it kept a
+ * signed-out Base App visitor on "you are not signed in" banners for nine
+ * seconds before the public Stocks board replaced them, because the board
+ * switches on the status query's ERROR and the error only arrived after the
+ * fourth attempt (measured on production, 2026-09-23). Anything else is still
+ * retried: a 502 during a restart can succeed a second later; a 401 cannot.
+ */
+export function retryUnlessSignedOutV1(failureCount: number, error: Error): boolean {
+  return !error.message.startsWith('authentication_required') && failureCount < 3;
+}
+
 export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse, Error, apiSpec.StatusResponse, string[]>, 'queryKey' | 'queryFn'>) {
   return useQuery({
     queryKey: ['status'],
@@ -725,6 +739,7 @@ export function useStatus(options?: Omit<UseQueryOptions<apiSpec.StatusResponse,
     // Status is cheap and triggers no expensive provider calls, so it can poll
     // more often to surface cache/budget diagnostics.
     refetchInterval: 15000,
+    retry: retryUnlessSignedOutV1,
     ...options,
   });
 }
