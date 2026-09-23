@@ -789,6 +789,18 @@ export function comparingProgressV1(input: ComparingProgressInputV1): ComparingP
  */
 export const ROUTE_PLANNER_UNAVAILABLE_CODE_V1 = 'route_planner_unavailable';
 
+const NOTHING_SPENT_V1 = 'Nothing was signed or spent.';
+
+/**
+ * A failure's text, said to end with what it did not do — once. The server's
+ * own fault sentences already end with it, and appending it again printed
+ * "Nothing was signed or spent. Nothing was signed or spent." under every
+ * failed Stocks buy.
+ */
+export function nothingSpentDetailV1(message: string): string {
+  return message.includes(NOTHING_SPENT_V1) ? message : `${message} ${NOTHING_SPENT_V1}`;
+}
+
 export function comparingTransportFailureV1(error: { message: string } | null | undefined): {
   title: string;
   detail: string;
@@ -801,7 +813,7 @@ export function comparingTransportFailureV1(error: { message: string } | null | 
   // reader; the code in front of it is not.
   const detail = ours
     ? error.message.slice(ROUTE_PLANNER_UNAVAILABLE_CODE_V1.length + 1).trim()
-    : `${error.message} Nothing was signed or spent.`;
+    : nothingSpentDetailV1(error.message);
   return ours
     ? { title: 'Miorail could not read your goal', detail, stage: 'planner', canCompareAgain: true }
     : // A failure we could not classify says nothing about the venues, so it

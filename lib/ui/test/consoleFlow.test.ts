@@ -12,6 +12,7 @@ import {
   commerceCheckoutAvailableV1,
   comparingProgressV1,
   comparingTransportFailureV1,
+  nothingSpentDetailV1,
   coverageFromStatusV1,
   deriveStageTimingsV1,
   dispatchRouteFamilyV1,
@@ -514,6 +515,19 @@ describe('Comparing is route-family aware and terminal', () => {
     assert.equal(unknown.stage, 'intent', 'an unclassified failure claims nothing about the venues');
     assert.match(unknown.detail, /Nothing was signed or spent\./);
     assert.equal(comparingTransportFailureV1(null), null);
+  });
+
+  test('a failure says nothing was spent once, however many layers say it', () => {
+    // 2026-09-23: the server's sentence already ends with it, and the card
+    // printed it twice under a failed Stocks buy.
+    const server = comparingTransportFailureV1({
+      message:
+        'route_plan_evaluation_failed: The route planner stopped before any venue answered. Nothing here is a finding about this pair, this token or the routes available on Base. Nothing was signed or spent.',
+    })!;
+    assert.equal(server.detail.match(/Nothing was signed or spent\./g)?.length, 1);
+    // The code stays: it is the one string that finds the log line.
+    assert.match(server.detail, /^route_plan_evaluation_failed: /);
+    assert.equal(nothingSpentDetailV1('API error: 502'), 'API error: 502 Nothing was signed or spent.');
   });
 
   test('an unstated stage never claims the market answered', () => {

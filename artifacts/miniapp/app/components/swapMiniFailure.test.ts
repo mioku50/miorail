@@ -59,7 +59,9 @@ describe('a failed swap comparison stays on Comparing in the miniapp', () => {
 
   test('the failure card names the reason and offers the way back', () => {
     assert.match(source, /const transportError = \(evaluation\.error/);
-    assert.match(source, /\$\{transportError\.message\} Nothing was signed or spent\./);
+    // Said once: the helper appends it only when the server's own sentence
+    // has not already said it (lib/ui consoleFlow tests pin that).
+    assert.match(source, /detail: nothingSpentDetailV1\(transportError\.message\),/);
     // The user leaves Comparing by choosing to, having read why.
     assert.match(source, /comparingFailure && \(/);
     assert.match(source, /Edit goal/);

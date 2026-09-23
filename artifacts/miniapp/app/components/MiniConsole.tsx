@@ -102,6 +102,7 @@ import {
   RwaDiscoverScreen,
   MarketRealityScreen,
   MarketRealityRadarScreen,
+  nothingSpentDetailV1,
   STOCKS_CONSOLE_DEFAULT_SIZE_V1,
   useStocksConsoleV1,
   useRadarConsoleV1,
@@ -501,7 +502,7 @@ export function MiniConsole() {
     if (transportError) {
       return {
         title: "The comparison could not be completed",
-        detail: `${transportError.message} Nothing was signed or spent.`,
+        detail: nothingSpentDetailV1(transportError.message),
       };
     }
     return dispatch.blockedReason
