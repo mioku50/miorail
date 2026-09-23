@@ -24,6 +24,7 @@ import {
 import { useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 import { useAuthGate } from '../../app/AuthProvider';
+import { expectedChainId } from '../../lib/chain';
 
 // ---------------------------------------------------------------------------
 // Phase 10B — Market Reality, on the web.
@@ -198,7 +199,11 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
         blockNumber: chainBlockNumberV1(status.data ?? null),
         gasLabel: chainGasLabelV1(status.data ?? null),
         chainUnavailableReason: chainUnavailableReasonV1(status.data ?? null),
-        networkLabel: chainLabelV1(status.data?.chainId),
+        // A visitor's `/status` is a 401, so the server's chain was never read:
+        // no Block and Gas dashes, and the chain this build was made for rather
+        // than "chain unknown".
+        chainRead: access === 'session',
+        networkLabel: chainLabelV1(status.data?.chainId ?? (access === 'public' ? expectedChainId : undefined)),
         connected: Boolean(address) && status.data?.rpc?.status === 'connected',
         walletLabel: shortAddressV1(address),
       }}
@@ -217,6 +222,7 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
         sourcesLabel: String(stocks.representationCount),
         spendLabel: '$0',
         blockNumber: chainBlockNumberV1(status.data ?? null),
+        chainRead: access === 'session',
       }}
       right={null}
       theme={theme}

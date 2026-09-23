@@ -1285,7 +1285,7 @@ function HeadlineAnswer({
               <dt>{lead.lastSeen.label}</dt>
               <dd>
                 <span className="mono">{lead.lastSeen.value}</span>
-                <span className="d"> {lead.lastSeen.note}</span>
+                <span className="d"> · {lead.lastSeen.note}</span>
               </dd>
             </dl>
           ) : null}

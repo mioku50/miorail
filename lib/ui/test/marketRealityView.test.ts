@@ -4163,12 +4163,22 @@ describe('the answer card decides nothing the board has not already decided', ()
       tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
       issuerName: 'Coinbase',
       structureLabel: 'B20 asset',
+      outcome: 'lapsed',
       outcomeChip: 'Tradable now',
       outcomeTone: 'good',
       outcomeBody: 'A router reaches this exact address at this size.',
       attribution: 'the market',
       inComparison: true,
-      lastSeen: { label: 'Buying in and selling back out', value: '$1,000 in → $999.12 back', note: 'measured 5 min ago' },
+      // Where the view actually puts a round trip. This fixture used to put it
+      // in `lastSeen`, which the view never does for a quote — so these tests
+      // passed while production showed no figure in this slot at all.
+      exit: {
+        label: 'Buying in and selling back out',
+        value: '$1,000 in → $999.12 back',
+        note: 'measured 5 min ago',
+        tone: 'good',
+      },
+      lastSeen: null,
       ...over,
     }) as never;
   const view = (representations: unknown[]) =>
@@ -4264,7 +4274,7 @@ describe('the answer card decides nothing the board has not already decided', ()
   });
 
   test('nothing measured says so, rather than showing a dash', () => {
-    const headline = stocksHeadlineV1(view([rep({ lastSeen: null })]))!;
+    const headline = stocksHeadlineV1(view([rep({ exit: null, lastSeen: null })]))!;
     assert.equal(headline.representation?.lastSeen, null);
   });
 
@@ -4857,5 +4867,136 @@ describe('the action row has one reading and two equal sides', () => {
     assert.match(actions, /onPrepare\(lead\.tokenAddress, 'buy'\)/);
     assert.match(actions, /onPrepare\(lead\.tokenAddress, 'sell'\)/);
     assert.doesNotMatch(actions, /direction === 'sell' \? 'Prepare sell' : 'Prepare buy'/);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A visitor reads the last measurement, not an expired price.
+//
+// Production, 2026-09-23, the day the board opened without a wallet. A
+// visitor's board cannot measure, so every quote on it had closed by the time
+// it was read, and the page led with "Price expired" and "0 / 4 market
+// answers" in the warning colour — above real, dated measurements, under a
+// notice promising "the last measured prices … each with its age".
+// ---------------------------------------------------------------------------
+
+describe('a visitor reads the last measurement, not an expired price', () => {
+  const read = (reader?: 'session' | 'public', source: MarketRealityWireV1 = wire()) =>
+    marketRealityViewV1({ wire: source, choice: null, now: NOW, ...(reader ? { reader } : {}) })!;
+
+  /** The stored run's round trip at the board's own size, nine minutes old. */
+  const LADDER_EXIT = {
+    [COINBASE_NVDA]: {
+      rungs: [],
+      note: null,
+      exit: {
+        roundTripCostBps: '3',
+        requestedCashAtomic: '100000000',
+        returnedCashAtomic: '99970000',
+        basis: 'last_measured' as const,
+        observedAt: '2026-08-26T20:25:19.000Z',
+      },
+    },
+  };
+
+  test('a closed quote carries its age, not a warning', () => {
+    const card = read('public').representations[0]!;
+    assert.equal(card.outcome, 'lapsed', 'the fact itself does not change with the reader');
+    assert.equal(card.outcomeChip, 'Last quote 39 min ago');
+    assert.equal(card.outcomeTone, 'neutral');
+    assert.match(card.outcomeBody, /^A router quoted \$100 39 min ago, and that quote has closed\./);
+    assert.match(card.outcomeBody, /history, not a price now/);
+    // The one control a visitor cannot use is not the instruction they get.
+    assert.doesNotMatch(card.outcomeBody, /Measure now/);
+  });
+
+  test('a session reader still gets the exception, and the button that clears it', () => {
+    const card = read().representations[0]!;
+    assert.equal(card.outcomeChip, 'Price expired');
+    assert.equal(card.outcomeTone, 'warn');
+    assert.match(card.outcomeBody, /Measure now/);
+    assert.deepEqual(read('session').representations[0], card, 'session is the default reader');
+  });
+
+  test('an open quote is open for anyone', () => {
+    const card = read('public', openSellWireV1()).representations[0]!;
+    assert.equal(card.outcome, 'priced');
+    assert.equal(card.outcomeChip, 'Priced now');
+  });
+
+  test('the board counts what it holds, and a count takes no verdict colour', () => {
+    const view = read('public');
+    assert.equal(view.coverageChip, '1 / 3 measured');
+    assert.equal(view.coverageTone, 'neutral');
+    assert.match(view.coverageBody, /has measured 1 of 3 outstanding representations/);
+    assert.match(view.coverageBody, /last measurement with its age/);
+    const row = view.comparisonSummary.find((entry) => entry.label === 'Measured at this size');
+    assert.equal(row?.value, '1 / 3');
+    assert.equal(row?.tone, 'neutral');
+    // A live-answer count is zero by construction for this reader: gone, not
+    // printed beside the count that means something.
+    assert.ok(!view.comparisonSummary.some((entry) => entry.label === 'Live answers'));
+  });
+
+  test('the session board keeps its live-answer count', () => {
+    const view = read();
+    assert.equal(view.coverageChip, '0 / 3 market answers');
+    assert.equal(view.coverageTone, 'warn');
+    assert.match(view.coverageBody, /current market answer for 0 of 3/);
+  });
+
+  test('our own failed call is not counted as a measurement of the market', () => {
+    const failed = wire({
+      representations: [
+        representation({
+          liveness: 'history_only',
+          lastObservation: {
+            ...LAPSED_OBSERVATION,
+            status: 'measurement_failed',
+            errorCode: 'provider_http_error',
+            returnedCashAtomic: null,
+          },
+        }),
+      ],
+    });
+    const view = read('public', failed);
+    assert.equal(view.representations[0]?.outcome, 'provider_failed');
+    assert.equal(view.coverageChip, '0 / 3 measured');
+    assert.match(view.coverageBody, /no market answer yet/);
+  });
+
+  test('the answer card leads with the round trip the stored run measured', () => {
+    // The slot existed for exactly this and never received it.
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW, reader: 'public', ladders: LADDER_EXIT });
+    const headline = stocksHeadlineV1(view)!;
+    assert.equal(headline.representation?.chip, 'Last quote 39 min ago');
+    assert.equal(headline.representation?.lastSeen?.label, 'Buying in and selling back out');
+    assert.match(headline.representation?.lastSeen?.value ?? '', /in → \$99\.97 back/);
+    assert.match(headline.representation?.lastSeen?.note ?? '', /0\.03% — measured 9 min ago/);
+  });
+
+  test('a session reader’s answer card gets the round trip too', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW, ladders: LADDER_EXIT });
+    const headline = stocksHeadlineV1(view)!;
+    assert.equal(headline.representation?.chip, 'Price expired');
+    assert.match(headline.representation?.lastSeen?.value ?? '', /\$99\.97 back/);
+  });
+
+  test('a later "no way out" is not led by an earlier round trip', () => {
+    // Two findings from two looks, one saying the money comes back and the
+    // other that it cannot, would read as the page contradicting itself.
+    const stale = wire({
+      representations: [
+        representation({
+          liveness: 'history_only',
+          lastObservation: { ...LAPSED_OBSERVATION, status: 'no_route', returnedCashAtomic: null },
+        }),
+      ],
+    });
+    const view = marketRealityViewV1({ wire: stale, choice: null, now: NOW, reader: 'public', ladders: LADDER_EXIT });
+    const headline = stocksHeadlineV1(view)!;
+    assert.equal(view!.representations[0]?.outcome, 'stale_finding');
+    assert.equal(headline.representation?.lastSeen?.label, 'Last market check');
+    assert.doesNotMatch(headline.representation?.lastSeen?.value ?? '', /back/);
   });
 });

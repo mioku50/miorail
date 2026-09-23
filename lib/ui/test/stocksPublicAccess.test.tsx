@@ -12,6 +12,8 @@ import {
   type StocksConsoleInputV1,
 } from '../src/console/stocksConsole';
 import { MarketRealityScreen } from '../src/console/MarketRealityScreen';
+import { ConsoleShell } from '../src/console/ConsoleShell';
+import { ConsoleMiniShell } from '../src/console/ConsoleMini';
 
 // ---------------------------------------------------------------------------
 // The Stocks board with no session.
@@ -219,5 +221,116 @@ test('nothing a session pays for is started without one', () => {
     'useRwaUseAccess(representationAddresses[0] ?? null, { enabled: useAccessEnabled, access })',
   ]) {
     assert.ok(source.includes(read), `missing: ${read}`);
+  }
+});
+
+// ---------------------------------------------------------------------------
+// The frame around the board, for a reader whose `/status` is a 401.
+//
+// Production, 2026-09-23: "chain unknown · Block — · Gas —" in the header and
+// "Block —" in the footer, above a board of real measurements. Nothing was
+// broken — the server's chain reading sits behind the session — but a row of
+// dashes reads as a dead feed, and it is the first thing a visitor sees.
+// ---------------------------------------------------------------------------
+
+function shellMarkupV1(chainRead: boolean | undefined): string {
+  return renderToStaticMarkup(
+    <ConsoleShell
+      header={{
+        crumb: ['Stocks'],
+        blockNumber: null,
+        gasLabel: null,
+        ...(chainRead === undefined ? {} : { chainRead }),
+        networkLabel: 'Base mainnet · 8453',
+        connected: false,
+        walletLabel: null,
+      }}
+      left={{ nav: [], sessions: [], sessionCount: '0', proofs: [], proofCount: '0' }}
+      footer={{
+        adaptersLabel: '—',
+        sourcesLabel: '5',
+        spendLabel: '$0',
+        blockNumber: null,
+        ...(chainRead === undefined ? {} : { chainRead }),
+      }}
+      right={null}
+      theme="dark"
+      onThemeChange={() => undefined}
+      onNewGoal={() => undefined}
+      onSelectSession={() => undefined}
+      onSelectProof={() => undefined}
+    >
+      <div>board</div>
+    </ConsoleShell>,
+  );
+}
+
+test('a visitor’s frame leaves out the chain it could not read', () => {
+  const markup = shellMarkupV1(false);
+  assert.doesNotMatch(markup, />Block </);
+  assert.doesNotMatch(markup, />Gas </);
+  // What IS known stays: the chain this build serves, and that no wallet is
+  // connected — the one message a visitor must not lose.
+  assert.match(markup, /Base mainnet · 8453/);
+  assert.match(markup, /not connected/);
+});
+
+test('a session frame still says when block and gas are not known right now', () => {
+  // Absent means read, or being read: a dash there is a real statement.
+  const markup = shellMarkupV1(undefined);
+  assert.match(markup, />Block </);
+  assert.match(markup, />Gas </);
+});
+
+test('the Base App bar leaves out an unread chain the same way', () => {
+  const bar = (chainRead: boolean) =>
+    renderToStaticMarkup(
+      <ConsoleMiniShell
+        goalLine="New goal"
+        stepLine="Not started"
+        networkLabel="chain unknown"
+        connected={false}
+        blockNumber={null}
+        chainRead={chainRead}
+        theme="dark"
+        onThemeChange={() => undefined}
+        drawer={null}
+        panels={null}
+      >
+        <div>board</div>
+      </ConsoleMiniShell>,
+    );
+  assert.doesNotMatch(bar(false), /chain unknown|Block/);
+  assert.match(bar(true), /chain unknown/);
+});
+
+test('both surfaces tell the board who is reading, and the frame what was read', () => {
+  const root = path.resolve(here, '..', '..', '..');
+  const source = (relative: string) => readFileSync(path.join(root, relative), 'utf8');
+  assert.match(source('lib/ui/src/console/stocksConsole.ts'), /reader: access,/);
+  const web = source('artifacts/interface/src/features/rwa/MarketRealityPage.tsx');
+  assert.equal(web.match(/chainRead: access === 'session',/g)?.length, 2, 'header and footer both');
+  assert.match(web, /chainLabelV1\(status\.data\?\.chainId \?\? \(access === 'public' \? expectedChainId : undefined\)\)/);
+  assert.match(
+    source('artifacts/miniapp/app/components/MiniConsole.tsx'),
+    /chainRead=\{!stocksSignedOut\}/,
+  );
+});
+
+test('every dossier the board fetches can reach its ladder', () => {
+  // Structural, because the failure is a re-render that never happens and SSR
+  // renders once. The hooks went from three to five and the memo's dependency
+  // list stayed at three; a ladder arriving on the fourth or fifth hook was
+  // picked up only when an open quote's tick re-ran the memo, which a visitor
+  // never has. NVDA's Coinbase card is the fourth.
+  const source = readFileSync(path.join(here, '../src/console/stocksConsole.ts'), 'utf8');
+  const hooks = [...source.matchAll(/const (dossier[A-Z]) = useOfficialAssetDossier\(/g)].map((match) => match[1]!);
+  assert.equal(hooks.length, 5);
+  const memo = source.slice(source.indexOf('const ladders = useMemo('));
+  const body = memo.slice(0, memo.indexOf('\n  ]);'));
+  const deps = body.slice(body.lastIndexOf('}, ['));
+  for (const hook of hooks) {
+    assert.ok(body.includes(`${hook}.data,`) || body.includes(`${hook}.data]`), `${hook} is not read by the ladders`);
+    assert.ok(deps.includes(`${hook}.data`), `${hook} is read but not a dependency, so its ladder can go unseen`);
   }
 });

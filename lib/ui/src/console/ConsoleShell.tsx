@@ -110,6 +110,15 @@ export interface ConsoleHeaderModelV1 {
    * that shows a stored block number reads as "our data is broken"; it usually
    * means one live probe was declined this second. */
   chainUnavailableReason?: string | null;
+  /**
+   * False when this reader cannot read the server's chain conditions at all —
+   * signed out, `/status` answers 401. Block and Gas are then left out rather
+   * than printed as dashes: a visitor on production, 2026-09-23, saw "chain
+   * unknown · Block — · Gas —" above a board of real measurements, which reads
+   * as a broken feed and is only a closed door. Absent means read, or still
+   * being read, and renders as before.
+   */
+  chainRead?: boolean;
   networkLabel: string;
   connected: boolean;
   walletLabel: string | null;
@@ -134,6 +143,8 @@ export interface ConsoleFooterModelV1 {
   sourcesLabel: string;
   spendLabel: string;
   blockNumber: string | null;
+  /** See `ConsoleHeaderModelV1.chainRead`. */
+  chainRead?: boolean;
 }
 
 export interface ConsoleShellProps {
@@ -225,14 +236,16 @@ export function ConsoleShell(props: ConsoleShellProps) {
             ))}
           </nav>
           <div className="hspace" />
-          <div className="hstat" title={header.chainUnavailableReason ?? undefined}>
-            <span>
-              Block <b className="mono">{header.blockNumber ?? '—'}</b>
-            </span>
-            <span>
-              Gas <b className="mono">{header.gasLabel ?? '—'}</b>
-            </span>
-          </div>
+          {header.chainRead === false ? null : (
+            <div className="hstat" title={header.chainUnavailableReason ?? undefined}>
+              <span>
+                Block <b className="mono">{header.blockNumber ?? '—'}</b>
+              </span>
+              <span>
+                Gas <b className="mono">{header.gasLabel ?? '—'}</b>
+              </span>
+            </div>
+          )}
           {/* `netchip` so the phone breakpoint can drop THIS chip specifically.
               Targeting it by "the chip without .mono" also hid the "not
               connected" chip, which is the one message that must survive. */}
@@ -363,9 +376,11 @@ export function ConsoleShell(props: ConsoleShellProps) {
           <span className="g">
             Spend <span className="v mono">{footer.spendLabel}</span>
           </span>
-          <span className="g">
-            Block <span className="v mono">{footer.blockNumber ?? '—'}</span>
-          </span>
+          {footer.chainRead === false ? null : (
+            <span className="g">
+              Block <span className="v mono">{footer.blockNumber ?? '—'}</span>
+            </span>
+          )}
           <span className="sp" />
           <a className="metriclink" href="/metrics">Public metrics</a>
           {/* AGPL-3.0 §13: anyone interacting with this program over a network

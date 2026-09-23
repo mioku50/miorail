@@ -554,10 +554,19 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       };
     }
     return built;
+    // All five. The hooks went from three to five when Dinari was bound and
+    // this list did not, so a ladder arriving fourth or fifth was read only if
+    // something else re-ran the memo. For a session that is the one-second
+    // tick of an open quote; a visitor has none, and on production,
+    // 2026-09-23, NVDA's Coinbase card — the fourth of its five
+    // representations — showed no round trip at all while its ladder sat in
+    // the cache.
   }, [
     dossierA.data,
     dossierB.data,
     dossierC.data,
+    dossierD.data,
+    dossierE.data,
     nowIso,
     question.requestedCashAtomic,
     question.destination,
@@ -570,8 +579,11 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
         choice: choices.find((choice) => choice.underlyingKey === selectedKey) ?? null,
         now: nowIso,
         ladders,
+        // A reader who cannot measure is told what was measured, with its
+        // age — not that every price on the board has expired.
+        reader: access,
       }),
-    [reality.data, choices, selectedKey, nowIso, ladders],
+    [reality.data, choices, selectedKey, nowIso, ladders, access],
   );
 
   // -------------------------------------------------------------------------

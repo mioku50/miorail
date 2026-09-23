@@ -28,6 +28,9 @@ export interface ConsoleMiniShellProps {
   networkLabel: string;
   connected: boolean;
   blockNumber: string | null;
+  /** See `ConsoleHeaderModelV1.chainRead`. False leaves the network and block
+   * out of the bottom bar instead of printing "chain unknown · Block —". */
+  chainRead?: boolean;
   theme: 'dark' | 'light';
   onThemeChange: (theme: 'dark' | 'light') => void;
   /** Contents of the drawer: sessions and proofs. */
@@ -126,10 +129,16 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
             <span className={`dot${props.connected ? '' : ' off'}`} />
             {CONSOLE_COPY_V1.readOnly}
           </span>
-          <span className="g">{props.networkLabel}</span>
-          <span className="g">
-            Block <span className="v mono">{props.blockNumber ?? '—'}</span>
-          </span>
+          {/* Signed out, the server's chain was never read: "chain unknown ·
+              Block —" there is a closed door printed as a broken feed. */}
+          {props.chainRead === false ? null : (
+            <>
+              <span className="g">{props.networkLabel}</span>
+              <span className="g">
+                Block <span className="v mono">{props.blockNumber ?? '—'}</span>
+              </span>
+            </>
+          )}
           <span className="sp" />
         </footer>
       </div>

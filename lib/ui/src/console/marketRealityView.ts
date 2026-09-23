@@ -934,21 +934,61 @@ const OUTCOME_ATTRIBUTION_V1: Readonly<
   never_measured: 'Miorail',
 };
 
+/**
+ * Who is reading, because it changes what a closed quote MEANS.
+ *
+ * A session reader's board measures the security it opens, so "Price expired"
+ * is an exception, in the warning colour, beside the button that clears it. A
+ * visitor's board cannot measure: every quote on it has closed by the time it
+ * is read, so the same chip was the ordinary state of the whole page. On
+ * production, 2026-09-23, a visitor opening NVDA read "Price expired" and "0 / 4
+ * market answers" above a board of real, dated measurements, under a notice
+ * promising "the last measured prices … each with its age". For that reader
+ * the last measurement and its age ARE the answer, and nothing about them is
+ * a warning.
+ */
+export type MarketRealityReaderV1 = 'session' | 'public';
+
+/** When the representation's last look happened, whatever it found. */
+function lastLookAtV1(representation: MarketRealityRepresentationWireV1): string | null {
+  // The stored observation first: a failed or refused look carries no quote
+  // evidence at all, and without this the sentence for those two lost its "39
+  // minutes ago" and read as though nothing had ever been tried.
+  return (
+    representation.lastObservation?.observedAt ??
+    representation.sources.find((source) => source.quoteEvidence)?.quoteEvidence?.observedAt ??
+    null
+  );
+}
+
+/**
+ * A closed quote, told to a reader who cannot open a new one.
+ *
+ * The same fact as `lapsed` — a router did quote, and the window closed — with
+ * the age in the chip instead of the word "expired", in the neutral tone every
+ * other statement of availability uses. The body still says the quote closed:
+ * what changes is that it is not framed as something having gone wrong.
+ */
+function visitorLapsedV1(
+  representation: MarketRealityRepresentationWireV1,
+  sizeLabel: string,
+  nowIso: string,
+): { chip: string; tone: ToneV1; body: string } {
+  const age = quoteAgeLabelV1(lastLookAtV1(representation), nowIso);
+  return {
+    chip: age ? `Last quote ${age}` : 'Last quote',
+    tone: 'neutral',
+    body: `A router quoted ${sizeLabel}${age ? ` ${age}` : ''}, and that quote has closed. What it said is history, not a price now.`,
+  };
+}
+
 function outcomeBodyV1(
   outcome: MarketRealityOutcomeV1,
   representation: MarketRealityRepresentationWireV1,
   sizeLabel: string,
   nowIso: string,
 ): string {
-  // The stored observation first: a failed or refused look carries no quote
-  // evidence at all, and without this the sentence for those two lost its "39
-  // minutes ago" and read as though nothing had ever been tried.
-  const age = quoteAgeLabelV1(
-    representation.lastObservation?.observedAt ??
-      representation.sources.find((source) => source.quoteEvidence)?.quoteEvidence?.observedAt ??
-      null,
-    nowIso,
-  );
+  const age = quoteAgeLabelV1(lastLookAtV1(representation), nowIso);
   switch (outcome) {
     case 'zero_supply':
       // Was written in the engine's vocabulary — "the latest fresh successful
@@ -3359,6 +3399,32 @@ export interface StocksHeadlineViewV1 {
   } | null;
 }
 
+/**
+ * The measurement the answer card leads with.
+ *
+ * This slot was built for the round trip and never received one. It was fed
+ * `lastSeen`, which by design carries only the cases the body has no figure
+ * for — a route not found, a sell never sized, a call that failed — and is null
+ * for a quote. So on every card with a price the slot was empty: NVDA on
+ * production, 2026-09-23, led with "a router did quote $1,000 15 min ago" and
+ * no figure at all, while the stored run held a $1,000 round trip measured
+ * minutes earlier. The tests passed throughout on a fixture that put a round
+ * trip into `lastSeen`, which the view never does.
+ *
+ * The round trip leads where a quote exists, open or closed; it is from the
+ * stored run and says its own age. Anywhere else the last market check stays,
+ * because a round trip from one run beside "no way to turn this into cash"
+ * from a later look would be two findings contradicting each other.
+ */
+function headlineMeasurementV1(
+  lead: RepresentationViewV1,
+): { label: string; value: string; note: string } | null {
+  if ((lead.outcome === 'priced' || lead.outcome === 'lapsed') && lead.exit) {
+    return { label: lead.exit.label, value: lead.exit.value, note: lead.exit.note ?? '' };
+  }
+  return lead.lastSeen;
+}
+
 export function stocksHeadlineV1(
   view: MarketRealityViewV1 | null,
 ): StocksHeadlineViewV1 | null {
@@ -3387,7 +3453,7 @@ export function stocksHeadlineV1(
           tone: lead.outcomeTone,
           body: lead.outcomeBody,
           attribution: lead.attribution,
-          lastSeen: lead.lastSeen,
+          lastSeen: headlineMeasurementV1(lead),
         }
       : null,
     // Every compared representation, the lead included: "3 representations"
@@ -3582,6 +3648,24 @@ export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockSc
  * as none of them. The `none` case is the live product's state for every
  * security in the corpus, so it is the one that had to be written first.
  */
+/**
+ * The outcomes that are an answer FROM THE MARKET at this exact size, open or
+ * past.
+ *
+ * A closed quote and an expired no-route finding each still say what the
+ * market did, at a stated time. Our own failed call, a token our router does
+ * not index, and a size nobody asked are not answers from the market, and
+ * counting them would make the board look better measured than it is.
+ */
+const MARKET_ANSWER_OUTCOMES_V1: ReadonlySet<MarketRealityOutcomeV1> = new Set<MarketRealityOutcomeV1>([
+  'priced',
+  'lapsed',
+  'stale_finding',
+  'no_route',
+  'unsized',
+  'policy_refused',
+]);
+
 function coverageBodyV1(input: {
   status: 'complete' | 'incomplete';
   answered: number;
@@ -3589,6 +3673,12 @@ function coverageBodyV1(input: {
   reviewed: number;
   unresolvedSupply: number;
   subject: string;
+  /**
+   * Set for a reader who cannot measure. The count is then of market answers
+   * held at this size, of any age, because a live-answer count is zero by
+   * construction for that reader and says nothing about the board.
+   */
+  measured?: number;
 }): string {
   const ways = input.reviewed === 1 ? 'one way' : `${input.reviewed} ways`;
   if (input.reviewed === 0) {
@@ -3599,6 +3689,21 @@ function coverageBodyV1(input: {
   }
   if (input.eligible === 0) {
     return `${input.subject} has ${ways} on Base, but no representation currently has fresh evidence of outstanding supply. Reviewed zero-supply contracts remain visible below.`;
+  }
+  if (input.measured !== undefined) {
+    const all =
+      input.eligible === 1
+        ? 'the one outstanding representation'
+        : `all ${input.eligible} outstanding representations`;
+    if (input.measured === 0) {
+      return `Miorail holds no market answer yet at this exact direction and size for ${
+        input.eligible === 1 ? 'the one outstanding representation' : `any of the ${input.eligible} outstanding representations`
+      }.`;
+    }
+    if (input.measured >= input.eligible) {
+      return `Miorail has measured ${all} at this exact direction and size. Each card shows its last measurement with its age.`;
+    }
+    return `Miorail has measured ${input.measured} of ${input.eligible} outstanding representations at this exact direction and size. Each card shows its last measurement with its age, or says what is missing.`;
   }
   if (input.status === 'complete') {
     return `Miorail has a current market answer for all ${input.eligible} outstanding representations at this exact direction and size.`;
@@ -3671,6 +3776,8 @@ export function marketRealityViewV1(input: {
   now: string;
   /** Keyed by lowercase token address. */
   ladders?: Readonly<Record<string, RepresentationLadderInputV1>>;
+  /** Absent means a session reader: every existing caller renders unchanged. */
+  reader?: MarketRealityReaderV1;
 }): MarketRealityViewV1 | null {
   const wire = input.wire;
   if (!wire) return null;
@@ -3685,13 +3792,30 @@ export function marketRealityViewV1(input: {
   const reviewed = wire.universe.reviewedRepresentationCount;
   const eligible = wire.marketOutcomeCoverage.eligibleRepresentationCount;
   const answered = wire.marketOutcomeCoverage.establishedOutcomeCount;
+  const visitor = input.reader === 'public';
+  // What a visitor's board holds, counted from the same outcomes the cards
+  // print, so the summary cannot claim a measurement no card shows.
+  const measured = visitor
+    ? Math.min(
+        eligible,
+        wire.representations.filter(
+          (row) =>
+            row.supply.state === 'positive_supply' &&
+            MARKET_ANSWER_OUTCOMES_V1.has(representationOutcomeV1(row, input.now)),
+        ).length,
+      )
+    : null;
 
   return {
     title: input.choice?.title ?? underlyingKeyTitleV1(wire.question.underlyingKey),
     identifier: input.choice?.identifier ?? underlyingKeyIdentifierV1(wire.question.underlyingKey),
     questionLine,
-    coverageChip: `${answered} / ${eligible} market answers`,
-    coverageTone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
+    coverageChip:
+      measured !== null ? `${measured} / ${eligible} measured` : `${answered} / ${eligible} market answers`,
+    // A count of past measurements is not a verdict on anything, so it takes
+    // no verdict colour.
+    coverageTone:
+      measured !== null ? 'neutral' : wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
     coverageDetail: wire.marketOutcomeCoverage.reason,
     comparisonSummary: [
       {
@@ -3709,15 +3833,22 @@ export function marketRealityViewV1(input: {
             : `${wire.universe.zeroSupplyRepresentationCount} with none outstanding`,
         tone: wire.universe.unresolvedSupplyRepresentationCount > 0 ? 'warn' : 'neutral',
       },
-      {
-        // One coverage row, not two. "Market answers 0 / 2" and "Live prices
-        // 0 / 2" sat one above the other saying the same thing to a reader in
-        // two vocabularies, and neither said which one to act on.
-        label: 'Live answers',
-        value: `${answered} / ${eligible}`,
-        note: 'open at this exact direction and size',
-        tone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
-      },
+      measured !== null
+        ? {
+            label: 'Measured at this size',
+            value: `${measured} / ${eligible}`,
+            note: 'the last measurement for each, with its age',
+            tone: 'neutral',
+          }
+        : {
+            // One coverage row, not two. "Market answers 0 / 2" and "Live prices
+            // 0 / 2" sat one above the other saying the same thing to a reader in
+            // two vocabularies, and neither said which one to act on.
+            label: 'Live answers',
+            value: `${answered} / ${eligible}`,
+            note: 'open at this exact direction and size',
+            tone: wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
+          },
       {
         label: 'Comparison',
         value: 'Not ranked',
@@ -3737,6 +3868,7 @@ export function marketRealityViewV1(input: {
       reviewed,
       unresolvedSupply: wire.universe.unresolvedSupplyRepresentationCount,
       subject: input.choice?.title ?? 'This security',
+      ...(measured !== null ? { measured } : {}),
     }),
     // Never hidden behind a control. A reader who does not see this line will
     // read the leftmost column as the winner.
@@ -3744,6 +3876,8 @@ export function marketRealityViewV1(input: {
       'No winner is selected. Compare the exact market state and evidence for each representation.',
     representations: wire.representations.map((representation) => {
       const outcome = representationOutcomeV1(representation, input.now);
+      const closedForVisitor =
+        visitor && outcome === 'lapsed' ? visitorLapsedV1(representation, sizeLabel, input.now) : null;
       const adapter = REPRESENTATION_STRUCTURE_ADAPTERS_V1[representation.issuerId];
       const approvedSources = [...new Set(representation.sources.map((source) => source.source))].sort();
       const watchUnavailableReason =
@@ -3765,9 +3899,9 @@ export function marketRealityViewV1(input: {
         structureLabel: STRUCTURE_LABEL_V1[representation.representationKind],
         structureNote: adapter.structure.note,
         outcome,
-        outcomeChip: OUTCOME_CHIP_V1[outcome],
-        outcomeBody: outcomeBodyV1(outcome, representation, sizeLabel, input.now),
-        outcomeTone: OUTCOME_TONE_V1[outcome],
+        outcomeChip: closedForVisitor?.chip ?? OUTCOME_CHIP_V1[outcome],
+        outcomeBody: closedForVisitor?.body ?? outcomeBodyV1(outcome, representation, sizeLabel, input.now),
+        outcomeTone: closedForVisitor?.tone ?? OUTCOME_TONE_V1[outcome],
         attribution: OUTCOME_ATTRIBUTION_V1[outcome],
         watchable: watchUnavailableReason === null,
         watchUnavailableReason,

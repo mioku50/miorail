@@ -2543,6 +2543,10 @@ export function MiniConsole() {
       networkLabel={chainLabelV1(status.data?.chainId)}
       connected={connected && status.data?.rpc?.status === "connected"}
       blockNumber={chainBlockNumberV1(status.data ?? null)}
+      // Signed out, `/status` is a 401 and the chain was never read. "chain
+      // unknown · Block —" under a board of real measurements reads as a
+      // broken feed; the bar says only what it knows.
+      chainRead={!stocksSignedOut}
       theme={theme}
       onThemeChange={setTheme}
       drawer={drawer}
