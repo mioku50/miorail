@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { MarketRealityScreen } from '../src/console/MarketRealityScreen';
+import { MarketRealityScreen, TradeAmountForm } from '../src/console/MarketRealityScreen';
 import {
   comparableMarketHistoryViewV1,
   marketExitCostBpsV1,
@@ -5002,13 +5002,19 @@ describe('a visitor reads the last measurement, not an expired price', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Growth plan step 2 — "Buy $10" on the answer card.
+// Growth plan step 2, revised — Buy and Sell at the reader's own amount.
 // ---------------------------------------------------------------------------
 
-describe('the starter buy on the answer card', () => {
-  const render = (over: { starterBuy?: { label: string; note: string | null } | null; onStarterBuy?: (a: string) => void }) => {
-    const wire = openSellWireV1();
-    return renderToStaticMarkup(
+describe('trading from the answer card', () => {
+  const NOTE = 'Base Account wallets: Miorail offers to pay the network fee, up to 3 trades a day.';
+  const wire = openSellWireV1();
+  const view = marketRealityViewV1({ wire, choice: null, now: NOW });
+  const LEAD = stocksHeadlineV1(view)!.representation!.tokenAddress;
+  const render = (over: {
+    trade?: { note: string | null; tokenDecimals: Record<string, number | null> } | null;
+    onTrade?: () => string | null;
+  }) => {
+    const markup = renderToStaticMarkup(
       React.createElement(MarketRealityScreen, {
         model: {
           choices: [],
@@ -5020,7 +5026,7 @@ describe('the starter buy on the answer card', () => {
           requestedCashAtomic: wire.question.requestedCashAtomic,
           surface: 'market',
           historyPeriod: 'now',
-          view: marketRealityViewV1({ wire, choice: null, now: NOW }),
+          view,
           viewLoading: false,
           viewError: null,
           history: null,
@@ -5033,7 +5039,7 @@ describe('the starter buy on the answer card', () => {
           watchingTokenAddress: null,
           removingWatchTokenAddress: null,
           watchError: null,
-          ...(over.starterBuy !== undefined ? { starterBuy: over.starterBuy } : {}),
+          ...(over.trade !== undefined ? { trade: over.trade } : {}),
           actions: {
             onUnderlying: () => undefined,
             onDirection: () => undefined,
@@ -5041,32 +5047,82 @@ describe('the starter buy on the answer card', () => {
             onSurface: () => undefined,
             onHistoryPeriod: () => undefined,
             onPrepare: () => undefined,
-            ...(over.onStarterBuy ? { onStarterBuy: over.onStarterBuy } : {}),
+            ...(over.onTrade ? { onTrade: over.onTrade } : {}),
           },
         },
       }),
     );
+    // The answer card only: every representation card below keeps its own
+    // Prepare buttons, and they are not what this is about.
+    const card = markup.slice(markup.indexOf('class="mr-headline"'));
+    return card.slice(0, card.indexOf('</section>'));
   };
 
-  test('the card offers it, first, with what may be said about the fee', () => {
-    const markup = render({
-      starterBuy: { label: 'Buy $10', note: 'Base Account wallets: Miorail offers to pay the network fee, up to 3 trades a day.' },
-      onStarterBuy: () => undefined,
-    });
-    const actions = markup.slice(markup.indexOf('mr-headline-actions'));
-    assert.match(actions, /^mr-headline-actions"><button type="button" class="btn">Buy \$10<\/button>/);
-    assert.match(markup, /<p class="lnote">Base Account wallets: Miorail offers to pay the network fee/);
+  test('the fixed $10 is gone: Buy and Sell, outlined and equal, take the reader’s amount', () => {
+    const card = render({ trade: { note: NOTE, tokenDecimals: { [LEAD]: 8 } }, onTrade: () => null });
+    assert.match(card, /<button type="button" class="btn alt" aria-expanded="false">Buy<\/button>/);
+    assert.match(card, /<button type="button" class="btn alt" aria-expanded="false">Sell<\/button>/);
+    assert.doesNotMatch(card, /Buy \$10|Prepare buy|Prepare sell/);
+    // Nothing is typed until a side is pressed.
+    assert.doesNotMatch(card, /<form/);
+    assert.match(card, new RegExp(`<p class="lnote">${NOTE.replace(/[.]/g, '\\.')}</p>`));
   });
 
   test('no note is printed when the fee is not on offer', () => {
-    const markup = render({ starterBuy: { label: 'Buy $10', note: null }, onStarterBuy: () => undefined });
-    assert.match(markup, />Buy \$10</);
-    assert.doesNotMatch(markup, /network fee/);
+    const card = render({ trade: { note: null, tokenDecimals: { [LEAD]: 8 } }, onTrade: () => null });
+    assert.match(card, />Buy</);
+    assert.doesNotMatch(card, /network fee/);
   });
 
-  test('a surface that cannot carry a buy through shows no such button', () => {
-    // The Base App passes no starter buy: it has no sign-in to finish one.
-    assert.doesNotMatch(render({}), /Buy \$10/);
-    assert.doesNotMatch(render({ starterBuy: { label: 'Buy $10', note: null } }), /Buy \$10/, 'a label with no action is no button');
+  test('a surface that cannot carry a trade through keeps its Prepare buttons', () => {
+    // The Base App passes no trade: it has no sign-in to finish one.
+    for (const card of [render({}), render({ trade: { note: NOTE, tokenDecimals: { [LEAD]: 8 } } })]) {
+      assert.match(card, />Prepare buy</);
+      assert.match(card, />Prepare sell</);
+      assert.doesNotMatch(card, />Buy<|>Sell<|network fee/);
+    }
+  });
+
+  test('a contract whose scale nobody read still offers Sell, through the prepare step', () => {
+    // No amount can be typed exactly without decimals, and dropping the side
+    // would make the card recommend the one it kept.
+    const card = render({ trade: { note: null, tokenDecimals: {} }, onTrade: () => null });
+    assert.match(card, /aria-expanded="false">Buy<\/button>/);
+    assert.match(card, /<button type="button" class="btn alt">Sell<\/button>/);
+  });
+
+  test('the amount form says what it reads, its floor, and that nothing is signed here', () => {
+    const form = (direction: 'buy' | 'sell') =>
+      renderToStaticMarkup(
+        React.createElement(TradeAmountForm, {
+          direction,
+          tokenDecimals: 8,
+          onSubmit: () => null,
+          onCancel: () => undefined,
+        }),
+      );
+    const buy = form('buy');
+    assert.match(buy, /<label for="mr-trade-buy">USDC to spend<\/label>/);
+    assert.match(buy, /inputMode="decimal"|inputmode="decimal"/);
+    assert.match(buy, /<span class="mr-trade-unit">USDC<\/span>/);
+    // Empty is not an amount: the button is there, and off.
+    assert.match(buy, /<button type="submit" class="btn" disabled="" title="Opens the prepare step for this exact address\. Nothing is approved, submitted, or signed here\.">Buy<\/button>/);
+    assert.match(buy, /From 0\.1 USDC\. The route is planned, quoted and simulated again at this amount before your wallet asks you to sign\./);
+    const sell = form('sell');
+    assert.match(sell, /Tokens to sell/);
+    assert.match(sell, /<span class="mr-trade-unit">tokens<\/span>/);
+    assert.match(sell, /as your wallet shows them\. What they fetch in USDC is quoted again/);
+    assert.doesNotMatch(sell, /From 0\.1|\$|worth/);
+  });
+
+  test('the button names the amount it read, and a refusal is said on the card', () => {
+    // Structural: typing needs a DOM these tests do not mount. The label is
+    // built from the parsed amount, never from the raw text, so `1,000` reads
+    // back as "1" before anything is sent.
+    const source = readFileSync(new URL('../src/console/MarketRealityScreen.tsx', import.meta.url), 'utf8');
+    const form = source.slice(source.indexOf('export function TradeAmountForm('));
+    assert.match(form, /`Buy for \$\{amount\.label\} USDC`/);
+    assert.match(form, /`Sell \$\{amount\.label\} tokens`/);
+    assert.match(form, /if \(amount\.status === 'ready'\) setRefusal\(onSubmit\(amount\.atomic\)\);/);
   });
 });

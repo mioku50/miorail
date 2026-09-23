@@ -3,12 +3,13 @@ import test, { describe } from 'node:test';
 
 import {
   HANDOFF_CASH_ADDRESS_V1,
-  STOCK_STARTER_BUY_CASH_ATOMIC_V1,
+  STOCK_BUY_MINIMUM_CASH_ATOMIC_V1,
   StockExecutionHandoffV1Schema,
   stockExecutionGoalSentenceV1,
   stockExecutionHandoffV1,
   stockExecutionSizeNoteV1,
-  stockStarterBuyGoalV1,
+  stockTradeAmountV1,
+  stockTradeGoalV1,
 } from '../src/executionHandoff.js';
 import { MarketRealityResponseV2Schema, type MarketRealityResponseV2 } from '../src/contracts.js';
 
@@ -578,42 +579,112 @@ describe('Phase 13.1 — Stocks to advanced execution', () => {
 });
 
 // ---------------------------------------------------------------------------
-// Growth plan step 2 — "Buy $10" is the same buy, at the starter size.
+// Growth plan step 2, revised — the reader names the size, on both sides.
 // ---------------------------------------------------------------------------
 
-describe('the starter buy', () => {
-  test('is a $10 USDC buy of the exact address the card shows', () => {
-    const built = stockStarterBuyGoalV1({ response: response(), tokenAddress: COINBASE, now: NOW });
-    assert.equal(built.status, 'ready');
-    assert.ok(built.status === 'ready');
-    assert.equal(STOCK_STARTER_BUY_CASH_ATOMIC_V1, '10000000');
-    assert.equal(built.handoff.direction, 'buy');
-    assert.equal(built.handoff.requestedCashAtomic, '10000000');
-    assert.equal(built.goal, `Swap 10 ${HANDOFF_CASH_ADDRESS_V1} to ${COINBASE} on Base`);
-    // The same rule every buy obeys: an address, never a name.
-    assert.doesNotMatch(built.goal, /NVDA|nvidia|coinbase/i);
+describe('an amount the reader types', () => {
+  const buy = (text: string) => stockTradeAmountV1({ direction: 'buy', text });
+  const sell = (text: string, tokenDecimals: number | null = 8) =>
+    stockTradeAmountV1({ direction: 'sell', text, tokenDecimals });
+
+  test('a buy is USDC, exact, from 0.1', () => {
+    assert.equal(STOCK_BUY_MINIMUM_CASH_ATOMIC_V1, '100000');
+    assert.deepEqual(buy('0.1'), { status: 'ready', atomic: '100000', label: '0.1' });
+    assert.deepEqual(buy('25'), { status: 'ready', atomic: '25000000', label: '25' });
+    assert.deepEqual(buy(' 1000.5 '), { status: 'ready', atomic: '1000500000', label: '1000.5' });
+    assert.deepEqual(buy('.5'), { status: 'ready', atomic: '500000', label: '0.5' });
+    assert.deepEqual(buy('0.099999'), { status: 'below_minimum', message: 'The smallest buy is 0.1 USDC.' });
+    assert.equal(buy('0').status, 'zero');
+    assert.equal(buy('0.000').status, 'zero');
+    assert.equal(buy('   ').status, 'empty');
   });
 
-  test('keeps every refusal a buy gets', () => {
-    // A zero-supply wrapper is not quietly swapped for what it wraps just
-    // because the size is small.
-    const wrapper = stockStarterBuyGoalV1({ response: response(), tokenAddress: BACKED_WRAPPER, now: NOW });
-    assert.equal(wrapper.status, 'refused');
-    assert.ok(wrapper.status === 'refused');
-    assert.equal(wrapper.reason, 'zero_supply_representation');
-    const stranger = stockStarterBuyGoalV1({
-      response: response(),
-      tokenAddress: '0x9999999999999999999999999999999999999999',
-      now: NOW,
+  test('nothing is rounded, and trailing zeros are not precision', () => {
+    assert.deepEqual(buy('0.1234567'), {
+      status: 'too_precise',
+      message: 'USDC has 6 decimal places; nothing is rounded.',
     });
-    assert.equal(stranger.status === 'refused' && stranger.reason, 'representation_not_reviewed');
+    assert.deepEqual(buy('0.1000000'), { status: 'ready', atomic: '100000', label: '0.1' });
+    // NVDA's Coinbase token has 8 places; the ninth is refused, not dropped.
+    assert.deepEqual(sell('0.000000001'), {
+      status: 'too_precise',
+      message: 'This token has 8 decimal places; nothing is rounded.',
+    });
+    assert.deepEqual(sell('0.00000001'), { status: 'ready', atomic: '1', label: '0.00000001' });
   });
 
-  test('is a buy even on a board asking about a sale', () => {
-    const sellBoard = response({ question: { ...questionV1, direction: 'sell' } });
-    const built = stockStarterBuyGoalV1({ response: sellBoard, tokenAddress: COINBASE, now: NOW });
+  test('a comma is the decimal point a phone offers, and nothing else is read', () => {
+    assert.deepEqual(buy('0,5'), { status: 'ready', atomic: '500000', label: '0.5' });
+    // No grouping: `1,000` is one, and the button that sends it says "1".
+    assert.deepEqual(buy('1,000'), { status: 'ready', atomic: '1000000', label: '1' });
+    for (const text of ['1 000', '1,000.5', '1.2.3', '$10', '10 USDC', '1e3', '-5', '+5', '0x10', '١٠', '.', ',']) {
+      assert.equal(buy(text).status, 'malformed', text);
+    }
+    assert.equal(buy('9'.repeat(41)).status, 'malformed');
+  });
+
+  test('a sell is tokens of the exact contract, with no floor', () => {
+    // What 0.1 USDC bought on 2026-09-23. Worth a little under 0.1 once the
+    // route took its cost — a floor on the way out would strand it.
+    assert.deepEqual(sell('0.00043778'), { status: 'ready', atomic: '43778', label: '0.00043778' });
+    assert.deepEqual(sell('1.5', 18), { status: 'ready', atomic: '1500000000000000000', label: '1.5' });
+    assert.deepEqual(sell('3', 0), { status: 'ready', atomic: '3', label: '3' });
+    assert.equal(sell('0').status, 'zero');
+    // Nobody read the contract's scale, so no amount is invented for it.
+    assert.equal(sell('1', null).status, 'decimals_unread');
+    assert.equal(stockTradeAmountV1({ direction: 'sell', text: '1' }).status, 'decimals_unread');
+  });
+});
+
+describe('the goal for a trade the reader sized', () => {
+  const goal = (over: Partial<Parameters<typeof stockTradeGoalV1>[0]>) =>
+    stockTradeGoalV1({
+      response: response(),
+      tokenAddress: COINBASE,
+      now: NOW,
+      direction: 'buy',
+      amountAtomic: '100000',
+      ...over,
+    });
+
+  test('a buy spends the typed USDC on the exact address the card shows', () => {
+    const built = goal({});
+    assert.deepEqual(built, {
+      status: 'ready',
+      tokenAddress: COINBASE,
+      direction: 'buy',
+      goal: `Swap 0.1 ${HANDOFF_CASH_ADDRESS_V1} to ${COINBASE} on Base`,
+    });
+    // The same rule every buy obeys: an address, never a name.
+    assert.doesNotMatch(built.status === 'ready' ? built.goal : '', /NVDA|nvidia|coinbase/i);
+  });
+
+  test('a sell carries the typed token amount, not the size the board measured', () => {
+    const built = goal({ direction: 'sell', amountAtomic: '1500000000000000000' });
     assert.ok(built.status === 'ready');
-    assert.equal(built.handoff.direction, 'buy');
-    assert.match(built.goal, /^Swap 10 /);
+    assert.equal(built.goal, `Swap 1.5 ${COINBASE} to ${HANDOFF_CASH_ADDRESS_V1} on Base`);
+    assert.doesNotMatch(built.goal, /\$|worth|USD/);
+  });
+
+  test('the side is the one pressed, whichever way the board asks', () => {
+    const sellBoard = response({ question: { ...questionV1, direction: 'sell' } });
+    const built = goal({ response: sellBoard, amountAtomic: '10000000' });
+    assert.ok(built.status === 'ready');
+    assert.equal(built.direction, 'buy');
+    assert.equal(built.goal, `Swap 10 ${HANDOFF_CASH_ADDRESS_V1} to ${COINBASE} on Base`);
+  });
+
+  test('keeps every refusal a prepare gets, and does not trust the card with the floor', () => {
+    // A zero-supply wrapper is not quietly swapped for what it wraps because
+    // the size is the reader's.
+    const wrapper = goal({ tokenAddress: BACKED_WRAPPER, amountAtomic: '10000000' });
+    assert.equal(wrapper.status === 'refused' && wrapper.reason, 'zero_supply_representation');
+    const stranger = goal({ tokenAddress: '0x9999999999999999999999999999999999999999', direction: 'sell', amountAtomic: '1' });
+    assert.equal(stranger.status === 'refused' && stranger.reason, 'representation_not_reviewed');
+    const dust = goal({ amountAtomic: '99999' });
+    assert.equal(dust.status === 'amount_refused' && dust.detail, 'The smallest buy is 0.1 USDC.');
+    for (const amountAtomic of ['0', '', '01', '1.5', '-1', ' 1']) {
+      assert.equal(goal({ direction: 'sell', amountAtomic }).status, 'amount_refused', amountAtomic);
+    }
   });
 });

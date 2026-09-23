@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 
 import { shortAddressV1 } from './B20WatchScreen';
 import { TokenIdentityV1 } from './TokenIdentity';
@@ -27,6 +27,7 @@ import {
   type StocksHeadlineViewV1,
 } from './marketRealityView';
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
+import { stockTradeAmountV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -194,8 +195,12 @@ export interface MarketRealityActionsV1 {
    * answering.
    */
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
-  /** Growth plan step 2 — "Buy $10" on the answer card. */
-  onStarterBuy?: (tokenAddress: string) => void;
+  /**
+   * Growth plan step 2 — buy or sell the answer card's address at an amount the
+   * reader typed: USDC atoms for a buy, atoms of the token for a sell. Returns
+   * why it could not, or null once the prepare step has opened.
+   */
+  onTrade?: (trade: { tokenAddress: string; direction: 'buy' | 'sell'; amountAtomic: string }) => string | null;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -222,9 +227,11 @@ export interface StocksVisitorNoticeV1 {
 export interface MarketRealityScreenModelV1 {
   /** Null for a signed-in reader. */
   visitor?: StocksVisitorNoticeV1 | null;
-  /** Growth plan step 2 — the starter buy on the answer card, and what may be
-   * said about its fee. Absent where the surface cannot carry a buy through. */
-  starterBuy?: { label: string; note: string | null } | null;
+  /** Growth plan step 2 — Buy and Sell at the reader's own amount on the answer
+   * card: what may be said about the fee, and each address's token decimals, so
+   * a sell amount is read in its own contract's scale. Absent where the surface
+   * cannot carry a trade through, and the card keeps its Prepare buttons. */
+  trade?: { note: string | null; tokenDecimals: Readonly<Record<string, number | null>> } | null;
   /** Phase 13.2. Null until a reader has asked. */
   ask?: StocksAskPanelModelV1;
   /** Why advanced execution is unavailable for an exact address, when it is.
@@ -1249,17 +1256,26 @@ function HeadlineAnswer({
   measuring,
   onMeasure,
   onPrepare,
-  starterBuy,
-  onStarterBuy,
+  trade,
+  onTrade,
 }: {
   headline: StocksHeadlineViewV1;
   measuring: boolean;
   onMeasure?: () => void;
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
-  starterBuy?: { label: string; note: string | null } | null;
-  onStarterBuy?: (tokenAddress: string) => void;
+  trade?: { note: string | null; tokenDecimals: Readonly<Record<string, number | null>> } | null;
+  onTrade?: (trade: { tokenAddress: string; direction: 'buy' | 'sell'; amountAtomic: string }) => string | null;
 }) {
   const lead = headline.representation;
+  // Which side's amount is open — one at a time, and only for the address the
+  // card leads with when it was opened. An amount typed for one contract is
+  // not an amount of another, so a new lead closes it.
+  const [side, setSide] = useState<{ tokenAddress: string; direction: 'buy' | 'sell' } | null>(null);
+  const tradable = lead && trade && onTrade ? lead : null;
+  const open = tradable && side?.tokenAddress === tradable.tokenAddress ? side.direction : null;
+  const sellDecimals = tradable ? (trade?.tokenDecimals[tradable.tokenAddress] ?? null) : null;
+  const toggle = (direction: 'buy' | 'sell') =>
+    setSide(open === direction || !tradable ? null : { tokenAddress: tradable.tokenAddress, direction });
   return (
     <section className="mr-headline" aria-label="What this security answers right now">
       <div className="mr-headline-top">
@@ -1314,15 +1330,6 @@ function HeadlineAnswer({
       )}
 
       <div className="mr-headline-actions">
-        {/* Growth plan step 2 — the first thing a reader can do with a stock
-            they have just read about, at a size anyone can try. It opens the
-            same planner every buy goes through, at $10; nothing is signed on
-            this page. */}
-        {lead && starterBuy && onStarterBuy ? (
-          <button type="button" className="btn" onClick={() => onStarterBuy(lead.tokenAddress)}>
-            {starterBuy.label}
-          </button>
-        ) : null}
         {onMeasure ? (
           <button type="button" className="btn" onClick={onMeasure} disabled={measuring}>
             {measuring ? 'Measuring…' : 'Measure now'}
@@ -1334,8 +1341,29 @@ function HeadlineAnswer({
             `Prepare sell` and nothing else, while every representation beneath
             it offered both. A summary that silently drops one of two available
             actions reads as a recommendation of the one it kept, which is the
-            single thing this board must never do. */}
-        {lead && onPrepare ? (
+            single thing this board must never do.
+            Growth plan step 2: where a trade can be carried through, the two
+            sides take an amount the reader types instead of the board's size,
+            and they stay outlined and equal — the fixed "Buy $10" before them
+            was filled, which made one side the loudest thing on the card. */}
+        {tradable ? (
+          <>
+            <button type="button" className="btn alt" aria-expanded={open === 'buy'} onClick={() => toggle('buy')}>
+              Buy
+            </button>
+            {sellDecimals !== null ? (
+              <button type="button" className="btn alt" aria-expanded={open === 'sell'} onClick={() => toggle('sell')}>
+                Sell
+              </button>
+            ) : onPrepare ? (
+              // Nobody read this contract's scale, so no token amount can be
+              // typed exactly; the prepare step asks for one instead.
+              <button type="button" className="btn alt" onClick={() => onPrepare(tradable.tokenAddress, 'sell')}>
+                Sell
+              </button>
+            ) : null}
+          </>
+        ) : lead && onPrepare ? (
           <>
             <button
               type="button"
@@ -1358,8 +1386,106 @@ function HeadlineAnswer({
           with the evidence for each
         </span>
       </div>
-      {lead && starterBuy?.note && onStarterBuy ? <p className="lnote">{starterBuy.note}</p> : null}
+      {tradable && open ? (
+        <TradeAmountForm
+          key={`${open}:${tradable.tokenAddress}`}
+          direction={open}
+          tokenDecimals={sellDecimals}
+          onCancel={() => setSide(null)}
+          onSubmit={(amountAtomic) =>
+            onTrade!({ tokenAddress: tradable.tokenAddress, direction: open, amountAtomic })
+          }
+        />
+      ) : null}
+      {tradable && trade?.note ? <p className="lnote">{trade.note}</p> : null}
     </section>
+  );
+}
+
+/**
+ * One amount, typed by the reader, for one side of the answer card's address.
+ *
+ * Nothing is signed or sent from here. The button opens the same prepare step
+ * every trade goes through, which plans, quotes and simulates again at this
+ * exact amount before any wallet is asked anything — and the button says the
+ * amount it read, so a comma or a stray zero is seen before it is sent.
+ */
+export function TradeAmountForm({
+  direction,
+  tokenDecimals,
+  onSubmit,
+  onCancel,
+}: {
+  direction: 'buy' | 'sell';
+  tokenDecimals: number | null;
+  onSubmit: (amountAtomic: string) => string | null;
+  onCancel: () => void;
+}) {
+  const [text, setText] = useState('');
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const input = useRef<HTMLInputElement>(null);
+  // The reader pressed Buy or Sell to type a number; the caret goes there.
+  useEffect(() => input.current?.focus(), []);
+  const buy = direction === 'buy';
+  const amount = stockTradeAmountV1({ direction, text, tokenDecimals });
+  const wrong = amount.status !== 'ready' && amount.status !== 'empty';
+  const id = `mr-trade-${direction}`;
+  return (
+    <form
+      className="mr-trade"
+      aria-label={buy ? 'Buy with USDC' : 'Sell tokens for USDC'}
+      onSubmit={(event) => {
+        event.preventDefault();
+        if (amount.status === 'ready') setRefusal(onSubmit(amount.atomic));
+      }}
+    >
+      <label htmlFor={id}>{buy ? 'USDC to spend' : 'Tokens to sell'}</label>
+      <div className="mr-trade-row">
+        <input
+          ref={input}
+          id={id}
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={40}
+          placeholder={buy ? '10' : '0.5'}
+          value={text}
+          aria-invalid={wrong}
+          aria-describedby={`${id}-note`}
+          onChange={(event) => {
+            setText(event.target.value);
+            setRefusal(null);
+          }}
+        />
+        <span className="mr-trade-unit">{buy ? 'USDC' : 'tokens'}</span>
+        <button
+          type="submit"
+          className="btn"
+          disabled={amount.status !== 'ready'}
+          title="Opens the prepare step for this exact address. Nothing is approved, submitted, or signed here."
+        >
+          {amount.status !== 'ready'
+            ? buy
+              ? 'Buy'
+              : 'Sell'
+            : buy
+              ? `Buy for ${amount.label} USDC`
+              : `Sell ${amount.label} tokens`}
+        </button>
+        <button type="button" className="btn alt" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      <p id={`${id}-note`} className="lnote" role="status" data-tone={refusal || wrong ? 'wrong' : undefined}>
+        {refusal ??
+          (wrong
+            ? amount.message
+            : buy
+              ? 'From 0.1 USDC. The route is planned, quoted and simulated again at this amount before your wallet asks you to sign.'
+              : 'The exact number of tokens of this contract, as your wallet shows them. What they fetch in USDC is quoted again before your wallet asks you to sign.')}
+      </p>
+    </form>
   );
 }
 
@@ -1553,8 +1679,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           measuring={model.measuring}
           onMeasure={actions.onMeasure}
           onPrepare={actions.onPrepare}
-          starterBuy={model.starterBuy ?? null}
-          onStarterBuy={actions.onStarterBuy}
+          trade={model.trade ?? null}
+          onTrade={actions.onTrade}
         />
       ) : null}
 

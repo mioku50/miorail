@@ -377,45 +377,154 @@ function usdLabelV1(atomic: string): string {
 export function stockExecutionGoalSentenceV1(handoff: StockExecutionHandoffV1): string {
   const parsed = StockExecutionHandoffV1Schema.parse(handoff);
   if (parsed.direction === 'buy') {
-    return `Swap ${usdLabelV1(parsed.requestedCashAtomic)} ${parsed.cashAddress} to ${parsed.tokenAddress} on Base`;
+    return buySentenceV1(usdLabelV1(parsed.requestedCashAtomic), parsed.tokenAddress);
   }
-  const amount = tokenLabelV1(parsed.exactTokenAtomic, parsed.tokenDecimals);
+  return sellSentenceV1(tokenLabelV1(parsed.exactTokenAtomic, parsed.tokenDecimals), parsed.tokenAddress);
+}
+
+// One wording per side, whoever sized it: the prepare buttons, or an amount the
+// reader typed. Two copies of a sentence the planner parses would drift.
+function buySentenceV1(usd: string, tokenAddress: string): string {
+  return `Swap ${usd} ${HANDOFF_CASH_ADDRESS_V1} to ${tokenAddress} on Base`;
+}
+
+function sellSentenceV1(amount: string | null, tokenAddress: string): string {
   return amount === null
-    ? `Swap ${parsed.tokenAddress} to ${parsed.cashAddress} on Base`
-    : `Swap ${amount} ${parsed.tokenAddress} to ${parsed.cashAddress} on Base`;
+    ? `Swap ${tokenAddress} to ${HANDOFF_CASH_ADDRESS_V1} on Base`
+    : `Swap ${amount} ${tokenAddress} to ${HANDOFF_CASH_ADDRESS_V1} on Base`;
+}
+
+// ---------------------------------------------------------------------------
+// Growth plan step 2, revised — the reader names the size.
+//
+// The card offered one fixed purchase, $10. Someone who wanted to try with a
+// dollar, or buy a hundred, had to take ten or leave, and someone already
+// holding the token could not sell from the card at a size of their own. Both
+// sides now take one exact amount the reader types:
+//
+//   * a BUY in USDC, from 0.1 — exact before anything is quoted;
+//   * a SELL in tokens of the exact contract, as the wallet shows them.
+//
+// A SELL is never typed in dollars. What a sale fetches is a price, known once
+// the planner quotes it, and "sell $10 worth" converted at the last measured
+// price asks for more tokens than a $10 position holds whenever the price has
+// dipped — the first sale a new holder makes would be the one that fails.
+//
+// A SELL has no floor either. A 0.1 USDC purchase comes back as tokens worth a
+// little under 0.1 USDC once the route has taken its cost, so a 0.1 floor on
+// the way out would strand exactly the position the floor on the way in made.
+// ---------------------------------------------------------------------------
+
+/** The smallest purchase the card accepts: 0.1 USDC, in USDC atoms. */
+export const STOCK_BUY_MINIMUM_CASH_ATOMIC_V1 = '100000';
+
+/** Base USDC's decimals, which a BUY amount is written in. */
+export const STOCK_CASH_DECIMALS_V1 = 6;
+
+export type StockTradeAmountV1 =
+  | { status: 'ready'; atomic: string; label: string }
+  | {
+      status: 'empty' | 'malformed' | 'too_precise' | 'zero' | 'below_minimum' | 'decimals_unread';
+      message: string;
+    };
+
+/**
+ * One typed amount, converted exactly.
+ *
+ * Never through `Number` and never rounded: a rounded size is a different size.
+ * A comma is read as the decimal point, because the decimal keypad of a phone
+ * in a comma locale offers no other key. Grouping is not accepted, so `1,000`
+ * is one — and the button that sends it says "1" before anything happens.
+ */
+export function stockTradeAmountV1(input: {
+  direction: 'buy' | 'sell';
+  text: string;
+  /** Decimals of the exact contract. Only a SELL is written in them. */
+  tokenDecimals?: number | null;
+}): StockTradeAmountV1 {
+  const buy = input.direction === 'buy';
+  const text = input.text.trim();
+  if (text === '') {
+    return { status: 'empty', message: buy ? 'Enter how many USDC to spend.' : 'Enter how many tokens to sell.' };
+  }
+  const decimals = buy ? STOCK_CASH_DECIMALS_V1 : input.tokenDecimals;
+  if (typeof decimals !== 'number' || !Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
+    // Not the reader's mistake: nobody read this contract's scale, so no
+    // amount can be written for it exactly.
+    return {
+      status: 'decimals_unread',
+      message: 'This token’s decimals could not be read, so no exact amount can be written for it.',
+    };
+  }
+  const match = text.length <= 40 ? /^(?:(\d+)(?:[.,](\d*))?|[.,](\d+))$/.exec(text) : null;
+  if (!match) return { status: 'malformed', message: 'Use digits and one decimal point, like 12.5.' };
+  const whole = match[1] ?? '0';
+  // Trailing zeros say nothing, so they are not precision the token lacks.
+  const fraction = (match[2] ?? match[3] ?? '').replace(/0+$/, '');
+  if (fraction.length > decimals) {
+    return {
+      status: 'too_precise',
+      message: `${buy ? 'USDC' : 'This token'} has ${decimals} decimal place${decimals === 1 ? '' : 's'}; nothing is rounded.`,
+    };
+  }
+  const atomic = BigInt(`${whole}${fraction.padEnd(decimals, '0')}`).toString();
+  if (atomic === '0') return { status: 'zero', message: 'Enter an amount above zero.' };
+  if (buy && BigInt(atomic) < BigInt(STOCK_BUY_MINIMUM_CASH_ATOMIC_V1)) {
+    return { status: 'below_minimum', message: `The smallest buy is ${usdLabelV1(STOCK_BUY_MINIMUM_CASH_ATOMIC_V1)} USDC.` };
+  }
+  return { status: 'ready', atomic, label: tokenLabelV1(atomic, decimals)! };
 }
 
 /**
- * Growth plan step 2 — the starter purchase: $10 of USDC.
+ * The planner's sentence for a trade the reader sized on the card.
  *
- * Small enough that anyone can try one, and exact before anything is quoted,
- * because a BUY spends an exact number of USDC atoms.
- */
-export const STOCK_STARTER_BUY_CASH_ATOMIC_V1 = '10000000';
-
-/**
- * The same BUY handoff for one exact reviewed address, at the starter size.
- *
- * Built from the board's own answer, so every refusal a buy gets still
+ * Built from the board's own answer, so every refusal a prepare gets still
  * applies — an address outside this answer, no supply outstanding, no
- * reviewed router policy. Only the size differs, and nothing about the size
- * the board measured travels with it: the planner quotes, simulates and asks
- * again at $10 before anything is signed.
+ * reviewed router policy. Only the size is the reader's, and nothing the board
+ * measured travels with it: the planner quotes, simulates and asks again at
+ * this exact amount before anything is signed.
  */
-export function stockStarterBuyGoalV1(input: {
+export function stockTradeGoalV1(input: {
   response: MarketRealityResponseV2;
   tokenAddress: string;
   now: Date;
+  direction: 'buy' | 'sell';
+  /** Atoms of USDC for a BUY, of the token for a SELL — `stockTradeAmountV1`'s. */
+  amountAtomic: string;
 }):
-  | { status: 'ready'; handoff: StockExecutionHandoffV1; goal: string }
-  | Extract<StockExecutionHandoffResultV1, { status: 'refused' }> {
-  const built = stockExecutionHandoffV1({ ...input, direction: 'buy' });
-  if (built.status !== 'ready') return built;
-  const handoff = StockExecutionHandoffV1Schema.parse({
-    ...built.handoff,
-    requestedCashAtomic: STOCK_STARTER_BUY_CASH_ATOMIC_V1,
+  | { status: 'ready'; tokenAddress: string; direction: 'buy' | 'sell'; goal: string }
+  | Extract<StockExecutionHandoffResultV1, { status: 'refused' }>
+  | { status: 'amount_refused'; detail: string } {
+  const response = MarketRealityResponseV2Schema.parse(input.response);
+  const built = stockExecutionHandoffV1({
+    response,
+    tokenAddress: input.tokenAddress,
+    now: input.now,
+    direction: input.direction,
   });
-  return { status: 'ready', handoff, goal: stockExecutionGoalSentenceV1(handoff) };
+  if (built.status !== 'ready') return built;
+  const { tokenAddress } = built.handoff;
+  if (!/^[1-9][0-9]*$/.test(input.amountAtomic)) {
+    return { status: 'amount_refused', detail: 'Enter an amount above zero.' };
+  }
+  if (input.direction === 'buy') {
+    if (BigInt(input.amountAtomic) < BigInt(STOCK_BUY_MINIMUM_CASH_ATOMIC_V1)) {
+      return {
+        status: 'amount_refused',
+        detail: `The smallest buy is ${usdLabelV1(STOCK_BUY_MINIMUM_CASH_ATOMIC_V1)} USDC.`,
+      };
+    }
+    return { status: 'ready', tokenAddress, direction: 'buy', goal: buySentenceV1(usdLabelV1(input.amountAtomic), tokenAddress) };
+  }
+  const decimals = response.representations.find((row) => row.tokenAddress === tokenAddress)?.supply.decimals ?? null;
+  const amount = tokenLabelV1(input.amountAtomic, decimals);
+  if (amount === null) {
+    return {
+      status: 'amount_refused',
+      detail: 'This token’s decimals could not be read, so no exact amount can be written for it.',
+    };
+  }
+  return { status: 'ready', tokenAddress, direction: 'sell', goal: sellSentenceV1(amount, tokenAddress) };
 }
 
 /** What the reader is told about the size before they plan. Reader copy, so the

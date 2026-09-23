@@ -123,15 +123,15 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
   const onStocksPath = location === '/stocks' || location.startsWith('/stocks/');
 
   // Growth plan step 2. Read only to decide whether the card may mention the
-  // fee; whether a given buy is sponsored is decided by the server when it is
-  // approved.
+  // fee; whether a given trade is sponsored is decided by the server when it
+  // is approved.
   const sponsoredGas = useSponsoredGasStatus();
   const stocks = useStocksConsoleV1({
     question,
     enabled,
     access,
     preferredSymbol: symbol ?? null,
-    starterBuy: {
+    trade: {
       sponsoredGas: sponsoredGas.data?.sponsoredGas === 'on',
       dailyLimitPerWallet: sponsoredGas.data?.dailyLimitPerWallet ?? null,
     },
