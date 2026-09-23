@@ -3,6 +3,8 @@ import test from 'node:test';
 import { encodeFunctionData, erc20Abi } from 'viem';
 import type { AssetRefV1, ExecutionCallV1 } from '@mioagent/route-domain';
 import { runSafetyKernel, swapTokenSecurityAddressesV1, tokenSecurityRefusalV1 } from '../src/safetyKernel.js';
+import { classifySwapCallV1 } from '../src/blueprint.js';
+import { narrowUniswapApprovalsV1 } from '../src/adapters/uniswap.js';
 import { ETH_BASE, NOW, USDC_BASE, WALLET, makeIntent } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
@@ -230,3 +232,39 @@ test('one token is asked about once, however it reaches this helper', () => {
   const doubled = { ...intent, toAsset: { ...USDC_BASE, address: USDC_BASE.address!.toUpperCase() } };
   assert.deepEqual(swapTokenSecurityAddressesV1(doubled as unknown as typeof intent), [USDC_BASE.address]);
 });
+
+test('a Uniswap batch with a Permit2 approval passes the whole kernel once narrowed, and not before', () => {
+  // 2026-09-23. Uniswap wrote `approve(Permit2, 2^256-1)` and a 30-day
+  // `Permit2.approve`; the kernel refused every such route, which is every
+  // Uniswap route the web picked. Classified the way the coordinator does it.
+  const intent = makeIntent();
+  const quoteExpiry = new Date(NOW.getTime() + 10 * 60_000).toISOString();
+  const expirySec = Math.floor(Date.parse(quoteExpiry) / 1000);
+  const PERMIT2 = '0x000000000022d473030f116ddee9f6b43ac78ba3' as const;
+  const word = (value: bigint | string) =>
+    (typeof value === 'string' ? value.replace(/^0x/, '').toLowerCase() : value.toString(16)).padStart(64, '0');
+  const amount = BigInt(intent.amount.amountAtomic);
+  const raw = [
+    { to: USDC_BASE.address!, value: '0', data: `0x095ea7b3${word(PERMIT2)}${word((1n << 256n) - 1n)}` },
+    {
+      to: PERMIT2,
+      value: '0',
+      data: `0x87517c45${word(USDC_BASE.address!)}${word(ROUTER)}${word(amount)}${word(BigInt(expirySec) + 30n * 86_400n)}`,
+    },
+    { to: ROUTER, value: '0', data: '0x3593564c' },
+  ];
+  const classify = (calls: typeof raw) =>
+    calls.map((call, index) =>
+      classifySwapCallV1({ index, call: call as never, routerAddress: ROUTER, inputAsset: USDC_BASE, walletAddress: WALLET }),
+    );
+  const before = runSafetyKernel(baseArgs({ intent, quoteExpiry, calls: classify(raw) })).result;
+  assert.equal(before.verdict, 'blocked');
+  const narrowed = narrowUniswapApprovalsV1(raw, {
+    inputToken: USDC_BASE.address!,
+    amountAtomic: intent.amount.amountAtomic,
+    expiresAtSec: expirySec,
+  });
+  const after = runSafetyKernel(baseArgs({ intent, quoteExpiry, calls: classify(narrowed) })).result;
+  assert.equal(after.verdict, 'allowed', after.blockedReason ?? '');
+});
+

@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import type { RouteIntentV1 } from '@mioagent/route-domain';
 import type { UniswapTradeTransport } from '@mioagent/swap-adapters';
-import { UniswapSwapBuildAdapter } from '../src/adapters/uniswap.js';
+import { validateUniswapSwap } from '@mioagent/security/uniswapGuard';
+import { UniswapSwapBuildAdapter, narrowUniswapApprovalsV1 } from '../src/adapters/uniswap.js';
 import { NOW, WALLET, WETH_BASE, makeIntent } from './fixtures.js';
 
 const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43';
@@ -345,5 +346,110 @@ test('a batch addressed to a router this adapter did not pin is still refused', 
   });
   const result = await adapter.build(buildInput(makeIntent()));
   assert.equal(result.outcome === 'router_mismatch' && result.errorCode, 'uniswap_router_not_pinned');
+});
+
+// ---------------------------------------------------------------------------
+// 2026-09-23 — the approvals Uniswap writes, and the ones the kernel accepts.
+// ---------------------------------------------------------------------------
+
+const PERMIT2_V1 = '0x000000000022d473030f116ddee9f6b43ac78ba3';
+const USDC_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const word = (value: bigint | string) =>
+  (typeof value === 'string' ? value.replace(/^0x/, '').toLowerCase() : value.toString(16)).padStart(64, '0');
+const approveCall = (spender: string, amount: bigint) => ({
+  to: USDC_V1,
+  value: '0',
+  data: `0x095ea7b3${word(spender)}${word(amount)}`,
+});
+const permitCall = (token: string, spender: string, amount: bigint, expiration: bigint) => ({
+  to: PERMIT2_V1,
+  value: '0',
+  data: `0x87517c45${word(token)}${word(spender)}${word(amount)}${word(expiration)}`,
+});
+const MAX_UINT256 = (1n << 256n) - 1n;
+const NOW_SEC = BigInt(Math.floor(NOW.getTime() / 1000));
+const QUOTE_EXPIRY = new Date(NOW.getTime() + 10 * 60_000).toISOString();
+// What swap_5792 returned for a wallet with no Permit2 allowance, in shape.
+const AS_UNISWAP_WROTE_IT = [
+  approveCall(PERMIT2_V1, MAX_UINT256),
+  permitCall(USDC_V1, ROUTER, 100_000_000n, NOW_SEC + 30n * 86_400n),
+  { to: ROUTER, value: '0', data: '0x3593564c' },
+];
+const guardFor = (calls: { to: string; value: string; data: string }[]) =>
+  validateUniswapSwap({
+    chain: 8453,
+    calls,
+    context: {
+      amountDecimal: '100',
+      inputAsset: { kind: 'erc20', address: USDC_V1, decimals: 6 },
+      outputAsset: { kind: 'native' },
+      swapper: WALLET,
+      routerVersion: '2.0',
+      expiresAt: QUOTE_EXPIRY,
+    },
+    now: NOW,
+  });
+
+test('the batch as Uniswap wrote it is refused by the guard — that was every web Uniswap route', () => {
+  const refused = guardFor(AS_UNISWAP_WROTE_IT);
+  assert.equal(refused.success, false);
+  assert.equal(!refused.success && refused.code, 'uniswap_approval_not_exact');
+  // Even with the unlimited approve gone, the 30-day permit is refused.
+  const permitOnly = guardFor(AS_UNISWAP_WROTE_IT.slice(1));
+  assert.equal(!permitOnly.success && permitOnly.code, 'uniswap_permit2_not_exact');
+});
+
+test('the adapter narrows both approvals to this swap, and the guard accepts the result', async () => {
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      swap: () => ({
+        status: 200,
+        payload: { from: WALLET, chainId: 8453, requestId: 'swap-req-narrow', calls: AS_UNISWAP_WROTE_IT },
+      }),
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent()));
+  assert.equal(result.outcome, 'built');
+  if (result.outcome !== 'built') return;
+  assert.equal(result.quoteExpiry, QUOTE_EXPIRY);
+  const expirySec = BigInt(Math.floor(Date.parse(QUOTE_EXPIRY) / 1000));
+  assert.deepEqual(
+    result.calls.map((call) => call.data),
+    [
+      approveCall(PERMIT2_V1, 100_000_000n).data,
+      permitCall(USDC_V1, ROUTER, 100_000_000n, expirySec).data,
+      '0x3593564c',
+    ],
+  );
+  assert.equal(guardFor(result.calls as never).success, true);
+});
+
+test('only approvals that already name the input token and an accepted spender are touched', () => {
+  const OTHER_ROUTER = '0xd6145b2d3f379919e8cdeda7b97e37c4b2ca9c40';
+  const OTHER_TOKEN = '0x4200000000000000000000000000000000000006';
+  const untouched = [
+    approveCall(OTHER_ROUTER, MAX_UINT256),
+    permitCall(USDC_V1, OTHER_ROUTER, MAX_UINT256, NOW_SEC + 86_400n),
+    permitCall(OTHER_TOKEN, ROUTER, MAX_UINT256, NOW_SEC + 86_400n),
+    { to: ROUTER, value: '0', data: '0x3593564c' },
+  ];
+  const narrowed = narrowUniswapApprovalsV1(untouched, {
+    inputToken: USDC_V1,
+    amountAtomic: '100000000',
+    expiresAtSec: Number(NOW_SEC) + 600,
+  });
+  // Left exactly as written, for the kernel to refuse.
+  assert.deepEqual(narrowed, untouched);
+  // An expiry already inside the quote is not moved later.
+  const early = permitCall(USDC_V1, ROUTER, 100_000_000n, NOW_SEC + 60n);
+  assert.deepEqual(
+    narrowUniswapApprovalsV1([early], { inputToken: USDC_V1, amountAtomic: '100000000', expiresAtSec: Number(NOW_SEC) + 600 }),
+    [early],
+  );
+  // A native input approves nothing, so nothing is rewritten.
+  assert.deepEqual(
+    narrowUniswapApprovalsV1(AS_UNISWAP_WROTE_IT, { inputToken: null, amountAtomic: '1', expiresAtSec: 1 }),
+    AS_UNISWAP_WROTE_IT,
+  );
 });
 

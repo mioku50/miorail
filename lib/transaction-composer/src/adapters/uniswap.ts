@@ -1,6 +1,7 @@
 import {
   BASE_UNISWAP_UNIVERSAL_ROUTER_2,
   BASE_UNISWAP_UNIVERSAL_ROUTER_2_VERSION,
+  PERMIT2_ADDRESS,
 } from '@mioagent/security/uniswapGuard';
 import {
   atomicToHumanDecimal,
@@ -29,6 +30,63 @@ const ROUTER = BASE_UNISWAP_UNIVERSAL_ROUTER_2 as `0x${string}`;
 
 function failure(outcome: SwapBuildFailureOutcome, errorCode: string, retryable: boolean): SwapBuildFailure {
   return { outcome, provider: 'uniswap', errorCode, retryable };
+}
+
+const ERC20_APPROVE_SELECTOR_V1 = '0x095ea7b3';
+const PERMIT2_APPROVE_SELECTOR_V1 = '0x87517c45';
+
+function wordV1(value: bigint): string {
+  return value.toString(16).padStart(64, '0');
+}
+
+/** The address in one ABI word, or null when the word is not an address. */
+function wordAddressV1(word: string): string | null {
+  return /^0{24}[0-9a-f]{40}$/.test(word) ? `0x${word.slice(24)}` : null;
+}
+
+/**
+ * The two approvals Uniswap writes, narrowed to this one swap.
+ *
+ * Measured 2026-09-23 with swap_5792 for 0.1 USDC → NVDAc: a wallet with no
+ * Permit2 allowance is given `approve(Permit2, 2^256-1)` on the input token,
+ * and every wallet is given `Permit2.approve(token, router, amount, now + 30
+ * days)`. The Safety Kernel refuses both — an approval must be the exact input,
+ * and a Permit2 allowance may not outlive the quote — so every Uniswap route
+ * the web chose as best was refused after it had been chosen.
+ *
+ * Only these two call shapes are rewritten, and only when they already name
+ * the input token and a spender the guard accepts (Permit2 or the pinned
+ * router): the amount becomes exactly the input, the expiry no later than the
+ * quote's. Anything else is left exactly as Uniswap wrote it, for the kernel
+ * to refuse. The router's calldata is never touched, and the kernel and the
+ * simulation both run on these calls, not on Uniswap's.
+ */
+export function narrowUniswapApprovalsV1<T extends { to: string; data: string }>(
+  calls: readonly T[],
+  input: { inputToken: string | null; amountAtomic: string; expiresAtSec: number },
+): T[] {
+  // A native input has nothing to approve; any approval there is refused as is.
+  if (!input.inputToken) return [...calls];
+  const token = input.inputToken.toLowerCase();
+  const router = ROUTER.toLowerCase();
+  const amount = BigInt(input.amountAtomic);
+  const expiry = BigInt(input.expiresAtSec);
+  return calls.map((call) => {
+    const to = call.to.toLowerCase();
+    const data = call.data.toLowerCase();
+    if (to === token && data.length === 138 && data.startsWith(ERC20_APPROVE_SELECTOR_V1)) {
+      const spender = wordAddressV1(data.slice(10, 74));
+      if (spender !== PERMIT2_ADDRESS && spender !== router) return call;
+      return { ...call, data: `${data.slice(0, 74)}${wordV1(amount)}` };
+    }
+    if (to === PERMIT2_ADDRESS && data.length === 266 && data.startsWith(PERMIT2_APPROVE_SELECTOR_V1)) {
+      if (wordAddressV1(data.slice(10, 74)) !== token || wordAddressV1(data.slice(74, 138)) !== router) return call;
+      const expiration = BigInt(`0x${data.slice(202, 266)}`);
+      const bounded = expiration < expiry ? expiration : expiry;
+      return { ...call, data: `${data.slice(0, 138)}${wordV1(amount)}${wordV1(bounded)}` };
+    }
+    return call;
+  });
 }
 
 export interface UniswapSwapBuildAdapterOptions {
@@ -195,6 +253,11 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
 
     const routerCalls = swapResult.calls!.filter((call) => call.to.toLowerCase() === ROUTER.toLowerCase());
     if (routerCalls.length !== 1) return failure('router_mismatch', 'uniswap_router_not_pinned', false);
+    const calls = narrowUniswapApprovalsV1(swapResult.calls!, {
+      inputToken: intent.fromAsset!.kind === 'native' ? null : tokenIn,
+      amountAtomic: intent.amount.amountAtomic,
+      expiresAtSec: swapBody.deadline,
+    });
 
     const requestHash = canonicalRequestHash('uniswap', { path: '/v1/quote', ...quoteBody });
     const responseHash = canonicalResponseHash('uniswap', {
@@ -204,7 +267,7 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
       outcome: 'built',
       provider: 'uniswap',
       routerAddress: ROUTER,
-      calls: swapResult.calls!,
+      calls,
       quoteExpiry,
       requestId,
       requestHash,
