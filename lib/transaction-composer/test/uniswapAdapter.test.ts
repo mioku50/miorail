@@ -292,3 +292,58 @@ test('a batch carrying a Permit2 approval beside the swap is built, not refused'
   assert.equal(result.calls.filter((call) => call.to.toLowerCase() === ROUTER).length, 1);
   assert.equal(result.calls[0]!.to.toLowerCase(), PERMIT2);
 });
+
+test('the real transport asks the Trading API for the pinned router, on both requests', async () => {
+  // 2026-09-23: with no version header the API built every swap for
+  // UniversalRouterV2_1_2 (0xd6145b2D…9c40) and each one was refused as
+  // `uniswap_router_not_pinned`. The tests above hand in their own transport,
+  // so the headers the production transport sends were never looked at.
+  const seen: { url: string; version: string | null }[] = [];
+  const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+    const headers = new Headers(init?.headers);
+    seen.push({ url: String(url), version: headers.get('x-universal-router-version') });
+    const quote = String(url).endsWith('/v1/quote');
+    return new Response(
+      JSON.stringify(
+        quote
+          ? { routing: 'CLASSIC', quote: { routing: 'CLASSIC', output: { amount: '38000000000000000' } } }
+          : {
+              from: WALLET,
+              chainId: 8453,
+              requestId: 'swap-req-1',
+              calls: [{ to: ROUTER, value: '0', data: '0x3593564c' }],
+            },
+      ),
+      { status: 200, headers: { 'content-type': 'application/json' } },
+    );
+  }) as typeof fetch;
+  const result = await new UniswapSwapBuildAdapter({ apiKey: 'test-key', fetchImpl }).build(buildInput(makeIntent()));
+  assert.equal(result.outcome, 'built');
+  assert.deepEqual(
+    seen.map((row) => [row.url.replace('https://trade-api.gateway.uniswap.org', ''), row.version]),
+    [
+      ['/v1/quote', '2.0'],
+      ['/v1/swap_5792', '2.0'],
+    ],
+  );
+});
+
+test('a batch addressed to a router this adapter did not pin is still refused', async () => {
+  // Asking for 2.0 is a request, not a guarantee; the pin is what decides.
+  const adapter = new UniswapSwapBuildAdapter({
+    transport: transportOf({
+      swap: () => ({
+        status: 200,
+        payload: {
+          from: WALLET,
+          chainId: 8453,
+          requestId: 'swap-req-1',
+          calls: [{ to: '0xd6145b2d3f379919e8cdeda7b97e37c4b2ca9c40', value: '0', data: '0x3593564c' }],
+        },
+      }),
+    }),
+  });
+  const result = await adapter.build(buildInput(makeIntent()));
+  assert.equal(result.outcome === 'router_mismatch' && result.errorCode, 'uniswap_router_not_pinned');
+});
+

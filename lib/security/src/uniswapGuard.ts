@@ -7,6 +7,15 @@ import {
 } from './swapAsset.js';
 
 export const BASE_UNISWAP_UNIVERSAL_ROUTER_2 = '0x6ff5693b99212da76ad316178a184ab56d299b43';
+/**
+ * The `x-universal-router-version` that makes Uniswap's Trading API build for
+ * the router above. Left unsent, the API picks its own default — and on
+ * 2026-09-23 that was UniversalRouterV2_1_2 (0xd6145b2D…9c40, listed in
+ * Uniswap/universal-router deploy-addresses/base.json), so every web Uniswap
+ * build came back addressed to a router nobody here had reviewed, and was
+ * refused as `uniswap_router_not_pinned`. The pin and the request move together.
+ */
+export const BASE_UNISWAP_UNIVERSAL_ROUTER_2_VERSION = '2.0';
 export const BASE_UNISWAP_UNIVERSAL_ROUTER_2_1_1 = '0xfdf682f51fe81aa4898f0ae2163d8a55c127fbc7';
 export const PERMIT2_ADDRESS = '0x000000000022d473030f116ddee9f6b43ac78ba3';
 

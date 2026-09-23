@@ -1,4 +1,7 @@
-import { BASE_UNISWAP_UNIVERSAL_ROUTER_2 } from '@mioagent/security/uniswapGuard';
+import {
+  BASE_UNISWAP_UNIVERSAL_ROUTER_2,
+  BASE_UNISWAP_UNIVERSAL_ROUTER_2_VERSION,
+} from '@mioagent/security/uniswapGuard';
 import {
   atomicToHumanDecimal,
   canonicalRequestHash,
@@ -50,6 +53,10 @@ export class UniswapSwapBuildAdapter implements SwapBuildAdapter {
           apiKey: apiKey ?? '',
           fetchImpl: options.fetchImpl,
           timeoutMs: options.timeoutMs,
+          // Ask for the router this adapter pins, on both requests. The Base
+          // App's Uniswap path always sent it; this one did not, and when the
+          // API's default moved to a newer router every build was refused.
+          extraHeaders: { 'x-universal-router-version': BASE_UNISWAP_UNIVERSAL_ROUTER_2_VERSION },
         }),
     );
   }
