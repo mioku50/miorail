@@ -19,7 +19,7 @@ import {
 import type { TokenIdentityReaderV1 } from '@mioagent/intent-core';
 import type { LlmProvider } from '@mioagent/llm';
 import type { ProviderReliabilityAssessmentV1 } from '@mioagent/route-outcomes';
-import type { RouteCandidateV1, RouteIntentV1 } from '@mioagent/route-domain';
+import { hashRouteIntentV1, type RouteCandidateV1, type RouteIntentV1 } from '@mioagent/route-domain';
 
 export type ReliabilityLoaderV1 = (
   candidates: readonly RouteCandidateV1[],
@@ -184,13 +184,19 @@ export class RoutePlanCoordinator {
     // requirements and the Safety Kernel must all see one depth. Raising it
     // after the run existed would leave a run recorded at one depth and checked
     // at another.
-    const intent = {
+    //
+    // And hashed again. The depth is part of the intent's financial payload, so
+    // a raised intent is a different intent: carrying the resolver's hash made
+    // storage refuse every floored run as tampered, before any venue was asked
+    // — every buy and sell from the Stocks card, until 2026-09-23.
+    const raised = {
       ...resolution.routeIntent,
       verificationDepth: raiseVerificationDepthV1(
         resolution.routeIntent.verificationDepth,
         input.minimumVerification,
       ),
     };
+    const intent = { ...raised, intentHash: hashRouteIntentV1(raised) };
     const routeRun = await this.dependencies.repository.createRouteRun(
       intent,
       routeEngineV1IdempotencyKey(intent, input.requestId),

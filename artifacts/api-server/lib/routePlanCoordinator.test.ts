@@ -8,6 +8,7 @@ import {
   type SwapPendingIntentRowV1,
 } from '@mioagent/route-storage';
 import type { IntentResolutionV2, PendingSwapIntentV2 } from '@mioagent/intent-engine';
+import { hashRouteIntentV1 } from '@mioagent/route-domain';
 import {
   NOW,
   WALLET,
@@ -374,5 +375,27 @@ describe('a verification floor raises and never lowers', () => {
     for (const depth of ['standard', 'enhanced', 'maximum'] as const) {
       assert.equal(raiseVerificationDepthV1(depth, undefined), depth);
     }
+  });
+
+  test('a raised run is stored, hashed at the depth it is checked at', async () => {
+    // 2026-09-23. Every buy and sell from the Stocks card carries this floor,
+    // and every one failed before any venue was asked: the depth was raised
+    // AFTER the resolver hashed the intent, so storage refused the run as
+    // tampered — "intentHash does not match the canonical V1 financial
+    // payload". The function above was tested; the run it feeds never was.
+    const { coordinator, repository, intent } = coordinatorFor({});
+    assert.equal(intent.verificationDepth, 'standard');
+    const result = await coordinator.evaluate({ ...input, requestId: 'floor-raised-1', minimumVerification: 'enhanced' });
+    assert.equal(result.outcome, 'evaluated');
+    const run = await repository.getRouteRun(intent.id, intent.tenantId);
+    assert.ok(run);
+    assert.equal(run.intent.verificationDepth, 'enhanced');
+    assert.equal(run.intentHash, hashRouteIntentV1(run.intent));
+    assert.notEqual(run.intentHash, intent.intentHash, 'a different depth is a different intent');
+    // Nothing else about the goal moved: same pair, same amount.
+    assert.deepEqual(
+      { ...run.intent, verificationDepth: 'standard', intentHash: intent.intentHash },
+      intent,
+    );
   });
 });
