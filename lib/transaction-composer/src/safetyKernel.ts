@@ -209,6 +209,36 @@ function evaluateContractSecurityV1(input: {
 }
 
 /**
+ * What a verdict that could not be read says — per token, in the provider's
+ * own words. "No usable GoPlus verdict for the input token" was said about
+ * USDC on 2026-09-24 when the unread token was NVDAc and the reason was
+ * GoPlus's rate limit: a sentence about the wrong token, and about the token
+ * at all, when it was about the provider. A provider that did not answer must
+ * never read as a fact about the token.
+ */
+function unreadVerdictDetailV1(
+  verdicts: ContractSecuritySummaryV1['verdicts'],
+  intent: RouteIntentV1,
+): string | null {
+  const unread = verdicts.filter(
+    (verdict) => verdict.provider !== 'goplus' || verdict.status === 'failed' || verdict.status === 'unknown',
+  );
+  if (unread.length === 0) return null;
+  const symbolOf = (address: string): string => {
+    for (const asset of [intent.fromAsset, intent.toAsset]) {
+      if (asset?.address && asset.address.toLowerCase() === address.toLowerCase()) return `${asset.symbol} ${address}`;
+    }
+    return address;
+  };
+  const bySummary = new Map<string, string[]>();
+  for (const verdict of unread) {
+    const summary = verdict.summary ?? 'no verdict was returned';
+    bySummary.set(summary, [...(bySummary.get(summary) ?? []), symbolOf(verdict.address)]);
+  }
+  return [...bySummary].map(([summary, tokens]) => `${tokens.join(', ')}: ${summary}`).join('; ');
+}
+
+/**
  * Runs the strict, server-side Safety Kernel over ALREADY server-built calls.
  * Provider-specific structural validation is delegated to the shared guards
  * (validateUniswapSwap / validateKyberSwap) rather than forked. Any failed
@@ -572,7 +602,7 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
   checks.push(
     check(
       'contract_token_security',
-      'Contract/token security verdict for the input token (GoPlus)',
+      'Contract/token security verdict for every token in the swap (GoPlus)',
       contractSecurity.status === 'blocked' ? 'failed' : 'passed',
       contractSecurity.status === 'blocked'
         ? (input.contractSecurityResults
@@ -581,7 +611,9 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
               return reason ? `${entry.address} — ${reason}` : null;
             })
             .filter((reason): reason is string => reason !== null)
-            .join('; ') || 'No usable GoPlus verdict for the input token')
+            .join('; ') ||
+          unreadVerdictDetailV1(contractSecurity.verdicts, input.intent) ||
+          'No usable GoPlus verdict for a token in this swap')
         : contractSecurity.status === 'warning'
           ? 'GoPlus reported a non-blocking warning'
           : null,

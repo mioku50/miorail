@@ -95,12 +95,63 @@ const TOKEN_SECURITY_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const TOKEN_SECURITY_SCAN_LIMIT = 50;
 const ERC20_ADDRESS_RE = /^0x[a-fA-F0-9]{40}$/;
 
+// ---------------------------------------------------------------------------
+// GoPlus answers HTTP 200 to everything and puts its verdict in the body's
+// `code`: 1 is complete data, 2 and 3 partial data (3 is what a B20 stock gets:
+// a name, open source, holders — no honeypot simulation). 4029 is its RATE
+// LIMIT, with an empty `result`. Until 2026-09-24 that read as "GoPlus has
+// nothing on this token", so a throttled read blocked a buy as if the token
+// itself were unknown — and the 2026-08-22 measurement that found "no
+// throttling" had checked HTTP statuses only.
+//
+// Measured 2026-09-24 on the public tier: about ten requests, then 35-50 s of
+// 4029. One portfolio load could spend all of it: up to 50 tokens, and every
+// token GoPlus omits from a batch (spam, and every B20 stock) was asked again
+// on its own, on every load, because a missing verdict was never remembered.
+// So a display read now remembers that GoPlus had nothing to say, and spends
+// at most part of the minute; the rest is kept for execution reads, which
+// never use a cache.
+// ---------------------------------------------------------------------------
+const GOPLUS_DATA_CODES = new Set([1, 2, 3]);
+const GOPLUS_RATE_LIMIT_CODES = new Set([4029]);
+/** After a 4029, nothing is sent for this long: another request inside the
+ * window only fails again, and may lengthen it. */
+const GOPLUS_RATE_LIMIT_BACKOFF_MS = 45_000;
+const GOPLUS_REQUEST_WINDOW_MS = 60_000;
+/** Requests a display read (portfolio, status) may spend per minute. */
+const GOPLUS_DISPLAY_BUDGET_PER_WINDOW = 4;
+/** How long a display read remembers that GoPlus had no usable verdict. */
+const TOKEN_SECURITY_NEGATIVE_TTL_MS = 15 * 60 * 1000;
+export const GOPLUS_RATE_LIMITED_SUMMARY =
+  'GoPlus is rate-limiting Miorail right now, so this token’s contract risk was not read. This says nothing about the token; try again in a minute.';
+const GOPLUS_DISPLAY_DEFERRED_SUMMARY =
+  'Not read just now: GoPlus requests are being kept for transactions. This says nothing about the token.';
+
 type TokenSecurityCacheEntry = {
   expiresAt: number;
   result: TokenSecurityResult;
 };
 
 const tokenSecurityCache = new Map<string, TokenSecurityCacheEntry>();
+/** Display reads only: tokens GoPlus answered about with no usable verdict. */
+const tokenSecurityNegativeCache = new Map<string, TokenSecurityCacheEntry>();
+let goPlusRateLimitedUntil = 0;
+const goPlusRequestTimes: number[] = [];
+
+/** Why a GoPlus request was not answered. Internal: callers get results. */
+class GoPlusUnansweredError extends Error {
+  constructor(readonly reason: 'rate_limited' | 'display_budget') {
+    super(reason === 'rate_limited' ? 'GoPlus rate limit' : 'GoPlus display budget spent');
+    this.name = 'GoPlusUnansweredError';
+  }
+}
+
+function goPlusRecentRequests(now: number): number {
+  while (goPlusRequestTimes.length > 0 && goPlusRequestTimes[0]! <= now - GOPLUS_REQUEST_WINDOW_MS) {
+    goPlusRequestTimes.shift();
+  }
+  return goPlusRequestTimes.length;
+}
 type GoPlusAppCredentials = { appKey: string; appSecret: string };
 let goPlusAccessToken: { appKey: string; value: string; expiresAt: number } | null = null;
 let goPlusAccessTokenPromise: Promise<string | undefined> | null = null;
@@ -121,6 +172,9 @@ export function setTokenSecurityHealthStatus(statusCode: 'connected' | 'missing'
 
 export function clearTokenSecurityCacheForTests() {
   tokenSecurityCache.clear();
+  tokenSecurityNegativeCache.clear();
+  goPlusRateLimitedUntil = 0;
+  goPlusRequestTimes.length = 0;
   goPlusAccessToken = null;
   goPlusAccessTokenPromise = null;
   tokenSecurityHealth = { providerName: 'none', statusCode: 'missing' };
@@ -282,23 +336,33 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
     const missing: string[] = [];
 
     for (const address of addresses) {
-      const cached = params.forceFresh ? undefined : tokenSecurityCache.get(cacheKey(params.chainId, address));
+      // Execution reads (forceFresh) never use either cache: a verdict that
+      // decides a signature is read now or not at all.
+      const key = cacheKey(params.chainId, address);
+      const cached = params.forceFresh ? undefined : tokenSecurityCache.get(key);
+      const remembered = params.forceFresh ? undefined : tokenSecurityNegativeCache.get(key);
       if (cached && cached.expiresAt > now) {
         results.set(address, cached.result);
+      } else if (remembered && remembered.expiresAt > now) {
+        results.set(address, remembered.result);
       } else {
         missing.push(address);
       }
     }
 
     if (missing.length > 0) {
-      const fetched = await this.fetchTokenSecurity(params.chainId, missing);
-      for (const result of fetched) {
+      const purpose = params.forceFresh ? 'execution' : 'display';
+      const fetched = await this.fetchTokenSecurity(params.chainId, missing, purpose);
+      for (const { result, answeredEmpty } of fetched) {
         results.set(result.address, result);
+        const key = cacheKey(params.chainId, result.address);
         if (!['failed', 'unknown'].includes(result.status)) {
-          tokenSecurityCache.set(cacheKey(params.chainId, result.address), {
-            expiresAt: Date.now() + TOKEN_SECURITY_CACHE_TTL_MS,
-            result
-          });
+          tokenSecurityCache.set(key, { expiresAt: Date.now() + TOKEN_SECURITY_CACHE_TTL_MS, result });
+          tokenSecurityNegativeCache.delete(key);
+        } else if (answeredEmpty && purpose === 'display') {
+          // GoPlus answered and had nothing usable. Asking again on every
+          // portfolio load is what spent the minute; a display read remembers.
+          tokenSecurityNegativeCache.set(key, { expiresAt: Date.now() + TOKEN_SECURITY_NEGATIVE_TTL_MS, result });
         }
       }
     }
@@ -315,13 +379,27 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
     return ordered;
   }
 
-  private async fetchTokenSecurity(chainId: number, addresses: string[]): Promise<TokenSecurityResult[]> {
+  private async fetchTokenSecurity(
+    chainId: number,
+    addresses: string[],
+    purpose: 'execution' | 'display',
+  ): Promise<{ result: TokenSecurityResult; answeredEmpty: boolean }[]> {
     const rawResults = new Map<string, Record<string, unknown>>();
+    /** Addresses a GoPlus answer covered, whether or not it named them. */
+    const answered = new Set<string>();
+    /** Why an address got no answer at all, when the reason was GoPlus's
+     * throttle or our own budget rather than GoPlus having nothing on it. */
+    const unanswered = new Map<string, GoPlusUnansweredError['reason']>();
+    let stop: GoPlusUnansweredError['reason'] | null = null;
     try {
-      for (const [address, raw] of await this.requestRaw(chainId, addresses)) rawResults.set(address, raw);
-    } catch {
+      const batch = await this.requestRaw(chainId, addresses, purpose);
+      for (const address of addresses) answered.add(address);
+      for (const [address, raw] of batch) rawResults.set(address, raw);
+    } catch (error) {
       // A failed batch is retried per address below. This also handles GoPlus
-      // returning a successful but incomplete batch response.
+      // returning a successful but incomplete batch response — which it does
+      // for every B20 token, answered only on its own.
+      if (error instanceof GoPlusUnansweredError) stop = error.reason;
     }
 
     const missing = addresses.filter((address) => {
@@ -329,23 +407,60 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
       return !raw || mapGoPlusTokenSecurity(address, raw).status === 'unknown';
     });
     for (const address of missing) {
+      if (stop) {
+        if (!rawResults.has(address)) unanswered.set(address, stop);
+        continue;
+      }
       try {
-        for (const [key, raw] of await this.requestRaw(chainId, [address])) rawResults.set(key, raw);
-      } catch {
+        const single = await this.requestRaw(chainId, [address], purpose);
+        answered.add(address);
+        for (const [key, raw] of single) rawResults.set(key, raw);
+      } catch (error) {
         // Preserve a failed result for this address without poisoning cache.
+        answered.delete(address);
+        if (error instanceof GoPlusUnansweredError) {
+          stop = error.reason;
+          if (!rawResults.has(address)) unanswered.set(address, stop);
+        }
       }
     }
 
-    const mapped = addresses.map((address) => {
+    return addresses.map((address) => {
       const raw = rawResults.get(address);
-      return raw ? mapGoPlusTokenSecurity(address, raw) : failedSecurityResult(address);
+      if (raw) {
+        const result = mapGoPlusTokenSecurity(address, raw);
+        return { result, answeredEmpty: result.status === 'unknown' && answered.has(address) };
+      }
+      const reason = unanswered.get(address);
+      if (reason === 'rate_limited') {
+        return { result: failedSecurityResult(address, GOPLUS_RATE_LIMITED_SUMMARY), answeredEmpty: false };
+      }
+      if (reason === 'display_budget') {
+        return {
+          result: { ...failedSecurityResult(address, GOPLUS_DISPLAY_DEFERRED_SUMMARY), status: 'unknown' as const },
+          answeredEmpty: false,
+        };
+      }
+      // Answered without naming this token, or not answered at all.
+      return { result: failedSecurityResult(address), answeredEmpty: answered.has(address) };
     });
-    return mapped;
   }
 
-  private async requestRaw(chainId: number, addresses: string[]): Promise<Map<string, Record<string, unknown>>> {
+  private async requestRaw(
+    chainId: number,
+    addresses: string[],
+    purpose: 'execution' | 'display' = 'execution',
+  ): Promise<Map<string, Record<string, unknown>>> {
     const url = new URL(`https://api.gopluslabs.io/api/v1/token_security/${chainId}`);
     url.searchParams.set('contract_addresses', addresses.join(','));
+    const now = Date.now();
+    if (now < goPlusRateLimitedUntil) {
+      goPlusDiagnostics.errorCode = 'goplus_rate_limited';
+      throw new GoPlusUnansweredError('rate_limited');
+    }
+    if (purpose === 'display' && goPlusRecentRequests(now) >= GOPLUS_DISPLAY_BUDGET_PER_WINDOW) {
+      throw new GoPlusUnansweredError('display_budget');
+    }
     let lastError: unknown;
     // A refused CREDENTIAL must not cost us the answer.
     //
@@ -365,6 +480,8 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
         const headers: Record<string, string> = { accept: 'application/json' };
         const accessToken = forcePublic ? undefined : await this.getAccessToken();
         if (accessToken) headers.Authorization = `Bearer ${accessToken}`;
+        goPlusRecentRequests(Date.now());
+        goPlusRequestTimes.push(Date.now());
         const res = await fetch(url.toString(), { headers, signal: AbortSignal.timeout(this.timeoutMs) });
         if (!res.ok) {
           if (res.status === 401 && accessToken) goPlusAccessToken = null;
@@ -380,7 +497,23 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
           }
           throw new Error(`GoPlus API error: ${res.statusText || res.status}`);
         }
-        const data = await res.json() as { result?: Record<string, Record<string, unknown>> };
+        const data = await res.json() as { code?: unknown; result?: Record<string, Record<string, unknown>> };
+        const code = data.code === undefined ? 1 : Number(data.code);
+        if (GOPLUS_RATE_LIMIT_CODES.has(code)) {
+          if (accessToken) {
+            // The account's own meter ran out: the public tier may still answer.
+            forcePublic = true;
+            goPlusDiagnostics = { authMode: 'public_fallback', errorCode: 'goplus_rate_limited' };
+            continue;
+          }
+          goPlusRateLimitedUntil = Date.now() + GOPLUS_RATE_LIMIT_BACKOFF_MS;
+          goPlusDiagnostics.errorCode = 'goplus_rate_limited';
+          throw new GoPlusUnansweredError('rate_limited');
+        }
+        if (!GOPLUS_DATA_CODES.has(code)) {
+          goPlusDiagnostics.errorCode = 'goplus_provider_error';
+          throw new Error(`GoPlus answered code ${Number.isFinite(code) ? code : 'unknown'}`);
+        }
         const normalized = new Map<string, Record<string, unknown>>();
         for (const [key, value] of Object.entries(data.result || {})) {
           const address = key.trim().toLowerCase();
@@ -388,6 +521,9 @@ export class GoPlusTokenSecurityProvider implements TokenSecurityProvider {
         }
         return normalized;
       } catch (error) {
+        // A throttle is final for this request: retrying inside the window
+        // only fails again.
+        if (error instanceof GoPlusUnansweredError) throw error;
         if (error instanceof Error && /abort|timeout/i.test(`${error.name} ${error.message}`)) {
           goPlusDiagnostics.errorCode = 'goplus_timeout';
         } else if (!goPlusDiagnostics.errorCode) {

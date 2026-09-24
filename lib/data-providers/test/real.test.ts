@@ -8,6 +8,7 @@ import {
   RealGoPlusProvider,
   RealMoralisProvider,
   GoPlusTokenSecurityProvider,
+  GOPLUS_RATE_LIMITED_SUMMARY,
   NoneTokenSecurityProvider,
   clearTokenSecurityCacheForTests,
   getTokenSecurityProviderFromEnv,
@@ -460,7 +461,7 @@ describe('Real Providers', () => {
         mock.restoreAll();
     });
 
-    test('GoPlus retries tokens omitted from a partial batch and keeps unknown results uncached', async () => {
+    test('GoPlus retries tokens omitted from a partial batch; a display read remembers an empty answer, an execution read asks again', async () => {
         clearTokenSecurityCacheForTests();
         const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
         process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
@@ -489,8 +490,14 @@ describe('Real Providers', () => {
         assert.strictEqual(getTokenSecurityProviderFromEnv().statusCode, 'partial');
         assert.strictEqual(mockFetch.mock.calls.length, 3);
 
-        await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [katana, usdc, spam] });
-        assert.strictEqual(mockFetch.mock.calls.length, 5, 'only the unknown spam result is retried and remains uncached');
+        // A portfolio load asking again about every token GoPlus has nothing
+        // on is what spent the public minute (2026-09-24): remembered now.
+        const again = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [katana, usdc, spam] });
+        assert.deepStrictEqual(again.map((result) => result.status), ['ok', 'ok', 'failed']);
+        assert.strictEqual(mockFetch.mock.calls.length, 3, 'a display read does not ask again about an empty answer');
+        // A verdict that decides a signature is read now, never remembered.
+        await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [katana, usdc, spam], forceFresh: true });
+        assert.strictEqual(mockFetch.mock.calls.length, 6, 'an execution read asks again, batch and singles');
         assert.strictEqual(getTokenSecurityProviderFromEnv().statusCode, 'partial');
         restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
         clearTokenSecurityCacheForTests();
@@ -591,6 +598,119 @@ describe('Real Providers', () => {
         assert.equal(diagnostics.authMode, 'public_fallback');
         assert.equal(diagnostics.errorCode, 'goplus_rate_limited');
         restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
+    test('a 4029 under HTTP 200 is GoPlus throttling, not GoPlus knowing nothing', async () => {
+        // Measured 2026-09-24 on the public tier: about ten requests, then
+        // 35-50 s of `code: 4029` with an empty result and HTTP 200. Read as a
+        // plain empty answer, it blocked a buy as if NVDAc itself were unknown.
+        clearTokenSecurityCacheForTests();
+        const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
+        process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+        const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+        const nvda = '0xb20000000000000000000078ee7ce2fe4908108c';
+        const mockFetch = mock.fn(async () => ({
+            ok: true,
+            json: async () => ({ code: 4029, message: 'request limit reached', result: {} }),
+        } as Response));
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
+        const results = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [usdc, nvda], forceFresh: true });
+        assert.deepStrictEqual(results.map((result) => result.status), ['failed', 'failed']);
+        assert.ok(results.every((result) => result.summary === GOPLUS_RATE_LIMITED_SUMMARY));
+        assert.strictEqual(mockFetch.mock.calls.length, 1, 'no per-token retries into a throttle');
+        assert.strictEqual(getTokenSecurityProviderFromEnv().errorCode, 'goplus_rate_limited');
+        // Inside the back-off nothing is sent, for any purpose.
+        await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [usdc], forceFresh: true });
+        await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [usdc] });
+        assert.strictEqual(mockFetch.mock.calls.length, 1);
+        // And a throttled answer is never remembered as an empty one.
+        clearTokenSecurityCacheForTests();
+        global.fetch = mock.fn(async () => ({
+            ok: true,
+            json: async () => ({ code: 1, result: { [usdc]: { is_open_source: '1', is_honeypot: '0' } } }),
+        } as Response)) as unknown as typeof fetch;
+        assert.strictEqual((await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [usdc] }))[0].status, 'ok');
+        restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
+    test('an authenticated 4029 answers from the public tier', async () => {
+        clearTokenSecurityCacheForTests();
+        const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
+        process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+        const token = '0x6666666666666666666666666666666666666666';
+        const authorizedAttempts: boolean[] = [];
+        const mockFetch = mock.fn(async (url: string | URL | Request, options?: RequestInit) => {
+            if (String(url).endsWith('/api/v1/token')) {
+                return { ok: true, json: async () => ({ result: { access_token: 'backend-token', expires_in: 3600 } }) } as Response;
+            }
+            const authorized = Boolean((options?.headers as Record<string, string> | undefined)?.Authorization);
+            authorizedAttempts.push(authorized);
+            if (authorized) return { ok: true, json: async () => ({ code: 4029, result: {} }) } as Response;
+            return { ok: true, json: async () => ({ code: 1, result: { [token]: { is_open_source: '1' } } }) } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider({ appKey: 'app-key', appSecret: 'app-secret' }, 1000);
+        const [security] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token], forceFresh: true });
+        assert.equal(security.status, 'ok');
+        assert.deepEqual(authorizedAttempts, [true, false]);
+        assert.equal(getTokenSecurityProviderFromEnv().authMode, 'public_fallback');
+        restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
+    test('display reads spend part of the minute and leave the rest for transactions', async () => {
+        clearTokenSecurityCacheForTests();
+        const originalProvider = process.env.TOKEN_SECURITY_PROVIDER;
+        process.env.TOKEN_SECURITY_PROVIDER = 'goplus';
+        const mockFetch = mock.fn(async (url: string | URL | Request) => {
+            const address = (new URL(String(url)).searchParams.get('contract_addresses') || '').toLowerCase();
+            return { ok: true, json: async () => ({ code: 1, result: { [address]: { is_open_source: '1', is_honeypot: '0' } } }) } as Response;
+        });
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
+        const token = (n: number) => `0x${n.toString(16).padStart(40, '0')}`;
+        // About ten a minute is all the public tier gives (measured
+        // 2026-09-24); display reads may take four of them.
+        for (let n = 1; n <= 4; n += 1) {
+            assert.equal((await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token(n)] }))[0].status, 'ok');
+        }
+        assert.strictEqual(mockFetch.mock.calls.length, 4);
+        // The fifth display read in the minute is not sent — and says so.
+        const [deferred] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token(5)] });
+        assert.strictEqual(deferred.status, 'unknown');
+        assert.match(deferred.summary, /kept for transactions/);
+        assert.strictEqual(mockFetch.mock.calls.length, 4);
+        // An execution read still goes out.
+        const [fresh] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token(5)], forceFresh: true });
+        assert.strictEqual(fresh.status, 'ok');
+        assert.strictEqual(mockFetch.mock.calls.length, 5);
+        restoreEnv('TOKEN_SECURITY_PROVIDER', originalProvider);
+        clearTokenSecurityCacheForTests();
+        mock.restoreAll();
+    });
+
+    test('an unknown GoPlus code is a failed read, never an empty answer to remember', async () => {
+        clearTokenSecurityCacheForTests();
+        const token = '0x7777777777777777777777777777777777777777';
+        const mockFetch = mock.fn(async () => ({ ok: true, json: async () => ({ code: 5000, message: 'system error', result: {} }) } as Response));
+        global.fetch = mockFetch as unknown as typeof fetch;
+        const provider = new GoPlusTokenSecurityProvider(undefined, 1000);
+        assert.strictEqual((await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] }))[0].status, 'failed');
+        // Not remembered: the next read is a new question. (Here it is not
+        // sent at all — the failed attempts spent the display minute — and it
+        // says that, rather than repeating a remembered "failed".)
+        const [next] = await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token] });
+        assert.strictEqual(next.status, 'unknown');
+        assert.match(next.summary, /kept for transactions/);
+        const calls = mockFetch.mock.calls.length;
+        await provider.getTokenSecurity({ chainId: 8453, tokenAddresses: [token], forceFresh: true });
+        assert.ok(mockFetch.mock.calls.length > calls, 'an execution read asks again');
         clearTokenSecurityCacheForTests();
         mock.restoreAll();
     });

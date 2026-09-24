@@ -16,7 +16,7 @@ import {
   type PublicGiftLikeV1,
 } from '../src/console/giftView';
 import { GiftProofPanel, PublicGiftCard, type ProofGiftModelV1 } from '../src/console/GiftPanels';
-import { ProofScreen } from '../src/console/ConsoleScreens';
+import { ProofScreen, ReviewScreen } from '../src/console/ConsoleScreens';
 import { GiftForm } from '../src/console/MarketRealityScreen';
 import { swapPrepareNoticeV1 } from '../src/console/consoleFlow';
 
@@ -307,5 +307,48 @@ describe('the stock card and the refusal', () => {
       swapPrepareNoticeV1({ outcome: 'unsupported', reason: 'unsupported_pair', detail: 'x' })?.title,
       'Miorail cannot prepare this route',
     );
+  });
+});
+
+describe('a refused prepare is never "all clear"', () => {
+  const base = {
+    steps: [],
+    calls: [],
+    simulation: {
+      available: true,
+      passed: true,
+      headline: 'Simulation passed on Base mainnet 8453',
+      detail: 'block 51722033 · 5s ago',
+      subLabel: 'block 51722033 · 5s ago',
+      canSign: false,
+      disabledReason: null,
+    },
+    balanceChanges: [],
+    balanceUnavailableReason: null,
+    checks: [],
+    limits: [],
+    onLimitChange: () => undefined,
+    onApprove: () => undefined,
+    onBack: () => undefined,
+    approvePending: false,
+  };
+
+  test('the 2026-09-24 screen: a refusal, zero calls, and the pill says there is nothing to sign', () => {
+    const html = renderToStaticMarkup(
+      <ReviewScreen
+        {...base}
+        notice={{
+          title: 'The Safety Kernel refused this transaction',
+          detail: 'contract_token_security: NVDAc 0xb200…: GoPlus is rate-limiting Miorail right now',
+        }}
+      />,
+    );
+    assert.doesNotMatch(html, /all clear/);
+    assert.match(html, /nothing to sign/);
+  });
+
+  test('a prepared route whose checks and simulation passed is still all clear', () => {
+    const html = renderToStaticMarkup(<ReviewScreen {...base} checks={[{ label: 'Kernel', passed: true }]} />);
+    assert.match(html, /all clear/);
   });
 });

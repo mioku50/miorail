@@ -706,7 +706,12 @@ export interface ReviewScreenModelV1 {
 }
 
 export function ReviewScreen(model: ReviewScreenModelV1) {
-  const allClear = model.checks.every((check) => check.passed) && model.simulation.passed;
+  // A refused prepare has no checks to list, and `every` over nothing is true:
+  // on 2026-09-24 the pill read "all clear" beside "The Safety Kernel refused
+  // this transaction" and zero calls to sign. Nothing is clear when there is
+  // nothing to sign.
+  const refused = Boolean(model.notice);
+  const allClear = !refused && model.checks.every((check) => check.passed) && model.simulation.passed;
   return (
     <section aria-label="Review transaction">
       <ConsoleStepper steps={model.steps} />
@@ -794,7 +799,9 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
           <h3>Pre-flight</h3>
           <span className="sub">re-runs automatically before you sign</span>
           <span className="rt">
-            <span className={`pill ${allClear ? 'g' : 'a'}`}>{allClear ? 'all clear' : model.simulation.subLabel}</span>
+            <span className={`pill ${allClear ? 'g' : 'a'}`}>
+              {allClear ? 'all clear' : refused ? 'nothing to sign' : model.simulation.subLabel}
+            </span>
           </span>
         </div>
         <div className="pb">
