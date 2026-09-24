@@ -49,6 +49,8 @@ import {
   SwapBlueprintSubmissionResponseV1Schema,
   SwapPrepareRequestV1Schema,
   SwapPrepareResponseV1Schema,
+  GiftRecipientRequestV1Schema,
+  GiftRecipientResponseV1Schema,
   UpdateIntelligenceBudgetRequestV1Schema,
 } from '@mioagent/api-zod';
 import { createStructuredLlmProvider } from '@mioagent/llm';
@@ -70,6 +72,8 @@ import {
 } from '@mioagent/route-storage';
 import { approvedStockSponsorshipV1, sponsoredGasConfiguredV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
 import { swapPrepareOutcomeMetaV1 } from '../lib/swapPrepareLog.js';
+import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
+import { checkStockGiftV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
 import { createReliabilityLookupV1 } from '../lib/reliabilityLookup.js';
 import {
@@ -954,7 +958,69 @@ export const swapPrepareRouteRuntime = {
     return composer.prepare(input);
   },
   now: () => new Date(),
+  /** Growth plan step 4: what the gift policy reads. */
+  gift: {
+    routeRun: async (routeRunId: string, tenantId: string) =>
+      createDatabaseRouteStorageRepository(client).getRouteRun(routeRunId, tenantId),
+    /** A Coinbase-issued B20 in the reviewed corpus: the one representation
+     * whose transfer semantics and transfer policy have been measured. */
+    isGiftableStock: async (tokenAddress: string): Promise<boolean> => {
+      const found = await createDatabaseUnderlyingAssetRepository(client).underlyingOf({ chainId: 8453, tokenAddress });
+      return found?.binding.issuerId === 'coinbase' && found.binding.representationKind === 'b20_asset';
+    },
+    resolveName: (name: string) => resolveBaseNameV1(name),
+    /** Gifts this user approved today (UTC): approved blueprints whose batch
+     * carries a transfer — only a gift batch can. */
+    giftsApprovedToday: async (tenantId: string, now: Date): Promise<number> => {
+      const dayStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const rows = await client`
+        SELECT count(*)::int AS n FROM execution_blueprints
+         WHERE user_id = ${tenantId} AND status = 'approved'
+           AND updated_at >= ${dayStart.toISOString()}::timestamptz
+           AND payload->'calls' @> '[{"callType":"transfer"}]'::jsonb`;
+      return Number(rows[0]?.n ?? 0);
+    },
+  },
 };
+
+// Growth plan step 4: what the person typed as a gift recipient, made into an
+// address the review can show — a Basename resolved through ENSIP-19, or a 0x
+// address checked for shape. Signed in, because "not your own wallet" needs
+// to know whose wallet it is. Nothing is stored.
+routeIntelligenceRouter.post('/gift/recipient', async (req, res) => {
+  const flags = swapPrepareRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1) {
+    res.status(404).json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = GiftRecipientRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_gift_recipient_request', code: 'invalid_gift_recipient_request' });
+    return;
+  }
+  try {
+    const result = await resolveGiftRecipientV1({
+      value: parsed.data.value,
+      walletAddress: user.address,
+      resolveName: swapPrepareRouteRuntime.gift.resolveName,
+    });
+    res.json(GiftRecipientResponseV1Schema.parse(result));
+  } catch (cause) {
+    logger.warn('Gift recipient lookup failed', safeFailureMetaV1(cause));
+    res.json(
+      GiftRecipientResponseV1Schema.parse({
+        outcome: 'refused',
+        code: 'resolver_unavailable',
+        message: 'Basenames cannot be looked up right now. Paste the 0x address instead.',
+      }),
+    );
+  }
+});
 
 routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
   const flags = swapPrepareRouteRuntime.flags(process.env);
@@ -986,6 +1052,31 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
       res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
       return;
     }
+    // A gift is checked against its policy before anything is quoted or
+    // built; a refusal is an ordinary outcome with the rule in its detail.
+    let giftRecipient: `0x${string}` | null = null;
+    if (parsed.data.gift) {
+      const run = await swapPrepareRouteRuntime.gift.routeRun(parsed.data.routeRunId, user.id);
+      if (run) {
+        const now = swapPrepareRouteRuntime.now();
+        const verdict = await checkStockGiftV1({
+          intent: run.intent,
+          walletAddress: user.address,
+          gift: parsed.data.gift,
+          isGiftableStock: swapPrepareRouteRuntime.gift.isGiftableStock,
+          resolveName: swapPrepareRouteRuntime.gift.resolveName,
+          giftsApprovedToday: () => swapPrepareRouteRuntime.gift.giftsApprovedToday(user.id, now),
+        });
+        if (!verdict.ok) {
+          logger.info('Gift refused before prepare', { code: verdict.code });
+          res.json(
+            SwapPrepareResponseV1Schema.parse({ outcome: 'unsupported', reason: 'gift_refused', detail: verdict.message }),
+          );
+          return;
+        }
+        giftRecipient = verdict.recipient;
+      }
+    }
     const result = await swapPrepareRouteRuntime.prepare({
       tenantId: user.id,
       walletAddress: user.address,
@@ -994,6 +1085,7 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
       selectedCandidateHash: parsed.data.selectedCandidateHash,
       requestId: parsed.data.requestId,
       now: swapPrepareRouteRuntime.now(),
+      ...(giftRecipient ? { gift: { recipient: giftRecipient } } : {}),
     });
     // T59: the ONLY change to this route — surface the paid-simulation price
     // label (null when the feature is unavailable/disabled) alongside the

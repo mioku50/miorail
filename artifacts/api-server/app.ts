@@ -121,6 +121,7 @@ import { routes } from './routes';
 import { mcpServerRouter } from './routes/mcp/index.js';
 import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
 import { stockPagesRouter } from './routes/stockPages.js';
+import { giftPagesRouter } from './routes/giftPages.js';
 import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 
 // T72-B §1 — the AUTHENTICATED MCP endpoint, mounted before the public one.
@@ -149,6 +150,9 @@ app.use('/api', routes);
 // paths here only so the head of the page can name one stock, and falls back to
 // the static index.html when this cannot answer.
 app.use(stockPagesRouter);
+// `/gift/<publicId>`: the same document, headed for the gift it shows, so a
+// gift shared on X or Farcaster previews as what it is.
+app.use(giftPagesRouter);
 
 // Health route
 app.get('/health', (_req: Request, res: Response) => {

@@ -27,7 +27,7 @@ import {
   type StocksHeadlineViewV1,
 } from './marketRealityView';
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
-import { stockTradeAmountV1 } from '@mioagent/rwa-market-reality/execution-handoff';
+import { stockGiftAmountV1, stockTradeAmountV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -201,6 +201,12 @@ export interface MarketRealityActionsV1 {
    * why it could not, or null once the prepare step has opened.
    */
   onTrade?: (trade: { tokenAddress: string; direction: 'buy' | 'sell'; amountAtomic: string }) => string | null;
+  /**
+   * Growth plan step 4 — buy the answer card's address for someone else, at
+   * an amount in USDC. Resolves to why it could not, or to null once the
+   * prepare step has opened.
+   */
+  onGift?: (gift: { tokenAddress: string; amountAtomic: string; recipient: string }) => Promise<string | null>;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -231,7 +237,12 @@ export interface MarketRealityScreenModelV1 {
    * card: what may be said about the fee, and each address's token decimals, so
    * a sell amount is read in its own contract's scale. Absent where the surface
    * cannot carry a trade through, and the card keeps its Prepare buttons. */
-  trade?: { note: string | null; tokenDecimals: Readonly<Record<string, number | null>> } | null;
+  trade?: {
+    note: string | null;
+    tokenDecimals: Readonly<Record<string, number | null>>;
+    /** Addresses that can be given: Coinbase-issued B20s. */
+    giftable?: Readonly<Record<string, boolean>>;
+  } | null;
   /** Phase 13.2. Null until a reader has asked. */
   ask?: StocksAskPanelModelV1;
   /** Why advanced execution is unavailable for an exact address, when it is.
@@ -1258,23 +1269,31 @@ function HeadlineAnswer({
   onPrepare,
   trade,
   onTrade,
+  onGift,
 }: {
   headline: StocksHeadlineViewV1;
   measuring: boolean;
   onMeasure?: () => void;
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
-  trade?: { note: string | null; tokenDecimals: Readonly<Record<string, number | null>> } | null;
+  onGift?: (gift: { tokenAddress: string; amountAtomic: string; recipient: string }) => Promise<string | null>;
+  trade?: {
+    note: string | null;
+    tokenDecimals: Readonly<Record<string, number | null>>;
+    /** Addresses that can be given: Coinbase-issued B20s. */
+    giftable?: Readonly<Record<string, boolean>>;
+  } | null;
   onTrade?: (trade: { tokenAddress: string; direction: 'buy' | 'sell'; amountAtomic: string }) => string | null;
 }) {
   const lead = headline.representation;
   // Which side's amount is open — one at a time, and only for the address the
   // card leads with when it was opened. An amount typed for one contract is
   // not an amount of another, so a new lead closes it.
-  const [side, setSide] = useState<{ tokenAddress: string; direction: 'buy' | 'sell' } | null>(null);
+  const [side, setSide] = useState<{ tokenAddress: string; direction: 'buy' | 'sell' | 'gift' } | null>(null);
   const tradable = lead && trade && onTrade ? lead : null;
   const open = tradable && side?.tokenAddress === tradable.tokenAddress ? side.direction : null;
   const sellDecimals = tradable ? (trade?.tokenDecimals[tradable.tokenAddress] ?? null) : null;
-  const toggle = (direction: 'buy' | 'sell') =>
+  const giftable = Boolean(tradable && onGift && trade?.giftable?.[tradable.tokenAddress]);
+  const toggle = (direction: 'buy' | 'sell' | 'gift') =>
     setSide(open === direction || !tradable ? null : { tokenAddress: tradable.tokenAddress, direction });
   return (
     <section className="mr-headline" aria-label="What this security answers right now">
@@ -1362,6 +1381,13 @@ function HeadlineAnswer({
                 Sell
               </button>
             ) : null}
+            {/* Growth plan step 4. Outlined like Buy and Sell: a gift is a
+                third thing the reader may do, not the one the card suggests. */}
+            {giftable ? (
+              <button type="button" className="btn alt" aria-expanded={open === 'gift'} onClick={() => toggle('gift')}>
+                Gift
+              </button>
+            ) : null}
           </>
         ) : lead && onPrepare ? (
           <>
@@ -1386,7 +1412,13 @@ function HeadlineAnswer({
           with the evidence for each
         </span>
       </div>
-      {tradable && open ? (
+      {tradable && open === 'gift' && giftable ? (
+        <GiftForm
+          key={`gift:${tradable.tokenAddress}`}
+          onCancel={() => setSide(null)}
+          onSubmit={(gift) => onGift!({ tokenAddress: tradable.tokenAddress, ...gift })}
+        />
+      ) : tradable && (open === 'buy' || open === 'sell') ? (
         <TradeAmountForm
           key={`${open}:${tradable.tokenAddress}`}
           direction={open}
@@ -1484,6 +1516,104 @@ export function TradeAmountForm({
             : buy
               ? 'From 0.1 USDC. The route is planned, quoted and simulated again at this amount before your wallet asks you to sign.'
               : 'The exact number of tokens of this contract, as your wallet shows them. What they fetch in USDC is quoted again before your wallet asks you to sign.')}
+      </p>
+    </form>
+  );
+}
+
+/**
+ * A gift: who receives it, and how many USDC to spend on it.
+ *
+ * Nothing is signed or sent from here either. The recipient is looked up and
+ * shown on the review with its address; the purchase is planned, quoted and
+ * simulated like any other, and the stock goes to the recipient only as the
+ * last call of the batch the giver's own wallet approves.
+ */
+export function GiftForm({
+  onSubmit,
+  onCancel,
+}: {
+  onSubmit: (gift: { amountAtomic: string; recipient: string }) => Promise<string | null>;
+  onCancel: () => void;
+}) {
+  const [recipient, setRecipient] = useState('');
+  const [text, setText] = useState('');
+  const [refusal, setRefusal] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const first = useRef<HTMLInputElement>(null);
+  useEffect(() => first.current?.focus(), []);
+  const amount = stockGiftAmountV1(text);
+  const who = recipient.trim();
+  // Shape only; whether a name resolves, and to whom, is the server's to say.
+  const recipientReady = /^0x[0-9a-fA-F]{40}$/.test(who) || /^[^\s]{1,255}\.base\.eth$/i.test(who);
+  const wrong = amount.status !== 'ready' && amount.status !== 'empty';
+  const ready = amount.status === 'ready' && recipientReady && !pending;
+  return (
+    <form
+      className="mr-trade"
+      aria-label="Give this stock to someone"
+      onSubmit={async (event) => {
+        event.preventDefault();
+        if (!ready || amount.status !== 'ready') return;
+        setPending(true);
+        setRefusal(await onSubmit({ amountAtomic: amount.atomic, recipient: who }));
+        setPending(false);
+      }}
+    >
+      <label htmlFor="mr-gift-recipient">Who receives it</label>
+      <div className="mr-trade-row">
+        <input
+          ref={first}
+          id="mr-gift-recipient"
+          type="text"
+          autoComplete="off"
+          spellCheck={false}
+          autoCapitalize="none"
+          maxLength={260}
+          placeholder="alice.base.eth or 0x…"
+          value={recipient}
+          onChange={(event) => {
+            setRecipient(event.target.value);
+            setRefusal(null);
+          }}
+        />
+      </div>
+      <label htmlFor="mr-gift-amount">USDC to spend on it</label>
+      <div className="mr-trade-row">
+        <input
+          id="mr-gift-amount"
+          type="text"
+          inputMode="decimal"
+          autoComplete="off"
+          spellCheck={false}
+          maxLength={40}
+          placeholder="5"
+          value={text}
+          aria-invalid={wrong}
+          aria-describedby="mr-gift-note"
+          onChange={(event) => {
+            setText(event.target.value);
+            setRefusal(null);
+          }}
+        />
+        <span className="mr-trade-unit">USDC</span>
+        <button
+          type="submit"
+          className="btn"
+          disabled={!ready}
+          title="Opens the prepare step with the recipient shown. Nothing is approved, submitted, or signed here."
+        >
+          {pending ? 'Checking the recipient…' : amount.status === 'ready' ? `Gift ${amount.label} USDC of it` : 'Gift'}
+        </button>
+        <button type="button" className="btn alt" onClick={onCancel}>
+          Cancel
+        </button>
+      </div>
+      <p id="mr-gift-note" className="lnote" role="status" data-tone={refusal || wrong ? 'wrong' : undefined}>
+        {refusal ??
+          (wrong
+            ? amount.message
+            : 'From 0.1 to 100 USDC. They receive the stock itself, in their own wallet on Base. The recipient and the route are checked again before your wallet asks you to sign.')}
       </p>
     </form>
   );
@@ -1681,6 +1811,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           onPrepare={actions.onPrepare}
           trade={model.trade ?? null}
           onTrade={actions.onTrade}
+          onGift={actions.onGift}
         />
       ) : null}
 

@@ -307,6 +307,9 @@ export interface PrepareSwapBlueprintInput {
   routeCardHash: string;
   selectedCandidateHash: string;
   requestId?: string;
+  /** Growth plan step 4: buy this for someone else. The address is the one
+   * the gift resolver returned; the server resolves a name again. */
+  gift?: { recipient: `0x${string}`; recipientName: string | null } | null;
 }
 
 export class SwapPrepareRequestIdentity {
@@ -320,6 +323,7 @@ export class SwapPrepareRequestIdentity {
       input.routeRunId,
       input.routeCardHash,
       input.selectedCandidateHash,
+      input.gift?.recipient.toLowerCase() ?? '',
     ].join('\u0000');
     if (material !== this.lastMaterial || !this.lastRequestId) {
       this.lastMaterial = material;
@@ -327,6 +331,26 @@ export class SwapPrepareRequestIdentity {
     }
     return this.lastRequestId;
   }
+}
+
+/** Growth plan step 4: a gift recipient as typed — a Basename or a 0x
+ * address — made into the address the review will show. Nothing is stored. */
+export function useResolveGiftRecipient(
+  options?: Omit<UseMutationOptions<apiSpec.GiftRecipientResponseV1, Error, { value: string }>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.GiftRecipientRequestV1Schema.parse({ value: input.value });
+      const response = await fetchApi<unknown>('/api/route-intelligence/gift/recipient', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.GiftRecipientResponseV1Schema.parse(response);
+    },
+  });
 }
 
 export function usePrepareSwapBlueprint(
@@ -347,6 +371,9 @@ export function usePrepareSwapBlueprint(
         selectedCandidateHash: input.selectedCandidateHash,
         walletAddress: input.walletAddress,
         requestId: identity.current!.resolve(input),
+        ...(input.gift
+          ? { gift: { recipient: input.gift.recipient.toLowerCase(), recipientName: input.gift.recipientName } }
+          : {}),
       });
       const response = await fetchApi<unknown>('/api/route-intelligence/swap/prepare', {
         method: 'POST',

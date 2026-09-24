@@ -4,6 +4,7 @@ import {
   baseNameResolverRuntimeV1,
   ethereumMainnetRpcUrlV1,
   resolveBaseNameV1,
+  reverseBaseNameV1,
 } from './baseNameResolver.js';
 
 const original = { ...baseNameResolverRuntimeV1 };
@@ -54,4 +55,25 @@ test('the resolver rejects non-Basename ENS names before RPC', async () => {
   baseNameResolverRuntimeV1.lookup = async () => { called = true; return ADDRESS; };
   assert.equal((await resolveBaseNameV1('alice.eth')).outcome, 'invalid');
   assert.equal(called, false);
+});
+
+test('a reverse name is shown only when it resolves forward to the same address', async () => {
+  baseNameResolverRuntimeV1.rpcUrl = () => 'https://eth-mainnet.example.invalid/key';
+  baseNameResolverRuntimeV1.reverse = async () => 'Mioku.base.eth';
+  baseNameResolverRuntimeV1.lookup = async () => ADDRESS;
+  assert.equal(await reverseBaseNameV1(ADDRESS), 'mioku.base.eth');
+  // Anybody can point their own reverse record at somebody else's name.
+  baseNameResolverRuntimeV1.lookup = async () => '0x3333333333333333333333333333333333333333';
+  assert.equal(await reverseBaseNameV1(ADDRESS), null);
+  // Not a Basename, no record, a failing RPC, no resolver: all just no label.
+  baseNameResolverRuntimeV1.lookup = async () => ADDRESS;
+  baseNameResolverRuntimeV1.reverse = async () => 'mioku.eth';
+  assert.equal(await reverseBaseNameV1(ADDRESS), null);
+  baseNameResolverRuntimeV1.reverse = async () => null;
+  assert.equal(await reverseBaseNameV1(ADDRESS), null);
+  baseNameResolverRuntimeV1.reverse = async () => { throw new Error('rpc down'); };
+  assert.equal(await reverseBaseNameV1(ADDRESS), null);
+  baseNameResolverRuntimeV1.rpcUrl = () => null;
+  assert.equal(await reverseBaseNameV1(ADDRESS), null);
+  assert.equal(await reverseBaseNameV1('not-an-address'), null);
 });

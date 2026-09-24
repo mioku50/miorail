@@ -534,3 +534,48 @@ test('reconcile: rejects when the proof blueprintHash no longer resolves to any 
     (error: unknown) => error instanceof RouteProofReconcileBindingError && error.code === 'route_proof_not_found',
   );
 });
+
+test('reconcile: a gift completes when the chain shows the swap AND the gift, and the projection names it', async () => {
+  const FRIEND = '0x8e525bfce1c0ffee00000000000000000000beef' as const;
+  const probe = await seedRouteProofFixture({ toAsset: ARBITRARY_TOKEN, transactionHashes: [TX_HASH_1] });
+  const minimum = probe.proof.expectedResult.assetChanges.find((change) => change.direction === 'credit')!.minimumAmountAtomic!;
+  const seeded = await seedRouteProofFixture({
+    toAsset: ARBITRARY_TOKEN,
+    transactionHashes: [TX_HASH_1],
+    gift: { recipient: FRIEND, amountAtomic: minimum },
+  });
+  const gross = seeded.proof.expectedResult.outputAmountAtomic!;
+  const withGift: VerifiedReceiptSourceV1 = {
+    ...stockReceiptSource(seeded),
+    logs: [
+      ...stockReceiptSource(seeded).logs,
+      transferLog(ARBITRARY_TOKEN.address as `0x${string}`, WALLET, FRIEND, BigInt(minimum)),
+    ],
+  };
+  const result = await reconcilerFor(seeded, mockReceiptReader({ [TX_HASH_1]: withGift })).reconcile({
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    routeRunId: seeded.intent.id,
+    routeProofId: seeded.proof.id,
+    now: LATER,
+  });
+  assert.equal(result.outcome, 'completed');
+  assert.equal(result.proof.reconciliationState, 'matched');
+  assert.equal(result.proof.actualOutput, gross);
+  assert.deepEqual(result.proof.gift, { recipient: FRIEND, amountAtomic: minimum });
+
+  // The same batch without the gift's Transfer in the receipt is not a delivered gift.
+  const missing = await seedRouteProofFixture({
+    toAsset: ARBITRARY_TOKEN,
+    transactionHashes: [TX_HASH_1],
+    gift: { recipient: FRIEND, amountAtomic: minimum },
+  });
+  const unproven = await reconcilerFor(missing, mockReceiptReader({ [TX_HASH_1]: stockReceiptSource(missing) })).reconcile({
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    routeRunId: missing.intent.id,
+    routeProofId: missing.proof.id,
+    now: LATER,
+  });
+  assert.equal(unproven.outcome, 'reconciliation_required');
+});

@@ -10,7 +10,13 @@ import type { VerifiedReceiptLogV1 } from './receipts.js';
 
 export type AssetReconstructionOutcomeV1 =
   | { kind: 'reconstructed'; actualResult: ExecutionResultV1 }
-  | { kind: 'unsupported'; reason: 'native_output_unverifiable' | 'unsupported_asset' };
+  | { kind: 'unsupported'; reason: 'native_output_unverifiable' | 'unsupported_asset' | 'gift_transfer_unverified' };
+
+/** A gift in the batch: the output token's own transfer to someone else. */
+export interface GiftTransferV1 {
+  recipient: string;
+  amountAtomic: string;
+}
 
 interface DecodedTransferV1 {
   tokenAddress: string;
@@ -45,6 +51,16 @@ function decodeTransferLogsV1(logs: readonly VerifiedReceiptLogV1[]): DecodedTra
     }
   }
   return out;
+}
+
+/** The gift an approved batch carries: its one ERC-20 transfer call. */
+export function giftOfApprovedCallsV1(
+  calls: readonly { callType: string; recipient: string | null; amountAtomic: string | null }[],
+): GiftTransferV1 | null {
+  const transfers = calls.filter((call) => call.callType === 'transfer');
+  if (transfers.length !== 1) return null;
+  const call = transfers[0]!;
+  return call.recipient && call.amountAtomic ? { recipient: call.recipient, amountAtomic: call.amountAtomic } : null;
 }
 
 function netForToken(transfers: readonly DecodedTransferV1[], tokenAddress: string, wallet: string): { out: bigint; in: bigint } {
@@ -136,6 +152,14 @@ export function reconstructAssetChangesV1(input: {
   expectedAssetChanges: readonly ExpectedAssetChangeV1[];
   successReceiptLogs: readonly VerifiedReceiptLogV1[];
   approvedCallTargets?: readonly string[];
+  /**
+   * The gift the approved batch carried, if any. Its Transfer from the wallet
+   * to the recipient is what the chain must show; the swap's own output is
+   * then the wallet's net PLUS that transfer, because the gift left the
+   * wallet after the swap put it there. No such Transfer, exactly as
+   * declared, and nothing is reconstructed.
+   */
+  giftTransfer?: GiftTransferV1 | null;
 }): AssetReconstructionOutcomeV1 {
   const outputChange = input.expectedAssetChanges.find((change) => change.direction === 'credit') ?? null;
   const inputChange = input.expectedAssetChanges.find((change) => change.direction === 'debit') ?? null;
@@ -145,8 +169,26 @@ export function reconstructAssetChangesV1(input: {
   }
 
   const wallet = input.walletAddress.toLowerCase();
-  const transfers = decodeTransferLogsV1(input.successReceiptLogs);
+  const decoded = decodeTransferLogsV1(input.successReceiptLogs);
   const native = nativeMovementV1(input.successReceiptLogs, input.approvedCallTargets ?? []);
+
+  // The gift's own Transfer is set aside before netting: it is the gift, not
+  // a cost of the swap. Exactly one, of the output token, wallet → recipient,
+  // for exactly the declared amount — anything else is not the gift.
+  let transfers = decoded;
+  if (input.giftTransfer) {
+    const token = outputChange.asset.kind === 'erc20' ? outputChange.asset.address?.toLowerCase() : null;
+    const recipient = input.giftTransfer.recipient.toLowerCase();
+    const matches = decoded.filter(
+      (transfer) =>
+        transfer.tokenAddress === token &&
+        transfer.from === wallet &&
+        transfer.to === recipient &&
+        transfer.value.toString() === input.giftTransfer!.amountAtomic,
+    );
+    if (!token || matches.length !== 1) return { kind: 'unsupported', reason: 'gift_transfer_unverified' };
+    transfers = decoded.filter((transfer) => transfer !== matches[0]);
+  }
 
   const amountForV1 = (change: ExpectedAssetChangeV1, direction: 'debit' | 'credit'): bigint | null => {
     if (change.asset.kind === 'native') {

@@ -18,6 +18,7 @@ import {
   rightRailHasContentV1,
 } from './navigation';
 import { BudgetDonut, ConsoleStepper, DepthCurve, RouteGraph, ScoreRadar, ScoreRows, Sparkline, type RouteGraphModelV1 } from './ConsoleCharts';
+import { GiftProofPanel, type ProofGiftModelV1 } from './GiftPanels';
 
 void React;
 
@@ -944,6 +945,8 @@ export interface ProofScreenModelV1 {
   record: { label: string; value: string; dim?: boolean }[];
   onExport: () => void;
   onNewGoal: () => void;
+  /** Growth plan step 4: set only when the approved batch carried a gift. */
+  gift?: ProofGiftModelV1 | null;
 }
 
 export function ProofScreen(model: ProofScreenModelV1) {
@@ -967,6 +970,8 @@ export function ProofScreen(model: ProofScreenModelV1) {
           <Kpis items={model.kpis} two />
         </div>
       </div>
+
+      {model.gift ? <GiftProofPanel gift={model.gift} /> : null}
 
       <div className="cols2">
         <div className="panel">

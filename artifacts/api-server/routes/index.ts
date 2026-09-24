@@ -16,6 +16,7 @@ import { mcpHandoffRouter } from './mcpHandoff';
 import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
 import { publicProofRouter } from './publicProof';
+import { publicGiftRouter } from './giftPages';
 import { publicMetricsRouter } from './publicMetrics';
 import { publicIdentityRouter } from './publicIdentity';
 import { publicStocksRouter } from './publicStocks';
@@ -29,6 +30,8 @@ routes.use('/auth', authRouter);
 // no session, no wallet and no SIWE; putting it behind the tenant middleware
 // would make it unreadable by the only people it exists for.
 routes.use('/public', publicProofRouter);
+// A gift's labels (two Basenames, a company), beside the proof they label.
+routes.use('/public', publicGiftRouter);
 routes.use('/public', publicMetricsRouter);
 // "Is this the real one" opens with no session for the same reason a proof
 // does: the reader holding an unknown address is the reader with no account.

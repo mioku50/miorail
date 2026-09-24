@@ -16,6 +16,7 @@ import {
 } from '@mioagent/route-domain';
 import { atomicToHumanDecimal, routablePairV1 } from '@mioagent/swap-adapters';
 import { assembleExecutionBlueprintV1, blueprintIdV1, classifySwapCallV1 } from './blueprint.js';
+import { giftDeclarationFromCallsV1, giftTransferCallV1 } from './gift.js';
 import { routeFromCandidateV1 } from './adapters/aerodrome.js';
 import { buildTransactionReviewProjectionV1 } from './reviewProjection.js';
 import {
@@ -337,6 +338,22 @@ export function aerodromeKernelInputV1(
 }
 
 /**
+ * The gift a STORED blueprint carries, for the kernel: its one transfer call
+ * as the declaration, and the swap minimum it must equal. Replay and approve
+ * re-check the same immutable bytes the prepare checked.
+ */
+export function storedGiftKernelInputV1(blueprint: ExecutionBlueprintV1): {
+  gift: ReturnType<typeof giftDeclarationFromCallsV1>;
+  swapMinimumOutputAtomic: string | null;
+} {
+  const credit = blueprint.expectedAssetChanges.find((change) => change.direction === 'credit');
+  return {
+    gift: giftDeclarationFromCallsV1(blueprint.calls),
+    swapMinimumOutputAtomic: credit?.minimumAmountAtomic ?? null,
+  };
+}
+
+/**
  * T59: standalone extraction of the composer's idempotent-replay review path
  * (previously a private method) so a separate, paid endpoint (transaction
  * simulation) can re-derive the SAME honest review projection over an
@@ -405,6 +422,7 @@ export async function reviewStoredBlueprintV1(
     hydrexContractPinVerified,
     hydrexUpstreamRouter,
     ...aerodromeKernelInputV1(providerId, selected, blueprint),
+    ...storedGiftKernelInputV1(blueprint),
   });
 
   if (safety.verdict === 'blocked') {
@@ -530,6 +548,9 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     }
 
     // --- Idempotent replay ----------------------------------------------------
+    const giftRecipient = input.gift?.recipient
+      ? (input.gift.recipient.toLowerCase() as `0x${string}`)
+      : null;
     const blueprintId = blueprintIdV1({
       tenantId: input.tenantId,
       walletAddress: input.walletAddress,
@@ -537,6 +558,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       routeCardHash: input.routeCardHash,
       selectedCandidateHash: input.selectedCandidateHash,
       requestId: input.requestId,
+      giftRecipient,
     });
     const existingBlueprints = await repository.listBlueprints(input.routeRunId, input.tenantId);
     const existing = existingBlueprints.find((stored) => stored.blueprint.id === blueprintId);
@@ -660,7 +682,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     }
 
     const inputAsset = intent.fromAsset!;
-    const calls = buildResult.calls.map((call, index) =>
+    const swapCalls = buildResult.calls.map((call, index) =>
       classifySwapCallV1({
         index,
         call,
@@ -669,6 +691,26 @@ export class DeterministicTransactionComposer implements TransactionComposer {
         walletAddress: input.walletAddress,
       }),
     );
+    // A gift appends one transfer of exactly the swap's guaranteed minimum.
+    // The kernel checks it against this declaration; the simulation below
+    // runs the whole batch, the transfer included.
+    const gift = giftRecipient
+      ? { recipient: giftRecipient, amountAtomic: buildResult.minimumOutput.amountAtomic }
+      : null;
+    if (gift && (intent.toAsset?.kind !== 'erc20' || !intent.toAsset.address)) {
+      return unsupportedResultV1('unsupported_pair', 'Only an ERC-20 purchase can be given as a gift');
+    }
+    const calls = gift
+      ? [
+          ...swapCalls,
+          giftTransferCallV1({
+            index: swapCalls.length,
+            token: intent.toAsset!,
+            recipient: gift.recipient,
+            amountAtomic: gift.amountAtomic,
+          }),
+        ]
+      : swapCalls;
 
     // --- Simulation ---------------------------------------------------------------
     // Aerodrome and o1 require simulation. The other providers keep the T57
@@ -727,6 +769,8 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       hydrexContractPinVerified: buildResult.hydrex?.contractPinVerified,
       hydrexUpstreamRouter: buildResult.hydrex?.upstreamRouter,
       balancer: buildResult.balancer,
+      gift,
+      swapMinimumOutputAtomic: buildResult.minimumOutput.amountAtomic,
     });
 
     if (safety.verdict === 'blocked') {

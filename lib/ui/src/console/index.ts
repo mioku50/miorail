@@ -14,6 +14,8 @@ export * from './verificationHonesty';
 export * from './consoleFlow';
 export * from './providerDiagnostics';
 export * from './consoleAdapters';
+export * from './giftView';
+export * from './GiftPanels';
 export * from './ConsoleCharts';
 export * from './ConsoleShell';
 export * from './ConsoleScreens';

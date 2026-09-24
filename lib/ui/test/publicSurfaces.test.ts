@@ -208,9 +208,9 @@ test('Stocks is sessionless on web, at an address worth sharing', () => {
   assert.doesNotMatch(root.slice(0, root.indexOf('</Route>')), /RequireSession/);
 });
 
-test('the edge sends stock pages to the API for their head, and falls back to the file', () => {
+test('the edge sends stock and gift pages to the API for their head, and falls back to the file', () => {
   const nginx = source('ops/nginx/miorail-app.conf');
-  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {']) {
+  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {', 'location ^~ /gift/ {']) {
     const at = nginx.indexOf(location);
     assert.ok(at >= 0, `Nginx has no ${location}`);
     const block = nginx.slice(at, nginx.indexOf('\n}', at));
@@ -229,6 +229,22 @@ test('the deploy proves a stock page left with its own head', () => {
   assert.match(deploy, /\/api\/public\/stocks\/underlyings/);
   assert.match(deploy, /property=\\"og:title\\"/);
   assert.match(deploy, /nginx served the static file/);
+  // And a gift page: an unknown id must answer with the API's head.
+  assert.match(deploy, /<title>Gift not found · Miorail<\/title>/);
+});
+
+test('a gift page opens with no session, and never reads its recipient from the address bar', () => {
+  const app = source('artifacts/interface/src/app/App.tsx');
+  const giftRoute = app.indexOf('<Route path="/gift/:publicId">');
+  const firstSessionGate = app.indexOf('<RequireSession>');
+  assert.ok(giftRoute >= 0 && giftRoute < firstSessionGate, '/gift/:publicId must render before any session gate');
+  const page = source('artifacts/interface/src/features/proof/PublicGiftPage.tsx');
+  // The gift is decoded from the bundle the page itself verified.
+  assert.match(page, /verifyPublicProofBundleV1/);
+  assert.match(page, /giftOfPublicBundleV1/);
+  const console = source('artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx');
+  assert.match(console, /giftFromHistoryStateV1\(window\.history\.state\)/);
+  assert.doesNotMatch(console, /searchParams[^\n]*get\(['"]recipient['"]\)/);
 });
 
 test('robots.txt is a file, and it names the sitemap', () => {

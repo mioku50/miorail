@@ -132,8 +132,9 @@ export const stockPagesRuntime = {
 
 let templateV1: { path: string; mtimeMs: number; html: string } | null = null;
 
-/** Re-read whenever the deploy replaced the file, and not otherwise. */
-async function indexHtmlV1(): Promise<string> {
+/** Re-read whenever the deploy replaced the file, and not otherwise. Shared
+ * with the gift pages, which serve the same document under their own head. */
+export async function indexHtmlV1(): Promise<string> {
   const path = stockPagesRuntime.indexHtmlPath();
   const stat = await stockPagesRuntime.stat(path);
   if (templateV1 && templateV1.path === path && templateV1.mtimeMs === stat.mtimeMs) {
@@ -150,7 +151,7 @@ export function resetStockPagesTemplateV1(): void {
   templateV1 = null;
 }
 
-function escapeHtmlV1(value: string): string {
+export function escapeHtmlV1(value: string): string {
   return value
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -268,7 +269,7 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
  * wallet connectors and the font host the page loads, which the static copy of
  * the same file has never been subject to. Same bytes, same rules.
  */
-function sendDocumentV1(res: Response, status: number, html: string): void {
+export function sendDocumentV1(res: Response, status: number, html: string): void {
   res.removeHeader('Content-Security-Policy');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');

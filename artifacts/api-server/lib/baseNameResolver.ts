@@ -50,7 +50,41 @@ export const baseNameResolverRuntimeV1 = {
       strict: true,
     });
   },
+  /** The primary name an address set for Base (ENSIP-19), or null. */
+  reverse: async (rpcUrl: string, address: Address): Promise<string | null> => {
+    const client = createPublicClient({
+      chain: mainnet,
+      transport: http(rpcUrl, { retryCount: 1, timeout: 6_000 }),
+    });
+    return client.getEnsName({ address, coinType: toCoinType(base.id), strict: true });
+  },
 };
+
+/**
+ * The Basename an address calls itself, for DISPLAY only — or null.
+ *
+ * A reverse record is written by the address's owner and says nothing by
+ * itself: anybody can point their own reverse record at "coinbase.base.eth".
+ * So the name is resolved forward again and kept only when it names this same
+ * address. Null covers every other case (no record, a non-Basename, an RPC
+ * failure, no resolver configured) because a label is optional and an address
+ * is always there to show instead.
+ */
+export async function reverseBaseNameV1(address: string): Promise<string | null> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(address)) return null;
+  const rpcUrl = baseNameResolverRuntimeV1.rpcUrl();
+  if (!rpcUrl) return null;
+  try {
+    const found = await baseNameResolverRuntimeV1.reverse(rpcUrl, getAddress(address));
+    if (!found) return null;
+    const name = normalize(found);
+    if (name.length > 255 || !name.endsWith('.base.eth')) return null;
+    const forward = await baseNameResolverRuntimeV1.lookup(rpcUrl, name);
+    return forward && forward.toLowerCase() === address.toLowerCase() ? name : null;
+  } catch {
+    return null;
+  }
+}
 
 /** Resolve a Basename through ENSIP-19 for Base (coin type 2147492101).
  * The returned address is the only value allowed to enter the Send action. */

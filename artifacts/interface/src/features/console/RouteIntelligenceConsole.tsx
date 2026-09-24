@@ -76,6 +76,12 @@ import {
   scoringVersionLabelV1,
   shortfallNoticeFromProjectionV1,
   simulationSourceFromResponseV1,
+  giftBannerV1,
+  giftFromHistoryStateV1,
+  giftProofLineV1,
+  giftShareForProofV1,
+  giftUrlV1,
+  reviewCallRowsV1,
   type RoutePlanProjectionV1,
   AiRouteCardPanel,
   AiReviewPanel,
@@ -100,6 +106,7 @@ import {
   usePortfolio,
   usePrepareSwapBlueprint,
   useRouteHistory,
+  useShareProof,
   useSimulateWithBudget,
   useStatus,
   type NftProofResponseV1,
@@ -179,6 +186,26 @@ export function RouteIntelligenceConsole() {
     const handed = new URLSearchParams(window.location.search).get('goal') ?? '';
     return handed.trim().slice(0, 4_000);
   });
+  // Growth plan step 4 — a gift's recipient, handed over in history state by
+  // the stocks card, NEVER from the address bar: a link can carry a purchase,
+  // not somebody for the reader to pay. Opened as a gift with none here, the
+  // page says so and prepares nothing as a gift.
+  const [gift] = useState(() =>
+    typeof window === 'undefined' ? null : giftFromHistoryStateV1(window.history.state),
+  );
+  const [giftMissing] = useState(
+    () =>
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).get('side') === 'gift' &&
+      !giftFromHistoryStateV1(window.history.state),
+  );
+  const giftBanner = giftBannerV1({ gift, missing: giftMissing });
+  // The gift link is a public proof link, created only by the giver's click
+  // on a delivered gift. Held here, not fetched: until that click there is no
+  // link to fetch.
+  const giftShare = useShareProof();
+  const [giftLink, setGiftLink] = useState<string | null>(null);
+  const [giftLinkCopied, setGiftLinkCopied] = useState(false);
   /** The one-word reply to a clarification. Held here rather than inside
    * ComparingScreen, which is a pure function of its model like every other
    * screen in that file. */
@@ -662,11 +689,13 @@ export function RouteIntelligenceConsole() {
    * Stated as a value rather than checked at the click, so the screen can say
    * it BEFORE the click and disable the control that cannot work.
    */
-  const reviewBlockedReason = !connected
-    ? CONSOLE_COPY_V1.walletDisconnected
-    : result?.outcome !== 'evaluated' || !projection
-      ? 'This goal has not produced a route card yet.'
-      : null;
+  const reviewBlockedReason = giftMissing
+    ? 'This gift has no recipient on this page. Start it again from the stock’s page.'
+    : !connected
+      ? CONSOLE_COPY_V1.walletDisconnected
+      : result?.outcome !== 'evaluated' || !projection
+        ? 'This goal has not produced a route card yet.'
+        : null;
 
   const reviewCandidate = (candidateHash: string) => {
     // Read out before the guard so the null check narrows the type as well as
@@ -690,6 +719,7 @@ export function RouteIntelligenceConsole() {
       routeRunId: result.routeRunId,
       routeCardHash,
       selectedCandidateHash: candidateHash,
+      ...(gift ? { gift } : {}),
     });
   };
 
@@ -1422,18 +1452,13 @@ export function RouteIntelligenceConsole() {
           onCompareAgain={() => compare({ fresh: true })}
           comparePending={comparePending}
           calls={
-            prepared?.blueprint.calls.map((call, index) => ({
-              index: index + 1,
-              title:
-                call.callType === 'approval'
-                  ? `Allow ${call.spender ?? 'the router'} to spend exactly ${call.amountAtomic ?? 'the quoted amount'}`
-                  : 'Swap through the selected route',
-              detail:
-                call.callType === 'approval'
-                  ? `${call.to} · exact amount, no unlimited approval`
-                  : `Recipient is your own wallet · expires ${prepared.blueprint.quoteExpiry}`,
-              mono: true,
-            })) ?? []
+            prepared
+              ? reviewCallRowsV1({
+                  calls: prepared.blueprint.calls,
+                  quoteExpiry: prepared.blueprint.quoteExpiry,
+                  recipientName: gift?.recipientName ?? null,
+                })
+              : []
           }
           notice={prepareNotice}
           simulation={simulation}
@@ -1626,9 +1651,58 @@ export function RouteIntelligenceConsole() {
     // reads the projection's real names.
     const proof = reconciliation.proof ?? null;
     const proofView = proof ? routeProofViewV1(proof) : null;
+    const giftLine = proof
+      ? giftProofLineV1({
+          gift: proof.gift,
+          asset: proof.expectedOutput.asset,
+          finalStatus: proof.finalStatus,
+          recipientName: gift?.recipientName ?? null,
+        })
+      : null;
+    const giftLinks =
+      proof?.gift && giftLink
+        ? giftShareForProofV1({
+            gift: proof.gift,
+            asset: proof.expectedOutput.asset,
+            recipientName: gift?.recipientName ?? null,
+            url: giftLink,
+          })
+        : null;
     content = (
       <ProofScreen
         steps={steps}
+        gift={
+          giftLine && proof
+            ? {
+                ...giftLine,
+                // Only a delivered gift is announced, and only where public
+                // proofs are switched on — a link that 404s is no gift.
+                share:
+                  giftLine.delivered && flags?.publicProofV1
+                    ? {
+                        url: giftLink,
+                        pending: giftShare.isPending,
+                        error: giftShare.isError ? 'The gift link could not be created. Nothing was published.' : null,
+                        onCreate: () =>
+                          giftShare.mutate(
+                            { proofId: proof.proofId },
+                            { onSuccess: (result) => setGiftLink(giftUrlV1(window.location.origin, result.publicId)) },
+                          ),
+                        xHref: giftLinks?.x ?? null,
+                        farcasterHref: giftLinks?.farcaster ?? null,
+                        onCopy: () => {
+                          if (!giftLink) return;
+                          void navigator.clipboard?.writeText(giftLink).then(
+                            () => setGiftLinkCopied(true),
+                            () => undefined,
+                          );
+                        },
+                        copied: giftLinkCopied,
+                      }
+                    : null,
+              }
+            : null
+        }
         eyebrow={proof ? `Route proof · ${proof.proofId.slice(-12)}` : 'Route proof · reconciling'}
         amount={proofView?.actualOutputDecimal ?? '—'}
         unit={proofView?.actualOutputDecimal ? proof!.expectedOutput.asset.symbol : ''}
@@ -1778,6 +1852,12 @@ export function RouteIntelligenceConsole() {
         enabled={Boolean(flags?.submissionRecoveryV1)}
         onResolved={() => consoleNav.navigate('activity')}
       />
+      {giftBanner ? (
+        <div className="gift-banner" data-tone={giftBanner.tone} role={giftBanner.tone === 'warn' ? 'alert' : 'note'}>
+          <b>{giftBanner.title}</b>
+          <p>{giftBanner.detail}</p>
+        </div>
+      ) : null}
       {content}
     </ConsoleShell>
   );

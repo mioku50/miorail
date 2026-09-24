@@ -421,10 +421,14 @@ export const STOCK_BUY_MINIMUM_CASH_ATOMIC_V1 = '100000';
 /** Base USDC's decimals, which a BUY amount is written in. */
 export const STOCK_CASH_DECIMALS_V1 = 6;
 
+/** The largest gift the card accepts: 100 USDC (the operator's range,
+ * 2026-09-23 — «с 0.1$ эквивалент до 100$»). The server holds the same line. */
+export const STOCK_GIFT_MAXIMUM_CASH_ATOMIC_V1 = '100000000';
+
 export type StockTradeAmountV1 =
   | { status: 'ready'; atomic: string; label: string }
   | {
-      status: 'empty' | 'malformed' | 'too_precise' | 'zero' | 'below_minimum' | 'decimals_unread';
+      status: 'empty' | 'malformed' | 'too_precise' | 'zero' | 'below_minimum' | 'above_maximum' | 'decimals_unread';
       message: string;
     };
 
@@ -473,6 +477,20 @@ export function stockTradeAmountV1(input: {
     return { status: 'below_minimum', message: `The smallest buy is ${usdLabelV1(STOCK_BUY_MINIMUM_CASH_ATOMIC_V1)} USDC.` };
   }
   return { status: 'ready', atomic, label: tokenLabelV1(atomic, decimals)! };
+}
+
+/**
+ * A gift's amount: a purchase in USDC, from 0.1 to 100. The same exact
+ * conversion as a buy, with the ceiling a gift has and a purchase does not.
+ */
+export function stockGiftAmountV1(text: string): StockTradeAmountV1 {
+  const amount = stockTradeAmountV1({ direction: 'buy', text });
+  if (amount.status === 'empty') return { status: 'empty', message: 'Enter how many USDC the gift is worth.' };
+  if (amount.status !== 'ready') return amount;
+  if (BigInt(amount.atomic) > BigInt(STOCK_GIFT_MAXIMUM_CASH_ATOMIC_V1)) {
+    return { status: 'above_maximum', message: `The largest gift is ${usdLabelV1(STOCK_GIFT_MAXIMUM_CASH_ATOMIC_V1)} USDC.` };
+  }
+  return amount;
 }
 
 /**

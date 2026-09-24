@@ -6,6 +6,7 @@ import {
   TransactionReceiptV1Schema,
   type RouteProofV1,
 } from '@mioagent/route-domain';
+import { giftOfApprovedCallsV1 } from './assetChanges.js';
 
 // T58: user-safe read projection of a RouteProofV1 — deliberately excludes
 // tenantId, the full approvedCalls array, and raw event payloads. This is
@@ -59,6 +60,18 @@ export const RouteProofProjectionV1Schema = z
     reconciliationState: z.enum(['pending', 'matched', 'deviated', 'partial', 'failed', 'manual_review']),
     createdAt: TimestampV1Schema,
     updatedAt: TimestampV1Schema,
+    /**
+     * A gift in the approved batch: who receives, and exactly how many units
+     * of the output token. DERIVED from the approved calls, like the reason
+     * above. Delivered is not a separate claim: a gift proof reaches
+     * `completed` only once its own Transfer to this recipient is in the
+     * receipt. Optional so a projection without a gift reads as before.
+     */
+    gift: z
+      .object({ recipient: z.string().regex(/^0x[0-9a-f]{40}$/), amountAtomic: z.string().regex(/^[1-9][0-9]*$/) })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 export type RouteProofProjectionV1 = z.infer<typeof RouteProofProjectionV1Schema>;
@@ -69,6 +82,7 @@ export function toRouteProofProjectionV1(
 ): RouteProofProjectionV1 {
   const outputChange = proof.expectedResult.assetChanges.find((change) => change.direction === 'credit') ?? null;
   const outputAsset = proof.expectedResult.outputAsset ?? outputChange?.asset ?? null;
+  const gift = giftOfApprovedCallsV1(proof.approvedCalls);
   const value: RouteProofProjectionV1 = {
     proofId: proof.id,
     blueprintId: options.blueprintId,
@@ -105,6 +119,7 @@ export function toRouteProofProjectionV1(
     reconciliationState: proof.reconciliationState,
     createdAt: proof.createdAt,
     updatedAt: proof.updatedAt,
+    ...(gift ? { gift: { recipient: gift.recipient.toLowerCase(), amountAtomic: gift.amountAtomic } } : {}),
   };
   return RouteProofProjectionV1Schema.parse(value);
 }

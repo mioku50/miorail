@@ -1964,3 +1964,50 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .pi-form { grid-template-columns: minmax(0, 1fr); }
   .mio-console .pi-compare-address { font-size: var(--fs-lg); }
 }
+
+/* ---------------------------------------------------------------------------
+   Growth plan step 4 — gifts.
+   The banner rides above every step of a gift in the Routes console; the proof
+   panel carries the share; the public page is one readable column. X and
+   Farcaster are the two large buttons (the operator's call): X inverted on the
+   ground, Farcaster in the palette's own violet — no brand hex, both themes.
+   --------------------------------------------------------------------------- */
+.mio-console .gift-banner { margin: 0 0 14px; padding: 12px 14px; border-radius: var(--r);
+  background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--hero-line); }
+.mio-console .gift-banner[data-tone="warn"] { background: var(--a-bg); box-shadow: inset 0 0 0 1px var(--a-line); }
+.mio-console .gift-banner b { display: block; color: var(--ink); font-size: var(--fs-body); }
+.mio-console .gift-banner p { margin: 4px 0 0; color: var(--muted); font-size: var(--fs-sm);
+  line-height: var(--lh-relaxed); overflow-wrap: anywhere; }
+.mio-console .gift-proof { margin-top: 14px; background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--hero-line); }
+.mio-console .gift-proof[data-delivered="false"] { background: var(--panel); box-shadow: inset 0 0 0 1px var(--line2); }
+.mio-console .gift-detail { margin: 0 0 12px; color: var(--muted); line-height: var(--lh-relaxed); overflow-wrap: anywhere; }
+.mio-console .gift-share-row { display: flex; flex-wrap: wrap; gap: 10px; }
+.mio-console .gift-share-row .btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
+.mio-console .btn.share-x { background: var(--ink); color: var(--bg); box-shadow: none; }
+.mio-console .btn.share-fc { background: var(--violet); color: var(--on-accent); box-shadow: none; }
+.mio-console .share-mark { width: 16px; height: 16px; flex: none; fill: currentColor; }
+.mio-console .gift-link { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 12px; }
+.mio-console .gift-link .mono { min-width: 0; color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+
+.mio-console.gift-page { min-height: 100vh; padding: 24px 16px 56px; }
+.mio-console .gift-page-inner { max-width: 720px; margin: 0 auto; display: grid; gap: 14px; }
+.mio-console .gift-brand { margin: 0; font-size: var(--fs-meta); letter-spacing: .12em; text-transform: uppercase; }
+.mio-console .gift-brand a { color: var(--accent-line); text-decoration: none; }
+.mio-console .gift-card { background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--hero-line); }
+.mio-console .gift-headline { margin: 6px 0 10px; color: var(--title-ink); font-size: var(--fs-title);
+  line-height: var(--lh-tight); overflow-wrap: anywhere; }
+.mio-console .gift-what { margin: 2px 0 10px; color: var(--muted); }
+.mio-console .gift-note { margin-top: 12px; }
+.mio-console .gift-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 4px 0 10px; }
+.mio-console .gift-actions .btn, .mio-console .gift-page .ph .btn { text-decoration: none; }
+.mio-console .gift-rows { display: grid; grid-template-columns: minmax(120px, 180px) minmax(0, 1fr); gap: 10px 16px; margin: 0; }
+.mio-console .gift-rows dt { color: var(--muted); font-size: var(--fs-sm); }
+.mio-console .gift-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.mio-console .gift-rows a { color: var(--accent-line); }
+.mio-console .gift-sub { display: block; margin-top: 2px; color: var(--dim); font-size: var(--fs-micro); }
+
+@media (max-width: 560px) {
+  .mio-console .gift-rows { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .mio-console .gift-rows dd { margin-bottom: 10px; }
+  .mio-console .gift-share-row .btn { flex: 1 1 100%; justify-content: center; }
+}

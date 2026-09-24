@@ -220,6 +220,8 @@ export function buildApprovedBlueprint(input: {
   candidate: RouteCandidateV1;
   evidenceSet: EvidenceSetV1;
   id?: string;
+  /** A gift: one transfer of the output token after the swap. */
+  gift?: { recipient: `0x${string}`; amountAtomic: string };
 }): ExecutionBlueprintV1 {
   const { intent, candidate, evidenceSet } = input;
   const id = input.id ?? 'blueprint-t58-fixture';
@@ -246,6 +248,21 @@ export function buildApprovedBlueprint(input: {
       recipient: null,
       spender: null,
     },
+    ...(input.gift
+      ? [
+          {
+            index: 2,
+            callType: 'transfer' as const,
+            to: candidate.expectedOutput.asset.address as `0x${string}`,
+            valueWei: '0',
+            data: '0xa9059cbb' as `0x${string}`,
+            asset: candidate.expectedOutput.asset,
+            amountAtomic: input.gift.amountAtomic,
+            recipient: input.gift.recipient,
+            spender: null,
+          },
+        ]
+      : []),
   ];
   const callsHash = hashApprovedCallsV1(calls);
   const draft: ExecutionBlueprintV1 = {
@@ -368,6 +385,7 @@ export async function seedRouteProofFixture(
     transactionHashes?: `0x${string}`[];
     receipts?: TransactionReceiptV1[];
     blueprintId?: string;
+    gift?: { recipient: `0x${string}`; amountAtomic: string };
   } = {},
 ): Promise<SeededRouteProofFixture> {
   const intent = buildIntent({ toAsset: overrides.toAsset });
@@ -377,7 +395,7 @@ export async function seedRouteProofFixture(
   });
   const evidence = buildEvidence(intent, candidate);
   const evidenceSet = buildEvidenceSet(intent, candidate, evidence);
-  const blueprint = buildApprovedBlueprint({ intent, candidate, evidenceSet, id: overrides.blueprintId });
+  const blueprint = buildApprovedBlueprint({ intent, candidate, evidenceSet, id: overrides.blueprintId, gift: overrides.gift });
   const proof = buildPendingProof(blueprint, {
     transactionHashes: overrides.transactionHashes,
     receipts: overrides.receipts,

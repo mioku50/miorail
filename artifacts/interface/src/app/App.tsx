@@ -51,6 +51,9 @@ const RouteIntelligenceConsole = lazy(() =>
 const PublicProofPage = lazy(() =>
   import('../features/proof/PublicProofPage').then((m) => ({ default: m.PublicProofPage })),
 );
+const PublicGiftPage = lazy(() =>
+  import('../features/proof/PublicGiftPage').then((m) => ({ default: m.PublicGiftPage })),
+);
 const B20WatchPage = lazy(() =>
   import('../features/b20/B20WatchPage').then((m) => ({ default: m.B20WatchPage })),
 );
@@ -193,6 +196,13 @@ export function App() {
             only its owner can open is not a proof anybody else can check. */}
         <Route path="/proof/:publicId">
           <PublicProofPage />
+        </Route>
+
+        {/* Growth plan step 4: a gift, as its giver shared it on X or
+            Farcaster. The same public proof, read for the gift it records —
+            no session, for the same reason a proof has none. */}
+        <Route path="/gift/:publicId">
+          <PublicGiftPage />
         </Route>
 
         {/* "Is this the real one" — no session, for the same reason. The reader

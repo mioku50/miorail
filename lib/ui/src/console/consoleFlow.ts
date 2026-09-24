@@ -892,7 +892,12 @@ export function swapPrepareNoticeV1(
     return { title: 'This route needs comparing again', detail: data.detail, canCompareAgain: true };
   }
   if (data.outcome === 'unsupported') {
-    return { title: 'Miorail cannot prepare this route', detail: data.detail };
+    // A refused gift is a refused GIFT: the route itself may be fine, and the
+    // detail names the rule (range, recipient, daily limit) the person can act on.
+    return {
+      title: data.reason === 'gift_refused' ? 'Miorail cannot send this gift' : 'Miorail cannot prepare this route',
+      detail: data.detail,
+    };
   }
   return {
     title: 'The Safety Kernel refused this transaction',

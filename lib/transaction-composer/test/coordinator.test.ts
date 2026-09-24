@@ -14,6 +14,7 @@ import { createTransactionComposer, TransactionComposerBindingError,
   simulationRequirementV1,
 } from '../src/coordinator.js';
 import type { TransactionComposerDependencies, TransactionComposerPrepareInput } from '../src/types.js';
+import { approveExecutionBlueprintV1 } from '../src/approval.js';
 import {
   ETH_BASE,
   NOW,
@@ -742,5 +743,93 @@ describe('a simulation is required by the provider OR by the intent', () => {
       simulationRequirementV1('aerodrome' as never, intentAt('standard'), reverted).acceptable,
       false,
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Gifts: the same swap to the wallet, then one transfer of exactly the build's
+// guaranteed minimum to the declared recipient.
+// ---------------------------------------------------------------------------
+
+describe('a gift', () => {
+  const FRIEND = '0x8e525bfce1c0ffee00000000000000000000beef' as const;
+  const STOCK: AssetRefV1 = {
+    assetId: 'eip155:8453/erc20:0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    chainId: 8453,
+    kind: 'erc20',
+    address: '0x50c5725949a6f0c72e6c4a641f24049a917db0cb',
+    symbol: 'DAI',
+    decimals: 18,
+  };
+
+  test('appends one transfer of exactly the build minimum, last, and the kernel passes it', async () => {
+    const { scenario, deps } = await defaultScenarioDeps({ toAsset: STOCK });
+    const composer = createTransactionComposer(deps);
+    const result = await composer.prepare(prepareInput(scenario, { gift: { recipient: FRIEND } }));
+    assert.equal(result.outcome, 'prepared', JSON.stringify(result));
+    if (result.outcome !== 'prepared') return;
+    const calls = result.blueprint.calls;
+    const transfer = calls.at(-1)!;
+    const minimum = buildSideOutputs(scenario.intent, BUILD_EXPECTED_ATOMIC).minimumOutput.amountAtomic;
+    assert.equal(transfer.callType, 'transfer');
+    assert.equal(transfer.to, STOCK.address);
+    assert.equal(transfer.recipient, FRIEND);
+    assert.equal(transfer.amountAtomic, minimum);
+    assert.equal(calls.filter((call) => call.callType === 'swap').length, 1);
+    assert.equal(result.review.safety.verdict, 'allowed');
+    assert.equal(result.review.safety.checks.find((check) => check.id === 'gift_transfer_exact')?.status, 'passed');
+    // The swap's own numbers are unchanged: the gift is a fact about one call.
+    const credit = result.blueprint.expectedAssetChanges.find((change) => change.direction === 'credit')!;
+    assert.equal(credit.minimumAmountAtomic, minimum);
+  });
+
+  test('replays itself, and never replays a blueprint prepared without it', async () => {
+    const { scenario, deps } = await defaultScenarioDeps({ toAsset: STOCK });
+    const composer = createTransactionComposer(deps);
+    const plain = await composer.prepare(prepareInput(scenario));
+    const gift = await composer.prepare(prepareInput(scenario, { gift: { recipient: FRIEND } }));
+    assert.equal(plain.outcome, 'prepared');
+    assert.equal(gift.outcome, 'prepared');
+    if (plain.outcome !== 'prepared' || gift.outcome !== 'prepared') return;
+    assert.notEqual(gift.blueprint.id, plain.blueprint.id, 'same request id, different blueprint');
+    assert.equal(plain.blueprint.calls.some((call) => call.callType === 'transfer'), false);
+    const replay = await composer.prepare(prepareInput(scenario, { gift: { recipient: FRIEND } }));
+    assert.equal(replay.outcome, 'prepared');
+    if (replay.outcome !== 'prepared') return;
+    assert.equal(replay.blueprint.id, gift.blueprint.id);
+    assert.equal(replay.review.safety.verdict, 'allowed', replay.review.safety.blockedReason ?? '');
+  });
+
+  test('approve re-checks the stored gift and hands the wallet the transfer as it was reviewed', async () => {
+    const { scenario, deps } = await defaultScenarioDeps({ toAsset: STOCK });
+    const composer = createTransactionComposer(deps);
+    const prepared = await composer.prepare(prepareInput(scenario, { gift: { recipient: FRIEND } }));
+    assert.equal(prepared.outcome, 'prepared');
+    if (prepared.outcome !== 'prepared') return;
+    const approved = await approveExecutionBlueprintV1(
+      { repository: deps.repository, contractSecurity: deps.contractSecurity },
+      {
+        tenantId: TENANT,
+        walletAddress: WALLET,
+        routeRunId: scenario.intent.id,
+        blueprintId: prepared.blueprint.id,
+        blueprintHash: prepared.blueprint.blueprintHash,
+        now: NOW,
+      },
+    );
+    assert.equal(approved.outcome, 'approved', JSON.stringify(approved));
+    if (approved.outcome !== 'approved') return;
+    const last = approved.payload.calls.at(-1)!;
+    const transfer = prepared.blueprint.calls.at(-1)!;
+    assert.equal(last.to, transfer.to);
+    assert.equal(last.data, transfer.data);
+    assert.equal(approved.payload.calls.length, prepared.blueprint.calls.length);
+  });
+
+  test('native ETH cannot be given', async () => {
+    const { scenario, deps } = await defaultScenarioDeps({ toAsset: ETH_BASE });
+    const composer = createTransactionComposer(deps);
+    const result = await composer.prepare(prepareInput(scenario, { gift: { recipient: FRIEND } }));
+    assert.equal(result.outcome, 'unsupported');
   });
 });

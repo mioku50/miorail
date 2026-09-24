@@ -18,6 +18,7 @@ import {
   STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
   stockExecutionHandoffV1,
   stockTradeGoalV1,
+  STOCK_GIFT_MAXIMUM_CASH_ATOMIC_V1,
 } from '@mioagent/rwa-market-reality/execution-handoff';
 
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
@@ -181,6 +182,20 @@ export interface StocksConsoleInputV1 {
    * `sponsoredGas` only decides whether the card may mention the fee.
    */
   trade?: { sponsoredGas: boolean; dailyLimitPerWallet: number | null } | null;
+  /**
+   * Growth plan step 4 — give this stock to someone. The surface resolves the
+   * recipient it was handed and opens the same prepare step as a purchase,
+   * with the recipient carried out of band (never in the address bar).
+   * Resolves to null once it has moved on, or to the sentence the card shows.
+   * Absent: no Gift button — the Base App has no sign-in to carry one through.
+   */
+  onGift?: (input: {
+    tokenAddress: string;
+    goal: string;
+    /** What the reader typed: a Basename or a 0x address. */
+    recipient: string;
+    minimumVerification: typeof STOCK_EXECUTION_VERIFICATION_DEPTH_V1;
+  }) => Promise<string | null>;
 }
 
 /** What the card says under Buy and Sell — an offer, never a promise: the fee
@@ -807,6 +822,16 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
             tokenDecimals: Object.fromEntries(
               reality.data.representations.map((row) => [row.tokenAddress, row.supply.decimals]),
             ),
+            // Only a Coinbase-issued B20 can be given: the one representation
+            // whose transfer rules have been read. The server holds the same line.
+            giftable: input.onGift
+              ? Object.fromEntries(
+                  reality.data.representations.map((row) => [
+                    row.tokenAddress,
+                    row.issuerId === 'coinbase' && row.representationKind === 'b20_asset',
+                  ]),
+                )
+              : {},
           }
         : null,
     scope: scopeView,
@@ -1016,6 +1041,31 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
                 minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
               });
               return null;
+            },
+          }
+        : {}),
+      // Growth plan step 4 — a purchase for someone else. The goal sentence is
+      // the purchase's own; who receives it travels beside it, never in it.
+      ...(reality.data && input.onGift && input.trade
+        ? {
+            onGift: async (gift: { tokenAddress: string; amountAtomic: string; recipient: string }) => {
+              if (BigInt(gift.amountAtomic) > BigInt(STOCK_GIFT_MAXIMUM_CASH_ATOMIC_V1)) {
+                return 'The largest gift is 100 USDC.';
+              }
+              const built = stockTradeGoalV1({
+                tokenAddress: gift.tokenAddress,
+                direction: 'buy',
+                amountAtomic: gift.amountAtomic,
+                response: reality.data as never,
+                now: new Date(),
+              });
+              if (built.status !== 'ready') return built.detail;
+              return input.onGift!({
+                tokenAddress: built.tokenAddress,
+                goal: built.goal,
+                recipient: gift.recipient,
+                minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
+              });
             },
           }
         : {}),

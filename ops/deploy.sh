@@ -525,6 +525,15 @@ printf '%s' "$stock_page" | grep -q "property=\"og:title\" content=\"[^\"]*$stoc
   || { echo "FAILED: $stock_path came back without its own head (nginx served the static file)"; exit 1; }
 printf '  stocks         %-28s %s\n' "$oauth_origin$stock_path" 'public board + a head naming the stock'
 
+# Gift pages (growth plan step 4) are headed by the API the same way, so a gift
+# shared on X or Farcaster previews as the gift. An id nobody was given must
+# come back as the API's own "Gift not found" head: the static file would say
+# "Miorail", which is nginx not routing /gift/ at all.
+gift_page=$(curl -sS --max-time 20 "$oauth_origin/gift/$(printf '0%.0s' $(seq 1 48))" 2>/dev/null) || gift_page=''
+printf '%s' "$gift_page" | grep -q '<title>Gift not found · Miorail</title>' \
+  || { echo 'FAILED: /gift/<id> came back without its own head (nginx served the static file)'; exit 1; }
+printf '  gifts          %-28s %s\n' "$oauth_origin/gift/…" 'unknown id answers with the gift head'
+
 # Sponsored gas (growth plan step 2). The wallet calls /api/paymaster from its
 # own origin, so the preflight must come back with an allowed origin — the
 # app's CORS would answer it with none, which is why the route is mounted

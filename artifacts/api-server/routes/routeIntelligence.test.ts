@@ -272,7 +272,7 @@ describe('POST /api/route-intelligence/swap/prepare', () => {
     requestId: 'prepare-req-1',
   };
 
-  function preparedFixture(): SwapPrepareResponseV1 {
+  function preparedFixture(): Extract<SwapPrepareResponseV1, { outcome: 'prepared' }> {
     const ROUTER = '0x6ff5693b99212da76ad316178a184ab56d299b43' as const;
     const USDC = {
       assetId: 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
@@ -1131,5 +1131,94 @@ describe('GET /api/route-intelligence/history', () => {
     const failed = await request(routeApp()).get(url);
     assert.equal(failed.status, 500);
     assert.deepEqual(failed.body, { error: 'history_failed', code: 'history_failed' });
+  });
+});
+
+describe('gifts: /swap/prepare with a recipient, and /gift/recipient', () => {
+  const original = { ...swapPrepareRouteRuntime };
+  const FRIEND = '0x8e525bfce1c0ffee00000000000000000000beef';
+  const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+  const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
+  const BODY = {
+    routeRunId: 'run-gift',
+    routeCardHash: `0x${'1'.repeat(64)}`,
+    selectedCandidateHash: `0x${'2'.repeat(64)}`,
+    walletAddress: WALLET,
+    requestId: 'gift-req-1',
+  };
+  const giftRun = (amountAtomic: string) =>
+    ({
+      intent: {
+        fromAsset: { kind: 'erc20', address: USDC },
+        toAsset: { kind: 'erc20', address: NVDA },
+        amount: { amountAtomic },
+      },
+    }) as never;
+  let calls: Parameters<typeof swapPrepareRouteRuntime.prepare>[0][] = [];
+
+  beforeEach(() => {
+    calls = [];
+    swapPrepareRouteRuntime.flags = (env) => ({ ...original.flags(env), routeIntelligenceV1: true });
+    swapPrepareRouteRuntime.migrationAvailable = async () => true;
+    swapPrepareRouteRuntime.now = () => NOW;
+    swapPrepareRouteRuntime.prepare = async (input) => {
+      calls.push(input);
+      return { outcome: 'unsupported', reason: 'unsupported_pair', detail: 'fixture' };
+    };
+    swapPrepareRouteRuntime.gift = {
+      routeRun: async () => giftRun('5000000'),
+      isGiftableStock: async (token) => token === NVDA,
+      resolveName: async (name) => ({ outcome: 'resolved', name, address: FRIEND as `0x${string}` }),
+      giftsApprovedToday: async () => 0,
+    };
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(swapPrepareRouteRuntime, original);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  test('a refused gift is an ordinary outcome that names the rule, and nothing is built', async () => {
+    swapPrepareRouteRuntime.gift = { ...swapPrepareRouteRuntime.gift, routeRun: async () => giftRun('50000') };
+    const response = await request(routeApp())
+      .post('/api/route-intelligence/swap/prepare')
+      .send({ ...BODY, gift: { recipient: FRIEND, recipientName: null } });
+    assert.equal(response.status, 200);
+    assert.deepEqual(response.body, { outcome: 'unsupported', reason: 'gift_refused', detail: 'A gift is from 0.1 to 100 USDC.' });
+    assert.equal(calls.length, 0);
+  });
+
+  test('an accepted gift reaches the composer with the recipient, and a plain prepare without one', async () => {
+    await request(routeApp())
+      .post('/api/route-intelligence/swap/prepare')
+      .send({ ...BODY, gift: { recipient: FRIEND, recipientName: 'alice.base.eth' } })
+      .expect(200);
+    assert.deepEqual(calls[0]?.gift, { recipient: FRIEND });
+    await request(routeApp()).post('/api/route-intelligence/swap/prepare').send(BODY).expect(200);
+    assert.equal('gift' in (calls[1] ?? {}), false, 'a purchase for yourself is prepared exactly as before');
+  });
+
+  test('a recipient that is not an address is refused by the schema', async () => {
+    const response = await request(routeApp())
+      .post('/api/route-intelligence/swap/prepare')
+      .send({ ...BODY, gift: { recipient: 'alice.base.eth', recipientName: null } });
+    assert.equal(response.status, 400);
+    assert.equal(calls.length, 0);
+  });
+
+  test('the recipient lookup needs a session, and turns a Basename into the address to review', async () => {
+    await request(routeApp(null)).post('/api/route-intelligence/gift/recipient').send({ value: 'alice.base.eth' }).expect(401);
+    const found = await request(routeApp())
+      .post('/api/route-intelligence/gift/recipient')
+      .send({ value: 'alice.base.eth' })
+      .expect(200);
+    assert.deepEqual(found.body, { outcome: 'resolved', address: FRIEND, name: 'alice.base.eth' });
+    const self = await request(routeApp())
+      .post('/api/route-intelligence/gift/recipient')
+      .send({ value: WALLET })
+      .expect(200);
+    assert.equal(self.body.code, 'recipient_is_you');
   });
 });

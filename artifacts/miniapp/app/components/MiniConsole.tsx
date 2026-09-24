@@ -103,6 +103,7 @@ import {
   MarketRealityScreen,
   MarketRealityRadarScreen,
   nothingSpentDetailV1,
+  reviewCallRowsV1,
   STOCKS_CONSOLE_DEFAULT_SIZE_V1,
   useStocksConsoleV1,
   useRadarConsoleV1,
@@ -1789,13 +1790,13 @@ export function MiniConsole() {
           // so "back" returned to a card that refused again.
           onCompareAgain={() => compare({ fresh: true })}
           comparePending={comparePending}
+          // Named call by call, as the web review names them: "Swap … Recipient
+          // is your own wallet" under a gift's transfer would say the opposite
+          // of what that call does.
           calls={
-            prepared?.blueprint.calls.map((call, index) => ({
-              index: index + 1,
-              title: call.callType === "approval" ? "Allow the router to spend exactly this amount" : "Swap through the selected route",
-              detail: call.callType === "approval" ? `${call.to} · exact amount` : "Recipient is your own wallet",
-              mono: true,
-            })) ?? []
+            prepared
+              ? reviewCallRowsV1({ calls: prepared.blueprint.calls, quoteExpiry: prepared.blueprint.quoteExpiry })
+              : []
           }
           simulation={simulation}
           balanceChanges={(simulationEvidence?.stateChanges ?? []).map((change: { address: string; summary: string }) => ({

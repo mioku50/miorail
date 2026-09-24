@@ -218,3 +218,44 @@ test('assetChanges: malformed logs are skipped, not thrown, and never fabricate 
   if (outcome.kind !== 'reconstructed') throw new Error('unreachable');
   assert.equal(outcome.actualResult.outputAmountAtomic, '0');
 });
+
+// A gift: the swap pays the wallet, then the wallet pays the friend exactly
+// the guaranteed minimum. The swap's output is the gross — the gift is set
+// aside, not netted as a loss.
+const FRIEND = '0x8e525bfce1c0ffee00000000000000000000beef' as const;
+const GIFT_CHANGES = [
+  { asset: USDC_BASE, direction: 'debit' as const, amountAtomic: '100000', minimumAmountAtomic: '100000', maximumAmountAtomic: '100000' },
+  { asset: STOCK_BASE, direction: 'credit' as const, amountAtomic: '44227', minimumAmountAtomic: '44006', maximumAmountAtomic: null },
+];
+
+test('assetChanges: a gift is set aside, and the swap’s output is the gross it paid the wallet', () => {
+  const outcome = reconstructAssetChangesV1({
+    walletAddress: WALLET,
+    expectedAssetChanges: GIFT_CHANGES,
+    successReceiptLogs: [
+      transferLog(USDC_BASE.address as `0x${string}`, WALLET, POOL, 100000n),
+      transferLog(STOCK_BASE.address, POOL, WALLET, 44227n),
+      transferLog(STOCK_BASE.address, WALLET, FRIEND, 44006n),
+    ],
+    giftTransfer: { recipient: FRIEND, amountAtomic: '44006' },
+  });
+  assert.equal(outcome.kind, 'reconstructed');
+  if (outcome.kind !== 'reconstructed') throw new Error('unreachable');
+  assert.equal(outcome.actualResult.outputAmountAtomic, '44227');
+});
+
+test('assetChanges: a gift the chain does not show — or shows for another amount — is not reconstructed', () => {
+  for (const logs of [
+    [transferLog(STOCK_BASE.address, POOL, WALLET, 44227n)],
+    [transferLog(STOCK_BASE.address, POOL, WALLET, 44227n), transferLog(STOCK_BASE.address, WALLET, FRIEND, 44005n)],
+    [transferLog(STOCK_BASE.address, POOL, WALLET, 44227n), transferLog(STOCK_BASE.address, WALLET, POOL, 44006n)],
+  ]) {
+    const outcome = reconstructAssetChangesV1({
+      walletAddress: WALLET,
+      expectedAssetChanges: GIFT_CHANGES,
+      successReceiptLogs: [transferLog(USDC_BASE.address as `0x${string}`, WALLET, POOL, 100000n), ...logs],
+      giftTransfer: { recipient: FRIEND, amountAtomic: '44006' },
+    });
+    assert.deepEqual(outcome, { kind: 'unsupported', reason: 'gift_transfer_unverified' });
+  }
+});

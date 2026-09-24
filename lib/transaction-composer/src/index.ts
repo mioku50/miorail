@@ -1,5 +1,6 @@
 export * from './types.js';
 export * from './blueprint.js';
+export * from './gift.js';
 export * from './safetyKernel.js';
 export * from './earnComposition.js';
 export * from './earnSafetyKernel.js';

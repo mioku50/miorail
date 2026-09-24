@@ -133,6 +133,10 @@ export function blueprintIdV1(input: {
   routeCardHash: HashV1;
   selectedCandidateHash: HashV1;
   requestId: string;
+  /** Part of the id only for a gift, so every existing id stays what it was
+   * and a gift request can never replay a blueprint prepared without one —
+   * or with another recipient. */
+  giftRecipient?: `0x${string}` | null;
 }): string {
   const hash = stableHashV1('transaction-composer-request/v1', {
     tenantId: input.tenantId,
@@ -141,6 +145,7 @@ export function blueprintIdV1(input: {
     routeCardHash: input.routeCardHash,
     selectedCandidateHash: input.selectedCandidateHash,
     requestId: input.requestId,
+    ...(input.giftRecipient ? { giftRecipient: input.giftRecipient.toLowerCase() } : {}),
   });
   return `blueprint:${hash.slice(2)}`;
 }

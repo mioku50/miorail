@@ -9,7 +9,7 @@ import {
   type TransactionReceiptV1,
 } from '@mioagent/route-domain';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
-import { reconstructAssetChangesV1 } from './assetChanges.js';
+import { giftOfApprovedCallsV1, reconstructAssetChangesV1 } from './assetChanges.js';
 import { CANONICAL_BASE_USDC, CANONICAL_BASE_WETH, ROUTE_PROOF_TERMINAL_FINAL_STATUSES } from './constants.js';
 import { computeRouteProofDeviationV1 } from './deviation.js';
 import {
@@ -367,6 +367,7 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
             expectedAssetChanges: proof.expectedResult.assetChanges,
             successReceiptLogs: successLogs,
             approvedCallTargets: proof.approvedCalls.map((call) => call.to),
+            giftTransfer: giftOfApprovedCallsV1(proof.approvedCalls),
           });
           if (reconstruction.kind === 'unsupported') {
             nextFinalStatus = 'reconciliation_required';

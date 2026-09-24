@@ -21,7 +21,7 @@ import {
   type MarketRealitySurfaceV1,
   type StocksConsoleQuestionV1,
 } from '@mioagent/ui';
-import { useSponsoredGasStatus, useStatus } from '@mioagent/api-client-react';
+import { useResolveGiftRecipient, useSponsoredGasStatus, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 import { useAuthGate } from '../../app/AuthProvider';
 import { expectedChainId } from '../../lib/chain';
@@ -126,6 +126,9 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
   // fee; whether a given trade is sponsored is decided by the server when it
   // is approved.
   const sponsoredGas = useSponsoredGasStatus();
+  // Growth plan step 4: a gift recipient, as typed, made into the address the
+  // review shows. Nothing about it is kept on this page.
+  const giftRecipient = useResolveGiftRecipient();
   const stocks = useStocksConsoleV1({
     question,
     enabled,
@@ -184,6 +187,33 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
         [VERIFICATION_FLOOR_PARAM_V1]: minimumVerification,
       });
       navigate(`/routes?${params.toString()}`);
+    },
+    // Growth plan step 4. The purchase travels like any other; WHO receives it
+    // travels in history state, never in the address bar, so a link somebody
+    // else wrote can never pre-fill a recipient for a person to pay.
+    onGift: async ({ tokenAddress, goal, recipient, minimumVerification }) => {
+      if (!gate.showPrivateSurfaces) {
+        navigate(`/signin?next=${encodeURIComponent(`${location}${search ? `?${search}` : ''}`)}`);
+        return null;
+      }
+      let found;
+      try {
+        found = await giftRecipient.mutateAsync({ value: recipient });
+      } catch {
+        return 'The recipient could not be checked just now. Try again in a moment.';
+      }
+      if (found.outcome !== 'resolved') return found.message;
+      const params = new URLSearchParams({
+        goal,
+        from: 'stocks',
+        token: tokenAddress,
+        side: 'gift',
+        [VERIFICATION_FLOOR_PARAM_V1]: minimumVerification,
+      });
+      navigate(`/routes?${params.toString()}`, {
+        state: { gift: { recipient: found.address, recipientName: found.name } },
+      });
+      return null;
     },
   });
 

@@ -29,6 +29,13 @@ export interface TransactionComposerPrepareInput {
   selectedCandidateHash: HashV1;
   requestId: string;
   now: Date;
+  /**
+   * A gift: the swap is built to the wallet as always, and one ERC-20 transfer
+   * of exactly the swap's guaranteed minimum output to this recipient is
+   * appended. The recipient is one the server resolved and validated; the
+   * composer re-checks only what a batch needs.
+   */
+  gift?: { recipient: `0x${string}` } | null;
 }
 
 export interface TransactionComposer {

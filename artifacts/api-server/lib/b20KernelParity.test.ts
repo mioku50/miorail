@@ -175,6 +175,10 @@ const PARITY_V1: Record<string, { enforcedBy: string[] | null; why: string }> = 
     enforcedBy: null,
     why: 'o1 calldata and RLP routes are never accepted by the Aerodrome-only B20 entry blueprint.',
   },
+  gift_transfer_exact: {
+    enforcedBy: null,
+    why: 'A B20 entry carries no gift: its stored call schema admits only an approval and a swap (index 0–1), so a transfer to anyone else cannot even be expressed, and the one swap must pay the authenticated wallet (recipient_is_authenticated_wallet).',
+  },
 };
 
 describe('the two kernels enforce the same invariants', () => {

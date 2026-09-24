@@ -19,6 +19,7 @@ import {
 import type { RouteStorageRepository } from '@mioagent/route-storage';
 import {
   aerodromeKernelInputV1,
+  storedGiftKernelInputV1,
   simulationRequirementV1,
   TransactionComposerBindingError,
 } from './coordinator.js';
@@ -298,6 +299,7 @@ export async function approveExecutionBlueprintV1(
       hydrexContractPinVerified,
       hydrexUpstreamRouter,
       ...aerodromeKernelInputV1(providerId, candidate, blueprint),
+      ...storedGiftKernelInputV1(blueprint),
     });
 
     if (safety.verdict === 'blocked') {

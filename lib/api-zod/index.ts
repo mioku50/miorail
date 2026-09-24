@@ -722,8 +722,35 @@ export const SwapPrepareRequestV1Schema = z
       .min(1)
       .max(200)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid swap prepare request ID'),
+    // Growth plan step 4: buy this for someone else. The recipient is the
+    // address the gift resolver returned; the name, when the person typed one,
+    // is resolved again server-side and must still match it.
+    gift: z
+      .object({
+        recipient: AddressV1Schema,
+        recipientName: z.string().min(1).max(255).nullable(),
+      })
+      .strict()
+      .optional(),
   })
   .strict();
+
+/** What the person typed as a gift recipient: a Basename or a 0x address. */
+export const GiftRecipientRequestV1Schema = z.object({ value: z.string().min(1).max(260) }).strict();
+
+export const GiftRecipientResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({ outcome: z.literal('resolved'), address: AddressV1Schema, name: z.string().min(1).max(255).nullable() })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('refused'),
+      code: z.enum(['recipient_invalid', 'recipient_is_you', 'name_unresolved', 'resolver_unavailable']),
+      message: z.string().min(1).max(300),
+    })
+    .strict(),
+]);
+export type GiftRecipientResponseV1 = z.infer<typeof GiftRecipientResponseV1Schema>;
 
 export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
   z
@@ -759,7 +786,9 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({
       outcome: z.literal('unsupported'),
-      reason: z.enum(['unsupported_pair', 'unsupported_provider', 'unsupported_card_state']),
+      // `gift_refused`: the gift policy said no before anything was built —
+      // the detail names which rule, in the person's words.
+      reason: z.enum(['unsupported_pair', 'unsupported_provider', 'unsupported_card_state', 'gift_refused']),
       detail: z.string().min(1).max(500),
     })
     .strict(),
@@ -995,6 +1024,13 @@ export const RouteProofProjectionV1Schema = z
     ]),
     createdAt: z.string().datetime({ offset: true }),
     updatedAt: z.string().datetime({ offset: true }),
+    // A gift in the approved batch — recipient and exact token units — derived
+    // from the approved calls. Optional: a proof without one reads as before.
+    gift: z
+      .object({ recipient: AddressV1Schema, amountAtomic: z.string().regex(/^[1-9][0-9]*$/) })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 

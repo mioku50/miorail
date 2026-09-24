@@ -23,6 +23,7 @@ import type {
   SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import { SafetyKernelResultV1Schema } from '@mioagent/route-domain';
+import { validateGiftTransferV1, type GiftDeclarationV1 } from './gift.js';
 import type { AerodromeBuildFactsV1, BalancerBuildFactsV1, SwapBuildProviderId } from './types.js';
 
 export interface RunSafetyKernelInput {
@@ -64,6 +65,15 @@ export interface RunSafetyKernelInput {
   hydrexUpstreamRouter?: string;
   /** Locally rebuilt Balancer protocol and exact API path provenance. */
   balancer?: BalancerBuildFactsV1;
+  /**
+   * A gift, as declared: who receives and how many token units. From the
+   * prepare request on prepare, and from the stored transfer call on replay
+   * and approve. Absent means no transfer call may be in the batch.
+   */
+  gift?: GiftDeclarationV1 | null;
+  /** The swap's guaranteed minimum output — required when a gift is declared,
+   * because it is the only amount a gift may send. */
+  swapMinimumOutputAtomic?: string | null;
 }
 
 export interface RunSafetyKernelOutput {
@@ -232,7 +242,14 @@ function guardAssetV1(asset: RouteIntentV1['fromAsset']): SwapGuardAssetV1 | nul
 
 export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOutput {
   const checks: SafetyKernelCheckV1[] = [];
-  const baseCalls: BaseCall[] = input.calls.map((call) => ({
+  const gift = input.gift ?? null;
+  // A declared gift's transfer is checked by its own rule below and is never
+  // shown to a provider guard: every guard validates a swap to the wallet and
+  // rightly refuses a call to the output token. Everything else — including
+  // an UNdeclared transfer — still reaches the guard and fails there too.
+  const giftCall = gift ? input.calls.find((call) => call.callType === 'transfer') ?? null : null;
+  const swapPartCalls = giftCall ? input.calls.filter((call) => call !== giftCall) : input.calls;
+  const baseCalls: BaseCall[] = swapPartCalls.map((call) => ({
     to: call.to,
     value: call.valueWei,
     data: call.data,
@@ -274,19 +291,49 @@ export function runSafetyKernel(input: RunSafetyKernelInput): RunSafetyKernelOut
 
   const swapCalls = input.calls.filter((call) => call.callType === 'swap');
   const approvalCalls = input.calls.filter((call) => call.callType === 'approval');
-  const otherCalls = input.calls.filter((call) => call.callType !== 'swap' && call.callType !== 'approval');
+  const otherCalls = input.calls.filter(
+    (call) => call.callType !== 'swap' && call.callType !== 'approval' && call !== giftCall,
+  );
   const orderedCorrectly =
     swapCalls.length === 1 &&
     otherCalls.length === 0 &&
-    approvalCalls.every((call) => call.index < swapCalls[0]!.index);
+    approvalCalls.every((call) => call.index < swapCalls[0]!.index) &&
+    (!giftCall || giftCall.index > swapCalls[0]!.index);
   checks.push(
     check(
       'call_order_and_count',
-      'Calls are exactly zero-or-more approvals followed by exactly one swap call',
+      gift
+        ? 'Calls are zero-or-more approvals, exactly one swap, then exactly one gift transfer'
+        : 'Calls are exactly zero-or-more approvals followed by exactly one swap call',
       orderedCorrectly ? 'passed' : 'failed',
-      orderedCorrectly ? null : 'Calls must contain approvals before exactly one swap call, nothing else',
+      orderedCorrectly
+        ? null
+        : gift
+          ? 'Calls must be approvals, one swap and then the one gift transfer, nothing else'
+          : 'Calls must contain approvals before exactly one swap call, nothing else',
     ),
   );
+
+  // Present only when the batch is a gift or carries a transfer: an ordinary
+  // swap's check list stays exactly what it was.
+  if (gift || input.calls.some((call) => call.callType === 'transfer')) {
+    const giftCheck = validateGiftTransferV1({
+      calls: input.calls,
+      intent: input.intent,
+      walletAddress: input.walletAddress,
+      routerAddress: input.routerAddress,
+      gift,
+      swapMinimumOutputAtomic: input.swapMinimumOutputAtomic,
+    });
+    checks.push(
+      check(
+        'gift_transfer_exact',
+        'The gift sends exactly the swap’s guaranteed minimum of the bought token to the declared recipient, and nothing else',
+        giftCheck.ok ? 'passed' : 'failed',
+        giftCheck.ok ? null : `${giftCheck.code}: ${giftCheck.detail}`,
+      ),
+    );
+  }
 
   const recipientsBound = swapCalls.every(
     (call) => call.recipient?.toLowerCase() === input.walletAddress.toLowerCase(),
