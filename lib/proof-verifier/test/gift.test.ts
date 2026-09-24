@@ -149,9 +149,25 @@ describe('a gift in a public bundle', () => {
       finalStatus: 'completed',
       delivered: true,
       transactionHash: `0x${'1'.repeat(64)}`,
+      source: 'bought',
       paid: { amountAtomic: '100000', symbol: 'USDC', decimals: 6 },
       issuedAt: NOW.toISOString(),
     });
+  });
+
+  test('a transfer alone is a gift from what the giver held, and nothing was paid', () => {
+    const bundle = bundleWith([giftCall({ index: 0 })]);
+    assert.equal(verifyPublicProofBundleV1(bundle).valid, true);
+    const gift = giftOfPublicBundleV1(bundle);
+    assert.equal(gift?.source, 'held');
+    assert.equal(gift?.paid, null);
+    assert.equal(gift?.recipient, FRIEND);
+    assert.equal(gift?.amountAtomic, GIFT);
+    assert.equal(gift?.delivered, true);
+    // Its labels are held to its bytes exactly as a bought gift's are.
+    assert.equal(giftOfPublicBundleV1(bundleWith([giftCall({ index: 0, amountAtomic: '1' })])), null);
+    // A single call that is not a transfer is no gift at all.
+    assert.equal(giftOfPublicBundleV1(bundleWith([SWAP])), null);
   });
 
   test('a failed proof is a gift that was not delivered', () => {

@@ -374,6 +374,10 @@ export async function reviewStoredBlueprintV1(
   now: Date,
   simulationStateOverride?: SimulationStateV1,
 ): Promise<TransactionPreparationResultV1> {
+  if (blueprint.goal !== 'swap' || intent.goal !== 'swap') {
+    // Only the swap kernel runs below. A send or an earn Blueprint has its own.
+    throw new TransactionComposerBindingError('goal_mismatch', 'Blueprint goal is not swap');
+  }
   const providerId = selected.provider.id as SwapBuildProviderId;
   const routerCall = blueprint.calls.find((call) => call.callType === 'swap');
   const routerAddress = (routerCall?.to ?? selected.provider.id) as `0x${string}`;
@@ -479,6 +483,12 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       throw new TransactionComposerBindingError('unsupported_chain', 'Route run is not on Base mainnet');
     }
     const intent = run.intent;
+    // A send run's intent parses here too (it is a RouteIntentV1), and it has
+    // no card to find — but a send is never prepared as a swap, so it is
+    // refused by its goal rather than by the absence of a card.
+    if (intent.goal !== 'swap') {
+      throw new TransactionComposerBindingError('goal_mismatch', 'Route run goal is not swap');
+    }
 
     const cards = await repository.listRouteCards(input.routeRunId, input.tenantId);
     const card = cards.find((entry) => entry.routeCardHash === input.routeCardHash);

@@ -92,3 +92,71 @@ export async function readStockRepresentationTokenV1(
     return { ok: false };
   }
 }
+
+const BALANCE_OF_ABI_V1 = [
+  {
+    type: 'function',
+    name: 'balanceOf',
+    inputs: [{ name: 'account', type: 'address' }],
+    outputs: [{ type: 'uint256' }],
+    stateMutability: 'view',
+  },
+] as const;
+
+export type StockHoldingV1 =
+  | { ok: true; decimals: number; symbol: string; balanceAtomic: string; blockNumber: string }
+  | { ok: false };
+
+/**
+ * One wallet's holding of one representation: `decimals()`, `symbol()` and
+ * `balanceOf(wallet)`, all at the same pinned block — the size, the name and
+ * the amount are one fact, and a gift is offered on it. A read that did not
+ * complete is `{ ok: false }`, never a zero balance.
+ */
+export async function readStockHoldingV1(tokenAddress: string, walletAddress: string): Promise<StockHoldingV1> {
+  const rpcUrl = rpcUrlV1();
+  if (!rpcUrl) return { ok: false };
+  if (!/^0x[0-9a-fA-F]{40}$/.test(tokenAddress) || !/^0x[0-9a-fA-F]{40}$/.test(walletAddress)) return { ok: false };
+
+  try {
+    const reader = createB20ReaderV1({ rpcUrl });
+    const anchor = await reader.readBlockAnchor();
+    if (!anchor.ok) return { ok: false };
+    const blockTag = anchor.value.blockTag;
+    const [decimalsRead, symbolRead, balanceRead] = await Promise.all([
+      reader.call({ to: tokenAddress, data: encodeFunctionData({ abi: ERC20_METADATA_ABI_V1, functionName: 'decimals' }), blockTag }),
+      reader.call({ to: tokenAddress, data: encodeFunctionData({ abi: ERC20_METADATA_ABI_V1, functionName: 'symbol' }), blockTag }),
+      reader.call({
+        to: tokenAddress,
+        data: encodeFunctionData({
+          abi: BALANCE_OF_ABI_V1,
+          functionName: 'balanceOf',
+          args: [walletAddress.toLowerCase() as `0x${string}`],
+        }),
+        blockTag,
+      }),
+    ]);
+    if (!decimalsRead.ok || !symbolRead.ok || !balanceRead.ok) return { ok: false };
+    const decimals = Number(
+      decodeFunctionResult({ abi: ERC20_METADATA_ABI_V1, functionName: 'decimals', data: decimalsRead.value as `0x${string}` }),
+    );
+    const symbol = String(
+      decodeFunctionResult({ abi: ERC20_METADATA_ABI_V1, functionName: 'symbol', data: symbolRead.value as `0x${string}` }),
+    );
+    const balance = decodeFunctionResult({
+      abi: BALANCE_OF_ABI_V1,
+      functionName: 'balanceOf',
+      data: balanceRead.value as `0x${string}`,
+    });
+    if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36 || typeof balance !== 'bigint') return { ok: false };
+    return {
+      ok: true,
+      decimals,
+      symbol: symbol.length > 0 ? symbol : 'TOKEN',
+      balanceAtomic: balance.toString(),
+      blockNumber: anchor.value.blockNumber,
+    };
+  } catch {
+    return { ok: false };
+  }
+}

@@ -1,10 +1,11 @@
 // ---------------------------------------------------------------------------
 // Growth plan step 4: a gift, read out of a public proof bundle.
 //
-// A gift batch is the ordinary swap to the giver's own wallet followed by ONE
-// ERC-20 `transfer(recipient, amount)` of the bought stock — the call the
-// Safety Kernel checked before the wallet ever saw it. The approved calls are
-// inside the canonical proof, under `approvedCallsHash`, so a reader of the
+// A gift batch is either the ordinary swap to the giver's own wallet followed
+// by ONE ERC-20 `transfer(recipient, amount)` of the bought stock, or — a gift
+// from what the giver already held — that one transfer alone. Either way it is
+// the call a kernel checked before the wallet ever saw it. The approved calls
+// are inside the canonical proof, under `approvedCallsHash`, so a reader of the
 // bundle can see exactly what was sent to whom without asking Miorail.
 //
 // The BYTES decide. Each call also carries labels (`recipient`, `amountAtomic`,
@@ -40,9 +41,13 @@ export interface PublicGiftV1 {
   finalStatus: string;
   delivered: boolean;
   transactionHash: `0x${string}` | null;
+  /** `bought`: a swap, then the transfer. `held`: the transfer alone, from
+   * what the giver's wallet already held — nothing was bought or paid. */
+  source: 'bought' | 'held';
   /** What the whole purchase spent, from the proof's actual debit (falling back
    * to the expected one). The gift is the swap's guaranteed minimum, so this is
-   * what the giver paid — not a price for the amount given. */
+   * what the giver paid — not a price for the amount given. Null for a gift
+   * from holdings: its one debit is the gift itself. */
   paid: { amountAtomic: string; symbol: string; decimals: number } | null;
   /** When the link was created. */
   issuedAt: string;
@@ -123,12 +128,14 @@ export function giftOfPublicBundleV1(input: unknown): PublicGiftV1 | null {
     actualResult?: unknown;
     expectedResult?: unknown;
   };
-  if (!Array.isArray(proof.approvedCalls) || proof.approvedCalls.length < 2) return null;
+  if (!Array.isArray(proof.approvedCalls) || proof.approvedCalls.length < 1) return null;
   const calls = proof.approvedCalls as LooseCallV1[];
   const transfers = calls.filter((call) => call?.callType === 'transfer');
-  // One transfer, and it is the last call: the order the kernel enforces.
+  // One transfer, and it is the last call: the order the kernel enforces. On
+  // its own it is a gift from holdings; after a swap, a gift that was bought.
   if (transfers.length !== 1 || calls.at(-1) !== transfers[0]) return null;
   const call = transfers[0]!;
+  const source = calls.length === 1 ? 'held' : 'bought';
 
   const token = assetOf(call.asset);
   const decoded = decodeTransferCalldataV1(call.data);
@@ -153,7 +160,8 @@ export function giftOfPublicBundleV1(input: unknown): PublicGiftV1 | null {
     finalStatus,
     delivered: finalStatus === 'completed',
     transactionHash: firstHash && HASH_V1.test(firstHash) ? (firstHash as `0x${string}`) : null,
-    paid: debitOf(proof.actualResult) ?? debitOf(proof.expectedResult),
+    source,
+    paid: source === 'held' ? null : (debitOf(proof.actualResult) ?? debitOf(proof.expectedResult)),
     issuedAt: typeof bundle.issuedAt === 'string' ? bundle.issuedAt : '',
   };
 }

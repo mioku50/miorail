@@ -18,6 +18,7 @@ import {
   mockReceiptReader,
   revertedReceiptSource,
   seedRouteProofFixture,
+  seedSendProofFixture,
   successSwapReceiptSource,
   transferLog,
   weth9MovementLog,
@@ -577,5 +578,38 @@ test('reconcile: a gift completes when the chain shows the swap AND the gift, an
     routeProofId: missing.proof.id,
     now: LATER,
   });
+  assert.equal(unproven.outcome, 'reconciliation_required');
+});
+
+test('reconcile: a gift from holdings completes when the receipt shows its one Transfer, and not otherwise', async () => {
+  const FRIEND = '0x8e525bfce1c0ffee00000000000000000000beef' as const;
+  const token = ARBITRARY_TOKEN.address as `0x${string}`;
+  const source = (logs: VerifiedReceiptSourceV1['logs']): VerifiedReceiptSourceV1 => ({
+    transactionHash: TX_HASH_1,
+    status: 'success',
+    blockNumber: 51700010n,
+    gasUsed: 62000n,
+    effectiveGasPriceWei: 5_000_000n,
+    logs,
+  });
+
+  const seeded = await seedSendProofFixture({ token: ARBITRARY_TOKEN, recipient: FRIEND, amountAtomic: '44227', transactionHashes: [TX_HASH_1] });
+  const delivered = await createRouteProofReconciler({
+    repository: seeded.repository,
+    receiptReader: mockReceiptReader({ [TX_HASH_1]: source([transferLog(token, WALLET, FRIEND, 44227n)]) }),
+  }).reconcile({ tenantId: TENANT, walletAddress: WALLET, routeRunId: seeded.intent.id, routeProofId: seeded.proof.id, now: LATER });
+  assert.equal(delivered.outcome, 'completed');
+  assert.equal(delivered.proof.reconciliationState, 'matched');
+  assert.equal(delivered.proof.actualOutput, '44227');
+  assert.equal(delivered.proof.outputDeviationBps, 0);
+  assert.equal(delivered.proof.expectedOutput.asset.address, token);
+  assert.deepEqual(delivered.proof.gift, { recipient: FRIEND, amountAtomic: '44227' });
+
+  // A receipt with no Transfer to the recipient is not a delivered gift.
+  const other = await seedSendProofFixture({ token: ARBITRARY_TOKEN, recipient: FRIEND, amountAtomic: '44227', transactionHashes: [TX_HASH_1] });
+  const unproven = await createRouteProofReconciler({
+    repository: other.repository,
+    receiptReader: mockReceiptReader({ [TX_HASH_1]: source([transferLog(token, WALLET, POOL, 44227n)]) }),
+  }).reconcile({ tenantId: TENANT, walletAddress: WALLET, routeRunId: other.intent.id, routeProofId: other.proof.id, now: LATER });
   assert.equal(unproven.outcome, 'reconciliation_required');
 });

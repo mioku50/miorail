@@ -1,4 +1,4 @@
-import type { RouteIntentV1 } from '@mioagent/route-domain';
+import type { AssetRefV1, RouteIntentV1 } from '@mioagent/route-domain';
 import type { BaseNameResolutionV1 } from './baseNameResolver.js';
 
 // ---------------------------------------------------------------------------
@@ -76,31 +76,204 @@ export async function checkStockGiftV1(input: {
     );
   }
 
+  const who = await checkGiftRecipientAndDayV1({
+    token,
+    walletAddress: input.walletAddress,
+    gift: input.gift,
+    resolveName: input.resolveName,
+    giftsApprovedToday: input.giftsApprovedToday,
+    selfMessage: 'A gift goes to someone else. To buy for yourself, use Buy.',
+  });
+  return who.ok ? { ok: true, recipient: who.recipient } : who;
+}
+
+/** Who receives, and whether today still has room — the same for a gift that
+ * is bought and one given from holdings. */
+async function checkGiftRecipientAndDayV1(input: {
+  token: string;
+  walletAddress: string;
+  gift: StockGiftRequestV1;
+  resolveName: (name: string) => Promise<BaseNameResolutionV1>;
+  giftsApprovedToday: () => Promise<number>;
+  selfMessage: string;
+}): Promise<
+  | { ok: true; recipient: `0x${string}` }
+  | { ok: false; code: 'gift_recipient_invalid' | 'gift_recipient_is_you' | 'gift_name_changed' | 'gift_daily_limit_reached'; message: string }
+> {
   const recipient = input.gift.recipient.trim().toLowerCase();
-  if (!ADDRESS_V1.test(recipient) || recipient === ZERO_ADDRESS_V1 || recipient === token || recipient === CANONICAL_BASE_USDC_V1) {
-    return refuse('gift_recipient_invalid', 'The recipient must be a Base wallet address.');
+  if (!ADDRESS_V1.test(recipient) || recipient === ZERO_ADDRESS_V1 || recipient === input.token || recipient === CANONICAL_BASE_USDC_V1) {
+    return { ok: false, code: 'gift_recipient_invalid', message: 'The recipient must be a Base wallet address.' };
   }
   if (recipient === input.walletAddress.toLowerCase()) {
-    return refuse('gift_recipient_is_you', 'A gift goes to someone else. To buy for yourself, use Buy.');
+    return { ok: false, code: 'gift_recipient_is_you', message: input.selfMessage };
   }
   if (input.gift.recipientName) {
     // Resolved again, now: a name can be pointed elsewhere between the moment
     // it was typed and the moment the batch is built.
     const resolved = await input.resolveName(input.gift.recipientName);
     if (resolved.outcome !== 'resolved' || resolved.address.toLowerCase() !== recipient) {
-      return refuse(
-        'gift_name_changed',
-        `${input.gift.recipientName} no longer resolves to the address shown. Enter the recipient again.`,
-      );
+      return {
+        ok: false,
+        code: 'gift_name_changed',
+        message: `${input.gift.recipientName} no longer resolves to the address shown. Enter the recipient again.`,
+      };
     }
   }
   if ((await input.giftsApprovedToday()) >= STOCK_GIFT_DAILY_LIMIT_V1) {
-    return refuse(
-      'gift_daily_limit_reached',
-      `This wallet has sent ${STOCK_GIFT_DAILY_LIMIT_V1} gifts today, the daily limit. It resets at 00:00 UTC.`,
-    );
+    return {
+      ok: false,
+      code: 'gift_daily_limit_reached',
+      message: `This wallet has sent ${STOCK_GIFT_DAILY_LIMIT_V1} gifts today, the daily limit. It resets at 00:00 UTC.`,
+    };
   }
   return { ok: true, recipient: recipient as `0x${string}` };
+}
+
+// ---------------------------------------------------------------------------
+// A gift from what the wallet already holds.
+//
+// The same person, recipient and day rules as a bought gift, and a range read
+// as what the amount would fetch in USDC right now, since nothing is paid for
+// it. Two reads come first: the wallet's balance of the stock, and that value.
+// When either cannot be read the gift is not offered, and the sentence says
+// the failure was a read, not a fact about the wallet or the stock.
+//
+// The ceiling is the bought gift's, $100. The floor is lower, $0.05: a
+// position bought at the $0.10 minimum fetches a little under $0.10 once the
+// route has taken its cost (0.00044227 NVDAc on 2026-09-23), and a $0.10 floor
+// on the way out would strand exactly the position the floor on the way in
+// made — the same reason a Sell has no floor at all.
+// ---------------------------------------------------------------------------
+
+/** $0.05 in USDC atomic units: the smallest gift from holdings. */
+export const STOCK_GIFT_SEND_MIN_USDC_ATOMIC_V1 = 50_000n;
+
+/** One wallet's holding of one token, read at one block. */
+export type StockHoldingReadV1 =
+  | { ok: true; decimals: number; symbol: string; balanceAtomic: string; blockNumber: string }
+  | { ok: false };
+
+/** What an amount fetches in USDC now; null when no router would say. */
+export type StockValuationV1 = { usdcAtomic: string; provider: string; observedAt: string } | null;
+
+export type StockGiftSendRefusalCodeV1 =
+  | 'gift_amount_invalid'
+  | 'gift_not_a_reviewed_stock'
+  | 'gift_recipient_invalid'
+  | 'gift_recipient_is_you'
+  | 'gift_name_changed'
+  | 'gift_daily_limit_reached'
+  | 'gift_balance_unavailable'
+  | 'gift_balance_short'
+  | 'gift_value_unavailable'
+  | 'gift_value_out_of_range';
+
+export type StockGiftSendCheckV1 =
+  | {
+      ok: true;
+      recipient: `0x${string}`;
+      token: AssetRefV1;
+      balance: { balanceAtomic: string; blockNumber: string };
+      valuation: NonNullable<StockValuationV1>;
+    }
+  | { ok: false; code: StockGiftSendRefusalCodeV1; message: string };
+
+function unitsV1(atomic: string, decimals: number): string {
+  if (decimals === 0) return atomic;
+  const padded = atomic.padStart(decimals + 1, '0');
+  const whole = padded.slice(0, -decimals);
+  const fraction = padded.slice(-decimals).replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole;
+}
+
+/** USDC atomic as dollars and cents, rounded down: never a flattering figure. */
+export function usdcDollarsV1(atomic: string): string {
+  const cents = BigInt(atomic) / 10_000n;
+  return `$${(cents / 100n).toString()}.${(cents % 100n).toString().padStart(2, '0')}`;
+}
+
+/** The token a send moves, as the route domain names it. */
+export function stockAssetRefV1(input: { tokenAddress: string; symbol: string; decimals: number }): AssetRefV1 {
+  const address = input.tokenAddress.toLowerCase() as `0x${string}`;
+  return {
+    assetId: `eip155:8453/erc20:${address}`,
+    chainId: 8453,
+    kind: 'erc20',
+    address,
+    symbol: input.symbol,
+    decimals: input.decimals,
+  };
+}
+
+export async function checkStockGiftSendV1(input: {
+  tokenAddress: string;
+  amountAtomic: string;
+  walletAddress: string;
+  gift: StockGiftRequestV1;
+  isGiftableStock: (tokenAddress: string) => Promise<boolean>;
+  resolveName: (name: string) => Promise<BaseNameResolutionV1>;
+  giftsApprovedToday: () => Promise<number>;
+  readHolding: (tokenAddress: string, walletAddress: string) => Promise<StockHoldingReadV1>;
+  valueInUsdc: (input: { token: AssetRefV1; amountAtomic: string }) => Promise<StockValuationV1>;
+}): Promise<StockGiftSendCheckV1> {
+  const refuse = (code: StockGiftSendRefusalCodeV1, message: string): StockGiftSendCheckV1 => ({ ok: false, code, message });
+  const token = input.tokenAddress.trim().toLowerCase();
+  if (!/^[1-9][0-9]{0,77}$/.test(input.amountAtomic)) {
+    return refuse('gift_amount_invalid', 'Enter how much of the stock to give.');
+  }
+  if (!ADDRESS_V1.test(token) || !(await input.isGiftableStock(token))) {
+    return refuse(
+      'gift_not_a_reviewed_stock',
+      'Only a Coinbase-issued tokenized stock Miorail has reviewed can be given here.',
+    );
+  }
+  const who = await checkGiftRecipientAndDayV1({
+    token,
+    walletAddress: input.walletAddress,
+    gift: input.gift,
+    resolveName: input.resolveName,
+    giftsApprovedToday: input.giftsApprovedToday,
+    selfMessage: 'A gift goes to someone else; this stock is already in your wallet.',
+  });
+  if (!who.ok) return who;
+
+  const holding = await input.readHolding(token, input.walletAddress.toLowerCase()).catch((): StockHoldingReadV1 => ({ ok: false }));
+  if (!holding.ok) {
+    return refuse(
+      'gift_balance_unavailable',
+      'Miorail could not read this wallet’s balance just now, so nothing was prepared. This says nothing about the wallet; try again in a moment.',
+    );
+  }
+  const asset = stockAssetRefV1({ tokenAddress: token, symbol: holding.symbol, decimals: holding.decimals });
+  const amount = `${unitsV1(input.amountAtomic, holding.decimals)} ${holding.symbol}`;
+  if (BigInt(holding.balanceAtomic) < BigInt(input.amountAtomic)) {
+    return refuse(
+      'gift_balance_short',
+      `This wallet holds ${unitsV1(holding.balanceAtomic, holding.decimals)} ${holding.symbol}, less than the ${amount} to give. Give less, or buy it with USDC instead.`,
+    );
+  }
+
+  const valuation = await input.valueInUsdc({ token: asset, amountAtomic: input.amountAtomic }).catch((): StockValuationV1 => null);
+  if (!valuation || !/^[0-9]+$/.test(valuation.usdcAtomic)) {
+    return refuse(
+      'gift_value_unavailable',
+      `Miorail could not price ${amount} just now, and the gift range is in dollars, so nothing was prepared. This says nothing about the stock; try again in a moment.`,
+    );
+  }
+  const value = BigInt(valuation.usdcAtomic);
+  if (value < STOCK_GIFT_SEND_MIN_USDC_ATOMIC_V1 || value > STOCK_GIFT_MAX_USDC_ATOMIC_V1) {
+    return refuse(
+      'gift_value_out_of_range',
+      `A gift from what you hold is worth from $0.05 to $100. ${amount} fetches about ${usdcDollarsV1(valuation.usdcAtomic)} in USDC right now.`,
+    );
+  }
+  return {
+    ok: true,
+    recipient: who.recipient,
+    token: asset,
+    balance: { balanceAtomic: holding.balanceAtomic, blockNumber: holding.blockNumber },
+    valuation,
+  };
 }
 
 /** The recipient a person typed, made into an address — or why it is not one. */

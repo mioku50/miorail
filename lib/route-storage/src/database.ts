@@ -373,8 +373,9 @@ function routeRunFromRow(row: Record<string, unknown>): RouteRunRecord {
     walletAddress: intent.walletAddress,
     chainId: intent.chainId,
     // T62: the goal column defaults to 'swap' (additive migration), so a row
-    // read before/without the column present still maps to a swap run.
-    goal: row.goal === 'earn' ? 'earn' : 'swap',
+    // read before/without the column present still maps to a swap run. A send
+    // run's intent says so itself, and only createSendRouteRun writes one.
+    goal: intent.goal === 'send' ? 'send' : 'swap',
     schemaVersion: intent.schemaVersion,
     status: databaseString(row.status, 'status'),
     intentHash: intent.intentHash,
@@ -387,6 +388,29 @@ function routeRunFromRow(row: Record<string, unknown>): RouteRunRecord {
         ? null
         : databaseTimestamp(row.completed_at, 'completed_at'),
   };
+}
+
+/** A send run, and only a send run: the goal column and the intent agree. */
+async function requireOwnedSendRun(
+  sql: SqlTemplateExecutor,
+  runId: string,
+  userId: string,
+): Promise<RouteRunRecord> {
+  const rows = await sql`
+    SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+           intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+    FROM route_runs
+    WHERE id = ${runId} AND user_id = ${userId} AND goal = 'send'
+    LIMIT 1
+  `;
+  if (!rows[0]) {
+    throw new RouteStorageTenantError('Send Route Run is missing or belongs to another tenant');
+  }
+  const run = routeRunFromRow(rows[0]);
+  if (run.intent.goal !== 'send') {
+    throw new RouteStorageIntegrityError('Stored send Route Run carries an intent that is not a send');
+  }
+  return run;
 }
 
 async function requireOwnedRun(
@@ -504,6 +528,11 @@ export function createDatabaseRouteStorageRepository(
       if (idempotencyKey.trim().length === 0) {
         throw new RouteStorageIntegrityError('Route run idempotency key must not be empty');
       }
+      if (intent.goal === 'send') {
+        // Written with goal 'swap', a send would be a run the swap composer
+        // may try to prepare. Its own path writes it with its own goal.
+        throw new RouteStorageIntegrityError('A send intent is stored by createSendRouteRun');
+      }
       const inserted = await sql`
         INSERT INTO route_runs (
           id, user_id, wallet_address, chain_id, schema_version, status,
@@ -549,6 +578,115 @@ export function createDatabaseRouteStorageRepository(
         LIMIT 1
       `;
       return rows[0] ? routeRunFromRow(rows[0]) : null;
+    },
+
+    // --- Gift from holdings: a send run and its one Blueprint ----------------
+
+    async createSendRouteRun(input: RouteIntentV1, idempotencyKey: string): Promise<RouteRunRecord> {
+      const intent = parseRouteIntent(input);
+      if (intent.goal !== 'send') {
+        throw new RouteStorageIntegrityError('createSendRouteRun requires a send intent');
+      }
+      if (idempotencyKey.trim().length === 0) {
+        throw new RouteStorageIntegrityError('Send route run idempotency key must not be empty');
+      }
+      const inserted = await sql`
+        INSERT INTO route_runs (
+          id, user_id, wallet_address, chain_id, goal, schema_version, status,
+          intent_hash, intent_payload, idempotency_key, created_at, updated_at
+        ) VALUES (
+          ${intent.id}, ${intent.tenantId}, ${intent.walletAddress}, ${intent.chainId},
+          'send', ${intent.schemaVersion}, ${intent.status}, ${intent.intentHash},
+          CAST(${jsonb(intent)} AS jsonb), ${idempotencyKey},
+          ${new Date(intent.createdAt)}, ${new Date(intent.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id, user_id, wallet_address, chain_id, schema_version, status,
+                  intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+      `;
+      if (inserted[0]) return routeRunFromRow(inserted[0]);
+      const existing = await sql`
+        SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+               intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+        FROM route_runs
+        WHERE user_id = ${intent.tenantId} AND goal = 'send'
+          AND (id = ${intent.id} OR idempotency_key = ${idempotencyKey})
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Send route run ID or idempotency key is already used by another run');
+      const record = routeRunFromRow(existing[0]);
+      if (
+        record.id !== intent.id ||
+        record.idempotencyKey !== idempotencyKey ||
+        !payloadEquals(record.intent, intent)
+      ) {
+        conflict('Send route run ID or user-scoped idempotency key has different content');
+      }
+      return record;
+    },
+
+    async getSendRouteRun(id: string, userId: string): Promise<RouteRunRecord | null> {
+      const rows = await sql`
+        SELECT id, user_id, wallet_address, chain_id, schema_version, status,
+               intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
+        FROM route_runs
+        WHERE id = ${id} AND user_id = ${userId} AND goal = 'send'
+        LIMIT 1
+      `;
+      if (!rows[0]) return null;
+      const run = routeRunFromRow(rows[0]);
+      if (run.intent.goal !== 'send') {
+        throw new RouteStorageIntegrityError('Stored send Route Run carries an intent that is not a send');
+      }
+      return run;
+    },
+
+    async insertSendBlueprint(runId: string, input: ExecutionBlueprintV1): Promise<void> {
+      const blueprint = parseExecutionBlueprint(input);
+      if (blueprint.goal !== 'send') {
+        throw new RouteStorageIntegrityError('insertSendBlueprint requires a send-goal Blueprint');
+      }
+      const run = await requireOwnedSendRun(sql, runId, blueprint.tenantId);
+      assertLinkedHash(blueprint.intentHash, run.intentHash, 'sendBlueprint.intentHash');
+      const inserted = await sql`
+        INSERT INTO execution_blueprints (
+          id, route_run_id, user_id, wallet_address, chain_id, goal, schema_version,
+          status, blueprint_hash, intent_hash, selected_candidate_hash, evidence_set_hash,
+          calls_hash, approved_calls_hash, prepared_transaction_action_id, payload,
+          expires_at, created_at, updated_at
+        ) VALUES (
+          ${blueprint.id}, ${runId}, ${blueprint.tenantId}, ${blueprint.walletAddress},
+          ${blueprint.chainId}, 'send', ${blueprint.schemaVersion}, ${blueprint.status},
+          ${blueprint.blueprintHash}, ${blueprint.intentHash}, ${blueprint.selectedCandidateHash},
+          ${blueprint.evidenceSetHash}, ${blueprint.callsHash}, ${blueprint.approvedCallsHash},
+          ${null}, CAST(${jsonb(blueprint)} AS jsonb),
+          ${new Date(blueprint.quoteExpiry)}, ${new Date(blueprint.createdAt)},
+          ${new Date(blueprint.updatedAt)}
+        )
+        ON CONFLICT DO NOTHING
+        RETURNING id
+      `;
+      if (inserted[0]) return;
+      const existing = await sql`
+        SELECT id, route_run_id, user_id, wallet_address, chain_id, schema_version, status,
+               blueprint_hash, intent_hash, selected_candidate_hash, evidence_set_hash,
+               calls_hash, approved_calls_hash, prepared_transaction_action_id, payload,
+               expires_at, created_at, updated_at
+        FROM execution_blueprints
+        WHERE user_id = ${blueprint.tenantId}
+          AND (id = ${blueprint.id} OR (route_run_id = ${runId} AND blueprint_hash = ${blueprint.blueprintHash}))
+        ORDER BY id
+        LIMIT 1
+      `;
+      if (!existing[0]) conflict('Send Blueprint ID is already owned by another tenant');
+      const stored = blueprintFromRow(existing[0]);
+      if (
+        databaseString(existing[0].route_run_id, 'route_run_id') !== runId ||
+        !payloadEquals(stored.blueprint, blueprint)
+      ) {
+        conflict('Send Blueprint ID or run-scoped hash has different content');
+      }
     },
 
     // --- T62: earn persistence (mirrors the swap methods; earn_* tables) -----
@@ -1484,7 +1622,7 @@ export function createDatabaseRouteStorageRepository(
             SELECT id, user_id, wallet_address, chain_id, schema_version, status,
                    intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
             FROM route_runs
-            WHERE user_id = ${userId} AND goal = 'swap'
+            WHERE user_id = ${userId} AND goal IN ('swap', 'send')
               AND (created_at, id) < (${new Date(cursor.createdAt)}, ${cursor.id})
             ORDER BY created_at DESC, id DESC
             LIMIT ${params.limit + 1}
@@ -1493,13 +1631,15 @@ export function createDatabaseRouteStorageRepository(
             SELECT id, user_id, wallet_address, chain_id, schema_version, status,
                    intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
             FROM route_runs
-            WHERE user_id = ${userId} AND goal = 'swap'
+            WHERE user_id = ${userId} AND goal IN ('swap', 'send')
             ORDER BY created_at DESC, id DESC
             LIMIT ${params.limit + 1}
           `;
       const hasMore = runRows.length > params.limit;
       const pageRows = runRows.slice(0, params.limit);
-      // T64.3.1: `goal = 'swap'` above is load-bearing, not an optimisation.
+      // T64.3.1: the goal filter above is load-bearing, not an optimisation.
+      // A send run (a gift from holdings) stores a RouteIntentV1 too, so it
+      // parses here and belongs in the same list; nothing else does.
       // Earn and Commerce runs share this table but store their OWN intent
       // shape, and routeRunFromRow parses every payload with the swap intent
       // schema. Without the filter one commerce comparison made the whole

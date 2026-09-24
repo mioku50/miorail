@@ -44,10 +44,12 @@ import {
 import { marketRealityRadarViewV1 } from './marketRealityRadarView';
 import type { MarketRealityRadarScreenModelV1 } from './MarketRealityRadarScreen';
 import type {
+  GiftRequestV1,
   MarketRealityScreenModelV1,
   MarketRealitySurfaceV1,
   StocksVisitorNoticeV1,
 } from './MarketRealityScreen';
+import type { GiftHoldingV1 } from './giftView';
 
 // ---------------------------------------------------------------------------
 // Phase 15.1 — the Stocks console, once, for both surfaces.
@@ -189,13 +191,22 @@ export interface StocksConsoleInputV1 {
    * Resolves to null once it has moved on, or to the sentence the card shows.
    * Absent: no Gift button — the Base App has no sign-in to carry one through.
    */
-  onGift?: (input: {
-    tokenAddress: string;
-    goal: string;
-    /** What the reader typed: a Basename or a 0x address. */
-    recipient: string;
-    minimumVerification: typeof STOCK_EXECUTION_VERIFICATION_DEPTH_V1;
-  }) => Promise<string | null>;
+  onGift?: (
+    input: {
+      tokenAddress: string;
+      /** What the reader typed: a Basename or a 0x address. */
+      recipient: string;
+      minimumVerification: typeof STOCK_EXECUTION_VERIFICATION_DEPTH_V1;
+    } & (
+      | { goal: string; send?: undefined }
+      // A gift from what the wallet already holds: no purchase, so no goal
+      // sentence — the amount is in the stock's own atoms.
+      | { goal: null; send: { amountAtomic: string; symbol: string; decimals: number } }
+    ),
+  ) => Promise<string | null>;
+  /** What this wallet holds of a stock, for the Gift form. Absent: the form
+   * only buys the gift. */
+  giftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
 }
 
 /** What the card says under Buy and Sell — an offer, never a promise: the fee
@@ -1048,7 +1059,20 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       // the purchase's own; who receives it travels beside it, never in it.
       ...(reality.data && input.onGift && input.trade
         ? {
-            onGift: async (gift: { tokenAddress: string; amountAtomic: string; recipient: string }) => {
+            ...(input.giftHolding ? { loadGiftHolding: input.giftHolding } : {}),
+            onGift: async (gift: GiftRequestV1) => {
+              if (gift.mode === 'send') {
+                // Nothing is bought, so there is no purchase sentence to build:
+                // the server reads the holding, the value and the rules itself.
+                if (!gift.unit) return 'What your wallet holds could not be read; open Gift again.';
+                return input.onGift!({
+                  tokenAddress: gift.tokenAddress.toLowerCase(),
+                  goal: null,
+                  send: { amountAtomic: gift.amountAtomic, symbol: gift.unit.symbol, decimals: gift.unit.decimals },
+                  recipient: gift.recipient,
+                  minimumVerification: STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
+                });
+              }
               if (BigInt(gift.amountAtomic) > BigInt(STOCK_GIFT_MAXIMUM_CASH_ATOMIC_V1)) {
                 return 'The largest gift is 100 USDC.';
               }

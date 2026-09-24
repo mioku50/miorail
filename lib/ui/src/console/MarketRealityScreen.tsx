@@ -29,6 +29,13 @@ import {
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 import { stockGiftAmountV1, stockTradeAmountV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 import {
+  giftDefaultModeV1,
+  giftSendAmountV1,
+  usdcCentsLabelV1,
+  type GiftHoldingV1,
+} from './giftView';
+import { tokenDecimalV1 } from './stockSellAmount';
+import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
   type ComparableMarketHistoryViewV1,
@@ -202,11 +209,15 @@ export interface MarketRealityActionsV1 {
    */
   onTrade?: (trade: { tokenAddress: string; direction: 'buy' | 'sell'; amountAtomic: string }) => string | null;
   /**
-   * Growth plan step 4 — buy the answer card's address for someone else, at
-   * an amount in USDC. Resolves to why it could not, or to null once the
-   * prepare step has opened.
+   * Growth plan step 4 — give the answer card's address to someone: bought
+   * with USDC (`amountAtomic` in USDC atoms), or sent from what the wallet
+   * already holds (`amountAtomic` in the stock's own atoms). Resolves to why it
+   * could not, or to null once the prepare step has opened.
    */
-  onGift?: (gift: { tokenAddress: string; amountAtomic: string; recipient: string }) => Promise<string | null>;
+  onGift?: (gift: GiftRequestV1) => Promise<string | null>;
+  /** What this wallet holds of a stock, read when the Gift form opens.
+   * Absent: the form only offers buying the gift. */
+  loadGiftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -1270,12 +1281,14 @@ function HeadlineAnswer({
   trade,
   onTrade,
   onGift,
+  loadGiftHolding,
 }: {
   headline: StocksHeadlineViewV1;
   measuring: boolean;
   onMeasure?: () => void;
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
-  onGift?: (gift: { tokenAddress: string; amountAtomic: string; recipient: string }) => Promise<string | null>;
+  onGift?: (gift: GiftRequestV1) => Promise<string | null>;
+  loadGiftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
   trade?: {
     note: string | null;
     tokenDecimals: Readonly<Record<string, number | null>>;
@@ -1417,6 +1430,7 @@ function HeadlineAnswer({
           key={`gift:${tradable.tokenAddress}`}
           onCancel={() => setSide(null)}
           onSubmit={(gift) => onGift!({ tokenAddress: tradable.tokenAddress, ...gift })}
+          loadHolding={loadGiftHolding ? () => loadGiftHolding(tradable.tokenAddress) : undefined}
         />
       ) : tradable && (open === 'buy' || open === 'sell') ? (
         <TradeAmountForm
@@ -1521,33 +1535,76 @@ export function TradeAmountForm({
   );
 }
 
+/** What the Gift form asks the surface to do. */
+export type GiftRequestV1 = {
+  tokenAddress: string;
+  recipient: string;
+  /** `buy`: USDC atoms to spend. `send`: atoms of the stock, from the holding. */
+  mode: 'buy' | 'send';
+  amountAtomic: string;
+  /** For a send: the stock's symbol and decimals as the holding read them —
+   * display only; the server reads its own. */
+  unit?: { symbol: string; decimals: number };
+};
+
 /**
- * A gift: who receives it, and how many USDC to spend on it.
+ * A gift: who receives it, and what they receive.
  *
- * Nothing is signed or sent from here either. The recipient is looked up and
- * shown on the review with its address; the purchase is planned, quoted and
- * simulated like any other, and the stock goes to the recipient only as the
- * last call of the batch the giver's own wallet approves.
+ * The form reads what the wallet already holds of this stock first. When
+ * there is a holding it offers to give from it — one transfer, typed in the
+ * stock's own units — and otherwise buys the gift with USDC. Nothing is signed
+ * or sent from here either: the recipient is looked up and shown on the review
+ * with its address, and the transfer (or the purchase and the transfer) is
+ * built, checked and simulated before the giver's own wallet is asked.
  */
 export function GiftForm({
   onSubmit,
   onCancel,
+  loadHolding,
 }: {
-  onSubmit: (gift: { amountAtomic: string; recipient: string }) => Promise<string | null>;
+  onSubmit: (gift: Omit<GiftRequestV1, 'tokenAddress'>) => Promise<string | null>;
   onCancel: () => void;
+  /** Reads this wallet's holding of the stock. Absent: the gift is bought. */
+  loadHolding?: () => Promise<GiftHoldingV1>;
 }) {
   const [recipient, setRecipient] = useState('');
   const [text, setText] = useState('');
   const [refusal, setRefusal] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+  const [holding, setHolding] = useState<GiftHoldingV1 | null>(null);
+  const [chosen, setChosen] = useState<'buy' | 'send' | null>(null);
   const first = useRef<HTMLInputElement>(null);
   useEffect(() => first.current?.focus(), []);
-  const amount = stockGiftAmountV1(text);
+  useEffect(() => {
+    if (!loadHolding) return;
+    let live = true;
+    loadHolding().then(
+      (read) => live && setHolding(read),
+      () => live && setHolding({ status: 'unavailable', message: 'What your wallet holds could not be read just now; the gift can still be bought with USDC.' }),
+    );
+    return () => {
+      live = false;
+    };
+    // Read once, when the form opens: the holding is the wallet's, not the text's.
+  }, []);
+  const reading = Boolean(loadHolding) && holding === null;
+  const held = holding?.status === 'held' ? holding : null;
+  const mode = held ? (chosen ?? giftDefaultModeV1(held)) : 'buy';
+  const buyAmount = stockGiftAmountV1(text);
+  const sendAmount = held ? giftSendAmountV1({ text, holding: held }) : null;
+  const amount = mode === 'send' && sendAmount ? sendAmount : buyAmount;
   const who = recipient.trim();
   // Shape only; whether a name resolves, and to whom, is the server's to say.
   const recipientReady = /^0x[0-9a-fA-F]{40}$/.test(who) || /^[^\s]{1,255}\.base\.eth$/i.test(who);
   const wrong = amount.status !== 'ready' && amount.status !== 'empty';
-  const ready = amount.status === 'ready' && recipientReady && !pending;
+  const ready = amount.status === 'ready' && recipientReady && !pending && !reading;
+  const heldLabel = held ? `${tokenDecimalV1(held.balanceAtomic, held.decimals)} ${held.symbol}` : null;
+  const heldValue = held?.valueUsdcAtomic ? ` (about ${usdcCentsLabelV1(held.valueUsdcAtomic)})` : '';
+  const switchMode = (next: 'buy' | 'send') => {
+    setChosen(next);
+    setText('');
+    setRefusal(null);
+  };
   return (
     <form
       className="mr-trade"
@@ -1556,7 +1613,14 @@ export function GiftForm({
         event.preventDefault();
         if (!ready || amount.status !== 'ready') return;
         setPending(true);
-        setRefusal(await onSubmit({ amountAtomic: amount.atomic, recipient: who }));
+        setRefusal(
+          await onSubmit({
+            mode,
+            amountAtomic: amount.atomic,
+            recipient: who,
+            ...(mode === 'send' && held ? { unit: { symbol: held.symbol, decimals: held.decimals } } : {}),
+          }),
+        );
         setPending(false);
       }}
     >
@@ -1578,7 +1642,19 @@ export function GiftForm({
           }}
         />
       </div>
-      <label htmlFor="mr-gift-amount">USDC to spend on it</label>
+      {reading ? <p className="lnote" role="status">Reading what your wallet holds of this stock…</p> : null}
+      {held ? (
+        <div className="mr-scope-switch" role="group" aria-label="How to give it">
+          <button type="button" aria-pressed={mode === 'send'} className={mode === 'send' ? 'on' : ''} onClick={() => switchMode('send')}>
+            From your {held.symbol}
+            <span className="d"> {tokenDecimalV1(held.balanceAtomic, held.decimals)}</span>
+          </button>
+          <button type="button" aria-pressed={mode === 'buy'} className={mode === 'buy' ? 'on' : ''} onClick={() => switchMode('buy')}>
+            Buy with USDC
+          </button>
+        </div>
+      ) : null}
+      <label htmlFor="mr-gift-amount">{mode === 'send' && held ? `${held.symbol} to give` : 'USDC to spend on it'}</label>
       <div className="mr-trade-row">
         <input
           id="mr-gift-amount"
@@ -1587,7 +1663,7 @@ export function GiftForm({
           autoComplete="off"
           spellCheck={false}
           maxLength={40}
-          placeholder="5"
+          placeholder={mode === 'send' && held ? tokenDecimalV1(held.balanceAtomic, held.decimals) : '5'}
           value={text}
           aria-invalid={wrong}
           aria-describedby="mr-gift-note"
@@ -1596,14 +1672,32 @@ export function GiftForm({
             setRefusal(null);
           }}
         />
-        <span className="mr-trade-unit">USDC</span>
+        <span className="mr-trade-unit">{mode === 'send' && held ? held.symbol : 'USDC'}</span>
+        {mode === 'send' && held ? (
+          <button
+            type="button"
+            className="btn alt"
+            onClick={() => {
+              setText(tokenDecimalV1(held.balanceAtomic, held.decimals));
+              setRefusal(null);
+            }}
+          >
+            Max
+          </button>
+        ) : null}
         <button
           type="submit"
           className="btn"
           disabled={!ready}
-          title="Opens the prepare step with the recipient shown. Nothing is approved, submitted, or signed here."
+          title="Opens the review with the recipient shown. Nothing is approved, submitted, or signed here."
         >
-          {pending ? 'Checking the recipient…' : amount.status === 'ready' ? `Gift ${amount.label} USDC of it` : 'Gift'}
+          {pending
+            ? 'Checking the recipient…'
+            : amount.status !== 'ready'
+              ? 'Gift'
+              : mode === 'send' && held
+                ? `Give ${amount.label} ${held.symbol}`
+                : `Gift ${amount.label} USDC of it`}
         </button>
         <button type="button" className="btn alt" onClick={onCancel}>
           Cancel
@@ -1613,7 +1707,9 @@ export function GiftForm({
         {refusal ??
           (wrong
             ? amount.message
-            : 'From 0.1 to 100 USDC. They receive the stock itself, in their own wallet on Base. The recipient and the route are checked again before your wallet asks you to sign.')}
+            : mode === 'send' && held
+              ? `${amount.status === 'ready' && 'valueLabel' in amount && amount.valueLabel ? `About ${amount.valueLabel} at today’s quote. ` : ''}You hold ${heldLabel}${heldValue}. One transfer from your wallet — nothing is bought. From $0.05 to $100 by what it fetches now, checked again before your wallet asks you to sign.`
+              : `${holding?.status === 'none' ? `Your wallet holds none of this stock, so the gift is bought. ` : holding?.status === 'unavailable' ? `${holding.message} ` : ''}From 0.1 to 100 USDC. They receive the stock itself, in their own wallet on Base. The recipient and the route are checked again before your wallet asks you to sign.`)}
       </p>
     </form>
   );
@@ -1812,6 +1908,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           trade={model.trade ?? null}
           onTrade={actions.onTrade}
           onGift={actions.onGift}
+          loadGiftHolding={actions.loadGiftHolding}
         />
       ) : null}
 

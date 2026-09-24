@@ -445,6 +445,134 @@ export async function seedRouteProofFixture(
   return { repository, intent, candidate, evidence, evidenceSet, blueprint, proof, events };
 }
 
+/** A send: one ERC-20 transfer from the wallet, on a send run — the shape
+ * transaction-composer's giftSend builds, written out here because this
+ * package must not depend on that one. */
+export async function seedSendProofFixture(input: {
+  token: AssetRefV1;
+  recipient: `0x${string}`;
+  amountAtomic: string;
+  transactionHashes?: `0x${string}`[];
+}): Promise<{ repository: RouteStorageRepository; intent: RouteIntentV1; blueprint: ExecutionBlueprintV1; proof: RouteProofV1 }> {
+  const intentDraft: RouteIntentV1 = {
+    schemaVersion: 'route-intent/v1',
+    id: 'gift-send:fixture',
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    chainId: 8453,
+    createdAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
+    status: 'ready',
+    intentHash: ZERO_HASH_V1,
+    goal: 'send',
+    fromAsset: input.token,
+    toAsset: null,
+    amount: { asset: input.token, amountAtomic: input.amountAtomic, amountDecimal: '0.00044227' },
+    optimizationMode: 'simplest_route',
+    verificationDepth: 'enhanced',
+    protocolConstraint: { mode: 'any', protocols: [] },
+    slippageConstraint: { maxBps: 0, source: 'policy' },
+    executionRequested: true,
+  };
+  const intent = RouteIntentV1Schema.parse({ ...intentDraft, intentHash: hashRouteIntentV1(intentDraft) });
+  const word = (value: string) => value.replace(/^0x/, '').toLowerCase().padStart(64, '0');
+  const calls: ExecutionCallV1[] = [
+    {
+      index: 0,
+      callType: 'transfer',
+      to: input.token.address as `0x${string}`,
+      valueWei: '0',
+      data: `0xa9059cbb${word(input.recipient)}${word(BigInt(input.amountAtomic).toString(16))}` as `0x${string}`,
+      asset: input.token,
+      amountAtomic: input.amountAtomic,
+      recipient: input.recipient,
+      spender: null,
+    },
+  ];
+  const callsHash = hashApprovedCallsV1(calls);
+  const blueprintDraft: ExecutionBlueprintV1 = {
+    schemaVersion: 'execution-blueprint/v1',
+    goal: 'send',
+    id: 'blueprint-send-fixture',
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    chainId: 8453,
+    createdAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
+    status: 'approved',
+    intentHash: intent.intentHash,
+    selectedCandidateHash: `0x${'5'.repeat(64)}`,
+    evidenceSetHash: `0x${'6'.repeat(64)}`,
+    blueprintHash: ZERO_HASH_V1,
+    callsHash,
+    approvedCallsHash: callsHash,
+    quoteExpiry: new Date(NOW.getTime() + 5 * 60_000).toISOString(),
+    calls,
+    expectedAssetChanges: [
+      {
+        asset: input.token,
+        direction: 'debit',
+        amountAtomic: input.amountAtomic,
+        minimumAmountAtomic: input.amountAtomic,
+        maximumAmountAtomic: input.amountAtomic,
+      },
+    ],
+    requiredApprovals: [],
+    simulationState: {
+      status: 'passed',
+      observedAt: NOW.toISOString(),
+      blockNumber: '51700000',
+      requestHash: `0x${'7'.repeat(64)}`,
+      responseHash: `0x${'8'.repeat(64)}`,
+      errorCode: null,
+    },
+    atomicRequired: true,
+  };
+  const blueprint = ExecutionBlueprintV1Schema.parse({
+    ...blueprintDraft,
+    blueprintHash: hashExecutionBlueprintV1(blueprintDraft),
+  });
+  const transactionHashes = input.transactionHashes ?? [];
+  const proofDraft: RouteProofV1 = {
+    schemaVersion: 'route-proof/v1',
+    id: fixtureRouteProofIdV1(blueprint.id),
+    tenantId: TENANT,
+    walletAddress: WALLET,
+    chainId: 8453,
+    createdAt: NOW.toISOString(),
+    updatedAt: NOW.toISOString(),
+    status: 'pending',
+    intentHash: blueprint.intentHash,
+    selectedCandidateHash: blueprint.selectedCandidateHash,
+    evidenceSetHash: blueprint.evidenceSetHash,
+    blueprintHash: blueprint.blueprintHash,
+    approvedCallsHash: callsHash,
+    proofHash: ZERO_HASH_V1,
+    approvedCalls: calls,
+    expectedResult: {
+      assetChanges: blueprint.expectedAssetChanges,
+      outputAmountAtomic: input.amountAtomic,
+      outputAsset: input.token,
+    },
+    actualResult: null,
+    estimatedGas: { gasUnits: '0', maxFeePerGasWei: null, estimatedCostNative: null, estimatedCostUsd: null },
+    actualGas: null,
+    deviation: { outputBps: null, gasCostUsd: null, withinTolerance: null },
+    transactionHashes,
+    receipts: transactionHashes.map((hash) => ({ transactionHash: hash, status: 'unknown' as const, blockNumber: null, gasUsed: null })),
+    finalStatus: 'pending',
+    reconciliationState: 'pending',
+  };
+  const proof = RouteProofV1Schema.parse({ ...proofDraft, proofHash: hashRouteProofV1(proofDraft) });
+
+  const repository = new InMemoryRouteStorageRepository();
+  await repository.createSendRouteRun(intent, intent.id);
+  await repository.insertSendBlueprint(intent.id, { ...blueprint, status: 'ready_for_review', approvedCallsHash: null, blueprintHash: hashExecutionBlueprintV1({ ...blueprint, status: 'ready_for_review', approvedCallsHash: null }) });
+  await repository.approveBlueprint(intent.id, blueprint.id, TENANT, blueprint);
+  await repository.upsertProofProjection(intent.id, proof);
+  return { repository, intent, blueprint, proof };
+}
+
 function padAddressTopic(address: `0x${string}`): `0x${string}` {
   return `0x${address.slice(2).toLowerCase().padStart(64, '0')}` as `0x${string}`;
 }

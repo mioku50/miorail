@@ -353,6 +353,85 @@ export function useResolveGiftRecipient(
   });
 }
 
+/** A gift from holdings: what this wallet holds of the stock, and what all
+ * of it fetches in USDC now. Read when the Gift form opens. */
+export function useGiftHolding(
+  options?: Omit<UseMutationOptions<apiSpec.GiftHoldingResponseV1, Error, { tokenAddress: string }>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.GiftHoldingRequestV1Schema.parse({ tokenAddress: input.tokenAddress.toLowerCase() });
+      const response = await fetchApi<unknown>('/api/route-intelligence/gift/holding', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.GiftHoldingResponseV1Schema.parse(response);
+    },
+  });
+}
+
+export interface PrepareGiftSendInput {
+  walletAddress: `0x${string}`;
+  tokenAddress: `0x${string}`;
+  amountAtomic: string;
+  recipient: `0x${string}`;
+  recipientName: string | null;
+  /** A new id is a new send run: a retry after an expired review passes one. */
+  fresh?: boolean;
+}
+
+/** The same request, sent twice, is the same send: a double click replays it. */
+export class GiftSendRequestIdentity {
+  private lastMaterial = '';
+  private lastRequestId = '';
+
+  resolve(input: PrepareGiftSendInput): string {
+    const material = [
+      input.walletAddress.toLowerCase(),
+      input.tokenAddress.toLowerCase(),
+      input.amountAtomic,
+      input.recipient.toLowerCase(),
+    ].join('\u0000');
+    if (input.fresh || material !== this.lastMaterial || !this.lastRequestId) {
+      this.lastMaterial = material;
+      this.lastRequestId = `gift-send-${globalThis.crypto.randomUUID()}`;
+    }
+    return this.lastRequestId;
+  }
+}
+
+/** A gift from holdings: one transfer, prepared and reviewed. Answers in the
+ * swap prepare's shape, so the one Review screen reads it. */
+export function usePrepareGiftSend(
+  options?: Omit<UseMutationOptions<apiSpec.SwapPrepareResponseV1, Error, PrepareGiftSendInput>, 'mutationFn' | 'retry'>,
+) {
+  const identity = useRef<GiftSendRequestIdentity | null>(null);
+  identity.current ??= new GiftSendRequestIdentity();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (input) => {
+      const request = apiSpec.GiftSendPrepareRequestV1Schema.parse({
+        walletAddress: input.walletAddress.toLowerCase(),
+        tokenAddress: input.tokenAddress.toLowerCase(),
+        amountAtomic: input.amountAtomic,
+        recipient: input.recipient.toLowerCase(),
+        recipientName: input.recipientName,
+        requestId: identity.current!.resolve(input),
+      });
+      const response = await fetchApi<unknown>('/api/route-intelligence/gift/send/prepare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(request),
+      });
+      return apiSpec.SwapPrepareResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function usePrepareSwapBlueprint(
   options?: Omit<
     UseMutationOptions<apiSpec.SwapPrepareResponseV1, Error, PrepareSwapBlueprintInput>,

@@ -7,6 +7,7 @@ import type { BaseNameResolutionV1 } from './baseNameResolver.js';
 import {
   CANONICAL_BASE_USDC_V1,
   STOCK_GIFT_DAILY_LIMIT_V1,
+  checkStockGiftSendV1,
   checkStockGiftV1,
   resolveGiftRecipientV1,
 } from './stockGift.js';
@@ -137,5 +138,126 @@ describe('who the recipient is', () => {
       await codes('alice.base.eth', async (name) => ({ outcome: 'unavailable', name, errorCode: 'rpc_down' })),
       'resolver_unavailable',
     );
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A gift from holdings: the same rules, plus the wallet's balance and the
+// amount's value in dollars — both read, never assumed.
+// ---------------------------------------------------------------------------
+
+describe('a gift from what the wallet holds', () => {
+  const holding = { ok: true as const, decimals: 8, symbol: 'NVDAc', balanceAtomic: '44227', blockNumber: '51700000' };
+  const worth = (usdcAtomic: string) => ({ usdcAtomic, provider: 'uniswap', observedAt: '2026-09-24T12:00:00.000Z' });
+  function send(over: Partial<Parameters<typeof checkStockGiftSendV1>[0]> = {}) {
+    return checkStockGiftSendV1({
+      tokenAddress: NVDA,
+      amountAtomic: '44227',
+      walletAddress: WALLET,
+      gift: { recipient: FRIEND, recipientName: null },
+      isGiftableStock: async (token) => token === NVDA,
+      resolveName: async (name) => resolved(name, FRIEND),
+      giftsApprovedToday: async () => 0,
+      readHolding: async () => holding,
+      valueInUsdc: async () => worth('100000'),
+      ...over,
+    });
+  }
+
+  test('passes with the token, the balance read and the value, all as read', async () => {
+    const verdict = await send();
+    assert.equal(verdict.ok, true);
+    if (!verdict.ok) return;
+    assert.equal(verdict.recipient, FRIEND);
+    assert.deepEqual(verdict.token, {
+      assetId: `eip155:8453/erc20:${NVDA}`,
+      chainId: 8453,
+      kind: 'erc20',
+      address: NVDA,
+      symbol: 'NVDAc',
+      decimals: 8,
+    });
+    assert.deepEqual(verdict.balance, { balanceAtomic: '44227', blockNumber: '51700000' });
+    assert.equal(verdict.valuation.usdcAtomic, '100000');
+  });
+
+  test('more than the wallet holds is refused, with both numbers and the other way to give', async () => {
+    const verdict = await send({ amountAtomic: '44228' });
+    assert.equal(verdict.ok, false);
+    if (verdict.ok) return;
+    assert.equal(verdict.code, 'gift_balance_short');
+    assert.match(verdict.message, /holds 0\.00044227 NVDAc, less than the 0\.00044228 NVDAc/);
+    assert.match(verdict.message, /buy it with USDC/);
+  });
+
+  test('the range is in dollars: what the amount fetches now, $0.05 to $100, both ends included', async () => {
+    for (const [usdc, ok] of [
+      ['49999', false],
+      ['50000', true],
+      // The operator's first buy: 0.1 USDC of NVDAc fetches a little under
+      // 0.1 on the way out, and must still be givable.
+      ['98765', true],
+      ['100000000', true],
+      ['100000001', false],
+    ] as const) {
+      const verdict = await send({ valueInUsdc: async () => worth(usdc) });
+      assert.equal(verdict.ok, ok, usdc);
+      if (!verdict.ok) {
+        assert.equal(verdict.code, 'gift_value_out_of_range');
+        assert.match(verdict.message, /\$0\.05 to \$100/);
+      }
+    }
+    const small = await send({ valueInUsdc: async () => worth('41999') });
+    assert.equal(small.ok, false);
+    if (!small.ok) assert.match(small.message, /about \$0\.04 in USDC right now/);
+  });
+
+  test('an unread balance or an unpriced amount is our failure, and says so', async () => {
+    const unread = await send({ readHolding: async () => ({ ok: false }) });
+    assert.equal(unread.ok, false);
+    if (!unread.ok) {
+      assert.equal(unread.code, 'gift_balance_unavailable');
+      assert.match(unread.message, /says nothing about the wallet/);
+    }
+    const thrown = await send({ readHolding: async () => { throw new Error('rpc'); } });
+    assert.equal(thrown.ok, false);
+    const unpriced = await send({ valueInUsdc: async () => null });
+    assert.equal(unpriced.ok, false);
+    if (!unpriced.ok) {
+      assert.equal(unpriced.code, 'gift_value_unavailable');
+      assert.match(unpriced.message, /says nothing about the stock/);
+    }
+  });
+
+  test('the recipient, stock and day rules are the ones a bought gift has', async () => {
+    const self = await send({ gift: { recipient: WALLET, recipientName: null } });
+    assert.equal(self.ok || self.code, 'gift_recipient_is_you');
+    const other = await send({ tokenAddress: '0x1111111111111111111111111111111111111111' });
+    assert.equal(other.ok || other.code, 'gift_not_a_reviewed_stock');
+    const full = await send({ giftsApprovedToday: async () => STOCK_GIFT_DAILY_LIMIT_V1 });
+    assert.equal(full.ok || full.code, 'gift_daily_limit_reached');
+    const renamed = await send({
+      gift: { recipient: FRIEND, recipientName: 'friend.base.eth' },
+      resolveName: async (name) => resolved(name, '0x9999999999999999999999999999999999999999'),
+    });
+    assert.equal(renamed.ok || renamed.code, 'gift_name_changed');
+    const zero = await send({ amountAtomic: '0' });
+    assert.equal(zero.ok || zero.code, 'gift_amount_invalid');
+  });
+
+  test('no balance or price is read for a gift the cheaper rules already refuse', async () => {
+    let reads = 0;
+    await send({
+      gift: { recipient: WALLET, recipientName: null },
+      readHolding: async () => {
+        reads += 1;
+        return holding;
+      },
+      valueInUsdc: async () => {
+        reads += 1;
+        return worth('100000');
+      },
+    });
+    assert.equal(reads, 0);
   });
 });

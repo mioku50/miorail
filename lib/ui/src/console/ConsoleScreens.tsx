@@ -684,6 +684,10 @@ export interface ReviewScreenModelV1 {
    * quote it shows, and going "back" to an expired card only fails again. */
   onCompareAgain?: () => void;
   comparePending?: boolean;
+  /** The two notice buttons' words, for a review that is not a route's: a
+   * gift from holdings has no route to go back to or compare. */
+  compareAgainLabel?: string;
+  backLabel?: string;
   /**
    * The wallet-bound signing control, supplied by the container. `lib/ui`
    * screens are pure and know nothing about wallets, so the one button that
@@ -731,11 +735,11 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
                 onClick={model.onCompareAgain}
                 disabled={model.comparePending}
               >
-                {model.comparePending ? 'Comparing…' : 'Compare again'}
+                {model.comparePending ? 'Comparing…' : (model.compareAgainLabel ?? 'Compare again')}
               </button>
             )}
             <button type="button" className="btn sec" onClick={model.onBack}>
-              Back to routes
+              {model.backLabel ?? 'Back to routes'}
             </button>
           </div>
         </div>
@@ -911,7 +915,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
           </button>
         )}
         <button type="button" className="btn sec lg" onClick={model.onBack}>
-          Back to routes
+          {model.backLabel ?? 'Back to routes'}
         </button>
         <span className="nt">
           {model.simulation.disabledReason ??

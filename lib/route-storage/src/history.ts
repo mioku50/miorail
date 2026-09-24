@@ -78,5 +78,10 @@ export function summarizeRouteIntentV1(intent: {
   if (intent.goal && intent.fromAsset && intent.toAsset && intent.amount) {
     return `${intent.goal} ${intent.amount.amountDecimal} ${intent.fromAsset.symbol} -> ${intent.toAsset.symbol}`;
   }
+  // A gift from holdings moves one asset and has no output: the sentence names
+  // what left the wallet, never an arrow to nothing.
+  if (intent.goal === 'send' && intent.fromAsset && intent.amount) {
+    return `send ${intent.amount.amountDecimal} ${intent.fromAsset.symbol}`;
+  }
   return intent.intentHash;
 }

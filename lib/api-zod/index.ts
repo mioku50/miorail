@@ -752,6 +752,68 @@ export const GiftRecipientResponseV1Schema = z.discriminatedUnion('outcome', [
 ]);
 export type GiftRecipientResponseV1 = z.infer<typeof GiftRecipientResponseV1Schema>;
 
+/** A gift from holdings, step one: what this wallet holds of the stock, and
+ * what that fetches in USDC now. Read before the form offers the choice. */
+export const GiftHoldingRequestV1Schema = z.object({ tokenAddress: AddressV1Schema }).strict();
+
+export const GiftHoldingResponseV1Schema = z.discriminatedUnion('outcome', [
+  z
+    .object({
+      outcome: z.literal('held'),
+      tokenAddress: AddressV1Schema,
+      symbol: z.string().min(1).max(40),
+      decimals: z.number().int().min(0).max(36),
+      balanceAtomic: z.string().regex(/^[1-9][0-9]*$/),
+      blockNumber: z.string().regex(/^[0-9]+$/),
+      /** What the whole balance fetches in USDC now; null when no router
+       * answered — the form then cannot say what a part of it is worth. */
+      valuation: z
+        .object({
+          usdcAtomic: z.string().regex(/^[0-9]+$/),
+          provider: z.string().min(1).max(60),
+          observedAt: z.string().datetime(),
+        })
+        .strict()
+        .nullable(),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('none'),
+      tokenAddress: AddressV1Schema,
+      symbol: z.string().min(1).max(40),
+      decimals: z.number().int().min(0).max(36),
+      blockNumber: z.string().regex(/^[0-9]+$/),
+    })
+    .strict(),
+  z
+    .object({
+      outcome: z.literal('refused'),
+      code: z.enum(['not_a_reviewed_stock', 'balance_unavailable']),
+      message: z.string().min(1).max(300),
+    })
+    .strict(),
+]);
+export type GiftHoldingResponseV1 = z.infer<typeof GiftHoldingResponseV1Schema>;
+
+/** A gift from holdings, step two: one transfer, prepared and reviewed. The
+ * answer is the swap prepare's own shape, so the one Review screen reads it. */
+export const GiftSendPrepareRequestV1Schema = z
+  .object({
+    walletAddress: AddressV1Schema,
+    tokenAddress: AddressV1Schema,
+    amountAtomic: z.string().regex(/^[1-9][0-9]{0,77}$/),
+    recipient: AddressV1Schema,
+    recipientName: z.string().min(1).max(255).nullable(),
+    requestId: z
+      .string()
+      .min(1)
+      .max(200)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/, 'Invalid gift send request ID'),
+  })
+  .strict();
+export type GiftSendPrepareRequestV1 = z.infer<typeof GiftSendPrepareRequestV1Schema>;
+
 export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({

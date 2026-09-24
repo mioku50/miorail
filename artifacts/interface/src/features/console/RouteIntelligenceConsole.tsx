@@ -79,6 +79,8 @@ import {
   giftBannerV1,
   giftFromHistoryStateV1,
   giftProofLineV1,
+  giftSendHonestyViewV1,
+  giftSendNoticeV1,
   giftShareForProofV1,
   giftUrlV1,
   reviewCallRowsV1,
@@ -104,6 +106,7 @@ import {
   useIntelligenceBudget,
   useMarketSnapshot,
   usePortfolio,
+  usePrepareGiftSend,
   usePrepareSwapBlueprint,
   useRouteHistory,
   useShareProof,
@@ -316,7 +319,13 @@ export function RouteIntelligenceConsole() {
     [mark, nftReconcile],
   );
   const commerceOrder = useCreateCommerceOrder();
-  const prepare = usePrepareSwapBlueprint();
+  const swapPrepare = usePrepareSwapBlueprint();
+  // A gift from holdings has no route to compare: its prepare is the first
+  // thing it does, and the Review, approve and proof screens below read
+  // whichever prepare produced the Blueprint on screen.
+  const sendPrepare = usePrepareGiftSend();
+  const giftSend = gift?.send ?? null;
+  const prepare = giftSend ? sendPrepare : swapPrepare;
   const flags = status.data?.productMigration;
   const paidIntelligenceOn = flags?.paidIntelligence === true;
   const budget = useIntelligenceBudget({ enabled: paidIntelligenceOn });
@@ -714,14 +723,43 @@ export function RouteIntelligenceConsole() {
     setBudgetResponse(null);
     mark('review', 'start');
     setScreen('review');
-    prepare.mutate({
+    swapPrepare.mutate({
       walletAddress: address.toLowerCase() as `0x${string}`,
       routeRunId: result.routeRunId,
       routeCardHash,
       selectedCandidateHash: candidateHash,
-      ...(gift ? { gift } : {}),
+      ...(gift ? { gift: { recipient: gift.recipient, recipientName: gift.recipientName } } : {}),
     });
   };
+
+  /**
+   * A gift from holdings: the one transfer, prepared as soon as the wallet is
+   * known. Pressing "Give" on the stock was the decision to look at it; the
+   * review still asks nothing of the wallet until its own button is pressed.
+   * `fresh` is a new request after an expired review — a new balance read,
+   * a new simulation, a new Blueprint.
+   */
+  const prepareGiftSend = (fresh = false) => {
+    if (!giftSend || !gift || !address) return;
+    setSubmission(null);
+    mark('review', 'start');
+    setScreen('review');
+    sendPrepare.mutate({
+      walletAddress: address.toLowerCase() as `0x${string}`,
+      tokenAddress: giftSend.tokenAddress,
+      amountAtomic: giftSend.amountAtomic,
+      recipient: gift.recipient,
+      recipientName: gift.recipientName,
+      fresh,
+    });
+  };
+  const giftSendStarted = useRef(false);
+  useEffect(() => {
+    if (giftSendStarted.current || !giftSend || !address) return;
+    giftSendStarted.current = true;
+    prepareGiftSend();
+    // Once per visit: the guard above is what makes this run exactly once.
+  }, [giftSend, address]);
 
   // --- derived models --------------------------------------------------------
 
@@ -1436,7 +1474,9 @@ export function RouteIntelligenceConsole() {
     // as reading only the `prepared` branch, one layer further out.
     const prepareNotice = prepare.isError
       ? swapPrepareRequestFailedNoticeV1()
-      : swapPrepareNoticeV1(prepare.data as never);
+      : giftSend
+        ? giftSendNoticeV1(prepare.data as never)
+        : swapPrepareNoticeV1(prepare.data as never);
     const priceLabel = prepared?.simulationPriceUsdc ? `${prepared.simulationPriceUsdc} USDC` : null;
     const budgetHasHeadroom = Boolean(budgetRecord && Number(budgetRecord.remainingUsdc) > 0);
     const simulationEvidence =
@@ -1449,8 +1489,9 @@ export function RouteIntelligenceConsole() {
           // A Route Card expires with the shortest quote it displays, which is
           // ~20s. "Back to routes" led to that same expired card and the same
           // refusal, so the recoverable refusal offers the thing that fixes it.
-          onCompareAgain={() => compare({ fresh: true })}
-          comparePending={comparePending}
+          onCompareAgain={() => (giftSend ? prepareGiftSend(true) : compare({ fresh: true }))}
+          comparePending={giftSend ? prepare.isPending : comparePending}
+          {...(giftSend ? { compareAgainLabel: 'Prepare it again', backLabel: 'Back to the stock' } : {})}
           calls={
             prepared
               ? reviewCallRowsV1({
@@ -1488,7 +1529,15 @@ export function RouteIntelligenceConsole() {
             })) ?? []
           }
           honesty={
-            prepared
+            prepared && giftSend && gift
+              ? giftSendHonestyViewV1({
+                  token: prepared.review.input.asset,
+                  recipient: gift.recipient,
+                  recipientName: gift.recipientName,
+                  safetyChecks: prepared.review.safety.checks,
+                  simulation: { state: prepared.review.simulationState.status },
+                })
+              : prepared
               ? verificationHonestyViewV1({
                   inputAsset: prepared.review.input.asset,
                   outputAsset: prepared.review.expectedOutput.asset,
@@ -1545,13 +1594,15 @@ export function RouteIntelligenceConsole() {
             ) : undefined
           }
           onApprove={() => undefined}
-          tokenPanels={b20Panels(true)}
-          onBack={() => setScreen('route')}
+          tokenPanels={giftSend ? undefined : b20Panels(true)}
+          onBack={() => (giftSend ? window.history.back() : setScreen('route'))}
           approvePending={prepare.isPending}
         />
 
-        {/* T59 / T60 — the two existing paid-simulation paths, unchanged. */}
-        {prepared && (
+        {/* T59 / T60 — the two existing paid-simulation paths, unchanged. A
+            gift from holdings has none: its transfer was simulated at prepare,
+            and there is no swap for them to price. */}
+        {prepared && !giftSend && (
           <div className="panel">
             <div className="ph">
               <h3>Simulate before signing</h3>

@@ -259,3 +259,53 @@ test('assetChanges: a gift the chain does not show — or shows for another amou
     assert.deepEqual(outcome, { kind: 'unsupported', reason: 'gift_transfer_unverified' });
   }
 });
+
+// A gift from holdings: one debit, no credit, and the gift's own Transfer.
+const SEND_CHANGES = [
+  { asset: STOCK_BASE, direction: 'debit' as const, amountAtomic: '44227', minimumAmountAtomic: '44227', maximumAmountAtomic: '44227' },
+];
+
+test('assetChanges: a send is read from its one Transfer — the wallet’s debit and what the recipient received', () => {
+  const outcome = reconstructAssetChangesV1({
+    walletAddress: WALLET,
+    expectedAssetChanges: SEND_CHANGES,
+    successReceiptLogs: [transferLog(STOCK_BASE.address, WALLET, FRIEND, 44227n)],
+    giftTransfer: { recipient: FRIEND, amountAtomic: '44227' },
+  });
+  assert.equal(outcome.kind, 'reconstructed');
+  if (outcome.kind !== 'reconstructed') throw new Error('unreachable');
+  assert.equal(outcome.actualResult.outputAmountAtomic, '44227');
+  assert.equal(outcome.actualResult.outputAsset?.address, STOCK_BASE.address);
+  assert.deepEqual(
+    outcome.actualResult.assetChanges.map((change) => [change.direction, change.amountAtomic]),
+    [['debit', '44227']],
+  );
+});
+
+test('assetChanges: a send the receipt does not show exactly once is not reconstructed', () => {
+  for (const logs of [
+    [],
+    [transferLog(STOCK_BASE.address, WALLET, FRIEND, 44226n)],
+    [transferLog(STOCK_BASE.address, WALLET, POOL, 44227n)],
+    [transferLog(STOCK_BASE.address, WALLET, FRIEND, 44227n), transferLog(STOCK_BASE.address, WALLET, FRIEND, 44227n)],
+    // Another contract's Transfer event naming the same parties is not the stock's.
+    [transferLog(USDC_BASE.address as `0x${string}`, WALLET, FRIEND, 44227n)],
+  ]) {
+    const outcome = reconstructAssetChangesV1({
+      walletAddress: WALLET,
+      expectedAssetChanges: SEND_CHANGES,
+      successReceiptLogs: logs,
+      giftTransfer: { recipient: FRIEND, amountAtomic: '44227' },
+    });
+    assert.deepEqual(outcome, { kind: 'unsupported', reason: 'gift_transfer_unverified' });
+  }
+});
+
+test('assetChanges: a debit with no credit and no gift is still unsupported', () => {
+  const outcome = reconstructAssetChangesV1({
+    walletAddress: WALLET,
+    expectedAssetChanges: SEND_CHANGES,
+    successReceiptLogs: [transferLog(STOCK_BASE.address, WALLET, FRIEND, 44227n)],
+  });
+  assert.deepEqual(outcome, { kind: 'unsupported', reason: 'unsupported_asset' });
+});

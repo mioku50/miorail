@@ -320,6 +320,8 @@ export const routeRuns = pgTable(
     chainId: integer('chain_id').notNull(),
     // T62: 'swap' (default) or 'earn'. Earn runs store an EarnRouteIntentV1
     // payload; the goal keeps the two isolated within this shared table.
+    // Commerce, NFT and private AI runs followed (0015, 0017, 0020); 'send' —
+    // a gift from what the wallet already holds — in 0072.
     goal: text('goal').default('swap').notNull(),
     schemaVersion: text('schema_version').notNull(),
     status: text('status').notNull(),
@@ -335,7 +337,10 @@ export const routeRuns = pgTable(
     index('route_runs_user_status_created_idx').on(table.userId, table.status, table.createdAt),
     index('route_runs_intent_hash_idx').on(table.intentHash),
     check('route_runs_chain_check', sql`${table.chainId} IN (8453, 84532)`),
-    check('route_runs_goal_check', sql`${table.goal} IN ('swap', 'earn', 'commerce')`),
+    check(
+      'route_runs_goal_check',
+      sql`${table.goal} IN ('swap', 'earn', 'commerce', 'nft', 'private_ai', 'send')`,
+    ),
     check(
       'route_runs_status_check',
       sql`${table.status} IN ('draft', 'ready', 'needs_clarification', 'collecting_candidates', 'collecting_evidence', 'scoring', 'card_ready', 'blueprint_ready', 'awaiting_approval', 'executing', 'reconciling', 'completed', 'partial_failure', 'failed', 'cancelled', 'rejected')`,
@@ -522,6 +527,7 @@ export const executionBlueprints = pgTable(
     walletAddress: text('wallet_address').notNull(),
     chainId: integer('chain_id').notNull(),
     // T62: which Safety Kernel re-validates this Blueprint at approve time.
+    // 'send' (0072): the Gift Send kernel, for a single transfer.
     goal: text('goal').default('swap').notNull(),
     schemaVersion: text('schema_version').notNull(),
     status: text('status').notNull(),
@@ -548,7 +554,7 @@ export const executionBlueprints = pgTable(
       table.expiresAt,
     ),
     check('execution_blueprints_chain_check', sql`${table.chainId} IN (8453, 84532)`),
-    check('execution_blueprints_goal_check', sql`${table.goal} IN ('swap', 'earn')`),
+    check('execution_blueprints_goal_check', sql`${table.goal} IN ('swap', 'earn', 'send')`),
     check(
       'execution_blueprints_status_check',
       sql`${table.status} IN ('draft', 'ready_for_review', 'approved', 'expired', 'invalid')`,

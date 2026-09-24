@@ -26,6 +26,7 @@ import { RouteProofReconcileBindingError } from '@mioagent/route-proof';
 import { RouteStorageIntegrityError } from '@mioagent/route-storage';
 import { logger } from '@mioagent/utils';
 import {
+  giftSendRouteRuntime,
   routeIntelligenceRouter,
   routePlanRouteRuntime,
   routeProofRouteRuntime,
@@ -1220,5 +1221,135 @@ describe('gifts: /swap/prepare with a recipient, and /gift/recipient', () => {
       .send({ value: WALLET })
       .expect(200);
     assert.equal(self.body.code, 'recipient_is_you');
+  });
+});
+
+describe('gifts from holdings: /gift/holding and /gift/send/prepare', () => {
+  const originalSend = { ...giftSendRouteRuntime };
+  const originalPrepare = { ...swapPrepareRouteRuntime };
+  const FRIEND = '0x8e525bfce1c0ffee00000000000000000000beef';
+  const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
+  const HOLDING = { ok: true as const, decimals: 8, symbol: 'NVDAc', balanceAtomic: '44227', blockNumber: '51700000' };
+  const WORTH = { usdcAtomic: '100000', provider: 'uniswap', observedAt: '2026-09-24T12:00:00.000Z' };
+  const BODY = {
+    walletAddress: WALLET,
+    tokenAddress: NVDA,
+    amountAtomic: '44227',
+    recipient: FRIEND,
+    recipientName: null,
+    requestId: 'gift-send-1',
+  };
+  let prepared: Parameters<typeof giftSendRouteRuntime.prepare>[0][] = [];
+  let valued: { amountAtomic: string }[] = [];
+
+  beforeEach(() => {
+    prepared = [];
+    valued = [];
+    giftSendRouteRuntime.flags = (env) => ({ ...originalSend.flags(env), routeIntelligenceV1: true });
+    giftSendRouteRuntime.migrationAvailable = async () => true;
+    giftSendRouteRuntime.sendGoalAvailable = async () => true;
+    giftSendRouteRuntime.now = () => NOW;
+    giftSendRouteRuntime.readHolding = async () => HOLDING;
+    giftSendRouteRuntime.valueInUsdc = async (input) => {
+      valued.push({ amountAtomic: input.amountAtomic });
+      return WORTH;
+    };
+    giftSendRouteRuntime.prepare = async (input) => {
+      prepared.push(input);
+      return { outcome: 'unsupported', reason: 'unsupported_pair', detail: 'fixture' };
+    };
+    swapPrepareRouteRuntime.gift = {
+      routeRun: async () => null,
+      isGiftableStock: async (token) => token === NVDA,
+      resolveName: async (name) => ({ outcome: 'resolved', name, address: FRIEND as `0x${string}` }),
+      giftsApprovedToday: async () => 0,
+    };
+    process.env.CHAIN_ENV = 'mainnet-readonly';
+  });
+
+  afterEach(() => {
+    Object.assign(giftSendRouteRuntime, originalSend);
+    Object.assign(swapPrepareRouteRuntime, originalPrepare);
+    if (originalChainEnv === undefined) delete process.env.CHAIN_ENV;
+    else process.env.CHAIN_ENV = originalChainEnv;
+  });
+
+  test('the holding read needs a session, and answers with the balance and what all of it fetches', async () => {
+    await request(routeApp(null)).post('/api/route-intelligence/gift/holding').send({ tokenAddress: NVDA }).expect(401);
+    const held = await request(routeApp()).post('/api/route-intelligence/gift/holding').send({ tokenAddress: NVDA }).expect(200);
+    assert.deepEqual(held.body, {
+      outcome: 'held',
+      tokenAddress: NVDA,
+      symbol: 'NVDAc',
+      decimals: 8,
+      balanceAtomic: '44227',
+      blockNumber: '51700000',
+      valuation: WORTH,
+    });
+    assert.deepEqual(valued, [{ amountAtomic: '44227' }]);
+  });
+
+  test('no balance is "none", an unread one says it was a read, and an unreviewed stock is refused', async () => {
+    giftSendRouteRuntime.readHolding = async () => ({ ...HOLDING, balanceAtomic: '0' });
+    const none = await request(routeApp()).post('/api/route-intelligence/gift/holding').send({ tokenAddress: NVDA }).expect(200);
+    assert.equal(none.body.outcome, 'none');
+    assert.equal(valued.length, 0, 'nothing held is not priced');
+
+    giftSendRouteRuntime.readHolding = async () => ({ ok: false });
+    const unread = await request(routeApp()).post('/api/route-intelligence/gift/holding').send({ tokenAddress: NVDA }).expect(200);
+    assert.equal(unread.body.code, 'balance_unavailable');
+    assert.match(unread.body.message, /says nothing about the wallet/);
+
+    const other = await request(routeApp())
+      .post('/api/route-intelligence/gift/holding')
+      .send({ tokenAddress: '0x1111111111111111111111111111111111111111' })
+      .expect(200);
+    assert.equal(other.body.code, 'not_a_reviewed_stock');
+  });
+
+  test('an unpriced holding is still held — the value is simply unknown', async () => {
+    giftSendRouteRuntime.valueInUsdc = async () => null;
+    const held = await request(routeApp()).post('/api/route-intelligence/gift/holding').send({ tokenAddress: NVDA }).expect(200);
+    assert.equal(held.body.outcome, 'held');
+    assert.equal(held.body.valuation, null);
+  });
+
+  test('a send the rules refuse is an ordinary outcome naming the rule, and nothing is built', async () => {
+    const response = await request(routeApp())
+      .post('/api/route-intelligence/gift/send/prepare')
+      .send({ ...BODY, amountAtomic: '44228' })
+      .expect(200);
+    assert.equal(response.body.outcome, 'unsupported');
+    assert.equal(response.body.reason, 'gift_refused');
+    assert.match(response.body.detail, /holds 0\.00044227 NVDAc/);
+    assert.equal(prepared.length, 0);
+  });
+
+  test('an accepted send reaches the composer with what was read, bound to the signed-in wallet', async () => {
+    await request(routeApp()).post('/api/route-intelligence/gift/send/prepare').send(BODY).expect(200);
+    assert.equal(prepared.length, 1);
+    const input = prepared[0]!;
+    assert.equal(input.tenantId, USER.id);
+    assert.equal(input.walletAddress, WALLET);
+    assert.equal(input.recipient, FRIEND);
+    assert.equal(input.token.address, NVDA);
+    assert.equal(input.token.symbol, 'NVDAc');
+    assert.equal(input.token.decimals, 8);
+    assert.deepEqual(input.observations, {
+      balance: { balanceAtomic: '44227', blockNumber: '51700000' },
+      valuation: WORTH,
+    });
+  });
+
+  test('another wallet, a missing migration or a signed-out caller never reach the rules', async () => {
+    await request(routeApp(null)).post('/api/route-intelligence/gift/send/prepare').send(BODY).expect(401);
+    await request(routeApp())
+      .post('/api/route-intelligence/gift/send/prepare')
+      .send({ ...BODY, walletAddress: '0x2222222222222222222222222222222222222222' })
+      .expect(403);
+    giftSendRouteRuntime.sendGoalAvailable = async () => false;
+    await request(routeApp()).post('/api/route-intelligence/gift/send/prepare').send(BODY).expect(503);
+    assert.equal(prepared.length, 0);
+    assert.equal(valued.length, 0);
   });
 });

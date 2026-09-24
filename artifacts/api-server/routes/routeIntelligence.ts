@@ -49,8 +49,11 @@ import {
   SwapBlueprintSubmissionResponseV1Schema,
   SwapPrepareRequestV1Schema,
   SwapPrepareResponseV1Schema,
+  GiftHoldingRequestV1Schema,
+  GiftHoldingResponseV1Schema,
   GiftRecipientRequestV1Schema,
   GiftRecipientResponseV1Schema,
+  GiftSendPrepareRequestV1Schema,
   UpdateIntelligenceBudgetRequestV1Schema,
 } from '@mioagent/api-zod';
 import { createStructuredLlmProvider } from '@mioagent/llm';
@@ -73,7 +76,9 @@ import {
 import { approvedStockSponsorshipV1, sponsoredGasConfiguredV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
 import { swapPrepareOutcomeMetaV1 } from '../lib/swapPrepareLog.js';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
-import { checkStockGiftV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
+import { checkStockGiftSendV1, checkStockGiftV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
+import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
+import { valueStockInUsdcV1 } from '../lib/giftSendValuation.js';
 import { createRouteOutcomeProjectorForServerV1 } from '../lib/routeOutcomeProjector.js';
 import { createReliabilityLookupV1 } from '../lib/reliabilityLookup.js';
 import {
@@ -105,14 +110,16 @@ import {
   HydrexSwapBuildAdapter,
   BalancerSwapBuildAdapter,
   approveEarnBlueprintV1,
-  approveExecutionBlueprintV1,
+  approveRouteBlueprintV1,
   createTransactionComposer,
   deriveBlueprintLifecycleV1,
   prepareEarnDepositV1,
+  prepareGiftSendV1,
   recordBlueprintSubmissionV1,
   reviewStoredBlueprintV1,
   type ApproveEarnBlueprintInputV1,
   type ApproveExecutionBlueprintInput,
+  type GiftSendPrepareInputV1,
   type PrepareEarnDepositInputV1,
   type RecordBlueprintSubmissionInput,
   type TransactionComposerPrepareInput,
@@ -1022,6 +1029,192 @@ routeIntelligenceRouter.post('/gift/recipient', async (req, res) => {
   }
 });
 
+// ---------------------------------------------------------------------------
+// A gift from what the wallet already holds.
+//
+// `/gift/holding` answers the form's first question — does this wallet hold
+// the stock, and roughly what is it worth — so the form can offer "give from
+// what you hold" before anything is bought. `/gift/send/prepare` builds and
+// reviews the one transfer; its answer is the swap prepare's shape, so the
+// same Review, approve and proof screens carry it. Approve dispatches on the
+// run: a send run goes to the Gift Send kernel (swapBlueprintRouteRuntime).
+// ---------------------------------------------------------------------------
+
+let sendGoalAdmittedV1 = false;
+
+export const giftSendRouteRuntime = {
+  flags: getMiorailProductMigrationFlags,
+  migrationAvailable: blueprintMigrationAvailable,
+  /** Migration 0072 admits the 'send' goal. Cached once true: a check does not
+   * narrow again while the process lives. */
+  sendGoalAvailable: async (): Promise<boolean> => {
+    if (sendGoalAdmittedV1) return true;
+    const rows = await client`
+      SELECT
+        (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'route_runs_goal_check' LIMIT 1) AS runs,
+        (SELECT pg_get_constraintdef(oid) FROM pg_constraint WHERE conname = 'execution_blueprints_goal_check' LIMIT 1) AS blueprints
+    `;
+    const row = rows[0];
+    sendGoalAdmittedV1 = Boolean(row && String(row.runs ?? '').includes("'send'") && String(row.blueprints ?? '').includes("'send'"));
+    return sendGoalAdmittedV1;
+  },
+  readHolding: (tokenAddress: string, walletAddress: string) => readStockHoldingV1(tokenAddress, walletAddress),
+  valueInUsdc: (input: { token: import('@mioagent/route-domain').AssetRefV1; amountAtomic: string; walletAddress: `0x${string}`; now: Date }) =>
+    valueStockInUsdcV1(input),
+  prepare: (input: GiftSendPrepareInputV1) =>
+    prepareGiftSendV1(
+      { repository: createDatabaseRouteStorageRepository(client), simulate: simulateSwapCallsV1 },
+      input,
+    ),
+  now: () => new Date(),
+};
+
+routeIntelligenceRouter.post('/gift/holding', async (req, res) => {
+  const flags = giftSendRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1) {
+    res.status(404).json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = GiftHoldingRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_gift_holding_request', code: 'invalid_gift_holding_request' });
+    return;
+  }
+  const refused = (code: 'not_a_reviewed_stock' | 'balance_unavailable', message: string) =>
+    res.json(GiftHoldingResponseV1Schema.parse({ outcome: 'refused', code, message }));
+  try {
+    const token = parsed.data.tokenAddress;
+    if (!(await swapPrepareRouteRuntime.gift.isGiftableStock(token))) {
+      refused('not_a_reviewed_stock', 'Only a Coinbase-issued tokenized stock Miorail has reviewed can be given here.');
+      return;
+    }
+    const holding = await giftSendRouteRuntime.readHolding(token, user.address);
+    if (!holding.ok) {
+      refused(
+        'balance_unavailable',
+        'Miorail could not read this wallet’s balance just now. This says nothing about the wallet; you can still buy the gift with USDC.',
+      );
+      return;
+    }
+    if (holding.balanceAtomic === '0') {
+      res.json(
+        GiftHoldingResponseV1Schema.parse({
+          outcome: 'none',
+          tokenAddress: token,
+          symbol: holding.symbol,
+          decimals: holding.decimals,
+          blockNumber: holding.blockNumber,
+        }),
+      );
+      return;
+    }
+    const valuation = await giftSendRouteRuntime
+      .valueInUsdc({
+        token: {
+          assetId: `eip155:8453/erc20:${token}`,
+          chainId: 8453,
+          kind: 'erc20',
+          address: token,
+          symbol: holding.symbol,
+          decimals: holding.decimals,
+        },
+        amountAtomic: holding.balanceAtomic,
+        walletAddress: user.address as `0x${string}`,
+        now: giftSendRouteRuntime.now(),
+      })
+      .catch(() => null);
+    res.json(
+      GiftHoldingResponseV1Schema.parse({
+        outcome: 'held',
+        tokenAddress: token,
+        symbol: holding.symbol,
+        decimals: holding.decimals,
+        balanceAtomic: holding.balanceAtomic,
+        blockNumber: holding.blockNumber,
+        valuation,
+      }),
+    );
+  } catch (cause) {
+    logger.warn('Gift holding read failed', safeFailureMetaV1(cause));
+    refused(
+      'balance_unavailable',
+      'Miorail could not read this wallet’s balance just now. This says nothing about the wallet; you can still buy the gift with USDC.',
+    );
+  }
+});
+
+routeIntelligenceRouter.post('/gift/send/prepare', async (req, res) => {
+  const flags = giftSendRouteRuntime.flags(process.env);
+  if (!flags.routeIntelligenceV1) {
+    res.status(404).json({ error: 'route_intelligence_disabled', code: 'route_intelligence_disabled' });
+    return;
+  }
+  const user = signedRoutePlanUser(req);
+  if (!user) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const parsed = GiftSendPrepareRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'invalid_gift_send_request', code: 'invalid_gift_send_request' });
+    return;
+  }
+  if (parsed.data.walletAddress !== user.address) {
+    res.status(403).json({ error: 'wallet_mismatch', code: 'wallet_mismatch' });
+    return;
+  }
+  const chainEnv = (process.env.CHAIN_ENV ?? 'sepolia').trim().toLowerCase();
+  if (chainEnv !== 'mainnet' && chainEnv !== 'mainnet-readonly') {
+    res.status(409).json({ error: 'base_mainnet_required', code: 'base_mainnet_required' });
+    return;
+  }
+  try {
+    if (!(await giftSendRouteRuntime.migrationAvailable()) || !(await giftSendRouteRuntime.sendGoalAvailable())) {
+      res.status(503).json({ error: 'route_storage_unavailable', code: 'route_storage_unavailable' });
+      return;
+    }
+    const now = giftSendRouteRuntime.now();
+    const verdict = await checkStockGiftSendV1({
+      tokenAddress: parsed.data.tokenAddress,
+      amountAtomic: parsed.data.amountAtomic,
+      walletAddress: user.address,
+      gift: { recipient: parsed.data.recipient, recipientName: parsed.data.recipientName },
+      isGiftableStock: swapPrepareRouteRuntime.gift.isGiftableStock,
+      resolveName: swapPrepareRouteRuntime.gift.resolveName,
+      giftsApprovedToday: () => swapPrepareRouteRuntime.gift.giftsApprovedToday(user.id, now),
+      readHolding: giftSendRouteRuntime.readHolding,
+      valueInUsdc: ({ token, amountAtomic }) =>
+        giftSendRouteRuntime.valueInUsdc({ token, amountAtomic, walletAddress: user.address as `0x${string}`, now }),
+    });
+    if (!verdict.ok) {
+      logger.info('Gift send refused before prepare', { code: verdict.code });
+      res.json(SwapPrepareResponseV1Schema.parse({ outcome: 'unsupported', reason: 'gift_refused', detail: verdict.message }));
+      return;
+    }
+    const result = await giftSendRouteRuntime.prepare({
+      tenantId: user.id,
+      walletAddress: user.address as `0x${string}`,
+      requestId: parsed.data.requestId,
+      token: verdict.token,
+      amountAtomic: parsed.data.amountAtomic,
+      recipient: verdict.recipient,
+      observations: { balance: verdict.balance, valuation: verdict.valuation },
+      reviewedStock: true,
+      now,
+    });
+    if (result.outcome !== 'prepared') logger.warn('Gift send prepare produced no calls', swapPrepareOutcomeMetaV1(result));
+    res.json(SwapPrepareResponseV1Schema.parse(result));
+  } catch (cause) {
+    logger.error('Gift send prepare failed', safeFailureMetaV1(cause));
+    res.status(500).json({ error: 'gift_send_prepare_failed', code: 'gift_send_prepare_failed' });
+  }
+});
+
 routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
   const flags = swapPrepareRouteRuntime.flags(process.env);
   if (!flags.routeIntelligenceV1) {
@@ -1115,13 +1308,24 @@ routeIntelligenceRouter.post('/swap/prepare', async (req, res) => {
 export const swapBlueprintRouteRuntime = {
   flags: getMiorailProductMigrationFlags,
   migrationAvailable: blueprintMigrationAvailable,
+  // A gift from holdings is approved by its own kernel, with the wallet's
+  // balance read again now; every other run here is a swap.
   approve: async (input: ApproveExecutionBlueprintInput) =>
-    approveExecutionBlueprintV1(
+    approveRouteBlueprintV1(
       {
         repository: createDatabaseRouteStorageRepository(client),
-        contractSecurity: async ({ chainId, addresses }) =>
-          (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
-        providerContractPin: providerContractPinVerifiedV1,
+        swap: {
+          contractSecurity: async ({ chainId, addresses }) =>
+            (await loadTokenSecurityContext(chainId, addresses)).tokenSecurity,
+          providerContractPin: providerContractPinVerifiedV1,
+        },
+        send: {
+          readBalance: async ({ tokenAddress, walletAddress }) => {
+            const holding = await readStockHoldingV1(tokenAddress, walletAddress);
+            return holding.ok ? holding.balanceAtomic : null;
+          },
+          reviewedStock: swapPrepareRouteRuntime.gift.isGiftableStock,
+        },
       },
       input,
     ),

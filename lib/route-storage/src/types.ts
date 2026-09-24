@@ -19,8 +19,13 @@ import type { RouteRunHistoryParamsV1, RouteRunHistoryPageV1 } from './history.j
 
 /** T62: swap route runs carry goal 'swap'; earn runs are stored in the SAME
  * route_runs table with goal 'earn' and an EarnRouteIntentV1 payload (never a
- * swap-shaped RouteIntentV1). The `goal` column keeps the two isolated. */
-export type RouteRunGoalV1 = 'swap' | 'earn';
+ * swap-shaped RouteIntentV1). The `goal` column keeps the two isolated.
+ *
+ * 'send' (migration 0072): a gift from what the wallet already holds. Its
+ * payload IS a RouteIntentV1 — with goal 'send', no output asset and no
+ * candidate — so the goal-agnostic Blueprint/Proof reads serve it as they
+ * serve a swap, and only its own insert path can create one. */
+export type RouteRunGoalV1 = 'swap' | 'earn' | 'send';
 
 export interface RouteRunRecord {
   id: string;
@@ -107,6 +112,15 @@ export interface RouteStorageRepository {
    * use). Stored in the SHARED execution_blueprints table (goal='earn' payload),
    * so approve/submission/proof reuse the T57/T58 machinery unchanged. */
   insertEarnBlueprint(runId: string, blueprint: ExecutionBlueprintV1, links?: BlueprintStorageLinks): Promise<void>;
+
+  // --- Gift from holdings: a send run and its one Blueprint ----------------
+  // A send has no quote, no candidate and no Evidence Set, so it cannot pass
+  // through insertBlueprint, which requires both. Its Blueprint is bound to the
+  // send run instead (goal 'send' on both rows), and createRouteRun refuses a
+  // send intent so the two paths can never produce each other's rows.
+  createSendRouteRun(input: RouteIntentV1, idempotencyKey: string): Promise<RouteRunRecord>;
+  getSendRouteRun(id: string, userId: string): Promise<RouteRunRecord | null>;
+  insertSendBlueprint(runId: string, blueprint: ExecutionBlueprintV1): Promise<void>;
 
   insertCandidate(runId: string, candidate: RouteCandidateV1): Promise<void>;
   listCandidates(runId: string, userId: string): Promise<RouteCandidateV1[]>;

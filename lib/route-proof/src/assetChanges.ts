@@ -141,6 +141,46 @@ function supportedAssetV1(asset: ExpectedAssetChangeV1['asset']): boolean {
 }
 
 /**
+ * A send, read back from the receipt: exactly one Transfer of the token, from
+ * the wallet to the recipient, for exactly the declared amount. The wallet's
+ * debit is its net outflow of that token in the receipt; what the recipient
+ * received — the output — is that one Transfer's value.
+ */
+function reconstructSendV1(input: {
+  walletAddress: `0x${string}`;
+  debit: ExpectedAssetChangeV1;
+  logs: readonly VerifiedReceiptLogV1[];
+  giftTransfer: GiftTransferV1;
+}): AssetReconstructionOutcomeV1 {
+  const asset = input.debit.asset;
+  if (asset.kind !== 'erc20' || !supportedAssetV1(asset)) return { kind: 'unsupported', reason: 'unsupported_asset' };
+  const token = (asset.address as string).toLowerCase();
+  const wallet = input.walletAddress.toLowerCase();
+  const recipient = input.giftTransfer.recipient.toLowerCase();
+  const decoded = decodeTransferLogsV1(input.logs);
+  const matches = decoded.filter(
+    (transfer) =>
+      transfer.tokenAddress === token &&
+      transfer.from === wallet &&
+      transfer.to === recipient &&
+      transfer.value.toString() === input.giftTransfer.amountAtomic,
+  );
+  if (matches.length !== 1) return { kind: 'unsupported', reason: 'gift_transfer_unverified' };
+  const net = netForToken(decoded, token, wallet);
+  const debit = net.out > net.in ? net.out - net.in : 0n;
+  return {
+    kind: 'reconstructed',
+    actualResult: {
+      assetChanges: [
+        { asset, direction: 'debit', amountAtomic: debit.toString(), minimumAmountAtomic: null, maximumAmountAtomic: null },
+      ],
+      outputAmountAtomic: matches[0]!.value.toString(),
+      outputAsset: asset,
+    },
+  };
+}
+
+/**
  * Reconstructs the actual Base swap movement from verified receipt logs only.
  * ERC-20 sides use wallet-net Transfer events emitted by that token's own
  * contract. Native sides use the canonical WETH9 Deposit/Withdrawal amount,
@@ -163,6 +203,17 @@ export function reconstructAssetChangesV1(input: {
 }): AssetReconstructionOutcomeV1 {
   const outputChange = input.expectedAssetChanges.find((change) => change.direction === 'credit') ?? null;
   const inputChange = input.expectedAssetChanges.find((change) => change.direction === 'debit') ?? null;
+
+  // A gift from holdings: nothing is bought, so nothing is credited. The one
+  // debit is the gift itself, and what the chain must show is its Transfer.
+  if (!outputChange && inputChange && input.giftTransfer && input.expectedAssetChanges.length === 1) {
+    return reconstructSendV1({
+      walletAddress: input.walletAddress,
+      debit: inputChange,
+      logs: input.successReceiptLogs,
+      giftTransfer: input.giftTransfer,
+    });
+  }
 
   if (!outputChange || !supportedAssetV1(outputChange.asset) || (inputChange && !supportedAssetV1(inputChange.asset))) {
     return { kind: 'unsupported', reason: 'unsupported_asset' };

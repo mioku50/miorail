@@ -103,7 +103,9 @@ const ExecutionBlueprintV1ObjectSchema = z
     // those existing blueprintHashes stable — goal is a routing tag, and the
     // selected kernel fails closed on the wrong call shape regardless, so it can
     // never be abused to bypass validation.
-    goal: z.enum(['swap', 'earn']).default('swap'),
+    // 'send': a gift from what the wallet already holds — one ERC-20
+    // transfer, checked by the Gift Send kernel and nothing else.
+    goal: z.enum(['swap', 'earn', 'send']).default('swap'),
     intentHash: HashV1Schema,
     selectedCandidateHash: HashV1Schema,
     evidenceSetHash: HashV1Schema,

@@ -189,6 +189,9 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
     if (idempotencyKey.trim().length === 0) {
       throw new RouteStorageIntegrityError('Route run idempotency key must not be empty');
     }
+    if (intent.goal === 'send') {
+      throw new RouteStorageIntegrityError('A send intent is stored by createSendRouteRun');
+    }
     const key = `${intent.tenantId}\u0000${idempotencyKey}`;
     const byId = this.runs.get(intent.id);
     const byKeyId = this.runByIdempotency.get(key);
@@ -229,9 +232,97 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
   async getRouteRun(id: string, userId: string): Promise<RouteRunRecord | null> {
     const stored = this.runs.get(id);
     // T62: never return an earn run through the swap getter — its payload is an
-    // EarnRouteIntentV1 that would fail to parse as a swap RouteIntentV1.
-    if (!stored || stored.userId !== userId || stored.goal !== 'swap') return null;
+    // EarnRouteIntentV1 that would fail to parse as a swap RouteIntentV1. A send
+    // run's payload is a RouteIntentV1, and Postgres returns it here too (its
+    // query has no goal filter): the goal-agnostic submission and proof paths
+    // read it through this getter, and the swap composer refuses its goal.
+    if (!stored || stored.userId !== userId || (stored.goal !== 'swap' && stored.goal !== 'send')) return null;
     return this.routeRunRecord(stored);
+  }
+
+  // --- Gift from holdings ----------------------------------------------------
+
+  async createSendRouteRun(input: RouteIntentV1, idempotencyKey: string): Promise<RouteRunRecord> {
+    const intent = parseRouteIntent(input);
+    if (intent.goal !== 'send') {
+      throw new RouteStorageIntegrityError('createSendRouteRun requires a send intent');
+    }
+    if (idempotencyKey.trim().length === 0) {
+      throw new RouteStorageIntegrityError('Send route run idempotency key must not be empty');
+    }
+    // One key space per user in Postgres (route_runs_user_idempotency_unique),
+    // so a send key never shares a slot with a swap key either.
+    const key = `${intent.tenantId}\u0000${idempotencyKey}`;
+    const byId = this.runs.get(intent.id);
+    const byKeyId = this.runByIdempotency.get(key);
+    const byKey = byKeyId ? this.runs.get(byKeyId) : undefined;
+    if (byId || byKey) {
+      const existing = byId ?? byKey!;
+      if (
+        existing.id !== intent.id ||
+        existing.userId !== intent.tenantId ||
+        existing.goal !== 'send' ||
+        existing.idempotencyKey !== idempotencyKey ||
+        !payloadEquals(existing.payload, intent)
+      ) {
+        conflict('Send route run ID or user-scoped idempotency key already has different content');
+      }
+      return this.routeRunRecord(existing);
+    }
+    const stored: StoredRun = {
+      id: intent.id,
+      userId: intent.tenantId,
+      walletAddress: intent.walletAddress,
+      chainId: intent.chainId,
+      goal: 'send',
+      schemaVersion: intent.schemaVersion,
+      status: intent.status,
+      intentHash: intent.intentHash,
+      idempotencyKey,
+      payload: structuredClone(intent),
+      createdAt: intent.createdAt,
+      updatedAt: intent.updatedAt,
+      completedAt: null,
+    };
+    this.runs.set(stored.id, stored);
+    this.runByIdempotency.set(key, stored.id);
+    return this.routeRunRecord(stored);
+  }
+
+  async getSendRouteRun(id: string, userId: string): Promise<RouteRunRecord | null> {
+    const stored = this.runs.get(id);
+    if (!stored || stored.userId !== userId || stored.goal !== 'send') return null;
+    return this.routeRunRecord(stored);
+  }
+
+  async insertSendBlueprint(runId: string, input: ExecutionBlueprintV1): Promise<void> {
+    const blueprint = parseExecutionBlueprint(input);
+    if (blueprint.goal !== 'send') {
+      throw new RouteStorageIntegrityError('insertSendBlueprint requires a send-goal Blueprint');
+    }
+    const run = this.runs.get(runId);
+    if (!run || run.goal !== 'send') throw new RouteStorageTenantError('Send Route Run is missing or belongs to another tenant');
+    if (run.userId !== blueprint.tenantId) {
+      throw new RouteStorageTenantError('Send Route Run is missing or belongs to another tenant');
+    }
+    const record = this.routeRunRecord(run);
+    assertLinkedHash(blueprint.intentHash, record.intentHash, 'sendBlueprint.intentHash');
+    const next: StoredBlueprint = {
+      id: blueprint.id,
+      runId,
+      userId: blueprint.tenantId,
+      hash: blueprint.blueprintHash,
+      preparedTransactionActionId: null,
+      payload: structuredClone(blueprint),
+    };
+    const existing =
+      this.blueprints.get(blueprint.id) ??
+      this.findByRunHash(this.blueprints, runId, blueprint.blueprintHash);
+    if (existing) {
+      if (immutableDuplicate(existing, next, existing.preparedTransactionActionId === null)) return;
+      conflict('Send Blueprint ID or run-scoped hash already has different content');
+    }
+    this.blueprints.set(next.id, next);
   }
 
   // --- T62: earn persistence -----------------------------------------------
@@ -920,8 +1011,10 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
 
   async listRouteRunHistory(userId: string, params: RouteRunHistoryParamsV1): Promise<RouteRunHistoryPageV1> {
     const cursor = params.cursor ? decodeRouteHistoryCursorV1(params.cursor) : null;
+    // The same goal filter as Postgres: only runs whose payload is a
+    // RouteIntentV1 belong in this list.
     const runs = [...this.runs.values()]
-      .filter((run) => run.userId === userId)
+      .filter((run) => run.userId === userId && (run.goal === 'swap' || run.goal === 'send'))
       .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
     const afterCursor = cursor
       ? runs.filter(
