@@ -234,8 +234,9 @@ export class InMemoryRouteStorageRepository implements RouteStorageRepository {
     // T62: never return an earn run through the swap getter — its payload is an
     // EarnRouteIntentV1 that would fail to parse as a swap RouteIntentV1. A send
     // run's payload is a RouteIntentV1, and Postgres returns it here too (its
-    // query has no goal filter): the goal-agnostic submission and proof paths
-    // read it through this getter, and the swap composer refuses its goal.
+    // query filters `goal IN ('swap', 'send')`): the goal-agnostic submission
+    // and proof paths read it through this getter, and the swap composer
+    // refuses its goal.
     if (!stored || stored.userId !== userId || (stored.goal !== 'swap' && stored.goal !== 'send')) return null;
     return this.routeRunRecord(stored);
   }

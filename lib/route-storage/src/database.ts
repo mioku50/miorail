@@ -570,11 +570,18 @@ export function createDatabaseRouteStorageRepository(
     },
 
     async getRouteRun(id: string, userId: string): Promise<RouteRunRecord | null> {
+      // Only the runs whose payload IS a RouteIntentV1: a swap, or a gift from
+      // holdings. Earn, Commerce, NFT and Private AI runs share this table with
+      // their own intent shapes. Unfiltered, an earn run was FOUND here and
+      // failed to parse, so `getRouteRun(...) ?? getEarnRouteRun(...)` threw
+      // before it could fall back — recording an earn deposit's submission
+      // would have failed the first time anybody made one. The in-memory fake
+      // already returned null for them.
       const rows = await sql`
         SELECT id, user_id, wallet_address, chain_id, schema_version, status,
                intent_hash, intent_payload, idempotency_key, created_at, updated_at, completed_at
         FROM route_runs
-        WHERE id = ${id} AND user_id = ${userId}
+        WHERE id = ${id} AND user_id = ${userId} AND goal IN ('swap', 'send')
         LIMIT 1
       `;
       return rows[0] ? routeRunFromRow(rows[0]) : null;
