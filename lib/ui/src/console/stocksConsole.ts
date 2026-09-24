@@ -337,10 +337,13 @@ export function autoMeasureDecisionV1(input: {
  * refused. Everything else on the board is the same evidence a session sees.
  */
 export function stocksVisitorNoticeV1(onSignIn?: () => void): StocksVisitorNoticeV1 {
+  // "Without a wallet" was false the moment a wallet connected on its own —
+  // Base App does that — while the header showed its address. What is missing
+  // is the signature, whichever wallet is there.
   return {
-    title: 'Reading without a wallet',
-    body: 'Everything on this board is public: the last measured prices, what it cost to get back out, and which contract is official, each with its age. Connect a wallet to measure again now, watch a price, or buy and sell.',
-    action: 'Connect wallet',
+    title: 'Reading without signing in',
+    body: 'Everything on this board is public: the last measured prices, what it cost to get back out, and which contract is official, each with its age. Sign in with your wallet to measure again now, watch a price, or buy and sell.',
+    action: 'Sign in',
     ...(onSignIn ? { onSignIn } : {}),
   };
 }

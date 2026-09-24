@@ -168,8 +168,8 @@ test('signed out, the session-only controls lead to the wallet when there is a d
   assert.equal(probe.measure, true);
   assert.equal(probe.watch, true);
   assert.equal(probe.askAvailable, true);
-  assert.match(markup, /Reading without a wallet/);
-  assert.match(markup, />Connect wallet</);
+  assert.match(markup, /Reading without signing in/);
+  assert.match(markup, />Sign in</);
 });
 
 test('signed out with no door, those controls are absent rather than inert', () => {
@@ -182,7 +182,7 @@ test('signed out with no door, those controls are absent rather than inert', () 
   assert.equal(probe.measure, false);
   assert.equal(probe.watch, false);
   assert.equal(probe.askAvailable, false);
-  assert.doesNotMatch(markup, />Connect wallet</);
+  assert.doesNotMatch(markup, />Sign in</);
 });
 
 test('a session reader gets no visitor notice and the full set of controls', () => {
@@ -201,7 +201,7 @@ test('the notice names what a visitor cannot do yet, so nothing looks broken', (
   const notice = stocksVisitorNoticeV1(() => {});
   assert.match(notice.body, /measure again now, watch a price, or buy and sell/);
   assert.match(notice.body, /each with its age/);
-  assert.equal(notice.action, 'Connect wallet');
+  assert.equal(notice.action, 'Sign in');
   assert.equal(stocksVisitorNoticeV1().onSignIn, undefined);
 });
 

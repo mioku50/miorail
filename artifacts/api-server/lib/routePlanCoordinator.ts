@@ -174,6 +174,16 @@ export class RoutePlanCoordinator {
       });
     }
     if (resolution.outcome === 'rejected') {
+      // The one line a refused goal leaves: which checks, on which fields —
+      // never the words, which are the person's. On 2026-09-24 a Base App buy
+      // was refused here and nothing in the log said which check had fired.
+      try {
+        logger.info('Swap goal refused', {
+          issues: resolution.issues.map((entry) => `${entry.code}:${entry.field}`),
+        });
+      } catch {
+        // A log line never decides an outcome.
+      }
       return RoutePlanResponseV1Schema.parse({
         outcome: 'rejected',
         issues: resolution.issues,

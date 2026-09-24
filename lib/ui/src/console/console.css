@@ -343,8 +343,13 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .st.now .b { background: var(--grad); box-shadow: var(--bar-glow); }
 
 .mio-console .panel { border-radius: var(--r); background: var(--panel); box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); margin-bottom: 14px; }
-.mio-console .ph { display: flex; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--line); }
-.mio-console .ph h3 { margin: 0; font-size: var(--fs-body); font-weight: 600; }
+/* A heading can be a goal sentence carrying two 42-character addresses. On a
+   393px phone its unbreakable words plus the pill and Cancel beside it were
+   wider than the panel, so the controls ran 110px past the edge and the whole
+   page scrolled sideways (Base App, 2026-09-24). The row wraps, and the heading
+   may break inside an address rather than push anything off-screen. */
+.mio-console .ph { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 11px 16px; border-bottom: 1px solid var(--line); }
+.mio-console .ph h3 { margin: 0; font-size: var(--fs-body); font-weight: 600; min-width: 0; overflow-wrap: anywhere; }
 .mio-console .ph .sub { font-size: var(--fs-meta); color: var(--faint); }
 .mio-console .ph .rt { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .mio-console .pb { padding: 16px; }

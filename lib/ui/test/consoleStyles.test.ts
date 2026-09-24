@@ -443,3 +443,17 @@ test('every app grid breakpoint covers the no-right variant too', () => {
     `these breakpoints set the app grid without the .no-right variant: ${offenders.join(', ')}`,
   );
 });
+
+describe('a panel heading on a phone', () => {
+  // 2026-09-24, Base App: the Comparing heading was the goal sentence with two
+  // 42-character addresses. Its unbreakable words plus the "done" pill and
+  // Cancel were wider than a 393px panel, so the controls ran 110px past the
+  // edge and the page scrolled sideways (measured: main 390 wide, 500 scroll).
+  test('the header row wraps, and the heading may break inside an address', () => {
+    const row = /\.mio-console \.ph \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    assert.match(row, /flex-wrap:\s*wrap/);
+    const heading = /\.mio-console \.ph h3 \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    assert.match(heading, /min-width:\s*0/);
+    assert.match(heading, /overflow-wrap:\s*anywhere/);
+  });
+});

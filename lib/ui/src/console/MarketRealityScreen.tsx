@@ -1737,7 +1737,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
   return (
     <section className="mr" aria-label="Market Reality">
       {model.visitor ? (
-        <div className="mr-scope" aria-label="Reading without a wallet">
+        <div className="mr-scope" aria-label="Reading without signing in">
           <div>
             <h3>{model.visitor.title}</h3>
             <p className="lnote">{model.visitor.body}</p>
