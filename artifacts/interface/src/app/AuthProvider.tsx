@@ -43,6 +43,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const previousAddress = useRef<string | null>(null);
   const previousConnected = useRef<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  // The wallet's own signature sheet is part of signing too. Without it the
+  // button read "Continue" while a request sat open in the wallet, and every
+  // press was dropped by the single-flight guard below — silently.
+  const [awaitingSignature, setAwaitingSignature] = useState(false);
 
   // T47: detect BaseApp vs normal-web wallet context so the backend can tune
   // provider-specific behavior. Unrelated to SIWE.
@@ -91,6 +95,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (addressChanged || justDisconnected) {
       attemptAddress.current = null;
+      setAwaitingSignature(false);
       setError(null);
       void (async () => {
         try {
@@ -119,7 +124,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (session.data?.user) await logoutWalletSession();
       clearTenantClientState(queryClient);
       const nextChallenge = await challenge.mutateAsync({ address });
-      const signature = await signMessageAsync({ message: nextChallenge.message });
+      setAwaitingSignature(true);
+      let signature: `0x${string}`;
+      try {
+        signature = await signMessageAsync({ message: nextChallenge.message });
+      } finally {
+        setAwaitingSignature(false);
+      }
       const result = await verify.mutateAsync({ message: nextChallenge.message, signature });
       queryClient.setQueryData(['session'], { user: result.user });
     } catch (cause) {
@@ -141,7 +152,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const value: AuthGateContextValue = {
     ...gate,
     continueWithWallet,
-    signing: challenge.isPending || verify.isPending,
+    signing: challenge.isPending || awaitingSignature || verify.isPending,
     error,
   };
 

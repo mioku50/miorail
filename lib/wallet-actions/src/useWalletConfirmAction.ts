@@ -231,7 +231,7 @@ export function useWalletConfirmAction({
 
   const confirm = async () => {
     if (!address) {
-      setError('Connect your Base Account wallet first');
+      setError('Connect your wallet first');
       setStatus('failed');
       return;
     }

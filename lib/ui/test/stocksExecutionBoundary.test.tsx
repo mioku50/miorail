@@ -436,7 +436,7 @@ describe('Phase 17.6 — the browser can sign, and still builds nothing', () => 
   const rendered = page.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
   test('the wallet is opened, and the promise sits on the control', () => {
-    assert.match(rendered, /Open in your Base Account/);
+    assert.match(rendered, /Open in your wallet/);
     assert.match(rendered, /hands them to your wallet untouched/);
     assert.match(rendered, /holds no key, signs nothing and/);
   });
@@ -515,11 +515,11 @@ describe('Phase 17.7 — the review screen is shared, and only the wallet differ
     for (const file of [webPage, baseApp]) {
       assert.doesNotMatch(file, /Review before anything is signed/);
       assert.doesNotMatch(file, /Confirm these terms/);
-      assert.doesNotMatch(file, /Open in your Base Account/);
+      assert.doesNotMatch(file, /Open in your wallet/);
     }
     assert.match(screen, /Review before anything is signed/);
     assert.match(screen, /Confirm these terms/);
-    assert.match(screen, /Open in your Base Account/);
+    assert.match(screen, /Open in your wallet/);
   });
 
   test('the shared screen still builds nothing and holds no wallet', () => {

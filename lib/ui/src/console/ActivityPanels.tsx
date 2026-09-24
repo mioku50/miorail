@@ -54,7 +54,7 @@ const RUN_STAGE_COPY_V1: Readonly<Record<string, string>> = {
   ready: 'Prepared and compared. Never signed, so there is no proof.',
   card_ready: 'A Route Card was produced. Never signed, so there is no proof.',
   blueprint_ready: 'An Execution Blueprint was built. Never signed, so there is no proof.',
-  awaiting_approval: 'Waiting on approval in Base Account. Nothing was submitted.',
+  awaiting_approval: 'Waiting on approval in your wallet. Nothing was submitted.',
   executing: 'Submitted. Receipts have not been reconciled yet.',
   reconciling: 'Submitted. Expected and actual are being compared.',
   completed: 'Executed and reconciled.',

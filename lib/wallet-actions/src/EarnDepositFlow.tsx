@@ -75,7 +75,7 @@ function EarnDepositReview({ prepared }: { prepared: PreparedEarn }) {
       </div>
       <div className="pb">
         <p className="eyebrow">
-          The server prepared these exact calls — nothing is signed until you confirm in your Base Account.
+          The server prepared these exact calls — nothing is signed until you confirm in your wallet.
         </p>
         <div className="kv">
           <span className="k">Quote expiry</span>

@@ -70,8 +70,8 @@ test('the submit hook sends the sponsor beside the Builder Code and drops it aft
   // attribution, which is lost silently when missing.
   assert.match(source, /\.\.\.\(suffix \? \{ dataSuffix: \{ value: suffix, optional: true \} \} : \{\}\),\s*\.\.\.\(gas\.capability \?\? \{\}\),/);
   // Declined only on a failure that was not the person saying no.
-  const failure = source.slice(source.indexOf("const message = cause instanceof Error ? cause.message : 'Wallet submission failed';"));
+  const failure = source.slice(source.indexOf('const message = walletSubmissionFailureMessageV1(cause);'));
   assert.match(failure.slice(0, 400), /if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/);
-  const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf("const message = cause instanceof Error ? cause.message : 'Wallet submission failed';"));
+  const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf('const message = walletSubmissionFailureMessageV1(cause);'));
   assert.doesNotMatch(rejection, /sponsorDeclinedRef/, 'saying no in the wallet is not the sponsor failing');
 });

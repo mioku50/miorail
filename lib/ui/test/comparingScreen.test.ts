@@ -352,12 +352,12 @@ describe('the signing button is the real one', () => {
       ReviewScreen(review({ signSlot: { type: 'button', props: { children: 'Sign with Base Account' } } as never })),
     );
     assert.match(rendered, /Sign with Base Account/);
-    assert.equal(rendered.includes('Approve in Base Account'), false);
+    assert.equal(rendered.includes('Approve in your wallet'), false);
   });
 
   test('with no slot the built-in button still renders, so the row is never empty', () => {
     const rendered = JSON.stringify(ReviewScreen(review({ simulation: { ...review().simulation, canSign: false, disabledReason: 'x' } })));
-    assert.match(rendered, /Approve in Base Account/);
+    assert.match(rendered, /Approve in your wallet/);
     assert.match(rendered, /"disabled":true/);
   });
 
@@ -367,7 +367,7 @@ describe('the signing button is the real one', () => {
     // pressing it did nothing. No slot means nothing was prepared to sign.
     const rendered = JSON.stringify(ReviewScreen(review()));
     assert.equal(review().simulation.canSign, true);
-    assert.match(rendered, /Approve in Base Account/);
+    assert.match(rendered, /Approve in your wallet/);
     assert.match(rendered, /"disabled":true/);
     assert.match(rendered, /Nothing was prepared for signing, so there is nothing to approve\. The reason is above\./);
     assert.doesNotMatch(rendered, /Miorail prepared these calls/);

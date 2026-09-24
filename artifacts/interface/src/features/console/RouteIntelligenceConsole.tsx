@@ -1785,7 +1785,7 @@ export function RouteIntelligenceConsole() {
           { title: 'Goal received', detail: goalLabel },
           { title: 'Routes compared', detail: `${projection?.availableRoutes.length ?? 0} quotable` },
           { title: simulation.passed ? 'Simulation passed' : 'Simulation not run', detail: simulation.subLabel },
-          { title: 'Approved in Base Account', detail: submission?.batchId ?? 'awaiting the wallet' },
+          { title: 'Approved in your wallet', detail: submission?.batchId ?? 'awaiting the wallet' },
           ...(submission?.txHashes ?? []).map((hash) => ({ title: 'Transaction', detail: hash, done: true })),
           ...(proof ? [{ title: 'Reconciled onchain', detail: `block ${proofView!.blockNumber ?? '—'}`, done: true }] : []),
         ]}

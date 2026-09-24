@@ -31,6 +31,14 @@ export {
   sponsoredGasPlanV1,
 } from './src/sponsoredGas';
 export type { SponsoredGasOfferV1, SponsoredGasStateV1 } from './src/sponsoredGas';
+export {
+  WALLET_CANNOT_BATCH_V1,
+  WALLET_HAS_NO_BATCHES_V1,
+  WALLET_UPGRADE_DECLINED_V1,
+  atomicBatchSupportV1,
+  walletSubmissionFailureMessageV1,
+} from './src/walletBatchSupport';
+export type { AtomicBatchSupportV1 } from './src/walletBatchSupport';
 
 // T57: approved-blueprint submission flow (server approve → Base Account
 // wallet → idempotent submission record). Shares CallsStatusPoller,

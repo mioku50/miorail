@@ -97,7 +97,7 @@ test('T19.7: WalletConfirmButton renders Confirm in Base Account without hitting
   );
 
   const html = renderToStaticMarkup(element);
-  assert.ok(html.includes('Confirm in Base Account'), `Expected "Confirm in Base Account", got: ${html}`);
+  assert.ok(html.includes('Confirm in your wallet'), `Expected "Confirm in your wallet", got: ${html}`);
 });
 
 test('T19.7: WalletConfirmButton throws when rendered without WagmiProvider (verifying context boundary requirement)', () => {

@@ -911,7 +911,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
             said "Miorail prepared these calls", and pressing it did nothing. */}
         {model.signSlot ?? (
           <button type="button" className="btn lg" onClick={model.onApprove} disabled>
-            {model.approvePending ? 'Waiting for Base Account…' : 'Approve in Base Account'}
+            {model.approvePending ? 'Waiting for your wallet…' : 'Approve in your wallet'}
           </button>
         )}
         <button type="button" className="btn sec lg" onClick={model.onBack}>

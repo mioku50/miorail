@@ -27,7 +27,7 @@ export function baseExplorerTxUrl(hash: string): string | null {
 const STATUS_COPY: Record<SubmissionStatusState, { label: string; detail: string; tone: 'neutral' | 'progress' | 'success' | 'warn' | 'risk' }> = {
   idle: { label: 'Not submitted', detail: 'No wallet submission has been started.', tone: 'neutral' },
   approving: { label: 'Approving', detail: 'The server is re-validating the reviewed blueprint.', tone: 'progress' },
-  submitting: { label: 'Wallet open', detail: 'Waiting for you to sign the batch in your Base Account wallet.', tone: 'progress' },
+  submitting: { label: 'Wallet open', detail: 'Waiting for you to sign the batch in your wallet.', tone: 'progress' },
   submitted: { label: 'Submitted', detail: 'The wallet accepted the batch. Waiting for onchain confirmation.', tone: 'progress' },
   confirmed: { label: 'Confirmed', detail: 'The wallet reported the batch as confirmed onchain.', tone: 'success' },
   submitted_unknown: { label: 'Status unknown', detail: 'The batch was sent but its final status could not be verified yet.', tone: 'warn' },

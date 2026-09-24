@@ -168,16 +168,15 @@ export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1
 
       <p className="lnote">
         Miorail never signs and never broadcasts. It holds no key. The calls above were written by the venue and
-        measured here; only your own Base Account can send them.
+        measured here; only your own wallet can send them.
       </p>
 
       {refused || !model.wallet.onOpen ? null : model.wallet.batchId ? (
         <div className="mr-clearance">
-          <p className="cr-verdict good">Submitted from your Base Account.</p>
+          <p className="cr-verdict good">Submitted from your wallet.</p>
           <code className="mr-clearance-token mono">{model.wallet.batchId}</code>
           <p className="lnote">
-            That is the batch your wallet returned. Miorail did not sign it and did not broadcast it — your Base Account
-            did.
+            That is the batch your wallet returned. Miorail did not sign it and did not broadcast it — your wallet did.
           </p>
         </div>
       ) : (
@@ -186,10 +185,10 @@ export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1
             type="button"
             className="btn lg"
             disabled={model.wallet.pending}
-            title="Hands the exact calls measured above to your wallet, untouched. Your Base Account decides."
+            title="Hands the exact calls measured above to your wallet, untouched. Your wallet decides."
             onClick={model.wallet.onOpen}
           >
-            {model.wallet.pending ? 'Waiting for your wallet…' : 'Open in your Base Account'}
+            {model.wallet.pending ? 'Waiting for your wallet…' : 'Open in your wallet'}
           </button>
           {model.wallet.error ? <p className="cr-verdict bad">{model.wallet.error}</p> : null}
         </div>

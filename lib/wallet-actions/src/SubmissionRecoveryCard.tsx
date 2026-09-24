@@ -34,7 +34,7 @@ import { browserMarkerStorageV1, clearRecoveryMarkerV1, type MarkerStorageV1 } f
 export const RECOVERY_NO_BATCH_COPY_V1 = [
   'The wallet batch identifier was not captured.',
   'Miorail cannot safely recover or resend this transaction.',
-  'Check your Base Account activity before starting a new route.',
+  'Check your wallet’s activity before starting a new route.',
 ] as const;
 
 /** Why this attempt is on screen at all. Each is a different sentence about

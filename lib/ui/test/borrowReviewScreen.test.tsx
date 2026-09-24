@@ -126,7 +126,7 @@ describe('what a reader is shown before approving a borrow', () => {
     assert.doesNotMatch(html, /\bsafe\b/i);
     assert.doesNotMatch(html, /\brecommend/i);
     // And it says plainly who can actually move anything.
-    assert.match(html, /only your own Base Account can send them/);
+    assert.match(html, /only your own wallet can send them/);
   });
 });
 
@@ -139,7 +139,7 @@ describe('a refusal is the whole screen', () => {
     });
     assert.match(html, /revert when executed/);
     assert.doesNotMatch(html, /After this borrow/);
-    assert.doesNotMatch(html, /Open in your Base Account/);
+    assert.doesNotMatch(html, /Open in your wallet/);
     // A disabled button beside a refusal still reads as "nearly".
     assert.doesNotMatch(html, /<button/);
   });
@@ -168,12 +168,12 @@ describe('the states around the review itself', () => {
 
   test('a submitted batch says whose wallet sent it', () => {
     const html = render({ wallet: { onOpen: () => {}, pending: false, error: null, batchId: '0xbatch' } });
-    assert.match(html, /Submitted from your Base Account/);
+    assert.match(html, /Submitted from your wallet/);
     assert.match(html, /Miorail did not sign it and did not broadcast it/);
   });
 
   test('with nothing to hand over there is no button at all', () => {
     const html = render({ wallet: { onOpen: null, pending: false, error: null, batchId: null } });
-    assert.doesNotMatch(html, /Open in your Base Account/);
+    assert.doesNotMatch(html, /Open in your wallet/);
   });
 });

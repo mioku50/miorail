@@ -309,7 +309,7 @@ describe('microcopy', () => {
     assert.equal(CONSOLE_COPY_V1.portfolioUnavailable, 'Balances didn’t load. Route comparison still works.');
     assert.equal(CONSOLE_COPY_V1.readOnly, 'Read-only until you approve');
     assert.equal(CONSOLE_COPY_V1.nothingSigned, 'Still nothing signed.');
-    assert.equal(CONSOLE_COPY_V1.prepared, 'Miorail prepared these calls. Base Account executes them.');
+    assert.equal(CONSOLE_COPY_V1.prepared, 'Miorail prepared these calls. Your wallet executes them.');
   });
 
   test('no console copy uses the retired scanner vocabulary or the blocked-until phrasing', () => {

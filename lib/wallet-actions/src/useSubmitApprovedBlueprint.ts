@@ -32,6 +32,7 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
+import { WALLET_CANNOT_BATCH_V1, atomicBatchSupportV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
 import {
   browserMarkerStorageV1,
   clearRecoveryMarkerV1,
@@ -346,7 +347,15 @@ export function useSubmitApprovedBlueprint({
     if (inFlightRef.current) return;
     if (!address) {
       setStatus('failed');
-      setError('Connect your Base Account wallet first');
+      setError('Connect your wallet first');
+      return;
+    }
+    // A wallet that SAYS it cannot send one transaction hears so before the
+    // server approves anything. One that says nothing is asked, and its answer
+    // is translated below.
+    if (atomicBatchSupportV1(walletCapabilities, base.id) === 'unsupported') {
+      setStatus('failed');
+      setError(WALLET_CANNOT_BATCH_V1);
       return;
     }
     inFlightRef.current = true;
@@ -483,7 +492,7 @@ export function useSubmitApprovedBlueprint({
             error: 'User rejected the request in the wallet',
           });
         } else {
-          const message = cause instanceof Error ? cause.message : 'Wallet submission failed';
+          const message = walletSubmissionFailureMessageV1(cause);
           if (gas.capability) {
             // Whatever failed, the retry must not depend on the sponsor.
             sponsorDeclinedRef.current = true;

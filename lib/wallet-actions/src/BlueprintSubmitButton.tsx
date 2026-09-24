@@ -55,7 +55,7 @@ export function blueprintSubmitLabel(status: BlueprintSubmitStatus, disabledReas
     case 'approving':
       return 'Approving on server…';
     case 'submitting':
-      return 'Opening Base Account wallet…';
+      return 'Opening your wallet…';
     case 'submitted':
       return 'Confirming onchain…';
     case 'confirmed':
@@ -71,7 +71,7 @@ export function blueprintSubmitLabel(status: BlueprintSubmitStatus, disabledReas
     case 'expired':
       return 'Review expired — refresh';
     default:
-      return 'Confirm in Base Account';
+      return 'Confirm in your wallet';
   }
 }
 
@@ -139,7 +139,7 @@ export function BlueprintSubmitButton({
         title={
           disabledReason ??
           (status === 'idle'
-            ? 'Opens your connected Base Account wallet to sign the reviewed batch. The server never signs or broadcasts.'
+            ? 'Opens your connected wallet to sign the reviewed batch. The server never signs or broadcasts.'
             : (error ?? undefined))
         }
         {...rest}
@@ -148,7 +148,7 @@ export function BlueprintSubmitButton({
       </Button>
       {status === 'idle' && !disabledReason && (
         <p className="mt-2 text-xs text-ink-3">
-          This opens your Base Account wallet with the exact reviewed calls. Nothing is sent until you sign there.
+          This opens your wallet with the exact reviewed calls. Nothing is sent until you sign there.
         </p>
       )}
       {/* T67X-B5: stated only once a batch exists, and only when it is not the

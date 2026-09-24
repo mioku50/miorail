@@ -127,7 +127,7 @@ export function WalletConfirmButton({
             ? 'Confirmed ✓'
             : status === 'failed'
               ? 'Failed — retry'
-              : (disabledReason || 'Confirm in Base Account');
+              : (disabledReason || 'Confirm in your wallet');
 
   const busy = isPreparing || isSending || isPolling || isConfirming;
 

@@ -159,8 +159,8 @@ test('button disabled reasons: wallet, chain, and review expiry are honest', () 
 });
 
 test('button label says the wallet will open and never claims server execution', () => {
-  assert.equal(blueprintSubmitLabel('idle', null), 'Confirm in Base Account');
-  assert.equal(blueprintSubmitLabel('submitting', null), 'Opening Base Account wallet…');
+  assert.equal(blueprintSubmitLabel('idle', null), 'Confirm in your wallet');
+  assert.equal(blueprintSubmitLabel('submitting', null), 'Opening your wallet…');
   assert.equal(blueprintSubmitLabel('confirmed', null), 'Confirmed onchain');
   assert.equal(blueprintSubmitLabel('idle', 'Connect a wallet to confirm'), 'Connect a wallet to confirm');
 });

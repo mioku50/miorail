@@ -219,7 +219,7 @@ export function StockActionReviewScreen({
                     title="Asks the server for the exact calls, then hands them to your wallet untouched. Your Base Account decides."
                     onClick={model.wallet.onOpen}
                   >
-                    {model.wallet.pending ? 'Waiting for your wallet…' : 'Open in your Base Account'}
+                    {model.wallet.pending ? 'Waiting for your wallet…' : 'Open in your wallet'}
                   </button>
                   {model.wallet.error ? (
                     <p className="cr-verdict bad">{model.wallet.error}</p>
