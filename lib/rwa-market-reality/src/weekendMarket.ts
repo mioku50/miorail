@@ -31,7 +31,9 @@ export const WEEKEND_MARKET_SCHEMA_VERSION_V1 = 'weekend-market/v1' as const;
 
 /** A price is the median of this window, never one run. */
 export const WEEKEND_MEDIAN_WINDOW_HOURS_V1 = 6;
-/** Fewer runs than this in the window and no price is named. */
+/** Fewer runs than this in the window and no price is named. The ladder is
+ * sampled hourly, so on its own the third quote after 20:00 ET came at ~23:00
+ * ET; `miorail-rwa-cash-exit.timer` adds three passes on Friday evening for it. */
 export const WEEKEND_MIN_SAMPLES_V1 = 3;
 /** A run further than this from its own reference is a broken quote. */
 export const WEEKEND_JUNK_RATIO_V1 = 0.1;

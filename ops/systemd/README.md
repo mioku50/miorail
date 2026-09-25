@@ -36,7 +36,7 @@ what makes Discover's Official Assets tab able to say anything:
 | Timer | Every | What a pass costs |
 | --- | --- | --- |
 | `miorail-rwa-official` | 6h | two HTTPS requests to published documents |
-| `miorail-rwa-cash-exit` | 1h | 13 `eth_call` + ~104 aggregator quotes, paced |
+| `miorail-rwa-cash-exit` | 1h, plus Fri 20:01/20:14/20:27 ET | 13 `eth_call` + ~104 aggregator quotes, paced |
 | `miorail-rwa-lookalikes` | 6h | nothing outbound at all — two stored tables |
 | `miorail-rwa-market-tail` | 1h | ~4 `eth_getLogs` for the whole vertical |
 | `miorail-rwa-watchlist` | 5m | whatever is due: 1 `eth_call` + 8 quotes each |

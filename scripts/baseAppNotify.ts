@@ -663,15 +663,18 @@ export interface WeeklySummaryV1 {
   dividends: ReadonlySet<string>;
 }
 
-/** From 20:30 ET after the week's last close, for twelve hours, and only when
- * a weekend follows: a mid-week holiday is not the end of a week. */
+/** From 20:45 ET after the week's last close, for twelve hours, and only when
+ * a weekend follows: a mid-week holiday is not the end of a week. 20:45 ET
+ * because the push lands on the Stocks board, and the weekend card there has
+ * its three quotes per stock only once the cash-exit timer's Friday passes
+ * (20:01, 20:14, 20:27 ET) have run. */
 export function weeklySummaryDueV1(now: Date): { weekCloseAt: string } | null {
   const window = weekendWindowV1(now);
   if (!window) return null;
   const darkStart = Date.parse(window.darkStartAt);
   if (Date.parse(window.expectedReopenAt) - darkStart < 48 * 3_600_000) return null;
   const at = now.getTime();
-  return at >= darkStart + 30 * 60_000 && at < darkStart + 12 * 3_600_000 ? { weekCloseAt: window.closeAt } : null;
+  return at >= darkStart + 45 * 60_000 && at < darkStart + 12 * 3_600_000 ? { weekCloseAt: window.closeAt } : null;
 }
 
 function signedPercentFromBpsV1(bps: number): string {

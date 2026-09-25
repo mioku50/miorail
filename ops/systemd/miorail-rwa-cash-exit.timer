@@ -20,11 +20,20 @@
 # What it does buy, hourly: the moment an asset with no route acquires one, and
 # the moment one loses it. Both are recorded against the run before, so a pass
 # that finds nothing changed writes nothing at all.
+#
+# Plus three passes on Friday at 20:01, 20:14 and 20:27 New York time, when the
+# reference feeds go quiet for the weekend. The weekend card names a price only
+# from three quotes taken after 20:00 ET, and the hourly passes alone got there
+# at 22:42–22:59 ET on the four Fridays before 2026-09-25. A pass takes about
+# five minutes (4:46–5:06 on 2026-09-25), so with the random delay the last one
+# ends by ~20:37 ET, ahead of the weekly push at 20:45 ET
+# (`weeklySummaryDueV1`). Three passes a week is ~1,500 more quotes, +1.8%.
 Description=Measure the official-asset cash-exit ladder
 
 [Timer]
 OnBootSec=12min
 OnUnitActiveSec=1h
+OnCalendar=Fri *-*-* 20:01,14,27:00 America/New_York
 Persistent=true
 RandomizedDelaySec=5min
 

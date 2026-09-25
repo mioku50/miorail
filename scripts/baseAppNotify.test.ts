@@ -723,8 +723,9 @@ const WEEK: WeeklySummaryV1 = {
 
 describe('the weekly summary', () => {
   const et = (iso: string) => new Date(iso);
-  test('due from 20:30 ET after the week closes, for twelve hours, and only before a weekend', () => {
+  test('due from 20:45 ET after the week closes, for twelve hours, and only before a weekend', () => {
     assert.equal(weeklySummaryDueV1(et('2026-09-26T00:15:00.000Z')), null, 'Friday 20:15 ET');
+    assert.equal(weeklySummaryDueV1(et('2026-09-26T00:40:00.000Z')), null, 'Friday 20:40 ET: the weekend card is still filling');
     assert.deepEqual(weeklySummaryDueV1(et('2026-09-26T00:45:00.000Z')), { weekCloseAt: '2026-09-25T20:00:00.000Z' });
     assert.equal(weeklySummaryDueV1(et('2026-09-26T12:30:00.000Z')), null, 'Saturday 08:30 ET');
     assert.equal(weeklySummaryDueV1(et('2026-09-23T22:00:00.000Z')), null, 'a Wednesday');
@@ -765,7 +766,7 @@ describe('the weekly summary', () => {
   test('a pass inside the window sends it once per wallet, and an unread balance sends nothing', async () => {
     const repository = new InMemoryBaseAppNotificationRepositoryV1();
     const { client, sends } = fakeClient();
-    const friday = new Date('2026-09-26T00:45:00.000Z');
+    const friday = new Date('2026-09-26T00:50:00.000Z');
     const deps = {
       repository,
       client,
@@ -824,4 +825,21 @@ test('the worker is installed by the deploy, runs this script, and prints no key
   const keyLine = deploy.split('\n').find((line) => line.includes('BASE_DEV_API'));
   assert.ok(keyLine && /grep -qE/.test(keyLine), keyLine);
   assert.doesNotMatch(deploy, /echo[^\n]*\$BASE_DEV_API|cut[^\n]*BASE_DEV_API/);
+});
+
+test('the weekly push waits for the Friday passes that fill the weekend card', () => {
+  const cwd = process.cwd();
+  const root = cwd.endsWith(`${path.sep}scripts`) ? path.join(cwd, '..') : cwd;
+  const timer = readFileSync(path.join(root, 'ops/systemd/miorail-rwa-cash-exit.timer'), 'utf8');
+  const calendar = /^OnCalendar=Fri \*-\*-\* 20:([0-9,]+):00 America\/New_York$/m.exec(timer);
+  assert.ok(calendar, 'the cash-exit timer quotes again right after 20:00 ET on Friday');
+  const minutes = calendar[1]!.split(',').map(Number);
+  assert.equal(minutes.length, 3, 'three quotes per stock is what the card needs');
+  const delay = Number(/^RandomizedDelaySec=(\d+)min$/m.exec(timer)?.[1]);
+  // The last pass starts by its minute plus the random delay and runs about
+  // five minutes (4:46–5:06 measured); the push must come after it ends.
+  const lastPassEnds = Math.max(...minutes) + delay + 6;
+  const push = new Date('2026-09-26T00:00:00.000Z').getTime() + lastPassEnds * 60_000;
+  assert.equal(weeklySummaryDueV1(new Date(push - 60_000)), null);
+  assert.ok(weeklySummaryDueV1(new Date('2026-09-26T00:45:00.000Z')));
 });
