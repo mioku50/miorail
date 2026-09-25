@@ -96,6 +96,12 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
       return failure('invalid_response', 'kyberswap_routes_invalid', false);
     }
     if (quotedRouter !== KYBERSWAP_BASE_ROUTER) return failure('router_mismatch', 'kyberswap_router_mismatch', false);
+    // The routeSummary goes back exactly as KyberSwap sent it, or not at all.
+    // Our own transport once rewrote a deep field to '[truncated]', and
+    // route/build answered HTTP 500 with nothing to say why (2026-09-25).
+    if (/"\[(?:truncated|redacted)\]"/.test(JSON.stringify(routeSummary))) {
+      return failure('invalid_response', 'kyberswap_route_summary_altered', false);
+    }
 
     // Build-side outputs come from the exact routeSummary that is POSTed to
     // route/build below — the same object the calldata is generated from.

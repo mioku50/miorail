@@ -436,8 +436,17 @@ function scrubCredential(text: string, credential: string | undefined): string {
   return credential ? text.split(credential).join('[redacted]') : text;
 }
 
+/** Nesting beyond this is pathological rather than a provider's own shape. The
+ * body is already bounded in bytes. This bound only stops a runaway walk. */
+const MAX_REDACTION_DEPTH_V1 = 64;
+
 function redactSecretFields(value: unknown, depth = 0): unknown {
-  if (depth > 8) return '[truncated]';
+  // This limit was 8. KyberSwap's route summary for a stock route nests one
+  // level deeper (route[0][0].extra._ss.poolExtra.swapDir is at depth 9), so
+  // it came back with '[truncated]' inside it. route/build needs that object
+  // back exactly, and answered HTTP 500 to every NVDAc build (2026-09-25).
+  // A redaction pass must remove secrets, never reshape what a provider sent.
+  if (depth > MAX_REDACTION_DEPTH_V1) return '[truncated]';
   if (Array.isArray(value)) {
     return value.slice(0, 200).map((item) => redactSecretFields(item, depth + 1));
   }

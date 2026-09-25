@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import type { BaseMcpSkillExecutor, PluginHttpResponse } from '@mioagent/runtime-skills';
+import { loadSkillExecutor, type BaseMcpSkillExecutor, type PluginHttpResponse } from '@mioagent/runtime-skills';
 import { KyberSwapBuildAdapter } from '../src/adapters/kyberswap.js';
 import { NOW, WALLET, makeIntent } from './fixtures.js';
 
@@ -129,4 +129,115 @@ test('KyberSwap build adapter rejects a wallet mismatch', async () => {
   const adapter = new KyberSwapBuildAdapter({ executorFactory: () => mockExecutor(defaultHandler()) });
   const result = await adapter.build(buildInput(makeIntent(), '0x2222222222222222222222222222222222222222'));
   assert.equal(result.outcome, 'rejected');
+});
+
+// ---------------------------------------------------------------------------
+// The routeSummary survives our own transport.
+//
+// 2026-09-25: every NVDAc build answered HTTP 500. The route went through a
+// pool whose summary nests `extra._ss.poolExtra` nine levels deep. The
+// transport's redaction pass cut everything past depth 8 to '[truncated]', so
+// route/build received an object KyberSwap never sent. The stub executor above
+// never runs that transport, which is why "byte-preserved" passed while
+// production failed.
+// ---------------------------------------------------------------------------
+
+const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
+
+/** Today's shape, trimmed: one Aerodrome CL leg that carries a sub-swap. */
+const DEEP_ROUTE_SUMMARY = {
+  tokenIn: USDC,
+  amountIn: '100000',
+  tokenOut: NVDA,
+  amountOut: SUMMARY_AMOUNT_OUT,
+  gas: '330498',
+  route: [
+    [
+      {
+        pool: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+        tokenIn: USDC,
+        tokenOut: NVDA,
+        swapAmount: '100000',
+        amountOut: SUMMARY_AMOUNT_OUT,
+        exchange: 'aerodrome-cl-3',
+        poolType: 'slipstream',
+        extra: {
+          _cs: '5094029034460558474',
+          _ss: {
+            pool: '0xca69c5a01fe47e7eff18114451a57d624583cd83',
+            tokenIn: USDC,
+            tokenOut: NVDA,
+            swapAmount: '100000',
+            amountOut: '44229',
+            exchange: 'metric-propamm',
+            poolType: 'metric-propamm',
+            poolExtra: { swapDir: false, priceProvider: '', blockNumber: 51771439 },
+            extra: null,
+          },
+          _ts: '1790332529',
+          nSqrtRx96: '52688704991194138088866569254',
+          nT: -8160,
+          rAI: '0',
+          ri: '23c87e7erfxE8YWL',
+        },
+      },
+    ],
+  ],
+  routeID: 'b5a3c2c1-probe',
+  checksum: '1234567890123456789',
+  timestamp: 1790332529,
+};
+
+function jsonResponse(body: unknown): Response {
+  return new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
+}
+
+test('the real transport hands route/build the routeSummary KyberSwap sent, however deep', async () => {
+  const posted: Array<{ routeSummary: unknown }> = [];
+  const fetchImpl = (async (_url: string, init: { method?: string; body?: string }) => {
+    if (init.method === 'POST') {
+      posted.push(JSON.parse(init.body ?? '{}'));
+      return jsonResponse({ code: 0, data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } });
+    }
+    return jsonResponse({ code: 0, data: { routerAddress: ROUTER, routeSummary: DEEP_ROUTE_SUMMARY } });
+  }) as never;
+  const real = loadSkillExecutor('kyberswap');
+  assert.ok(real, 'the kyberswap namespace is loadable');
+  const adapter = new KyberSwapBuildAdapter({
+    executorFactory: () => ({
+      ...real!,
+      request: (input) => real!.request({ ...input, fetchImpl } as never),
+    }),
+  });
+  const result = await adapter.build(buildInput());
+  assert.equal(result.outcome, 'built', JSON.stringify(result));
+  assert.equal(posted.length, 1);
+  assert.deepEqual(posted[0]!.routeSummary, DEEP_ROUTE_SUMMARY);
+});
+
+test('a routeSummary our transport altered is never posted', async () => {
+  let posts = 0;
+  const adapter = new KyberSwapBuildAdapter({
+    executorFactory: () =>
+      mockExecutor(async (input) => {
+        if (input.method === 'GET') {
+          return {
+            status: 200,
+            data: {
+              data: {
+                routerAddress: ROUTER,
+                routeSummary: { amountOut: SUMMARY_AMOUNT_OUT, route: [[{ extra: { poolExtra: '[truncated]' } }]] },
+              },
+            },
+          };
+        }
+        posts += 1;
+        return { status: 200, data: { data: { routerAddress: ROUTER, data: '0xabcdef01', transactionValue: '0' } } };
+      }),
+  });
+  const result = await adapter.build(buildInput());
+  assert.equal(result.outcome, 'invalid_response');
+  assert.equal('errorCode' in result ? result.errorCode : null, 'kyberswap_route_summary_altered');
+  assert.equal(posts, 0);
 });
