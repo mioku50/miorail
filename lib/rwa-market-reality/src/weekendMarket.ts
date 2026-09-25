@@ -329,3 +329,73 @@ export function weekendMarketV1(input: {
         : null,
   };
 }
+
+// --- The week that just closed ----------------------------------------------
+
+export interface WeeklyStockChangeV1 {
+  tokenAddress: string;
+  symbol: string;
+  name: string;
+  /** The reference at this week's last close, USD per share. */
+  close: string;
+  /** The reference at the close a week before. */
+  previousClose: string;
+  changeBps: number;
+}
+
+export interface WeeklyCloseChangesV1 {
+  weekCloseAt: string;
+  previousCloseAt: string;
+  /** Biggest moves first. */
+  stocks: WeeklyStockChangeV1[];
+}
+
+/** A print this far before its bound is not that close: a stale feed must not
+ * stand in for a week it did not see. */
+const WEEKLY_PRINT_MAX_AGE_MS_V1 = 4 * 24 * 3_600_000;
+
+/**
+ * Each stock's reference at the week's last close against the close a week
+ * earlier. Null outside a quiet period: the week is final only once it has
+ * closed.
+ *
+ * "A week earlier" is the same New York wall-clock time seven days back, not
+ * 168 hours back, so the week a clock changes still ends at 16:00 ET. When
+ * that day was a holiday, the latest print before it (the day before's close)
+ * stands in, which is what a close means there.
+ */
+export function weeklyCloseChangesV1(input: {
+  now: Date;
+  stocks: readonly WeekendMarketStockInputV1[];
+  calendar?: ReviewedReferenceCalendarV1;
+}): WeeklyCloseChangesV1 | null {
+  const window = weekendWindowV1(input.now, input.calendar);
+  if (!window || input.now.getTime() < Date.parse(window.darkStartAt)) return null;
+  const closeAtMs = Date.parse(window.closeAt);
+  const closeLocal = etPartsV1(new Date(closeAtMs));
+  const previousAtMs = etInstantV1(shiftDateV1(closeLocal.localDate, -7), closeLocal.minuteOfDay).getTime();
+  const stocks: WeeklyStockChangeV1[] = [];
+  for (const stock of input.stocks) {
+    const prints = stock.runs
+      .map((run) => ({ value: run.reference, at: Date.parse(run.referenceUpdatedAt) }))
+      .filter((print) => Number.isFinite(print.value) && print.value > 0 && Number.isFinite(print.at));
+    const latestBy = (bound: number) =>
+      prints.filter((print) => print.at <= bound).sort((a, b) => b.at - a.at)[0];
+    const close = latestBy(closeAtMs);
+    const previous = latestBy(previousAtMs);
+    if (!close || !previous) continue;
+    if (closeAtMs - close.at > WEEKLY_PRINT_MAX_AGE_MS_V1 || previousAtMs - previous.at > WEEKLY_PRINT_MAX_AGE_MS_V1) {
+      continue;
+    }
+    stocks.push({
+      tokenAddress: stock.tokenAddress.toLowerCase(),
+      symbol: stock.symbol,
+      name: stock.name,
+      close: priceV1(close.value),
+      previousClose: priceV1(previous.value),
+      changeBps: bpsV1(close.value, previous.value),
+    });
+  }
+  stocks.sort((a, b) => Math.abs(b.changeBps) - Math.abs(a.changeBps) || a.symbol.localeCompare(b.symbol));
+  return { weekCloseAt: window.closeAt, previousCloseAt: new Date(previousAtMs).toISOString(), stocks };
+}

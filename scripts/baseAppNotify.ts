@@ -35,6 +35,7 @@ import type {
   RadarEventNoticeRowV1,
   RwaSignalRowV1,
 } from '@mioagent/route-storage';
+import { weekendWindowV1, type WeeklyCloseChangesV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 export const BASE_APP_NOTIFY_ENDPOINT_V1 = 'https://dashboard.base.org/api/v1/notifications';
 export const BASE_APP_TITLE_MAX_V1 = 30;
@@ -249,6 +250,9 @@ export interface StockNamesV1 {
   symbol: string | null;
   /** The token's published ticker — "NVDAc". */
   representation: string | null;
+  /** Who issued it, as the reviewed corpus records it — "coinbase". What a
+   * multiplier change MEANS is the issuer's rule, never ours. */
+  issuer?: string | null;
 }
 export type NamesOfV1 = (tokenAddress: string) => StockNamesV1 | null;
 
@@ -572,6 +576,176 @@ export function summaryNoticeV1(notices: readonly NoticeV1[]): NoticeV1 {
 }
 
 // ---------------------------------------------------------------------------
+// What a holder is told
+//
+// A multiplier change reaches everyone opted in as a fact about the contract.
+// The wallets that HOLD the token get it as a fact about their own tokens.
+// For Coinbase's B20 stocks, a small rise in the multiplier is how a reinvested
+// dividend arrives (GOOGLc, 2026-09-14: 1 → 1.000377). Almost nobody knows
+// their stock paid them that way. Another issuer's multiplier means something
+// else (Backed rebases), so the dividend sentence is Coinbase's alone.
+// ---------------------------------------------------------------------------
+
+/** Which of these tokens each wallet holds. A wallet holding none is absent. */
+export type HoldingsV1 = ReadonlyMap<string, ReadonlySet<string>>;
+
+/** The multiplier a token converted with before a change to `toWad`, or null. */
+export type PreviousMultiplierV1 = (tokenAddress: string, toWad: string) => string | null;
+
+/** A rise below this, on a Coinbase stock, reads as a reinvested dividend. A
+ * split is a whole multiple; anything between is left unnamed. */
+const DIVIDEND_RISE_MAX_PPM_V1 = 50_000;
+
+/** The change from one WAD multiplier to another, in parts per million. */
+export function multiplierChangePpmV1(fromWad: string, toWad: string): number | null {
+  const from = digitsV1(fromWad);
+  const to = digitsV1(toWad);
+  if (from === null || to === null || from === 0n) return null;
+  return Number(((to - from) * 1_000_000n) / from);
+}
+
+/** 377 ppm reads "0.038%"; a change of a percent or more keeps two decimals. */
+export function ppmPercentV1(ppm: number): string {
+  const percent = Math.abs(ppm) / 10_000;
+  return `${percent < 1 ? percent.toFixed(3) : percent.toFixed(2)}%`;
+}
+
+export function holderMultiplierNoticeV1(
+  signal: RwaSignalRowV1,
+  names: NamesOfV1,
+  previousWad: string | null,
+): NoticeV1 | null {
+  if (signal.kind !== 'official_asset_multiplier_changed') return null;
+  const toWad = (signal.facts as { multiplierWad?: unknown }).multiplierWad;
+  const to = multiplierV1(toWad);
+  const name = names(signal.subjectAddress);
+  const symbol = name?.symbol ?? name?.representation ?? null;
+  if (!to || typeof toWad !== 'string' || !symbol) return null;
+  const representation = name?.representation ?? symbol;
+  const key = `holder:rwa_signal:${signal.signalId}`;
+  const targetPath = stockPathV1(name?.symbol ?? null);
+  const from = previousWad ? multiplierV1(previousWad) : null;
+  const ppm = previousWad ? multiplierChangePpmV1(previousWad, toWad) : null;
+  const coinbase = (name?.issuer ?? '').toLowerCase().startsWith('coinbase');
+  if (coinbase && from && ppm !== null && ppm > 0 && ppm < DIVIDEND_RISE_MAX_PPM_V1) {
+    return noticeV1({
+      key,
+      label: `${symbol} dividend in shares`,
+      title: `${symbol}: dividend in shares`,
+      message: `Your ${representation} now track ${ppmPercentV1(ppm)} more ${symbol} shares each: the multiplier went from ${from} to ${to}. That is how a reinvested dividend reaches a token holder.`,
+      targetPath,
+    });
+  }
+  return noticeV1({
+    key,
+    label: `${symbol} shares per token changed`,
+    title: `${symbol}: shares per token`,
+    message:
+      from && ppm !== null && ppm !== 0
+        ? `Your ${representation} now track ${to} ${symbol} shares each, ${ppm > 0 ? 'up' : 'down'} from ${from}.`
+        : `Your ${representation} now track ${to} ${symbol} shares each.`,
+    targetPath,
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The weekly summary
+//
+// Once a week, in the evening after the week's last close: the holder hears
+// how THEIR stocks did, everyone else hears how the market did, and both are
+// told the tokens keep trading on Base over the weekend. The numbers are the
+// reference at each close, so a week reads the way a brokerage statement does.
+// ---------------------------------------------------------------------------
+
+export interface WeeklySummaryV1 {
+  week: WeeklyCloseChangesV1;
+  /** Tokens whose multiplier rose as a dividend during the week. */
+  dividends: ReadonlySet<string>;
+}
+
+/** From 20:30 ET after the week's last close, for twelve hours, and only when
+ * a weekend follows: a mid-week holiday is not the end of a week. */
+export function weeklySummaryDueV1(now: Date): { weekCloseAt: string } | null {
+  const window = weekendWindowV1(now);
+  if (!window) return null;
+  const darkStart = Date.parse(window.darkStartAt);
+  if (Date.parse(window.expectedReopenAt) - darkStart < 48 * 3_600_000) return null;
+  const at = now.getTime();
+  return at >= darkStart + 30 * 60_000 && at < darkStart + 12 * 3_600_000 ? { weekCloseAt: window.closeAt } : null;
+}
+
+function signedPercentFromBpsV1(bps: number): string {
+  const text = percentFromBpsV1(String(bps)) ?? '0.00%';
+  return bps > 0 ? `+${text}` : text;
+}
+
+/** One wallet's weekly push. `held` null means it holds none of these stocks. */
+export function weeklyNoticeV1(input: {
+  weekly: WeeklySummaryV1;
+  held: ReadonlySet<string> | null;
+}): NoticeV1 | null {
+  const { week, dividends } = input.weekly;
+  const rows = input.held ? week.stocks.filter((row) => input.held!.has(row.tokenAddress)) : week.stocks;
+  if (rows.length === 0) return null;
+  const top = rows
+    .slice(0, 3)
+    .map((row) => `${row.symbol} ${signedPercentFromBpsV1(row.changeBps)}`)
+    .join(', ');
+  if (input.held) {
+    const paid = rows.filter((row) => dividends.has(row.tokenAddress)).map((row) => row.symbol);
+    return noticeV1({
+      key: `weekly:${week.weekCloseAt}:held`,
+      label: 'your week',
+      title: 'Your stocks this week',
+      message: `${top} from last week's close.${paid.length > 0 ? ` ${paid.join(', ')} paid a dividend in shares.` : ''} They keep trading on Base this weekend.`,
+      targetPath: '/stocks',
+    });
+  }
+  return noticeV1({
+    key: `weekly:${week.weekCloseAt}`,
+    label: 'the week',
+    title: 'The week on Base',
+    message: `Tokenized stocks this week: ${top} from last week's close. They keep trading on Base while Wall Street is closed.`,
+    targetPath: '/stocks',
+  });
+}
+
+export function planWeeklySummaryV1(input: {
+  weekly: WeeklySummaryV1;
+  wallets: readonly string[];
+  holdings: HoldingsV1;
+  sentToday: ReadonlyMap<string, number>;
+  limits?: Partial<BaseAppNotifyLimitsV1>;
+}): { groups: BaseAppPushGroupV1[]; capped: number } {
+  const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...input.limits };
+  const byMessage = new Map<string, BaseAppPushGroupV1>();
+  let capped = 0;
+  for (const wallet of [...input.wallets].sort()) {
+    if ((input.sentToday.get(wallet) ?? 0) >= limits.dailyCap) {
+      capped += 1;
+      continue;
+    }
+    const held = input.holdings.get(wallet);
+    const notice =
+      weeklyNoticeV1({ weekly: input.weekly, held: held && held.size > 0 ? held : null }) ??
+      weeklyNoticeV1({ weekly: input.weekly, held: null });
+    if (!notice) continue;
+    const id = JSON.stringify([notice.title, notice.message, notice.targetPath]);
+    const group = byMessage.get(id) ?? { title: notice.title, message: notice.message, targetPath: notice.targetPath, wallets: [] };
+    group.wallets.push(wallet);
+    byMessage.set(id, group);
+  }
+  const groups: BaseAppPushGroupV1[] = [];
+  for (const group of byMessage.values()) {
+    for (let index = 0; index < group.wallets.length; index += BASE_APP_BATCH_MAX_V1) {
+      groups.push({ ...group, wallets: group.wallets.slice(index, index + BASE_APP_BATCH_MAX_V1) });
+    }
+  }
+  groups.sort((a, b) => b.wallets.length - a.wallets.length || a.message.localeCompare(b.message));
+  return { groups: groups.slice(0, limits.maxRequests), capped };
+}
+
+// ---------------------------------------------------------------------------
 // Who gets what
 // ---------------------------------------------------------------------------
 
@@ -613,6 +787,10 @@ export function planBaseAppNotificationsV1(input: {
   names: NamesOfV1;
   now: Date;
   limits?: Partial<BaseAppNotifyLimitsV1>;
+  /** Who holds what, read this pass. Absent: everyone gets the contract's
+   * version, exactly as before this existed. */
+  holdings?: HoldingsV1;
+  previousMultiplier?: PreviousMultiplierV1;
 }): BaseAppNotifyPlanV1 {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...input.limits };
   const oldest = input.now.getTime() - limits.maxAgeMs;
@@ -662,6 +840,19 @@ export function planBaseAppNotificationsV1(input: {
     }
     const watchedToken =
       signal.kind === 'official_asset_lookalike_created' ? signal.officialAddress : signal.subjectAddress;
+    if (signal.kind === 'official_asset_multiplier_changed' && input.holdings) {
+      const token = signal.subjectAddress.toLowerCase();
+      const toWad = (signal.facts as { multiplierWad?: unknown }).multiplierWad;
+      const previous =
+        typeof toWad === 'string' && input.previousMultiplier ? input.previousMultiplier(token, toWad) : null;
+      const holderNotice = holderMultiplierNoticeV1(signal, input.names, previous);
+      const holders = [...input.enabled].filter((wallet) => input.holdings!.get(wallet)?.has(token));
+      if (holderNotice && holders.length > 0) {
+        deliver(holderNotice, holders);
+        deliver(notice, [...input.enabled].filter((wallet) => !holders.includes(wallet)));
+        continue;
+      }
+    }
     deliver(notice, broadcast ? input.enabled : new Set(watchersByToken.get(watchedToken?.toLowerCase() ?? '') ?? []));
   }
 
@@ -733,6 +924,8 @@ export interface BaseAppNotifyReportV1 {
   dropped: number;
   /** Why a pass stopped: our code for Base's answer, never its body. */
   stoppedBy: string | null;
+  /** The weekly summary: null outside its window, else what happened. */
+  weekly: { weekCloseAt: string; due: number; sent: number; capped: number } | null;
 }
 
 function utcDayV1(at: Date): string {
@@ -747,6 +940,13 @@ export async function runBaseAppNotifyV1(deps: {
   now: () => Date;
   dry?: boolean;
   limits?: Partial<BaseAppNotifyLimitsV1>;
+  /** Which of these tokens each wallet holds, read from the chain now. */
+  holdings?: (wallets: readonly string[], tokens: readonly string[]) => Promise<HoldingsV1>;
+  /** The multiplier before each recorded change, read once per pass. */
+  previousMultipliers?: () => Promise<PreviousMultiplierV1>;
+  /** The week that just closed, and its dividends. Asked only inside the
+   * summary's window. */
+  weekly?: (now: Date) => Promise<WeeklySummaryV1 | null>;
 }): Promise<BaseAppNotifyReportV1> {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...deps.limits };
   const report: BaseAppNotifyReportV1 = {
@@ -763,9 +963,63 @@ export async function runBaseAppNotifyV1(deps: {
     capped: 0,
     dropped: 0,
     stoppedBy: null,
+    weekly: null,
   };
   if (!deps.client) return { ...report, outcome: 'off' };
   const now = deps.now();
+
+  // The weekly summary rides no cursor: it is due by the clock, once per week
+  // per wallet, and a pass that fails it leaves it due for the next pass.
+  const due = deps.weekly ? weeklySummaryDueV1(now) : null;
+  if (due && deps.weekly) {
+    const weekly = await deps.weekly(now);
+    if (weekly && weekly.week.stocks.length > 0) {
+      let enabledNow: Set<string>;
+      try {
+        enabledNow = await deps.client.enabledWallets();
+      } catch (cause) {
+        return { ...report, outcome: 'stopped', stoppedBy: cause instanceof BaseAppNotifyErrorV1 ? cause.message : 'base_app_error' };
+      }
+      const already = await deps.repository.weeklySentTo({ weekCloseAt: due.weekCloseAt, wallets: [...enabledNow] });
+      const pending = [...enabledNow].filter((wallet) => !already.has(wallet));
+      report.weekly = { weekCloseAt: due.weekCloseAt, due: pending.length, sent: 0, capped: 0 };
+      if (pending.length > 0) {
+        // A holder must never be told the market's week instead of their own:
+        // an unread balance leaves the summary for the next pass.
+        let holdings: HoldingsV1 | null;
+        try {
+          holdings = deps.holdings
+            ? await deps.holdings(pending, weekly.week.stocks.map((row) => row.tokenAddress))
+            : new Map();
+        } catch {
+          holdings = null;
+        }
+        if (holdings) {
+          const day = utcDayV1(now);
+          const sentToday = await deps.repository.sentOn({ day, wallets: pending });
+          const plan = planWeeklySummaryV1({ weekly, wallets: pending, holdings, sentToday, limits });
+          report.weekly.capped = plan.capped;
+          if (!deps.dry) {
+            for (const group of plan.groups) {
+              try {
+                const result = await deps.client.send(group);
+                report.weekly.sent += result.sent.length;
+                report.failed += result.failed.notSaved + result.failed.disabled + result.failed.other;
+                if (result.sent.length > 0) {
+                  await deps.repository.recordSent({ day, wallets: result.sent });
+                  await deps.repository.recordWeeklySent({ weekCloseAt: due.weekCloseAt, wallets: result.sent, at: now });
+                }
+              } catch (cause) {
+                const error = cause instanceof BaseAppNotifyErrorV1 ? cause : null;
+                if (error && error.status === 400) continue;
+                return { ...report, outcome: 'stopped', stoppedBy: error ? error.message : 'base_app_error' };
+              }
+            }
+          }
+        }
+      }
+    }
+  }
 
   // A dry pass writes nothing, so it cannot open a cursor; it reads from one
   // that is already open, or reports that none is.
@@ -816,7 +1070,7 @@ export async function runBaseAppNotifyV1(deps: {
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       await deps.repository.pruneDaily({ before: utcDayV1(weekAgo) });
     }
-    return report;
+    return (report.weekly?.sent ?? 0) > 0 ? { ...report, outcome: 'delivered' } : report;
   }
 
   // Only rows this module could send are worth asking Base about.
@@ -835,7 +1089,12 @@ export async function runBaseAppNotifyV1(deps: {
       limits,
     });
     if (!deps.dry) await advance();
-    return { ...report, stale: plan.stale, unsent: plan.unsent, outcome: deps.dry ? 'dry' : 'idle' };
+    return {
+      ...report,
+      stale: plan.stale,
+      unsent: plan.unsent,
+      outcome: deps.dry ? 'dry' : (report.weekly?.sent ?? 0) > 0 ? 'delivered' : 'idle',
+    };
   }
 
   const tokens = new Set<string>();
@@ -864,7 +1123,39 @@ export async function runBaseAppNotifyV1(deps: {
 
   const day = utcDayV1(now);
   const sentToday = await deps.repository.sentOn({ day, wallets: [...enabled] });
-  const plan = planBaseAppNotificationsV1({ signals, radarEvents, watchers, enabled, sentToday, names, now, limits });
+  // Holders are read only when a multiplier change is about to be sent. An
+  // unread balance falls back to the contract's version for everyone, which
+  // is exactly what this pass sent before holders existed.
+  const multiplierTokens = [
+    ...new Set(
+      sendable
+        .filter((signal) => signal.kind === 'official_asset_multiplier_changed')
+        .map((signal) => signal.subjectAddress.toLowerCase()),
+    ),
+  ];
+  let holdings: HoldingsV1 | undefined;
+  let previousMultiplier: PreviousMultiplierV1 | undefined;
+  if (multiplierTokens.length > 0 && deps.holdings && enabled.size > 0) {
+    try {
+      holdings = await deps.holdings([...enabled], multiplierTokens);
+      previousMultiplier = deps.previousMultipliers ? await deps.previousMultipliers() : undefined;
+    } catch {
+      holdings = undefined;
+      previousMultiplier = undefined;
+    }
+  }
+  const plan = planBaseAppNotificationsV1({
+    signals,
+    radarEvents,
+    watchers,
+    enabled,
+    sentToday,
+    names,
+    now,
+    limits,
+    ...(holdings ? { holdings } : {}),
+    ...(previousMultiplier ? { previousMultiplier } : {}),
+  });
   Object.assign(report, {
     groups: plan.groups.length,
     notices: plan.notices,
@@ -897,5 +1188,5 @@ export async function runBaseAppNotifyV1(deps: {
   }
 
   await advance();
-  return { ...report, outcome: plan.groups.length > 0 ? 'delivered' : 'idle' };
+  return { ...report, outcome: plan.groups.length > 0 || (report.weekly?.sent ?? 0) > 0 ? 'delivered' : 'idle' };
 }

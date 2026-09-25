@@ -6,6 +6,7 @@ import {
   etInstantV1,
   weekendMarketV1,
   weekendWindowV1,
+  weeklyCloseChangesV1,
   type WeekendMarketRunV1,
 } from '../src/weekendMarket.js';
 
@@ -183,5 +184,36 @@ describe('the weekend on Base', () => {
       ],
     });
     assert.deepEqual(answer.stocks.map((row) => row.symbol), ['NVDA', 'AAPL']);
+  });
+});
+
+describe('the week that just closed', () => {
+  test('this week’s close against last week’s, once the week has closed', () => {
+    const lastWeek = hourly({ fromDate: '2026-09-18', fromClock: '14:05', hours: 2, mid: 96, reference: 96, referenceUpdatedAt: iso('2026-09-18', '15:59') });
+    const runs = [...lastWeek, ...weekendRuns()];
+    const week = weeklyCloseChangesV1({
+      now: et('2026-09-25', '21:00'),
+      stocks: [{ tokenAddress: NVDA, symbol: 'NVDA', name: 'NVIDIA', runs }],
+    });
+    assert.equal(week?.weekCloseAt, iso('2026-09-25', '16:00'));
+    assert.equal(week?.previousCloseAt, iso('2026-09-18', '16:00'));
+    assert.deepEqual(week?.stocks.map((row) => [row.symbol, row.previousClose, row.close, row.changeBps]), [['NVDA', '96.00', '100.00', 417]]);
+  });
+
+  test('not before the week has closed, and not from a print days too old', () => {
+    assert.equal(weeklyCloseChangesV1({ now: et('2026-09-25', '15:00'), stocks: [] }), null);
+    const stale = hourly({ fromDate: '2026-09-11', fromClock: '14:05', hours: 2, mid: 90, reference: 90, referenceUpdatedAt: iso('2026-09-11', '15:59') });
+    const week = weeklyCloseChangesV1({
+      now: et('2026-09-25', '21:00'),
+      stocks: [{ tokenAddress: NVDA, symbol: 'NVDA', name: 'NVIDIA', runs: [...stale, ...weekendRuns()] }],
+    });
+    assert.deepEqual(week?.stocks, []);
+  });
+
+  test('the week a clock changes still ends at 16:00 ET', () => {
+    // US clocks go back on 2026-11-01: 16:00 ET is 21:00Z after, 20:00Z before.
+    const week = weeklyCloseChangesV1({ now: et('2026-11-06', '21:00'), stocks: [] });
+    assert.equal(week?.weekCloseAt, '2026-11-06T21:00:00.000Z');
+    assert.equal(week?.previousCloseAt, '2026-10-30T20:00:00.000Z');
   });
 });

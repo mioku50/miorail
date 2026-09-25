@@ -2,6 +2,7 @@ import {
   RADAR_EVENT_KINDS_V1,
   assertBaseAppCursorIdV1,
   assertBaseAppDailyInputV1,
+  assertBaseAppWeeklyInputV1,
   type BaseAppNotificationCursorV1,
   type BaseAppNotificationRepositoryV1,
   type BaseAppNotificationSourceV1,
@@ -175,6 +176,28 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
         DELETE FROM base_app_notification_daily WHERE day < ${input.before}::date
         RETURNING 1`) as Record<string, unknown>[];
       return rows.length;
+    },
+
+    async weeklySentTo(input) {
+      assertBaseAppWeeklyInputV1(input);
+      const sent = new Set<string>();
+      if (input.wallets.length === 0) return sent;
+      const rows = (await sql`
+        SELECT wallet_address FROM base_app_weekly_summary
+         WHERE week_close_at = ${input.weekCloseAt}::timestamptz
+           AND wallet_address = ANY(${[...input.wallets]})`) as Record<string, unknown>[];
+      for (const row of rows) sent.add(String(row.wallet_address));
+      return sent;
+    },
+
+    async recordWeeklySent(input) {
+      assertBaseAppWeeklyInputV1(input);
+      for (const wallet of new Set(input.wallets)) {
+        await sql`
+          INSERT INTO base_app_weekly_summary (week_close_at, wallet_address, sent_at)
+          VALUES (${input.weekCloseAt}::timestamptz, ${wallet}, ${input.at.toISOString()}::timestamptz)
+          ON CONFLICT (week_close_at, wallet_address) DO NOTHING`;
+      }
     },
   };
 }

@@ -83,6 +83,24 @@ export interface BaseAppNotificationRepositoryV1 {
   recordSent(input: { day: string; wallets: readonly string[] }): Promise<void>;
   /** Deletes the counts of days before `before`; returns how many rows went. */
   pruneDaily(input: { before: string }): Promise<number>;
+  /** The wallets among these that already had the summary for the week that
+   * closed at `weekCloseAt`. */
+  weeklySentTo(input: { weekCloseAt: string; wallets: readonly string[] }): Promise<Set<string>>;
+  /** Marks these wallets as having had that week's summary. Idempotent. */
+  recordWeeklySent(input: { weekCloseAt: string; wallets: readonly string[]; at: Date }): Promise<void>;
+}
+
+/** A week is named by the instant its last close happened, and a wallet by its
+ * lowercase address: the same shapes the table checks. */
+export function assertBaseAppWeeklyInputV1(input: { weekCloseAt: string; wallets: readonly string[] }): void {
+  if (!Number.isFinite(Date.parse(input.weekCloseAt)) || !/Z$|[+-]\d{2}:\d{2}$/.test(input.weekCloseAt)) {
+    throw new RouteStorageIntegrityError(`expected an ISO instant for the week's close: ${input.weekCloseAt}`);
+  }
+  for (const wallet of input.wallets) {
+    if (!WALLET_V1.test(wallet)) {
+      throw new RouteStorageIntegrityError('expected a lowercase 20-byte wallet address');
+    }
+  }
 }
 
 const WALLET_V1 = /^0x[0-9a-f]{40}$/;

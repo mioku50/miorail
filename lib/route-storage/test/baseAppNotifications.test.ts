@@ -137,3 +137,35 @@ test('the migration holds the same rules the store enforces', () => {
   // Two tables and no third: who opted in is Base's list, never copied here.
   assert.equal(sql.match(/CREATE TABLE/g)?.length, 2);
 });
+
+describe('the weekly summary is recorded once per wallet per week', () => {
+  const WEEK = '2026-09-25T20:00:00.000Z';
+  const ME = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
+  const YOU = '0x1111111111111111111111111111111111111111';
+
+  test('a wallet marked for one week is not marked for the next, and marking twice is harmless', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    assert.deepEqual([...(await repository.weeklySentTo({ weekCloseAt: WEEK, wallets: [ME, YOU] }))], []);
+    await repository.recordWeeklySent({ weekCloseAt: WEEK, wallets: [ME], at: new Date('2026-09-26T00:45:00.000Z') });
+    await repository.recordWeeklySent({ weekCloseAt: WEEK, wallets: [ME], at: new Date('2026-09-26T00:50:00.000Z') });
+    assert.deepEqual([...(await repository.weeklySentTo({ weekCloseAt: WEEK, wallets: [ME, YOU] }))], [ME]);
+    // The same instant written another way is the same week.
+    assert.deepEqual([...(await repository.weeklySentTo({ weekCloseAt: '2026-09-25T16:00:00-04:00', wallets: [ME] }))], [ME]);
+    assert.deepEqual([...(await repository.weeklySentTo({ weekCloseAt: '2026-10-02T20:00:00.000Z', wallets: [ME] }))], []);
+  });
+
+  test('the fake refuses what the table refuses', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    await assert.rejects(() => repository.weeklySentTo({ weekCloseAt: 'friday', wallets: [ME] }), /ISO instant/);
+    await assert.rejects(
+      () => repository.recordWeeklySent({ weekCloseAt: WEEK, wallets: ['0xABC'], at: new Date() }),
+      /lowercase 20-byte wallet/,
+    );
+  });
+
+  test('the database writes one row per week and wallet, and reads by the same key', () => {
+    const source = readFileSync(resolve(process.cwd(), process.cwd().endsWith('route-storage') ? 'src' : 'lib/route-storage/src', 'baseAppNotificationsDatabase.ts'), 'utf8');
+    assert.match(source, /ON CONFLICT \(week_close_at, wallet_address\) DO NOTHING/);
+    assert.match(source, /WHERE week_close_at = \$\{input\.weekCloseAt\}::timestamptz/);
+  });
+});

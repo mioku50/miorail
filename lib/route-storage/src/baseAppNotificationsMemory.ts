@@ -1,6 +1,7 @@
 import {
   assertBaseAppCursorIdV1,
   assertBaseAppDailyInputV1,
+  assertBaseAppWeeklyInputV1,
   compareBaseAppPositionV1,
   type BaseAppNotificationCursorV1,
   type BaseAppNotificationRepositoryV1,
@@ -23,6 +24,7 @@ export class InMemoryBaseAppNotificationRepositoryV1 implements BaseAppNotificat
   private readonly radarEvents: RadarEventNoticeRowV1[] = [];
   private readonly watches: { userId: string; tokenAddress: string }[] = [];
   private readonly daily = new Map<string, number>();
+  private readonly weekly = new Set<string>();
 
   /** Test seams: rows the other workers would have written. */
   seedSignal(row: RwaSignalRowV1): void {
@@ -136,6 +138,18 @@ export class InMemoryBaseAppNotificationRepositoryV1 implements BaseAppNotificat
       const key = `${wallet}|${input.day}`;
       this.daily.set(key, (this.daily.get(key) ?? 0) + 1);
     }
+  }
+
+  async weeklySentTo(input: { weekCloseAt: string; wallets: readonly string[] }): Promise<Set<string>> {
+    assertBaseAppWeeklyInputV1(input);
+    const week = new Date(input.weekCloseAt).toISOString();
+    return new Set(input.wallets.filter((wallet) => this.weekly.has(`${week}|${wallet}`)));
+  }
+
+  async recordWeeklySent(input: { weekCloseAt: string; wallets: readonly string[]; at: Date }): Promise<void> {
+    assertBaseAppWeeklyInputV1(input);
+    const week = new Date(input.weekCloseAt).toISOString();
+    for (const wallet of input.wallets) this.weekly.add(`${week}|${wallet}`);
   }
 
   async pruneDaily(input: { before: string }): Promise<number> {

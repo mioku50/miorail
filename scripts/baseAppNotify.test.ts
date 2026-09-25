@@ -22,7 +22,14 @@ import {
   noticeForSignalV1,
   percentFromBpsV1,
   planBaseAppNotificationsV1,
+  planWeeklySummaryV1,
+  ppmPercentV1,
+  holderMultiplierNoticeV1,
+  multiplierChangePpmV1,
   runBaseAppNotifyV1,
+  weeklyNoticeV1,
+  weeklySummaryDueV1,
+  type WeeklySummaryV1,
   stockPathV1,
   summaryNoticeV1,
   usdV1,
@@ -614,6 +621,190 @@ describe('one pass', () => {
     assert.deepEqual([dry.outcome, dry.groups, sends.length], ['dry', 1, 0]);
     assert.equal((await repository.cursor('rwa_signal'))!.cursorId, '', 'still before the row');
     assert.equal((await runBaseAppNotifyV1({ repository, client: null, names: namesFor, now: () => NOW })).outcome, 'off');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Holders hear it as news about their own tokens; everyone hears the week.
+// ---------------------------------------------------------------------------
+
+const GOOGL = '0xb2000000000000000000002d0ba3164cc74f58b7';
+const coinbaseNames: NamesOfV1 = (address) =>
+  address === GOOGL
+    ? { symbol: 'GOOGL', representation: 'GOOGLc', issuer: 'coinbase' }
+    : address === NVDA
+      ? { symbol: 'NVDA', representation: 'NVDAc', issuer: 'coinbase' }
+      : null;
+/** GOOGLc on 2026-09-14, as the ratio reader recorded it. */
+const GOOGL_DIVIDEND = { from: '1000000000000000000', to: '1000377118676784179' };
+const googlMultiplier = (over: Partial<RwaSignalRowV1> = {}) =>
+  signal(
+    'official_asset_multiplier_changed',
+    {
+      event: 'multiplier_updated',
+      multiplierWad: GOOGL_DIVIDEND.to,
+      payloadState: 'decoded',
+      transactionHash: `0x${'ab'.repeat(32)}`,
+      blockNumber: '51310620',
+    },
+    { subjectAddress: GOOGL, ...over },
+  );
+
+describe('a dividend in shares reaches the people who hold the stock', () => {
+  test('the Coinbase multiplier rise of 2026-09-14 reads as a dividend, to a holder', () => {
+    assert.equal(multiplierChangePpmV1(GOOGL_DIVIDEND.from, GOOGL_DIVIDEND.to), 377);
+    assert.equal(ppmPercentV1(377), '0.038%');
+    const notice = holderMultiplierNoticeV1(googlMultiplier(), coinbaseNames, GOOGL_DIVIDEND.from);
+    assert.equal(notice?.title, 'GOOGL: dividend in shares');
+    assert.equal(
+      notice?.message,
+      'Your GOOGLc now track 0.038% more GOOGL shares each: the multiplier went from 1 to 1.000377. That is how a reinvested dividend reaches a token holder.',
+    );
+    assert.ok(notice!.title.length <= BASE_APP_TITLE_MAX_V1 && notice!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+    assert.equal(notice?.targetPath, '/stocks/googl');
+  });
+
+  test('another issuer, a split, or an unknown previous value is never called a dividend', () => {
+    const backed: NamesOfV1 = () => ({ symbol: 'GOOGL', representation: 'bGOOGL', issuer: 'backed' });
+    assert.doesNotMatch(holderMultiplierNoticeV1(googlMultiplier(), backed, GOOGL_DIVIDEND.from)?.title ?? '', /dividend/);
+    const split = googlMultiplier({ facts: { event: 'multiplier_updated', multiplierWad: '2000000000000000000', payloadState: 'decoded', transactionHash: `0x${'ab'.repeat(32)}`, blockNumber: '1' } });
+    assert.equal(holderMultiplierNoticeV1(split, coinbaseNames, GOOGL_DIVIDEND.from)?.message, 'Your GOOGLc now track 2 GOOGL shares each, up from 1.');
+    assert.equal(holderMultiplierNoticeV1(googlMultiplier(), coinbaseNames, null)?.message, 'Your GOOGLc now track 1.000377 GOOGL shares each.');
+  });
+
+  test('a holder gets the holder version, everyone else the contract version', () => {
+    const plan = planBaseAppNotificationsV1({
+      signals: [googlMultiplier()],
+      radarEvents: [],
+      watchers: [],
+      enabled: new Set([ME, YOU]),
+      sentToday: new Map(),
+      names: coinbaseNames,
+      now: NOW,
+      holdings: new Map([[ME, new Set([GOOGL])]]),
+      previousMultiplier: () => GOOGL_DIVIDEND.from,
+    });
+    assert.deepEqual(
+      plan.groups.map((group) => [group.title, group.wallets]).sort(),
+      [
+        ['GOOGL: dividend in shares', [ME]],
+        ['GOOGL: multiplier changed', [YOU]],
+      ],
+    );
+  });
+
+  test('without holdings everyone gets the contract version, exactly as before', () => {
+    const plan = planBaseAppNotificationsV1({
+      signals: [googlMultiplier()],
+      radarEvents: [],
+      watchers: [],
+      enabled: new Set([ME, YOU]),
+      sentToday: new Map(),
+      names: coinbaseNames,
+      now: NOW,
+    });
+    assert.deepEqual(plan.groups.map((group) => [group.title, group.wallets]), [['GOOGL: multiplier changed', [ME, YOU].sort()]]);
+  });
+});
+
+const WEEK: WeeklySummaryV1 = {
+  week: {
+    weekCloseAt: '2026-09-25T20:00:00.000Z',
+    previousCloseAt: '2026-09-18T20:00:00.000Z',
+    stocks: [
+      { tokenAddress: '0xb200000000000000000000397293cb8cda9a10c5', symbol: 'SNDK', name: 'Sandisk', close: '1800.00', previousClose: '1735.00', changeBps: 375 },
+      { tokenAddress: NVDA, symbol: 'NVDA', name: 'NVIDIA', close: '229.00', previousClose: '222.37', changeBps: 298 },
+      { tokenAddress: GOOGL, symbol: 'GOOGL', name: 'Alphabet', close: '346.00', previousClose: '348.79', changeBps: -80 },
+      { tokenAddress: '0xb200000000000000000000578f3ae29d9e6e0101', symbol: 'AAPL', name: 'Apple', close: '336.00', previousClose: '335.47', changeBps: 16 },
+    ],
+  },
+  dividends: new Set([GOOGL]),
+};
+
+describe('the weekly summary', () => {
+  const et = (iso: string) => new Date(iso);
+  test('due from 20:30 ET after the week closes, for twelve hours, and only before a weekend', () => {
+    assert.equal(weeklySummaryDueV1(et('2026-09-26T00:15:00.000Z')), null, 'Friday 20:15 ET');
+    assert.deepEqual(weeklySummaryDueV1(et('2026-09-26T00:45:00.000Z')), { weekCloseAt: '2026-09-25T20:00:00.000Z' });
+    assert.equal(weeklySummaryDueV1(et('2026-09-26T12:30:00.000Z')), null, 'Saturday 08:30 ET');
+    assert.equal(weeklySummaryDueV1(et('2026-09-23T22:00:00.000Z')), null, 'a Wednesday');
+    // Thanksgiving: Wednesday's close is followed by one quiet day, not a weekend.
+    assert.equal(weeklySummaryDueV1(et('2026-11-26T02:00:00.000Z')), null);
+  });
+
+  test('a holder hears their own stocks, and a dividend they were paid', () => {
+    const notice = weeklyNoticeV1({ weekly: WEEK, held: new Set([NVDA, GOOGL]) });
+    assert.equal(notice?.title, 'Your stocks this week');
+    assert.equal(
+      notice?.message,
+      "NVDA +2.98%, GOOGL −0.80% from last week's close. GOOGL paid a dividend in shares. They keep trading on Base this weekend.",
+    );
+  });
+
+  test('everyone else hears the market, three biggest moves first', () => {
+    const notice = weeklyNoticeV1({ weekly: WEEK, held: null });
+    assert.equal(notice?.title, 'The week on Base');
+    assert.match(notice?.message ?? '', /^Tokenized stocks this week: SNDK \+3\.75%, NVDA \+2\.98%, GOOGL −0\.80% from last week's close\./);
+    assert.ok(notice!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+  });
+
+  test('wallets that hold the same stocks share one push; the capped wait for tomorrow', () => {
+    const plan = planWeeklySummaryV1({
+      weekly: WEEK,
+      wallets: [ME, YOU, THEM],
+      holdings: new Map([[ME, new Set([NVDA])]]),
+      sentToday: new Map([[THEM, 4]]),
+    });
+    assert.equal(plan.capped, 1);
+    assert.deepEqual(plan.groups.map((group) => [group.title, group.wallets]).sort(), [
+      ['The week on Base', [YOU]],
+      ['Your stocks this week', [ME]],
+    ]);
+  });
+
+  test('a pass inside the window sends it once per wallet, and an unread balance sends nothing', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client, sends } = fakeClient();
+    const friday = new Date('2026-09-26T00:45:00.000Z');
+    const deps = {
+      repository,
+      client,
+      names: async () => names,
+      now: () => friday,
+      weekly: async () => WEEK,
+    };
+    const unread = await runBaseAppNotifyV1({
+      ...deps,
+      holdings: async () => {
+        throw new Error('rpc down');
+      },
+    });
+    assert.equal(unread.weekly?.sent, 0);
+    assert.equal(sends.length, 0, 'a holder is never told the market week instead of their own');
+
+    const first = await runBaseAppNotifyV1({ ...deps, holdings: async () => new Map([[ME, new Set([NVDA])]]) });
+    assert.equal(first.weekly?.sent, 2);
+    assert.deepEqual(sends.map((send) => send.title).sort(), ['The week on Base', 'Your stocks this week']);
+    const again = await runBaseAppNotifyV1({ ...deps, holdings: async () => new Map([[ME, new Set([NVDA])]]) });
+    assert.equal(again.weekly?.due, 0);
+    assert.equal(sends.length, 2, 'the next pass sends nothing more');
+  });
+
+  test('outside the window the week is not even read', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client } = fakeClient();
+    let asked = 0;
+    await runBaseAppNotifyV1({
+      repository,
+      client,
+      names: async () => names,
+      now: () => NOW,
+      weekly: async () => {
+        asked += 1;
+        return WEEK;
+      },
+    });
+    assert.equal(asked, 0);
   });
 });
 
