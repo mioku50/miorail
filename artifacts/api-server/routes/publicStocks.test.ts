@@ -205,3 +205,45 @@ test('the cache expires on its own clock and evicts the oldest past its bound', 
   now = 1_001;
   assert.equal(await cache.read('a', work), 5);
 });
+
+test('the weekend is one public read per five-minute slot, and state none is an answer', async (t) => {
+  const reads: string[] = [];
+  stubV1(t, {
+    now: () => new Date('2026-09-27T22:00:00.000Z'),
+    readWeekend: async (now: Date) => {
+      reads.push(now.toISOString());
+      return {
+        schemaVersion: 'weekend-market/v1',
+        state: 'in_progress',
+        generatedAt: now.toISOString(),
+        window: null,
+        stocks: [],
+        called: null,
+      } as never;
+    },
+  });
+  const app = appV1();
+  const first = await request(app).get('/api/public/stocks/weekend').expect(200);
+  await request(app).get('/api/public/stocks/weekend').expect(200);
+  assert.equal(first.body.state, 'in_progress');
+  // A burst of readers inside one slot is one read.
+  assert.deepEqual(reads, ['2026-09-27T22:00:00.000Z']);
+  assert.equal(first.headers['x-robots-tag'], 'noindex');
+});
+
+test('a weekend read that fails is an outage, never cached', async (t) => {
+  let attempts = 0;
+  stubV1(t, {
+    now: () => new Date('2026-09-27T22:00:00.000Z'),
+    readWeekend: async () => {
+      attempts += 1;
+      throw new Error('database down');
+    },
+  });
+  const app = appV1();
+  const failed = await request(app).get('/api/public/stocks/weekend').expect(500);
+  assert.equal(failed.body.code, 'weekend_market_failed');
+  assert.doesNotMatch(JSON.stringify(failed.body), /database down/);
+  await request(app).get('/api/public/stocks/weekend').expect(500);
+  assert.equal(attempts, 2);
+});

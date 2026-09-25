@@ -6,6 +6,7 @@ import {
   StocksAskResponseV1Schema,
   type StocksAskResponseV1,
 } from '@mioagent/rwa-market-reality/narration-contract';
+import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
 // gate the confirm button without a new dep (api-spec already re-exports it
@@ -914,6 +915,25 @@ export type StocksReadAccessV1 = 'session' | 'public';
 
 function stocksReadBaseV1(access: StocksReadAccessV1 | undefined): string {
   return access === 'public' ? '/api/public/stocks' : '/api/route-intelligence/rwa';
+}
+
+/**
+ * The weekend on Base: where tokenized stocks trade while Wall Street is
+ * closed, and where they reopened. Public for everybody: it measures a market,
+ * never a wallet. `state: 'none'` the rest of the week, which the board shows
+ * as nothing.
+ */
+export function useWeekendMarket(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['weekend-market'],
+    queryFn: async () =>
+      WeekendMarketResponseV1Schema.parse(await fetchApi<unknown>('/api/public/stocks/weekend')),
+    retry: false,
+    enabled: options?.enabled !== false,
+    // The server answers per five-minute slot and the sampler runs about hourly.
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
 }
 
 /** Phase 3 official-asset dossier shared by Web and Base App. Read-only: the

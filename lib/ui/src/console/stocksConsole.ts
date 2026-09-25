@@ -12,6 +12,7 @@ import {
   useRwaUseAccess,
   useAerodromePoolSpot,
   type StocksReadAccessV1,
+  useWeekendMarket,
 } from '@mioagent/api-client-react';
 import {
   stockExecutionGoalSentenceV1,
@@ -24,6 +25,7 @@ import {
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
+import { weekendMarketViewV1 } from './weekendMarketView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
   MARKET_REALITY_SIZES_V1,
@@ -825,8 +827,21 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     configurationRead: input.configurationRead !== false,
   });
 
+  // The weekend card. The same public read for everybody: it measures a
+  // market, never a wallet, and it is null the rest of the week.
+  const weekendRead = useWeekendMarket({ enabled });
+  const weekend = useMemo(
+    () =>
+      weekendMarketViewV1(weekendRead.data ?? null, {
+        now: new Date(),
+        origin: typeof window === 'undefined' ? 'https://miorail.xyz' : window.location.origin,
+      }),
+    [weekendRead.data],
+  );
+
   const model: MarketRealityScreenModelV1 = {
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
+    weekend,
     // The decimals travel per address so the card can read a SELL amount in
     // the exact contract's own scale; null where nobody read it.
     trade:

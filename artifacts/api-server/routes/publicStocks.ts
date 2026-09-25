@@ -14,6 +14,7 @@ import {
   rwaMarketRealityRuntime,
 } from './rwaMarketReality.js';
 import { readOfficialAssetDossierV1, rwaDossierRuntime } from './rwaDossier.js';
+import { databaseWeekendRunsV1, readWeekendMarketV1 } from '../lib/weekendMarketRead.js';
 
 // ---------------------------------------------------------------------------
 // The Stocks board, readable without a wallet.
@@ -108,6 +109,8 @@ export const publicStocksCachesV1 = {
   history: createPublicReadCacheV1({ ttlMs: 60_000, max: 1_024 }),
   dossier: createPublicReadCacheV1({ ttlMs: 2 * 60_000, max: 256 }),
   useAccess: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 256 }),
+  // The weekend sampler runs about hourly, so five minutes loses nothing.
+  weekend: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
 };
 
 /** A testing seam; production never replaces any of it. */
@@ -125,6 +128,19 @@ export const publicStocksRuntime = {
   readHistory: readMarketRealityHistoryV1,
   readDossier: readOfficialAssetDossierV1,
   readUseAccess: readUseAccessV1,
+  readWeekend: (now: Date) =>
+    readWeekendMarketV1(now, {
+      runs: databaseWeekendRunsV1,
+      identify: async (tokenAddress: string) => {
+        const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress });
+        if (!found) return null;
+        return {
+          symbol: found.underlying.displaySymbol ?? found.underlying.canonicalName,
+          name: found.underlying.canonicalName,
+        };
+      },
+    }),
+  now: () => new Date(),
 };
 
 const PUBLIC_LADDER_SIZES_V1: readonly string[] = CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1;
@@ -176,6 +192,27 @@ publicStocksRouter.use(async (req: Request, res: Response, next) => {
     return;
   }
   next();
+});
+
+/**
+ * The weekend on Base: while Wall Street is closed, where the tokens trade
+ * against the close at the bell, and once the feed prints again, where it
+ * reopened. `state: 'none'` outside a quiet period, so the board can ask at
+ * any time and show nothing when there is nothing to show.
+ */
+publicStocksRouter.get('/weekend', async (_req: Request, res: Response) => {
+  try {
+    if (!(await publicStocksRuntime.storageAvailable())) {
+      refuse(res, 503, 'market_reality_storage_unavailable');
+      return;
+    }
+    const now = publicStocksRuntime.now();
+    // One answer per five-minute slot, so a burst of readers is one read.
+    const slot = Math.floor(now.getTime() / 300_000);
+    sendPublic(res, await publicStocksCachesV1.weekend.read(`weekend|${slot}`, () => publicStocksRuntime.readWeekend(now)));
+  } catch (error) {
+    failed(res, 'weekend', 'weekend_market_failed', error);
+  }
 });
 
 publicStocksRouter.get('/underlyings', async (req: Request, res: Response) => {

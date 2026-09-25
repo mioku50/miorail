@@ -9,7 +9,8 @@
     ".": "./src/index.ts",
     "./contracts": "./src/contracts.ts",
     "./execution-handoff": "./src/executionHandoff.ts",
-    "./narration-contract": "./src/narrationContract.ts"
+    "./narration-contract": "./src/narrationContract.ts",
+    "./weekend-market": "./src/weekendMarket.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

@@ -17,3 +17,4 @@ export * from './agent.js';
 // is the only way that stays true when the wording changes.
 export * from './agentSummary.js';
 export * from './discoveryAliases.js';
+export * from './weekendMarket.js';
