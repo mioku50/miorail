@@ -224,6 +224,105 @@ const PASSING_BODY = {
   assetChanges: { status: 'unavailable', unavailableReason: 'no_logs_emitted', changes: [] },
 };
 
+describe('a revert from an empty wallet is about the wallet, not the route', () => {
+  // 2026-09-25, Base App: 0.1 USDC of NVDAc from a wallet that held no USDC.
+  // Uniswap's batch reverted in Permit2's words, and the screen told the
+  // person to change the route or the amount. The same empty wallet on Hydrex
+  // reverted in USDC's own words, which the text check already caught.
+  const USDC_ASSET = {
+    assetId: 'eip155:8453/erc20:0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    chainId: 8453 as const,
+    kind: 'erc20' as const,
+    address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const,
+    symbol: 'USDC',
+    decimals: 6,
+  };
+  const PERMIT2_REVERT = {
+    ...SUCCESS_BODY,
+    status: 'reverted',
+    revertReason: 'execution reverted: TRANSFER_FROM_FAILED',
+    failedCallIndex: 1,
+  };
+  const spending = () => ({ ...request(), spend: { asset: USDC_ASSET, amountAtomic: '100000' } });
+
+  test('a wallet holding less than the input is insufficient_funds, whatever the router said', async () => {
+    const reads: unknown[] = [];
+    const state = await simulateSwapCallsV1(spending(), {
+      provider: provider(PERMIT2_REVERT),
+      readSpendBalance: async (input) => {
+        reads.push(input);
+        return 0n;
+      },
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'failed');
+    assert.equal(state.errorCode, 'insufficient_funds');
+    assert.deepEqual(reads, [{ asset: USDC_ASSET, walletAddress: WALLET }]);
+  });
+
+  test('a wallet that holds enough keeps the revert a statement about the route', async () => {
+    const state = await simulateSwapCallsV1(spending(), {
+      provider: provider(PERMIT2_REVERT),
+      readSpendBalance: async () => 100000n,
+      now: () => NOW,
+    });
+    assert.equal(state.errorCode, 'reverted');
+  });
+
+  test('an unread balance is not an empty one', async () => {
+    const unread = async () => null;
+    const broken = async (): Promise<bigint | null> => {
+      throw new Error('rpc down');
+    };
+    for (const readSpendBalance of [unread, broken]) {
+      const state = await simulateSwapCallsV1(spending(), {
+        provider: provider(PERMIT2_REVERT),
+        readSpendBalance,
+        now: () => NOW,
+      });
+      assert.equal(state.errorCode, 'reverted');
+    }
+  });
+
+  test('a passing simulation never reads the balance', async () => {
+    let reads = 0;
+    const state = await simulateSwapCallsV1(spending(), {
+      provider: provider(SUCCESS_BODY),
+      readSpendBalance: async () => {
+        reads += 1;
+        return 0n;
+      },
+      now: () => NOW,
+    });
+    assert.equal(state.status, 'passed');
+    assert.equal(reads, 0);
+  });
+
+  test('the token’s own words still count when no balance is read', async () => {
+    const state = await simulateSwapCallsV1(request(), {
+      provider: provider({ ...PERMIT2_REVERT, revertReason: 'execution reverted: ERC20: transfer amount exceeds balance' }),
+      now: () => NOW,
+    });
+    assert.equal(state.errorCode, 'insufficient_funds');
+  });
+
+  test('what the batch spends is never sent to a simulator', async () => {
+    let sent: object | null = null;
+    await simulateSwapCallsV1(spending(), {
+      provider: {
+        providerId: 'test-provider',
+        async simulate(input) {
+          sent = input;
+          return { ok: true, body: SUCCESS_BODY };
+        },
+      },
+      now: () => NOW,
+    });
+    assert.ok(sent);
+    assert.equal(Object.hasOwn(sent, 'spend'), false);
+  });
+});
+
 describe('swap simulation batch chain', () => {
   test('an exhausted primary does not condemn the batch claim when the Base RPC answers', async () => {
     resetSimulationProviderHealthV1();

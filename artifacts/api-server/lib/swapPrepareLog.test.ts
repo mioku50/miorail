@@ -43,8 +43,27 @@ test('a kernel refusal logs each failed check id and our own code, never the det
       { id: 'contract_security', code: null },
     ],
     simulation: 'passed',
+    simulationErrorCode: null,
   });
   assert.doesNotMatch(JSON.stringify(meta), /Permit2 approval must|GoPlus|0xb2/);
+});
+
+test('a refused simulation logs which of the two refusals it was', () => {
+  const blocked = (errorCode: string) =>
+    swapPrepareOutcomeMetaV1({
+      outcome: 'blocked',
+      routeRunId: 'run-3',
+      safety: {
+        verdict: 'blocked',
+        checks: [{ id: 'simulation_evidence', description: 'Simulation', status: 'failed', detail: 'These exact calls…' }],
+        blockedReason: 'simulation_evidence: …',
+      } as never,
+      simulation: { status: 'failed', errorCode } as never,
+    });
+  assert.equal(blocked('insufficient_funds').simulationErrorCode, 'insufficient_funds');
+  assert.equal(blocked('reverted').simulationErrorCode, 'reverted');
+  // Only a closed code of ours is logged, never words a provider supplied.
+  assert.equal(blocked('execution reverted: TRANSFER_FROM_FAILED').simulationErrorCode, null);
 });
 
 test('a refresh logs its reason and the build error code, not the sentence', () => {

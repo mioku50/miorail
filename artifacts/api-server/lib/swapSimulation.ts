@@ -15,6 +15,7 @@ import {
   createBaseRpcBatchSimulationProviderFromEnvV1,
   createBaseRpcSwapSimulationProviderFromEnvV1,
 } from './baseRpcSwapSimulation.js';
+import { createSpendBalanceReaderFromEnvV1, type SpendBalanceReaderV1 } from './spendBalance.js';
 
 // ---------------------------------------------------------------------------
 // T67B.1 §6 — the swap Blueprint's simulation.
@@ -43,6 +44,10 @@ export interface SwapSimulationDepsV1 {
   /** A third, narrower provider (one call only), tried last. Undefined enables
    * the Base RPC `eth_call` path in production wiring; tests may inject/null it. */
   fallbackProvider?: SimulationProvider | null;
+  /** Reads the wallet's balance of what the batch spends, after a revert only.
+   * Undefined uses the Base read RPC in production wiring and reads nothing
+   * under test wiring; null never reads. */
+  readSpendBalance?: SpendBalanceReaderV1 | null;
   now?: () => Date;
 }
 
@@ -502,28 +507,79 @@ export async function simulateSwapCallsV1(
 
   const responseHash = stableHashV1('swap-simulation-response/v1', response);
   const blockNumber = String(response.blockNumber);
+  if (response.status === 'success') {
+    return {
+      status: 'passed',
+      observedAt: nowIso,
+      blockNumber,
+      requestHash: requestHash as SimulationStateV1['requestHash'],
+      responseHash: responseHash as SimulationStateV1['responseHash'],
+      errorCode: null,
+    };
+  }
+
   // A simulated revert is a RESULT, not a transport failure: it is reported as
   // `failed`, which is a thing the user is told, not a thing that is retried.
-  return response.status === 'success'
-    ? {
-        status: 'passed',
-        observedAt: nowIso,
-        blockNumber,
-        requestHash: requestHash as SimulationStateV1['requestHash'],
-        responseHash: responseHash as SimulationStateV1['responseHash'],
-        errorCode: null,
-      }
-    : {
-        status: 'failed',
-        observedAt: nowIso,
-        blockNumber,
-        requestHash: requestHash as SimulationStateV1['requestHash'],
-        responseHash: responseHash as SimulationStateV1['responseHash'],
-        // A revert because the WALLET cannot pay is not a statement about the
-        // route. Collapsing it into `reverted` told a user with an empty
-        // balance that the market was broken.
-        errorCode: /insufficient\s+(?:funds|balance)|exceeds\s+balance/iu.test(response.revertReason ?? '')
-          ? 'insufficient_funds'
-          : 'reverted',
-      };
+  //
+  // A revert because the WALLET cannot pay is not a statement about the route.
+  // Collapsing it into `reverted` told a user with an empty balance that the
+  // market was broken. The revert text catches a token's own words ("transfer
+  // amount exceeds balance"). The balance read catches a router that reports
+  // the same empty wallet in its own words (Permit2's "TRANSFER_FROM_FAILED").
+  const readSpendBalance =
+    deps.readSpendBalance === undefined
+      ? (productionWiring ? createSpendBalanceReaderFromEnvV1(process.env) : null)
+      : deps.readSpendBalance;
+  const walletShort = await spendShortfallV1(request, readSpendBalance);
+  const insufficient =
+    walletShort === true || /insufficient\s+(?:funds|balance)|exceeds\s+balance/iu.test(response.revertReason ?? '');
+  try {
+    // Which call reverted, in the router's words, and whether the wallet could
+    // pay. On 2026-09-25 this line did not exist, and the revert had to be
+    // rebuilt by hand to learn that the wallet held no USDC.
+    logger.info('Swap simulation reverted', {
+      blueprintId: request.blueprintId,
+      provider: answer.providerId,
+      failedCallIndex: response.failedCallIndex ?? null,
+      revertReason: (response.revertReason ?? '').replace(/https?:\/\/\S+/giu, '[endpoint]').slice(0, 200),
+      walletShort,
+    });
+  } catch {
+    // A log line never decides an outcome.
+  }
+  return {
+    status: 'failed',
+    observedAt: nowIso,
+    blockNumber,
+    requestHash: requestHash as SimulationStateV1['requestHash'],
+    responseHash: responseHash as SimulationStateV1['responseHash'],
+    errorCode: insufficient ? 'insufficient_funds' : 'reverted',
+  };
+}
+
+/**
+ * Whether the wallet holds less of the spent asset than the batch takes.
+ *
+ * `null` when nothing could be compared: no spend declared, no reader, or a
+ * read that did not come back. An unread balance is not an empty one, so a
+ * `null` leaves the revert a revert.
+ */
+async function spendShortfallV1(
+  request: SwapSimulationRequestV1,
+  read: SpendBalanceReaderV1 | null,
+): Promise<boolean | null> {
+  if (!request.spend || !read) return null;
+  let required: bigint;
+  try {
+    required = BigInt(request.spend.amountAtomic);
+  } catch {
+    return null;
+  }
+  if (required <= 0n) return null;
+  try {
+    const balance = await read({ asset: request.spend.asset, walletAddress: request.walletAddress });
+    return balance === null ? null : balance < required;
+  } catch {
+    return null;
+  }
 }

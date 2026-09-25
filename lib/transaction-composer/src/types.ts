@@ -169,6 +169,14 @@ export interface SwapSimulationRequestV1 {
   blueprintId: string;
   callsHash: HashV1;
   calls: readonly ExecutionCallV1[];
+  /**
+   * What the batch takes from the wallet: the intent's input. Never sent to a
+   * simulator. It is here so a revert can be read against the wallet's own
+   * balance. A router reports an empty wallet in its own words — Uniswap's
+   * Permit2 path says `TRANSFER_FROM_FAILED` — and no pattern over those words
+   * can tell "this wallet cannot pay" from "this route is broken".
+   */
+  spend?: { asset: TokenAmountV1['asset']; amountAtomic: string };
 }
 
 /** Injected so this package never imports @mioagent/paid-intelligence. */

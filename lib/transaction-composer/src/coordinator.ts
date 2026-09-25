@@ -738,6 +738,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
             blueprintId,
             callsHash: hashApprovedCallsV1(calls),
             calls,
+            spend: { asset: inputAsset, amountAtomic: intent.amount.amountAtomic },
           })
         : unsimulatedStateV1('no_simulation_provider');
     }

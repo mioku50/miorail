@@ -603,6 +603,23 @@ describe('the composer prepares Aerodrome only under its own conditions', () => 
     assert.match(check?.detail ?? '', /not about the route/i);
   });
 
+  test('the simulation is told what the batch spends, so an empty wallet can be named', async () => {
+    // 2026-09-25: an empty wallet's Uniswap batch reverted in Permit2's words,
+    // which no text check can tell from a broken route. What the batch spends
+    // travels beside the calls so the simulator's side can read the balance.
+    const s = await scene();
+    const seen: SwapSimulationRequestV1[] = [];
+    const result = await composerFor(s, {
+      simulate: async (request) => {
+        seen.push(request);
+        return PASSED_SIMULATION;
+      },
+    }).prepare(prepareInput(s));
+    assert.equal(result.outcome, 'prepared', JSON.stringify(result));
+    assert.equal(seen.length, 1);
+    assert.deepEqual(seen[0]!.spend, { asset: s.intent.fromAsset, amountAtomic: s.intent.amount.amountAtomic });
+  });
+
   test('a moved route is reported as route_changed, not as an expired quote', async () => {
     const s = await scene(DIRECT_VOLATILE);
     const result = await composerFor(s, { quoteRoute: DIRECT_STABLE }).prepare(prepareInput(s));

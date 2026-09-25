@@ -120,7 +120,7 @@ export const SIMULATION_OUTCOME_COPY_V1: Readonly<Record<SimulationOutcomeV1, Si
   },
   insufficient_funds: {
     headline: 'Your wallet cannot fund this swap',
-    detail: 'The simulation ran and failed because this wallet does not hold enough to cover the input amount and gas. This is about the balance, not about the route.',
+    detail: 'The simulation ran and failed because this wallet does not hold enough to cover the input amount and gas. This is about the balance, not about the route. Nothing was signed: add funds to this wallet and try again.',
     subLabel: 'insufficient funds',
   },
   simulation_method_unsupported: {

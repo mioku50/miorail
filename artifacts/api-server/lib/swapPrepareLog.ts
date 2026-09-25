@@ -37,6 +37,9 @@ export function swapPrepareOutcomeMetaV1(
           .filter((check) => check.status === 'failed')
           .map((check) => ({ id: check.id, code: leadingCodeV1(check.detail) })),
         simulation: result.simulation?.status ?? null,
+        // `reverted` and `insufficient_funds` are two different sentences on
+        // the screen. On 2026-09-25 the line said only `failed`.
+        simulationErrorCode: OUR_CODE_V1.test(result.simulation?.errorCode ?? '') ? result.simulation!.errorCode : null,
       };
     case 'refresh_required':
       return {
