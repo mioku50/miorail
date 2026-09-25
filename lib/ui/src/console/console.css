@@ -1941,6 +1941,13 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    two addresses, and every other element is context for that one.
    --------------------------------------------------------------------------- */
 .mio-console.pi-page { max-width: 760px; margin: 0 auto; padding: 32px 20px 64px; display: grid; gap: 20px; }
+/* A page's own head is not the app bar. `.mio-console header` styles the
+   console's top bar and matched every <header> inside the console, so
+   /is-it-real laid its eyebrow, title and lede out as a three-column bar with
+   the chrome background (measured 2026-09-25 at 390px: the title began right
+   of the eyebrow). */
+.mio-console .pi-head { display: block; padding: 0; border-bottom: 0; background: none;
+  backdrop-filter: none; }
 .mio-console .pi-head h1 { margin: 4px 0 8px; font-size: var(--fs-title); letter-spacing: -0.01em; color: var(--ink); }
 .mio-console .pi-eyebrow { margin: 0; color: var(--muted); font-size: var(--fs-meta);
   text-transform: uppercase; letter-spacing: 0.08em; }

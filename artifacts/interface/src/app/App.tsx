@@ -86,6 +86,9 @@ const SettingsPage = lazy(() =>
 const PublicIdentityPage = lazy(() =>
   import('../features/identity/PublicIdentityPage').then((m) => ({ default: m.PublicIdentityPage })),
 );
+const PaidApiPage = lazy(() =>
+  import('../features/x402/PaidApiPage').then((m) => ({ default: m.PaidApiPage })),
+);
 const PublicMetricsPage = lazy(() =>
   import('../features/metrics/PublicMetricsPage').then((m) => ({ default: m.PublicMetricsPage })),
 );
@@ -215,6 +218,13 @@ export function App() {
         </Route>
         <Route path="/is-it-real">
           <PublicIdentityPage />
+        </Route>
+
+        {/* The paid API. No session: a reader deciding whether to point an
+            agent here sees the price and the answers first, and connects a
+            wallet only to buy one. */}
+        <Route path="/x402">
+          <PaidApiPage />
         </Route>
 
         {/* The Stocks board at an address worth sharing. No session: the board

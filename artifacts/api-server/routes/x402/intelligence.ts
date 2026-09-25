@@ -865,6 +865,22 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
 
   router.get('/catalog', (_req, res) => res.json(sellerCatalogV1(env)));
 
+  // x402scan and indexes like it discover a seller from one document at
+  // /.well-known/x402 (nginx maps that path here): the absolute URL of every
+  // paid resource, each of which answers a bare GET with its 402. Built from
+  // the catalog, so a resource cannot be listed here and absent there, and
+  // withheld whenever the catalog says payments cannot settle.
+  router.get('/well-known', (_req, res) => {
+    const catalog = sellerCatalogV1(env);
+    const origin = env.PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+    if (!catalog.enabled || !origin || !/^https:\/\//.test(origin)) {
+      res.status(404).json({ error: 'x402_intelligence_not_released', code: 'x402_intelligence_not_released' });
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json({ version: 1, resources: catalog.services.map((service) => `${origin}${service.path}`) });
+  });
+
   router.get(
     '/b20/exit-analysis',
     featureGate,

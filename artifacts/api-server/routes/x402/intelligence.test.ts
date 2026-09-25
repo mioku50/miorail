@@ -92,6 +92,34 @@ test('catalog publishes every fixed-price service without payment', async () => 
   }
 });
 
+test('the discovery document lists every catalogued resource at its absolute address', async () => {
+  // x402scan registers a seller from /.well-known/x402 (nginx maps it here).
+  const app = express();
+  app.use(
+    '/api/x402/intelligence/v1',
+    createX402IntelligenceRouterV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz/' }, dbEnabled: false }),
+  );
+  const catalog = await request(app).get('/api/x402/intelligence/v1/catalog').expect(200);
+  const discovery = await request(app).get('/api/x402/intelligence/v1/well-known').expect(200);
+  assert.equal(discovery.body.version, 1);
+  assert.deepEqual(
+    discovery.body.resources,
+    (catalog.body.services as { path: string }[]).map((service) => `https://miorail.xyz${service.path}`),
+  );
+
+  // Nothing is listed that cannot be bought: the seller switched off, or no
+  // public https origin to name the resources by.
+  for (const env of [
+    { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz', MIORAIL_X402_SELLER_INTELLIGENCE_V1: 'false' },
+    { ...ENV, PUBLIC_API_BASE_URL: 'http://miorail.xyz' },
+    { ...ENV },
+  ] as NodeJS.ProcessEnv[]) {
+    const off = express();
+    off.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({ env, dbEnabled: false }));
+    await request(off).get('/api/x402/intelligence/v1/well-known').expect(404);
+  }
+});
+
 test('the official x402 challenge prices a seller resource at the catalogue price in Base USDC', async () => {
   const facilitator = createServer((req, res) => {
     if (req.url?.endsWith('/supported')) {

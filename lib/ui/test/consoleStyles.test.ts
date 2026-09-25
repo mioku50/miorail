@@ -457,3 +457,15 @@ describe('a panel heading on a phone', () => {
     assert.match(heading, /overflow-wrap:\s*anywhere/);
   });
 });
+
+describe('a public page head is not the app bar', () => {
+  // 2026-09-25: `.mio-console header` is the console's top bar (flex, chrome
+  // background), and it matched the <header> of /is-it-real too, so the
+  // eyebrow, title and lede sat side by side in one bar on a phone.
+  test('the page head is reset to a block, without the bar chrome', () => {
+    const head = /\.mio-console \.pi-head \{([^}]*)\}/.exec(css)?.[1] ?? '';
+    assert.match(head, /display:\s*block/);
+    assert.match(head, /background:\s*none/);
+    assert.match(head, /border-bottom:\s*0/);
+  });
+});

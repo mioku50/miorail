@@ -264,3 +264,11 @@ test('an unread configuration is never reported as a switched-off section', () =
   const mini = source('artifacts/miniapp/app/components/MiniConsole.tsx');
   assert.match(mini, /unavailable: !status\.isSuccess\s*\n\s*\? undefined/);
 });
+
+test('the edge serves the x402 discovery document from the API', () => {
+  const nginx = source('ops/nginx/miorail-app.conf');
+  const at = nginx.indexOf('location = /.well-known/x402 {');
+  assert.ok(at >= 0, 'Nginx has no /.well-known/x402');
+  const block = nginx.slice(at, nginx.indexOf('\n}', at));
+  assert.match(block, /proxy_pass http:\/\/127\.0\.0\.1:8080\/api\/x402\/intelligence\/v1\/well-known;/);
+});
