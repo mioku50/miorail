@@ -111,6 +111,113 @@ function resourceOriginV1(env: NodeJS.ProcessEnv): string | undefined {
   return `${base}${X402_INTELLIGENCE_MOUNT_V1}`;
 }
 
+/** The public origin resources are named by: `PUBLIC_API_BASE_URL`, https only. */
+function publicOriginV1(env: NodeJS.ProcessEnv): string | null {
+  const base = env.PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
+  return base && /^https:\/\//.test(base) ? base : null;
+}
+
+/** What an operation's declaration is read for. `@x402/extensions` types the
+ * input schema loosely, so this is the part of it the document relies on. */
+interface DeclaredInputV1 {
+  inputSchema?: { properties?: Record<string, { description?: string }>; required?: readonly string[] };
+  output?: { example?: unknown };
+}
+
+const X402_OPENAPI_GUIDANCE_V1 = [
+  'Every paid operation is a GET that answers 402 first. Read the x402 v2 challenge from the PAYMENT-REQUIRED header, sign the USDC authorization on Base (eip155:8453) for exactly the amount it names, and repeat the same request with the PAYMENT-SIGNATURE header.',
+  'Inputs are checked before the price: a malformed input answers 400, and an input Miorail holds no evidence for answers 404. Neither is charged.',
+  'Answers report stored evidence and name what was not established. None is a recommendation or an executable quote, and an address absent from the reviewed corpus is absent from Miorail, never shown to be fake.',
+  'Addresses are exact Base contract addresses. A ticker never selects a contract.',
+].join(' ');
+
+/**
+ * The paid surface as an OpenAPI document.
+ *
+ * x402scan registers a seller from `/openapi.json` alone. Its discovery tool
+ * (`@agentcash/discovery` 1.7.5) says of `/.well-known/x402` that it "no longer
+ * parses these", and on 2026-09-25 "Add Server" answered "No discovery document
+ * found" while that document was live. Built from the catalog and each route's
+ * Bazaar declaration, so the price, the paths and the inputs are the ones the
+ * 402 challenge carries.
+ */
+export function x402OpenApiDocumentV1(input: {
+  origin: string;
+  services: readonly { id: X402IntelligenceServiceV1; method: string; path: string; description: string }[];
+  declarations: Readonly<Record<X402IntelligenceServiceV1, DeclaredInputV1>>;
+  payment: { network: string; asset: string; amountAtomic: string; amountUsdc: string };
+}) {
+  const paths: Record<string, unknown> = {};
+  for (const service of input.services) {
+    const declared = input.declarations[service.id];
+    const required = new Set(declared?.inputSchema?.required ?? []);
+    paths[service.path] = {
+      [service.method.toLowerCase()]: {
+        operationId: service.id,
+        summary: service.description,
+        tags: ['x402'],
+        parameters: Object.entries(declared?.inputSchema?.properties ?? {}).map(([name, schema]) => ({
+          in: 'query',
+          name,
+          required: required.has(name),
+          ...(schema.description ? { description: schema.description } : {}),
+          schema: { type: 'string' },
+        })),
+        responses: {
+          '200': {
+            description: 'The answer, with what Miorail did not establish.',
+            content: {
+              'application/json': {
+                schema: { type: 'object' },
+                ...(declared?.output?.example !== undefined ? { example: declared.output.example } : {}),
+              },
+            },
+          },
+          '400': { description: 'Malformed input, refused before the price. Nothing is charged.' },
+          '402': { description: 'Payment required. The x402 v2 challenge is in the PAYMENT-REQUIRED header.' },
+          '404': { description: 'No stored evidence for this input, refused before the price. Nothing is charged.' },
+        },
+        'x-payment-info': {
+          price: { mode: 'fixed', currency: 'USD', amount: input.payment.amountUsdc },
+          protocols: [
+            {
+              x402: {
+                version: 2,
+                scheme: 'exact',
+                network: input.payment.network,
+                asset: input.payment.asset,
+                amount: input.payment.amountAtomic,
+              },
+            },
+          ],
+        },
+      },
+    };
+  }
+  paths[`${X402_INTELLIGENCE_MOUNT_V1}/catalog`] = {
+    get: {
+      operationId: 'catalog',
+      summary: 'The price list: every paid resource, its inputs and what it does not establish.',
+      tags: ['x402'],
+      security: [],
+      responses: { '200': { description: 'The catalog.', content: { 'application/json': { schema: { type: 'object' } } } } },
+    },
+  };
+  return {
+    openapi: '3.1.0',
+    info: {
+      title: 'Miorail paid intelligence',
+      version: 'x402-intelligence-v1',
+      description:
+        'Answers about Base tokens that an agent cannot compute for itself: exit coverage, liquidity evidence, which token is the stock, whether an address is the official one, and published trade proofs. Sold per request over x402 in USDC on Base.',
+      'x-guidance': X402_OPENAPI_GUIDANCE_V1,
+    },
+    servers: [{ url: input.origin }],
+    tags: [{ name: 'x402' }],
+    paths,
+  };
+}
+
 function sellerEnabledV1(env: NodeJS.ProcessEnv): boolean {
   return env.MIORAIL_X402_SELLER_INTELLIGENCE_V1?.trim().toLowerCase() === 'true';
 }
@@ -872,13 +979,32 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   // withheld whenever the catalog says payments cannot settle.
   router.get('/well-known', (_req, res) => {
     const catalog = sellerCatalogV1(env);
-    const origin = env.PUBLIC_API_BASE_URL?.trim().replace(/\/+$/, '');
-    if (!catalog.enabled || !origin || !/^https:\/\//.test(origin)) {
+    const origin = publicOriginV1(env);
+    if (!catalog.enabled || !origin) {
       res.status(404).json({ error: 'x402_intelligence_not_released', code: 'x402_intelligence_not_released' });
       return;
     }
     res.setHeader('Cache-Control', 'public, max-age=300');
     res.json({ version: 1, resources: catalog.services.map((service) => `${origin}${service.path}`) });
+  });
+
+  // nginx maps /openapi.json here. Withheld on the same terms as the list.
+  router.get('/openapi.json', (_req, res) => {
+    const catalog = sellerCatalogV1(env);
+    const origin = publicOriginV1(env);
+    if (!catalog.enabled || !origin) {
+      res.status(404).json({ error: 'x402_intelligence_not_released', code: 'x402_intelligence_not_released' });
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=300');
+    res.json(
+      x402OpenApiDocumentV1({
+        origin,
+        services: catalog.services,
+        declarations: DISCOVERY_V1 as Record<X402IntelligenceServiceV1, DeclaredInputV1>,
+        payment: catalog.payment,
+      }),
+    );
   });
 
   router.get(

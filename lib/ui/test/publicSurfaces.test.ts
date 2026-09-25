@@ -271,4 +271,10 @@ test('the edge serves the x402 discovery document from the API', () => {
   assert.ok(at >= 0, 'Nginx has no /.well-known/x402');
   const block = nginx.slice(at, nginx.indexOf('\n}', at));
   assert.match(block, /proxy_pass http:\/\/127\.0\.0\.1:8080\/api\/x402\/intelligence\/v1\/well-known;/);
+  // x402scan parses only OpenAPI now; without its own location the SPA
+  // answered /openapi.json with index.html and a 200.
+  const openapi = nginx.indexOf('location = /openapi.json {');
+  assert.ok(openapi >= 0, 'Nginx has no /openapi.json');
+  const openapiBlock = nginx.slice(openapi, nginx.indexOf('\n}', openapi));
+  assert.match(openapiBlock, /proxy_pass http:\/\/127\.0\.0\.1:8080\/api\/x402\/intelligence\/v1\/openapi\.json;/);
 });

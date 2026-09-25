@@ -272,7 +272,9 @@ export function PaidApiPage() {
         <p className="lnote">
           Any x402 v2 client pays and retries, for example <span className="mono">@x402/fetch</span>. The catalog is at{' '}
           <a className="mono" href={`${X402_INTELLIGENCE_BASE_V1}/catalog`}>{`${X402_INTELLIGENCE_BASE_V1}/catalog`}</a>, and
-          the free read tools are an MCP server at <span className="mono">{`${ORIGIN}/mcp`}</span>.
+          the whole surface is described for agents as OpenAPI at{' '}
+          <a className="mono" href="/openapi.json">/openapi.json</a>. The free read tools are an MCP server at{' '}
+          <span className="mono">{`${ORIGIN}/mcp`}</span>.
         </p>
       </section>
     </main>

@@ -120,6 +120,51 @@ test('the discovery document lists every catalogued resource at its absolute add
   }
 });
 
+test('the OpenAPI document is what x402scan parses: a price, the protocol and the inputs on every paid route', async () => {
+  // @agentcash/discovery 1.7.5 (x402scan's "Add Server") no longer parses
+  // /.well-known/x402; it reads /openapi.json and nothing else.
+  const app = express();
+  app.use(
+    '/api/x402/intelligence/v1',
+    createX402IntelligenceRouterV1({ env: { ...ENV, PUBLIC_API_BASE_URL: 'https://miorail.xyz' }, dbEnabled: false }),
+  );
+  const catalog = await request(app).get('/api/x402/intelligence/v1/catalog').expect(200);
+  const response = await request(app).get('/api/x402/intelligence/v1/openapi.json').expect(200);
+  const doc = response.body as {
+    openapi: string;
+    info: { title: string; version: string; 'x-guidance'?: string };
+    servers: { url: string }[];
+    paths: Record<string, Record<string, Record<string, unknown>>>;
+  };
+  // The fields their schema requires, and the base path their parser derives
+  // from servers[0]: empty, so each key is the full path.
+  assert.match(doc.openapi, /^3\./);
+  assert.ok(doc.info.title && doc.info.version);
+  assert.deepEqual(doc.servers, [{ url: 'https://miorail.xyz' }]);
+  assert.ok((doc.info['x-guidance'] ?? '').length > 0 && (doc.info['x-guidance'] ?? '').length < 4000);
+
+  for (const service of catalog.body.services as { id: string; path: string }[]) {
+    const operation = doc.paths[service.path]?.get;
+    assert.ok(operation, `${service.path} is in the document`);
+    // A 402 response, and structured payment info: a fixed price in USD equal
+    // to the catalogue's, and the x402 protocol.
+    assert.ok((operation.responses as Record<string, unknown>)['402']);
+    const info = operation['x-payment-info'] as { price: Record<string, string>; protocols: Record<string, unknown>[] };
+    assert.deepEqual(info.price, { mode: 'fixed', currency: 'USD', amount: MIORAIL_X402_INTELLIGENCE_PRICE_USDC_V1 });
+    assert.ok(info.protocols.some((protocol) => 'x402' in protocol));
+    // An input schema, or the audit flags the paid route as uncallable.
+    const parameters = operation.parameters as { in: string; name: string; required: boolean }[];
+    assert.ok(parameters.length > 0 && parameters.every((parameter) => parameter.in === 'query'));
+    assert.ok(parameters.some((parameter) => parameter.required), `${service.path} names its required input`);
+  }
+  // The free price list says it is free rather than leaving its auth unknown.
+  assert.deepEqual(doc.paths['/api/x402/intelligence/v1/catalog']?.get?.security, []);
+
+  const off = express();
+  off.use('/api/x402/intelligence/v1', createX402IntelligenceRouterV1({ env: ENV, dbEnabled: false }));
+  await request(off).get('/api/x402/intelligence/v1/openapi.json').expect(404);
+});
+
 test('the official x402 challenge prices a seller resource at the catalogue price in Base USDC', async () => {
   const facilitator = createServer((req, res) => {
     if (req.url?.endsWith('/supported')) {
