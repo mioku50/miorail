@@ -36,6 +36,7 @@ import {
 } from './giftView';
 import { tokenDecimalV1 } from './stockSellAmount';
 import { WeekendMarketCard } from './WeekendMarketCard';
+import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlertsStrip';
 import type { WeekendMarketViewV1 } from './weekendMarketView';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
@@ -249,6 +250,8 @@ export interface MarketRealityScreenModelV1 {
   /** While Wall Street is closed, and until the next session closes after the
    * reopen. Null the rest of the week. */
   weekend?: WeekendMarketViewV1 | null;
+  /** Alerts in Telegram, for a signed-in reader when the bot exists. */
+  telegram?: TelegramAlertsModelV1 | null;
   /** Growth plan step 2 — Buy and Sell at the reader's own amount on the answer
    * card: what may be said about the fee, and each address's token decimals, so
    * a sell amount is read in its own contract's scale. Absent where the surface
@@ -1755,6 +1758,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         </div>
       ) : null}
       {model.weekend ? <WeekendMarketCard view={model.weekend} /> : null}
+      {model.telegram ? <TelegramAlertsStrip model={model.telegram} /> : null}
       {/* What this page is, before what it counts. Coinbase B20 is the standard
           Base documents for tokenized stocks on this chain, and it is the scope
           a reader lands in; the wider corpus is one press away and is named

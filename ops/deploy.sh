@@ -558,6 +558,19 @@ grep -qE '^(BASE_DEV_API|BASE_DASHBOARD_API_KEY)=.+' "$REPO/.env" && notify_key=
 notify_timer=$(systemctl is-active miorail-base-app-notify.timer 2>/dev/null || true)
 printf '  base app push  %-28s %s\n' "key $notify_key" "timer ${notify_timer:-unknown}"
 
+# The Telegram bot: its webhook pointed at this deployment, with the secret
+# derived from the token. Set on every deploy, because a token revoked in
+# BotFather changes the secret while the old webhook keeps the old one, and
+# every update would then be refused. The script prints a verdict and never
+# the token. A warning, not a failure: the bot being down must not block a
+# deploy that fixes something else.
+telegram_state=$(cd "$REPO" && as_service_user npx tsx scripts/telegram_webhook.ts 2>/dev/null | tail -1) \
+  || telegram_state='failed the script did not run'
+case "$telegram_state" in
+  on*|off*) printf '  telegram bot   %s\n' "$telegram_state" ;;
+  *)        printf '  telegram bot   WARNING: %s\n' "$telegram_state" ;;
+esac
+
 # The language lane, asked to answer.
 #
 # On 2026-09-09 the configured primary had been returning 402 on every call for

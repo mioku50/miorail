@@ -12,6 +12,9 @@ import {
   useRwaUseAccess,
   useAerodromePoolSpot,
   type StocksReadAccessV1,
+  useConnectTelegram,
+  useDisconnectTelegram,
+  useTelegramLink,
   useWeekendMarket,
 } from '@mioagent/api-client-react';
 import {
@@ -26,6 +29,7 @@ import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
 import { weekendMarketViewV1 } from './weekendMarketView';
+import { telegramAlertsViewV1 } from './telegramAlertsView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
   MARKET_REALITY_SIZES_V1,
@@ -839,9 +843,51 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [weekendRead.data],
   );
 
+  // Alerts in Telegram: signed in only, and only where a bot exists. A link
+  // that was issued is polled for until the reader presses Start or it lapses.
+  const [telegramPending, setTelegramPending] = useState<{ url: string; expiresAt: string } | null>(null);
+  const [telegramFailed, setTelegramFailed] = useState<'connect' | 'disconnect' | null>(null);
+  const telegramLink = useTelegramLink({ enabled: enabled && session, poll: telegramPending !== null });
+  const connectTelegram = useConnectTelegram();
+  const disconnectTelegram = useDisconnectTelegram();
+  useEffect(() => {
+    if (!telegramPending) return;
+    if (telegramLink.data?.linked) {
+      setTelegramPending(null);
+      return;
+    }
+    const left = Date.parse(telegramPending.expiresAt) - Date.now();
+    const timer = setTimeout(() => setTelegramPending(null), Math.max(0, left));
+    return () => clearTimeout(timer);
+  }, [telegramPending, telegramLink.data?.linked]);
+  const telegramView = telegramAlertsViewV1({
+    status: session ? telegramLink.data : null,
+    pending: telegramPending,
+    busy: connectTelegram.isPending ? 'connect' : disconnectTelegram.isPending ? 'disconnect' : null,
+    failed: telegramFailed,
+    now: new Date(),
+  });
+  const telegram = telegramView
+    ? {
+        view: telegramView,
+        onConnect: () => {
+          setTelegramFailed(null);
+          connectTelegram.mutate(undefined, {
+            onSuccess: (issued) => setTelegramPending(issued),
+            onError: () => setTelegramFailed('connect'),
+          });
+        },
+        onDisconnect: () => {
+          setTelegramFailed(null);
+          disconnectTelegram.mutate(undefined, { onError: () => setTelegramFailed('disconnect') });
+        },
+      }
+    : null;
+
   const model: MarketRealityScreenModelV1 = {
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     weekend,
+    telegram,
     // The decimals travel per address so the card can read a SELL amount in
     // the exact contract's own scale; null where nobody read it.
     trade:

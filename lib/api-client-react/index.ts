@@ -936,6 +936,44 @@ export function useWeekendMarket(options?: { enabled?: boolean }) {
   });
 }
 
+/** Telegram alerts for the signed-in wallet: is there a bot, and is this
+ * wallet connected to a chat. Polled while a one-time link is waiting to be
+ * used, so the panel turns to "on" by itself after /start. */
+export function useTelegramLink(options: { enabled: boolean; poll?: boolean }) {
+  return useQuery({
+    queryKey: ['telegram-link'],
+    queryFn: async () => apiSpec.TelegramLinkStatusV1Schema.parse(await fetchApi<unknown>('/api/telegram/link')),
+    retry: false,
+    enabled: options.enabled,
+    staleTime: 60_000,
+    refetchInterval: options.poll ? 4_000 : false,
+  });
+}
+
+/** Issues a one-time t.me link for the session's wallet. Nothing in the
+ * request names a wallet: the server takes it from the session. */
+export function useConnectTelegram() {
+  return useMutation({
+    retry: false,
+    mutationFn: async () =>
+      apiSpec.TelegramLinkIssuedV1Schema.parse(
+        await fetchApi<unknown>('/api/telegram/link', { method: 'POST', body: '{}' }),
+      ),
+  });
+}
+
+export function useDisconnectTelegram() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async () =>
+      apiSpec.TelegramLinkStatusV1Schema.parse(await fetchApi<unknown>('/api/telegram/link', { method: 'DELETE' })),
+    onSuccess: (status) => {
+      queryClient.setQueryData(['telegram-link'], status);
+    },
+  });
+}
+
 /** Phase 3 official-asset dossier shared by Web and Base App. Read-only: the
  * endpoint assembles stored source/market evidence plus pinned Base reads and
  * returns no quote, call, approval or execution payload. */

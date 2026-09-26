@@ -5413,3 +5413,23 @@ export {
   RepresentationUseAccessV1Schema,
   type RepresentationUseAccessV1,
 } from '@mioagent/rwa-issuer/useAccess';
+
+// Telegram alerts: what the website may know about a connection — whether the
+// bot is configured and whether this wallet is heard in some chat. Never which
+// chat: that stays on the server.
+export const TelegramLinkStatusV1Schema = z
+  .object({
+    available: z.boolean(),
+    linked: z.boolean(),
+  })
+  .strict();
+export type TelegramLinkStatusV1 = z.infer<typeof TelegramLinkStatusV1Schema>;
+
+/** A one-time t.me link, returned once. */
+export const TelegramLinkIssuedV1Schema = z
+  .object({
+    url: z.string().regex(/^https:\/\/t\.me\/[A-Za-z0-9_]{5,32}\?start=[A-Za-z0-9_-]{32}$/),
+    expiresAt: z.string().min(1),
+  })
+  .strict();
+export type TelegramLinkIssuedV1 = z.infer<typeof TelegramLinkIssuedV1Schema>;

@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import test, { describe } from 'node:test';
 
 import { InMemoryBaseAppNotificationRepositoryV1 } from '../src/baseAppNotificationsMemory.js';
+import { createDatabaseBaseAppNotificationRepositoryV1 } from '../src/baseAppNotificationsDatabase.js';
 import type { RadarEventNoticeRowV1 } from '../src/baseAppNotifications.js';
 import type { RwaSignalRowV1 } from '../src/rwaSignals.js';
 
@@ -163,9 +164,52 @@ describe('the weekly summary is recorded once per wallet per week', () => {
     );
   });
 
-  test('the database writes one row per week and wallet, and reads by the same key', () => {
+  test('the database writes one row per channel, week and wallet, and reads by the same key', () => {
     const source = readFileSync(resolve(process.cwd(), process.cwd().endsWith('route-storage') ? 'src' : 'lib/route-storage/src', 'baseAppNotificationsDatabase.ts'), 'utf8');
-    assert.match(source, /ON CONFLICT \(week_close_at, wallet_address\) DO NOTHING/);
-    assert.match(source, /WHERE week_close_at = \$\{input\.weekCloseAt\}::timestamptz/);
+    assert.match(source, /ON CONFLICT \(channel, week_close_at, wallet_address\) DO NOTHING/);
+    assert.match(source, /WHERE channel = \$\{channel\} AND week_close_at = \$\{input\.weekCloseAt\}::timestamptz/);
+  });
+});
+
+describe('each channel keeps its own memory', () => {
+  const WEEK = '2026-09-25T20:00:00.000Z';
+  const ME = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
+
+  function recordingSql() {
+    const calls: { text: string; values: unknown[] }[] = [];
+    const sql = (async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      calls.push({ text: strings.join('$'), values });
+      return /INSERT INTO base_app_notification_cursor|FROM base_app_notification_cursor/.test(strings.join('$'))
+        ? [{ source: 'rwa_signal', cursor_at: WEEK, cursor_id: '', opened_at: WEEK, updated_at: WEEK }]
+        : [];
+    }) as unknown as Parameters<typeof createDatabaseBaseAppNotificationRepositoryV1>[0];
+    return { calls, sql };
+  }
+
+  test('every read and write of the three tables names the channel it is for', async () => {
+    const { calls, sql } = recordingSql();
+    const repository = createDatabaseBaseAppNotificationRepositoryV1(sql, { channel: 'telegram' });
+    await repository.cursor('rwa_signal');
+    await repository.openCursor({ source: 'rwa_signal', at: new Date(WEEK) });
+    await repository.advanceCursor({ source: 'rwa_signal', cursorAt: WEEK, cursorId: '7', at: new Date(WEEK) });
+    await repository.sentOn({ day: '2026-09-26', wallets: [ME] });
+    await repository.recordSent({ day: '2026-09-26', wallets: [ME] });
+    await repository.pruneDaily({ before: '2026-09-19' });
+    await repository.weeklySentTo({ weekCloseAt: WEEK, wallets: [ME] });
+    await repository.recordWeeklySent({ weekCloseAt: WEEK, wallets: [ME], at: new Date(WEEK) });
+    const ours = calls.filter((call) => /base_app_(notification_cursor|notification_daily|weekly_summary)/.test(call.text));
+    assert.ok(ours.length >= 9, String(ours.length));
+    for (const call of ours) {
+      assert.match(call.text, /channel/, call.text);
+      assert.ok(call.values.includes('telegram'), call.text);
+      assert.ok(!call.values.includes('base_app'), call.text);
+    }
+  });
+
+  test('Base App stays the default, and an unknown channel is refused', () => {
+    const { calls, sql } = recordingSql();
+    void createDatabaseBaseAppNotificationRepositoryV1(sql).cursor('radar_event');
+    assert.ok(calls[0]?.values.includes('base_app'));
+    assert.throws(() => createDatabaseBaseAppNotificationRepositoryV1(sql, { channel: 'email' as never }), /unknown notification channel/);
   });
 });

@@ -21,6 +21,7 @@ import { publicMetricsRouter } from './publicMetrics';
 import { publicIdentityRouter } from './publicIdentity';
 import { publicStocksRouter } from './publicStocks';
 import { x402IntelligenceRouterV1 } from './x402/intelligence';
+import { telegramLinkRouter, telegramWebhookRouter } from './telegram';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -47,6 +48,10 @@ routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);
 // The committed plugin catalogue is public documentation. Only this dedicated
 // read router sits before tenant auth; OAuth, console and actions remain below.
 routes.use('/mcp/base', mcpBasePublicRouter);
+// Telegram has no session: its webhook is told apart by the secret it echoes.
+// Only POST /telegram/webhook is answered here; /telegram/link falls through
+// to the session gate below.
+routes.use('/telegram', telegramWebhookRouter);
 routes.use(requireTenant, enforceTenantBinding);
 routes.use('/memory', memoryRouter);
 routes.use('/settings', settingsRouter);
@@ -66,3 +71,4 @@ routes.use('/mcp/base', mcpBaseRouter);
 // not (an MCP client has no cookie to send).
 routes.use('/mcp/handoff', mcpHandoffRouter);
 routes.use('/route-intelligence', routeIntelligenceRouter);
+routes.use('/telegram', telegramLinkRouter);

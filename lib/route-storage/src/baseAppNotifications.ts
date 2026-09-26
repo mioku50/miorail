@@ -11,6 +11,16 @@ import { RouteStorageIntegrityError } from './types.js';
 // notifications on is Base's list, asked for on every pass and never copied.
 // ---------------------------------------------------------------------------
 
+/**
+ * Where a notice is delivered. Each channel keeps its own cursors, daily
+ * counts and weekly record in the same three tables (migration 0074 added the
+ * column; the `base_app_` in their names is where they started), so a wallet
+ * told something in Base App is still told it in Telegram, and neither
+ * channel's cap spends the other's.
+ */
+export const NOTIFICATION_CHANNELS_V1 = ['base_app', 'telegram'] as const;
+export type NotificationChannelV1 = (typeof NOTIFICATION_CHANNELS_V1)[number];
+
 export const BASE_APP_NOTIFICATION_SOURCES_V1 = ['rwa_signal', 'radar_event'] as const;
 export type BaseAppNotificationSourceV1 = (typeof BASE_APP_NOTIFICATION_SOURCES_V1)[number];
 

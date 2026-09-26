@@ -7,6 +7,10 @@
  * signer, no chain write, no wallet. The Base Dashboard key is read from the
  * environment and is never printed.
  *
+ * Then the same pass again for Telegram (./telegramNotify.ts): the same notices,
+ * to the wallets a chat connected, with Telegram's own cursors and counts.
+ * Either channel runs without the other; the bot token is never printed.
+ *
  *   pnpm base-app:notify --dry     reads and plans, sends and writes nothing
  *   pnpm base-app:notify
  */
@@ -15,11 +19,13 @@ import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseBaseAppNotificationRepositoryV1,
   createDatabaseOfficialAssetRepository,
+  createDatabaseTelegramLinkRepositoryV1,
   createDatabaseRepresentationRatioRepository,
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
 } from '@mioagent/route-storage';
 import { weekendWindowV1, weeklyCloseChangesV1 } from '@mioagent/rwa-market-reality/weekend-market';
+import { createTelegramBotClientV1, telegramConfigV1 } from '@mioagent/telegram';
 
 import {
   baseAppNotifyConfigV1,
@@ -30,15 +36,16 @@ import {
   type StockNamesV1,
 } from './baseAppNotify.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
+import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 
 async function main(): Promise<void> {
   const dry = process.argv.includes('--dry');
   reportLoadedEnvFileV1(loadRootEnvFileV1());
   const config = baseAppNotifyConfigV1(process.env);
-  if (!config) {
-    console.log(JSON.stringify({ event: 'base_app_notify', outcome: 'off' }));
-    return;
-  }
+  const telegram = telegramConfigV1(process.env);
+  if (!config) console.log(JSON.stringify({ event: 'base_app_notify', outcome: 'off' }));
+  if (!telegram) console.log(JSON.stringify({ event: 'telegram_notify', outcome: 'off' }));
+  if (!config && !telegram) return;
 
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const official = createDatabaseOfficialAssetRepository(client);
@@ -74,9 +81,7 @@ async function main(): Promise<void> {
     return held;
   };
 
-  const report = await runBaseAppNotifyV1({
-    repository: createDatabaseBaseAppNotificationRepositoryV1(client),
-    client: createBaseAppNotifyClientV1({ config }),
+  const shared: Omit<Parameters<typeof runBaseAppNotifyV1>[0], 'repository' | 'client'> = {
     // A lookup that fails fails the pass, which advances nothing: a push is
     // never dropped because a name could not be read this minute.
     names: async (tokens) => {
@@ -137,11 +142,34 @@ async function main(): Promise<void> {
       }
       return { week, dividends };
     },
-  });
-  console.log(JSON.stringify({ event: 'base_app_notify', dry, ...report }));
-  // Base down or throttling is a later pass's problem; a key Base no longer
-  // takes is the operator's, and a failed unit is how that gets seen.
-  if (report.stoppedBy && /http_(401|403|404)$/.test(report.stoppedBy)) process.exitCode = 1;
+  };
+
+  if (config) {
+    const report = await runBaseAppNotifyV1({
+      ...shared,
+      repository: createDatabaseBaseAppNotificationRepositoryV1(client),
+      client: createBaseAppNotifyClientV1({ config }),
+    });
+    console.log(JSON.stringify({ event: 'base_app_notify', dry, ...report }));
+    // Base down or throttling is a later pass's problem; a key Base no longer
+    // takes is the operator's, and a failed unit is how that gets seen.
+    if (report.stoppedBy && /http_(401|403|404)$/.test(report.stoppedBy)) process.exitCode = 1;
+  }
+
+  if (telegram) {
+    const report = await runBaseAppNotifyV1({
+      ...shared,
+      repository: createDatabaseBaseAppNotificationRepositoryV1(client, { channel: 'telegram' }),
+      client: createTelegramNotifyClientV1({
+        bot: createTelegramBotClientV1({ token: telegram.token }),
+        links: createDatabaseTelegramLinkRepositoryV1(client),
+        origin: telegram.origin,
+      }),
+    });
+    console.log(JSON.stringify({ event: 'telegram_notify', dry, ...report }));
+    // A token BotFather revoked is the operator's to replace.
+    if (report.stoppedBy && /^telegram_unauthorized/.test(report.stoppedBy)) process.exitCode = 1;
+  }
 }
 
 main()

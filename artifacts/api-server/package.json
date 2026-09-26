@@ -45,6 +45,7 @@
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
+    "@mioagent/telegram": "workspace:*",
     "@mioagent/tools": "workspace:*",
     "@mioagent/transaction-composer": "workspace:*",
     "@mioagent/utils": "workspace:*",

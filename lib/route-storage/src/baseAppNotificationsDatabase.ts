@@ -6,6 +6,8 @@ import {
   type BaseAppNotificationCursorV1,
   type BaseAppNotificationRepositoryV1,
   type BaseAppNotificationSourceV1,
+  NOTIFICATION_CHANNELS_V1,
+  type NotificationChannelV1,
   type RadarEventKindV1,
   type RadarEventNoticeRowV1,
 } from './baseAppNotifications.js';
@@ -52,7 +54,10 @@ function rowToRadarNoticeV1(row: Record<string, unknown>): RadarEventNoticeRowV1
  */
 export function createDatabaseBaseAppNotificationRepositoryV1(
   sql: SqlTemplateExecutor,
+  options: { channel?: NotificationChannelV1 } = {},
 ): BaseAppNotificationRepositoryV1 {
+  const channel = options.channel ?? 'base_app';
+  if (!NOTIFICATION_CHANNELS_V1.includes(channel)) throw new Error(`unknown notification channel: ${String(channel)}`);
   async function newestPosition(source: BaseAppNotificationSourceV1): Promise<{ at: string; id: string } | null> {
     const rows =
       source === 'rwa_signal'
@@ -73,7 +78,7 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
     async cursor(source) {
       const rows = (await sql`
         SELECT source, cursor_at, cursor_id, opened_at, updated_at
-          FROM base_app_notification_cursor WHERE source = ${source}`) as Record<string, unknown>[];
+          FROM base_app_notification_cursor WHERE channel = ${channel} AND source = ${source}`) as Record<string, unknown>[];
       return rows[0] ? rowToCursorV1(rows[0]) : null;
     },
 
@@ -84,14 +89,14 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
       const id = newest?.id ?? '';
       assertBaseAppCursorIdV1(input.source, id);
       const inserted = (await sql`
-        INSERT INTO base_app_notification_cursor (source, cursor_at, cursor_id, opened_at, updated_at)
-        VALUES (${input.source}, ${at}::timestamptz, ${id}, ${input.at.toISOString()}::timestamptz,
+        INSERT INTO base_app_notification_cursor (channel, source, cursor_at, cursor_id, opened_at, updated_at)
+        VALUES (${channel}, ${input.source}, ${at}::timestamptz, ${id}, ${input.at.toISOString()}::timestamptz,
                 ${input.at.toISOString()}::timestamptz)
-        ON CONFLICT (source) DO NOTHING
+        ON CONFLICT (channel, source) DO NOTHING
         RETURNING source`) as Record<string, unknown>[];
       const rows = (await sql`
         SELECT source, cursor_at, cursor_id, opened_at, updated_at
-          FROM base_app_notification_cursor WHERE source = ${input.source}`) as Record<string, unknown>[];
+          FROM base_app_notification_cursor WHERE channel = ${channel} AND source = ${input.source}`) as Record<string, unknown>[];
       return { cursor: rowToCursorV1(rows[0]!), openedNow: inserted.length > 0 };
     },
 
@@ -102,7 +107,7 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
            SET cursor_at = ${input.cursorAt}::timestamptz,
                cursor_id = ${input.cursorId},
                updated_at = ${input.at.toISOString()}::timestamptz
-         WHERE source = ${input.source}`;
+         WHERE channel = ${channel} AND source = ${input.source}`;
     },
 
     async signalsAfter(input) {
@@ -151,7 +156,7 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
       if (input.wallets.length === 0) return counts;
       const rows = (await sql`
         SELECT wallet_address, sent FROM base_app_notification_daily
-         WHERE day = ${input.day}::date AND wallet_address = ANY(${[...input.wallets]})`) as Record<
+         WHERE channel = ${channel} AND day = ${input.day}::date AND wallet_address = ANY(${[...input.wallets]})`) as Record<
         string,
         unknown
       >[];
@@ -163,9 +168,9 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
       assertBaseAppDailyInputV1(input);
       for (const wallet of new Set(input.wallets)) {
         await sql`
-          INSERT INTO base_app_notification_daily (wallet_address, day, sent)
-          VALUES (${wallet}, ${input.day}::date, 1)
-          ON CONFLICT (wallet_address, day)
+          INSERT INTO base_app_notification_daily (channel, wallet_address, day, sent)
+          VALUES (${channel}, ${wallet}, ${input.day}::date, 1)
+          ON CONFLICT (channel, wallet_address, day)
           DO UPDATE SET sent = base_app_notification_daily.sent + 1`;
       }
     },
@@ -173,7 +178,7 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
     async pruneDaily(input) {
       assertBaseAppDailyInputV1({ day: input.before, wallets: [] });
       const rows = (await sql`
-        DELETE FROM base_app_notification_daily WHERE day < ${input.before}::date
+        DELETE FROM base_app_notification_daily WHERE channel = ${channel} AND day < ${input.before}::date
         RETURNING 1`) as Record<string, unknown>[];
       return rows.length;
     },
@@ -184,7 +189,7 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
       if (input.wallets.length === 0) return sent;
       const rows = (await sql`
         SELECT wallet_address FROM base_app_weekly_summary
-         WHERE week_close_at = ${input.weekCloseAt}::timestamptz
+         WHERE channel = ${channel} AND week_close_at = ${input.weekCloseAt}::timestamptz
            AND wallet_address = ANY(${[...input.wallets]})`) as Record<string, unknown>[];
       for (const row of rows) sent.add(String(row.wallet_address));
       return sent;
@@ -194,9 +199,9 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
       assertBaseAppWeeklyInputV1(input);
       for (const wallet of new Set(input.wallets)) {
         await sql`
-          INSERT INTO base_app_weekly_summary (week_close_at, wallet_address, sent_at)
-          VALUES (${input.weekCloseAt}::timestamptz, ${wallet}, ${input.at.toISOString()}::timestamptz)
-          ON CONFLICT (week_close_at, wallet_address) DO NOTHING`;
+          INSERT INTO base_app_weekly_summary (channel, week_close_at, wallet_address, sent_at)
+          VALUES (${channel}, ${input.weekCloseAt}::timestamptz, ${wallet}, ${input.at.toISOString()}::timestamptz)
+          ON CONFLICT (channel, week_close_at, wallet_address) DO NOTHING`;
       }
     },
   };
