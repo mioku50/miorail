@@ -1,4 +1,8 @@
-import type { WeekendMarketResponseV1, WeekendMarketStockV1 } from '@mioagent/rwa-market-reality/weekend-market';
+import {
+  weekendStampV1,
+  type WeekendMarketResponseV1,
+  type WeekendMarketStockV1,
+} from '@mioagent/rwa-market-reality/weekend-market';
 
 import { giftShareLinksV1 } from './giftView';
 
@@ -104,7 +108,10 @@ export function weekendMarketViewV1(
   if (!response || response.state === 'none' || !response.window) return null;
   const measured = response.stocks.filter((stock) => stock.base !== null);
   if (measured.length === 0) return null;
-  const url = `${input.origin.replace(/\/+$/, '')}/stocks`;
+  // The link names the slot these numbers were computed at, so the picture a
+  // feed draws under the post shows the post's own numbers, with their clock.
+  const stamp = weekendStampV1(response.generatedAt);
+  const url = `${input.origin.replace(/\/+$/, '')}/stocks${stamp ? `?weekend=${stamp}` : ''}`;
   const reopened = response.state === 'reopened';
   const rows = response.stocks.map((stock) => rowV1(stock, reopened));
 

@@ -332,6 +332,40 @@ export function weekendMarketV1(input: {
   };
 }
 
+// --- The weekend as a link names it ------------------------------------------
+//
+// The board is computed at the start of a five-minute slot, not at the moment
+// somebody asked, so a slot has exactly one answer. A shared link names the
+// slot, and whoever unfurls the link later computes that same answer: the
+// picture under a post shows the numbers the post was written from, and says
+// when they were measured.
+
+export const WEEKEND_SLOT_MS_V1 = 5 * 60_000;
+
+export function weekendSlotStartV1(now: Date): Date {
+  return new Date(Math.floor(now.getTime() / WEEKEND_SLOT_MS_V1) * WEEKEND_SLOT_MS_V1);
+}
+
+const WEEKEND_STAMP_V1 = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})Z$/;
+
+/** "20260926T0740Z" for a slot's start, and null for any other instant: a
+ * stamp is never rounded, because a rounded one names a different answer. */
+export function weekendStampV1(at: Date | string): string | null {
+  const ms = typeof at === 'string' ? Date.parse(at) : at.getTime();
+  if (!Number.isFinite(ms) || ms % WEEKEND_SLOT_MS_V1 !== 0) return null;
+  const iso = new Date(ms).toISOString();
+  return `${iso.slice(0, 4)}${iso.slice(5, 7)}${iso.slice(8, 10)}T${iso.slice(11, 13)}${iso.slice(14, 16)}Z`;
+}
+
+/** The slot a stamp names, or null for anything that does not name exactly
+ * one: a 31 February, a minute off the slot grid, a stray character. */
+export function weekendStampInstantV1(stamp: string): Date | null {
+  const match = WEEKEND_STAMP_V1.exec(stamp);
+  if (!match) return null;
+  const at = new Date(`${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}:00.000Z`);
+  return Number.isFinite(at.getTime()) && weekendStampV1(at) === stamp ? at : null;
+}
+
 // --- The week that just closed ----------------------------------------------
 
 export interface WeeklyStockChangeV1 {

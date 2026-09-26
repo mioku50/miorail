@@ -3,6 +3,7 @@ import test from 'node:test';
 import express from 'express';
 import helmet from 'helmet';
 import request from 'supertest';
+import type { WeekendMarketResponseV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import {
   renderStockPageHtmlV1,
@@ -203,4 +204,145 @@ test('a burst of unfurls reads the ladder once', async (t) => {
     request(app).get('/stocks/NVDA').expect(200),
   ]);
   assert.deepEqual(asked, ['security:isin:US67066G1040']);
+});
+
+// ---------------------------------------------------------------------------
+// A shared weekend post
+// ---------------------------------------------------------------------------
+
+const WEEKEND_WINDOW = {
+  closeAt: '2026-09-25T20:00:00.000Z',
+  darkStartAt: '2026-09-26T00:00:00.000Z',
+  expectedReopenAt: '2026-09-28T00:00:00.000Z',
+  nextSessionCloseAt: '2026-09-28T20:00:00.000Z',
+};
+
+function weekendAtV1(at: Date): WeekendMarketResponseV1 {
+  return {
+    schemaVersion: 'weekend-market/v1',
+    state: 'in_progress',
+    generatedAt: at.toISOString(),
+    window: WEEKEND_WINDOW,
+    stocks: [
+      {
+        tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+        symbol: 'META',
+        name: 'Meta Platforms',
+        close: '752.77',
+        base: { value: '745.26', moveBps: -100, samples: 6, from: WEEKEND_WINDOW.darkStartAt, to: at.toISOString() },
+        reopen: null,
+        unavailable: null,
+      },
+    ],
+    called: null,
+  };
+}
+
+function weekendStubV1(t: test.TestContext, over: Partial<typeof stockPagesRuntime> = {}) {
+  const reads: string[] = [];
+  const drawn: string[] = [];
+  stubV1(t, {
+    now: () => new Date('2026-09-26T07:43:00.000Z'),
+    weekend: async (at: Date) => {
+      reads.push(at.toISOString());
+      return weekendAtV1(at);
+    },
+    renderPng: async (svg: string) => {
+      drawn.push(svg);
+      return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    },
+    ...over,
+  });
+  return { reads, drawn };
+}
+
+const LIST_TITLE = /<title>Tokenized stocks on Base, measured · Miorail<\/title>/;
+
+test('a shared weekend link previews as the post’s own numbers, with their clock', async (t) => {
+  const { reads } = weekendStubV1(t);
+  const html = (await request(appV1()).get('/stocks?weekend=20260926T0740Z').expect(200)).text;
+  assert.match(html, /<title>The weekend on Base, as of Sat 03:40 ET · Miorail<\/title>/);
+  assert.match(html, /property="og:image" content="https:\/\/miorail\.xyz\/stocks\/weekend\/20260926T0740Z\.png"/);
+  assert.match(html, /name="twitter:image" content="https:\/\/miorail\.xyz\/stocks\/weekend\/20260926T0740Z\.png"/);
+  assert.match(html, /property="og:image:width" content="1200"/);
+  assert.match(html, /name="twitter:image:alt" content="The weekend on Base, as of Sat 03:40 ET\. Against Friday&#39;s close: META −1\.00%\."/);
+  assert.match(html, /name="description" content="[^"]*As of Sat 03:40 ET: META −1\.00% against Friday&#39;s close/);
+  // One five-minute answer among many: shared, not indexed.
+  assert.match(html, /<meta name="robots" content="noindex" \/>/);
+  assert.match(html, /property="og:url" content="https:\/\/miorail\.xyz\/stocks\?weekend=20260926T0740Z"/);
+  // The slot's own start, not the moment the link was unfurled.
+  assert.deepEqual(reads, ['2026-09-26T07:40:00.000Z']);
+});
+
+test('a link that names no slot, a slot to come or an old one previews as the board', async (t) => {
+  const { reads } = weekendStubV1(t);
+  const app = appV1();
+  for (const stamp of ['20260926T0741Z', '20260926T0745Z', '20260915T0740Z', '<script>alert(1)</script>', '']) {
+    const html = (await request(app).get(`/stocks?weekend=${encodeURIComponent(stamp)}`).expect(200)).text;
+    assert.match(html, LIST_TITLE, stamp);
+    assert.doesNotMatch(html, /alert\(1\)/);
+  }
+  // A repeated parameter is not a string, and not a slot either.
+  assert.match((await request(app).get('/stocks?weekend=20260926T0740Z&weekend=x').expect(200)).text, LIST_TITLE);
+  assert.deepEqual(reads, [], 'nothing that names no slot reaches the database');
+});
+
+test('a slot with nothing to draw previews as the board', async (t) => {
+  weekendStubV1(t, {
+    weekend: async (at: Date) => ({ ...weekendAtV1(at), state: 'none', window: null, stocks: [] }),
+  });
+  assert.match((await request(appV1()).get('/stocks?weekend=20260926T0740Z').expect(200)).text, LIST_TITLE);
+});
+
+test('a weekend read that fails previews as the board and never fails the page', async (t) => {
+  weekendStubV1(t, {
+    weekend: async () => {
+      throw new Error('database down');
+    },
+  });
+  assert.match((await request(appV1()).get('/stocks?weekend=20260926T0740Z').expect(200)).text, LIST_TITLE);
+});
+
+test('the picture is read with the page and drawn once, held a day, and any feed may show it', async (t) => {
+  const { reads, drawn } = weekendStubV1(t);
+  const app = appV1();
+  await request(app).get('/stocks?weekend=20260926T0740Z').expect(200);
+  const first = await request(app).get('/stocks/weekend/20260926T0740Z.png').expect(200);
+  await request(app).get('/stocks/weekend/20260926T0740Z.png').expect(200);
+  assert.equal(first.headers['content-type'], 'image/png');
+  assert.equal(first.headers['cache-control'], 'public, max-age=86400');
+  assert.equal(first.headers['cross-origin-resource-policy'], 'cross-origin');
+  assert.deepEqual(reads, ['2026-09-26T07:40:00.000Z']);
+  assert.equal(drawn.length, 1);
+  assert.match(drawn[0]!, />as of Sat 03:40 ET</);
+  assert.match(drawn[0]!, />META</);
+});
+
+test('a picture for no slot is a 404', async (t) => {
+  const { reads } = weekendStubV1(t);
+  const app = appV1();
+  for (const path of ['/stocks/weekend/20260926T0741Z.png', '/stocks/weekend/20260926T0740Z.jpg', '/stocks/weekend/latest.png']) {
+    await request(app).get(path).expect(404);
+  }
+  assert.deepEqual(reads, []);
+});
+
+test('a picture that cannot be drawn is the board’s picture: a feed keeps the first one it gets', async (t) => {
+  weekendStubV1(t, {
+    renderPng: async () => {
+      throw new Error('wasm failed');
+    },
+  });
+  const response = await request(appV1()).get('/stocks/weekend/20260926T0740Z.png').expect(302);
+  assert.equal(response.headers.location, 'https://miorail.xyz/og-stocks.png');
+});
+
+test('a picture whose slot cannot be read is the board’s picture too', async (t) => {
+  weekendStubV1(t, {
+    weekend: async () => {
+      throw new Error('database down');
+    },
+  });
+  const response = await request(appV1()).get('/stocks/weekend/20260926T0740Z.png').expect(302);
+  assert.equal(response.headers.location, 'https://miorail.xyz/og-stocks.png');
 });

@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
+import { weekendSlotStartV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import {
   historyWindowFromRequestV1,
@@ -206,10 +207,13 @@ publicStocksRouter.get('/weekend', async (_req: Request, res: Response) => {
       refuse(res, 503, 'market_reality_storage_unavailable');
       return;
     }
-    const now = publicStocksRuntime.now();
-    // One answer per five-minute slot, so a burst of readers is one read.
-    const slot = Math.floor(now.getTime() / 300_000);
-    sendPublic(res, await publicStocksCachesV1.weekend.read(`weekend|${slot}`, () => publicStocksRuntime.readWeekend(now)));
+    // One answer per five-minute slot, computed at the slot's start: a burst of
+    // readers is one read, and a link that names the slot gets the same answer.
+    const slot = weekendSlotStartV1(publicStocksRuntime.now());
+    sendPublic(
+      res,
+      await publicStocksCachesV1.weekend.read(`weekend|${slot.getTime()}`, () => publicStocksRuntime.readWeekend(slot)),
+    );
   } catch (error) {
     failed(res, 'weekend', 'weekend_market_failed', error);
   }

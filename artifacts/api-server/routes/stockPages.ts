@@ -3,9 +3,12 @@ import { promises as fs } from 'node:fs';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import { assembleCashExitLadderV1 } from '@mioagent/rwa-cash-exit';
 import { companyDisplayNameV1 } from '@mioagent/rwa-market-reality';
+import { weekendStampInstantV1, type WeekendMarketResponseV1 } from '@mioagent/rwa-market-reality/weekend-market';
 import { logger } from '@mioagent/utils';
 
-import { createPublicReadCacheV1, publicStocksCachesV1 } from './publicStocks.js';
+import { renderCardPngV1 } from '../lib/cardImage.js';
+import { WEEKEND_CARD_HEIGHT_V1, WEEKEND_CARD_WIDTH_V1, weekendCardSvgV1, weekendCardV1 } from '../lib/weekendCard.js';
+import { createPublicReadCacheV1, publicStocksCachesV1, publicStocksRuntime } from './publicStocks.js';
 import { readMarketRealityIndexV1, rwaMarketRealityRuntime } from './rwaMarketReality.js';
 
 // ---------------------------------------------------------------------------
@@ -49,9 +52,24 @@ const SYMBOL_PATTERN_V1 = /^[A-Za-z0-9][A-Za-z0-9.-]{0,15}$/;
  */
 const previewRoundTripCacheV1 = createPublicReadCacheV1({ ttlMs: 60_000, max: 64 });
 
+/**
+ * A shared weekend link, read and drawn once per slot it names.
+ *
+ * X, Telegram and Farcaster each unfurl a posted link, some of them several
+ * times, and a slot's answer does not change, so a read and a picture are
+ * held. A slot is five minutes, so the links that can exist are bounded too.
+ */
+const weekendShareCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 16 });
+const weekendImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 8 });
+
+/** A weekend link older than this is history: it previews as the board. */
+const WEEKEND_SHARE_MAX_AGE_MS_V1 = 10 * 24 * 60 * 60 * 1000;
+
 /** Testing seam. */
 export function resetStockPagesPreviewCacheV1(): void {
   previewRoundTripCacheV1.clear();
+  weekendShareCacheV1.clear();
+  weekendImageCacheV1.clear();
 }
 
 export type StockPageEntryV1 = {
@@ -123,6 +141,9 @@ export const stockPagesRuntime = {
     }
     return null;
   },
+  /** The weekend board at one slot's start: the read the board itself makes. */
+  weekend: (at: Date): Promise<WeekendMarketResponseV1> => publicStocksRuntime.readWeekend(at),
+  renderPng: (svg: string): Promise<Uint8Array> => renderCardPngV1(svg),
   now: (): Date => new Date(),
 };
 
@@ -166,6 +187,8 @@ export type StockPageMetaV1 = {
   /** Absolute. Omitted for a page that must not be indexed. */
   canonicalUrl: string | null;
   imageUrl: string;
+  /** Said when the image is drawn from data: its size and what it shows. */
+  image?: { width: number; height: number; alt: string };
   noindex: boolean;
 };
 
@@ -187,10 +210,14 @@ export function renderStockPageHtmlV1(template: string, meta: StockPageMetaV1): 
     `<meta property="og:description" content="${escapeHtmlV1(meta.description)}" />`,
     meta.canonicalUrl ? `<meta property="og:url" content="${escapeHtmlV1(meta.canonicalUrl)}" />` : null,
     `<meta property="og:image" content="${escapeHtmlV1(meta.imageUrl)}" />`,
+    meta.image ? `<meta property="og:image:width" content="${meta.image.width}" />` : null,
+    meta.image ? `<meta property="og:image:height" content="${meta.image.height}" />` : null,
+    meta.image ? `<meta property="og:image:alt" content="${escapeHtmlV1(meta.image.alt)}" />` : null,
     '<meta name="twitter:card" content="summary_large_image" />',
     `<meta name="twitter:title" content="${escapeHtmlV1(meta.title)}" />`,
     `<meta name="twitter:description" content="${escapeHtmlV1(meta.description)}" />`,
     `<meta name="twitter:image" content="${escapeHtmlV1(meta.imageUrl)}" />`,
+    meta.image ? `<meta name="twitter:image:alt" content="${escapeHtmlV1(meta.image.alt)}" />` : null,
   ].filter((tag): tag is string => tag !== null);
   return template
     .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtmlV1(meta.title)}</title>`)
@@ -263,6 +290,44 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
 }
 
 /**
+ * A shared weekend post's page: the board, under a head that shows the slot
+ * the post was written from. Kept out of search: it is one five-minute answer
+ * among many, and the board is the page that lasts.
+ */
+export function weekendShareMetaV1(input: {
+  origin: string;
+  stamp: string;
+  response: WeekendMarketResponseV1;
+}): StockPageMetaV1 | null {
+  const card = weekendCardV1(input.response);
+  if (!card) return null;
+  return {
+    title: `${card.title}, as of ${card.asOf} · Miorail`,
+    description: card.description,
+    canonicalUrl: `${input.origin}/stocks?weekend=${input.stamp}`,
+    imageUrl: `${input.origin}/stocks/weekend/${input.stamp}.png`,
+    image: { width: WEEKEND_CARD_WIDTH_V1, height: WEEKEND_CARD_HEIGHT_V1, alt: card.alt },
+    noindex: true,
+  };
+}
+
+/**
+ * The weekend a link names, or null when it names none: not a slot, a slot
+ * still to come, one older than the links this answers, or one with nothing
+ * measured to draw. The stamp is the only thing read from the request, and it
+ * picks a time, never a number.
+ */
+async function weekendShareV1(stamp: string): Promise<WeekendMarketResponseV1 | null> {
+  const at = weekendStampInstantV1(stamp);
+  if (!at) return null;
+  const age = stockPagesRuntime.now().getTime() - at.getTime();
+  if (age < 0 || age > WEEKEND_SHARE_MAX_AGE_MS_V1) return null;
+  if (!stockPagesRuntime.enabled(process.env)) return null;
+  const response = await weekendShareCacheV1.read(stamp, () => stockPagesRuntime.weekend(at));
+  return weekendCardV1(response) ? response : null;
+}
+
+/**
  * The headers nginx sends with index.html, and not the API's.
  *
  * Helmet's defaults suit JSON, not this document: its CSP would block the
@@ -285,12 +350,75 @@ function unavailableV1(res: Response, error: unknown): void {
   res.status(503).type('text/plain').send('stock page unavailable');
 }
 
-stockPagesRouter.get('/stocks', async (_req: Request, res: Response) => {
+stockPagesRouter.get('/stocks', async (req: Request, res: Response) => {
+  let html: string;
   try {
-    const html = await indexHtmlV1();
-    sendDocumentV1(res, 200, renderStockPageHtmlV1(html, listMetaV1(stockPagesRuntime.origin())));
+    html = await indexHtmlV1();
   } catch (error) {
     unavailableV1(res, error);
+    return;
+  }
+  const origin = stockPagesRuntime.origin();
+  // A shared weekend post names its slot. Whatever else the query holds is the
+  // app's business, and a link that names no slot previews as the board.
+  const stamp = typeof req.query.weekend === 'string' ? req.query.weekend : null;
+  if (stamp !== null) {
+    try {
+      const response = await weekendShareV1(stamp);
+      const meta = response ? weekendShareMetaV1({ origin, stamp, response }) : null;
+      if (meta) {
+        sendDocumentV1(res, 200, renderStockPageHtmlV1(html, meta));
+        return;
+      }
+    } catch (error) {
+      logger.warn('Weekend share could not be read', {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  }
+  sendDocumentV1(res, 200, renderStockPageHtmlV1(html, listMetaV1(origin)));
+});
+
+/**
+ * The picture a shared weekend post previews as.
+ *
+ * Its address names the slot, so what it shows never changes, and it may be
+ * held a day. A name that is not a slot with something to draw is a 404. A
+ * slot that cannot be read or drawn right now answers with the board's own
+ * picture rather than none: a feed keeps the first picture it gets.
+ */
+stockPagesRouter.get('/stocks/weekend/:file', async (req: Request, res: Response) => {
+  const stamp = /^(\d{8}T\d{4}Z)\.png$/.exec(String(req.params.file ?? ''))?.[1] ?? null;
+  const fallback = `${stockPagesRuntime.origin()}/og-stocks.png`;
+  let response: WeekendMarketResponseV1 | null;
+  try {
+    response = stamp ? await weekendShareV1(stamp) : null;
+  } catch (error) {
+    logger.warn('Weekend card could not be read', {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    res.redirect(302, fallback);
+    return;
+  }
+  const card = response ? weekendCardV1(response) : null;
+  if (!stamp || !card) {
+    res.status(404).type('text/plain').send('no weekend card for that time');
+    return;
+  }
+  try {
+    const png = await weekendImageCacheV1.read(stamp, async () =>
+      Buffer.from(await stockPagesRuntime.renderPng(weekendCardSvgV1(card))),
+    );
+    // Shown by whoever unfurls the link, from their own page: helmet's
+    // same-origin resource policy would stop one that shows it directly.
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.status(200).type('png').send(png);
+  } catch (error) {
+    logger.warn('Weekend card could not be drawn', {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    res.redirect(302, fallback);
   }
 });
 

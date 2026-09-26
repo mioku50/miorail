@@ -209,7 +209,9 @@ test('the cache expires on its own clock and evicts the oldest past its bound', 
 test('the weekend is one public read per five-minute slot, and state none is an answer', async (t) => {
   const reads: string[] = [];
   stubV1(t, {
-    now: () => new Date('2026-09-27T22:00:00.000Z'),
+    // Mid-slot: the read is made at the slot's start, so a link naming the slot
+    // can be answered with the same numbers later.
+    now: () => new Date('2026-09-27T22:03:17.000Z'),
     readWeekend: async (now: Date) => {
       reads.push(now.toISOString());
       return {

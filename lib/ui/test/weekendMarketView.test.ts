@@ -57,10 +57,21 @@ describe('the weekend card', () => {
     );
     assert.equal(view.rows[3]?.off, true);
     assert.equal(view.columns.reopen, null);
-    // The share text names the three biggest moves and links the board.
+    // The share text names the three biggest moves, and the link names the
+    // slot they were computed at, so the preview shows the same numbers.
     const x = new URL(view.share.x);
     assert.match(x.searchParams.get('text') ?? '', /SNDK \+2\.23%, MSTR \+1\.66%, AMZN −0\.53%/);
-    assert.equal(x.searchParams.get('url'), 'https://miorail.xyz/stocks');
+    assert.equal(x.searchParams.get('url'), 'https://miorail.xyz/stocks?weekend=20260920T2300Z');
+    const cast = new URL(view.share.farcaster);
+    assert.equal(cast.searchParams.get('embeds[]'), 'https://miorail.xyz/stocks?weekend=20260920T2300Z');
+  });
+
+  test('an answer not computed at a slot start links the board, never a slot it was not', () => {
+    const view = weekendMarketViewV1(
+      { ...IN_PROGRESS, generatedAt: '2026-09-20T23:03:17.000Z' },
+      { now: new Date('2026-09-20T23:04:00.000Z'), origin: 'https://miorail.xyz' },
+    );
+    assert.equal(new URL(view!.share.x).searchParams.get('url'), 'https://miorail.xyz/stocks');
   });
 
   test('reopened: where it reopened, and which side Base had been on', () => {

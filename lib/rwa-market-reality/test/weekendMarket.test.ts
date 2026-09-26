@@ -6,6 +6,9 @@ import {
   etInstantV1,
   weekendMarketV1,
   weekendWindowV1,
+  weekendSlotStartV1,
+  weekendStampInstantV1,
+  weekendStampV1,
   weeklyCloseChangesV1,
   type WeekendMarketRunV1,
 } from '../src/weekendMarket.js';
@@ -215,5 +218,27 @@ describe('the week that just closed', () => {
     const week = weeklyCloseChangesV1({ now: et('2026-11-06', '21:00'), stocks: [] });
     assert.equal(week?.weekCloseAt, '2026-11-06T21:00:00.000Z');
     assert.equal(week?.previousCloseAt, '2026-10-30T20:00:00.000Z');
+  });
+});
+
+describe('the weekend as a link names it', () => {
+  test('a slot has one stamp, and the stamp reads back to the slot', () => {
+    const slot = weekendSlotStartV1(new Date('2026-09-26T07:44:59.999Z'));
+    assert.equal(slot.toISOString(), '2026-09-26T07:40:00.000Z');
+    assert.equal(weekendStampV1(slot), '20260926T0740Z');
+    assert.equal(weekendStampV1('2026-09-26T07:40:00.000Z'), '20260926T0740Z');
+    assert.equal(weekendStampInstantV1('20260926T0740Z')?.toISOString(), '2026-09-26T07:40:00.000Z');
+  });
+
+  test('an instant off the slot grid has no stamp: rounding would name another answer', () => {
+    assert.equal(weekendStampV1('2026-09-26T07:41:00.000Z'), null);
+    assert.equal(weekendStampV1('2026-09-26T07:40:00.001Z'), null);
+    assert.equal(weekendStampV1('not a time'), null);
+  });
+
+  test('a stamp that does not name exactly one slot names none', () => {
+    for (const stamp of ['20260926T0741Z', '20260231T0740Z', '20261326T0740Z', '20260926T2440Z', '20260926T0740', ' 20260926T0740Z', '20260926t0740z', '2026-09-26T07:40Z']) {
+      assert.equal(weekendStampInstantV1(stamp), null, stamp);
+    }
   });
 });
