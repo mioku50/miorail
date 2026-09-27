@@ -2,6 +2,7 @@ import { b20MultiplierStandingV1, type B20MultiplierEventV1 } from '@mioagent/b2
 import { client } from '@mioagent/db';
 import {
   createDatabaseB20CorporateActionRepository,
+  createDatabaseDividendDeclarationRepositoryV1,
   createDatabaseDividendRecordSupplyRepositoryV1,
   createDatabaseOfficialAssetRepository,
   createDatabaseRepresentationRatioRepository,
@@ -9,10 +10,12 @@ import {
   dividendSupplyDecimalV1,
   readPublicLadderMidsV1,
 } from '@mioagent/route-storage';
+import { mergeDividendDeclarationsV1 } from '@mioagent/rwa-market-reality/dividend-sources';
 import {
   DIVIDEND_DECLARATIONS_V1,
   dividendCalendarV1,
   type DividendCalendarResponseV1,
+  type DividendDeclarationV1,
   type DividendMultiplierChangeV1,
   type DividendTokenV1,
 } from '@mioagent/rwa-market-reality/dividends';
@@ -50,6 +53,9 @@ export interface DividendReadDepsV1 {
   supplies(tokens: readonly string[]): Promise<Array<{ tokenAddress: string; recordDate: string; supply: string }>>;
   /** Reference prices per share, as the feed published them in a window. */
   references(tokens: readonly string[], window: { since: Date; until: Date }): Promise<Array<{ tokenAddress: string; at: string; price: number }>>;
+  /** Declarations the watcher read from the companies' releases (migration
+   * 0076). The registry wins a payment it already names. */
+  declarations(): Promise<DividendDeclarationV1[]>;
 }
 
 /** A raw value at any scale, as WAD. The B20 scale is read, never assumed. */
@@ -86,11 +92,13 @@ function priceAtV1(rows: readonly { at: string; price: number }[], instant: numb
 export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1): Promise<DividendCalendarResponseV1> {
   const identities = await deps.tokens();
   const addresses = identities.map((token) => token.tokenAddress);
-  const [readings, transitions, supplies] = await Promise.all([
+  const [readings, transitions, supplies, observed] = await Promise.all([
     deps.readings(addresses),
     deps.transitions(addresses),
     deps.supplies(addresses),
+    deps.declarations(),
   ]);
+  const declarations = mergeDividendDeclarationsV1(DIVIDEND_DECLARATIONS_V1, observed);
 
   const tokens: DividendTokenV1[] = [];
   const changeTimes: number[] = [];
@@ -150,7 +158,7 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
 
   for (const { identity, reading, changes, planned } of perToken) {
     const prices = references.filter((row) => row.tokenAddress === identity.tokenAddress);
-    const declared = DIVIDEND_DECLARATIONS_V1.find((row) => row.underlyingKey === identity.underlyingKey);
+    const declared = declarations.find((row) => row.underlyingKey === identity.underlyingKey);
     tokens.push({
       tokenAddress: identity.tokenAddress,
       tokenSymbol: identity.tokenSymbol,
@@ -166,7 +174,7 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
       priceNow: priceAtV1(prices, now.getTime(), PRICE_NOW_MAX_AGE_MS_V1),
     });
   }
-  return dividendCalendarV1({ now, tokens });
+  return dividendCalendarV1({ now, tokens, declarations });
 }
 
 // ---------------------------------------------------------------------------
@@ -247,6 +255,11 @@ export const databaseDividendReadDepsV1: DividendReadDepsV1 = {
   async supplies(tokens) {
     const rows = await createDatabaseDividendRecordSupplyRepositoryV1(client).supplies({ chainId: CHAIN_ID_V1, tokenAddresses: tokens });
     return rows.map((row) => ({ tokenAddress: row.tokenAddress, recordDate: row.recordDate, supply: dividendSupplyDecimalV1(row) }));
+  },
+
+  async declarations() {
+    const rows = await createDatabaseDividendDeclarationRepositoryV1(client).declarations();
+    return rows.map(({ sourceKind: _kind, publishedAt: _published, observedAt: _observed, ...declaration }) => declaration);
   },
 
   async references(tokens, window) {

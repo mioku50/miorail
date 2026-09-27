@@ -1,0 +1,17 @@
+[Unit]
+# Every two hours.
+#
+# Companies announce a dividend after the close, with their results or on
+# their own, so a declaration reaches the board and the holders' notices the
+# same evening. A pass reads a few small pages: the submissions list per
+# company and one feed each, and only a release from the last three days.
+Description=Read new dividend declarations
+
+[Timer]
+OnBootSec=12min
+OnUnitActiveSec=2h
+Persistent=true
+RandomizedDelaySec=5min
+
+[Install]
+WantedBy=timers.target

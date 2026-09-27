@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./contracts": "./src/contracts.ts",
+    "./dividend-sources": "./src/dividendSources.ts",
     "./dividend-wallet": "./src/dividendWallet.ts",
     "./dividends": "./src/dividends.ts",
     "./execution-handoff": "./src/executionHandoff.ts",

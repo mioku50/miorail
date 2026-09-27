@@ -123,6 +123,9 @@ describe('Your dividends, for a signed-in wallet', () => {
       ],
     );
     assert.equal(view.total, 'Reinvested into your tokens so far: $0.327.');
+    // A sliver of a token: a bound, not "about" one.
+    const sliver = myDividendsViewV1({ data: walletOf({ META: 0.0009 }, {}), failed: false })!;
+    assert.equal(sliver.rows[0]?.lines[0], 'Sep 28: less than $0.001 on your 0.0009 METAc — META declared $0.525 a share.');
     assert.equal(view.empty, null);
     assert.equal(view.note, 'A dividend reaches whoever holds the token when its multiplier moves, not on the record date.');
   });

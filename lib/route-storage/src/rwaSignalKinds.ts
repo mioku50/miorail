@@ -44,6 +44,10 @@ export const RWA_SIGNAL_KINDS_V1 = [
   'official_asset_multiplier_changed',
   'official_asset_multiplier_change_scheduled',
   'official_asset_multiplier_change_cancelled',
+  // Not onchain at all: the company behind a token declared a dividend, read
+  // from its own release (migration 0076). One signal per Coinbase token of
+  // that company, because each converts the dividend into shares per token.
+  'official_asset_dividend_declared',
 ] as const;
 export type RwaSignalKindV1 = (typeof RWA_SIGNAL_KINDS_V1)[number];
 

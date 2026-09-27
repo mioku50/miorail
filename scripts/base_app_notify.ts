@@ -100,6 +100,22 @@ async function main(): Promise<void> {
     now: () => new Date(),
     dry,
     holdings,
+    // What each token converts with now: the ratio reader's last reading, as
+    // WAD, so a scheduled rise can be told to a holder as a percentage.
+    currentMultipliers: async (tokens) => {
+      const rows = await ratios.readRatios({ chainId: 8453, tokenAddresses: [...tokens] });
+      const now = new Map<string, string>();
+      for (const row of rows) {
+        if (row.ratioKind !== 'b20_multiplier') continue;
+        try {
+          const scale = BigInt(row.scale);
+          if (scale > 0n) now.set(row.tokenAddress.toLowerCase(), ((BigInt(row.rawValue) * 10n ** 18n) / scale).toString());
+        } catch {
+          // An unreadable row is no reading; the holder gets the plain sentence.
+        }
+      }
+      return (token) => now.get(token.toLowerCase()) ?? null;
+    },
     previousMultipliers: async () => {
       const changes = await ratios.recentChanges({ chainId: 8453, limit: 200 });
       return (token, toWad) =>

@@ -25,6 +25,8 @@ import {
   planWeeklySummaryV1,
   ppmPercentV1,
   holderMultiplierNoticeV1,
+  holderDividendDeclaredNoticeV1,
+  holderScheduledNoticeV1,
   multiplierChangePpmV1,
   runBaseAppNotifyV1,
   weeklyNoticeV1,
@@ -704,6 +706,92 @@ describe('a dividend in shares reaches the people who hold the stock', () => {
       now: NOW,
     });
     assert.deepEqual(plan.groups.map((group) => [group.title, group.wallets]), [['GOOGL: multiplier changed', [ME, YOU].sort()]]);
+  });
+});
+
+/** Alphabet's next dividend, as the declaration watcher would record it. */
+const alphabetDeclared = (subjectAddress = GOOGL) =>
+  signal(
+    'official_asset_dividend_declared',
+    {
+      underlyingKey: 'security:isin:US02079K3059',
+      symbol: 'GOOGL',
+      company: 'Alphabet',
+      amountPerShare: '0.22',
+      declaredOn: '2026-10-28',
+      exDate: null,
+      recordDate: '2026-12-07',
+      payDate: '2026-12-14',
+      sourceUrl: 'https://www.sec.gov/Archives/edgar/data/1652044/000165204426000090/googexhibit991q32026.htm',
+    },
+    { subjectAddress },
+  );
+
+describe('a declared or scheduled dividend reaches its holders as theirs', () => {
+  test('everyone hears what the company declared, and that the token takes it later', () => {
+    const notice = noticeForSignalV1(alphabetDeclared(), coinbaseNames);
+    assert.equal(notice?.title, 'GOOGL: dividend declared');
+    assert.equal(
+      notice?.message,
+      'Alphabet declared $0.22 a share, payable Dec 14. GOOGLc takes it later as more GOOGL shares per token.',
+    );
+    // A declaration missing its amount or date is not said at all.
+    assert.equal(noticeForSignalV1({ ...alphabetDeclared(), facts: { ...alphabetDeclared().facts, payDate: 'soon' } }, coinbaseNames), null);
+  });
+
+  test('a holder hears when it reaches their tokens: whoever holds them when it converts', () => {
+    const notice = holderDividendDeclaredNoticeV1(alphabetDeclared(), coinbaseNames);
+    assert.equal(
+      notice?.message,
+      'Alphabet declared $0.22 a share, payable Dec 14. Your GOOGLc get it as more GOOGL shares per token if you still hold them when it converts.',
+    );
+    assert.ok(notice!.title.length <= BASE_APP_TITLE_MAX_V1 && notice!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+    const plan = planBaseAppNotificationsV1({
+      signals: [alphabetDeclared()],
+      radarEvents: [],
+      watchers: [],
+      enabled: new Set([ME, YOU]),
+      sentToday: new Map(),
+      names: coinbaseNames,
+      now: NOW,
+      holdings: new Map([[ME, new Set([GOOGL])]]),
+    });
+    assert.deepEqual(
+      plan.groups.map((group) => [group.message.startsWith('Alphabet') ? group.message.includes('Your') : null, group.wallets]).sort(),
+      [
+        [false, [YOU]],
+        [true, [ME]],
+      ],
+    );
+  });
+
+  test('a scheduled rise on a Coinbase stock is a dividend with a date; anything else is a plan', () => {
+    const scheduled = (multiplierWad: string) =>
+      signal(
+        'official_asset_multiplier_change_scheduled',
+        {
+          event: 'ui_multiplier_updated',
+          multiplierWad,
+          effectiveAt: '2026-12-15T14:30:00.000Z',
+          payloadState: 'decoded',
+          transactionHash: `0x${'cd'.repeat(32)}`,
+          blockNumber: '53000000',
+        },
+        { subjectAddress: GOOGL },
+      );
+    const rise = holderScheduledNoticeV1(scheduled('1000754000000000000'), coinbaseNames, GOOGL_DIVIDEND.to);
+    assert.equal(rise?.title, 'GOOGL: dividend scheduled');
+    assert.equal(
+      rise?.message,
+      'Your GOOGLc will track 0.038% more GOOGL shares each from Dec 15, 2026 14:30 UTC: a reinvested dividend. It reaches whoever holds GOOGLc then.',
+    );
+    assert.ok(rise!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+    // No current reading, or a split: the plan, in plain numbers.
+    assert.equal(
+      holderScheduledNoticeV1(scheduled('1000754000000000000'), coinbaseNames, null)?.title,
+      'GOOGL: multiplier scheduled',
+    );
+    assert.match(holderScheduledNoticeV1(scheduled('2000000000000000000'), coinbaseNames, GOOGL_DIVIDEND.to)?.message ?? '', /will track 2 GOOGL shares each from Dec 15, 2026 14:30 UTC, as the issuer scheduled/);
   });
 });
 

@@ -37,6 +37,7 @@ import {
 import { client, closeDb } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
 import {
+  createDatabaseDividendDeclarationRepositoryV1,
   createDatabaseDividendRecordSupplyRepositoryV1,
   createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
@@ -45,6 +46,8 @@ import {
   createDatabaseUnderlyingAssetRepository,
 } from '@mioagent/route-storage';
 import { readB20MultiplierV1 } from '@mioagent/rwa-dossier';
+import { mergeDividendDeclarationsV1 } from '@mioagent/rwa-market-reality/dividend-sources';
+import { DIVIDEND_DECLARATIONS_V1 } from '@mioagent/rwa-market-reality/dividends';
 import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
 
 import { recordDividendSuppliesV1 } from './dividendRecordSupply.js';
@@ -317,10 +320,13 @@ async function main(): Promise<void> {
       const underlyingKey = underlyingOf.get(asset.tokenAddress);
       return underlyingKey ? [{ tokenAddress: asset.tokenAddress, underlyingKey }] : [];
     });
+    // The registry and what the declaration watcher read since (0076).
+    const observed = await createDatabaseDividendDeclarationRepositoryV1(client).declarations();
     const pass = await recordDividendSuppliesV1({
       reader,
       repository: createDatabaseDividendRecordSupplyRepositoryV1(client),
       tokens,
+      declarations: mergeDividendDeclarationsV1(DIVIDEND_DECLARATIONS_V1, observed),
       now,
     });
     console.log(

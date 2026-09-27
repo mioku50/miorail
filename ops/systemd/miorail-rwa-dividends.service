@@ -1,0 +1,37 @@
+[Unit]
+# New dividend declarations, read from the companies' own releases: 8-K
+# exhibits on EDGAR (Apple, Alphabet, NVIDIA), Microsoft's newsroom and Meta's
+# release on PR Newswire. A declaration counts only when the company's standing
+# sentence matches in full; it is stored with that sentence (migration 0076)
+# and becomes a signal the notifier sends.
+#
+# Oneshot, driven by miorail-rwa-dividends.timer. Reads public web pages and
+# writes Miorail's own tables: no signer, no key, no chain read, no wallet.
+Description=Miorail dividend declaration watcher
+Documentation=https://github.com/mioku50/miorail
+After=network-online.target postgresql.service
+Wants=network-online.target postgresql.service
+
+[Service]
+Type=oneshot
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+EnvironmentFile=/home/miorail/mioagent/.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_dividend_declarations.ts
+
+TimeoutStartSec=300
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/home/miorail/mioagent
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-rwa-dividends

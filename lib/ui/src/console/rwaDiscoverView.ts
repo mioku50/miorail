@@ -667,6 +667,9 @@ const SIGNAL_TITLE_V1: Readonly<Record<string, string>> = {
   official_asset_cash_exit_changed: 'Round-trip cost moved',
   official_asset_corporate_action_announced: 'The issuer announced a corporate action',
   official_asset_multiplier_changed: 'Shares per token changed',
+  official_asset_multiplier_change_scheduled: 'Shares per token scheduled to change',
+  official_asset_multiplier_change_cancelled: 'A scheduled change was withdrawn',
+  official_asset_dividend_declared: 'The company declared a dividend',
 };
 
 // ---------------------------------------------------------------------------
@@ -1212,6 +1215,33 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
       return ratio === null
         ? `${ticker} published a new multiplier onchain. The value came in a form this build cannot read, so the card's own multiplier reading is the one to trust.`
         : `${ticker} published a new multiplier of ${ratio}. What a multiplier means is the issuer's: on Coinbase's B20 assets it is how many underlying shares one token redeems for.`;
+    }
+    case 'official_asset_multiplier_change_scheduled': {
+      const ticker = card.subjectTicker ?? 'an asset';
+      const ratio = rwaMultiplierLabelV1(text('multiplierWad'));
+      const when = text('effectiveAt');
+      // A plan, and said to be one: until its date the token converts at the
+      // number it has now.
+      return `${ticker} scheduled a new multiplier${ratio ? ` of ${ratio}` : ''}${
+        when ? ` from ${when.slice(0, 16).replace('T', ' ')} UTC` : ''
+      }. Until then it converts at the one it has now.`;
+    }
+    case 'official_asset_multiplier_change_cancelled': {
+      const ticker = card.subjectTicker ?? 'an asset';
+      const ratio = rwaMultiplierLabelV1(text('multiplierWad'));
+      return `${ticker} withdrew its scheduled multiplier change${ratio ? ` to ${ratio}` : ''}. The one it has now stays in force.`;
+    }
+    case 'official_asset_dividend_declared': {
+      const ticker = card.subjectTicker ?? 'the token';
+      const company = text('company') ?? 'The company';
+      const amount = text('amountPerShare');
+      const pay = text('payDate');
+      const record = text('recordDate');
+      // The company's cash, in its own release; the token takes it later, as
+      // more shares per token, and only a later reading can say how many.
+      return `${company} declared${amount ? ` $${amount} a share` : ' a dividend'}${pay ? `, payable ${pay}` : ''}${
+        record ? ` to holders of record on ${record}` : ''
+      }. ${ticker} takes it as more shares per token when it converts.`;
     }
     default:
       return 'This build does not know how to describe this signal.';

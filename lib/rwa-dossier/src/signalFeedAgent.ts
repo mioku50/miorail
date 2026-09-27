@@ -156,6 +156,9 @@ const KIND_PHRASE_V1: Readonly<Record<RwaSignalKindV1, string>> = {
   // three would tell a holder their token converts differently than it does.
   official_asset_multiplier_change_scheduled: 'shares per token scheduled to change — not yet in force',
   official_asset_multiplier_change_cancelled: 'a scheduled change to shares per token was withdrawn',
+  // The company's cash, not the token's: a Coinbase token takes it later, as
+  // more shares per token, so an assistant must not say the token "paid" it.
+  official_asset_dividend_declared: 'the company declared a cash dividend — the token receives it later as more shares per token',
 };
 
 /** The sentence an assistant reads first.

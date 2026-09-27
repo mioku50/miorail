@@ -69,6 +69,9 @@ function depsV1(over: Partial<DividendReadDepsV1> = {}): DividendReadDepsV1 & { 
         { tokenAddress: NVDAC, at: '2026-09-29T20:00:00.000Z', price: 225 },
       ];
     },
+    async declarations() {
+      return [];
+    },
     ...over,
   };
 }
@@ -136,6 +139,33 @@ describe('the dividend calendar, read', () => {
       }),
     );
     assert.equal(stale.stocks.find((stock) => stock.symbol === 'NVDA')!.next?.token.priceUsd ?? null, null);
+  });
+
+  test('a declaration the watcher read joins the registry; one the registry names stays the registry’s', async () => {
+    const release = (payDate: string, amountPerShare: string) => ({
+      underlyingKey: 'security:isin:US02079K3059',
+      symbol: 'GOOGL',
+      company: 'Alphabet',
+      amountPerShare,
+      declaredOn: '2026-10-28',
+      exDate: null,
+      recordDate: '2026-12-07',
+      payDate,
+      source: { publisher: 'Alphabet Inc., Form 8-K, exhibit 99.1', url: 'https://www.sec.gov/x.htm', quote: 'x' },
+    });
+    const calendar = await readDividendCalendarV1(
+      new Date('2026-10-30T12:00:00.000Z'),
+      depsV1({
+        async declarations() {
+          // A new one, and a rewording of September's that the registry already names.
+          return [release('2026-12-14', '0.23'), { ...release('2026-09-14', '0.99'), recordDate: '2026-09-07', declaredOn: '2026-07-22' }];
+        },
+      }),
+    );
+    const alphabet = calendar.stocks.find((stock) => stock.symbol === 'GOOGL')!;
+    assert.equal(alphabet.next?.state, 'announced');
+    assert.deepEqual([alphabet.next?.amountPerShare, alphabet.next?.payDate, alphabet.next?.source?.url], ['0.23', '2026-12-14', 'https://www.sec.gov/x.htm']);
+    assert.equal(alphabet.history[0]?.amountPerShare, '0.22');
   });
 
   test('a change with no log keeps the reader’s time; a price older than a day is no price', async () => {

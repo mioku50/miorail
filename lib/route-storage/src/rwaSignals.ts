@@ -158,6 +158,31 @@ const MultiplierScheduleFactsV1Schema = z
   })
   .strict();
 
+const IsoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'expected a YYYY-MM-DD date');
+
+/**
+ * A company declared a dividend, in its own release.
+ *
+ * The declaration's own dates travel with it, because "declared" alone tells
+ * a holder nothing they can act on: the payment date is when the token can
+ * start converting it, and the record date decides whether the token is owed
+ * it at all.
+ */
+const DividendDeclaredFactsV1Schema = z
+  .object({
+    underlyingKey: z.string().min(1).max(120),
+    symbol: z.string().min(1).max(20),
+    company: z.string().min(1).max(120),
+    /** Per share, as the company wrote it: "0.525". */
+    amountPerShare: z.string().regex(/^\d+\.\d{2,4}$/),
+    declaredOn: IsoDate,
+    exDate: IsoDate.nullable(),
+    recordDate: IsoDate,
+    payDate: IsoDate,
+    sourceUrl: z.string().url().startsWith('https://'),
+  })
+  .strict();
+
 /**
  * One recorded transition.
  *
@@ -279,6 +304,17 @@ export const RwaSignalV1Schema = z
         occurredAt: z.string().datetime(),
         dedupeKey: z.string().min(1).max(200),
         facts: MultiplierScheduleFactsV1Schema,
+      })
+      .strict(),
+    z
+      .object({
+        kind: z.literal('official_asset_dividend_declared'),
+        chainId: z.literal(8453),
+        subjectAddress: Address,
+        officialAddress: z.null(),
+        occurredAt: z.string().datetime(),
+        dedupeKey: z.string().min(1).max(200),
+        facts: DividendDeclaredFactsV1Schema,
       })
       .strict(),
   ])

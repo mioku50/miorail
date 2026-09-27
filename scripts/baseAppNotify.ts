@@ -69,6 +69,7 @@ export const BASE_APP_BROADCAST_KINDS_V1: ReadonlySet<string> = new Set([
   'official_asset_multiplier_changed',
   'official_asset_multiplier_change_scheduled',
   'official_asset_multiplier_change_cancelled',
+  'official_asset_dividend_declared',
 ]);
 
 /** Market transitions, sent to the wallets that watch the token. */
@@ -319,6 +320,25 @@ function utcDateV1(iso: unknown): string | null {
   return `${month} ${date.getUTCDate()}, ${date.getUTCFullYear()} ${time} UTC`;
 }
 
+/** "Dec 28" from a New York date, as a company writes its payment date. */
+function payDayV1(date: unknown): string | null {
+  if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  const day = new Date(`${date}T12:00:00Z`);
+  if (!Number.isFinite(day.getTime())) return null;
+  return `${day.toLocaleString('en-US', { month: 'short', timeZone: 'UTC' })} ${day.getUTCDate()}`;
+}
+
+/** What a company declared, as the release said it: "Meta declared $0.525 a
+ * share, payable Dec 28". Null when a fact is missing: a push never guesses a
+ * number or a date. */
+function declaredV1(facts: Record<string, unknown>): { company: string; sentence: string } | null {
+  const company = typeof facts.company === 'string' && facts.company.length > 0 ? facts.company : null;
+  const amount = typeof facts.amountPerShare === 'string' && /^\d+\.\d{2,4}$/.test(facts.amountPerShare) ? facts.amountPerShare : null;
+  const pay = payDayV1(facts.payDate);
+  if (!company || !amount || !pay) return null;
+  return { company, sentence: `${company} declared $${amount} a share, payable ${pay}` };
+}
+
 function noticeV1(input: { key: string; label: string; title: string; message: string; targetPath: string }): NoticeV1 {
   return {
     key: input.key,
@@ -440,6 +460,19 @@ export function noticeForSignalV1(signal: RwaSignalRowV1, names: NamesOfV1): Not
         label: `${who} change cancelled`,
         title: `${who}: change cancelled`,
         message: `The scheduled multiplier change for ${representation}${multiplier ? ` to ${multiplier}` : ''} was cancelled.`,
+        targetPath,
+      });
+    }
+    case 'official_asset_dividend_declared': {
+      // The company's cash, in its own release. The token does not pay it:
+      // it takes it later, as more shares per token.
+      const declared = declaredV1(facts);
+      if (!declared) return null;
+      return noticeV1({
+        key,
+        label: `${who} dividend declared`,
+        title: `${who}: dividend declared`,
+        message: `${declared.sentence}. ${representation} takes it later as more ${who} shares per token.`,
         targetPath,
       });
     }
@@ -648,6 +681,81 @@ export function holderMultiplierNoticeV1(
   });
 }
 
+/** The multiplier a token converts with now, or null when unread. */
+export type CurrentMultiplierV1 = (tokenAddress: string) => string | null;
+
+/**
+ * A plan the issuer published, told to a holder as a fact about their tokens.
+ *
+ * Under Cobalt a dividend can arrive as a scheduled change: the multiplier
+ * rises at a stated time, and whoever holds the token then gets the rise.
+ * That is the one thing a holder can act on, so it is the sentence.
+ */
+export function holderScheduledNoticeV1(
+  signal: RwaSignalRowV1,
+  names: NamesOfV1,
+  currentWad: string | null,
+): NoticeV1 | null {
+  if (signal.kind !== 'official_asset_multiplier_change_scheduled') return null;
+  const facts = signal.facts as { multiplierWad?: unknown; effectiveAt?: unknown };
+  const to = multiplierV1(facts.multiplierWad);
+  const when = utcDateV1(facts.effectiveAt);
+  const name = names(signal.subjectAddress);
+  const symbol = name?.symbol ?? name?.representation ?? null;
+  if (!to || !when || typeof facts.multiplierWad !== 'string' || !symbol) return null;
+  const representation = name?.representation ?? symbol;
+  const key = `holder:rwa_signal:${signal.signalId}`;
+  const targetPath = stockPathV1(name?.symbol ?? null);
+  const ppm = currentWad ? multiplierChangePpmV1(currentWad, facts.multiplierWad) : null;
+  const coinbase = (name?.issuer ?? '').toLowerCase().startsWith('coinbase');
+  if (coinbase && ppm !== null && ppm > 0 && ppm < DIVIDEND_RISE_MAX_PPM_V1) {
+    return noticeV1({
+      key,
+      label: `${symbol} dividend scheduled`,
+      title: `${symbol}: dividend scheduled`,
+      message: `Your ${representation} will track ${ppmPercentV1(ppm)} more ${symbol} shares each from ${when}: a reinvested dividend. It reaches whoever holds ${representation} then.`,
+      targetPath,
+    });
+  }
+  return noticeV1({
+    key,
+    label: `${symbol} multiplier scheduled`,
+    title: `${symbol}: multiplier scheduled`,
+    message: `Your ${representation} will track ${to} ${symbol} shares each from ${when}, as the issuer scheduled. Until then nothing changes.`,
+    targetPath,
+  });
+}
+
+/**
+ * A company's declaration, told to a holder of its token.
+ *
+ * The record date does not decide who gets it on Base: the token's multiplier
+ * is one number for every holder and moves when Coinbase converts the cash,
+ * so it reaches whoever holds the token at that moment.
+ */
+export function holderDividendDeclaredNoticeV1(signal: RwaSignalRowV1, names: NamesOfV1): NoticeV1 | null {
+  if (signal.kind !== 'official_asset_dividend_declared') return null;
+  const declared = declaredV1(signal.facts);
+  const name = names(signal.subjectAddress);
+  const symbol = name?.symbol ?? (typeof signal.facts.symbol === 'string' ? signal.facts.symbol : null);
+  if (!declared || !symbol) return null;
+  const representation = name?.representation ?? symbol;
+  return noticeV1({
+    key: `holder:rwa_signal:${signal.signalId}`,
+    label: `${symbol} dividend declared`,
+    title: `${symbol}: dividend declared`,
+    message: `${declared.sentence}. Your ${representation} get it as more ${symbol} shares per token if you still hold them when it converts.`,
+    targetPath: stockPathV1(name?.symbol ?? symbol),
+  });
+}
+
+/** Kinds a holder hears about their own tokens rather than the contract's. */
+const HOLDER_KINDS_V1: ReadonlySet<string> = new Set([
+  'official_asset_multiplier_changed',
+  'official_asset_multiplier_change_scheduled',
+  'official_asset_dividend_declared',
+]);
+
 // ---------------------------------------------------------------------------
 // The weekly summary
 //
@@ -794,6 +902,7 @@ export function planBaseAppNotificationsV1(input: {
    * version, exactly as before this existed. */
   holdings?: HoldingsV1;
   previousMultiplier?: PreviousMultiplierV1;
+  currentMultiplier?: CurrentMultiplierV1;
 }): BaseAppNotifyPlanV1 {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...input.limits };
   const oldest = input.now.getTime() - limits.maxAgeMs;
@@ -843,12 +952,19 @@ export function planBaseAppNotificationsV1(input: {
     }
     const watchedToken =
       signal.kind === 'official_asset_lookalike_created' ? signal.officialAddress : signal.subjectAddress;
-    if (signal.kind === 'official_asset_multiplier_changed' && input.holdings) {
+    if (HOLDER_KINDS_V1.has(signal.kind) && input.holdings) {
       const token = signal.subjectAddress.toLowerCase();
       const toWad = (signal.facts as { multiplierWad?: unknown }).multiplierWad;
-      const previous =
-        typeof toWad === 'string' && input.previousMultiplier ? input.previousMultiplier(token, toWad) : null;
-      const holderNotice = holderMultiplierNoticeV1(signal, input.names, previous);
+      const holderNotice =
+        signal.kind === 'official_asset_multiplier_changed'
+          ? holderMultiplierNoticeV1(
+              signal,
+              input.names,
+              typeof toWad === 'string' && input.previousMultiplier ? input.previousMultiplier(token, toWad) : null,
+            )
+          : signal.kind === 'official_asset_multiplier_change_scheduled'
+            ? holderScheduledNoticeV1(signal, input.names, input.currentMultiplier ? input.currentMultiplier(token) : null)
+            : holderDividendDeclaredNoticeV1(signal, input.names);
       const holders = [...input.enabled].filter((wallet) => input.holdings!.get(wallet)?.has(token));
       if (holderNotice && holders.length > 0) {
         deliver(holderNotice, holders);
@@ -947,6 +1063,8 @@ export async function runBaseAppNotifyV1(deps: {
   holdings?: (wallets: readonly string[], tokens: readonly string[]) => Promise<HoldingsV1>;
   /** The multiplier before each recorded change, read once per pass. */
   previousMultipliers?: () => Promise<PreviousMultiplierV1>;
+  /** The multiplier each of these tokens converts with now, read once per pass. */
+  currentMultipliers?: (tokens: readonly string[]) => Promise<CurrentMultiplierV1>;
   /** The week that just closed, and its dividends. Asked only inside the
    * summary's window. */
   weekly?: (now: Date) => Promise<WeeklySummaryV1 | null>;
@@ -1126,25 +1244,27 @@ export async function runBaseAppNotifyV1(deps: {
 
   const day = utcDayV1(now);
   const sentToday = await deps.repository.sentOn({ day, wallets: [...enabled] });
-  // Holders are read only when a multiplier change is about to be sent. An
+  // Holders are read only when something a holder hears differently is about
+  // to be sent: a multiplier change, a scheduled one, a declared dividend. An
   // unread balance falls back to the contract's version for everyone, which
   // is exactly what this pass sent before holders existed.
   const multiplierTokens = [
     ...new Set(
-      sendable
-        .filter((signal) => signal.kind === 'official_asset_multiplier_changed')
-        .map((signal) => signal.subjectAddress.toLowerCase()),
+      sendable.filter((signal) => HOLDER_KINDS_V1.has(signal.kind)).map((signal) => signal.subjectAddress.toLowerCase()),
     ),
   ];
   let holdings: HoldingsV1 | undefined;
   let previousMultiplier: PreviousMultiplierV1 | undefined;
+  let currentMultiplier: CurrentMultiplierV1 | undefined;
   if (multiplierTokens.length > 0 && deps.holdings && enabled.size > 0) {
     try {
       holdings = await deps.holdings([...enabled], multiplierTokens);
       previousMultiplier = deps.previousMultipliers ? await deps.previousMultipliers() : undefined;
+      currentMultiplier = deps.currentMultipliers ? await deps.currentMultipliers(multiplierTokens) : undefined;
     } catch {
       holdings = undefined;
       previousMultiplier = undefined;
+      currentMultiplier = undefined;
     }
   }
   const plan = planBaseAppNotificationsV1({
@@ -1158,6 +1278,7 @@ export async function runBaseAppNotifyV1(deps: {
     limits,
     ...(holdings ? { holdings } : {}),
     ...(previousMultiplier ? { previousMultiplier } : {}),
+    ...(currentMultiplier ? { currentMultiplier } : {}),
   });
   Object.assign(report, {
     groups: plan.groups.length,

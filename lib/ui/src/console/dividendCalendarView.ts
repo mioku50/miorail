@@ -130,11 +130,17 @@ function lastV1(event: DividendEventV1, stock: DividendStockV1): string {
   }
 }
 
-/** "$0.33", "$0.003", or "under $0.001" for a sliver of a token. */
+/** "$0.33", "$0.003", or "less than $0.001" for a sliver of a token. */
 function walletUsdV1(value: string): string {
   const number = Number(value);
-  if (number > 0 && number < 0.001) return 'under $0.001';
+  if (number > 0 && number < 0.001) return 'less than $0.001';
   return usdV1(value);
+}
+
+/** "about $0.33" ahead of time, but never "about less than". */
+function aboutUsdV1(value: string): string {
+  const said = walletUsdV1(value);
+  return said.startsWith('$') ? `about ${said}` : said;
 }
 
 /** "4", "2.5", "0.012345". */
@@ -146,7 +152,7 @@ function tokensV1(value: string): string {
 function aheadV1(event: DividendWalletEventV1, holding: DividendWalletHoldingV1): string {
   const day = event.payDateApproximate ? `Around ${dayV1(event.payDate)}` : dayV1(event.payDate);
   const yours = `your ${tokensV1(event.tokens)} ${holding.tokenSymbol}`;
-  const about = event.usd === null ? null : `about ${walletUsdV1(event.usd)} on ${yours}`;
+  const about = event.usd === null ? null : `${aboutUsdV1(event.usd)} on ${yours}`;
   switch (event.state) {
     case 'estimated':
       return about

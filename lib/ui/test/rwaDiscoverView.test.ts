@@ -683,6 +683,56 @@ describe('rwa discover view — signals', () => {
     assert.match(view.cards[0]!.detail, /What a multiplier means is the issuer's/);
   });
 
+  test('a plan, a withdrawn plan and a declared dividend are each said for what they are', () => {
+    const cardOf = (kind: 'official_asset_multiplier_change_scheduled' | 'official_asset_multiplier_change_cancelled' | 'official_asset_dividend_declared', facts: Record<string, unknown>) => ({
+      signalId: `${kind}-1`,
+      kind,
+      subjectAddress: AAPL,
+      subjectTicker: 'AAPLc',
+      officialAddress: null,
+      officialTicker: null,
+      occurredAt: '2026-10-29T20:30:12.000Z',
+      recordedAt: '2026-10-30T02:00:00.000Z',
+      facts,
+    });
+    const schedule = { event: 'ui_multiplier_updated', multiplierWad: '1000470000000000000', effectiveAt: '2026-11-13T14:30:00.000Z', payloadState: 'decoded', transactionHash: `0x${'a'.repeat(64)}`, blockNumber: '53000000' };
+    const view = signalFeedViewV1(
+      {
+        observedAt: NOW.toISOString(),
+        watching: [
+          { kind: 'official_asset_multiplier_change_scheduled' as const, watchingSince: '2026-08-20T10:00:00.000Z' },
+          { kind: 'official_asset_multiplier_change_cancelled' as const, watchingSince: '2026-08-20T10:00:00.000Z' },
+          { kind: 'official_asset_dividend_declared' as const, watchingSince: '2026-10-01T10:00:00.000Z' },
+        ],
+        notReported: [],
+        cards: [
+          cardOf('official_asset_multiplier_change_scheduled', schedule),
+          cardOf('official_asset_multiplier_change_cancelled', { ...schedule, event: 'ui_multiplier_update_cancelled' }),
+          cardOf('official_asset_dividend_declared', {
+            underlyingKey: 'security:isin:US0378331005',
+            symbol: 'AAPL',
+            company: 'Apple',
+            amountPerShare: '0.27',
+            declaredOn: '2026-10-29',
+            exDate: null,
+            recordDate: '2026-11-09',
+            payDate: '2026-11-12',
+            sourceUrl: 'https://www.sec.gov/Archives/edgar/data/320193/000032019326000020/a8-kex991q4.htm',
+          }),
+        ],
+      },
+      NOW,
+    );
+    assert.deepEqual(
+      view.cards.map((card) => [card.title, card.detail]),
+      [
+        ['Shares per token scheduled to change', 'AAPLc scheduled a new multiplier of 1.00047 from 2026-11-13 14:30 UTC. Until then it converts at the one it has now.'],
+        ['A scheduled change was withdrawn', 'AAPLc withdrew its scheduled multiplier change to 1.00047. The one it has now stays in force.'],
+        ['The company declared a dividend', 'Apple declared $0.27 a share, payable 2026-11-12 to holders of record on 2026-11-09. AAPLc takes it as more shares per token when it converts.'],
+      ],
+    );
+  });
+
   test('a WAD is a decimal string, trimmed, and a bad one is not a number', () => {
     assert.equal(rwaMultiplierLabelV1('1000000000000000000'), '1');
     assert.equal(rwaMultiplierLabelV1('2000000000000000000'), '2');
