@@ -47,6 +47,7 @@ import { StocksAskResponseV1Schema } from '@mioagent/rwa-market-reality/narratio
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { B20_UNSUPPORTED_QUESTIONS_V1, questionIsRussianV1 } from '../lib/b20AnswerPlan.js';
 import { stocksEvidenceBundleV1 } from '../lib/stocksEvidence.js';
+import type { DividendCalendarResponseV1, DividendStockV1 } from '@mioagent/rwa-market-reality/dividends';
 import { narrateStocksAnswerV1 } from '../lib/stocksNarration.js';
 import { createReviewedMarketRealityReferenceAdapterV1 } from '../lib/rwaReferenceSession.js';
 import {
@@ -254,6 +255,13 @@ export const rwaMarketRealityRuntime = {
     }
   },
   assemble: assembleMarketRealityV2,
+  /**
+   * The dividend calendar the Stocks board renders, for an ask about a
+   * dividend. Imported when first asked for: the public board's router imports
+   * this one, so a static import back would be a cycle.
+   */
+  dividends: async (now: Date): Promise<DividendCalendarResponseV1> =>
+    (await import('./publicStocks.js')).dividendCalendarForSlotV1(now),
   assembleIndex: assembleMarketRealityIndexV1,
   assembleHistory: assembleMarketRealityHistoryV1,
   coordinator: () => marketRealityCoordinatorV1,
@@ -1403,6 +1411,9 @@ rwaMarketRealityRouter.get('/rwa/market-reality/:underlyingKey/history', async (
 // carries messages, a model and a temperature, and nothing else.
 // ---------------------------------------------------------------------------
 
+/** A question about a dividend, in either language this console is used in. */
+const STOCKS_DIVIDEND_QUESTION_V1 = /dividend|payout|ex-date|record date|дивиденд|выплат/iu;
+
 /** Longest question this surface accepts. A reader asking more than this is
  * writing a brief, and the bundle is one exact market question wide. */
 const STOCKS_ASK_MAX_QUESTION_V1 = 1_000;
@@ -1540,7 +1551,25 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/ask', async (req
       }
     }
 
-    const bundle = stocksEvidenceBundleV1({ question: asked, reality, pools, now });
+    // A question about a dividend reads the calendar, and only that question:
+    // every other answer keeps the bundle it always had.
+    let dividends: DividendStockV1 | null | 'unread' | undefined;
+    if (STOCKS_DIVIDEND_QUESTION_V1.test(asked)) {
+      try {
+        const calendar = await rwaMarketRealityRuntime.dividends(now);
+        dividends = calendar.stocks.find((stock) => stock.underlyingKey === question.underlyingKey) ?? null;
+      } catch {
+        dividends = 'unread';
+      }
+    }
+
+    const bundle = stocksEvidenceBundleV1({
+      question: asked,
+      reality,
+      pools,
+      ...(dividends !== undefined ? { dividends } : {}),
+      now,
+    });
 
     const narrated = await narrateStocksAnswerV1({
       bundle,

@@ -3,6 +3,7 @@ import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import { InMemoryMarketRealityRadarRepositoryV1 } from '@mioagent/rwa-market-reality';
+import { dividendCalendarV1 } from '@mioagent/rwa-market-reality/dividends';
 
 import {
   rwaMarketRealityRouter,
@@ -756,6 +757,51 @@ describe('POST Ask Miorail about the exact question on screen', () => {
     assert.equal(response.body.refused, false);
     assert.ok(response.body.answer.established.length > 0);
     assert.ok(response.body.evidence.length > 0, 'the provenance rows travel with the answer');
+  });
+
+  test('a question about a dividend reads the calendar; any other question does not', async () => {
+    ready();
+    let reads = 0;
+    rwaMarketRealityRuntime.dividends = async () => {
+      reads += 1;
+      return dividendCalendarV1({
+        now: new Date('2026-09-27T12:00:00.000Z'),
+        tokens: [
+          {
+            tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+            tokenSymbol: 'NVDAc',
+            underlyingKey: UNDERLYING,
+            symbol: 'NVDA',
+            company: 'NVIDIA',
+            reading: { multiplierWad: '1000000000000000000', readAt: '2026-09-27T03:18:00.000Z' },
+            changes: [],
+            scheduled: [],
+            supplyAtRecord: { '2026-09-10': '16308.99' },
+            priceNow: 180,
+          },
+        ],
+      });
+    };
+    const plain = await request(app()).post(ASK).send({ question: 'what does it cost?' });
+    assert.equal(plain.status, 200);
+    assert.equal(reads, 0, 'a cost question never reads the calendar');
+
+    const response = await request(app()).post(ASK).send({ question: 'Когда NVIDIA заплатит следующие дивиденды?' });
+    assert.equal(response.status, 200);
+    assert.equal(reads, 1);
+    const rows = (response.body.evidence as Array<{ kind: string; value: string }>).filter((row) => row.kind === 'dividend');
+    assert.equal(rows.length, 1);
+    assert.match(rows[0]!.value, /^NVIDIA \$0\.25 a share, payable 2026-10-01 \(declared\)/);
+
+    // A calendar Miorail could not read is its own gap, never "no dividend".
+    rwaMarketRealityRuntime.dividends = async () => {
+      throw new Error('connect ECONNREFUSED postgres://user:hunter2@10.0.0.4:5432/mio');
+    };
+    const unread = await request(app()).post(ASK).send({ question: 'next dividend?' });
+    assert.equal(unread.status, 200);
+    const said = JSON.stringify(unread.body);
+    assert.match(said, /could not read its dividend calendar/);
+    assert.doesNotMatch(said, /No dividend for|hunter2|postgres:/);
   });
 
   test('the answer is about the question on screen, and echoes it', async () => {

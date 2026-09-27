@@ -28,6 +28,11 @@ import {
   miorailSummariseUniverseV1,
 } from './tools.js';
 import {
+  DividendCalendarAgentInputV1Schema,
+  DividendCalendarAgentOutputV1Schema,
+  miorailGetDividendCalendarV1,
+} from './dividendTool.js';
+import {
   MarketRealityAgentChangesInputV1Schema,
   MarketRealityAgentChangesOutputV1Schema,
   MarketRealityAgentComparisonInputV1Schema,
@@ -85,7 +90,7 @@ export const MIORAIL_MCP_NAME_V1 = 'miorail';
  * So this moves whenever the published tool list moves, and
  * `mcpServer.test.ts` refuses a registry change that leaves it behind.
  */
-export const MIORAIL_MCP_VERSION_V1 = '1.4.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.5.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
@@ -109,6 +114,8 @@ An empty result is not the same as a quiet chain. Call miorail_discover_status f
 The Stocks tools are a separate read-only product surface for reviewed tokenized-stock representations. An underlying key groups representations but never selects one. Preserve every exact Base address. A router quote is not execution evidence; provider failure is not an asset finding; an expired quote is history; ranking is withheld. get_market_changes requires an exact address or CAIP-10 and reads only public append-only market evidence — never tenant Radar watches or user metadata.
 
 get_recorded_changes is the only read here that needs no subject: it answers "did anything change?" across the whole reviewed universe, so it is the one to call on a schedule when the user has not named an asset. Its empty result is TWO different facts and they must never share a sentence — a kind listed in \`notWatched\` has never had an emitter run, so an empty feed for it means nobody looked, never that the market was quiet. Only a kind present in \`watching\` can support "nothing changed", and only back to its \`watchingSince\`. \`truncated: true\` makes every count a floor.
+
+get_dividend_calendar answers "when does this stock pay next, about how much reaches one token, and what did the last one do". It keeps two parties apart: what the COMPANY declared, quoted from its own release, and what reached the TOKEN, read from the token. A Coinbase token takes a dividend as more shares per token, never as cash, and it reaches whoever holds the token when the multiplier moves, not on the record date. An estimate is Miorail's arithmetic from what reached a token before and must be called an estimate. \`miorailSummary\` is the wording to prefer.
 
 get_use_access reports what one exact representation can be used for and what gates it, including the POOLS that hold it — a question about LP or liquidity is answered from \`pools\`, never from the lending venues in \`defi\`. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. WHO SUPPORTS IT IS A LEDGER, NOT A VERDICT: \`ecosystem\` carries the apps Base’s own stocks page names — thirty of them — each with that page’s claim beside what the app itself answered for this exact address, in the SAME four states. Most of them are apps Miorail does not read at all, and those are \`unchecked\`: reporting them as refusals states our reach as a fact about somebody else’s product. \`ecosystem.summary\` is the deterministic sentence to repeat. A venue listing an address is still not permission to act: caps and pause flags are not read, and the borrower’s own position is not read at all. PER MARKET, NOT PER VENUE: where a venue publishes them, \`defi.venues[].markets\` carries every market for this address with its own curation flag, LLTV in basis points and what is available to borrow in it — one Morpho-curated market at 62.5% beside three anyone deployed is the normal shape, and a figure there says a market could be used, never that this user could use it. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.`;
 
@@ -570,6 +577,26 @@ Evidence older than a day is labelled stale and describes what was true when it 
   // anything change today" had no tool that could take the question and either
   // guessed a subject or said nothing. The screen has had this feed since
   // Phase 2; the protocol had no market-wide read at all.
+  // Dividends: what each company declared, and what reached its token.
+  server.registerTool(
+    'get_dividend_calendar',
+    {
+      title: 'Dividends on Coinbase tokenized stocks: what was declared, and what reached the token',
+      description:
+        'When each Coinbase tokenized stock on Base pays its next dividend, about how much reaches one token, and what each past dividend did to the token. Pass `symbol` (a ticker such as META, or its token such as METAc) for one stock, or nothing for all of them. READ `miorailSummary` FIRST and prefer its wording. Each dividend carries two facts from two parties and they must stay apart: the COMPANY\u2019s declaration (amount per share, record and payment dates, and the sentence quoted from its own release, with the link) and the TOKEN\u2019s side, read from the token. A Coinbase token takes a dividend as more shares per token, after withholding tax and a Coinbase fee, never as cash, and it reaches whoever holds the token when the multiplier moves, not whoever held it on the record date. `state` is one of: `estimated` (not declared yet: the last dividend again a quarter later, Miorail\u2019s guess), `announced` (declared), `scheduled` (declared, conversion scheduled on Base), `effective` (reinvested: read from the token), `awaiting_confirmation` (paid; Miorail has not confirmed the conversion, and `reason` names that gap as Miorail\u2019s), `not_entitled` (the token had no supply on the record date, so nothing was owed) and `not_reflected` (owed, paid, read since, and unmoved). `token.kind` says where a number comes from: `measured` on the token, `scheduled` by the issuer, `estimate` from Miorail\u2019s arithmetic at the share of a dividend that reached a token before (`passThrough`). An estimate must be called one. This tool takes no wallet: what one person received is not on this surface.',
+      inputSchema: DividendCalendarAgentInputV1Schema,
+      outputSchema: DividendCalendarAgentOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async (args) => {
+      try {
+        return reply(await miorailGetDividendCalendarV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
   server.registerTool(
     'get_recorded_changes',
     {

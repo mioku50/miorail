@@ -32,6 +32,7 @@ const REQUIRED_CAVEATS_V1 = [
 const EXPECTED_TOOLS_V1 = [
   'check_address_identity',
   'compare_market_reality',
+  'get_dividend_calendar',
   'get_market_changes',
   'get_recorded_changes',
   'get_representations',

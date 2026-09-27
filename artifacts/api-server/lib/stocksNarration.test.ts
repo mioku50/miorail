@@ -11,6 +11,9 @@ import type {
   PooledRowMeasurementV1,
 } from '@mioagent/rwa-market-reality/contracts';
 
+import { DIVIDEND_MECHANISM_SENTENCE_V1 } from '@mioagent/rwa-market-reality/dividend-agent';
+import { dividendCalendarV1, type DividendTokenV1 } from '@mioagent/rwa-market-reality/dividends';
+
 import {
   STOCKS_BENCH_ADDRESSES_V1,
   STOCKS_BENCH_CORPUS_V1,
@@ -610,6 +613,74 @@ describe('a reasoning model that answered with nothing', () => {
 // decide it WITH, which is the only version of this guarantee worth stating.
 // ---------------------------------------------------------------------------
 
+describe('a question about a dividend', () => {
+  const WAD = '1000000000000000000';
+  const GOOGL_AFTER = '1000377118676784179';
+  const tokenOf = (over: Partial<DividendTokenV1> & Pick<DividendTokenV1, 'tokenAddress' | 'symbol' | 'underlyingKey' | 'company'>): DividendTokenV1 => ({
+    tokenSymbol: `${over.symbol}c`,
+    reading: { multiplierWad: WAD, readAt: '2026-09-27T03:18:00.000Z' },
+    changes: [],
+    scheduled: [],
+    supplyAtRecord: {},
+    priceNow: 180,
+    ...over,
+  });
+  // NVIDIA declared, and 59.5% of Alphabet's dividend reached GOOGLc.
+  const calendar = dividendCalendarV1({
+    now: new Date('2026-09-27T12:00:00.000Z'),
+    tokens: [
+      tokenOf({
+        tokenAddress: '0xb2000000000000000000002d0ba3164cc74f58b7',
+        symbol: 'GOOGL',
+        company: 'Alphabet',
+        underlyingKey: 'security:isin:US02079K3059',
+        reading: { multiplierWad: GOOGL_AFTER, readAt: '2026-09-27T03:18:00.000Z' },
+        changes: [{ fromWad: WAD, toWad: GOOGL_AFTER, at: '2026-09-14T18:29:21.000Z', confirmed: true, priceAt: 347.1 }],
+        supplyAtRecord: { '2026-09-07': '6113.6938' },
+      }),
+      tokenOf({ tokenAddress: COINBASE_NVDA, symbol: 'NVDA', company: 'NVIDIA', underlyingKey: 'security:isin:US67066G1040', supplyAtRecord: { '2026-09-10': '16308.99' } }),
+    ],
+  });
+  const nvidia = calendar.stocks.find((stock) => stock.symbol === 'NVDA')!;
+  const ask = (dividends: Parameters<typeof stocksEvidenceBundleV1>[0]['dividends']) =>
+    stocksEvidenceBundleV1({
+      question: 'When does NVDA pay its next dividend, and how much reaches a token?',
+      reality: caseOf('A').reality,
+      ...(dividends !== undefined ? { dividends } : {}),
+      now: STOCKS_BENCH_NOW_V1,
+    });
+
+  test('the answer leads with what NVIDIA declared and what should reach NVDAc, cited to the token', () => {
+    const bundle = ask(nvidia);
+    const rows = bundle.items.filter((item) => item.kind === 'dividend');
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0]!.subject, COINBASE_NVDA);
+    assert.match(rows[0]!.value, /^NVIDIA \$0\.25 a share, payable 2026-10-01 \(declared\): Miorail estimates about [0-9.]+% more NVDA shares per NVDAc/);
+    assert.match(rows[0]!.value, /An estimate, not the company's figure\.$/);
+    assert.ok(bundle.deterministic.startsWith('Next: NVIDIA $0.25 a share, payable 2026-10-01'));
+    assert.ok(bundle.caveats.includes(DIVIDEND_MECHANISM_SENTENCE_V1));
+    // The fallback answer stands on the bundle it was written from.
+    assert.equal(verify(bundle, deterministicStocksNarrationV1(bundle)).ok, true);
+  });
+
+  test('nothing on record and a calendar Miorail could not read are two different absences', () => {
+    const none = ask(null);
+    assert.equal(none.items.some((item) => item.kind === 'dividend'), false);
+    assert.ok(none.missing.includes(`No dividend for ${caseOf('A').reality.question.underlyingKey} is on record in Miorail.`));
+    const unread = ask('unread');
+    assert.ok(unread.missing.some((line) => /could not read its dividend calendar/.test(line)));
+    assert.equal(unread.missing.some((line) => /No dividend for/.test(line)), false);
+  });
+
+  test('a question about something else keeps the bundle it always had', () => {
+    const before = bundleOf('A');
+    const after = ask(undefined);
+    assert.equal(after.items.some((item) => item.kind === 'dividend'), false);
+    assert.equal(after.caveats.includes(DIVIDEND_MECHANISM_SENTENCE_V1), false);
+    assert.deepEqual(after.missing, before.missing);
+  });
+});
+
 describe('the Stocks narrator has no actions', () => {
   test('the provider is handed messages and two settings, and no capability', async () => {
     const bundle = bundleOf('A');
@@ -745,9 +816,14 @@ describe('the Stocks narrator has no actions', () => {
       [
         '@mioagent/llm',
         '@mioagent/rwa-market-reality/contracts',
+        // The dividend calendar's contract and the sentences written from it:
+        // schemas and pure functions over an already-read calendar. The read
+        // itself happens in the route, and never reaches the narrator.
+        '@mioagent/rwa-market-reality/dividend-agent',
+        '@mioagent/rwa-market-reality/dividends',
         '@mioagent/rwa-market-reality/narration-contract',
       ],
-      'a provider interface and two sets of contracts — no wallet, no chain, no repository',
+      'a provider interface and three sets of contracts — no wallet, no chain, no repository',
     );
     // And nothing in those three files names an action.
     const sources = [...closure].map((file) => readFileSync(file, 'utf8')).join('\n');

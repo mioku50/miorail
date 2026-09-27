@@ -658,7 +658,8 @@ Rules, all enforced automatically after you answer:
 11. When a read of Miorail's did not complete, say it is Miorail's gap. Never report it as a property of the token.
 12. An expired quote is history. Say when it was measured; never state it as a current cost.
 13. A pool holding a token is not a route. A [pool] row says where the token sits and how concentrated it is; it never says what an exit costs, and a pool venue was never asked for a price.
-14. Answer in the language of the question. Keep "explanation" under ${STOCKS_EXPLANATION_MAX_CHARS_V1} characters.
+14. A [dividend] row keeps two parties apart: what the company declared, and what reached its token. A Coinbase token receives a dividend as more shares per token, never as cash, and a row that says "estimate" must stay an estimate in your answer.
+15. Answer in the language of the question. Keep "explanation" under ${STOCKS_EXPLANATION_MAX_CHARS_V1} characters.
 
 Write only the JSON object. No preamble, no code fence, no commentary.`;
 

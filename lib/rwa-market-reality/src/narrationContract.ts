@@ -27,6 +27,9 @@ export const STOCKS_EVIDENCE_KINDS_V1 = [
   'pool',
   'provider_failure',
   'history',
+  // What the company declared and what reached its token, from the dividend
+  // calendar: present only when the question was about a dividend.
+  'dividend',
 ] as const;
 export type StocksEvidenceKindV1 = (typeof STOCKS_EVIDENCE_KINDS_V1)[number];
 

@@ -9,6 +9,8 @@ import type {
   StocksEvidenceItemV1,
   StocksEvidenceKindV1,
 } from '@mioagent/rwa-market-reality/narration-contract';
+import { DIVIDEND_MECHANISM_SENTENCE_V1, dividendEventSentenceV1 } from '@mioagent/rwa-market-reality/dividend-agent';
+import type { DividendStockV1 } from '@mioagent/rwa-market-reality/dividends';
 
 import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
 
@@ -428,6 +430,44 @@ function poolItemsV1(
   };
 }
 
+/**
+ * What the company declared and what reached its Coinbase token, from the same
+ * calendar the board renders: the next dividend, and the last two.
+ *
+ * `unread` is Miorail's gap and says so; it is never "no dividend". The rows
+ * belong to the token when the token is one of this answer's representations,
+ * so a claim about Backed cannot cite Coinbase's conversion.
+ */
+function dividendItemsV1(
+  state: BuilderStateV1,
+  underlyingKey: string,
+  stock: DividendStockV1 | null | 'unread',
+  representations: readonly string[],
+): { missing: string[]; sentence: string | null } {
+  if (stock === 'unread') {
+    return {
+      missing: [`Miorail could not read its dividend calendar just now, so nothing about ${underlyingKey}'s dividends is established.`],
+      sentence: null,
+    };
+  }
+  if (!stock || (stock.next === null && stock.history.length === 0)) {
+    return { missing: [`No dividend for ${underlyingKey} is on record in Miorail.`], sentence: null };
+  }
+  const subject = representations.includes(stock.tokenAddress.toLowerCase()) ? stock.tokenAddress : null;
+  const sentences: string[] = [];
+  if (stock.next) {
+    const text = dividendEventSentenceV1(stock.next, stock);
+    push(state, 'dividend', subject, `next dividend of ${stock.symbol}`, text);
+    sentences.push(`Next: ${text}`);
+  }
+  for (const event of stock.history.slice(0, 2)) {
+    const text = dividendEventSentenceV1(event, stock);
+    push(state, 'dividend', subject, `dividend of ${stock.symbol} paid ${event.payDate}`, text);
+    sentences.push(`Before: ${text}`);
+  }
+  return { missing: [], sentence: sentences.join(' ') };
+}
+
 export function stocksEvidenceBundleV1(input: {
   question: string;
   reality: MarketRealityResponseV2;
@@ -441,6 +481,12 @@ export function stocksEvidenceBundleV1(input: {
    * surfaces cannot state different depths for the same pool.
    */
   pools?: ReadonlyMap<string, PooledLiquidityMeasurementV1> | null;
+  /**
+   * The dividend calendar's row for this security, when the question was
+   * about a dividend. Absent: not asked, and the bundle is what it always
+   * was. Null: asked, and nothing is on record. `unread`: Miorail's gap.
+   */
+  dividends?: DividendStockV1 | null | 'unread';
   now: Date;
 }): StocksEvidenceBundleV1 {
   const { reality, now } = input;
@@ -526,6 +572,20 @@ export function stocksEvidenceBundleV1(input: {
     sentences.push(...historyItemsV1(state, input.history, reality.question.cashDecimals));
   }
 
+  // Asked about a dividend: the answer leads with it.
+  let aboutDividends = false;
+  if (input.dividends !== undefined) {
+    aboutDividends = true;
+    const dividend = dividendItemsV1(
+      state,
+      reality.question.underlyingKey,
+      input.dividends,
+      reality.representations.map((row) => row.tokenAddress.toLowerCase()),
+    );
+    missing.push(...dividend.missing);
+    if (dividend.sentence) sentences.unshift(dividend.sentence);
+  }
+
   const measured = reality.representations.filter((row) => row.liveness !== 'never_measured').length;
   const state_ =
     measured === 0
@@ -553,6 +613,12 @@ export function stocksEvidenceBundleV1(input: {
   if (providerFailures.length > 0) {
     caveats.push(
       'A read of Miorail’s that did not complete is a gap in Miorail, and must not be reported as a property of the token.',
+    );
+  }
+  if (aboutDividends) {
+    caveats.push(
+      DIVIDEND_MECHANISM_SENTENCE_V1,
+      "An estimate is Miorail's arithmetic from what reached a token before, never the company's figure.",
     );
   }
   if (pooledVenues.size > 0 || state.items.some((item) => item.kind === 'pool')) {
