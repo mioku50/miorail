@@ -16,6 +16,7 @@ import {
   useDisconnectTelegram,
   useTelegramLink,
   useDividendCalendar,
+  useMyDividends,
   useWeekendMarket,
 } from '@mioagent/api-client-react';
 import {
@@ -845,9 +846,18 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [weekendRead.data],
   );
 
-  // Dividends: the same public read for everybody, like the weekend card.
+  // Dividends: the same public read for everybody, like the weekend card, and
+  // for a signed-in wallet what reached its own tokens and what is next.
   const dividendRead = useDividendCalendar({ enabled });
-  const dividends = useMemo(() => dividendCalendarViewV1(dividendRead.data ?? null), [dividendRead.data]);
+  const myDividendsRead = useMyDividends({ enabled: enabled && session });
+  const dividends = useMemo(
+    () =>
+      dividendCalendarViewV1(
+        dividendRead.data ?? null,
+        session ? { data: myDividendsRead.data ?? null, failed: myDividendsRead.isError } : null,
+      ),
+    [dividendRead.data, session, myDividendsRead.data, myDividendsRead.isError],
+  );
 
   // Alerts in Telegram: signed in only, and only where a bot exists. A link
   // that was issued is polled for until the reader presses Start or it lapses.

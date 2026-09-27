@@ -23,6 +23,28 @@ export function DividendCalendarCard({ view }: { view: DividendCalendarViewV1 })
       </div>
       <div className="pb">
         <p className="lnote">{view.lede}</p>
+        {view.mine ? (
+          <div className="mr-utility-group" aria-label={view.mine.title}>
+            <h4>{view.mine.title}</h4>
+            {view.mine.empty ? <p className="lnote">{view.mine.empty}</p> : null}
+            {view.mine.rows.length > 0 ? (
+              <div className="mr-utility-edges">
+                {view.mine.rows.map((row) => (
+                  <div className="mr-utility-edge" key={row.key}>
+                    <div className="mr-utility-edge-head">
+                      <strong>{row.title}</strong>
+                    </div>
+                    {row.lines.map((line) => (
+                      <p key={line}>{line}</p>
+                    ))}
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            {view.mine.total ? <p className="lnote">{view.mine.total}</p> : null}
+            <p className="lnote">{view.mine.note}</p>
+          </div>
+        ) : null}
         <table>
           <thead>
             <tr>

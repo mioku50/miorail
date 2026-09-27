@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
+import type { DividendCalendarResponseV1 } from '@mioagent/rwa-market-reality/dividends';
 import { weekendSlotStartV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import {
@@ -223,6 +224,13 @@ publicStocksRouter.get('/weekend', async (_req: Request, res: Response) => {
   }
 });
 
+/** The calendar for the five-minute slot `now` falls in. One computation per
+ * slot, shared by the public board and every wallet's own read. */
+export function dividendCalendarForSlotV1(now: Date): Promise<DividendCalendarResponseV1> {
+  const slot = weekendSlotStartV1(now);
+  return publicStocksCachesV1.dividends.read(`dividends|${slot.getTime()}`, () => publicStocksRuntime.readDividends(slot));
+}
+
 /**
  * Dividends on Coinbase's tokenized stocks: what each company declared, in its
  * own words, and what reached the token, read from the token. The next payment
@@ -234,11 +242,7 @@ publicStocksRouter.get('/dividends', async (_req: Request, res: Response) => {
       refuse(res, 503, 'market_reality_storage_unavailable');
       return;
     }
-    const slot = weekendSlotStartV1(publicStocksRuntime.now());
-    sendPublic(
-      res,
-      await publicStocksCachesV1.dividends.read(`dividends|${slot.getTime()}`, () => publicStocksRuntime.readDividends(slot)),
-    );
+    sendPublic(res, await dividendCalendarForSlotV1(publicStocksRuntime.now()));
   } catch (error) {
     failed(res, 'dividends', 'dividend_calendar_failed', error);
   }

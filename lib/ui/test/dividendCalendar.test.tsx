@@ -3,10 +3,11 @@ import test, { describe } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { dividendWalletConversionsV1, dividendWalletKeyV1, dividendWalletV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { dividendCalendarV1, type DividendTokenV1 } from '@mioagent/rwa-market-reality/dividends';
 
 import { DividendCalendarCard } from '../src/console/DividendCalendarCard';
-import { dividendCalendarViewV1 } from '../src/console/dividendCalendarView';
+import { dividendCalendarViewV1, myDividendsViewV1 } from '../src/console/dividendCalendarView';
 
 // The test runner compiles JSX with the classic transform: React.createElement.
 void React;
@@ -79,5 +80,67 @@ describe('Dividends on Base, on the Stocks board', () => {
     assert.match(html, /<button type="button" class="btn sec">Show all 4<\/button>/);
     assert.match(html, /<a href="https:\/\/www\.prnewswire\.com\/[^"]+" target="_blank" rel="noreferrer">META&#x27;s release<\/a>/);
     assert.doesNotMatch(html, /data-tone="(good|bad|warn)"/);
+  });
+});
+
+/** A wallet with 4 GOOGLc (2.5 of them before Alphabet's dividend converted),
+ * 1 METAc and 3 TSLAc. */
+function walletOf(held: Record<string, number>, before: Record<string, number>) {
+  const address = (symbol: string) => CALENDAR.stocks.find((stock) => stock.symbol === symbol)!.tokenAddress;
+  const units = (amount: number) => BigInt(Math.round(amount * 1e8));
+  return dividendWalletV1({
+    calendar: CALENDAR,
+    now: new Date('2026-09-27T12:00:00.000Z'),
+    blockNumber: 51_000_000,
+    decimals: new Map(CALENDAR.stocks.map((stock) => [stock.tokenAddress, 8])),
+    balances: new Map(CALENDAR.stocks.map((stock) => [stock.tokenAddress, units(held[stock.symbol] ?? 0)])),
+    balancesBefore: new Map(
+      dividendWalletConversionsV1(CALENDAR).map((row) => {
+        const symbol = CALENDAR.stocks.find((stock) => stock.tokenAddress === row.tokenAddress)!.symbol;
+        return [dividendWalletKeyV1(address(symbol), row.at), units(before[symbol] ?? 0)] as const;
+      }),
+    ),
+  });
+}
+
+describe('Your dividends, for a signed-in wallet', () => {
+  const MINE = walletOf({ GOOGL: 4, META: 1, TSLA: 3 }, { GOOGL: 2.5 });
+
+  test('what is ahead on what it holds, and what already reached it', () => {
+    const view = myDividendsViewV1({ data: MINE, failed: false })!;
+    assert.deepEqual(
+      view.rows.map((row) => [row.title, row.lines]),
+      [
+        ['METAc · 1 held', ['Sep 28: about $0.312 on your 1 METAc — META declared $0.525 a share.']],
+        [
+          'GOOGLc · 4 held',
+          [
+            'Around Dec 14: about $0.524 on your 4 GOOGLc — an estimate, GOOGL has not declared it yet.',
+            'Sep 14: $0.327 reinvested — 0.00094 more GOOGL shares on the 2.5 GOOGLc you held.',
+          ],
+        ],
+        ['TSLAc · 3 held', ['No dividend on record.']],
+      ],
+    );
+    assert.equal(view.total, 'Reinvested into your tokens so far: $0.327.');
+    assert.equal(view.empty, null);
+    assert.equal(view.note, 'A dividend reaches whoever holds the token when its multiplier moves, not on the record date.');
+  });
+
+  test('nothing before the first answer; a failed read and an empty wallet each say so', () => {
+    assert.equal(myDividendsViewV1(null), null);
+    assert.equal(myDividendsViewV1({ data: null, failed: false }), null);
+    assert.equal(myDividendsViewV1({ data: null, failed: true })?.empty, 'Your dividends could not be read just now.');
+    assert.equal(myDividendsViewV1({ data: walletOf({}, {}), failed: false })?.empty, 'This wallet holds none of these stocks.');
+    // Signed out: the board has no section for it at all.
+    assert.equal(dividendCalendarViewV1(CALENDAR)!.mine, null);
+  });
+
+  test('the card puts it above the board', () => {
+    const view = dividendCalendarViewV1(CALENDAR, { data: MINE, failed: false })!;
+    const html = renderToStaticMarkup(<DividendCalendarCard view={view} />);
+    assert.match(html, /<div class="mr-utility-group" aria-label="Your dividends"><h4>Your dividends<\/h4>/);
+    assert.match(html, /<strong>GOOGLc · 4 held<\/strong>/);
+    assert.ok(html.indexOf('Your dividends') < html.indexOf('<table>'));
   });
 });

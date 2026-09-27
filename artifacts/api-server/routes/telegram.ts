@@ -17,7 +17,7 @@ import {
   type TelegramCommandV1,
   type TelegramConfigV1,
 } from '@mioagent/telegram';
-import { tenantUserFromRequest } from '../middleware/tenantAuth';
+import { sessionWalletV1 } from '../lib/sessionWallet';
 
 // ---------------------------------------------------------------------------
 // Telegram: the bot's webhook, and the website's "Connect Telegram".
@@ -166,19 +166,6 @@ telegramWebhookRouter.post('/webhook', async (req: Request, res: Response) => {
 // ---------------------------------------------------------------------------
 
 export const telegramLinkRouter = Router();
-
-/** A wallet proven by a real sign-in. The development single user — the zero
- * address, under test or DEV_SINGLE_USER — is not one: a chat must never be
- * joined to a wallet nobody signed for. */
-function sessionWalletV1(req: Request, res: Response): string | null {
-  const user = tenantUserFromRequest(req);
-  const wallet = typeof user?.address === 'string' ? user.address.toLowerCase() : '';
-  if (!/^0x[0-9a-f]{40}$/.test(wallet) || user?.id !== `eip155:8453:${wallet}` || /^0x0{40}$/.test(wallet)) {
-    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
-    return null;
-  }
-  return wallet;
-}
 
 telegramLinkRouter.get('/link', async (req: Request, res: Response) => {
   const wallet = sessionWalletV1(req, res);

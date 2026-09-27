@@ -322,7 +322,8 @@ export interface DividendTokenV1 {
 // Dates. Every date above is a New York date.
 // ---------------------------------------------------------------------------
 
-function shiftDateV1(date: string, days: number): string {
+/** A New York date, `days` later (or earlier). */
+export function shiftDateV1(date: string, days: number): string {
   const [year, month, day] = date.split('-').map(Number);
   return new Date(Date.UTC(year!, month! - 1, day! + days)).toISOString().slice(0, 10);
 }
@@ -422,8 +423,10 @@ function estimateOfV1(input: {
 }): DividendTokenEffectV1 {
   const amount = Number(input.amountPerShare);
   if (input.passThrough === null || input.price === null || !(input.price > 0) || !(amount > 0)) return NO_EFFECT_V1;
-  const perToken = amount * input.passThrough;
-  const rise = perToken / input.price;
+  // A token tracks `from` shares, so it is owed the dividend on that many.
+  const from = input.reading ? Number(BigInt(input.reading.multiplierWad)) / 1e18 : 1;
+  const perToken = amount * input.passThrough * from;
+  const rise = (amount * input.passThrough) / input.price;
   return {
     kind: 'estimate',
     multiplierFrom: input.reading?.multiplierWad ?? null,

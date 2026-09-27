@@ -6,6 +6,7 @@ import {
   StocksAskResponseV1Schema,
   type StocksAskResponseV1,
 } from '@mioagent/rwa-market-reality/narration-contract';
+import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
 
@@ -948,6 +949,21 @@ export function useDividendCalendar(options?: { enabled?: boolean }) {
     enabled: options?.enabled !== false,
     // The server answers per five-minute slot; a multiplier is read every six hours.
     staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
+  });
+}
+
+/** The signed-in wallet's dividends: what reached the tokens it held, and
+ * what the next ones should bring to what it holds now. The server takes the
+ * wallet from the session; nothing here names one. */
+export function useMyDividends(options: { enabled: boolean }) {
+  return useQuery({
+    queryKey: ['my-dividends'],
+    queryFn: async () => DividendWalletResponseV1Schema.parse(await fetchApi<unknown>('/api/stocks/dividends/mine')),
+    retry: false,
+    enabled: options.enabled,
+    // The server holds a wallet's answer for half a minute.
+    staleTime: 60_000,
     refetchInterval: 15 * 60_000,
   });
 }

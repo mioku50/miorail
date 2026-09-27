@@ -1,4 +1,9 @@
 import type {
+  DividendWalletEventV1,
+  DividendWalletHoldingV1,
+  DividendWalletResponseV1,
+} from '@mioagent/rwa-market-reality/dividend-wallet';
+import type {
   DividendCalendarResponseV1,
   DividendEventV1,
   DividendStockV1,
@@ -30,9 +35,30 @@ export interface DividendRowViewV1 {
   last: string | null;
 }
 
+/** One stock the signed-in wallet holds, or held when a dividend reached it. */
+export interface MyDividendRowViewV1 {
+  key: string;
+  /** "GOOGLc · 4 held". */
+  title: string;
+  /** One sentence per dividend: ahead first, soonest first, then received. */
+  lines: string[];
+}
+
+export interface MyDividendsViewV1 {
+  title: string;
+  rows: MyDividendRowViewV1[];
+  /** What has been reinvested into this wallet's tokens so far, or null. */
+  total: string | null;
+  /** In place of rows: holds none of them, or could not be read. */
+  empty: string | null;
+  note: string;
+}
+
 export interface DividendCalendarViewV1 {
   title: string;
   lede: string;
+  /** The signed-in wallet's own; null when signed out or not read yet. */
+  mine: MyDividendsViewV1 | null;
   rows: DividendRowViewV1[];
   /** The stocks with no dividend on record, named once. */
   none: string | null;
@@ -104,8 +130,88 @@ function lastV1(event: DividendEventV1, stock: DividendStockV1): string {
   }
 }
 
+/** "$0.33", "$0.003", or "under $0.001" for a sliver of a token. */
+function walletUsdV1(value: string): string {
+  const number = Number(value);
+  if (number > 0 && number < 0.001) return 'under $0.001';
+  return usdV1(value);
+}
+
+/** "4", "2.5", "0.012345". */
+function tokensV1(value: string): string {
+  const number = Number(value);
+  return number.toLocaleString('en-US', { maximumFractionDigits: number < 1 ? 6 : 4 });
+}
+
+function aheadV1(event: DividendWalletEventV1, holding: DividendWalletHoldingV1): string {
+  const day = event.payDateApproximate ? `Around ${dayV1(event.payDate)}` : dayV1(event.payDate);
+  const yours = `your ${tokensV1(event.tokens)} ${holding.tokenSymbol}`;
+  const about = event.usd === null ? null : `about ${walletUsdV1(event.usd)} on ${yours}`;
+  switch (event.state) {
+    case 'estimated':
+      return about
+        ? `${day}: ${about} — an estimate, ${holding.company} has not declared it yet.`
+        : `${day}: ${holding.company} has not declared it yet, and nothing has converted to estimate from.`;
+    case 'announced':
+      return about
+        ? `${day}: ${about} — ${holding.company} declared $${event.amountPerShare} a share.`
+        : `${day}: ${holding.company} declared $${event.amountPerShare} a share; what reaches a token is not measured yet.`;
+    case 'scheduled':
+      return `${event.at ? dayV1(event.at.slice(0, 10)) : day}: ${about ?? `more ${holding.symbol} per ${holding.tokenSymbol}`}, scheduled on Base by the issuer.`;
+    case 'awaiting_confirmation':
+    case 'not_reflected':
+      return `${day}: ${holding.company} paid $${event.amountPerShare} a share; it is not in the token yet${about ? ` — ${about} when it is` : ''}.`;
+    case 'not_entitled':
+      return `${day}: not owed — ${holding.tokenSymbol} had no supply on the record date.`;
+    default:
+      return `${day}: $${event.amountPerShare} a share.`;
+  }
+}
+
+function receivedV1(event: DividendWalletEventV1, holding: DividendWalletHoldingV1): string {
+  const shares = event.shares === null ? '' : ` — ${Number(event.shares).toPrecision(2)} more ${holding.symbol} shares`;
+  const worth = event.usd === null ? 'Reinvested' : `${walletUsdV1(event.usd)} reinvested`;
+  return `${dayV1(event.payDate)}: ${worth}${shares} on the ${tokensV1(event.tokens)} ${holding.tokenSymbol} you held.`;
+}
+
+/**
+ * The signed-in wallet's dividends, in words. Null while there is nothing to
+ * say yet: signed out, or the first read has not answered.
+ */
+export function myDividendsViewV1(
+  mine: { data: DividendWalletResponseV1 | null | undefined; failed: boolean } | null | undefined,
+): MyDividendsViewV1 | null {
+  if (!mine || (!mine.data && !mine.failed)) return null;
+  const note = 'A dividend reaches whoever holds the token when its multiplier moves, not on the record date.';
+  if (!mine.data) {
+    return { title: 'Your dividends', rows: [], total: null, empty: 'Your dividends could not be read just now.', note };
+  }
+  const rows = mine.data.holdings.map((holding): MyDividendRowViewV1 => {
+    const lines = [
+      ...holding.upcoming.map((event) => aheadV1(event, holding)),
+      ...holding.received.map((event) => receivedV1(event, holding)),
+    ];
+    return {
+      key: holding.tokenAddress,
+      title: Number(holding.tokens) > 0 ? `${holding.tokenSymbol} · ${tokensV1(holding.tokens)} held` : `${holding.tokenSymbol} · none held now`,
+      lines: lines.length > 0 ? lines : ['No dividend on record.'],
+    };
+  });
+  const received = Number(mine.data.receivedUsd);
+  return {
+    title: 'Your dividends',
+    rows,
+    total: received > 0 ? `Reinvested into your tokens so far: ${walletUsdV1(mine.data.receivedUsd)}.` : null,
+    empty: rows.length === 0 ? 'This wallet holds none of these stocks.' : null,
+    note,
+  };
+}
+
 /** Null when no stock has a dividend on record, so the board shows nothing. */
-export function dividendCalendarViewV1(response: DividendCalendarResponseV1 | null | undefined): DividendCalendarViewV1 | null {
+export function dividendCalendarViewV1(
+  response: DividendCalendarResponseV1 | null | undefined,
+  mine?: { data: DividendWalletResponseV1 | null | undefined; failed: boolean } | null,
+): DividendCalendarViewV1 | null {
   if (!response) return null;
   const payers = response.stocks.filter((stock) => stock.next !== null || stock.history.length > 0);
   if (payers.length === 0) return null;
@@ -132,6 +238,7 @@ export function dividendCalendarViewV1(response: DividendCalendarResponseV1 | nu
   return {
     title: 'Dividends on Base',
     lede: "A company pays cash per share. A Coinbase token gets it as more shares per token, after withholding tax and Coinbase's fee — read from the token, never assumed.",
+    mine: myDividendsViewV1(mine),
     rows,
     none: quiet.length > 0 ? `No dividend on record: ${quiet.join(', ')}.` : null,
     note: [
