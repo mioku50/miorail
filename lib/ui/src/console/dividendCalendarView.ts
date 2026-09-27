@@ -137,7 +137,7 @@ export function dividendCalendarViewV1(response: DividendCalendarResponseV1 | nu
     note: [
       "Declared: the company's own release. Estimate: not declared yet — the last dividend again, a quarter later.",
       response.passThrough.percent && measured
-        ? `Per token: ${response.passThrough.percent}% of a dividend has reached a token so far (${measured.symbol}, ${dayV1(measured.payDate)}), at today's price.`
+        ? `Per token: ${response.passThrough.percent}% of a dividend has reached a token so far (${measured.symbol}, ${dayV1(measured.payDate)}), at the latest reference price.`
         : 'Per token: nothing has converted yet, so nothing is estimated.',
     ].join(' '),
   };

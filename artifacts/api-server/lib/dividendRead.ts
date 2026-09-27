@@ -64,12 +64,20 @@ function toWadV1(raw: string, scale: string): string | null {
   }
 }
 
-/** The last price the feed had published at an instant, within a day. */
-function priceAtV1(rows: readonly { at: string; price: number }[], instant: number): number | null {
+/** At a change: the feed publishes through every weekday session, so a print
+ * older than a day is no price for that moment. */
+const PRICE_AT_MAX_AGE_MS_V1 = 86_400_000;
+/** Now: the feed stops from Friday evening to Sunday evening, and for a
+ * holiday, so its latest print can be two to three days old. Four days covers
+ * a long weekend and no more. */
+const PRICE_NOW_MAX_AGE_MS_V1 = 4 * 86_400_000;
+
+/** The last price the feed had published at an instant, within `maxAgeMs`. */
+function priceAtV1(rows: readonly { at: string; price: number }[], instant: number, maxAgeMs: number): number | null {
   let best: { at: number; price: number } | null = null;
   for (const row of rows) {
     const at = Date.parse(row.at);
-    if (!Number.isFinite(at) || at > instant || at < instant - 86_400_000) continue;
+    if (!Number.isFinite(at) || at > instant || at < instant - maxAgeMs) continue;
     if (!best || at > best.at) best = { at, price: row.price };
   }
   return best?.price ?? null;
@@ -150,12 +158,12 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
       symbol: identity.symbol,
       company: declared?.company ?? identity.company ?? identity.symbol,
       reading,
-      changes: changes.map((change) => ({ ...change, priceAt: priceAtV1(prices, Date.parse(change.at)) })),
+      changes: changes.map((change) => ({ ...change, priceAt: priceAtV1(prices, Date.parse(change.at), PRICE_AT_MAX_AGE_MS_V1) })),
       scheduled: planned,
       supplyAtRecord: Object.fromEntries(
         supplies.filter((row) => row.tokenAddress === identity.tokenAddress).map((row) => [row.recordDate, row.supply]),
       ),
-      priceNow: priceAtV1(prices, now.getTime()),
+      priceNow: priceAtV1(prices, now.getTime(), PRICE_NOW_MAX_AGE_MS_V1),
     });
   }
   return dividendCalendarV1({ now, tokens });

@@ -152,7 +152,7 @@ describe('a plan that was called off', () => {
 });
 
 describe('a plan overtaken by another change', () => {
-  test('an emergency change that matured first supersedes the plan behind it', () => {
+  test('an emergency change logged before the plan’s date supersedes the plan behind it', () => {
     const standing = b20MultiplierStandingV1({
       events: [
         scheduledV1(),
@@ -160,7 +160,7 @@ describe('a plan overtaken by another change', () => {
           event: 'multiplier_updated',
           multiplierWad: HALF,
           effectiveAt: null,
-          blockTime: '2026-10-07T08:00:00.000Z',
+          blockTime: '2026-10-03T08:00:00.000Z',
           blockNumber: 300,
           transactionHash: `0x${'cc'.repeat(32)}`,
           logIndex: 0,
@@ -210,7 +210,69 @@ describe('a plan overtaken by another change', () => {
     assert.equal(standing.effectiveMultiplierWad, HALF);
   });
 
-  test('two plans both still ahead stay scheduled — neither has replaced anything', () => {
+  test('a plan that matured and was changed later happened: the later change replaced nothing', () => {
+    // The emergency setter ran two days AFTER the plan's date. Nothing fires at
+    // maturation, so the token converted at the plan's value from its date
+    // until then — the plan was executed, and "not executed" would be false.
+    const standing = b20MultiplierStandingV1({
+      events: [
+        scheduledV1(),
+        {
+          event: 'multiplier_updated',
+          multiplierWad: HALF,
+          effectiveAt: null,
+          blockTime: '2026-10-07T08:00:00.000Z',
+          blockNumber: 300,
+          transactionHash: `0x${'cc'.repeat(32)}`,
+          logIndex: 0,
+        },
+      ],
+      reading: readingV1({ multiplierWad: HALF, blockTime: '2026-10-08T00:00:00.000Z' }),
+      now: at('2026-10-08T00:00:00.000Z'),
+    });
+    assert.equal(standing.history.find((row) => row.blockNumber === 100)!.state, 'effective');
+    assert.equal(standing.history.find((row) => row.blockNumber === 300)!.state, 'effective');
+    assert.equal(standing.effectiveMultiplierWad, HALF);
+  });
+
+  test('two dividends a quarter apart are both effective, not the older one "not executed"', () => {
+    const SEPTEMBER = '1000377118676784179';
+    const DECEMBER = '1000800000000000000';
+    const standing = b20MultiplierStandingV1({
+      events: [
+        {
+          event: 'multiplier_updated',
+          multiplierWad: SEPTEMBER,
+          effectiveAt: null,
+          blockTime: '2026-09-14T18:29:21.000Z',
+          blockNumber: 51_310_600,
+          transactionHash: `0x${'ee'.repeat(32)}`,
+          logIndex: 3,
+        },
+        scheduledV1({
+          multiplierWad: DECEMBER,
+          blockTime: '2026-12-01T15:00:00.000Z',
+          effectiveAt: '2026-12-14T14:30:00.000Z',
+          blockNumber: 60_000_000,
+        }),
+      ],
+      reading: readingV1({ multiplierWad: DECEMBER, blockNumber: 61_000_000, blockTime: '2026-12-15T00:00:00.000Z' }),
+      now: at('2026-12-15T00:00:00.000Z'),
+    });
+    assert.deepEqual(
+      standing.history.map((row) => [row.multiplierWad, row.state]),
+      [
+        [DECEMBER, 'effective'],
+        [SEPTEMBER, 'effective'],
+      ],
+    );
+  });
+
+  test('a second plan logged while the first was pending replaced it: one slot, per Base’s spec', () => {
+    // "Only one pending update can be live at a time": a second schedule is
+    // refused while one is live, so a second one on record means the first was
+    // no longer live. It will never mature.
+
     const standing = b20MultiplierStandingV1({
       events: [
         scheduledV1(),
@@ -225,11 +287,10 @@ describe('a plan overtaken by another change', () => {
       reading: readingV1({ blockTime: '2026-10-03T00:00:00.000Z' }),
       now: at('2026-10-03T00:00:00.000Z'),
     });
-    assert.equal(standing.scheduled.length, 2);
-    assert.equal(
-      standing.history.every((row) => row.state === 'scheduled'),
-      true,
-    );
+    assert.equal(standing.scheduled.length, 1);
+    assert.equal(standing.scheduled[0]!.multiplierWad, HALF);
+    const first = standing.history.find((row) => row.blockNumber === 100)!;
+    assert.deepEqual([first.state, first.cause], ['not_executed_as_planned', 'superseded']);
   });
 });
 

@@ -103,6 +103,41 @@ describe('the dividend calendar, read', () => {
     ]);
   });
 
+  test('on a Sunday the estimate uses Friday’s print: the feed is quiet, not missing', async () => {
+    const calendar = await readDividendCalendarV1(
+      new Date('2026-09-27T12:00:00.000Z'),
+      depsV1({
+        async references(_tokens, window) {
+          // Runs keep coming all weekend and carry the feed's last print.
+          return window.until.getTime() > Date.parse('2026-09-20T00:00:00.000Z')
+            ? [
+                { tokenAddress: GOOGLC, at: '2026-09-14T18:25:03.000Z', price: 347.1 },
+                { tokenAddress: NVDAC, at: '2026-09-25T23:35:43.000Z', price: 224.49 },
+                { tokenAddress: NVDAC, at: '2026-09-22T20:00:00.000Z', price: 1 },
+              ]
+            : [];
+        },
+        async multiplierEvents(tokenAddress) {
+          return tokenAddress === GOOGLC ? [event({})] : [];
+        },
+      }),
+    );
+    const nvidia = calendar.stocks.find((stock) => stock.symbol === 'NVDA')!;
+    assert.equal(nvidia.next?.state, 'announced');
+    assert.equal(nvidia.next?.token.kind, 'estimate');
+    assert.equal(nvidia.next?.token.priceUsd, '224.49');
+    // Older than four days is no price, not a stale one.
+    const stale = await readDividendCalendarV1(
+      new Date('2026-10-02T12:00:00.000Z'),
+      depsV1({
+        async references() {
+          return [{ tokenAddress: NVDAC, at: '2026-09-25T23:35:43.000Z', price: 224.49 }];
+        },
+      }),
+    );
+    assert.equal(stale.stocks.find((stock) => stock.symbol === 'NVDA')!.next?.token.priceUsd ?? null, null);
+  });
+
   test('a change with no log keeps the reader’s time; a price older than a day is no price', async () => {
     const calendar = await readDividendCalendarV1(
       new Date('2026-09-30T12:00:00.000Z'),

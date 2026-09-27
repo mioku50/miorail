@@ -180,14 +180,14 @@ export function b20MultiplierStandingV1(input: {
     .slice()
     .sort(newestFirstV1);
 
-  // A change is SUPERSEDED when a later change took effect while it was still
-  // waiting. The comparison is on `effectiveAt`, not on block order: a plan
-  // scheduled later can mature earlier, and the one that actually moved the
-  // token is the one that matured.
+  // When a change takes effect: its date, or its own block for the instant
+  // setter, which was in force the moment it was logged.
   const maturedAt = (event: B20MultiplierEventV1): number =>
     event.effectiveAt === null ? msV1(event.blockTime) : msV1(event.effectiveAt);
 
-  const resolved: B20MultiplierChangeV1[] = changes.map((event) => {
+  // Newest first, so a change can lean on what came after it.
+  const resolved: B20MultiplierChangeV1[] = [];
+  for (const event of changes) {
     const route: B20MultiplierChangeRouteV1 =
       event.event === 'multiplier_updated' ||
       event.effectiveAt === null ||
@@ -208,53 +208,68 @@ export function b20MultiplierStandingV1(input: {
     };
 
     if (event.effectiveAt !== null && cancelled.has(`${event.multiplierWad}@${event.effectiveAt}`)) {
-      return { ...base, state: 'not_executed_as_planned' as const, cause: 'cancelled' as const };
+      resolved.push({ ...base, state: 'not_executed_as_planned', cause: 'cancelled' });
+      continue;
     }
 
-    // Anything that matured strictly later replaced this one, and only if this
-    // one had not matured first.
+    // SUPERSEDED: another change was logged after this one and before its
+    // date. Only one pending update can be live at a time (Base's Cobalt spec):
+    // a second schedule is refused while one is live, and the instant setter
+    // clears it. So whatever was logged in that window took its place, whether
+    // or not it has matured yet. A change logged AFTER this one's date
+    // replaced nothing: this one had already happened.
     const supersededBy = changes.find(
       (other) =>
         other !== event &&
-        maturedAt(other) > matures &&
-        msV1(other.blockTime) >= msV1(event.blockTime) &&
-        maturedAt(other) <= now,
+        (other.blockNumber > event.blockNumber ||
+          (other.blockNumber === event.blockNumber && other.logIndex > event.logIndex)) &&
+        msV1(other.blockTime) < matures,
     );
-    const stillWaiting = matures > now;
-
-    if (stillWaiting) {
-      // A plan that a later plan will replace is not yet "not executed" — the
-      // replacement has not happened either. It stays `scheduled` until one of
-      // them matures, because that is what is true.
-      return { ...base, state: 'scheduled' as const };
+    if (supersededBy !== undefined) {
+      resolved.push({ ...base, state: 'not_executed_as_planned', cause: 'superseded' });
+      continue;
     }
 
-    if (supersededBy !== undefined) {
-      return { ...base, state: 'not_executed_as_planned' as const, cause: 'superseded' as const };
+    if (matures > now) {
+      resolved.push({ ...base, state: 'scheduled' });
+      continue;
     }
 
     // Matured. Only the token can say it actually holds this value.
-    if (
-      reading !== null &&
-      msV1(reading.blockTime) >= matures &&
-      reading.multiplierWad === event.multiplierWad
-    ) {
-      return {
+    if (reading !== null && msV1(reading.blockTime) >= matures && reading.multiplierWad === event.multiplierWad) {
+      resolved.push({
         ...base,
-        state: 'effective' as const,
+        state: 'effective',
         confirmedBy: { blockNumber: reading.blockNumber, blockTime: reading.blockTime },
-      };
+      });
+      continue;
     }
 
-    // The reading is FROM AFTER this change matured and says something else.
-    // Something replaced it that we have no log for — a fact about our record,
-    // not about the token, and it is not `effective`.
+    // Or a later change says it: one logged after this one had matured, and
+    // itself confirmed by the token. Nothing fires at maturation, so the token
+    // converted at this value from its date until that later change, and the
+    // reading that confirms the later one confirms the record in between. This
+    // is what keeps last quarter's dividend from reading as "not executed" the
+    // day the next one lands.
+    const followedBy = resolved.find(
+      (later) => later.state === 'effective' && msV1(later.announcedAt) >= matures,
+    );
+    if (followedBy !== undefined) {
+      resolved.push({ ...base, state: 'effective', confirmedBy: followedBy.confirmedBy });
+      continue;
+    }
+
+    // The reading is FROM AFTER this change matured and says something else,
+    // and no later change on record explains it. Something replaced it that we
+    // have no log for — a fact about our record, not about the token, and it is
+    // not `effective`.
     if (reading !== null && msV1(reading.blockTime) >= matures) {
-      return { ...base, state: 'not_executed_as_planned' as const, cause: 'superseded' as const };
+      resolved.push({ ...base, state: 'not_executed_as_planned', cause: 'superseded' });
+      continue;
     }
 
-    return { ...base, state: 'awaiting_confirmation' as const };
-  });
+    resolved.push({ ...base, state: 'awaiting_confirmation' });
+  }
 
   return {
     // Straight from the token, never assembled from a change. A caller that
