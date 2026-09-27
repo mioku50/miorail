@@ -582,7 +582,7 @@ export function stocksEvidenceBundleV1(input: {
       input.dividends,
       reality.representations.map((row) => row.tokenAddress.toLowerCase()),
     );
-    missing.push(...dividend.missing);
+    missing.unshift(...dividend.missing);
     if (dividend.sentence) sentences.unshift(dividend.sentence);
   }
 

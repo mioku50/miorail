@@ -123,8 +123,18 @@ export function numbersInV1(text: string): string[] {
   // is a thousands separator, anything else is a decimal fraction. "1,139"
   // stays 1139; "0,1784511" becomes 0.1784511; "178,45" becomes 178.45. A
   // three-digit Russian fraction is genuinely ambiguous and keeps the English
-  // reading, which is the one this corpus has always used.
-  const decimalised = normalised.replace(/(\d),(\d{1,2}|\d{4,})\b/g, '$1.$2');
+  // reading, which is the one this corpus has always used — except after a
+  // lone zero. English never writes a thousands group after 0, so "0,525" is
+  // only ever the Russian 0.525. Measured live 2026-09-27: Meta's $0.525
+  // dividend, written "0,525 $", became 525 and a correct answer was refused.
+  //
+  // An ISO date's hyphens are separators, not minus signs. "2026-09-28" was
+  // read as 2026, -9 and -28, so "28 сентября" or "September 28" quoted a
+  // number the row did not carry. That was the same refusal, for the date.
+  const decimalised = normalised
+    .replace(/\b(\d{4})-(\d{2})-(\d{2})(?!\d)/g, '$1/$2/$3')
+    .replace(/(?<![\d.,])0,(\d{3})(?!\d)/g, '0.$1')
+    .replace(/(\d),(\d{1,2}|\d{4,})\b/g, '$1.$2');
   for (const match of decimalised.matchAll(/-?(?:\d[\d,]*)?\.?\d+/g)) {
     const raw = match[0].replace(/,/g, '');
     if (raw === '' || raw === '-' || raw === '.') continue;

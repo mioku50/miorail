@@ -595,9 +595,15 @@ function reusedCodeV1(detail: string): StocksNarrationViolationCodeV1 {
 // ---------------------------------------------------------------------------
 
 export function deterministicStocksNarrationV1(bundle: StocksEvidenceBundleV1): StocksNarrationV1 {
-  const claimable = bundle.items.filter(
-    (item) => item.kind !== 'identity' && item.kind !== 'question',
-  );
+  // Dividend rows are there only because the question was about a dividend,
+  // so they lead, and the cap below cannot cut them. Every other row keeps
+  // its order.
+  const claimable = [
+    ...bundle.items.filter((item) => item.kind === 'dividend'),
+    ...bundle.items.filter(
+      (item) => item.kind !== 'dividend' && item.kind !== 'identity' && item.kind !== 'question',
+    ),
+  ];
   const established = claimable.slice(0, 24).map((item) => ({
     claim: `${item.label}: ${item.value}`,
     sourceIds: [item.id],

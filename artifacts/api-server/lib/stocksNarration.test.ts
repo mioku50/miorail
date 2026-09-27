@@ -639,9 +639,11 @@ describe('a question about a dividend', () => {
         supplyAtRecord: { '2026-09-07': '6113.6938' },
       }),
       tokenOf({ tokenAddress: COINBASE_NVDA, symbol: 'NVDA', company: 'NVIDIA', underlyingKey: 'security:isin:US67066G1040', supplyAtRecord: { '2026-09-10': '16308.99' } }),
+      tokenOf({ tokenAddress: '0xb2000000000000000000008bc8786b856e61707c', symbol: 'META', company: 'Meta', underlyingKey: 'security:isin:US30303M1027', supplyAtRecord: { '2026-09-15': '120.5' } }),
     ],
   });
   const nvidia = calendar.stocks.find((stock) => stock.symbol === 'NVDA')!;
+  const meta = calendar.stocks.find((stock) => stock.symbol === 'META')!;
   const ask = (dividends: Parameters<typeof stocksEvidenceBundleV1>[0]['dividends']) =>
     stocksEvidenceBundleV1({
       question: 'When does NVDA pay its next dividend, and how much reaches a token?',
@@ -659,8 +661,25 @@ describe('a question about a dividend', () => {
     assert.match(rows[0]!.value, /An estimate, not the company's figure\.$/);
     assert.ok(bundle.deterministic.startsWith('Next: NVIDIA $0.25 a share, payable 2026-10-01'));
     assert.ok(bundle.caveats.includes(DIVIDEND_MECHANISM_SENTENCE_V1));
-    // The fallback answer stands on the bundle it was written from.
-    assert.equal(verify(bundle, deterministicStocksNarrationV1(bundle)).ok, true);
+    // The fallback answer stands on the bundle it was written from, and it is
+    // what a reader sees when the narration is refused: it leads with the
+    // dividend, so no cap on its length can cut it.
+    const fallback = deterministicStocksNarrationV1(bundle);
+    assert.equal(verify(bundle, fallback).ok, true);
+    assert.deepEqual(fallback.established[0]!.sourceIds, [rows[0]!.id]);
+  });
+
+  test("a Russian answer that writes Meta's dividend the Russian way is not refused", () => {
+    // Measured live 2026-09-27: "0,525 $" was read as 525 and "28 сентября"
+    // as a 28 the row did not carry, so the correct answer was refused.
+    const bundle = ask(meta);
+    const narration = goodNarration(bundle);
+    narration.explanation = 'Meta объявила 0,525 $ на акцию с выплатой 28 сентября 2026 года.';
+    const verdict = verify(bundle, narration);
+    assert.equal(verdict.ok, true, JSON.stringify(verdict.violations));
+    // The same sentence with a figure the row does not carry is still refused.
+    narration.explanation = 'Meta объявила 0,625 $ на акцию с выплатой 28 сентября 2026 года.';
+    assert.ok(codes(verify(bundle, narration)).includes('unsupported_number'));
   });
 
   test('nothing on record and a calendar Miorail could not read are two different absences', () => {

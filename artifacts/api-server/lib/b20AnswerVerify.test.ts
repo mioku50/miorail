@@ -204,6 +204,22 @@ describe('a Russian-formatted number is one number', () => {
     assert.deepEqual(numbersInV1('49 929 328'), ['49929328']);
   });
 
+  test('a comma after a lone zero is a decimal point', () => {
+    // Measured live 2026-09-27: Meta's $0.525 dividend, written "0,525 $",
+    // was read as 525. English never writes a thousands group after 0.
+    assert.deepEqual(numbersInV1('0,525 $ за акцию'), ['0.525']);
+    assert.deepEqual(numbersInV1('-0,525'), ['-0.525']);
+    // A real thousands group is still one number.
+    assert.deepEqual(numbersInV1('10,525 and 1,139'), ['10525', '1139']);
+  });
+
+  test("an ISO date's hyphens are not minus signs", () => {
+    // "2026-09-28" was 2026, -9 and -28, so "28 сентября" quoted a number the
+    // row did not carry.
+    assert.deepEqual(numbersInV1('payable 2026-09-28'), ['2026', '9', '28']);
+    assert.deepEqual(numbersInV1('a cost of -12 bps'), ['-12']);
+  });
+
   test('separate small numbers are NOT merged', () => {
     // The joining rule is exact groups of three, so ordinary prose keeps its
     // numbers apart. Merging here would be the dangerous direction.
