@@ -6,6 +6,7 @@ import {
   StocksAskResponseV1Schema,
   type StocksAskResponseV1,
 } from '@mioagent/rwa-market-reality/narration-contract';
+import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
@@ -933,6 +934,21 @@ export function useWeekendMarket(options?: { enabled?: boolean }) {
     // The server answers per five-minute slot and the sampler runs about hourly.
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
+  });
+}
+
+/** Dividends on Coinbase's tokenized stocks: what each company declared and
+ * what reached the token. Public, like the weekend card. */
+export function useDividendCalendar(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['dividend-calendar'],
+    queryFn: async () =>
+      DividendCalendarResponseV1Schema.parse(await fetchApi<unknown>('/api/public/stocks/dividends')),
+    retry: false,
+    enabled: options?.enabled !== false,
+    // The server answers per five-minute slot; a multiplier is read every six hours.
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
   });
 }
 

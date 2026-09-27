@@ -8,6 +8,7 @@
   "exports": {
     ".": "./src/index.ts",
     "./contracts": "./src/contracts.ts",
+    "./dividends": "./src/dividends.ts",
     "./execution-handoff": "./src/executionHandoff.ts",
     "./narration-contract": "./src/narrationContract.ts",
     "./weekend-market": "./src/weekendMarket.ts"

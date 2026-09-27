@@ -168,6 +168,21 @@ export interface B20ReaderV1 {
    * bad minute into a permanent fact about somebody's launch.
    */
   readTransaction?(hash: string): Promise<B20RpcResultV1<B20TransactionV1 | null>>;
+  /**
+   * One block's number, hash and timestamp.
+   *
+   * Optional for the same reason: only the dividend supply read needs the
+   * block at an instant, and it finds that block by these timestamps. `null`
+   * means the endpoint answered and has no such block yet.
+   */
+  readBlockHeader?(blockTag: string): Promise<B20RpcResultV1<B20BlockHeaderV1 | null>>;
+}
+
+export interface B20BlockHeaderV1 {
+  blockNumber: number;
+  blockHash: HashV1;
+  /** Seconds, as the header carries it. */
+  timestamp: number;
 }
 
 /** As much of a transaction as the identity anchor needs. Deliberately not the
@@ -543,6 +558,30 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
         ok: true as const,
         value: { from, to: to && /^0x[0-9a-f]{40}$/.test(to) ? to : null, blockNumber },
         raw: from,
+      };
+    },
+
+    async readBlockHeader(blockTag: string) {
+      const result = await rpc('eth_getBlockByNumber', [blockTag, false]);
+      if (!result.ok) return result;
+      if (result.value === null) return { ok: true as const, value: null, raw: 'null' };
+      const block = result.value as { hash?: unknown; number?: unknown; timestamp?: unknown };
+      const hash = typeof block.hash === 'string' ? block.hash.toLowerCase() : null;
+      if (!hash || !/^0x[0-9a-f]{64}$/.test(hash) || typeof block.number !== 'string' || typeof block.timestamp !== 'string') {
+        return { ok: false as const, reason: 'invalid_response' as const };
+      }
+      let blockNumber: bigint;
+      let timestamp: bigint;
+      try {
+        blockNumber = BigInt(block.number);
+        timestamp = BigInt(block.timestamp);
+      } catch {
+        return { ok: false as const, reason: 'invalid_response' as const };
+      }
+      return {
+        ok: true as const,
+        value: { blockNumber: Number(blockNumber), blockHash: hash as HashV1, timestamp: Number(timestamp) },
+        raw: hash,
       };
     },
 

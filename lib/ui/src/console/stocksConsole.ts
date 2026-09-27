@@ -15,6 +15,7 @@ import {
   useConnectTelegram,
   useDisconnectTelegram,
   useTelegramLink,
+  useDividendCalendar,
   useWeekendMarket,
 } from '@mioagent/api-client-react';
 import {
@@ -29,6 +30,7 @@ import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
 import { weekendMarketViewV1 } from './weekendMarketView';
+import { dividendCalendarViewV1 } from './dividendCalendarView';
 import { telegramAlertsViewV1 } from './telegramAlertsView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
@@ -843,6 +845,10 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [weekendRead.data],
   );
 
+  // Dividends: the same public read for everybody, like the weekend card.
+  const dividendRead = useDividendCalendar({ enabled });
+  const dividends = useMemo(() => dividendCalendarViewV1(dividendRead.data ?? null), [dividendRead.data]);
+
   // Alerts in Telegram: signed in only, and only where a bot exists. A link
   // that was issued is polled for until the reader presses Start or it lapses.
   const [telegramPending, setTelegramPending] = useState<{ url: string; expiresAt: string } | null>(null);
@@ -887,6 +893,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   const model: MarketRealityScreenModelV1 = {
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     weekend,
+    dividends,
     telegram,
     // The decimals travel per address so the card can read a SELL amount in
     // the exact contract's own scale; null where nobody read it.

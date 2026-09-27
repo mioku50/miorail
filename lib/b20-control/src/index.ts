@@ -12,5 +12,6 @@ export * from './securityIdentifier.js';
 export * from './registry.js';
 export * from './corporateActions.js';
 export * from './multiplierLifecycle.js';
+export * from './blockAtTime.js';
 export * from './seize.js';
 export * from './rpcBudget.js';

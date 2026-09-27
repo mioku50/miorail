@@ -112,3 +112,6 @@ export * from './baseAppNotificationsDatabase.js';
 export * from './telegramLinks.js';
 export * from './telegramLinksMemory.js';
 export * from './telegramLinksDatabase.js';
+export * from './dividendRecordSupply.js';
+export * from './dividendRecordSupplyMemory.js';
+export * from './dividendRecordSupplyDatabase.js';

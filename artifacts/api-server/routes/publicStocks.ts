@@ -16,6 +16,7 @@ import {
 } from './rwaMarketReality.js';
 import { readOfficialAssetDossierV1, rwaDossierRuntime } from './rwaDossier.js';
 import { databaseWeekendRunsV1, readWeekendMarketV1 } from '../lib/weekendMarketRead.js';
+import { databaseDividendReadDepsV1, readDividendCalendarV1 } from '../lib/dividendRead.js';
 
 // ---------------------------------------------------------------------------
 // The Stocks board, readable without a wallet.
@@ -112,6 +113,8 @@ export const publicStocksCachesV1 = {
   useAccess: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 256 }),
   // The weekend sampler runs about hourly, so five minutes loses nothing.
   weekend: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
+  // A multiplier is read every six hours and a declaration changes by deploy.
+  dividends: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
 };
 
 /** A testing seam; production never replaces any of it. */
@@ -129,6 +132,7 @@ export const publicStocksRuntime = {
   readHistory: readMarketRealityHistoryV1,
   readDossier: readOfficialAssetDossierV1,
   readUseAccess: readUseAccessV1,
+  readDividends: (now: Date) => readDividendCalendarV1(now, databaseDividendReadDepsV1),
   readWeekend: (now: Date) =>
     readWeekendMarketV1(now, {
       runs: databaseWeekendRunsV1,
@@ -216,6 +220,27 @@ publicStocksRouter.get('/weekend', async (_req: Request, res: Response) => {
     );
   } catch (error) {
     failed(res, 'weekend', 'weekend_market_failed', error);
+  }
+});
+
+/**
+ * Dividends on Coinbase's tokenized stocks: what each company declared, in its
+ * own words, and what reached the token, read from the token. The next payment
+ * per stock, declared or estimated, and every past one with its state.
+ */
+publicStocksRouter.get('/dividends', async (_req: Request, res: Response) => {
+  try {
+    if (!(await publicStocksRuntime.storageAvailable())) {
+      refuse(res, 503, 'market_reality_storage_unavailable');
+      return;
+    }
+    const slot = weekendSlotStartV1(publicStocksRuntime.now());
+    sendPublic(
+      res,
+      await publicStocksCachesV1.dividends.read(`dividends|${slot.getTime()}`, () => publicStocksRuntime.readDividends(slot)),
+    );
+  } catch (error) {
+    failed(res, 'dividends', 'dividend_calendar_failed', error);
   }
 });
 

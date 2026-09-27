@@ -37,6 +37,7 @@ import {
 import { client, closeDb } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
 import {
+  createDatabaseDividendRecordSupplyRepositoryV1,
   createDatabaseIssuerRepresentationRepository,
   createDatabaseOfficialAssetRepository,
   createDatabaseRepresentationRatioRepository,
@@ -46,6 +47,7 @@ import {
 import { readB20MultiplierV1 } from '@mioagent/rwa-dossier';
 import { readDinariBalancePerShareV1 } from '@mioagent/rwa-issuer';
 
+import { recordDividendSuppliesV1 } from './dividendRecordSupply.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 const CHAIN_ID_V1 = 8453 as const;
@@ -303,6 +305,30 @@ async function main(): Promise<void> {
   // loud: the day this first runs it must not read as thirteen splits.
   if (changed.length > 0) {
     console.log(`  CHANGED: ${changed.join(', ')}`);
+  }
+
+  // How many tokens existed when each dividend's record date closed: read once
+  // per token and date, so the calendar can tell a dividend that was not owed
+  // from one that was owed and not converted. Its own failure is its own: the
+  // multipliers above are already stored.
+  try {
+    const underlyingOf = new Map(reviewedBindings.map((binding) => [binding.tokenAddress, binding.underlyingKey]));
+    const tokens = coinbaseB20.flatMap((asset) => {
+      const underlyingKey = underlyingOf.get(asset.tokenAddress);
+      return underlyingKey ? [{ tokenAddress: asset.tokenAddress, underlyingKey }] : [];
+    });
+    const pass = await recordDividendSuppliesV1({
+      reader,
+      repository: createDatabaseDividendRecordSupplyRepositoryV1(client),
+      tokens,
+      now,
+    });
+    console.log(
+      `dividend record supply: ${pass.recorded} recorded, ${pass.known} known, ${pass.pending} ahead` +
+        (pass.failed.length > 0 ? `, failed ${pass.failed.join(' ')}` : ''),
+    );
+  } catch (error) {
+    console.log(`dividend record supply: failed ${error instanceof Error ? error.name : 'error'}`);
   }
 }
 
