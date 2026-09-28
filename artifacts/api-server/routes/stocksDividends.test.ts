@@ -7,7 +7,9 @@ import type { B20BlockHeaderV1, B20ReaderV1 } from '@mioagent/b20-control';
 import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { dividendCalendarV1, type DividendTokenV1 } from '@mioagent/rwa-market-reality/dividends';
 
-import { createDividendWalletCachesV1 } from '../lib/dividendWalletRead.js';
+import { decodeFunctionData, encodeFunctionResult, type Hex } from 'viem';
+
+import { AGGREGATE3_ABI_V1, MULTICALL3_V1, createDividendWalletCachesV1 } from '../lib/dividendWalletRead.js';
 import { stocksDividendsCacheV1, stocksDividendsRouter, stocksDividendsRuntime } from './stocksDividends.js';
 
 const WALLET = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
@@ -70,14 +72,25 @@ function readerV1() {
       const n = tag === 'latest' ? head : Number.parseInt(tag, 16);
       return { ok: true as const, value: n > head ? null : header(n), raw: 'x' };
     },
+    // Every read arrives as one Multicall3 call; each row is answered here.
     async call(input: { to: string; data: string; blockTag: string }) {
       calls += 1;
-      if (input.data === '0x313ce567') return { ok: true as const, value: word(8n), raw: 'x' };
-      asked.push(`0x${input.data.slice(-40)}`);
+      assert.equal(input.to, MULTICALL3_V1);
+      const [rows] = decodeFunctionData({ abi: AGGREGATE3_ABI_V1, data: input.data as Hex }).args;
       const time = header(Number.parseInt(input.blockTag, 16)).timestamp;
-      if (input.to === GOOGLC) return { ok: true as const, value: word(time < converted ? 250_000_000n : 400_000_000n), raw: 'x' };
-      if (input.to === METAC) return { ok: true as const, value: word(100_000_000n), raw: 'x' };
-      return { ok: true as const, value: word(0n), raw: 'x' };
+      const answer = (to: string, data: string): string => {
+        if (data === '0x313ce567') return word(8n);
+        asked.push(`0x${data.slice(-40)}`);
+        if (to === GOOGLC) return word(time < converted ? 250_000_000n : 400_000_000n);
+        if (to === METAC) return word(100_000_000n);
+        return word(0n);
+      };
+      const value = encodeFunctionResult({
+        abi: AGGREGATE3_ABI_V1,
+        functionName: 'aggregate3',
+        result: rows.map((row) => ({ success: true, returnData: answer(row.target.toLowerCase(), row.callData) as Hex })),
+      });
+      return { ok: true as const, value, raw: 'x' };
     },
   } as unknown as B20ReaderV1;
   return { reader, asked, calls: () => calls };
@@ -145,12 +158,16 @@ describe('my dividends', () => {
   test('a reload inside half a minute reads the chain once; the past is read once per wallet', async () => {
     await request(app()).get('/stocks/dividends/mine');
     const first = chain.calls();
+    // Decimals, the balances now, and the balances before the one conversion:
+    // three calls, however many tokens the calendar carries.
+    assert.equal(first, 3);
     await request(app()).get('/stocks/dividends/mine');
     assert.equal(chain.calls(), first);
     stocksDividendsCacheV1.clear();
     await request(app()).get('/stocks/dividends/mine');
-    // Two balances now; no decimals, no search and no past balance again.
-    assert.equal(chain.calls(), first + 2);
+    // The balances now, in one call; no decimals, no search and no past
+    // balance again.
+    assert.equal(chain.calls(), first + 1);
   });
 
   test('a balance the endpoint would not give is a refusal, not an empty wallet', async () => {

@@ -960,7 +960,11 @@ export function useMyDividends(options: { enabled: boolean }) {
   return useQuery({
     queryKey: ['my-dividends'],
     queryFn: async () => DividendWalletResponseV1Schema.parse(await fetchApi<unknown>('/api/stocks/dividends/mine')),
-    retry: false,
+    // One more try a few seconds later when the chain read failed. The
+    // endpoint refuses a burst, and the refusal would otherwise stand until
+    // the quarter-hour refetch. Nothing else is retried.
+    retry: (failures, error) => failures < 1 && /^dividend_wallet_unread\b/.test(error.message),
+    retryDelay: 4_000,
     enabled: options.enabled,
     // The server holds a wallet's answer for half a minute.
     staleTime: 60_000,
