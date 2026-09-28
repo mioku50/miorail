@@ -567,6 +567,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .donutwrap { display: flex; align-items: center; gap: 14px; }
 .mio-console .qrow { display: grid; grid-template-columns: minmax(72px,.75fr) minmax(0,1.25fr); gap: 10px; align-items: start; padding: 8px 0; font-size: var(--fs-sm); color: var(--muted); border-bottom: 1px solid var(--line); }
 .mio-console .qrow:last-child { border-bottom: 0; }
+/* A mark under a symbol in a narrow balance list is a box of its own, so a
+   long one ("not the official AAPLc") wraps inside its outline instead of
+   splitting its highlight across two lines. */
+.mio-console .qrow > span:first-child > .tag { display: inline-block; max-width: 100%; line-height: var(--lh-tight); vertical-align: top; }
 /* A pill in a qrow is a STATUS, not a column.
  *
  * `.qrow` is a two-column grid built for label/value pairs, so a `.pill` placed
