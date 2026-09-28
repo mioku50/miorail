@@ -1562,6 +1562,16 @@ function exitViewV1(
   const grade = exitCostGradeV1(bps);
   const withinBound = grade === 'within_policy';
   const tone = EXIT_COST_TONE_V1[grade];
+  // More came back than went in. That is not a point on the cost scale, so no
+  // cost sentence applies to it. NVDA's card, 2026-09-28, read "$1,000 in →
+  // $1,000.83 back · Total cost to buy and exit: -0.08% … it costs more than
+  // the reviewed slippage policy allows": one measurement, described as its
+  // opposite, because this grade was added after these sentences and fell
+  // into the "not within the policy" branch. The chip already said it.
+  const returnedMore =
+    grade === 'returned_more_than_taken'
+      ? 'That is not a cost reading: the buy and the sell are separate quotes taken moments apart, and the gap between them is larger than what the trip costs.'
+      : null;
 
   // Money first, whenever both sides of the trip were measured.
   //
@@ -1575,7 +1585,9 @@ function exitViewV1(
     return {
       label: 'Buying in and selling back out',
       value: `${paidIn} in → ${cameBack} back`,
-      note: withinBound
+      note: returnedMore
+        ? `More came back than went in — ${when}. ${returnedMore}`
+        : withinBound
         ? `Total cost to buy and exit: ${cost} — ${when}.`
         : // Never "no route": a route exists and answered. What it answered is
           // that the money does not come back, which is a fact about how much
@@ -1591,9 +1603,11 @@ function exitViewV1(
   }
 
   return {
-    label: 'Cost to buy and exit',
+    label: returnedMore ? 'Buying in and selling back out' : 'Cost to buy and exit',
     value: cost,
-    note: withinBound
+    note: returnedMore
+      ? `more came back than went in — ${when}. ${returnedMore}`
+      : withinBound
       ? `what buying in and selling straight back costs at this size — ${when}`
       : grade === 'most_value_lost'
         ? `a price is available at this size, and buying in then selling straight back costs this much — ${when}. Most of the money does not come back.`

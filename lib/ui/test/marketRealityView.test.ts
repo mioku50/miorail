@@ -2942,6 +2942,28 @@ describe('what a round trip costs, said as money first', () => {
     assert.equal(good.tone, 'good');
   });
 
+  test('more back than in is said as that, never as a cost above the policy', () => {
+    // NVDA, 2026-09-28: "$1,000 in → $1,000.83 back · Total cost to buy and
+    // exit: -0.08% … it costs more than the reviewed slippage policy allows".
+    const more = at({
+      roundTripCostBps: '-8',
+      requestedCashAtomic: '1000000000',
+      returnedCashAtomic: '1000830000',
+    });
+    assert.equal(more.value, '$1,000 in → $1,000.83 back');
+    assert.match(more.note ?? '', /^More came back than went in — measured/);
+    assert.match(more.note ?? '', /not a cost reading/);
+    assert.doesNotMatch(more.note ?? '', /policy|Total cost/);
+    // The chip's colour, not a verdict: neither good nor bad.
+    assert.equal(more.tone, 'off');
+
+    // Without both sides in money, the percentage says the same.
+    const bare = at({ roundTripCostBps: '-8' });
+    assert.equal(bare.label, 'Buying in and selling back out');
+    assert.match(bare.note ?? '', /^more came back than went in — /);
+    assert.doesNotMatch(bare.note ?? '', /policy/);
+  });
+
   test('one side unmeasured falls back to the percentage, never a rebuilt figure', () => {
     // The percentage is derived FROM the two amounts. Reconstructing an amount
     // out of it would print money that was never measured.
