@@ -354,6 +354,14 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .ph .rt { margin-left: auto; display: flex; gap: 8px; align-items: center; }
 .mio-console .pb { padding: 16px; }
 .mio-console .pb.tight { padding: 12px 16px; }
+/* A panel body that is a sentence, a table, a fold button and a closing note,
+   like the weekend and dividend cards. Without these, the table's header
+   touched the sentence above it, the button touched the last row, and the
+   share buttons touched the note. */
+.mio-console .pb > .lnote + table,
+.mio-console .pb > .mr-utility-group + table { margin-top: 12px; }
+.mio-console .pb > table + .btn { margin-top: 10px; }
+.mio-console .pb > .lnote + .gift-share-row { margin-top: 12px; }
 /* minmax(0,…) rather than a bare 1fr. A grid track's automatic minimum is its
    content's min-content width, and a 450-character transaction hash has no
    break opportunity — so one unbroken string in the execution timeline widened
@@ -432,6 +440,11 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console tr:last-child td { border-bottom: 0; }
 .mio-console td.nm { color: var(--ink); font-weight: 500; }
 .mio-console th.r, .mio-console td.r { text-align: right; padding-right: 0; }
+/* Two right-aligned columns side by side have no padding between them. On a
+   phone the weekend card's "$1,782.02" and "$1,764.32" ran together. */
+.mio-console th.r + th.r, .mio-console td.r + td.r { padding-left: 12px; }
+/* A source a row cites is a link, and should look like one. */
+.mio-console td .lnote a { color: var(--blue); text-underline-offset: 2px; }
 .mio-console td.off, .mio-console td.off * { color: var(--dim); }
 .mio-console td.good { color: var(--green); }
 .mio-console td.warn { color: var(--amber); }
@@ -2017,6 +2030,26 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .gift-rows dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
 .mio-console .gift-rows a { color: var(--accent-line); }
 .mio-console .gift-sub { display: block; margin-top: 2px; color: var(--dim); font-size: var(--fs-micro); }
+
+/* On a phone the dividend table has two columns: "Last" moves under "Next",
+   under its own small header, and an empty one is not drawn. With three
+   columns, "Last" took a third of a 390px screen to show a dash, and "Next"
+   wrapped into five lines. */
+@media (max-width: 560px) {
+  .mio-console .dividend-table,
+  .mio-console .dividend-table thead,
+  .mio-console .dividend-table tbody { display: block; }
+  .mio-console .dividend-table tr { display: grid; grid-template-columns: 64px minmax(0, 1fr); column-gap: 12px;
+    border-bottom: 1px solid var(--line); }
+  .mio-console .dividend-table tbody tr:last-child { border-bottom: 0; }
+  .mio-console .dividend-table th,
+  .mio-console .dividend-table td { border-bottom: 0; padding-right: 0; }
+  .mio-console .dividend-table th.dividend-last { display: none; }
+  .mio-console .dividend-table td.dividend-last { grid-column: 2; padding-top: 0; }
+  .mio-console .dividend-table td.dividend-last[data-empty] { display: none; }
+  .mio-console .dividend-table td.dividend-last::before { content: "Last"; display: block; margin-bottom: 2px;
+    font-size: var(--fs-micro); color: var(--dim); }
+}
 
 @media (max-width: 560px) {
   .mio-console .gift-rows { grid-template-columns: minmax(0, 1fr); gap: 2px; }

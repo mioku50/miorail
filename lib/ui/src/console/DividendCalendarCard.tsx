@@ -45,12 +45,12 @@ export function DividendCalendarCard({ view }: { view: DividendCalendarViewV1 })
             <p className="lnote">{view.mine.note}</p>
           </div>
         ) : null}
-        <table>
+        <table className="dividend-table">
           <thead>
             <tr>
               <th>Stock</th>
               <th>Next</th>
-              <th>Last</th>
+              <th className="dividend-last">Last</th>
             </tr>
           </thead>
           <tbody>
@@ -74,7 +74,9 @@ export function DividendCalendarCard({ view }: { view: DividendCalendarViewV1 })
                     </div>
                   ) : null}
                 </td>
-                <td className="lnote">{row.last ?? '—'}</td>
+                <td className="lnote dividend-last" data-empty={row.last ? undefined : ''}>
+                  {row.last ?? '—'}
+                </td>
               </tr>
             ))}
           </tbody>

@@ -144,6 +144,8 @@ describe('Your dividends, for a signed-in wallet', () => {
     const html = renderToStaticMarkup(<DividendCalendarCard view={view} />);
     assert.match(html, /<div class="mr-utility-group" aria-label="Your dividends"><h4>Your dividends<\/h4>/);
     assert.match(html, /<strong>GOOGLc · 4 held<\/strong>/);
-    assert.ok(html.indexOf('Your dividends') < html.indexOf('<table>'));
+    assert.ok(html.indexOf('Your dividends') < html.indexOf('<table class="dividend-table">'));
+    // On a phone an empty "Last" is not drawn; the marker is what hides it.
+    assert.match(html, /<td class="lnote dividend-last" data-empty="">—<\/td>/);
   });
 });
