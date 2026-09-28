@@ -12,7 +12,7 @@ import { decodeFunctionData, encodeFunctionResult, type Hex } from 'viem';
 import { AGGREGATE3_ABI_V1, MULTICALL3_V1, createDividendWalletCachesV1 } from '../lib/dividendWalletRead.js';
 import { stocksDividendsCacheV1, stocksDividendsRouter, stocksDividendsRuntime } from './stocksDividends.js';
 
-const WALLET = '0x8e525bfce1ef40aa8075ef64e45421b5855c8909';
+const WALLET = '0x2222222222222222222222222222222222222222';
 const SOMEONE_ELSE = '0x1111111111111111111111111111111111111111';
 const NOW = new Date('2026-09-27T12:00:00.000Z');
 const WAD = '1000000000000000000';
