@@ -28,6 +28,7 @@ describe('the freshness promise, in words', () => {
   test('an interval is a round number of minutes or hours, never arithmetic', () => {
     assert.equal(intervalLabelV1(3_600), 'hourly');
     assert.equal(intervalLabelV1(1_800), 'every 30 minutes');
+    assert.equal(intervalLabelV1(60), 'every minute');
     assert.equal(intervalLabelV1(6 * 3_600), 'every 6 hours');
   });
 

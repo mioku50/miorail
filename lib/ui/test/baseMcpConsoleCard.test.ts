@@ -300,7 +300,7 @@ describe('the console header counts tools in words', () => {
       baseMcpToolSummaryV1({
         routing: { read: 8, action: 7, routable: 1, blocked: 0, releasedActions: 3 },
       }),
-      '8 reads · 3 actions ready · 4 actions needing an adapter · 1 routes ai handoffs',
+      '8 reads · 3 actions ready · 4 actions needing an adapter · 1 Routes AI handoff',
     );
   });
 
@@ -329,8 +329,11 @@ describe('the console header counts tools in words', () => {
     // Every non-zero bucket in the rail appears in the header sentence.
     const summary = baseMcpToolSummaryV1({ routing });
     for (const entry of tally.filter((row) => row.count > 0)) {
-      assert.match(summary, new RegExp(`${entry.count} ${entry.label.toLowerCase()}`));
+      assert.ok(summary.includes(`${entry.count} ${entry.count === 1 ? entry.one : entry.many}`), summary);
     }
+    // One is one: "1 actions needing an adapter" and "1 routes ai handoffs"
+    // were printed on production, 2026-09-28.
+    assert.equal(summary, '8 reads · 4 actions ready · 1 action needing an adapter · 1 Routes AI handoff · 2 not callable here');
   });
 
   test('an unread list is a sentence, not an em-dash', () => {

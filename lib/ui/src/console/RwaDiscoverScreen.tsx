@@ -298,7 +298,7 @@ function LookalikesTab({
           <button
             key={entry.id}
             type="button"
-            className={`btn${filter === entry.id ? ' on' : ''}`}
+            className={`btn sec${filter === entry.id ? ' on' : ''}`}
             aria-pressed={filter === entry.id}
             onClick={() => onFilter(entry.id)}
           >
@@ -488,7 +488,7 @@ export function RwaDiscoverScreen({ model }: { model: RwaDiscoverScreenModelV1 }
               type="button"
               role="tab"
               aria-selected={model.tab === tab}
-              className={`btn${model.tab === tab ? ' on' : ''}`}
+              className={`btn sec${model.tab === tab ? ' on' : ''}`}
               onClick={() => model.onTab(tab)}
             >
               {RWA_DISCOVER_TAB_LABEL_V1[tab]}

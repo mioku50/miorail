@@ -4,7 +4,6 @@ import { useAccount } from 'wagmi';
 import {
   BudgetPaymentsPanel,
   ConnectedAppsCard,
-  ConsoleRightRail,
   ConsoleShell,
   SettingsScreen,
   adaptersFromStatusV1,
@@ -144,17 +143,9 @@ export function SettingsPage() {
         spendLabel: paidView.label,
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
-      right={
-        <ConsoleRightRail
-          price={null}
-          priceUnavailableReason={null}
-          depth={null}
-          depthUnavailableReason={null}
-          evidenceFeed={[]}
-          spend={null}
-          freshness={[]}
-        />
-      }
+      // Nothing here is a goal being analysed: an empty "No active analysis"
+      // rail beside the settings was Routes AI's, not this page's.
+      right={null}
       theme={theme}
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}

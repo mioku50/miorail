@@ -977,7 +977,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
       value:
         observation.status === 'not_observed'
           ? 'not observed'
-          : String(observation.movementCount ?? 0),
+          : (observation.movementCount ?? 0).toLocaleString('en-US'),
       // Never "trades". 2 of 34 measured transactions through the v4 singleton
       // carried no swap at all, so the word would be wrong 6% of the time.
       note: 'Transfers through a venue, not confirmed swaps',
@@ -1012,7 +1012,7 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     lookalikeNote:
       asset.lookalikeCount === 0
         ? null
-        : `${asset.lookalikeCount} contract${asset.lookalikeCount === 1 ? '' : 's'} in the launch index declare this asset’s name. A resemblance is not a claim about intent.`,
+        : `${asset.lookalikeCount} contract${asset.lookalikeCount === 1 ? ' in the launch index declares' : 's in the launch index declare'} this asset’s name. A resemblance is not a claim about intent.`,
     technical: [
       { label: 'Route status', value: asset.market.routeStatus },
       { label: 'Reference status', value: asset.referenceValue.status },

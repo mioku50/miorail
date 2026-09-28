@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { PortfolioResponseSchema } from '@mioagent/api-zod';
 import { analyzePortfolioForRisk, fetchInternalPortfolio } from '../lib/portfolioAnalysis.js';
+import { withRegistryMarksV1 } from '../lib/portfolioRegistry.js';
 import { tenantWalletAddress } from '../middleware/tenantAuth';
 
 export const portfolioRouter = Router();
@@ -26,6 +27,9 @@ portfolioRouter.get('/', async (req, res, next) => {
 
     res.json(PortfolioResponseSchema.parse({
       ...portfolio,
+      // Which of these contracts the official registry names, and which wear
+      // an official ticker at another address.
+      tokens: await withRegistryMarksV1(portfolio.tokens, chainEnv),
       analysis: {
         ...analysis,
         providerContext: {

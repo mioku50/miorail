@@ -39,6 +39,8 @@ import {
   consoleHomeSectionV1,
   consoleNavModelV1,
   consoleSectionLabelV1,
+  activityProofItemsV1,
+  planWalletRowsV1,
   opportunityCardViewV1,
   type B20ConsoleScopeViewV1,
   type ConsolePipelineStateV1,
@@ -310,7 +312,9 @@ export function MiniConsole() {
       mark("simulation", "complete");
     },
   });
-  const history = useRouteHistory({ limit: 5 });
+  // Twenty, like the web's Activity page: Activity lists them here, and the
+  // drawer's proofs are the runs among them that have one.
+  const history = useRouteHistory({ limit: 20 });
   // The paid ledger, only while Activity is open: it is the one thing this
   // product has provably completed, and it was invisible on a tab that showed
   // route runs which never reached a signature.
@@ -883,70 +887,22 @@ export function MiniConsole() {
           : null
       }
       freshness={[
-        { label: "Quote age", value: quoteFreshness.label.replace("quote ", ""), tone: quoteFreshness.stale ? "off" : undefined },
+        { label: "Quote age", value: primaryRoute ? quoteFreshness.label.replace("quote ", "") : "—", tone: primaryRoute && quoteFreshness.stale ? "off" : undefined },
         { label: "Simulation age", value: ageLabelV1(simulationSource?.ageSeconds ?? null) },
         { label: "Re-sim before signing", value: simulation.passed ? "on" : "not run", tone: simulation.passed ? "ok" : "off" },
       ]}
     />
   );
 
+  // The drawer is navigation first, as it is on the web (§9.5/§9.6). A new
+  // goal, the session, recent proofs and the route adapters belong to Routes
+  // AI and Activity, where the web shows them too. On Stocks the drawer opened
+  // on a gradient "+ New goal" that reset a planner nobody could see, and the
+  // sections sat below a list of thirteen adapters.
+  const onPlanner = section === "routes" || section === "activity";
+  const proofItems = activityProofItemsV1(historyItems);
   const drawer = (
     <>
-      <button type="button" className="newgoal" onClick={() => { setScreen("plan"); setGoal(""); setClock(emptyStageClockV1()); settled.current = false; }}>
-        + New goal
-      </button>
-      <div className="sechead">
-        <span>Active session</span>
-      </div>
-      {projection ? (
-        <button type="button" className="item on" onClick={() => setScreen("route")}>
-          <span className="t">{goalLabel}</span>
-          <span className="m">
-            <span className="tag b">{projection.outcome}</span>
-            {projection.availableRoutes.length} routes
-          </span>
-        </button>
-      ) : (
-        <p className="empty">No active session yet — start one above.</p>
-      )}
-      {/* T67E §2.1 — the drawer opens from the panel that already shows the
-          spend, not from a nav entry called "x402". */}
-      <div className="minipanel">
-        <div className="row">
-          <span>Agent spending budget</span>
-          <button type="button" className="btn sec" onClick={() => setBudgetOpen((open) => !open)}>
-            {budgetOpen ? "Close" : "Open"}
-          </button>
-        </div>
-      </div>
-      <div className="sechead">
-        <span>Recent proofs</span>
-        <span className="mono">{historyItems.length}</span>
-      </div>
-      {historyItems.length === 0 ? (
-        <p className="empty">No proofs yet. They appear here after your first signed route.</p>
-      ) : (
-        historyItems.slice(0, 5).map((run) => (
-          <div key={run.routeRunId} className="item">
-            <span className="t">{run.intentSummary || run.routeRunId}</span>
-            <span className="m">
-              <span className="tag n">{run.proofFinalStatus ?? run.runStatus}</span>
-            </span>
-          </div>
-        ))
-      )}
-      <div className="minipanel">
-        <div className="row">
-          <span>Route adapters</span>
-          <span className="v mono">{adapterRows.summary}</span>
-        </div>
-        {adapterRows.rows.map((row) => (
-          <div key={row.name} className={`row${row.usable ? "" : " off"}`}>
-            <span>{row.name}</span>
-            <span className={`v${row.live ? " ok" : ""}`}>{row.label}</span>
-          </div>
-        ))}
-      </div>
       {/* Phase 15.1 — the sections that are not in the tab bar.
           Three tabs get ~130px each on a 390px screen and four get ~90px, so
           Stocks, Radar and B20 took the bar. The rest still have real handlers,
@@ -966,6 +922,84 @@ export function MiniConsole() {
           <span className="t">{consoleSectionLabelV1(id)}</span>
         </button>
       ))}
+      {onPlanner ? (
+        <>
+          <button
+            type="button"
+            className="newgoal"
+            onClick={() => {
+              setSection("routes");
+              setScreen("plan");
+              setGoal("");
+              setClock(emptyStageClockV1());
+              settled.current = false;
+            }}
+          >
+            + New goal
+          </button>
+          <div className="sechead">
+            <span>Active session</span>
+          </div>
+          {projection ? (
+            <button
+              type="button"
+              className="item on"
+              onClick={() => {
+                setSection("routes");
+                setScreen("route");
+              }}
+            >
+              <span className="t">{goalLabel}</span>
+              <span className="m">
+                <span className="tag b">{projection.outcome}</span>
+                {projection.availableRoutes.length} routes
+              </span>
+            </button>
+          ) : (
+            <p className="empty">No active session yet — start one above.</p>
+          )}
+          <div className="sechead">
+            <span>Recent proofs</span>
+            <span className="mono">{historyItems.filter((run) => run.proofId).length}</span>
+          </div>
+          {proofItems.length === 0 ? (
+            <p className="empty">None among your recent runs. A proof opens when a route is handed to your wallet.</p>
+          ) : (
+            proofItems.map((item) => (
+              <div key={item.id} className="item">
+                <span className="t">{item.title}</span>
+                <span className="m">
+                  <span className={`tag ${item.tag.tone}`}>{item.tag.label}</span>
+                  {item.meta}
+                </span>
+              </div>
+            ))
+          )}
+          <div className="minipanel">
+            <div className="row">
+              <span>Route adapters</span>
+              <span className="v mono">{adapterRows.summary}</span>
+            </div>
+            {adapterRows.rows.map((row) => (
+              <div key={row.name} className={`row${row.usable ? "" : " off"}`}>
+                <span>{row.name}</span>
+                <span className={`v${row.live ? " ok" : ""}`}>{row.label}</span>
+              </div>
+            ))}
+          </div>
+        </>
+      ) : null}
+      {/* T67E §2.1 — the drawer opens from the panel that already shows the
+          spend, not from a nav entry called "x402". A setting, so it is here
+          on every section: the Base App has no Settings page to hold it. */}
+      <div className="minipanel">
+        <div className="row">
+          <span>Agent spending budget</span>
+          <button type="button" className="btn sec" onClick={() => setBudgetOpen((open) => !open)}>
+            {budgetOpen ? "Close" : "Open"}
+          </button>
+        </div>
+      </div>
       <div className="minipanel">
         <WalletConnect />
       </div>
@@ -1372,13 +1406,7 @@ export function MiniConsole() {
           )
         }
         walletLabel={address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null}
-        balances={
-          portfolio.data?.tokens?.map((token: { symbol: string; balanceFormatted?: string; balanceUsd?: string }) => ({
-            asset: token.symbol,
-            amount: token.balanceFormatted ?? "—",
-            usd: token.balanceUsd ? `$${token.balanceUsd}` : "—",
-          })) ?? []
-        }
+        balances={planWalletRowsV1(portfolio.data?.tokens ?? [])}
         balancesUnavailableReason={connected ? CONSOLE_COPY_V1.portfolioUnavailable : CONSOLE_COPY_V1.walletDisconnected}
         coverage={coverageFromStatusV1(status.data ?? null)}
         chainKpis={[
@@ -2542,8 +2570,13 @@ export function MiniConsole() {
 
   return (
     <ConsoleMiniShell
-      goalLine={goalLabel}
-      stepLine={`${stepLabel} · ${spendLabel.split(" · ")[0]}`}
+      // The header says where the reader is. A goal and its eight steps are
+      // Routes AI's; on every other section they described a planner the
+      // reader never opened: "New goal · Not started · 8 steps · $0" above
+      // the Stocks board.
+      goalLine={section === "routes" ? goalLabel : consoleSectionLabelV1(section)}
+      stepLine={section === "routes" ? `${stepLabel} · ${spendLabel.split(" · ")[0]}` : null}
+      section={section}
       networkLabel={chainLabelV1(status.data?.chainId)}
       connected={connected && status.data?.rpc?.status === "connected"}
       blockNumber={chainBlockNumberV1(status.data ?? null)}

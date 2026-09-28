@@ -1,3 +1,7 @@
+import React from 'react';
+
+void React;
+
 // ---------------------------------------------------------------------------
 // What the wallet actually holds.
 //
@@ -32,6 +36,79 @@ export interface WalletBalanceEntryV1 {
   /** The provider's spam heuristic. Kept out of the total and shown apart. */
   possibleSpam?: boolean;
   verified?: boolean;
+  /** Miorail's official registry, joined by address on the server. */
+  registry?: WalletRegistryMarkV1 | null;
+}
+
+export interface WalletRegistryMarkV1 {
+  standing: 'official' | 'lookalike';
+  ticker: string;
+  officialAddress?: string;
+}
+
+export interface WalletRegistryMarkViewV1 {
+  label: string;
+  /** `.tag` for official, `.tag.a` for a lookalike. Official is an identity,
+   * not a verdict, so it wears no quality colour. */
+  tone: 'n' | 'a';
+  title: string;
+}
+
+/**
+ * The registry's word on one balance row.
+ *
+ * A provider names a token by the symbol its contract chose. A wallet held 15
+ * "AAPLc" at 0x2a97…8636 and both balance lists showed it beside the real
+ * NVDAc as one more holding. A lookalike is two strings that matched and two
+ * addresses that did not, and the mark says only that.
+ */
+export function walletRegistryMarkViewV1(registry: WalletRegistryMarkV1 | null | undefined): WalletRegistryMarkViewV1 | null {
+  if (!registry) return null;
+  if (registry.standing === 'official') {
+    return { label: `official ${registry.ticker}`, tone: 'n', title: `Listed by its issuer as ${registry.ticker}, at this exact address.` };
+  }
+  const official = registry.officialAddress
+    ? ` The official ${registry.ticker} is ${registry.officialAddress.slice(0, 6)}…${registry.officialAddress.slice(-4)}.`
+    : '';
+  return {
+    label: `not the official ${registry.ticker}`,
+    tone: 'a',
+    title: `This contract uses ${registry.ticker}'s ticker at another address.${official}`,
+  };
+}
+
+/** One row of Routes AI's "Your wallet". */
+export interface PlanWalletRowV1 {
+  asset: string;
+  amount: string;
+  usd: string;
+  mark: WalletRegistryMarkViewV1 | null;
+}
+
+/**
+ * Routes AI's "Your wallet", from the same balances the card reads.
+ *
+ * Both surfaces mapped the provider's rows by hand and read `balanceUsd`, a
+ * field the portfolio answer does not carry, so every dollar cell was a dash,
+ * USDC's too. They also listed zero and spam rows in the provider's order.
+ * This list is where a goal starts, so what has a price leads.
+ */
+export function planWalletRowsV1(rows: readonly WalletBalanceEntryV1[]): PlanWalletRowV1[] {
+  const { shown } = walletBalanceRowsV1(rows);
+  const value = (row: WalletBalanceEntryV1) => {
+    const amount = Number(row.usdValue ?? NaN);
+    return Number.isFinite(amount) ? amount : -1;
+  };
+  const ordered = [...shown].sort((left, right) => {
+    if (isNativeBalanceV1(left.address) !== isNativeBalanceV1(right.address)) return isNativeBalanceV1(left.address) ? -1 : 1;
+    return value(right) - value(left);
+  });
+  return ordered.map((row) => ({
+    asset: row.symbol,
+    amount: row.balanceFormatted ?? '—',
+    usd: balanceUsdLabelV1(row.usdValue) ?? '—',
+    mark: walletRegistryMarkViewV1(row.registry),
+  }));
 }
 
 export interface WalletBalancesModelV1 {
@@ -120,6 +197,14 @@ export function WalletBalancesCard(model: WalletBalancesModelV1) {
                   <span>
                     {row.symbol}
                     {isNativeBalanceV1(row.address) && <span className="tag">native</span>}
+                    {(() => {
+                      const mark = walletRegistryMarkViewV1(row.registry);
+                      return mark ? (
+                        <span className={`tag${mark.tone === 'a' ? ' a' : ''}`} title={mark.title}>
+                          {mark.label}
+                        </span>
+                      ) : null;
+                    })()}
                   </span>
                   {/* Two numbers on one line read as one broken value:
                       `0.5925 $0.59` has to be parsed before it can be read.

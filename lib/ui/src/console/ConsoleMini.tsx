@@ -22,9 +22,14 @@ void React;
 // ---------------------------------------------------------------------------
 
 export interface ConsoleMiniShellProps {
-  /** The active goal, promoted into the header as a single line. */
+  /** The header's first line: the active goal on Routes AI, the section's
+   * name everywhere else. */
   goalLine: string;
-  stepLine: string;
+  /** The second line, when the section has one. Routes AI's progress. */
+  stepLine?: string | null;
+  /** The current section. The drawer closes when it changes, so picking a
+   * section in the drawer shows it instead of leaving the drawer over it. */
+  section?: string;
   networkLabel: string;
   connected: boolean;
   blockNumber: string | null;
@@ -62,6 +67,10 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
   }, []);
 
   useEffect(() => {
+    setDrawerOpen(false);
+  }, [props.section]);
+
+  useEffect(() => {
     if (!drawerOpen) return;
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setDrawerOpen(false);
@@ -86,7 +95,7 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
           </button>
           <div className="minihead">
             <div className="goalline">{props.goalLine}</div>
-            <div className="stepline">{props.stepLine}</div>
+            {props.stepLine ? <div className="stepline">{props.stepLine}</div> : null}
           </div>
           <div className="themetog" role="group" aria-label="Theme">
             <button type="button" className={props.theme === 'dark' ? 'on' : ''} onClick={() => props.onThemeChange('dark')} aria-pressed={props.theme === 'dark'}>

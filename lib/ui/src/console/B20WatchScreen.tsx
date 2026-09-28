@@ -566,10 +566,10 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
               )}
               {(model.suggestedFromHoldings?.length ?? 0) > 0 && (
                 <span className="nt">
-                  {model.suggestedFromHoldings!.length} token
-                  {model.suggestedFromHoldings!.length === 1 ? '' : 's'} you hold are not watched —
-                  add them from the list above. Miorail does not enrol a wallet’s positions on its
-                  own.
+                  {model.suggestedFromHoldings!.length === 1
+                    ? '1 token you hold is not watched — add it by its address above.'
+                    : `${model.suggestedFromHoldings!.length} tokens you hold are not watched — add them by address above.`}{' '}
+                  Miorail does not enrol a wallet’s positions on its own.
                 </span>
               )}
             </div>

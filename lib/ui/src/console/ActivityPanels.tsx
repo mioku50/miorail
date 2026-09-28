@@ -68,6 +68,74 @@ export function activityRunStageCopyV1(runStatus: string): string {
   return RUN_STAGE_COPY_V1[runStatus] ?? 'This run is in a state this build does not have words for.';
 }
 
+/**
+ * Where a run got to once a proof was opened for it, by the proof's status.
+ *
+ * A run keeps the status it had when it was prepared, so every run with a
+ * proof still reads `ready`. Its sentence said "Never signed, so there is no
+ * proof" beside a pill reading `reconciliation_required`, under the first
+ * real stock trade (2026-09-23) among others. A proof opens when a plan goes
+ * to the wallet, and a wallet can decline, so none of these says "signed".
+ */
+const PROOF_STAGE_COPY_V1: Readonly<Record<string, string>> = {
+  pending: 'Handed to your wallet. What happened has not been reconciled yet.',
+  completed: 'Executed and reconciled.',
+  partial_failure: 'Executed, and part of it did not do what was expected.',
+  failed: 'Sent, and it failed onchain.',
+  cancelled: 'Declined in the wallet or cancelled before it was sent. Nothing was executed.',
+  reconciliation_required:
+    'Handed to your wallet, and what happened could not be matched to the plan on its own. It needs reconciling.',
+};
+
+/** The sentence under a run: its proof's, when it has one. */
+export function activityRunSentenceV1(run: Pick<ActivityRunRowV1, 'runStatus' | 'proofFinalStatus'>): string {
+  if (run.proofFinalStatus) {
+    return PROOF_STAGE_COPY_V1[run.proofFinalStatus] ?? 'This proof is in a state this build does not have words for.';
+  }
+  return activityRunStageCopyV1(run.runStatus);
+}
+
+/** The pill's tone: its proof's, when it has one, like the pill's words. */
+export function activityRunPillToneV1(run: Pick<ActivityRunRowV1, 'runStatus' | 'proofFinalStatus'>): string {
+  if (!run.proofFinalStatus) return activityRunToneV1(run.runStatus);
+  if (run.proofFinalStatus === 'completed') return 'g';
+  if (run.proofFinalStatus === 'failed' || run.proofFinalStatus === 'cancelled') return 'n';
+  return 'a';
+}
+
+/** One entry of the rail's "Recent proofs". */
+export interface ActivityProofItemV1 {
+  id: string;
+  title: string;
+  tag: { label: string; tone: 'g' | 'b' | 'n' };
+  meta: string;
+}
+
+/**
+ * The rail's "Recent proofs": runs that have one, newest first.
+ *
+ * It listed the newest runs whatever they reached, so Routes AI showed five
+ * never-sent runs under "Recent proofs", while Activity, reading the same
+ * runs, counted six proofs and listed none. The date is part of the line
+ * because a proof is often days old, and a bare time read as today.
+ */
+export function activityProofItemsV1(
+  runs: readonly Pick<ActivityRunRowV1, 'routeRunId' | 'createdAt' | 'intentSummary' | 'proofId' | 'proofFinalStatus'>[],
+  limit = 5,
+): ActivityProofItemV1[] {
+  return runs
+    .filter((run) => run.proofId)
+    .slice(0, limit)
+    .map((run) => ({
+      id: run.routeRunId,
+      title: run.intentSummary || run.routeRunId,
+      tag: { label: run.proofFinalStatus ?? 'pending', tone: run.proofFinalStatus === 'completed' ? 'g' : 'n' },
+      meta: Number.isFinite(Date.parse(run.createdAt))
+        ? new Date(run.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+        : '',
+    }));
+}
+
 /** True while a run has not reached a wallet. Most of them, today. */
 export function activityRunUnsignedV1(runStatus: string): boolean {
   return [
@@ -151,11 +219,11 @@ export function ActivityRunsCard(model: ActivityRunsModelV1) {
                   >
                     {run.intentSummary || run.routeRunId}
                   </button>
-                  <span className={`pill ${activityRunToneV1(run.runStatus)}`}>
+                  <span className={`pill ${activityRunPillToneV1(run)}`}>
                     {run.proofFinalStatus ?? run.runStatus}
                   </span>
                 </div>
-                <p className="lnote">{activityRunStageCopyV1(run.runStatus)}</p>
+                <p className="lnote">{activityRunSentenceV1(run)}</p>
                 <p className="lnote">
                   {new Date(run.createdAt).toLocaleString()}
                   {run.provider ? ` · ${run.provider}` : ''}

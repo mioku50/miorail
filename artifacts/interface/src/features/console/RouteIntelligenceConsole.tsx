@@ -89,6 +89,8 @@ import {
   AiReviewPanel,
   AiResultPanel,
   AiProofPanel,
+  activityProofItemsV1,
+  planWalletRowsV1,
 } from '@mioagent/ui';
 import {
   useBoundedProofReconciliation,
@@ -335,7 +337,9 @@ export function RouteIntelligenceConsole() {
       mark('simulation', 'complete');
     },
   });
-  const history = useRouteHistory({ limit: 5 });
+  // Twenty, like Activity's first page: the rail lists the runs that have a
+  // proof, and the five newest often have none.
+  const history = useRouteHistory({ limit: 20 });
   // T65.2A — a REAL price, not a status flag. The rail used to pass null and
   // explain that the panel did not exist; now it shows what the server read,
   // with its age and its provider.
@@ -1027,15 +1031,7 @@ export function RouteIntelligenceConsole() {
   const quoteFreshness = quoteFreshnessFromRouteV1(primaryRoute);
 
   const historyItems = history.data?.items ?? [];
-  const proofs: ConsoleSessionItemV1[] = historyItems.slice(0, 5).map((run) => ({
-    id: run.routeRunId,
-    title: run.intentSummary || run.routeRunId,
-    tag: {
-      label: run.proofFinalStatus ?? run.runStatus,
-      tone: run.proofFinalStatus ? ('g' as const) : ('n' as const),
-    },
-    meta: run.createdAt ? new Date(run.createdAt).toLocaleTimeString() : '',
-  }));
+  const proofs: ConsoleSessionItemV1[] = activityProofItemsV1(historyItems);
 
   const sessions: ConsoleSessionItemV1[] = projection
     ? [
@@ -1082,7 +1078,7 @@ export function RouteIntelligenceConsole() {
           : null
       }
       freshness={[
-        { label: 'Quote age', value: quoteFreshness.label.replace('quote ', ''), tone: quoteFreshness.stale ? 'off' : undefined },
+        { label: 'Quote age', value: primaryRoute ? quoteFreshness.label.replace('quote ', '') : '—', tone: primaryRoute && quoteFreshness.stale ? 'off' : undefined },
         { label: 'Simulation age', value: ageLabelV1(simulationSource?.ageSeconds ?? null) },
         { label: 'Re-sim before signing', value: simulation.passed ? 'on' : 'not run', tone: simulation.passed ? 'ok' : 'off' },
       ]}
@@ -1151,13 +1147,7 @@ export function RouteIntelligenceConsole() {
           )
         }
         walletLabel={walletLabel}
-        balances={
-          portfolio.data?.tokens?.map((token: { symbol: string; balanceFormatted?: string; balanceUsd?: string }) => ({
-            asset: token.symbol,
-            amount: token.balanceFormatted ?? '—',
-            usd: token.balanceUsd ? `$${token.balanceUsd}` : '—',
-          })) ?? []
-        }
+        balances={planWalletRowsV1(portfolio.data?.tokens ?? [])}
         balancesUnavailableReason={connected ? CONSOLE_COPY_V1.portfolioUnavailable : CONSOLE_COPY_V1.walletDisconnected}
         coverage={coverageFromStatusV1(status.data ?? null)}
         chainKpis={[
@@ -1864,7 +1854,7 @@ export function RouteIntelligenceConsole() {
         sessions,
         sessionCount: String(sessions.length),
         proofs,
-        proofCount: String(historyItems.length),
+        proofCount: String(historyItems.filter((run) => run.proofId).length),
         // T70 §2 — one line, not a panel. The usage bars, the limits row and
         // the adapter list moved to Settings; what a user needs while planning
         // a route is whether paid evidence is on, and a way through.

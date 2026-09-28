@@ -2352,6 +2352,18 @@ export const PortfolioTokenSchema = z.object({
   possibleSpam: z.boolean().optional(),
   security: PortfolioTokenSecuritySchema.optional(),
   dataFreshness: z.enum(['live', 'cached']).optional(),
+  /**
+   * Miorail's official asset registry, joined by address. `official`: an
+   * issuer-published asset. `lookalike`: another contract wearing an official
+   * ticker. Absent when the registry says nothing either way, or was not read.
+   */
+  registry: z
+    .object({
+      standing: z.enum(['official', 'lookalike']),
+      ticker: z.string(),
+      officialAddress: z.string().optional(),
+    })
+    .optional(),
 });
 
 export const PortfolioProvidersSchema = z.object({

@@ -41,7 +41,9 @@ export function intervalLabelV1(seconds: number): string {
     const hours = seconds / 3_600;
     return hours === 1 ? 'hourly' : `every ${hours} hours`;
   }
-  return `every ${Math.round(seconds / 60)} minutes`;
+  const minutes = Math.round(seconds / 60);
+  // "every 1 minutes" was on the B20 page, 2026-09-28.
+  return minutes === 1 ? 'every minute' : `every ${minutes} minutes`;
 }
 
 /** How long until a due time, or how overdue it is. Never a negative number

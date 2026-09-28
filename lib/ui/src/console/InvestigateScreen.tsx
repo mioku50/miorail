@@ -105,7 +105,7 @@ export function InvestigateScreen({ model }: { model: InvestigateScreenModelV1 }
             model.onSubmit();
           }}
         >
-          <label htmlFor="investigate-address">Contract address</label>
+          <label htmlFor="investigate-address">Base address</label>
           <div>
             <input
               id="investigate-address"

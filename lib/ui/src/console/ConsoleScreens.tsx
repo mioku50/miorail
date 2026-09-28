@@ -12,6 +12,7 @@ import {
 } from './consoleState';
 import type { ProviderDiagnosticRowV1, ProviderHistoryViewV1 } from './consoleAdapters';
 import type { VerificationHonestyViewV1 } from './verificationHonesty';
+import type { WalletRegistryMarkViewV1 } from './WalletBalancesCard';
 import {
   CONSOLE_NO_ANALYSIS_COPY_V1,
   CONSOLE_NO_ANALYSIS_TITLE_V1,
@@ -1075,7 +1076,12 @@ export interface WalletBalanceRowV1 {
   asset: string;
   amount: string;
   usd: string;
+  /** The official registry's word on this contract, when it has one. */
+  mark?: WalletRegistryMarkViewV1 | null;
 }
+
+/** Rows before "Show all": the list sits above what Miorail can route. */
+const PLAN_WALLET_ROWS_FOLDED_V1 = 8;
 
 export interface PlanScreenModelV1 {
   goal: string;
@@ -1092,6 +1098,44 @@ export interface PlanScreenModelV1 {
   chainKpis: KpiV1[];
   gasPoints: number[];
   chainNote: string;
+}
+
+/**
+ * The wallet's rows, folded after the first few.
+ *
+ * Its own component so the fold's state lives here: `PlanScreen` holds no
+ * hooks, and its tests call it as a function.
+ */
+function PlanWalletRows({ rows }: { rows: readonly WalletBalanceRowV1[] }) {
+  const [expanded, setExpanded] = React.useState(false);
+  const shown = expanded ? rows : rows.slice(0, PLAN_WALLET_ROWS_FOLDED_V1);
+  return (
+    <>
+      <table>
+        <tbody>
+          {shown.map((row, index) => (
+            <tr key={`${row.asset}-${index}`}>
+              <td className="nm">
+                {row.asset}
+                {row.mark ? (
+                  <span className={`tag${row.mark.tone === 'a' ? ' a' : ''}`} title={row.mark.title}>
+                    {row.mark.label}
+                  </span>
+                ) : null}
+              </td>
+              <td className="mono">{row.amount}</td>
+              <td className={`r${row.usd === '—' ? ' off' : ' mono'}`}>{row.usd}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      {rows.length > shown.length ? (
+        <button type="button" className="btn sec" onClick={() => setExpanded(true)}>
+          Show all {rows.length}
+        </button>
+      ) : null}
+    </>
+  );
 }
 
 export function PlanScreen(model: PlanScreenModelV1) {
@@ -1164,17 +1208,7 @@ export function PlanScreen(model: PlanScreenModelV1) {
             {model.balances.length === 0 ? (
               <p className="empty">{model.balancesUnavailableReason ?? CONSOLE_COPY_V1.portfolioUnavailable}</p>
             ) : (
-              <table>
-                <tbody>
-                  {model.balances.map((row) => (
-                    <tr key={row.asset}>
-                      <td className="nm">{row.asset}</td>
-                      <td className="mono">{row.amount}</td>
-                      <td className="r off">{row.usd}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              <PlanWalletRows rows={model.balances} />
             )}
           </div>
         </div>

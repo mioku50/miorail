@@ -3,6 +3,9 @@ import test, { describe } from 'node:test';
 
 import {
   activityDeviationLabelV1,
+  activityProofItemsV1,
+  activityRunPillToneV1,
+  activityRunSentenceV1,
   activityRunStageCopyV1,
   activityRunToneV1,
   activityRunUnsignedV1,
@@ -151,5 +154,44 @@ describe('proof details', () => {
     const short = activityShortHashV1(`0x${'a'.repeat(64)}`);
     assert.ok(short.startsWith('0xaaaaaaaa'));
     assert.ok(short.includes('…'));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A run with a proof is described by its proof.
+//
+// Production, 2026-09-28: six runs had a proof, and every one of them still
+// read `ready`, so each said "Never signed, so there is no proof" beside a
+// pill reading `pending` or `reconciliation_required`. One was the first real
+// stock trade. Routes AI's rail meanwhile listed five never-sent runs under
+// "Recent proofs", and Activity's rail counted six and listed none.
+// ---------------------------------------------------------------------------
+describe('a run with a proof is described by its proof', () => {
+  test('the sentence and the pill come from the proof, never from the stale run status', () => {
+    for (const status of ['pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required']) {
+      const sentence = activityRunSentenceV1(run({ proofId: 'proof-1', proofFinalStatus: status }));
+      assert.doesNotMatch(sentence, /Never signed|no proof|does not have words/, status);
+    }
+    assert.match(activityRunSentenceV1(run({ proofId: 'p', proofFinalStatus: 'reconciliation_required' })), /needs reconciling/);
+    // A proof opens when a plan goes to the wallet, and a wallet can decline.
+    assert.match(activityRunSentenceV1(run({ proofId: 'p', proofFinalStatus: 'cancelled' })), /Nothing was executed/);
+    // Without a proof the run's own sentence stands.
+    assert.equal(activityRunSentenceV1(run()), activityRunStageCopyV1('ready'));
+    assert.equal(activityRunPillToneV1(run({ proofId: 'p', proofFinalStatus: 'completed' })), 'g');
+    assert.equal(activityRunPillToneV1(run({ proofId: 'p', proofFinalStatus: 'reconciliation_required' })), 'a');
+  });
+
+  test('"Recent proofs" lists the runs that have one, with their date', () => {
+    const runs = [
+      run({ routeRunId: 'a', createdAt: '2026-09-25T18:39:45.000Z' }),
+      run({ routeRunId: 'b', createdAt: '2026-09-23T16:16:13.000Z', proofId: 'p-b', proofFinalStatus: 'reconciliation_required' }),
+      run({ routeRunId: 'c', createdAt: '2026-09-08T14:46:45.000Z', proofId: 'p-c', proofFinalStatus: 'completed' }),
+    ];
+    const items = activityProofItemsV1(runs);
+    assert.deepEqual(items.map((item) => item.id), ['b', 'c']);
+    assert.deepEqual(items[1]!.tag, { label: 'completed', tone: 'g' });
+    // A date, not a bare time that reads as today.
+    assert.match(items[0]!.meta, /^Sep 23, /);
+    assert.deepEqual(activityProofItemsV1([run()]), []);
   });
 });

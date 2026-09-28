@@ -323,7 +323,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
                 <span className="mono">{left.proofCount}</span>
               </div>
               {left.proofs.length === 0 ? (
-                <p className="empty">No proofs yet. They appear here after your first signed route.</p>
+                <p className="empty">None among your recent runs. A proof opens when a route is handed to your wallet.</p>
               ) : (
                 left.proofs.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectProof} />)
               )}

@@ -237,6 +237,9 @@ export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): st
 export interface BaseMcpCapabilityTallyV1 {
   label: string;
   count: number;
+  /** The words after the number in the header sentence, for one and for more. */
+  one: string;
+  many: string;
 }
 
 export interface BaseMcpRoutingCountsV1 {
@@ -259,11 +262,16 @@ export function baseMcpCapabilityTallyV1(
   if (!routing) return [];
   const actionsBlocked = Math.max(0, routing.action - routing.releasedActions);
   return [
-    { label: 'Reads', count: routing.read },
-    { label: 'Actions ready', count: routing.releasedActions },
-    { label: 'Actions needing an adapter', count: actionsBlocked },
-    { label: 'Routes AI handoffs', count: routing.routable },
-    { label: 'Not callable here', count: routing.blocked },
+    { label: 'Reads', count: routing.read, one: 'read', many: 'reads' },
+    { label: 'Actions ready', count: routing.releasedActions, one: 'action ready', many: 'actions ready' },
+    {
+      label: 'Actions needing an adapter',
+      count: actionsBlocked,
+      one: 'action needing an adapter',
+      many: 'actions needing an adapter',
+    },
+    { label: 'Routes AI handoffs', count: routing.routable, one: 'Routes AI handoff', many: 'Routes AI handoffs' },
+    { label: 'Not callable here', count: routing.blocked, one: 'not callable here', many: 'not callable here' },
   ];
 }
 
@@ -279,7 +287,9 @@ export function baseMcpToolSummaryV1(model: {
   if (tally.length === 0) return 'tool list not read yet';
   const parts = tally
     .filter((entry) => entry.count > 0)
-    .map((entry) => `${entry.count} ${entry.label.toLowerCase()}`);
+    // In the sentence's own words: lowercasing the rail's label printed
+    // "1 routes ai handoffs".
+    .map((entry) => `${entry.count} ${entry.count === 1 ? entry.one : entry.many}`);
   return parts.length > 0 ? parts.join(' · ') : 'no callable tools';
 }
 
