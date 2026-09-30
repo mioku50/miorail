@@ -249,8 +249,8 @@ Requests to act are handed to Routes for fresh quotes and explicit approval.
 
 ## Public Miorail MCP
 
-Miorail MCP `1.3.0` exposes thirteen read-only tools at `https://miorail.xyz/mcp`
-— five over tokenized stocks, eight over stored B20 evidence:
+Miorail MCP `1.5.0` exposes sixteen read-only tools at `https://miorail.xyz/mcp`
+— eight over tokenized stocks, eight over stored B20 evidence:
 
 ```text
 list_reviewed_stocks        every reviewed security, by ticker, name or ISIN
@@ -258,6 +258,9 @@ get_representations         every exact address that claims one security
 compare_market_reality      one size, one direction, every representation
 get_market_changes          what moved since a stored observation
 get_use_access              what one exact address can be used for, and what gates it
+check_address_identity      compare an exact address with the reviewed contract
+get_dividend_calendar       declarations, measured reinvestments and estimates
+get_recorded_changes        recorded changes across the reviewed market
 
 miorail_discover_status
 miorail_list_b20_opportunities
@@ -309,11 +312,11 @@ curl -s -X POST https://miorail.xyz/mcp \
 
 ## Connected Miorail MCP
 
-`https://miorail.xyz/mcp/private` is the same read tools **plus eight bound to
+`https://miorail.xyz/mcp/private` is the same sixteen read tools **plus eleven bound to
 one wallet** — the one that authorised the connection. It cannot read, prepare
 or execute for any other wallet, and no argument would let it try.
 
-One of the eight is the verb the read tools were missing.
+One of the eleven is the verb the read tools were missing.
 `compare_market_reality` reads stored evidence, so it could truthfully report
 "no fresh answer at this size" and had no way to get one — only the web button
 could measure. `miorail_measure_market_reality` is that button, calling the same
@@ -379,6 +382,28 @@ dependency, so no projection can quietly acquire a wallet.
 What Base App has that the web does not is proximity: the wallet is already in
 the reader's hand, so the review tab (`/action/<draft>`) confirms and signs in
 place rather than sending anybody to a browser.
+
+## My stocks today
+
+A signed-in holder opens Stocks on their own balances, upcoming dividends and
+recorded changes relevant to the contracts they hold or watch. Balances and
+Cobalt multiplier getters use the same pinned Base block. A scheduled multiplier
+is shown separately from the effective value; maturity is read from the getter
+because it emits no event. Reference values carry publication times, include the
+feed's multiplier once, and are never presented as sale proceeds or profit/loss.
+
+The web uses `GET /api/stocks/today`; Connected MCP `1.3.0` exposes the same
+calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
+argument. Pass the previous `generatedAt` as `since` to return to the changes;
+omitting it asks for 24 hours, and the maximum window is seven days. The browser
+remembers only that timestamp, separately per wallet. Coverage names the exact
+Coinbase contracts currently read from Base documentation; other issuers and
+contracts are outside this balance read. A full change page and failed reads
+remain explicit gaps. This tool creates no watch, action or transaction.
+
+A verified, delivered gift offers its recipient a route into this overview and
+the existing optional Telegram alerts. Opening a gift link never subscribes
+anybody and needs no claim transaction.
 
 ## Base MCP Extensions
 
@@ -530,11 +555,11 @@ miorail-b20-measure
 
 Miorail is functional but not broadly production-hardened. Important open work includes:
 
-- nine of the thirteen Coinbase tokenized stocks hold zero supply, so the comparison the product is built on is demonstrable on four securities today;
-- no reference price exists for Backed or Dinari, because neither publishes a feed a contract can read — the adapters are deliberately unwritten rather than written to return nothing;
+- supply and official-source coverage change over time; the current API identifies zero-supply contracts and contracts outside the latest source list separately;
+- reference-price adapters for Backed and Dinari are not implemented; no reference value is inferred for them;
 - the Investigate dossier is only partly polymorphic: a non-B20 contract is told so plainly, but Backed's rebasing model and Dinari's factory predicate do not yet have evidence modules of their own;
-- `compare_market_reality` reads stored evidence only, so a connected assistant cannot force a fresh measurement the way the web surface can;
-- the tokenized-stock path has settled once, as a buy of the primary representation at ten cents; assistant Stocks SELL still needs a review contract that binds an explicit token amount and refreshes output terms. The current cash-equivalent clearance correctly refuses execution. Exact-token SELL is a delivery gap; Routes AI is the existing alternative;
+- `compare_market_reality` reads stored evidence; authenticated assistants use `miorail_measure_market_reality` for a fresh measurement;
+- assistant Stocks SELL binds an explicit token amount on the review page and refreshes its output terms; broader owner-verified execution acceptance is still needed;
 - the Aerodrome corroborator reads one pool for the primary representation only, and there is still no verifiable CL quoter to price against — the marginal price is a cross-check, never a route;
 - the confirmed clearance is carried back to the assistant by the person, because no tool exists for an assistant to poll for one;
 - expand Fundamental Intelligence beyond the operator-registered claim corpus and design a safe self-serve project-claim flow;

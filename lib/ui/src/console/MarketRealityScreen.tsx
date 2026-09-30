@@ -40,6 +40,7 @@ import { DividendCalendarCard } from './DividendCalendarCard';
 import type { DividendCalendarViewV1 } from './dividendCalendarView';
 import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlertsStrip';
 import type { WeekendMarketViewV1 } from './weekendMarketView';
+import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -247,6 +248,7 @@ export interface StocksVisitorNoticeV1 {
 }
 
 export interface MarketRealityScreenModelV1 {
+  today?: MyStocksTodayModelV1 | null;
   /** Null for a signed-in reader. */
   visitor?: StocksVisitorNoticeV1 | null;
   /** While Wall Street is closed, and until the next session closes after the
@@ -1762,6 +1764,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           ) : null}
         </div>
       ) : null}
+      {model.today ? <MyStocksTodayCard model={model.today} /> : null}
       {model.weekend ? <WeekendMarketCard view={model.weekend} /> : null}
       {model.dividends ? <DividendCalendarCard view={model.dividends} /> : null}
       {model.telegram ? <TelegramAlertsStrip model={model.telegram} /> : null}

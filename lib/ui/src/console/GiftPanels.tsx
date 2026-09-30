@@ -106,7 +106,7 @@ export function GiftProofPanel({ gift }: { gift: ProofGiftModelV1 }) {
 
 /** The public gift page's body. Every figure on it comes from the bundle the
  * page verified; the two names are labels that fall back to addresses. */
-export function PublicGiftCard({ view }: { view: PublicGiftPageViewV1 }) {
+export function PublicGiftCard({ view, followup }: { view: PublicGiftPageViewV1; followup?: { href: string; label: string; note: string } | null }) {
   return (
     <>
       <section className="panel gift-card" aria-label="Gift">
@@ -133,6 +133,11 @@ export function PublicGiftCard({ view }: { view: PublicGiftPageViewV1 }) {
           <p className="lnote">{view.giveBack}</p>
         </div>
       </section>
+
+      {followup ? <section className="panel" aria-label="Your gifted stock">
+        <div className="ph"><h3>Keep up with your stock</h3></div>
+        <div className="pb"><p>{followup.note}</p><a className="btn lg" href={followup.href}>{followup.label}</a></div>
+      </section> : null}
 
       {view.share ? (
         <section className="panel" aria-label="Share this gift">

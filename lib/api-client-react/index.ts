@@ -9,6 +9,7 @@ import {
 import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
+import { StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
 // gate the confirm button without a new dep (api-spec already re-exports it
@@ -970,6 +971,38 @@ export function useMyDividends(options: { enabled: boolean }) {
     staleTime: 60_000,
     refetchInterval: 15 * 60_000,
   });
+}
+
+/** A prior successful visit's timestamp, local to this browser and wallet.
+ * It is only a filter; the server derives ownership from the session. */
+export function useMyStocksToday(options: { enabled: boolean }) {
+  const session = useSession({ enabled: options.enabled });
+  const wallet = options.enabled ? session.data?.user?.address.toLowerCase() ?? null : null;
+  const baseline = useRef<{ wallet: string | null; since: string | undefined }>({ wallet: null, since: undefined });
+  if (baseline.current.wallet !== wallet) {
+    let since: string | undefined;
+    try {
+      const stored = wallet && typeof window !== 'undefined' ? window.localStorage.getItem(`miorail:stocks-seen:${wallet}`) : null;
+      if (stored && Number.isFinite(Date.parse(stored)) && Date.parse(stored) <= Date.now()) since = stored;
+    } catch { /* A blocked local store leaves the default 24-hour window. */ }
+    baseline.current = { wallet, since };
+  }
+  const since = baseline.current.since;
+  const query = useQuery({
+    queryKey: ['my-stocks-today', wallet, since ?? '24h'],
+    queryFn: async () => StockBriefV1Schema.parse(await fetchApi<unknown>(`/api/stocks/today${since ? `?since=${encodeURIComponent(since)}` : ''}`)),
+    enabled: options.enabled && wallet !== null,
+    staleTime: 30_000,
+    refetchInterval: 5 * 60_000,
+    retry: 1,
+    retryDelay: 4_000,
+  });
+  useEffect(() => {
+    if (!wallet || !query.data) return;
+    try { window.localStorage.setItem(`miorail:stocks-seen:${wallet}`, query.data.generatedAt); }
+    catch { /* Reading the overview never requires local storage. */ }
+  }, [wallet, query.data]);
+  return { ...query, returning: since !== undefined };
 }
 
 /** Telegram alerts for the signed-in wallet: is there a bot, and is this

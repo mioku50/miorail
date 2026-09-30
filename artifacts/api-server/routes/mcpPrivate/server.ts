@@ -31,6 +31,8 @@ import {
   MiorailReviewBorrowOutputV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
+import { StockBriefInputV1Schema, StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
+import { readMyStocksTodayV1 } from '../../lib/stockBriefRead.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -55,13 +57,15 @@ import type { McpPrivateIdentityV1 } from './session.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.2.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.3.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound ten below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound eleven below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+
+For a daily personal read, use miorail_get_my_stocks_today. It reads this grant’s wallet and reports its own coverage; get_dividend_calendar remains the public calendar.
 
 The order is fixed and every step exists for a reason:
 
@@ -82,7 +86,7 @@ BORROWING AGAINST A TOKENIZED SECURITY IS A SEPARATE, SHORTER PATH, and it is th
 a. miorail_read_borrow_capacity — every market for that exact collateral, each with its own row. Never merge them, and always say whether the wallet's collateral or the market's own liquidity set each figure.
 b. miorail_review_borrow — reads, has the VENUE write the calldata, executes it once against real state, and checks the loan asset actually arrives here in the reviewed amount. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
 
-This surface buys B20 tokens through a route Miorail certified. It is not a general swap tool: there is no path here to an arbitrary token, an arbitrary router or calldata of your own.`;
+The certified B20 entry path above is buy-only. For Stocks, miorail_prepare_stock_action can prepare a buy or a sell review link. A sell must bind an exact token amount chosen on that review page, and its cash output is refreshed there. These paths do not accept an arbitrary router or calldata of your own.`;
 
 const ADDRESS_ARG_V1 = z
   .string()
@@ -119,7 +123,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the ten below can be called at all. A client that connected
+  // before any of the eleven below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -139,6 +143,17 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
       content: [{ type: 'text' as const, text: `${failure.code}: ${failure.message}` }],
     };
   };
+
+  server.registerTool('miorail_get_my_stocks_today', {
+    title: 'My stocks today — holdings, dividends and relevant changes',
+    description: `Read the connected wallet's reviewed Coinbase stocks, balances at a pinned Base block, reference values with publication times, upcoming dividend estimates, confirmed reinvestments and changes relevant to its current holdings and watchlist. No wallet argument: the grant's owner is the only account read. Pass the prior response's generatedAt as since to check back; omitted means the last 24 hours, and windows longer than seven days are clamped and labelled. Coverage names the exact contracts read. Reference values are not executable proceeds or profit/loss. Recorded market changes preserve their own size and provider; never interpolate them to this wallet's balance. Empty changes do not prove nothing happened: always retain coverage, unavailable and truncated states. The issuer's pending multiplier is a plan, not today's conversion. This tool prepares no action and signs nothing.`,
+    inputSchema: StockBriefInputV1Schema.shape,
+    outputSchema: StockBriefV1Schema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, async (args) => {
+    try { return reply(await readMyStocksTodayV1(identity.walletAddress, args.since)); }
+    catch { return { isError: true, content: [{ type: 'text' as const, text: 'stock_brief_unread: Your stock overview could not be read. This does not establish that your holdings or the market are empty.' }] }; }
+  });
 
   // -------------------------------------------------------------------------
   // Connected Intelligence 1 — the stock-native prepare.

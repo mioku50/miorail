@@ -585,7 +585,7 @@ export async function assembleOfficialLookalikeFeedV1(
 
 export async function assembleRwaSignalFeedV1(
   deps: OfficialDiscoverDepsV1,
-  input?: { limit?: number; kinds?: readonly RwaSignalKindV1[]; since?: string },
+  input?: { limit?: number; kinds?: readonly RwaSignalKindV1[]; since?: string; tokenAddresses?: readonly string[] },
 ): Promise<RwaSignalFeedV1> {
   const now = deps.now();
   const limit = Math.max(1, Math.min(200, input?.limit ?? 50));
@@ -593,6 +593,7 @@ export async function assembleRwaSignalFeedV1(
     deps.signals.recentSignals({
       chainId: 8453,
       limit,
+      ...(input?.tokenAddresses === undefined ? {} : { tokenAddresses: input.tokenAddresses }),
       ...(input?.kinds && input.kinds.length > 0 ? { kinds: input.kinds } : {}),
       ...(input?.since === undefined ? {} : { since: input.since }),
     }),

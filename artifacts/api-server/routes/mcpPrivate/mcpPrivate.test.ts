@@ -887,7 +887,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry plus ten', async () => {
+  test('the connected surface is exactly the public registry plus eleven', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -905,7 +905,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 10);
+    assert.equal(connectedNames.size, publicNames.length + 11);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {

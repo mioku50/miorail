@@ -30,6 +30,15 @@ export const stocksDividendsRuntime = {
  * once, and a purchase shows within the minute. */
 export const stocksDividendsCacheV1 = createPublicReadCacheV1({ ttlMs: 30_000, max: 1_024 });
 
+/** Shared by the web dividend card and the connected personal brief. */
+export async function myDividendWalletV1(wallet: string, now: Date) {
+  const reader = stocksDividendsRuntime.reader();
+  if (!reader) throw new Error('dividend_wallet_chain_unconfigured');
+  return stocksDividendsCacheV1.read(wallet.toLowerCase(), async () =>
+    readDividendWalletV1({ wallet, now, calendar: await stocksDividendsRuntime.calendar(now), reader, caches: stocksDividendsRuntime.caches }),
+  );
+}
+
 /** Our own failure codes only: an RPC or database message can carry a URL. */
 function failureCodeV1(cause: unknown): string {
   const message = cause instanceof Error ? cause.message : '';
@@ -54,15 +63,7 @@ stocksDividendsRouter.get('/mine', async (req: Request, res: Response) => {
     }
     const now = stocksDividendsRuntime.now();
     res.json(
-      await stocksDividendsCacheV1.read(wallet, async () =>
-        readDividendWalletV1({
-          wallet,
-          now,
-          calendar: await stocksDividendsRuntime.calendar(now),
-          reader,
-          caches: stocksDividendsRuntime.caches,
-        }),
-      ),
+      await myDividendWalletV1(wallet, now),
     );
   } catch (cause) {
     logger.warn('Dividend wallet read failed', { code: failureCodeV1(cause) });

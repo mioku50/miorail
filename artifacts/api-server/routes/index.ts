@@ -23,6 +23,7 @@ import { publicStocksRouter } from './publicStocks';
 import { x402IntelligenceRouterV1 } from './x402/intelligence';
 import { telegramLinkRouter, telegramWebhookRouter } from './telegram';
 import { stocksDividendsRouter } from './stocksDividends';
+import { stocksTodayRouter } from './stocksToday';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -75,3 +76,4 @@ routes.use('/route-intelligence', routeIntelligenceRouter);
 routes.use('/telegram', telegramLinkRouter);
 // One wallet's dividends: the session's wallet, never one the client names.
 routes.use('/stocks/dividends', stocksDividendsRouter);
+routes.use('/stocks', stocksTodayRouter);

@@ -160,7 +160,7 @@ function aheadV1(event: DividendWalletEventV1, holding: DividendWalletHoldingV1)
         : `${day}: ${holding.company} has not declared it yet, and nothing has converted to estimate from.`;
     case 'announced':
       return about
-        ? `${day}: ${about} — ${holding.company} declared $${event.amountPerShare} a share.`
+        ? `${day}: ${about}${event.kind === 'estimate' ? ' (estimate)' : ''} — ${holding.company} declared $${event.amountPerShare} a share.`
         : `${day}: ${holding.company} declared $${event.amountPerShare} a share; what reaches a token is not measured yet.`;
     case 'scheduled':
       return `${event.at ? dayV1(event.at.slice(0, 10)) : day}: ${about ?? `more ${holding.symbol} per ${holding.tokenSymbol}`}, scheduled on Base by the issuer.`;
@@ -240,7 +240,7 @@ export function dividendCalendarViewV1(
     };
   });
   const quiet = response.stocks.filter((stock) => stock.next === null && stock.history.length === 0).map((stock) => stock.symbol);
-  const measured = response.passThrough.measuredOn[0];
+  const measured = response.passThrough.measuredOn;
   return {
     title: 'Dividends on Base',
     lede: "A company pays cash per share. A Coinbase token gets it as more shares per token, after withholding tax and Coinbase's fee — read from the token, never assumed.",
@@ -249,8 +249,8 @@ export function dividendCalendarViewV1(
     none: quiet.length > 0 ? `No dividend on record: ${quiet.join(', ')}.` : null,
     note: [
       "Declared: the company's own release. Estimate: not declared yet — the last dividend again, a quarter later.",
-      response.passThrough.percent && measured
-        ? `Per token: ${response.passThrough.percent}% of a dividend has reached a token so far (${measured.symbol}, ${dayV1(measured.payDate)}), at the latest reference price.`
+      response.passThrough.percent && measured.length > 0
+        ? `Estimates use the median measured share of declared dividends that reached a token: ${response.passThrough.percent}%, from ${measured.map((row) => `${row.symbol} ${dayV1(row.payDate)}: ${row.percent}%`).join('; ')}. Each conversion is valued at its historical reference price. This is not a fixed withholding rate or fee.`
         : 'Per token: nothing has converted yet, so nothing is estimated.',
     ].join(' '),
   };

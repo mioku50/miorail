@@ -23,7 +23,7 @@ async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAt
     let json: unknown;
     if (path === '/api/status') json = { chainId: 8453, productMigration: { routeIntelligenceV1: true }, rpc: { status: 'connected' } };
     else if (path === '/api/auth/session') json = { user: null };
-    else if (path.endsWith('/rwa/underlyings')) json = fixture('underlyings');
+    else if (path.endsWith('/rwa/underlyings') || path === '/api/public/stocks/underlyings') json = fixture('underlyings');
     else if (path.endsWith('/stock-action/test-sell/confirm')) {
       confirmations.push(request.postDataJSON());
       json = { clearance: 'fixture-clearance', expiresAt: '2026-09-05T22:00:00Z' };
@@ -55,7 +55,7 @@ async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAt
         },
         reality: fixture('nvda-market'),
       };
-    } else if (path.includes('/rwa/market-reality/') && !/\/(measure|history|ask)$/.test(path)) {
+    } else if ((path.includes('/rwa/market-reality/') || path.includes('/public/stocks/market-reality/')) && !/\/(measure|history|ask)$/.test(path)) {
       json = fixture(path.includes('US19260') ? 'coin-market' : 'nvda-market');
     } else if (/\/(release|submission|approve)$/.test(path)) forbiddenWrites.push(path);
     return json ? route.fulfill({ json }) : route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
@@ -160,7 +160,7 @@ test('one wallet attempt stays pending until the wallet resolves', async ({ page
   await page.getByRole('button', { name: 'Use available balance' }).click();
   await page.getByRole('button', { name: 'Check this amount', exact: true }).click();
   await page.getByRole('button', { name: 'Confirm token amount', exact: true }).click();
-  await page.getByRole('button', { name: 'Open in your Base Account', exact: true }).click();
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { walletAttempts: number }).walletAttempts)).toBe(1);
   await expect(page.getByRole('button', { name: 'Waiting for your wallet…', exact: true })).toBeDisabled();
   expect(releases).toBe(1);

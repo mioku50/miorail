@@ -64,7 +64,20 @@ describe('Dividends on Base, on the Stocks board', () => {
     assert.equal(apple!.last, 'Aug 13: $0.27 paid, not owed — AAPLc had no supply on the record date.');
     assert.equal(alphabet!.last, 'Sep 14: +0.038% GOOGL per GOOGLc, worth $0.131 — 59.5% of the $0.22 declared.');
     assert.equal(view.none, 'No dividend on record: TSLA.');
-    assert.match(view.note, /59\.5% of a dividend has reached a token so far \(GOOGL, Sep 14\)/);
+    assert.match(view.note, /median measured share.*59\.5%, from GOOGL Sep 14: 59\.5%/);
+    assert.match(view.note, /historical reference price/);
+    assert.doesNotMatch(view.note, /latest reference price/);
+  });
+
+  test('the estimate basis names all conversions rather than attributing a median to one stock', () => {
+    const view = dividendCalendarViewV1({ ...CALENDAR, passThrough: {
+      percent: '51.2', measuredOn: [
+        { symbol: 'GOOGL', payDate: '2026-09-14', percent: '59.5' },
+        { symbol: 'META', payDate: '2026-09-28', percent: '43.0' },
+      ],
+    } })!;
+    assert.match(view.note, /51\.2%, from GOOGL Sep 14: 59\.5%; META Sep 28: 43\.0%/);
+    assert.match(view.note, /not a fixed withholding rate or fee/);
   });
 
   test('nothing at all when no stock has a dividend on record', () => {
@@ -111,7 +124,7 @@ describe('Your dividends, for a signed-in wallet', () => {
     assert.deepEqual(
       view.rows.map((row) => [row.title, row.lines]),
       [
-        ['METAc · 1 held', ['Sep 28: about $0.312 on your 1 METAc — META declared $0.525 a share.']],
+        ['METAc · 1 held', ['Sep 28: about $0.312 on your 1 METAc (estimate) — META declared $0.525 a share.']],
         [
           'GOOGLc · 4 held',
           [
@@ -125,7 +138,7 @@ describe('Your dividends, for a signed-in wallet', () => {
     assert.equal(view.total, 'Reinvested into your tokens so far: $0.327.');
     // A sliver of a token: a bound, not "about" one.
     const sliver = myDividendsViewV1({ data: walletOf({ META: 0.0009 }, {}), failed: false })!;
-    assert.equal(sliver.rows[0]?.lines[0], 'Sep 28: less than $0.001 on your 0.0009 METAc — META declared $0.525 a share.');
+    assert.equal(sliver.rows[0]?.lines[0], 'Sep 28: less than $0.001 on your 0.0009 METAc (estimate) — META declared $0.525 a share.');
     assert.equal(view.empty, null);
     assert.equal(view.note, 'A dividend reaches whoever holds the token when its multiplier moves, not on the record date.');
   });

@@ -2062,3 +2062,26 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .gift-rows dd { margin-bottom: 10px; }
   .mio-console .gift-share-row .btn { flex: 1 1 100%; justify-content: center; }
 }
+
+/* A holder's short daily read. The exact position is the visual anchor;
+   disclosure folds away, and a phone keeps the position before its value. */
+.mio-console .stocks-today .ph { justify-content: space-between; gap: 12px; }
+.mio-console .stocks-today-holdings { display: grid; gap: 12px; margin-block: 16px; }
+.mio-console .stocks-today-holding { border: 1px solid var(--line); border-left: 3px solid var(--accent-line); border-radius: 12px; padding: 14px 16px; min-width: 0; }
+.mio-console .stocks-today-position { display: grid; grid-template-columns: minmax(70px, .5fr) minmax(100px, 1fr) minmax(180px, 2fr); align-items: baseline; gap: 12px; }
+.mio-console .stocks-today-position > a { font-size: var(--fs-lg); font-weight: 700; text-decoration: none; }
+.mio-console .stocks-today-position .lnote { display: block; }
+.mio-console .stocks-today-holding p { margin-block: 8px; }
+.mio-console .stocks-today details { margin-top: 12px; overflow-wrap: anywhere; }
+.mio-console .stocks-today summary { cursor: pointer; color: var(--muted); }
+.mio-console .stocks-today-changes { border-top: 1px solid var(--line); padding-top: 16px; }
+.mio-console .stocks-today-changes ul { padding-left: 20px; }
+.mio-console .stocks-today-changes li { padding-block: 8px; }
+.mio-console .stocks-today-changes li p { margin-block: 4px; }
+.mio-console .stocks-today-schedule { color: var(--amber); }
+.mio-console .stocks-today-coverage { margin-top: 12px; }
+@media (max-width: 640px) {
+  .mio-console .stocks-today-position { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .mio-console .stocks-today-position > span:last-child { grid-column: 1 / -1; }
+  .mio-console .stocks-today-holding { padding: 12px; }
+}

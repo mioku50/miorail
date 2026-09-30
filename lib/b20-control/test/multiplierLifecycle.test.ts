@@ -101,6 +101,32 @@ describe('a multiplier change that has not happened yet', () => {
 });
 
 describe('a plan that was called off', () => {
+  for (const sameBlock of [false, true]) {
+    test(`a cancelled pair can be scheduled again ${sameBlock ? 'in the same block' : 'in a later block'}`, () => {
+      const plan = scheduledV1();
+      const cancel = scheduledV1({ event: 'ui_multiplier_update_cancelled', blockNumber: 150, logIndex: 2, blockTime: '2026-10-03T11:00:00.000Z' });
+      const next = scheduledV1({ blockNumber: sameBlock ? 150 : 151, logIndex: 3, blockTime: cancel.blockTime });
+      const standing = b20MultiplierStandingV1({
+        events: [next, cancel, plan], // The repository can return newest first.
+        reading: readingV1({ blockTime: '2026-10-04T00:00:00.000Z' }),
+        now: at('2026-10-04T00:00:00.000Z'),
+      });
+      assert.equal(standing.history.find((row) => row.blockNumber === 100)?.cause, 'cancelled');
+      assert.equal(standing.scheduled.length, 1);
+      assert.equal(standing.scheduled[0]?.logIndex, 3);
+    });
+  }
+
+  test('a historical cancellation cannot cancel a plan logged after it', () => {
+    const plan = scheduledV1();
+    const standing = b20MultiplierStandingV1({
+      events: [plan, scheduledV1({ event: 'ui_multiplier_update_cancelled', blockNumber: 99 })],
+      reading: null,
+      now: at('2026-10-04T00:00:00.000Z'),
+    });
+    assert.equal(standing.scheduled.length, 1);
+  });
+
   test('a cancellation matched by its pair retires exactly that change', () => {
     const standing = b20MultiplierStandingV1({
       events: [

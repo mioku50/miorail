@@ -49,6 +49,7 @@ export * from './borrowReviewView';
 export * from './BorrowReviewScreen';
 export * from './borrowReviewConsole';
 export * from './multiplierScheduleView';
+export * from './MyStocksTodayCard';
 export * from './marketRealityHistoryView';
 export * from './marketRealityRadarView';
 export * from './MarketRealityScreen';

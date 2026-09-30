@@ -432,6 +432,10 @@ export interface RwaSignalRepositoryV1 {
   /** The feed. Newest first, bounded, optionally one kind. */
   recentSignals(input: {
     chainId: number;
+    /** Match an exact subject or the official asset a lookalike refers to.
+     * Filtering precedes the page limit, so unrelated activity cannot hide
+     * the changes a holder came to read. An empty set matches nothing. */
+    tokenAddresses?: readonly string[];
     kinds?: readonly RwaSignalKindV1[];
     limit: number;
     /**

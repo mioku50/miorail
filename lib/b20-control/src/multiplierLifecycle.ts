@@ -165,14 +165,20 @@ export function b20MultiplierStandingV1(input: {
   const now = input.now.getTime();
   const reading = input.reading;
 
-  // A cancellation names the plan it calls off by (multiplier, effectiveAt).
-  // Matching on the pair rather than on "the most recent pending" is what
-  // keeps a cancellation from retiring the wrong change if two ever overlap.
-  const cancelled = new Set<string>();
-  for (const event of input.events) {
-    if (event.event !== 'ui_multiplier_update_cancelled') continue;
+  // A pair can be scheduled again after cancellation, including atomically in
+  // the same block. Walk chain order and retire only the preceding occurrence.
+  const cancelled = new Set<B20MultiplierEventV1>();
+  const pending = new Map<string, B20MultiplierEventV1>();
+  for (const event of [...input.events].sort((a, b) => -newestFirstV1(a, b))) {
     if (event.effectiveAt === null) continue;
-    cancelled.add(`${event.multiplierWad}@${event.effectiveAt}`);
+    const key = `${event.multiplierWad}@${event.effectiveAt}`;
+    if (event.event === 'ui_multiplier_update_cancelled') {
+      const plan = pending.get(key);
+      if (plan && msV1(event.blockTime) < msV1(plan.effectiveAt!)) cancelled.add(plan);
+      pending.delete(key);
+    } else if (msV1(event.effectiveAt) > msV1(event.blockTime)) {
+      pending.set(key, event);
+    }
   }
 
   const changes = input.events
@@ -207,7 +213,7 @@ export function b20MultiplierStandingV1(input: {
       confirmedBy: null,
     };
 
-    if (event.effectiveAt !== null && cancelled.has(`${event.multiplierWad}@${event.effectiveAt}`)) {
+    if (cancelled.has(event)) {
       resolved.push({ ...base, state: 'not_executed_as_planned', cause: 'cancelled' });
       continue;
     }

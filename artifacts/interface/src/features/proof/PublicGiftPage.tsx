@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useRoute } from 'wouter';
 import { giftOfPublicBundleV1, verifyPublicProofBundleV1 } from '@mioagent/proof-verifier';
-import { PublicGiftCard, publicGiftPageViewV1, type PublicGiftLabelsV1 } from '@mioagent/ui';
+import { PublicGiftCard, publicGiftPageViewV1, giftRecipientFollowupV1, type PublicGiftLabelsV1 } from '@mioagent/ui';
+import { useSession } from '@mioagent/api-client-react';
 
 // ---------------------------------------------------------------------------
 // Growth plan step 4 — /gift/:publicId.
@@ -30,6 +31,7 @@ function useNoIndex(): void {
 }
 
 export function PublicGiftPage() {
+  const session = useSession({ retry: false });
   const [, params] = useRoute('/gift/:publicId');
   const publicId = params?.publicId ?? '';
   useNoIndex();
@@ -142,7 +144,10 @@ export function PublicGiftPage() {
       </section>
     );
   } else {
-    body = <PublicGiftCard view={view} />;
+    body = <PublicGiftCard view={view} followup={gift && giftRecipientFollowupV1({
+      verified: verification?.valid === true, delivered: gift.delivered, recipient: gift.recipient,
+      sessionWallet: session.data?.user?.address ?? null, stockHref: view.stockHref,
+    })} />;
   }
 
   return (

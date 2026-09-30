@@ -16,7 +16,7 @@ import {
   useDisconnectTelegram,
   useTelegramLink,
   useDividendCalendar,
-  useMyDividends,
+  useMyStocksToday,
   useWeekendMarket,
 } from '@mioagent/api-client-react';
 import {
@@ -849,14 +849,14 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // Dividends: the same public read for everybody, like the weekend card, and
   // for a signed-in wallet what reached its own tokens and what is next.
   const dividendRead = useDividendCalendar({ enabled });
-  const myDividendsRead = useMyDividends({ enabled: enabled && session });
+  const todayRead = useMyStocksToday({ enabled: enabled && session });
   const dividends = useMemo(
     () =>
       dividendCalendarViewV1(
         dividendRead.data ?? null,
-        session ? { data: myDividendsRead.data ?? null, failed: myDividendsRead.isError } : null,
+        null,
       ),
-    [dividendRead.data, session, myDividendsRead.data, myDividendsRead.isError],
+    [dividendRead.data],
   );
 
   // Alerts in Telegram: signed in only, and only where a bot exists. A link
@@ -904,6 +904,11 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     weekend,
     dividends,
+    today: session ? {
+      data: todayRead.data ?? null, loading: todayRead.isPending, failed: todayRead.isError,
+      refreshing: todayRead.isFetching, returning: todayRead.returning,
+      onRefresh: () => { void todayRead.refetch(); },
+    } : null,
     telegram,
     // The decimals travel per address so the card can read a SELL amount in
     // the exact contract's own scale; null where nobody read it.

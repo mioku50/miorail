@@ -463,6 +463,7 @@ describe('the existing execution boundary is unchanged', () => {
         'miorail_check_exit_profile',
         'miorail_get_base_mcp_action',
         'miorail_get_execution_status',
+        'miorail_get_my_stocks_today',
         'miorail_get_stock_base_mcp_action',
         'miorail_measure_market_reality',
         'miorail_prepare_b20_entry',
@@ -477,6 +478,9 @@ describe('the existing execution boundary is unchanged', () => {
     // surface: `miorail_get_base_mcp_action` still consumes an entry plan id
     // that only the B20 clearance path can produce.
     const tools = (await client.listTools()).tools;
+    const today = tools.find((tool) => tool.name === 'miorail_get_my_stocks_today')!;
+    assert.equal(today.annotations?.readOnlyHint, true);
+    assert.deepEqual(Object.keys(today.inputSchema.properties ?? {}), ['since']);
     const stock = tools.find((tool) => tool.name === 'miorail_prepare_stock_action')!;
     const action = tools.find((tool) => tool.name === 'miorail_get_base_mcp_action')!;
     const stockArgs = Object.keys(

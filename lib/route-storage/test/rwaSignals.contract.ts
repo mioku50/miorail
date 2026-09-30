@@ -45,6 +45,18 @@ export function rwaSignalContractV1(
   open: () => Promise<{ repository: RwaSignalRepositoryV1 }>,
 ): void {
   describe(`rwa signal repository (${label})`, () => {
+    test('personal relevance includes an official lookalike match before applying the page limit', async () => {
+      const { repository } = await open();
+      await repository.openSignalWatch({ chainId: 8453, kinds: ['official_asset_lookalike_created'], at: '2026-08-25T10:00:00.000Z' });
+      await repository.recordSignals({ chainId: 8453, recordedAt: '2026-08-25T13:00:00.000Z', signals: [
+        lookalikeSignalV1(),
+        lookalikeSignalV1({ subjectAddress: SECOND, officialAddress: IMPOSTOR, dedupeKey: 'unrelated:newer', occurredAt: '2026-08-25T12:30:00.000Z' }),
+      ] });
+      const rows = await repository.recentSignals({ chainId: 8453, tokenAddresses: [AAPL], limit: 1 });
+      assert.equal(rows[0]?.officialAddress, AAPL);
+      assert.equal(rows[0]?.subjectAddress, IMPOSTOR);
+      assert.deepEqual(await repository.recentSignals({ chainId: 8453, tokenAddresses: [], limit: 1 }), []);
+    });
     test('the pass that opens a watch is told so, and every later one is not', async () => {
       const { repository } = await open();
       const first = await repository.openSignalWatch({

@@ -296,6 +296,24 @@ export interface PublicGiftPageViewV1 {
   share: { url: string; x: string; farcaster: string } | null;
 }
 
+/** The recipient gets a continuation only for a verified, completed gift.
+ * Opening a public link never enrolls its visitor or names their wallet. */
+export function giftRecipientFollowupV1(input: {
+  verified: boolean; delivered: boolean; recipient: string;
+  sessionWallet: string | null; stockHref: string | null;
+}): { href: string; label: string; note: string } | null {
+  if (!input.verified || !input.delivered || !ADDRESS_V1.test(input.recipient.toLowerCase())) return null;
+  const next = `${input.stockHref ?? '/stocks'}#my-stocks-today`;
+  const own = input.sessionWallet?.toLowerCase() === input.recipient.toLowerCase();
+  return {
+    href: own ? next : `/signin?next=${encodeURIComponent(next)}`,
+    label: own ? 'See my stocks today' : 'Connect the receiving wallet',
+    note: own
+      ? 'Your daily overview reads what you hold now, upcoming dividends and recorded changes. Open Stocks to choose Telegram alerts.'
+      : `Sign in with ${shortAddressV1(input.recipient)} to see this stock in your daily overview and choose dividend and market alerts. This gift needs no claim transaction.`,
+  };
+}
+
 const BASESCAN_V1 = 'https://basescan.org';
 
 /** A person as the page names them: the Basename that resolves back to them,
