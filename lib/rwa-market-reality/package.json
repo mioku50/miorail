@@ -15,7 +15,8 @@
     "./execution-handoff": "./src/executionHandoff.ts",
     "./narration-contract": "./src/narrationContract.ts",
     "./weekend-market": "./src/weekendMarket.ts",
-    "./stock-brief": "./src/stockBrief.ts"
+    "./stock-brief": "./src/stockBrief.ts",
+    "./stock-position-quote": "./src/stockPositionQuote.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

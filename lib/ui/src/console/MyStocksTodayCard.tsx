@@ -5,6 +5,8 @@ import type { StockBriefV1 } from '@mioagent/rwa-market-reality/stock-brief';
 import { myDividendsViewV1 } from './dividendCalendarView';
 import { multiplierDecimalV1 } from './multiplierScheduleView';
 import { signalFeedViewV1 } from './rwaDiscoverView';
+import type { StockPositionQuoteV1 } from '@mioagent/rwa-market-reality/stock-position-quote';
+import { MyStockCashOut } from './MyStockCashOut';
 
 export interface MyStocksTodayModelV1 {
   data: StockBriefV1 | null;
@@ -13,6 +15,8 @@ export interface MyStocksTodayModelV1 {
   refreshing: boolean;
   returning: boolean;
   onRefresh: () => void;
+  walletKey?: string;
+  onMeasureCashOut?: (tokenAddress: string) => Promise<StockPositionQuoteV1>;
 }
 
 function money(value: string) {
@@ -105,6 +109,15 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                         )}
                       </span>
                     </div>
+                    {model.onMeasureCashOut ? (
+                      <MyStockCashOut
+                        key={`${model.walletKey}:${holding.tokenAddress}`}
+                        tokenAddress={holding.tokenAddress}
+                        tokenSymbol={holding.tokenSymbol}
+                        overviewTokens={holding.tokens}
+                        onMeasure={model.onMeasureCashOut}
+                      />
+                    ) : null}
                     {mine?.lines[0] ? <p>{mine.lines[0]}</p> : null}
                     {holding.schedule ? (
                       <p className="stocks-today-schedule">

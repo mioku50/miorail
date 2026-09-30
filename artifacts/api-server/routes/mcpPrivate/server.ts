@@ -33,6 +33,8 @@ import {
 import type { McpPrivateIdentityV1 } from './session.js';
 import { StockBriefInputV1Schema, StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { readMyStocksTodayV1 } from '../../lib/stockBriefRead.js';
+import { StockPositionQuoteInputV1Schema, StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
+import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/stockPositionQuoteRead.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -57,15 +59,15 @@ import { readMyStocksTodayV1 } from '../../lib/stockBriefRead.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.3.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.4.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound eleven below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound twelve below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
-For a daily personal read, use miorail_get_my_stocks_today. It reads this grant’s wallet and reports its own coverage; get_dividend_calendar remains the public calendar.
+For a daily personal read, use miorail_get_my_stocks_today. It reads this grant’s wallet and reports its own coverage; get_dividend_calendar remains the public calendar. When the owner asks what their position would fetch, use miorail_measure_my_stock_cash_out for that entire current balance, never scale a public ladder quote to it.
 
 The order is fixed and every step exists for a reason:
 
@@ -123,7 +125,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the eleven below can be called at all. A client that connected
+  // before any of the twelve below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -153,6 +155,20 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   }, async (args) => {
     try { return reply(await readMyStocksTodayV1(identity.walletAddress, args.since)); }
     catch { return { isError: true, content: [{ type: 'text' as const, text: 'stock_brief_unread: Your stock overview could not be read. This does not establish that your holdings or the market are empty.' }] }; }
+  });
+
+  server.registerTool('miorail_measure_my_stock_cash_out', {
+    title: 'Check cash out for my entire current stock balance',
+    description: `On an explicit request, read this grant owner's CURRENT raw balance of one reviewed Coinbase stock contract at a pinned Base block and request a fresh quote to USDC for exactly that balance. First use miorail_get_my_stocks_today to identify the exact contract. The only input is tokenAddress; no wallet, cash size, token size, router or calldata can be supplied. This measures the ENTIRE balance, not a sale the user has approved. Provider reads and private evidence persistence are bounded by the same 10-per-minute wallet budget as the SELL review; do not poll this tool. Report holding, provider, observedAt and expiresAt. After expiry returnedAtomic is historical evidence, never a current price. No-route is specific to the providers, exact amount and destination; not_established is a measurement gap. Router proceeds exclude network fees, and transfer policy and wallet execution are not checked. This returns no clearance, calldata or transaction and cannot sell anything. A sale requires a separate exact-amount human review.`,
+    inputSchema: StockPositionQuoteInputV1Schema.shape,
+    outputSchema: StockPositionQuoteV1Schema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  }, async (args) => {
+    try { return reply(await measureMyStockCashOutV1(identity.walletAddress, args)); }
+    catch (error) {
+      const code = error instanceof StockPositionQuoteErrorV1 ? error.code : 'stock_cash_out_measurement_unread';
+      return { isError: true, content: [{ type: 'text' as const, text: `${code}: Cash out could not be measured. This does not establish that the token is untradeable. Nothing was prepared or confirmed.` }] };
+    }
   });
 
   // -------------------------------------------------------------------------

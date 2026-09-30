@@ -10,6 +10,7 @@ import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/div
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
 import { StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
+import { StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
 // gate the confirm button without a new dep (api-spec already re-exports it
@@ -1002,7 +1003,17 @@ export function useMyStocksToday(options: { enabled: boolean }) {
     try { window.localStorage.setItem(`miorail:stocks-seen:${wallet}`, query.data.generatedAt); }
     catch { /* Reading the overview never requires local storage. */ }
   }, [wallet, query.data]);
-  return { ...query, returning: since !== undefined };
+  return { ...query, returning: since !== undefined, wallet };
+}
+
+/** Explicit measurement only: no mount, focus or timer triggers a quote. */
+export function useMeasureMyStockCashOut() {
+  return useMutation({
+    retry: false,
+    mutationFn: async (tokenAddress: string) => StockPositionQuoteV1Schema.parse(
+      await fetchApi<unknown>('/api/stocks/cash-out', { method: 'POST', body: JSON.stringify({ tokenAddress }) }),
+    ),
+  });
 }
 
 /** Telegram alerts for the signed-in wallet: is there a bot, and is this

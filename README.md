@@ -312,11 +312,11 @@ curl -s -X POST https://miorail.xyz/mcp \
 
 ## Connected Miorail MCP
 
-`https://miorail.xyz/mcp/private` is the same sixteen read tools **plus eleven bound to
+`https://miorail.xyz/mcp/private` is the same sixteen read tools **plus twelve bound to
 one wallet** — the one that authorised the connection. It cannot read, prepare
 or execute for any other wallet, and no argument would let it try.
 
-One of the eleven is the verb the read tools were missing.
+One of the twelve is the verb the read tools were missing.
 `compare_market_reality` reads stored evidence, so it could truthfully report
 "no fresh answer at this size" and had no way to get one — only the web button
 could measure. `miorail_measure_market_reality` is that button, calling the same
@@ -392,7 +392,7 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.3.0` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.4.0` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
 argument. Pass the previous `generatedAt` as `since` to return to the changes;
 omitting it asks for 24 hours, and the maximum window is seven days. The browser
@@ -400,6 +400,22 @@ remembers only that timestamp, separately per wallet. Coverage names the exact
 Coinbase contracts currently read from Base documentation; other issuers and
 contracts are outside this balance read. A full change page and failed reads
 remain explicit gaps. This tool creates no watch, action or transaction.
+
+**Check cash out** asks for a fresh router quote into USDC for the owner's entire
+current raw balance of one covered contract. The authenticated
+`POST /api/stocks/cash-out` and `miorail_measure_my_stock_cash_out` use the same
+SELL measurement engine. The only input is the exact token address; the wallet,
+balance, decimals and pinned block come from authenticated chain reads. This is
+an explicit request, never an overview poll. Concurrent checks join one run;
+web, MCP and the SELL terms review share a ten-per-minute wallet budget. Evidence
+is stored under `tenant_position`, outside the public ladder.
+
+The result names each provider and distinguishes a quoted amount, an expired
+quote, no route at this exact size, an incomplete measurement and a zero balance.
+An expired quote stays dated as **Last quoted** and is not refreshed automatically.
+USDC output excludes network fees; transfer policy and simulation are not checked
+here. Nothing is sold or approved. The existing stock review still obtains a
+user-chosen exact amount, fresh terms and a separate wallet approval.
 
 A verified, delivered gift offers its recipient a route into this overview and
 the existing optional Telegram alerts. Opening a gift link never subscribes

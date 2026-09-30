@@ -17,6 +17,7 @@ import {
   useTelegramLink,
   useDividendCalendar,
   useMyStocksToday,
+  useMeasureMyStockCashOut,
   useWeekendMarket,
 } from '@mioagent/api-client-react';
 import {
@@ -850,6 +851,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // for a signed-in wallet what reached its own tokens and what is next.
   const dividendRead = useDividendCalendar({ enabled });
   const todayRead = useMyStocksToday({ enabled: enabled && session });
+  const cashOut = useMeasureMyStockCashOut();
   const dividends = useMemo(
     () =>
       dividendCalendarViewV1(
@@ -908,6 +910,8 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       data: todayRead.data ?? null, loading: todayRead.isPending, failed: todayRead.isError,
       refreshing: todayRead.isFetching, returning: todayRead.returning,
       onRefresh: () => { void todayRead.refetch(); },
+      walletKey: todayRead.wallet ?? '',
+      onMeasureCashOut: (tokenAddress) => cashOut.mutateAsync(tokenAddress),
     } : null,
     telegram,
     // The decimals travel per address so the card can read a SELL amount in

@@ -1,6 +1,6 @@
 # Miorail architecture
 
-Current map, checked against the repository and VPS on 5 September 2026.
+Current map, updated against the repository and Aeza VPS on 1 October 2026.
 Execution boundaries: [SECURITY-MODEL](SECURITY-MODEL.md). Capability stages:
 [PLUGIN_REGISTRY](PLUGIN_REGISTRY.md).
 
@@ -35,9 +35,18 @@ reference price, freshness and historical observations.
 
 `artifacts/api-server/routes/rwaMarketReality.ts` coordinates the web Stocks
 surface. `routes/mcp/marketRealityTools.ts` projects the same engine into public
-and connected MCP reads. Current MCP comparison reads stored evidence; the web
-measurement coordinator has no MCP entry point yet. Use & access currently
-exists on the web API but has no Stocks MCP tool.
+and connected MCP reads. Comparison reads stored evidence; connected
+`miorail_measure_market_reality` invokes the web measurement coordinator.
+Stocks MCP also returns measured Use & access, including exact-address DeFi
+availability rather than treating announcements as venue listings.
+
+`stockBriefRead.ts` serves the personal overview through the web and connected
+MCP, deriving the wallet from its authenticated session/grant. Balances and
+Cobalt multiplier getters share a pinned block; reference values remain separate
+from market quotes. Explicit `stockPositionQuoteRead.ts` requests use the existing
+cash-exit engine for the entire freshly read raw balance, persist tenant-scoped
+evidence, and share the SELL terms request budget. They do not grant a clearance
+or check wallet execution. Both web and Base App render these shared UI components.
 
 A source snapshot and its asset membership must publish atomically. Failed
 provider reads preserve the last successful evidence and expose uncertainty;
@@ -51,10 +60,10 @@ logic live in `artifacts/api-server/lib/stockAction*`. Confirmed BUY becomes a
 typed route intent, then uses the existing route engine, simulation and Safety
 Kernel to produce unsigned calls. The Base Account signs and submits them.
 
-Current stock clearance binds cash input for BUY. It does not bind token input
-for SELL, so SELL execution is refused until a separate exact-token review
-contract is implemented. The route engine's ability to swap tokens does not
-close that missing Stocks review flow by itself.
+Stock clearance binds cash input for BUY and a user-chosen exact token input
+for SELL. SELL terms are measured for that exact amount before confirmation;
+the execution step refreshes the output while preserving the confirmed token
+size. The separate certified B20 entry path remains buy-only.
 
 EIP-5792 batch identifiers are submission identifiers. Confirmed transaction
 hashes come from receipts. Reconciliation must establish actual asset movement
@@ -62,9 +71,9 @@ before claiming success.
 
 ## Separate MCP systems
 
-Miorail serves 13 public read-only tools at `/mcp`. Connected MCP adds eight
-wallet-bound tools (21 total) for preparation, measurement and execution
-evidence. These
+Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.4.0 adds twelve
+wallet-bound tools (28 total) for personal reads, preparation, measurement and
+execution evidence. These
 counts describe the audited release; new tools must update schemas, tests,
 client instructions and deployment smoke checks together.
 

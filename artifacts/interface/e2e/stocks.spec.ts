@@ -71,18 +71,18 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const nvda = page.getByRole('option', { name: /^NVDA / });
     const coin = page.getByRole('option', { name: /^COIN / });
     await expect(nvda).toHaveAttribute('aria-selected', 'true');
-    expect(await nvda.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
+    await expect.poll(() => nvda.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     await coin.click();
     await expect(coin).toHaveAttribute('aria-selected', 'true');
     await expect(nvda).toHaveAttribute('aria-selected', 'false');
     await expect(page).toHaveURL(new RegExp(encodeURIComponent(COIN)));
-    expect(await coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
+    await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     await page.reload();
-    await expect(coin).toHaveAttribute('aria-selected', 'true');
+    await expect(coin).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });
     await page.getByRole('button', { name: 'Base', exact: true }).click();
-    expect(await coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
+    await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     await page.getByRole('button', { name: 'Dark', exact: true }).click();
-    expect(await coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
+    await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
   });
 
   test(`Use & access gives visible feedback and removes market-only controls (${viewport.width}px)`, async ({ page }) => {

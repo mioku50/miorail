@@ -2080,6 +2080,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .stocks-today-changes li p { margin-block: 4px; }
 .mio-console .stocks-today-schedule { color: var(--amber); }
 .mio-console .stocks-today-coverage { margin-top: 12px; }
+.mio-console .stocks-today-cash-out { border-top: 1px solid var(--line); padding-top: 12px; margin-top: 12px; overflow-wrap: anywhere; }
+.mio-console .stocks-today-cash-out-control { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
 @media (max-width: 640px) {
   .mio-console .stocks-today-position { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
   .mio-console .stocks-today-position > span:last-child { grid-column: 1 / -1; }
