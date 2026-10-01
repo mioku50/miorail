@@ -1,7 +1,4 @@
-import {
-  B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1,
-  type B20ReaderV1,
-} from '@mioagent/b20-control';
+import { B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1, type B20ReaderV1 } from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import type {
@@ -272,7 +269,9 @@ export function executableFromRunV1(
           (BigInt(returned) *
             10n **
               BigInt(
-                observation.tokenDecimals + PER_TOKEN_PRICE_DECIMALS_V1 - observation.destinationDecimals,
+                observation.tokenDecimals +
+                  PER_TOKEN_PRICE_DECIMALS_V1 -
+                  observation.destinationDecimals,
               )) /
           BigInt(tested)
         ).toString()
@@ -585,7 +584,14 @@ export async function assembleOfficialLookalikeFeedV1(
 
 export async function assembleRwaSignalFeedV1(
   deps: OfficialDiscoverDepsV1,
-  input?: { limit?: number; kinds?: readonly RwaSignalKindV1[]; since?: string; tokenAddresses?: readonly string[] },
+  input?: {
+    limit?: number;
+    kinds?: readonly RwaSignalKindV1[];
+    since?: string;
+    until?: string;
+    timeBasis?: 'occurred' | 'recorded';
+    tokenAddresses?: readonly string[];
+  },
 ): Promise<RwaSignalFeedV1> {
   const now = deps.now();
   const limit = Math.max(1, Math.min(200, input?.limit ?? 50));
@@ -596,6 +602,8 @@ export async function assembleRwaSignalFeedV1(
       ...(input?.tokenAddresses === undefined ? {} : { tokenAddresses: input.tokenAddresses }),
       ...(input?.kinds && input.kinds.length > 0 ? { kinds: input.kinds } : {}),
       ...(input?.since === undefined ? {} : { since: input.since }),
+      ...(input?.until === undefined ? {} : { until: input.until }),
+      ...(input?.timeBasis === undefined ? {} : { timeBasis: input.timeBasis }),
     }),
     deps.signals.signalWatch({ chainId: 8453 }),
     deps.official.officialAssets({ chainId: 8453, limit: 64, currentlyListedOnly: false }),

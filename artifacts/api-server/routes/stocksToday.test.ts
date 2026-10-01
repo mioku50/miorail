@@ -145,14 +145,40 @@ test('the anonymous MCP has no personal-wallet tool', async () => {
   }
 });
 
-test('a cached refresh keeps the original read cursor so a return visit cannot skip changes', async () => {
+test('a cached balance does not cache away a delayed change or move its receipt past the bounded inbox read', async () => {
   const first = await request(app()).get('/stocks/today');
-  stockBriefRuntime.now = () => new Date(NOW.getTime() + 5_000);
+  const later = new Date(NOW.getTime() + 5_000);
+  stockBriefRuntime.now = () => later;
+  stockBriefRuntime.changes = async (addresses, since, until) => {
+    assert.deepEqual(addresses, [TOKEN]);
+    assert.equal(since, first.body.generatedAt);
+    assert.equal(until, later.toISOString());
+    return {
+      ...FEED,
+      cards: [
+        {
+          signalId: '1',
+          chainId: 8453,
+          kind: 'official_asset_multiplier_changed',
+          subjectAddress: TOKEN,
+          subjectTicker: 'NVDAc',
+          officialAddress: null,
+          officialTicker: null,
+          occurredAt: new Date(NOW.getTime() - 86_400_000).toISOString(),
+          recordedAt: new Date(NOW.getTime() + 2_000).toISOString(),
+          facts: { multiplierWad: '1005000000000000000' },
+        },
+      ],
+    };
+  };
   const refreshed = await request(app()).get(
     `/stocks/today?since=${encodeURIComponent(first.body.generatedAt)}`,
   );
   assert.equal(refreshed.status, 200);
-  assert.equal(refreshed.body.generatedAt, first.body.generatedAt);
+  assert.equal(refreshed.body.generatedAt, later.toISOString());
+  assert.equal(refreshed.body.balanceReadAt, first.body.balanceReadAt);
+  assert.equal(refreshed.body.inbox.heldCount, 1);
+  assert.equal(refreshed.body.changes.cards[0].signalId, '1');
   assert.deepEqual(wallets, [WALLET], 'one chain read inside the cache TTL');
 });
 

@@ -18,7 +18,9 @@ import { RouteStorageIntegrityError } from './types.js';
 // ---------------------------------------------------------------------------
 
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/, 'expected a lowercase 20-byte address');
-const TxHash = z.string().regex(/^0x[0-9a-f]{64}$/, 'expected a lowercase 32-byte transaction hash');
+const TxHash = z
+  .string()
+  .regex(/^0x[0-9a-f]{64}$/, 'expected a lowercase 32-byte transaction hash');
 const PositiveDigits = z.string().regex(/^[1-9][0-9]*$/, 'expected a positive integer string');
 
 // The kinds live in their own leaf module so the browser-facing Discover
@@ -453,6 +455,11 @@ export interface RwaSignalRepositoryV1 {
      * the screen asks for.
      */
     since?: string;
+    /** Personal inboxes use insertion time so a delayed observation is not
+     * hidden by an earlier visit. The public market feed defaults to occurrence. */
+    timeBasis?: 'occurred' | 'recorded';
+    /** Inclusive snapshot bound, applied before the page limit. */
+    until?: string;
   }): Promise<RwaSignalRowV1[]>;
 
   /** One asset's own history, for the card that shows it. */

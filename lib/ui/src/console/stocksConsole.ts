@@ -912,6 +912,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       onRefresh: () => { void todayRead.refetch(); },
       walletKey: todayRead.wallet ?? '',
       onMeasureCashOut: (tokenAddress) => cashOut.mutateAsync(tokenAddress),
+      onMarkRead: todayRead.markRead,
+      markedRead: todayRead.markedRead,
+      readSaved: todayRead.readSaved,
     } : null,
     telegram,
     // The decimals travel per address so the card can read a SELL amount in

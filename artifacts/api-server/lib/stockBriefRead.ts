@@ -22,10 +22,12 @@ export const stockBriefRuntime = {
   calendar: stocksDividendsRuntime.calendar,
   references: databaseDividendReadDepsV1.references,
   watches: (userId: string) => rwaMarketRealityRuntime.radar().watchesForUser({ userId }),
-  changes: (addresses: string[], since: string) =>
+  changes: (addresses: string[], since: string, until: string) =>
     assembleRwaSignalFeedV1(rwaDiscoverRuntime.deps(), {
       tokenAddresses: addresses,
       since,
+      until,
+      timeBasis: 'recorded',
       limit: 200,
     }),
 };
@@ -39,7 +41,7 @@ export async function readMyStocksTodayV1(wallet: string, since?: string): Promi
   wallet = wallet.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) throw new Error('stock_brief_identity_invalid');
   const now = stockBriefRuntime.now();
-  stockBriefWindowV1(now, since); // Reject invalid/future windows before any IO.
+  const window = stockBriefWindowV1(now, since); // Reject invalid/future windows before any IO.
   const core = await stockBriefCacheV1.read(wallet, async () => {
     if (!(await stockBriefRuntime.available())) throw new Error('stock_brief_storage_unavailable');
     const reader = stockBriefRuntime.reader();
@@ -93,29 +95,38 @@ export async function readMyStocksTodayV1(wallet: string, since?: string): Promi
             : null,
       });
     }
-    const watches = await stockBriefRuntime.watches(`eip155:8453:${wallet}`);
-    const watchedAddresses = [...new Set(watches.map((row) => row.tokenAddress))];
-    const addresses = [...new Set([...held, ...watchedAddresses])];
-    // Seven days is the maximum return window. Failures remain a named gap.
-    const [referenceRead, changeRead] = await Promise.allSettled([
+    const referenceRead = await Promise.allSettled([
       stockBriefRuntime.references(held, {
         since: new Date(now.getTime() - 4 * 86_400_000),
         until: now,
       }),
-      stockBriefRuntime.changes(addresses, new Date(now.getTime() - 7 * 86_400_000).toISOString()),
     ]);
     return {
       dividends,
       balanceReadAt,
       controls,
-      watchedAddresses,
-      generatedAt: now.toISOString(),
       tokenAddresses: calendar.stocks.map((row) => row.tokenAddress),
-      references: referenceRead.status === 'fulfilled' ? referenceRead.value : [],
-      changes: changeRead.status === 'fulfilled' ? changeRead.value : null,
+      references: referenceRead[0]!.status === 'fulfilled' ? referenceRead[0]!.value : [],
     };
   });
-  // A cached response must not move the next-visit cursor past its read.
-  // Otherwise a refresh inside the TTL could silently skip intervening events.
-  return stockBriefV1({ ...core, now, since });
+  // Balance/reference reads are cached, with their original dates. The inbox
+  // is read on EVERY visit against a bounded insertion-time snapshot. Its
+  // receipt must never advance past an event that was absent from a cached feed.
+  const watches = await stockBriefRuntime.watches(`eip155:8453:${wallet}`);
+  const watchedAddresses = [...new Set(watches.map((row) => row.tokenAddress))];
+  const addresses = [
+    ...new Set([
+      ...core.dividends.holdings
+        .filter((row) => Number(row.tokens) > 0)
+        .map((row) => row.tokenAddress),
+      ...watchedAddresses,
+    ]),
+  ];
+  let changes: Awaited<ReturnType<typeof stockBriefRuntime.changes>> | null = null;
+  try {
+    changes = await stockBriefRuntime.changes(addresses, window.since, now.toISOString());
+  } catch {
+    /* A failed inbox read cannot be marked as reviewed. */
+  }
+  return stockBriefV1({ ...core, now, since, changes, watchedAddresses });
 }

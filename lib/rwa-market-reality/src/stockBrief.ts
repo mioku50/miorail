@@ -47,6 +47,29 @@ export const StockBriefV1Schema = z
     changes: RwaSignalFeedV1Schema.nullable(),
     changesTruncated: z.boolean(),
     changesUnavailable: z.boolean(),
+    inbox: z
+      .object({
+        windowBasis: z.literal('recorded_at'),
+        heldCount: z.number().int().nonnegative(),
+        watchedCount: z.number().int().nonnegative(),
+        items: z
+          .array(
+            z
+              .object({
+                signalId: z.string().min(1),
+                relation: z.enum(['held', 'watched']),
+                relatedTokenAddress: Address,
+                inspectionHref: z.string().regex(/^\/investigate\?token=0x[0-9a-f]{40}$/),
+                relatedInspectionHref: z
+                  .string()
+                  .regex(/^\/investigate\?token=0x[0-9a-f]{40}$/)
+                  .nullable(),
+              })
+              .strict(),
+          )
+          .max(200),
+      })
+      .strict(),
     dividends: DividendWalletResponseV1Schema,
     miorailSummary: z.object({ summary: z.string() }).strict(),
     caveats: z.array(z.string()),
@@ -116,15 +139,39 @@ export function stockBriefV1(input: {
     });
   const relevant = new Set([...holdings.map((row) => row.tokenAddress), ...input.watchedAddresses]);
   const cards =
-    input.changes?.cards.filter(
-      (card) =>
-        (relevant.has(card.subjectAddress) ||
-          (card.officialAddress !== null && relevant.has(card.officialAddress))) &&
-        Date.parse(card.occurredAt) >= Date.parse(window.since) &&
-        Date.parse(card.occurredAt) <= now,
-    ) ?? [];
+    input.changes?.cards
+      .filter(
+        (card) =>
+          (relevant.has(card.subjectAddress) ||
+            (card.officialAddress !== null && relevant.has(card.officialAddress))) &&
+          Date.parse(card.recordedAt) >= Date.parse(window.since) &&
+          Date.parse(card.recordedAt) <= now &&
+          Date.parse(card.occurredAt) <= now,
+      )
+      .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt)) ?? [];
   const changes = input.changes ? { ...input.changes, cards } : null;
   const changesTruncated = (input.changes?.cards.length ?? 0) >= 200;
+  const held = new Set(holdings.map((row) => row.tokenAddress));
+  const items = cards.map((card) => {
+    const relatedTokenAddress = held.has(card.subjectAddress)
+      ? card.subjectAddress
+      : card.officialAddress && held.has(card.officialAddress)
+        ? card.officialAddress
+        : relevant.has(card.subjectAddress)
+          ? card.subjectAddress
+          : card.officialAddress!;
+    return {
+      signalId: card.signalId,
+      relation: held.has(relatedTokenAddress) ? ('held' as const) : ('watched' as const),
+      relatedTokenAddress,
+      inspectionHref: `/investigate?token=${card.subjectAddress}`,
+      relatedInspectionHref:
+        relatedTokenAddress === card.subjectAddress
+          ? null
+          : `/investigate?token=${relatedTokenAddress}`,
+    };
+  });
+  const heldCount = items.filter((row) => row.relation === 'held').length;
   return StockBriefV1Schema.parse({
     schemaVersion: 'my-stocks-today/v1',
     chainId: 8453,
@@ -141,12 +188,14 @@ export function stockBriefV1(input: {
     changes,
     changesTruncated,
     changesUnavailable: changes === null,
+    inbox: { windowBasis: 'recorded_at', heldCount, watchedCount: items.length - heldCount, items },
     dividends: input.dividends,
     miorailSummary: {
-      summary: `This wallet holds ${holdings.length} reviewed Coinbase stock${holdings.length === 1 ? '' : 's'}. ${changes === null ? 'Its recorded changes could not be read.' : `${cards.length}${changesTruncated ? ' or more' : ''} relevant recorded changes since ${window.since}; this does not establish that nothing else changed.`} Upcoming dividend figures are estimates unless explicitly scheduled by the issuer. Reference values are not sale proceeds.`,
+      summary: `This wallet holds ${holdings.length} reviewed Coinbase stock${holdings.length === 1 ? '' : 's'}. ${changes === null ? 'Its recorded changes could not be read.' : `${heldCount} changes related to current holdings and ${items.length - heldCount} to watched contracts were recorded since ${window.since}${changesTruncated ? '; the page is full and older entries may be missing' : ''}. Occurrence dates remain separate; this does not establish that nothing else changed.`} Upcoming dividend figures are estimates unless explicitly scheduled by the issuer. Reference values are not sale proceeds.`,
     },
     caveats: [
       'Relevance uses the stocks held now and the current watchlist; it does not reconstruct every past holding.',
+      'This personal inbox uses when Miorail recorded each change, so delayed observations can appear on a later visit. Occurrence and recording dates remain separate.',
       'Recorded market changes retain their own measured size, provider and policy. They are not quotes for this wallet’s balance.',
       'No executable sale value or profit/loss is computed. Open the stock and prepare a sell at an exact token amount for a fresh review.',
       'A dividend reaches the holder when the multiplier changes; a declared cash dividend is not cash paid to this wallet.',

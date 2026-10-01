@@ -48,6 +48,14 @@ cash-exit engine for the entire freshly read raw balance, persist tenant-scoped
 evidence, and share the SELL terms request budget. They do not grant a clearance
 or check wallet execution. Both web and Base App render these shared UI components.
 
+The personal change inbox reads a bounded recording-time window on every
+overview request, independently of cached balances. Public change feeds keep
+their occurrence-time ordering. Each personal entry explains its relationship
+to current holdings/watchlist and links to exact-contract inspection. Browser
+read cursors advance only on explicit **Mark as read**, and incomplete/failed
+pages cannot be acknowledged; connected clients maintain their own reviewed
+cursor. No receipt enrolls a watch or initiates a trade.
+
 A source snapshot and its asset membership must publish atomically. Failed
 provider reads preserve the last successful evidence and expose uncertainty;
 they must not manufacture delistings, disabled transfers or absent markets.
@@ -71,7 +79,7 @@ before claiming success.
 
 ## Separate MCP systems
 
-Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.4.0 adds twelve
+Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.4.1 adds twelve
 wallet-bound tools (28 total) for personal reads, preparation, measurement and
 execution evidence. These
 counts describe the audited release; new tools must update schemas, tests,

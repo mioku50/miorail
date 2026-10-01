@@ -2075,6 +2075,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .stocks-today details { margin-top: 12px; overflow-wrap: anywhere; }
 .mio-console .stocks-today summary { cursor: pointer; color: var(--muted); }
 .mio-console .stocks-today-changes { border-top: 1px solid var(--line); padding-top: 16px; }
+.mio-console .stocks-today-changes-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.mio-console .stocks-today-relevance { display: block; color: var(--muted); font-size: var(--fs-sm); margin-bottom: 4px; }
+.mio-console .stocks-today-change-links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
 .mio-console .stocks-today-changes ul { padding-left: 20px; }
 .mio-console .stocks-today-changes li { padding-block: 8px; }
 .mio-console .stocks-today-changes li p { margin-block: 4px; }

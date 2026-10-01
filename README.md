@@ -392,11 +392,19 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.4.0` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.4.1` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
-argument. Pass the previous `generatedAt` as `since` to return to the changes;
+argument. Pass a reviewed `generatedAt` as `since` to return to the changes;
 omitting it asks for 24 hours, and the maximum window is seven days. The browser
-remembers only that timestamp, separately per wallet. Coverage names the exact
+remembers that timestamp only after **Mark as read**, separately per wallet.
+Opening, polling or refreshing never advances it. Failed or full change pages
+cannot be acknowledged. This receipt is local to the browser; MCP clients keep
+their own reviewed cursor. The personal inbox filters and orders by recording
+time so delayed observations still appear, while preserving occurrence dates.
+Each entry labels holding/watch relevance and opens an exact-contract inspection.
+Balance/reference reads retain their original dates inside the short cache;
+the bounded change window is read anew on every overview request.
+Coverage names the exact
 Coinbase contracts currently read from Base documentation; other issuers and
 contracts are outside this balance read. A full change page and failed reads
 remain explicit gaps. This tool creates no watch, action or transaction.

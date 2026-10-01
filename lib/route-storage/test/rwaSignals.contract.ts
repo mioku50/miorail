@@ -45,17 +45,94 @@ export function rwaSignalContractV1(
   open: () => Promise<{ repository: RwaSignalRepositoryV1 }>,
 ): void {
   describe(`rwa signal repository (${label})`, () => {
+    test('a personal insertion-time window includes delayed findings and bounds before its page limit, without changing public chronology', async () => {
+      const { repository } = await open();
+      await repository.openSignalWatch({
+        chainId: 8453,
+        kinds: ['official_asset_lookalike_created'],
+        at: '2026-08-25T10:00:00.000Z',
+      });
+      await repository.recordSignals({
+        chainId: 8453,
+        recordedAt: '2026-08-25T19:00:00.000Z',
+        signals: [lookalikeSignalV1()],
+      });
+      await repository.recordSignals({
+        chainId: 8453,
+        recordedAt: '2026-08-25T18:00:00.000Z',
+        signals: [
+          lookalikeSignalV1({
+            subjectAddress: SECOND,
+            occurredAt: '2026-08-25T17:00:00.000Z',
+            dedupeKey: 'recent:occurred',
+          }),
+        ],
+      });
+      await repository.recordSignals({
+        chainId: 8453,
+        recordedAt: '2026-08-25T20:00:00.000Z',
+        signals: [
+          lookalikeSignalV1({
+            subjectAddress: SECOND,
+            occurredAt: '2026-08-25T19:30:00.000Z',
+            dedupeKey: 'after:snapshot',
+          }),
+        ],
+      });
+      const input = {
+        chainId: 8453,
+        tokenAddresses: [AAPL],
+        limit: 1,
+        since: '2026-08-25T18:30:00.000Z',
+        until: '2026-08-25T19:00:00.000Z',
+      };
+      const personal = await repository.recentSignals({ ...input, timeBasis: 'recorded' });
+      assert.equal(personal[0]?.subjectAddress, IMPOSTOR);
+      assert.equal(personal[0]?.occurredAt, '2026-08-25T12:00:00.000Z');
+      assert.equal(personal[0]?.recordedAt, input.until);
+      assert.deepEqual(
+        await repository.recentSignals(input),
+        [],
+        'the default still asks when the event happened',
+      );
+      const chronological = await repository.recentSignals({
+        chainId: 8453,
+        limit: 1,
+        until: input.until,
+      });
+      assert.equal(chronological[0]?.occurredAt, '2026-08-25T17:00:00.000Z');
+    });
     test('personal relevance includes an official lookalike match before applying the page limit', async () => {
       const { repository } = await open();
-      await repository.openSignalWatch({ chainId: 8453, kinds: ['official_asset_lookalike_created'], at: '2026-08-25T10:00:00.000Z' });
-      await repository.recordSignals({ chainId: 8453, recordedAt: '2026-08-25T13:00:00.000Z', signals: [
-        lookalikeSignalV1(),
-        lookalikeSignalV1({ subjectAddress: SECOND, officialAddress: IMPOSTOR, dedupeKey: 'unrelated:newer', occurredAt: '2026-08-25T12:30:00.000Z' }),
-      ] });
-      const rows = await repository.recentSignals({ chainId: 8453, tokenAddresses: [AAPL], limit: 1 });
+      await repository.openSignalWatch({
+        chainId: 8453,
+        kinds: ['official_asset_lookalike_created'],
+        at: '2026-08-25T10:00:00.000Z',
+      });
+      await repository.recordSignals({
+        chainId: 8453,
+        recordedAt: '2026-08-25T13:00:00.000Z',
+        signals: [
+          lookalikeSignalV1(),
+          lookalikeSignalV1({
+            subjectAddress: SECOND,
+            officialAddress: IMPOSTOR,
+            dedupeKey: 'unrelated:newer',
+            occurredAt: '2026-08-25T12:30:00.000Z',
+          }),
+        ],
+      });
+      const rows = await repository.recentSignals({
+        chainId: 8453,
+        tokenAddresses: [AAPL],
+        limit: 1,
+      });
       assert.equal(rows[0]?.officialAddress, AAPL);
       assert.equal(rows[0]?.subjectAddress, IMPOSTOR);
-      assert.deepEqual(await repository.recentSignals({ chainId: 8453, tokenAddresses: [], limit: 1 }), []);
+      assert.deepEqual(
+        await repository.recentSignals({ chainId: 8453, tokenAddresses: [], limit: 1 }),
+        [],
+      );
     });
     test('the pass that opens a watch is told so, and every later one is not', async () => {
       const { repository } = await open();
@@ -194,10 +271,10 @@ export function rwaSignalContractV1(
       });
 
       const feed = await repository.recentSignals({ chainId: 8453, limit: 10 });
-      assert.deepEqual(feed.map((row) => row.kind), [
-        'official_asset_market_became_active',
-        'official_asset_lookalike_created',
-      ]);
+      assert.deepEqual(
+        feed.map((row) => row.kind),
+        ['official_asset_market_became_active', 'official_asset_lookalike_created'],
+      );
       // When it happened and when we wrote it are separate facts. A pass that
       // catches up after an outage must not date its findings to itself.
       assert.equal(feed[0].occurredAt, '2026-08-25T17:00:00.000Z');
@@ -208,14 +285,20 @@ export function rwaSignalContractV1(
         kinds: ['official_asset_lookalike_created'],
         limit: 10,
       });
-      assert.deepEqual(narrowed.map((row) => row.subjectAddress), [IMPOSTOR]);
+      assert.deepEqual(
+        narrowed.map((row) => row.subjectAddress),
+        [IMPOSTOR],
+      );
 
       const forAsset = await repository.signalsForSubject({
         chainId: 8453,
         subjectAddress: AAPL,
         limit: 10,
       });
-      assert.deepEqual(forAsset.map((row) => row.kind), ['official_asset_market_became_active']);
+      assert.deepEqual(
+        forAsset.map((row) => row.kind),
+        ['official_asset_market_became_active'],
+      );
 
       // "The newest N changes" and "what changed since T" are different
       // questions. The window is inclusive on its lower edge and cuts on when
@@ -226,7 +309,10 @@ export function rwaSignalContractV1(
         limit: 10,
         since: '2026-08-25T17:00:00.000Z',
       });
-      assert.deepEqual(sinceLate.map((row) => row.kind), ['official_asset_market_became_active']);
+      assert.deepEqual(
+        sinceLate.map((row) => row.kind),
+        ['official_asset_market_became_active'],
+      );
 
       const sinceAll = await repository.recentSignals({
         chainId: 8453,
@@ -333,11 +419,14 @@ export function rwaSignalContractV1(
         subjectAddress: AAPL,
         limit: 10,
       });
-      assert.deepEqual(
-        feed.map((row) => row.kind).sort(),
-        ['official_asset_corporate_action_announced', 'official_asset_multiplier_changed'],
+      assert.deepEqual(feed.map((row) => row.kind).sort(), [
+        'official_asset_corporate_action_announced',
+        'official_asset_multiplier_changed',
+      ]);
+      assert.equal(
+        feed.find((row) => row.kind.endsWith('announced'))!.facts.announcementId,
+        '2026-01',
       );
-      assert.equal(feed.find((row) => row.kind.endsWith('announced'))!.facts.announcementId, '2026-01');
     });
   });
 }

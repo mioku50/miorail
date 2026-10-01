@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { QueryClient, UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
 import {
@@ -974,7 +974,7 @@ export function useMyDividends(options: { enabled: boolean }) {
   });
 }
 
-/** A prior successful visit's timestamp, local to this browser and wallet.
+/** An explicitly reviewed overview's timestamp, local to this browser and wallet.
  * It is only a filter; the server derives ownership from the session. */
 export function useMyStocksToday(options: { enabled: boolean }) {
   const session = useSession({ enabled: options.enabled });
@@ -983,12 +983,13 @@ export function useMyStocksToday(options: { enabled: boolean }) {
   if (baseline.current.wallet !== wallet) {
     let since: string | undefined;
     try {
-      const stored = wallet && typeof window !== 'undefined' ? window.localStorage.getItem(`miorail:stocks-seen:${wallet}`) : null;
+      const stored = wallet && typeof window !== 'undefined' ? window.localStorage.getItem(`miorail:stocks-reviewed:v1:${wallet}`) : null;
       if (stored && Number.isFinite(Date.parse(stored)) && Date.parse(stored) <= Date.now()) since = stored;
     } catch { /* A blocked local store leaves the default 24-hour window. */ }
     baseline.current = { wallet, since };
   }
   const since = baseline.current.since;
+  const [receipt, setReceipt] = useState<{ wallet: string; at: string; persisted: boolean } | null>(null);
   const query = useQuery({
     queryKey: ['my-stocks-today', wallet, since ?? '24h'],
     queryFn: async () => StockBriefV1Schema.parse(await fetchApi<unknown>(`/api/stocks/today${since ? `?since=${encodeURIComponent(since)}` : ''}`)),
@@ -998,12 +999,25 @@ export function useMyStocksToday(options: { enabled: boolean }) {
     retry: 1,
     retryDelay: 4_000,
   });
-  useEffect(() => {
-    if (!wallet || !query.data) return;
-    try { window.localStorage.setItem(`miorail:stocks-seen:${wallet}`, query.data.generatedAt); }
-    catch { /* Reading the overview never requires local storage. */ }
-  }, [wallet, query.data]);
-  return { ...query, returning: since !== undefined, wallet };
+  const markedRead = receipt?.wallet === wallet && query.data !== undefined &&
+    Date.parse(receipt.at) >= Date.parse(query.data.generatedAt);
+  const markRead = () => {
+    if (!wallet || !query.data || query.isError || query.isFetching ||
+        query.data.changesUnavailable || query.data.changesTruncated) return;
+    let persisted = false;
+    try {
+      const key = `miorail:stocks-reviewed:v1:${wallet}`;
+      const previous = window.localStorage.getItem(key);
+      // Another open tab may already have reviewed a newer snapshot.
+      const next = previous && Date.parse(previous) > Date.parse(query.data.generatedAt)
+        ? previous : query.data.generatedAt;
+      window.localStorage.setItem(key, next);
+      persisted = true;
+    } catch { /* Local acknowledgment still works when browser storage is blocked. */ }
+    setReceipt({ wallet, at: query.data.generatedAt, persisted });
+  };
+  return { ...query, returning: since !== undefined, wallet, markRead, markedRead,
+    readSaved: receipt?.wallet === wallet ? receipt.persisted : null };
 }
 
 /** Explicit measurement only: no mount, focus or timer triggers a quote. */

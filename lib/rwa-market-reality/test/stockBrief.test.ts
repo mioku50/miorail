@@ -82,3 +82,64 @@ test('unrelated events and older holdings are not presented as personal news; wa
     true,
   );
 });
+
+test('the inbox includes a late recorded event, preserves its occurrence date, and names the exact held contract behind a lookalike', () => {
+  const input = briefInput();
+  const card = {
+    signalId: 'late',
+    chainId: 8453 as const,
+    kind: 'official_asset_lookalike_created' as const,
+    subjectAddress: OTHER,
+    subjectTicker: 'NVDAc',
+    officialAddress: TOKEN,
+    officialTicker: 'NVDAc',
+    occurredAt: '2026-09-20T10:00:00.000Z',
+    recordedAt: '2026-09-30T20:00:00.000Z',
+    facts: {},
+  };
+  const watched = {
+    ...card,
+    signalId: 'watched',
+    kind: 'official_asset_multiplier_changed' as const,
+    subjectAddress: OTHER,
+    officialAddress: null,
+    recordedAt: '2026-09-30T20:01:00.000Z',
+  };
+  const future = { ...card, signalId: 'after-snapshot', recordedAt: '2026-09-30T22:00:00.000Z' };
+  const result = stockBriefV1({
+    ...input,
+    since: '2026-09-30T19:00:00.000Z',
+    watchedAddresses: [OTHER],
+    changes: { ...FEED, cards: [card, future, watched] },
+  });
+  assert.deepEqual(
+    result.changes?.cards.map((c) => c.signalId),
+    ['watched', 'late'],
+  );
+  assert.equal(result.changes?.cards[1]?.occurredAt, card.occurredAt);
+  assert.deepEqual(result.inbox, {
+    windowBasis: 'recorded_at',
+    heldCount: 1,
+    watchedCount: 1,
+    items: [
+      {
+        signalId: 'watched',
+        relation: 'watched',
+        relatedTokenAddress: OTHER,
+        inspectionHref: `/investigate?token=${OTHER}`,
+        relatedInspectionHref: null,
+      },
+      {
+        signalId: 'late',
+        relation: 'held',
+        relatedTokenAddress: TOKEN,
+        inspectionHref: `/investigate?token=${OTHER}`,
+        relatedInspectionHref: `/investigate?token=${TOKEN}`,
+      },
+    ],
+  });
+  assert.match(
+    result.miorailSummary.summary,
+    /1 changes related to current holdings and 1 to watched/,
+  );
+});

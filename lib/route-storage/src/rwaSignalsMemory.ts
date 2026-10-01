@@ -16,7 +16,10 @@ import {
  * which is the exact gap that put three bugs into production in T65.
  */
 export function createMemoryRwaSignalRepository(): RwaSignalRepositoryV1 {
-  const watch = new Map<string, { chainId: number; kind: RwaSignalKindV1; watchingSince: string }>();
+  const watch = new Map<
+    string,
+    { chainId: number; kind: RwaSignalKindV1; watchingSince: string }
+  >();
   const signals: RwaSignalRowV1[] = [];
   const keys = new Set<string>();
   let nextId = 1;
@@ -80,26 +83,35 @@ export function createMemoryRwaSignalRepository(): RwaSignalRepositoryV1 {
     async recentSignals(input) {
       const limit = Math.max(1, Math.min(200, input.limit));
       const kinds = input.kinds && input.kinds.length > 0 ? new Set(input.kinds) : null;
-      // Inclusive on the lower edge, matching `occurred_at >= since` in SQL.
       const since = input.since === undefined ? null : Date.parse(input.since);
-      const addresses = input.tokenAddresses === undefined ? null : new Set(input.tokenAddresses.map((address) => address.toLowerCase()));
-      return signals
-        .filter(
-          (row) =>
-            row.chainId === input.chainId &&
-            (addresses === null || addresses.has(row.subjectAddress) || (row.officialAddress !== null && addresses.has(row.officialAddress))) &&
-            (kinds === null || kinds.has(row.kind)) &&
-            (since === null || Date.parse(row.occurredAt) >= since),
-        )
-        // The same total order the database produces: newest occurrence first,
-        // then newest insertion, so two transitions stamped alike stay stable.
-        .sort(
-          (left, right) =>
-            Date.parse(right.occurredAt) - Date.parse(left.occurredAt) ||
-            Number(right.signalId) - Number(left.signalId),
-        )
-        .slice(0, limit)
-        .map((row) => ({ ...row, facts: { ...row.facts } }));
+      const until = input.until === undefined ? null : Date.parse(input.until);
+      const time = (row: RwaSignalRowV1) =>
+        Date.parse(input.timeBasis === 'recorded' ? row.recordedAt : row.occurredAt);
+      const addresses =
+        input.tokenAddresses === undefined
+          ? null
+          : new Set(input.tokenAddresses.map((address) => address.toLowerCase()));
+      return (
+        signals
+          .filter(
+            (row) =>
+              row.chainId === input.chainId &&
+              (addresses === null ||
+                addresses.has(row.subjectAddress) ||
+                (row.officialAddress !== null && addresses.has(row.officialAddress))) &&
+              (kinds === null || kinds.has(row.kind)) &&
+              (since === null || time(row) >= since) &&
+              (until === null || time(row) <= until),
+          )
+          // The same total order the database produces: newest occurrence first,
+          // then newest insertion, so two transitions stamped alike stay stable.
+          .sort(
+            (left, right) =>
+              time(right) - time(left) || Number(right.signalId) - Number(left.signalId),
+          )
+          .slice(0, limit)
+          .map((row) => ({ ...row, facts: { ...row.facts } }))
+      );
     },
 
     async signalsForSubject(input) {

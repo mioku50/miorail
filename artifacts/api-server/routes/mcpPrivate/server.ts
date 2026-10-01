@@ -59,7 +59,7 @@ import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/st
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.4.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.4.1';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -148,7 +148,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
 
   server.registerTool('miorail_get_my_stocks_today', {
     title: 'My stocks today — holdings, dividends and relevant changes',
-    description: `Read the connected wallet's reviewed Coinbase stocks, balances at a pinned Base block, reference values with publication times, upcoming dividend estimates, confirmed reinvestments and changes relevant to its current holdings and watchlist. No wallet argument: the grant's owner is the only account read. Pass the prior response's generatedAt as since to check back; omitted means the last 24 hours, and windows longer than seven days are clamped and labelled. Coverage names the exact contracts read. Reference values are not executable proceeds or profit/loss. Recorded market changes preserve their own size and provider; never interpolate them to this wallet's balance. Empty changes do not prove nothing happened: always retain coverage, unavailable and truncated states. The issuer's pending multiplier is a plan, not today's conversion. This tool prepares no action and signs nothing.`,
+    description: `Read the connected wallet's reviewed Coinbase stocks, balances at a pinned Base block, reference values with publication times, upcoming dividend estimates, confirmed reinvestments and changes relevant to its current holdings and watchlist. No wallet argument: the grant's owner is the only account read. The personal inbox uses recordedAt, so delayed events are included even when occurredAt predates the previous visit. Preserve both dates. inbox items explain held/watched relevance and link to exact-contract inspection. Pass a REVIEWED response's generatedAt as since to check back; omitted means the last 24 hours, and windows longer than seven days are clamped and labelled. Do not advance a remembered cursor merely because you fetched the overview, or when changesUnavailable/changesTruncated is true. This tool does not store a read receipt; the web's explicit Mark as read is local to that browser and wallet. Coverage names the exact contracts read. Reference values are not executable proceeds or profit/loss. Recorded market changes preserve their own size and provider; never interpolate them to this wallet's balance. Current relevance does not prove the wallet held this asset when an event occurred. Empty changes do not prove nothing happened: always retain coverage, unavailable and truncated states. The issuer's pending multiplier is a plan, not today's conversion. This tool prepares no action and signs nothing.`,
     inputSchema: StockBriefInputV1Schema.shape,
     outputSchema: StockBriefV1Schema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
