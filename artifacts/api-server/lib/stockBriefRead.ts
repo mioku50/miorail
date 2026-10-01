@@ -3,8 +3,17 @@ import { assembleRwaSignalFeedV1 } from '@mioagent/rwa-dossier';
 import {
   stockBriefV1,
   stockBriefWindowV1,
+  StockBriefInputV1Schema,
   type StockBriefV1,
 } from '@mioagent/rwa-market-reality/stock-brief';
+import type { z } from 'zod';
+import type { RwaSignalRowV1 } from '@mioagent/route-storage';
+import {
+  stockInboxRuntime,
+  stockInboxProofV1,
+  readStockInboxProofV1,
+  StockInboxErrorV1,
+} from './stockInboxRead.js';
 import { databaseDividendReadDepsV1 } from './dividendRead.js';
 import { readAtBlockV1 } from './dividendWalletRead.js';
 import { myDividendWalletV1, stocksDividendsRuntime } from '../routes/stocksDividends.js';
@@ -22,13 +31,14 @@ export const stockBriefRuntime = {
   calendar: stocksDividendsRuntime.calendar,
   references: databaseDividendReadDepsV1.references,
   watches: (userId: string) => rwaMarketRealityRuntime.radar().watchesForUser({ userId }),
-  changes: (addresses: string[], since: string, until: string) =>
+  changes: (addresses: string[], since: string, until: string, rows?: readonly RwaSignalRowV1[]) =>
     assembleRwaSignalFeedV1(rwaDiscoverRuntime.deps(), {
       tokenAddresses: addresses,
       since,
       until,
       timeBasis: 'recorded',
       limit: 200,
+      rows,
     }),
 };
 export const stockBriefCacheV1 = createPublicReadCacheV1({ ttlMs: 30_000, max: 1_024 });
@@ -37,11 +47,26 @@ function word(read: B20RpcResultV1<string> | undefined): bigint | null {
   return read?.ok && /^0x[0-9a-fA-F]{64}$/.test(read.value) ? BigInt(read.value) : null;
 }
 
-export async function readMyStocksTodayV1(wallet: string, since?: string): Promise<StockBriefV1> {
+export async function readMyStocksTodayV1(
+  wallet: string,
+  options?: string | z.infer<typeof StockBriefInputV1Schema>,
+): Promise<StockBriefV1> {
   wallet = wallet.toLowerCase();
   if (!/^0x[0-9a-f]{40}$/.test(wallet)) throw new Error('stock_brief_identity_invalid');
   const now = stockBriefRuntime.now();
-  const window = stockBriefWindowV1(now, since); // Reject invalid/future windows before any IO.
+  const input = StockBriefInputV1Schema.parse(
+    typeof options === 'string' ? { since: options } : (options ?? {}),
+  );
+  if (input.since) stockBriefWindowV1(now, input.since); // Validate before chain IO.
+  const cursor = input.cursor ? readStockInboxProofV1(input.cursor, wallet, 'cursor', now) : null;
+  if (
+    cursor &&
+    (cursor.kind !== 'cursor' || input.since || (input.view && input.view !== cursor.view))
+  )
+    throw new StockInboxErrorV1('stock_inbox_cursor_invalid');
+  const view = cursor?.kind === 'cursor' ? cursor.view : (input.view ?? 'unread');
+  // Ensure proofs can be issued before spending any RPC reads.
+  stockInboxRuntime.secret();
   const core = await stockBriefCacheV1.read(wallet, async () => {
     if (!(await stockBriefRuntime.available())) throw new Error('stock_brief_storage_unavailable');
     const reader = stockBriefRuntime.reader();
@@ -122,11 +147,68 @@ export async function readMyStocksTodayV1(wallet: string, since?: string): Promi
       ...watchedAddresses,
     ]),
   ];
+  const repository = stockInboxRuntime.repository();
+  const state = await repository.open(wallet, now);
+  const since =
+    cursor?.kind === 'cursor'
+      ? cursor.since
+      : input.since
+        ? stockBriefWindowV1(now, input.since).since
+        : state.since;
+  const until = cursor?.kind === 'cursor' ? cursor.until : now.toISOString();
+  let nextCursor: string | null = null;
   let changes: Awaited<ReturnType<typeof stockBriefRuntime.changes>> | null = null;
   try {
-    changes = await stockBriefRuntime.changes(addresses, window.since, now.toISOString());
+    const rows = await repository.page({
+      wallet,
+      addresses,
+      since,
+      until,
+      view,
+      before: cursor?.kind === 'cursor' ? cursor.before : undefined,
+    });
+    const visible = rows.slice(0, 50);
+    const expiry = new Date(now.getTime() + 15 * 60_000).toISOString();
+    if (rows.length > 50) {
+      const last = visible.at(-1)!;
+      nextCursor = stockInboxProofV1({
+        kind: 'cursor',
+        wallet,
+        view,
+        since,
+        until,
+        before: { at: last.recordedAt, id: last.signalId },
+        issuedAt: now.toISOString(),
+        expiresAt: expiry,
+      });
+    }
+    changes = await stockBriefRuntime.changes(addresses, since, until, visible);
   } catch {
     /* A failed inbox read cannot be marked as reviewed. */
   }
-  return stockBriefV1({ ...core, now, since, changes, watchedAddresses });
+  const brief = stockBriefV1({
+    ...core,
+    now,
+    since,
+    preserveWindow: true,
+    changes,
+    watchedAddresses,
+    inboxState: {
+      view,
+      openedAt: state.openedAt,
+      reviewedAt: state.reviewedAt,
+      snapshotAt: until,
+      nextCursor: changes ? nextCursor : null,
+      reviewToken: null,
+    },
+  });
+  if (changes && view === 'unread')
+    brief.inbox.reviewToken = stockInboxProofV1({
+      kind: 'review',
+      wallet,
+      ids: brief.inbox.items.map((row) => row.signalId),
+      issuedAt: now.toISOString(),
+      expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(),
+    });
+  return brief;
 }

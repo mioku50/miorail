@@ -22,7 +22,7 @@ test('a personal holding, estimated dividend and dated reference appear without 
   assert.match(html, /0\.000882 held/);
   assert.match(html, /Reference value/);
   assert.match(html, /\(estimate\)/);
-  assert.match(html, /Since you last marked as read/);
+  assert.match(html, /Unread updates/);
   assert.match(html, /What was measured/);
   assert.doesNotMatch(html, /\$1,000|Cash back|nothing changed/i);
 });
@@ -45,6 +45,8 @@ test('a delayed personal change links to exact evidence and cannot imply ownersh
     },
   ];
   data.inbox = {
+    ...data.inbox,
+    reviewToken: 'opaque-review-proof',
     windowBasis: 'recorded_at',
     heldCount: 1,
     watchedCount: 0,

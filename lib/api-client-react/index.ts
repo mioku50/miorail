@@ -9,7 +9,7 @@ import {
 import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
-import { StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
+import { StockBriefV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 
 // T19.1: re-export the production action-type whitelist so both surfaces can
@@ -974,50 +974,92 @@ export function useMyDividends(options: { enabled: boolean }) {
   });
 }
 
-/** An explicitly reviewed overview's timestamp, local to this browser and wallet.
- * It is only a filter; the server derives ownership from the session. */
+/** Shared per-event receipts follow the authenticated wallet across clients. */
 export function useMyStocksToday(options: { enabled: boolean }) {
   const session = useSession({ enabled: options.enabled });
-  const wallet = options.enabled ? session.data?.user?.address.toLowerCase() ?? null : null;
-  const baseline = useRef<{ wallet: string | null; since: string | undefined }>({ wallet: null, since: undefined });
-  if (baseline.current.wallet !== wallet) {
-    let since: string | undefined;
-    try {
-      const stored = wallet && typeof window !== 'undefined' ? window.localStorage.getItem(`miorail:stocks-reviewed:v1:${wallet}`) : null;
-      if (stored && Number.isFinite(Date.parse(stored)) && Date.parse(stored) <= Date.now()) since = stored;
-    } catch { /* A blocked local store leaves the default 24-hour window. */ }
-    baseline.current = { wallet, since };
-  }
-  const since = baseline.current.since;
-  const [receipt, setReceipt] = useState<{ wallet: string; at: string; persisted: boolean } | null>(null);
+  const wallet = options.enabled ? (session.data?.user?.address.toLowerCase() ?? null) : null;
+  const client = useQueryClient();
+  const [navigation, setNavigation] = useState<{
+    wallet: string | null;
+    view: 'unread' | 'history';
+    cursor: string | null;
+  }>({ wallet: null, view: 'unread', cursor: null });
+  const view = navigation.wallet === wallet ? navigation.view : 'unread';
+  const cursor = navigation.wallet === wallet ? navigation.cursor : null;
+  const [receipt, setReceipt] = useState<{ wallet: string; at: string } | null>(null);
   const query = useQuery({
-    queryKey: ['my-stocks-today', wallet, since ?? '24h'],
-    queryFn: async () => StockBriefV1Schema.parse(await fetchApi<unknown>(`/api/stocks/today${since ? `?since=${encodeURIComponent(since)}` : ''}`)),
+    queryKey: ['my-stocks-today', wallet, view, cursor],
+    queryFn: async () => {
+      const params = new URLSearchParams();
+      if (view !== 'unread') params.set('view', view);
+      if (cursor) params.set('cursor', cursor);
+      return StockBriefV1Schema.parse(
+        await fetchApi<unknown>(`/api/stocks/today${params.size ? `?${params}` : ''}`),
+      );
+    },
     enabled: options.enabled && wallet !== null,
     staleTime: 30_000,
-    refetchInterval: 5 * 60_000,
+    refetchInterval: cursor ? false : 5 * 60_000,
+    refetchOnWindowFocus: cursor ? false : true,
     retry: 1,
     retryDelay: 4_000,
   });
-  const markedRead = receipt?.wallet === wallet && query.data !== undefined &&
-    Date.parse(receipt.at) >= Date.parse(query.data.generatedAt);
-  const markRead = () => {
-    if (!wallet || !query.data || query.isError || query.isFetching ||
-        query.data.changesUnavailable || query.data.changesTruncated) return;
-    let persisted = false;
-    try {
-      const key = `miorail:stocks-reviewed:v1:${wallet}`;
-      const previous = window.localStorage.getItem(key);
-      // Another open tab may already have reviewed a newer snapshot.
-      const next = previous && Date.parse(previous) > Date.parse(query.data.generatedAt)
-        ? previous : query.data.generatedAt;
-      window.localStorage.setItem(key, next);
-      persisted = true;
-    } catch { /* Local acknowledgment still works when browser storage is blocked. */ }
-    setReceipt({ wallet, at: query.data.generatedAt, persisted });
+  const acknowledgment = useMutation({
+    retry: false,
+    mutationFn: async (input: { wallet: string; reviewToken: string }) =>
+      StockInboxReadResultV1Schema.parse(
+        await fetchApi<unknown>('/api/stocks/inbox/read', {
+          method: 'POST',
+          body: JSON.stringify({ reviewToken: input.reviewToken }),
+        }),
+      ),
+    onSuccess: (data, input) => {
+      setReceipt({ wallet: input.wallet, at: data.reviewedAt });
+      void client.invalidateQueries({ queryKey: ['my-stocks-today', input.wallet] });
+    },
+  });
+  const navigate = (nextView: 'unread' | 'history', nextCursor: string | null) => {
+    acknowledgment.reset();
+    setReceipt(null);
+    setNavigation({ wallet, view: nextView, cursor: nextCursor });
   };
-  return { ...query, returning: since !== undefined, wallet, markRead, markedRead,
-    readSaved: receipt?.wallet === wallet ? receipt.persisted : null };
+  const markRead = () => {
+    if (
+      !wallet ||
+      !query.data?.inbox.reviewToken ||
+      query.isError ||
+      query.isFetching ||
+      acknowledgment.isPending ||
+      query.data.changesUnavailable ||
+      query.data.changesTruncated ||
+      view !== 'unread'
+    )
+      return;
+    acknowledgment.mutate({ wallet, reviewToken: query.data.inbox.reviewToken });
+  };
+  return {
+    ...query,
+    wallet,
+    view,
+    markRead,
+    returning: query.data?.inbox.reviewedAt != null,
+    markedRead: receipt?.wallet === wallet,
+    marking: acknowledgment.isPending && acknowledgment.variables?.wallet === wallet,
+    markFailed: acknowledgment.isError && acknowledgment.variables?.wallet === wallet,
+    onView: (next: 'unread' | 'history') => navigate(next, null),
+    onNextPage: () => {
+      if (query.data?.inbox.nextCursor) navigate(view, query.data.inbox.nextCursor);
+    },
+    onFirstPage: () => navigate(view, null),
+    isLaterPage: cursor !== null,
+    refresh: () => {
+      if (cursor) navigate(view, null);
+      else {
+        acknowledgment.reset();
+        void query.refetch();
+      }
+    },
+  };
 }
 
 /** Explicit measurement only: no mount, focus or timer triggers a quote. */

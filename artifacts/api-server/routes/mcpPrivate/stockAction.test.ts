@@ -465,6 +465,7 @@ describe('the existing execution boundary is unchanged', () => {
         'miorail_get_execution_status',
         'miorail_get_my_stocks_today',
         'miorail_get_stock_base_mcp_action',
+        'miorail_mark_stock_updates_read',
         'miorail_measure_market_reality',
         'miorail_measure_my_stock_cash_out',
         'miorail_prepare_b20_entry',
@@ -481,7 +482,11 @@ describe('the existing execution boundary is unchanged', () => {
     const tools = (await client.listTools()).tools;
     const today = tools.find((tool) => tool.name === 'miorail_get_my_stocks_today')!;
     assert.equal(today.annotations?.readOnlyHint, true);
-    assert.deepEqual(Object.keys(today.inputSchema.properties ?? {}), ['since']);
+    assert.deepEqual(Object.keys(today.inputSchema.properties ?? {}), ['since', 'view', 'cursor']);
+    const mark = tools.find((tool) => tool.name === 'miorail_mark_stock_updates_read')!;
+    assert.equal(mark.annotations?.readOnlyHint, false);
+    assert.equal(mark.annotations?.destructiveHint, false);
+    assert.deepEqual(Object.keys(mark.inputSchema.properties ?? {}), ['reviewToken']);
     const stock = tools.find((tool) => tool.name === 'miorail_prepare_stock_action')!;
     const action = tools.find((tool) => tool.name === 'miorail_get_base_mcp_action')!;
     const stockArgs = Object.keys(

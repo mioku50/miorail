@@ -118,3 +118,7 @@ export * from './dividendRecordSupplyDatabase.js';
 export * from './dividendDeclarations.js';
 export * from './dividendDeclarationsMemory.js';
 export * from './dividendDeclarationsDatabase.js';
+
+export * from './stockInbox.js';
+export * from './stockInboxMemory.js';
+export * from './stockInboxDatabase.js';

@@ -16,6 +16,7 @@ import type {
   RwaSignalKindV1,
   B20CorporateActionRepositoryV1,
   RwaSignalRepositoryV1,
+  RwaSignalRowV1,
 } from '@mioagent/route-storage';
 import { isOfficialV1 } from '@mioagent/route-storage';
 
@@ -590,21 +591,24 @@ export async function assembleRwaSignalFeedV1(
     since?: string;
     until?: string;
     timeBasis?: 'occurred' | 'recorded';
+    rows?: readonly RwaSignalRowV1[];
     tokenAddresses?: readonly string[];
   },
 ): Promise<RwaSignalFeedV1> {
   const now = deps.now();
   const limit = Math.max(1, Math.min(200, input?.limit ?? 50));
   const [cards, watching, universe, coverage] = await Promise.all([
-    deps.signals.recentSignals({
-      chainId: 8453,
-      limit,
-      ...(input?.tokenAddresses === undefined ? {} : { tokenAddresses: input.tokenAddresses }),
-      ...(input?.kinds && input.kinds.length > 0 ? { kinds: input.kinds } : {}),
-      ...(input?.since === undefined ? {} : { since: input.since }),
-      ...(input?.until === undefined ? {} : { until: input.until }),
-      ...(input?.timeBasis === undefined ? {} : { timeBasis: input.timeBasis }),
-    }),
+    input?.rows
+      ? Promise.resolve(input.rows)
+      : deps.signals.recentSignals({
+          chainId: 8453,
+          limit,
+          ...(input?.tokenAddresses === undefined ? {} : { tokenAddresses: input.tokenAddresses }),
+          ...(input?.kinds && input.kinds.length > 0 ? { kinds: input.kinds } : {}),
+          ...(input?.since === undefined ? {} : { since: input.since }),
+          ...(input?.until === undefined ? {} : { until: input.until }),
+          ...(input?.timeBasis === undefined ? {} : { timeBasis: input.timeBasis }),
+        }),
     deps.signals.signalWatch({ chainId: 8453 }),
     deps.official.officialAssets({ chainId: 8453, limit: 64, currentlyListedOnly: false }),
     deps.corporateActions.coverage({ chainId: 8453 }),

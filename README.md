@@ -312,11 +312,11 @@ curl -s -X POST https://miorail.xyz/mcp \
 
 ## Connected Miorail MCP
 
-`https://miorail.xyz/mcp/private` is the same sixteen read tools **plus twelve bound to
+`https://miorail.xyz/mcp/private` is the same sixteen read tools **plus thirteen bound to
 one wallet** — the one that authorised the connection. It cannot read, prepare
 or execute for any other wallet, and no argument would let it try.
 
-One of the twelve is the verb the read tools were missing.
+One of the thirteen is the verb the read tools were missing.
 `compare_market_reality` reads stored evidence, so it could truthfully report
 "no fresh answer at this size" and had no way to get one — only the web button
 could measure. `miorail_measure_market_reality` is that button, calling the same
@@ -392,15 +392,28 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.4.1` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.5.0` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
-argument. Pass a reviewed `generatedAt` as `since` to return to the changes;
-omitting it asks for 24 hours, and the maximum window is seven days. The browser
-remembers that timestamp only after **Mark as read**, separately per wallet.
-Opening, polling or refreshing never advances it. Failed or full change pages
-cannot be acknowledged. This receipt is local to the browser; MCP clients keep
-their own reviewed cursor. The personal inbox filters and orders by recording
-time so delayed observations still appear, while preserving occurrence dates.
+argument. The shared inbox establishes a fixed 24-hour baseline at first use;
+opening it acknowledges no event. Unread entries persist past seven days and
+are paged fifty at a time. `view: "history"` also shows reviewed entries for
+currently held/watched contracts. `nextCursor` pages through one dated snapshot;
+refresh without it to see later findings. Occurrence and recording dates remain
+separate. An optional `since` still requests an ad hoc window capped at seven
+days; it never advances the inbox or imports an old browser cursor.
+
+**Mark as read** calls `POST /api/stocks/inbox/read` with an opaque, wallet-bound
+proof for only the returned page. It expires after fifteen minutes and cannot
+acknowledge unseen pages, forged IDs or another wallet. A failed feed returns no
+proof; a failed receipt leaves events unread. Per-event receipts live in
+PostgreSQL and are shared by web, Base App and Connected MCP for the same wallet.
+`miorail_mark_stock_updates_read` accepts that unchanged proof only after the
+user explicitly asks to mark the shown updates as read. Fetching, explaining
+or sending a notification never grants that authorization. Connected MCP now
+has 29 tools: 16 public reads plus 13 wallet-bound tools. This new tool changes
+only inbox receipts, never holdings, notification subscriptions or actions.
+The personal inbox filters and orders by recording time, then signal ID, so
+same-time and delayed insertions remain independently reviewable.
 Each entry labels holding/watch relevance and opens an exact-contract inspection.
 Balance/reference reads retain their original dates inside the short cache;
 the bounded change window is read anew on every overview request.

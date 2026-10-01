@@ -31,7 +31,8 @@ import {
   MiorailReviewBorrowOutputV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
-import { StockBriefInputV1Schema, StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
+import { StockBriefInputV1Schema, StockBriefV1Schema, StockInboxReadInputV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
+import { acknowledgeStockInboxV1, StockInboxErrorV1 } from '../../lib/stockInboxRead.js';
 import { readMyStocksTodayV1 } from '../../lib/stockBriefRead.js';
 import { StockPositionQuoteInputV1Schema, StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/stockPositionQuoteRead.js';
@@ -59,13 +60,13 @@ import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/st
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.4.1';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.5.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound twelve below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound thirteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
 For a daily personal read, use miorail_get_my_stocks_today. It reads this grant’s wallet and reports its own coverage; get_dividend_calendar remains the public calendar. When the owner asks what their position would fetch, use miorail_measure_my_stock_cash_out for that entire current balance, never scale a public ladder quote to it.
 
@@ -125,7 +126,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the twelve below can be called at all. A client that connected
+  // before any of the thirteen below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -148,13 +149,25 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
 
   server.registerTool('miorail_get_my_stocks_today', {
     title: 'My stocks today — holdings, dividends and relevant changes',
-    description: `Read the connected wallet's reviewed Coinbase stocks, balances at a pinned Base block, reference values with publication times, upcoming dividend estimates, confirmed reinvestments and changes relevant to its current holdings and watchlist. No wallet argument: the grant's owner is the only account read. The personal inbox uses recordedAt, so delayed events are included even when occurredAt predates the previous visit. Preserve both dates. inbox items explain held/watched relevance and link to exact-contract inspection. Pass a REVIEWED response's generatedAt as since to check back; omitted means the last 24 hours, and windows longer than seven days are clamped and labelled. Do not advance a remembered cursor merely because you fetched the overview, or when changesUnavailable/changesTruncated is true. This tool does not store a read receipt; the web's explicit Mark as read is local to that browser and wallet. Coverage names the exact contracts read. Reference values are not executable proceeds or profit/loss. Recorded market changes preserve their own size and provider; never interpolate them to this wallet's balance. Current relevance does not prove the wallet held this asset when an event occurred. Empty changes do not prove nothing happened: always retain coverage, unavailable and truncated states. The issuer's pending multiplier is a plan, not today's conversion. This tool prepares no action and signs nothing.`,
+    description: `Read the connected wallet's reviewed Coinbase stocks, balances at a pinned Base block, reference values with publication times, upcoming dividend estimates, confirmed reinvestments and changes relevant to its current holdings and watchlist. No wallet argument: the grant's owner is the only account read. The personal inbox uses recordedAt, so delayed events are included even when occurredAt predates the previous visit. Preserve both dates. inbox items explain held/watched relevance and link to exact-contract inspection. Omitted view returns the wallet's shared unread inbox; view history includes reviewed entries. The initial 24-hour baseline is fixed on first use, and unreviewed entries remain beyond seven days. Reading establishes that baseline but acknowledges no event. nextCursor pages through a bounded snapshot; use it unchanged to read the next page, and refresh without it for new entries. Optional since is an ad hoc window capped at seven days; it is never a read receipt. reviewToken is an opaque 15-minute proof for ONLY the returned unread page, bound to this wallet. After the USER explicitly asks to mark the shown page as read, call miorail_mark_stock_updates_read with that token. Reading, explaining or delivering a notification alone is not permission to mark it. Never acknowledge unavailable changes. Web, Base App and MCP share these per-event receipts for the same wallet. Preserve remaining pages; marking this page never reviews them. Coverage names the exact contracts read. Reference values are not executable proceeds or profit/loss. Recorded market changes preserve their own size and provider; never interpolate them to this wallet's balance. Current relevance does not prove the wallet held this asset when an event occurred. Empty changes do not prove nothing happened: always retain coverage, unavailable and truncated states. The issuer's pending multiplier is a plan, not today's conversion. This tool prepares no action and signs nothing.`,
     inputSchema: StockBriefInputV1Schema.shape,
     outputSchema: StockBriefV1Schema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async (args) => {
-    try { return reply(await readMyStocksTodayV1(identity.walletAddress, args.since)); }
+    try { return reply(await readMyStocksTodayV1(identity.walletAddress, args)); }
     catch { return { isError: true, content: [{ type: 'text' as const, text: 'stock_brief_unread: Your stock overview could not be read. This does not establish that your holdings or the market are empty.' }] }; }
+  });
+
+  server.registerTool('miorail_mark_stock_updates_read', {
+    title: 'Mark the shown stock updates as read',
+    description: `Only when the USER explicitly asks to mark the shown stock updates as read. Pass the unchanged reviewToken from miorail_get_my_stocks_today. It expires after 15 minutes and is bound to this grant's wallet and ONLY those returned events. Other unread pages and later findings stay unread. This stores a shared receipt visible in web, Base App and connected MCP. Fetching or explaining an overview is not permission to acknowledge it. No wallet, timestamp or event IDs can be supplied. An expired token requires a fresh read and review. This changes only inbox receipts, never holdings, notifications or transactions.`,
+    inputSchema: StockInboxReadInputV1Schema.shape,
+    outputSchema: StockInboxReadResultV1Schema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (args) => {
+    try { return reply(await acknowledgeStockInboxV1(identity.walletAddress, args)); }
+    catch (error) { return { isError: true, content: [{ type: 'text' as const,
+      text: `${error instanceof StockInboxErrorV1 ? error.code : 'stock_inbox_receipt_unavailable'}: These updates could not be marked as read. Read the inbox again; unseen entries remain unread.` }] }; }
   });
 
   server.registerTool('miorail_measure_my_stock_cash_out', {

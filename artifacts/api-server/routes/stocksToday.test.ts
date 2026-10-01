@@ -16,6 +16,8 @@ import {
 } from '../../../lib/rwa-market-reality/test/fixtures/stockBrief.js';
 import { AGGREGATE3_ABI_V1 } from '../lib/dividendWalletRead.js';
 import { stockBriefRuntime, stockBriefCacheV1 } from '../lib/stockBriefRead.js';
+import { createMemoryStockInboxRepositoryV1, type RwaSignalRowV1 } from '@mioagent/route-storage';
+import { stockInboxRuntime } from '../lib/stockInboxRead.js';
 import { stocksTodayRouter } from './stocksToday.js';
 import { createMiorailPrivateMcpServerV1 } from './mcpPrivate/server.js';
 import { createMiorailMcpServerV1 } from './mcp/server.js';
@@ -23,10 +25,13 @@ import { createMiorailMcpServerV1 } from './mcp/server.js';
 const WALLET = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
 const original = { ...stockBriefRuntime };
+const originalInbox = { ...stockInboxRuntime };
+let signals: RwaSignalRowV1[];
 let wallets: string[];
 let calls: string[];
 function app(wallet: string | null = WALLET) {
   const server = express();
+  server.use(express.json());
   server.use((req, _res, next) => {
     Object.assign(req, {
       session: {
@@ -39,6 +44,13 @@ function app(wallet: string | null = WALLET) {
   return server;
 }
 beforeEach(() => {
+  signals = [];
+  const repository = createMemoryStockInboxRepositoryV1(() => signals);
+  Object.assign(stockInboxRuntime, {
+    repository: () => repository,
+    now: () => stockBriefRuntime.now(),
+    secret: () => 'stock-inbox-test-secret-32-characters',
+  });
   wallets = [];
   calls = [];
   stockBriefCacheV1.clear();
@@ -78,14 +90,23 @@ beforeEach(() => {
       assert.ok(userId.startsWith('eip155:8453:'));
       return [];
     },
-    changes: async (addresses: string[]) => {
+    changes: async (
+      addresses: string[],
+      _since: string,
+      _until: string,
+      rows: RwaSignalRowV1[] = [],
+    ) => {
       assert.deepEqual(addresses, [TOKEN]);
-      return FEED;
+      return {
+        ...FEED,
+        cards: rows.map((row) => ({ ...row, subjectTicker: 'NVDAc', officialTicker: null })),
+      };
     },
   });
 });
 afterEach(() => {
   Object.assign(stockBriefRuntime, original);
+  Object.assign(stockInboxRuntime, originalInbox);
   stockBriefCacheV1.clear();
 });
 
@@ -219,4 +240,188 @@ test('failed changes and references are gaps while chain failure cannot look lik
   const failed = await request(app()).get('/stocks/today');
   assert.equal(failed.status, 503);
   assert.deepEqual(failed.body, { code: 'stock_brief_unread' });
+});
+
+function event(
+  id: number,
+  recordedAt = new Date(NOW.getTime() - 1000).toISOString(),
+): RwaSignalRowV1 {
+  return {
+    signalId: String(id),
+    chainId: 8453,
+    subjectAddress: TOKEN,
+    officialAddress: null,
+    kind: 'official_asset_multiplier_changed',
+    occurredAt: '2026-09-20T10:00:00.000Z',
+    recordedAt,
+    facts: { multiplierWad: '1050000000000000000' },
+  };
+}
+async function connected(wallet: `0x${string}` = WALLET) {
+  const client = new Client({ name: 'shared-inbox-test', version: '1' });
+  const server = createMiorailPrivateMcpServerV1({
+    tenantId: `eip155:8453:${wallet}`,
+    walletAddress: wallet,
+    chainId: 8453,
+    tokenId: 'test-grant',
+    source: 'oauth',
+  });
+  const [a, b] = InMemoryTransport.createLinkedPair();
+  await Promise.all([client.connect(a), server.connect(b)]);
+  return {
+    client,
+    async close() {
+      await client.close();
+      await server.close();
+    },
+  };
+}
+
+test('web receipts are shared with MCP, MCP receipts with web, while another wallet remains unread', async () => {
+  signals.push(event(1));
+  const before = await request(app()).get('/stocks/today');
+  assert.equal(before.body.inbox.items.length, 1);
+  assert.equal(before.body.inbox.reviewedAt, null);
+  assert.equal((await request(app()).get('/stocks/today')).body.inbox.items.length, 1);
+  const marked = await request(app())
+    .post('/stocks/inbox/read')
+    .send({ reviewToken: before.body.inbox.reviewToken });
+  assert.equal(marked.status, 200);
+  const mcp = await connected();
+  try {
+    assert.equal(mcp.client.getServerVersion()?.version, '1.5.0');
+    assert.equal((await mcp.client.listTools()).tools.length, 29);
+    const first = (
+      await mcp.client.callTool({ name: 'miorail_get_my_stocks_today', arguments: {} })
+    ).structuredContent as any;
+    assert.equal(first.inbox.items.length, 0);
+    assert.equal(first.inbox.reviewedAt, marked.body.reviewedAt);
+    signals.push(event(2)); // Same recordedAt as event 1, inserted AFTER its acknowledgment.
+    const second = (
+      await mcp.client.callTool({ name: 'miorail_get_my_stocks_today', arguments: {} })
+    ).structuredContent as any;
+    assert.deepEqual(
+      second.inbox.items.map((i: any) => i.signalId),
+      ['2'],
+    );
+    const reply = await mcp.client.callTool({
+      name: 'miorail_mark_stock_updates_read',
+      arguments: { reviewToken: second.inbox.reviewToken },
+    });
+    assert.equal(reply.isError, undefined);
+    assert.equal((await request(app()).get('/stocks/today')).body.inbox.items.length, 0);
+    assert.equal((await request(app(OTHER)).get('/stocks/today')).body.inbox.items.length, 2);
+    const history = await request(app()).get('/stocks/today?view=history');
+    assert.equal(history.body.inbox.items.length, 2);
+    assert.equal(history.body.inbox.reviewToken, null);
+  } finally {
+    await mcp.close();
+  }
+});
+
+test('page acknowledgment leaves unseen pages and concurrent findings unread; the fixed baseline survives weeks', async () => {
+  signals.push(...Array.from({ length: 102 }, (_, i) => event(i + 1)));
+  const first = (await request(app()).get('/stocks/today')).body;
+  assert.equal(first.inbox.items.length, 50);
+  assert.ok(first.inbox.nextCursor);
+  assert.equal((await request(app(OTHER)).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`)).status, 400);
+  assert.equal((await request(app()).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.reviewToken)}`)).status, 400);
+  assert.equal(
+    first.changesTruncated,
+    false,
+    'a paginated page can be reviewed without dropping other pages',
+  );
+  signals.push(event(103));
+  const next = (
+    await request(app()).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`)
+  ).body;
+  assert.equal(next.inbox.items.length, 50);
+  assert.equal(
+    new Set([...first.inbox.items, ...next.inbox.items].map((i) => i.signalId)).size,
+    100,
+  );
+  assert.equal(
+    (await request(app()).post('/stocks/inbox/read').send({ reviewToken: first.inbox.reviewToken }))
+      .status,
+    200,
+  );
+  const unread = (await request(app()).get('/stocks/today')).body;
+  assert.ok(unread.inbox.items.some((i: { signalId: string }) => i.signalId === '103'));
+  assert.equal(
+    (
+      await request(app()).get(
+        `/stocks/today?cursor=${encodeURIComponent(unread.inbox.nextCursor)}`,
+      )
+    ).body.inbox.items.length,
+    3,
+  );
+  stockBriefRuntime.now = () => new Date(NOW.getTime() + 20 * 86_400_000);
+  assert.equal((await request(app()).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`)).status, 400);
+  stockBriefCacheV1.clear();
+  const weeksLater = (await request(app()).get('/stocks/today')).body;
+  assert.equal(weeksLater.since, first.since);
+  assert.equal(weeksLater.windowClamped, false);
+  assert.equal(weeksLater.inbox.items.length, 50);
+  assert.equal(weeksLater.changesUnavailable, false);
+});
+
+test('forged, expired and foreign-wallet proofs cannot save receipts; failures expose no proof', async () => {
+  signals.push(event(1));
+  const brief = (await request(app()).get('/stocks/today')).body;
+  assert.equal(
+    (
+      await request(app(null))
+        .post('/stocks/inbox/read')
+        .send({ reviewToken: brief.inbox.reviewToken })
+    ).status,
+    401,
+  );
+  assert.equal(
+    (
+      await request(app(OTHER))
+        .post('/stocks/inbox/read')
+        .send({ reviewToken: brief.inbox.reviewToken })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(app())
+        .post('/stocks/inbox/read')
+        .send({ signalIds: ['1'], wallet: WALLET })
+    ).status,
+    400,
+  );
+  const [body, mac] = brief.inbox.reviewToken.split('.');
+  const payload = JSON.parse(Buffer.from(body, 'base64url').toString());
+  payload.ids = ['2'];
+  const forged = `${Buffer.from(JSON.stringify(payload)).toString('base64url')}.${mac}`;
+  assert.equal(
+    (await request(app()).post('/stocks/inbox/read').send({ reviewToken: forged })).status,
+    400,
+  );
+  stockBriefRuntime.now = () => new Date(NOW.getTime() + 16 * 60_000);
+  assert.equal(
+    (await request(app()).post('/stocks/inbox/read').send({ reviewToken: brief.inbox.reviewToken }))
+      .status,
+    400,
+  );
+  assert.equal((await request(app()).get('/stocks/today')).body.inbox.items.length, 1);
+  stockBriefRuntime.changes = async () => {
+    throw new Error('secret-db-location');
+  };
+  const failed = (await request(app()).get('/stocks/today')).body;
+  assert.equal(failed.inbox.reviewToken, null);
+  assert.equal(failed.changesUnavailable, true);
+  assert.doesNotMatch(JSON.stringify(failed), /secret-db-location/);
+  const mcp = await connected();
+  try {
+    const invalid = await mcp.client.callTool({
+      name: 'miorail_mark_stock_updates_read',
+      arguments: { reviewToken: brief.inbox.reviewToken },
+    });
+    assert.equal(invalid.isError, true);
+  } finally {
+    await mcp.close();
+  }
 });

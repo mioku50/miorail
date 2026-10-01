@@ -119,6 +119,12 @@ test('the inbox includes a late recorded event, preserves its occurrence date, a
   assert.equal(result.changes?.cards[1]?.occurredAt, card.occurredAt);
   assert.deepEqual(result.inbox, {
     windowBasis: 'recorded_at',
+    view: 'unread',
+    openedAt: null,
+    reviewedAt: null,
+    snapshotAt: NOW.toISOString(),
+    nextCursor: null,
+    reviewToken: null,
     heldCount: 1,
     watchedCount: 1,
     items: [

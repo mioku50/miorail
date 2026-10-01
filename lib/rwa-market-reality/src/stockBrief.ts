@@ -9,7 +9,19 @@ import {
 const Iso = z.string().datetime({ offset: true });
 const Amount = z.string().regex(/^\d+(?:\.\d+)?$/);
 const Address = z.string().regex(/^0x[0-9a-f]{40}$/);
-export const StockBriefInputV1Schema = z.object({ since: Iso.optional() }).strict();
+export const StockBriefInputV1Schema = z
+  .object({
+    since: Iso.optional(),
+    view: z.enum(['unread', 'history']).optional(),
+    cursor: z.string().min(1).max(2048).optional(),
+  })
+  .strict();
+export const StockInboxReadInputV1Schema = z
+  .object({ reviewToken: z.string().min(1).max(8192) })
+  .strict();
+export const StockInboxReadResultV1Schema = z
+  .object({ reviewedAt: Iso, markedCount: z.number().int().min(0).max(50) })
+  .strict();
 
 export const StockBriefV1Schema = z
   .object({
@@ -50,6 +62,12 @@ export const StockBriefV1Schema = z
     inbox: z
       .object({
         windowBasis: z.literal('recorded_at'),
+        view: z.enum(['unread', 'history']),
+        openedAt: Iso.nullable(),
+        reviewedAt: Iso.nullable(),
+        snapshotAt: Iso,
+        nextCursor: z.string().max(2048).nullable(),
+        reviewToken: z.string().max(8192).nullable(),
         heldCount: z.number().int().nonnegative(),
         watchedCount: z.number().int().nonnegative(),
         items: z
@@ -78,11 +96,11 @@ export const StockBriefV1Schema = z
 export type StockBriefV1 = z.infer<typeof StockBriefV1Schema>;
 
 const DAY = 86_400_000;
-export function stockBriefWindowV1(now: Date, since?: string) {
+export function stockBriefWindowV1(now: Date, since?: string, preserve = false) {
   const requested = since === undefined ? now.getTime() - DAY : Date.parse(since);
   if (!Number.isFinite(requested) || requested > now.getTime())
     throw new Error('stock_brief_since_invalid');
-  const bounded = Math.max(requested, now.getTime() - 7 * DAY);
+  const bounded = preserve ? requested : Math.max(requested, now.getTime() - 7 * DAY);
   return { since: new Date(bounded).toISOString(), windowClamped: bounded !== requested };
 }
 
@@ -91,6 +109,11 @@ export function stockBriefWindowV1(now: Date, since?: string) {
 export function stockBriefV1(input: {
   now: Date;
   since?: string;
+  preserveWindow?: boolean;
+  inboxState?: Pick<
+    StockBriefV1['inbox'],
+    'view' | 'openedAt' | 'reviewedAt' | 'snapshotAt' | 'nextCursor' | 'reviewToken'
+  >;
   balanceReadAt: string;
   generatedAt?: string;
   dividends: DividendWalletResponseV1;
@@ -107,7 +130,7 @@ export function stockBriefV1(input: {
   watchedAddresses: readonly string[];
   changes: RwaSignalFeedV1 | null;
 }): StockBriefV1 {
-  const window = stockBriefWindowV1(input.now, input.since);
+  const window = stockBriefWindowV1(input.now, input.since, input.preserveWindow);
   const now = input.now.getTime();
   const holdings = input.dividends.holdings
     .filter((row) => Number(row.tokens) > 0)
@@ -145,12 +168,13 @@ export function stockBriefV1(input: {
           (relevant.has(card.subjectAddress) ||
             (card.officialAddress !== null && relevant.has(card.officialAddress))) &&
           Date.parse(card.recordedAt) >= Date.parse(window.since) &&
-          Date.parse(card.recordedAt) <= now &&
+          Date.parse(card.recordedAt) <=
+            Date.parse(input.inboxState?.snapshotAt ?? input.now.toISOString()) &&
           Date.parse(card.occurredAt) <= now,
       )
       .sort((a, b) => Date.parse(b.recordedAt) - Date.parse(a.recordedAt)) ?? [];
   const changes = input.changes ? { ...input.changes, cards } : null;
-  const changesTruncated = (input.changes?.cards.length ?? 0) >= 200;
+  const changesTruncated = input.inboxState ? false : (input.changes?.cards.length ?? 0) >= 200;
   const held = new Set(holdings.map((row) => row.tokenAddress));
   const items = cards.map((card) => {
     const relatedTokenAddress = held.has(card.subjectAddress)
@@ -172,6 +196,9 @@ export function stockBriefV1(input: {
     };
   });
   const heldCount = items.filter((row) => row.relation === 'held').length;
+  const changeSummary = input.inboxState
+    ? `This ${input.inboxState.view} page contains ${heldCount} updates related to current holdings and ${items.length - heldCount} to watched contracts, recorded from ${window.since} through ${input.inboxState.snapshotAt}.${input.inboxState.nextCursor ? ' More entries are available on older pages.' : ''}`
+    : `${heldCount} changes related to current holdings and ${items.length - heldCount} to watched contracts were recorded since ${window.since}${changesTruncated ? '; the page is full and older entries may be missing' : ''}.`;
   return StockBriefV1Schema.parse({
     schemaVersion: 'my-stocks-today/v1',
     chainId: 8453,
@@ -188,10 +215,22 @@ export function stockBriefV1(input: {
     changes,
     changesTruncated,
     changesUnavailable: changes === null,
-    inbox: { windowBasis: 'recorded_at', heldCount, watchedCount: items.length - heldCount, items },
+    inbox: {
+      windowBasis: 'recorded_at',
+      heldCount,
+      watchedCount: items.length - heldCount,
+      items,
+      view: 'unread',
+      openedAt: null,
+      reviewedAt: null,
+      snapshotAt: input.now.toISOString(),
+      nextCursor: null,
+      reviewToken: null,
+      ...input.inboxState,
+    },
     dividends: input.dividends,
     miorailSummary: {
-      summary: `This wallet holds ${holdings.length} reviewed Coinbase stock${holdings.length === 1 ? '' : 's'}. ${changes === null ? 'Its recorded changes could not be read.' : `${heldCount} changes related to current holdings and ${items.length - heldCount} to watched contracts were recorded since ${window.since}${changesTruncated ? '; the page is full and older entries may be missing' : ''}. Occurrence dates remain separate; this does not establish that nothing else changed.`} Upcoming dividend figures are estimates unless explicitly scheduled by the issuer. Reference values are not sale proceeds.`,
+      summary: `This wallet holds ${holdings.length} reviewed Coinbase stock${holdings.length === 1 ? '' : 's'}. ${changes === null ? 'Its recorded changes could not be read.' : `${changeSummary} Occurrence dates remain separate; this does not establish that nothing else changed.`} Upcoming dividend figures are estimates unless explicitly scheduled by the issuer. Reference values are not sale proceeds.`,
     },
     caveats: [
       'Relevance uses the stocks held now and the current watchlist; it does not reconstruct every past holding.',

@@ -909,12 +909,14 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     today: session ? {
       data: todayRead.data ?? null, loading: todayRead.isPending, failed: todayRead.isError,
       refreshing: todayRead.isFetching, returning: todayRead.returning,
-      onRefresh: () => { void todayRead.refetch(); },
+      onRefresh: todayRead.refresh,
       walletKey: todayRead.wallet ?? '',
       onMeasureCashOut: (tokenAddress) => cashOut.mutateAsync(tokenAddress),
       onMarkRead: todayRead.markRead,
       markedRead: todayRead.markedRead,
-      readSaved: todayRead.readSaved,
+      marking: todayRead.marking, markFailed: todayRead.markFailed,
+      onView: todayRead.onView, onNextPage: todayRead.onNextPage, onFirstPage: todayRead.onFirstPage,
+      isLaterPage: todayRead.isLaterPage,
     } : null,
     telegram,
     // The decimals travel per address so the card can read a SELL amount in

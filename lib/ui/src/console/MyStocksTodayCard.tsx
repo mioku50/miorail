@@ -19,7 +19,12 @@ export interface MyStocksTodayModelV1 {
   onMeasureCashOut?: (tokenAddress: string) => Promise<StockPositionQuoteV1>;
   onMarkRead?: () => void;
   markedRead?: boolean;
-  readSaved?: boolean | null;
+  marking?: boolean;
+  markFailed?: boolean;
+  onView?: (view: 'unread' | 'history') => void;
+  onNextPage?: () => void;
+  onFirstPage?: () => void;
+  isLaterPage?: boolean;
 }
 
 function money(value: string) {
@@ -182,25 +187,26 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
             {dividendView?.total ? <p>{dividendView.total}</p> : null}
             <div className="stocks-today-changes">
               <div className="stocks-today-changes-header">
-                <h4>
-                  {model.returning
-                    ? 'Since you last marked as read'
-                    : 'Recorded in the last 24 hours'}
-                </h4>
-                {model.onMarkRead ? (
+                <h4>{data.inbox.view === 'history' ? 'Your update history' : 'Unread updates'}</h4>
+                {model.onMarkRead && data.inbox.view === 'unread' ? (
                   <button
                     type="button"
                     className="btn sec"
                     onClick={model.onMarkRead}
                     disabled={
-                      model.markedRead ||
+                      model.marking ||
+                      !data.inbox.reviewToken ||
                       model.failed ||
                       model.refreshing ||
                       data.changesUnavailable ||
                       data.changesTruncated
                     }
                   >
-                    {model.markedRead ? 'Marked as read' : 'Mark as read'}
+                    {model.marking
+                      ? 'Saving…'
+                      : data.inbox.nextCursor
+                        ? 'Mark this page as read'
+                        : 'Mark as read'}
                   </button>
                 ) : null}
               </div>
@@ -209,15 +215,49 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                 {data.watchedCount === 1 ? '' : 's'} · from {date(data.since)}.{' '}
                 {data.windowClamped ? 'This overview reaches back seven days.' : ''}
               </p>
+              {model.onView ? (
+                <div className="stocks-today-change-links" role="group" aria-label="Update view">
+                  <button
+                    className="btn sec"
+                    type="button"
+                    aria-pressed={data.inbox.view === 'unread'}
+                    disabled={model.marking}
+                    onClick={() => model.onView?.('unread')}
+                  >
+                    Unread
+                  </button>
+                  <button
+                    className="btn sec"
+                    type="button"
+                    aria-pressed={data.inbox.view === 'history'}
+                    disabled={model.marking}
+                    onClick={() => model.onView?.('history')}
+                  >
+                    History
+                  </button>
+                </div>
+              ) : null}
+              {data.inbox.reviewedAt ? (
+                <p className="lnote">
+                  Last marked as read {date(data.inbox.reviewedAt)} · shared with your other clients
+                  for this wallet.
+                </p>
+              ) : null}
               {model.markedRead ? (
                 <p className="lnote" role="status">
-                  {model.readSaved === false
-                    ? 'Marked for this visit. Your browser could not save the date for next time.'
-                    : 'Marked as read for your next visit in this browser.'}
+                  Read receipt saved for this wallet in web, Base App and connected MCP.
                 </p>
-              ) : model.onMarkRead ? (
+              ) : null}
+              {model.markFailed ? (
+                <p className="lnote" role="alert">
+                  Could not save the read receipt. Refresh and try again; these updates remain
+                  unread.
+                </p>
+              ) : null}
+              {data.inbox.view === 'unread' ? (
                 <p className="lnote">
-                  Opening or refreshing this overview does not mark it as read.
+                  Opening or refreshing does not mark updates as read. Unread entries remain beyond
+                  seven days.
                 </p>
               ) : null}
               {data.changesUnavailable ? (
@@ -232,8 +272,10 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                 </React.Fragment>
               ) : (
                 <p>
-                  No relevant change is recorded in this window. Coverage is limited to the
-                  measurements below.
+                  {data.inbox.view === 'unread'
+                    ? 'No unread update is recorded for your current stocks and watches.'
+                    : 'No relevant change is recorded in this history window.'}{' '}
+                  Coverage is limited to the measurements below.
                 </p>
               )}
               {feed && feed.cards.length > 3 ? (
@@ -241,6 +283,35 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                   <summary>{feed.cards.length - 3} more recorded changes</summary>
                   <ul>{feed.cards.slice(3).map(update)}</ul>
                 </details>
+              ) : null}
+              {data.inbox.nextCursor && model.onNextPage ? (
+                <p>
+                  <button
+                    className="btn sec"
+                    type="button"
+                    disabled={model.refreshing || model.marking}
+                    onClick={model.onNextPage}
+                  >
+                    Older updates
+                  </button>
+                </p>
+              ) : null}
+              {model.isLaterPage && model.onFirstPage ? (
+                <p>
+                  <button
+                    className="btn sec"
+                    type="button"
+                    disabled={model.refreshing || model.marking}
+                    onClick={model.onFirstPage}
+                  >
+                    Newest updates
+                  </button>
+                </p>
+              ) : null}
+              {data.inbox.nextCursor ? (
+                <p className="lnote">
+                  More entries are available. Marking this page leaves other pages unread.
+                </p>
               ) : null}
               {data.changesTruncated ? (
                 <p className="lnote">

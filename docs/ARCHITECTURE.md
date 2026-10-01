@@ -48,13 +48,22 @@ cash-exit engine for the entire freshly read raw balance, persist tenant-scoped
 evidence, and share the SELL terms request budget. They do not grant a clearance
 or check wallet execution. Both web and Base App render these shared UI components.
 
-The personal change inbox reads a bounded recording-time window on every
-overview request, independently of cached balances. Public change feeds keep
-their occurrence-time ordering. Each personal entry explains its relationship
-to current holdings/watchlist and links to exact-contract inspection. Browser
-read cursors advance only on explicit **Mark as read**, and incomplete/failed
-pages cannot be acknowledged; connected clients maintain their own reviewed
-cursor. No receipt enrolls a watch or initiates a trade.
+The personal inbox keeps a fixed initial baseline and per-event read receipts
+in PostgreSQL. Each overview freshly reads its bounded snapshot independently
+of cached balances. Unread entries survive past seven days; fifty-row pages
+use a signed cursor with a recording-time/ID total order. Public change feeds
+keep occurrence-time ordering. Each entry explains current holding/watch
+relevance and links to exact-contract inspection.
+
+Explicit Mark as read submits an HMAC proof bound to the authenticated wallet,
+returned event IDs and a fifteen-minute expiry. It cannot acknowledge unseen
+pages or arbitrary timestamps. One SQL statement inserts all receipts and
+updates the shared review date atomically; duplicate receipts are idempotent.
+Web, Base App and Connected MCP share them. A failed feed issues no proof;
+failed writes cannot become an optimistic success. The initial baseline is
+bookkeeping only and never marks a signal as read. Old local browser cursors
+are not imported. No receipt enrolls a watch or initiates a trade. Migration
+0077 is additive and applied explicitly before deploying this release.
 
 A source snapshot and its asset membership must publish atomically. Failed
 provider reads preserve the last successful evidence and expose uncertainty;
@@ -79,8 +88,8 @@ before claiming success.
 
 ## Separate MCP systems
 
-Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.4.1 adds twelve
-wallet-bound tools (28 total) for personal reads, preparation, measurement and
+Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.5.0 adds thirteen
+wallet-bound tools (29 total) for personal reads, preparation, measurement and
 execution evidence. These
 counts describe the audited release; new tools must update schemas, tests,
 client instructions and deployment smoke checks together.
