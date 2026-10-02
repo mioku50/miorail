@@ -5,6 +5,7 @@ import {
   DividendWalletResponseV1Schema,
   type DividendWalletResponseV1,
 } from './dividendWallet.js';
+import { stockInboxNewsV1 } from './stockInboxNews.js';
 
 const Iso = z.string().datetime({ offset: true });
 const Amount = z.string().regex(/^\d+(?:\.\d+)?$/);
@@ -75,6 +76,16 @@ export const StockBriefV1Schema = z
             z
               .object({
                 signalId: z.string().min(1),
+                evidenceSignalIds: z.array(z.string().min(1)).min(1).max(50).optional(),
+                transactionHash: z
+                  .string()
+                  .regex(/^0x[0-9a-f]{64}$/)
+                  .nullable()
+                  .optional(),
+                headline: z.string().nullable().optional(),
+                summary: z.string().nullable().optional(),
+                occurredAt: Iso.optional(),
+                recordedAt: Iso.optional(),
                 relation: z.enum(['held', 'watched']),
                 relatedTokenAddress: Address,
                 inspectionHref: z.string().regex(/^\/investigate\?token=0x[0-9a-f]{40}$/),
@@ -176,7 +187,8 @@ export function stockBriefV1(input: {
   const changes = input.changes ? { ...input.changes, cards } : null;
   const changesTruncated = input.inboxState ? false : (input.changes?.cards.length ?? 0) >= 200;
   const held = new Set(holdings.map((row) => row.tokenAddress));
-  const items = cards.map((card) => {
+  const items = stockInboxNewsV1(cards, new Set(input.tokenAddresses)).map((news) => {
+    const card = news.primary;
     const relatedTokenAddress = held.has(card.subjectAddress)
       ? card.subjectAddress
       : card.officialAddress && held.has(card.officialAddress)
@@ -186,6 +198,12 @@ export function stockBriefV1(input: {
           : card.officialAddress!;
     return {
       signalId: card.signalId,
+      evidenceSignalIds: news.evidenceSignalIds,
+      transactionHash: news.transactionHash,
+      headline: news.headline,
+      summary: news.summary,
+      occurredAt: news.occurredAt,
+      recordedAt: news.recordedAt,
       relation: held.has(relatedTokenAddress) ? ('held' as const) : ('watched' as const),
       relatedTokenAddress,
       inspectionHref: `/investigate?token=${card.subjectAddress}`,
@@ -235,6 +253,7 @@ export function stockBriefV1(input: {
     caveats: [
       'Relevance uses the stocks held now and the current watchlist; it does not reconstruct every past holding.',
       'This personal inbox uses when Miorail recorded each change, so delayed observations can appear on a later visit. Occurrence and recording dates remain separate.',
+      'Inbox items are the personal news units. Issuer logs for the same exact contract and transaction are grouped; changes.cards retains their individual evidence. Do not report those raw cards as additional personal updates.',
       'Recorded market changes retain their own measured size, provider and policy. They are not quotes for this wallet’s balance.',
       'No executable sale value or profit/loss is computed. Open the stock and prepare a sell at an exact token amount for a fresh review.',
       'A dividend reaches the holder when the multiplier changes; a declared cash dividend is not cash paid to this wallet.',

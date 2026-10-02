@@ -3,6 +3,8 @@ import { rowToSignalV1 } from './rwaSignalsDatabase.js';
 import {
   StockInboxIdsV1Schema,
   StockInboxWalletV1Schema,
+  STOCK_INBOX_ISSUER_KINDS_V1,
+  stockInboxPageV1,
   type StockInboxRepositoryV1,
   type StockInboxStateV1,
 } from './stockInbox.js';
@@ -31,17 +33,47 @@ export function createDatabaseStockInboxRepositoryV1(
       StockInboxWalletV1Schema.parse(input.wallet);
       const at = input.before?.at ?? null,
         id = input.before?.id ?? '0';
-      const rows = await sql`SELECT s.id, s.chain_id, s.kind, s.subject_address, s.official_address,
-        s.occurred_at, s.recorded_at, s.facts FROM rwa_signals s
+      const rows = await sql`WITH eligible AS (
+        SELECT s.*, r.signal_id AS read_id,
+          CASE WHEN s.kind = ANY(${[...STOCK_INBOX_ISSUER_KINDS_V1]}::text[])
+            AND s.facts->>'transactionHash' ~ '^0x[0-9a-fA-F]{64}$'
+          THEN s.chain_id::text || ':' || s.subject_address || ':' || lower(s.facts->>'transactionHash')
+          ELSE 'signal:' || s.id::text END AS group_key
+        FROM rwa_signals s LEFT JOIN stock_inbox_reads r ON r.wallet_address = ${input.wallet} AND r.signal_id = s.id
         WHERE s.chain_id = 8453
           AND (s.subject_address = ANY(${[...input.addresses]}::text[]) OR s.official_address = ANY(${[...input.addresses]}::text[]))
           AND s.recorded_at >= ${input.since}::timestamptz AND s.recorded_at <= ${input.until}::timestamptz
           AND s.occurred_at <= ${input.until}::timestamptz
-          AND (${input.view === 'history'} OR NOT EXISTS
-            (SELECT 1 FROM stock_inbox_reads r WHERE r.wallet_address = ${input.wallet} AND r.signal_id = s.id))
-          AND (${at}::timestamptz IS NULL OR (date_trunc('milliseconds', s.recorded_at), s.id) < (${at}::timestamptz, ${id}::bigint))
-        ORDER BY date_trunc('milliseconds', s.recorded_at) DESC, s.id DESC LIMIT 51`;
-      return rows.map(rowToSignalV1);
+      ), grouped AS (
+        SELECT group_key, max(date_trunc('milliseconds', recorded_at)) AS anchor_at,
+          (array_agg(id ORDER BY date_trunc('milliseconds', recorded_at) DESC, id DESC))[1] AS anchor_id,
+          count(*) AS member_count, bool_or(read_id IS NULL) AS unread
+        FROM eligible GROUP BY group_key
+      ), selected AS (
+        SELECT * FROM grouped WHERE (${input.view === 'history'} OR unread)
+          AND (${at}::timestamptz IS NULL OR (anchor_at, anchor_id) < (${at}::timestamptz, ${id}::bigint))
+        ORDER BY anchor_at DESC, anchor_id DESC LIMIT 51
+      ) SELECT g.anchor_at, g.anchor_id::text AS anchor_id, g.member_count,
+        CASE WHEN g.member_count <= 50 THEN (
+          SELECT jsonb_agg(jsonb_build_object('id', e.id::text, 'chain_id', e.chain_id,
+            'kind', e.kind, 'subject_address', e.subject_address, 'official_address', e.official_address,
+            'occurred_at', e.occurred_at, 'recorded_at', e.recorded_at, 'facts', e.facts)
+            ORDER BY date_trunc('milliseconds', e.recorded_at) DESC, e.id DESC)
+          FROM eligible e WHERE e.group_key = g.group_key
+        ) ELSE NULL END AS members
+      FROM selected g ORDER BY g.anchor_at DESC, g.anchor_id DESC`;
+      return stockInboxPageV1(
+        rows.map((row) => ({
+          anchor: {
+            at: new Date(row.anchor_at as string).toISOString(),
+            id: String(row.anchor_id),
+          },
+          rows:
+            row.members === null
+              ? []
+              : (row.members as Record<string, unknown>[]).map(rowToSignalV1),
+        })),
+      );
     },
     async acknowledge(wallet, ids, now) {
       StockInboxWalletV1Schema.parse(wallet);

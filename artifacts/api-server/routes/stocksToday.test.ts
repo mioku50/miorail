@@ -289,7 +289,7 @@ test('web receipts are shared with MCP, MCP receipts with web, while another wal
   assert.equal(marked.status, 200);
   const mcp = await connected();
   try {
-    assert.equal(mcp.client.getServerVersion()?.version, '1.5.0');
+    assert.equal(mcp.client.getServerVersion()?.version, '1.5.1');
     assert.equal((await mcp.client.listTools()).tools.length, 29);
     const first = (
       await mcp.client.callTool({ name: 'miorail_get_my_stocks_today', arguments: {} })
@@ -319,13 +319,77 @@ test('web receipts are shared with MCP, MCP receipts with web, while another wal
   }
 });
 
+test('one issuer transaction is one news update in web and MCP; its proof reviews every supporting log', async () => {
+  const transactionHash = `0x${'a'.repeat(64)}`;
+  signals.push(
+    {
+      ...event(1),
+      kind: 'official_asset_corporate_action_announced',
+      facts: { transactionHash, event: 'announcement', payloadState: 'topic_only' },
+    },
+    {
+      ...event(2),
+      facts: { transactionHash, event: 'multiplier_updated', multiplierWad: '1000537939576369481' },
+    },
+    {
+      ...event(3),
+      facts: {
+        transactionHash,
+        event: 'ui_multiplier_updated',
+        multiplierWad: '1000537939576369481',
+      },
+    },
+  );
+  const web = (await request(app()).get('/stocks/today')).body;
+  assert.equal(web.changes.cards.length, 3);
+  assert.equal(web.inbox.items.length, 1);
+  assert.equal(web.inbox.heldCount, 1);
+  assert.deepEqual(web.inbox.items[0].evidenceSignalIds, ['3', '2', '1']);
+  const mcp = await connected();
+  try {
+    const response = await mcp.client.callTool({
+      name: 'miorail_get_my_stocks_today',
+      arguments: {},
+    });
+    const news = response.structuredContent as any;
+    assert.deepEqual(news.inbox.items, web.inbox.items);
+    const marked = await mcp.client.callTool({
+      name: 'miorail_mark_stock_updates_read',
+      arguments: { reviewToken: news.inbox.reviewToken },
+    });
+    assert.equal(marked.isError, undefined);
+    assert.equal((marked.structuredContent as any).markedCount, 3);
+    assert.equal((await request(app()).get('/stocks/today')).body.inbox.items.length, 0);
+    const history = (await request(app()).get('/stocks/today?view=history')).body;
+    assert.equal(history.inbox.items.length, 1);
+    assert.equal(history.changes.cards.length, 3);
+    assert.equal((await request(app(OTHER)).get('/stocks/today')).body.inbox.items.length, 1);
+  } finally {
+    await mcp.close();
+  }
+});
+
 test('page acknowledgment leaves unseen pages and concurrent findings unread; the fixed baseline survives weeks', async () => {
   signals.push(...Array.from({ length: 102 }, (_, i) => event(i + 1)));
   const first = (await request(app()).get('/stocks/today')).body;
   assert.equal(first.inbox.items.length, 50);
   assert.ok(first.inbox.nextCursor);
-  assert.equal((await request(app(OTHER)).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`)).status, 400);
-  assert.equal((await request(app()).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.reviewToken)}`)).status, 400);
+  assert.equal(
+    (
+      await request(app(OTHER)).get(
+        `/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await request(app()).get(
+        `/stocks/today?cursor=${encodeURIComponent(first.inbox.reviewToken)}`,
+      )
+    ).status,
+    400,
+  );
   assert.equal(
     first.changesTruncated,
     false,
@@ -356,7 +420,11 @@ test('page acknowledgment leaves unseen pages and concurrent findings unread; th
     3,
   );
   stockBriefRuntime.now = () => new Date(NOW.getTime() + 20 * 86_400_000);
-  assert.equal((await request(app()).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`)).status, 400);
+  assert.equal(
+    (await request(app()).get(`/stocks/today?cursor=${encodeURIComponent(first.inbox.nextCursor)}`))
+      .status,
+    400,
+  );
   stockBriefCacheV1.clear();
   const weeksLater = (await request(app()).get('/stocks/today')).body;
   assert.equal(weeksLater.since, first.since);

@@ -50,8 +50,13 @@ or check wallet execution. Both web and Base App render these shared UI componen
 
 The personal inbox keeps a fixed initial baseline and per-event read receipts
 in PostgreSQL. Each overview freshly reads its bounded snapshot independently
-of cached balances. Unread entries survive past seven days; fifty-row pages
-use a signed cursor with a recording-time/ID total order. Public change feeds
+of cached balances. Unread entries survive past seven days. Issuer signals
+with the same chain, exact contract and transaction form one `inbox.items`
+news item; `changes.cards` retains the raw evidence. Equal values alone do
+not establish identity. Group anchors use the latest recording-time/ID pair.
+Pages keep transactions whole within the fifty-source-ID proof budget, including
+already-read supporting logs of a partially reviewed group. A newly recorded log
+remains unread after an older proof is acknowledged. Public change feeds
 keep occurrence-time ordering. Each entry explains current holding/watch
 relevance and links to exact-contract inspection.
 
@@ -88,13 +93,17 @@ before claiming success.
 
 ## Separate MCP systems
 
-Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.5.0 adds thirteen
+Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.5.1 adds thirteen
 wallet-bound tools (29 total) for personal reads, preparation, measurement and
 execution evidence. These
 counts describe the audited release; new tools must update schemas, tests,
 client instructions and deployment smoke checks together.
 
-Miorail also acts as a client of `mcp.base.org`. Base MCP Extensions discovers
+Miorail also acts as a client of Coinbase Wallet MCP. Its canonical endpoint
+is `wallet-mcp.coinbase.com`; existing `mcp.base.org` connections remain supported.
+An existing OAuth grant keeps its configured issuer until an explicit reconnect.
+The October 1 upstream update changes endpoint/setup documentation, not tools
+or plugin schemas. Base MCP Extensions discovers
 and classifies its live tool list, while reviewed typed adapters control what
 is callable. The committed 20-plugin catalogue defines reviewed integrations;
 its live drift check compares names only. Neither plugin text nor a discovered

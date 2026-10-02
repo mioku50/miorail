@@ -130,6 +130,12 @@ test('the inbox includes a late recorded event, preserves its occurrence date, a
     items: [
       {
         signalId: 'watched',
+        evidenceSignalIds: ['watched'],
+        transactionHash: null,
+        headline: null,
+        summary: null,
+        occurredAt: watched.occurredAt,
+        recordedAt: watched.recordedAt,
         relation: 'watched',
         relatedTokenAddress: OTHER,
         inspectionHref: `/investigate?token=${OTHER}`,
@@ -137,6 +143,12 @@ test('the inbox includes a late recorded event, preserves its occurrence date, a
       },
       {
         signalId: 'late',
+        evidenceSignalIds: ['late'],
+        transactionHash: null,
+        headline: null,
+        summary: null,
+        occurredAt: card.occurredAt,
+        recordedAt: card.recordedAt,
         relation: 'held',
         relatedTokenAddress: TOKEN,
         inspectionHref: `/investigate?token=${OTHER}`,

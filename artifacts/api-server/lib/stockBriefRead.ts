@@ -159,7 +159,7 @@ export async function readMyStocksTodayV1(
   let nextCursor: string | null = null;
   let changes: Awaited<ReturnType<typeof stockBriefRuntime.changes>> | null = null;
   try {
-    const rows = await repository.page({
+    const page = await repository.page({
       wallet,
       addresses,
       since,
@@ -167,17 +167,17 @@ export async function readMyStocksTodayV1(
       view,
       before: cursor?.kind === 'cursor' ? cursor.before : undefined,
     });
-    const visible = rows.slice(0, 50);
+    const visible = page.groups.flatMap((group) => group.rows);
     const expiry = new Date(now.getTime() + 15 * 60_000).toISOString();
-    if (rows.length > 50) {
-      const last = visible.at(-1)!;
+    if (page.hasMore) {
+      const last = page.groups.at(-1)!.anchor;
       nextCursor = stockInboxProofV1({
         kind: 'cursor',
         wallet,
         view,
         since,
         until,
-        before: { at: last.recordedAt, id: last.signalId },
+        before: last,
         issuedAt: now.toISOString(),
         expiresAt: expiry,
       });
@@ -206,7 +206,7 @@ export async function readMyStocksTodayV1(
     brief.inbox.reviewToken = stockInboxProofV1({
       kind: 'review',
       wallet,
-      ids: brief.inbox.items.map((row) => row.signalId),
+      ids: brief.inbox.items.flatMap((row) => row.evidenceSignalIds ?? [row.signalId]),
       issuedAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + 15 * 60_000).toISOString(),
     });

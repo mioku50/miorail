@@ -1,6 +1,13 @@
 import { expect, test } from '@playwright/test';
 import { readFileSync } from 'node:fs';
-import { briefFixture, NOW } from '../../../lib/rwa-market-reality/test/fixtures/stockBrief.js';
+import { stockBriefV1 } from '../../../lib/rwa-market-reality/src/stockBrief.js';
+import {
+  briefInput,
+  FEED,
+  TOKEN,
+  briefFixture,
+  NOW,
+} from '../../../lib/rwa-market-reality/test/fixtures/stockBrief.js';
 import type { StockPositionQuoteV1 } from '@mioagent/rwa-market-reality/stock-position-quote';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
@@ -190,6 +197,85 @@ for (const width of [1440, 390]) {
       '/api/stocks/inbox/read',
       '/api/stocks/inbox/read',
     ]);
+  });
+}
+
+for (const width of [1440, 390]) {
+  test(`one issuer transaction is one visible update; evidence and receipts retain all logs (${width}px)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 1000 });
+    await sharedInboxFixture().install(page);
+    const transactionHash = `0x${'a'.repeat(64)}`;
+    const cards = ['ui_multiplier_updated', 'multiplier_updated', 'announcement'].map(
+      (event, i) => ({
+        signalId: String(3 - i),
+        chainId: 8453 as const,
+        kind:
+          event === 'announcement'
+            ? ('official_asset_corporate_action_announced' as const)
+            : ('official_asset_multiplier_changed' as const),
+        subjectAddress: TOKEN,
+        officialAddress: null,
+        subjectTicker: 'NVDAc',
+        officialTicker: null,
+        occurredAt: '2026-09-30T16:47:47.000Z',
+        recordedAt: '2026-09-30T16:59:27.058Z',
+        facts: { transactionHash, event, multiplierWad: '1000537939576369481' },
+      }),
+    );
+    let read = false;
+    const acknowledged: string[] = [];
+    await page.route('**/api/stocks/today*', (route) => {
+      const history = new URL(route.request().url()).searchParams.get('view') === 'history';
+      const data = stockBriefV1({
+        ...briefInput(),
+        changes: { ...FEED, cards: read && !history ? [] : cards },
+      });
+      data.inbox.view = history ? 'history' : 'unread';
+      data.inbox.reviewToken = read || history ? null : 'all-three-records';
+      return route.fulfill({ json: data });
+    });
+    await page.route('**/api/stocks/inbox/read', (route) => {
+      expect(route.request().postDataJSON()).toEqual({ reviewToken: 'all-three-records' });
+      acknowledged.push(...cards.map((card) => card.signalId));
+      read = true;
+      return route.fulfill({ json: { reviewedAt: NOW.toISOString(), markedCount: 3 } });
+    });
+    await page.goto('/stocks');
+    const card = page.getByRole('region', { name: 'My stocks today', exact: true });
+    const headline = card.getByText('NVDAc: Shares per token changed', { exact: true });
+    await expect(headline).toHaveCount(1);
+    await expect(headline).toBeVisible();
+    await expect(card.getByText(/1 related to your holdings/)).toBeVisible();
+    await expect(card.getByText(/one NVDAc to about 1\.00053794/)).toBeVisible();
+    const evidence = card
+      .locator('details')
+      .filter({
+        has: page.locator('summary', { hasText: 'Evidence for this update · 3 records' }),
+      });
+    await expect(evidence).not.toHaveAttribute('open', '');
+    await expect(
+      evidence.getByText('The issuer announced a corporate action', { exact: true }),
+    ).not.toBeVisible();
+    await card.screenshot({ path: `/tmp/miorail-inbox-news-${width}.png` });
+    await evidence.locator('summary').click();
+    await expect(
+      evidence.getByText('The issuer announced a corporate action', { exact: true }),
+    ).toBeVisible();
+    await expect(evidence.getByRole('link', { name: 'View transaction' })).toHaveAttribute(
+      'href',
+      `https://basescan.org/tx/${transactionHash}`,
+    );
+    await card.getByRole('button', { name: 'Mark as read', exact: true }).click();
+    await expect(card.getByText(/No unread update/)).toBeVisible();
+    expect(acknowledged).toEqual(['3', '2', '1']);
+    await card.getByRole('button', { name: 'History', exact: true }).click();
+    await expect(headline).toHaveCount(1);
+    await expect(
+      card.locator('summary', { hasText: 'Evidence for this update · 3 records' }),
+    ).toBeVisible();
+    expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   });
 }
 

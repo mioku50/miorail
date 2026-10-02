@@ -1,6 +1,10 @@
 import assert from 'node:assert/strict';
 import { describe, test } from 'node:test';
-import type { StockInboxRepositoryV1, RwaSignalRowV1 } from '../src/index.js';
+import type {
+  StockInboxRepositoryV1,
+  StockInboxPageInputV1,
+  RwaSignalRowV1,
+} from '../src/index.js';
 
 const WALLET = '0x1111111111111111111111111111111111111111';
 const OTHER = '0x2222222222222222222222222222222222222222';
@@ -48,19 +52,19 @@ export function stockInboxContract(
         until: NOW.toISOString(),
         view: 'unread' as const,
       };
-      assert.equal((await repository.page(input)).length, 2);
+      assert.equal((await pageRows(repository, input)).length, 2);
       await repository.acknowledge(WALLET, ['1'], NOW);
       await repository.acknowledge(WALLET, ['1'], NOW);
       assert.deepEqual(
-        (await repository.page(input)).map((r) => r.signalId),
+        (await pageRows(repository, input)).map((r) => r.signalId),
         ['2'],
       );
-      assert.equal((await repository.page({ ...input, view: 'history' })).length, 2);
+      assert.equal((await pageRows(repository, { ...input, view: 'history' })).length, 2);
       await repository.open(OTHER, NOW);
-      assert.equal((await repository.page({ ...input, wallet: OTHER })).length, 2);
+      assert.equal((await pageRows(repository, { ...input, wallet: OTHER })).length, 2);
       await add([signal(3)]); // Same timestamp, inserted after a review.
       assert.deepEqual(
-        (await repository.page(input)).map((r) => r.signalId),
+        (await pageRows(repository, input)).map((r) => r.signalId),
         ['3', '2'],
       );
     });
@@ -75,10 +79,10 @@ export function stockInboxContract(
         until: NOW.toISOString(),
         view: 'unread' as const,
       };
-      const first = (await repository.page(input)).slice(0, 50);
+      const first = (await pageRows(repository, input)).slice(0, 50);
       const last = first.at(-1)!;
       const second = (
-        await repository.page({ ...input, before: { at: last.recordedAt, id: last.signalId } })
+        await pageRows(repository, { ...input, before: { at: last.recordedAt, id: last.signalId } })
       ).slice(0, 50);
       assert.equal(new Set([...first, ...second].map((r) => r.signalId)).size, 100);
       await repository.acknowledge(
@@ -86,11 +90,11 @@ export function stockInboxContract(
         first.map((r) => r.signalId),
         NOW,
       );
-      assert.equal((await repository.page(input)).length, 51);
+      assert.equal((await pageRows(repository, input)).length, 50);
       const lastSecond = second.at(-1)!;
       assert.equal(
         (
-          await repository.page({
+          await pageRows(repository, {
             ...input,
             before: { at: lastSecond.recordedAt, id: lastSecond.signalId },
           })
@@ -110,7 +114,7 @@ export function stockInboxContract(
       const state = await repository.open(WALLET, NOW);
       assert.deepEqual(
         (
-          await repository.page({
+          await pageRows(repository, {
             wallet: WALLET,
             addresses: [TOKEN],
             since: state.since,
@@ -128,7 +132,7 @@ export function stockInboxContract(
       await assert.rejects(repository.acknowledge(WALLET, ['1', '9999999'], NOW));
       assert.equal(
         (
-          await repository.page({
+          await pageRows(repository, {
             wallet: WALLET,
             addresses: [TOKEN],
             since: state.since,
@@ -142,5 +146,109 @@ export function stockInboxContract(
       await assert.rejects(repository.acknowledge(WALLET, ['0'], NOW));
       await assert.rejects(repository.open('arbitrary-wallet', NOW));
     });
+    test('issuer logs form a whole transaction page, including already-read supporting records', async () => {
+      const { repository, add } = await factory();
+      const tx = `0x${'a'.repeat(64)}`;
+      await add([
+        ...Array.from({ length: 49 }, (_, i) => signal(i + 4)),
+        ...[1, 2, 3].map((id) => ({
+          ...signal(id),
+          facts: { transactionHash: tx, multiplierWad: '1000537939576369481' },
+        })),
+      ]);
+      const state = await repository.open(WALLET, NOW);
+      const input = {
+        wallet: WALLET,
+        addresses: [TOKEN],
+        since: state.since,
+        until: NOW.toISOString(),
+        view: 'unread' as const,
+      };
+      const first = await repository.page(input);
+      assert.equal(first.groups.length, 49);
+      assert.equal(first.hasMore, true);
+      const second = await repository.page({ ...input, before: first.groups.at(-1)!.anchor });
+      assert.equal(second.groups.length, 1);
+      assert.deepEqual(
+        second.groups[0]!.rows.map((row) => row.signalId),
+        ['3', '2', '1'],
+      );
+      await repository.acknowledge(WALLET, ['3'], NOW); // A legacy client reviewed only one log.
+      assert.equal(
+        (await repository.page({ ...input, before: first.groups.at(-1)!.anchor })).groups[0]!.rows
+          .length,
+        3,
+      );
+      await repository.acknowledge(WALLET, ['1', '2', '3'], NOW);
+      assert.equal(
+        (await repository.page({ ...input, before: first.groups.at(-1)!.anchor })).groups.length,
+        0,
+      );
+      assert.equal(
+        (await repository.page({ ...input, view: 'history', before: first.groups.at(-1)!.anchor }))
+          .groups[0]!.rows.length,
+        3,
+      );
+    });
+    test('group anchors keep interleaved records and equal-valued independent transactions apart', async () => {
+      const { repository, add } = await factory();
+      const tx = `0x${'a'.repeat(64)}`,
+        different = `0x${'b'.repeat(64)}`;
+      await add([
+        { ...signal(1), facts: { transactionHash: tx } },
+        { ...signal(3), facts: { transactionHash: tx } },
+        { ...signal(2), facts: { transactionHash: different } },
+        { ...signal(4, OTHER), facts: { transactionHash: tx } },
+      ]);
+      const state = await repository.open(WALLET, NOW);
+      const input = {
+        wallet: WALLET,
+        addresses: [TOKEN, OTHER],
+        since: state.since,
+        until: NOW.toISOString(),
+        view: 'unread' as const,
+      };
+      const result = await repository.page(input);
+      assert.deepEqual(
+        result.groups.map((group) => group.rows.map((row) => row.signalId)),
+        [['4'], ['3', '1'], ['2']],
+      );
+      assert.deepEqual(
+        (await repository.page({ ...input, before: result.groups[1]!.anchor })).groups.map(
+          (group) => group.rows.map((row) => row.signalId),
+        ),
+        [['2']],
+      );
+    });
+    test('a later log is never swallowed by a proof issued before it was recorded', async () => {
+      const { repository, add } = await factory();
+      const tx = `0x${'a'.repeat(64)}`;
+      await add([{ ...signal(1), facts: { transactionHash: tx } }]);
+      const state = await repository.open(WALLET, NOW);
+      const input = {
+        wallet: WALLET,
+        addresses: [TOKEN],
+        since: state.since,
+        until: NOW.toISOString(),
+        view: 'unread' as const,
+      };
+      const shown = await repository.page(input);
+      await add([{ ...signal(2), facts: { transactionHash: tx } }]);
+      await repository.acknowledge(
+        WALLET,
+        shown.groups.flatMap((group) => group.rows.map((row) => row.signalId)),
+        NOW,
+      );
+      const unread = await repository.page(input);
+      assert.equal(unread.groups.length, 1);
+      assert.deepEqual(
+        unread.groups[0]!.rows.map((row) => row.signalId),
+        ['2', '1'],
+      );
+    });
   });
+}
+
+async function pageRows(repository: StockInboxRepositoryV1, input: StockInboxPageInputV1) {
+  return (await repository.page(input)).groups.flatMap((group) => group.rows);
 }

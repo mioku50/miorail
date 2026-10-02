@@ -2,8 +2,47 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { briefFixture } from '../../rwa-market-reality/test/fixtures/stockBrief.js';
+import { briefInput, FEED, TOKEN } from '../../rwa-market-reality/test/fixtures/stockBrief.js';
+import { stockBriefV1 } from '../../rwa-market-reality/src/stockBrief.js';
 import { MyStocksTodayCard } from '../src/console/MyStocksTodayCard';
 import { giftRecipientFollowupV1 } from '../src/console/giftView';
+
+test('the personal feed presents one issuer update and keeps compatibility logs inside evidence', () => {
+  const transactionHash = `0x${'a'.repeat(64)}`;
+  const cards = ['ui_multiplier_updated', 'multiplier_updated', 'announcement'].map((event, i) => ({
+    signalId: String(3 - i),
+    chainId: 8453 as const,
+    kind:
+      event === 'announcement'
+        ? ('official_asset_corporate_action_announced' as const)
+        : ('official_asset_multiplier_changed' as const),
+    subjectAddress: TOKEN,
+    officialAddress: null,
+    subjectTicker: 'NVDAc',
+    officialTicker: null,
+    occurredAt: '2026-09-30T16:47:47.000Z',
+    recordedAt: '2026-09-30T16:59:27.058Z',
+    facts: { transactionHash, event, multiplierWad: '1000537939576369481' },
+  }));
+  const html = renderToStaticMarkup(
+    <MyStocksTodayCard
+      model={{
+        data: stockBriefV1({ ...briefInput(), changes: { ...FEED, cards } }),
+        loading: false,
+        failed: false,
+        refreshing: false,
+        returning: true,
+        onRefresh() {},
+      }}
+    />,
+  );
+  assert.equal((html.match(/NVDAc: Shares per token changed/g) ?? []).length, 1);
+  assert.match(html, /1 related to your holdings/);
+  assert.match(html, /Evidence for this update · 3 records/);
+  assert.match(html, /about 1\.00053794/);
+  assert.match(html, /The issuer announced a corporate action/);
+  assert.match(html, new RegExp(`https://basescan.org/tx/${transactionHash}`));
+});
 
 test('a personal holding, estimated dividend and dated reference appear without turning a benchmark into sale proceeds', () => {
   const html = renderToStaticMarkup(

@@ -1,6 +1,9 @@
 import {
   StockInboxIdsV1Schema,
   StockInboxWalletV1Schema,
+  stockInboxGroupKeyV1,
+  stockInboxPageV1,
+  type StockInboxGroupV1,
   type StockInboxRepositoryV1,
   type StockInboxStateV1,
 } from './stockInbox.js';
@@ -25,7 +28,7 @@ export function createMemoryStockInboxRepositoryV1(
     async page(input) {
       StockInboxWalletV1Schema.parse(input.wallet);
       const addresses = new Set(input.addresses);
-      return signals()
+      const rows = signals()
         .filter(
           (row) =>
             row.chainId === 8453 &&
@@ -33,20 +36,31 @@ export function createMemoryStockInboxRepositoryV1(
               (row.officialAddress !== null && addresses.has(row.officialAddress))) &&
             Date.parse(row.recordedAt) >= Date.parse(input.since) &&
             Date.parse(row.recordedAt) <= Date.parse(input.until) &&
-            Date.parse(row.occurredAt) <= Date.parse(input.until) &&
-            (input.view === 'history' || !read.has(`${input.wallet}:${row.signalId}`)) &&
-            (!input.before ||
-              Date.parse(row.recordedAt) < Date.parse(input.before.at) ||
-              (Date.parse(row.recordedAt) === Date.parse(input.before.at) &&
-                BigInt(row.signalId) < BigInt(input.before.id))),
+            Date.parse(row.occurredAt) <= Date.parse(input.until),
         )
         .sort(
           (a, b) =>
             Date.parse(b.recordedAt) - Date.parse(a.recordedAt) ||
             (BigInt(a.signalId) > BigInt(b.signalId) ? -1 : 1),
         )
-        .slice(0, 51)
         .map((row) => ({ ...row, facts: { ...row.facts } }));
+      const groups = new Map<string, StockInboxGroupV1>();
+      for (const row of rows) {
+        const key = stockInboxGroupKeyV1(row);
+        const existing = groups.get(key);
+        if (existing) existing.rows.push(row);
+        else groups.set(key, { anchor: { at: row.recordedAt, id: row.signalId }, rows: [row] });
+      }
+      const visible = [...groups.values()].filter(
+        (group) =>
+          (input.view === 'history' ||
+            group.rows.some((row) => !read.has(`${input.wallet}:${row.signalId}`))) &&
+          (!input.before ||
+            Date.parse(group.anchor.at) < Date.parse(input.before.at) ||
+            (Date.parse(group.anchor.at) === Date.parse(input.before.at) &&
+              BigInt(group.anchor.id) < BigInt(input.before.id))),
+      );
+      return stockInboxPageV1(visible.slice(0, 51));
     },
     async acknowledge(wallet, ids, now) {
       StockInboxWalletV1Schema.parse(wallet);

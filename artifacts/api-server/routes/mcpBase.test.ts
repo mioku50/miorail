@@ -196,6 +196,51 @@ test('GET /api/mcp/base/connect redirects to Base auth without leaking verifier'
   restoreEnv('SESSION_SECRET', originalSecret);
 });
 
+for (const endpoint of [
+  "https://wallet-mcp.coinbase.com",
+  "https://mcp.base.org",
+]) {
+  test(`Base OAuth connects through the configured endpoint ${endpoint}`, async () => {
+    const fake = createFakeDb();
+    baseMcpOAuthStoreRuntime.db = fake.db;
+    const previous = {
+      enabled: process.env.BASE_MCP_ENABLED,
+      url: process.env.BASE_MCP_SERVER_URL,
+      secret: process.env.SESSION_SECRET,
+    };
+    process.env.BASE_MCP_ENABLED = "true";
+    process.env.BASE_MCP_SERVER_URL = endpoint;
+    process.env.SESSION_SECRET = "test-session-secret";
+    mcpBaseRouteRuntime.auth = async (provider: any, options: any) => {
+      assert.equal(options.serverUrl.origin, endpoint);
+      const state = await provider.state();
+      await provider.saveCodeVerifier("test-code-verifier");
+      await provider.redirectToAuthorization(
+        new URL(
+          `${endpoint}/authorize?state=${state}&code_challenge=challenge`,
+        ),
+      );
+      return "REDIRECT";
+    };
+    try {
+      const response = await request(app).get(
+        "/api/mcp/base/connect?returnTo=/extensions",
+      );
+      assert.equal(response.status, 302);
+      assert.ok(response.headers.location.startsWith(`${endpoint}/authorize?`));
+      assert.equal(
+        response.headers.location.includes("test-code-verifier"),
+        false,
+      );
+      assert.equal(fake.states.size, 1);
+    } finally {
+      restoreEnv("BASE_MCP_ENABLED", previous.enabled);
+      restoreEnv("BASE_MCP_SERVER_URL", previous.url);
+      restoreEnv("SESSION_SECRET", previous.secret);
+    }
+  });
+}
+
 test('GET /api/mcp/base/connect clears stale encrypted credentials before reconnecting', async () => {
   const fake = createFakeDb();
   baseMcpOAuthStoreRuntime.db = fake.db;

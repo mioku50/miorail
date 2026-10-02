@@ -392,11 +392,12 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.5.0` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.5.1` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
 argument. The shared inbox establishes a fixed 24-hour baseline at first use;
 opening it acknowledges no event. Unread entries persist past seven days and
-are paged fifty at a time. `view: "history"` also shows reviewed entries for
+are paged with up to fifty source IDs, keeping each issuer transaction whole.
+`view: "history"` also shows reviewed entries for
 currently held/watched contracts. `nextCursor` pages through one dated snapshot;
 refresh without it to see later findings. Occurrence and recording dates remain
 separate. An optional `since` still requests an ad hoc window capped at seven
@@ -412,8 +413,15 @@ user explicitly asks to mark the shown updates as read. Fetching, explaining
 or sending a notification never grants that authorization. Connected MCP now
 has 29 tools: 16 public reads plus 13 wallet-bound tools. This new tool changes
 only inbox receipts, never holdings, notification subscriptions or actions.
-The personal inbox filters and orders by recording time, then signal ID, so
-same-time and delayed insertions remain independently reviewable.
+The personal inbox groups issuer logs by chain, exact contract and transaction.
+Compatibility multiplier logs and a corporate-action announcement from one
+transaction form one news item. Its expanded evidence retains every source;
+equal values in different transactions or contracts remain separate updates.
+`inbox.items` is the news feed and `changes.cards` contains its raw evidence,
+which assistants must not repeat as additional news. Counts refer to news items.
+Group anchors use the latest recording time and signal ID; pages and review
+proofs include whole groups. A later log remains unread even if an earlier proof
+was used, and existing per-event receipts require no migration.
 Each entry labels holding/watch relevance and opens an exact-contract inspection.
 Balance/reference reads retain their original dates inside the short cache;
 the bounded change window is read anew on every overview request.
@@ -444,7 +452,16 @@ anybody and needs no claim transaction.
 
 ## Base MCP Extensions
 
-Miorail reads the live `mcp.base.org` registry and classifies tools as `READ`, `ACTION`, `ROUTABLE`, or blocked before an LLM can select them.
+Miorail reads the live Wallet MCP registry at the configured endpoint and classifies tools as `READ`, `ACTION`, `ROUTABLE`, or blocked before an LLM can select them.
+
+For new connections the canonical endpoint is `https://wallet-mcp.coinbase.com`.
+Base's [October 1 endpoint update](https://github.com/base/skills/commit/4f3d8f3787311edf15e2c4e4ba8160dea524683f)
+also moves the setup guide to [Coinbase Wallet MCP documentation](https://docs.cdp.coinbase.com/ai-agents/coinbase-for-agents/wallet-mcp)
+and updates ChatGPT, Claude, Claude Code, Codex, Cursor and Hermes instructions.
+Existing `https://mcp.base.org` connections remain supported. Keep their configured
+endpoint until an explicit OAuth reconnect; do not transfer an old grant to the
+new OAuth issuer by editing the server URL. This upstream change adds no tools
+or plugin capabilities. `.env.example` uses the new endpoint for fresh setups.
 
 - `READ` tools may answer scoped Base questions.
 - `ROUTABLE` swap/yield requests are handed to Routes; they cannot bypass provider comparison or Route Proof.

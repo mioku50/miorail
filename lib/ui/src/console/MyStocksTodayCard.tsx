@@ -51,6 +51,11 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
   const data = model.data;
   const dividendView = data ? myDividendsViewV1({ data: data.dividends, failed: false }) : null;
   const feed = data?.changes ? signalFeedViewV1(data.changes, new Date(data.generatedAt)) : null;
+  const news =
+    data?.inbox.items.flatMap((item) => {
+      const card = feed?.cards.find((card) => card.signalId === item.signalId);
+      return card ? [card] : [];
+    }) ?? [];
   const update = (card: NonNullable<typeof feed>['cards'][number]) => {
     const item = data?.inbox.items.find((row) => row.signalId === card.signalId);
     const recorded = data?.changes?.cards.find((row) => row.signalId === card.signalId);
@@ -60,13 +65,20 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
           {item?.relation === 'held' ? 'Related to your holdings' : 'A market you watch'}
         </span>
         <strong>
-          {card.subject.label}: {card.title}
+          {card.subject.label}: {item?.headline ?? card.title}
         </strong>
-        <p>{card.detail}</p>
+        <p>{item?.summary ?? card.detail}</p>
         <span className="lnote">
-          Occurred {recorded ? date(recorded.occurredAt) : card.occurred}
-          {recorded && recorded.recordedAt !== recorded.occurredAt
-            ? ` · recorded ${date(recorded.recordedAt)}`
+          Occurred{' '}
+          {item?.occurredAt
+            ? date(item.occurredAt)
+            : recorded
+              ? date(recorded.occurredAt)
+              : card.occurred}
+          {(item?.recordedAt ?? recorded?.recordedAt) !==
+            (item?.occurredAt ?? recorded?.occurredAt) &&
+          (item?.recordedAt ?? recorded?.recordedAt)
+            ? ` · recorded ${date(item?.recordedAt ?? recorded!.recordedAt)}`
             : ''}
         </span>
         {item ? (
@@ -78,6 +90,32 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
               </a>
             ) : null}
           </div>
+        ) : null}
+        {item?.evidenceSignalIds && item.evidenceSignalIds.length > 1 ? (
+          <details>
+            <summary>Evidence for this update · {item.evidenceSignalIds.length} records</summary>
+            <p className="lnote">One issuer transaction. These records support the update above.</p>
+            {item.transactionHash ? (
+              <a
+                href={`https://basescan.org/tx/${item.transactionHash}`}
+                target="_blank"
+                rel="noreferrer"
+              >
+                View transaction
+              </a>
+            ) : null}
+            <ul>
+              {item.evidenceSignalIds.map((id) => {
+                const source = feed?.cards.find((row) => row.signalId === id);
+                return source ? (
+                  <li key={id}>
+                    <strong>{source.title}</strong>
+                    <p>{source.detail}</p>
+                  </li>
+                ) : null;
+              })}
+            </ul>
+          </details>
         ) : null}
       </li>
     );
@@ -262,13 +300,13 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
               ) : null}
               {data.changesUnavailable ? (
                 <p>Changes could not be read. No claim about a quiet market can be made.</p>
-              ) : feed?.cards.length ? (
+              ) : news.length ? (
                 <React.Fragment>
                   <p>
                     {data.inbox.heldCount} related to your holdings · {data.inbox.watchedCount} to
                     markets you watch.
                   </p>
-                  <ul>{feed.cards.slice(0, 3).map(update)}</ul>
+                  <ul>{news.slice(0, 3).map(update)}</ul>
                 </React.Fragment>
               ) : (
                 <p>
@@ -278,10 +316,10 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                   Coverage is limited to the measurements below.
                 </p>
               )}
-              {feed && feed.cards.length > 3 ? (
+              {news.length > 3 ? (
                 <details>
-                  <summary>{feed.cards.length - 3} more recorded changes</summary>
-                  <ul>{feed.cards.slice(3).map(update)}</ul>
+                  <summary>{news.length - 3} more recorded changes</summary>
+                  <ul>{news.slice(3).map(update)}</ul>
                 </details>
               ) : null}
               {data.inbox.nextCursor && model.onNextPage ? (
