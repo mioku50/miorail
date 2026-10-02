@@ -1,4 +1,4 @@
-import { LlmProvider, LlmRequest, LlmResponse } from './types.js';
+import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
 
 export interface OpenAiConfig {
   baseUrl: string;

@@ -1,8 +1,8 @@
-import { Request, Response, NextFunction, type RequestHandler } from 'express';
+import type { Request, Response, NextFunction, RequestHandler } from 'express';
 import { CdpClient } from '@coinbase/cdp-sdk';
 import type { EvmServerAccount } from '@coinbase/cdp-sdk';
 import { generateJwt } from '@coinbase/cdp-sdk/auth';
-import { X402PaymentRequired } from '@mioagent/x402-parser';
+import type { X402PaymentRequired } from '@mioagent/x402-parser';
 import {
   builderCodeAdviceV1,
   resolveBuilderCodeV1,

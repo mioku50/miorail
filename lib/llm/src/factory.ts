@@ -1,4 +1,4 @@
-import { LlmProvider } from './types';
+import type { LlmProvider } from './types';
 import { OpenAiCompatibleClient } from './openai';
 import { LlmProviderChainV1, type NamedLlmProviderV1 } from './fallback';
 import { createLazyX402BuyerPaidFetch, x402BuyerPaymentModeFromEnv } from '@mioagent/x402-gateway';

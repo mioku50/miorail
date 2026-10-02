@@ -1,5 +1,5 @@
 import { LlmHttpError } from './openai.js';
-import { LlmProvider, LlmRequest, LlmResponse } from './types.js';
+import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
 
 // ---------------------------------------------------------------------------
 // A two-provider chain: try the primary, and on a failure that a different

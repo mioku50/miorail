@@ -53,6 +53,10 @@ test('an existing chain mapping is preserved and conflicting ISINs are refused',
   }))!;
   await underlyings.bindRepresentation({
     ...original.binding,
+    // Written by the issuer-API binder above, so the typing is present.
+    issuerId: original.binding.issuerId!,
+    issuerInstrumentKey: original.binding.issuerInstrumentKey!,
+    representationKind: original.binding.representationKind!,
     sourceKind: 'coinbase_b20_metadata',
     observedAt: at,
     observedBlockNumber: '52080000',

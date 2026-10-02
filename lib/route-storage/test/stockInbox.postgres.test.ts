@@ -35,8 +35,11 @@ else
   stockInboxContract('postgres', async () => {
     await sql`TRUNCATE stock_inbox_reads, stock_inbox_state, rwa_signals RESTART IDENTITY CASCADE`;
     return {
-      repository: createDatabaseStockInboxRepositoryV1(
-        (strings, ...values) => sql(strings, ...values) as any,
+      repository: createDatabaseStockInboxRepositoryV1((strings, ...values) =>
+        (sql as unknown as (
+          strings: TemplateStringsArray,
+          ...values: unknown[]
+        ) => Promise<Record<string, unknown>[]>)(strings, ...values),
       ),
       async add(rows) {
         for (const row of rows)
