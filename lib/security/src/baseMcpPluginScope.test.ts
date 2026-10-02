@@ -109,11 +109,11 @@ describe('the generated list is a boundary, not a scrape', () => {
     assert.equal(BASE_MCP_ALL_PLUGIN_HOSTS_V1.some((host) => /^docs\./.test(host)), false);
   });
 
-  test('mcp.base.org and the RPC are not plugin hosts', () => {
+  test('the wallet MCP and the RPC are not plugin hosts', () => {
     // Reached through the MCP client and the configured RPC respectively.
     // Letting a plugin call either through this gateway would route around the
     // credential handling each of them has of its own.
-    for (const banned of ['mcp.base.org', 'mainnet.base.org']) {
+    for (const banned of ['mcp.base.org', 'wallet-mcp.coinbase.com', 'mainnet.base.org']) {
       assert.ok(!BASE_MCP_ALL_PLUGIN_HOSTS_V1.includes(banned), banned);
     }
   });

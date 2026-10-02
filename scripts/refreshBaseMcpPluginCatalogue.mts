@@ -50,8 +50,11 @@ const NEVER_ALLOWLIST_V1 = new Set([
   'etherscan.io',
   'example.com',
   'localhost',
-  // Reached through the MCP client, not through plugin HTTP.
+  // Reached through the MCP client, not through plugin HTTP. Both hosts: Base
+  // moved the canonical endpoint on 2026-10-01 and the old one still serves
+  // existing connections.
   'mcp.base.org',
+  'wallet-mcp.coinbase.com',
   // An RPC endpoint is not a plugin API, and ours is configured elsewhere.
   'mainnet.base.org',
   'sepolia.base.org',
