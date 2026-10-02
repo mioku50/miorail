@@ -12,6 +12,9 @@
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "@mioagent/route-storage": "workspace:*"
+  },
   "devDependencies": {
     "tsx": "^4.22.4",
     "typescript": "^5.4.5"

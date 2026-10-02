@@ -80,6 +80,16 @@ function assetV1(overrides: Partial<OfficialAssetWireV1> = {}): OfficialAssetWir
   };
 }
 
+test('an API-only official listing keeps its issuer provenance on the card', () => {
+  const wire = overviewV1([assetV1({ ticker: 'NFLXc', listedIn: ['coinbase_stocks_api'], sourceDiscrepancy: true })], {
+    sources: [{ sourceKind: 'coinbase_stocks_api', sourceUrl: 'https://api.coinbase.com/v1/tokenized-stocks',
+      checkedAt: NOW.toISOString(), status: 'ok', assetCount: 58, lastSuccessfulAt: NOW.toISOString() }],
+  });
+  const view = officialAssetsViewV1(wire, NOW);
+  assert.equal(view.assets[0]!.listedIn, 'Coinbase Stocks API');
+  assert.equal(view.sources[0]!.label, 'Coinbase Stocks API');
+});
+
 function overviewV1(
   assets: OfficialAssetWireV1[],
   overrides: Partial<OfficialAssetsOverviewWireV1> = {},

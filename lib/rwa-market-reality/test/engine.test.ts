@@ -347,6 +347,28 @@ test('a stale B20 multiplier cannot normalize a fresh router quote', async () =>
   assert.equal(result.ranking.status, 'withheld');
 });
 
+test('an API-only Coinbase listing can be quoted without inventing a reference price', async () => {
+  const row = { ...binding(A, 'coinbase:b20_address:a', 'coinbase'), sourceKind: 'coinbase_stocks_api' as const };
+  const ratio: RepresentationRatioRowV1 = {
+    chainId: 8453, tokenAddress: A, ratioKind: 'b20_multiplier', application: 'apply_to_raw_balance',
+    rawValue: '1000000000000000000', scale: '1000000000000000000', scaleSource: 'read_from_contract',
+    blockNumber: '49900000', blockHash: H, evidenceHash: H,
+    observedAt: '2026-08-26T12:00:00.000Z', lastCheckedAt: '2026-08-26T12:00:00.000Z',
+    lastChangedAt: null, reads: 1, changes: 0, createdAt: '2026-08-26T12:00:00.000Z',
+  };
+  const result = await assembleMarketRealityV2(
+    deps({ [A]: run(A, '500000000000000000') }, { bindings: [row], ratios: [ratio] }),
+    { underlyingKey: UNDERLYING, direction: 'buy', requestedCashAtomic: '100000000' },
+  );
+  const asset = result.representations[0]!;
+  assert.equal(asset.status, 'full');
+  assert.equal(asset.normalization, 'fresh_ratio_applied');
+  assert.equal(asset.reference.status, 'unknown');
+  assert.equal(asset.reference.valueAtomic, null);
+  assert.ok(asset.effectivePriceAtomic);
+  assert.equal(asset.basis.status, 'withheld');
+});
+
 test('a background sample is history, never a current quote', async () => {
   // The mismatch, in the read path. The sampler measured this token perfectly
   // forty minutes ago and the quote window closed twenty seconds later. The

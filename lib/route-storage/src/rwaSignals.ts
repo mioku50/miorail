@@ -46,7 +46,7 @@ export const RWA_CASH_EXIT_CHANGE_THRESHOLD_BPS_V1 = 50;
 
 const AddedFactsV1Schema = z
   .object({
-    sourceKind: z.enum(['base_docs_technical', 'base_product_list', 'backed_assets_api']),
+    sourceKind: z.enum(['base_docs_technical', 'base_product_list', 'backed_assets_api', 'coinbase_stocks_api']),
     sourceUrl: z.string().url().startsWith('https://'),
     ticker: z.string().min(1).max(16),
     displayName: z.string().min(1).max(120).nullable(),

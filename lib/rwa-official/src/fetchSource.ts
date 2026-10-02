@@ -21,7 +21,7 @@ export async function fetchOfficialSourceV1(input: {
   try {
     const response = await (input.fetchImpl ?? fetch)(input.url, {
       method: 'GET',
-      headers: { accept: 'text/markdown, text/html;q=0.9, text/plain;q=0.8', 'user-agent': 'miorail/1 (+official-asset-registry)' },
+      headers: { accept: 'application/json, text/markdown, text/html;q=0.9, text/plain;q=0.8', 'user-agent': 'miorail/1 (+official-asset-registry)' },
       signal: controller.signal,
       redirect: 'follow',
     });

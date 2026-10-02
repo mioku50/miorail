@@ -149,7 +149,9 @@ async function main(): Promise<void> {
   const requested = tickersV1(process.argv);
   // Naming tickers is naming registry members, so it selects the registry.
   const corpus = requested === null ? corpusV1(process.argv) : 'official';
-  const limit = numericArgV1('--limit', 64);
+  // The issuer API alone has more than the old 64-row registry cap. Read the
+  // repository's full bounded page before selecting named tickers.
+  const limit = numericArgV1('--limit', 500);
   const underlyingLimit = numericArgV1('--underlying-limit', 300);
   const gapMs = numericArgV1('--gap-ms', DEFAULT_GAP_MS_V1);
   reportLoadedEnvFileV1(loadRootEnvFileV1());

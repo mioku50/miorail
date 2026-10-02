@@ -432,7 +432,7 @@ export async function assembleAddressDossierV1(
   // It answers for other issuers' tokens too, and what those answers mean is
   // established by nothing we have reviewed.
   const registryToken = listed.some(
-    (row) => row.sourceKind === 'base_docs_technical' || row.sourceKind === 'base_product_list',
+    (row) => row.sourceKind === 'base_docs_technical' || row.sourceKind === 'base_product_list' || row.sourceKind === 'coinbase_stocks_api',
   )
     ? tokenAddress
     : null;

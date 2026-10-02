@@ -426,9 +426,19 @@ Each entry labels holding/watch relevance and opens an exact-contract inspection
 Balance/reference reads retain their original dates inside the short cache;
 the bounded change window is read anew on every overview request.
 Coverage names the exact
-Coinbase contracts currently read from Base documentation; other issuers and
+Coinbase contracts currently listed by the issuer API or Base documentation; other issuers and
 contracts are outside this balance read. A full change page and failed reads
 remain explicit gaps. This tool creates no watch, action or transaction.
+
+Coinbase's [Tokenized Stocks API](https://api.coinbase.com/v1/tokenized-stocks)
+is checked hourly as an independent official source. Each address is bound to
+the issuer's checksum-validated ISIN; symbols remain display metadata. The
+first successful check of a source establishes a baseline without announcing
+old listings as new. Failed or malformed responses preserve the previous
+catalog. Optional NAV, supply and multiplier fields do not become chain
+evidence: supply and shares per token are read independently at a pinned block.
+Stocks without NAV remain discoverable and can be quoted by reviewed routers;
+their reference comparison stays unavailable until a reviewed feed exists.
 
 **Check cash out** asks for a fresh router quote into USDC for the owner's entire
 current raw balance of one covered contract. The authenticated

@@ -26,6 +26,9 @@ export function officialCorpusHashV1(assets: readonly OfficialSourceAssetV1[]): 
   // hashes the same. Address first, because address is the identity.
   const canonical = [...assets]
     .sort((left, right) => left.tokenAddress.localeCompare(right.tokenAddress))
-    .map((asset) => [asset.tokenAddress, asset.ticker, asset.referenceFeedAddress ?? '']);
+    .map((asset) => [
+      asset.tokenAddress, asset.ticker, asset.referenceFeedAddress ?? '',
+      ...(asset.underlyingIsin === undefined ? [] : [asset.underlyingIsin, asset.tokenDecimals, asset.displayName]),
+    ]);
   return createHash('sha256').update(JSON.stringify(canonical), 'utf8').digest('hex');
 }

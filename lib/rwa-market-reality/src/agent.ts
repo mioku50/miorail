@@ -117,7 +117,7 @@ export const MarketRealityAgentChangesInputV1Schema = z
 
 const ReviewedIdentityEvidenceV1Schema = z
   .object({
-    sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata']),
+    sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata', 'coinbase_stocks_api']),
     sourceRef: z.string().min(1).max(300),
     sourceHash: z
       .string()
@@ -175,7 +175,7 @@ export const MarketRealityAgentRepresentationsOutputV1Schema = z
         assetClass: z.enum(['equity', 'fund_share', 'other', 'unknown']),
         identifierScheme: z.enum(['isin', 'dinari_stock_id', 'composite_figi']).nullable(),
         identifierValue: z.string().min(1).max(120).nullable(),
-        sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata']),
+        sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata', 'coinbase_stocks_api']),
         sourceRef: z.string().min(1).max(300),
         sourceHash: z
           .string()

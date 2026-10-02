@@ -76,7 +76,7 @@ export interface OfficialAssetWireV1 {
   ticker: string;
   displayName: string | null;
   issuer: string;
-  listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api')[];
+  listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api')[];
   sourceDiscrepancy: boolean;
   referenceValue: {
     status: 'fresh' | 'stale' | 'paused' | 'unavailable' | 'invalid';
@@ -128,7 +128,7 @@ export interface OfficialAssetsOverviewWireV1 {
     notMeasured: number;
   };
   sources: readonly {
-    sourceKind: 'base_docs_technical' | 'base_product_list' | 'backed_assets_api';
+    sourceKind: 'base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api';
     sourceUrl: string;
     checkedAt: string | null;
     status: 'ok' | 'unreachable' | 'unparsable' | null;
@@ -296,11 +296,12 @@ export function rwaAgeLabelV1(iso: string | null, now: Date): string | null {
 // ---------------------------------------------------------------------------
 
 const SOURCE_LABEL_V1: Readonly<
-  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api', string>
+  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api', string>
 > = {
   base_docs_technical: 'Base docs',
   base_product_list: 'Base product page',
   backed_assets_api: 'Backed bTokens API',
+  coinbase_stocks_api: 'Coinbase Stocks API',
 };
 
 const ROUTE_STATUS_V1: Readonly<
@@ -1153,6 +1154,8 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
       const source =
         sourceKind === 'base_product_list'
           ? 'the Base product page'
+          : sourceKind === 'coinbase_stocks_api'
+            ? 'the Coinbase Stocks API'
           : sourceKind === 'backed_assets_api'
             ? 'the Backed bTokens API'
             : 'the Base docs corpus';

@@ -42,7 +42,7 @@ export interface AddressDossierWireV1 {
       ticker: string;
       displayName: string | null;
       issuer: string;
-      listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api')[];
+      listedIn: readonly ('base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api')[];
       sourceDiscrepancy: boolean;
       referenceFeedAddress: string | null;
     } | null;
@@ -185,11 +185,12 @@ const STANDING_COPY_V1: Readonly<
 };
 
 const SOURCE_LABEL_V1: Readonly<
-  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api', string>
+  Record<'base_docs_technical' | 'base_product_list' | 'backed_assets_api' | 'coinbase_stocks_api', string>
 > = {
   base_docs_technical: 'Base docs',
   base_product_list: 'Base product page',
   backed_assets_api: 'Backed bTokens API',
+  coinbase_stocks_api: 'Coinbase Stocks API',
 };
 
 const ORIGIN_COPY_V1: Readonly<

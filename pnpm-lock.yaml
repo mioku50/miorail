@@ -1158,6 +1158,10 @@ importers:
         version: 5.9.3
 
   lib/rwa-official:
+    dependencies:
+      '@mioagent/route-storage':
+        specifier: workspace:*
+        version: link:../route-storage
     devDependencies:
       tsx:
         specifier: ^4.22.4

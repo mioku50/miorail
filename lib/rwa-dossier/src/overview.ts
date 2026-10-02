@@ -79,6 +79,7 @@ const SOURCE_URLS_V1: Readonly<Record<OfficialSourceKindV1, string>> = {
     'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks.md',
   base_product_list: 'https://brand.base.org/stocks',
   backed_assets_api: 'https://api.xstocks.fi/api/v1/token?type=btokens',
+  coinbase_stocks_api: 'https://api.coinbase.com/v1/tokenized-stocks',
 };
 
 function currentTickerV1(identity: OfficialAssetIdentityV1): {
@@ -382,7 +383,7 @@ export async function assembleOfficialAssetsOverviewV1(
       (listing) =>
         listing.currentlyListed &&
         (listing.sourceKind === 'base_docs_technical' ||
-          listing.sourceKind === 'base_product_list'),
+          listing.sourceKind === 'base_product_list' || listing.sourceKind === 'coinbase_stocks_api'),
     );
     const referenceValue = !isCoinbaseB20
       ? unestablishedIssuerReferenceV1()

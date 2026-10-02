@@ -1,16 +1,14 @@
 [Unit]
-# Every six hours.
+# Every hour: the issuer API may add a batch before the Base pages catch up.
 #
-# The corpus is a published document, not a feed: Coinbase adds an equity every
-# few weeks, and the product page moves separately from the technical one. Six
-# hours bounds how long a listing change can sit unnoticed without pointlessly
-# re-fetching a document that has not moved — the snapshot records the document
-# hash, so an unchanged page costs one request and writes one row.
+# Read the API and both Base publications independently. An hourly check bounds
+# discovery lag even when the documentation has not caught up with issuance.
+# Stored hashes keep changes distinguishable from an unchanged response.
 Description=Check the reviewed official-asset sources
 
 [Timer]
 OnBootSec=5min
-OnUnitActiveSec=6h
+OnUnitActiveSec=1h
 Persistent=true
 RandomizedDelaySec=10min
 

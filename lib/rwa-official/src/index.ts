@@ -4,3 +4,4 @@ export * from './productList.js';
 export * from './snapshot.js';
 export * from './fetchSource.js';
 export * from './sourceHealth.js';
+export * from './coinbaseStocks.js';

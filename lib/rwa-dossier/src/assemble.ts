@@ -511,7 +511,7 @@ export async function assembleOfficialAssetDossierV1(
   const isCoinbaseB20 = identity!.listings.some(
     (listing) =>
       listing.currentlyListed &&
-      (listing.sourceKind === 'base_docs_technical' || listing.sourceKind === 'base_product_list'),
+      (listing.sourceKind === 'base_docs_technical' || listing.sourceKind === 'base_product_list' || listing.sourceKind === 'coinbase_stocks_api'),
   );
   const anchorRead = isCoinbaseB20
     ? await deps.reader.readBlockAnchor()

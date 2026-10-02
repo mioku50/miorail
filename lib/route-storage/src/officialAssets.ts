@@ -30,6 +30,7 @@ export const OFFICIAL_SOURCE_KINDS_V1 = [
   'base_docs_technical',
   'base_product_list',
   'backed_assets_api',
+  'coinbase_stocks_api',
 ] as const;
 export type OfficialSourceKindV1 = (typeof OFFICIAL_SOURCE_KINDS_V1)[number];
 
@@ -38,6 +39,7 @@ export const OFFICIAL_SOURCE_ISSUERS_V1: Readonly<Record<OfficialSourceKindV1, s
   base_docs_technical: 'coinbase',
   base_product_list: 'coinbase',
   backed_assets_api: 'backed',
+  coinbase_stocks_api: 'coinbase',
 };
 
 /**

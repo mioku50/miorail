@@ -7,9 +7,9 @@
  * that and withdraws nothing. An asset does not stop being officially issued
  * because our request did.
  *
- * Reads only, apart from the two official-asset tables. No signer, no key, no
- * chain write, no RPC. The Coinbase and Backed sources are public HTTPS
- * documents; Dinari membership is ingested by its separate onchain adapter.
+ * Records source snapshots, membership transitions and checked issuer ISIN
+ * bindings. No signer, no key, no chain write, no RPC. Coinbase and Backed
+ * publish public HTTPS sources; Dinari uses its separate onchain adapter.
  *
  *   pnpm rwa:ingest-official            # check and record
  *   pnpm rwa:ingest-official --dry      # check and print, write nothing
@@ -23,6 +23,8 @@ import {
   officialSourceRegressionsV1,
   parseBaseDocsCorpusV1,
   parseBaseProductListV1,
+  parseCoinbaseStocksApiV1,
+  type OfficialSourceAssetV1,
   type OfficialParseResultV1,
   type OfficialSourceCheckV1,
   type OfficialSourceKeyV1,
@@ -37,6 +39,7 @@ import {
 } from '@mioagent/route-storage';
 import { officialSourceSignalsV1 } from '@mioagent/rwa-dossier';
 
+import { bindCoinbaseStocksApiV1 } from './coinbaseStockBindings.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 const CHAIN_ID_V1 = 8453 as const;
@@ -44,6 +47,7 @@ const CHAIN_ID_V1 = 8453 as const;
 const PARSERS_V1: Record<OfficialSourceKeyV1, (body: string) => OfficialParseResultV1> = {
   base_docs_technical: parseBaseDocsCorpusV1,
   base_product_list: parseBaseProductListV1,
+  coinbase_stocks_api: parseCoinbaseStocksApiV1,
 };
 
 async function main(): Promise<void> {
@@ -80,6 +84,7 @@ async function main(): Promise<void> {
 
     let snapshot: OfficialSourceSnapshotV1;
     let assets: OfficialAssetInputV1[] = [];
+    let sourceAssets: OfficialSourceAssetV1[] = [];
 
     if (!fetched.ok) {
       snapshot = {
@@ -116,6 +121,7 @@ async function main(): Promise<void> {
               ? `set aside ${parsed.otherEntries.map((entry) => entry.label).join(', ')}`
               : null,
         };
+        sourceAssets = parsed.assets;
         assets = parsed.assets.map((asset) => ({
           chainId: CHAIN_ID_V1,
           tokenAddress: asset.tokenAddress,
@@ -163,7 +169,18 @@ async function main(): Promise<void> {
       console.log('  membership unchanged');
     }
 
-    if (watchOpenedNow) continue;
+    if (kind === 'coinbase_stocks_api' && snapshot.status === 'ok') {
+      const bindings = await bindCoinbaseStocksApiV1({
+        assets: sourceAssets, underlyings, sourceHash: snapshot.corpusHash!, observedAt,
+      });
+      console.log(`  underlying identity: ${bindings.established} established, ${bindings.retained} retained, ${bindings.conflicts.length} conflicts`);
+      if (bindings.conflicts.length > 0) {
+        console.error(`  conflicting ISIN mappings refused: ${bindings.conflicts.join(', ')}`);
+        process.exitCode = 1;
+      }
+    }
+    // Each source gets its own baseline. Adding an API is not 58 new issuances.
+    if (watchOpenedNow || previous === null) continue;
     // A delisted asset is not in `assets` -- this check is why it was dropped.
     // Its name comes from what the corpus already holds, so the signal can say
     // WHICH asset left rather than printing an address.

@@ -20,6 +20,7 @@ const WRITERS_V1 = [
   // the Base contract, and otherwise a symbol join whose BOTH sides are that
   // same issuer's publications, gated on a composite FIGI the registry that
   // issues FIGIs agrees with.
+  'scripts/coinbaseStockBindings.ts',
   'scripts/rwa_bind_dinari_representations.ts',
   'scripts/rwa_enrich_underlying_identity.ts',
   'scripts/rwa_ingest_official.ts',
@@ -56,7 +57,7 @@ function sourcesThatBindV1(): string[] {
 }
 
 describe('every writer establishes complete typed identity', () => {
-  test('the set of binding writers is exactly the reviewed three', () => {
+  test('the set of binding writers is exactly the reviewed writers', () => {
     assert.deepEqual(sourcesThatBindV1(), [...WRITERS_V1]);
   });
 

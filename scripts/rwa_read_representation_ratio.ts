@@ -96,11 +96,10 @@ async function main(): Promise<void> {
   // A reviewed issuer adapter selects its own corpus. Backed is also an
   // OFFICIAL source now, but calling the B20 multiplier selectors on a Backed
   // token would turn one issuer's convention into another issuer's evidence.
-  const coinbaseB20 = await official.officialAssets({
+  const coinbaseB20 = (await official.officialAssets({
     chainId: CHAIN_ID_V1,
     limit: 500,
-    sourceKind: 'base_docs_technical',
-  });
+  })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
   // Every issuer gets its OWN adapter. Reading `multiplier()` off a dShare
   // would be a guess, and a guess of exactly that shape was measured to
   // contradict another issuer's own published value.

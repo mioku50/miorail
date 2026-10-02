@@ -484,6 +484,13 @@
       "when": 1788787800000,
       "tag": "0068_market_pool_readings",
       "breakpoints": true
+    },
+    {
+      "idx": 69,
+      "version": "7",
+      "when": 1788960600000,
+      "tag": "0070_coinbase_stocks_api",
+      "breakpoints": true
     }
   ]
 }

@@ -42,6 +42,7 @@ import type {
 /** Each reviewed underlying source belongs to exactly one reviewed issuer. */
 export const ISSUER_BY_REVIEWED_SOURCE_KIND_V1 = {
   coinbase_b20_metadata: 'coinbase',
+  coinbase_stocks_api: 'coinbase',
   dinari_stock_api: 'dinari',
   backed_assets_api: 'backed',
 } as const satisfies Record<UnderlyingSourceKindV1, 'coinbase' | 'dinari' | 'backed'>;

@@ -49,6 +49,7 @@ export const OFFICIAL_SOURCE_KINDS_V1 = [
   'base_docs_technical',
   'base_product_list',
   'backed_assets_api',
+  'coinbase_stocks_api',
 ] as const;
 
 /**

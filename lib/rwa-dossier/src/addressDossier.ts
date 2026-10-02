@@ -68,7 +68,7 @@ export const AddressIdentityV1Schema = z
         displayName: z.string().min(1).max(120).nullable(),
         issuer: z.string().min(1).max(80),
         listedIn: z
-          .array(z.enum(['base_docs_technical', 'base_product_list', 'backed_assets_api']))
+          .array(z.enum(['base_docs_technical', 'base_product_list', 'backed_assets_api', 'coinbase_stocks_api']))
           .max(8),
         sourceDiscrepancy: z.boolean(),
         referenceFeedAddress: Address.nullable(),

@@ -9,7 +9,7 @@ const TOKEN = '0xb20000000000000000000078ee7ce2fe4908108c';
 /** Exercise real routing, hooks, components and CSS. Authentication alone is
  * bypassed in this local browser module; every API call is intercepted. No
  * wallet provider, production cookie, live network or signature is needed. */
-async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAtomic: '43417', decimals: 8, blockTag: '0x308c458' }) {
+async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAtomic: '43417', decimals: 8, blockTag: '0x308c458' }, catalog?: { index: unknown; market: unknown }) {
   const confirmations: unknown[] = [];
   const termsAsked: unknown[] = [];
   const forbiddenWrites: string[] = [];
@@ -23,7 +23,7 @@ async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAt
     let json: unknown;
     if (path === '/api/status') json = { chainId: 8453, productMigration: { routeIntelligenceV1: true }, rpc: { status: 'connected' } };
     else if (path === '/api/auth/session') json = { user: null };
-    else if (path.endsWith('/rwa/underlyings') || path === '/api/public/stocks/underlyings') json = fixture('underlyings');
+    else if (path.endsWith('/rwa/underlyings') || path === '/api/public/stocks/underlyings') json = catalog?.index ?? fixture('underlyings');
     else if (path.endsWith('/stock-action/test-sell/confirm')) {
       confirmations.push(request.postDataJSON());
       json = { clearance: 'fixture-clearance', expiresAt: '2026-09-05T22:00:00Z' };
@@ -56,11 +56,52 @@ async function stubApi(page: Page, holding: unknown = { state: 'read', balanceAt
         reality: fixture('nvda-market'),
       };
     } else if ((path.includes('/rwa/market-reality/') || path.includes('/public/stocks/market-reality/')) && !/\/(measure|history|ask)$/.test(path)) {
-      json = fixture(path.includes('US19260') ? 'coin-market' : 'nvda-market');
+      json = catalog?.market ?? fixture(path.includes('US19260') ? 'coin-market' : 'nvda-market');
     } else if (/\/(release|submission|approve)$/.test(path)) forbiddenWrites.push(path);
     return json ? route.fulfill({ json }) : route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });
   return { confirmations, termsAsked, forbiddenWrites };
+}
+
+for (const width of [1440, 390]) {
+  test(`issuer API listing without NAV opens its exact stock (${width}px)`, async ({ page }) => {
+    const { tokens } = JSON.parse(readFileSync(new URL('../../../lib/rwa-official/test/fixtures/coinbase-stocks-api.json', import.meta.url), 'utf8'));
+    const index = fixture('underlyings');
+    index.entries = tokens.map((row: { isin: string; name: string; symbol: string; total_supply?: number }) => ({
+      underlyingKey: `security:isin:${row.isin}`, canonicalName: row.name,
+      displaySymbol: row.symbol.slice(0, -1), assetClass: 'equity',
+      identifierScheme: 'isin', identifierValue: row.isin,
+      representationCount: 1, liveRepresentationCount: (row.total_supply ?? 0) > 0 ? 1 : 0,
+      issuerIds: ['coinbase'], coinbaseIssued: true, multiIssuer: false,
+    }));
+    index.totals = { underlyings: 58, boundRepresentations: 58, multiIssuerUnderlyings: 0, coinbaseUnderlyings: 58, allUnderlyings: 58 };
+    const netflix = tokens.find((row: { symbol: string }) => row.symbol === 'NFLXc');
+    const market = fixture('nvda-market');
+    const asset = market.representations.find((row: { issuerId: string }) => row.issuerId === 'coinbase');
+    const address = netflix.contract_address.toLowerCase();
+    asset.tokenAddress = address;
+    asset.issuerInstrumentKey = `coinbase:b20_address:${address}`;
+    // An absent issuer NAV is an evidence gap, not a zero-dollar price.
+    asset.reference = { ...market.representations[0].reference, reason: 'No reviewed reference feed is established for this exact address.' };
+    market.question.underlyingKey = `security:isin:${netflix.isin}`;
+    market.representations = [asset];
+    market.universe = { reviewedRepresentationCount: 1, positiveSupplyRepresentationCount: 1, zeroSupplyRepresentationCount: 0, unresolvedSupplyRepresentationCount: 0 };
+    market.marketOutcomeCoverage.eligibleRepresentationCount = 1;
+    market.numericComparisonCoverage.eligibleRepresentationCount = 1;
+    await page.setViewportSize({ width, height: 1000 });
+    await stubApi(page, undefined, { index, market });
+    await page.goto('/market');
+    await page.getByPlaceholder('Search stocks, ticker or ISIN').fill('NFLX');
+    const choice = page.getByRole('option', { name: /^NFLX / });
+    await expect(choice).toBeVisible();
+    await choice.click();
+    await expect(choice).toHaveAttribute('aria-selected', 'true');
+    await expect(page).toHaveURL(new RegExp(encodeURIComponent(market.question.underlyingKey)));
+    await expect(page.getByText(`ISIN ${netflix.isin}`, { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('No reviewed reference feed is established for this exact address.', { exact: false }).first()).toBeAttached();
+    await page.reload();
+    await expect(page.getByRole('option', { name: /^NFLX / })).toHaveAttribute('aria-selected', 'true');
+  });
 }
 
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {

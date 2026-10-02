@@ -44,6 +44,7 @@ export const UNDERLYING_SOURCE_KINDS_V1 = [
   'dinari_stock_api',
   'backed_assets_api',
   'coinbase_b20_metadata',
+  'coinbase_stocks_api',
 ] as const;
 export type UnderlyingSourceKindV1 = (typeof UNDERLYING_SOURCE_KINDS_V1)[number];
 

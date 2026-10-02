@@ -1,9 +1,12 @@
 // ---------------------------------------------------------------------------
 // The reviewed sources of the OFFICIAL trust root.
 //
-// Two of them, deliberately, and they are not interchangeable:
+// Separate publications, with independent snapshots and provenance:
 //
-//   base_docs_technical  the complete issuance corpus, published for
+//   coinbase_stocks_api  issuer-published exact-address records and ISINs.
+//                        Expands before the integration/product pages; presence
+//                        is not a quote or proof of trading eligibility.
+//   base_docs_technical  the integration table, published for
 //                        integrators. Thirteen tokenized equities on
 //                        2026-08-25, plus the oracle registry; ten on
 //                        2026-09-10, when Base dropped COINc, CRCLc and INTCc
@@ -32,6 +35,11 @@
 // ---------------------------------------------------------------------------
 
 export const OFFICIAL_SOURCES_V1 = {
+  coinbase_stocks_api: {
+    url: 'https://api.coinbase.com/v1/tokenized-stocks',
+    humanUrl: 'https://docs.base.org/sdks/tokenized-stocks/overview',
+    issuer: 'coinbase',
+  },
   base_docs_technical: {
     url: 'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks.md',
     /** Where a human reads the same document. Shown, never fetched. */
@@ -55,6 +63,9 @@ export interface OfficialSourceAssetV1 {
   displayName: string | null;
   /** The reference feed the SAME document binds to this asset, if any. */
   referenceFeedAddress: string | null;
+  /** Only an issuer-published exact-address ISIN establishes this join. */
+  underlyingIsin?: string;
+  tokenDecimals?: number;
 }
 
 export type OfficialParseResultV1 =

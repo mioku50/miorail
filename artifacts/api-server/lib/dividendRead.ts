@@ -185,7 +185,7 @@ export const databaseDividendReadDepsV1: DividendReadDepsV1 = {
   async tokens() {
     const official = createDatabaseOfficialAssetRepository(client);
     const underlyings = createDatabaseUnderlyingAssetRepository(client);
-    const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 500, sourceKind: 'base_docs_technical' });
+    const assets = (await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 })).filter((asset) => asset.issuer.toLowerCase() === 'coinbase');
     const rows = await Promise.all(
       assets.map(async (asset): Promise<DividendTokenIdentityV1 | null> => {
         const found = await underlyings.underlyingOf({ chainId: CHAIN_ID_V1, tokenAddress: asset.tokenAddress });
