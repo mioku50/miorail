@@ -2078,6 +2078,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .stocks-today-changes-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .mio-console .stocks-today-relevance { display: block; color: var(--muted); font-size: var(--fs-sm); margin-bottom: 4px; }
 .mio-console .stocks-today-change-links { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 8px; }
+/* The app's reset gives every <a> the colour of its text and no underline, so
+   "Inspect this contract" read as a sentence nobody could tell was a link. */
+.mio-console .stocks-today-change-links a, .mio-console .stocks-today details a { color: var(--blue); text-underline-offset: 2px; }
 .mio-console .stocks-today-changes ul { padding-left: 20px; }
 .mio-console .stocks-today-changes li { padding-block: 8px; }
 .mio-console .stocks-today-changes li p { margin-block: 4px; }

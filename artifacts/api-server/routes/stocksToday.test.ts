@@ -8,6 +8,7 @@ import { encodeFunctionResult } from 'viem';
 import type { B20ReaderV1 } from '@mioagent/b20-control';
 import { dividendCalendarV1 } from '@mioagent/rwa-market-reality/dividends';
 import { StockBriefV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
+import { logger } from '@mioagent/utils';
 import {
   briefInput,
   NOW,
@@ -237,9 +238,20 @@ test('failed changes and references are gaps while chain failure cannot look lik
   stockBriefRuntime.dividends = async () => {
     throw new Error('secret-rpc-url');
   };
-  const failed = await request(app()).get('/stocks/today');
-  assert.equal(failed.status, 503);
-  assert.deepEqual(failed.body, { code: 'stock_brief_unread' });
+  // A failed overview leaves one line with a code, never the message.
+  const warnings: Array<{ message: string; meta: unknown }> = [];
+  const warn = logger.warn;
+  logger.warn = ((message: string, meta?: unknown) => {
+    warnings.push({ message, meta });
+  }) as typeof logger.warn;
+  try {
+    const failed = await request(app()).get('/stocks/today');
+    assert.equal(failed.status, 503);
+    assert.deepEqual(failed.body, { code: 'stock_brief_unread' });
+  } finally {
+    logger.warn = warn;
+  }
+  assert.deepEqual(warnings, [{ message: 'Stock overview read failed', meta: { code: 'error', kind: 'Error' } }]);
 });
 
 function event(
