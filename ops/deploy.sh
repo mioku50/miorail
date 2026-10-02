@@ -138,7 +138,7 @@ if [ "$(file_digest "$DEPLOY_SOURCE")" != "$digest_before_pull" ]; then
   run_from_snapshot "$@"
 fi
 
-step "2/7  dependencies"
+step "2/7  dependencies and migrations"
 # --frozen-lockfile: a deploy that silently resolves a different tree is not a
 # deploy of the commit that was reviewed.
 #
@@ -150,6 +150,13 @@ step "2/7  dependencies"
 # source and build. A deploy IS a non-interactive context; saying so is not the
 # same as forcing anything, and `--frozen-lockfile` still decides the tree.
 as_service_user env CI=true pnpm install --frozen-lockfile
+
+# A successful build says nothing about the production schema. Apply the
+# checked-in journal before publishing code or enabling timers that use it.
+# Match the API's two environment files without loading secrets into a build.
+as_service_user env NODE_ENV=production "$NODE_BIN/node" \
+  --env-file="$REPO/.env" --env-file-if-exists=/etc/miorail/api-rpc.env \
+  --import tsx "$REPO/lib/db/migrate.ts"
 
 step "3/7  build"
 # `pnpm -r build` runs each package's own build. For the interface that is
@@ -310,8 +317,8 @@ else
 fi
 # `enable --now` on a timer starts the clock without running the pass, so a
 # deploy never fires every worker at once. A NEW timer with Persistent=true
-# still fires on its first enable, so a migration a new worker needs must be
-# applied BEFORE the deploy, not after it. That ordering has been learned twice
+# still fires on its first enable, so migrations run in step 2 before timers
+# are enabled. That ordering has been learned twice
 # here — watch_schedule in Phase 8, representation_ratio in Phase 9A.5.
 systemctl enable --now "${RWA_TIMERS[@]}" >/dev/null
 
