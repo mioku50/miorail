@@ -10,7 +10,7 @@ import type {
   StocksEvidenceKindV1,
 } from '@mioagent/rwa-market-reality/narration-contract';
 import { DIVIDEND_MECHANISM_SENTENCE_V1, dividendEventSentenceV1 } from '@mioagent/rwa-market-reality/dividend-agent';
-import type { DividendStockV1 } from '@mioagent/rwa-market-reality/dividends';
+import { dividendReleasesReadV1, type DividendStockV1 } from '@mioagent/rwa-market-reality/dividends';
 
 import type { B20AnswerAssertionsV1 } from './b20AnswerVerify.js';
 
@@ -451,7 +451,16 @@ function dividendItemsV1(
     };
   }
   if (!stock || (stock.next === null && stock.history.length === 0)) {
-    return { missing: [`No dividend for ${underlyingKey} is on record in Miorail.`], sentence: null };
+    // Five companies' releases are read. For the rest, "no dividend on record"
+    // read as "pays none" — about Pfizer and Philip Morris among them.
+    return {
+      missing: [
+        dividendReleasesReadV1(underlyingKey)
+          ? `No dividend for ${underlyingKey} is on record in Miorail.`
+          : `Miorail does not read the dividend releases of ${underlyingKey}, so nothing about its dividends is established.`,
+      ],
+      sentence: null,
+    };
   }
   const subject = representations.includes(stock.tokenAddress.toLowerCase()) ? stock.tokenAddress : null;
   const sentences: string[] = [];

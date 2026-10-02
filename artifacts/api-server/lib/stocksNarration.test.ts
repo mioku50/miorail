@@ -691,6 +691,25 @@ describe('a question about a dividend', () => {
     assert.equal(unread.missing.some((line) => /No dividend for/.test(line)), false);
   });
 
+  test('a company whose releases Miorail does not read is unread, never dividend-free', () => {
+    // Pfizer pays every quarter; Miorail reads five companies' releases and
+    // Pfizer is not one of them.
+    const pfizer = 'security:isin:US7170811035';
+    const reality = caseOf('A').reality;
+    const bundle = stocksEvidenceBundleV1({
+      question: 'Does Pfizer pay a dividend?',
+      reality: { ...reality, question: { ...reality.question, underlyingKey: pfizer } },
+      dividends: null,
+      now: STOCKS_BENCH_NOW_V1,
+    });
+    assert.ok(
+      bundle.missing.includes(
+        `Miorail does not read the dividend releases of ${pfizer}, so nothing about its dividends is established.`,
+      ),
+    );
+    assert.equal(bundle.missing.some((line) => /No dividend for/.test(line)), false);
+  });
+
   test('a question about something else keeps the bundle it always had', () => {
     const before = bundleOf('A');
     const after = ask(undefined);

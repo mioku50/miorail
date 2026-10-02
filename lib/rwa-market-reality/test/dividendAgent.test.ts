@@ -54,7 +54,12 @@ describe('the dividend calendar, for an assistant', () => {
       out.miorailSummary,
       /Last for GOOGL: Alphabet \$0\.22 a share, payable 2026-09-14 \(reinvested into the token\): GOOGLc tracked 0\.0377% more GOOGL shares per token from 2026-09-14T18:29:21\.000Z, worth \$0\.1309 a token at \$347\.10, 59\.5% of the declared amount\./,
     );
-    assert.match(out.miorailSummary, /No dividend on record: TSLA\./);
+    // Tesla's releases are not read, so nothing is said about its dividends.
+    assert.match(
+      out.miorailSummary,
+      /Not read: Miorail does not read the dividend releases of TSLA, so nothing is established about whether they pay one\./,
+    );
+    assert.doesNotMatch(out.miorailSummary, /No dividend on record/);
     assert.ok(out.miorailSummary.endsWith(DIVIDEND_MECHANISM_SENTENCE_V1));
   });
 

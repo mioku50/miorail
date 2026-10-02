@@ -2,6 +2,7 @@ import { z } from 'zod';
 
 import {
   DividendCalendarResponseV1Schema,
+  dividendReleasesReadV1,
   type DividendCalendarResponseV1,
   type DividendEventV1,
   type DividendStockV1,
@@ -77,8 +78,17 @@ export function dividendCalendarSummaryV1(calendar: DividendCalendarResponseV1):
     const last = stock.history[0];
     if (last) sentences.push(`Last for ${stock.symbol}: ${dividendEventSentenceV1(last, stock)}`);
   }
-  const quiet = calendar.stocks.filter((stock) => stock.next === null && stock.history.length === 0).map((stock) => stock.symbol);
+  const silent = calendar.stocks.filter((stock) => stock.next === null && stock.history.length === 0);
+  const quiet = silent.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
+  const unread = silent.filter((stock) => !dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   if (quiet.length > 0) sentences.push(`No dividend on record: ${quiet.join(', ')}.`);
+  // Miorail's gap, said as one. "No dividend on record" here once told an
+  // assistant that Pfizer and Philip Morris pay nothing.
+  if (unread.length > 0) {
+    sentences.push(
+      `Not read: Miorail does not read the dividend releases of ${unread.join(', ')}, so nothing is established about whether they pay one.`,
+    );
+  }
   if (sentences.length === 0) sentences.push('No dividend is on record for any of these stocks.');
   return [...sentences, DIVIDEND_MECHANISM_SENTENCE_V1].join(' ');
 }

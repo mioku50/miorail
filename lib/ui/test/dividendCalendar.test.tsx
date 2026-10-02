@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { dividendWalletConversionsV1, dividendWalletKeyV1, dividendWalletV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
-import { dividendCalendarV1, type DividendTokenV1 } from '@mioagent/rwa-market-reality/dividends';
+import { DIVIDEND_DECLARATIONS_V1, dividendCalendarV1, type DividendTokenV1 } from '@mioagent/rwa-market-reality/dividends';
 
 import { DividendCalendarCard } from '../src/console/DividendCalendarCard';
 import { dividendCalendarViewV1, myDividendsViewV1 } from '../src/console/dividendCalendarView';
@@ -63,7 +63,12 @@ describe('Dividends on Base, on the Stocks board', () => {
     assert.equal(apple!.source, null);
     assert.equal(apple!.last, 'Aug 13: $0.27 paid, not owed — AAPLc had no supply on the record date.');
     assert.equal(alphabet!.last, 'Sep 14: +0.038% GOOGL per GOOGLc, worth $0.131 — 59.5% of the $0.22 declared.');
-    assert.equal(view.none, 'No dividend on record: TSLA.');
+    // Miorail does not read Tesla's releases: its gap, said as one, never "no dividend".
+    assert.equal(view.none, null);
+    assert.equal(
+      view.unread,
+      'Not read: TSLA. Miorail reads the dividend releases of AAPL, GOOGL, META and NVDA only, so this board does not say whether the others pay one.',
+    );
     assert.match(view.note, /median measured share.*59\.5%, from GOOGL Sep 14: 59\.5%/);
     assert.match(view.note, /historical reference price/);
     assert.doesNotMatch(view.note, /latest reference price/);
@@ -116,6 +121,28 @@ function walletOf(held: Record<string, number>, before: Record<string, number>) 
   });
 }
 
+
+test('"No dividend on record" only where Miorail reads the releases; the rest are "not read"', () => {
+  // Sixty stocks on the board and five companies read: the board once said
+  // "No dividend on record" for Pfizer, which pays one every quarter.
+  const calendar = dividendCalendarV1({
+    now: new Date('2026-09-27T12:00:00.000Z'),
+    declarations: DIVIDEND_DECLARATIONS_V1.filter((row) => row.symbol !== 'MSFT'),
+    tokens: [
+      token('GOOGL', 'security:isin:US02079K3059', { supplyAtRecord: { '2026-09-07': '6113.6938' } }),
+      token('MSFT', 'security:isin:US5949181045'),
+      token('PFE', 'security:isin:US7170811035'),
+    ],
+  });
+  const view = dividendCalendarViewV1(calendar)!;
+  assert.equal(view.none, 'No dividend on record: MSFT.');
+  assert.equal(
+    view.unread,
+    'Not read: PFE. Miorail reads the dividend releases of GOOGL and MSFT only, so this board does not say whether the others pay one.',
+  );
+  assert.match(renderToStaticMarkup(<DividendCalendarCard view={view} />), /<p class="lnote">Not read: PFE\./);
+});
+
 describe('Your dividends, for a signed-in wallet', () => {
   const MINE = walletOf({ GOOGL: 4, META: 1, TSLA: 3 }, { GOOGL: 2.5 });
 
@@ -132,7 +159,7 @@ describe('Your dividends, for a signed-in wallet', () => {
             'Sep 14: $0.327 reinvested — 0.00094 more GOOGL shares on the 2.5 GOOGLc you held.',
           ],
         ],
-        ['TSLAc · 3 held', ['No dividend on record.']],
+        ['TSLAc · 3 held', ["Not read: Miorail does not read TSLA's dividend releases yet."]],
       ],
     );
     assert.equal(view.total, 'Reinvested into your tokens so far: $0.327.');

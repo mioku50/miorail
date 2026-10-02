@@ -87,6 +87,7 @@ export function DividendCalendarCard({ view }: { view: DividendCalendarViewV1 })
           </button>
         ) : null}
         {view.none ? <p className="lnote">{view.none}</p> : null}
+        {view.unread ? <p className="lnote">{view.unread}</p> : null}
         <p className="lnote">{view.note}</p>
       </div>
     </section>

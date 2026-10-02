@@ -8,9 +8,16 @@ import {
   releaseTextV1,
   usDateV1,
 } from '../src/dividendSources.js';
-import { DIVIDEND_DECLARATIONS_V1 } from '../src/dividends.js';
+import { DIVIDEND_DECLARATIONS_V1, DIVIDEND_RELEASES_READ_V1 } from '../src/dividends.js';
 
 const issuer = (symbol: string) => DIVIDEND_ISSUERS_V1.find((row) => row.symbol === symbol)!;
+
+test('the screens say "not read" for exactly the companies this file does not read', () => {
+  assert.deepEqual(
+    [...new Set(DIVIDEND_ISSUERS_V1.map((row) => row.underlyingKey))].sort(),
+    [...DIVIDEND_RELEASES_READ_V1].sort(),
+  );
+});
 
 function read(symbol: string, html: string, publishedAt = '2026-07-22T20:05:00Z') {
   return readDividendReleaseV1({

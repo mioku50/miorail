@@ -3,10 +3,11 @@ import type {
   DividendWalletHoldingV1,
   DividendWalletResponseV1,
 } from '@mioagent/rwa-market-reality/dividend-wallet';
-import type {
-  DividendCalendarResponseV1,
-  DividendEventV1,
-  DividendStockV1,
+import {
+  dividendReleasesReadV1,
+  type DividendCalendarResponseV1,
+  type DividendEventV1,
+  type DividendStockV1,
 } from '@mioagent/rwa-market-reality/dividends';
 
 // ---------------------------------------------------------------------------
@@ -60,8 +61,10 @@ export interface DividendCalendarViewV1 {
   /** The signed-in wallet's own; null when signed out or not read yet. */
   mine: MyDividendsViewV1 | null;
   rows: DividendRowViewV1[];
-  /** The stocks with no dividend on record, named once. */
+  /** The stocks whose releases Miorail reads and that have no dividend on record, named once. */
   none: string | null;
+  /** The stocks whose releases Miorail does not read: its gap, never "no dividend". */
+  unread: string | null;
   note: string;
 }
 
@@ -74,6 +77,11 @@ const STATE_LABELS_V1: Record<DividendEventV1['state'], string> = {
   not_entitled: 'Not owed',
   not_reflected: 'Not in the token yet',
 };
+
+/** "A, B and C". */
+function listV1(items: readonly string[]): string {
+  return items.length < 2 ? items.join('') : `${items.slice(0, -1).join(', ')} and ${items[items.length - 1]}`;
+}
 
 /** "Sep 28" from a New York date. */
 function dayV1(date: string): string {
@@ -200,7 +208,14 @@ export function myDividendsViewV1(
     return {
       key: holding.tokenAddress,
       title: Number(holding.tokens) > 0 ? `${holding.tokenSymbol} · ${tokensV1(holding.tokens)} held` : `${holding.tokenSymbol} · none held now`,
-      lines: lines.length > 0 ? lines : ['No dividend on record.'],
+      lines:
+        lines.length > 0
+          ? lines
+          : [
+              dividendReleasesReadV1(holding.underlyingKey)
+                ? 'No dividend on record.'
+                : `Not read: Miorail does not read ${holding.symbol}'s dividend releases yet.`,
+            ],
     };
   });
   const received = Number(mine.data.receivedUsd);
@@ -239,7 +254,10 @@ export function dividendCalendarViewV1(
       last: last ? lastV1(last, stock) : null,
     };
   });
-  const quiet = response.stocks.filter((stock) => stock.next === null && stock.history.length === 0).map((stock) => stock.symbol);
+  const silent = response.stocks.filter((stock) => stock.next === null && stock.history.length === 0);
+  const quiet = silent.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
+  const unread = silent.filter((stock) => !dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
+  const read = [...new Set(response.stocks.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol))].sort();
   const measured = response.passThrough.measuredOn;
   return {
     title: 'Dividends on Base',
@@ -247,6 +265,10 @@ export function dividendCalendarViewV1(
     mine: myDividendsViewV1(mine),
     rows,
     none: quiet.length > 0 ? `No dividend on record: ${quiet.join(', ')}.` : null,
+    unread:
+      unread.length > 0
+        ? `Not read: ${unread.join(', ')}. Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'} only, so this board does not say whether the others pay one.`
+        : null,
     note: [
       "Declared: the company's own release. Estimate: not declared yet — the last dividend again, a quarter later.",
       response.passThrough.percent && measured.length > 0

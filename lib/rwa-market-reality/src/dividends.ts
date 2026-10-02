@@ -78,6 +78,28 @@ export const DIVIDEND_CONVERSION_WINDOW_DAYS_V1 = 14;
 // automated reads (Meta's does).
 // ---------------------------------------------------------------------------
 
+/**
+ * The companies whose own dividend releases Miorail reads, by underlying key.
+ * `DIVIDEND_ISSUERS_V1` in dividendSources.ts is the reader; its test pins the
+ * two lists together.
+ *
+ * For every other stock on the calendar nothing about dividends has been read,
+ * and that is Miorail's gap, not the company's policy. The calendar grew from
+ * thirteen stocks to sixty when the issuer API was added, and the board then
+ * said "No dividend on record" for Pfizer, Philip Morris and Broadcom.
+ */
+export const DIVIDEND_RELEASES_READ_V1: readonly string[] = [
+  'security:isin:US0378331005', // AAPL
+  'security:isin:US02079K3059', // GOOGL
+  'security:isin:US30303M1027', // META
+  'security:isin:US5949181045', // MSFT
+  'security:isin:US67066G1040', // NVDA
+];
+
+export function dividendReleasesReadV1(underlyingKey: string): boolean {
+  return DIVIDEND_RELEASES_READ_V1.includes(underlyingKey);
+}
+
 export interface DividendSourceV1 {
   publisher: string;
   url: string;
