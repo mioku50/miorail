@@ -35,7 +35,7 @@ export const StockBriefV1Schema = z
     balanceReadAt: Iso,
     coverage: z
       .object({
-        tokenAddresses: z.array(Address).max(64),
+        tokenAddresses: z.array(Address).max(500),
         note: z.string(),
       })
       .strict(),
@@ -55,7 +55,7 @@ export const StockBriefV1Schema = z
           scheduleRead: z.enum(['read', 'unavailable']),
         }).strict(),
       )
-      .max(64),
+      .max(500),
     watchedCount: z.number().int().nonnegative(),
     changes: RwaSignalFeedV1Schema.nullable(),
     changesTruncated: z.boolean(),
@@ -226,7 +226,7 @@ export function stockBriefV1(input: {
     balanceReadAt: input.balanceReadAt,
     coverage: {
       tokenAddresses: input.tokenAddresses,
-      note: `Balances cover ${input.tokenAddresses.length} Coinbase stock contracts currently in the reviewed Base documentation. Other contracts and issuers are not included in this balance read.`,
+      note: `Balances cover ${input.tokenAddresses.length} Coinbase stock contracts currently listed by the reviewed issuer API or Base documentation. Other contracts and issuers are not included in this balance read.`,
     },
     holdings,
     watchedCount: new Set(input.watchedAddresses).size,

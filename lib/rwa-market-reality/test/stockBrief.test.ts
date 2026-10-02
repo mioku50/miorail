@@ -3,6 +3,22 @@ import test from 'node:test';
 import { stockBriefV1, stockBriefWindowV1 } from '../src/stockBrief.js';
 import { briefInput, NOW, TOKEN, OTHER, FEED } from './fixtures/stockBrief.js';
 
+test('an expanding issuer catalog stays covered without inventing reference values', () => {
+  const input = briefInput();
+  input.tokenAddresses = Array.from({ length: 65 }, (_, i) =>
+    `0xb200${(i + 1).toString(16).padStart(36, '0')}`,
+  );
+  input.dividends.holdings = input.tokenAddresses.map((tokenAddress) => ({
+    ...input.dividends.holdings[0]!, tokenAddress,
+  }));
+  input.references = [];
+  const result = stockBriefV1(input);
+  assert.equal(result.coverage.tokenAddresses.length, 65);
+  assert.equal(result.holdings.length, 65);
+  assert.ok(result.holdings.every((row) => row.reference === null));
+  assert.match(result.coverage.note, /reviewed issuer API or Base documentation/);
+});
+
 test('a tiny holding is valued at a dated total-return reference, without applying its multiplier twice', () => {
   const input = briefInput();
   input.controls = new Map([
