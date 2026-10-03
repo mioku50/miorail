@@ -9,10 +9,11 @@ function drizzleDir(): string {
 
 // The deploy applies this journal with drizzle's migrator, which skips every
 // entry whose `when` is not later than the last one production recorded. Nine
-// migrations were once applied by hand and never journaled, and two files
-// shared the number 0070. A file outside the journal is a migration no fresh
-// database runs; an entry out of order is one a deploy silently skips.
-test('every migration file is journaled once, in order, under its own number', async () => {
+// migrations were once applied by hand and never journaled. A file outside the
+// journal is a migration no fresh database runs; an entry out of order is one
+// a deploy silently skips. Drizzle keys on the full tag, so two tags may share
+// a number as long as each is journaled once, in its place.
+test('every migration file is journaled once, in order', async () => {
   const journal = JSON.parse(await readFile(resolve(drizzleDir(), 'meta/_journal.json'), 'utf8')) as {
     entries: Array<{ idx: number; when: number; tag: string }>;
   };
@@ -20,8 +21,6 @@ test('every migration file is journaled once, in order, under its own number', a
   const tags = journal.entries.map((entry) => entry.tag);
   assert.deepEqual([...tags].sort(), [...files].sort(), 'journal tags and .sql files differ');
   assert.equal(new Set(tags).size, tags.length, 'a tag is journaled twice');
-  const numbers = tags.map((tag) => tag.slice(0, 4));
-  assert.equal(new Set(numbers).size, numbers.length, 'two migrations share a number');
   journal.entries.forEach((entry, index) => {
     assert.equal(entry.idx, index, `${entry.tag} is out of index order`);
     if (index > 0) {
