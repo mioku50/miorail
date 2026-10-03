@@ -8,6 +8,8 @@ import { createDatabaseRpcCuLedgerRepository } from '@mioagent/route-storage';
 import { getExecutionCapabilities } from '../lib/executionCapabilities.js';
 import { attachBaseMcpToolProbeStatus, finalizeBaseMcpReadiness, getBaseMcpStatusSnapshot, probeBaseMcpStatus, type BaseMcpStatus } from '../lib/baseMcpStatus.js';
 import { getBaseMcpAuthStatus, type StoredBaseMcpAuthStatus } from '../lib/baseMcpOAuthStore.js';
+import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
+import { baseMcpCallbackUrlV1 } from './mcpBase.js';
 import {
   x402ConfigFromEnv,
   x402MiddlewareDiagnosticsFromEnv,
@@ -207,8 +209,42 @@ function publicX402Status(x402Config: X402RuntimeConfig) {
 
 export const statusRouter = Router();
 
+// After a restart nothing has listed Base MCP's tools yet, so a connected
+// wallet read "degraded, tool inventory unverified" in the header until
+// someone opened Extensions. The first status read for a connected user lists
+// them once, bounded, and every read after it is answered from that record.
+// One probe at a time, and a minute's pause after one that did not verify.
+let toolInventoryInflight: Promise<void> | null = null;
+let toolInventoryFailedAt = 0;
+async function verifyToolInventoryOnceV1(userId: string, redirectUrl: string): Promise<void> {
+  if (toolInventoryInflight) return toolInventoryInflight;
+  const secret = process.env.SESSION_SECRET;
+  if (!secret || Date.now() - toolInventoryFailedAt < 60_000) return;
+  toolInventoryInflight = Promise.race([
+    statusRouteRuntime
+      .probeToolInventory({ userId, sessionSecret: secret, redirectUrl })
+      .then((result) => result ?? ('inert' as const)),
+    new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 4_000).unref()),
+  ])
+    .then((outcome) => {
+      if (outcome === 'inert') return;
+      if (outcome === 'timeout' || outcome.status !== 'connected') toolInventoryFailedAt = Date.now();
+    })
+    .catch(() => {
+      toolInventoryFailedAt = Date.now();
+    })
+    .finally(() => {
+      toolInventoryInflight = null;
+    });
+  return toolInventoryInflight;
+}
+
 export const statusRouteRuntime = {
   getBaseMcpAuthStatus,
+  /** Lists the connected user's Base MCP tools, which records the inventory
+   * every status reads. Inert under test, like the wallet match below. */
+  probeToolInventory: async (input: Parameters<typeof probeBaseMcpTools>[0]) =>
+    process.env.NODE_ENV === 'test' ? null : probeBaseMcpTools(input),
   resolveWalletMatch: async (req: Parameters<typeof createApiToolAggregatorForUser>[0], userId: string, tenantWallet: string) => {
     if (process.env.NODE_ENV === 'test') return { match: true, mcpAddresses: [], checked: false };
     const tools = await createApiToolAggregatorForUser(
@@ -291,7 +327,11 @@ statusRouter.get('/', async (req, res, next) => {
     const rpcUrl = baseStatus.chainId === 84532
       ? process.env.BASE_SEPOLIA_RPC_URL || 'https://sepolia.base.org'
       : process.env.BASE_MAINNET_RPC_URL || 'https://mainnet.base.org';
-    const finalizedBaseMcp = finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)));
+    let finalizedBaseMcp = finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)));
+    if (auth.connected && finalizedBaseMcp.errorCode === 'tool_inventory_unverified') {
+      await verifyToolInventoryOnceV1(userId, baseMcpCallbackUrlV1(req));
+      finalizedBaseMcp = finalizeBaseMcpReadiness(attachBaseMcpToolProbeStatus(mergeBaseMcpAuthStatus(baseMcp, auth)));
+    }
     let walletMatch = { match: true, mcpAddresses: [] as string[], checked: false };
     if (auth.connected) {
       walletMatch = await statusRouteRuntime.resolveWalletMatch(req, userId, tenantWallet);

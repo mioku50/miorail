@@ -92,6 +92,9 @@ function callbackUrl(req: Request): string {
   return `${publicOrigin(req)}/api/mcp/base/callback`;
 }
 
+/** The OAuth callback for this request's origin, for a probe outside this router. */
+export const baseMcpCallbackUrlV1 = callbackUrl;
+
 function redirectWithParam(path: string, key: string, value: string): string {
   const safePath = sanitizeReturnTo(path);
   const url = new URL(safePath, 'http://local');

@@ -738,6 +738,53 @@ describe('Status API', () => {
     restoreEnv('BASE_MCP_STATUS_PATH', origPath);
   });
 
+  test('GET /api/status lists a connected wallet’s tools once when nothing has yet', async () => {
+    // After every restart the header read "degraded, tool inventory
+    // unverified" until someone opened Extensions.
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const origSecret = process.env.SESSION_SECRET;
+    const originalFetch = global.fetch;
+    const originalProbe = statusRouteRuntime.probeToolInventory;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.example.test';
+    process.env.SESSION_SECRET = 'test-session-secret';
+    global.fetch = mock.fn(async () => ({ ok: true, status: 200, json: async () => ({ issuer: 'https://mcp.example.test' }) }) as Response) as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => ({
+      connected: true,
+      needsReauth: false,
+      userScoped: true,
+      expiresAt: '2026-07-07T18:00:00.000Z',
+      connectedAt: '2026-07-07T17:00:00.000Z',
+    });
+    let probes = 0;
+    statusRouteRuntime.probeToolInventory = (async () => {
+      probes += 1;
+      recordBaseMcpToolProbe({
+        endpointHost: 'mcp.example.test',
+        toolsCount: 15,
+        capabilities: { readOnly: 9, userConfirmedTransaction: 5, forbidden: 0, unknown: 1 },
+        checkedAt: '2026-10-03T06:00:00.000Z',
+      });
+      return { status: 'connected' };
+    }) as unknown as typeof statusRouteRuntime.probeToolInventory;
+    try {
+      const first = await request(app).get('/api/status');
+      assert.strictEqual(first.body.baseMcp.status, 'connected');
+      assert.strictEqual(first.body.baseMcp.readiness, 'tools_available');
+      assert.strictEqual(first.body.baseMcp.usable, true);
+      const second = await request(app).get('/api/status');
+      assert.strictEqual(second.body.baseMcp.readiness, 'tools_available');
+      assert.strictEqual(probes, 1);
+    } finally {
+      statusRouteRuntime.probeToolInventory = originalProbe;
+      global.fetch = originalFetch;
+      restoreEnv('BASE_MCP_ENABLED', origEnabled);
+      restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+      restoreEnv('SESSION_SECRET', origSecret);
+    }
+  });
+
   test('GET /api/status includes last successful Base MCP tool probe summary', async () => {
     const origEnabled = process.env.BASE_MCP_ENABLED;
     const origUrl = process.env.BASE_MCP_SERVER_URL;
