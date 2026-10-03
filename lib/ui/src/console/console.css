@@ -1543,8 +1543,13 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    the transfer, and a typo is not that. */
 /* The side whose amount is open reads as pressed; the other stays as it was. */
 .mio-console .mr-headline-actions .btn.alt[aria-expanded="true"] { background: var(--panel2); box-shadow: inset 0 0 0 1px var(--accent-line); }
-.mio-console .mr-trade { display: grid; gap: 8px; margin-top: 12px; padding: 12px; min-width: 0;
-  border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel2); }
+.mio-console .mr-trade { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; margin-top: 12px;
+  padding: 12px; min-width: 0; border: 1px solid var(--line2); border-radius: var(--r); background: var(--panel2); }
+/* The Gift form's two ways to give. A grid track grows to its widest child, and
+   two nowrap buttons were wider than a phone's card: the whole form, the Gift
+   button with it, stuck out past the border. Here they wrap instead. */
+.mio-console .mr-trade .mr-scope-switch { display: flex; flex-wrap: wrap; justify-self: start; max-width: 100%; }
+.mio-console .mr-trade .mr-scope-switch button { white-space: normal; text-align: left; }
 .mio-console .mr-trade label { font-size: var(--fs-meta); color: var(--muted); }
 .mio-console .mr-trade-row { display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; min-width: 0; }
 .mio-console .mr-trade input { flex: 1 1 9ch; min-width: 0; max-width: 22ch; padding: 9px 12px; border: 1px solid var(--line2);

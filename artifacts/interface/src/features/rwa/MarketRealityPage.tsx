@@ -233,7 +233,10 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
       });
       return null;
     },
-    giftHolding: async (tokenAddress) => {
+    // Signed out there is no wallet to read, and the read's 401 would reach
+    // the form as "could not be read just now". Without it the gift is
+    // bought, and the Gift button asks for a sign-in first.
+    giftHolding: !gate.showPrivateSurfaces ? undefined : async (tokenAddress) => {
       const read = await giftHolding.mutateAsync({ tokenAddress });
       if (read.outcome === 'held') {
         return {
