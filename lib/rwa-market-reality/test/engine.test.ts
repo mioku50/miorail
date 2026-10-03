@@ -525,6 +525,9 @@ test('the Stocks index admits only reviewed equities and computes totals over th
         index === 0 ? representationCount - (issuerIds.length - 1) : 1,
       ]),
     ),
+    liveRepresentationCountsByIssuer: Object.fromEntries(
+      issuerIds.map((issuerId, index) => [issuerId, index === 0 ? live - (issuerIds.length - 1) : 1]),
+    ),
   });
   const rows = [
     underlying('backed:instrument:equity', 'equity', 3, ['backed', 'coinbase']),
@@ -554,10 +557,12 @@ test('the Stocks index admits only reviewed equities and computes totals over th
   // above the grid read `Securities 13` beside `Representations 39` because
   // this number counted every contract bound to a Coinbase-covered company —
   // two units under two labels, and no way to tell which was which.
+  // No company is multi-issuer in the Coinbase scope: each is its Coinbase
+  // contract alone (operator, 2026-10-03).
   assert.deepEqual(result.totals, {
     underlyings: 2,
     boundRepresentations: 2,
-    multiIssuerUnderlyings: 1,
+    multiIssuerUnderlyings: 0,
     coinbaseUnderlyings: 2,
     allUnderlyings: 2,
   });
@@ -576,10 +581,61 @@ test('the Stocks index admits only reviewed equities and computes totals over th
     { limit: 50, scope: 'all_representations' },
   );
   assert.equal(wide.totals.boundRepresentations, 4);
-  // Carried through, so the surface can order and label on it.
+  // Coinbase's own contracts, so the surface orders and labels on them. The
+  // wide scope still carries every issuer's.
   assert.deepEqual(
-    result.entries.map((entry) => entry.liveRepresentationCount),
+    result.entries.map((entry) => [entry.representationCount, entry.liveRepresentationCount, entry.issuerIds]),
+    [
+      [1, 1, ['coinbase']],
+      [1, 1, ['coinbase']],
+    ],
+  );
+  assert.deepEqual(
+    wide.entries.map((entry) => entry.liveRepresentationCount),
     [3, 1],
+  );
+});
+
+test('in the Coinbase scope a company is as live as its Coinbase contract', async () => {
+  // COIN on production: COINc held nothing while Backed's bCOIN had supply,
+  // and the Coinbase-only board listed COIN as a live market.
+  const row = (key: string, live: Record<string, number>) => ({
+    underlying: {
+      underlyingKey: key,
+      assetClass: 'equity' as const,
+      canonicalName: key,
+      displaySymbol: null,
+      identifierScheme: null,
+      identifierValue: null,
+      sourceKind: 'coinbase_b20_metadata' as const,
+      sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base',
+      sourceHash: 'cd'.repeat(32),
+      observedAt: '2026-09-01T12:00:00.000Z',
+    },
+    representationCount: 2,
+    liveRepresentationCount: Object.values(live).reduce((a, b) => a + b, 0),
+    issuerIds: ['backed', 'coinbase'],
+    representationCountsByIssuer: { backed: 1, coinbase: 1 },
+    liveRepresentationCountsByIssuer: live,
+  });
+  const result = await assembleMarketRealityIndexV1(
+    {
+      underlyings: {
+        listUnderlyings: async () => [row('security:isin:coin', { backed: 1 }), row('security:isin:nvda', { backed: 1, coinbase: 1 })],
+        underlyingCounts: async () => {
+          throw new Error('generic security totals must not leak into Stocks');
+        },
+      } as unknown as UnderlyingAssetRepositoryV1,
+      now: () => new Date('2026-09-01T12:00:00.000Z'),
+    },
+    { limit: 50 },
+  );
+  assert.deepEqual(
+    result.entries.map((entry) => [entry.underlyingKey, entry.liveRepresentationCount, entry.multiIssuer]),
+    [
+      ['security:isin:nvda', 1, false],
+      ['security:isin:coin', 0, false],
+    ],
   );
 });
 
@@ -607,6 +663,7 @@ test('a security with tokens outstanding is not ranked below an empty contract',
     liveRepresentationCount: live,
     issuerIds: ['coinbase'],
     representationCountsByIssuer: { coinbase: representationCount },
+    liveRepresentationCountsByIssuer: { coinbase: live },
   });
   const result = await assembleMarketRealityIndexV1(
     {

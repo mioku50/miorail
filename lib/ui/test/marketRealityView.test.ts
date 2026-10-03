@@ -2153,17 +2153,14 @@ describe('Phase 11 utility and eligibility map', () => {
       [2, 1, 1, 2],
     );
 
-    // Nothing held by two issuers: no "Multi-issuer" chip either.
+    // One issuer on the board (the Stocks screens show Coinbase's contracts
+    // only): no chips at all, because "All" and "Coinbase" are the same list.
     const single = stockFiltersV1([choice(['coinbase'], false)]);
-    assert.deepEqual(
-      single.map((entry) => entry.id),
-      ['all', 'coinbase'],
-    );
+    assert.deepEqual(single, []);
 
-    // And the moment a Dinari representation IS bound, its chip appears with
-    // no further change here.
-    assert.ok(stockFiltersV1([choice(['dinari'], false)]).some((entry) => entry.id === 'dinari'));
-    assert.deepEqual(stockFiltersV1([]).map((entry) => entry.id), ['all']);
+    // Any one issuer alone, or nothing at all, is the same: nothing to choose.
+    assert.deepEqual(stockFiltersV1([choice(['dinari'], false)]), []);
+    assert.deepEqual(stockFiltersV1([]), []);
   });
 
   test('two documents on one edge are named by publisher, never twice by kind', () => {
@@ -4158,12 +4155,12 @@ describe('which corpus is a switch, not a one-way button', () => {
   const wire = (scope: string, coinbase = 13, all = 35) =>
     ({ scope, totals: { coinbaseUnderlyings: coinbase, allUnderlyings: all }, entries: [] }) as never;
 
-  test('both corpora are offered, in the unit the band above counts in', () => {
+  test('the Coinbase board offers no second corpus', () => {
+    // Operator, 2026-10-03: Backed and Dinari beside Coinbase confused people,
+    // so the switch to "All reviewed" is gone from the Stocks screens.
     const view = stockScopeViewV1(wire('coinbase_b20'))!;
-    assert.deepEqual(view.options, [
-      { scope: 'coinbase_b20', label: 'Coinbase B20', count: 13 },
-      { scope: 'all_representations', label: 'All reviewed', count: 35 },
-    ]);
+    assert.deepEqual(view.options, [{ scope: 'coinbase_b20', label: 'Coinbase B20', count: 13 }]);
+    assert.equal(view.other, null);
     assert.equal(view.selected, 'coinbase_b20');
   });
 
@@ -4343,7 +4340,7 @@ describe('a scoped list says what it is a slice of', () => {
     allUnderlyings: 35,
   };
 
-  test('the default scope names the standard and offers the wider corpus', () => {
+  test('the default scope names the standard and nothing beyond it', () => {
     const scope = stockScopeViewV1({
       scope: 'coinbase_b20',
       entries: [],
@@ -4351,14 +4348,10 @@ describe('a scoped list says what it is a slice of', () => {
       observedAt: NOW,
     });
     assert.equal(scope?.title, 'Coinbase Tokenized Stocks');
-    // The other 22 are named as somewhere to go, not silently absent — and
-    // named in the same unit as the counters beside them. The button used to
-    // read `All representations · 35` over a band counting securities, so the
-    // one number a reader could compare it against was in the other unit.
-    assert.match(scope?.aside ?? '', /35 companies/);
-    assert.equal(scope?.other?.scope, 'all_representations');
-    assert.equal(scope?.other?.label, 'View all issuers');
-    assert.doesNotMatch(scope?.other?.label ?? '', /\d/);
+    // No "Miorail also tracks 35 companies across Coinbase, Backed and
+    // Dinari": the Stocks screens show Coinbase's contracts only.
+    assert.equal(scope?.aside, null);
+    assert.equal(scope?.other, null);
   });
 
   test('every number on the scope band names the unit it counts', () => {

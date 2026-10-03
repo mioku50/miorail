@@ -52,6 +52,8 @@ before(async () => {
     '0057_representation_ratio.sql',
     '0058_issuer_membership.sql',
     '0059_underlying_identity_and_backed.sql',
+    // listUnderlyings joins supply to tell a live market from an empty one.
+    '0060_representation_supply.sql',
   ]) {
     const migration = await readFile(resolve(drizzleDir(), file), 'utf8');
     await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));

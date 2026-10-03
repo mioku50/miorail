@@ -1115,7 +1115,10 @@ function ChoiceButton({
             Dinari" pushed the badge out of the card and it rendered as
             "MULTI-" — a clipped word that reads like a bug, on the one chip
             that carries the page's whole point. */}
-        <span className="mr-choice-issuers">{choice.issuerLine}</span>
+        {/* A board of one issuer's contracts names no issuer on every tile. */}
+        {choice.issuerIds.length === 1 && choice.issuerIds[0] === 'coinbase' ? null : (
+          <span className="mr-choice-issuers">{choice.issuerLine}</span>
+        )}
         {choice.multiIssuer ? <span className="pill mr-choice-tag">multi-issuer</span> : null}
         {/* Kept on the row as well as in the section, so a reader who opens one
             anyway does not read an empty contract as a broken product. */}
@@ -1180,6 +1183,7 @@ export function Chooser({
           placeholder="Search stocks, ticker or ISIN"
         />
       </label>
+      {filters.length > 1 ? (
       <div className="mr-filters" role="group" aria-label="Stock filters">
         {filters.map((entry) => (
           <button
@@ -1193,6 +1197,7 @@ export function Chooser({
           </button>
         ))}
       </div>
+      ) : null}
       <div className="mr-choices" role="listbox" aria-label="Markets with tokens outstanding">
         {partitioned.live.map((choice) => (
           <ChoiceButton
@@ -1436,8 +1441,9 @@ function HeadlineAnswer({
           </>
         ) : null}
         <span className="d mr-headline-more">
-          {headline.alternativeCount} representation{headline.alternativeCount === 1 ? '' : 's'} below,
-          with the evidence for each
+          {headline.alternativeCount > 1
+            ? `${headline.alternativeCount} representations below, with the evidence for each`
+            : 'The evidence is below'}
         </span>
       </div>
       {tradable && open === 'gift' && giftable ? (
@@ -2025,7 +2031,9 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           {model.surface === 'market' && model.historyPeriod === 'now' ? (
             <>
               <p className="cr-verdict">{model.view.coverageBody}</p>
-              <FactList facts={model.view.comparisonSummary} label="Market Reality coverage" />
+              {model.view.comparisonSummary.length > 0 ? (
+                <FactList facts={model.view.comparisonSummary} label="Market Reality coverage" />
+              ) : null}
               {model.view.rankingNote ? (
                 <p className="lnote mr-ranking">{model.view.rankingNote}</p>
               ) : null}

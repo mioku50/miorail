@@ -358,6 +358,12 @@ export interface UnderlyingAssetRepositoryV1 {
 export interface UnderlyingIndexEntryV1 {
   underlying: UnderlyingAssetV1;
   representationCount: number;
+  /**
+   * Of those, the ones with tokens outstanding, keyed by issuer. The Stocks
+   * screens show Coinbase's contract only, and COIN read as a live market
+   * because Backed's bCOIN had supply while COINc had none.
+   */
+  liveRepresentationCountsByIssuer?: Record<string, number>;
   /** Distinct issuers behind those representations, sorted. */
   issuerIds: string[];
   /**

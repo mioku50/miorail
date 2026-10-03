@@ -3506,6 +3506,9 @@ export function stockFiltersV1(
       perIssuer.set(issuer, (perIssuer.get(issuer) ?? 0) + 1);
     }
   }
+  // One issuer on the board, no chips: "All" beside "Coinbase" would offer a
+  // choice between the same list twice.
+  if (multi === 0 && perIssuer.size <= 1) return [];
   const filters: StockFilterViewV1[] = [{ id: 'all', label: 'All', count: choices.length }];
   if (multi > 0) filters.push({ id: 'multi', label: 'Multi-issuer', count: multi });
   // ISSUER_NAME_V1's own order, so the chips do not reshuffle when the corpus
@@ -3534,6 +3537,25 @@ export function stockFiltersV1(
 export function underlyingCountersV1(wire: MarketRealityIndexWireV1 | null): FactViewV1[] {
   if (!wire) return [];
   const coinbaseScope = (wire.scope ?? 'all_representations') === 'coinbase_b20';
+  if (coinbaseScope) {
+    // Coinbase's contracts only (operator, 2026-10-03). Two numbers a reader
+    // can use: how many stocks, and how many of them hold any tokens at all —
+    // the same split the grid below draws.
+    return [
+      {
+        label: 'Coinbase stocks',
+        value: String(wire.totals.underlyings),
+        note: 'companies with a Coinbase B20 contract',
+        tone: 'neutral',
+      },
+      {
+        label: 'With tokens outstanding',
+        value: String(wire.entries.filter((entry) => entry.liveRepresentationCount > 0).length),
+        note: 'companies whose Coinbase contract holds any',
+        tone: 'neutral',
+      },
+    ];
+  }
   return [
     {
       label: coinbaseScope ? 'Coinbase stocks' : 'Stocks',
@@ -3608,7 +3630,6 @@ export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockSc
   const coinbase = wire.totals.coinbaseUnderlyings;
   const all = wire.totals.allUnderlyings;
   if (coinbase === undefined || all === undefined) return null;
-  const others = all - coinbase;
   if (scope === 'coinbase_b20') {
     return {
       title: 'Coinbase Tokenized Stocks',
@@ -3621,23 +3642,17 @@ export function stockScopeViewV1(wire: MarketRealityIndexWireV1 | null): StockSc
       // counted securities — so the one number a reader could compare it
       // against was in the other unit. It says what pressing it changes: the
       // set of issuers, not the set of companies.
-      aside:
-        others > 0
-          ? `Miorail also tracks ${all} companies in total, across Coinbase, Backed and Dinari.`
-          : null,
-      other: others > 0 ? { scope: 'all_representations', label: 'View all issuers' } : null,
+      // No other issuer is offered: the Stocks screens show Coinbase's
+      // contracts only (operator, 2026-10-03, "to not confuse people").
+      aside: null,
+      other: null,
       // Both corpora, always both visible, so a reader can see which one they
       // are standing in. As a single "View all issuers" button it was a
       // one-way door with no lit state: the counters said "Coinbase stocks 13"
       // while the chips below offered All / Multi-issuer / Coinbase / Dinari /
       // Backed, and the two scoping ideas -- which corpus, and which issuer
       // within it -- looked identical and meant different things.
-      options: [
-        { scope: 'coinbase_b20', label: 'Coinbase B20', count: coinbase },
-        ...(others > 0
-          ? [{ scope: 'all_representations' as const, label: 'All reviewed', count: all }]
-          : []),
-      ],
+      options: [{ scope: 'coinbase_b20', label: 'Coinbase B20', count: coinbase }],
       selected: 'coinbase_b20',
     };
   }
@@ -3831,7 +3846,10 @@ export function marketRealityViewV1(input: {
     coverageTone:
       measured !== null ? 'neutral' : wire.marketOutcomeCoverage.status === 'complete' ? 'good' : 'warn',
     coverageDetail: wire.marketOutcomeCoverage.reason,
-    comparisonSummary: [
+    // One representation has nothing to be compared with, so the counts and
+    // "Not ranked" that frame a comparison would describe a page that is not
+    // there. Coinbase's contract alone is what the Stocks screens show.
+    comparisonSummary: reviewed <= 1 ? [] : [
       {
         label: 'Reviewed representations',
         value: String(reviewed),
@@ -3887,7 +3905,9 @@ export function marketRealityViewV1(input: {
     // Never hidden behind a control. A reader who does not see this line will
     // read the leftmost column as the winner.
     rankingNote:
-      'No winner is selected. Compare the exact market state and evidence for each representation.',
+      reviewed <= 1
+        ? ''
+        : 'No winner is selected. Compare the exact market state and evidence for each representation.',
     representations: wire.representations.map((representation) => {
       const outcome = representationOutcomeV1(representation, input.now);
       const closedForVisitor =

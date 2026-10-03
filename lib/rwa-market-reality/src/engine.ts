@@ -692,9 +692,22 @@ export async function assembleMarketRealityIndexV1(
   // security, different representations, different market reality — is the one
   // thing here that nothing else shows. It just stops being the opening move.
   const scope: MarketRealityIndexScopeV1 = input.scope ?? 'coinbase_b20';
+  // In the Coinbase scope each company is its Coinbase contract and nothing
+  // else: the Stocks screens show no other issuer (operator, 2026-10-03, "to
+  // not confuse people"). COIN read as a live market because Backed's bCOIN
+  // had supply while COINc had none; here it is the empty market it is.
   const scopedRows =
     scope === 'coinbase_b20'
-      ? stockRows.filter((row) => row.issuerIds.includes('coinbase'))
+      ? stockRows
+          .filter((row) => row.issuerIds.includes('coinbase'))
+          .map((row) => ({
+            ...row,
+            representationCount: row.representationCountsByIssuer?.coinbase ?? 0,
+            liveRepresentationCount: row.liveRepresentationCountsByIssuer?.coinbase ?? 0,
+            issuerIds: ['coinbase'],
+          }))
+          // Stable: equal live counts keep the repository's order.
+          .sort((left, right) => right.liveRepresentationCount - left.liveRepresentationCount)
       : stockRows;
   const rows = scopedRows.slice(0, Math.max(1, Math.min(500, input.limit)));
   const entries = rows.map((row) => ({

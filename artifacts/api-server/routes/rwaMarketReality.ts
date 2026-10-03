@@ -20,8 +20,10 @@ import {
   createDatabaseRepresentationSupplyRepository,
   createDatabaseUnderlyingAssetRepository,
   RouteStorageConflictError,
+  type UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 import {
+  ISSUER_BY_REVIEWED_SOURCE_KIND_V1,
   MARKET_REALITY_INDEX_SCOPES_V1,
   MARKET_REALITY_WINDOWS_V1,
   MarketRealityHistoryV1Schema,
@@ -705,10 +707,31 @@ export async function readMarketRealityIndexV1(input: {
   return MarketRealityIndexV1Schema.parse(index);
 }
 
+/**
+ * The Stocks screens show Coinbase's representation and no other issuer's.
+ *
+ * Operator, 2026-10-03: Backed and Dinari beside Coinbase confused people.
+ * Narrowing the bindings here, before anything is assembled, keeps the page's
+ * counts, verdict and Ask Miorail in step with what it shows; hiding cards in
+ * the browser would leave "3 of 4 measured" over one card. Connected
+ * assistants read through the MCP tools, which keep every reviewed issuer.
+ */
+export function coinbaseOnlyUnderlyingsV1(
+  repository: UnderlyingAssetRepositoryV1,
+): UnderlyingAssetRepositoryV1 {
+  return {
+    ...repository,
+    representationsOf: async (input) =>
+      (await repository.representationsOf(input)).filter(
+        (row) => (row.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[row.sourceKind]) === 'coinbase',
+      ),
+  };
+}
+
 export async function readMarketRealityV1(question: MarketRealityMeasureQuestionV1) {
   const result = await rwaMarketRealityRuntime.assemble(
     {
-      underlyings: rwaMarketRealityRuntime.underlyings(),
+      underlyings: coinbaseOnlyUnderlyingsV1(rwaMarketRealityRuntime.underlyings()),
       cashExit: rwaMarketRealityRuntime.cashExit(),
       ratios: rwaMarketRealityRuntime.ratios(),
       supplies: rwaMarketRealityRuntime.supplies(),
@@ -731,7 +754,7 @@ export async function readMarketRealityHistoryV1(
 ) {
   const history = await rwaMarketRealityRuntime.assembleHistory(
     {
-      underlyings: rwaMarketRealityRuntime.underlyings(),
+      underlyings: coinbaseOnlyUnderlyingsV1(rwaMarketRealityRuntime.underlyings()),
       cashExit: rwaMarketRealityRuntime.cashExit(),
       now: rwaMarketRealityRuntime.now,
     },
@@ -1163,6 +1186,9 @@ export async function measureMarketRealityV1(input: {
   /** Proved by the caller's own surface. Never taken from a request field. */
   walletAddress: string;
   tenantId: string;
+  /** The Stocks screens measure Coinbase's representation only; an
+   * assistant's measurement keeps every reviewed issuer. */
+  coinbaseOnly?: boolean;
 }): Promise<MarketRealityMeasureResultV1> {
   if (!rwaMarketRealityRuntime.enabled(process.env)) {
     return { ok: false, status: 404, code: 'route_intelligence_disabled' };
@@ -1193,7 +1219,9 @@ export async function measureMarketRealityV1(input: {
 
     const result = await rwaMarketRealityRuntime.coordinator().measure(
       {
-        underlyings: rwaMarketRealityRuntime.underlyings(),
+        underlyings: input.coinbaseOnly
+          ? coinbaseOnlyUnderlyingsV1(rwaMarketRealityRuntime.underlyings())
+          : rwaMarketRealityRuntime.underlyings(),
         cashExit,
         ratios: rwaMarketRealityRuntime.ratios(),
         supplies: rwaMarketRealityRuntime.supplies(),
@@ -1333,6 +1361,7 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/measure', async 
     },
     walletAddress: user.address,
     tenantId: user.id,
+    coinbaseOnly: true,
   });
   if (!result.ok) {
     res.status(result.status).json({ error: result.code, code: result.code });
@@ -1512,7 +1541,7 @@ rwaMarketRealityRouter.post('/rwa/market-reality/:underlyingKey/ask', async (req
     // cannot drift apart, because there is only one way to build the answer.
     const assembled = await rwaMarketRealityRuntime.assemble(
       {
-        underlyings: rwaMarketRealityRuntime.underlyings(),
+        underlyings: coinbaseOnlyUnderlyingsV1(rwaMarketRealityRuntime.underlyings()),
         cashExit: rwaMarketRealityRuntime.cashExit(),
         ratios: rwaMarketRealityRuntime.ratios(),
         supplies: rwaMarketRealityRuntime.supplies(),

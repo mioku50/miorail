@@ -91,10 +91,11 @@ export const stockPagesRuntime = {
     (process.env.MIORAIL_PUBLIC_ORIGIN ?? 'https://miorail.xyz').trim().replace(/\/+$/, ''),
   stat: (path: string) => fs.stat(path),
   readFile: (path: string) => fs.readFile(path, 'utf8'),
-  /** Every reviewed equity, Coinbase-issued or not, from the cached chooser. */
+  /** Every Coinbase stock, from the cached chooser: the Stocks screens show
+   * no other issuer, so a page head must not name a company they do not list. */
   stocks: async (): Promise<StockPageEntryV1[]> => {
-    const index = await publicStocksCachesV1.index.read('all_representations|500', () =>
-      readMarketRealityIndexV1({ limit: 500, scope: 'all_representations' }),
+    const index = await publicStocksCachesV1.index.read('coinbase_b20|500', () =>
+      readMarketRealityIndexV1({ limit: 500, scope: 'coinbase_b20' }),
     );
     return index.entries
       .filter((entry) => entry.assetClass === 'equity' && entry.displaySymbol)

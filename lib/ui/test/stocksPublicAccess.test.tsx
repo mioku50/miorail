@@ -141,20 +141,16 @@ test('a ticker in the address selects that security, not the default one', () =>
   assert.equal(probe.selectedSymbol, 'NVDA');
 });
 
-test('a ticker the corpus does not hold selects nothing and says whose statement that is', () => {
+test('a ticker that is not a Coinbase stock selects nothing and says so', () => {
+  // The board shows Coinbase's contracts only, so there is no wider corpus to
+  // fall back to: a link to a Dinari- or Backed-only ticker opens on nothing.
   const { probe } = probeV1(
-    (client) => {
-      const index = indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')], 'all_representations');
-      // The hook widens to the whole corpus before saying "not held"; seed the
-      // wide read so the answer is final.
-      client.setQueryData(['rwa-underlyings', 100, null, 'public'], index);
-      client.setQueryData(['rwa-underlyings', 100, 'all_representations', 'public'], index);
-    },
+    (client) =>
+      client.setQueryData(['rwa-underlyings', 100, null, 'public'], indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')])),
     { access: 'public', preferredSymbol: 'zzzz' },
   );
   assert.equal(probe.selectedKey, null, 'a link to one stock must never open on another');
-  assert.match(String(probe.viewError), /no reviewed security under the ticker ZZZZ/);
-  assert.match(String(probe.viewError), /statement about Miorail’s corpus/);
+  assert.match(String(probe.viewError), /ZZZZ is not one of the Coinbase stocks on Base/);
 });
 
 test('signed out, the session-only controls lead to the wallet when there is a door', () => {
@@ -215,7 +211,7 @@ test('nothing a session pays for is started without one', () => {
   assert.match(source, /if \(!enabled \|\| !session \|\| !selectedKey \|\| !questionKey\) return;/);
   // And every read the public door serves is asked through it.
   for (const read of [
-    'useRwaUnderlyings({ enabled, scope: scope ?? undefined, access })',
+    'useRwaUnderlyings({ enabled, access })',
     '{ enabled, access }',
     'useOfficialAssetDossier(representationAddresses[0] ?? null, { access })',
     'useRwaUseAccess(representationAddresses[0] ?? null, { enabled: useAccessEnabled, access })',

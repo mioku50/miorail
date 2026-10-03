@@ -385,8 +385,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // Coinbase B20 standard. A reader who widens it is asking a different
   // question — not filtering this one — so the scope is state here and a cache
   // key in the hook.
-  const [scope, setScope] = useState<'coinbase_b20' | 'all_representations' | null>(null);
-  const index = useRwaUnderlyings({ enabled, scope: scope ?? undefined, access });
+  // The server's default scope: Coinbase's contracts only. The Stocks screens
+  // show no other issuer (operator, 2026-10-03, "to not confuse people").
+  const index = useRwaUnderlyings({ enabled, access });
   const choices = useMemo(() => underlyingChoicesV1(index.data ?? null), [index.data]);
   const counters = useMemo(() => underlyingCountersV1(index.data ?? null), [index.data]);
   const scopeView = useMemo(() => stockScopeViewV1(index.data ?? null), [index.data]);
@@ -397,7 +398,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   // against, which is the one thing this surface is for.
   const defaultKey = useMemo(
     () =>
-      choices.find((choice) => choice.multiIssuer)?.underlyingKey ??
+      choices.find((choice) => choice.emptyNote === null)?.underlyingKey ??
       choices[0]?.underlyingKey ??
       null,
     [choices],
@@ -414,16 +415,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     );
     return (matches.find((entry) => entry.coinbaseIssued) ?? matches[0])?.underlyingKey ?? null;
   }, [preferredSymbol, index.data]);
-  // Not in the scope the board opened on: widen once before saying "not held",
-  // because a Backed-only security is still a security Miorail reviewed.
-  const symbolMissingInScope = Boolean(preferredSymbol && index.data && !symbolKey);
-  useEffect(() => {
-    if (symbolMissingInScope && index.data?.scope !== 'all_representations') {
-      setScope('all_representations');
-    }
-  }, [symbolMissingInScope, index.data?.scope]);
-  const symbolNotHeld =
-    symbolMissingInScope && index.data?.scope === 'all_representations' ? preferredSymbol : null;
+  const symbolNotHeld = preferredSymbol && index.data && !symbolKey ? preferredSymbol : null;
 
   const selectedKey = question.underlyingKey ?? (preferredSymbol ? symbolKey : defaultKey);
   const symbolOf = (underlyingKey: string): string | null =>
@@ -941,17 +933,6 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
           }
         : null,
     scope: scopeView,
-    // The selected key belongs to the scope it was chosen in. Widening keeps it
-    // — every scoped key is in the wide corpus — and narrowing lets the default
-    // pick again rather than stranding the board on a security the grid above
-    // it no longer lists.
-    onScope: (next) => {
-      setScope(next);
-      // The selection belongs to the scope it was made in. Clearing it lets
-      // `defaultKey` pick again from the corpus now on screen, rather than
-      // leaving the board on a security the grid above it no longer lists.
-      input.onQuestion({ underlyingKey: null });
-    },
     choices,
     choicesLoading: index.isLoading,
     choicesError:
@@ -970,7 +951,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     viewError:
       disabledNotice ??
       (symbolNotHeld
-        ? `Miorail holds no reviewed security under the ticker ${symbolNotHeld.toUpperCase()}. That is a statement about Miorail’s corpus, not about what exists on Base.`
+        ? `${symbolNotHeld.toUpperCase()} is not one of the Coinbase stocks on Base that Miorail shows.`
         : null) ??
       (reality.error ? stocksConsoleFailureCopyV1(reality.error, 'this comparison') : null),
     history: historyView,

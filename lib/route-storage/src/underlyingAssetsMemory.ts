@@ -81,7 +81,13 @@ export function createMemoryUnderlyingAssetRepository(
     async listUnderlyings(input) {
       const byKey = new Map<
         string,
-        { count: number; live: number; issuers: Set<string>; perIssuer: Map<string, number> }
+        {
+          count: number;
+          live: number;
+          issuers: Set<string>;
+          perIssuer: Map<string, number>;
+          livePerIssuer: Map<string, number>;
+        }
       >();
       for (const row of bindings.values()) {
         if (row.chainId !== input.chainId) continue;
@@ -90,12 +96,15 @@ export function createMemoryUnderlyingAssetRepository(
           live: 0,
           issuers: new Set<string>(),
           perIssuer: new Map<string, number>(),
+          livePerIssuer: new Map<string, number>(),
         };
         entry.count += 1;
-        if (supplyStates.get(row.tokenAddress.toLowerCase()) === 'positive_supply') entry.live += 1;
+        const live = supplyStates.get(row.tokenAddress.toLowerCase()) === 'positive_supply';
+        if (live) entry.live += 1;
         if (row.issuerId) {
           entry.issuers.add(row.issuerId);
           entry.perIssuer.set(row.issuerId, (entry.perIssuer.get(row.issuerId) ?? 0) + 1);
+          if (live) entry.livePerIssuer.set(row.issuerId, (entry.livePerIssuer.get(row.issuerId) ?? 0) + 1);
         }
         byKey.set(row.underlyingKey, entry);
       }
@@ -108,6 +117,7 @@ export function createMemoryUnderlyingAssetRepository(
             liveRepresentationCount: entry?.live ?? 0,
             issuerIds: [...(entry?.issuers ?? [])].sort(),
             representationCountsByIssuer: Object.fromEntries(entry?.perIssuer ?? []),
+            liveRepresentationCountsByIssuer: Object.fromEntries(entry?.livePerIssuer ?? []),
           };
         })
         // A security with tokens outstanding first; then most-represented,
