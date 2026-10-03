@@ -2148,3 +2148,15 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .mr-uses li .k { grid-column: 1 / -1; }
 }
 .mio-console .mr-trade-presets .pill.on { color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }
+
+/* The status bar holds three things now (2026-10-03); on a phone they fit in
+   one line if the gaps give way, so the source offer is never cut off. */
+@media (max-width: 520px) {
+  .mio-console:not(.mini) footer { gap: 10px; padding: 0 12px; }
+  .mio-console:not(.mini) footer .g { flex: 0 1 auto; min-width: 0; }
+  .mio-console:not(.mini) footer .g .t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+
+/* The stock's name on its own card may take two lines on a phone rather than
+   lose its end: "NVIDIA Corpora…" beside the price. */
+.mio-console .mr-stock-id h3 { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }

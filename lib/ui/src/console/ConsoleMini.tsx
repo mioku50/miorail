@@ -139,15 +139,11 @@ export function ConsoleMiniShell(props: ConsoleMiniShellProps) {
             {CONSOLE_COPY_V1.readOnly}
           </span>
           {/* Signed out, the server's chain was never read: "chain unknown ·
-              Block —" there is a closed door printed as a broken feed. */}
-          {props.chainRead === false ? null : (
-            <>
-              <span className="g">{props.networkLabel}</span>
-              <span className="g">
-                Block <span className="v mono">{props.blockNumber ?? '—'}</span>
-              </span>
-            </>
-          )}
+              Block —" there is a closed door printed as a broken feed. The
+              block number itself left the bar on 2026-10-03, as on the web:
+              a counter nobody here decides anything by, and on a phone it
+              was the part the screen cut off. */}
+          {props.chainRead === false ? null : <span className="g">{props.networkLabel}</span>}
           <span className="sp" />
         </footer>
       </div>

@@ -440,7 +440,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
         <footer>
           <span className="g">
             <span className="dot" />
-            {CONSOLE_COPY_V1.readOnly}
+            <span className="t">{CONSOLE_COPY_V1.readOnly}</span>
           </span>
           {/* Adapters, sources, spend and the block left the status bar
               (2026-10-03): four system counters on every page, read by
