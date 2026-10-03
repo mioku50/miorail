@@ -191,7 +191,7 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
  * the same transaction moved the multiplier.
  *
  * Read from the stored log, not only from the decoded columns. Every
- * announcement before 2026-10-04 was stored `topic_only`, because the decoder
+ * announcement before 2026-10-03 was stored `topic_only`, because the decoder
  * did not yet know that Coinbase indexes the caller. The raw topics and data
  * were kept for exactly this.
  */

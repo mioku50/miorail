@@ -116,6 +116,13 @@ const CorporateActionFactsV1Schema = z
     payloadState: z.enum(['decoded', 'topic_only']),
     transactionHash: TxHash,
     blockNumber: PositiveDigits,
+    /**
+     * Whether the same transaction moved the multiplier. An announcement that
+     * brackets the conversion is that conversion's news, and its own signal
+     * says it; one with nothing inside is a notice AHEAD of it (Coinbase's
+     * "Cash Dividend" of 2026-10-03). Optional: rows before 2026-10-03 lack it.
+     */
+    carriesMultiplierChange: z.boolean().optional(),
   })
   .strict();
 

@@ -339,6 +339,25 @@ function declaredV1(facts: Record<string, unknown>): { company: string; sentence
   return { company, sentence: `${company} declared $${amount} a share, payable ${pay}` };
 }
 
+/**
+ * The issuer's own words for a dividend notice, when they can be repeated.
+ *
+ * Coinbase writes "Cash Dividend" into the token before it converts a dividend
+ * (AEOc, 2026-10-03). Quoted only when it reads as a short label that says
+ * dividend: anything longer or stranger is somebody's text and is not
+ * repeated in a push.
+ */
+export function dividendNoticeWordsV1(facts: Record<string, unknown>): string | null {
+  if (facts.payloadState !== 'decoded' || typeof facts.description !== 'string') return null;
+  const words = facts.description.trim();
+  return /dividend/i.test(words) && /^[A-Za-z0-9][A-Za-z0-9 .,&'()/-]{0,39}$/.test(words) ? words : null;
+}
+
+/** The dividend tab, where a notice ahead of a conversion is listed. */
+const DIVIDENDS_PATH_V1 = '/stocks/dividends';
+/** The reader's own stocks, where a holder's notice comes first. */
+const MINE_PATH_V1 = '/stocks/mine';
+
 function noticeV1(input: { key: string; label: string; title: string; message: string; targetPath: string }): NoticeV1 {
   return {
     key: input.key,
@@ -422,7 +441,20 @@ export function noticeForSignalV1(signal: RwaSignalRowV1, names: NamesOfV1): Not
         targetPath,
       });
     }
-    case 'official_asset_corporate_action_announced':
+    case 'official_asset_corporate_action_announced': {
+      // An announcement around the conversion itself is that conversion's
+      // news, and the multiplier signal from the same transaction says it.
+      if (facts.carriesMultiplierChange === true) return null;
+      const words = dividendNoticeWordsV1(facts);
+      if (words) {
+        return noticeV1({
+          key,
+          label: `${who} dividend notice`,
+          title: `${who}: dividend notice`,
+          message: `The ${representation} contract posted “${words}” ahead of the conversion. It names no amount or date. The dividend reaches whoever holds ${representation} when it converts.`,
+          targetPath: DIVIDENDS_PATH_V1,
+        });
+      }
       return noticeV1({
         key,
         label: `${who} corporate action`,
@@ -430,6 +462,7 @@ export function noticeForSignalV1(signal: RwaSignalRowV1, names: NamesOfV1): Not
         message: `The ${representation} contract posted a corporate-action announcement on Base.`,
         targetPath,
       });
+    }
     case 'official_asset_multiplier_changed': {
       const multiplier = multiplierV1(facts.multiplierWad);
       return noticeV1({
@@ -749,12 +782,49 @@ export function holderDividendDeclaredNoticeV1(signal: RwaSignalRowV1, names: Na
   });
 }
 
+/**
+ * A dividend notice in the token, told to a holder of it.
+ *
+ * Nothing has converted yet and the notice carries no amount or date. What a
+ * holder can act on is the rule: the rise reaches whoever holds the token at
+ * the conversion, not whoever held it on the record date.
+ */
+export function holderDividendNoticeV1(signal: RwaSignalRowV1, names: NamesOfV1): NoticeV1 | null {
+  if (signal.kind !== 'official_asset_corporate_action_announced') return null;
+  if (signal.facts.carriesMultiplierChange === true) return null;
+  const words = dividendNoticeWordsV1(signal.facts);
+  const name = names(signal.subjectAddress);
+  const symbol = name?.symbol ?? name?.representation ?? null;
+  if (!words || !symbol) return null;
+  const representation = name?.representation ?? symbol;
+  const issuer = (name?.issuer ?? '').toLowerCase().startsWith('coinbase') ? 'Coinbase' : 'The issuer';
+  return noticeV1({
+    key: `holder:rwa_signal:${signal.signalId}`,
+    label: `${symbol} dividend notice`,
+    title: `${symbol}: dividend notice`,
+    message: `${issuer} posted “${words}” in your ${representation}. It reaches whoever holds ${representation} when it converts, as more ${symbol} shares per token. No amount or date yet.`,
+    targetPath: MINE_PATH_V1,
+  });
+}
+
 /** Kinds a holder hears about their own tokens rather than the contract's. */
 const HOLDER_KINDS_V1: ReadonlySet<string> = new Set([
   'official_asset_multiplier_changed',
   'official_asset_multiplier_change_scheduled',
   'official_asset_dividend_declared',
+  'official_asset_corporate_action_announced',
 ]);
+
+/**
+ * Whether an announcement shares its transaction with a multiplier change in
+ * this batch. The fact on the row decides; rows written before it existed are
+ * matched against the batch they arrived in.
+ */
+function announcementCarriesChangeV1(signal: RwaSignalRowV1, moved: ReadonlySet<string>): boolean {
+  if (signal.kind !== 'official_asset_corporate_action_announced') return false;
+  if (typeof signal.facts.carriesMultiplierChange === 'boolean') return signal.facts.carriesMultiplierChange;
+  return typeof signal.facts.transactionHash === 'string' && moved.has(signal.facts.transactionHash.toLowerCase());
+}
 
 // ---------------------------------------------------------------------------
 // The weekly summary
@@ -935,9 +1005,25 @@ export function planBaseAppNotificationsV1(input: {
     if (reached) notices += 1;
   };
 
+  const moved = new Set(
+    input.signals
+      .filter(
+        (signal) =>
+          signal.kind === 'official_asset_multiplier_changed' ||
+          signal.kind === 'official_asset_multiplier_change_scheduled',
+      )
+      .map((signal) => signal.facts.transactionHash)
+      .filter((hash): hash is string => typeof hash === 'string')
+      .map((hash) => hash.toLowerCase()),
+  );
+
   for (const signal of input.signals) {
     if (Date.parse(signal.recordedAt) < oldest) {
       stale += 1;
+      continue;
+    }
+    if (announcementCarriesChangeV1(signal, moved)) {
+      unsent += 1;
       continue;
     }
     const broadcast = BASE_APP_BROADCAST_KINDS_V1.has(signal.kind);
@@ -964,7 +1050,9 @@ export function planBaseAppNotificationsV1(input: {
             )
           : signal.kind === 'official_asset_multiplier_change_scheduled'
             ? holderScheduledNoticeV1(signal, input.names, input.currentMultiplier ? input.currentMultiplier(token) : null)
-            : holderDividendDeclaredNoticeV1(signal, input.names);
+            : signal.kind === 'official_asset_corporate_action_announced'
+              ? holderDividendNoticeV1(signal, input.names)
+              : holderDividendDeclaredNoticeV1(signal, input.names);
       const holders = [...input.enabled].filter((wallet) => input.holdings!.get(wallet)?.has(token));
       if (holderNotice && holders.length > 0) {
         deliver(holderNotice, holders);
@@ -1245,9 +1333,10 @@ export async function runBaseAppNotifyV1(deps: {
   const day = utcDayV1(now);
   const sentToday = await deps.repository.sentOn({ day, wallets: [...enabled] });
   // Holders are read only when something a holder hears differently is about
-  // to be sent: a multiplier change, a scheduled one, a declared dividend. An
-  // unread balance falls back to the contract's version for everyone, which
-  // is exactly what this pass sent before holders existed.
+  // to be sent: a multiplier change, a scheduled one, a declared dividend, a
+  // notice in the token. An unread balance falls back to the contract's
+  // version for everyone, which is exactly what this pass sent before holders
+  // existed.
   const multiplierTokens = [
     ...new Set(
       sendable.filter((signal) => HOLDER_KINDS_V1.has(signal.kind)).map((signal) => signal.subjectAddress.toLowerCase()),

@@ -291,6 +291,14 @@ export function corporateActionSignalsV1(input: {
   watchingSince: ReadonlyMap<RwaOnchainSignalKindV1, string>;
 }): RwaSignalV1[] {
   const signals: RwaSignalV1[] = [];
+  // A pass reads whole blocks, so every log of a transaction is in it.
+  const moved = new Set(
+    input.observations
+      .filter(
+        ({ action }) => action.event === 'multiplier_updated' || action.event === 'ui_multiplier_updated',
+      )
+      .map((observation) => observation.transactionHash.toLowerCase()),
+  );
   for (const observation of input.observations) {
     const { action } = observation;
     if (action.event === 'end_announcement') continue;
@@ -344,6 +352,7 @@ export function corporateActionSignalsV1(input: {
           payloadState: action.payload,
           transactionHash: observation.transactionHash,
           blockNumber,
+          carriesMultiplierChange: moved.has(observation.transactionHash.toLowerCase()),
         },
       });
       continue;

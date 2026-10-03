@@ -26,6 +26,8 @@ import {
   ppmPercentV1,
   holderMultiplierNoticeV1,
   holderDividendDeclaredNoticeV1,
+  holderDividendNoticeV1,
+  dividendNoticeWordsV1,
   holderScheduledNoticeV1,
   multiplierChangePpmV1,
   runBaseAppNotifyV1,
@@ -792,6 +794,106 @@ describe('a declared or scheduled dividend reaches its holders as theirs', () =>
       'GOOGL: multiplier scheduled',
     );
     assert.match(holderScheduledNoticeV1(scheduled('2000000000000000000'), coinbaseNames, GOOGL_DIVIDEND.to)?.message ?? '', /will track 2 GOOGL shares each from Dec 15, 2026 14:30 UTC, as the issuer scheduled/);
+  });
+});
+
+/** Coinbase's notice in the token ahead of a conversion, as AEOc carried it
+ * on 2026-10-03 (here on GOOGLc, whose names the fixtures already hold). */
+const dividendNotice = (facts: Record<string, unknown> = {}) =>
+  signal(
+    'official_asset_corporate_action_announced',
+    {
+      event: 'announcement',
+      announcementId: 'GOOGLc-2026-12:pre',
+      description: 'Cash Dividend',
+      uri: 'https://example.test/actions',
+      payloadState: 'decoded',
+      transactionHash: `0x${'ef'.repeat(32)}`,
+      blockNumber: '53000000',
+      carriesMultiplierChange: false,
+      ...facts,
+    },
+    { subjectAddress: GOOGL },
+  );
+
+describe('a dividend notice in the token reaches its holders first', () => {
+  test('everyone hears the notice in the issuer’s words, and that it names no amount', () => {
+    const notice = noticeForSignalV1(dividendNotice(), coinbaseNames);
+    assert.equal(notice?.title, 'GOOGL: dividend notice');
+    assert.equal(
+      notice?.message,
+      'The GOOGLc contract posted “Cash Dividend” ahead of the conversion. It names no amount or date. The dividend reaches whoever holds GOOGLc when it converts.',
+    );
+    assert.equal(notice?.targetPath, '/stocks/dividends');
+  });
+
+  test('a holder hears it as theirs, and lands on their own stocks', () => {
+    const notice = holderDividendNoticeV1(dividendNotice(), coinbaseNames);
+    assert.equal(
+      notice?.message,
+      'Coinbase posted “Cash Dividend” in your GOOGLc. It reaches whoever holds GOOGLc when it converts, as more GOOGL shares per token. No amount or date yet.',
+    );
+    assert.equal(notice?.targetPath, '/stocks/mine');
+    assert.ok(notice!.title.length <= BASE_APP_TITLE_MAX_V1 && notice!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+    const plan = planBaseAppNotificationsV1({
+      signals: [dividendNotice()],
+      radarEvents: [],
+      watchers: [],
+      enabled: new Set([ME, YOU]),
+      sentToday: new Map(),
+      names: coinbaseNames,
+      now: NOW,
+      holdings: new Map([[ME, new Set([GOOGL])]]),
+    });
+    assert.deepEqual(
+      plan.groups.map((group) => [group.message.startsWith('Coinbase') ? 'holder' : 'everyone', group.wallets]).sort(),
+      [
+        ['everyone', [YOU]],
+        ['holder', [ME]],
+      ],
+    );
+  });
+
+  test('the announcement around the conversion itself is not a second push', () => {
+    const conversion = googlMultiplier({ facts: { ...googlMultiplier().facts, transactionHash: `0x${'ef'.repeat(32)}` } });
+    const plan = planBaseAppNotificationsV1({
+      signals: [dividendNotice({ carriesMultiplierChange: true }), conversion],
+      radarEvents: [],
+      watchers: [],
+      enabled: new Set([ME]),
+      sentToday: new Map(),
+      names: coinbaseNames,
+      now: NOW,
+      holdings: new Map([[ME, new Set([GOOGL])]]),
+      previousMultiplier: () => GOOGL_DIVIDEND.from,
+    });
+    assert.deepEqual(plan.groups.map((group) => group.title), ['GOOGL: dividend in shares']);
+    assert.equal(plan.unsent, 1);
+
+    // A row written before the fact existed is matched against its batch.
+    const { carriesMultiplierChange: _dropped, ...olderFacts } = dividendNotice().facts;
+    void _dropped;
+    const older = planBaseAppNotificationsV1({
+      signals: [dividendNotice({ ...olderFacts, carriesMultiplierChange: undefined }), conversion],
+      radarEvents: [],
+      watchers: [],
+      enabled: new Set([ME]),
+      sentToday: new Map(),
+      names: coinbaseNames,
+      now: NOW,
+      holdings: new Map([[ME, new Set([GOOGL])]]),
+      previousMultiplier: () => GOOGL_DIVIDEND.from,
+    });
+    assert.deepEqual(older.groups.map((group) => group.title), ['GOOGL: dividend in shares']);
+  });
+
+  test('other words, or words nobody should repeat, stay a plain corporate action', () => {
+    assert.equal(dividendNoticeWordsV1(dividendNotice().facts), 'Cash Dividend');
+    assert.equal(dividendNoticeWordsV1(dividendNotice({ description: 'Stock split 2:1' }).facts), null);
+    assert.equal(dividendNoticeWordsV1(dividendNotice({ description: 'Dividend <a href=x>claim here</a>' }).facts), null);
+    assert.equal(dividendNoticeWordsV1(dividendNotice({ payloadState: 'topic_only', description: null }).facts), null);
+    assert.equal(noticeForSignalV1(dividendNotice({ description: 'Stock split 2:1' }), coinbaseNames)?.title, 'GOOGL: corporate action');
+    assert.equal(holderDividendNoticeV1(dividendNotice({ description: 'Stock split 2:1' }), coinbaseNames), null);
   });
 });
 

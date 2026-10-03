@@ -67,10 +67,50 @@ describe('corporate action signals', () => {
       payloadState: 'decoded',
       transactionHash: TX,
       blockNumber: '50430000',
+      carriesMultiplierChange: false,
     });
     // ...and it survives the store's own schema, which is the only thing that
     // decides whether a worker can write it.
     assert.doesNotThrow(() => assertRwaSignalV1(signal, 'write'));
+  });
+
+  test('an announcement that brackets the conversion says so; a notice ahead of it does not', () => {
+    const conversion = corporateActionSignalsV1({
+      observations: [
+        observationV1(),
+        observationV1({
+          logIndex: 4,
+          action: {
+            event: 'ui_multiplier_updated',
+            announcementId: null,
+            caller: null,
+            description: null,
+            uri: null,
+            multiplierWad: '1000377118676784179',
+            effectiveAt: '2026-09-12T10:00:00.000Z',
+          },
+        }),
+        // A notice in another transaction of the same pass: nothing moved there.
+        observationV1({ transactionHash: `0x${'b'.repeat(64)}`, logIndex: 1 }),
+      ],
+      watchingSince: watching,
+    });
+    const notices = conversion.filter((row) => row.kind === 'official_asset_corporate_action_announced');
+    assert.deepEqual(
+      notices.map((row) => [row.facts.transactionHash, (row.facts as { carriesMultiplierChange?: boolean }).carriesMultiplierChange]),
+      [
+        [TX, true],
+        [`0x${'b'.repeat(64)}`, false],
+      ],
+    );
+    for (const row of notices) assert.doesNotThrow(() => assertRwaSignalV1(row, 'write'));
+  });
+
+  test('a stored announcement from before the field still reads', () => {
+    const [signal] = corporateActionSignalsV1({ observations: [observationV1()], watchingSince: watching });
+    const { carriesMultiplierChange: _dropped, ...older } = signal!.facts as Record<string, unknown>;
+    void _dropped;
+    assert.doesNotThrow(() => assertRwaSignalV1({ ...signal!, facts: older } as never, 'write'));
   });
 
   test('the closing bracket is not a second corporate action', () => {
