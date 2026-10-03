@@ -125,6 +125,33 @@ export function stockInboxContract(
         ['1'],
       );
     });
+    test('a cost change far above the holding is not its news; a route change is, at any size', async () => {
+      // A $0.21 position was shown a $10,000 round trip. The cap is the
+      // smallest measured size that covers the holding.
+      const { repository, add } = await factory();
+      const market = (id: number, kind: RwaSignalRowV1['kind'], size: string, token = TOKEN): RwaSignalRowV1 => ({
+        ...signal(id, token),
+        kind,
+        facts: { requestedCashAtomic: size, destination: 'USDC' },
+      });
+      await add([
+        market(1, 'official_asset_cash_exit_changed', '100000000'),
+        market(2, 'official_asset_cash_exit_changed', '100000000000'),
+        market(3, 'official_asset_market_became_active', '10000000000'),
+        market(4, 'official_asset_cash_exit_changed', '100000000000', OTHER),
+      ]);
+      const state = await repository.open(WALLET, NOW);
+      const rows = await pageRows(repository, {
+        wallet: WALLET,
+        addresses: [TOKEN, OTHER],
+        since: state.since,
+        until: NOW.toISOString(),
+        view: 'unread',
+        sizeCaps: [{ address: TOKEN, maxCashAtomic: '100000000' }],
+      });
+      // OTHER has no cap (a watched contract, or one Miorail cannot value).
+      assert.deepEqual(rows.map((r) => r.signalId).sort(), ['1', '3', '4']);
+    });
     test('a failing receipt is atomic and cannot acknowledge a valid subset', async () => {
       const { repository, add } = await factory();
       await add([signal(1)]);

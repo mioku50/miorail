@@ -4,6 +4,7 @@ import {
   StockInboxIdsV1Schema,
   StockInboxWalletV1Schema,
   STOCK_INBOX_ISSUER_KINDS_V1,
+  STOCK_INBOX_SIZED_KINDS_V1,
   stockInboxPageV1,
   type StockInboxRepositoryV1,
   type StockInboxStateV1,
@@ -33,6 +34,11 @@ export function createDatabaseStockInboxRepositoryV1(
       StockInboxWalletV1Schema.parse(input.wallet);
       const at = input.before?.at ?? null,
         id = input.before?.id ?? '0';
+      const caps = (input.sizeCaps ?? []).filter(
+        (cap) => /^0x[0-9a-f]{40}$/.test(cap.address) && /^[0-9]{1,30}$/.test(cap.maxCashAtomic),
+      );
+      const capAddresses = caps.map((cap) => cap.address),
+        capSizes = caps.map((cap) => cap.maxCashAtomic);
       const rows = await sql`WITH eligible AS (
         SELECT s.*, r.signal_id AS read_id,
           CASE WHEN s.kind = ANY(${[...STOCK_INBOX_ISSUER_KINDS_V1]}::text[])
@@ -44,6 +50,15 @@ export function createDatabaseStockInboxRepositoryV1(
           AND (s.subject_address = ANY(${[...input.addresses]}::text[]) OR s.official_address = ANY(${[...input.addresses]}::text[]))
           AND s.recorded_at >= ${input.since}::timestamptz AND s.recorded_at <= ${input.until}::timestamptz
           AND s.occurred_at <= ${input.until}::timestamptz
+          AND NOT (
+            s.kind = ANY(${[...STOCK_INBOX_SIZED_KINDS_V1]}::text[])
+            AND s.facts->>'requestedCashAtomic' ~ '^[0-9]{1,30}$'
+            AND EXISTS (
+              SELECT 1 FROM unnest(${capAddresses}::text[], ${capSizes}::numeric[]) AS cap(address, max_cash)
+              WHERE cap.address = s.subject_address
+                AND (s.facts->>'requestedCashAtomic')::numeric > cap.max_cash
+            )
+          )
       ), grouped AS (
         SELECT group_key, max(date_trunc('milliseconds', recorded_at)) AS anchor_at,
           (array_agg(id ORDER BY date_trunc('milliseconds', recorded_at) DESC, id DESC))[1] AS anchor_id,

@@ -98,3 +98,75 @@ test('missing or malformed transaction identity never groups equal-looking recor
     2,
   );
 });
+
+test('a multiplier move that carried a received dividend is told as that dividend', () => {
+  // Production 2026-10-01: NVIDIA's dividend converted, and the inbox said
+  // only "Shares per token changed".
+  const input = briefInput();
+  input.dividends.holdings[0]!.received = [
+    {
+      state: 'effective',
+      reason: null,
+      amountPerShare: '0.25',
+      payDate: '2026-09-30',
+      payDateApproximate: false,
+      kind: 'measured',
+      tokens: '0.00088158',
+      shares: '0.00000047',
+      usd: '0.0001',
+      at: '2026-09-30T16:47:47.000Z',
+    },
+  ];
+  const cards = [card('766'), { ...card('765'), facts: { ...card('765').facts, event: 'multiplier_updated' } }];
+  const [item] = stockBriefV1({ ...input, changes: { ...FEED, cards } }).inbox.items;
+  assert.equal(item!.headline, "NVIDIA's dividend arrived");
+  assert.equal(
+    item!.summary,
+    'NVIDIA paid $0.25 a share on Sep 30. Coinbase reinvested it as more shares: one NVDAc now represents about 1.00053794 NVDA shares. On the 0.00088158 NVDAc you held, that is less than $0.01.',
+  );
+  assert.deepEqual(item!.evidenceSignalIds, ['766', '765']);
+  // A move at another moment is not that dividend.
+  const later = { ...card('767'), occurredAt: '2026-09-29T10:00:00.000Z', facts: { ...card('767').facts, transactionHash: `0x${'b'.repeat(64)}` } };
+  const [other] = stockBriefV1({ ...input, changes: { ...FEED, cards: [later] } }).inbox.items;
+  assert.equal(other!.headline, 'Shares per token changed');
+});
+
+test('every market, listing and lookalike item has words an assistant can repeat', () => {
+  const market = (id: string, kind: string, facts: Record<string, unknown>) => ({
+    ...card(id),
+    kind: kind as 'official_asset_multiplier_changed',
+    facts: { ticker: '0xb20000…108c', destination: 'USDC', ...facts },
+  });
+  const cards = [
+    market('1', 'official_asset_market_became_active', { requestedCashAtomic: '10000000000', roundTripCostBps: '8' }),
+    market('2', 'official_asset_market_became_unreachable', { requestedCashAtomic: '100000000' }),
+    market('3', 'official_asset_cash_exit_changed', {
+      requestedCashAtomic: '100000000',
+      previousRoundTripCostBps: '8',
+      roundTripCostBps: '35',
+    }),
+    market('4', 'official_asset_dividend_declared', { company: 'NVIDIA', amountPerShare: '0.25', payDate: '2026-12-31' }),
+    market('5', 'official_source_added_asset', { sourceKind: 'coinbase_stocks_api' }),
+  ];
+  const items = stockBriefV1({ ...briefInput(), changes: { ...FEED, cards } }).inbox.items;
+  const words = new Map(items.map((item) => [item.signalId, [item.headline, item.summary]]));
+  assert.deepEqual(words.get('1'), [
+    'Can be sold for USDC again',
+    'Miorail found a route to sell NVDAc for USDC again; the measurement before found none. The largest size that went through was $10,000, for a round trip of 0.08%.',
+  ]);
+  assert.deepEqual(words.get('2'), [
+    'No route to sell found',
+    "Miorail's latest measurement found no route to sell NVDAc for USDC, even at $100; the one before found a route. The measurement itself worked.",
+  ]);
+  assert.deepEqual(words.get('3'), [
+    'Cost to sell changed',
+    'A $100 round trip in NVDAc now costs 0.35%, against 0.08% at the measurement before.',
+  ]);
+  assert.deepEqual(words.get('4'), [
+    'NVIDIA declared a dividend',
+    'NVIDIA declared $0.25 a share, payable Dec 31. NVDAc takes it as more shares per token when it converts.',
+  ]);
+  assert.deepEqual(words.get('5'), ['Listed by the Coinbase Stocks API', 'NVDAc is now listed by the Coinbase Stocks API.']);
+  // The shortened address in a market signal's facts never stands in for the name.
+  assert.equal(items.some((item) => /0xb20000…108c/.test(item.summary ?? '')), false);
+});

@@ -148,8 +148,10 @@ test('the inbox includes a late recorded event, preserves its occurrence date, a
         signalId: 'watched',
         evidenceSignalIds: ['watched'],
         transactionHash: null,
-        headline: null,
-        summary: null,
+        // Every item has words, on every surface: an assistant reading the
+        // inbox got nulls for anything that was not an issuer transaction.
+        headline: 'Token multiplier changed',
+        summary: 'NVDAc recorded a new multiplier. Its meaning depends on the issuer.',
         occurredAt: watched.occurredAt,
         recordedAt: watched.recordedAt,
         relation: 'watched',
@@ -161,8 +163,8 @@ test('the inbox includes a late recorded event, preserves its occurrence date, a
         signalId: 'late',
         evidenceSignalIds: ['late'],
         transactionHash: null,
-        headline: null,
-        summary: null,
+        headline: 'A lookalike appeared',
+        summary: 'A new token resembles NVDAc. It is a different contract, not NVDAc.',
         occurredAt: card.occurredAt,
         recordedAt: card.recordedAt,
         relation: 'held',

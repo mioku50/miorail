@@ -117,6 +117,24 @@ export function stockBriefWindowV1(now: Date, since?: string, preserve = false) 
 
 /** A reference is a total-return value PER TOKEN. Its multiplier is already
  * in the feed; applying it again here would double-count reinvestment. */
+/** The newest usable reference price for one token, within four days. */
+export function stockReferencePriceV1(
+  references: readonly { tokenAddress: string; price: number; at: string }[],
+  tokenAddress: string,
+  now: number,
+): { tokenAddress: string; price: number; at: string } | undefined {
+  return references
+    .filter(
+      (ref) =>
+        ref.tokenAddress === tokenAddress &&
+        Number.isFinite(ref.price) &&
+        ref.price > 0 &&
+        Date.parse(ref.at) <= now &&
+        Date.parse(ref.at) >= now - 4 * DAY,
+    )
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+}
+
 export function stockBriefV1(input: {
   now: Date;
   since?: string;
@@ -146,16 +164,7 @@ export function stockBriefV1(input: {
   const holdings = input.dividends.holdings
     .filter((row) => Number(row.tokens) > 0)
     .map((row) => {
-      const price = input.references
-        .filter(
-          (ref) =>
-            ref.tokenAddress === row.tokenAddress &&
-            Number.isFinite(ref.price) &&
-            ref.price > 0 &&
-            Date.parse(ref.at) <= now &&
-            Date.parse(ref.at) >= now - 4 * DAY,
-        )
-        .sort((a, b) => Date.parse(b.at) - Date.parse(a.at))[0];
+      const price = stockReferencePriceV1(input.references, row.tokenAddress, now);
       const controls = input.controls.get(row.tokenAddress);
       return {
         ...row,
@@ -187,7 +196,24 @@ export function stockBriefV1(input: {
   const changes = input.changes ? { ...input.changes, cards } : null;
   const changesTruncated = input.inboxState ? false : (input.changes?.cards.length ?? 0) >= 200;
   const held = new Set(holdings.map((row) => row.tokenAddress));
-  const items = stockInboxNewsV1(cards, new Set(input.tokenAddresses)).map((news) => {
+  // A dividend this wallet received is the reason its multiplier moved; the
+  // inbox says it as the dividend, not as a change in shares per token.
+  const received = input.dividends.holdings.flatMap((holding) =>
+    holding.received
+      .filter((event) => event.kind === 'measured' && event.at !== null)
+      .map((event) => ({
+        tokenAddress: holding.tokenAddress,
+        at: event.at!,
+        company: holding.company,
+        symbol: holding.symbol,
+        tokenSymbol: holding.tokenSymbol,
+        amountPerShare: event.amountPerShare,
+        payDate: event.payDate,
+        tokens: event.tokens,
+        usd: event.usd,
+      })),
+  );
+  const items = stockInboxNewsV1(cards, new Set(input.tokenAddresses), received).map((news) => {
     const card = news.primary;
     const relatedTokenAddress = held.has(card.subjectAddress)
       ? card.subjectAddress
@@ -253,7 +279,6 @@ export function stockBriefV1(input: {
     caveats: [
       'Relevance uses the stocks held now and the current watchlist; it does not reconstruct every past holding.',
       'This personal inbox uses when Miorail recorded each change, so delayed observations can appear on a later visit. Occurrence and recording dates remain separate.',
-      'Inbox items are the personal news units. Issuer logs for the same exact contract and transaction are grouped; changes.cards retains their individual evidence. Do not report those raw cards as additional personal updates.',
       'Recorded market changes retain their own measured size, provider and policy. They are not quotes for this wallet’s balance.',
       'No executable sale value or profit/loss is computed. Open the stock and prepare a sell at an exact token amount for a fresh review.',
       'A dividend reaches the holder when the multiplier changes; a declared cash dividend is not cash paid to this wallet.',

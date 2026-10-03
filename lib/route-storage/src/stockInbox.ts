@@ -15,6 +15,13 @@ export interface StockInboxPageInputV1 {
   until: string;
   view: 'unread' | 'history';
   before?: { at: string; id: string };
+  /**
+   * Per held contract, the largest measured cash size that is still this
+   * wallet's news. A cost change measured above it belongs to the public
+   * ladder: a $0.21 position was shown a $10,000 round trip. A contract with
+   * no cap here keeps every size.
+   */
+  sizeCaps?: readonly { address: string; maxCashAtomic: string }[];
 }
 export interface StockInboxGroupV1 {
   /** Latest recording/ID anchors the entire transaction, even across pages. */
@@ -31,6 +38,22 @@ export const STOCK_INBOX_ISSUER_KINDS_V1 = [
   'official_asset_multiplier_change_scheduled',
   'official_asset_multiplier_change_cancelled',
 ] as const;
+
+/** A measurement at one size: whether it is a holder's news depends on that size.
+ * A route appearing or disappearing is everyone's news at any size. */
+export const STOCK_INBOX_SIZED_KINDS_V1 = ['official_asset_cash_exit_changed'] as const;
+
+/** True when a sized measurement is above this wallet's cap for that contract. */
+export function stockInboxAboveCapV1(
+  row: Pick<RwaSignalRowV1, 'kind' | 'subjectAddress' | 'facts'>,
+  caps: readonly { address: string; maxCashAtomic: string }[] | undefined,
+): boolean {
+  if (!caps?.length || !STOCK_INBOX_SIZED_KINDS_V1.some((kind) => kind === row.kind)) return false;
+  const size = row.facts.requestedCashAtomic;
+  if (typeof size !== 'string' || !/^[0-9]{1,30}$/.test(size)) return false;
+  const cap = caps.find((entry) => entry.address === row.subjectAddress);
+  return cap !== undefined && BigInt(size) > BigInt(cap.maxCashAtomic);
+}
 
 /** Same exact contract and issuer transaction form one news item. No grouping
  * by amount, ticker or time: independent transactions stay independent. */

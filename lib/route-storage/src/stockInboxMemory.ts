@@ -1,6 +1,7 @@
 import {
   StockInboxIdsV1Schema,
   StockInboxWalletV1Schema,
+  stockInboxAboveCapV1,
   stockInboxGroupKeyV1,
   stockInboxPageV1,
   type StockInboxGroupV1,
@@ -36,7 +37,8 @@ export function createMemoryStockInboxRepositoryV1(
               (row.officialAddress !== null && addresses.has(row.officialAddress))) &&
             Date.parse(row.recordedAt) >= Date.parse(input.since) &&
             Date.parse(row.recordedAt) <= Date.parse(input.until) &&
-            Date.parse(row.occurredAt) <= Date.parse(input.until),
+            Date.parse(row.occurredAt) <= Date.parse(input.until) &&
+            !stockInboxAboveCapV1(row, input.sizeCaps),
         )
         .sort(
           (a, b) =>

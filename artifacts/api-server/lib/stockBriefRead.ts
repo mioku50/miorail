@@ -3,11 +3,12 @@ import { assembleRwaSignalFeedV1 } from '@mioagent/rwa-dossier';
 import {
   stockBriefV1,
   stockBriefWindowV1,
+  stockReferencePriceV1,
   StockBriefInputV1Schema,
   type StockBriefV1,
 } from '@mioagent/rwa-market-reality/stock-brief';
 import type { z } from 'zod';
-import type { RwaSignalRowV1 } from '@mioagent/route-storage';
+import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1, type RwaSignalRowV1 } from '@mioagent/route-storage';
 import {
   stockInboxRuntime,
   stockInboxProofV1,
@@ -42,6 +43,32 @@ export const stockBriefRuntime = {
     }),
 };
 export const stockBriefCacheV1 = createPublicReadCacheV1({ ttlMs: 30_000, max: 1_024 });
+
+/**
+ * For each held contract this wallet does not also watch, the smallest
+ * measured cash size that covers the holding. A cost change measured above it
+ * is the public ladder's news, not this holder's. A holding Miorail cannot
+ * value, or one larger than every measured size, gets no cap and keeps them all.
+ */
+export function stockInboxSizeCapsV1(input: {
+  holdings: readonly { tokenAddress: string; tokens: string }[];
+  references: readonly { tokenAddress: string; price: number; at: string }[];
+  watched: ReadonlySet<string>;
+  now: number;
+}): { address: string; maxCashAtomic: string }[] {
+  const caps: { address: string; maxCashAtomic: string }[] = [];
+  for (const holding of input.holdings) {
+    const tokens = Number(holding.tokens);
+    if (!(tokens > 0) || input.watched.has(holding.tokenAddress)) continue;
+    const price = stockReferencePriceV1(input.references, holding.tokenAddress, input.now);
+    if (!price) continue;
+    const value = Math.ceil(tokens * price.price * 1_000_000);
+    if (!Number.isFinite(value)) continue;
+    const rung = CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1.find((size) => BigInt(size) >= BigInt(value));
+    if (rung) caps.push({ address: holding.tokenAddress, maxCashAtomic: rung });
+  }
+  return caps;
+}
 
 function word(read: B20RpcResultV1<string> | undefined): bigint | null {
   return read?.ok && /^0x[0-9a-fA-F]{64}$/.test(read.value) ? BigInt(read.value) : null;
@@ -166,6 +193,12 @@ export async function readMyStocksTodayV1(
       until,
       view,
       before: cursor?.kind === 'cursor' ? cursor.before : undefined,
+      sizeCaps: stockInboxSizeCapsV1({
+        holdings: core.dividends.holdings,
+        references: core.references,
+        watched: new Set(watchedAddresses),
+        now: now.getTime(),
+      }),
     });
     const visible = page.groups.flatMap((group) => group.rows);
     const expiry = new Date(now.getTime() + 15 * 60_000).toISOString();
