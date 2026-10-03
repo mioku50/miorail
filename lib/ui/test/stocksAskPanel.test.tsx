@@ -192,10 +192,12 @@ describe('the suggested questions', () => {
         `presupposes a comparison or a recommendation: ${prompt}`,
       );
     }
-    // And at least one asks whether comparing is possible at all.
-    assert.ok(
-      STOCKS_ASK_PROMPTS_V1.some((prompt) => /compared right now/i.test(prompt)),
-      'a reader needs a way to ask whether the comparison exists',
-    );
+    // The board shows one contract per stock (Coinbase's, since 2026-10-03),
+    // so no chip may ask about "representations" as if there were several.
+    for (const prompt of STOCKS_ASK_PROMPTS_V1) {
+      assert.doesNotMatch(prompt, /representations/i, `asks about a comparison the board no longer shows: ${prompt}`);
+    }
+    // And one asks the board's own question: what a round trip costs here.
+    assert.ok(STOCKS_ASK_PROMPTS_V1.some((prompt) => /buying in and selling back out/i.test(prompt)));
   });
 });

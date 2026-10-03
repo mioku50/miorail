@@ -329,7 +329,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        <b>Base MCP Extensions</b>
+        <b>Base MCP plugins</b>
         {/* This read `— READ · — ACTION` before the tool list was fetched:
             machine words, and two em-dashes where a reader expects a count.
             The rail beside it was already saying the same numbers in words a

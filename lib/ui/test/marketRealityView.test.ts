@@ -1220,6 +1220,8 @@ describe('an absent number never renders as a zero', () => {
       choice: {
         underlyingKey: 'security:isin:US67066G1040',
         title: 'NVIDIA (NVDA)',
+        ticker: 'NVDA',
+        company: 'NVIDIA',
         identifier: 'ISIN US67066G1040',
         issuerLine: 'Coinbase',
         issuerIds: ['coinbase'],
@@ -2135,6 +2137,8 @@ describe('Phase 11 utility and eligibility map', () => {
     const choice = (issuerIds: readonly ('coinbase' | 'dinari' | 'backed')[], multiIssuer: boolean) => ({
       underlyingKey: issuerIds.join('-') + String(multiIssuer),
       title: 'x',
+      ticker: 'X',
+      company: null,
       identifier: null,
       issuerLine: 'x',
       issuerIds,
@@ -5028,6 +5032,12 @@ describe('trading from the answer card', () => {
   const render = (over: {
     trade?: { note: string | null; tokenDecimals: Record<string, number | null> } | null;
     onTrade?: () => string | null;
+    /** Whether the wallet holds the card's token; absent is "not read". */
+    held?: boolean;
+    /** The whole screen rather than the card alone. */
+    whole?: boolean;
+    questionFixed?: boolean;
+    weekendOpen?: boolean;
   }) => {
     const markup = renderToStaticMarkup(
       React.createElement(MarketRealityScreen, {
@@ -5055,6 +5065,40 @@ describe('trading from the answer card', () => {
           removingWatchTokenAddress: null,
           watchError: null,
           ...(over.trade !== undefined ? { trade: over.trade } : {}),
+          ...(over.held !== undefined
+            ? { heldTokenAddresses: new Set(over.held ? [LEAD.toLowerCase()] : []) }
+            : {}),
+          ...(over.questionFixed ? { questionFixed: true } : {}),
+          ...(over.weekendOpen
+            ? {
+                weekend: {
+                  state: 'in_progress' as const,
+                  title: 'The weekend on Base',
+                  badge: 'Wall Street closed',
+                  lede: '',
+                  columns: { base: 'On Base now', reopen: null },
+                  rows: [],
+                  note: '',
+                  share: { x: '', farcaster: '' },
+                },
+              }
+            : {}),
+          quotes: new Map([
+            [
+              wire.question.underlyingKey,
+              {
+                tokenAddress: LEAD,
+                iconPath: `/api/public/stocks/icons/${LEAD}.png`,
+                companyName: 'NVIDIA Corporation',
+                tokenSymbol: 'NVDAc',
+                priceUsd: 234.31,
+                price: '$234.31',
+                change: '+0.42%',
+                // The card ages a price against the reader's own clock.
+                priceAt: new Date().toISOString(),
+              },
+            ],
+          ]),
           actions: {
             onUnderlying: () => undefined,
             onDirection: () => undefined,
@@ -5067,15 +5111,43 @@ describe('trading from the answer card', () => {
         },
       }),
     );
+    if (over.whole) return markup;
     // The answer card only: every representation card below keeps its own
     // Prepare buttons, and they are not what this is about.
     const card = markup.slice(markup.indexOf('class="mr-headline"'));
     return card.slice(0, card.indexOf('</section>'));
   };
 
-  test('the fixed $10 is gone: Buy and Sell, outlined and equal, take the reader’s amount', () => {
+  test('the card leads with the stock and its price on Base, the evidence folded below it', () => {
+    const card = render({ trade: { note: null, tokenDecimals: { [LEAD]: 8 } }, onTrade: () => null });
+    assert.match(card, /<h3>NVIDIA Corporation<\/h3>/);
+    assert.match(card, /<strong class="mono">\$234\.31<\/strong><span class="mono d">\+0\.42% · 24h<\/span>/);
+    assert.match(card, /Price on Base · just now/);
+    // No machinery above the buttons: no address line, no question line.
+    assert.doesNotMatch(card, /mr-headline-rep|mr-headline-q|Measure now/);
+    const page = render({ trade: { note: null, tokenDecimals: { [LEAD]: 8 } }, onTrade: () => null, whole: true });
+    assert.ok(page.indexOf('class="mr-headline"') < page.indexOf('class="mr-evidence"'), 'the card is above the evidence');
+    assert.match(page, /<details class="mr-evidence"><summary>How we know this/);
+    // Everything the evidence holds is still there, one tap away.
+    assert.match(page, /Measure now|Sizes are the rungs|Market Reality/);
+  });
+
+  test('the evidence opens by itself where it IS the page: a fixed question under review', () => {
+    const page = render({ whole: true, questionFixed: true });
+    assert.match(page, /<details class="mr-evidence" open="">/);
+  });
+
+  test('over the weekend the card says Wall Street is closed and Base is trading', () => {
+    const card = render({ weekendOpen: true });
+    assert.match(card, /Wall Street closed — trading on Base/);
+    assert.doesNotMatch(render({}), /Wall Street closed/);
+  });
+
+  test('the fixed $10 is gone: Buy leads, Sell sits beside it, and both take the reader’s amount', () => {
+    // 2026-10-03: the loud button is what the reader can do now. Anyone with
+    // USDC can buy; with the holdings not read yet, Sell stays, outlined.
     const card = render({ trade: { note: NOTE, tokenDecimals: { [LEAD]: 8 } }, onTrade: () => null });
-    assert.match(card, /<button type="button" class="btn alt" aria-expanded="false">Buy<\/button>/);
+    assert.match(card, /<button type="button" class="btn" aria-expanded="false">Buy<\/button>/);
     assert.match(card, /<button type="button" class="btn alt" aria-expanded="false">Sell<\/button>/);
     assert.doesNotMatch(card, /Buy \$10|Prepare buy|Prepare sell/);
     // Nothing is typed until a side is pressed.
@@ -5104,6 +5176,40 @@ describe('trading from the answer card', () => {
     const card = render({ trade: { note: null, tokenDecimals: {} }, onTrade: () => null });
     assert.match(card, /aria-expanded="false">Buy<\/button>/);
     assert.match(card, /<button type="button" class="btn alt">Sell<\/button>/);
+  });
+
+  test('a holder gets Sell as loud as Buy; a wallet known to hold none is not offered Sell', () => {
+    const trade = { note: null, tokenDecimals: { [LEAD]: 8 } };
+    const holder = render({ trade, onTrade: () => null, held: true });
+    assert.match(holder, /<button type="button" class="btn" aria-expanded="false">Buy<\/button>/);
+    assert.match(holder, /<button type="button" class="btn" aria-expanded="false">Sell<\/button>/);
+    const none = render({ trade, onTrade: () => null, held: false });
+    assert.match(none, />Buy<\/button>/);
+    assert.doesNotMatch(none, />Sell</);
+  });
+
+  test('the quick amounts only fill the field, and the button still says what it read', () => {
+    const buy = renderToStaticMarkup(
+      React.createElement(TradeAmountForm, {
+        direction: 'buy',
+        tokenDecimals: 8,
+        onSubmit: () => null,
+        onCancel: () => undefined,
+      }),
+    );
+    assert.match(buy, /aria-label="Quick amounts"/);
+    for (const preset of ['$1', '$5', '$20']) assert.match(buy, new RegExp(`>\\${preset}</button>`));
+    // Nothing is filled before a tap, so the button reads plain "Buy".
+    assert.match(buy, /<button type="submit" class="btn" disabled=""[^>]*>Buy<\/button>/);
+    const sell = renderToStaticMarkup(
+      React.createElement(TradeAmountForm, {
+        direction: 'sell',
+        tokenDecimals: 8,
+        onSubmit: () => null,
+        onCancel: () => undefined,
+      }),
+    );
+    assert.doesNotMatch(sell, /Quick amounts/);
   });
 
   test('the amount form says what it reads, its floor, and that nothing is signed here', () => {

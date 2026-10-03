@@ -43,6 +43,14 @@ export interface MyDividendRowViewV1 {
   title: string;
   /** One sentence per dividend: ahead first, soonest first, then received. */
   lines: string[];
+  /**
+   * The one line worth showing beside the holding, or null.
+   *
+   * A $0.21 position read "less than $0.001" twice above everything else on
+   * its card (2026-10-03). A sum under a cent is still in `lines`, in the
+   * record a reader can open; it just does not lead.
+   */
+  lead: string | null;
 }
 
 export interface MyDividendsViewV1 {
@@ -138,6 +146,11 @@ function lastV1(event: DividendEventV1, stock: DividendStockV1): string {
   }
 }
 
+/** A dollar sum too small to lead a holding's card: under one cent. */
+function underACentV1(usd: string | null): boolean {
+  return usd !== null && Number(usd) < 0.01;
+}
+
 /** "$0.33", "$0.003", or "less than $0.001" for a sliver of a token. */
 function walletUsdV1(value: string): string {
   const number = Number(value);
@@ -205,8 +218,10 @@ export function myDividendsViewV1(
       ...holding.upcoming.map((event) => aheadV1(event, holding)),
       ...holding.received.map((event) => receivedV1(event, holding)),
     ];
+    const first = holding.upcoming[0] ?? holding.received[0] ?? null;
     return {
       key: holding.tokenAddress,
+      lead: first && !underACentV1(first.usd) ? (lines[0] ?? null) : null,
       title: Number(holding.tokens) > 0 ? `${holding.tokenSymbol} · ${tokensV1(holding.tokens)} held` : `${holding.tokenSymbol} · none held now`,
       lines:
         lines.length > 0
@@ -222,7 +237,7 @@ export function myDividendsViewV1(
   return {
     title: 'Your dividends',
     rows,
-    total: received > 0 ? `Reinvested into your tokens so far: ${walletUsdV1(mine.data.receivedUsd)}.` : null,
+    total: received >= 0.01 ? `Reinvested into your tokens so far: ${walletUsdV1(mine.data.receivedUsd)}.` : null,
     empty: rows.length === 0 ? 'This wallet holds none of these stocks.' : null,
     note,
   };
@@ -265,9 +280,13 @@ export function dividendCalendarViewV1(
     mine: myDividendsViewV1(mine),
     rows,
     none: quiet.length > 0 ? `No dividend on record: ${quiet.join(', ')}.` : null,
+    // A count, not a roll-call. The list of every unread ticker ran to 53
+    // names on the board (2026-10-03) — a wall of "not" in front of the five
+    // the board does read. The scope is kept: the others are not called
+    // dividend-free, only not read.
     unread:
       unread.length > 0
-        ? `Not read: ${unread.join(', ')}. Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'} only, so this board does not say whether the others pay one.`
+        ? `Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'}. For ${unread.length === 1 ? 'the other stock' : `the other ${unread.length} stocks`} on this board it does not say whether ${unread.length === 1 ? 'it pays' : 'they pay'} one.`
         : null,
     note: [
       "Declared: the company's own release. Estimate: not declared yet — the last dividend again, a quarter later.",

@@ -110,8 +110,10 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // This surface is the reviewed extension layer around Base MCP: plugin
     // catalogue, live tools and a thread scoped to those capabilities. "AI"
     // described the input method, not the product boundary.
-    label: 'Base MCP Extensions',
-    compactLabel: 'MCP Extensions',
+    // "Plugins" is the reader's word for what this page lists; "Extensions"
+    // was ours for the layer around them (operator, 2026-10-03).
+    label: 'Base MCP plugins',
+    compactLabel: 'MCP plugins',
     path: '/extensions',
     blurb: 'Reviewed Base MCP plugins, live tools, and a thread scoped to those capabilities.',
   },
@@ -148,21 +150,13 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
 /**
  * The primary navigation, in order.
  *
- * Stocks first. It was in the drawer only, which made the tab bar the product
- * Miorail used to be: Discover, B20 controls, Routes AI — the surfaces Stocks
- * was built on top of. A reader whose first screen is the narrow one met the
- * foundations and never the product.
- *
- * Radar second because it is the same question, watched: a reader who has just
- * chosen an exact address, size and direction has one next move, and it is not
- * a different feed.
- *
- * Three, not four. Activity moved to the drawer beside Extensions: a tab bar
- * of three working surfaces is more honest than four where one is a viewer for
- * records this deployment has never produced, and the three that remain get
- * ~130px each on a 390px screen instead of ~90px.
+ * Stocks first: it is the product a new reader meets. Then the two surfaces
+ * the operator named as the console's core on 2026-10-03 — Base MCP plugins and
+ * Routes AI. Settings completes the four main pages in the drawer
+ * (`CONSOLE_MAIN_SECTIONS_V1`); Radar, Discover, Investigate, B20 controls and
+ * Activity moved behind "More", reachable by a tap and never removed.
  */
-export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'radar', 'opportunities'] as const;
+export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'extensions', 'routes'] as const;
 
 /**
  * What the Base App MiniApp renders, in order.
@@ -183,10 +177,21 @@ export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'radar', 'opportunities'] 
  */
 export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'radar', 'portfolio'] as const;
 
+/**
+ * The four pages the console leads with, in order (operator, 2026-10-03):
+ * Stocks, Base MCP plugins, Routes AI and Settings.
+ */
+export const CONSOLE_MAIN_SECTIONS_V1 = ['market', 'extensions', 'routes', 'settings'] as const;
+
+/**
+ * Everything else, behind "More" and opened on a tap. Nothing here is removed:
+ * every one of them is still a page with its own path, and the drawer lists
+ * them the moment a reader asks — or by itself, when the reader is on one.
+ */
+export const CONSOLE_MORE_SECTIONS_V1 = ['radar', 'opportunities', 'investigate', 'portfolio', 'activity'] as const;
+
 /** T70 §3 — the mobile drawer is the complete map of mounted sections. */
-// Activity and Extensions sit in the drawer rather than the tab bar. Neither
-// is where work starts; both are places you go to look something up.
-export const CONSOLE_DRAWER_SECTIONS_V1 = ['market', 'radar', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_MAIN_SECTIONS_V1, ...CONSOLE_MORE_SECTIONS_V1] as const;
 
 export function consoleSectionLabelV1(section: ConsoleSectionV1): string {
   return CONSOLE_SECTION_TABLE_V1[section].label;
@@ -235,6 +240,8 @@ export interface ConsoleNavItemV1 {
    * from "you did something wrong", and low contrast is not an explanation.
    */
   unavailableReason: string | null;
+  /** `more` sections sit behind the drawer's "More"; the rest lead. */
+  group: 'main' | 'more';
 }
 
 export interface ConsoleNavInputV1 {
@@ -251,8 +258,11 @@ export interface ConsoleNavInputV1 {
 }
 
 export function consoleNavModelV1(input: ConsoleNavInputV1): ConsoleNavItemV1[] {
-  const mounted = new Set(input.mounted);
-  return CONSOLE_SECTIONS_V1.filter((section) => mounted.has(section)).map((section) => {
+  // In the surface's own order: the web drawer leads with its four pages and
+  // the Base App with its three, and neither follows the table's order.
+  const known = new Set<ConsoleSectionV1>(CONSOLE_SECTIONS_V1);
+  const more = new Set<ConsoleSectionV1>(CONSOLE_MORE_SECTIONS_V1);
+  return [...new Set(input.mounted)].filter((section) => known.has(section)).map((section) => {
     const definition = CONSOLE_SECTION_TABLE_V1[section];
     const reason = input.unavailable?.[section] ?? null;
     return {
@@ -265,6 +275,7 @@ export function consoleNavModelV1(input: ConsoleNavInputV1): ConsoleNavItemV1[] 
       active: input.active === section && reason === null,
       available: reason === null,
       unavailableReason: reason,
+      group: more.has(section) ? 'more' : 'main',
     };
   });
 }

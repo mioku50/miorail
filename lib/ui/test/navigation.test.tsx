@@ -165,17 +165,28 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
 
   test('Stocks leads and the evidence tools remain reachable after it', () => {
     assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 9);
+    // Four pages lead (operator, 2026-10-03); the other five follow behind
+    // "More", in the order the drawer lists them.
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
       'market',
+      'extensions',
+      'routes',
+      'settings',
       'radar',
       'opportunities',
       'investigate',
       'portfolio',
-      'routes',
       'activity',
-      'extensions',
-      'settings',
     ]);
+    const nav = consoleNavModelV1({ mounted: CONSOLE_DRAWER_SECTIONS_V1, active: 'market' });
+    assert.deepEqual(
+      nav.filter((item) => item.group === 'main').map((item) => item.label),
+      ['Stocks', 'Base MCP plugins', 'Routes AI', 'Settings'],
+    );
+    assert.deepEqual(
+      nav.filter((item) => item.group === 'more').map((item) => item.label),
+      ['Radar', 'Discover', 'Investigate', 'B20 controls', 'Activity'],
+    );
   });
 
   test('every drawer section is reachable, so the drawer is the complete map', () => {
@@ -238,7 +249,9 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
         <div>Stocks body</div>
       </ConsoleShell>,
     );
-    assert.match(markup, /Advanced evidence/);
+    // The five behind "More" are in the drawer, folded: one tap away.
+    assert.match(markup, /<details class="railmore"><summary class="railgroup">More<\/summary>/);
+    assert.match(markup, /Investigate/);
     assert.match(markup, /app no-right/);
     assert.doesNotMatch(markup, /\+ New goal|Active session|Recent proofs|aria-label="Live data"/);
   });
@@ -306,7 +319,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // one a new reader is most likely to meet -- led with Discover, B20
     // controls and Routes AI. Those are the foundations, not the product.
     const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'market' });
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Radar', 'Discover']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'MCP plugins', 'Routes AI']);
   });
 
   test('a Base App tab always has a handler behind it', () => {
@@ -387,8 +400,8 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // whatever a third-party tool returned — so they must not read as one
     // feature split across two tabs.
     assert.equal(CONSOLE_SECTION_TABLE_V1.routes.label, 'Routes AI');
-    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Base MCP Extensions');
-    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.compactLabel, 'MCP Extensions');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Base MCP plugins');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.compactLabel, 'MCP plugins');
   });
 
   test('no tab is named for something that only exists after a signature', () => {
@@ -414,7 +427,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
   });
 
   test('both surfaces read the same table, in each surface\u2019s own order', () => {
-    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['market', 'radar', 'opportunities']);
+    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['market', 'extensions', 'routes']);
     assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'radar', 'portfolio']);
     // Whatever each surface lists, the words come from the shared table.
     for (const section of [...CONSOLE_PRIMARY_SECTIONS_V1, ...CONSOLE_MINIAPP_SECTIONS_V1]) {
@@ -464,7 +477,7 @@ describe('§9.8 — an unwired section gets no button', () => {
 
   test('a mounted-but-unusable section is present, inert and explained', () => {
     const nav = consoleNavModelV1({
-      mounted: CONSOLE_PRIMARY_SECTIONS_V1,
+      mounted: CONSOLE_DRAWER_SECTIONS_V1,
       active: 'opportunities',
       unavailable: { opportunities: 'Discover is off on this server.' },
     });
@@ -1422,5 +1435,56 @@ describe('every surface carries one name', () => {
   test('no section label is a second name for another section', () => {
     const labels = CONSOLE_SECTIONS_V1.map((section) => consoleSectionLabelV1(section));
     assert.equal(new Set(labels).size, labels.length);
+  });
+});
+
+describe('2026-10-03 — four pages lead, the rest are one tap away', () => {
+  function shellMarkup(active: 'market' | 'investigate') {
+    const nav = consoleNavModelV1({ mounted: CONSOLE_DRAWER_SECTIONS_V1, active });
+    return renderToStaticMarkup(
+      <ConsoleShell
+        header={{
+          crumb: ['Stocks'],
+          nav,
+          blockNumber: '52121619',
+          gasLabel: '0.006 gwei',
+          networkLabel: 'Base mainnet',
+          connected: true,
+          walletLabel: '0x1234…abcd',
+        }}
+        left={{ nav, sessions: [], sessionCount: '0', proofs: [], proofCount: '0' }}
+        footer={{ adaptersLabel: '12/13', sourcesLabel: '1', spendLabel: '$0', blockNumber: '52121619' }}
+        right={null}
+        theme="dark"
+        onThemeChange={() => undefined}
+        onNewGoal={() => undefined}
+        onSelectSession={() => undefined}
+        onSelectProof={() => undefined}
+      >
+        <div>body</div>
+      </ConsoleShell>,
+    );
+  }
+
+  test('"More" is folded on a main page and open on one of its own', () => {
+    assert.match(shellMarkup('market'), /<details class="railmore">/);
+    assert.match(shellMarkup('investigate'), /<details class="railmore" open="">/);
+  });
+
+  test('the header and the status bar carry no system counters', () => {
+    const markup = shellMarkup('market');
+    for (const counter of ['Block', 'Gas', 'Adapters', 'Sources', 'Spend', '52121619', '0.006 gwei', '12/13']) {
+      assert.ok(!markup.includes(counter), `${counter} is still on screen`);
+    }
+    // What stays: the read-only promise, the metrics and the source offer.
+    assert.match(markup, /Public metrics/);
+    assert.match(markup, /Source \(AGPL-3.0\)/);
+  });
+
+  test('the header shows the one Miorail mark, the same drawing as the tab icon', () => {
+    const markup = shellMarkup('market');
+    assert.match(markup, /class="logo mark"/);
+    assert.match(markup, /stroke="#3D46F2"/);
+    assert.doesNotMatch(markup, /<rect x="3" y="2.5"/, 'the rails glyph that read as an H is gone');
   });
 });

@@ -130,6 +130,8 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await page.setViewportSize(viewport);
     await stubApi(page);
     await page.goto(`/market?key=${encodeURIComponent(COIN)}`);
+    // The evidence is folded under the stock's card since 2026-10-03.
+    await page.getByText('How we know this', { exact: false }).first().click();
     const utility = page.getByRole('tab', { name: 'Use & access', exact: true });
     await utility.click();
     await expect(utility).toHaveAttribute('aria-selected', 'true');
@@ -137,6 +139,7 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await expect(page.getByRole('tablist', { name: 'Size', exact: true })).toHaveCount(0);
     await expect(page.getByRole('status').filter({ hasText: 'Use & access' })).toBeInViewport();
     await page.getByRole('tab', { name: 'Market Reality', exact: true }).click();
+    // Pressing a tab inside the evidence does not fold it shut.
     await expect(page.getByRole('tablist', { name: 'Direction', exact: true })).toBeVisible();
   });
 }

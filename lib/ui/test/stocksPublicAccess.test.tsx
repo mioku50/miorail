@@ -271,11 +271,14 @@ test('a visitor’s frame leaves out the chain it could not read', () => {
   assert.match(markup, /not connected/);
 });
 
-test('a session frame still says when block and gas are not known right now', () => {
-  // Absent means read, or being read: a dash there is a real statement.
-  const markup = shellMarkupV1(undefined);
-  assert.match(markup, />Block </);
-  assert.match(markup, />Gas </);
+test('no frame carries block and gas any more: Settings has network status', () => {
+  // 2026-10-03. They answered how the chain is doing, on every page, to a
+  // reader asking about a stock.
+  for (const chainRead of [undefined, true]) {
+    const markup = shellMarkupV1(chainRead);
+    assert.doesNotMatch(markup, />Block </);
+    assert.doesNotMatch(markup, />Gas </);
+  }
 });
 
 test('the Base App bar leaves out an unread chain the same way', () => {

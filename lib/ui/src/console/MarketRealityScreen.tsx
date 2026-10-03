@@ -41,6 +41,8 @@ import type { DividendCalendarViewV1 } from './dividendCalendarView';
 import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlertsStrip';
 import type { WeekendMarketViewV1 } from './weekendMarketView';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
+import { stockPriceNoteV1, type StockQuoteViewV1 } from './stockQuotesView';
+import type { StockUsesViewV1 } from './stockUsesView';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -259,6 +261,14 @@ export interface MarketRealityScreenModelV1 {
   dividends?: DividendCalendarViewV1 | null;
   /** Alerts in Telegram, for a signed-in reader when the bot exists. */
   telegram?: TelegramAlertsModelV1 | null;
+  /** Each stock's price on Base, its 24-hour change, name and icon, keyed by
+   * underlying. Absent or empty: the list shows names alone. */
+  quotes?: ReadonlyMap<string, StockQuoteViewV1>;
+  /** "What else you can do with NVDAc", for the stock on the card. */
+  uses?: StockUsesViewV1 | null;
+  /** The tokens this wallet holds; null when nobody is signed in or the
+   * holdings are not read yet. Decides which side of the card leads. */
+  heldTokenAddresses?: ReadonlySet<string> | null;
   /** Growth plan step 2 — Buy and Sell at the reader's own amount on the answer
    * card: what may be said about the fee, and each address's token decimals, so
    * a sell amount is read in its own contract's scale. Absent where the surface
@@ -1093,23 +1103,38 @@ function RepresentationCard({
 
 function ChoiceButton({
   choice,
+  quote,
   selectedKey,
   onUnderlying,
 }: {
   choice: UnderlyingChoiceViewV1;
+  quote: StockQuoteViewV1 | null;
   selectedKey: string | null;
   onUnderlying: (underlyingKey: string) => void;
 }) {
+  const company = quote?.companyName ?? choice.company;
   return (
     <button
       type="button"
       role="option"
       aria-selected={choice.underlyingKey === selectedKey}
-      className={`mr-choice${choice.underlyingKey === selectedKey ? ' on' : ''}`}
+      className={`mr-choice mr-choice-quoted${choice.underlyingKey === selectedKey ? ' on' : ''}`}
       onClick={() => onUnderlying(choice.underlyingKey)}
     >
-      <span className="mr-choice-name">{choice.title}</span>
+      {/* Coinbase's own icon, served from our origin; a letter where there is
+          none. Decorative: the ticker beside it is the name. */}
+      {quote?.iconPath ? (
+        <img className="mr-choice-icon" src={quote.iconPath} alt="" width={24} height={24} loading="lazy" decoding="async" />
+      ) : (
+        <span className="mr-choice-icon mr-choice-letter" aria-hidden="true">
+          {choice.ticker.slice(0, 1)}
+        </span>
+      )}
+      <span className="mr-choice-name">{choice.ticker}</span>
+      {/* A price on Base, or nothing: never $0 and never an old number. */}
+      <span className="mr-choice-px mono">{quote?.price ?? ''}</span>
       <span className="mr-choice-sub">
+        {company ? <span className="mr-choice-company">{company}</span> : null}
         {/* The issuer list is the part that may be shortened; the tag is not.
             As a bare text node it could not shrink, so "Backed · Coinbase ·
             Dinari" pushed the badge out of the card and it rendered as
@@ -1124,18 +1149,21 @@ function ChoiceButton({
             anyway does not read an empty contract as a broken product. */}
         {choice.emptyNote ? <span className="pill mr-choice-tag">{choice.emptyNote}</span> : null}
       </span>
+      <span className="mr-choice-chg mono">{quote?.change ?? ''}</span>
     </button>
   );
 }
 
 export function Chooser({
   choices,
+  quotes,
   selectedKey,
   loading,
   error,
   onUnderlying,
 }: {
   choices: readonly UnderlyingChoiceViewV1[];
+  quotes?: ReadonlyMap<string, StockQuoteViewV1>;
   selectedKey: string | null;
   loading: boolean;
   error: string | null;
@@ -1156,12 +1184,12 @@ export function Chooser({
         return false;
       return (
         !query ||
-        `${choice.title} ${choice.identifier ?? ''} ${choice.issuerLine}`
+        `${choice.title} ${choice.identifier ?? ''} ${choice.issuerLine} ${quotes?.get(choice.underlyingKey)?.companyName ?? ''}`
           .toLowerCase()
           .includes(query)
       );
     });
-  }, [choices, active, search]);
+  }, [choices, quotes, active, search]);
   const partitioned = useMemo(() => partitionChoicesBySupplyV1(visible), [visible]);
   if (error) return <p className="note warn">{error}</p>;
   if (choices.length === 0) {
@@ -1203,6 +1231,7 @@ export function Chooser({
           <ChoiceButton
             key={choice.underlyingKey}
             choice={choice}
+            quote={quotes?.get(choice.underlyingKey) ?? null}
             selectedKey={selectedKey}
             onUnderlying={onUnderlying}
           />
@@ -1225,6 +1254,7 @@ export function Chooser({
               <ChoiceButton
                 key={choice.underlyingKey}
                 choice={choice}
+                quote={quotes?.get(choice.underlyingKey) ?? null}
                 selectedKey={selectedKey}
                 onUnderlying={onUnderlying}
               />
@@ -1287,16 +1317,23 @@ function CompactRepresentation({
 }
 
 /**
- * The answer, before the machinery that produced it.
+ * The stock, before the machinery that produced the answer.
  *
- * Everything in here is read off the same view the board below renders, so
- * the summary cannot drift from the evidence. It states a MEASUREMENT and its
- * age -- never a ranking, and never a claim that the trade would succeed.
+ * Top to bottom, in the order a person asks (2026-10-03): what is it and what
+ * does it cost on Base; buy it; what a round trip costs; what else it can do.
+ * Everything that proves those lines is under "How we know", directly below,
+ * and every number here is read off the same view the board renders there, so
+ * the summary cannot drift from the evidence. It states a measurement and its
+ * age — never a ranking, and never a claim that a trade would succeed.
  */
 function HeadlineAnswer({
   headline,
-  measuring,
-  onMeasure,
+  ticker,
+  company,
+  quote,
+  uses,
+  held,
+  weekendClosed,
   onPrepare,
   trade,
   onTrade,
@@ -1304,8 +1341,15 @@ function HeadlineAnswer({
   loadGiftHolding,
 }: {
   headline: StocksHeadlineViewV1;
-  measuring: boolean;
-  onMeasure?: () => void;
+  /** `NVDA`, and the company where the reviewed source names one. */
+  ticker: string | null;
+  company: string | null;
+  quote: StockQuoteViewV1 | null;
+  uses: StockUsesViewV1 | null;
+  /** Whether this wallet holds the token; null when that is not known. */
+  held: boolean | null;
+  /** Wall Street is in its weekend dark window, and Base is trading. */
+  weekendClosed: boolean;
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
   onGift?: (gift: GiftRequestV1) => Promise<string | null>;
   loadGiftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
@@ -1328,49 +1372,45 @@ function HeadlineAnswer({
   const giftable = Boolean(tradable && onGift && trade?.giftable?.[tradable.tokenAddress]);
   const toggle = (direction: 'buy' | 'sell' | 'gift') =>
     setSide(open === direction || !tradable ? null : { tokenAddress: tradable.tokenAddress, direction });
+  // The loud button is what the reader can do NOW (2026-10-03). Anyone with
+  // USDC can buy, so Buy leads; Sell matches it once the wallet holds the
+  // token, and is not offered to a wallet known to hold none. The rule this
+  // board keeps is that it never picks a token or an issuer for anybody —
+  // and it does not: Coinbase's contract is the only one on this card.
+  const showSell = held !== false;
+  const sellClass = held === true ? 'btn' : 'btn alt';
+  const priceNote = stockPriceNoteV1(quote?.priceAt ?? null, new Date());
+  const name = quote?.companyName ?? company ?? headline.title;
+  const symbols = [ticker, quote?.tokenSymbol].filter((part): part is string => Boolean(part) && part !== name);
   return (
     <section className="mr-headline" aria-label="What this security answers right now">
-      <div className="mr-headline-top">
-        <div className="mr-headline-id">
-          <h3>{headline.title}</h3>
-          {headline.identifier ? <span className="mono d">{headline.identifier}</span> : null}
+      <div className="mr-stock-top">
+        {quote?.iconPath ? (
+          <img className="mr-stock-icon" src={quote.iconPath} alt="" width={40} height={40} decoding="async" />
+        ) : (
+          <span className="mr-stock-icon mr-choice-letter" aria-hidden="true">
+            {(ticker ?? headline.title).slice(0, 1)}
+          </span>
+        )}
+        <div className="mr-stock-id">
+          <h3>{name}</h3>
+          <span className="mono d">{symbols.length > 0 ? symbols.join(' · ') : headline.identifier}</span>
         </div>
-        {lead ? (
-          <span className="pill cr-status" data-tone={lead.tone}>{lead.chip}</span>
+        {quote?.price ? (
+          <div className="mr-stock-px">
+            <strong className="mono">{quote.price}</strong>
+            {quote.change ? <span className="mono d">{quote.change} · 24h</span> : null}
+          </div>
         ) : null}
       </div>
-      <p className="mr-headline-q">{headline.questionLine}</p>
+      {priceNote || weekendClosed ? (
+        <p className="mr-stock-note">
+          {weekendClosed ? <span className="pill mr-stock-badge">Wall Street closed — trading on Base</span> : null}
+          {priceNote ? <span>{priceNote}</span> : null}
+        </p>
+      ) : null}
 
-      {lead ? (
-        <>
-          <p className="mr-headline-rep">
-            <strong>{lead.issuerName}</strong> <span className="d">{lead.structureLabel}</span>
-            <span className="mono d"> · {lead.shortAddress}</span>
-          </p>
-          {/* The measurement stays on the card whatever the twenty-second quote
-              is doing. An expired quote does not un-measure a round trip. */}
-          {/* Only when there IS a measurement. The first draft printed
-              "nothing has been measured" beside a body reading "a router did
-              quote $1,000 12 min ago, and that quote has since expired" --
-              two sentences about one fact, contradicting each other, because
-              `lastSeen` carries a round trip and the body carries every other
-              way a measurement can exist. The body is the authority; this slot
-              exists to give the round trip the size it deserves, not to
-              narrate its absence. */}
-          {lead.lastSeen ? (
-            <dl className="mr-headline-measure">
-              <dt>{lead.lastSeen.label}</dt>
-              <dd>
-                <span className="mono">{lead.lastSeen.value}</span>
-                <span className="d"> · {lead.lastSeen.note}</span>
-              </dd>
-            </dl>
-          ) : null}
-          <p className="mr-headline-body">
-            {lead.body} <span className="d">— {lead.attribution}</span>
-          </p>
-        </>
-      ) : (
+      {lead ? null : (
         <p className="mr-headline-body">
           {headline.primaryAbsence?.shortAddress ? (
             <>
@@ -1382,40 +1422,26 @@ function HeadlineAnswer({
       )}
 
       <div className="mr-headline-actions">
-        {onMeasure ? (
-          <button type="button" className="btn" onClick={onMeasure} disabled={measuring}>
-            {measuring ? 'Measuring…' : 'Measure now'}
-          </button>
-        ) : null}
-        {/* Both sides, like every card below.
-            This summary used to offer ONE button, the side the board's toggle
-            happened to be on — so a reader looking at a sell board was shown
-            `Prepare sell` and nothing else, while every representation beneath
-            it offered both. A summary that silently drops one of two available
-            actions reads as a recommendation of the one it kept, which is the
-            single thing this board must never do.
-            Growth plan step 2: where a trade can be carried through, the two
-            sides take an amount the reader types instead of the board's size,
-            and they stay outlined and equal — the fixed "Buy $10" before them
-            was filled, which made one side the loudest thing on the card. */}
         {tradable ? (
           <>
-            <button type="button" className="btn alt" aria-expanded={open === 'buy'} onClick={() => toggle('buy')}>
+            <button type="button" className="btn" aria-expanded={open === 'buy'} onClick={() => toggle('buy')}>
               Buy
             </button>
-            {sellDecimals !== null ? (
-              <button type="button" className="btn alt" aria-expanded={open === 'sell'} onClick={() => toggle('sell')}>
-                Sell
-              </button>
-            ) : onPrepare ? (
-              // Nobody read this contract's scale, so no token amount can be
-              // typed exactly; the prepare step asks for one instead.
-              <button type="button" className="btn alt" onClick={() => onPrepare(tradable.tokenAddress, 'sell')}>
-                Sell
-              </button>
+            {showSell ? (
+              sellDecimals !== null ? (
+                <button type="button" className={sellClass} aria-expanded={open === 'sell'} onClick={() => toggle('sell')}>
+                  Sell
+                </button>
+              ) : onPrepare ? (
+                // Nobody read this contract's scale, so no token amount can be
+                // typed exactly; the prepare step asks for one instead.
+                <button type="button" className={sellClass} onClick={() => onPrepare(tradable.tokenAddress, 'sell')}>
+                  Sell
+                </button>
+              ) : null
             ) : null}
-            {/* Growth plan step 4. Outlined like Buy and Sell: a gift is a
-                third thing the reader may do, not the one the card suggests. */}
+            {/* Growth plan step 4. Outlined: a gift is a third thing the reader
+                may do, not the one the card leads with. */}
             {giftable ? (
               <button type="button" className="btn alt" aria-expanded={open === 'gift'} onClick={() => toggle('gift')}>
                 Gift
@@ -1424,27 +1450,14 @@ function HeadlineAnswer({
           </>
         ) : lead && onPrepare ? (
           <>
-            <button
-              type="button"
-              className="btn alt"
-              onClick={() => onPrepare(lead.tokenAddress, 'buy')}
-            >
+            <button type="button" className="btn" onClick={() => onPrepare(lead.tokenAddress, 'buy')}>
               Prepare buy
             </button>
-            <button
-              type="button"
-              className="btn alt"
-              onClick={() => onPrepare(lead.tokenAddress, 'sell')}
-            >
+            <button type="button" className="btn alt" onClick={() => onPrepare(lead.tokenAddress, 'sell')}>
               Prepare sell
             </button>
           </>
         ) : null}
-        <span className="d mr-headline-more">
-          {headline.alternativeCount > 1
-            ? `${headline.alternativeCount} representations below, with the evidence for each`
-            : 'The evidence is below'}
-        </span>
       </div>
       {tradable && open === 'gift' && giftable ? (
         <GiftForm
@@ -1465,9 +1478,44 @@ function HeadlineAnswer({
         />
       ) : null}
       {tradable && trade?.note ? <p className="lnote">{trade.note}</p> : null}
+
+      {/* What a round trip costs, in one line, with its age. The measurement
+          stays whatever the twenty-second quote is doing: an expired quote
+          does not un-measure a round trip. */}
+      {lead?.lastSeen ? (
+        <p className="mr-stock-cost">
+          <span className="mono">{lead.lastSeen.value}</span>
+          <span className="d"> · {lead.lastSeen.note}</span>
+        </p>
+      ) : null}
+
+      {uses ? (
+        <section className="mr-uses" aria-label={uses.title}>
+          <h4>{uses.title}</h4>
+          <ul>
+            {uses.rows.map((row) => (
+              <li key={row.id}>
+                <span className="k">{row.label}</span>
+                <span>{row.text}</span>
+                {row.href ? (
+                  <a href={row.href} target="_blank" rel="noopener noreferrer">
+                    Open ↗
+                  </a>
+                ) : (
+                  <span />
+                )}
+              </li>
+            ))}
+          </ul>
+          <p className="lnote">{uses.note}</p>
+        </section>
+      ) : null}
     </section>
   );
 }
+
+/** Quick buy amounts, in USDC. */
+export const STOCK_BUY_PRESETS_V1 = ['1', '5', '20'] as const;
 
 /**
  * One amount, typed by the reader, for one side of the answer card's address.
@@ -1507,6 +1555,27 @@ export function TradeAmountForm({
       }}
     >
       <label htmlFor={id}>{buy ? 'USDC to spend' : 'Tokens to sell'}</label>
+      {/* Three amounts a first buy is usually made of, one tap each. They
+          only fill the field; the button below still says what it read. */}
+      {buy ? (
+        <div className="mr-trade-presets" role="group" aria-label="Quick amounts">
+          {STOCK_BUY_PRESETS_V1.map((preset) => (
+            <button
+              key={preset}
+              type="button"
+              className={`pill${text === preset ? ' on' : ''}`}
+              aria-pressed={text === preset}
+              onClick={() => {
+                setText(preset);
+                setRefusal(null);
+                input.current?.focus();
+              }}
+            >
+              ${preset}
+            </button>
+          ))}
+        </div>
+      ) : null}
       <div className="mr-trade-row">
         <input
           ref={input}
@@ -1751,10 +1820,23 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
   // The answer card replaces the loose Measure button rather than joining it:
   // two controls with one label on one screen is a question about which one
   // the reader just pressed.
-  const headline =
-    model.surface === 'market' && model.historyPeriod === 'now'
-      ? stocksHeadlineV1(model.view ?? null)
-      : null;
+  // The stock's card leads whatever the evidence below is showing: a reader who
+  // opens Use & access or a past hour is still looking at the same stock.
+  const headline = stocksHeadlineV1(model.view ?? null);
+  const selectedChoice = model.choices.find((choice) => choice.underlyingKey === model.selectedKey) ?? null;
+  const leadAddress = headline?.representation?.tokenAddress ?? null;
+  const held =
+    model.heldTokenAddresses && leadAddress ? model.heldTokenAddresses.has(leadAddress.toLowerCase()) : null;
+  // Closed by default: the card above carries the answer, and this holds the
+  // proof. Open by itself where the proof IS the page — the review of a fixed
+  // question — or where a link asked for Use & access or a past hour. Once
+  // open it stays open: pressing a tab inside it must not fold it shut.
+  const wantsEvidence =
+    model.questionFixed === true || model.surface === 'utility' || model.historyPeriod !== 'now';
+  const [evidenceOpen, setEvidenceOpen] = useState(wantsEvidence);
+  useEffect(() => {
+    if (wantsEvidence) setEvidenceOpen(true);
+  }, [wantsEvidence]);
   return (
     <section className="mr" aria-label="Market Reality">
       {model.visitor ? (
@@ -1819,6 +1901,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
       {model.questionFixed ? null : (
         <Chooser
           choices={model.choices}
+          quotes={model.quotes}
           selectedKey={model.selectedKey}
           loading={model.choicesLoading}
           error={model.choicesError}
@@ -1826,6 +1909,46 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         />
       )}
 
+      {model.viewError ? <p className="note warn">{model.viewError}</p> : null}
+      {/* The stock, then what to do with it, then — folded — how we know. */}
+      {headline ? (
+        <HeadlineAnswer
+          headline={headline}
+          ticker={selectedChoice?.ticker ?? null}
+          company={selectedChoice?.company ?? null}
+          quote={model.selectedKey ? (model.quotes?.get(model.selectedKey) ?? null) : null}
+          uses={model.uses ?? null}
+          held={held}
+          weekendClosed={model.weekend?.state === 'in_progress'}
+          onPrepare={actions.onPrepare}
+          trade={model.trade ?? null}
+          onTrade={actions.onTrade}
+          onGift={actions.onGift}
+          loadGiftHolding={actions.loadGiftHolding}
+        />
+      ) : !model.view ? (
+        <p className="empty">
+          {model.viewLoading
+            ? 'Reading this stock…'
+            : model.selectedKey
+              ? 'No answer for this security.'
+              : 'Pick a security above.'}
+        </p>
+      ) : null}
+
+      {actions.onAsk && model.ask ? (
+        <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
+      ) : null}
+
+      <details
+        className="mr-evidence"
+        open={evidenceOpen}
+        onToggle={(event) => setEvidenceOpen(event.currentTarget.open)}
+      >
+        <summary>
+          How we know this
+          <span className="d"> · measurements at each size, routes, pools, lending, terms</span>
+        </summary>
       <div className="mr-surface-tabs tabbar" role="tablist" aria-label="Stock views">
         <button
           type="button"
@@ -1891,7 +2014,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         )}
         {/* The control that closes the twenty-second gap. Absent rather than
             disabled when the server does not offer it. */}
-        {actions.onMeasure && !headline && (
+        {actions.onMeasure && (
           <button
             type="button"
             className="btn mr-measure"
@@ -1920,26 +2043,6 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           Bridge and Lending
         </p>
       )}
-
-      {/* Question, then answer, then the tools that change it. The card sits
-          directly under the rails that set the size and direction, so pressing
-          either changes what is under the reader's eyes. */}
-      {headline ? (
-        <HeadlineAnswer
-          headline={headline}
-          measuring={model.measuring}
-          onMeasure={actions.onMeasure}
-          onPrepare={actions.onPrepare}
-          trade={model.trade ?? null}
-          onTrade={actions.onTrade}
-          onGift={actions.onGift}
-          loadGiftHolding={actions.loadGiftHolding}
-        />
-      ) : null}
-
-      {model.surface === 'market' && actions.onAsk && model.ask ? (
-        <StocksAskPanel model={model.ask} actions={{ onAsk: actions.onAsk }} />
-      ) : null}
 
       {model.surface === 'market' && !model.questionFixed ? (
         <div
@@ -1978,20 +2081,11 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           pressed a button deserves to know which one happened. */}
       {model.measurementNote ? <p className="lnote mr-spent">{model.measurementNote}</p> : null}
 
-      {model.viewError ? <p className="note warn">{model.viewError}</p> : null}
       {model.historyError && model.historyPeriod !== 'now' ? (
         <p className="note warn">{model.historyError}</p>
       ) : null}
 
-      {!model.view ? (
-        <p className="empty">
-          {model.viewLoading
-            ? 'Reading every reviewed representation…'
-            : model.selectedKey
-              ? 'No answer for this security.'
-              : 'Pick a security above.'}
-        </p>
-      ) : (
+      {!model.view ? null : (
         <>
           <div className="mr-head">
             <div className="mr-head-l">
@@ -2213,6 +2307,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           </p>
         </>
       )}
+      </details>
     </section>
   );
 }

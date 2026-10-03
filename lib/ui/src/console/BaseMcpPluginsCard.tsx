@@ -566,7 +566,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                 {filtered.map((plugin) => {
                   const reach = baseMcpPluginReachV1(plugin);
                   const capabilities = baseMcpPluginCapabilitiesV1(plugin);
-                  const owner = plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP Extensions';
+                  const owner = plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins';
                   const moreCount = Math.max(0, plugin.examples.length - 2);
                   return (
                     <article className="mcp-plugin-card" key={plugin.id} data-plugin-id={plugin.id}>

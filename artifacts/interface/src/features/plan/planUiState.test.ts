@@ -18,9 +18,12 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 //
 // Both tables are DERIVED from the shared section table in lib/ui, so this test
 // also pins that the web app has no navigation vocabulary of its own.
-test('the header names Stocks, Radar and the evidence index', () => {
+test('the header names Stocks, Base MCP plugins and Routes AI', () => {
   const tabs = navTabs();
-  assert.deepEqual(tabs.map((route) => route.path), ['/market', '/radar', '/opportunities']);
+  // 2026-10-03: the operator named the console's main pages — Stocks, Base MCP
+  // plugins, Routes AI and Settings. Radar, Discover and the rest sit behind
+  // "More" in the drawer, a tap away.
+  assert.deepEqual(tabs.map((route) => route.path), ['/market', '/extensions', '/routes']);
   // Named for what each surface CONTAINS. "Opportunities" described the shape
   // of a list and "Portfolio" the generic category, and neither told a user
   // which flow they were in — the compact bar had already said "B20" for the
@@ -41,7 +44,7 @@ test('the header names Stocks, Radar and the evidence index', () => {
   // four where one is empty.
   // Phase 15.1 — the header opens on the product, not on the surfaces it was
   // built from. Stocks was reachable only from the drawer.
-  assert.deepEqual(tabs.map((route) => route.label), ['Stocks', 'Radar', 'Discover']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Stocks', 'Base MCP plugins', 'Routes AI']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {

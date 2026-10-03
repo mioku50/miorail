@@ -67,7 +67,7 @@ describe('Dividends on Base, on the Stocks board', () => {
     assert.equal(view.none, null);
     assert.equal(
       view.unread,
-      'Not read: TSLA. Miorail reads the dividend releases of AAPL, GOOGL, META and NVDA only, so this board does not say whether the others pay one.',
+      'Miorail reads the dividend releases of AAPL, GOOGL, META and NVDA. For the other stock on this board it does not say whether it pays one.',
     );
     assert.match(view.note, /median measured share.*59\.5%, from GOOGL Sep 14: 59\.5%/);
     assert.match(view.note, /historical reference price/);
@@ -138,9 +138,9 @@ test('"No dividend on record" only where Miorail reads the releases; the rest ar
   assert.equal(view.none, 'No dividend on record: MSFT.');
   assert.equal(
     view.unread,
-    'Not read: PFE. Miorail reads the dividend releases of GOOGL and MSFT only, so this board does not say whether the others pay one.',
+    'Miorail reads the dividend releases of GOOGL and MSFT. For the other stock on this board it does not say whether it pays one.',
   );
-  assert.match(renderToStaticMarkup(<DividendCalendarCard view={view} />), /<p class="lnote">Not read: PFE\./);
+  assert.match(renderToStaticMarkup(<DividendCalendarCard view={view} />), /<p class="lnote">Miorail reads the dividend releases of GOOGL and MSFT\./);
 });
 
 describe('Your dividends, for a signed-in wallet', () => {
@@ -166,6 +166,19 @@ describe('Your dividends, for a signed-in wallet', () => {
     // A sliver of a token: a bound, not "about" one.
     const sliver = myDividendsViewV1({ data: walletOf({ META: 0.0009 }, {}), failed: false })!;
     assert.equal(sliver.rows[0]?.lines[0], 'Sep 28: less than $0.001 on your 0.0009 METAc (estimate) — META declared $0.525 a share.');
+    // ...which stays in the record and does not lead the holding (2026-10-03).
+    assert.equal(sliver.rows[0]?.lead, null);
+    assert.equal(sliver.total, null);
+    // A sum worth a cent or more leads; a holding Miorail does not read leads
+    // with nothing rather than with "Not read".
+    assert.deepEqual(
+      view.rows.map((row) => row.lead),
+      [
+        'Sep 28: about $0.312 on your 1 METAc (estimate) — META declared $0.525 a share.',
+        'Around Dec 14: about $0.524 on your 4 GOOGLc — an estimate, GOOGL has not declared it yet.',
+        null,
+      ],
+    );
     assert.equal(view.empty, null);
     assert.equal(view.note, 'A dividend reaches whoever holds the token when its multiplier moves, not on the record date.');
   });

@@ -188,7 +188,7 @@ export function matchBaseMcpProviderIntentV1(
     exampleId: closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,
-      `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP Extensions'} and its current lifecycle stage is ${provider.lifecycleStage}.`,
+      `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,
       `For a read, use Base MCP help for ${provider.pluginId} and then at most one GET request to its declared scope (${hosts}). Never invent an endpoint or a result.`,
     ].join(' '),
   };

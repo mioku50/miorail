@@ -164,7 +164,7 @@ export function classifyBaseMcpExtensionIntentV1(
     return {
       kind: 'needs_input',
       errorCode: `base_mcp_${provider.pluginId.replace(/-/g, '_')}_action_adapter_required`,
-      reply: `${provider.pluginId} is assigned to Base MCP Extensions and this action is recognized. Its current ${provider.lifecycleStage} stage has no typed action adapter yet, so no write tool was called.`,
+      reply: `${provider.pluginId} is assigned to Base MCP plugins and this action is recognized. Its current ${provider.lifecycleStage} stage has no typed action adapter yet, so no write tool was called.`,
     };
   }
   if (provider?.disposition === 'read_in_extensions') {

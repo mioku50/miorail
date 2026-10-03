@@ -316,6 +316,11 @@ export interface UnderlyingChoiceViewV1 {
   underlyingKey: string;
   /** What a reader calls it. Never the key. */
   title: string;
+  /** The ticker alone, `NVDA`: what every tile leads with. */
+  ticker: string;
+  /** The company, where the reviewed source names one apart from the ticker.
+   * The list prefers Coinbase's own name for it when that was read. */
+  company: string | null;
   /** The stable identifier, spelled out — `ISIN US67066G1040`. */
   identifier: string | null;
   /** "Coinbase · Backed" or "Backed only". */
@@ -2570,7 +2575,7 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
     // onchain object and not "Aerodrome" as a brand.
     note:
       row.pairedBalanceAtomic !== null && row.pairedDecimals !== null
-        ? `against ${amount(row.pairedBalanceAtomic, row.pairedDecimals)} ${row.pairedSymbol ?? 'of the other side'}`
+        ? `against ${amount(row.pairedBalanceAtomic, row.pairedDecimals)} ${pairedTokenLabelV1(row) ?? 'of the other side'}`
         : 'the other side was not read',
     links: poolRowLinksV1(row),
     // Neutral for every row. A balance is a size, not a quality, and colouring
@@ -2587,7 +2592,7 @@ function pooledSectionV1(use: RepresentationUseAccessV1 | null): UseSectionViewV
       `${rows.length} pool${rows.length === 1 ? '' : 's'} on Base hold this exact address. ` +
       `The deepest holds ${amount(lead.tokenBalanceAtomic, lead.tokenDecimals)}` +
       (lead.pairedBalanceAtomic !== null && lead.pairedDecimals !== null
-        ? ` against ${amount(lead.pairedBalanceAtomic, lead.pairedDecimals)} ${lead.pairedSymbol ?? 'of the other side'}`
+        ? ` against ${amount(lead.pairedBalanceAtomic, lead.pairedDecimals)} ${pairedTokenLabelV1(lead) ?? 'of the other side'}`
         : '') +
       `${leadPlace}. ` +
       // The count is bounded the moment it is said, because a count is the one
@@ -3256,6 +3261,12 @@ export function underlyingChoicesV1(
       entry.displaySymbol && entry.displaySymbol !== entry.canonicalName
         ? `${entry.displaySymbol} · ${entry.canonicalName}`
         : entry.canonicalName,
+    // One shape on every tile: the ticker on top, the company under it. The
+    // title above mixed the two — "NVDA" beside "AMZN · Amazon.com Inc." —
+    // because some reviewed rows carry the ticker in both fields.
+    ticker: entry.displaySymbol ?? entry.canonicalName,
+    company:
+      entry.displaySymbol && entry.displaySymbol !== entry.canonicalName ? entry.canonicalName : null,
     identifier:
       entry.identifierScheme && entry.identifierValue
         ? `${entry.identifierScheme.toUpperCase()} ${entry.identifierValue}`
@@ -4284,6 +4295,25 @@ const SPOT_DENOMINATION_V1: Readonly<Record<string, string>> = {
   '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913': 'USDC',
   '0x4200000000000000000000000000000000000006': 'WETH',
 };
+
+/**
+ * What the other side of a pool is called: the pinned name for Base's own cash
+ * tokens, then the symbol the pair's contract reported, else null.
+ *
+ * The pinned name wins. The deepest NVDAc pool pairs it with USDC, and the
+ * stored reading had no symbol for it (seen 2026-10-03), so the card said
+ * "against 1,598,344.51 of the other side" about the one pair everybody knows.
+ */
+export function pairedTokenLabelV1(row: {
+  pairedTokenAddress: string | null;
+  pairedSymbol: string | null;
+}): string | null {
+  return (
+    (row.pairedTokenAddress ? SPOT_DENOMINATION_V1[row.pairedTokenAddress.toLowerCase()] : undefined) ??
+    row.pairedSymbol ??
+    null
+  );
+}
 
 export function poolSpotViewV1(input: {
   wire:

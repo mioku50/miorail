@@ -189,7 +189,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                         onMeasure={model.onMeasureCashOut}
                       />
                     ) : null}
-                    {mine?.lines[0] ? <p>{mine.lines[0]}</p> : null}
+                    {mine?.lead ? <p>{mine.lead}</p> : null}
                     {holding.schedule ? (
                       <p className="stocks-today-schedule">
                         The issuer scheduled {multiplierDecimalV1(holding.schedule.multiplierWad)}{' '}
@@ -207,7 +207,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                       {holding.scheduleRead === 'unavailable' ? (
                         <p className="lnote">Miorail could not read whether a change is scheduled.</p>
                       ) : null}
-                      {mine?.lines.slice(1).map((line) => (
+                      {(mine?.lead ? mine.lines.slice(1) : (mine?.lines ?? [])).map((line) => (
                         <p key={line}>{line}</p>
                       ))}
                       <p className="lnote mono">{holding.tokenAddress}</p>

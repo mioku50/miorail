@@ -61,6 +61,52 @@ function useConsoleHostClass(): void {
   }, []);
 }
 
+/**
+ * The Basename the signed-in wallet calls itself, for the header — or null.
+ *
+ * Read once per page load and kept for the rest of it, so moving between
+ * sections asks nothing again. The server looks up only the session's own
+ * wallet and keeps a name only when it resolves forward to that same address;
+ * anything else is null, and the header keeps the address it already shows.
+ */
+const WALLET_BASENAME_CACHE_V1 = new Map<string, Promise<string | null>>();
+
+function useWalletBasenameV1(walletLabel: string | null): string | null {
+  const [name, setName] = useState<string | null>(null);
+  useEffect(() => {
+    setName(null);
+    if (!walletLabel || typeof fetch !== 'function') return;
+    let live = true;
+    let pending = WALLET_BASENAME_CACHE_V1.get(walletLabel);
+    if (!pending) {
+      pending = fetch('/api/auth/basename', { credentials: 'same-origin', headers: { accept: 'application/json' } })
+        .then((response) => (response.ok ? (response.json() as Promise<{ basename?: unknown }>) : null))
+        .then((body) =>
+          typeof body?.basename === 'string' && /^[^\s]{1,255}\.base\.eth$/.test(body.basename) ? body.basename : null,
+        )
+        .catch(() => null);
+      WALLET_BASENAME_CACHE_V1.set(walletLabel, pending);
+    }
+    void pending.then((value) => {
+      if (live) setName(value);
+    });
+    return () => {
+      live = false;
+    };
+  }, [walletLabel]);
+  return name;
+}
+
+/** The one Miorail mark: the same drawing as the browser tab's icon. */
+export function MiorailMarkV1({ size = 24 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 64 64" fill="none" aria-hidden="true">
+      <path d="M10 50V14l22 22 22-22v36" stroke="#3D46F2" strokeWidth="7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 22 2 18M10 30H1M10 38l-8 4M54 22l8-4M54 30h9M54 38l8 4" stroke="#F27EE0" strokeWidth="3" strokeLinecap="round" />
+    </svg>
+  );
+}
+
 export interface ConsoleSessionItemV1 {
   id: string;
   title: string;
@@ -138,6 +184,11 @@ export interface ConsoleHeaderModelV1 {
  */
 export const MIORAIL_SOURCE_URL_V1 = 'https://github.com/mioku50/mioagent';
 
+/**
+ * What pages still hand the status bar. Since 2026-10-03 the bar renders none
+ * of these counters — Settings carries network status — and the field stays so
+ * no page has to change for a bar that only got quieter.
+ */
 export interface ConsoleFooterModelV1 {
   adaptersLabel: string;
   sourcesLabel: string;
@@ -162,6 +213,24 @@ export interface ConsoleShellProps {
   railFold?: ReactNode;
 }
 
+function RailNavItem({ item, onNavigate }: { item: ConsoleNavItemV1; onNavigate: (id: ConsoleSectionV1) => void }) {
+  return item.available ? (
+    <button
+      type="button"
+      className={`item${item.active ? ' on' : ''}`}
+      aria-current={item.active ? 'page' : undefined}
+      onClick={() => onNavigate(item.id)}
+    >
+      <span className="t">{item.label}</span>
+    </button>
+  ) : (
+    <div className="item off">
+      <span className="t">{item.label}</span>
+      <span className="m">{item.unavailableReason}</span>
+    </div>
+  );
+}
+
 function RailItem({ item, onSelect }: { item: ConsoleSessionItemV1; onSelect: (id: string) => void }) {
   return (
     <button type="button" className={`item${item.active ? ' on' : ''}`} onClick={() => onSelect(item.id)}>
@@ -175,10 +244,16 @@ function RailItem({ item, onSelect }: { item: ConsoleSessionItemV1; onSelect: (i
 }
 
 export function ConsoleShell(props: ConsoleShellProps) {
-  const { header, left, footer } = props;
+  const { header, left } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const railNav = left.nav ?? header.nav ?? [];
   const activeSection = railNav.find((item) => item.active)?.id ?? null;
+  const basename = useWalletBasenameV1(header.walletLabel);
+  const mainNav = railNav.filter((item) => item.group !== 'more');
+  const moreNav = railNav.filter((item) => item.group === 'more');
+  // Open by itself when the reader is on one of its pages, so the drawer never
+  // hides where they are; otherwise one tap away.
+  const moreActive = moreNav.some((item) => item.active);
   const showExecutionRail = activeSection === 'routes' || activeSection === 'activity';
   useConsoleHostClass();
 
@@ -206,13 +281,10 @@ export function ConsoleShell(props: ConsoleShellProps) {
             ☰
           </button>
           <div className="brand">
-            <span className="logo">
-              <svg width="13" height="13" viewBox="0 0 20 20" aria-hidden="true">
-                <rect x="3" y="2.5" width="2.4" height="15" rx="1.2" />
-                <rect x="14.6" y="2.5" width="2.4" height="15" rx="1.2" />
-                <rect x="3" y="6.4" width="14" height="2" rx="1" opacity=".5" />
-                <rect x="3" y="11.6" width="14" height="2" rx="1" opacity=".5" />
-              </svg>
+            {/* One mark everywhere. The header drew two rails and two ties,
+                which read as an "H", while the browser tab showed an M. */}
+            <span className="logo mark">
+              <MiorailMarkV1 size={24} />
             </span>
             Miorail
           </div>
@@ -236,16 +308,9 @@ export function ConsoleShell(props: ConsoleShellProps) {
             ))}
           </nav>
           <div className="hspace" />
-          {header.chainRead === false ? null : (
-            <div className="hstat" title={header.chainUnavailableReason ?? undefined}>
-              <span>
-                Block <b className="mono">{header.blockNumber ?? '—'}</b>
-              </span>
-              <span>
-                Gas <b className="mono">{header.gasLabel ?? '—'}</b>
-              </span>
-            </div>
-          )}
+          {/* Block and gas left the header (2026-10-03). They answer how the
+              chain is doing, which is Settings' question; a reader here is
+              asking about a stock. Network status keeps both. */}
           {/* `netchip` so the phone breakpoint can drop THIS chip specifically.
               Targeting it by "the chip without .mono" also hid the "not
               connected" chip, which is the one message that must survive. */}
@@ -254,7 +319,13 @@ export function ConsoleShell(props: ConsoleShellProps) {
             {header.networkLabel}
           </span>
           {header.walletLabel ? (
-            <span className="chip mono">{header.walletLabel}</span>
+            basename ? (
+              <span className="chip" title={header.walletLabel}>
+                {basename}
+              </span>
+            ) : (
+              <span className="chip mono">{header.walletLabel}</span>
+            )
           ) : (
             <span className="chip">not connected</span>
           )}
@@ -276,29 +347,33 @@ export function ConsoleShell(props: ConsoleShellProps) {
               Settings too; the header bar has room for four. */}
           {railNav.length > 0 && (
             <nav className="railnav" aria-label="Sections">
-              {railNav.map((item) => (
-                <React.Fragment key={item.id}>
-                  {item.id === 'opportunities' ? <div className="railgroup">Advanced evidence</div> : null}
-                  {item.available ? (
-                    <button
-                      type="button"
-                      className={`item${item.active ? ' on' : ''}`}
-                      aria-current={item.active ? 'page' : undefined}
-                      onClick={() => {
-                        header.onNavigate?.(item.id);
+              {mainNav.map((item) => (
+                <RailNavItem
+                  key={item.id}
+                  item={item}
+                  onNavigate={(id) => {
+                    header.onNavigate?.(id);
+                    setDrawerOpen(false);
+                  }}
+                />
+              ))}
+              {/* Four pages lead (operator, 2026-10-03); the rest are a tap
+                  away, never removed. */}
+              {moreNav.length > 0 ? (
+                <details className="railmore" open={moreActive}>
+                  <summary className="railgroup">More</summary>
+                  {moreNav.map((item) => (
+                    <RailNavItem
+                      key={item.id}
+                      item={item}
+                      onNavigate={(id) => {
+                        header.onNavigate?.(id);
                         setDrawerOpen(false);
                       }}
-                    >
-                      <span className="t">{item.label}</span>
-                    </button>
-                  ) : (
-                    <div className="item off">
-                      <span className="t">{item.label}</span>
-                      <span className="m">{item.unavailableReason}</span>
-                    </div>
-                  )}
-                </React.Fragment>
-              ))}
+                    />
+                  ))}
+                </details>
+              ) : null}
             </nav>
           )}
 
@@ -367,20 +442,9 @@ export function ConsoleShell(props: ConsoleShellProps) {
             <span className="dot" />
             {CONSOLE_COPY_V1.readOnly}
           </span>
-          <span className="g">
-            Adapters <span className="v mono">{footer.adaptersLabel}</span>
-          </span>
-          <span className="g">
-            Sources <span className="v mono">{footer.sourcesLabel}</span>
-          </span>
-          <span className="g">
-            Spend <span className="v mono">{footer.spendLabel}</span>
-          </span>
-          {footer.chainRead === false ? null : (
-            <span className="g">
-              Block <span className="v mono">{footer.blockNumber ?? '—'}</span>
-            </span>
-          )}
+          {/* Adapters, sources, spend and the block left the status bar
+              (2026-10-03): four system counters on every page, read by
+              nobody deciding anything there. Settings keeps them. */}
           <span className="sp" />
           <a className="metriclink" href="/metrics">Public metrics</a>
           {/* AGPL-3.0 §13: anyone interacting with this program over a network

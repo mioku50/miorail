@@ -130,7 +130,7 @@ export function ExtensionsPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Base MCP Extensions'],
+        crumb: ['Base MCP plugins'],
         nav: consoleNav.header,
         onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),

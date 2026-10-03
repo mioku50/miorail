@@ -2093,3 +2093,58 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   .mio-console .stocks-today-position > span:last-child { grid-column: 1 / -1; }
   .mio-console .stocks-today-holding { padding: 12px; }
 }
+
+/* The one Miorail mark in the header: the browser tab's own drawing, on no
+   tile of its own (2026-10-03). */
+.mio-console .logo.mark { background: none; box-shadow: none; width: 26px; height: 26px; }
+
+/* "More": the five sections behind the four main pages, one tap away. */
+.mio-console .railnav details.railmore > summary { cursor: pointer; list-style: none; display: flex; align-items: center; gap: 6px; }
+.mio-console .railnav details.railmore > summary::-webkit-details-marker { display: none; }
+.mio-console .railnav details.railmore > summary::after { content: '+'; margin-left: auto; font-weight: 600; }
+.mio-console .railnav details.railmore[open] > summary::after { content: '−'; }
+
+/* ---------------------------------------------------------------------------
+   Stocks for people (2026-10-03): a list with prices, a card that leads with
+   the stock, and the evidence folded under "How we know this".
+   --------------------------------------------------------------------------- */
+.mio-console .mr-choices { grid-template-columns: repeat(auto-fill,minmax(210px,1fr)); max-height: 260px; }
+.mio-console .mr-choice.mr-choice-quoted { grid-template-columns: 24px minmax(0,1fr) auto; column-gap: 10px; row-gap: 2px; align-items: center; justify-items: stretch; }
+.mio-console .mr-choice-quoted .mr-choice-icon { grid-column: 1; grid-row: 1 / span 2; }
+.mio-console .mr-choice-quoted .mr-choice-name { grid-column: 2; grid-row: 1; }
+.mio-console .mr-choice-quoted .mr-choice-sub { grid-column: 2; grid-row: 2; }
+.mio-console .mr-choice-quoted .mr-choice-px { grid-column: 3; grid-row: 1; justify-self: end; color: var(--ink); font-size: var(--fs-body); font-variant-numeric: tabular-nums; }
+.mio-console .mr-choice-quoted .mr-choice-chg { grid-column: 3; grid-row: 2; justify-self: end; color: var(--muted); font-size: var(--fs-meta); font-variant-numeric: tabular-nums; }
+.mio-console .mr-choice-icon { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; background: var(--panel2); }
+.mio-console .mr-choice-letter { display: grid; place-items: center; color: var(--muted); font-size: var(--fs-meta); font-weight: 700; box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .mr-choice-company { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.mio-console .mr-stock-top { display: grid; grid-template-columns: auto minmax(0,1fr) auto; gap: 4px 12px; align-items: center; }
+.mio-console .mr-stock-icon { width: 40px; height: 40px; border-radius: 50%; object-fit: cover; background: var(--panel2); }
+.mio-console .mr-stock-icon.mr-choice-letter { font-size: var(--fs-body); }
+.mio-console .mr-stock-id { display: grid; gap: 2px; min-width: 0; }
+.mio-console .mr-stock-id h3 { margin: 0; color: var(--title-ink); font-size: var(--fs-title); font-weight: 750; letter-spacing: -.02em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mio-console .mr-stock-px { display: grid; justify-items: end; gap: 2px; }
+.mio-console .mr-stock-px strong { color: var(--title-ink); font-size: var(--fs-title); font-weight: 750; font-variant-numeric: tabular-nums; }
+.mio-console .mr-stock-note { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 8px 0 12px; color: var(--faint); font-size: var(--fs-meta); }
+.mio-console .mr-stock-badge { padding: 2px 9px; font-size: var(--fs-micro); }
+.mio-console .mr-stock-cost { margin: 12px 0 0; color: var(--ink); font-size: var(--fs-body); line-height: var(--lh-relaxed); overflow-wrap: anywhere; }
+.mio-console .mr-trade-presets { display: flex; flex-wrap: wrap; gap: 6px; }
+.mio-console .mr-trade-presets .pill { cursor: pointer; font: inherit; font-size: var(--fs-meta); }
+
+.mio-console .mr-uses { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
+.mio-console .mr-uses h4 { margin: 0 0 8px; color: var(--muted); font-size: var(--fs-micro); font-weight: 650; text-transform: uppercase; letter-spacing: .07em; }
+.mio-console .mr-uses ul { display: grid; gap: 8px; margin: 0; padding: 0; list-style: none; }
+.mio-console .mr-uses li { display: grid; grid-template-columns: 64px minmax(0,1fr) auto; gap: 10px; align-items: baseline; color: var(--ink); font-size: var(--fs-body); }
+.mio-console .mr-uses li .k { color: var(--faint); font-size: var(--fs-meta); }
+.mio-console .mr-uses li a { color: var(--blue); white-space: nowrap; text-underline-offset: 2px; }
+.mio-console .mr-uses .lnote { margin: 10px 0 0; }
+
+.mio-console details.mr-evidence { margin: 14px 0 0; }
+.mio-console details.mr-evidence > summary { cursor: pointer; padding: 10px 2px; color: var(--ink); font-weight: 650; }
+.mio-console details.mr-evidence > summary .d { font-weight: 400; }
+@media (max-width: 520px) {
+  .mio-console .mr-uses li { grid-template-columns: minmax(0,1fr) auto; }
+  .mio-console .mr-uses li .k { grid-column: 1 / -1; }
+}
+.mio-console .mr-trade-presets .pill.on { color: var(--ink); box-shadow: inset 0 0 0 1px var(--accent-line); }

@@ -19,6 +19,7 @@ import {
   useMyStocksToday,
   useMeasureMyStockCashOut,
   useWeekendMarket,
+  useStockQuotes,
 } from '@mioagent/api-client-react';
 import {
   stockExecutionGoalSentenceV1,
@@ -32,6 +33,8 @@ import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
 import { weekendMarketViewV1 } from './weekendMarketView';
+import { stockQuoteViewsByKeyV1 } from './stockQuotesView';
+import { stockUsesViewV1 } from './stockUsesView';
 import { dividendCalendarViewV1 } from './dividendCalendarView';
 import { telegramAlertsViewV1 } from './telegramAlertsView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
@@ -839,10 +842,48 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [weekendRead.data],
   );
 
+  // The list's prices and icons: the same public read for everybody.
+  const quotesRead = useStockQuotes({ enabled });
+  const quotes = useMemo(() => stockQuoteViewsByKeyV1(quotesRead.data ?? null), [quotesRead.data]);
+  const selectedQuote = selectedKey ? (quotes.get(selectedKey) ?? null) : null;
+
+  // "What else you can do with NVDAc": the public Use & access read for the
+  // stock's Coinbase contract. Public on purpose, also for a signed-in reader:
+  // pools and lending markets are facts about the token, not the wallet, and
+  // the public read is cached on the server.
+  const primaryAddress =
+    reality.data?.representations.find(
+      (row) => row.issuerId === 'coinbase' && row.supply.state === 'positive_supply',
+    )?.tokenAddress ?? null;
+  const usesRead = useRwaUseAccess(primaryAddress, { enabled: enabled && Boolean(primaryAddress), access: 'public' });
+  const uses = useMemo(
+    () =>
+      stockUsesViewV1({
+        use: usesRead.data ?? null,
+        tokenSymbol: selectedQuote?.tokenSymbol ?? 'this token',
+        priceUsd: selectedQuote?.priceUsd ?? null,
+        now: new Date(),
+      }),
+    [usesRead.data, selectedQuote],
+  );
+
   // Dividends: the same public read for everybody, like the weekend card, and
   // for a signed-in wallet what reached its own tokens and what is next.
   const dividendRead = useDividendCalendar({ enabled });
   const todayRead = useMyStocksToday({ enabled: enabled && session });
+  // What this wallet holds, from the same read as "My stocks today". Null
+  // until it is read, so the card never hides Sell on a guess.
+  const heldTokenAddresses = useMemo(
+    () =>
+      session && todayRead.data
+        ? new Set(
+            todayRead.data.holdings
+              .filter((holding) => Number(holding.tokens) > 0)
+              .map((holding) => holding.tokenAddress.toLowerCase()),
+          )
+        : null,
+    [session, todayRead.data],
+  );
   const cashOut = useMeasureMyStockCashOut();
   const dividends = useMemo(
     () =>
@@ -898,6 +939,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     weekend,
     dividends,
+    quotes,
+    uses,
+    heldTokenAddresses,
     today: session ? {
       data: todayRead.data ?? null, loading: todayRead.isPending, failed: todayRead.isError,
       refreshing: todayRead.isFetching, returning: todayRead.returning,

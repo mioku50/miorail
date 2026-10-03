@@ -78,6 +78,8 @@ function project(input: {
       {
         underlyingKey: 'isin:us:US67066G1040',
         title: 'NVIDIA (NVDA)',
+        ticker: 'NVDA',
+        company: 'NVIDIA',
         identifier: 'ISIN US67066G1040',
         issuerLine: 'Coinbase only',
         issuerIds: ['coinbase'],

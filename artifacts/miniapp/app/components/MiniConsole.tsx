@@ -2434,7 +2434,7 @@ export function MiniConsole() {
             width and keeps the B20 content unmuddled. */}
         <div className="ctarow">
           <button type="button" className="btn sec" onClick={() => setSection("extensions")}>
-            Base MCP Extensions →
+            Base MCP plugins →
           </button>
         </div>
       </>
