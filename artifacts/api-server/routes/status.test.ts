@@ -909,6 +909,47 @@ describe('Status API', () => {
     restoreEnv('MCP_SERVER_URL', origLegacyMcpUrl);
   });
 
+  test('GET /api/status probes the OAuth discovery document both Base hosts serve', async () => {
+    // Neither host has `/health`; a 404 there marked a working connection degraded.
+    const origEnabled = process.env.BASE_MCP_ENABLED;
+    const origUrl = process.env.BASE_MCP_SERVER_URL;
+    const origPath = process.env.BASE_MCP_STATUS_PATH;
+    const origLegacyUrl = process.env.BASE_MCP_URL;
+    const origLegacyMcpUrl = process.env.MCP_SERVER_URL;
+    const originalFetch = global.fetch;
+    process.env.BASE_MCP_ENABLED = 'true';
+    process.env.BASE_MCP_SERVER_URL = 'https://wallet-mcp.coinbase.com';
+    delete process.env.BASE_MCP_STATUS_PATH;
+    delete process.env.BASE_MCP_URL;
+    delete process.env.MCP_SERVER_URL;
+
+    const mockFetch = mock.fn(async (url: string | URL | Request) => {
+      assert.strictEqual(String(url), 'https://wallet-mcp.coinbase.com/.well-known/oauth-authorization-server');
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({ issuer: 'https://wallet-mcp.coinbase.com', response_types_supported: ['code'] }),
+      } as Response;
+    });
+    global.fetch = mockFetch as unknown as typeof fetch;
+    statusRouteRuntime.getBaseMcpAuthStatus = async () => DEFAULT_BASE_MCP_AUTH;
+
+    try {
+      const response = await request(app).get('/api/status');
+      assert.strictEqual(response.status, 200);
+      assert.strictEqual(response.body.baseMcp.endpointHost, 'wallet-mcp.coinbase.com');
+      assert.strictEqual(response.body.baseMcp.errorCode, undefined);
+      assert.strictEqual(mockFetch.mock.calls.length, 1);
+    } finally {
+      global.fetch = originalFetch;
+      restoreEnv('BASE_MCP_ENABLED', origEnabled);
+      restoreEnv('BASE_MCP_SERVER_URL', origUrl);
+      restoreEnv('BASE_MCP_STATUS_PATH', origPath);
+      restoreEnv('BASE_MCP_URL', origLegacyUrl);
+      restoreEnv('MCP_SERVER_URL', origLegacyMcpUrl);
+    }
+  });
+
   test('GET /api/status reports configured Base MCP timeout as unreachable', async () => {
     const origEnabled = process.env.BASE_MCP_ENABLED;
     const origUrl = process.env.BASE_MCP_SERVER_URL;

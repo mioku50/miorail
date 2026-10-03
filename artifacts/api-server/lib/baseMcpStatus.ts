@@ -37,7 +37,12 @@ export interface BaseMcpStatus {
   };
 }
 
-const DEFAULT_STATUS_PATH = '/health';
+// The OAuth discovery document: what every MCP client reads first, and served
+// by both Base hosts. `/health` answers 404 on mcp.base.org and
+// wallet-mcp.coinbase.com alike (measured 2026-10-03), so a wallet connected
+// with fifteen live tools read as "degraded, no usable tools" until something
+// happened to list them.
+const DEFAULT_STATUS_PATH = '/.well-known/oauth-authorization-server';
 const DEFAULT_TIMEOUT_MS = 2500;
 const SUCCESS_TTL_MS = 30_000;
 const FAILURE_COOLDOWN_MS = 30_000;
