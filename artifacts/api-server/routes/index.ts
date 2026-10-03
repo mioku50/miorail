@@ -19,7 +19,7 @@ import { publicProofRouter } from './publicProof';
 import { publicGiftRouter } from './giftPages';
 import { publicMetricsRouter } from './publicMetrics';
 import { publicIdentityRouter } from './publicIdentity';
-import { publicStocksRouter } from './publicStocks';
+import { publicStockIconsRouter, publicStocksRouter } from './publicStocks';
 import { x402IntelligenceRouterV1 } from './x402/intelligence';
 import { telegramLinkRouter, telegramWebhookRouter } from './telegram';
 import { stocksDividendsRouter } from './stocksDividends';
@@ -43,6 +43,8 @@ routes.use('/public', publicIdentityRouter);
 // first thing anybody saw at miorail.xyz was "Continue with your wallet" —
 // while the public MCP served the same evidence to any bot. Measuring,
 // watching and the narrator stay below the tenant gate.
+// Icons first: a list shows dozens at once, and they have their own limit.
+routes.use('/public/stocks', publicStockIconsRouter);
 routes.use('/public/stocks', publicStocksRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.

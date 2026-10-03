@@ -43,6 +43,13 @@ export const ALLOWED_PARTNER_HOSTS = [
   // catalogue is put to it before it becomes an underlying key, and the same
   // answer carries the security type the asset class is read from.
   'api.openfigi.com',
+  // Coinbase's public Tokenized Stocks API, which Base's docs point integrators
+  // to: no key, read-only, and the only path requested is /v1/tokenized-stocks.
+  // The Stocks list reads each token's name and icon address from it.
+  'api.coinbase.com',
+  // Where that API's `icon_url` points. Only /equity_icons/<sha256>.png is ever
+  // requested, and the bytes are served to readers from our own origin.
+  'metadata.coinbase.com',
 ] as const;
 
 export class PartnerHostNotAllowlistedError extends Error {

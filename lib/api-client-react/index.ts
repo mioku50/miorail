@@ -9,6 +9,7 @@ import {
 import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
+import { StockQuotesResponseV1Schema } from '@mioagent/rwa-market-reality/stock-quotes';
 import { StockBriefV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 
@@ -935,6 +936,24 @@ export function useWeekendMarket(options?: { enabled?: boolean }) {
     retry: false,
     enabled: options?.enabled !== false,
     // The server answers per five-minute slot and the sampler runs about hourly.
+    staleTime: 5 * 60_000,
+    refetchInterval: 10 * 60_000,
+  });
+}
+
+/**
+ * The Stocks list's prices, names and icons: each Coinbase stock's price on
+ * Base and its change over 24 hours. Public for everybody, like the weekend
+ * card — a price on Base is a fact about a market, never about a wallet.
+ */
+export function useStockQuotes(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['stock-quotes'],
+    queryFn: async () =>
+      StockQuotesResponseV1Schema.parse(await fetchApi<unknown>('/api/public/stocks/quotes')),
+    retry: false,
+    enabled: options?.enabled !== false,
+    // The server answers per five-minute slot and the ladder runs about hourly.
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
   });

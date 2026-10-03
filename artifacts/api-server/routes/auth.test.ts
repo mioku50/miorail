@@ -2,7 +2,7 @@ import assert from 'node:assert';
 import test, { afterEach, beforeEach } from 'node:test';
 import request from 'supertest';
 import { app } from '../app';
-import { authRouteRuntime, setWalletSignatureVerifierForTests } from './auth';
+import { authBasenameRuntime, authRouteRuntime, setWalletSignatureVerifierForTests } from './auth';
 
 const WALLET_A = '0x1111111111111111111111111111111111111111';
 const WALLET_B = '0x2222222222222222222222222222222222222222';
@@ -106,4 +106,31 @@ test('T47: logout keeps the session when prepared-action invalidation fails', as
   assert.equal(response.body.code, 'wallet_session_invalidation_failed');
   const session = await agent.get('/api/auth/session').expect(200);
   assert.equal(session.body.user.address, WALLET_A);
+});
+
+test('the header asks for the session wallet’s own Basename, once an hour, and never another wallet’s', async () => {
+  const originalReverse = authBasenameRuntime.reverse;
+  const originalNow = authBasenameRuntime.now;
+  const asked: string[] = [];
+  let clock = 1_000_000;
+  authBasenameRuntime.reverse = async (address) => {
+    asked.push(address);
+    return 'alice.base.eth';
+  };
+  authBasenameRuntime.now = () => clock;
+  try {
+    await request(app).get('/api/auth/basename').expect(401);
+    const agent = await authenticatedAgent();
+    // A query naming another wallet changes nothing: the session decides.
+    const first = await agent.get(`/api/auth/basename?address=${WALLET_B}`).expect(200);
+    assert.deepEqual(first.body, { address: WALLET_A, basename: 'alice.base.eth' });
+    await agent.get('/api/auth/basename').expect(200);
+    assert.deepEqual(asked, [WALLET_A]);
+    clock += 3_600_001;
+    await agent.get('/api/auth/basename').expect(200);
+    assert.deepEqual(asked, [WALLET_A, WALLET_A]);
+  } finally {
+    authBasenameRuntime.reverse = originalReverse;
+    authBasenameRuntime.now = originalNow;
+  }
 });

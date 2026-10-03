@@ -170,6 +170,15 @@ export interface DefiMarketV1 {
    * nearly empty at the same time, and only this field says the second half.
    */
   liquidityUsd: number | null;
+  /**
+   * The venue's own yearly rates for this market, in integer basis points:
+   * what a lender of the loan asset earns, and what a borrower pays. Variable,
+   * and the venue's figure rather than our measurement — a reader is told so.
+   *
+   * Optional so a reply from a server that predates the fields still parses.
+   */
+  supplyApyBps?: number | null;
+  borrowApyBps?: number | null;
 }
 
 export interface DefiVenueListingV1 extends DefiVenueReadingV1 {
@@ -370,6 +379,8 @@ export const RepresentationUseAccessV1Schema = z
                       supplyUsd: z.number().min(0).nullable(),
                       borrowUsd: z.number().min(0).nullable(),
                       liquidityUsd: z.number().min(0).nullable(),
+                      supplyApyBps: z.number().int().min(0).max(10_000_000).nullable().optional(),
+                      borrowApyBps: z.number().int().min(0).max(10_000_000).nullable().optional(),
                     })
                     .strict(),
                 )

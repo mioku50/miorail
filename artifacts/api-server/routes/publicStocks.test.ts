@@ -274,3 +274,63 @@ test('a weekend read that fails is an outage, never cached', async (t) => {
   await request(app).get('/api/public/stocks/weekend').expect(500);
   assert.equal(attempts, 2);
 });
+
+test('the list prices come from one read per five-minute slot', async (t) => {
+  let reads = 0;
+  stubV1(t, {
+    readQuotes: async (now: Date) => {
+      reads += 1;
+      return { schemaVersion: 'stock-quotes/v1', asOf: now.toISOString(), rows: [] };
+    },
+  });
+  const app = appV1();
+  const first = await request(app).get('/api/public/stocks/quotes').expect(200);
+  await request(app).get('/api/public/stocks/quotes').expect(200);
+  assert.equal(reads, 1);
+  assert.equal(first.body.schemaVersion, 'stock-quotes/v1');
+  // Computed at the slot's start, so every reader of the slot gets one answer.
+  assert.equal(Date.parse(first.body.asOf) % (5 * 60_000), 0);
+  assert.equal(first.headers['x-robots-tag'], 'noindex');
+});
+
+test('a failed price read is a stable code and is not cached', async (t) => {
+  let reads = 0;
+  stubV1(t, {
+    readQuotes: async () => {
+      reads += 1;
+      throw new Error('postgres://user:secret@host/db exploded');
+    },
+  });
+  const app = appV1();
+  const failed = await request(app).get('/api/public/stocks/quotes').expect(500);
+  assert.deepEqual(failed.body, { error: 'stock_quotes_failed', code: 'stock_quotes_failed' });
+  await request(app).get('/api/public/stocks/quotes').expect(500);
+  assert.equal(reads, 2);
+});
+
+test('an icon is served from our origin as a PNG, and only for an exact address', async (t) => {
+  const { publicStockIconsRouter, publicStockIconsRuntime } = await import('./publicStocks.js');
+  const saved = { ...publicStockIconsRuntime };
+  const asked: string[] = [];
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2, 3]);
+  Object.assign(publicStockIconsRuntime, {
+    limiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 1_000 }),
+    icon: async (tokenAddress: string) => {
+      asked.push(tokenAddress);
+      return tokenAddress === NVDAC ? png : null;
+    },
+  });
+  t.after(() => Object.assign(publicStockIconsRuntime, saved));
+  const app = express();
+  app.use('/api/public/stocks', publicStockIconsRouter);
+  const icon = await request(app).get(`/api/public/stocks/icons/${NVDAC.toUpperCase().replace('0X', '0x')}.png`).expect(200);
+  assert.equal(icon.headers['content-type'], 'image/png');
+  assert.equal(icon.headers['cache-control'], 'public, max-age=86400');
+  assert.equal(icon.headers['x-content-type-options'], 'nosniff');
+  assert.deepEqual([...icon.body], [...png]);
+  await request(app).get(`/api/public/stocks/icons/0x${'1'.repeat(40)}.png`).expect(404);
+  // Nothing but an exact address reaches the icon read.
+  await request(app).get('/api/public/stocks/icons/NVDAc.png').expect(400);
+  await request(app).get(`/api/public/stocks/icons/${NVDAC}.svg`).expect(400);
+  assert.deepEqual(asked, [NVDAC, `0x${'1'.repeat(40)}`]);
+});

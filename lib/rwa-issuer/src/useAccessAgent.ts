@@ -144,6 +144,11 @@ const VenueRowSchemaV1 = z
             /** What could be borrowed out of THIS market right now. The field
              * that separates a market that exists from one anybody can use. */
             liquidityUsd: z.number().nullable(),
+            /** The venue's own yearly rates, integer basis points: what a
+             * lender earns and what a borrower pays. Variable, and Morpho's
+             * figure, not Miorail's measurement. */
+            supplyApyBps: z.number().int().nullable().optional(),
+            borrowApyBps: z.number().int().nullable().optional(),
           })
           .strict(),
       )

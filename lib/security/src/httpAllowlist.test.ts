@@ -72,6 +72,10 @@ test('ALLOWED_PARTNER_HOSTS covers exactly the sanctioned partner hosts', () => 
     // from the vault factory first, never the only source for it.
     'v3.euler.finance',
     'api.openfigi.com',
+    // The Stocks list: Coinbase's public Tokenized Stocks API and the icons it
+    // links to, both read-only and both on fixed paths.
+    'api.coinbase.com',
+    'metadata.coinbase.com',
   ]);
 });
 

@@ -5,6 +5,7 @@ import { base } from 'viem/chains';
 import { db, users } from '@mioagent/db';
 import { BASE_CHAIN_ID, type TenantUser } from '../middleware/tenantAuth';
 import { invalidatePreparedTransactionsForUser } from '../lib/preparedTransactionStore.js';
+import { reverseBaseNameV1 } from '../lib/baseNameResolver.js';
 
 export const authRouter = Router();
 const CHALLENGE_TTL_MS = 5 * 60 * 1000;
@@ -134,6 +135,45 @@ authRouter.post('/verify', async (req, res) => {
 
 authRouter.get('/session', (req, res) => {
   res.json({ user: req.session.user || null });
+});
+
+/**
+ * The Basename the signed-in wallet calls itself, for the header — or null.
+ *
+ * Its own route rather than a field on `/session`: the session answers on
+ * every page load, and two Ethereum reads must not stand in front of it. The
+ * header shows the address first and swaps in the name when this answers.
+ * Only the session's own wallet is ever looked up, so this cannot be aimed at
+ * someone else's address. A name is kept for an hour, and no name for fifteen
+ * minutes, so a wallet that has just set one sees it soon.
+ */
+export const authBasenameRuntime = {
+  reverse: (address: string): Promise<string | null> => reverseBaseNameV1(address),
+  now: (): number => Date.now(),
+};
+const basenameCacheV1 = new Map<string, { at: number; name: string | null }>();
+
+authRouter.get('/basename', async (req, res) => {
+  const address = req.session.user?.address?.toLowerCase();
+  if (!address || !/^0x[0-9a-f]{40}$/.test(address)) {
+    res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
+    return;
+  }
+  const now = authBasenameRuntime.now();
+  const cached = basenameCacheV1.get(address);
+  if (cached && now - cached.at < (cached.name ? 3_600_000 : 900_000)) {
+    res.json({ address, basename: cached.name });
+    return;
+  }
+  const name = await authBasenameRuntime.reverse(address).catch(() => null);
+  basenameCacheV1.set(address, { at: now, name });
+  // A bound, not a policy: one entry per signed-in wallet.
+  while (basenameCacheV1.size > 10_000) {
+    const oldest = basenameCacheV1.keys().next();
+    if (oldest.done) break;
+    basenameCacheV1.delete(oldest.value);
+  }
+  res.json({ address, basename: name });
 });
 
 authRouter.post('/logout', async (req, res) => {

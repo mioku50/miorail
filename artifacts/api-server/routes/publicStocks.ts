@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
+import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
 import type { DividendCalendarResponseV1 } from '@mioagent/rwa-market-reality/dividends';
 import { weekendSlotStartV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
@@ -18,6 +19,8 @@ import {
 import { readOfficialAssetDossierV1, rwaDossierRuntime } from './rwaDossier.js';
 import { databaseWeekendRunsV1, readWeekendMarketV1 } from '../lib/weekendMarketRead.js';
 import { databaseDividendReadDepsV1, readDividendCalendarV1 } from '../lib/dividendRead.js';
+import { createCoinbaseStockMetaCacheV1 } from '../lib/coinbaseStockMeta.js';
+import { databaseStockPricesV1, readStockQuotesV1 } from '../lib/stockQuotesRead.js';
 
 // ---------------------------------------------------------------------------
 // The Stocks board, readable without a wallet.
@@ -116,6 +119,8 @@ export const publicStocksCachesV1 = {
   weekend: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
   // A multiplier is read every six hours and a declaration changes by deploy.
   dividends: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
+  // The list's prices come from the hourly ladder, so a slot loses nothing.
+  quotes: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
 };
 
 /** A testing seam; production never replaces any of it. */
@@ -144,6 +149,20 @@ export const publicStocksRuntime = {
           symbol: found.underlying.displaySymbol ?? found.underlying.canonicalName,
           name: found.underlying.canonicalName,
         };
+      },
+    }),
+  /** Coinbase's names and icons for its tokens; one per process. */
+  stockMeta: createCoinbaseStockMetaCacheV1(),
+  readQuotes: (now: Date) =>
+    readStockQuotesV1(now, {
+      prices: databaseStockPricesV1,
+      meta: () => publicStocksRuntime.stockMeta.read(),
+      identify: async (tokenAddress: string) => {
+        const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress });
+        if (!found) return null;
+        const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
+        // The Stocks screens show Coinbase's stocks and no other issuer's.
+        return issuer === 'coinbase' ? { underlyingKey: found.underlying.underlyingKey } : null;
       },
     }),
   now: () => new Date(),
@@ -245,6 +264,26 @@ publicStocksRouter.get('/dividends', async (_req: Request, res: Response) => {
     sendPublic(res, await dividendCalendarForSlotV1(publicStocksRuntime.now()));
   } catch (error) {
     failed(res, 'dividends', 'dividend_calendar_failed', error);
+  }
+});
+
+/**
+ * The list's prices: each Coinbase stock's price on Base, its change over 24
+ * hours, its name and its icon. One computation per five-minute slot.
+ */
+publicStocksRouter.get('/quotes', async (_req: Request, res: Response) => {
+  try {
+    if (!(await publicStocksRuntime.storageAvailable())) {
+      refuse(res, 503, 'market_reality_storage_unavailable');
+      return;
+    }
+    const slot = weekendSlotStartV1(publicStocksRuntime.now());
+    sendPublic(
+      res,
+      await publicStocksCachesV1.quotes.read(`quotes|${slot.getTime()}`, () => publicStocksRuntime.readQuotes(slot)),
+    );
+  } catch (error) {
+    failed(res, 'quotes', 'stock_quotes_failed', error);
   }
 });
 
@@ -421,5 +460,48 @@ publicStocksRouter.get('/use-access/:tokenAddress', async (req: Request, res: Re
       errorName: error instanceof Error ? error.name : typeof error,
     });
     refuse(res, 502, 'use_access_unavailable');
+  }
+});
+
+// ---------------------------------------------------------------------------
+// Coinbase's icon for each token, from our own origin.
+//
+// Its own router, with its own limit, mounted before the board's. One list
+// shows a few dozen icons at once, and counting them against the ninety reads
+// a minute the board allows would let the pictures starve the prices. Each
+// answer is a cached file, and a browser keeps it for a day.
+// ---------------------------------------------------------------------------
+
+export const publicStockIconsRouter = Router();
+
+export const publicStockIconsRuntime = {
+  limiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 600 }),
+  icon: (tokenAddress: string) => publicStocksRuntime.stockMeta.icon(tokenAddress),
+};
+
+publicStockIconsRouter.get('/icons/:file', async (req: Request, res: Response) => {
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const allowed = await publicStockIconsRuntime.limiter.consume(`public-stock-icons:${ip}`);
+  if (!allowed.success) {
+    refuse(res, 429, 'rate_limited');
+    return;
+  }
+  const match = /^(0x[0-9a-f]{40})\.png$/.exec(String(req.params.file ?? '').toLowerCase());
+  if (!match) {
+    refuse(res, 400, 'exact_address_required');
+    return;
+  }
+  try {
+    const bytes = await publicStockIconsRuntime.icon(match[1]!);
+    if (!bytes) {
+      refuse(res, 404, 'icon_not_found');
+      return;
+    }
+    res.setHeader('Content-Type', 'image/png');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.status(200).end(Buffer.from(bytes));
+  } catch (error) {
+    failed(res, 'icon', 'stock_icon_failed', error);
   }
 });

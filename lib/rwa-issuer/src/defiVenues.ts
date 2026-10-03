@@ -63,13 +63,17 @@ export const EULER_VISIBILITIES_V1 = 'visible,warning,hidden,pending_review';
 // NVDAc sat in four Base markets — three empty and uncurated, and the curated
 // one held $15,440 of collateral against $825 of borrowable liquidity. Without
 // these two the four rows are indistinguishable.
+//
+// `supplyApy` and `borrowApy` are the venue's own rates: what lending the loan
+// asset into the market earns and what borrowing it costs. Measured 2026-10-03
+// on the curated NVDAc/USDC market: 4.08% and 4.99% a year.
 export const MORPHO_MARKETS_BY_ASSET_QUERY_V1 = `query MiorailMarketsByAsset($chainId: [Int!], $address: [String!]) {
   asCollateral: markets(first: 20, where: { chainId_in: $chainId, collateralAssetAddress_in: $address }) {
     items {
       marketId listed lltv
       loanAsset { symbol }
       collateralAsset { symbol }
-      state { supplyAssetsUsd borrowAssetsUsd collateralAssetsUsd liquidityAssetsUsd }
+      state { supplyAssetsUsd borrowAssetsUsd collateralAssetsUsd liquidityAssetsUsd supplyApy borrowApy }
     }
   }
   asLoan: markets(first: 20, where: { chainId_in: $chainId, loanAssetAddress_in: $address }) {
@@ -77,7 +81,7 @@ export const MORPHO_MARKETS_BY_ASSET_QUERY_V1 = `query MiorailMarketsByAsset($ch
       marketId listed lltv
       loanAsset { symbol }
       collateralAsset { symbol }
-      state { supplyAssetsUsd borrowAssetsUsd collateralAssetsUsd liquidityAssetsUsd }
+      state { supplyAssetsUsd borrowAssetsUsd collateralAssetsUsd liquidityAssetsUsd supplyApy borrowApy }
     }
   }
 }`;
@@ -249,7 +253,17 @@ function morphoMarketV1(
     supplyUsd: usdV1(state.supplyAssetsUsd),
     borrowUsd: usdV1(state.borrowAssetsUsd),
     liquidityUsd: usdV1(state.liquidityAssetsUsd),
+    supplyApyBps: apyBpsV1(state.supplyApy),
+    borrowApyBps: apyBpsV1(state.borrowApy),
   };
+}
+
+/** Morpho publishes a rate as a fraction (`0.0408` is 4.08% a year). Kept as
+ * integer basis points, like the LLTV, and absent rather than zero when the
+ * venue did not say. */
+function apyBpsV1(raw: unknown): number | null {
+  if (typeof raw !== 'number' || !Number.isFinite(raw) || raw < 0 || raw > 1_000) return null;
+  return Math.round(raw * 10_000);
 }
 
 export function moonwellDefiSourceV1(options?: { endpoint?: string }): DefiListingSourceV1 {

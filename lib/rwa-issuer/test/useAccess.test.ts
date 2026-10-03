@@ -555,7 +555,15 @@ describe('the venue parsers, against the shapes those venues really return', () 
           lltv: '625000000000000000',
           loanAsset: { symbol: 'USDC' },
           collateralAsset: { symbol: 'NVDAc' },
-          state: { collateralAssetsUsd: 15_425, supplyAssetsUsd: 8_440, borrowAssetsUsd: 7_605, liquidityAssetsUsd: 835 },
+          state: {
+            collateralAssetsUsd: 15_425,
+            supplyAssetsUsd: 8_440,
+            borrowAssetsUsd: 7_605,
+            liquidityAssetsUsd: 835,
+            // Morpho's own rates, as fractions. Measured 2026-10-03 on this market.
+            supplyApy: 0.04083,
+            borrowApy: 0.04991,
+          },
         },
         { marketId: '0xstranger', listed: false, lltv: '770000000000000000', state: {} },
       ],
@@ -571,6 +579,9 @@ describe('the venue parsers, against the shapes those venues really return', () 
     assert.equal(curated.role, 'collateral');
     assert.equal(curated.collateralAssetSymbol, 'NVDAc');
     assert.equal(curated.loanAssetSymbol, 'USDC');
+    // Integer basis points, like the LLTV: 4.08% and 4.99% a year.
+    assert.equal(curated.supplyApyBps, 408);
+    assert.equal(curated.borrowApyBps, 499);
 
     // A venue that published no state publishes no numbers. Null, never zero:
     // an unread market and an empty one are different facts.
@@ -579,6 +590,8 @@ describe('the venue parsers, against the shapes those venues really return', () 
     assert.equal(stranger.liquidityUsd, null);
     assert.equal(stranger.collateralUsd, null);
     assert.equal(stranger.lltvBps, 7700);
+    assert.equal(stranger.supplyApyBps, null);
+    assert.equal(stranger.borrowApyBps, null);
   });
 
   test('Morpho: a market with no id is not a market', () => {
