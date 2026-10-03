@@ -148,10 +148,10 @@ for (const width of [1440, 390]) {
     await page.goto('/stocks');
     const card = page.getByRole('region', { name: 'My stocks today', exact: true });
     await expect(card.getByRole('heading', { name: 'Unread updates' })).toBeVisible();
-    await expect(card.getByText('Related to your holdings', { exact: true })).toBeVisible();
-    await expect(card.getByText(/Occurred Sep 20.*recorded Sep 30/)).toBeVisible();
+    await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
+    await expect(card.getByText(/Sep 20.*seen by Miorail Sep 30/)).toBeVisible();
     await expect(
-      card.getByRole('link', { name: 'Inspect this contract', exact: true }),
+      card.getByRole('link', { name: 'See details', exact: true }),
     ).toHaveAttribute('href', `/investigate?token=${briefFixture().holdings[0]!.tokenAddress}`);
     await page.reload();
     await expect(card.getByRole('button', { name: 'Mark this page as read' })).toBeEnabled();
@@ -161,7 +161,7 @@ for (const width of [1440, 390]) {
     await card.getByRole('button', { name: 'Mark as read', exact: true }).click();
     await expect(card.getByText(/Read receipt saved/)).toBeVisible();
     await card.getByRole('button', { name: 'Newest updates' }).click();
-    await expect(card.getByText('Related to your holdings', { exact: true })).toBeVisible();
+    await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Mark as read', exact: true }).click();
     await expect(card.getByText(/No unread update/)).toBeVisible();
     const otherContext = await browser.newContext({ viewport: { width, height: 1000 } });
@@ -173,13 +173,13 @@ for (const width of [1440, 390]) {
       await expect(secondCard.getByText(/No unread update/)).toBeVisible();
       await secondCard.getByRole('button', { name: 'History', exact: true }).click();
       await expect(secondCard.getByRole('heading', { name: 'Your update history' })).toBeVisible();
-      await expect(secondCard.getByText('Related to your holdings', { exact: true })).toBeVisible();
+      await expect(secondCard.getByText('Your stock', { exact: true })).toBeVisible();
       await expect(
         secondCard.getByRole('button', { name: 'Mark as read', exact: true }),
       ).toHaveCount(0);
       fixture.add();
       await card.getByRole('button', { name: 'Refresh', exact: true }).click();
-      await expect(card.getByText('Related to your holdings', { exact: true })).toBeVisible();
+      await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
       expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
       await card.screenshot({ path: `/tmp/miorail-shared-inbox-${width}.png` });
       const foreign = await otherContext.newPage();
@@ -247,12 +247,12 @@ for (const width of [1440, 390]) {
     const headline = card.getByText('NVDAc: Shares per token changed', { exact: true });
     await expect(headline).toHaveCount(1);
     await expect(headline).toBeVisible();
-    await expect(card.getByText(/1 related to your holdings/)).toBeVisible();
+    await expect(card.getByText(/1 about stocks you hold/)).toBeVisible();
     await expect(card.getByText(/one NVDAc to about 1\.00053794/)).toBeVisible();
     const evidence = card
       .locator('details')
       .filter({
-        has: page.locator('summary', { hasText: 'Evidence for this update · 3 records' }),
+        has: page.locator('summary', { hasText: 'Source records · 3' }),
       });
     await expect(evidence).not.toHaveAttribute('open', '');
     await expect(
@@ -273,7 +273,7 @@ for (const width of [1440, 390]) {
     await card.getByRole('button', { name: 'History', exact: true }).click();
     await expect(headline).toHaveCount(1);
     await expect(
-      card.locator('summary', { hasText: 'Evidence for this update · 3 records' }),
+      card.locator('summary', { hasText: 'Source records · 3' }),
     ).toBeVisible();
     expect(await card.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
   });
@@ -291,7 +291,7 @@ test('unavailable data and failed persistence keep updates unread and show a ret
   await card.getByRole('button', { name: 'Mark this page as read' }).click();
   await expect(card.getByRole('alert')).toHaveText(/Could not save the read receipt/);
   await page.reload();
-  await expect(card.getByText('Related to your holdings', { exact: true })).toBeVisible();
+  await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
   fixture.failRead(true);
   await card.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(card.getByRole('button', { name: 'Mark this page as read' })).toBeDisabled();

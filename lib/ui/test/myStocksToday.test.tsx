@@ -37,8 +37,8 @@ test('the personal feed presents one issuer update and keeps compatibility logs 
     />,
   );
   assert.equal((html.match(/NVDAc: Shares per token changed/g) ?? []).length, 1);
-  assert.match(html, /1 related to your holdings/);
-  assert.match(html, /Evidence for this update · 3 records/);
+  assert.match(html, /1 about stocks you hold\./);
+  assert.match(html, /Source records · 3/);
   assert.match(html, /about 1\.00053794/);
   assert.match(html, /The issuer announced a corporate action/);
   assert.match(html, new RegExp(`https://basescan.org/tx/${transactionHash}`));
@@ -109,10 +109,10 @@ test('a delayed personal change links to exact evidence and cannot imply ownersh
     onMarkRead() {},
   };
   const html = renderToStaticMarkup(<MyStocksTodayCard model={model} />);
-  assert.match(html, /Related to your holdings/);
+  assert.match(html, /Your stock/);
   assert.match(html, new RegExp(`href="/investigate\\?token=${token}"`));
-  assert.match(html, /Occurred Sep 20/);
-  assert.match(html, /recorded Sep 30/);
+  // Ten days late: the reader is told why an old event is new here.
+  assert.match(html, /Sep 20, 10:00 AM UTC · seen by Miorail Sep 30/);
   assert.match(html, /does not establish that you held the token/);
   assert.match(html, />Mark as read<\/button>/);
   for (const state of [

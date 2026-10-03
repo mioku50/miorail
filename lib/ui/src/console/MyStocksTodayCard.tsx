@@ -59,42 +59,39 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
   const update = (card: NonNullable<typeof feed>['cards'][number]) => {
     const item = data?.inbox.items.find((row) => row.signalId === card.signalId);
     const recorded = data?.changes?.cards.find((row) => row.signalId === card.signalId);
+    const occurredAt = item?.occurredAt ?? recorded?.occurredAt ?? null;
+    const recordedAt = item?.recordedAt ?? recorded?.recordedAt ?? null;
     return (
       <li key={card.signalId}>
         <span className="stocks-today-relevance">
-          {item?.relation === 'held' ? 'Related to your holdings' : 'A market you watch'}
+          {item?.relation === 'held' ? 'Your stock' : 'A stock you watch'}
         </span>
         <strong>
           {card.subject.label}: {item?.headline ?? card.title}
         </strong>
         <p>{item?.summary ?? card.detail}</p>
         <span className="lnote">
-          Occurred{' '}
-          {item?.occurredAt
-            ? date(item.occurredAt)
-            : recorded
-              ? date(recorded.occurredAt)
-              : card.occurred}
-          {(item?.recordedAt ?? recorded?.recordedAt) !==
-            (item?.occurredAt ?? recorded?.occurredAt) &&
-          (item?.recordedAt ?? recorded?.recordedAt)
-            ? ` · recorded ${date(item?.recordedAt ?? recorded!.recordedAt)}`
+          {occurredAt ? date(occurredAt) : card.occurred}
+          {/* The inbox runs on when Miorail recorded an event. Said only when
+              that is late enough to explain why an older event is new here. */}
+          {occurredAt && recordedAt && Date.parse(recordedAt) - Date.parse(occurredAt) > 3_600_000
+            ? ` · seen by Miorail ${date(recordedAt)}`
             : ''}
         </span>
         {item ? (
           <div className="stocks-today-change-links">
-            <a href={item.inspectionHref}>Inspect this contract</a>
+            <a href={item.inspectionHref}>See details</a>
             {item.relatedInspectionHref ? (
               <a href={item.relatedInspectionHref}>
-                {item.relation === 'held' ? 'Inspect my stock' : 'Inspect watched contract'}
+                {item.relation === 'held' ? 'See my stock' : 'See the stock I watch'}
               </a>
             ) : null}
           </div>
         ) : null}
         {item?.evidenceSignalIds && item.evidenceSignalIds.length > 1 ? (
           <details>
-            <summary>Evidence for this update · {item.evidenceSignalIds.length} records</summary>
-            <p className="lnote">One issuer transaction. These records support the update above.</p>
+            <summary>Source records · {item.evidenceSignalIds.length}</summary>
+            <p className="lnote">One issuer transaction on Base.</p>
             {item.transactionHash ? (
               <a
                 href={`https://basescan.org/tx/${item.transactionHash}`}
@@ -149,10 +146,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
         ) : null}
         {data ? (
           <React.Fragment>
-            <p className="lnote">
-              Your wallet · balances at block {data.balanceBlock.toLocaleString('en-US')} ·{' '}
-              {date(data.balanceReadAt)}
-            </p>
+            <p className="lnote">Your wallet · balances as of {date(data.balanceReadAt)}</p>
             {data.holdings.length === 0 ? (
               <p>
                 You hold none of the {data.coverage.tokenAddresses.length} Coinbase stock contracts
@@ -178,7 +172,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                             <strong>≈ {money(holding.reference.valueUsd)}</strong>
                             <span className="lnote">
                               {' '}
-                              Reference value · published {date(holding.reference.publishedAt)}
+                              Reference value · {date(holding.reference.publishedAt)}
                             </span>
                           </>
                         ) : (
@@ -199,19 +193,19 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                     {holding.schedule ? (
                       <p className="stocks-today-schedule">
                         The issuer scheduled {multiplierDecimalV1(holding.schedule.multiplierWad)}{' '}
-                        shares per token from {date(holding.schedule.effectiveAt)}. It is not in
-                        force at the balance block.
+                        shares per token from {date(holding.schedule.effectiveAt)}. Until then the
+                        current value applies.
                       </p>
                     ) : null}
                     <details>
                       <summary>Shares and dividend record</summary>
                       <p className="lnote">
                         {multiplier
-                          ? `One token represented ${multiplier} shares at the balance block.`
-                          : 'Shares per token could not be read at this block.'}
+                          ? `One ${holding.tokenSymbol} represents ${multiplier} ${holding.symbol} ${multiplier === '1' ? 'share' : 'shares'}.`
+                          : 'Shares per token could not be read.'}
                       </p>
                       {holding.scheduleRead === 'unavailable' ? (
-                        <p className="lnote">The pending multiplier schedule could not be read.</p>
+                        <p className="lnote">Miorail could not read whether a change is scheduled.</p>
                       ) : null}
                       {mine?.lines.slice(1).map((line) => (
                         <p key={line}>{line}</p>
@@ -249,9 +243,9 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                 ) : null}
               </div>
               <p className="lnote">
-                Recorded changes for stocks you hold now and {data.watchedCount} watched contract
-                {data.watchedCount === 1 ? '' : 's'} · from {date(data.since)}.{' '}
-                {data.windowClamped ? 'This overview reaches back seven days.' : ''}
+                For the stocks you hold
+                {data.watchedCount > 0 ? ` and ${data.watchedCount} you watch` : ''} · since{' '}
+                {date(data.since)}.{data.windowClamped ? ' This overview reaches back seven days.' : ''}
               </p>
               {model.onView ? (
                 <div className="stocks-today-change-links" role="group" aria-label="Update view">
@@ -276,49 +270,44 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                 </div>
               ) : null}
               {data.inbox.reviewedAt ? (
-                <p className="lnote">
-                  Last marked as read {date(data.inbox.reviewedAt)} · shared with your other clients
-                  for this wallet.
-                </p>
+                <p className="lnote">Last marked as read {date(data.inbox.reviewedAt)}.</p>
               ) : null}
               {model.markedRead ? (
                 <p className="lnote" role="status">
-                  Read receipt saved for this wallet in web, Base App and connected MCP.
+                  Marked as read — on the web, in Base App and in connected assistants.
                 </p>
               ) : null}
               {model.markFailed ? (
                 <p className="lnote" role="alert">
-                  Could not save the read receipt. Refresh and try again; these updates remain
-                  unread.
+                  Could not mark these as read. Refresh and try again; they stay unread.
                 </p>
               ) : null}
               {data.inbox.view === 'unread' ? (
-                <p className="lnote">
-                  Opening or refreshing does not mark updates as read. Unread entries remain beyond
-                  seven days.
-                </p>
+                <p className="lnote">Updates stay here until you mark them as read.</p>
               ) : null}
               {data.changesUnavailable ? (
-                <p>Changes could not be read. No claim about a quiet market can be made.</p>
+                <p>Updates could not be read just now. That does not mean nothing happened.</p>
               ) : news.length ? (
                 <React.Fragment>
                   <p>
-                    {data.inbox.heldCount} related to your holdings · {data.inbox.watchedCount} to
-                    markets you watch.
+                    {data.inbox.heldCount} about stocks you hold
+                    {data.inbox.watchedCount > 0
+                      ? ` · ${data.inbox.watchedCount} about stocks you watch`
+                      : ''}
+                    .
                   </p>
                   <ul>{news.slice(0, 3).map(update)}</ul>
                 </React.Fragment>
               ) : (
                 <p>
                   {data.inbox.view === 'unread'
-                    ? 'No unread update is recorded for your current stocks and watches.'
-                    : 'No relevant change is recorded in this history window.'}{' '}
-                  Coverage is limited to the measurements below.
+                    ? 'No unread updates for your stocks.'
+                    : 'Nothing was recorded for your stocks in this window.'}
                 </p>
               )}
               {news.length > 3 ? (
                 <details>
-                  <summary>{news.length - 3} more recorded changes</summary>
+                  <summary>{news.length - 3} more updates</summary>
                   <ul>{news.slice(3).map(update)}</ul>
                 </details>
               ) : null}
@@ -348,7 +337,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
               ) : null}
               {data.inbox.nextCursor ? (
                 <p className="lnote">
-                  More entries are available. Marking this page leaves other pages unread.
+                  Older updates are on the next page. Marking this page leaves them unread.
                 </p>
               ) : null}
               {data.changesTruncated ? (
@@ -357,14 +346,16 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                   read.
                 </p>
               ) : null}
-              <p className="lnote">
-                Listed by when Miorail recorded them; an older event can arrive later. This does not
-                establish that you held the token when it occurred.
-              </p>
             </div>
             <details className="stocks-today-coverage">
               <summary>What was measured</summary>
-              <p className="lnote">{data.coverage.note}</p>
+              <p className="lnote">
+                Balances were read at Base block {data.balanceBlock.toLocaleString('en-US')}.{' '}
+                {data.coverage.note}
+              </p>
+              <p className="lnote">
+                An update does not establish that you held the token when it occurred.
+              </p>
               <p className="lnote">
                 Reference values include the feed’s dividend multiplier. They are not sale proceeds.
                 Selling your actual token amount needs a fresh quote and review.
