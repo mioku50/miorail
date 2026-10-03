@@ -1573,7 +1573,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   box-shadow: inset 0 0 0 1px var(--accent-line); }
 .mio-console .mr-surface-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
-/* Stocks' own four tabs (2026-10-04): Market, My stocks, Dividends, Weekend.
+/* Stocks' own four tabs (2026-10-03): Market, My stocks, Dividends, Weekend.
    Four equal columns, so the bar fills a phone and never scrolls sideways, in
    the evidence tabs' pressed look. Links on the web, buttons in the Base App. */
 .mio-console .mr-sections { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px;
@@ -1590,6 +1590,29 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-sections .n { color: var(--faint); font-weight: 600; }
 @media (max-width: 520px) {
   .mio-console .mr-sections .item { padding: 8px 2px; font-size: var(--fs-meta); }
+}
+
+/* Call the reopen (2026-10-03): one row per stock. On a phone the stock and its
+   numbers share a line and the call sits under them at full width, two equal
+   halves a thumb can find; from 720px the call moves to the end of the line.
+   Above and below wear the switch's pressed look and no colour: a side is not
+   good or bad until the reopen says which was right. */
+.mio-console .mr-reopen { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 8px; }
+.mio-console .mr-reopen-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px;
+  align-items: center; padding: 10px 12px; border-radius: var(--r); background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line); }
+.mio-console .mr-reopen-stock { display: grid; min-width: 0; }
+.mio-console .mr-reopen-stock .lnote { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mio-console .mr-reopen-nums { display: grid; justify-items: end; text-align: right; font-size: var(--fs-sm); }
+.mio-console .mr-reopen-call { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; min-width: 0; }
+.mio-console .mr-reopen-call .mr-scope-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
+.mio-console .mr-reopen-call .mr-scope-switch button { text-align: center; }
+.mio-console .mr-reopen-rules { margin-top: 12px; }
+.mio-console .mr-reopen-rules summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); }
+@media (min-width: 720px) {
+  .mio-console .mr-reopen-row { grid-template-columns: minmax(0, 1fr) auto minmax(220px, auto); }
+  .mio-console .mr-reopen-call { grid-column: auto; justify-content: flex-end; }
+  .mio-console .mr-reopen-call .mr-scope-switch { width: auto; }
 }
 
 /* Direction and size, two rails on one line so the question reads as one

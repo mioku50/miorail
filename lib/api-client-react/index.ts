@@ -9,6 +9,11 @@ import {
 import { DividendWalletResponseV1Schema } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 import { WeekendMarketResponseV1Schema } from '@mioagent/rwa-market-reality/weekend-market';
+import {
+  ReopenGameResponseV1Schema,
+  ReopenPickResponseV1Schema,
+  type ReopenDirectionV1,
+} from '@mioagent/rwa-market-reality/reopen-game';
 import { StockQuotesResponseV1Schema } from '@mioagent/rwa-market-reality/stock-quotes';
 import { StockBriefV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
@@ -939,6 +944,106 @@ export function useWeekendMarket(options?: { enabled?: boolean }) {
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
   });
+}
+
+/**
+ * Call the reopen: the device's own token.
+ *
+ * A reader who plays without a wallet is handed a random token on their first
+ * pick and sends it back on every read; the server keeps only its hash. Kept in
+ * this browser alone, so it can vanish (a private window, cleared site data):
+ * then the game simply starts this device over, and signing in is how a streak
+ * outlives a device.
+ */
+const REOPEN_DEVICE_KEY_V1 = 'miorail.reopen.device.v1';
+const REOPEN_DEVICE_HEADER_V1 = 'x-miorail-reopen-device';
+
+function reopenDeviceTokenV1(): string | null {
+  try {
+    const token = globalThis.localStorage?.getItem(REOPEN_DEVICE_KEY_V1) ?? null;
+    return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberReopenDeviceV1(token: string | null): void {
+  try {
+    if (token) globalThis.localStorage?.setItem(REOPEN_DEVICE_KEY_V1, token);
+    else globalThis.localStorage?.removeItem(REOPEN_DEVICE_KEY_V1);
+  } catch {
+    // Storage refused: the next pick starts a new device, which is the honest
+    // outcome for a browser that keeps nothing.
+  }
+}
+
+function reopenHeadersV1(): Record<string, string> {
+  const token = reopenDeviceTokenV1();
+  return token ? { [REOPEN_DEVICE_HEADER_V1]: token } : {};
+}
+
+/** This weekend's round, its result, or when the next one opens — with the
+ * reader's own picks when they have any. */
+export function useReopenGame(options?: { enabled?: boolean; signedIn?: boolean }) {
+  return useQuery({
+    queryKey: ['reopen-game', options?.signedIn ? 'wallet' : 'device'],
+    queryFn: async () =>
+      ReopenGameResponseV1Schema.parse(await fetchApi<unknown>('/api/public/reopen', { headers: reopenHeadersV1() })),
+    retry: false,
+    enabled: options?.enabled !== false,
+    staleTime: 60_000,
+    refetchInterval: 2 * 60_000,
+  });
+}
+
+/** Sends the whole set of picks for the open round; the answer replaces the
+ * round in the cache, and a first pick's device token is kept. */
+export function usePickReopen() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    retry: false,
+    mutationFn: async (input: { roundId: string; picks: Record<string, ReopenDirectionV1> }) =>
+      ReopenPickResponseV1Schema.parse(
+        await fetchApi<unknown>('/api/public/reopen/picks', {
+          method: 'POST',
+          headers: reopenHeadersV1(),
+          body: JSON.stringify(input),
+        }),
+      ),
+    onSuccess: (response) => {
+      if (response.device) rememberReopenDeviceV1(response.device);
+      queryClient.setQueriesData({ queryKey: ['reopen-game'] }, response.game);
+    },
+  });
+}
+
+/** Once signed in, a device's picks move to the wallet, and the device token
+ * is dropped: from then on the wallet is the player. */
+export function useClaimReopenDevice(options: { signedIn: boolean }) {
+  const queryClient = useQueryClient();
+  useEffect(() => {
+    if (!options.signedIn) return;
+    const token = reopenDeviceTokenV1();
+    if (!token) return;
+    let cancelled = false;
+    fetchApi<unknown>('/api/reopen/claim', {
+      method: 'POST',
+      headers: { [REOPEN_DEVICE_HEADER_V1]: token },
+      body: '{}',
+    })
+      .then(() => {
+        if (cancelled) return;
+        // Merged or already gone: either way the token has nothing left to do.
+        rememberReopenDeviceV1(null);
+        void queryClient.invalidateQueries({ queryKey: ['reopen-game'] });
+      })
+      .catch(() => {
+        // Kept for the next sign-in: a failed claim must not lose the picks.
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [options.signedIn, queryClient]);
 }
 
 /**

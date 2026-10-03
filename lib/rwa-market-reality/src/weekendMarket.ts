@@ -146,6 +146,11 @@ function etPartsV1(instant: Date): { localDate: string; minuteOfDay: number } {
   };
 }
 
+/** The New York calendar date an instant falls on. */
+export function etLocalDateV1(instant: Date): string {
+  return etPartsV1(instant).localDate;
+}
+
 /** The instant a New York wall clock shows `minuteOfDay` on `localDate`.
  * Tries both of the offsets New York uses and keeps the one that reads back. */
 export function etInstantV1(localDate: string, minuteOfDay: number): Date {

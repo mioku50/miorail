@@ -301,7 +301,7 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
   return {
     title: 'The weekend on Base · Miorail',
     description:
-      "While Wall Street is closed, tokenized stocks keep trading on Base: where they trade against Friday's close, and where they reopened. No wallet needed to look.",
+      "While Wall Street is closed, tokenized stocks keep trading on Base. Call the reopen: will five stocks open above or below Friday's close? Base makes its own call. No wallet needed to play.",
     canonicalUrl: `${origin}/stocks/weekend`,
     imageUrl: `${origin}/og-stocks.png`,
     noindex: false,

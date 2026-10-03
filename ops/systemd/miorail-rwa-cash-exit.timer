@@ -28,12 +28,18 @@
 # five minutes (4:46–5:06 on 2026-09-25), so with the random delay the last one
 # ends by ~20:37 ET, ahead of the weekly push at 20:45 ET
 # (`weeklySummaryDueV1`). Three passes a week is ~1,500 more quotes, +1.8%.
+#
+# Plus one pass on Sunday at 20:01 New York time, when the feeds print again.
+# Call the reopen settles on the first reference price recorded after the
+# reopen; with the hourly passes alone that record can come up to an hour into
+# the overnight session, an hour of trading after the moment the round is about.
 Description=Measure the official-asset cash-exit ladder
 
 [Timer]
 OnBootSec=12min
 OnUnitActiveSec=1h
 OnCalendar=Fri *-*-* 20:01,14,27:00 America/New_York
+OnCalendar=Sun *-*-* 20:01:00 America/New_York
 Persistent=true
 RandomizedDelaySec=5min
 

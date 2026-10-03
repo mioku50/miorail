@@ -18,3 +18,4 @@ export * from './agent.js';
 export * from './agentSummary.js';
 export * from './discoveryAliases.js';
 export * from './weekendMarket.js';
+export * from './reopenGame.js';

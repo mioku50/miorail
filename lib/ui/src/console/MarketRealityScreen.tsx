@@ -36,6 +36,7 @@ import {
 } from './giftView';
 import { tokenDecimalV1 } from './stockSellAmount';
 import { WeekendMarketCard } from './WeekendMarketCard';
+import { ReopenGameCard, type ReopenGameModelV1 } from './ReopenGameCard';
 import { DividendCalendarCard } from './DividendCalendarCard';
 import type { DividendCalendarViewV1 } from './dividendCalendarView';
 import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlertsStrip';
@@ -256,6 +257,8 @@ export interface MarketRealityScreenModelV1 {
   sections?: StocksSectionsModelV1 | null;
   /** What the Weekend tab says between weekends. */
   weekendQuiet?: WeekendQuietViewV1 | null;
+  /** Call the reopen: this weekend's round, its result, or when the next opens. */
+  reopen?: ReopenGameModelV1 | null;
   today?: MyStocksTodayModelV1 | null;
   /** Null for a signed-in reader. */
   visitor?: StocksVisitorNoticeV1 | null;
@@ -1937,6 +1940,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           <StocksMineSignedOut visitor={model.visitor} />
         ) : null
       ) : null}
+      {show('weekend') && model.reopen ? <ReopenGameCard model={model.reopen} /> : null}
       {show('weekend') ? (
         model.weekend ? (
           <WeekendMarketCard view={model.weekend} />

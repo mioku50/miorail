@@ -20,7 +20,11 @@ import {
   useMeasureMyStockCashOut,
   useWeekendMarket,
   useStockQuotes,
+  useReopenGame,
+  usePickReopen,
+  useClaimReopenDevice,
 } from '@mioagent/api-client-react';
+import type { ReopenDirectionV1 } from '@mioagent/rwa-market-reality/reopen-game';
 import {
   stockExecutionGoalSentenceV1,
   STOCK_EXECUTION_VERIFICATION_DEPTH_V1,
@@ -33,6 +37,7 @@ import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
 import { weekendMarketViewV1, weekendQuietViewV1 } from './weekendMarketView';
+import { reopenGameViewV1 } from './reopenGameView';
 import { stocksSectionTabsV1, type StocksSectionV1 } from './stocksSections';
 import { stockQuoteViewsByKeyV1 } from './stockQuotesView';
 import { stockUsesViewV1 } from './stockUsesView';
@@ -944,6 +949,75 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       }
     : null;
 
+  // Call the reopen. Read for everybody; a pick needs no wallet. Each tap sends
+  // the whole set, one request at a time: a tap made while one is in flight
+  // waits and goes next, so the server always ends with the last thing tapped.
+  const reopenRead = useReopenGame({ enabled, signedIn: session });
+  const pickReopen = usePickReopen();
+  useClaimReopenDevice({ signedIn: enabled && session });
+  const [reopenPending, setReopenPending] = useState<Record<string, ReopenDirectionV1> | null>(null);
+  const [reopenFailed, setReopenFailed] = useState<string | null>(null);
+  const reopenQueued = useRef<{ roundId: string; picks: Record<string, ReopenDirectionV1> } | null>(null);
+  const reopenSending = useRef(false);
+  const sendReopenPicks = (next: { roundId: string; picks: Record<string, ReopenDirectionV1> }) => {
+    reopenQueued.current = next;
+    if (reopenSending.current) return;
+    reopenSending.current = true;
+    const flush = () => {
+      const job = reopenQueued.current;
+      reopenQueued.current = null;
+      if (!job) {
+        reopenSending.current = false;
+        setReopenPending(null);
+        return;
+      }
+      pickReopen.mutate(job, {
+        onSuccess: () => flush(),
+        onError: (error) => {
+          reopenQueued.current = null;
+          reopenSending.current = false;
+          setReopenPending(null);
+          setReopenFailed(
+            /round_locked/.test(error.message)
+              ? 'Picks have closed for this round.'
+              : 'That pick was not saved. Try again in a moment.',
+          );
+        },
+      });
+    };
+    flush();
+  };
+  const reopenView = useMemo(
+    () =>
+      reopenGameViewV1(reopenRead.data ?? null, {
+        now: new Date(),
+        origin: typeof window === 'undefined' ? 'https://miorail.xyz' : window.location.origin,
+        pending: reopenPending,
+        failed: reopenFailed,
+      }),
+    [reopenRead.data, reopenPending, reopenFailed],
+  );
+  const reopen = reopenView
+    ? {
+        view: reopenView,
+        onPick:
+          reopenView.state === 'open' && reopenView.roundId
+            ? (symbol: string, side: ReopenDirectionV1) => {
+                const roundId = reopenView.roundId!;
+                const current = reopenPending ?? reopenRead.data?.me?.picks ?? {};
+                // Tapping the side already chosen takes the pick back.
+                const next = { ...current };
+                if (next[symbol] === side) delete next[symbol];
+                else next[symbol] = side;
+                setReopenFailed(null);
+                setReopenPending(next);
+                sendReopenPicks({ roundId, picks: next });
+              }
+            : undefined,
+        ...(session ? {} : input.onSignInRequired ? { onSignIn: input.onSignInRequired } : {}),
+      }
+    : null;
+
   // The unread count on "My stocks": only from the unread view, never from the
   // history a reader chose to look at.
   const inbox = session ? todayRead.data?.inbox : undefined;
@@ -965,6 +1039,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
   const model: MarketRealityScreenModelV1 = {
     sections,
     weekendQuiet: sections && !weekend ? weekendQuietViewV1(new Date()) : null,
+    reopen,
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     weekend,
     dividends,

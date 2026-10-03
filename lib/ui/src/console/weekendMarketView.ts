@@ -53,7 +53,8 @@ export function signedPercentV1(bps: number): string {
   return bps > 0 ? `+${percent}%` : bps < 0 ? `${MINUS}${percent}%` : `${percent}%`;
 }
 
-function etLabelV1(iso: string): string {
+/** "Sun 17:00 ET". */
+export function etLabelV1(iso: string): string {
   const parts = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     weekday: 'short',
@@ -65,7 +66,8 @@ function etLabelV1(iso: string): string {
   return `${value('weekday')} ${value('hour')}:${value('minute')} ET`;
 }
 
-function untilV1(iso: string, now: Date): string | null {
+/** "in 3 h", or null once it has passed. */
+export function untilV1(iso: string, now: Date): string | null {
   const minutes = Math.round((Date.parse(iso) - now.getTime()) / 60_000);
   if (minutes <= 0) return null;
   if (minutes < 60) return `in ${minutes} min`;

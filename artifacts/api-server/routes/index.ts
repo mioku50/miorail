@@ -24,6 +24,7 @@ import { x402IntelligenceRouterV1 } from './x402/intelligence';
 import { telegramLinkRouter, telegramWebhookRouter } from './telegram';
 import { stocksDividendsRouter } from './stocksDividends';
 import { stocksTodayRouter } from './stocksToday';
+import { reopenClaimRouter, reopenGameRouter } from './reopenGame';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -46,6 +47,9 @@ routes.use('/public', publicIdentityRouter);
 // Icons first: a list shows dozens at once, and they have their own limit.
 routes.use('/public/stocks', publicStockIconsRouter);
 routes.use('/public/stocks', publicStocksRouter);
+// Call the reopen is played without a wallet, so it sits before the gate too;
+// moving a device's picks to a wallet is the one part that needs a session.
+routes.use('/public/reopen', reopenGameRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
 routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);
@@ -79,3 +83,4 @@ routes.use('/telegram', telegramLinkRouter);
 // One wallet's dividends: the session's wallet, never one the client names.
 routes.use('/stocks/dividends', stocksDividendsRouter);
 routes.use('/stocks', stocksTodayRouter);
+routes.use('/reopen', reopenClaimRouter);
