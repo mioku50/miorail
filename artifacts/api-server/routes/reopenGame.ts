@@ -46,6 +46,7 @@ export const reopenGameRuntime = {
    * symbol is not an identifier. */
   stocks: async (since: Date, until: Date): Promise<WeekendMarketStockInputV1[]> => {
     const rows = await databaseWeekendRunsV1(since, until);
+    const names = await publicStocksRuntime.stockMeta.read().catch(() => new Map<string, { name: string }>());
     const byToken = new Map<string, typeof rows>();
     for (const row of rows) byToken.set(row.token, [...(byToken.get(row.token) ?? []), row]);
     const stocks: WeekendMarketStockInputV1[] = [];
@@ -58,7 +59,7 @@ export const reopenGameRuntime = {
       stocks.push({
         tokenAddress: token,
         symbol,
-        name: found.underlying.canonicalName,
+        name: names.get(token)?.name ?? found.underlying.canonicalName,
         runs: runs.map(({ at, mid, reference, referenceUpdatedAt }) => ({ at, mid, reference, referenceUpdatedAt })),
       });
     }
@@ -69,6 +70,8 @@ export const reopenGameRuntime = {
     const slot = weekendSlotStartV1(now);
     return publicStocksCachesV1.weekend.read(`weekend|${slot.getTime()}`, () => publicStocksRuntime.readWeekend(slot));
   },
+  /** Coinbase's company names, the ones the stock list shows. */
+  names: () => publicStocksRuntime.stockMeta.read(),
   storageAvailable: (): Promise<boolean> => publicStocksRuntime.storageAvailable(),
   enabled: (env: NodeJS.ProcessEnv): boolean => publicStocksRuntime.enabled(env),
   now: () => new Date(),
@@ -86,6 +89,7 @@ function depsV1(): ReopenGameDepsV1 {
     repository: reopenGameRuntime.repository(),
     stocks: reopenGameRuntime.stocks,
     weekend: reopenGameRuntime.weekend,
+    names: reopenGameRuntime.names,
   };
 }
 

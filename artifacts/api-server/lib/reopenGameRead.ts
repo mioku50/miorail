@@ -40,6 +40,10 @@ export interface ReopenGameDepsV1 {
   stocks: (since: Date, until: Date) => Promise<WeekendMarketStockInputV1[]>;
   /** The weekend card at this moment: the price on Base while it lasts. */
   weekend: (now: Date) => Promise<WeekendMarketResponseV1>;
+  /** The issuer's own company names, by lowercase token address. A display
+   * name is not part of a round's record: the close, the calls and the
+   * results are, and nothing here touches them. */
+  names?: () => Promise<ReadonlyMap<string, { name: string }>>;
 }
 
 export interface ReopenPlayerRefV1 {
@@ -147,7 +151,11 @@ export async function reopenSharedStateV1(now: Date, deps: ReopenGameDepsV1): Pr
 
   let round: ReopenSharedStateV1['round'] = null;
   if (row) {
-    const lineup = lineupOfV1(row);
+    const names = deps.names ? await deps.names().catch(() => null) : null;
+    const lineup = lineupOfV1(row).map((stock) => ({
+      ...stock,
+      name: names?.get(stock.tokenAddress)?.name ?? stock.name,
+    }));
     const calls = callsOfV1(row);
     const results = resultsOfV1(row);
     const state = results !== null ? 'settled' : nowMs < Date.parse(row.locksAt) ? 'open' : 'locked';

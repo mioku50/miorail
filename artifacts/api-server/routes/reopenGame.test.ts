@@ -61,6 +61,7 @@ function stubV1(t: test.TestContext, now: Date, signedIn: string | null = null) 
     repository: () => repository,
     stocks: async () => STOCKS,
     weekend: async (at: Date) => weekendMarketV1({ now: at, stocks: STOCKS }),
+    names: async () => new Map([[STOCKS[0]!.tokenAddress, { name: 'NVIDIA Corporation' }]]),
     storageAvailable: async () => true,
     enabled: () => true,
     now: () => clock,
@@ -100,6 +101,8 @@ describe('Call the reopen over HTTP', () => {
     assert.equal(game.round?.state, 'open');
     assert.equal(game.round?.number, 1);
     assert.equal(game.me, null);
+    // The issuer's company name where it has one, the stored one otherwise.
+    assert.deepEqual(game.round?.stocks.slice(0, 2).map((row) => row.name), ['NVIDIA Corporation', 'TSLA Inc.']);
   });
 
   test('a first pick without a wallet hands the device a token, and the token plays again', async (t) => {

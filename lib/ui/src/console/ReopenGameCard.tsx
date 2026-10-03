@@ -44,7 +44,7 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
               <li key={row.symbol} className="mr-reopen-row">
                 <div className="mr-reopen-stock">
                   <strong>{row.symbol}</strong>
-                  <span className="lnote">{row.name}</span>
+                  {row.name !== row.symbol ? <span className="lnote">{row.name}</span> : null}
                 </div>
                 <div className="mr-reopen-nums mono">
                   <span>Fri {row.close}</span>
