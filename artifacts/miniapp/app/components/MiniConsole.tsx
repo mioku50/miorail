@@ -110,6 +110,7 @@ import {
   useStocksConsoleV1,
   useRadarConsoleV1,
   type StocksConsoleQuestionV1,
+  type StocksSectionV1,
   lookalikeFeedViewV1,
   officialAssetsViewV1,
   signalFeedViewV1,
@@ -2039,6 +2040,7 @@ export function MiniConsole() {
   // the question is stored (component state, because there is no URL bar) and
   // what happens when a reader asks to leave a screen.
   // -------------------------------------------------------------------------
+  const [stocksSection, setStocksSection] = useState<StocksSectionV1>("market");
   const [stocksQuestion, setStocksQuestion] = useState<StocksConsoleQuestionV1>({
     underlyingKey: null,
     direction: "sell",
@@ -2056,6 +2058,9 @@ export function MiniConsole() {
     status.isError && String((status.error as Error | null)?.message ?? "").includes("authentication_required");
   const stocks = useStocksConsoleV1({
     question: stocksQuestion,
+    // The same four tabs as the web. No address bar here, so the tab is state.
+    section: stocksSection,
+    onSection: setStocksSection,
     enabled: stocksSignedOut ? true : routeIntelligenceOn,
     access: stocksSignedOut ? "public" : "session",
     // Signed out, `/status` answers 401 and every flag reads false. The Base

@@ -8,6 +8,9 @@ import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   MarketRealityScreen,
   STOCKS_CONSOLE_DEFAULT_SIZE_V1,
+  STOCKS_SECTION_LABELS_V1,
+  STOCKS_SECTION_PATHS_V1,
+  stocksSectionOfSegmentV1,
   chainBlockNumberV1,
   chainGasLabelV1,
   chainLabelV1,
@@ -20,6 +23,7 @@ import {
   type MarketRealityHistoryPeriodV1,
   type MarketRealitySurfaceV1,
   type StocksConsoleQuestionV1,
+  type StocksSectionV1,
 } from '@mioagent/ui';
 import { useGiftHolding, useResolveGiftRecipient, useSponsoredGasStatus, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
@@ -103,9 +107,16 @@ function searchFromPatchV1(
   return params.toString();
 }
 
-export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
+export function MarketRealityPage({ symbol: segment }: { symbol?: string | null } = {}) {
   const [location, navigate] = useLocation();
   const search = useSearch();
+  // `/stocks/mine`, `/stocks/dividends` and `/stocks/weekend` name a tab of
+  // Stocks; every other word after `/stocks/` is a ticker. A shared weekend
+  // post links to `/stocks?weekend=<slot>`, and opens on the Weekend tab.
+  const section = stocksSectionOfSegmentV1(segment);
+  const symbol = section ? null : segment;
+  const current: StocksSectionV1 =
+    section ?? (location === '/stocks' && new URLSearchParams(search).has('weekend') ? 'weekend' : 'market');
   const { address } = useAccount();
   const { theme, setTheme } = useConsoleTheme();
   const status = useStatus();
@@ -134,6 +145,11 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
   const giftHolding = useGiftHolding();
   const stocks = useStocksConsoleV1({
     question,
+    section: current,
+    onSection: (next) => {
+      if (next !== current) navigate(STOCKS_SECTION_PATHS_V1[next]);
+    },
+    sectionHref: (next) => STOCKS_SECTION_PATHS_V1[next],
     enabled,
     access,
     preferredSymbol: symbol ?? null,
@@ -266,7 +282,7 @@ export function MarketRealityPage({ symbol }: { symbol?: string | null } = {}) {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Stocks'],
+        crumb: ['Stocks', ...(current === 'market' ? [] : [STOCKS_SECTION_LABELS_V1[current]])],
         nav: nav.header,
         onNavigate: nav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),

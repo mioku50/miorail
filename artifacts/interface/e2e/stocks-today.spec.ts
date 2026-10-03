@@ -145,7 +145,7 @@ for (const width of [1440, 390]) {
       WALLET,
     );
     await fixture.install(page);
-    await page.goto('/stocks');
+    await page.goto('/stocks/mine');
     const card = page.getByRole('region', { name: 'My stocks today', exact: true });
     await expect(card.getByRole('heading', { name: 'Unread updates' })).toBeVisible();
     await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
@@ -159,7 +159,7 @@ for (const width of [1440, 390]) {
     await card.getByRole('button', { name: 'Older updates', exact: true }).click();
     await expect(card.getByRole('button', { name: 'Newest updates' })).toBeVisible();
     await card.getByRole('button', { name: 'Mark as read', exact: true }).click();
-    await expect(card.getByText(/Read receipt saved/)).toBeVisible();
+    await expect(card.getByText(/Marked as read/)).toBeVisible();
     await card.getByRole('button', { name: 'Newest updates' }).click();
     await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
     await card.getByRole('button', { name: 'Mark as read', exact: true }).click();
@@ -168,7 +168,7 @@ for (const width of [1440, 390]) {
     try {
       const second = await otherContext.newPage();
       await fixture.install(second);
-      await second.goto('/stocks');
+      await second.goto('/stocks/mine');
       const secondCard = second.getByRole('region', { name: 'My stocks today', exact: true });
       await expect(secondCard.getByText(/No unread update/)).toBeVisible();
       await secondCard.getByRole('button', { name: 'History', exact: true }).click();
@@ -184,7 +184,7 @@ for (const width of [1440, 390]) {
       await card.screenshot({ path: `/tmp/miorail-shared-inbox-${width}.png` });
       const foreign = await otherContext.newPage();
       await fixture.install(foreign, '0x2222222222222222222222222222222222222222');
-      await foreign.goto('/stocks');
+      await foreign.goto('/stocks/mine');
       await expect(
         foreign
           .getByRole('region', { name: 'My stocks today', exact: true })
@@ -242,7 +242,7 @@ for (const width of [1440, 390]) {
       read = true;
       return route.fulfill({ json: { reviewedAt: NOW.toISOString(), markedCount: 3 } });
     });
-    await page.goto('/stocks');
+    await page.goto('/stocks/mine');
     const card = page.getByRole('region', { name: 'My stocks today', exact: true });
     const headline = card.getByText('NVDAc: Shares per token changed', { exact: true });
     await expect(headline).toHaveCount(1);
@@ -284,24 +284,24 @@ test('unavailable data and failed persistence keep updates unread and show a ret
 }) => {
   const fixture = sharedInboxFixture();
   await fixture.install(page);
-  await page.goto('/stocks');
+  await page.goto('/stocks/mine');
   const card = page.getByRole('region', { name: 'My stocks today', exact: true });
   await expect(card.getByRole('button', { name: 'Mark this page as read' })).toBeEnabled();
   fixture.failSave(true);
   await card.getByRole('button', { name: 'Mark this page as read' }).click();
-  await expect(card.getByRole('alert')).toHaveText(/Could not save the read receipt/);
+  await expect(card.getByRole('alert')).toHaveText(/Could not mark these as read/);
   await page.reload();
   await expect(card.getByText('Your stock', { exact: true })).toBeVisible();
   fixture.failRead(true);
   await card.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(card.getByRole('button', { name: 'Mark this page as read' })).toBeDisabled();
-  await expect(card.getByText(/Changes could not be read/)).toBeVisible();
+  await expect(card.getByText(/Updates could not be read/)).toBeVisible();
   fixture.failRead(false);
   fixture.failSave(false);
   await card.getByRole('button', { name: 'Refresh', exact: true }).click();
   await expect(card.getByRole('button', { name: 'Mark this page as read' })).toBeEnabled();
   await card.getByRole('button', { name: 'Mark this page as read' }).click();
-  await expect(card.getByText(/Read receipt saved/)).toBeVisible();
+  await expect(card.getByText(/Marked as read/)).toBeVisible();
 });
 
 for (const width of [1440, 390]) {
@@ -383,7 +383,7 @@ for (const width of [1440, 390]) {
         return route.fulfill({ json: fixture('nvda-market') });
       return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
     });
-    await page.goto('/stocks');
+    await page.goto('/stocks/mine');
     const card = page.getByRole('region', { name: 'My stocks today', exact: true });
     await expect(card.getByRole('button', { name: 'Check cash out', exact: true })).toBeVisible();
     expect(quoteCalls).toBe(0);

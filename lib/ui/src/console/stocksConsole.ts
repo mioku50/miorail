@@ -32,7 +32,8 @@ import {
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
-import { weekendMarketViewV1 } from './weekendMarketView';
+import { weekendMarketViewV1, weekendQuietViewV1 } from './weekendMarketView';
+import { stocksSectionTabsV1, type StocksSectionV1 } from './stocksSections';
 import { stockQuoteViewsByKeyV1 } from './stockQuotesView';
 import { stockUsesViewV1 } from './stockUsesView';
 import { dividendCalendarViewV1 } from './dividendCalendarView';
@@ -124,6 +125,14 @@ export function stocksConsoleFailureCopyV1(error: unknown, subject: string): str
 
 export interface StocksConsoleInputV1 {
   question: StocksConsoleQuestionV1;
+  /**
+   * Which tab of Stocks is showing. The web keeps it in the path, the Base App
+   * in state. Absent: every part on one page.
+   */
+  section?: StocksSectionV1;
+  onSection?: (section: StocksSectionV1) => void;
+  /** Where each tab lives, on a surface with addresses. */
+  sectionHref?: (section: StocksSectionV1) => string;
   /** Apply a change to the question. The caller decides where it is stored. */
   onQuestion: (patch: StocksConsoleQuestionPatchV1) => void;
   /** `routeIntelligenceV1` on this deployment. */
@@ -935,7 +944,27 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       }
     : null;
 
+  // The unread count on "My stocks": only from the unread view, never from the
+  // history a reader chose to look at.
+  const inbox = session ? todayRead.data?.inbox : undefined;
+  const unread = inbox && inbox.view === 'unread' ? inbox.heldCount + inbox.watchedCount : null;
+  const sections =
+    input.section && input.onSection
+      ? {
+          current: input.section,
+          onSection: input.onSection,
+          tabs: stocksSectionTabsV1({
+            unread,
+            unreadMore: Boolean(inbox?.nextCursor),
+            weekendLive: weekend?.state === 'in_progress',
+            href: input.sectionHref ?? null,
+          }),
+        }
+      : null;
+
   const model: MarketRealityScreenModelV1 = {
+    sections,
+    weekendQuiet: sections && !weekend ? weekendQuietViewV1(new Date()) : null,
     visitor: session ? null : stocksVisitorNoticeV1(input.onSignInRequired),
     weekend,
     dividends,

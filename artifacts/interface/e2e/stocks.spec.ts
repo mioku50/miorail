@@ -97,6 +97,8 @@ for (const width of [1440, 390]) {
     await choice.click();
     await expect(choice).toHaveAttribute('aria-selected', 'true');
     await expect(page).toHaveURL(new RegExp(encodeURIComponent(market.question.underlyingKey)));
+    // The identifiers are evidence, folded under the card since 2026-10-03.
+    await page.getByText('How we know this', { exact: false }).first().click();
     await expect(page.getByText(`ISIN ${netflix.isin}`, { exact: true }).first()).toBeVisible();
     await expect(page.getByText('No reviewed reference feed is established for this exact address.', { exact: false }).first()).toBeAttached();
     await page.reload();

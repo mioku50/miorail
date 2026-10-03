@@ -1,4 +1,5 @@
 import {
+  nextWeekendStartV1,
   weekendStampV1,
   type WeekendMarketResponseV1,
   type WeekendMarketStockV1,
@@ -160,5 +161,22 @@ export function weekendMarketViewV1(
           ? `The weekend on Base: before Wall Street reopened, tokenized stocks on Base were on the same side of Friday's close as the reopen for ${called.sameDirection} of ${called.meaningful}.`
           : 'The weekend on Base, measured: where tokenized stocks traded while Wall Street was closed, and where they reopened.',
     }),
+  };
+}
+
+/** The Weekend tab between weekends: when the next one starts, and what the
+ * tab shows then. Never a number: there is nothing measured to show. */
+export interface WeekendQuietViewV1 {
+  title: string;
+  lede: string;
+}
+
+export function weekendQuietViewV1(now: Date): WeekendQuietViewV1 {
+  const start = nextWeekendStartV1(now);
+  const until = start ? untilV1(start, now) : null;
+  const when = start ? `${etLabelV1(start)}${until ? ` (${until})` : ''}` : 'on Friday evening';
+  return {
+    title: 'The weekend on Base',
+    lede: `Wall Street is open now. It closes for the weekend ${when}. From then until the reopen, these tokens keep trading on Base, and this tab shows where they trade against Friday's close, then where they reopened.`,
   };
 }

@@ -4,6 +4,7 @@ import test, { describe } from 'node:test';
 import {
   WeekendMarketResponseV1Schema,
   etInstantV1,
+  nextWeekendStartV1,
   weekendMarketV1,
   weekendWindowV1,
   weekendSlotStartV1,
@@ -240,5 +241,24 @@ describe('the weekend as a link names it', () => {
     for (const stamp of ['20260926T0741Z', '20260231T0740Z', '20261326T0740Z', '20260926T2440Z', '20260926T0740', ' 20260926T0740Z', '20260926t0740z', '2026-09-26T07:40Z']) {
       assert.equal(weekendStampInstantV1(stamp), null, stamp);
     }
+  });
+});
+
+describe('the next quiet period, for a weekday page', () => {
+  test('on a Wednesday it is Friday 20:00 ET', () => {
+    assert.equal(nextWeekendStartV1(new Date('2026-10-07T15:00:00.000Z')), etInstantV1('2026-10-09', 20 * 60).toISOString());
+  });
+
+  test('on Friday afternoon it is that evening, and once it has begun it is the next one', () => {
+    assert.equal(nextWeekendStartV1(new Date('2026-10-09T18:00:00.000Z')), etInstantV1('2026-10-09', 20 * 60).toISOString());
+    assert.equal(nextWeekendStartV1(new Date('2026-10-10T12:00:00.000Z')), etInstantV1('2026-10-16', 20 * 60).toISOString());
+  });
+
+  test('before Thanksgiving it is Wednesday evening', () => {
+    assert.equal(nextWeekendStartV1(new Date('2026-11-24T15:00:00.000Z')), etInstantV1('2026-11-25', 20 * 60).toISOString());
+  });
+
+  test('past the reviewed calendar it is not guessed', () => {
+    assert.equal(nextWeekendStartV1(new Date('2030-01-02T15:00:00.000Z')), null);
   });
 });

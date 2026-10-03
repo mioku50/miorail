@@ -1573,6 +1573,25 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   box-shadow: inset 0 0 0 1px var(--accent-line); }
 .mio-console .mr-surface-tabs button:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
 
+/* Stocks' own four tabs (2026-10-04): Market, My stocks, Dividends, Weekend.
+   Four equal columns, so the bar fills a phone and never scrolls sideways, in
+   the evidence tabs' pressed look. Links on the web, buttons in the Base App. */
+.mio-console .mr-sections { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(0, 1fr); gap: 4px;
+  margin: 0 0 12px; padding: 4px; border: 0; border-radius: calc(var(--r) + 3px); background: var(--panel2);
+  box-shadow: inset 0 0 0 1px var(--line); backdrop-filter: none; }
+.mio-console .mr-sections .item { display: block; min-width: 0; padding: 8px 6px; border: 0; border-radius: var(--r);
+  font: inherit; font-size: var(--fs-body); font-weight: 650; letter-spacing: -.005em; color: var(--muted);
+  text-align: center; text-decoration: none; background: transparent; cursor: pointer; white-space: nowrap;
+  overflow: hidden; text-overflow: ellipsis; transition: background .12s, color .12s, box-shadow .12s; }
+.mio-console .mr-sections .item:hover { color: var(--ink); background: var(--n-bg); }
+.mio-console .mr-sections .item.on { color: var(--ink); background: var(--node-a-bg);
+  box-shadow: inset 0 0 0 1px var(--accent-line); }
+.mio-console .mr-sections .item:focus-visible { outline: 2px solid var(--accent-line); outline-offset: 2px; }
+.mio-console .mr-sections .n { color: var(--faint); font-weight: 600; }
+@media (max-width: 520px) {
+  .mio-console .mr-sections .item { padding: 8px 2px; font-size: var(--fs-meta); }
+}
+
 /* Direction and size, two rails on one line so the question reads as one
    sentence rather than as two unrelated controls. */
 .mio-console .mr-question { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }

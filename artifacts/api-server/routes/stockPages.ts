@@ -268,6 +268,46 @@ export function stockPageMetaV1(input: {
   };
 }
 
+/**
+ * Stocks' own tabs: `/stocks/mine`, `/stocks/dividends`, `/stocks/weekend`.
+ * They share the ticker form of the address, so they are answered before a
+ * ticker is looked up; otherwise each would be a 404 "no such stock".
+ */
+export const STOCK_SECTION_PAGES_V1 = ['mine', 'dividends', 'weekend'] as const;
+export type StockSectionPageV1 = (typeof STOCK_SECTION_PAGES_V1)[number];
+
+export function stockSectionMetaV1(origin: string, section: StockSectionPageV1): StockPageMetaV1 {
+  if (section === 'mine') {
+    // A page about one reader's own wallet: nothing on it is for a search index.
+    return {
+      title: 'My stocks on Base · Miorail',
+      description:
+        'Your tokenized stocks on Base: what they fetch now, what changed about them, and the dividends that reached them. Read from your own wallet once you sign in.',
+      canonicalUrl: null,
+      imageUrl: `${origin}/og-stocks.png`,
+      noindex: true,
+    };
+  }
+  if (section === 'dividends') {
+    return {
+      title: 'Dividends on tokenized stocks on Base · Miorail',
+      description:
+        'When each Coinbase tokenized stock on Base pays next, about how much reaches one token, and what each past dividend did to it, read from the token. No wallet needed to look.',
+      canonicalUrl: `${origin}/stocks/dividends`,
+      imageUrl: `${origin}/og-stocks.png`,
+      noindex: false,
+    };
+  }
+  return {
+    title: 'The weekend on Base · Miorail',
+    description:
+      "While Wall Street is closed, tokenized stocks keep trading on Base: where they trade against Friday's close, and where they reopened. No wallet needed to look.",
+    canonicalUrl: `${origin}/stocks/weekend`,
+    imageUrl: `${origin}/og-stocks.png`,
+    noindex: false,
+  };
+}
+
 function listMetaV1(origin: string): StockPageMetaV1 {
   return {
     title: 'Tokenized stocks on Base, measured · Miorail',
@@ -433,6 +473,11 @@ stockPagesRouter.get('/stocks/:symbol', async (req: Request, res: Response) => {
   }
   const origin = stockPagesRuntime.origin();
   const symbol = String(req.params.symbol ?? '');
+  const section = STOCK_SECTION_PAGES_V1.find((page) => page === symbol.toLowerCase());
+  if (section) {
+    sendDocumentV1(res, 200, renderStockPageHtmlV1(html, stockSectionMetaV1(origin, section)));
+    return;
+  }
   if (!SYMBOL_PATTERN_V1.test(symbol)) {
     sendDocumentV1(res, 404, renderStockPageHtmlV1(html, notFoundMetaV1(origin)));
     return;
@@ -489,17 +534,19 @@ stockPagesRouter.get('/stocks/:symbol', async (req: Request, res: Response) => {
  */
 stockPagesRouter.get('/sitemap.xml', async (_req: Request, res: Response) => {
   const origin = stockPagesRuntime.origin();
-  const paths = ['/stocks', '/is-it-real'];
+  // The public tabs of Stocks are pages of their own; My stocks is a wallet's
+  // and is not listed.
+  const paths = ['/stocks', '/stocks/dividends', '/stocks/weekend', '/is-it-real'];
   try {
     if (stockPagesRuntime.enabled(process.env)) {
       const stocks = await stockPagesRuntime.stocks();
       const symbols = [
         ...new Set(stocks.filter((row) => row.coinbaseIssued).map((row) => row.symbol.toLowerCase())),
       ].sort();
-      paths.splice(1, 0, ...symbols.map((symbol) => `/stocks/${symbol}`));
+      paths.splice(3, 0, ...symbols.map((symbol) => `/stocks/${symbol}`));
     }
   } catch (error) {
-    // A sitemap with the two fixed pages is still a true one.
+    // A sitemap with the fixed pages alone is still a true one.
     logger.warn('Sitemap could not read the stock corpus', {
       errorName: error instanceof Error ? error.name : typeof error,
     });

@@ -215,6 +215,30 @@ export function weekendWindowV1(
   };
 }
 
+/**
+ * When the next quiet period begins, for a page with none to show: 20:00 ET
+ * on the last session before a day without one. Null past the reviewed
+ * calendar, because the end of our calendar is not a weekend.
+ */
+export function nextWeekendStartV1(
+  now: Date,
+  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+): string | null {
+  const today = etPartsV1(now).localDate;
+  for (let offset = 0; offset <= 14; offset += 1) {
+    const date = shiftDateV1(today, offset);
+    if (!sessionOnV1(date, calendar)) continue;
+    const next = shiftDateV1(date, 1);
+    if (next > calendar.validThrough) return null;
+    // A session tomorrow means the overnight session opens at 20:00 tonight:
+    // a weeknight never goes quiet.
+    if (sessionOnV1(next, calendar)) continue;
+    const start = etInstantV1(date, 20 * 60);
+    if (start.getTime() > now.getTime()) return start.toISOString();
+  }
+  return null;
+}
+
 function medianV1(values: readonly number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);

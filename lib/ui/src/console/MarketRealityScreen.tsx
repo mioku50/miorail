@@ -39,7 +39,8 @@ import { WeekendMarketCard } from './WeekendMarketCard';
 import { DividendCalendarCard } from './DividendCalendarCard';
 import type { DividendCalendarViewV1 } from './dividendCalendarView';
 import { TelegramAlertsStrip, type TelegramAlertsModelV1 } from './TelegramAlertsStrip';
-import type { WeekendMarketViewV1 } from './weekendMarketView';
+import type { WeekendMarketViewV1, WeekendQuietViewV1 } from './weekendMarketView';
+import type { StocksSectionsModelV1, StocksSectionV1 } from './stocksSections';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
 import { stockPriceNoteV1, type StockQuoteViewV1 } from './stockQuotesView';
 import type { StockUsesViewV1 } from './stockUsesView';
@@ -250,6 +251,11 @@ export interface StocksVisitorNoticeV1 {
 }
 
 export interface MarketRealityScreenModelV1 {
+  /** Stocks as four tabs: Market, My stocks, Dividends, Weekend. Absent: every
+   * part on one page, which is how the board was laid out before 2026-10-04. */
+  sections?: StocksSectionsModelV1 | null;
+  /** What the Weekend tab says between weekends. */
+  weekendQuiet?: WeekendQuietViewV1 | null;
   today?: MyStocksTodayModelV1 | null;
   /** Null for a signed-in reader. */
   visitor?: StocksVisitorNoticeV1 | null;
@@ -1805,6 +1811,74 @@ export function GiftForm({
   );
 }
 
+/**
+ * The four tabs of Stocks. A link where the surface has addresses, so a tab can
+ * be opened in a new window or shared; a button in the Base App. Either way
+ * the tab changes in place, without reloading the page.
+ */
+function StocksSectionBar({ model }: { model: StocksSectionsModelV1 }) {
+  return (
+    <nav className="tabbar mr-sections" aria-label="Stocks">
+      {model.tabs.map((tab) => {
+        const on = tab.key === model.current;
+        const body = (
+          <>
+            {tab.label}
+            {tab.note ? <span className="n"> · {tab.note}</span> : null}
+          </>
+        );
+        return tab.href ? (
+          <a
+            key={tab.key}
+            href={tab.href}
+            className={`item${on ? ' on' : ''}`}
+            aria-current={on ? 'page' : undefined}
+            onClick={(event) => {
+              // A modified click is the reader asking for a new tab or window.
+              if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0) return;
+              event.preventDefault();
+              model.onSection(tab.key);
+            }}
+          >
+            {body}
+          </a>
+        ) : (
+          <button
+            key={tab.key}
+            type="button"
+            className={`item${on ? ' on' : ''}`}
+            aria-current={on ? 'page' : undefined}
+            onClick={() => model.onSection(tab.key)}
+          >
+            {body}
+          </button>
+        );
+      })}
+    </nav>
+  );
+}
+
+/** My stocks for a reader with no wallet signed in: what the tab holds, and
+ * the way in. Nothing about any wallet is shown or guessed. */
+function StocksMineSignedOut({ visitor }: { visitor: StocksVisitorNoticeV1 | null | undefined }) {
+  return (
+    <div className="mr-scope" aria-label="My stocks">
+      <div>
+        <h3>Your stocks</h3>
+        <p className="lnote">
+          What your stocks fetch now, what changed about them, and the dividends that reached them are read from your
+          own wallet. Sign in to see yours; nothing is signed or sent.
+        </p>
+      </div>
+      {visitor?.onSignIn ? (
+        <button type="button" className="btn" onClick={visitor.onSignIn}>
+          {visitor.action}
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
 export function MarketRealityScreen({ model }: { model: MarketRealityScreenModelV1 }) {
   const { actions } = model;
   // Membership, not order. `inComparison` comes from the view, which reads it
@@ -1837,9 +1911,13 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
   useEffect(() => {
     if (wantsEvidence) setEvidenceOpen(true);
   }, [wantsEvidence]);
+  // Null: one page with every part on it.
+  const section: StocksSectionV1 | null = model.sections?.current ?? null;
+  const show = (part: StocksSectionV1) => section === null || section === part;
   return (
     <section className="mr" aria-label="Market Reality">
-      {model.visitor ? (
+      {model.sections ? <StocksSectionBar model={model.sections} /> : null}
+      {show('market') && model.visitor ? (
         <div className="mr-scope" aria-label="Reading without signing in">
           <div>
             <h3>{model.visitor.title}</h3>
@@ -1852,10 +1930,37 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           ) : null}
         </div>
       ) : null}
-      {model.today ? <MyStocksTodayCard model={model.today} /> : null}
-      {model.weekend ? <WeekendMarketCard view={model.weekend} /> : null}
-      {model.dividends ? <DividendCalendarCard view={model.dividends} /> : null}
-      {model.telegram ? <TelegramAlertsStrip model={model.telegram} /> : null}
+      {show('mine') ? (
+        model.today ? (
+          <MyStocksTodayCard model={model.today} />
+        ) : section === 'mine' ? (
+          <StocksMineSignedOut visitor={model.visitor} />
+        ) : null
+      ) : null}
+      {show('weekend') ? (
+        model.weekend ? (
+          <WeekendMarketCard view={model.weekend} />
+        ) : section === 'weekend' && model.weekendQuiet ? (
+          <section className="panel" aria-label={model.weekendQuiet.title}>
+            <div className="ph">
+              <h3>{model.weekendQuiet.title}</h3>
+            </div>
+            <div className="pb">
+              <p className="lnote">{model.weekendQuiet.lede}</p>
+            </div>
+          </section>
+        ) : null
+      ) : null}
+      {show('dividends') ? (
+        model.dividends ? (
+          <DividendCalendarCard view={model.dividends} all={section === 'dividends'} />
+        ) : section === 'dividends' ? (
+          <p className="empty">Reading the dividend calendar…</p>
+        ) : null
+      ) : null}
+      {show('mine') && model.telegram ? <TelegramAlertsStrip model={model.telegram} /> : null}
+      {show('market') ? (
+      <>
       {/* What this page is, before what it counts. Coinbase B20 is the standard
           Base documents for tokenized stocks on this chain, and it is the scope
           a reader lands in; the wider corpus is one press away and is named
@@ -2308,6 +2413,8 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
         </>
       )}
       </details>
+      </>
+      ) : null}
     </section>
   );
 }

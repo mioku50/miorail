@@ -179,6 +179,8 @@ test('the sitemap lists the Coinbase-issued stock pages and the fixed pages', as
   const locs = [...response.text.matchAll(/<loc>([^<]+)<\/loc>/g)].map((match) => match[1]);
   assert.deepEqual(locs, [
     'https://miorail.xyz/stocks',
+    'https://miorail.xyz/stocks/dividends',
+    'https://miorail.xyz/stocks/weekend',
     'https://miorail.xyz/stocks/aapl',
     'https://miorail.xyz/stocks/nvda',
     'https://miorail.xyz/is-it-real',
@@ -192,7 +194,22 @@ test('a sitemap whose corpus will not answer still lists the fixed pages', async
     },
   });
   const response = await request(appV1()).get('/sitemap.xml').expect(200);
-  assert.equal([...response.text.matchAll(/<loc>/g)].length, 2);
+  assert.equal([...response.text.matchAll(/<loc>/g)].length, 4);
+});
+
+test('a tab of Stocks is a page with its own head, not an unknown ticker', async (t) => {
+  const asked = stubV1(t);
+  const dividends = (await request(appV1()).get('/stocks/dividends').expect(200)).text;
+  assert.match(dividends, /<title>Dividends on tokenized stocks on Base · Miorail<\/title>/);
+  assert.match(dividends, /href="https:\/\/miorail\.xyz\/stocks\/dividends"/);
+  const weekend = (await request(appV1()).get('/stocks/weekend').expect(200)).text;
+  assert.match(weekend, /<title>The weekend on Base · Miorail<\/title>/);
+  // One reader's own wallet: nothing on it is for a search index.
+  const mine = (await request(appV1()).get('/stocks/mine').expect(200)).text;
+  assert.match(mine, /<meta name="robots" content="noindex" \/>/);
+  assert.doesNotMatch(mine, /rel="canonical"/);
+  // No ticker was looked up for any of them.
+  assert.deepEqual(asked, []);
 });
 
 test('a burst of unfurls reads the ladder once', async (t) => {
