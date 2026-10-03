@@ -54,9 +54,12 @@ export function createDatabaseStockInboxRepositoryV1(
             s.kind = ANY(${[...STOCK_INBOX_SIZED_KINDS_V1]}::text[])
             AND s.facts->>'requestedCashAtomic' ~ '^[0-9]{1,30}$'
             AND EXISTS (
-              SELECT 1 FROM unnest(${capAddresses}::text[], ${capSizes}::numeric[]) AS cap(address, max_cash)
+              -- text[] and a cast here: the app's driver cannot bind a numeric[]
+              -- parameter ("Received an instance of Array"), so production
+              -- read every overview as unavailable while a test client passed.
+              SELECT 1 FROM unnest(${capAddresses}::text[], ${capSizes}::text[]) AS cap(address, max_cash)
               WHERE cap.address = s.subject_address
-                AND (s.facts->>'requestedCashAtomic')::numeric > cap.max_cash
+                AND (s.facts->>'requestedCashAtomic')::numeric > cap.max_cash::numeric
             )
           )
       ), grouped AS (
