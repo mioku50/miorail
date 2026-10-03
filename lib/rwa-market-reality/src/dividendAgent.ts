@@ -70,15 +70,23 @@ export function dividendEventSentenceV1(event: DividendEventV1, stock: DividendS
   return `${company}.`;
 }
 
+/** A notice the issuer logged in the token. Its words are the issuer's, in
+ * quotes, and the sentence says what the notice does not: an amount or a date. */
+export function dividendNoticeSentenceV1(stock: DividendStockV1): string {
+  const notice = stock.notice!;
+  return `Ahead for ${stock.symbol}: the issuer logged “${notice.description}” in the ${stock.tokenSymbol} contract on ${notice.at.slice(0, 10)}, and the token has not converted a dividend since. The notice names no amount and no date.`;
+}
+
 /** The whole calendar, or one stock of it, as sentences an assistant can repeat. */
 export function dividendCalendarSummaryV1(calendar: DividendCalendarResponseV1): string {
   const sentences: string[] = [];
   for (const stock of calendar.stocks) {
     if (stock.next) sentences.push(`Next for ${stock.symbol}: ${dividendEventSentenceV1(stock.next, stock)}`);
+    if (stock.notice) sentences.push(dividendNoticeSentenceV1(stock));
     const last = stock.history[0];
     if (last) sentences.push(`Last for ${stock.symbol}: ${dividendEventSentenceV1(last, stock)}`);
   }
-  const silent = calendar.stocks.filter((stock) => stock.next === null && stock.history.length === 0);
+  const silent = calendar.stocks.filter((stock) => stock.next === null && stock.history.length === 0 && !stock.notice);
   const quiet = silent.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   const unread = silent.filter((stock) => !dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   if (quiet.length > 0) sentences.push(`No dividend on record: ${quiet.join(', ')}.`);

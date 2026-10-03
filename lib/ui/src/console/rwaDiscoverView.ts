@@ -1202,7 +1202,9 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
       // Miorail knows is that the bracket opened, in this transaction; what it
       // is about is what the contract said, verbatim or not at all.
       if (said) {
-        return `${ticker} announced onchain${id ? ` (${id})` : ''}: “${said}”. The action executed inside this announcement; Miorail reports the event, not its consequences.`;
+        // Not "the action executed inside it": Coinbase's notices ahead of a
+        // dividend are brackets with nothing inside (AEOc, 2026-10-03).
+        return `${ticker} announced onchain${id ? ` (${id})` : ''}: “${said}”. Miorail reports the announcement, not its consequences.`;
       }
       return `${ticker} announced a corporate action onchain${id ? ` (${id})` : ''}. Its description was published in a form this build cannot read, so the event is recorded and its words are not.`;
     }

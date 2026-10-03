@@ -1,4 +1,4 @@
-import { b20MultiplierStandingV1, type B20MultiplierEventV1 } from '@mioagent/b20-control';
+import { b20MultiplierStandingV1, decodeB20CorporateActionLogV1, type B20MultiplierEventV1 } from '@mioagent/b20-control';
 import { client } from '@mioagent/db';
 import {
   createDatabaseB20CorporateActionRepository,
@@ -9,6 +9,7 @@ import {
   createDatabaseUnderlyingAssetRepository,
   dividendSupplyDecimalV1,
   readPublicLadderMidsV1,
+  type B20CorporateActionRowV1,
 } from '@mioagent/route-storage';
 import { mergeDividendDeclarationsV1 } from '@mioagent/rwa-market-reality/dividend-sources';
 import {
@@ -17,6 +18,7 @@ import {
   type DividendCalendarResponseV1,
   type DividendDeclarationV1,
   type DividendMultiplierChangeV1,
+  type DividendNoticeInputV1,
   type DividendTokenV1,
 } from '@mioagent/rwa-market-reality/dividends';
 
@@ -50,6 +52,9 @@ export interface DividendReadDepsV1 {
   readings(tokens: readonly string[]): Promise<Array<{ tokenAddress: string; rawValue: string; scale: string; blockNumber: number; readAt: string }>>;
   transitions(tokens: readonly string[]): Promise<Array<{ tokenAddress: string; fromRawValue: string; toRawValue: string; scale: string; observedAt: string }>>;
   multiplierEvents(tokenAddress: string): Promise<B20MultiplierEventV1[]>;
+  /** The issuer's announcements on one token, decoded from their logs.
+   * Absent: no notice is read, and the calendar says nothing about one. */
+  notices?(tokenAddress: string): Promise<DividendNoticeInputV1[]>;
   supplies(tokens: readonly string[]): Promise<Array<{ tokenAddress: string; recordDate: string; supply: string }>>;
   /** Reference prices per share, as the feed published them in a window. */
   references(tokens: readonly string[], window: { since: Date; until: Date }): Promise<Array<{ tokenAddress: string; at: string; price: number }>>;
@@ -107,7 +112,10 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
       const readingRow = readings.find((row) => row.tokenAddress === identity.tokenAddress);
       const readingWad = readingRow ? toWadV1(readingRow.rawValue, readingRow.scale) : null;
       const reading = readingRow && readingWad ? { multiplierWad: readingWad, readAt: readingRow.readAt } : null;
-      const events = await deps.multiplierEvents(identity.tokenAddress);
+      const [events, notices] = await Promise.all([
+        deps.multiplierEvents(identity.tokenAddress),
+        deps.notices ? deps.notices(identity.tokenAddress) : Promise.resolve([]),
+      ]);
       const standing = b20MultiplierStandingV1({
         events,
         reading: reading && readingRow ? { multiplierWad: reading.multiplierWad, blockNumber: readingRow.blockNumber, blockTime: reading.readAt } : null,
@@ -144,7 +152,7 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
             !changes.some((seen) => seen.toWad === change.multiplierWad),
         )
         .map((change) => ({ multiplierWad: change.multiplierWad, effectiveAt: change.effectiveAt! }));
-      return { identity, reading, changes, planned };
+      return { identity, reading, changes, planned, notices };
     }),
   );
 
@@ -156,7 +164,7 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
   ];
   const references = (await Promise.all(windows.map((window) => deps.references(addresses, window)))).flat();
 
-  for (const { identity, reading, changes, planned } of perToken) {
+  for (const { identity, reading, changes, planned, notices } of perToken) {
     const prices = references.filter((row) => row.tokenAddress === identity.tokenAddress);
     const declared = declarations.find((row) => row.underlyingKey === identity.underlyingKey);
     tokens.push({
@@ -172,9 +180,54 @@ export async function readDividendCalendarV1(now: Date, deps: DividendReadDepsV1
         supplies.filter((row) => row.tokenAddress === identity.tokenAddress).map((row) => [row.recordDate, row.supply]),
       ),
       priceNow: priceAtV1(prices, now.getTime(), PRICE_NOW_MAX_AGE_MS_V1),
+      notices,
     });
   }
   return dividendCalendarV1({ now, tokens, declarations });
+}
+
+/**
+ * A token's announcements, as notices: the issuer's id and words, and whether
+ * the same transaction moved the multiplier.
+ *
+ * Read from the stored log, not only from the decoded columns. Every
+ * announcement before 2026-10-04 was stored `topic_only`, because the decoder
+ * did not yet know that Coinbase indexes the caller. The raw topics and data
+ * were kept for exactly this.
+ */
+export function dividendNoticesFromActionsV1(rows: readonly B20CorporateActionRowV1[]): DividendNoticeInputV1[] {
+  const moved = new Set(
+    rows
+      .filter((row) => row.event === 'multiplier_updated' || row.event === 'ui_multiplier_updated')
+      .map((row) => row.transactionHash.toLowerCase()),
+  );
+  return rows.flatMap((row): DividendNoticeInputV1[] => {
+    if (row.event !== 'announcement') return [];
+    const action = row.payloadState === 'decoded' ? row : decodeB20CorporateActionLogV1({ topics: row.topics, data: row.data });
+    if (!action || !action.announcementId || !action.description) return [];
+    return [
+      {
+        at: row.blockTime,
+        announcementId: action.announcementId,
+        description: action.description,
+        transactionHash: row.transactionHash.toLowerCase(),
+        carriedChange: moved.has(row.transactionHash.toLowerCase()),
+      },
+    ];
+  });
+}
+
+/** One read of a token's corporate actions serves its multiplier events and
+ * its notices in the same calendar read. */
+const actionsReadV1 = new Map<string, { at: number; rows: Promise<B20CorporateActionRowV1[]> }>();
+function actionsForV1(tokenAddress: string): Promise<B20CorporateActionRowV1[]> {
+  const now = Date.now();
+  const hit = actionsReadV1.get(tokenAddress);
+  if (hit && now - hit.at < 30_000) return hit.rows;
+  const rows = createDatabaseB20CorporateActionRepository(client).actionsFor({ chainId: CHAIN_ID_V1, tokenAddress, limit: 200 });
+  actionsReadV1.set(tokenAddress, { at: now, rows });
+  rows.catch(() => actionsReadV1.delete(tokenAddress));
+  return rows;
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +285,7 @@ export const databaseDividendReadDepsV1: DividendReadDepsV1 = {
   },
 
   async multiplierEvents(tokenAddress) {
-    const rows = await createDatabaseB20CorporateActionRepository(client).actionsFor({ chainId: CHAIN_ID_V1, tokenAddress, limit: 200 });
+    const rows = await actionsForV1(tokenAddress);
     return rows.flatMap((row): B20MultiplierEventV1[] => {
       if (row.event !== 'multiplier_updated' && row.event !== 'ui_multiplier_updated' && row.event !== 'ui_multiplier_update_cancelled') {
         return [];
@@ -250,6 +303,10 @@ export const databaseDividendReadDepsV1: DividendReadDepsV1 = {
         },
       ];
     });
+  },
+
+  async notices(tokenAddress) {
+    return dividendNoticesFromActionsV1(await actionsForV1(tokenAddress));
   },
 
   async supplies(tokens) {

@@ -78,3 +78,27 @@ describe('the dividend calendar, for an assistant', () => {
     assert.equal(DividendCalendarAgentInputV1Schema.safeParse({ wallet: '0x1' }).success, false);
   });
 });
+
+describe('a notice in the token, for an assistant', () => {
+  const aeo = token('AEO', 'security:isin:US02553E1064', {
+    notices: [
+      {
+        at: '2026-10-03T00:38:13.000Z',
+        announcementId: '4bc6:pre',
+        description: 'Cash Dividend',
+        transactionHash: `0x${'1'.padStart(64, '0')}`,
+        carriedChange: false,
+      },
+    ],
+  });
+  const calendar = dividendCalendarV1({ now: new Date('2026-10-04T12:00:00.000Z'), tokens: [aeo], declarations: [] });
+
+  test('is said in the issuer’s words, with no amount or date, and is not called unread', () => {
+    const out = dividendCalendarForAgentV1(calendar, { symbol: 'AEOc' });
+    DividendCalendarAgentOutputV1Schema.parse(out);
+    assert.match(out.miorailSummary, /Ahead for AEO: the issuer logged “Cash Dividend” in the AEOc contract on 2026-10-03/);
+    assert.match(out.miorailSummary, /The notice names no amount and no date\./);
+    assert.doesNotMatch(out.miorailSummary, /Not read/);
+    assert.doesNotMatch(out.miorailSummary, /\$\d/);
+  });
+});

@@ -215,3 +215,60 @@ describe('the calendar', () => {
     assert.deepEqual([calendar.stocks[1]?.symbol, calendar.stocks[1]?.next, calendar.stocks[1]?.history], ['TSLA', null, []]);
   });
 });
+
+describe('a dividend notice in the token', () => {
+  const TX = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
+  const NOW = new Date('2026-10-04T12:00:00.000Z');
+  /** AEOc as production held it on 2026-10-03: "Cash Dividend", nothing inside. */
+  const AEO = token('TSLA', {
+    tokenSymbol: 'AEOc',
+    symbol: 'AEO',
+    company: 'American Eagle Outfitters, Inc.',
+    underlyingKey: 'security:isin:US02553E1064',
+    notices: [
+      { at: '2026-10-03T00:38:13.000Z', announcementId: '4bc6:pre', description: 'Cash Dividend', transactionHash: TX(1), carriedChange: false },
+    ],
+  });
+
+  test('a notice nothing has followed is ahead, with the issuer’s words and no amount', () => {
+    const calendar = dividendCalendarV1({ now: NOW, tokens: [AEO], declarations: [] });
+    DividendCalendarResponseV1Schema.parse(calendar);
+    const row = calendar.stocks[0]!;
+    assert.equal(row.next, null);
+    assert.deepEqual(row.notice, {
+      at: '2026-10-03T00:38:13.000Z',
+      announcementId: '4bc6:pre',
+      description: 'Cash Dividend',
+      transactionHash: TX(1),
+    });
+  });
+
+  test('a rise after the notice is the dividend arriving, so the notice is done', () => {
+    const paid = {
+      ...AEO,
+      changes: [{ fromWad: WAD, toWad: '1000400000000000000', at: '2026-10-03T03:00:00.000Z', confirmed: true, priceAt: 20 }],
+    };
+    assert.equal(dividendCalendarV1({ now: NOW, tokens: [paid], declarations: [] }).stocks[0]!.notice, null);
+  });
+
+  test('a notice whose own transaction moved the multiplier was the conversion, not a notice ahead of one', () => {
+    const carried = { ...AEO, notices: [{ ...AEO.notices![0]!, carriedChange: true }] };
+    assert.equal(dividendCalendarV1({ now: NOW, tokens: [carried], declarations: [] }).stocks[0]!.notice, null);
+  });
+
+  test('an old notice nothing followed, or one about something else, is not a dividend ahead', () => {
+    const old = { ...AEO, notices: [{ ...AEO.notices![0]!, at: '2026-08-01T00:00:00.000Z' }] };
+    const split = { ...AEO, notices: [{ ...AEO.notices![0]!, description: 'Stock Split' }] };
+    assert.equal(dividendCalendarV1({ now: NOW, tokens: [old], declarations: [] }).stocks[0]!.notice, null);
+    assert.equal(dividendCalendarV1({ now: NOW, tokens: [split], declarations: [] }).stocks[0]!.notice, null);
+  });
+
+  test('a stock with a notice sorts after the payers on record and before the silent ones', () => {
+    const silent = token('AAPL', { tokenSymbol: 'ZZZc', symbol: 'ZZZ', underlyingKey: 'security:isin:US0000000001' });
+    const calendar = dividendCalendarV1({ now: NOW, tokens: [silent, AEO, GOOGL] });
+    assert.deepEqual(
+      calendar.stocks.map((stock) => stock.symbol),
+      ['GOOGL', 'AEO', 'ZZZ'],
+    );
+  });
+});

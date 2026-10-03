@@ -4,6 +4,7 @@ import {
   DIVIDEND_CONVERSION_WINDOW_DAYS_V1,
   DIVIDEND_STATES_V1,
   DividendEventV1Schema,
+  DividendNoticeV1Schema,
   newYorkDateV1,
   shiftDateV1,
   type DividendCalendarResponseV1,
@@ -71,6 +72,9 @@ export const DividendWalletHoldingV1Schema = z
     upcoming: z.array(DividendWalletEventV1Schema),
     /** Reached this wallet, newest first. */
     received: z.array(DividendWalletEventV1Schema),
+    /** The issuer's dividend notice in the token, while this wallet holds it
+     * and nothing has converted since. Optional: older responses lack it. */
+    notice: DividendNoticeV1Schema.nullable().optional(),
   })
   .strict();
 export type DividendWalletHoldingV1 = z.infer<typeof DividendWalletHoldingV1Schema>;
@@ -211,6 +215,7 @@ export function dividendWalletV1(input: {
       tokens: tokenAmountV1(held, decimals),
       upcoming,
       received,
+      notice: held > 0n ? (stock.notice ?? null) : null,
     });
   }
   return {

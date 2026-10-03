@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import type { B20MultiplierEventV1 } from '@mioagent/b20-control';
+import { B20_CORPORATE_ACTION_TOPICS_V1, type B20MultiplierEventV1 } from '@mioagent/b20-control';
+import type { B20CorporateActionRowV1 } from '@mioagent/route-storage';
 import { DividendCalendarResponseV1Schema } from '@mioagent/rwa-market-reality/dividends';
 
-import { readDividendCalendarV1, type DividendReadDepsV1 } from './dividendRead.js';
+import { dividendNoticesFromActionsV1, readDividendCalendarV1, type DividendReadDepsV1 } from './dividendRead.js';
 
 const GOOGLC = '0xb2000000000000000000002d0ba3164cc74f58b7';
 const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
@@ -181,5 +182,64 @@ describe('the dividend calendar, read', () => {
     assert.equal(paid.state, 'effective');
     assert.equal(paid.token.at, '2026-09-14T22:21:00.000Z');
     assert.equal(paid.token.priceUsd, '348.89');
+  });
+});
+
+describe('notices read from the stored log', () => {
+  const word = (value: bigint) => value.toString(16).padStart(64, '0');
+  const text = (value: string) => {
+    const bytes = Buffer.from(value, 'utf8');
+    return word(BigInt(bytes.length)) + bytes.toString('hex').padEnd(Math.ceil(bytes.length / 32) * 64, '0');
+  };
+  /** Coinbase's layout: the caller in topic 1, the id, words and uri in the data. */
+  const announcementData = (id: string, description: string, uri: string) => {
+    const tails = [text(id), text(description), text(uri)];
+    let cursor = 3 * 32;
+    const heads = tails.map((tail) => {
+      const head = word(BigInt(cursor));
+      cursor += tail.length / 2;
+      return head;
+    });
+    return `0x${heads.join('')}${tails.join('')}`;
+  };
+  const AEOC = '0xb2000000000000000000006064f8ec027f042294';
+  const TX = (n: number) => `0x${n.toString(16).padStart(64, '0')}`;
+  const row = (over: Partial<B20CorporateActionRowV1>): B20CorporateActionRowV1 => ({
+    chainId: 8453,
+    tokenAddress: AEOC,
+    event: 'announcement',
+    payloadState: 'topic_only',
+    announcementId: null,
+    caller: null,
+    description: null,
+    uri: null,
+    multiplierWad: null,
+    effectiveAt: null,
+    topics: [B20_CORPORATE_ACTION_TOPICS_V1.announcement, `0x${word(0xaan)}`],
+    data: announcementData('4bc6:pre', 'Cash Dividend', 'https://example.test/ca/4bc6'),
+    blockNumber: 52099273,
+    blockTime: '2026-10-03T00:38:13.000Z',
+    transactionHash: TX(1),
+    logIndex: 48,
+    observedAt: '2026-10-03T01:00:00.000Z',
+    ...over,
+  });
+
+  test('a row stored before the decoder knew the layout is read from its raw log', () => {
+    assert.deepEqual(dividendNoticesFromActionsV1([row({})]), [
+      { at: '2026-10-03T00:38:13.000Z', announcementId: '4bc6:pre', description: 'Cash Dividend', transactionHash: TX(1), carriedChange: false },
+    ]);
+  });
+
+  test('an announcement whose transaction moved the multiplier carried the conversion', () => {
+    const rows = [
+      row({ transactionHash: TX(2) }),
+      row({ event: 'multiplier_updated', payloadState: 'decoded', multiplierWad: '1000537939576369481', topics: [B20_CORPORATE_ACTION_TOPICS_V1.multiplier_updated], data: `0x${word(1000537939576369481n)}`, transactionHash: TX(2), logIndex: 49 }),
+    ];
+    assert.deepEqual(dividendNoticesFromActionsV1(rows).map((notice) => notice.carriedChange), [true]);
+  });
+
+  test('an announcement with no readable words is no notice', () => {
+    assert.deepEqual(dividendNoticesFromActionsV1([row({ data: '0x' })]), []);
   });
 });

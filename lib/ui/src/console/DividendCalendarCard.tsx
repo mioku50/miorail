@@ -11,10 +11,11 @@ void React;
 const DIVIDEND_ROWS_FOLDED_V1 = 3;
 
 /** Dividends on Base: what each company declared, and what reached the token.
- * Every sentence comes from the view, so both boards say the same thing. */
-export function DividendCalendarCard({ view }: { view: DividendCalendarViewV1 }) {
+ * Every sentence comes from the view, so both boards say the same thing.
+ * `all`: the card is its own page (the Dividends tab), so nothing is folded. */
+export function DividendCalendarCard({ view, all = false }: { view: DividendCalendarViewV1; all?: boolean }) {
   const [expanded, setExpanded] = useState(false);
-  const rows = expanded ? view.rows : view.rows.slice(0, DIVIDEND_ROWS_FOLDED_V1);
+  const rows = all || expanded ? view.rows : view.rows.slice(0, DIVIDEND_ROWS_FOLDED_V1);
   const hidden = view.rows.length - rows.length;
   return (
     <section className="panel" aria-label={view.title}>
@@ -65,6 +66,7 @@ export function DividendCalendarCard({ view }: { view: DividendCalendarViewV1 })
                   <span className="pill cr-status" data-tone="neutral">
                     {row.state}
                   </span>
+                  {row.notice ? <div className="lnote">{row.notice}</div> : null}
                   {row.effect ? <div className="lnote">{row.effect}</div> : null}
                   {row.source ? (
                     <div className="lnote">

@@ -67,7 +67,7 @@ describe('Dividends on Base, on the Stocks board', () => {
     assert.equal(view.none, null);
     assert.equal(
       view.unread,
-      'Miorail reads the dividend releases of AAPL, GOOGL, META and NVDA. For the other stock on this board it does not say whether it pays one.',
+      'Miorail reads the dividend releases of AAPL, GOOGL, META and NVDA. For the other stock on this board it shows a dividend only when Coinbase posts a notice in the token before paying it.',
     );
     assert.match(view.note, /median measured share.*59\.5%, from GOOGL Sep 14: 59\.5%/);
     assert.match(view.note, /historical reference price/);
@@ -138,7 +138,7 @@ test('"No dividend on record" only where Miorail reads the releases; the rest ar
   assert.equal(view.none, 'No dividend on record: MSFT.');
   assert.equal(
     view.unread,
-    'Miorail reads the dividend releases of GOOGL and MSFT. For the other stock on this board it does not say whether it pays one.',
+    'Miorail reads the dividend releases of GOOGL and MSFT. For the other stock on this board it shows a dividend only when Coinbase posts a notice in the token before paying it.',
   );
   assert.match(renderToStaticMarkup(<DividendCalendarCard view={view} />), /<p class="lnote">Miorail reads the dividend releases of GOOGL and MSFT\./);
 });
@@ -200,5 +200,51 @@ describe('Your dividends, for a signed-in wallet', () => {
     assert.ok(html.indexOf('Your dividends') < html.indexOf('<table class="dividend-table">'));
     // On a phone an empty "Last" is not drawn; the marker is what hides it.
     assert.match(html, /<td class="lnote dividend-last" data-empty="">—<\/td>/);
+  });
+});
+
+describe('a dividend notice in the token', () => {
+  const AEO = token('AEO', 'security:isin:US02553E1064', {
+    notices: [
+      {
+        at: '2026-10-03T00:38:13.000Z',
+        announcementId: '4bc6:pre',
+        description: 'Cash Dividend',
+        transactionHash: `0x${'1'.padStart(64, '0')}`,
+        carriedChange: false,
+      },
+    ],
+  });
+  const now = new Date('2026-10-04T12:00:00.000Z');
+  const calendar = dividendCalendarV1({ now, tokens: [AEO], declarations: [] });
+
+  test('a company Miorail does not read gets a row from the notice, with no amount', () => {
+    const view = dividendCalendarViewV1(calendar)!;
+    assert.ok(view);
+    const row = view.rows[0]!;
+    assert.equal(row.symbol, 'AEO');
+    assert.equal(row.next, 'Amount and date not published');
+    assert.equal(row.state, 'Notice in the token');
+    assert.equal(row.notice, 'Coinbase posted “Cash Dividend” in the AEOc contract on Oct 3.');
+    assert.equal(view.unread, null);
+    const html = renderToStaticMarkup(<DividendCalendarCard view={view} all />);
+    assert.match(html, /Coinbase posted “Cash Dividend” in the AEOc contract on Oct 3\./);
+    assert.doesNotMatch(html, /\$\d/);
+  });
+
+  test('a holder reads the notice first, and it says who receives it', () => {
+    const wallet = dividendWalletV1({
+      calendar,
+      now,
+      blockNumber: 52100000,
+      decimals: new Map([[AEO.tokenAddress, 8]]),
+      balances: new Map([[AEO.tokenAddress, 300000000n]]),
+      balancesBefore: new Map(),
+    });
+    const mine = myDividendsViewV1({ data: wallet, failed: false })!;
+    assert.equal(
+      mine.rows[0]!.lead,
+      'Coinbase posted “Cash Dividend” in the AEOc contract on Oct 3. It reaches whoever holds AEOc when it converts; the amount is not published yet.',
+    );
   });
 });

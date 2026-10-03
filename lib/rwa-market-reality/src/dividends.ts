@@ -67,6 +67,14 @@ export const DIVIDEND_MAX_MULTIPLIER_RISE_V1 = 0.05;
 /** How long after the payment date a conversion is still matched to it. */
 export const DIVIDEND_CONVERSION_WINDOW_DAYS_V1 = 14;
 
+/**
+ * How long a dividend notice in the token stays "ahead" with no conversion
+ * after it. Coinbase logs "Cash Dividend" in the token before the multiplier
+ * moves (AEOc, 2026-10-03), and a dividend converts within weeks of its record
+ * date. Past this, an unfollowed notice is no evidence that one is coming.
+ */
+export const DIVIDEND_NOTICE_PENDING_DAYS_V1 = 45;
+
 // ---------------------------------------------------------------------------
 // The declarations, from the companies' own words.
 //
@@ -273,6 +281,20 @@ export const DividendEventV1Schema = z
   .strict();
 export type DividendEventV1 = z.infer<typeof DividendEventV1Schema>;
 
+/** A dividend the issuer announced in the token itself, not converted yet. */
+export const DividendNoticeV1Schema = z
+  .object({
+    /** When the announcement was logged. */
+    at: IsoV1,
+    /** The issuer's own id for it, verbatim. */
+    announcementId: z.string().min(1).max(200),
+    /** The issuer's own words, verbatim: "Cash Dividend". */
+    description: z.string().min(1).max(2_000),
+    transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/),
+  })
+  .strict();
+export type DividendNoticeV1 = z.infer<typeof DividendNoticeV1Schema>;
+
 export const DividendStockV1Schema = z
   .object({
     underlyingKey: z.string().min(1),
@@ -286,6 +308,13 @@ export const DividendStockV1Schema = z
     history: z.array(DividendEventV1Schema),
     /** When Miorail last read this token's multiplier. */
     lastReadAt: IsoV1.nullable(),
+    /**
+     * A dividend the issuer announced IN THE TOKEN that has not converted yet.
+     * It covers every Coinbase stock, including the ones whose releases
+     * Miorail does not read, and it names no amount and no date. Optional so
+     * that a calendar cached before it existed still parses.
+     */
+    notice: DividendNoticeV1Schema.nullable().optional(),
   })
   .strict();
 export type DividendStockV1 = z.infer<typeof DividendStockV1Schema>;
@@ -338,6 +367,53 @@ export interface DividendTokenV1 {
   supplyAtRecord: Readonly<Record<string, string>>;
   /** The reference price per share now. */
   priceNow: number | null;
+  /** The issuer's announcements on this token, decoded from their logs, each
+   * with whether its own transaction also moved the multiplier. */
+  notices?: readonly DividendNoticeInputV1[];
+}
+
+export interface DividendNoticeInputV1 {
+  at: string;
+  announcementId: string;
+  description: string;
+  transactionHash: string;
+  /** The announcement's transaction also moved the multiplier: that bracket
+   * WAS the conversion, not a notice ahead of one. */
+  carriedChange: boolean;
+}
+
+/**
+ * The newest dividend notice in the token that no conversion has followed.
+ *
+ * A notice whose own transaction moved the multiplier is the conversion
+ * itself, and the history already has it. A rise the token made after a
+ * notice is the dividend arriving. What is left is a dividend the issuer said
+ * is coming, in the token, and has not paid in yet.
+ */
+export function pendingDividendNoticeV1(token: DividendTokenV1, now: Date): DividendNoticeV1 | null {
+  const nowMs = now.getTime();
+  const oldest = nowMs - DIVIDEND_NOTICE_PENDING_DAYS_V1 * 86_400_000;
+  const newest = (token.notices ?? [])
+    .filter((notice) => !notice.carriedChange && /dividend/i.test(notice.description))
+    .map((notice) => ({ notice, at: Date.parse(notice.at) }))
+    .filter(({ at }) => Number.isFinite(at) && at >= oldest && at <= nowMs)
+    .sort((a, b) => b.at - a.at)[0];
+  if (!newest) return null;
+  const converted = token.changes.some((change) => {
+    if (!change.confirmed || Date.parse(change.at) < newest.at) return false;
+    try {
+      return BigInt(change.toWad) > BigInt(change.fromWad);
+    } catch {
+      return false;
+    }
+  });
+  if (converted) return null;
+  return {
+    at: new Date(newest.at).toISOString(),
+    announcementId: newest.notice.announcementId,
+    description: newest.notice.description,
+    transactionHash: newest.notice.transactionHash.toLowerCase(),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -650,12 +726,16 @@ export function dividendCalendarV1(input: {
       next: upcoming[0] ?? estimated,
       history: past,
       lastReadAt: token.reading?.readAt ?? null,
+      notice: pendingDividendNoticeV1(token, input.now),
     };
   });
-  // Payers first, soonest payment first; the rest by symbol.
+  // Payers first, soonest payment first; then a notice in the token with no
+  // payment on record, newest notice first; the rest by symbol.
+  const rankV1 = (stock: DividendStockV1) => (stock.next ? 0 : stock.notice ? 1 : 2);
   stocks.sort((a, b) => {
-    if ((a.next === null) !== (b.next === null)) return a.next === null ? 1 : -1;
+    if (rankV1(a) !== rankV1(b)) return rankV1(a) - rankV1(b);
     if (a.next && b.next && a.next.payDate !== b.next.payDate) return a.next.payDate.localeCompare(b.next.payDate);
+    if (!a.next && !b.next && a.notice && b.notice && a.notice.at !== b.notice.at) return b.notice.at.localeCompare(a.notice.at);
     return a.symbol.localeCompare(b.symbol);
   });
 

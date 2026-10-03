@@ -7,6 +7,7 @@ import {
   dividendReleasesReadV1,
   type DividendCalendarResponseV1,
   type DividendEventV1,
+  type DividendNoticeV1,
   type DividendStockV1,
 } from '@mioagent/rwa-market-reality/dividends';
 
@@ -34,6 +35,8 @@ export interface DividendRowViewV1 {
   source: { label: string; href: string } | null;
   /** The last one, in a sentence, or null. */
   last: string | null;
+  /** The issuer's dividend notice in the token, not converted yet, or null. */
+  notice: string | null;
 }
 
 /** One stock the signed-in wallet holds, or held when a dividend reached it. */
@@ -146,6 +149,12 @@ function lastV1(event: DividendEventV1, stock: DividendStockV1): string {
   }
 }
 
+/** "Coinbase posted “Cash Dividend” in the AEOc contract on Oct 3." The words
+ * in quotes are the issuer's own; nothing in the notice is an amount or a date. */
+function noticeV1(notice: DividendNoticeV1, tokenSymbol: string): string {
+  return `Coinbase posted “${notice.description}” in the ${tokenSymbol} contract on ${dayV1(notice.at.slice(0, 10))}.`;
+}
+
 /** A dollar sum too small to lead a holding's card: under one cent. */
 function underACentV1(usd: string | null): boolean {
   return usd !== null && Number(usd) < 0.01;
@@ -214,14 +223,20 @@ export function myDividendsViewV1(
     return { title: 'Your dividends', rows: [], total: null, empty: 'Your dividends could not be read just now.', note };
   }
   const rows = mine.data.holdings.map((holding): MyDividendRowViewV1 => {
+    // A notice in the token leads: it is the dividend that reaches whoever
+    // holds the token when it converts, and it has no sum to be too small.
+    const notice = holding.notice
+      ? `${noticeV1(holding.notice, holding.tokenSymbol)} It reaches whoever holds ${holding.tokenSymbol} when it converts; the amount is not published yet.`
+      : null;
     const lines = [
+      ...(notice ? [notice] : []),
       ...holding.upcoming.map((event) => aheadV1(event, holding)),
       ...holding.received.map((event) => receivedV1(event, holding)),
     ];
     const first = holding.upcoming[0] ?? holding.received[0] ?? null;
     return {
       key: holding.tokenAddress,
-      lead: first && !underACentV1(first.usd) ? (lines[0] ?? null) : null,
+      lead: notice ?? (first && !underACentV1(first.usd) ? (lines[0] ?? null) : null),
       title: Number(holding.tokens) > 0 ? `${holding.tokenSymbol} · ${tokensV1(holding.tokens)} held` : `${holding.tokenSymbol} · none held now`,
       lines:
         lines.length > 0
@@ -249,7 +264,7 @@ export function dividendCalendarViewV1(
   mine?: { data: DividendWalletResponseV1 | null | undefined; failed: boolean } | null,
 ): DividendCalendarViewV1 | null {
   if (!response) return null;
-  const payers = response.stocks.filter((stock) => stock.next !== null || stock.history.length > 0);
+  const payers = response.stocks.filter((stock) => stock.next !== null || stock.history.length > 0 || Boolean(stock.notice));
   if (payers.length === 0) return null;
   const rows = payers.map((stock): DividendRowViewV1 => {
     const next = stock.next;
@@ -262,14 +277,21 @@ export function dividendCalendarViewV1(
         ? next.payDateApproximate
           ? `≈ $${next.amountPerShare} · around ${dayV1(next.payDate)}`
           : `$${next.amountPerShare} · ${dayV1(next.payDate)}`
-        : '—',
-      state: next ? STATE_LABELS_V1[next.state] : 'None declared',
-      effect: next ? effectV1(next, stock) : null,
+        : stock.notice
+          ? 'Amount and date not published'
+          : '—',
+      state: next ? STATE_LABELS_V1[next.state] : stock.notice ? 'Notice in the token' : 'None declared',
+      effect: next
+        ? effectV1(next, stock)
+        : stock.notice
+          ? `When it is paid, it converts into more ${stock.symbol} per ${stock.tokenSymbol}.`
+          : null,
       source: next?.source ? { label: `${stock.company}'s release`, href: next.source.url } : null,
       last: last ? lastV1(last, stock) : null,
+      notice: stock.notice ? noticeV1(stock.notice, stock.tokenSymbol) : null,
     };
   });
-  const silent = response.stocks.filter((stock) => stock.next === null && stock.history.length === 0);
+  const silent = response.stocks.filter((stock) => stock.next === null && stock.history.length === 0 && !stock.notice);
   const quiet = silent.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   const unread = silent.filter((stock) => !dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   const read = [...new Set(response.stocks.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol))].sort();
@@ -286,7 +308,7 @@ export function dividendCalendarViewV1(
     // dividend-free, only not read.
     unread:
       unread.length > 0
-        ? `Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'}. For ${unread.length === 1 ? 'the other stock' : `the other ${unread.length} stocks`} on this board it does not say whether ${unread.length === 1 ? 'it pays' : 'they pay'} one.`
+        ? `Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'}. For ${unread.length === 1 ? 'the other stock' : `the other ${unread.length} stocks`} on this board it shows a dividend only when Coinbase posts a notice in the token before paying it.`
         : null,
     note: [
       "Declared: the company's own release. Estimate: not declared yet — the last dividend again, a quarter later.",
