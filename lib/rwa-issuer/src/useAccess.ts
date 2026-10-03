@@ -10,15 +10,21 @@ import {
   encodeOftProbeCallV1,
   encodePolicyExistsCallV1,
   encodePolicyIdCallV1,
+  encodeSeizeExemptPolicyIdCallV1,
+  seizureFromReadsV1,
   transferPauseFromReadV1,
   transferPolicyBindingFromReadsV1,
   walletPolicyCheckFromReadsV1,
+  walletSeizureCheckFromReadV1,
+  B20_PAUSABLE_SEIZE_V1,
   type B20TransferScopeV1,
   type BridgeCapabilityV1,
   type RawCallResultV1,
+  type SeizureStateV1,
   type TransferPauseStateV1,
   type TransferPolicyBindingV1,
   type WalletPolicyCheckV1,
+  type WalletSeizureCheckV1,
 } from './onchainUse.js';
 
 import {
@@ -205,7 +211,7 @@ export interface RepresentationUseAccessV1 {
   caip10: string;
   /**
    * The one block the PINNED onchain fields below were read at — `transfers`,
-   * `transferPolicies`, `bridge` and `wallet`. Null when the anchor itself
+   * `transferPolicies`, `seizure`, `bridge` and `wallet`. Null when the anchor itself
    * could not be taken, in which case none of those were read.
    *
    * It does not cover `defi`. Venue listings are read outside this anchor by
@@ -217,6 +223,14 @@ export interface RepresentationUseAccessV1 {
   observedAt: string;
   transfers: TransferPauseStateV1;
   transferPolicies: TransferPolicyBindingV1[];
+  /**
+   * Whether the issuer can take this token out of a wallet (Cobalt's seize),
+   * read at the same block as `transfers`.
+   *
+   * Optional in the type for the rolling-deploy reason `pools` gives. The
+   * assembler always sets it, so absent means an older deployment answered.
+   */
+  seizure?: SeizureStateV1;
   bridge: BridgeCapabilityV1;
   defi: DefiListingV1;
   /**
@@ -225,8 +239,11 @@ export interface RepresentationUseAccessV1 {
    * ONCHAIN ADDRESS-POLICY ONLY. Not KYC, not jurisdiction eligibility, not
    * legal permission to trade a security. There is no field here that could be
    * read as one.
+   *
+   * `seizure` is present only while seize is switched on for the token. When it
+   * is off, every wallet is exempt and there is nothing per-wallet to read.
    */
-  wallet: { address: string; checks: WalletPolicyCheckV1[] } | null;
+  wallet: { address: string; checks: WalletPolicyCheckV1[]; seizure?: WalletSeizureCheckV1 } | null;
   /**
    * What the pools holding this exact address were MEASURED to contain.
    *
@@ -306,6 +323,14 @@ export interface PooledLiquidityRowV1 {
  */
 const ScopeV1 = z.enum(['sender', 'receiver', 'executor']);
 
+export const SeizureStateSchemaV1 = z.discriminatedUnion('state', [
+  z.object({ state: z.literal('off'), paused: z.boolean().nullable() }).strict(),
+  z
+    .object({ state: z.enum(['on', 'unclear']), policyId: z.string(), paused: z.boolean().nullable() })
+    .strict(),
+  z.object({ state: z.literal('unread'), reason: z.string() }).strict(),
+]);
+
 export const RepresentationUseAccessV1Schema = z
   .object({
     schemaVersion: z.literal('representation-use-access/v1'),
@@ -332,6 +357,8 @@ export const RepresentationUseAccessV1Schema = z
         z.object({ scope: ScopeV1, state: z.literal('unread'), reason: z.string() }).strict(),
       ]),
     ),
+    // Optional for the reason `pools` is: a server that predates the field.
+    seizure: SeizureStateSchemaV1.optional(),
     bridge: z.discriminatedUnion('state', [
       z.object({ state: z.literal('none_detected') }).strict(),
       z
@@ -499,6 +526,12 @@ export const RepresentationUseAccessV1Schema = z
               .strict(),
           ]),
         ),
+        seizure: z
+          .discriminatedUnion('state', [
+            z.object({ state: z.enum(['exempt', 'not_exempt']), policyId: z.string() }).strict(),
+            z.object({ state: z.literal('not_confirmed'), reason: z.string() }).strict(),
+          ])
+          .optional(),
       })
       .strict()
       .nullable(),
@@ -582,6 +615,7 @@ function unreadEverythingV1(
     observedAt,
     transfers: { state: 'unread', reason },
     transferPolicies: SCOPES_V1.map((scope) => ({ scope, state: 'unread' as const, reason })),
+    seizure: { state: 'unread', reason },
     bridge: { state: 'unread', reason },
     defi,
     pools,
@@ -676,10 +710,14 @@ export async function assembleUseAccessV1(input: {
     call(tokenAddress, encodeIsPausedCallV1()),
     ...SCOPES_V1.map((scope) => call(tokenAddress, encodePolicyIdCallV1(scope))),
     call(tokenAddress, encodeOftProbeCallV1('endpoint')),
+    call(tokenAddress, encodeSeizeExemptPolicyIdCallV1()),
+    call(tokenAddress, encodeIsPausedCallV1(B20_PAUSABLE_SEIZE_V1)),
   ]);
   const transfers = transferPauseFromReadV1(first[0]!);
   const policyIdReads = SCOPES_V1.map((_, index) => first[index + 1]!);
   const endpointRead = first[SCOPES_V1.length + 1]!;
+  const seizePolicyIdRead = first[SCOPES_V1.length + 2]!;
+  const seizePausedRead = first[SCOPES_V1.length + 3]!;
 
   // Round 2 — one existence read per DISTINCT policy, and the bridge peers.
   //
@@ -687,7 +725,7 @@ export async function assembleUseAccessV1(input: {
   // the registry three times about policy 5 spent three calls to learn one
   // fact, and against a rate-limited endpoint the third is the one that fails.
   const distinctPolicies: string[] = [];
-  for (const read of policyIdReads) {
+  for (const read of [...policyIdReads, seizePolicyIdRead]) {
     if (!read.ok) continue;
     const policyId = decodeUint64WordV1(read.value);
     if (policyId === null || policyId === 0n) continue;
@@ -723,6 +761,16 @@ export async function assembleUseAccessV1(input: {
 
   const bridge = bridgeCapabilityFromReadsV1({ endpoint: endpointRead, peers });
 
+  const seizePolicyId = seizePolicyIdRead.ok ? decodeUint64WordV1(seizePolicyIdRead.value) : null;
+  const seizure = seizureFromReadsV1({
+    policyIdRead: seizePolicyIdRead,
+    pausedRead: seizePausedRead,
+    existsRead:
+      seizePolicyId !== null && seizePolicyId !== 0n
+        ? (existsByPolicy.get(seizePolicyId.toString()) ?? null)
+        : null,
+  });
+
   // Round 3 — the signed-in wallet, once per distinct gating policy.
   let wallet: RepresentationUseAccessV1['wallet'] = null;
   if (walletAddress) {
@@ -732,14 +780,20 @@ export async function assembleUseAccessV1(input: {
         gating.push(binding.policyId);
       }
     }
+    // The seize exemption is asked once more only when it is switched on and
+    // its policy is not already among the transfer ones.
+    const asked =
+      seizure.state === 'on' && !gating.includes(seizure.policyId)
+        ? [...gating, seizure.policyId]
+        : gating;
     const third = await roundV1(
       input.reader,
-      gating.map((policyId) =>
+      asked.map((policyId) =>
         call(B20_POLICY_REGISTRY_V1, encodeIsAuthorizedCallV1(BigInt(policyId), walletAddress)),
       ),
     );
     const authorizedByPolicy = new Map<string, RawCallResultV1>(
-      gating.map((policyId, index) => [policyId, third[index]!]),
+      asked.map((policyId, index) => [policyId, third[index]!]),
     );
     wallet = {
       address: walletAddress,
@@ -749,6 +803,14 @@ export async function assembleUseAccessV1(input: {
           binding.state === 'bound' ? (authorizedByPolicy.get(binding.policyId) ?? null) : null,
         ),
       ),
+      ...(seizure.state === 'on'
+        ? {
+            seizure: walletSeizureCheckFromReadV1(
+              seizure,
+              authorizedByPolicy.get(seizure.policyId) ?? null,
+            ),
+          }
+        : {}),
     };
   }
 
@@ -762,6 +824,7 @@ export async function assembleUseAccessV1(input: {
     observedAt,
     transfers,
     transferPolicies,
+    seizure,
     bridge,
     defi,
     pools,

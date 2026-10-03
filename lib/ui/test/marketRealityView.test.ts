@@ -3669,6 +3669,51 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     assert.doesNotMatch(JSON.stringify(transfer), /KYC|jurisdiction|accredited|permission to trade/i);
   });
 
+  test('seizure is its own line: off today, neutral either way, ids only in Evidence', () => {
+    const off = useSectionsV1({
+      ...base,
+      use: use({ seizure: { state: 'off', paused: false } }),
+    })[1]!;
+    const line = off.facts.find((fact) => fact.label === 'Issuer can seize')!;
+    assert.equal(line.value, 'Not switched on');
+    assert.match(line.note ?? '', /every wallet is exempt while the token’s exemption policy is unset/);
+    // Off is a configuration the issuer can change, not a guarantee: no green.
+    assert.equal(line.tone, 'neutral');
+    assert.equal(
+      off.evidence.find((row) => row.label === 'Seize exemption policy')?.value,
+      'unset (ALWAYS_ALLOW): every wallet exempt',
+    );
+    assert.equal(off.evidence.find((row) => row.label === 'SEIZE pause')?.value, 'not paused');
+    // The sender scope is bound, so the older burn path is named beside it.
+    assert.match(JSON.stringify(off.evidence), /burnBlocked\(\)/);
+
+    const on = useSectionsV1({
+      ...base,
+      use: use({
+        seizure: { state: 'on', policyId: '7', paused: true },
+        wallet: {
+          address: '0xdead00000000000000000000000000000000beef',
+          checks: [],
+          seizure: { state: 'not_exempt', policyId: '7' },
+        },
+      }),
+    })[1]!;
+    assert.deepEqual(
+      on.facts.filter((fact) => fact.label !== 'Transfers').map((fact) => [fact.label, fact.value, fact.tone]),
+      [
+        ['Issuer can seize', 'Switched on', 'neutral'],
+        ['Your wallet', 'Not exempt from seizure', 'neutral'],
+      ],
+    );
+    assert.match(on.facts[1]!.note ?? '', /seizing is paused right now/);
+    assert.doesNotMatch(JSON.stringify(on.facts), /policy 7/);
+    assert.equal(on.evidence.find((row) => row.label === 'Seize exemption policy')?.value, 'policy 7');
+
+    // An older server sent no seizure: the section says nothing about it.
+    const older = useSectionsV1({ ...base, use: use() })[1]!;
+    assert.ok(!older.facts.some((fact) => fact.label === 'Issuer can seize'));
+  });
+
   test('a bridge is claimed only for a destination that is really configured', () => {
     const none = useSectionsV1({ ...base, use: use() })[2]!;
     assert.equal(none.chip, 'No bridge here');

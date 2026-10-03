@@ -252,7 +252,7 @@ export interface StocksVisitorNoticeV1 {
 
 export interface MarketRealityScreenModelV1 {
   /** Stocks as four tabs: Market, My stocks, Dividends, Weekend. Absent: every
-   * part on one page, which is how the board was laid out before 2026-10-04. */
+   * part on one page, which is how the board was laid out before 2026-10-03. */
   sections?: StocksSectionsModelV1 | null;
   /** What the Weekend tab says between weekends. */
   weekendQuiet?: WeekendQuietViewV1 | null;

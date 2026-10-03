@@ -50,9 +50,12 @@ const WORD_V1 = /^0x[0-9a-f]{64}$/;
  */
 export const B20_POLICY_REGISTRY_V1 = '0x8453000000000000000000000000000000000002' as const;
 
-/** `PausableFeature.TRANSFER`. MINT, BURN and SEIZE are 1, 2 and 3 and are
- * deliberately not read here: this surface answers about transfers. */
+/** `PausableFeature.TRANSFER`. MINT and BURN are 1 and 2 and are deliberately
+ * not read here: this surface answers about transfers. */
 export const B20_PAUSABLE_TRANSFER_V1 = 0;
+
+/** `PausableFeature.SEIZE`, appended at Cobalt. Independent of TRANSFER. */
+export const B20_PAUSABLE_SEIZE_V1 = 3;
 
 /** `ALWAYS_ALLOW`. Base Docs: it "authorizes every account" and "cannot be
  * created, modified, or renounced", so a scope bound to it restricts nobody. */
@@ -89,6 +92,18 @@ export const B20_TRANSFER_POLICY_SCOPES_V1 = {
 
 export type B20TransferScopeV1 = keyof typeof B20_TRANSFER_POLICY_SCOPES_V1;
 
+/**
+ * `SEIZE_EXEMPT_POLICY`, the Cobalt scope `seizeWithMemo` checks the holder
+ * against: keccak256("SEIZE_EXEMPT_POLICY"), as Base Docs publishes it.
+ *
+ * The token's own getter `SEIZE_EXEMPT_POLICY()` answered this exact word on
+ * NVDAc on 2026-10-03, and `policyId` with a key the token does not know
+ * reverts rather than answering 0, so a wrong constant reads as unread, never
+ * as "off".
+ */
+export const B20_SEIZE_EXEMPT_POLICY_KEY_V1 =
+  '0xedb5da348cfb67af08746d3afd1be81034b50d5c8576f31aff688f39dfd540ed' as const;
+
 // --- encoding -------------------------------------------------------------
 
 function wordV1(value: bigint): string {
@@ -111,6 +126,10 @@ export function encodeIsPausedCallV1(feature = B20_PAUSABLE_TRANSFER_V1): string
 
 export function encodePolicyIdCallV1(scope: B20TransferScopeV1): string {
   return `0x${B20_USE_SELECTORS_V1.policyId}${B20_TRANSFER_POLICY_SCOPES_V1[scope].slice(2)}`;
+}
+
+export function encodeSeizeExemptPolicyIdCallV1(): string {
+  return `0x${B20_USE_SELECTORS_V1.policyId}${B20_SEIZE_EXEMPT_POLICY_KEY_V1.slice(2)}`;
 }
 
 export function encodePolicyExistsCallV1(policyId: bigint): string {
@@ -204,6 +223,33 @@ export type BridgeCapabilityV1 =
   | { state: 'detected'; endpointAddress: string | null; configuredPeers: number[] }
   | { state: 'unread'; reason: string };
 
+/**
+ * Whether the issuer has switched on Cobalt's seize for this token.
+ *
+ * `seizeWithMemo` moves a holder's balance to a destination the issuer picks.
+ * It skips allowance and all three transfer policies, so nothing above says
+ * anything about it. And THE POLARITY IS INVERTED: an account the exemption
+ * policy AUTHORIZES cannot be seized. Unset (ALWAYS_ALLOW) authorizes everyone,
+ * so `off` is Base Docs' "nobody is seizable" — the state every token starts in.
+ *
+ * `unclear` — the token names a policy the registry does not have. A missing
+ * policy answers `isAuthorized` differently by type, and here a `false` would
+ * make every holder seizable, so it is neither on nor off.
+ *
+ * Configuration only, never occurrence: whether anybody HAS been seized is a
+ * `Seized` log, and this read does not look for one.
+ */
+export type SeizureStateV1 =
+  | { state: 'off'; paused: boolean | null }
+  | { state: 'on'; policyId: string; paused: boolean | null }
+  | { state: 'unclear'; policyId: string; paused: boolean | null }
+  | { state: 'unread'; reason: string };
+
+/** Whether ONE wallet is exempt from a seize that is switched on. */
+export type WalletSeizureCheckV1 =
+  | { state: 'exempt' | 'not_exempt'; policyId: string }
+  | { state: 'not_confirmed'; reason: string };
+
 /** One `eth_call` answer, as the readers in this repo already shape them. */
 export type RawCallResultV1 = { ok: true; value: string } | { ok: false; reason: string };
 
@@ -264,6 +310,48 @@ export function walletPolicyCheckFromReadsV1(
     return { scope, state: 'not_confirmed', reason: 'isAuthorized did not return a boolean word' };
   }
   return { scope, state: authorized ? 'allowed' : 'blocked', policyId: binding.policyId };
+}
+
+export function seizureFromReadsV1(input: {
+  policyIdRead: RawCallResultV1;
+  pausedRead: RawCallResultV1;
+  /** `policyExists` for the named policy; null when none was named. */
+  existsRead: RawCallResultV1 | null;
+}): SeizureStateV1 {
+  if (!input.policyIdRead.ok) return { state: 'unread', reason: input.policyIdRead.reason };
+  const policyId = decodeUint64WordV1(input.policyIdRead.value);
+  if (policyId === null) {
+    return { state: 'unread', reason: 'policyId did not return a uint64 word' };
+  }
+  // The pause bit is a separate fact about the same token. A failed pause read
+  // does not unread the policy: it is carried as null and said as such.
+  const paused = input.pausedRead.ok ? decodeBoolWordV1(input.pausedRead.value) : null;
+  if (policyId === B20_ALWAYS_ALLOW_POLICY_ID_V1) return { state: 'off', paused };
+  if (!input.existsRead) {
+    return { state: 'unread', reason: 'the policy was named but never checked for existence' };
+  }
+  if (!input.existsRead.ok) return { state: 'unread', reason: input.existsRead.reason };
+  const exists = decodeBoolWordV1(input.existsRead.value);
+  if (exists === null) {
+    return { state: 'unread', reason: 'policyExists did not return a boolean word' };
+  }
+  return { state: exists ? 'on' : 'unclear', policyId: policyId.toString(), paused };
+}
+
+export function walletSeizureCheckFromReadV1(
+  seizure: Extract<SeizureStateV1, { state: 'on' }>,
+  isAuthorizedRead: RawCallResultV1 | null,
+): WalletSeizureCheckV1 {
+  if (!isAuthorizedRead) {
+    return { state: 'not_confirmed', reason: 'the policy was not checked for this address' };
+  }
+  if (!isAuthorizedRead.ok) return { state: 'not_confirmed', reason: isAuthorizedRead.reason };
+  const authorized = decodeBoolWordV1(isAuthorizedRead.value);
+  if (authorized === null) {
+    return { state: 'not_confirmed', reason: 'isAuthorized did not return a boolean word' };
+  }
+  // THE INVERSION: authorized by the exemption policy means it cannot be seized.
+  return { state: authorized ? 'exempt' : 'not_exempt', policyId: seizure.policyId };
 }
 
 /**

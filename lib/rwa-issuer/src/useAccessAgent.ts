@@ -58,6 +58,7 @@ export const USE_ACCESS_AGENT_SCHEMA_VERSION_V1 = 'miorail-agent-use-access/v1';
 export const USE_ACCESS_NOT_STATED_V1: readonly string[] = [
   'Whether a listed asset can be borrowed, supplied or posted as collateral RIGHT NOW BY THE PERSON ASKING: caps and pause flags are not read, and a borrower’s own position is not read at all. Where a venue publishes them, each market’s terms and what is available to borrow in it are in `defi.venues[].markets` — a figure there is a fact about the market and never a permission.',
   'Whether any particular wallet may transfer or use this token. This is a public read and holds no wallet.',
+  'Whether anybody has been seized. `seizure` is the issuer’s configuration at the block, never an event, and the deprecated `burnBlocked` path — which can burn the balance of a wallet the sender policy blocks — is not read.',
   'Eligibility of any kind — KYC, jurisdiction, or legal permission to hold or trade a security.',
   'Any venue outside the ones named in `checkedVenues`. A miss is bounded by where Miorail looked and is never a statement about DeFi as a whole.',
   'What a future integration will do. An announcement is a dated claim by a named party, never a measurement.',
@@ -291,6 +292,23 @@ export const UseAccessAgentOutputV1Schema = z
         })
         .strict(),
     ),
+    /**
+     * Whether the issuer has switched on Cobalt's seize for this token. `off`:
+     * the exemption policy is unset, which exempts every wallet. `on`: a real
+     * policy decides who is exempt, and a wallet it does not authorize can have
+     * the token moved out. `unclear`: the token names a policy the registry
+     * does not have. Configuration at `blockTag`, never a record that anybody
+     * was seized. Null when a deployment that predates the read answered.
+     */
+    seizure: z
+      .object({
+        state: z.enum(['off', 'on', 'unclear', 'unread']),
+        policyId: z.string().nullable(),
+        paused: z.boolean().nullable(),
+        reason: z.string().nullable(),
+      })
+      .strict()
+      .nullable(),
     bridge: z
       .object({
         state: z.enum(['none_detected', 'detected', 'unread']),
@@ -650,7 +668,7 @@ export function useAccessForAgentV1(input: {
     },
     observedAt: use.observedAt,
     blockTag: use.blockTag,
-    blockTagCovers: ['transfers', 'transferPolicies', 'bridge'],
+    blockTagCovers: ['transfers', 'transferPolicies', 'seizure', 'bridge'],
     transfers: use.transfers,
     transferPolicies: use.transferPolicies.map((row) => ({
       scope: row.scope,
@@ -659,6 +677,15 @@ export function useAccessForAgentV1(input: {
       policyExists: row.state === 'bound' ? row.policyExists : null,
       reason: row.state === 'unread' ? row.reason : null,
     })),
+    seizure: use.seizure
+      ? {
+          state: use.seizure.state,
+          policyId:
+            use.seizure.state === 'on' || use.seizure.state === 'unclear' ? use.seizure.policyId : null,
+          paused: use.seizure.state === 'unread' ? null : use.seizure.paused,
+          reason: use.seizure.state === 'unread' ? use.seizure.reason : null,
+        }
+      : null,
     bridge: {
       state: use.bridge.state,
       configuredPeers: use.bridge.state === 'detected' ? use.bridge.configuredPeers : null,

@@ -88,7 +88,29 @@ describe('the block governs what it governs, and says which', () => {
     const projected = project();
     assert.equal(projected.blockTag, '0x3060000');
     assert.ok(!projected.blockTagCovers.includes('defi'));
-    assert.deepEqual(projected.blockTagCovers, ['transfers', 'transferPolicies', 'bridge']);
+    assert.deepEqual(projected.blockTagCovers, ['transfers', 'transferPolicies', 'seizure', 'bridge']);
+  });
+
+  test('seizure travels as configuration, and the wallet’s own answer never does', () => {
+    assert.deepEqual(project({ seizure: { state: 'off', paused: false } }).seizure, {
+      state: 'off',
+      policyId: null,
+      paused: false,
+      reason: null,
+    });
+    const armed = project({
+      seizure: { state: 'on', policyId: '7', paused: null },
+      wallet: {
+        address: WALLET,
+        checks: [],
+        seizure: { state: 'not_exempt', policyId: '7' },
+      },
+    });
+    assert.deepEqual(armed.seizure, { state: 'on', policyId: '7', paused: null, reason: null });
+    assert.ok(!JSON.stringify(armed).includes('not_exempt'));
+    // A deployment that predates the read says nothing, not "off".
+    assert.equal(project().seizure, null);
+    assert.ok(USE_ACCESS_NOT_STATED_V1.some((line) => line.startsWith('Whether anybody has been seized')));
   });
 
   test('each venue row carries its own provenance instead', () => {

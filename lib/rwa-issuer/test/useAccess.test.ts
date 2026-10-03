@@ -16,6 +16,12 @@ import {
   reviewedDefiSourcesV1,
 } from '../src/defiVenues.js';
 import {
+  encodeIsAuthorizedCallV1,
+  encodeIsPausedCallV1,
+  encodePolicyExistsCallV1,
+  encodeSeizeExemptPolicyIdCallV1,
+} from '../src/onchainUse.js';
+import {
   RepresentationUseAccessV1Schema,
   assembleUseAccessV1,
   defiListingV1,
@@ -49,7 +55,7 @@ function readerV1(
     },
     async call({ to, data }) {
       const key = `${to.toLowerCase()}:${data.slice(2, 10)}`;
-      const answer = answers[key] ?? answers[data.slice(2, 10)];
+      const answer = answers[data] ?? answers[key] ?? answers[data.slice(2, 10)];
       if (answer === undefined) return { ok: false, reason: 'execution_reverted' };
       if (typeof answer === 'object') return { ok: false, reason: answer.revert };
       return { ok: true, value: answer };
@@ -60,11 +66,15 @@ function readerV1(
 // The real shape production answers with, from a live read of NVDAc on
 // 2026-09-02: transfers not paused, all three transfer scopes bound to policy
 // 5, policy 5 exists, and `endpoint()` reverts because a B20 token is not an
-// OFT.
+// OFT. Since Cobalt the seize exemption slot answers too, and on 2026-10-03 it
+// was unset (policy 0) with SEIZE not paused.
+const SEIZE_POLICY_ID_CALL = encodeSeizeExemptPolicyIdCallV1();
+const REGISTRY = '0x8453000000000000000000000000000000000002';
 const COINBASE_LIVE_V1 = {
   bc61e733: WORD_FALSE,
   db3de624: WORD_FIVE,
-  [`${'0x8453000000000000000000000000000000000002'}:330f5637`]: WORD_TRUE,
+  [SEIZE_POLICY_ID_CALL]: WORD_FALSE,
+  [`${REGISTRY}:330f5637`]: WORD_TRUE,
 };
 
 describe('what one exact address can do, read at one block', () => {
@@ -182,6 +192,119 @@ describe('what one exact address can do, read at one block', () => {
     });
     assert.equal(use.bridge.state, 'detected');
     assert.deepEqual(use.bridge.state === 'detected' ? use.bridge.configuredPeers : null, [30101]);
+  });
+});
+
+describe('whether the issuer can take the token out of a wallet', () => {
+  const SEVEN = `0x${'0'.repeat(63)}7`;
+  const armed = (overrides: Record<string, string | { revert: string }> = {}) =>
+    readerV1({
+      ...COINBASE_LIVE_V1,
+      [SEIZE_POLICY_ID_CALL]: SEVEN,
+      [encodePolicyExistsCallV1(7n)]: WORD_TRUE,
+      [encodeIsAuthorizedCallV1(5n, WALLET)]: WORD_TRUE,
+      ...overrides,
+    });
+
+  test('a Coinbase stock today: off, because an unset exemption exempts everyone', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1(COINBASE_LIVE_V1),
+      now: NOW,
+      walletAddress: WALLET,
+    });
+    assert.deepEqual(use.seizure, { state: 'off', paused: false });
+    // Off covers every wallet, so there is nothing per-wallet to ask.
+    assert.equal(use.wallet?.seizure, undefined);
+  });
+
+  test('switched on, the polarity is inverted: authorized means it cannot be seized', async () => {
+    const exempt = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: armed({ [encodeIsAuthorizedCallV1(7n, WALLET)]: WORD_TRUE }),
+      now: NOW,
+      walletAddress: WALLET,
+    });
+    assert.deepEqual(exempt.seizure, { state: 'on', policyId: '7', paused: false });
+    assert.deepEqual(exempt.wallet?.seizure, { state: 'exempt', policyId: '7' });
+    // The transfer answers are untouched by the seize policy.
+    assert.ok(exempt.wallet!.checks.every((check) => check.state === 'allowed'));
+
+    const exposed = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: armed({ [encodeIsAuthorizedCallV1(7n, WALLET)]: WORD_FALSE }),
+      now: NOW,
+      walletAddress: WALLET,
+    });
+    assert.deepEqual(exposed.wallet?.seizure, { state: 'not_exempt', policyId: '7' });
+  });
+
+  test('a named policy the registry lacks is unclear, and no wallet is told it is exempt', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: armed({
+        [encodePolicyExistsCallV1(7n)]: WORD_FALSE,
+        [encodeIsAuthorizedCallV1(7n, WALLET)]: WORD_TRUE,
+      }),
+      now: NOW,
+      walletAddress: WALLET,
+    });
+    assert.deepEqual(use.seizure, { state: 'unclear', policyId: '7', paused: false });
+    assert.equal(use.wallet?.seizure, undefined);
+  });
+
+  test('a paused seize says paused; an unread pause bit does not unread the policy', async () => {
+    const paused = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: armed({
+        [encodeIsPausedCallV1(3)]: WORD_TRUE,
+        [encodeIsAuthorizedCallV1(7n, WALLET)]: WORD_TRUE,
+      }),
+      now: NOW,
+    });
+    assert.deepEqual(paused.seizure, { state: 'on', policyId: '7', paused: true });
+    // TRANSFER is its own bit: pausing seize leaves transfers active.
+    assert.deepEqual(paused.transfers, { state: 'read', transfersPaused: false });
+
+    const unreadPause = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1({ ...COINBASE_LIVE_V1, [encodeIsPausedCallV1(3)]: { revert: 'timeout' } }),
+      now: NOW,
+    });
+    assert.deepEqual(unreadPause.seizure, { state: 'off', paused: null });
+  });
+
+  test('a slot the token does not answer is unread, never off', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1({ ...COINBASE_LIVE_V1, [SEIZE_POLICY_ID_CALL]: { revert: 'execution_reverted' } }),
+      now: NOW,
+    });
+    assert.deepEqual(use.seizure, { state: 'unread', reason: 'execution_reverted' });
+
+    const outage = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: readerV1({}, { anchor: false }),
+      now: NOW,
+    });
+    assert.equal(outage.seizure?.state, 'unread');
+  });
+
+  test('the wire carries it, and a server that predates it still parses', async () => {
+    const use = await assembleUseAccessV1({
+      tokenAddress: NVDA,
+      reader: armed({ [encodeIsAuthorizedCallV1(7n, WALLET)]: WORD_FALSE }),
+      now: NOW,
+      walletAddress: WALLET,
+    });
+    const parsed = RepresentationUseAccessV1Schema.parse(JSON.parse(JSON.stringify(use)));
+    assert.deepEqual(parsed.seizure, { state: 'on', policyId: '7', paused: false });
+    assert.deepEqual(parsed.wallet?.seizure, { state: 'not_exempt', policyId: '7' });
+
+    const older = JSON.parse(JSON.stringify(use)) as Record<string, unknown>;
+    delete older.seizure;
+    delete (older.wallet as Record<string, unknown>).seizure;
+    assert.equal(RepresentationUseAccessV1Schema.parse(older).seizure, undefined);
   });
 });
 

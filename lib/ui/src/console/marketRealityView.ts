@@ -2225,6 +2225,78 @@ function transferSectionV1(
       facts.push({ label, value: 'Not confirmed', note: check.reason, tone: 'off' });
     }
   }
+  // Whether the issuer can take the token out of a wallet. Seize skips every
+  // transfer policy above, so none of those rows answers it. Neutral in every
+  // state: "off" is a configuration the issuer can change, and "on" says what a
+  // role holder could do, not that anybody did.
+  const seizure = use?.seizure;
+  if (seizure) {
+    const pausedNote = seizure.state !== 'unread' && seizure.paused ? '; seizing is paused right now' : '';
+    facts.push(
+      seizure.state === 'off'
+        ? {
+            label: 'Issuer can seize',
+            value: 'Not switched on',
+            note: `every wallet is exempt while the token’s exemption policy is unset; the issuer can set one later${pausedNote}`,
+            tone: 'neutral',
+          }
+        : seizure.state === 'on'
+          ? {
+              label: 'Issuer can seize',
+              value: 'Switched on',
+              note: `a policy the issuer set decides which wallets are exempt; a role holder can move this token out of any wallet it does not authorize${pausedNote}`,
+              tone: 'neutral',
+            }
+          : {
+              label: 'Issuer can seize',
+              value: 'Not confirmed',
+              note:
+                seizure.state === 'unclear'
+                  ? 'the token names an exemption policy the registry does not have, and a missing policy answers differently by type'
+                  : seizure.reason,
+              tone: 'off',
+            },
+    );
+    const mine = use?.wallet?.seizure;
+    if (mine) {
+      facts.push(
+        mine.state === 'not_confirmed'
+          ? { label: 'Your wallet', value: 'Not confirmed', note: mine.reason, tone: 'off' }
+          : {
+              label: 'Your wallet',
+              value: mine.state === 'exempt' ? 'Exempt from seizure' : 'Not exempt from seizure',
+              note:
+                mine.state === 'exempt'
+                  ? 'the exemption policy authorizes this address, so it cannot be seized'
+                  : 'the exemption policy does not authorize this address',
+              tone: 'neutral',
+            },
+      );
+    }
+    evidence.push({
+      label: 'Seize exemption policy',
+      value:
+        seizure.state === 'off'
+          ? 'unset (ALWAYS_ALLOW): every wallet exempt'
+          : seizure.state === 'unread'
+            ? `unread — ${seizure.reason}`
+            : `policy ${seizure.policyId}${seizure.state === 'unclear' ? ' (registry has no such policy)' : ''}`,
+    });
+    if (seizure.state !== 'unread') {
+      evidence.push({
+        label: 'SEIZE pause',
+        value: seizure.paused === null ? 'unread' : seizure.paused ? 'paused' : 'not paused',
+      });
+    }
+  }
+  // The older path, still callable: it destroys the balance of a wallet the
+  // sender policy blocks, so it exists only where that scope is bound.
+  if (use?.transferPolicies.some((binding) => binding.scope === 'sender' && binding.state === 'bound')) {
+    evidence.push({
+      label: 'burnBlocked()',
+      value: 'deprecated, still callable: a role holder can burn the balance of a wallet the sender policy blocks',
+    });
+  }
   if (use?.blockTag) evidence.push({ label: 'Read at block', value: use.blockTag });
   // Base Docs states this separately and it is exactly the kind of true fact a
   // reader turns into a false one: an allowance is not permission.
