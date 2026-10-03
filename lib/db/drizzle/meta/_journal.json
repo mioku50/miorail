@@ -488,8 +488,71 @@
     {
       "idx": 69,
       "version": "7",
+      "when": 1788874260000,
+      "tag": "0069_b20_corporate_actions",
+      "breakpoints": true
+    },
+    {
+      "idx": 70,
+      "version": "7",
+      "when": 1788874320000,
+      "tag": "0070_b20_multiplier_schedule",
+      "breakpoints": true
+    },
+    {
+      "idx": 71,
+      "version": "7",
+      "when": 1788874380000,
+      "tag": "0071_base_app_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 72,
+      "version": "7",
+      "when": 1788874440000,
+      "tag": "0072_gift_send_goal",
+      "breakpoints": true
+    },
+    {
+      "idx": 73,
+      "version": "7",
+      "when": 1788874500000,
+      "tag": "0073_base_app_weekly_summary",
+      "breakpoints": true
+    },
+    {
+      "idx": 74,
+      "version": "7",
+      "when": 1788874560000,
+      "tag": "0074_telegram_notifications",
+      "breakpoints": true
+    },
+    {
+      "idx": 75,
+      "version": "7",
+      "when": 1788874620000,
+      "tag": "0075_dividend_record_supply",
+      "breakpoints": true
+    },
+    {
+      "idx": 76,
+      "version": "7",
+      "when": 1788874680000,
+      "tag": "0076_dividend_declarations",
+      "breakpoints": true
+    },
+    {
+      "idx": 77,
+      "version": "7",
+      "when": 1788874740000,
+      "tag": "0077_stock_inbox",
+      "breakpoints": true
+    },
+    {
+      "idx": 78,
+      "version": "7",
       "when": 1788960600000,
-      "tag": "0070_coinbase_stocks_api",
+      "tag": "0078_coinbase_stocks_api",
       "breakpoints": true
     }
   ]
