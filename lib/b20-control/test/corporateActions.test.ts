@@ -120,6 +120,28 @@ describe('B20 announcement decoding', () => {
     assert.equal(row.announcementId, null);
   });
 
+  test('reads the layout Coinbase uses: the caller in topic 1, three strings in the data', () => {
+    // The shape of AEOc's notice on 2026-10-03: a "Cash Dividend" with a ":pre"
+    // id and nothing else in its bracket.
+    const parts = [stringWords('4bc6:pre'), stringWords('Cash Dividend'), stringWords('https://example.test/ca/4bc6')];
+    let cursor = 3 * 32;
+    const heads: string[] = [];
+    for (const part of parts) {
+      heads.push(part.head(cursor));
+      cursor += part.tail.length / 2;
+    }
+    const row = decodeB20CorporateActionLogV1({
+      topics: [PUBLISHED_V1.announcement, `0x${word(BigInt(CALLER))}`],
+      data: `0x${heads.join('')}${parts.map((part) => part.tail).join('')}`,
+    });
+    assert.ok(row);
+    assert.equal(row.payload, 'decoded');
+    assert.equal(row.caller, CALLER);
+    assert.equal(row.announcementId, '4bc6:pre');
+    assert.equal(row.description, 'Cash Dividend');
+    assert.equal(row.uri, 'https://example.test/ca/4bc6');
+  });
+
   test('an offset that points past the data reads nothing', () => {
     const data = `0x${word(BigInt(CALLER))}${word(32n * 99n)}${word(96n)}${word(128n)}`;
     const row = decodeB20CorporateActionLogV1({ topics: [PUBLISHED_V1.announcement], data });

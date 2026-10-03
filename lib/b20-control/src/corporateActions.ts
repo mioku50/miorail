@@ -329,11 +329,18 @@ export function decodeB20CorporateActionLogV1(log: RawEventLogV1): B20CorporateA
     return { ...topicOnlyV1(event), payload: 'decoded', announcementId: id };
   }
 
-  if (indexed !== 0 || words.length < 4) return topicOnlyV1(event);
-  const caller = addressOfV1(words[0]);
-  const id = stringAtV1(words, 1, B20_ANNOUNCEMENT_ID_MAX_V1);
-  const description = stringAtV1(words, 2, B20_ANNOUNCEMENT_TEXT_MAX_V1);
-  const uri = stringAtV1(words, 3, B20_ANNOUNCEMENT_TEXT_MAX_V1);
+  // Two layouts are read. Nothing indexed: all four arguments are in the data.
+  // The caller indexed: it is topic 1 and the three strings are the data. Five
+  // real announcements settled the second one on 2026-10-03 — Coinbase's
+  // "Cash Dividend" notices on GOOGLc, METAc, NVDAc and AEOc. An indexed string
+  // is a hash of itself, so any other layout stays `topic_only`.
+  const callerIndexed = indexed === 1;
+  if (!(indexed === 0 && words.length >= 4) && !(callerIndexed && words.length >= 3)) return topicOnlyV1(event);
+  const first = callerIndexed ? 0 : 1;
+  const caller = addressOfV1(callerIndexed ? String(topics[1]).replace(/^0x/i, '') : words[0]);
+  const id = stringAtV1(words, first, B20_ANNOUNCEMENT_ID_MAX_V1);
+  const description = stringAtV1(words, first + 1, B20_ANNOUNCEMENT_TEXT_MAX_V1);
+  const uri = stringAtV1(words, first + 2, B20_ANNOUNCEMENT_TEXT_MAX_V1);
   if (caller === null || id === null || id.length === 0 || description === null || uri === null) {
     return topicOnlyV1(event);
   }
