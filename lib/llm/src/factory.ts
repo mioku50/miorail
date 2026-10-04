@@ -1,6 +1,6 @@
 import type { LlmProvider } from './types';
 import { OpenAiCompatibleClient } from './openai';
-import { LlmProviderChainV1, type NamedLlmProviderV1 } from './fallback';
+import { LlmLinkRestV1, LlmProviderChainV1, type NamedLlmProviderV1 } from './fallback';
 import { createLazyX402BuyerPaidFetch, x402BuyerPaymentModeFromEnv } from '@mioagent/x402-gateway';
 
 function fetchForPaymentMode(): typeof fetch | undefined {
@@ -50,6 +50,42 @@ export function providerHeadersV1(baseUrl: string, env: NodeJS.ProcessEnv = proc
   const agent = (env.AGENTROUTER_USER_AGENT || '').trim() || 'cline/3.1.0';
   return { 'User-Agent': agent };
 }
+
+/**
+ * The OpenRouter upstreams this lane never uses, unless an operator says
+ * otherwise in `OPENROUTER_PROVIDER_IGNORE`: a comma-separated list, or
+ * `none`. Empty means this default, as `.env.example` ships the line blank.
+ *
+ * OpenRouter serves one model from many upstreams and keeps a prompt on the
+ * one it chose. Measured 2026-09-29 on the Stocks narrator corpus with
+ * deepseek-v4-flash: on OpenInference 17-52 s and 8/14 verified, on every
+ * other upstream 2.5-7 s and 26/26. Every call over 30 s whose upstream was
+ * known was OpenInference, and for our output-heavy answers it was also the
+ * dearest. Neither `sort: 'latency'` nor `sort: 'throughput'` moved
+ * prompts off it.
+ */
+export const OPENROUTER_IGNORED_UPSTREAMS_V1: readonly string[] = ['OpenInference'];
+
+/**
+ * Request-body fields a gateway reads, host-scoped for the same reason as
+ * the headers: a field one gateway reads is a 422 from another.
+ */
+export function providerBodyV1(baseUrl: string, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
+  if (!OPENROUTER_HOSTS_V1.includes(providerLabelV1(baseUrl))) return {};
+  const configured = (env.OPENROUTER_PROVIDER_IGNORE || '').trim();
+  if (configured.toLowerCase() === 'none') return {};
+  const ignore = configured
+    ? configured.split(',').map((name) => name.trim()).filter((name) => name.length > 0)
+    : [...OPENROUTER_IGNORED_UPSTREAMS_V1];
+  return ignore.length > 0 ? { provider: { ignore } } : {};
+}
+
+/**
+ * Which links said they cannot serve, shared by every chain built here. A
+ * chain is built per request, and a link's account is the same in all of
+ * them.
+ */
+export const LLM_LINK_REST_V1 = new LlmLinkRestV1();
 
 /**
  * The shared credential a host publishes for itself, or ''.
@@ -163,6 +199,7 @@ export function fallbackLinkV1(
       baseUrl,
       defaultModel: model,
       headers: providerHeadersV1(baseUrl),
+      body: providerBodyV1(baseUrl),
       ...(options.jsonMode ? { jsonMode: true } : {}),
     }),
   };
@@ -189,6 +226,7 @@ export function primaryLinkV1(input: {
       baseUrl: input.baseUrl,
       defaultModel: input.model,
       headers: providerHeadersV1(input.baseUrl),
+      body: providerBodyV1(input.baseUrl),
       fetchImpl: fetchForPaymentMode(),
     }),
   };
@@ -225,6 +263,10 @@ function withFallbackV1(primary: NamedLlmProviderV1 & { model?: string }): LlmPr
       // Hosts and a redacted provider message. An operator needs to know the
       // primary is down long before the last spare also runs out.
       console.warn(`[llm] ${from} failed, falling over to ${to}: ${reason}`);
+    },
+    rest: LLM_LINK_REST_V1,
+    onRest: ({ label, reason, restMs }) => {
+      console.warn(`[llm] ${label} cannot serve; skipped for ${Math.round(restMs / 60_000)} min: ${reason}`);
     },
   });
 }
@@ -324,6 +366,10 @@ function withStructuredFallbackV1(primary: NamedLlmProviderV1 & { model?: string
     onFallover: ({ from, to, reason }) => {
       console.warn(`[llm:structured] ${from} failed, falling over to ${to}: ${reason}`);
     },
+    rest: LLM_LINK_REST_V1,
+    onRest: ({ label, reason, restMs }) => {
+      console.warn(`[llm:structured] ${label} cannot serve; skipped for ${Math.round(restMs / 60_000)} min: ${reason}`);
+    },
   });
 }
 
@@ -377,6 +423,7 @@ export function createStructuredLlmProvider(): LlmProvider {
         baseUrl,
         defaultModel: model,
         headers: providerHeadersV1(baseUrl),
+        body: providerBodyV1(baseUrl),
         jsonMode: true,
       }),
     });

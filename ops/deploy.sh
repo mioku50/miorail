@@ -588,17 +588,27 @@ esac
 # deterministic text after waiting out its budget. The failure was found by a
 # person asking a question, which is the worst available detector.
 #
-# One trivial completion, through the real chain, with the real credentials.
-# It costs a fraction of a cent and it is the only check here that can tell a
-# configured lane from a working one. A warning rather than a failure: a dead
-# model must not block a deploy that fixes something else, and every surface
-# that uses it already degrades honestly.
-llm_probe=$(cd "$REPO" && as_service_user npx tsx scripts/probe_llm_lane.ts 2>/dev/null | tail -1) \
-  || llm_probe='dead the probe did not run'
+# One trivial completion per link, then one through the real chain, with the
+# real credentials. It costs a fraction of a cent and it is the only check
+# here that can tell a configured lane from a working one. Each link is asked
+# on its own because the chain alone hid a dead spare: from 2026-09-29 Mistral
+# answered every call with a zero allowance while the chain still said ok. A
+# warning rather than a failure: a dead model must not block a deploy that
+# fixes something else, and every surface that uses it already degrades
+# honestly.
+llm_probe_all=$(cd "$REPO" && as_service_user npx tsx scripts/probe_llm_lane.ts 2>/dev/null) \
+  || llm_probe_all='dead the probe did not run'
+llm_probe=$(printf '%s\n' "$llm_probe_all" | tail -1)
 case "$llm_probe" in
   ok*) printf '  llm lane       %-28s %s\n' "$(grep -E '^LLM_MODEL=' "$REPO/.env" | cut -d= -f2)" 'answered' ;;
   *)   printf '  llm lane       WARNING: no configured model answered — %s\n' "${llm_probe#dead }" ;;
 esac
+printf '%s\n' "$llm_probe_all" | grep -E '^link ' | while read -r _ role host model verdict detail; do
+  case "$verdict" in
+    ok) printf '    %-8s %-16s %-28s answered in %s\n' "$role" "$host" "$model" "$detail" ;;
+    *)  printf '    %-8s %-16s %-28s WARNING: %s\n' "$role" "$host" "$model" "$detail" ;;
+  esac
+done
 
 echo
 # Counted from the response, not typed in. The literal said "5 tools" for a

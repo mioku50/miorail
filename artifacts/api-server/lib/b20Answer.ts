@@ -143,6 +143,8 @@ export async function narrateB20AnswerV1(input: {
   }
 
   let narration: string;
+  const budgetMs = input.timeoutMs ?? 12_000;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const response = await Promise.race([
       input.provider.generate({
@@ -157,16 +159,20 @@ export async function narrateB20AnswerV1(input: {
         // is in the bundle above it. On a reasoning model the 12s budget below
         // was unreachable, so this narrator never ran either.
         reasoningEffort: 'none',
+        // Shared out by the chain, so a slow primary leaves the spare a turn.
+        timeoutMs: budgetMs,
       }),
-      new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('narrator timed out')), input.timeoutMs ?? 12_000),
-      ),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('narrator timed out')), budgetMs);
+      }),
     ]);
     narration = (response.message.content ?? '').trim();
   } catch (error) {
     // The message, never the cause: a provider error carries a base URL, and a
     // base URL carries a key.
     return keep([`the narrator did not answer (${error instanceof Error ? error.name : 'unknown'})`]);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
 
   const verdict = verifyB20NarrationV1({ narration, evidence, assertions: input.bundle.assertions });

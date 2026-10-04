@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import {
+  LLM_LINK_REST_V1,
   createLlmProvider,
   createStructuredLlmProvider,
+  providerBodyV1,
   providerHeadersV1,
   providerLabelV1,
 } from './factory.js';
@@ -521,4 +523,83 @@ test('the structured lane falls over, and borrows the primary spares when it has
     assert.equal(shouldFallOverV1(new LlmHttpError(429, 'Rate limit exceeded')), true);
     assert.equal(shouldFallOverV1(new LlmHttpError(400, 'bad request')), false);
   });
+});
+
+// ---------------------------------------------------------------------------
+// OpenRouter keeps a prompt on the upstream it chose, and one upstream took
+// 17-52 s for the Stocks narrator while every other took 2.5-7 s (2026-09-29).
+// ---------------------------------------------------------------------------
+test('OpenRouter is asked to skip the slow upstream, and no other host gets the field', () => {
+  assert.deepEqual(providerBodyV1('https://openrouter.ai/api', {}), { provider: { ignore: ['OpenInference'] } });
+  assert.deepEqual(
+    providerBodyV1('https://openrouter.ai/api', { OPENROUTER_PROVIDER_IGNORE: 'OpenInference, Relace' }),
+    { provider: { ignore: ['OpenInference', 'Relace'] } },
+  );
+  // The example env ships the line blank, so blank is the default; an
+  // operator turns it off by saying so.
+  assert.deepEqual(providerBodyV1('https://openrouter.ai/api', { OPENROUTER_PROVIDER_IGNORE: '' }), {
+    provider: { ignore: ['OpenInference'] },
+  });
+  assert.deepEqual(providerBodyV1('https://openrouter.ai/api', { OPENROUTER_PROVIDER_IGNORE: 'none' }), {});
+  // A field one gateway reads is a 422 from another.
+  assert.deepEqual(providerBodyV1('https://agentrouter.org/v1', {}), {});
+  assert.deepEqual(providerBodyV1('https://api.mistral.ai', {}), {});
+});
+
+test('the production chain: the routing field reaches OpenRouter only, and a dead spare rests', async (t) => {
+  const originalEnv = { ...process.env };
+  const originalFetch = globalThis.fetch;
+  const originalWarn = console.warn;
+  t.after(() => {
+    process.env = { ...originalEnv };
+    globalThis.fetch = originalFetch;
+    console.warn = originalWarn;
+    LLM_LINK_REST_V1.clear();
+  });
+  LLM_LINK_REST_V1.clear();
+  clearFallbackEnv();
+  clearStructuredEnv();
+  delete process.env.OPENROUTER_PROVIDER_IGNORE;
+  process.env.LLM_PROVIDER = 'openai-compatible';
+  process.env.LLM_BASE_URL = 'https://openrouter.ai/api';
+  delete process.env.LLM_API_KEY;
+  process.env.OPENROUTER_KEY = 'sk-or-test-key';
+  process.env.LLM_MODEL = 'deepseek/deepseek-v4-flash';
+  process.env.LLM_FALLBACK_BASE_URL = 'https://api.mistral.ai';
+  process.env.LLM_FALLBACK_MODEL = 'mistral-small-2603';
+  process.env.MISTRAL_API_KEY = 'mistral-test-key';
+  process.env.LLM_FALLBACK_2_BASE_URL = 'https://agentrouter.org/v1';
+  process.env.LLM_FALLBACK_2_MODEL = 'deepseek-v4-flash';
+  process.env.AGENTROUTER_API_KEY = 'agentrouter-test-key';
+
+  const asked: Array<{ host: string; body: Record<string, unknown> }> = [];
+  globalThis.fetch = (async (url: string, init: RequestInit) => {
+    const host = new URL(url).host;
+    asked.push({ host, body: JSON.parse(String(init.body)) });
+    if (host === 'openrouter.ai') return new Response('{"error":"down"}', { status: 503 });
+    if (host === 'api.mistral.ai') {
+      return new Response('{"message":"Rate limit exceeded","code":"1300"}', {
+        status: 429,
+        headers: { 'x-ratelimit-limit-req-minute': '0' },
+      });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'ok' } }] }), {
+      status: 200,
+    });
+  }) as unknown as typeof fetch;
+  const warnings: string[] = [];
+  console.warn = (message: string) => warnings.push(message);
+
+  const ask = () => createLlmProvider().generate({ messages: [{ role: 'user', content: 'hi' }], timeoutMs: 30_000 });
+  assert.equal((await ask()).message.content, 'ok');
+  assert.deepEqual(asked.map((entry) => entry.host), ['openrouter.ai', 'api.mistral.ai', 'agentrouter.org']);
+  assert.deepEqual(asked[0]!.body.provider, { ignore: ['OpenInference'] });
+  assert.equal('provider' in asked[1]!.body, false);
+  assert.equal('provider' in asked[2]!.body, false);
+  assert.ok(warnings.some((line) => /^\[llm\] api\.mistral\.ai cannot serve; skipped for 10 min/.test(line)));
+
+  // The next request, through a new chain, does not ask the resting spare.
+  asked.length = 0;
+  assert.equal((await ask()).message.content, 'ok');
+  assert.deepEqual(asked.map((entry) => entry.host), ['openrouter.ai', 'agentrouter.org']);
 });

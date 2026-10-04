@@ -718,7 +718,9 @@ export async function narrateStocksAnswerV1(input: {
   if (!input.provider) return keep(null, 'no language provider is configured', null);
 
   const started = Date.now();
+  const budgetMs = input.timeoutMs ?? 30_000;
   let raw: string;
+  let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     const response = await Promise.race([
       input.provider.generate({
@@ -733,14 +735,19 @@ export async function narrateStocksAnswerV1(input: {
         // about. Measured against this exact prompt on deepseek-v4-flash:
         // 120.5s with thinking, 6.7s without.
         reasoningEffort: 'none',
+        // The chain shares this out, so a slow primary leaves the spare its
+        // turn instead of spending the whole wait.
+        timeoutMs: budgetMs,
       }),
-      new Promise<never>((_resolve, reject) =>
-        setTimeout(() => reject(new Error('narrator timed out')), input.timeoutMs ?? 30_000),
-      ),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new Error('narrator timed out')), budgetMs);
+      }),
     ]);
     raw = (response.message.content ?? '').trim();
   } catch (error) {
     return keep(null, error instanceof Error ? error.message : 'unknown', Date.now() - started);
+  } finally {
+    if (timer) clearTimeout(timer);
   }
   const latencyMs = Date.now() - started;
 

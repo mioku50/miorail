@@ -85,6 +85,9 @@ interface RunV1 {
   latencyMs: number | null;
   violationCodes: StocksNarrationViolationCodeV1[];
   providerErrorName: string | null;
+  /** The upstream a gateway named for this answer (OpenRouter's `provider`),
+   * because a p95 alone cannot say which upstream was slow. */
+  upstream: string | null;
 }
 
 function lanesV1(): LaneV1[] {
@@ -271,8 +274,16 @@ async function main(): Promise<void> {
   const runs = await mapWithConcurrencyV1(jobs, concurrency, async (job) => {
     await pace();
     const context: ChainCallV1 = { answeredByIndex: null, attempts: 0 };
+    let upstream: string | null = null;
+    const recorded: LlmProvider = {
+      async generate(request: LlmRequest): Promise<LlmResponse> {
+        const response = await job.lane.provider.generate(request);
+        upstream = response.upstream ?? null;
+        return response;
+      },
+    };
     const answered = await chainCall.run(context, () =>
-      narrateStocksAnswerV1({ bundle: job.fixture.bundle, provider: job.lane.provider, timeoutMs: 60_000 }),
+      narrateStocksAnswerV1({ bundle: job.fixture.bundle, provider: recorded, timeoutMs: 60_000 }),
     );
     const fellOver = job.lane.isChain && context.attempts > 1;
     const providerError = answered.providerError;
@@ -286,6 +297,7 @@ async function main(): Promise<void> {
       latencyMs: answered.latencyMs,
       violationCodes: (answered.rejectedBecause ?? []).map((violation) => violation.code),
       providerErrorName: providerError,
+      upstream,
     };
     return run;
   });
@@ -315,6 +327,15 @@ async function main(): Promise<void> {
         `${`${summary.emptyContentRate}%`.padEnd(7)} ${`${summary.fallbackActivationRate}%`.padEnd(9)} ` +
         `${String(summary.latencyP50Ms ?? '-').padEnd(7)} ${String(summary.latencyP95Ms ?? '-').padEnd(7)} ` +
         `${summary.unsupportedClaimRejectionRate}%`,
+    );
+  }
+
+  for (const summary of report.byLane) {
+    const upstreams = Object.entries(summary.upstreams);
+    if (upstreams.length === 0) continue;
+    console.log(
+      `  ${summary.lane} upstreams: ` +
+        upstreams.map(([name, entry]) => `${name} ${entry.runs} (p50 ${entry.latencyP50Ms ?? '-'}ms)`).join(', '),
     );
   }
 
@@ -382,7 +403,23 @@ function summariseV1(runs: readonly RunV1[], lane: LaneV1) {
     unsupportedClaimRejectionRate: rate(rejectedOnContent, runs.length),
     violations: histogramV1(runs),
     providerErrors: errors,
+    upstreams: upstreamsV1(runs),
   };
+}
+
+function upstreamsV1(runs: readonly RunV1[]): Record<string, { runs: number; latencyP50Ms: number | null }> {
+  const byName = new Map<string, number[]>();
+  for (const run of runs) {
+    if (!run.upstream) continue;
+    const latencies = byName.get(run.upstream) ?? [];
+    if (run.latencyMs !== null) latencies.push(run.latencyMs);
+    byName.set(run.upstream, latencies);
+  }
+  const out: Record<string, { runs: number; latencyP50Ms: number | null }> = {};
+  for (const [name, latencies] of byName) {
+    out[name] = { runs: runs.filter((run) => run.upstream === name).length, latencyP50Ms: percentileV1(latencies, 50) };
+  }
+  return out;
 }
 
 main().catch((error) => {

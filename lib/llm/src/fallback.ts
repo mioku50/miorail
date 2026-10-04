@@ -1,4 +1,4 @@
-import { LlmHttpError } from './openai.js';
+import { LlmHttpError, LlmTimeoutError } from './openai.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
 
 // ---------------------------------------------------------------------------
@@ -36,6 +36,74 @@ export function shouldFallOverV1(error: unknown): boolean {
   // Network errors, timeouts and malformed provider responses all reach here.
   // Every one of them is a property of the provider, not of the request.
   return true;
+}
+
+/**
+ * Whether a failure says the link cannot serve ANY request for a while.
+ *
+ * 401 and 402 are the account: a refused key or a spent balance stays that
+ * way for longer than any reader waits. A 429 counts only when the
+ * provider's own header says the allowance is zero, which is how Mistral
+ * answered a valid key from 2026-09-29; an ordinary 429 is a minute passing.
+ *
+ * 403 and 404 do not count. OpenRouter answers 403 for one flagged prompt and
+ * 404 when no upstream takes one request's parameters, and resting a link
+ * over one request would take it away from every other.
+ */
+export function linkCannotServeV1(error: unknown): boolean {
+  if (!(error instanceof LlmHttpError)) return false;
+  if (error.status === 401 || error.status === 402) return true;
+  return error.status === 429 && error.zeroAllowance;
+}
+
+/** How long a link that cannot serve is skipped before it is asked again. */
+export const LLM_LINK_REST_MS_V1 = 10 * 60_000;
+
+/**
+ * The links that said they cannot serve, and until when.
+ *
+ * Without it, a dead spare kept a share of every budget: with three links
+ * and a 30 s budget the primary got 10 s, because the third link was owed
+ * 10 s it would spend failing in a tenth of a second. The factory shares one
+ * of these between every chain it builds: chains are built per request, and
+ * a link's account is the same in all of them.
+ */
+export class LlmLinkRestV1 {
+  private readonly until = new Map<string, number>();
+
+  constructor(private readonly now: () => number = Date.now) {}
+
+  resting(label: string): boolean {
+    const until = this.until.get(label);
+    if (until === undefined) return false;
+    if (until > this.now()) return true;
+    this.until.delete(label);
+    return false;
+  }
+
+  rest(label: string, ms: number = LLM_LINK_REST_MS_V1): void {
+    this.until.set(label, this.now() + ms);
+  }
+
+  clear(): void {
+    this.until.clear();
+  }
+}
+
+/** The chain's own guarantee: a link that ignores `timeoutMs` still loses
+ * its turn when its share runs out. The client aborts its request too. */
+async function withinShareV1<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(() => reject(new LlmTimeoutError(ms)), ms);
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /** Raised only when EVERY provider failed. It names them all, because
@@ -80,6 +148,13 @@ export interface FallbackLlmProviderOptions {
   /** Called when the primary fails and the fallback is about to be tried. The
    * reason is already redacted by the client that produced it. */
   onFallover?: (event: { from: string; to: string; reason: string }) => void;
+  /** Skip links that said they cannot serve (see `linkCannotServeV1`). Off
+   * unless given. */
+  rest?: LlmLinkRestV1;
+  /** Called once, when a link starts resting. */
+  onRest?: (event: { label: string; reason: string; restMs: number }) => void;
+  /** Test seam for the budget's clock. */
+  now?: () => number;
 }
 
 /**
@@ -90,6 +165,11 @@ export interface FallbackLlmProviderOptions {
  * spare is then not a spare at all. Order is cheapest-first: the chain spends
  * the free tier before the paid one, and a link is only reached when every
  * link before it failed in a way a different provider could survive.
+ *
+ * When the request names a budget (`timeoutMs`), each link gets an equal
+ * share of what is left: with 30 s and two links the primary gets 15 s, and
+ * the spare gets the rest, so a slow primary can no longer spend the time
+ * the spare needed.
  */
 export class LlmProviderChainV1 implements LlmProvider {
   constructor(
@@ -100,21 +180,47 @@ export class LlmProviderChainV1 implements LlmProvider {
   }
 
   async generate(request: LlmRequest): Promise<LlmResponse> {
+    const now = this.options.now ?? Date.now;
+    const rest = this.options.rest;
+    const awake = rest ? this.links.filter((link) => !rest.resting(link.label)) : this.links;
+    // Every link resting is no reason to answer nobody: ask them all anyway.
+    const links = awake.length > 0 ? awake : this.links;
+    const deadline = request.timeoutMs === undefined ? null : now() + request.timeoutMs;
+
     const failures: Array<{ label: string; error: unknown }> = [];
-    for (const [index, link] of this.links.entries()) {
+    for (const [index, link] of links.entries()) {
+      let share: number | null = null;
+      if (deadline !== null) {
+        const left = deadline - now();
+        if (left <= 0) {
+          // The links not reached are named, so the exhausted error does not
+          // read as though they had been asked and failed on their own.
+          for (const untried of links.slice(index)) {
+            failures.push({ label: untried.label, error: new Error('not asked: the budget was spent') });
+          }
+          break;
+        }
+        share = Math.max(1, Math.floor(left / (links.length - index)));
+      }
       if (index > 0) {
         this.options.onFallover?.({
-          from: this.links[index - 1]!.label,
+          from: links[index - 1]!.label,
           to: link.label,
           reason: messageOf(failures[failures.length - 1]?.error),
         });
       }
       try {
-        return await link.provider.generate(request);
+        return share === null
+          ? await link.provider.generate(request)
+          : await withinShareV1(link.provider.generate({ ...request, timeoutMs: share }), share);
       } catch (error) {
         // A request the NEXT provider would reject identically is rethrown
         // as-is, so the caller sees the real cause rather than a second symptom.
         if (!shouldFallOverV1(error)) throw error;
+        if (rest && linkCannotServeV1(error)) {
+          rest.rest(link.label, LLM_LINK_REST_MS_V1);
+          this.options.onRest?.({ label: link.label, reason: messageOf(error), restMs: LLM_LINK_REST_MS_V1 });
+        }
         failures.push({ label: link.label, error });
       }
     }

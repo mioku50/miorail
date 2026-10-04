@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 
-import { OpenAiCompatibleClient } from './openai.js';
+import { LlmHttpError, LlmTimeoutError, OpenAiCompatibleClient } from './openai.js';
 
 const respond = (body: unknown, status = 200) =>
   new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } });
@@ -68,4 +68,74 @@ test('a reasoning model that ran out of budget is a failure, not an empty reply'
     }).generate({ messages: [{ role: 'user', content: 'hi' }] });
     assert.equal(response.message.content, '');
   });
+});
+
+test('a request ends when its budget does, and says so', async () => {
+  // The fetch only ever ends by its signal, as a stalled upstream does.
+  const stalled = new OpenAiCompatibleClient({
+    baseUrl: 'https://gateway.example',
+    apiKey: 'k'.repeat(24),
+    defaultModel: 'deepseek-v4-flash',
+    fetchImpl: (_url, init) =>
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+      }),
+  });
+  // AbortSignal.timeout does not hold the event loop open; a real request's
+  // socket does, and this fake has none.
+  const keepAlive = setInterval(() => undefined, 1_000);
+  const started = Date.now();
+  try {
+    await assert.rejects(
+      stalled.generate({ messages: [{ role: 'user', content: 'hi' }], timeoutMs: 40 }),
+      (error: unknown) => error instanceof LlmTimeoutError && error.timeoutMs === 40 && /No answer within 40 ms/.test(error.message),
+    );
+  } finally {
+    clearInterval(keepAlive);
+  }
+  assert.ok(Date.now() - started < 2_000);
+});
+
+test('gateway body fields go first, so they cannot replace the request', async () => {
+  let sent: Record<string, unknown> = {};
+  const routed = new OpenAiCompatibleClient({
+    baseUrl: 'https://openrouter.ai/api',
+    apiKey: 'k'.repeat(24),
+    defaultModel: 'deepseek/deepseek-v4-flash',
+    body: { provider: { ignore: ['OpenInference'] }, model: 'someone-else', messages: [] },
+    fetchImpl: async (_url, init) => {
+      sent = JSON.parse(String(init?.body));
+      return respond({ provider: 'StreamLake', choices: [{ message: { role: 'assistant', content: 'ok' } }] });
+    },
+  });
+  const response = await routed.generate({ messages: [{ role: 'user', content: 'hi' }] });
+  assert.deepEqual(sent.provider, { ignore: ['OpenInference'] });
+  assert.equal(sent.model, 'deepseek/deepseek-v4-flash');
+  assert.deepEqual(sent.messages, [{ role: 'user', content: 'hi' }]);
+  // The upstream OpenRouter names, kept for measurements.
+  assert.equal(response.upstream, 'StreamLake');
+});
+
+test('a 429 with a zero allowance is told apart from a busy minute', async () => {
+  const answering429 = (headers: Record<string, string>) =>
+    new OpenAiCompatibleClient({
+      baseUrl: 'https://api.mistral.ai',
+      apiKey: 'k'.repeat(24),
+      defaultModel: 'mistral-small-2603',
+      fetchImpl: async () =>
+        new Response(JSON.stringify({ message: 'Rate limit exceeded', code: '1300' }), { status: 429, headers }),
+    });
+  // Mistral's answer to a valid key from 2026-09-29.
+  await assert.rejects(
+    answering429({ 'x-ratelimit-limit-req-minute': '0', 'x-ratelimit-remaining-req-minute': '0' }).generate({
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+    (error: unknown) => error instanceof LlmHttpError && error.status === 429 && error.zeroAllowance,
+  );
+  await assert.rejects(
+    answering429({ 'x-ratelimit-limit-req-minute': '50', 'x-ratelimit-remaining-req-minute': '0' }).generate({
+      messages: [{ role: 'user', content: 'hi' }],
+    }),
+    (error: unknown) => error instanceof LlmHttpError && error.status === 429 && !error.zeroAllowance,
+  );
 });

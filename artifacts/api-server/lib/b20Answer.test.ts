@@ -237,6 +237,9 @@ describe('the bundle is the model’s only context', () => {
     assert.equal(request.tools, undefined);
     assert.doesNotMatch(prompt, /0x[0-9a-f]{40}/i);
     assert.equal(request.temperature, 0);
+    // The chain is told the narrator's budget, so a slow primary leaves the
+    // spare a turn.
+    assert.equal(request.timeoutMs, 12_000);
   });
 
   test('the system prompt states every rule the verifier enforces', () => {

@@ -3,13 +3,16 @@ import { test } from 'node:test';
 
 import {
   FallbackLlmProvider,
+  LLM_LINK_REST_MS_V1,
   LlmChainExhaustedError,
+  LlmLinkRestV1,
   LlmProviderChainV1,
   NON_FAILOVER_STATUSES_V1,
+  linkCannotServeV1,
   shouldFallOverV1,
   type NamedLlmProviderV1,
 } from './fallback.js';
-import { LlmHttpError } from './openai.js';
+import { LlmHttpError, LlmTimeoutError } from './openai.js';
 import type { LlmProvider, LlmRequest, LlmResponse } from './types.js';
 
 function answering(content: string): LlmProvider & { calls: LlmRequest[] } {
@@ -212,4 +215,185 @@ test('a malformed request stops the chain at the first link, not the last', asyn
   const chain = new LlmProviderChainV1([link('first'), link('second'), link('third')]);
   await assert.rejects(() => chain.generate({ messages: [] }), /400/);
   assert.equal(calls, 1);
+});
+
+// ---------------------------------------------------------------------------
+// A budget is shared out, so a slow link cannot spend the time the next one
+// needed. On 2026-09-28 a Stocks narration logged provider_did_not_answer with
+// no fallover line: the primary was still thinking when the narrator's 30 s
+// ran out, and the spare was never asked.
+// ---------------------------------------------------------------------------
+
+/** A link that never answers and ignores any budget it is given. */
+function stalled(): LlmProvider & { calls: LlmRequest[] } {
+  const calls: LlmRequest[] = [];
+  return {
+    calls,
+    generate(request: LlmRequest): Promise<LlmResponse> {
+      calls.push(request);
+      return new Promise<LlmResponse>(() => undefined);
+    },
+  };
+}
+
+test('with a budget, a stalled primary loses its turn and the spare answers in time', async () => {
+  const primary = stalled();
+  const spare = answering('from spare');
+  const hops: string[] = [];
+  const chain = new LlmProviderChainV1(
+    [
+      { label: 'primary.example', provider: primary },
+      { label: 'spare.example', provider: spare },
+    ],
+    { onFallover: ({ from, to, reason }) => hops.push(`${from} -> ${to}: ${reason}`) },
+  );
+  const started = Date.now();
+  const response = await chain.generate({ ...REQUEST, timeoutMs: 120 });
+  assert.equal(response.message.content, 'from spare');
+  assert.ok(Date.now() - started < 1_000);
+  // Each link is told its share: half to the primary, the rest to the spare.
+  const primaryShare = primary.calls[0]?.timeoutMs ?? 0;
+  assert.ok(primaryShare >= 55 && primaryShare <= 60, `primary share ${primaryShare}`);
+  assert.ok((spare.calls[0]?.timeoutMs ?? 0) > 0 && (spare.calls[0]?.timeoutMs ?? 0) <= 65);
+  assert.deepEqual(hops, [`primary.example -> spare.example: No answer within ${primaryShare} ms`]);
+});
+
+test('a primary that answers inside its share is the only link asked', async () => {
+  const primary = answering('from primary');
+  const spare = answering('from spare');
+  const chain = new LlmProviderChainV1(
+    [
+      { label: 'primary.example', provider: primary },
+      { label: 'spare.example', provider: spare },
+    ],
+    { now: () => 0 },
+  );
+  const response = await chain.generate({ ...REQUEST, timeoutMs: 30_000 });
+  assert.equal(response.message.content, 'from primary');
+  assert.equal(primary.calls[0]?.timeoutMs, 15_000);
+  assert.equal(spare.calls.length, 0);
+});
+
+test('a fast failure hands its unused share on', async () => {
+  const spare = answering('from spare');
+  const chain = new LlmProviderChainV1([
+    { label: 'primary.example', provider: failing(new LlmHttpError(503, 'down')) },
+    { label: 'spare.example', provider: spare },
+  ]);
+  await chain.generate({ ...REQUEST, timeoutMs: 30_000 });
+  // Nearly the whole budget, not the half the primary was owed.
+  assert.ok((spare.calls[0]?.timeoutMs ?? 0) > 29_000);
+});
+
+test('when every link stalls, the chain ends with the budget and names each link', async () => {
+  const chain = new LlmProviderChainV1([
+    { label: 'primary.example', provider: stalled() },
+    { label: 'spare.example', provider: stalled() },
+  ]);
+  const started = Date.now();
+  await assert.rejects(chain.generate({ ...REQUEST, timeoutMs: 80 }), (error: unknown) => {
+    assert.ok(error instanceof LlmChainExhaustedError);
+    assert.deepEqual(error.failures.map((failure) => failure.label), ['primary.example', 'spare.example']);
+    assert.ok(error.failures.every((failure) => failure.error instanceof LlmTimeoutError));
+    return true;
+  });
+  assert.ok(Date.now() - started < 1_000);
+});
+
+test('a spent budget asks nobody, and says the links were not asked', async () => {
+  const primary = answering('from primary');
+  const chain = new LlmProviderChainV1([{ label: 'primary.example', provider: primary }]);
+  await assert.rejects(chain.generate({ ...REQUEST, timeoutMs: 0 }), /primary\.example: not asked: the budget was spent/);
+  assert.equal(primary.calls.length, 0);
+});
+
+test('without a budget nothing changes: the request goes as it came', async () => {
+  const primary = answering('from primary');
+  const chain = new LlmProviderChainV1([{ label: 'primary.example', provider: primary }]);
+  await chain.generate(REQUEST);
+  assert.equal(primary.calls[0]?.timeoutMs, undefined);
+});
+
+// ---------------------------------------------------------------------------
+// A link that said it cannot serve rests, so it neither costs a round trip nor
+// keeps a share of every budget.
+// ---------------------------------------------------------------------------
+
+test('only an account-level refusal rests a link', () => {
+  assert.equal(linkCannotServeV1(new LlmHttpError(401, 'bad key')), true);
+  assert.equal(linkCannotServeV1(new LlmHttpError(402, 'budget pool quota has been exhausted')), true);
+  assert.equal(linkCannotServeV1(new LlmHttpError(429, 'Rate limit exceeded', { zeroAllowance: true })), true);
+  // A busy minute passes; one flagged prompt or one unsupported parameter is
+  // about that request, not the link.
+  assert.equal(linkCannotServeV1(new LlmHttpError(429, 'Rate limit exceeded')), false);
+  assert.equal(linkCannotServeV1(new LlmHttpError(403, 'flagged')), false);
+  assert.equal(linkCannotServeV1(new LlmHttpError(404, 'no endpoints')), false);
+  assert.equal(linkCannotServeV1(new LlmHttpError(503, 'down')), false);
+  assert.equal(linkCannotServeV1(new LlmTimeoutError(10)), false);
+});
+
+test('a spare with a zero allowance rests, and the live links share the budget', async () => {
+  let clock = 1_000_000;
+  const rest = new LlmLinkRestV1(() => clock);
+  const rested: string[] = [];
+  const dead = failing(new LlmHttpError(429, 'Rate limit exceeded', { zeroAllowance: true }));
+  const primary = failing(new LlmHttpError(503, 'down'));
+  const spare = answering('from spare');
+  const chain = () =>
+    new LlmProviderChainV1(
+      [
+        { label: 'primary.example', provider: primary },
+        { label: 'dead.example', provider: dead },
+        { label: 'spare.example', provider: spare },
+      ],
+      { rest, onRest: ({ label }) => rested.push(label), now: () => clock },
+    );
+
+  // The first request meets the dead link and puts it to rest.
+  assert.equal((await chain().generate({ ...REQUEST, timeoutMs: 30_000 })).message.content, 'from spare');
+  assert.equal(dead.calls.length, 1);
+  assert.deepEqual(rested, ['dead.example']);
+
+  // The next one, in a NEW chain as the factory builds them, skips it, and
+  // the primary is owed half the budget instead of a third.
+  await chain().generate({ ...REQUEST, timeoutMs: 30_000 });
+  assert.equal(dead.calls.length, 1);
+  assert.equal(primary.calls[1]?.timeoutMs, 15_000);
+
+  // After its rest it is asked again.
+  clock += LLM_LINK_REST_MS_V1;
+  await chain().generate({ ...REQUEST, timeoutMs: 30_000 });
+  assert.equal(dead.calls.length, 2);
+  assert.deepEqual(rested, ['dead.example', 'dead.example']);
+});
+
+test('an ordinary 429 does not rest a link', async () => {
+  const rest = new LlmLinkRestV1();
+  const busy = failing(new LlmHttpError(429, 'Rate limit exceeded'));
+  const chain = new LlmProviderChainV1(
+    [
+      { label: 'busy.example', provider: busy },
+      { label: 'spare.example', provider: answering('from spare') },
+    ],
+    { rest },
+  );
+  await chain.generate(REQUEST);
+  await chain.generate(REQUEST);
+  assert.equal(busy.calls.length, 2);
+  assert.equal(rest.resting('busy.example'), false);
+});
+
+test('when every link rests, they are all asked anyway', async () => {
+  const rest = new LlmLinkRestV1();
+  rest.rest('primary.example');
+  rest.rest('spare.example');
+  const primary = answering('from primary');
+  const chain = new LlmProviderChainV1(
+    [
+      { label: 'primary.example', provider: primary },
+      { label: 'spare.example', provider: answering('from spare') },
+    ],
+    { rest },
+  );
+  assert.equal((await chain.generate(REQUEST)).message.content, 'from primary');
 });

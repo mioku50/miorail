@@ -720,7 +720,7 @@ describe('a question about a dividend', () => {
 });
 
 describe('the Stocks narrator has no actions', () => {
-  test('the provider is handed messages and two settings, and no capability', async () => {
+  test('the provider is handed messages, two settings and a budget, and no capability', async () => {
     const bundle = bundleOf('A');
     let seen: LlmRequest | null = null;
     const provider: LlmProvider = {
@@ -732,11 +732,14 @@ describe('the Stocks narrator has no actions', () => {
     await narrateStocksAnswerV1({ bundle, provider });
     const request = seen as unknown as LlmRequest;
     assert.ok(request, 'the provider was called');
-    // Two generation settings and nothing else. `reasoningEffort` is the same
-    // class of thing as `temperature` — how the model writes, not what it may
-    // reach — and this pin exists to catch the day a capability joins them.
-    assert.deepEqual(Object.keys(request).sort(), ['messages', 'reasoningEffort', 'temperature']);
+    // Two generation settings, the time budget and nothing else.
+    // `reasoningEffort` is the same class of thing as `temperature` — how the
+    // model writes, not what it may reach — and the budget is how long it may
+    // take. This pin exists to catch the day a capability joins them.
+    assert.deepEqual(Object.keys(request).sort(), ['messages', 'reasoningEffort', 'temperature', 'timeoutMs']);
     assert.equal(request.reasoningEffort, 'none');
+    // The narrator's whole wait goes to the chain, which shares it out.
+    assert.equal(request.timeoutMs, 30_000);
     assert.equal(request.tools, undefined);
     assert.equal(request.messages.length, 2);
     assert.deepEqual(

@@ -18,10 +18,23 @@ export interface OpenAiConfig {
    * be able to redirect the credential or change the body's declared type.
    */
   headers?: Readonly<Record<string, string>>;
+  /**
+   * Extra request-body fields this gateway reads, such as OpenRouter's
+   * routing preferences.
+   *
+   * Spread FIRST, for the same reason as `headers`: configuration must not be
+   * able to replace the model, the messages or anything the caller asked for.
+   * Host-scoped by the factory, because a field one gateway reads is a 422
+   * from another.
+   */
+  body?: Readonly<Record<string, unknown>>;
   /** Ask compatible providers to guarantee a JSON object. Exact keys and
    * financial semantics are still enforced by the caller's strict parser. */
   jsonMode?: boolean;
 }
+
+/** The longest any one request may take, whatever budget a caller names. */
+export const CLIENT_TIMEOUT_MS_V1 = 60_000;
 
 /** How much of a provider's error body is kept. A gateway that answers with an
  * HTML page or a stack trace should not become a multi-kilobyte log line. */
@@ -49,18 +62,62 @@ export function redactSecretV1(text: string, secret: string): string {
  */
 export class LlmHttpError extends Error {
   readonly status: number;
+  /**
+   * A 429 whose own rate-limit header says the allowance is zero.
+   *
+   * That is not "too many requests this minute", which passes, but "no
+   * requests at all", which does not. Mistral answered exactly this from
+   * 2026-09-29 for days: `x-ratelimit-limit-req-minute: 0` on a valid key.
+   */
+  readonly zeroAllowance: boolean;
 
-  constructor(status: number, body: string) {
+  constructor(status: number, body: string, options: { zeroAllowance?: boolean } = {}) {
     super(`OpenAI API error (${status}): ${body}`);
     this.name = 'LlmHttpError';
     this.status = status;
+    this.zeroAllowance = options.zeroAllowance === true;
   }
+}
+
+/** No answer arrived within the request's budget. */
+export class LlmTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`No answer within ${timeoutMs} ms`);
+    this.name = 'LlmTimeoutError';
+    this.timeoutMs = timeoutMs;
+  }
+}
+
+/** Rate-limit headers that state a per-window allowance: Mistral's, OpenAI's,
+ * and the generic one OpenRouter sends. */
+const ALLOWANCE_HEADERS_V1: readonly string[] = [
+  'x-ratelimit-limit-req-minute',
+  'x-ratelimit-limit-requests',
+  'x-ratelimit-limit',
+];
+
+function zeroAllowanceV1(headers: Headers): boolean {
+  return ALLOWANCE_HEADERS_V1.some((name) => headers.get(name)?.trim() === '0');
 }
 
 export class OpenAiCompatibleClient implements LlmProvider {
   constructor(private config: OpenAiConfig) {}
 
   async generate(request: LlmRequest): Promise<LlmResponse> {
+    const timeoutMs = Math.max(1, Math.min(CLIENT_TIMEOUT_MS_V1, Math.floor(request.timeoutMs ?? CLIENT_TIMEOUT_MS_V1)));
+    try {
+      return await this.generateWithin(request, AbortSignal.timeout(timeoutMs));
+    } catch (error) {
+      // The signal also aborts reading the body, so a stalled stream lands
+      // here too. Named, so a fallover line says what happened.
+      if (error instanceof Error && error.name === 'TimeoutError') throw new LlmTimeoutError(timeoutMs);
+      throw error;
+    }
+  }
+
+  private async generateWithin(request: LlmRequest, signal: AbortSignal): Promise<LlmResponse> {
     const model = request.model || this.config.defaultModel;
     const url = `${this.config.baseUrl.replace(/(?:\/v1)?\/?$/, '')}/v1/chat/completions`;
 
@@ -73,8 +130,9 @@ export class OpenAiCompatibleClient implements LlmProvider {
         'Content-Type': 'application/json',
         'Authorization': `Bearer ${this.config.apiKey}`
       },
-      signal: AbortSignal.timeout(60000),
+      signal,
       body: JSON.stringify({
+        ...(this.config.body ?? {}),
         model,
         messages: request.messages,
         temperature: request.temperature,
@@ -92,10 +150,12 @@ export class OpenAiCompatibleClient implements LlmProvider {
       throw new LlmHttpError(
         response.status,
         redactSecretV1(errorText, this.config.apiKey).slice(0, ERROR_BODY_LIMIT),
+        { zeroAllowance: response.status === 429 && zeroAllowanceV1(response.headers) },
       );
     }
 
     const data = await response.json() as {
+      provider?: unknown;
       choices?: Array<{
         finish_reason?: string;
         message?: {
@@ -161,7 +221,10 @@ export class OpenAiCompatibleClient implements LlmProvider {
         promptTokens: data.usage.prompt_tokens,
         completionTokens: data.usage.completion_tokens,
         totalTokens: data.usage.total_tokens
-      } : undefined
+      } : undefined,
+      ...(typeof data.provider === 'string' && data.provider.length > 0
+        ? { upstream: data.provider.slice(0, 64) }
+        : {}),
     };
   }
 }

@@ -113,13 +113,15 @@ async function classifyB20QuestionV1(input: {
     },
   ];
   let timer: ReturnType<typeof setTimeout> | undefined;
+  const budgetMs = input.timeoutMs ?? SEMANTIC_TIMEOUT_MS_V1;
   try {
     const timeout = new Promise<null>((resolve) => {
-      timer = setTimeout(() => resolve(null), input.timeoutMs ?? SEMANTIC_TIMEOUT_MS_V1);
+      timer = setTimeout(() => resolve(null), budgetMs);
     });
     const generated = input.provider
       // Extraction from a closed vocabulary: nothing here rewards thinking.
-      .generate({ messages, temperature: 0, reasoningEffort: 'none' })
+      // The budget goes with it, so the chain can share it between links.
+      .generate({ messages, temperature: 0, reasoningEffort: 'none', timeoutMs: budgetMs })
       .then((response) => parseB20SemanticIntentV1(response.message.content || ''))
       .catch(() => null);
     return await Promise.race([generated, timeout]);
