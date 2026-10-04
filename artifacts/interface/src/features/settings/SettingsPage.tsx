@@ -175,12 +175,12 @@ export function SettingsPage() {
             canRetryVerification={grant.canRetryVerification}
           />
         }
-        adapters={adapterRows}
-        adaptersUnavailableReason={
-          status.error ? 'The server did not report its adapters, so none are listed. Nothing here is a statement about them.' : null
-        }
+        // Rows built from an unread report would draw every adapter as
+        // `disabled`; until the report is read, the panel says so instead.
+        adapters={statusRows.adaptersUnavailableReason ? { rows: [], summary: '—' } : adapterRows}
+        adaptersUnavailableReason={statusRows.adaptersUnavailableReason}
         providers={statusRows.providers}
-        providersUnavailableReason={null}
+        providersUnavailableReason={statusRows.providersUnavailableReason}
         network={statusRows.network}
         technical={statusRows.technical}
       />

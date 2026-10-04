@@ -53,9 +53,27 @@ describe('Settings reads the server the same way on both surfaces', () => {
   test('an unread status says so rather than reading as a healthy server', () => {
     const rows = settingsStatusRowsV1(null);
     assert.deepEqual(rows.providers, []);
+    // "None listed" must not read as "none configured", and an adapter list
+    // built from unread flags would draw all thirteen as switched off.
+    assert.match(rows.providersUnavailableReason ?? '', /were not read/);
+    assert.match(rows.adaptersUnavailableReason ?? '', /did not report its adapters/);
+    assert.equal(settingsStatusRowsV1(STATUS).providersUnavailableReason, null);
+    assert.equal(settingsStatusRowsV1(STATUS).adaptersUnavailableReason, null);
     assert.deepEqual(rows.network.map((row) => row.value), ['chain unknown', 'unknown', '—', '—']);
     assert.equal(rows.network[1]!.tone, 'off');
     assert.deepEqual(rows.technical.map((row) => row.value), ['not reported', 'not reported', 'off', 'off']);
+  });
+
+  test('signed out, the Base App asks for a wallet instead of drawing the server as switched off', () => {
+    // The web keeps Settings behind its session gate; the Base App reaches it
+    // from the drawer, where every read on it answers 401 to a visitor.
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    const gate = mini.indexOf('section === "settings" && stocksSignedOut');
+    assert.ok(gate > 0, 'the Base App renders Settings to a signed-out reader');
+    assert.ok(gate < mini.indexOf('} else if (section === "settings") {'), 'the gate must come before the page');
+    for (const surface of [mini, read('../../../artifacts/interface/src/features/settings/SettingsPage.tsx')]) {
+      assert.match(surface, /adaptersUnavailableReason=\{statusRows\.adaptersUnavailableReason\}/);
+    }
   });
 
   test('the web and the Base App both build Settings from the shared parts', () => {

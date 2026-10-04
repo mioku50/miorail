@@ -2575,6 +2575,25 @@ export function MiniConsole() {
         />
       </>
     );
+  } else if (section === "settings" && stocksSignedOut) {
+    // Settings belong to a wallet, and the web keeps the page behind its
+    // session gate. Signed out, every read on it answers 401: the grants read
+    // as "could not be read" and the server's flags as off, so thirteen
+    // adapters were drawn `disabled` on a server where they are on.
+    sectionContent = (
+      <div className="panel">
+        <div className="ph">
+          <h3>Settings</h3>
+        </div>
+        <div className="pb">
+          <p className="lnote">
+            Settings belong to a wallet: the assistants it has connected and its spending budget. Sign in with
+            your wallet to see them. Nothing here is read until you do.
+          </p>
+          <WalletConnect />
+        </div>
+      </div>
+    );
   } else if (section === "settings") {
     // The web's Settings page, from the same parts: who else can act as this
     // wallet first, then the spending budget folded under Advanced, then how
@@ -2594,14 +2613,12 @@ export function MiniConsole() {
         connectedApps={<ConnectedAppsSettingsV1 />}
         budgetStatus={{ label: paidView.label, needsAttention: paidView.moneyAtRisk }}
         budget={budgetPanel}
-        adapters={adapterRows}
-        adaptersUnavailableReason={
-          status.error
-            ? "The server did not report its adapters, so none are listed. Nothing here is a statement about them."
-            : null
-        }
+        // Rows built from an unread report would draw every adapter as
+        // `disabled`; until the report is read, the panel says so instead.
+        adapters={statusRows.adaptersUnavailableReason ? { rows: [], summary: "—" } : adapterRows}
+        adaptersUnavailableReason={statusRows.adaptersUnavailableReason}
         providers={statusRows.providers}
-        providersUnavailableReason={null}
+        providersUnavailableReason={statusRows.providersUnavailableReason}
         network={statusRows.network}
         technical={statusRows.technical}
       />

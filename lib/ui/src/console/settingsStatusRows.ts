@@ -35,12 +35,25 @@ export type SettingsServerStatusV1 = ConsoleServerStatusV1 & {
 
 export interface SettingsStatusRowsV1 {
   providers: SettingsProviderRowV1[];
+  /** Set exactly when the report was not read: "none listed" must not read
+   * as "none configured". */
+  providersUnavailableReason: string | null;
+  /** Set exactly when the report was not read. The adapter rows are built
+   * from the server's flags, and an unread report reads every flag as off:
+   * thirteen adapters drawn as `disabled` on a server where they are on. */
+  adaptersUnavailableReason: string | null;
   network: { label: string; value: string; tone?: 'ok' | 'off' }[];
   technical: { label: string; value: string }[];
 }
 
 export function settingsStatusRowsV1(status: SettingsServerStatusV1 | null): SettingsStatusRowsV1 {
   return {
+    providersUnavailableReason: status
+      ? null
+      : 'This server’s providers were not read, so none are listed. Nothing here is a statement about them.',
+    adaptersUnavailableReason: status
+      ? null
+      : 'The server did not report its adapters, so none are listed. Nothing here is a statement about them.',
     // Read straight from the server's own report. A provider this server
     // never mentions is absent from the list rather than listed as broken.
     providers: SETTINGS_PROVIDER_SLOTS_V1.flatMap(({ key, name, what }) => {
