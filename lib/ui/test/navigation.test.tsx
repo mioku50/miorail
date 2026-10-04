@@ -9,7 +9,9 @@ import url from 'node:url';
 import {
   CONSOLE_DRAWER_SECTIONS_V1,
   CONSOLE_PIPELINE_STATES_V1,
+  CONSOLE_MAIN_SECTIONS_V1,
   CONSOLE_MINIAPP_SECTIONS_V1,
+  CONSOLE_MORE_SECTIONS_V1,
   CONSOLE_PRIMARY_SECTIONS_V1,
   CONSOLE_SECTIONS_V1,
   CONSOLE_SECTION_TABLE_V1,
@@ -307,11 +309,32 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
 });
 
 describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
-  test('Base App shows Stocks, Radar and B20', () => {
+  test('Base App leads with the same pages as the web', () => {
     const nav = consoleNavModelV1({ mounted: CONSOLE_MINIAPP_SECTIONS_V1, active: 'market' });
-    // Phase 15.1. It was Discover / B20 / Routes AI -- the surfaces Stocks is
-    // built from, on the narrow screen where the product should lead.
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Radar', 'B20']);
+    // Phase 15.1 made it Stocks / Radar / B20; the roadmap of 2026-10-04 gave
+    // it the web's own main pages, so a reader meets the same product on a
+    // phone and on a laptop.
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'MCP plugins', 'Routes AI']);
+    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], [...CONSOLE_PRIMARY_SECTIONS_V1]);
+  });
+
+  test('the Base App drawer leads with Settings, then what the web keeps behind More', () => {
+    const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    const drawer = /const MINIAPP_DRAWER_SECTIONS_V1 = \[([^\]]+)\]/.exec(mini);
+    const listed = [...drawer![1]!.matchAll(/"([a-z]+)"/g)].map((match) => match[1]!);
+    // Every main page is reachable: three in the bar, Settings in the drawer.
+    assert.deepEqual(
+      [...CONSOLE_MAIN_SECTIONS_V1].filter((section) => !(CONSOLE_MINIAPP_SECTIONS_V1 as readonly string[]).includes(section)),
+      ['settings'],
+    );
+    assert.equal(listed[0], 'settings');
+    // The rest is the web's "More", minus Investigate, which the Base App does
+    // not mount.
+    assert.deepEqual(
+      listed.slice(1),
+      CONSOLE_MORE_SECTIONS_V1.filter((section) => section !== 'investigate'),
+    );
+    assert.match(mini, /<span>More<\/span>/);
   });
 
   test('the web tab bar opens on the product, not on what it was built from', () => {
@@ -334,12 +357,12 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     }
   });
 
-  test('the Base App opens on Stocks, and Radar is one tab away', () => {
+  test('the Base App opens on Stocks, and Radar is one tap away in the drawer', () => {
     // Phase 15.1. The Base App is the narrow surface and it opened on Discover
     // -- one of the surfaces Stocks is built from.
     assert.equal(CONSOLE_MINIAPP_SECTIONS_V1[0], 'market');
-    assert.ok(CONSOLE_MINIAPP_SECTIONS_V1.includes('radar'));
     const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
+    assert.match(mini, /const MINIAPP_DRAWER_SECTIONS_V1 = \[[^\]]*"radar"/);
     assert.match(mini, /return "market";/, 'the stored-section fallback must be Stocks');
     assert.match(mini, /MarketRealityScreen model=\{stocks\.model\}/);
     assert.match(mini, /MarketRealityRadarScreen model=\{radarConsole\.model\}/);
@@ -428,7 +451,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
 
   test('both surfaces read the same table, in each surface\u2019s own order', () => {
     assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['market', 'extensions', 'routes']);
-    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'radar', 'portfolio']);
+    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'extensions', 'routes']);
     // Whatever each surface lists, the words come from the shared table.
     for (const section of [...CONSOLE_PRIMARY_SECTIONS_V1, ...CONSOLE_MINIAPP_SECTIONS_V1]) {
       assert.ok(CONSOLE_SECTION_TABLE_V1[section].compactLabel.length > 0);

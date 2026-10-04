@@ -159,23 +159,25 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
 export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'extensions', 'routes'] as const;
 
 /**
- * What the Base App MiniApp renders, in order.
+ * What the Base App MiniApp's bar shows, in order.
  *
- * Deliberately its own list. It used to BE `CONSOLE_PRIMARY_SECTIONS_V1`, on
- * the rule that a tab must have a real handler behind it — so reordering the
- * web tab bar would have shipped inert tabs into the Base App. The rule is
- * right; sharing one constant between two surfaces that mount different screens
- * was what made it fragile.
+ * The same three pages as the web's primary navigation, so a reader who
+ * learns Miorail on a phone finds the same pages on a laptop (operator
+ * roadmap, 2026-10-04). Settings, the fourth main page, leads the Base App's
+ * drawer, and Radar, Discover, B20 controls and Activity follow it behind
+ * "More", exactly as on the web. Three tabs, because three get ~130px each on
+ * a 390px screen and "MCP plugins" does not survive ~90px.
  *
- * Stocks first here too: the Base App is the narrow surface, and it opened on
- * Discover — one of the surfaces Stocks is built from. B20 controls stay
- * because the wallet-bound checks live there and nowhere else in the MiniApp.
- * Routes AI moved out of the bar: three tabs get ~130px each on a 390px screen.
+ * Deliberately its own list all the same. It used to BE
+ * `CONSOLE_PRIMARY_SECTIONS_V1`, on the rule that a tab must have a real
+ * handler behind it — so reordering the web tab bar would have shipped inert
+ * tabs into the Base App. The rule is right; sharing one constant between two
+ * surfaces that mount different screens was what made it fragile.
  *
  * Adding a section here without adding its screen is the bug this separation
  * exists to make visible, and `navigation.test.tsx` fails on it.
  */
-export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'radar', 'portfolio'] as const;
+export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'extensions', 'routes'] as const;
 
 /**
  * The four pages the console leads with, in order (operator, 2026-10-03):

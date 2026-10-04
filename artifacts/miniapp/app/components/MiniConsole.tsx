@@ -16,6 +16,8 @@ import {
   NftRouteCardPanel,
   commerceCheckoutAvailableV1,
   CONSOLE_MINIAPP_SECTIONS_V1,
+  CONSOLE_MORE_SECTIONS_V1,
+  ConnectedAppsSettingsV1,
   ConsoleMiniShell,
   ConsoleRightRail,
   B20ExitCard,
@@ -39,6 +41,10 @@ import {
   consoleHomeSectionV1,
   consoleNavModelV1,
   consoleSectionLabelV1,
+  paidIntelligenceStateV1,
+  paidIntelligenceViewV1,
+  settingsStatusRowsV1,
+  SettingsScreen,
   activityProofItemsV1,
   planWalletRowsV1,
   opportunityCardViewV1,
@@ -225,7 +231,9 @@ const SECTION_STORAGE_KEY_V1 = "miorail.section.v1";
 function readStoredSectionV1(): ConsoleSectionV1 {
   try {
     const stored = globalThis.sessionStorage?.getItem(SECTION_STORAGE_KEY_V1);
-    if (stored && (MINIAPP_SECTIONS_V1 as readonly string[]).includes(stored)) {
+    // Any section a reader can reach, the drawer's included: a reader on
+    // Radar who leaves and comes back should come back to Radar.
+    if (stored && ([...MINIAPP_SECTIONS_V1, ...MINIAPP_DRAWER_SECTIONS_V1] as readonly string[]).includes(stored)) {
       return stored as ConsoleSectionV1;
     }
   } catch {
@@ -244,9 +252,10 @@ function readStoredSectionV1(): ConsoleSectionV1 {
  * surfaces can differ without either shipping a tab that renders nothing. */
 const MINIAPP_SECTIONS_V1 = CONSOLE_MINIAPP_SECTIONS_V1;
 
-/** Sections the Base App renders that the tab bar has no room for. Every one
+/** Sections the Base App renders that the tab bar has no room for: Settings,
+ * the fourth main page, and then what the web keeps behind "More". Every one
  * has a handler below; `navigation.test.tsx` holds both lists to that rule. */
-const MINIAPP_DRAWER_SECTIONS_V1 = ["opportunities", "routes", "extensions", "activity"] as const;
+const MINIAPP_DRAWER_SECTIONS_V1 = ["settings", "radar", "opportunities", "portfolio", "activity"] as const;
 
 
 export function MiniConsole() {
@@ -278,7 +287,6 @@ export function MiniConsole() {
   const [nftProof, setNftProof] = useState<NftProofResponseV1 | null>(null);
   const [simulateResponse, setSimulateResponse] = useState<SimulateBlueprintResponseV1 | null>(null);
   const [budgetResponse, setBudgetResponse] = useState<SimulateWithBudgetResponseV1 | null>(null);
-  const [budgetOpen, setBudgetOpen] = useState(false);
 
   const mark = useCallback((stage: ConsoleStageV1, phase: "start" | "complete") => {
     const at = Date.now();
@@ -902,27 +910,31 @@ export function MiniConsole() {
   // sections sat below a list of thirteen adapters.
   const onPlanner = section === "routes" || section === "activity";
   const proofItems = activityProofItemsV1(historyItems);
+  const moreSections = new Set<ConsoleSectionV1>(CONSOLE_MORE_SECTIONS_V1);
+  const drawerItem = (id: ConsoleSectionV1) => (
+    <button
+      key={id}
+      type="button"
+      className={`item${section === id ? " on" : ""}`}
+      onClick={() => setSection(id)}
+    >
+      <span className="t">{consoleSectionLabelV1(id)}</span>
+    </button>
+  );
   const drawer = (
     <>
-      {/* Phase 15.1 — the sections that are not in the tab bar.
-          Three tabs get ~130px each on a 390px screen and four get ~90px, so
-          Stocks, Radar and B20 took the bar. The rest still have real handlers,
-          and a handler with no way in is a dead screen — so the drawer is the
-          way in, exactly as it is on the web. Labels come from the shared
-          table, never typed here. */}
+      {/* The sections that are not in the tab bar, in the web drawer's order:
+          Settings, the fourth main page, then what the web keeps behind
+          "More". Three tabs get ~130px each on a 390px screen and four get
+          ~90px, so the bar holds the other three main pages. A handler with
+          no way in is a dead screen, so the drawer is the way in, exactly as
+          it is on the web. Labels come from the shared table, never typed
+          here. */}
+      {MINIAPP_DRAWER_SECTIONS_V1.filter((id) => !moreSections.has(id)).map(drawerItem)}
       <div className="sechead">
         <span>More</span>
       </div>
-      {MINIAPP_DRAWER_SECTIONS_V1.map((id) => (
-        <button
-          key={id}
-          type="button"
-          className={`item${section === id ? " on" : ""}`}
-          onClick={() => setSection(id)}
-        >
-          <span className="t">{consoleSectionLabelV1(id)}</span>
-        </button>
-      ))}
+      {MINIAPP_DRAWER_SECTIONS_V1.filter((id) => moreSections.has(id)).map(drawerItem)}
       {onPlanner ? (
         <>
           <button
@@ -990,17 +1002,9 @@ export function MiniConsole() {
           </div>
         </>
       ) : null}
-      {/* T67E §2.1 — the drawer opens from the panel that already shows the
-          spend, not from a nav entry called "x402". A setting, so it is here
-          on every section: the Base App has no Settings page to hold it. */}
-      <div className="minipanel">
-        <div className="row">
-          <span>Agent spending budget</span>
-          <button type="button" className="btn sec" onClick={() => setBudgetOpen((open) => !open)}>
-            {budgetOpen ? "Close" : "Open"}
-          </button>
-        </div>
-      </div>
+      {/* The agent spending budget lived here, on every section, while the
+          Base App had no Settings page to hold it. It is in Settings now, as
+          on the web. */}
       <div className="minipanel">
         <WalletConnect />
       </div>
@@ -2571,6 +2575,37 @@ export function MiniConsole() {
         />
       </>
     );
+  } else if (section === "settings") {
+    // The web's Settings page, from the same parts: who else can act as this
+    // wallet first, then the spending budget folded under Advanced, then how
+    // the server is wired. The budget used to open from the drawer on every
+    // section, because the Base App had no Settings page to hold it.
+    const paidView = paidIntelligenceViewV1(
+      paidIntelligenceStateV1({
+        featureEnabled: paidIntelligenceOn,
+        settleReady: status.data?.paidIntelligence?.settleReady === true,
+        budget: budgetRecord,
+        charges: charges.data?.charges ?? [],
+      }),
+    );
+    const statusRows = settingsStatusRowsV1(status.data ?? null);
+    sectionContent = (
+      <SettingsScreen
+        connectedApps={<ConnectedAppsSettingsV1 />}
+        budgetStatus={{ label: paidView.label, needsAttention: paidView.moneyAtRisk }}
+        budget={budgetPanel}
+        adapters={adapterRows}
+        adaptersUnavailableReason={
+          status.error
+            ? "The server did not report its adapters, so none are listed. Nothing here is a statement about them."
+            : null
+        }
+        providers={statusRows.providers}
+        providersUnavailableReason={null}
+        network={statusRows.network}
+        technical={statusRows.technical}
+      />
+    );
   }
 
   return (
@@ -2607,7 +2642,6 @@ export function MiniConsole() {
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}
       />
-      {budgetOpen && budgetPanel}
       {sectionContent}
     </ConsoleMiniShell>
   );

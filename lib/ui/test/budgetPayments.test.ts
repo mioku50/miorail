@@ -252,16 +252,20 @@ describe('§2.1 — this is not a technical menu', () => {
     assert.ok(!/>[^<]*x402/i.test(visible), 'x402 appears in the panel’s primary copy');
   });
 
-  test('the full panel is reachable on every surface', () => {
+  test('the full panel is reachable on every surface, in Settings', () => {
     // T70 §2 — on the web it moved from a mid-flow drawer to Settings, because
     // it was the first card on Routes and the largest block in the drawer, and
-    // it is a thing you read once when something is wrong. Base App has no
-    // Settings section in its four-up bar, so there it is still the drawer.
+    // it is a thing you read once when something is wrong. The Base App kept
+    // it in its drawer while it had no Settings page; since 2026-10-04 it has
+    // one, and the panel is there, as on the web.
     const web = readFileSync(path.join(here, '../../../artifacts/interface/src/features/settings/SettingsPage.tsx'), 'utf8');
     assert.ok(web.includes('BudgetPaymentsPanel'), 'Settings does not mount the panel');
     const mini = readFileSync(path.join(here, '../../../artifacts/miniapp/app/components/MiniConsole.tsx'), 'utf8');
     assert.ok(mini.includes('BudgetPaymentsPanel'), 'the miniapp does not mount the panel');
-    assert.ok(mini.includes('budgetOpen'), 'the miniapp has no way to open it');
+    const settings = mini.slice(mini.indexOf('section === "settings"'));
+    assert.ok(mini.includes('section === "settings"'), 'the miniapp has no Settings section');
+    assert.match(settings, /<SettingsScreen[\s\S]*budget=\{budgetPanel\}/, 'Settings in the miniapp does not hold the panel');
+    assert.ok(!mini.includes('budgetOpen'), 'the drawer still opens a second copy of the panel');
   });
 
   test('the flow surfaces carry a status line and no panel', () => {
