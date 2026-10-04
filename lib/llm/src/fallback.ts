@@ -62,11 +62,11 @@ export const LLM_LINK_REST_MS_V1 = 10 * 60_000;
 /**
  * The links that said they cannot serve, and until when.
  *
- * Without it, a dead spare kept a share of every budget: with three links
- * and a 30 s budget the primary got 10 s, because the third link was owed
- * 10 s it would spend failing in a tenth of a second. The factory shares one
- * of these between every chain it builds: chains are built per request, and
- * a link's account is the same in all of them.
+ * Without it, a dead link kept its claim on every budget: the spare before
+ * it was held to half of what was left so the dead one could spend the rest
+ * failing in a tenth of a second. The factory shares one of these between
+ * every chain it builds: chains are built per request, and a link's account
+ * is the same in all of them.
  */
 export class LlmLinkRestV1 {
   private readonly until = new Map<string, number>();
@@ -166,10 +166,13 @@ export interface FallbackLlmProviderOptions {
  * the free tier before the paid one, and a link is only reached when every
  * link before it failed in a way a different provider could survive.
  *
- * When the request names a budget (`timeoutMs`), each link gets an equal
- * share of what is left: with 30 s and two links the primary gets 15 s, and
- * the spare gets the rest, so a slow primary can no longer spend the time
- * the spare needed.
+ * When the request names a budget (`timeoutMs`), a link may spend at most
+ * half of what is left, and the last link all of it: with 30 s the primary
+ * gets 15 s and a slow primary can no longer spend the time the spare needed.
+ * Half rather than an equal share, because the links are in order of
+ * preference: on the narrator corpus the primary verified 85-90% and the
+ * spare 55% (2026-10-04), and an equal split with a dead third link left the
+ * primary 10 s.
  */
 export class LlmProviderChainV1 implements LlmProvider {
   constructor(
@@ -200,7 +203,7 @@ export class LlmProviderChainV1 implements LlmProvider {
           }
           break;
         }
-        share = Math.max(1, Math.floor(left / (links.length - index)));
+        share = Math.max(1, index === links.length - 1 ? left : Math.floor(left / 2));
       }
       if (index > 0) {
         this.options.onFallover?.({

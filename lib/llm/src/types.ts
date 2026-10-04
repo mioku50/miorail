@@ -42,9 +42,9 @@ export interface LlmRequest {
    * budget at all, so each link waited out the client's own 60 s. A slow
    * primary spent the whole 30 s and the spare was never asked: on 2026-09-28
    * a narration logged `provider_did_not_answer` with no fallover line. With a
-   * budget, a chain gives each link an equal share of what is left, and the
-   * client aborts its request when its share runs out. Unset keeps the
-   * client's 60 s per link.
+   * budget, a chain lets each link spend at most half of what is left (the
+   * last link all of it), and the client aborts its request when its share
+   * runs out. Unset keeps the client's 60 s per link.
    */
   timeoutMs?: number;
   tools?: Array<{

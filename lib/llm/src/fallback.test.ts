@@ -332,39 +332,53 @@ test('only an account-level refusal rests a link', () => {
   assert.equal(linkCannotServeV1(new LlmTimeoutError(10)), false);
 });
 
-test('a spare with a zero allowance rests, and the live links share the budget', async () => {
+test('a dead last link rests, and the spare before it may then use the whole remainder', async () => {
+  // The production shape: Mistral, with a zero allowance, is the last link.
   let clock = 1_000_000;
   const rest = new LlmLinkRestV1(() => clock);
   const rested: string[] = [];
-  const dead = failing(new LlmHttpError(429, 'Rate limit exceeded', { zeroAllowance: true }));
   const primary = failing(new LlmHttpError(503, 'down'));
-  const spare = answering('from spare');
+  let spareFails = true;
+  const spareCalls: LlmRequest[] = [];
+  const spare: LlmProvider = {
+    async generate(request: LlmRequest): Promise<LlmResponse> {
+      spareCalls.push(request);
+      if (spareFails) throw new LlmHttpError(503, 'down');
+      return { message: { role: 'assistant', content: 'from spare' } };
+    },
+  };
+  const dead = failing(new LlmHttpError(429, 'Rate limit exceeded', { zeroAllowance: true }));
   const chain = () =>
     new LlmProviderChainV1(
       [
         { label: 'primary.example', provider: primary },
-        { label: 'dead.example', provider: dead },
         { label: 'spare.example', provider: spare },
+        { label: 'dead.example', provider: dead },
       ],
       { rest, onRest: ({ label }) => rested.push(label), now: () => clock },
     );
 
-  // The first request meets the dead link and puts it to rest.
-  assert.equal((await chain().generate({ ...REQUEST, timeoutMs: 30_000 })).message.content, 'from spare');
+  // While the dead link is awake, the spare before it may spend half of what
+  // is left (the primary failed at once, so that is half of all 30 s), and
+  // the dead link is owed the rest.
+  await assert.rejects(chain().generate({ ...REQUEST, timeoutMs: 30_000 }), LlmChainExhaustedError);
+  assert.equal(primary.calls[0]?.timeoutMs, 15_000);
+  assert.equal(spareCalls[0]?.timeoutMs, 15_000);
   assert.equal(dead.calls.length, 1);
   assert.deepEqual(rested, ['dead.example']);
 
-  // The next one, in a NEW chain as the factory builds them, skips it, and
-  // the primary is owed half the budget instead of a third.
-  await chain().generate({ ...REQUEST, timeoutMs: 30_000 });
+  // Resting, it is neither asked nor owed anything: in a NEW chain, as the
+  // factory builds them, the spare is the last link and may use it all.
+  spareFails = false;
+  assert.equal((await chain().generate({ ...REQUEST, timeoutMs: 30_000 })).message.content, 'from spare');
+  assert.equal(spareCalls[1]?.timeoutMs, 30_000);
   assert.equal(dead.calls.length, 1);
-  assert.equal(primary.calls[1]?.timeoutMs, 15_000);
 
-  // After its rest it is asked again.
+  // After its rest it is a link again, and owed its share again.
   clock += LLM_LINK_REST_MS_V1;
+  assert.equal(rest.resting('dead.example'), false);
   await chain().generate({ ...REQUEST, timeoutMs: 30_000 });
-  assert.equal(dead.calls.length, 2);
-  assert.deepEqual(rested, ['dead.example', 'dead.example']);
+  assert.equal(spareCalls[2]?.timeoutMs, 15_000);
 });
 
 test('an ordinary 429 does not rest a link', async () => {
