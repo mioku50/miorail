@@ -1607,6 +1607,13 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-reopen-call { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; min-width: 0; }
 .mio-console .mr-reopen-call .mr-scope-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
 .mio-console .mr-reopen-call .mr-scope-switch button { text-align: center; }
+.mio-console .mr-reopen-board { margin-top: 16px; }
+.mio-console .mr-reopen-board h4 { margin: 0 0 4px; font-size: var(--fs-body); }
+.mio-console .mr-reopen-board table { table-layout: fixed; }
+.mio-console .mr-reopen-board th:first-child { width: 2.8em; }
+.mio-console .mr-reopen-board th.r { width: 4.6em; }
+.mio-console .mr-reopen-board td.nm { overflow-wrap: anywhere; }
+.mio-console .mr-reopen-board tr.you td { color: var(--ink); font-weight: 650; }
 .mio-console .mr-reopen-rules { margin-top: 12px; }
 .mio-console .mr-reopen-rules summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); }
 @media (min-width: 720px) {

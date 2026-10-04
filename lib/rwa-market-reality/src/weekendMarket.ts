@@ -151,6 +151,19 @@ export function etLocalDateV1(instant: Date): string {
   return etPartsV1(instant).localDate;
 }
 
+/** "Sun 17:00 ET": a moment as a New York wall clock with its weekday. */
+export function etClockLabelV1(iso: string): string {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    weekday: 'short',
+    hour: '2-digit',
+    minute: '2-digit',
+    hourCycle: 'h23',
+  }).formatToParts(new Date(iso));
+  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
+  return `${value('weekday')} ${value('hour')}:${value('minute')} ET`;
+}
+
 /** The instant a New York wall clock shows `minuteOfDay` on `localDate`.
  * Tries both of the offsets New York uses and keeps the one that reads back. */
 export function etInstantV1(localDate: string, minuteOfDay: number): Date {

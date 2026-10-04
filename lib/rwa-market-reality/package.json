@@ -15,6 +15,7 @@
     "./execution-handoff": "./src/executionHandoff.ts",
     "./narration-contract": "./src/narrationContract.ts",
     "./reopen-game": "./src/reopenGame.ts",
+    "./reopen-game-service": "./src/reopenGameService.ts",
     "./weekend-market": "./src/weekendMarket.ts",
     "./stock-brief": "./src/stockBrief.ts",
     "./stock-position-quote": "./src/stockPositionQuote.ts",

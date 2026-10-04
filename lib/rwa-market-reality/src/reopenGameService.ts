@@ -1,6 +1,7 @@
 import type { ReopenGameRepositoryV1, ReopenRoundRowV1 } from '@mioagent/route-storage';
 import {
   REOPEN_CALL_GRACE_MS_V1,
+  REOPEN_LINEUP_V1,
   REOPEN_GAME_SCHEMA_VERSION_V1,
   ReopenCallV1Schema,
   ReopenResultV1Schema,
@@ -8,7 +9,9 @@ import {
   reopenBaseCallsV1,
   reopenBasePicksV1,
   reopenCrowdPicksV1,
+  reopenLeaderboardV1,
   reopenLineupV1,
+  reopenPlayerNameV1,
   reopenRecordV1,
   reopenResultsV1,
   reopenSchedulesV1,
@@ -17,12 +20,10 @@ import {
   type ReopenGameResponseV1,
   type ReopenResultV1,
   type ReopenScheduleV1,
+  type ReopenStandingV1,
   type ReopenStockV1,
-} from '@mioagent/rwa-market-reality/reopen-game';
-import type {
-  WeekendMarketResponseV1,
-  WeekendMarketStockInputV1,
-} from '@mioagent/rwa-market-reality/weekend-market';
+} from './reopenGame.js';
+import type { WeekendMarketResponseV1, WeekendMarketStockInputV1 } from './weekendMarket.js';
 
 // ---------------------------------------------------------------------------
 // Call the reopen, as the server keeps it.
@@ -44,7 +45,13 @@ export interface ReopenGameDepsV1 {
    * name is not part of a round's record: the close, the calls and the
    * results are, and nothing here touches them. */
   names?: () => Promise<ReadonlyMap<string, { name: string }>>;
+  /** The Basename a wallet calls itself, verified forward, or null. Asked only
+   * for the players the leaderboard shows. */
+  basename?: (wallet: string) => Promise<string | null>;
 }
+
+/** How many players the leaderboard names. */
+export const REOPEN_LEADERBOARD_ROWS_V1 = 10;
 
 export interface ReopenPlayerRefV1 {
   playerId: string;
@@ -141,6 +148,9 @@ export interface ReopenSharedStateV1 {
   baseRecord: ReopenGameResponseV1['baseRecord'];
   /** Every stored round, newest first: what a player's record is built from. */
   rows: ReopenRoundRowV1[];
+  /** Everybody ranked, and the names of those the board shows. Null before
+   * the first round settles. */
+  leaderboard: { rounds: number; standings: ReopenStandingV1[]; names: ReadonlyMap<string, string> } | null;
 }
 
 /** Everything that is the same for every reader at this moment. */
@@ -211,12 +221,41 @@ export async function reopenSharedStateV1(now: Date, deps: ReopenGameDepsV1): Pr
     settledRounds += 1;
   }
 
+  // The leaderboard: every settled round, everybody who picked in one.
+  const settledRows = rows.filter((stored) => stored.results !== null);
+  let leaderboard: ReopenSharedStateV1['leaderboard'] = null;
+  if (settledRows.length > 0) {
+    const standings = reopenLeaderboardV1({
+      rounds: settledRows.map((stored) => ({
+        roundId: stored.roundId,
+        results: resultsOfV1(stored) ?? [],
+        calls: callsOfV1(stored),
+      })),
+      picks: await deps.repository.standings(),
+    });
+    const shown = standings.slice(0, REOPEN_LEADERBOARD_ROWS_V1);
+    const names = new Map<string, string>();
+    await Promise.all(
+      shown.map(async (standing) => {
+        // A Basename the wallet set for itself, or the player's number. A
+        // device has neither a wallet nor a name, only its number.
+        const basename =
+          standing.playerId.startsWith('w:') && deps.basename
+            ? await deps.basename(standing.playerId.slice(2)).catch(() => null)
+            : null;
+        names.set(standing.playerId, basename ?? reopenPlayerNameV1(standing.playerNumber));
+      }),
+    );
+    leaderboard = { rounds: settledRows.length, standings, names };
+  }
+
   return {
     generatedAt: now.toISOString(),
     round,
     next: nextOut,
     baseRecord: { rounds: settledRounds, correct, of },
     rows,
+    leaderboard,
   };
 }
 
@@ -253,12 +292,128 @@ export async function reopenGameForV1(input: {
       signed: input.player.signed,
     };
   }
+  const board = shared.leaderboard;
+  const mine = board && input.player ? board.standings.find((row) => row.playerId === input.player!.playerId) : undefined;
   return {
     schemaVersion: REOPEN_GAME_SCHEMA_VERSION_V1,
     generatedAt: shared.generatedAt,
     round: shared.round,
     next: shared.next,
+    leaderboard: board
+      ? {
+          rounds: board.rounds,
+          players: board.standings.length,
+          rows: board.standings.slice(0, REOPEN_LEADERBOARD_ROWS_V1).map((row) => ({
+            rank: row.rank,
+            name: board.names.get(row.playerId) ?? reopenPlayerNameV1(row.playerNumber),
+            correct: row.correct,
+            of: row.of,
+            played: row.played,
+            you: row.playerId === input.player?.playerId,
+          })),
+          me: mine ? { rank: mine.rank, correct: mine.correct, of: mine.of, played: mine.played } : null,
+        }
+      : null,
     baseRecord: shared.baseRecord,
     me,
   };
 }
+
+/**
+ * The lineup's stored runs, from one issuer: a symbol is not an identifier,
+ * and another issuer's NVDA would be another question. Shared by the API and
+ * the notifier, which identify tokens through their own repositories.
+ */
+export async function reopenLineupStocksV1(input: {
+  runs: readonly { token: string; at: string; mid: number; reference: number; referenceUpdatedAt: string }[];
+  identify: (tokenAddress: string) => Promise<{ symbol: string; name: string; coinbase: boolean } | null>;
+}): Promise<WeekendMarketStockInputV1[]> {
+  const byToken = new Map<string, WeekendMarketStockInputV1['runs'][number][]>();
+  for (const row of input.runs) {
+    const token = row.token.toLowerCase();
+    byToken.set(token, [
+      ...(byToken.get(token) ?? []),
+      { at: row.at, mid: row.mid, reference: row.reference, referenceUpdatedAt: row.referenceUpdatedAt },
+    ]);
+  }
+  const stocks: WeekendMarketStockInputV1[] = [];
+  for (const [token, runs] of byToken) {
+    const identity = await input.identify(token);
+    if (!identity?.coinbase || !(REOPEN_LINEUP_V1 as readonly string[]).includes(identity.symbol)) continue;
+    stocks.push({ tokenAddress: token, symbol: identity.symbol, name: identity.name, runs });
+  }
+  return stocks;
+}
+
+// --- What the notifier needs ----------------------------------------------------
+
+/** One round as the notifier sees it: who played, how they did, who played
+ * before. Wallets only: a device has nobody to push to. */
+export interface ReopenNoticeFactsV1 {
+  roundId: string;
+  number: number;
+  opensAt: string;
+  locksAt: string;
+  settledAt: string | null;
+  symbols: readonly string[];
+  /** Wallets with picks in this round, with their score and place once settled. */
+  players: ReadonlyMap<string, { score: { correct: number; of: number } | null; rank: number | null; beatBase: boolean }>;
+  /** Wallets that played a settled round before this one. */
+  returning: ReadonlySet<string>;
+  base: { correct: number; of: number } | null;
+  /** How many players the leaderboard ranks. */
+  ranked: number;
+}
+
+/**
+ * The round brought up to date, as the notifier needs it. The notifier runs
+ * every five minutes, so a round opens, is called and settles on time even
+ * when nobody opens the page.
+ */
+export async function reopenNoticeFactsV1(now: Date, deps: ReopenGameDepsV1): Promise<ReopenNoticeFactsV1 | null> {
+  const { row } = await advanceReopenRoundV1(now, deps);
+  if (!row) return null;
+  const results = resultsOfV1(row);
+  const calls = callsOfV1(row);
+  const base = results ? reopenScoreV1(reopenBasePicksV1(calls ?? []), results) : null;
+  const settledRows = (await deps.repository.rounds(200)).filter((stored) => stored.results !== null);
+  const standings =
+    settledRows.length > 0
+      ? reopenLeaderboardV1({
+          rounds: settledRows.map((stored) => ({
+            roundId: stored.roundId,
+            results: resultsOfV1(stored) ?? [],
+            calls: callsOfV1(stored),
+          })),
+          picks: await deps.repository.standings(),
+        })
+      : [];
+  const rankOf = new Map(standings.map((standing) => [standing.playerId, standing.rank]));
+  const players = new Map<string, { score: { correct: number; of: number } | null; rank: number | null; beatBase: boolean }>();
+  for (const entry of await deps.repository.roundPicks(row.roundId)) {
+    if (!entry.playerId.startsWith('w:')) continue;
+    const score = results ? reopenScoreV1(entry.picks, results) : null;
+    players.set(entry.playerId.slice(2), {
+      score: score ? { correct: score.correct, of: score.of } : null,
+      rank: results ? (rankOf.get(entry.playerId) ?? null) : null,
+      beatBase: Boolean(score && base && score.correct > base.correct),
+    });
+  }
+  // Played a settled round other than this one.
+  const earlier = (await deps.repository.standings()).filter(
+    (entry) => entry.roundId !== row.roundId && entry.playerId.startsWith('w:'),
+  );
+  return {
+    roundId: row.roundId,
+    number: row.number,
+    opensAt: row.opensAt,
+    locksAt: row.locksAt,
+    settledAt: row.settledAt,
+    symbols: lineupOfV1(row).map((stock) => stock.symbol),
+    players,
+    returning: new Set(earlier.map((entry) => entry.playerId.slice(2))),
+    base: base ? { correct: base.correct, of: base.of } : null,
+    ranked: standings.length,
+  };
+}
+

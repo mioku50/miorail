@@ -98,6 +98,33 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
             </a>
           </div>
         ) : null}
+        {view.leaderboard ? (
+          <div className="mr-reopen-board" aria-label={view.leaderboard.title}>
+            <h4>{view.leaderboard.title}</h4>
+            <p className="lnote">{view.leaderboard.note}</p>
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Player</th>
+                  <th className="r">Right</th>
+                  <th className="r">Rounds</th>
+                </tr>
+              </thead>
+              <tbody>
+                {view.leaderboard.rows.map((row) => (
+                  <tr key={row.key} className={row.you ? 'you' : undefined}>
+                    <td className="mono">{row.rank}</td>
+                    <td className="nm">{row.name}</td>
+                    <td className="r mono">{row.score}</td>
+                    <td className="r mono">{row.rounds}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            {view.leaderboard.me ? <p className="lnote">{view.leaderboard.me}</p> : null}
+          </div>
+        ) : null}
         <details className="mr-reopen-rules">
           <summary>How a round is decided</summary>
           <p className="lnote">{view.rules}</p>

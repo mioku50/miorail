@@ -7,9 +7,16 @@ import {
   weekendMarketV1,
   type WeekendMarketRunV1,
   type WeekendMarketStockInputV1,
-} from '@mioagent/rwa-market-reality/weekend-market';
+} from '../src/weekendMarket.js';
 
-import { advanceReopenRoundV1, reopenGameForV1, reopenSharedStateV1, type ReopenGameDepsV1 } from './reopenGameRead.js';
+import {
+  advanceReopenRoundV1,
+  reopenGameForV1,
+  reopenLineupStocksV1,
+  reopenNoticeFactsV1,
+  reopenSharedStateV1,
+  type ReopenGameDepsV1,
+} from '../src/reopenGameService.js';
 
 const et = (localDate: string, clock: string): Date => {
   const [hour, minute] = clock.split(':').map(Number);
@@ -155,6 +162,88 @@ describe('the round is brought up to date by whoever asks', () => {
     const late = await reopenSharedStateV1(et('2026-10-13', '12:00'), deps);
     assert.equal(late.round?.state, 'settled');
     assert.deepEqual(late.round?.score?.base, { correct: 3, of: 5, cells: '🟩🟥🟥🟩🟩' });
+  });
+
+  test('after the reopen the leaderboard names a Basename, numbers everyone else, and marks the reader', async () => {
+    const { deps, repository } = depsV1();
+    const asked: string[] = [];
+    deps.basename = async (wallet) => {
+      asked.push(wallet);
+      return wallet === '0x1111111111111111111111111111111111111111' ? 'first.base.eth' : null;
+    };
+    await advanceReopenRoundV1(et('2026-10-10', '12:00'), deps);
+    const named = await repository.walletPlayer({ wallet: '0x1111111111111111111111111111111111111111', now: et('2026-10-10', '12:00') });
+    const plain = await repository.walletPlayer({ wallet: '0x2222222222222222222222222222222222222222', now: et('2026-10-10', '12:00') });
+    const device = await repository.createDevicePlayer({ tokenHash: 'd'.repeat(64), now: et('2026-10-10', '12:00') });
+    const at = et('2026-10-11', '12:00');
+    await repository.savePicks({ roundId: '2026-10-09', playerId: named, picks: { NVDA: 'up', TSLA: 'down' }, now: at });
+    await repository.savePicks({ roundId: '2026-10-09', playerId: plain, picks: { NVDA: 'up', TSLA: 'up', AAPL: 'down', AMZN: 'down', MSTR: 'up' }, now: at });
+    await repository.savePicks({ roundId: '2026-10-09', playerId: device, picks: { NVDA: 'down' }, now: at });
+
+    const open = await reopenSharedStateV1(et('2026-10-11', '12:00'), deps);
+    assert.equal(open.leaderboard, null, 'no table before a round settles');
+
+    const settled = await reopenSharedStateV1(et('2026-10-11', '21:30'), deps);
+    const game = await reopenGameForV1({ shared: settled, player: { playerId: device, signed: false }, now: et('2026-10-11', '21:30'), repository });
+    assert.deepEqual(game.leaderboard, {
+      rounds: 1,
+      players: 3,
+      rows: [
+        { rank: 1, name: 'Player 2', correct: 5, of: 5, played: 1, you: false },
+        { rank: 2, name: 'first.base.eth', correct: 1, of: 5, played: 1, you: false },
+        { rank: 3, name: 'Player 3', correct: 0, of: 5, played: 1, you: true },
+      ],
+      me: { rank: 3, correct: 0, of: 5, played: 1 },
+    });
+    // A Basename is asked for wallets only, and never for a device.
+    assert.deepEqual(asked.sort(), ['0x1111111111111111111111111111111111111111', '0x2222222222222222222222222222222222222222']);
+  });
+
+  test('the notifier’s read settles the round by itself and knows each wallet’s score and place', async () => {
+    const { deps, repository } = depsV1();
+    await advanceReopenRoundV1(et('2026-10-10', '12:00'), deps);
+    const wallet = await repository.walletPlayer({ wallet: '0x1111111111111111111111111111111111111111', now: et('2026-10-10', '12:00') });
+    const device = await repository.createDevicePlayer({ tokenHash: 'e'.repeat(64), now: et('2026-10-10', '12:00') });
+    const at = et('2026-10-11', '12:00');
+    await repository.savePicks({ roundId: '2026-10-09', playerId: wallet, picks: { NVDA: 'up', TSLA: 'up', AAPL: 'down', AMZN: 'down', MSTR: 'up' }, now: at });
+    await repository.savePicks({ roundId: '2026-10-09', playerId: device, picks: { NVDA: 'up' }, now: at });
+
+    const before = await reopenNoticeFactsV1(et('2026-10-11', '15:00'), deps);
+    assert.equal(before?.settledAt, null);
+    assert.deepEqual([...before!.players.keys()], ['0x1111111111111111111111111111111111111111'], 'a device has nobody to push to');
+    assert.deepEqual([...before!.returning], [], 'nobody played a round before this one');
+
+    // Nobody opened the page after the reopen; the notifier's read settles it.
+    const after = await reopenNoticeFactsV1(et('2026-10-11', '21:30'), deps);
+    assert.ok(after?.settledAt);
+    assert.deepEqual(after?.base, { correct: 3, of: 5 });
+    assert.deepEqual(after?.players.get('0x1111111111111111111111111111111111111111'), {
+      score: { correct: 5, of: 5 },
+      rank: 1,
+      beatBase: true,
+    });
+    assert.equal(after?.ranked, 2);
+    assert.deepEqual(after?.symbols, ['NVDA', 'TSLA', 'AAPL', 'AMZN', 'MSTR']);
+  });
+
+  test('the lineup keeps one issuer’s five stocks and nothing else', async () => {
+    const runs = [
+      { token: '0xAA00000000000000000000000000000000000001', at: iso('2026-10-09', '15:00'), mid: 1, reference: 1, referenceUpdatedAt: iso('2026-10-09', '15:00') },
+      { token: '0xaa00000000000000000000000000000000000002', at: iso('2026-10-09', '15:00'), mid: 1, reference: 1, referenceUpdatedAt: iso('2026-10-09', '15:00') },
+      { token: '0xaa00000000000000000000000000000000000003', at: iso('2026-10-09', '15:00'), mid: 1, reference: 1, referenceUpdatedAt: iso('2026-10-09', '15:00') },
+    ];
+    const stocks = await reopenLineupStocksV1({
+      runs,
+      identify: async (token) =>
+        token.endsWith('1')
+          ? { symbol: 'NVDA', name: 'NVIDIA Corporation', coinbase: true }
+          : token.endsWith('2')
+            ? { symbol: 'NVDA', name: 'Another NVDA', coinbase: false }
+            : { symbol: 'META', name: 'Meta', coinbase: true },
+    });
+    assert.deepEqual(stocks.map((row) => [row.tokenAddress, row.symbol, row.runs.length]), [
+      ['0xaa00000000000000000000000000000000000001', 'NVDA', 1],
+    ]);
   });
 
   test('a reader with no picks has no game of their own', async () => {

@@ -34,6 +34,14 @@ export interface ReopenGameRowViewV1 {
   mark: '🟩' | '🟥' | '⬜' | null;
 }
 
+export interface ReopenLeaderboardViewV1 {
+  title: string;
+  note: string;
+  rows: { key: string; rank: string; name: string; score: string; rounds: string; you: boolean }[];
+  /** The reader's place when it is below the rows shown. */
+  me: string | null;
+}
+
 export interface ReopenGameViewV1 {
   state: 'upcoming' | 'open' | 'locked' | 'settled';
   roundId: string | null;
@@ -48,6 +56,33 @@ export interface ReopenGameViewV1 {
   rules: string;
   share: { x: string; farcaster: string } | null;
   error: string | null;
+  /** Everybody who played a settled round; null before the first one. */
+  leaderboard: ReopenLeaderboardViewV1 | null;
+}
+
+/** The table, in words. A wallet is named only by a Basename it set for
+ * itself; everybody else, signed in or not, is a number. */
+export function reopenLeaderboardViewV1(
+  board: ReopenGameResponseV1['leaderboard'],
+): ReopenLeaderboardViewV1 | null {
+  if (!board || board.rows.length === 0) return null;
+  const shownYou = board.rows.some((row) => row.you);
+  return {
+    title: 'Leaderboard',
+    note: `After ${plural(board.rounds, 'round', 'rounds')} · ${plural(board.players, 'player', 'players')}. Most right first. A wallet with a Basename is listed by it; everyone else by player number.`,
+    rows: board.rows.map((row, index) => ({
+      key: `${row.rank}:${index}`,
+      rank: `#${row.rank}`,
+      name: row.you ? `${row.name} · you` : row.name,
+      score: `${row.correct}/${row.of}`,
+      rounds: String(row.played),
+      you: row.you,
+    })),
+    me:
+      board.me && !shownYou
+        ? `You: #${board.me.rank} of ${board.players} · ${board.me.correct}/${board.me.of} right over ${plural(board.me.played, 'round', 'rounds')}.`
+        : null,
+  };
 }
 
 const RULES_V1 =
@@ -97,6 +132,7 @@ export function reopenGameViewV1(
       rules: RULES_V1,
       share: null,
       error,
+      leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
     };
   }
 
@@ -178,6 +214,7 @@ export function reopenGameViewV1(
           })
         : null,
       error,
+      leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
     };
   }
 
@@ -195,6 +232,7 @@ export function reopenGameViewV1(
       rules: RULES_V1,
       share: null,
       error,
+      leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
     };
   }
 
@@ -223,5 +261,6 @@ export function reopenGameViewV1(
         ? giftShareLinksV1({ url, text: reopenShareLineV1({ number: round.number, mine, base }) })
         : null,
     error,
+    leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
   };
 }

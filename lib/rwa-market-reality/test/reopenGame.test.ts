@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  reopenLeaderboardV1,
+  reopenPlayerNameV1,
   REOPEN_CALL_GRACE_MS_V1,
   REOPEN_LINEUP_V1,
   ReopenGameResponseV1Schema,
@@ -280,6 +282,50 @@ describe('a player’s record', () => {
   });
 });
 
+describe('the leaderboard', () => {
+  const round = (roundId: string, outcomes: ('up' | 'down' | 'void')[], calls: ('up' | 'down' | null)[]) => ({
+    roundId,
+    results: outcomes.map((outcome, index) => ({
+      symbol: ['NVDA', 'TSLA', 'AAPL'][index]!,
+      reopen: outcome === 'void' ? null : '101.00',
+      at: outcome === 'void' ? null : iso('2026-10-11', '20:00'),
+      outcome,
+    })),
+    calls: calls.map((call, index) => ({ symbol: ['NVDA', 'TSLA', 'AAPL'][index]!, base: call ? '100.50' : null, call })),
+  });
+  const ONE = round('2026-10-09', ['up', 'down', 'void'], ['up', 'up', 'down']);
+  const TWO = round('2026-10-16', ['down', 'down', 'up'], ['down', 'up', 'up']);
+
+  test('most right first, the more accurate between equals, equals share a rank', () => {
+    const board = reopenLeaderboardV1({
+      rounds: [ONE, TWO],
+      picks: [
+        { roundId: '2026-10-09', playerId: 'a', playerNumber: 1, picks: { NVDA: 'up', TSLA: 'down' } },
+        { roundId: '2026-10-16', playerId: 'a', playerNumber: 1, picks: { NVDA: 'up' } },
+        { roundId: '2026-10-09', playerId: 'b', playerNumber: 2, picks: { NVDA: 'up', TSLA: 'down' } },
+        { roundId: '2026-10-16', playerId: 'c', playerNumber: 3, picks: { NVDA: 'down', TSLA: 'down', AAPL: 'up' } },
+        { roundId: '2026-10-09', playerId: 'd', playerNumber: 4, picks: { NVDA: 'up', TSLA: 'down' } },
+        // Picks in a round that has not settled count for nothing yet.
+        { roundId: '2026-10-23', playerId: 'e', playerNumber: 5, picks: { NVDA: 'up' } },
+      ],
+    });
+    assert.deepEqual(
+      board.map((row) => [row.playerId, row.rank, row.correct, row.of, row.played, row.beatBase]),
+      [
+        ['c', 1, 3, 3, 1, 1],
+        // b and d: 2 of 2. a: also 2 right, but of 5 called, so behind them.
+        ['b', 2, 2, 2, 1, 1],
+        ['d', 2, 2, 2, 1, 1],
+        ['a', 4, 2, 5, 2, 1],
+      ],
+    );
+  });
+
+  test('a player without a Basename is a number, never a piece of an address', () => {
+    assert.equal(reopenPlayerNameV1(12), 'Player 12');
+  });
+});
+
 describe('the wire', () => {
   test('a pick names a round and at most one side per stock', () => {
     assert.ok(ReopenPickRequestV1Schema.safeParse({ roundId: '2026-10-09', picks: { NVDA: 'up', TSLA: 'down' } }).success);
@@ -294,6 +340,7 @@ describe('the wire', () => {
       generatedAt: iso('2026-10-07', '11:00'),
       round: null,
       next: { number: 1, opensAt: SCHEDULE.opensAt, locksAt: SCHEDULE.locksAt, expectedReopenAt: SCHEDULE.expectedReopenAt },
+      leaderboard: null,
       baseRecord: { rounds: 0, correct: 0, of: 0 },
       me: null,
     });

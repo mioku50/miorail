@@ -31,6 +31,7 @@ function openGame(picks: Record<string, 'up' | 'down'> | null) {
       score: null,
     },
     next: { number: 2, opensAt: '2026-10-17T00:00:00.000Z', locksAt: '2026-10-18T21:00:00.000Z', expectedReopenAt: '2026-10-19T00:00:00.000Z' },
+    leaderboard: null as unknown,
     baseRecord: { rounds: 0, correct: 0, of: 0 },
     me: picks
       ? { picks, pickedAt: '2026-10-10T16:01:00.000Z', score: null, record: { played: 0, streak: 0, correct: 0, of: 0, beatBase: 0 }, signed: false }
@@ -110,11 +111,24 @@ test('a settled round shows the squares, the score and the line to share (390px)
     score: { base: { correct: 0, of: 2, cells: '🟥🟥' }, crowd: { correct: 1, of: 1, cells: '🟩⬜' } },
   });
   Object.assign(settled.me!, { score: { correct: 2, of: 2, cells: '🟩🟩' }, record: { played: 1, streak: 1, correct: 2, of: 2, beatBase: 1 } });
+  settled.leaderboard = {
+    rounds: 1,
+    players: 4,
+    rows: [
+      { rank: 1, name: 'a-very-long-basename-for-a-phone.base.eth', correct: 2, of: 2, played: 1, you: false },
+      { rank: 1, name: 'Player 3', correct: 2, of: 2, played: 1, you: true },
+      { rank: 3, name: 'Player 1', correct: 1, of: 2, played: 1, you: false },
+    ],
+    me: { rank: 1, correct: 2, of: 2, played: 1 },
+  };
   await stubApi(page, settled);
   await page.goto('/stocks/weekend');
   await expect(page.getByText('You 2/2 · Base 0/2 · players 1/1. 4 people played.', { exact: false })).toBeVisible();
   await expect(page.getByText('🟩 You ▲ above').first()).toBeVisible();
   await expect(page.getByText('Reopened above · $102.00')).toBeVisible();
+  const board = page.getByLabel('Leaderboard');
+  await expect(board.getByText('After 1 round · 4 players.', { exact: false })).toBeVisible();
+  await expect(board.locator('tr.you')).toContainText('Player 3 · you');
   const post = page.getByRole('link', { name: 'Post on X' }).first();
   expect(decodeURIComponent((await post.getAttribute('href')) ?? '')).toContain('Call the reopen #1 🟩🟩 2/2 · Base 0/2');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);

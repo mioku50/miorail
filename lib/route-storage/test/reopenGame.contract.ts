@@ -94,6 +94,40 @@ export function reopenGameContract(name: string, factory: () => Promise<ReopenGa
       assert.deepEqual(crowd.split, { NVDA: { up: 2, down: 0 }, TSLA: { up: 0, down: 1 } });
     });
 
+    test('players are numbered as they join, and the leaderboard reads only settled rounds', async () => {
+      const repo = await factory();
+      await repo.openRound({ opening: opening('2026-10-09'), now: BEFORE_LOCK });
+      await repo.openRound({ opening: opening('2026-10-16', 7), now: BEFORE_LOCK });
+      const device = await repo.createDevicePlayer({ tokenHash: DEVICE, now: BEFORE_LOCK });
+      const wallet = await repo.walletPlayer({ wallet: WALLET, now: BEFORE_LOCK });
+      const silent = await repo.createDevicePlayer({ tokenHash: OTHER_DEVICE, now: BEFORE_LOCK });
+      await repo.savePicks({ roundId: '2026-10-09', playerId: wallet, picks: { NVDA: 'up' }, now: BEFORE_LOCK });
+      await repo.savePicks({ roundId: '2026-10-09', playerId: device, picks: { TSLA: 'down' }, now: BEFORE_LOCK });
+      await repo.savePicks({ roundId: '2026-10-09', playerId: silent, picks: {}, now: BEFORE_LOCK });
+      const sixteenth = new Date(BEFORE_LOCK.getTime() + 7 * 86_400_000);
+      await repo.savePicks({ roundId: '2026-10-16', playerId: wallet, picks: { NVDA: 'down' }, now: sixteenth });
+
+      assert.deepEqual(
+        (await repo.roundPicks('2026-10-09')).map((row) => [row.playerId, row.playerNumber, row.picks]),
+        [
+          [device, 1, { TSLA: 'down' }],
+          [wallet, 2, { NVDA: 'up' }],
+        ],
+        'an empty pick is nobody, and the order is the join order',
+      );
+      assert.deepEqual(await repo.standings(), [], 'nothing is settled yet');
+      await repo.fixCalls({ roundId: '2026-10-09', calls: [], at: AFTER_LOCK });
+      await repo.settle({ roundId: '2026-10-09', results: [], at: AFTER_REOPEN });
+      assert.deepEqual(
+        (await repo.standings()).map((row) => [row.roundId, row.playerNumber]),
+        [
+          ['2026-10-09', 1],
+          ['2026-10-09', 2],
+        ],
+        'the open round of the 16th is not on the board',
+      );
+    });
+
     test('a device plays without a wallet, and signing in moves its picks over', async () => {
       const repo = await factory();
       await repo.openRound({ opening: opening('2026-10-09'), now: BEFORE_LOCK });

@@ -28,6 +28,10 @@ import {
   holderDividendDeclaredNoticeV1,
   holderDividendNoticeV1,
   dividendNoticeWordsV1,
+  planReopenNoticesV1,
+  reopenAudienceV1,
+  reopenNoticeDueV1,
+  reopenNoticeV1,
   holderScheduledNoticeV1,
   multiplierChangePpmV1,
   runBaseAppNotifyV1,
@@ -1033,3 +1037,137 @@ test('the weekly push waits for the Friday passes that fill the weekend card', (
   assert.equal(weeklySummaryDueV1(new Date(push - 60_000)), null);
   assert.ok(weeklySummaryDueV1(new Date('2026-09-26T00:45:00.000Z')));
 });
+
+// ---------------------------------------------------------------------------
+// Call the reopen: the invitation, the last call and the results.
+// ---------------------------------------------------------------------------
+
+describe('Call the reopen pushes', () => {
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0x2222222222222222222222222222222222222222';
+  const C = '0x3333333333333333333333333333333333333333';
+  // The weekend of 2026-10-09: open Fri 20:00 ET, lock Sun 17:00 ET.
+  const facts = (over: Record<string, unknown> = {}) => ({
+    roundId: '2026-10-09',
+    number: 2,
+    opensAt: '2026-10-10T00:00:00.000Z',
+    locksAt: '2026-10-11T21:00:00.000Z',
+    settledAt: null as string | null,
+    symbols: ['NVDA', 'TSLA', 'AAPL', 'AMZN', 'MSTR'],
+    players: new Map([[A, { score: null, rank: null, beatBase: false }]]) as Map<
+      string,
+      { score: { correct: number; of: number } | null; rank: number | null; beatBase: boolean }
+    >,
+    returning: new Set([A, B]),
+    base: null as { correct: number; of: number } | null,
+    ranked: 0,
+    ...over,
+  });
+  const at = (iso: string) => new Date(iso);
+
+  test('each notice has its own window, and none of them overlap', () => {
+    assert.equal(reopenNoticeDueV1(facts(), at('2026-10-10T13:59:00.000Z')), null, 'Saturday before 10:00 ET');
+    assert.equal(reopenNoticeDueV1(facts(), at('2026-10-10T14:00:00.000Z')), 'open');
+    assert.equal(reopenNoticeDueV1(facts(), at('2026-10-11T17:59:00.000Z')), 'open');
+    assert.equal(reopenNoticeDueV1(facts(), at('2026-10-11T18:00:00.000Z')), 'last_call', '14:00 ET Sunday');
+    assert.equal(reopenNoticeDueV1(facts(), at('2026-10-11T20:45:00.000Z')), null, 'too close to the lock');
+    const settled = facts({ settledAt: '2026-10-12T00:12:00.000Z' });
+    assert.equal(reopenNoticeDueV1(settled, at('2026-10-12T00:15:00.000Z')), 'results');
+    assert.equal(reopenNoticeDueV1(settled, at('2026-10-13T00:12:00.000Z')), null, 'a day later it is not news');
+  });
+
+  test('the invitation skips who already picked; the last call goes only to returning players', () => {
+    const enabled = new Set([A, B, C]);
+    assert.deepEqual(reopenAudienceV1(facts(), 'open', enabled), [B, C]);
+    assert.deepEqual(reopenAudienceV1(facts(), 'last_call', enabled), [B], 'C never played; A already picked');
+    const settled = facts({
+      settledAt: '2026-10-12T00:12:00.000Z',
+      players: new Map([
+        [A, { score: { correct: 4, of: 5 }, rank: 2, beatBase: true }],
+        [C, { score: { correct: 0, of: 0 }, rank: null, beatBase: false }],
+      ]),
+    });
+    assert.deepEqual(reopenAudienceV1(settled, 'results', enabled), [A], 'a round with nothing to score says nothing');
+  });
+
+  test('what each one says fits Base App, and the result is the wallet’s own', () => {
+    const invite = reopenNoticeV1(facts(), 'open', B)!;
+    assert.equal(invite.title, 'Call the reopen #2');
+    assert.equal(
+      invite.message,
+      "Will NVDA, TSLA, AAPL, AMZN and MSTR reopen above or below Friday's close? Picks close Sun 17:00 ET, and Base makes its own call at the same minute. No wallet needed.",
+    );
+    assert.equal(invite.targetPath, '/stocks/weekend');
+    const last = reopenNoticeV1(facts(), 'last_call', B)!;
+    assert.equal(last.title, 'Last call: reopen #2');
+    const result = reopenNoticeV1(
+      facts({
+        settledAt: '2026-10-12T00:12:00.000Z',
+        players: new Map([[A, { score: { correct: 4, of: 5 }, rank: 2, beatBase: true }]]),
+        base: { correct: 3, of: 5 },
+        ranked: 12,
+      }),
+      'results',
+      A,
+    )!;
+    assert.equal(result.title, 'Reopen #2: you 4/5');
+    assert.equal(result.message, "You called 4 of 5, Base 3 of 5. You beat Base this round. You're #2 of 12 on the leaderboard.");
+    for (const notice of [invite, last, result]) {
+      assert.ok(notice.title.length <= BASE_APP_TITLE_MAX_V1 && notice.message.length <= BASE_APP_MESSAGE_MAX_V1);
+    }
+  });
+
+  test('one request per message, and nobody past the day’s cap', () => {
+    const plan = planReopenNoticesV1({
+      facts: facts(),
+      kind: 'open',
+      wallets: [B, C],
+      sentToday: new Map([[C, 4]]),
+    });
+    assert.deepEqual(plan.groups.map((group) => [group.title, group.wallets]), [['Call the reopen #2', [B]]]);
+    assert.equal(plan.capped, 1);
+  });
+
+  test('a pass sends a notice once, records it, and a failing round read stops nothing else', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client, sends } = fakeClient({ enabledWallets: async () => new Set([A, B]) });
+    const now = () => at('2026-10-10T15:00:00.000Z');
+    const reopen = async () => facts();
+    const first = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, reopen });
+    assert.deepEqual(first.reopen, { roundId: '2026-10-09', kind: 'open', due: 1, sent: 1, capped: 0 });
+    assert.deepEqual(sends.map((send) => [send.title, [...send.wallets]]), [['Call the reopen #2', [B]]]);
+    assert.equal((await repository.sentOn({ day: '2026-10-10', wallets: [B] })).get(B), 1, 'it counts toward the cap');
+    const second = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, reopen });
+    assert.deepEqual(second.reopen, { roundId: '2026-10-09', kind: 'open', due: 0, sent: 0, capped: 0 });
+    assert.equal(sends.length, 1, 'once per round, kind and wallet');
+
+    const broken = await runBaseAppNotifyV1({
+      repository,
+      client,
+      names: async () => names,
+      now,
+      reopen: async () => {
+        throw new Error('database unavailable');
+      },
+    });
+    assert.equal(broken.reopen, null);
+    assert.notEqual(broken.outcome, 'stopped');
+  });
+
+  test('a dry pass plans the round’s notice and sends nothing', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client, sends } = fakeClient({ enabledWallets: async () => new Set([B]) });
+    const report = await runBaseAppNotifyV1({
+      repository,
+      client,
+      names: async () => names,
+      now: () => at('2026-10-10T15:00:00.000Z'),
+      reopen: async () => facts(),
+      dry: true,
+    });
+    assert.deepEqual(report.reopen, { roundId: '2026-10-09', kind: 'open', due: 1, sent: 0, capped: 0 });
+    assert.equal(sends.length, 0);
+    assert.deepEqual([...(await repository.reopenSentTo({ roundId: '2026-10-09', kind: 'open', wallets: [B] }))], []);
+  });
+});
+

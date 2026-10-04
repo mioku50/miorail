@@ -9,6 +9,7 @@ import {
   reopenWalletPlayerIdV1,
   type ReopenCrowdV1,
   type ReopenGameRepositoryV1,
+  type ReopenPlayerPicksV1,
   type ReopenRoundRowV1,
   type ReopenSideV1,
 } from './reopenGame.js';
@@ -37,6 +38,16 @@ function roundV1(row: Record<string, unknown>): ReopenRoundRowV1 {
     results: (row.results as unknown[] | null) ?? null,
     settledAt: isoOrNullV1(row.settled_at),
     createdAt: isoV1(row.created_at),
+  };
+}
+
+function playerPicksV1(row: Record<string, unknown>): ReopenPlayerPicksV1 {
+  return {
+    roundId: String(row.round_id),
+    playerId: String(row.player_id),
+    // bigint comes back as a string from the driver; a player number is small.
+    playerNumber: Number(row.player_number),
+    picks: row.picks as Record<string, ReopenSideV1>,
   };
 }
 
@@ -188,6 +199,28 @@ export function createDatabaseReopenGameRepositoryV1(sql: SqlTemplateExecutor): 
         split[symbol] = count;
       }
       return { players: Number(players[0]?.players ?? 0), split };
+    },
+
+    async standings() {
+      const rows = await sql`
+        SELECT p.round_id, p.player_id, pl.player_number, p.picks
+          FROM reopen_picks AS p
+          JOIN reopen_rounds AS r ON r.round_id = p.round_id
+          JOIN reopen_players AS pl ON pl.player_id = p.player_id
+         WHERE r.results IS NOT NULL AND p.picks <> '{}'::jsonb
+         ORDER BY p.round_id, pl.player_number`;
+      return rows.map(playerPicksV1);
+    },
+
+    async roundPicks(roundId) {
+      assertReopenRoundIdV1(roundId);
+      const rows = await sql`
+        SELECT p.round_id, p.player_id, pl.player_number, p.picks
+          FROM reopen_picks AS p
+          JOIN reopen_players AS pl ON pl.player_id = p.player_id
+         WHERE p.round_id = ${roundId} AND p.picks <> '{}'::jsonb
+         ORDER BY pl.player_number`;
+      return rows.map(playerPicksV1);
     },
 
     async mergeDevice(input) {

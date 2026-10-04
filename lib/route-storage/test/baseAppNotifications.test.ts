@@ -171,6 +171,33 @@ describe('the weekly summary is recorded once per wallet per week', () => {
   });
 });
 
+describe('a Call the reopen notice goes to a wallet once per round and kind', () => {
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0x2222222222222222222222222222222222222222';
+
+  test('marked for one kind is not marked for another, and marking twice is harmless', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    await repository.recordReopenSent({ roundId: '2026-10-09', kind: 'open', wallets: [A], at: OPEN });
+    await repository.recordReopenSent({ roundId: '2026-10-09', kind: 'open', wallets: [A], at: OPEN });
+    assert.deepEqual([...(await repository.reopenSentTo({ roundId: '2026-10-09', kind: 'open', wallets: [A, B] }))], [A]);
+    assert.deepEqual([...(await repository.reopenSentTo({ roundId: '2026-10-09', kind: 'results', wallets: [A] }))], []);
+    assert.deepEqual([...(await repository.reopenSentTo({ roundId: '2026-10-16', kind: 'open', wallets: [A] }))], []);
+  });
+
+  test('the fake refuses what the table refuses', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    await assert.rejects(() => repository.reopenSentTo({ roundId: 'next', kind: 'open', wallets: [A] }), /round named by its date/);
+    await assert.rejects(
+      () => repository.recordReopenSent({ roundId: '2026-10-09', kind: 'reminder' as 'open', wallets: [A], at: OPEN }),
+      /unknown round notice/,
+    );
+    await assert.rejects(
+      () => repository.recordReopenSent({ roundId: '2026-10-09', kind: 'open', wallets: ['0xABC'], at: OPEN }),
+      /lowercase 20-byte wallet/,
+    );
+  });
+});
+
 describe('each channel keeps its own memory', () => {
   const WEEK = '2026-09-25T20:00:00.000Z';
   const ME = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';

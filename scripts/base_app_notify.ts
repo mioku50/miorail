@@ -19,12 +19,15 @@ import { client, closeDb } from '@mioagent/db';
 import {
   createDatabaseBaseAppNotificationRepositoryV1,
   createDatabaseOfficialAssetRepository,
+  createDatabaseReopenGameRepositoryV1,
   createDatabaseTelegramLinkRepositoryV1,
   createDatabaseRepresentationRatioRepository,
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
 } from '@mioagent/route-storage';
-import { weekendWindowV1, weeklyCloseChangesV1 } from '@mioagent/rwa-market-reality/weekend-market';
+import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
+import { reopenLineupStocksV1, reopenNoticeFactsV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
+import { weekendMarketV1, weekendWindowV1, weeklyCloseChangesV1 } from '@mioagent/rwa-market-reality/weekend-market';
 import { createTelegramBotClientV1, telegramConfigV1 } from '@mioagent/telegram';
 
 import {
@@ -50,6 +53,7 @@ async function main(): Promise<void> {
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
   const official = createDatabaseOfficialAssetRepository(client);
   const ratios = createDatabaseRepresentationRatioRepository(client);
+  const reopenGames = createDatabaseReopenGameRepositoryV1(client);
   const rpcUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
 
   // Balances at ONE block, so a wallet is a holder or not at a single moment.
@@ -158,6 +162,30 @@ async function main(): Promise<void> {
       }
       return { week, dividends };
     },
+    // Call the reopen. Reading the round is also what opens it, fixes Base's
+    // calls and settles it, so a round keeps time with nobody on the page.
+    reopen: (now) =>
+      reopenNoticeFactsV1(now, {
+        repository: reopenGames,
+        stocks: async (since, until) =>
+          reopenLineupStocksV1({
+            runs: await readPublicLadderMidsV1(client, { since, until }),
+            // The same rule the API uses, so whichever of the two opens a
+            // round, the other reads the same five stocks back.
+            identify: async (token) => {
+              const found = await underlyings.underlyingOf({ chainId: 8453, tokenAddress: token });
+              if (!found) return null;
+              const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
+              return {
+                symbol: found.underlying.displaySymbol ?? found.underlying.canonicalName,
+                name: found.underlying.canonicalName,
+                coinbase: issuer === 'coinbase',
+              };
+            },
+          }),
+        // The notifier shows no live price; the page does.
+        weekend: async (at) => weekendMarketV1({ now: at, stocks: [] }),
+      }),
   };
 
   if (config) {

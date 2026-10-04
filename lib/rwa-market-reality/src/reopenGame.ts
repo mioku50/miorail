@@ -382,6 +382,102 @@ export function reopenRecordV1(rounds: readonly ReopenPlayedRoundV1[]): ReopenRe
   return { played: locked.filter(playedOne).length, streak, correct, of, beatBase };
 }
 
+// --- The leaderboard ------------------------------------------------------------
+
+export interface ReopenStandingV1 {
+  playerId: string;
+  /** In the order players joined; the board's name for anyone without a Basename. */
+  playerNumber: number;
+  rank: number;
+  correct: number;
+  of: number;
+  /** Settled rounds the player picked in. */
+  played: number;
+  /** Settled rounds where the player was right more often than Base. */
+  beatBase: number;
+}
+
+/**
+ * Everybody who played a settled round, ranked.
+ *
+ * Most right first; between equal counts, fewer stocks called for them (the
+ * more accurate player); equal on both is the same rank (1, 2, 2, 4), listed in
+ * the order the players joined. A round still open counts for nobody yet.
+ */
+export function reopenLeaderboardV1(input: {
+  rounds: readonly { roundId: string; results: readonly ReopenResultV1[]; calls: readonly ReopenCallV1[] | null }[];
+  picks: readonly { roundId: string; playerId: string; playerNumber: number; picks: ReopenPicksV1 }[];
+}): ReopenStandingV1[] {
+  const rounds = new Map(input.rounds.map((round) => [round.roundId, round]));
+  const byPlayer = new Map<string, Omit<ReopenStandingV1, 'rank'>>();
+  for (const row of input.picks) {
+    const round = rounds.get(row.roundId);
+    if (!round || Object.keys(row.picks).length === 0) continue;
+    const mine = reopenScoreV1(row.picks, round.results);
+    const base = reopenScoreV1(reopenBasePicksV1(round.calls ?? []), round.results);
+    const standing = byPlayer.get(row.playerId) ?? {
+      playerId: row.playerId,
+      playerNumber: row.playerNumber,
+      correct: 0,
+      of: 0,
+      played: 0,
+      beatBase: 0,
+    };
+    standing.correct += mine.correct;
+    standing.of += mine.of;
+    standing.played += 1;
+    if (mine.correct > base.correct) standing.beatBase += 1;
+    byPlayer.set(row.playerId, standing);
+  }
+  const sorted = [...byPlayer.values()].sort(
+    (a, b) => b.correct - a.correct || a.of - b.of || a.playerNumber - b.playerNumber,
+  );
+  return sorted.map((standing, index) => {
+    const first = sorted.findIndex((other) => other.correct === standing.correct && other.of === standing.of);
+    return { ...standing, rank: first === -1 ? index + 1 : first + 1 };
+  });
+}
+
+/** The board's name for a player without a Basename: never anything derived
+ * from an address, which anybody could recompute from a list of addresses. */
+export function reopenPlayerNameV1(playerNumber: number): string {
+  return `Player ${playerNumber}`;
+}
+
+export const ReopenLeaderboardV1Schema = z
+  .object({
+    /** Settled rounds the table counts. */
+    rounds: z.number().int().nonnegative(),
+    players: z.number().int().nonnegative(),
+    rows: z
+      .array(
+        z
+          .object({
+            rank: z.number().int().positive(),
+            /** A Basename that resolves back to the wallet, or "Player 12". */
+            name: z.string().min(1).max(120),
+            correct: z.number().int().nonnegative(),
+            of: z.number().int().nonnegative(),
+            played: z.number().int().nonnegative(),
+            you: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(10),
+    /** The reader's own place, also when it is below the rows shown. */
+    me: z
+      .object({
+        rank: z.number().int().positive(),
+        correct: z.number().int().nonnegative(),
+        of: z.number().int().nonnegative(),
+        played: z.number().int().nonnegative(),
+      })
+      .strict()
+      .nullable(),
+  })
+  .strict();
+export type ReopenLeaderboardV1 = z.infer<typeof ReopenLeaderboardV1Schema>;
+
 // --- The wire -----------------------------------------------------------------
 
 export const ReopenGameStockV1Schema = ReopenStockV1Schema.extend({
@@ -423,6 +519,9 @@ export const ReopenGameResponseV1Schema = z
       .object({ number: z.number().int().positive(), opensAt: IsoV1, locksAt: IsoV1, expectedReopenAt: IsoV1 })
       .strict()
       .nullable(),
+    /** Everybody who played a settled round; null before the first one.
+     * Optional: for the seconds a new page talks to an older server. */
+    leaderboard: ReopenLeaderboardV1Schema.nullable().optional(),
     /** Base's record over every settled round. */
     baseRecord: z
       .object({

@@ -10,6 +10,7 @@ import {
   type ReopenCrowdV1,
   type ReopenGameRepositoryV1,
   type ReopenPicksRowV1,
+  type ReopenPlayerPicksV1,
   type ReopenRoundOpeningV1,
   type ReopenRoundRowV1,
   type ReopenSideV1,
@@ -20,7 +21,8 @@ import { RouteStorageIntegrityError } from './types.js';
  * the way the SQL does, against the round it writes into. */
 export class InMemoryReopenGameRepositoryV1 implements ReopenGameRepositoryV1 {
   private readonly roundRows = new Map<string, ReopenRoundRowV1>();
-  private readonly players = new Map<string, { createdAt: string; mergedInto: string | null }>();
+  private readonly players = new Map<string, { createdAt: string; mergedInto: string | null; number: number }>();
+  private nextNumber = 1;
   private readonly picks = new Map<string, { roundId: string; playerId: string; picks: Record<string, ReopenSideV1>; pickedAt: string }>();
 
   private copy(row: ReopenRoundRowV1): ReopenRoundRowV1 {
@@ -83,7 +85,9 @@ export class InMemoryReopenGameRepositoryV1 implements ReopenGameRepositoryV1 {
   async walletPlayer(input: { wallet: string; now: Date }): Promise<string> {
     assertReopenWalletV1(input.wallet);
     const playerId = reopenWalletPlayerIdV1(input.wallet);
-    if (!this.players.has(playerId)) this.players.set(playerId, { createdAt: input.now.toISOString(), mergedInto: null });
+    if (!this.players.has(playerId)) {
+      this.players.set(playerId, { createdAt: input.now.toISOString(), mergedInto: null, number: this.nextNumber++ });
+    }
     return playerId;
   }
 
@@ -91,7 +95,7 @@ export class InMemoryReopenGameRepositoryV1 implements ReopenGameRepositoryV1 {
     assertReopenTokenHashV1(input.tokenHash);
     const playerId = reopenDevicePlayerIdV1(input.tokenHash);
     if (this.players.has(playerId)) throw new RouteStorageIntegrityError('duplicate device player');
-    this.players.set(playerId, { createdAt: input.now.toISOString(), mergedInto: null });
+    this.players.set(playerId, { createdAt: input.now.toISOString(), mergedInto: null, number: this.nextNumber++ });
     return playerId;
   }
 
@@ -144,6 +148,27 @@ export class InMemoryReopenGameRepositoryV1 implements ReopenGameRepositoryV1 {
       }
     }
     return { players: rows.length, split };
+  }
+
+  private playerPicksV1(filter: (row: { roundId: string }) => boolean): ReopenPlayerPicksV1[] {
+    return [...this.picks.values()]
+      .filter((row) => filter(row) && Object.keys(row.picks).length > 0)
+      .map((row) => ({
+        roundId: row.roundId,
+        playerId: row.playerId,
+        playerNumber: this.players.get(row.playerId)!.number,
+        picks: { ...row.picks },
+      }))
+      .sort((a, b) => a.roundId.localeCompare(b.roundId) || a.playerNumber - b.playerNumber);
+  }
+
+  async standings(): Promise<ReopenPlayerPicksV1[]> {
+    return this.playerPicksV1((row) => this.roundRows.get(row.roundId)?.results != null);
+  }
+
+  async roundPicks(roundId: string): Promise<ReopenPlayerPicksV1[]> {
+    assertReopenRoundIdV1(roundId);
+    return this.playerPicksV1((row) => row.roundId === roundId);
   }
 
   async mergeDevice(input: { tokenHash: string; wallet: string; now: Date }): Promise<{ moved: number; dropped: number } | null> {

@@ -3,6 +3,7 @@ import {
   assertBaseAppCursorIdV1,
   assertBaseAppDailyInputV1,
   assertBaseAppWeeklyInputV1,
+  assertReopenNoticeInputV1,
   type BaseAppNotificationCursorV1,
   type BaseAppNotificationRepositoryV1,
   type BaseAppNotificationSourceV1,
@@ -202,6 +203,28 @@ export function createDatabaseBaseAppNotificationRepositoryV1(
           INSERT INTO base_app_weekly_summary (channel, week_close_at, wallet_address, sent_at)
           VALUES (${channel}, ${input.weekCloseAt}::timestamptz, ${wallet}, ${input.at.toISOString()}::timestamptz)
           ON CONFLICT (channel, week_close_at, wallet_address) DO NOTHING`;
+      }
+    },
+
+    async reopenSentTo(input) {
+      assertReopenNoticeInputV1(input);
+      const sent = new Set<string>();
+      if (input.wallets.length === 0) return sent;
+      const rows = (await sql`
+        SELECT wallet_address FROM reopen_notices
+         WHERE channel = ${channel} AND round_id = ${input.roundId} AND kind = ${input.kind}
+           AND wallet_address = ANY(${[...input.wallets]})`) as Record<string, unknown>[];
+      for (const row of rows) sent.add(String(row.wallet_address));
+      return sent;
+    },
+
+    async recordReopenSent(input) {
+      assertReopenNoticeInputV1(input);
+      for (const wallet of new Set(input.wallets)) {
+        await sql`
+          INSERT INTO reopen_notices (channel, round_id, kind, wallet_address, sent_at)
+          VALUES (${channel}, ${input.roundId}, ${input.kind}, ${wallet}, ${input.at.toISOString()}::timestamptz)
+          ON CONFLICT (channel, round_id, kind, wallet_address) DO NOTHING`;
       }
     },
   };

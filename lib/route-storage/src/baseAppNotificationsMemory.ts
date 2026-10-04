@@ -2,7 +2,9 @@ import {
   assertBaseAppCursorIdV1,
   assertBaseAppDailyInputV1,
   assertBaseAppWeeklyInputV1,
+  assertReopenNoticeInputV1,
   compareBaseAppPositionV1,
+  type ReopenNoticeKindV1,
   type BaseAppNotificationCursorV1,
   type BaseAppNotificationRepositoryV1,
   type BaseAppNotificationSourceV1,
@@ -25,6 +27,7 @@ export class InMemoryBaseAppNotificationRepositoryV1 implements BaseAppNotificat
   private readonly watches: { userId: string; tokenAddress: string }[] = [];
   private readonly daily = new Map<string, number>();
   private readonly weekly = new Set<string>();
+  private readonly reopen = new Set<string>();
 
   /** Test seams: rows the other workers would have written. */
   seedSignal(row: RwaSignalRowV1): void {
@@ -150,6 +153,21 @@ export class InMemoryBaseAppNotificationRepositoryV1 implements BaseAppNotificat
     assertBaseAppWeeklyInputV1(input);
     const week = new Date(input.weekCloseAt).toISOString();
     for (const wallet of input.wallets) this.weekly.add(`${week}|${wallet}`);
+  }
+
+  async reopenSentTo(input: { roundId: string; kind: ReopenNoticeKindV1; wallets: readonly string[] }): Promise<Set<string>> {
+    assertReopenNoticeInputV1(input);
+    return new Set(input.wallets.filter((wallet) => this.reopen.has(`${input.roundId}|${input.kind}|${wallet}`)));
+  }
+
+  async recordReopenSent(input: {
+    roundId: string;
+    kind: ReopenNoticeKindV1;
+    wallets: readonly string[];
+    at: Date;
+  }): Promise<void> {
+    assertReopenNoticeInputV1(input);
+    for (const wallet of input.wallets) this.reopen.add(`${input.roundId}|${input.kind}|${wallet}`);
   }
 
   async pruneDaily(input: { before: string }): Promise<number> {

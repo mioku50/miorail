@@ -5,21 +5,22 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { createDatabaseReopenGameRepositoryV1, type ReopenGameRepositoryV1 } from '@mioagent/route-storage';
 import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
 import {
-  REOPEN_LINEUP_V1,
   ReopenPickRequestV1Schema,
   type ReopenGameResponseV1,
 } from '@mioagent/rwa-market-reality/reopen-game';
 import { weekendSlotStartV1, type WeekendMarketStockInputV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import { tenantUserFromRequest } from '../middleware/tenantAuth';
+import { reverseBaseNameV1 } from '../lib/baseNameResolver';
 import { sessionWalletV1 } from '../lib/sessionWallet';
 import {
   reopenGameForV1,
+  reopenLineupStocksV1,
   reopenSharedStateV1,
   type ReopenGameDepsV1,
   type ReopenPlayerRefV1,
   type ReopenSharedStateV1,
-} from '../lib/reopenGameRead';
+} from '@mioagent/rwa-market-reality/reopen-game-service';
 import { databaseWeekendRunsV1 } from '../lib/weekendMarketRead';
 import { createPublicReadCacheV1, publicStocksCachesV1, publicStocksRuntime } from './publicStocks';
 import { rwaMarketRealityRuntime } from './rwaMarketReality';
@@ -45,25 +46,20 @@ export const reopenGameRuntime = {
   /** Coinbase's lineup stocks with their stored runs: one issuer, because a
    * symbol is not an identifier. */
   stocks: async (since: Date, until: Date): Promise<WeekendMarketStockInputV1[]> => {
-    const rows = await databaseWeekendRunsV1(since, until);
     const names = await publicStocksRuntime.stockMeta.read().catch(() => new Map<string, { name: string }>());
-    const byToken = new Map<string, typeof rows>();
-    for (const row of rows) byToken.set(row.token, [...(byToken.get(row.token) ?? []), row]);
-    const stocks: WeekendMarketStockInputV1[] = [];
-    for (const [token, runs] of byToken) {
-      const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress: token });
-      if (!found) continue;
-      const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
-      const symbol = found.underlying.displaySymbol ?? found.underlying.canonicalName;
-      if (issuer !== 'coinbase' || !(REOPEN_LINEUP_V1 as readonly string[]).includes(symbol)) continue;
-      stocks.push({
-        tokenAddress: token,
-        symbol,
-        name: names.get(token)?.name ?? found.underlying.canonicalName,
-        runs: runs.map(({ at, mid, reference, referenceUpdatedAt }) => ({ at, mid, reference, referenceUpdatedAt })),
-      });
-    }
-    return stocks;
+    return reopenLineupStocksV1({
+      runs: await databaseWeekendRunsV1(since, until),
+      identify: async (token) => {
+        const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress: token });
+        if (!found) return null;
+        const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
+        return {
+          symbol: found.underlying.displaySymbol ?? found.underlying.canonicalName,
+          name: names.get(token)?.name ?? found.underlying.canonicalName,
+          coinbase: issuer === 'coinbase',
+        };
+      },
+    });
   },
   /** The weekend card through the same five-minute cache its own route uses. */
   weekend: (now: Date) => {
@@ -72,6 +68,9 @@ export const reopenGameRuntime = {
   },
   /** Coinbase's company names, the ones the stock list shows. */
   names: () => publicStocksRuntime.stockMeta.read(),
+  /** A wallet's Basename for the leaderboard: the reverse record, kept only
+   * when it resolves forward to the same wallet. */
+  basename: (wallet: string): Promise<string | null> => reverseBaseNameV1(wallet),
   storageAvailable: (): Promise<boolean> => publicStocksRuntime.storageAvailable(),
   enabled: (env: NodeJS.ProcessEnv): boolean => publicStocksRuntime.enabled(env),
   now: () => new Date(),
@@ -84,12 +83,35 @@ export const reopenGameCachesV1 = {
   shared: createPublicReadCacheV1({ ttlMs: 30_000, max: 4 }),
 };
 
+/**
+ * Basenames, asked at most every six hours per wallet. Two Ethereum calls per
+ * name (the reverse record, then forward again), and a board shows ten: a
+ * thirty-second refresh must not pay that every time. A failed answer is not
+ * kept, so the next refresh asks again.
+ */
+const BASENAME_TTL_MS_V1 = 6 * 3_600_000;
+const basenameCache = new Map<string, { at: number; name: Promise<string | null> }>();
+function cachedBasenameV1(wallet: string): Promise<string | null> {
+  const key = wallet.toLowerCase();
+  const hit = basenameCache.get(key);
+  const now = Date.now();
+  if (hit && now - hit.at < BASENAME_TTL_MS_V1) return hit.name;
+  const name = reopenGameRuntime.basename(key);
+  basenameCache.set(key, { at: now, name });
+  name.catch(() => {
+    if (basenameCache.get(key)?.name === name) basenameCache.delete(key);
+  });
+  if (basenameCache.size > 2_000) basenameCache.delete(basenameCache.keys().next().value!);
+  return name;
+}
+
 function depsV1(): ReopenGameDepsV1 {
   return {
     repository: reopenGameRuntime.repository(),
     stocks: reopenGameRuntime.stocks,
     weekend: reopenGameRuntime.weekend,
     names: reopenGameRuntime.names,
+    basename: cachedBasenameV1,
   };
 }
 

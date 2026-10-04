@@ -33,9 +33,15 @@
 import type {
   BaseAppNotificationRepositoryV1,
   RadarEventNoticeRowV1,
+  ReopenNoticeKindV1,
   RwaSignalRowV1,
 } from '@mioagent/route-storage';
-import { weekendWindowV1, type WeeklyCloseChangesV1 } from '@mioagent/rwa-market-reality/weekend-market';
+import type { ReopenNoticeFactsV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
+import {
+  etClockLabelV1,
+  weekendWindowV1,
+  type WeeklyCloseChangesV1,
+} from '@mioagent/rwa-market-reality/weekend-market';
 
 export const BASE_APP_NOTIFY_ENDPOINT_V1 = 'https://dashboard.base.org/api/v1/notifications';
 export const BASE_APP_TITLE_MAX_V1 = 30;
@@ -1113,6 +1119,132 @@ export function planBaseAppNotificationsV1(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Call the reopen: three pushes a round
+//
+// The invitation the morning after a round opens, to everybody opted in who
+// has not picked yet. A last call three hours before the lock, only to wallets
+// that played a round before and have not picked this one: a streak is the one
+// thing it saves. The results once the round settles, to every wallet that
+// picked, with its own score and place. Each kind once per round per wallet,
+// and none of them on top of a day's cap.
+// ---------------------------------------------------------------------------
+
+/** The morning after a Friday-evening open: 10:00 ET on Saturday. */
+export const REOPEN_INVITE_AFTER_OPEN_MS_V1 = 14 * 3_600_000;
+/** The last call starts three hours before the lock, which is when the
+ * invitation stops: the two never cover the same minute. */
+export const REOPEN_LAST_CALL_LEAD_MS_V1 = 3 * 3_600_000;
+/** Too close to the lock to act on. */
+export const REOPEN_LAST_CALL_STOP_MS_V1 = 15 * 60_000;
+/** Results older than this are not news. */
+export const REOPEN_RESULTS_FRESH_MS_V1 = 24 * 3_600_000;
+
+/** Which of a round's notices is due at `now`, if any. */
+export function reopenNoticeDueV1(facts: ReopenNoticeFactsV1, now: Date): ReopenNoticeKindV1 | null {
+  const at = now.getTime();
+  const locks = Date.parse(facts.locksAt);
+  if (facts.settledAt) {
+    const settled = Date.parse(facts.settledAt);
+    return at >= settled && at < settled + REOPEN_RESULTS_FRESH_MS_V1 ? 'results' : null;
+  }
+  if (at >= Date.parse(facts.opensAt) + REOPEN_INVITE_AFTER_OPEN_MS_V1 && at < locks - REOPEN_LAST_CALL_LEAD_MS_V1) {
+    return 'open';
+  }
+  if (at >= locks - REOPEN_LAST_CALL_LEAD_MS_V1 && at < locks - REOPEN_LAST_CALL_STOP_MS_V1) return 'last_call';
+  return null;
+}
+
+/** Who a notice is for, before what was already sent and the daily cap. */
+export function reopenAudienceV1(
+  facts: ReopenNoticeFactsV1,
+  kind: ReopenNoticeKindV1,
+  enabled: ReadonlySet<string>,
+): string[] {
+  const opted = [...enabled].sort();
+  if (kind === 'results') return opted.filter((wallet) => facts.players.get(wallet)?.score?.of);
+  if (kind === 'last_call') return opted.filter((wallet) => facts.returning.has(wallet) && !facts.players.has(wallet));
+  return opted.filter((wallet) => !facts.players.has(wallet));
+}
+
+function symbolsSentenceV1(symbols: readonly string[]): string {
+  return symbols.length <= 1 ? (symbols[0] ?? '') : `${symbols.slice(0, -1).join(', ')} and ${symbols.at(-1)}`;
+}
+
+/** What one wallet is told. Null when there is nothing true to say. */
+export function reopenNoticeV1(
+  facts: ReopenNoticeFactsV1,
+  kind: ReopenNoticeKindV1,
+  wallet: string,
+): { title: string; message: string; targetPath: string } | null {
+  const targetPath = '/stocks/weekend';
+  const lock = etClockLabelV1(facts.locksAt);
+  if (kind === 'open') {
+    return {
+      title: clipV1(`Call the reopen #${facts.number}`, BASE_APP_TITLE_MAX_V1),
+      message: clipV1(
+        `Will ${symbolsSentenceV1(facts.symbols)} reopen above or below Friday's close? Picks close ${lock}, and Base makes its own call at the same minute. No wallet needed.`,
+        BASE_APP_MESSAGE_MAX_V1,
+      ),
+      targetPath,
+    };
+  }
+  if (kind === 'last_call') {
+    return {
+      title: clipV1(`Last call: reopen #${facts.number}`, BASE_APP_TITLE_MAX_V1),
+      message: clipV1(
+        `Picks close ${lock}. You played before and have no call this weekend yet: ${symbolsSentenceV1(facts.symbols)}, above or below Friday's close.`,
+        BASE_APP_MESSAGE_MAX_V1,
+      ),
+      targetPath,
+    };
+  }
+  const mine = facts.players.get(wallet);
+  if (!mine?.score || mine.score.of === 0 || !facts.base) return null;
+  const place = mine.rank !== null ? ` You're #${mine.rank} of ${facts.ranked} on the leaderboard.` : '';
+  return {
+    title: clipV1(`Reopen #${facts.number}: you ${mine.score.correct}/${mine.score.of}`, BASE_APP_TITLE_MAX_V1),
+    message: clipV1(
+      `You called ${mine.score.correct} of ${mine.score.of}, Base ${facts.base.correct} of ${facts.base.of}.${mine.beatBase ? ' You beat Base this round.' : ''}${place}`,
+      BASE_APP_MESSAGE_MAX_V1,
+    ),
+    targetPath,
+  };
+}
+
+/** The pushes for one notice kind: one per distinct message, never past the
+ * day's cap. */
+export function planReopenNoticesV1(input: {
+  facts: ReopenNoticeFactsV1;
+  kind: ReopenNoticeKindV1;
+  wallets: readonly string[];
+  sentToday: ReadonlyMap<string, number>;
+  limits?: Partial<BaseAppNotifyLimitsV1>;
+}): { groups: BaseAppPushGroupV1[]; capped: number } {
+  const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...input.limits };
+  const byMessage = new Map<string, BaseAppPushGroupV1>();
+  let capped = 0;
+  for (const wallet of [...input.wallets].sort()) {
+    if ((input.sentToday.get(wallet) ?? 0) >= limits.dailyCap) {
+      capped += 1;
+      continue;
+    }
+    const notice = reopenNoticeV1(input.facts, input.kind, wallet);
+    if (!notice) continue;
+    const id = JSON.stringify([notice.title, notice.message, notice.targetPath]);
+    const group = byMessage.get(id) ?? { ...notice, wallets: [] };
+    group.wallets.push(wallet);
+    byMessage.set(id, group);
+  }
+  const groups: BaseAppPushGroupV1[] = [];
+  for (const group of byMessage.values()) {
+    for (let index = 0; index < group.wallets.length; index += BASE_APP_BATCH_MAX_V1) {
+      groups.push({ ...group, wallets: group.wallets.slice(index, index + BASE_APP_BATCH_MAX_V1) });
+    }
+  }
+  return { groups, capped };
+}
+
+// ---------------------------------------------------------------------------
 // One pass
 // ---------------------------------------------------------------------------
 
@@ -1133,6 +1265,8 @@ export interface BaseAppNotifyReportV1 {
   stoppedBy: string | null;
   /** The weekly summary: null outside its window, else what happened. */
   weekly: { weekCloseAt: string; due: number; sent: number; capped: number } | null;
+  /** Call the reopen: null when no round notice was due. */
+  reopen: { roundId: string; kind: ReopenNoticeKindV1; due: number; sent: number; capped: number } | null;
 }
 
 function utcDayV1(at: Date): string {
@@ -1156,6 +1290,9 @@ export async function runBaseAppNotifyV1(deps: {
   /** The week that just closed, and its dividends. Asked only inside the
    * summary's window. */
   weekly?: (now: Date) => Promise<WeeklySummaryV1 | null>;
+  /** Call the reopen's current round, brought up to date. A failure skips
+   * the round's notices for this pass and nothing else. */
+  reopen?: (now: Date) => Promise<ReopenNoticeFactsV1 | null>;
 }): Promise<BaseAppNotifyReportV1> {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...deps.limits };
   const report: BaseAppNotifyReportV1 = {
@@ -1173,6 +1310,7 @@ export async function runBaseAppNotifyV1(deps: {
     dropped: 0,
     stoppedBy: null,
     weekly: null,
+    reopen: null,
   };
   if (!deps.client) return { ...report, outcome: 'off' };
   const now = deps.now();
@@ -1230,6 +1368,56 @@ export async function runBaseAppNotifyV1(deps: {
     }
   }
 
+  // Call the reopen: due by the clock like the weekly summary, once per round,
+  // kind and wallet. The round is read first because the read is also what
+  // opens it, fixes Base's calls and settles it, on time with nobody looking.
+  if (deps.reopen) {
+    let facts: ReopenNoticeFactsV1 | null;
+    try {
+      facts = await deps.reopen(now);
+    } catch {
+      facts = null;
+    }
+    const kind = facts ? reopenNoticeDueV1(facts, now) : null;
+    if (facts && kind) {
+      let enabledNow: Set<string>;
+      try {
+        enabledNow = await deps.client.enabledWallets();
+      } catch (cause) {
+        return { ...report, outcome: 'stopped', stoppedBy: cause instanceof BaseAppNotifyErrorV1 ? cause.message : 'base_app_error' };
+      }
+      const audience = reopenAudienceV1(facts, kind, enabledNow);
+      const already = audience.length > 0
+        ? await deps.repository.reopenSentTo({ roundId: facts.roundId, kind, wallets: audience })
+        : new Set<string>();
+      const pending = audience.filter((wallet) => !already.has(wallet));
+      report.reopen = { roundId: facts.roundId, kind, due: pending.length, sent: 0, capped: 0 };
+      if (pending.length > 0) {
+        const day = utcDayV1(now);
+        const sentToday = await deps.repository.sentOn({ day, wallets: pending });
+        const plan = planReopenNoticesV1({ facts, kind, wallets: pending, sentToday, limits });
+        report.reopen.capped = plan.capped;
+        if (!deps.dry) {
+          for (const group of plan.groups) {
+            try {
+              const result = await deps.client.send(group);
+              report.reopen.sent += result.sent.length;
+              report.failed += result.failed.notSaved + result.failed.disabled + result.failed.other;
+              if (result.sent.length > 0) {
+                await deps.repository.recordSent({ day, wallets: result.sent });
+                await deps.repository.recordReopenSent({ roundId: facts.roundId, kind, wallets: result.sent, at: now });
+              }
+            } catch (cause) {
+              const error = cause instanceof BaseAppNotifyErrorV1 ? cause : null;
+              if (error && error.status === 400) continue;
+              return { ...report, outcome: 'stopped', stoppedBy: error ? error.message : 'base_app_error' };
+            }
+          }
+        }
+      }
+    }
+  }
+
   // A dry pass writes nothing, so it cannot open a cursor; it reads from one
   // that is already open, or reports that none is.
   const cursors = {
@@ -1279,7 +1467,7 @@ export async function runBaseAppNotifyV1(deps: {
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       await deps.repository.pruneDaily({ before: utcDayV1(weekAgo) });
     }
-    return (report.weekly?.sent ?? 0) > 0 ? { ...report, outcome: 'delivered' } : report;
+    return (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) > 0 ? { ...report, outcome: 'delivered' } : report;
   }
 
   // Only rows this module could send are worth asking Base about.
@@ -1302,7 +1490,7 @@ export async function runBaseAppNotifyV1(deps: {
       ...report,
       stale: plan.stale,
       unsent: plan.unsent,
-      outcome: deps.dry ? 'dry' : (report.weekly?.sent ?? 0) > 0 ? 'delivered' : 'idle',
+      outcome: deps.dry ? 'dry' : (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) > 0 ? 'delivered' : 'idle',
     };
   }
 
@@ -1401,5 +1589,8 @@ export async function runBaseAppNotifyV1(deps: {
   }
 
   await advance();
-  return { ...report, outcome: plan.groups.length > 0 || (report.weekly?.sent ?? 0) > 0 ? 'delivered' : 'idle' };
+  return {
+    ...report,
+    outcome: plan.groups.length > 0 || (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) > 0 ? 'delivered' : 'idle',
+  };
 }

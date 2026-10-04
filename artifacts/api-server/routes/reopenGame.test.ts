@@ -62,6 +62,7 @@ function stubV1(t: test.TestContext, now: Date, signedIn: string | null = null) 
     stocks: async () => STOCKS,
     weekend: async (at: Date) => weekendMarketV1({ now: at, stocks: STOCKS }),
     names: async () => new Map([[STOCKS[0]!.tokenAddress, { name: 'NVIDIA Corporation' }]]),
+    basename: async () => null,
     storageAvailable: async () => true,
     enabled: () => true,
     now: () => clock,

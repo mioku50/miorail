@@ -54,6 +54,16 @@ export interface ReopenPicksRowV1 {
   pickedAt: string;
 }
 
+/** One player's picks in one round, with the number they are known by. */
+export interface ReopenPlayerPicksV1 {
+  roundId: string;
+  playerId: string;
+  /** In the order players joined. The board names a player by it unless a
+   * Basename stands in: a number reveals nothing about a wallet. */
+  playerNumber: number;
+  picks: Record<string, ReopenSideV1>;
+}
+
 export interface ReopenCrowdV1 {
   players: number;
   split: Record<string, { up: number; down: number }>;
@@ -87,6 +97,10 @@ export interface ReopenGameRepositoryV1 {
   picksOf(playerId: string): Promise<ReopenPicksRowV1[]>;
   /** How many played the round, and how they split per stock. */
   crowd(roundId: string): Promise<ReopenCrowdV1>;
+  /** Every non-empty pick in every settled round: the leaderboard's input. */
+  standings(): Promise<ReopenPlayerPicksV1[]>;
+  /** Every non-empty pick in one round. */
+  roundPicks(roundId: string): Promise<ReopenPlayerPicksV1[]>;
   /**
    * Moves the device's picks to the wallet's player. Where both picked the
    * same round the wallet's stand and the device's go, so nobody is counted

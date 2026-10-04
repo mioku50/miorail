@@ -98,6 +98,33 @@ export interface BaseAppNotificationRepositoryV1 {
   weeklySentTo(input: { weekCloseAt: string; wallets: readonly string[] }): Promise<Set<string>>;
   /** Marks these wallets as having had that week's summary. Idempotent. */
   recordWeeklySent(input: { weekCloseAt: string; wallets: readonly string[]; at: Date }): Promise<void>;
+  /** The wallets among these that already had this Call the reopen notice. */
+  reopenSentTo(input: { roundId: string; kind: ReopenNoticeKindV1; wallets: readonly string[] }): Promise<Set<string>>;
+  /** Marks these wallets as having had it. Idempotent. */
+  recordReopenSent(input: {
+    roundId: string;
+    kind: ReopenNoticeKindV1;
+    wallets: readonly string[];
+    at: Date;
+  }): Promise<void>;
+}
+
+/** The three pushes a Call the reopen round sends, as migration 0080 allows. */
+export const REOPEN_NOTICE_KINDS_V1 = ['open', 'last_call', 'results'] as const;
+export type ReopenNoticeKindV1 = (typeof REOPEN_NOTICE_KINDS_V1)[number];
+
+export function assertReopenNoticeInputV1(input: { roundId: string; kind: string; wallets: readonly string[] }): void {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.roundId)) {
+    throw new RouteStorageIntegrityError(`expected a round named by its date: ${input.roundId}`);
+  }
+  if (!(REOPEN_NOTICE_KINDS_V1 as readonly string[]).includes(input.kind)) {
+    throw new RouteStorageIntegrityError(`unknown round notice: ${input.kind}`);
+  }
+  for (const wallet of input.wallets) {
+    if (!WALLET_V1.test(wallet)) {
+      throw new RouteStorageIntegrityError('expected a lowercase 20-byte wallet address');
+    }
+  }
 }
 
 /** A week is named by the instant its last close happened, and a wallet by its

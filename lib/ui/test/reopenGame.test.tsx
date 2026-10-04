@@ -53,6 +53,50 @@ function game(over: Partial<ReopenGameResponseV1> = {}): ReopenGameResponseV1 {
 const NOW = new Date('2026-10-10T16:00:00.000Z');
 const record = { played: 0, streak: 0, correct: 0, of: 0, beatBase: 0 };
 
+describe('the leaderboard', () => {
+  const board = (over: Record<string, unknown> = {}) => ({
+    rounds: 2,
+    players: 14,
+    rows: [
+      { rank: 1, name: 'first.base.eth', correct: 9, of: 10, played: 2, you: false },
+      { rank: 2, name: 'Player 7', correct: 8, of: 10, played: 2, you: false },
+      { rank: 2, name: 'Player 3', correct: 8, of: 10, played: 2, you: true },
+    ],
+    me: { rank: 2, correct: 8, of: 10, played: 2 },
+    ...over,
+  });
+
+  test('names a Basename or a number, marks the reader, and says how it ranks', () => {
+    const view = reopenGameViewV1(game({ leaderboard: board() }), { now: NOW, origin: ORIGIN })!;
+    assert.equal(
+      view.leaderboard?.note,
+      'After 2 rounds · 14 players. Most right first. A wallet with a Basename is listed by it; everyone else by player number.',
+    );
+    assert.deepEqual(view.leaderboard?.rows.map((row) => [row.rank, row.name, row.score, row.rounds]), [
+      ['#1', 'first.base.eth', '9/10', '2'],
+      ['#2', 'Player 7', '8/10', '2'],
+      ['#2', 'Player 3 · you', '8/10', '2'],
+    ]);
+    assert.equal(view.leaderboard?.me, null, 'the reader is already in the rows');
+    const html = renderToStaticMarkup(<ReopenGameCard model={{ view }} />);
+    assert.match(html, /<tr class="you"><td class="mono">#2<\/td><td class="nm">Player 3 · you<\/td>/);
+    assert.doesNotMatch(html, /0x[0-9a-f]{4}/i, 'no address on the board');
+  });
+
+  test('a reader below the rows gets their own line, and no table before a round settles', () => {
+    const below = reopenGameViewV1(
+      game({ leaderboard: board({ rows: board().rows.slice(0, 2), me: { rank: 14, correct: 2, of: 10, played: 2 } }) }),
+      { now: NOW, origin: ORIGIN },
+    )!;
+    assert.equal(below.leaderboard?.me, 'You: #14 of 14 · 2/10 right over 2 rounds.');
+    assert.equal(reopenGameViewV1(game({ leaderboard: null }), { now: NOW, origin: ORIGIN })!.leaderboard, null);
+    // A server that predates the table sends no field at all.
+    const older = game();
+    delete (older as { leaderboard?: unknown }).leaderboard;
+    assert.equal(reopenGameViewV1(older, { now: NOW, origin: ORIGIN })!.leaderboard, null);
+  });
+});
+
 describe('Call the reopen, in words', () => {
   test('before the first round: when it opens and what it asks, and nothing to press', () => {
     const view = reopenGameViewV1(game({ round: null, next: { number: 1, opensAt: OPENS, locksAt: LOCKS, expectedReopenAt: REOPEN } }), {
