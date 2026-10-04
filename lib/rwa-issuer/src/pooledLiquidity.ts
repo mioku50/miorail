@@ -100,6 +100,13 @@ export interface PoolIdentityV1 {
   defaultPluginFactory: boolean;
   /** A v2-style pool factory: it enumerates its pairs. */
   enumeratesPairs: boolean;
+  /**
+   * True when a probe did not happen at all (throttled, timed out), as
+   * opposed to the factory answering that it has no such method. Such a
+   * factory places no pool in this pass: its pools keep the venue already
+   * stored, and the store never lets a weaker label replace a stronger one.
+   */
+  unread?: boolean;
 }
 
 /**
@@ -127,6 +134,9 @@ export function poolVenueFromIdentityV1(
   shape?: PoolShapeV1,
 ): PoolVenueIdV1 | null {
   if (!identity.factory) return null;
+  // A factory whose answers did not arrive is not a factory that answered
+  // nothing: calling its pools "venue not named" would demote Aerodrome.
+  if (identity.unread) return null;
   // Named venues first, each by a method only that protocol publishes.
   if (identity.voter && identity.voter.toLowerCase() === AERODROME_VOTER_V1) {
     return identity.concentrated ? 'aerodrome_cl' : 'aerodrome_v2';
@@ -330,6 +340,21 @@ const FACTORY_PROBES_V1 = [
   POOL_SELECTORS_V1.allPairsLength,
 ] as const;
 
+/** Failures that say nothing about the contract: the read did not happen. A
+ * revert or an empty answer is the contract speaking, and is not here. */
+const UNREAD_REASONS_V1: ReadonlySet<string> = new Set([
+  'rate_limited',
+  'rpc_timeout',
+  'rpc_error',
+  'rpc_unavailable',
+  'invalid_response',
+  'not_configured',
+]);
+
+function unreadV1(result: { ok: boolean; reason?: string } | undefined): boolean {
+  return !result || (!result.ok && UNREAD_REASONS_V1.has(result.reason ?? ''));
+}
+
 export async function readFactoryIdentityV1(input: {
   reader: B20ReaderV1;
   factories: readonly string[];
@@ -338,21 +363,33 @@ export async function readFactoryIdentityV1(input: {
   const factories = [...new Set(input.factories.map(lower))];
   if (factories.length === 0) return new Map();
   const width = FACTORY_PROBES_V1.length;
-  const results = await callManyV1(
-    input.reader,
-    factories.flatMap((factory) =>
-      FACTORY_PROBES_V1.map((selector) => ({
-        to: factory,
-        data: encodeNoArgsV1(selector),
-        blockTag: input.blockTag,
-      })),
-    ),
+  const calls = factories.flatMap((factory) =>
+    FACTORY_PROBES_V1.map((selector) => ({
+      to: factory,
+      data: encodeNoArgsV1(selector),
+      blockTag: input.blockTag,
+    })),
   );
+  const results = [...(await callManyV1(input.reader, calls))];
+  // Once more for the calls that did not happen. The public endpoint refuses
+  // single entries inside an accepted batch, and on 2026-10-04 from 0 to 3 of
+  // the 3 Aerodrome factories answered `voter()` per run.
+  const retry = calls.flatMap((_call, index) => (unreadV1(results[index]) ? [index] : []));
+  if (retry.length > 0) {
+    const again = await callManyV1(
+      input.reader,
+      retry.map((index) => calls[index]!),
+    );
+    retry.forEach((index, position) => {
+      if (again[position]) results[index] = again[position]!;
+    });
+  }
   const identity = new Map<string, PoolIdentityV1>();
   for (const [index, factory] of factories.entries()) {
     const base = index * width;
     const voterResult = results[base];
     const voter = voterResult?.ok ? decodeAddressWordV1(voterResult.value) : null;
+    const unread = FACTORY_PROBES_V1.some((_selector, offset) => unreadV1(results[base + offset]));
     identity.set(factory, {
       factory,
       voter: voter ? lower(voter) : null,
@@ -361,6 +398,7 @@ export async function readFactoryIdentityV1(input: {
       lmPoolDeployer: Boolean(results[base + 3]?.ok),
       defaultPluginFactory: Boolean(results[base + 4]?.ok),
       enumeratesPairs: Boolean(results[base + 5]?.ok),
+      ...(unread ? { unread: true } : {}),
     });
   }
   return identity;

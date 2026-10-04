@@ -60,7 +60,20 @@ export function createDatabaseMarketPoolReadingRepository(
             ${reading.blockNumber}::bigint, ${reading.readAt}::timestamptz
           )
           ON CONFLICT (chain_id, pool_address, token_address) DO UPDATE SET
-            venue_id = EXCLUDED.venue_id,
+            -- Never a weaker label (\`keptPoolVenueV1\`): protocol over engine
+            -- over shape over nothing. A pool's factory and that factory's
+            -- voter never change, so only a failed read makes Aerodrome look
+            -- like "venue not named"; the balances still land.
+            venue_id = CASE
+              WHEN market_pool_readings.venue_id IS NOT NULL AND (
+                     EXCLUDED.venue_id IS NULL
+                  OR (EXCLUDED.venue_id IN ('unnamed_cl', 'unnamed_pair')
+                      AND market_pool_readings.venue_id NOT IN ('unnamed_cl', 'unnamed_pair'))
+                  OR (EXCLUDED.venue_id = 'algebra_cl'
+                      AND market_pool_readings.venue_id NOT IN ('unnamed_cl', 'unnamed_pair', 'algebra_cl')))
+                THEN market_pool_readings.venue_id
+              ELSE EXCLUDED.venue_id
+            END,
             factory_address = EXCLUDED.factory_address,
             token_balance_atomic = EXCLUDED.token_balance_atomic,
             token_decimals = EXCLUDED.token_decimals,
@@ -97,9 +110,7 @@ export function createDatabaseMarketPoolReadingRepository(
             AND (EXCLUDED.paired_balance_atomic IS NOT NULL
                  OR market_pool_readings.paired_balance_atomic IS NULL)
             AND (EXCLUDED.factory_address IS NOT NULL
-                 OR market_pool_readings.factory_address IS NULL)
-            AND (EXCLUDED.venue_id IS NOT NULL
-                 OR market_pool_readings.venue_id IS NULL)`;
+                 OR market_pool_readings.factory_address IS NULL)`;
         written += 1;
       }
       return { written };

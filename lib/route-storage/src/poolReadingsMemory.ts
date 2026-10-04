@@ -1,5 +1,6 @@
 import {
   assertMarketPoolReadingV1,
+  keptPoolVenueV1,
   type MarketPoolReadingRepositoryV1,
   type MarketPoolReadingV1,
 } from './poolReadings.js';
@@ -12,11 +13,12 @@ import {
  * 500. So this validates on write, keys on the same unique triple, and applies
  * the same never-move-backwards rule as the ON CONFLICT clause.
  */
-/** True when `next` would drop something `stored` already knows. */
+/** True when `next` would drop something `stored` already knows. The venue
+ * is not here: a weaker venue keeps the stored one and the rest of the row
+ * still lands (see `keptPoolVenueV1`). */
 function losesAFactV1(stored: MarketPoolReadingV1, next: MarketPoolReadingV1): boolean {
   if (stored.pairedBalanceAtomic !== null && next.pairedBalanceAtomic === null) return true;
   if (stored.factoryAddress !== null && next.factoryAddress === null) return true;
-  if (stored.venueId !== null && next.venueId === null) return true;
   return false;
 }
 
@@ -39,7 +41,7 @@ export function createMemoryMarketPoolReadingRepository(): MarketPoolReadingRepo
         // that dropped the pair, the factory or the venue must not replace a
         // reading that has it just because its block is newer.
         if (existing && losesAFactV1(existing, reading)) continue;
-        rows.set(key(reading), reading);
+        rows.set(key(reading), existing ? { ...reading, venueId: keptPoolVenueV1(existing.venueId, reading.venueId) } : reading);
         written += 1;
       }
       return { written };

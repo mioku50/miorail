@@ -120,6 +120,27 @@ export const POOL_VENUE_TIERS_V1: Readonly<Record<PoolVenueIdV1, PoolVenueTierV1
   unnamed_pair: 'shape',
 };
 
+/**
+ * How much a stored label knows: a protocol over an engine over a shape over
+ * nothing.
+ *
+ * A pool's factory never changes, and neither does that factory's `voter()`,
+ * so a label can only get weaker when a read failed. Measured on production
+ * 2026-10-04: from 0 to 3 of the 3 Aerodrome factories answered `voter()` per
+ * run, and the deepest NVDAc pool, holding $1.6m, was shown as "Concentrated
+ * pool, venue not named". The store therefore keeps the stronger label.
+ */
+export function poolVenueStrengthV1(id: PoolVenueIdV1 | null): number {
+  if (id === null) return 0;
+  const tier = POOL_VENUE_TIERS_V1[id];
+  return tier === 'protocol' ? 3 : tier === 'engine' ? 2 : 1;
+}
+
+/** The label a store keeps when a new reading arrives: never a weaker one. */
+export function keptPoolVenueV1(stored: PoolVenueIdV1 | null, next: PoolVenueIdV1 | null): PoolVenueIdV1 | null {
+  return poolVenueStrengthV1(next) < poolVenueStrengthV1(stored) ? stored : next;
+}
+
 /** True only for a tier that names the exchange itself. */
 export function poolVenueNamesTheExchangeV1(id: PoolVenueIdV1 | null): boolean {
   return id !== null && POOL_VENUE_TIERS_V1[id] === 'protocol';

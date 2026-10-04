@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test, { describe } from 'node:test';
 
 import {
@@ -11,6 +12,7 @@ import {
   poolVenuePageUrlV1,
   assertMarketPoolReadingV1,
   createMemoryMarketPoolReadingRepository,
+  keptPoolVenueV1,
   type MarketPoolReadingV1,
 } from '../src/index.js';
 
@@ -205,6 +207,32 @@ describe('a pool reading is about one token, and carries both sides', () => {
     assert.match(POOL_VENUE_NAMES_V1.unnamed_cl, /not named/);
     assert.match(POOL_VENUE_NAMES_V1.unnamed_pair, /not named/);
     assert.doesNotMatch(POOL_VENUE_NAMES_V1.aerodrome_cl, /not named/);
+  });
+});
+
+describe('a label never gets weaker', () => {
+  test('protocol over engine over shape over nothing', () => {
+    assert.equal(keptPoolVenueV1('aerodrome_cl', 'unnamed_cl'), 'aerodrome_cl');
+    assert.equal(keptPoolVenueV1('aerodrome_cl', null), 'aerodrome_cl');
+    assert.equal(keptPoolVenueV1('aerodrome_cl', 'algebra_cl'), 'aerodrome_cl');
+    assert.equal(keptPoolVenueV1('unnamed_cl', 'aerodrome_cl'), 'aerodrome_cl');
+    assert.equal(keptPoolVenueV1('algebra_cl', 'unnamed_cl'), 'algebra_cl');
+    assert.equal(keptPoolVenueV1(null, 'unnamed_pair'), 'unnamed_pair');
+    // Equal strength is a real reading: the newer one stands.
+    assert.equal(keptPoolVenueV1('aerodrome_cl', 'uniswap_v3'), 'uniswap_v3');
+  });
+
+  test('the database names the same weak labels as the tiers do', () => {
+    // The ON CONFLICT clause spells the shape and engine ids out; a new id
+    // added to the tiers must be added there too, or Postgres would let it
+    // overwrite a protocol label the memory store keeps.
+    const shapes = POOL_VENUE_IDS_V1.filter((id) => POOL_VENUE_TIERS_V1[id] === 'shape');
+    const engines = POOL_VENUE_IDS_V1.filter((id) => POOL_VENUE_TIERS_V1[id] === 'engine');
+    assert.deepEqual(shapes, ['unnamed_cl', 'unnamed_pair']);
+    assert.deepEqual(engines, ['algebra_cl']);
+    const sql = readFileSync(new URL('../src/poolReadingsDatabase.ts', import.meta.url), 'utf8');
+    assert.match(sql, /EXCLUDED\.venue_id IN \('unnamed_cl', 'unnamed_pair'\)/);
+    assert.match(sql, /EXCLUDED\.venue_id = 'algebra_cl'/);
   });
 });
 

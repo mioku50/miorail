@@ -182,7 +182,8 @@ async function main(): Promise<void> {
   });
   console.log(
     `  ${factories.size} factory/factories, ` +
-      `${[...factoryIdentity.values()].filter((identity) => identity.voter).length} answering an Aerodrome voter`,
+      `${[...factoryIdentity.values()].filter((identity) => identity.voter).length} answering an Aerodrome voter, ` +
+      `${[...factoryIdentity.values()].filter((identity) => identity.unread).length} unread after a retry`,
   );
 
   // The pools their factory could not place, asked about their own shape. A
@@ -195,7 +196,12 @@ async function main(): Promise<void> {
     const word = result.value.replace(/^0x/, '');
     if (word.length !== 64 || !/^0{24}/.test(word)) continue;
     const identity = factoryIdentity.get(`0x${word.slice(24)}`.toLowerCase());
-    if (identity && poolVenueFromIdentityV1(identity) === null) unplaced.set(pool.toLowerCase(), pool);
+    // An unread factory is not one that answered nothing: asking its pools
+    // their shape would spend three calls each on a factory we simply did
+    // not hear from (74 pools on 2026-10-04 12:57 UTC).
+    if (identity && !identity.unread && poolVenueFromIdentityV1(identity) === null) {
+      unplaced.set(pool.toLowerCase(), pool);
+    }
   }
   const poolShapes = await readPoolShapesV1({
     reader,

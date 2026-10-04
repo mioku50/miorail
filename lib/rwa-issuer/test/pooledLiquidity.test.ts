@@ -200,6 +200,62 @@ describe('a venue is read, never guessed', () => {
     assert.equal(reader.asked.length, 0);
   });
 
+  test('a factory probe that did not happen is asked once more, and a revert is not', async () => {
+    // Measured 2026-10-04: the public endpoint refused single entries inside
+    // accepted batches, and from 0 to 3 of the 3 Aerodrome factories answered
+    // `voter()` per run. A refusal is not an answer.
+    const voterKey = `${AERO_CL_FACTORY}:0x${POOL_SELECTORS_V1.voter}`;
+    const asked: string[] = [];
+    let throttled = 1;
+    const reader = {
+      call: async () => ({ ok: false, reason: 'reverted' }),
+      callMany: async (inputs: readonly B20BatchCallV1[]) =>
+        inputs.map((input) => {
+          const key = `${input.to}:${input.data}`;
+          asked.push(key);
+          if (key === voterKey) {
+            if (throttled > 0) {
+              throttled -= 1;
+              return { ok: false, reason: 'rate_limited' };
+            }
+            return { ok: true, value: word(AERODROME_VOTER_V1), raw: '' };
+          }
+          if (key === `${AERO_CL_FACTORY}:0x${POOL_SELECTORS_V1.tickSpacings}`) return { ok: true, value: word('0x01'), raw: '' };
+          return { ok: false, reason: 'reverted' };
+        }),
+    } as unknown as B20ReaderV1;
+    const map = await readFactoryIdentityV1({ reader, factories: [AERO_CL_FACTORY], blockTag: '0x1' });
+    const identity = map.get(AERO_CL_FACTORY)!;
+    assert.equal(identity.voter, AERODROME_VOTER_V1);
+    assert.equal(identity.unread, undefined);
+    assert.equal(poolVenueFromIdentityV1(identity), 'aerodrome_cl');
+    // The throttled probe was asked twice; the four that reverted, once each.
+    assert.equal(asked.filter((key) => key === voterKey).length, 2);
+    assert.equal(asked.length, 6 + 1);
+  });
+
+  test('a factory still unread after the retry places no pool, rather than a shape', async () => {
+    const reader = {
+      call: async () => ({ ok: false, reason: 'reverted' }),
+      callMany: async (inputs: readonly B20BatchCallV1[]) =>
+        inputs.map((input) =>
+          input.data === `0x${POOL_SELECTORS_V1.voter}`
+            ? { ok: false, reason: 'rate_limited' }
+            : input.data === `0x${POOL_SELECTORS_V1.tickSpacings}`
+              ? { ok: true, value: word('0x01'), raw: '' }
+              : { ok: false, reason: 'reverted' },
+        ),
+    } as unknown as B20ReaderV1;
+    const identity = (await readFactoryIdentityV1({ reader, factories: [AERO_CL_FACTORY], blockTag: '0x1' })).get(
+      AERO_CL_FACTORY,
+    )!;
+    assert.equal(identity.unread, true);
+    assert.equal(identity.concentrated, true);
+    // Before this, a concentrated factory with no voter answer was named
+    // "Concentrated pool, venue not named": Aerodrome, demoted by a refusal.
+    assert.equal(poolVenueFromIdentityV1(identity), null);
+  });
+
   test('identity is read once per factory, not once per pool', async () => {
     const reader = readerFor({
       [`${AERO_CL_FACTORY}:0x${POOL_SELECTORS_V1.voter}`]: word(AERODROME_VOTER_V1),
