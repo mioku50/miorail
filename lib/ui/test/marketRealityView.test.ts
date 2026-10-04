@@ -5,6 +5,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { MarketRealityScreen, TradeAmountForm } from '../src/console/MarketRealityScreen';
+import type { StockChartViewV1 } from '../src/console/stockChartView';
 import {
   comparableMarketHistoryViewV1,
   marketExitCostBpsV1,
@@ -5083,6 +5084,7 @@ describe('trading from the answer card', () => {
     whole?: boolean;
     questionFixed?: boolean;
     weekendOpen?: boolean;
+    chart?: StockChartViewV1 | null;
   }) => {
     const markup = renderToStaticMarkup(
       React.createElement(MarketRealityScreen, {
@@ -5114,6 +5116,7 @@ describe('trading from the answer card', () => {
             ? { heldTokenAddresses: new Set(over.held ? [LEAD.toLowerCase()] : []) }
             : {}),
           ...(over.questionFixed ? { questionFixed: true } : {}),
+          ...(over.chart !== undefined ? { chart: over.chart } : {}),
           ...(over.weekendOpen
             ? {
                 weekend: {
@@ -5186,6 +5189,26 @@ describe('trading from the answer card', () => {
     const card = render({ weekendOpen: true });
     assert.match(card, /Wall Street closed — trading on Base/);
     assert.doesNotMatch(render({}), /Wall Street closed/);
+  });
+
+  test('the card carries a week on Base when there is one, and draws nothing when there is not', () => {
+    const chart: StockChartViewV1 = {
+      path: 'M0.00,20.00L50.00,10.00L100.00,30.00',
+      baseOnly: [{ x: 33.33, width: 28.57 }],
+      low: '$96.50',
+      high: '$104.25',
+      label: 'NVIDIA on Base over 7 days, hourly: from $100.00 to $104.25, low $96.50, high $104.25.',
+      caption: '7 days on Base, hourly. Shaded: Wall Street was closed and the stock traded only on Base.',
+    };
+    const card = render({ chart });
+    assert.match(card, /<figure class="mr-stock-chart">/);
+    assert.match(card, /role="img" aria-label="NVIDIA on Base over 7 days, hourly: from \$100\.00 to \$104\.25/);
+    assert.match(card, /<rect class="spark-band" x="33\.33" y="0" width="28\.57" height="40"/);
+    assert.match(card, /\$96\.50 – \$104\.25/);
+    // No colour of its own: the line is the console's chart stroke.
+    assert.match(card, /<path class="ln-b"/);
+    assert.doesNotMatch(render({}), /mr-stock-chart/);
+    assert.doesNotMatch(render({ chart: null }), /mr-stock-chart/);
   });
 
   test('the fixed $10 is gone: Buy leads, Sell sits beside it, and both take the reader’s amount', () => {

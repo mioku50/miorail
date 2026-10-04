@@ -558,6 +558,12 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .subv { font-size: var(--fs-meta); color: var(--faint); margin-top: 2px; }
 .mio-console .subv.good { color: var(--green); }
 .mio-console .spark { width: 100%; height: 40px; display: block; margin-top: 8px; }
+/* The week on a stock's card (2026-10-04): a line on Base, and the weekend
+   shaded where only Base traded. A band is a period, not a verdict. */
+.mio-console .mr-stock-chart { margin: 10px 0 0; }
+.mio-console .mr-stock-chart .spark { height: 48px; margin-top: 0; }
+.mio-console .spark-band { fill: var(--chart-grid); opacity: .5; }
+.mio-console .mr-stock-chart figcaption { margin-top: 4px; font-size: var(--fs-meta); line-height: var(--lh-snug); color: var(--faint); }
 .mio-console .feed { list-style: none; margin: 0; padding: 0; }
 .mio-console .feed li { display: flex; gap: 9px; padding: 7px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-meta); color: var(--muted); }
 .mio-console .feed li:last-child { border-bottom: 0; }

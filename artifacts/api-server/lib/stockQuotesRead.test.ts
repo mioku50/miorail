@@ -1,12 +1,32 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { readStockQuotesV1, stockIconPathV1 } from './stockQuotesRead.js';
+import { readStockChartV1, readStockQuotesV1, stockIconPathV1 } from './stockQuotesRead.js';
 
 const NOW = new Date('2026-10-03T14:00:00Z');
 const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
 const COINC = '0xb2000000000000000000000000000000000c0c0c';
 const BNVDA = '0x1111111111111111111111111111111111111111';
+
+test('a chart asks for one stock over a week and three hours, and draws from that alone', async () => {
+  const now = new Date('2026-10-07T16:00:00.000Z');
+  const token = '0xb20000000000000000000078ee7ce2fe4908108c';
+  const asked: { token: string; since: string; until: string }[] = [];
+  const chart = await readStockChartV1(now, token.toUpperCase().replace('0X', '0x'), {
+    prices: async (askedToken, since, until) => {
+      asked.push({ token: askedToken, since: since.toISOString(), until: until.toISOString() });
+      return Array.from({ length: 30 }, (_, index) => ({
+        token,
+        at: new Date(now.getTime() - index * 3_600_000).toISOString(),
+        mid: 100,
+      }));
+    },
+  });
+  assert.deepEqual(asked, [{ token, since: '2026-09-30T13:00:00.000Z', until: now.toISOString() }]);
+  assert.equal(chart.tokenAddress, token);
+  assert.equal(chart.points.length, 30);
+  assert.ok(chart.points.every((point) => point.mid === 100));
+});
 
 test('the list is Coinbase’s stocks as the corpus binds them, named by Coinbase', async () => {
   const sinceAsked: Date[] = [];

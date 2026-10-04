@@ -5,6 +5,7 @@ import {
   type ConsoleStepViewV1,
   type ScoreDimensionViewV1,
 } from './consoleState';
+import type { StockChartViewV1 } from './stockChartView';
 
 void React;
 
@@ -271,6 +272,31 @@ export function Sparkline({ points, label, height = 40, gradientId }: { points: 
       <path d={`M${coords.join(' L')} L100,34 L0,34 Z`} fill={`url(#${gradientId})`} />
       <polyline className="ln-b" points={coords.join(' ')} fill="none" strokeWidth="1.6" />
     </svg>
+  );
+}
+
+/**
+ * The week on a stock's card. Time runs along x, so a missed ladder pass is a
+ * gap, and the weekend is shaded where only Base traded. The line wears the
+ * console's one chart colour and no direction colour: a rise is not good
+ * news and a fall is not bad news.
+ */
+export function StockWeekChart({ view }: { view: StockChartViewV1 }) {
+  return (
+    <figure className="mr-stock-chart">
+      <svg className="spark" viewBox="0 0 100 40" preserveAspectRatio="none" role="img" aria-label={view.label}>
+        {view.baseOnly.map((band) => (
+          <rect key={band.x} className="spark-band" x={band.x} y={0} width={band.width} height={40} />
+        ))}
+        <path className="ln-b" d={view.path} fill="none" strokeWidth="1.6" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <figcaption className="d">
+        <span className="mono">
+          {view.low} – {view.high}
+        </span>{' '}
+        · {view.caption}
+      </figcaption>
+    </figure>
   );
 }
 

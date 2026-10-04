@@ -19,6 +19,7 @@
     "./reopen-game-service": "./src/reopenGameService.ts",
     "./weekend-market": "./src/weekendMarket.ts",
     "./stock-brief": "./src/stockBrief.ts",
+    "./stock-chart": "./src/stockChart.ts",
     "./stock-position-quote": "./src/stockPositionQuote.ts",
     "./stock-quotes": "./src/stockQuotes.ts"
   },

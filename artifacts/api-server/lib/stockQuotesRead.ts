@@ -1,5 +1,14 @@
 import { client } from '@mioagent/db';
-import { readPublicLadderPricesV1, type PublicLadderPriceRowV1 } from '@mioagent/route-storage';
+import {
+  readPublicLadderPricesOfTokenV1,
+  readPublicLadderPricesV1,
+  type PublicLadderPriceRowV1,
+} from '@mioagent/route-storage';
+import {
+  STOCK_CHART_DAYS_V1,
+  stockChartV1,
+  type StockChartResponseV1,
+} from '@mioagent/rwa-market-reality/stock-chart';
 import {
   stockQuotesV1,
   type StockQuotesResponseV1,
@@ -56,4 +65,25 @@ export async function readStockQuotesV1(now: Date, deps: StockQuotesReadDepsV1):
 /** The shared read, over the production database. */
 export function databaseStockPricesV1(since: Date, until: Date): Promise<PublicLadderPriceRowV1[]> {
   return readPublicLadderPricesV1(client, { since, until });
+}
+
+/**
+ * A week of one stock's price on Base, for the chart on its card.
+ *
+ * Three hours more than the week are read, so the first hour's point takes
+ * the card's own three-run median like every other point.
+ */
+export async function readStockChartV1(
+  now: Date,
+  tokenAddress: string,
+  deps: { prices: (token: string, since: Date, until: Date) => Promise<readonly PublicLadderPriceRowV1[]> },
+): Promise<StockChartResponseV1> {
+  const token = tokenAddress.toLowerCase();
+  const since = new Date(now.getTime() - (STOCK_CHART_DAYS_V1 * 24 + 3) * 3_600_000);
+  return stockChartV1({ now, tokenAddress: token, prices: await deps.prices(token, since, now) });
+}
+
+/** One stock's prices, over the production database. */
+export function databaseStockChartPricesV1(token: string, since: Date, until: Date): Promise<PublicLadderPriceRowV1[]> {
+  return readPublicLadderPricesOfTokenV1(client, { token, since, until });
 }

@@ -45,6 +45,8 @@ import type { StocksSectionsModelV1, StocksSectionV1 } from './stocksSections';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
 import { stockPriceNoteV1, type StockQuoteViewV1 } from './stockQuotesView';
 import type { StockUsesViewV1 } from './stockUsesView';
+import type { StockChartViewV1 } from './stockChartView';
+import { StockWeekChart } from './ConsoleCharts';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -275,6 +277,9 @@ export interface MarketRealityScreenModelV1 {
   quotes?: ReadonlyMap<string, StockQuoteViewV1>;
   /** "What else you can do with NVDAc", for the stock on the card. */
   uses?: StockUsesViewV1 | null;
+  /** A week of the card's stock on Base, hourly; null when there is too
+   * little to draw. */
+  chart?: StockChartViewV1 | null;
   /** The tokens this wallet holds; null when nobody is signed in or the
    * holdings are not read yet. Decides which side of the card leads. */
   heldTokenAddresses?: ReadonlySet<string> | null;
@@ -1341,6 +1346,7 @@ function HeadlineAnswer({
   company,
   quote,
   uses,
+  chart,
   held,
   weekendClosed,
   onPrepare,
@@ -1355,6 +1361,7 @@ function HeadlineAnswer({
   company: string | null;
   quote: StockQuoteViewV1 | null;
   uses: StockUsesViewV1 | null;
+  chart: StockChartViewV1 | null;
   /** Whether this wallet holds the token; null when that is not known. */
   held: boolean | null;
   /** Wall Street is in its weekend dark window, and Base is trading. */
@@ -1418,6 +1425,7 @@ function HeadlineAnswer({
           {priceNote ? <span>{priceNote}</span> : null}
         </p>
       ) : null}
+      {chart ? <StockWeekChart view={chart} /> : null}
 
       {lead ? null : (
         <p className="mr-headline-body">
@@ -2027,6 +2035,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           company={selectedChoice?.company ?? null}
           quote={model.selectedKey ? (model.quotes?.get(model.selectedKey) ?? null) : null}
           uses={model.uses ?? null}
+          chart={model.chart ?? null}
           held={held}
           weekendClosed={model.weekend?.state === 'in_progress'}
           onPrepare={actions.onPrepare}

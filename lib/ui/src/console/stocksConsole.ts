@@ -19,6 +19,7 @@ import {
   useMyStocksToday,
   useMeasureMyStockCashOut,
   useWeekendMarket,
+  useStockChart,
   useStockQuotes,
   useReopenGame,
   usePickReopen,
@@ -41,6 +42,7 @@ import { reopenGameViewV1 } from './reopenGameView';
 import { stocksSectionTabsV1, type StocksSectionV1 } from './stocksSections';
 import { stockQuoteViewsByKeyV1 } from './stockQuotesView';
 import { stockUsesViewV1 } from './stockUsesView';
+import { stockChartViewV1 } from './stockChartView';
 import { dividendCalendarViewV1 } from './dividendCalendarView';
 import { telegramAlertsViewV1 } from './telegramAlertsView';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
@@ -894,6 +896,15 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [usesRead.data, selectedQuote],
   );
 
+  // The week on the card: the same Coinbase token, hourly, from the ladder.
+  // Public, like the list's prices.
+  const chartRead = useStockChart(primaryAddress, { enabled: enabled && Boolean(primaryAddress) });
+  const chart = useMemo(
+    () =>
+      stockChartViewV1(chartRead.data ?? null, selectedQuote?.companyName ?? selectedQuote?.tokenSymbol ?? 'This stock'),
+    [chartRead.data, selectedQuote],
+  );
+
   // Dividends: the same public read for everybody, like the weekend card, and
   // for a signed-in wallet what reached its own tokens and what is next.
   const dividendRead = useDividendCalendar({ enabled });
@@ -1074,6 +1085,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     dividends,
     quotes,
     uses,
+    chart,
     heldTokenAddresses,
     today: session ? {
       data: todayRead.data ?? null, loading: todayRead.isPending, failed: todayRead.isError,

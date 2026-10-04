@@ -20,7 +20,12 @@ import { readOfficialAssetDossierV1, rwaDossierRuntime } from './rwaDossier.js';
 import { databaseWeekendRunsV1, readWeekendMarketV1 } from '../lib/weekendMarketRead.js';
 import { databaseDividendReadDepsV1, readDividendCalendarV1 } from '../lib/dividendRead.js';
 import { createCoinbaseStockMetaCacheV1 } from '../lib/coinbaseStockMeta.js';
-import { databaseStockPricesV1, readStockQuotesV1 } from '../lib/stockQuotesRead.js';
+import {
+  databaseStockChartPricesV1,
+  databaseStockPricesV1,
+  readStockChartV1,
+  readStockQuotesV1,
+} from '../lib/stockQuotesRead.js';
 
 // ---------------------------------------------------------------------------
 // The Stocks board, readable without a wallet.
@@ -121,6 +126,8 @@ export const publicStocksCachesV1 = {
   dividends: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
   // The list's prices come from the hourly ladder, so a slot loses nothing.
   quotes: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
+  // One week per stock, from the same hourly ladder.
+  chart: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 64 }),
 };
 
 /** A testing seam; production never replaces any of it. */
@@ -153,18 +160,22 @@ export const publicStocksRuntime = {
     }),
   /** Coinbase's names and icons for its tokens; one per process. */
   stockMeta: createCoinbaseStockMetaCacheV1(),
+  /** The security a Coinbase token stands for, or null for any other address:
+   * the Stocks screens show Coinbase's stocks and no other issuer's. */
+  coinbaseUnderlying: async (tokenAddress: string): Promise<{ underlyingKey: string } | null> => {
+    const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress });
+    if (!found) return null;
+    const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
+    return issuer === 'coinbase' ? { underlyingKey: found.underlying.underlyingKey } : null;
+  },
   readQuotes: (now: Date) =>
     readStockQuotesV1(now, {
       prices: databaseStockPricesV1,
       meta: () => publicStocksRuntime.stockMeta.read(),
-      identify: async (tokenAddress: string) => {
-        const found = await rwaMarketRealityRuntime.underlyings().underlyingOf({ chainId: 8453, tokenAddress });
-        if (!found) return null;
-        const issuer = found.binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[found.binding.sourceKind];
-        // The Stocks screens show Coinbase's stocks and no other issuer's.
-        return issuer === 'coinbase' ? { underlyingKey: found.underlying.underlyingKey } : null;
-      },
+      identify: (tokenAddress: string) => publicStocksRuntime.coinbaseUnderlying(tokenAddress),
     }),
+  readChart: (now: Date, tokenAddress: string) =>
+    readStockChartV1(now, tokenAddress, { prices: databaseStockChartPricesV1 }),
   now: () => new Date(),
 };
 
@@ -284,6 +295,45 @@ publicStocksRouter.get('/quotes', async (_req: Request, res: Response) => {
     );
   } catch (error) {
     failed(res, 'quotes', 'stock_quotes_failed', error);
+  }
+});
+
+/**
+ * A week of one Coinbase stock's price on Base, hourly, for the chart on its
+ * card, with the weekend windows when only Base traded. One computation per
+ * stock per five-minute slot.
+ */
+publicStocksRouter.get('/chart/:tokenAddress', async (req: Request, res: Response) => {
+  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    refuse(res, 400, 'exact_address_required');
+    return;
+  }
+  try {
+    if (!(await publicStocksRuntime.storageAvailable())) {
+      refuse(res, 503, 'market_reality_storage_unavailable');
+      return;
+    }
+    // The card is a Coinbase stock's, and so is this read: an address the
+    // corpus does not bind to Coinbase gets no chart and costs no query.
+    if (!(await publicStocksRuntime.coinbaseUnderlying(tokenAddress))) {
+      refuse(
+        res,
+        404,
+        'stock_not_listed',
+        'Miorail lists no Coinbase stock at that exact Base address. This is a statement about Miorail’s list, never about the token.',
+      );
+      return;
+    }
+    const slot = weekendSlotStartV1(publicStocksRuntime.now());
+    sendPublic(
+      res,
+      await publicStocksCachesV1.chart.read(`chart|${tokenAddress}|${slot.getTime()}`, () =>
+        publicStocksRuntime.readChart(slot, tokenAddress),
+      ),
+    );
+  } catch (error) {
+    failed(res, 'chart', 'stock_chart_failed', error);
   }
 });
 

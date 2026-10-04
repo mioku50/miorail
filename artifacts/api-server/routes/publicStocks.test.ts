@@ -308,6 +308,53 @@ test('a failed price read is a stable code and is not cached', async (t) => {
   assert.equal(reads, 2);
 });
 
+test('a stock chart is one read per stock per slot, and only for a Coinbase stock', async (t) => {
+  const reads: string[] = [];
+  stubV1(t, {
+    coinbaseUnderlying: async (tokenAddress: string) => (tokenAddress === NVDAC ? { underlyingKey: NVDA } : null),
+    readChart: async (now: Date, tokenAddress: string) => {
+      reads.push(tokenAddress);
+      return {
+        schemaVersion: 'stock-chart/v1',
+        tokenAddress,
+        asOf: now.toISOString(),
+        from: new Date(now.getTime() - 7 * 86_400_000).toISOString(),
+        points: [],
+        baseOnly: [],
+      };
+    },
+  });
+  const app = appV1();
+  const first = await request(app).get(`/api/public/stocks/chart/${NVDAC.toUpperCase().replace('0X', '0x')}`).expect(200);
+  await request(app).get(`/api/public/stocks/chart/${NVDAC}`).expect(200);
+  assert.deepEqual(reads, [NVDAC]);
+  assert.equal(first.body.schemaVersion, 'stock-chart/v1');
+  // Computed at the slot's start, so every reader of the slot gets one answer.
+  assert.equal(Date.parse(first.body.asOf) % (5 * 60_000), 0);
+  assert.equal(first.headers['x-robots-tag'], 'noindex');
+  // Another issuer's token, or one nobody binds: no chart, and no query.
+  const notListed = await request(app).get(`/api/public/stocks/chart/0x${'1'.repeat(40)}`).expect(404);
+  assert.equal(notListed.body.code, 'stock_not_listed');
+  await request(app).get('/api/public/stocks/chart/NVDAc').expect(400);
+  assert.deepEqual(reads, [NVDAC]);
+});
+
+test('a failed chart read is a stable code and is not cached', async (t) => {
+  let reads = 0;
+  stubV1(t, {
+    coinbaseUnderlying: async () => ({ underlyingKey: NVDA }),
+    readChart: async () => {
+      reads += 1;
+      throw new Error('postgres://user:secret@host/db exploded');
+    },
+  });
+  const app = appV1();
+  const failed = await request(app).get(`/api/public/stocks/chart/${NVDAC}`).expect(500);
+  assert.deepEqual(failed.body, { error: 'stock_chart_failed', code: 'stock_chart_failed' });
+  await request(app).get(`/api/public/stocks/chart/${NVDAC}`).expect(500);
+  assert.equal(reads, 2);
+});
+
 test('an icon is served from our origin as a PNG, and only for an exact address', async (t) => {
   const { publicStockIconsRouter, publicStockIconsRuntime } = await import('./publicStocks.js');
   const saved = { ...publicStockIconsRuntime };

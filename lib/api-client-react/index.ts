@@ -15,6 +15,7 @@ import {
   type ReopenDirectionV1,
 } from '@mioagent/rwa-market-reality/reopen-game';
 import { StockQuotesResponseV1Schema } from '@mioagent/rwa-market-reality/stock-quotes';
+import { StockChartResponseV1Schema } from '@mioagent/rwa-market-reality/stock-chart';
 import { StockBriefV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 
@@ -1061,6 +1062,23 @@ export function useStockQuotes(options?: { enabled?: boolean }) {
     // The server answers per five-minute slot and the ladder runs about hourly.
     staleTime: 5 * 60_000,
     refetchInterval: 10 * 60_000,
+  });
+}
+
+/** A week of one stock's price on Base, hourly, for the chart on its card.
+ * Public, like the list's prices: a price on Base is a fact about a market. */
+export function useStockChart(tokenAddress: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['stock-chart', tokenAddress?.toLowerCase() ?? null],
+    queryFn: async () =>
+      StockChartResponseV1Schema.parse(
+        await fetchApi<unknown>(`/api/public/stocks/chart/${encodeURIComponent(tokenAddress!.toLowerCase())}`),
+      ),
+    retry: false,
+    enabled: options?.enabled !== false && Boolean(tokenAddress),
+    // The server answers per five-minute slot and the ladder runs about hourly.
+    staleTime: 5 * 60_000,
+    refetchInterval: 15 * 60_000,
   });
 }
 
