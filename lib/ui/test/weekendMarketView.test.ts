@@ -139,6 +139,24 @@ describe('the weekend card', () => {
     assert.doesNotMatch(words, /\bpredict|will open|expected to open|signal/i);
   });
 
+  test('each row carries the list\u2019s icon and company, and its move scaled to the biggest move on the board', () => {
+    const sndk = IN_PROGRESS.stocks[0]!.tokenAddress;
+    const view = weekendMarketViewV1(IN_PROGRESS, {
+      now: new Date('2026-09-20T23:00:00.000Z'),
+      origin: 'https://miorail.xyz',
+      faces: new Map([[sndk, { icon: `/api/public/stocks/icons/${sndk}.png`, name: 'Sandisk Corporation' }]]),
+    })!;
+    assert.deepEqual(
+      view.rows.map((row) => [row.symbol, row.name, row.icon !== null, row.bar]),
+      [
+        ['SNDK', 'Sandisk Corporation', true, { side: 'up', share: 1 }],
+        ['MSTR', 'MSTR Inc.', false, { side: 'up', share: 166 / 223 }],
+        ['AMZN', 'AMZN Inc.', false, { side: 'down', share: 53 / 223 }],
+        ['MSFT', 'MSFT Inc.', false, null],
+      ],
+    );
+  });
+
   test('a signed percent reads the way a price move is written', () => {
     assert.equal(signedPercentV1(223), '+2.23%');
     assert.equal(signedPercentV1(-5), '−0.05%');

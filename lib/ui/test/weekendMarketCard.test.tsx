@@ -26,6 +26,8 @@ function view(count: number): WeekendMarketViewV1 {
       gap: null,
       mark: null,
       off: false,
+      icon: index === 0 ? '/api/public/stocks/icons/0xb2.png' : null,
+      bar: { side: index % 2 ? 'down' : 'up', share: 1 / (index + 1) },
     })),
     note: 'Where a market trades over the weekend is not a forecast of where it reopens.',
     share: { x: 'https://x.com/intent/tweet?text=t', farcaster: 'https://farcaster.xyz/~/compose?text=t' },
@@ -38,6 +40,15 @@ test('the weekend card folds to the five biggest moves, and offers the rest', ()
   assert.match(html, /Show all 10/);
   assert.match(html, /Post on X/);
   assert.match(html, /not a forecast/);
+});
+
+test('a row wears its icon and its move as a bar on the side it moved', () => {
+  const html = renderToStaticMarkup(<WeekendMarketCard view={view(2)} />);
+  assert.match(html, /<img class="mr-choice-icon" src="\/api\/public\/stocks\/icons\/0xb2\.png"/);
+  assert.match(html, /<span class="mr-choice-icon" aria-hidden="true"><\/span>/, 'no icon keeps the space');
+  assert.match(html, /<span class="mr-wk-bar" data-side="up" aria-hidden="true"><span style="width:50%"><\/span><\/span>/);
+  assert.match(html, /<span class="mr-wk-bar" data-side="down" aria-hidden="true"><span style="width:25%"><\/span><\/span>/);
+  assert.match(html, /<span class="pill br">Wall Street closed<\/span>/);
 });
 
 test('five or fewer rows need no fold', () => {

@@ -860,6 +860,28 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     configurationRead: input.configurationRead !== false,
   });
 
+  // The list's prices and icons: the same public read for everybody.
+  const quotesRead = useStockQuotes({ enabled });
+  const quotes = useMemo(() => stockQuoteViewsByKeyV1(quotesRead.data ?? null), [quotesRead.data]);
+  const selectedQuote = selectedKey ? (quotes.get(selectedKey) ?? null) : null;
+  // The same icons and company names on the Weekend tab, by token address.
+  const facesByToken = useMemo(
+    () =>
+      new Map(
+        [...quotes.values()].map(
+          (quote) => [quote.tokenAddress.toLowerCase(), { icon: quote.iconPath, name: quote.companyName }] as const,
+        ),
+      ),
+    [quotes],
+  );
+  const iconsByToken = useMemo(
+    () =>
+      new Map(
+        [...facesByToken].flatMap(([address, face]) => (face.icon ? [[address, face.icon] as const] : [])),
+      ),
+    [facesByToken],
+  );
+
   // The weekend card. The same public read for everybody: it measures a
   // market, never a wallet, and it is null the rest of the week.
   const weekendRead = useWeekendMarket({ enabled });
@@ -868,14 +890,10 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       weekendMarketViewV1(weekendRead.data ?? null, {
         now: new Date(),
         origin: typeof window === 'undefined' ? 'https://miorail.xyz' : window.location.origin,
+        faces: facesByToken,
       }),
-    [weekendRead.data],
+    [weekendRead.data, facesByToken],
   );
-
-  // The list's prices and icons: the same public read for everybody.
-  const quotesRead = useStockQuotes({ enabled });
-  const quotes = useMemo(() => stockQuoteViewsByKeyV1(quotesRead.data ?? null), [quotesRead.data]);
-  const selectedQuote = selectedKey ? (quotes.get(selectedKey) ?? null) : null;
 
   // "What else you can do with NVDAc": the public Use & access read for the
   // stock's Coinbase contract. Public on purpose, also for a signed-in reader:
@@ -1022,8 +1040,9 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
         origin: typeof window === 'undefined' ? 'https://miorail.xyz' : window.location.origin,
         pending: reopenPending,
         failed: reopenFailed,
+        icons: iconsByToken,
       }),
-    [reopenRead.data, reopenPending, reopenFailed],
+    [reopenRead.data, reopenPending, reopenFailed, iconsByToken],
   );
   const reopen = reopenView
     ? {

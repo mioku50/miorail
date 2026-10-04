@@ -133,7 +133,13 @@ test('a settled round shows the squares, the score and the line to share (390px)
   };
   await stubApi(page, settled);
   await page.goto('/stocks/weekend');
-  await expect(page.getByText('You 2/2 · Base 0/2 · players 1/1. 4 people played.', { exact: false })).toBeVisible();
+  await expect(page.getByText('4 people played.', { exact: false })).toBeVisible();
+  // The score sits in tiles under the verdict, each with its squares.
+  await expect(page.getByText('You beat Base 🎉')).toBeVisible();
+  const card = page.getByRole('region', { name: 'Call the reopen' });
+  await expect(card.locator('.mr-reopen-tiles .kpi')).toHaveText([/You\s*2\/2\s*🟩🟩/, /Base\s*0\/2\s*🟥🟥/, /Players\s*1\/1\s*🟩⬜/]);
+  await expect(card.locator('.mr-reopen-row[data-mark="right"]')).toHaveCount(2);
+  await expect(card.locator('.mr-reopen-steps .st.done')).toHaveCount(3);
   await expect(page.getByText('🟩 You ▲ above').first()).toBeVisible();
   await expect(page.getByText('Reopened above · $102.00')).toBeVisible();
   const board = page.getByLabel('Leaderboard');

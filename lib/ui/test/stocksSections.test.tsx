@@ -113,7 +113,7 @@ describe('Stocks in four tabs', () => {
     const quiet = weekendQuietViewV1(new Date('2026-10-07T15:00:00.000Z'));
     assert.equal(
       quiet.lede,
-      "Wall Street is open now. It closes for the weekend Fri 20:00 ET (in 2 days). From then until the reopen, these tokens keep trading on Base, and this tab shows where they trade against Friday's close, then where they reopened.",
+      "Wall Street is open now. It closes for the weekend Fri 20:00 ET (in 2 d 9 h). From then until the reopen, these tokens keep trading on Base, and this tab shows where they trade against Friday's close, then where they reopened.",
     );
     const html = screen({ section: 'weekend', weekend: null, weekendQuiet: quiet });
     assert.match(html, /It closes for the weekend Fri 20:00 ET/);

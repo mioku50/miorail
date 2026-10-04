@@ -23,9 +23,7 @@ export function WeekendMarketCard({ view }: { view: WeekendMarketViewV1 }) {
     <section className="panel" aria-label={view.title}>
       <div className="ph">
         <h3>{view.title}</h3>
-        <span className="pill cr-status" data-tone="neutral">
-          {view.badge}
-        </span>
+        <span className={`pill ${view.state === 'in_progress' ? 'br' : 'n'}`}>{view.badge}</span>
       </div>
       <div className="pb">
         <p className="lnote">{view.lede}</p>
@@ -42,13 +40,28 @@ export function WeekendMarketCard({ view }: { view: WeekendMarketViewV1 }) {
             {rows.map((row) => (
               <tr key={row.key}>
                 <td className="nm">
-                  {row.symbol}
-                  {row.mark ? <div className="lnote">{row.mark}</div> : null}
+                  <div className="mr-wk-stock">
+                    {row.icon ? (
+                      <img className="mr-choice-icon" src={row.icon} alt="" width={24} height={24} loading="lazy" decoding="async" />
+                    ) : (
+                      <span className="mr-choice-icon" aria-hidden="true" />
+                    )}
+                    <div className="mr-wk-id">
+                      {row.symbol}
+                      {row.name !== row.symbol ? <div className="lnote">{row.name}</div> : null}
+                      {row.mark ? <div className="lnote">{row.mark}</div> : null}
+                    </div>
+                  </div>
                 </td>
                 <td className={`r mono${row.off ? ' off' : ''}`}>{row.close}</td>
                 <td className={`r mono${row.off ? ' off' : ''}`}>
                   {row.base}
                   <div className="lnote">{row.move}</div>
+                  {row.bar ? (
+                    <span className="mr-wk-bar" data-side={row.bar.side} aria-hidden="true">
+                      <span style={{ width: `${Math.round(row.bar.share * 50)}%` }} />
+                    </span>
+                  ) : null}
                 </td>
                 {view.columns.reopen ? (
                   <td className="r mono">

@@ -6,7 +6,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { ReopenGameResponseV1 } from '@mioagent/rwa-market-reality/reopen-game';
 
 import { ReopenGameCard } from '../src/console/ReopenGameCard';
-import { reopenGameViewV1 } from '../src/console/reopenGameView';
+import { countdownV1, reopenGameViewV1 } from '../src/console/reopenGameView';
 
 // The test runner compiles JSX with the classic transform: React.createElement.
 void React;
@@ -78,8 +78,9 @@ describe('the leaderboard', () => {
       ['#2', 'Player 3 · you', '8/10', '2'],
     ]);
     assert.equal(view.leaderboard?.me, null, 'the reader is already in the rows');
+    assert.deepEqual(view.leaderboard?.rows.map((row) => row.medal), ['🥇', '🥈', '🥈'], 'a shared rank shares the medal');
     const html = renderToStaticMarkup(<ReopenGameCard model={{ view }} />);
-    assert.match(html, /<tr class="you"><td class="mono">#2<\/td><td class="nm">Player 3 · you<\/td>/);
+    assert.match(html, /<tr class="you"><td class="mono" title="#2">🥈<\/td><td class="nm">Player 3 · you<\/td>/);
     assert.doesNotMatch(html, /0x[0-9a-f]{4}/i, 'no address on the board');
   });
 
@@ -104,7 +105,9 @@ describe('Call the reopen, in words', () => {
       origin: ORIGIN,
     })!;
     assert.equal(view.state, 'upcoming');
-    assert.match(view.lede, /^Round #1 opens Fri 20:00 ET \(in 2 days\), when Wall Street closes for the weekend/);
+    assert.match(view.lede, /^Round #1 opens Fri 20:00 ET, when Wall Street closes for the weekend/);
+    assert.deepEqual(view.clock, { until: OPENS, left: '2 d 9 h', label: 'until round #1 opens', at: 'Fri 20:00 ET' });
+    assert.deepEqual(view.steps.map((step) => step.state), ['now', 'next', 'next']);
     assert.match(view.lede, /Picks close Sun 17:00 ET, and Base makes its own call at the same minute\./);
     assert.deepEqual(view.rows, []);
     assert.doesNotMatch(renderToStaticMarkup(<ReopenGameCard model={{ view }} />), /<button/);
@@ -113,7 +116,19 @@ describe('Call the reopen, in words', () => {
   test('open: Base now beside the close, two plain buttons per stock, and no wallet needed', () => {
     const view = reopenGameViewV1(game(), { now: NOW, origin: ORIGIN })!;
     assert.equal(view.badge, 'Picks open');
-    assert.match(view.lede, /Picks close Sun 17:00 ET \(in 29 h\)\./);
+    assert.match(view.lede, /Picks close Sun 17:00 ET\. At that minute/);
+    assert.doesNotMatch(view.lede, /\(in /, 'the countdown is the one clock on the card');
+    assert.deepEqual(view.clock, { until: LOCKS, left: '1 d 5 h', label: 'until picks close', at: 'Sun 17:00 ET' });
+    assert.deepEqual(
+      view.steps.map((step) => [step.label, step.at, step.state]),
+      [
+        ['Picks open', 'Fri 20:00 ET', 'done'],
+        ['Picks close, Base calls', 'Sun 17:00 ET', 'now'],
+        ['Wall Street reopens', 'Sun 20:00 ET', 'next'],
+      ],
+    );
+    assert.deepEqual(view.tiles, [{ key: 'mine', label: 'Your calls', value: '0 of 2', detail: 'no wallet needed', progress: 0 }]);
+    assert.equal(view.verdict, null);
     assert.equal(view.rows[0]?.baseNow, '$101.00 · +1.00%');
     assert.equal(view.standing, 'Pick ▲ or ▼ for each stock. No wallet needed; you can change a pick until the lock.');
     assert.equal(view.share, null, 'nothing to share before a pick');
@@ -122,6 +137,35 @@ describe('Call the reopen, in words', () => {
     assert.match(html, /<button type="button" aria-pressed="false">▲ Above<\/button>/);
     // Up and down wear no colour: no tone, no good or bad.
     assert.doesNotMatch(html, /data-tone="(good|bad|warn)"/);
+    assert.doesNotMatch(html, /class="pill g"|data-mark=/);
+    assert.match(html, /<span class="amount">1 d 5 h<\/span>/);
+    assert.match(html, /<div role="listitem" class="st now" aria-current="step"><div class="n">Picks close, Base calls<\/div>/);
+  });
+
+  test('the countdown reads in days, hours and minutes, and stops at the moment', () => {
+    const at = (ms: number) => countdownV1(new Date(Date.parse(LOCKS) + ms).toISOString(), new Date(LOCKS));
+    assert.equal(at(30_000), '1 min');
+    assert.equal(at(45 * 60_000), '45 min');
+    assert.equal(at(60 * 60_000), '1 h');
+    assert.equal(at(110 * 60_000), '1 h 50 min');
+    assert.equal(at(48 * 3_600_000), '2 d');
+    assert.equal(at(53 * 3_600_000), '2 d 5 h');
+    assert.equal(at(0), null);
+    assert.equal(at(-60_000), null);
+  });
+
+  test('a stock wears its icon, and a picked row and the pressed side wear the brand', () => {
+    const address = stock('NVDA').tokenAddress;
+    const view = reopenGameViewV1(
+      game({ me: { picks: { NVDA: 'down' }, pickedAt: NOW.toISOString(), score: null, record, signed: false } }),
+      { now: NOW, origin: ORIGIN, icons: new Map([[address, `/api/public/stocks/icons/${address}.png`]]) },
+    )!;
+    assert.equal(view.rows[0]?.icon, `/api/public/stocks/icons/${address}.png`);
+    assert.deepEqual(view.tiles[0], { key: 'mine', label: 'Your calls', value: '1 of 2', detail: 'yours to change until the lock', progress: 0.5 });
+    const html = renderToStaticMarkup(<ReopenGameCard model={{ view, onPick: () => undefined }} />);
+    assert.match(html, /<li class="mr-reopen-row" data-picked="true"><div class="mr-reopen-stock"><img class="mr-choice-icon" src="\/api\/public\/stocks\/icons\/0x/);
+    assert.match(html, /<button type="button" aria-pressed="true" class="on">▼ Below<\/button>/);
+    assert.match(html, /<span class="usebar" aria-hidden="true"><span style="width:50%"><\/span><\/span>/);
   });
 
   test('a device that picked is told the picks live on it, and offered a wallet', () => {
@@ -170,6 +214,16 @@ describe('Call the reopen, in words', () => {
       ['▲ at $101.00', '2 ▲ · 1 ▼'],
       ['no call: too few quotes', '0 ▲ · 3 ▼'],
     ]);
+    assert.deepEqual(view.clock, { until: REOPEN, left: '2 h', label: 'until Wall Street reopens', at: 'Sun 20:00 ET' });
+    assert.deepEqual(view.steps.map((step) => step.state), ['done', 'done', 'now']);
+    assert.deepEqual(
+      view.tiles.map((tile) => [tile.label, tile.value, tile.detail]),
+      [
+        ['Players', '3', 'made a call'],
+        ['Your calls', 'None', 'you sat this one out'],
+        ["Base's calls", '1 of 2', 'from its price at the lock'],
+      ],
+    );
     const html = renderToStaticMarkup(<ReopenGameCard model={{ view, onPick: () => undefined }} />);
     assert.doesNotMatch(html, /aria-pressed/);
     assert.match(html, /No pick/);
@@ -204,7 +258,22 @@ describe('Call the reopen, in words', () => {
       { now: new Date('2026-10-12T02:00:00.000Z'), origin: ORIGIN },
     )!;
     assert.equal(view.badge, 'Results');
-    assert.equal(view.lede, 'You 1/1 · Base 0/1 · players 1/1. 12 people played. Round #2 opens Fri 20:00 ET (in 5 days).');
+    assert.equal(view.lede, '12 people played. Round #2 opens Fri 20:00 ET.');
+    assert.deepEqual(
+      view.tiles.map((tile) => [tile.label, tile.value, tile.detail]),
+      [
+        ['You', '1/1', '🟩⬜'],
+        ['Base', '0/1', '🟥⬜'],
+        ['Players', '1/1', '🟩⬜'],
+      ],
+    );
+    assert.deepEqual(view.verdict, { text: 'You beat Base 🎉', tone: 'won' });
+    assert.deepEqual(view.steps.map((step) => step.state), ['done', 'done', 'done']);
+    assert.equal(view.clock?.label, 'until round #2 opens');
+    const settledHtml = renderToStaticMarkup(<ReopenGameCard model={{ view }} />);
+    assert.match(settledHtml, /<li class="mr-reopen-row" data-mark="right">/);
+    assert.match(settledHtml, /<li class="mr-reopen-row" data-mark="void">/);
+    assert.match(settledHtml, /<p class="mr-reopen-verdict"><span class="pill g">You beat Base 🎉<\/span><\/p>/);
     assert.deepEqual(view.rows.map((row) => [row.mark, row.result]), [
       ['🟩', 'Reopened above · $102.00'],
       ['⬜', 'Reopened at the close · $100.00'],

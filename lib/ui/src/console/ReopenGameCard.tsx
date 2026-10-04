@@ -1,10 +1,10 @@
 'use client';
 
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 
 import type { ReopenDirectionV1 } from '@mioagent/rwa-market-reality/reopen-game';
 
-import type { ReopenGameViewV1 } from './reopenGameView';
+import { countdownV1, type ReopenGameViewV1 } from './reopenGameView';
 
 void React;
 
@@ -22,6 +22,30 @@ const SIDES_V1: readonly { side: ReopenDirectionV1; label: string }[] = [
   { side: 'down', label: '▼ Below' },
 ];
 
+const MARK_V1 = { '🟩': 'right', '🟥': 'wrong', '⬜': 'void' } as const;
+
+/** The countdown, recounted every 15 seconds. It starts from the count the
+ * view was built with, so the first paint is the same on every render. */
+function ReopenClock({ clock }: { clock: NonNullable<ReopenGameViewV1['clock']> }) {
+  const [left, setLeft] = useState<string | null>(clock.left);
+  useEffect(() => {
+    const tick = () => setLeft(countdownV1(clock.until, new Date()));
+    tick();
+    const timer = setInterval(tick, 15_000);
+    return () => clearInterval(timer);
+  }, [clock.until]);
+  if (!left) return null;
+  return (
+    <div className="mr-reopen-clock" role="timer" aria-label={`${left} ${clock.label}`}>
+      <span className="amount">{left}</span>
+      <span className="mr-reopen-clock-label">
+        {clock.label}
+        <span className="lnote">{clock.at}</span>
+      </span>
+    </div>
+  );
+}
+
 /**
  * Call the reopen, on the Weekend tab. Every sentence comes from the view, so
  * the web and the Base App say the same thing; this only lays it out. One row
@@ -33,22 +57,77 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
   const closeDay = view.closeDay ?? { long: 'Friday', short: 'Fri' };
   const cta = view.cta;
   return (
-    <section className="panel" aria-label="Call the reopen">
-      <div className="ph">
-        <h3>{view.title}</h3>
-        <span className="pill cr-status" data-tone="neutral">
-          {view.badge}
-        </span>
-      </div>
-      <div className="pb">
+    <section className="panel mr-reopen-card" data-state={view.state} aria-label="Call the reopen">
+      <div className="mr-reopen-hero">
+        <div className="mr-reopen-top">
+          <h3 className="mr-reopen-title">{view.title}</h3>
+          <span className={`pill ${view.state === 'open' ? 'br' : 'n'}`}>
+            {view.state === 'open' ? <span className="dot mr-reopen-live" aria-hidden="true" /> : null}
+            {view.badge}
+          </span>
+        </div>
         <p className="lnote">{view.lede}</p>
+        {view.clock ? <ReopenClock key={view.clock.until} clock={view.clock} /> : null}
+        {view.verdict ? (
+          <p className="mr-reopen-verdict">
+            <span className={`pill ${view.verdict.tone === 'won' ? 'g' : view.verdict.tone === 'level' ? 'br' : 'n'}`}>
+              {view.verdict.text}
+            </span>
+          </p>
+        ) : null}
+        {view.tiles.length > 0 ? (
+          <div className="mr-reopen-tiles">
+            {view.tiles.map((tile) => (
+              <div key={tile.key} className="kpi">
+                <span className="k">{tile.label}</span>
+                <span className="v">{tile.value}</span>
+                {tile.detail ? <span className="d">{tile.detail}</span> : null}
+                {typeof tile.progress === 'number' ? (
+                  <span className="usebar" aria-hidden="true">
+                    <span style={{ width: `${Math.round(tile.progress * 100)}%` }} />
+                  </span>
+                ) : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      {view.steps.length > 0 ? (
+        <div className="stepper mr-reopen-steps" role="list" aria-label="The round">
+          {view.steps.map((step) => (
+            <div
+              key={step.key}
+              role="listitem"
+              className={`st${step.state === 'next' ? '' : ` ${step.state}`}`}
+              aria-current={step.state === 'now' ? 'step' : undefined}
+            >
+              <div className="n">{step.label}</div>
+              <div className="b" />
+              <div className="tm">{step.at}</div>
+            </div>
+          ))}
+        </div>
+      ) : null}
+      <div className="pb">
         {view.rows.length > 0 ? (
           <ul className="mr-reopen">
             {view.rows.map((row) => (
-              <li key={row.symbol} className="mr-reopen-row">
+              <li
+                key={row.symbol}
+                className="mr-reopen-row"
+                data-picked={view.state === 'open' && row.pick ? 'true' : undefined}
+                data-mark={row.mark ? MARK_V1[row.mark] : undefined}
+              >
                 <div className="mr-reopen-stock">
-                  <strong>{row.symbol}</strong>
-                  {row.name !== row.symbol ? <span className="lnote">{row.name}</span> : null}
+                  {row.icon ? (
+                    <img className="mr-choice-icon" src={row.icon} alt="" width={24} height={24} loading="lazy" decoding="async" />
+                  ) : (
+                    <span className="mr-choice-icon" aria-hidden="true" />
+                  )}
+                  <div className="mr-reopen-id">
+                    <strong>{row.symbol}</strong>
+                    {row.name !== row.symbol ? <span className="lnote">{row.name}</span> : null}
+                  </div>
                 </div>
                 <div className="mr-reopen-nums mono">
                   <span>
@@ -136,7 +215,9 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
               <tbody>
                 {view.leaderboard.rows.map((row) => (
                   <tr key={row.key} className={row.you ? 'you' : undefined}>
-                    <td className="mono">{row.rank}</td>
+                    <td className="mono" title={row.rank}>
+                      {row.medal ?? row.rank}
+                    </td>
                     <td className="nm">{row.name}</td>
                     <td className="r mono">{row.score}</td>
                     <td className="r mono">{row.rounds}</td>

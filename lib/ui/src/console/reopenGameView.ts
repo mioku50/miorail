@@ -6,7 +6,9 @@ import {
 import { etWeekdayV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import { giftShareLinksV1 } from './giftView';
-import { etLabelV1, signedPercentV1, untilV1 } from './weekendMarketView';
+import { countdownV1, etLabelV1, signedPercentV1 } from './weekendMarketView';
+
+export { countdownV1 };
 
 // ---------------------------------------------------------------------------
 // Call the reopen, in words.
@@ -20,6 +22,10 @@ import { etLabelV1, signedPercentV1, untilV1 } from './weekendMarketView';
 //
 // After a pick, one way out of the game: a piece of NVIDIA from $1, the same
 // stock whatever was picked. Nothing in the game says buy what you called.
+//
+// One clock on the page: the countdown to the next moment. The lede names
+// that moment by its time and never says "in 2 h" beside it, because two
+// clocks that round differently read as one clock that is wrong.
 // ---------------------------------------------------------------------------
 
 export interface ReopenGameRowViewV1 {
@@ -37,12 +43,32 @@ export interface ReopenGameRowViewV1 {
   result: string | null;
   /** Once settled: the reader's square. */
   mark: '🟩' | '🟥' | '⬜' | null;
+  /** Coinbase's icon for the token, when the list has one. */
+  icon: string | null;
+}
+
+/** One of the round's three moments: passed, next, or after that. */
+export interface ReopenGameStepViewV1 {
+  key: 'open' | 'lock' | 'reopen';
+  label: string;
+  at: string;
+  state: 'done' | 'now' | 'next';
+}
+
+/** A number set large, with what it counts. */
+export interface ReopenGameTileViewV1 {
+  key: string;
+  label: string;
+  value: string;
+  detail: string | null;
+  /** How full the bar under it is, 0 to 1; null draws none. */
+  progress?: number | null;
 }
 
 export interface ReopenLeaderboardViewV1 {
   title: string;
   note: string;
-  rows: { key: string; rank: string; name: string; score: string; rounds: string; you: boolean }[];
+  rows: { key: string; rank: string; medal: string | null; name: string; score: string; rounds: string; you: boolean }[];
   /** The reader's place when it is below the rows shown. */
   me: string | null;
 }
@@ -73,7 +99,46 @@ export interface ReopenGameViewV1 {
   /** Once the reader has picked: the way to the stock itself, unrelated to
    * any call. */
   cta: { label: string; symbol: string; href: string } | null;
+  /** The next moment that matters, counted down on screen: the opening, the
+   * lock, the reopen, or the next round. `left` is the count when the view
+   * was built; the screen recounts it from `until`. */
+  clock: { until: string; left: string; label: string; at: string } | null;
+  /** The round's three moments, from the opening to the reopen. */
+  steps: ReopenGameStepViewV1[];
+  /** The reader's calls, Base's record, players, or the score. */
+  tiles: ReopenGameTileViewV1[];
+  /** Once settled with a pick: the reader against Base. Only this and right or
+   * wrong wear colour. */
+  verdict: { text: string; tone: 'won' | 'lost' | 'level' } | null;
 }
+
+function clockV1(until: string, label: string, now: Date): ReopenGameViewV1['clock'] {
+  const left = countdownV1(until, now);
+  return left ? { until, left, label, at: etLabelV1(until) } : null;
+}
+
+/** The opening and the lock are done once passed; the reopen only once the
+ * round settled, since the prints that settle it land after the bell. */
+function stepsV1(
+  moments: { opensAt: string; locksAt: string; expectedReopenAt: string },
+  now: Date,
+  settled: boolean,
+): ReopenGameStepViewV1[] {
+  const list = [
+    { key: 'open', label: 'Picks open', at: moments.opensAt },
+    { key: 'lock', label: 'Picks close, Base calls', at: moments.locksAt },
+    { key: 'reopen', label: 'Wall Street reopens', at: moments.expectedReopenAt },
+  ] as const;
+  let next = false;
+  return list.map((step) => {
+    const done = settled || (step.key !== 'reopen' && Date.parse(step.at) <= now.getTime());
+    const state = done ? 'done' : next ? 'next' : 'now';
+    if (!done) next = true;
+    return { key: step.key, label: step.label, at: etLabelV1(step.at), state };
+  });
+}
+
+const MEDAL_V1: Readonly<Record<number, string>> = { 1: '🥇', 2: '🥈', 3: '🥉' };
 
 /** The table, in words. A wallet is named only by a Basename it set for
  * itself; everybody else, signed in or not, is a number. */
@@ -88,6 +153,7 @@ export function reopenLeaderboardViewV1(
     rows: board.rows.map((row, index) => ({
       key: `${row.rank}:${index}`,
       rank: `#${row.rank}`,
+      medal: MEDAL_V1[row.rank] ?? null,
       name: row.you ? `${row.name} · you` : row.name,
       score: `${row.correct}/${row.of}`,
       rounds: String(row.played),
@@ -133,16 +199,26 @@ export function reopenGameViewV1(
     /** Picks sent but not yet answered, shown as already made. */
     pending?: Readonly<Record<string, ReopenDirectionV1>> | null;
     failed?: string | null;
+    /** Token address (lowercase) to its icon path, from the list's prices. */
+    icons?: ReadonlyMap<string, string> | null;
   },
 ): ReopenGameViewV1 | null {
   if (!response) return null;
   const url = `${input.origin.replace(/\/+$/, '')}/stocks/weekend`;
   const round = response.round;
   const next = response.next;
-  const nextLine = next
-    ? `Round #${next.number} opens ${etLabelV1(next.opensAt)}${untilV1(next.opensAt, input.now) ? ` (${untilV1(next.opensAt, input.now)})` : ''}.`
-    : null;
+  const nextLine = next ? `Round #${next.number} opens ${etLabelV1(next.opensAt)}.` : null;
   const error = input.failed ?? null;
+  const baseRecord = response.baseRecord;
+  const baseRecordTile: ReopenGameTileViewV1 | null =
+    baseRecord.rounds > 0
+      ? {
+          key: 'base-record',
+          label: "Base's record",
+          value: `${baseRecord.correct}/${baseRecord.of}`,
+          detail: `over ${plural(baseRecord.rounds, 'round', 'rounds')}`,
+        }
+      : null;
 
   if (!round) {
     if (!next) return null;
@@ -151,7 +227,7 @@ export function reopenGameViewV1(
       roundId: null,
       title: 'Call the reopen',
       badge: 'Next round',
-      lede: `Round #${next.number} opens ${etLabelV1(next.opensAt)}${untilV1(next.opensAt, input.now) ? ` (${untilV1(next.opensAt, input.now)})` : ''}, when Wall Street closes for the weekend: five stocks, and for each one question — will it reopen above or below ${etWeekdayV1(next.opensAt)}'s close? Picks close ${etLabelV1(next.locksAt)}, and Base makes its own call at the same minute.`,
+      lede: `Round #${next.number} opens ${etLabelV1(next.opensAt)}, when Wall Street closes for the weekend: five stocks, and for each one question — will it reopen above or below ${etWeekdayV1(next.opensAt)}'s close? Picks close ${etLabelV1(next.locksAt)}, and Base makes its own call at the same minute.`,
       closeDay: null,
       rows: [],
       standing: null,
@@ -161,6 +237,10 @@ export function reopenGameViewV1(
       error,
       leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
       cta: null,
+      clock: clockV1(next.opensAt, `until round #${next.number} opens`, input.now),
+      steps: stepsV1(next, input.now, false),
+      tiles: baseRecordTile ? [baseRecordTile] : [],
+      verdict: null,
     };
   }
 
@@ -204,8 +284,11 @@ export function reopenGameViewV1(
             : pick === outcome
               ? '🟩'
               : '🟥',
+      icon: input.icons?.get(stock.tokenAddress.toLowerCase()) ?? null,
     };
   });
+  const pickedCount = rows.filter((row) => row.pick !== null).length;
+  const steps = stepsV1(round, input.now, state === 'settled');
 
   const record = me?.record ?? null;
   const standing =
@@ -225,14 +308,13 @@ export function reopenGameViewV1(
     .join(' ');
 
   if (state === 'open') {
-    const until = untilV1(round.locksAt, input.now);
     return {
       state,
       roundId: round.roundId,
       title: `Call the reopen · #${round.number}`,
       badge: 'Picks open',
       closeDay,
-      lede: `Will each stock reopen above or below ${closeDay.long}'s close? Picks close ${etLabelV1(round.locksAt)}${until ? ` (${until})` : ''}. At that minute Base makes its own call from its price on Base, and the reopen at ${etLabelV1(round.expectedReopenAt)} settles both.`,
+      lede: `Will each stock reopen above or below ${closeDay.long}'s close? Picks close ${etLabelV1(round.locksAt)}. At that minute Base makes its own call from its price on Base, and the reopen at ${etLabelV1(round.expectedReopenAt)} settles both.`,
       rows,
       standing,
       keepWithWallet: Boolean(me && !me.signed && picked),
@@ -246,11 +328,25 @@ export function reopenGameViewV1(
       error,
       leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
       cta: picked ? CTA_V1 : null,
+      clock: clockV1(round.locksAt, 'until picks close', input.now),
+      steps,
+      tiles: [
+        {
+          key: 'mine',
+          label: 'Your calls',
+          value: `${pickedCount} of ${rows.length}`,
+          detail: pickedCount === 0 ? 'no wallet needed' : 'yours to change until the lock',
+          progress: rows.length > 0 ? pickedCount / rows.length : null,
+        },
+        ...(baseRecordTile ? [baseRecordTile] : []),
+      ],
+      verdict: null,
     };
   }
 
   if (state === 'locked') {
     const called = round.stocks.some((stock) => stock.baseCall !== null);
+    const baseCalls = round.stocks.filter((stock) => stock.baseCall?.call).length;
     return {
       state,
       roundId: round.roundId,
@@ -266,6 +362,23 @@ export function reopenGameViewV1(
       error,
       leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
       cta: picked ? CTA_V1 : null,
+      clock: clockV1(round.expectedReopenAt, 'until Wall Street reopens', input.now),
+      steps,
+      tiles: [
+        ...(round.players !== null
+          ? [{ key: 'players', label: 'Players', value: String(round.players), detail: 'made a call' }]
+          : []),
+        {
+          key: 'mine',
+          label: 'Your calls',
+          value: pickedCount > 0 ? `${pickedCount} of ${rows.length}` : 'None',
+          detail: pickedCount > 0 ? 'locked in' : 'you sat this one out',
+        },
+        ...(called
+          ? [{ key: 'base', label: "Base's calls", value: `${baseCalls} of ${rows.length}`, detail: 'from its price at the lock' }]
+          : []),
+      ],
+      verdict: null,
     };
   }
 
@@ -278,14 +391,15 @@ export function reopenGameViewV1(
     base ? `Base ${base.correct}/${base.of}` : null,
     crowd ? `players ${crowd.correct}/${crowd.of}` : null,
   ].filter(Boolean);
-  const players = round.players !== null ? ` ${plural(round.players, 'person', 'people')} played.` : '';
+  const players = round.players !== null ? `${plural(round.players, 'person', 'people')} played.` : '';
+  const lede = [players, mine ? '' : 'You did not play this round.', nextLine ?? ''].filter(Boolean).join(' ');
   return {
     state,
     roundId: round.roundId,
     title: `Call the reopen · #${round.number}`,
     badge: 'Results',
     closeDay,
-    lede: `${parts.join(' · ')}.${players}${mine ? '' : ' You did not play this round.'}${nextLine ? ` ${nextLine}` : ''}`,
+    lede: lede || `${parts.join(' · ')}.`,
     rows,
     standing,
     keepWithWallet: Boolean(me && !me.signed && (me.record.played ?? 0) > 0),
@@ -302,5 +416,20 @@ export function reopenGameViewV1(
     error,
     leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
     cta: picked ? CTA_V1 : null,
+    clock: next ? clockV1(next.opensAt, `until round #${next.number} opens`, input.now) : null,
+    steps,
+    tiles: [
+      ...(mine ? [{ key: 'mine', label: 'You', value: `${mine.correct}/${mine.of}`, detail: mine.cells }] : []),
+      ...(base ? [{ key: 'base', label: 'Base', value: `${base.correct}/${base.of}`, detail: base.cells }] : []),
+      ...(crowd ? [{ key: 'crowd', label: 'Players', value: `${crowd.correct}/${crowd.of}`, detail: crowd.cells }] : []),
+    ],
+    verdict:
+      mine && base
+        ? mine.correct > base.correct
+          ? { text: 'You beat Base 🎉', tone: 'won' }
+          : mine.correct < base.correct
+            ? { text: 'Base won this round', tone: 'lost' }
+            : { text: 'Level with Base', tone: 'level' }
+        : null,
   };
 }

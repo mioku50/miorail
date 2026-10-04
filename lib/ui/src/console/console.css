@@ -1601,14 +1601,46 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 /* Call the reopen (2026-10-03): one row per stock. On a phone the stock and its
    numbers share a line and the call sits under them at full width, two equal
    halves a thumb can find; from 720px the call moves to the end of the line.
-   Above and below wear the switch's pressed look and no colour: a side is not
-   good or bad until the reopen says which was right. */
+   A pressed side wears the brand, the same for above and below, never green or
+   red: a side is not good or bad until the reopen says which was right.
+
+   Dressed 2026-10-04, when the operator found the tab grey: the card glows with
+   the brand line, opens on the hero wash with the countdown set large, shows
+   the round's three moments as a stepper and the reader's numbers as tiles.
+   Colour still only answers right or wrong: a settled row, the verdict. */
+.mio-console .mr-reopen-card { overflow: hidden; box-shadow: inset 0 0 0 1px var(--hero-line), var(--hero-shadow); }
+.mio-console .mr-reopen-hero { padding: 16px; border-radius: var(--r) var(--r) 0 0; background: var(--glow-bg), var(--hero-bg);
+  box-shadow: inset 0 0 0 1px var(--hero-line); }
+.mio-console .mr-reopen-top { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; }
+.mio-console .mr-reopen-title { margin: 0; font-size: var(--fs-title); font-weight: 700; line-height: var(--lh-tight); letter-spacing: -.015em;
+  background: var(--hero-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.mio-console .mr-reopen-hero > .lnote { margin: 8px 0 0; max-width: 68ch; }
+.mio-console .mr-reopen-live { animation: mr-reopen-pulse 1.8s ease-in-out infinite; }
+@keyframes mr-reopen-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .mio-console .mr-reopen-live { animation: none; } }
+.mio-console .mr-reopen-clock { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; margin-top: 14px; }
+.mio-console .mr-reopen-clock .amount { font-size: var(--fs-hero); }
+.mio-console .mr-reopen-clock-label { display: grid; font-size: var(--fs-body); line-height: var(--lh-snug); color: var(--muted); }
+.mio-console .mr-reopen-verdict { margin: 12px 0 0; }
+.mio-console .mr-reopen-verdict .pill { padding: 6px 12px; font-size: var(--fs-body); }
+.mio-console .mr-reopen-tiles { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 14px; }
+.mio-console .mr-reopen-tiles .kpi { flex: 1 1 140px; max-width: 260px; padding: 10px 12px; border-radius: var(--r); background: var(--panel);
+  box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); }
+.mio-console .mr-reopen-tiles .kpi .v { font-size: var(--fs-xl); letter-spacing: -.01em; }
+.mio-console .mr-reopen-steps { margin: 0; border-radius: 0; background: transparent; box-shadow: inset 0 -1px 0 var(--line); }
+.mio-console .mr-reopen-steps .st .n { white-space: normal; }
+.mio-console .mr-reopen-row[data-picked='true'] { background: var(--hero-bg); box-shadow: inset 0 0 0 1px var(--hero-line); }
+.mio-console .mr-reopen-row[data-mark='right'] { background: var(--g-bg); box-shadow: inset 0 0 0 1px var(--g-line); }
+.mio-console .mr-reopen-row[data-mark='wrong'] { background: var(--r-bg); box-shadow: inset 0 0 0 1px var(--r-line); }
+.mio-console .mr-reopen-call .mr-scope-switch button.on { color: var(--on-accent); background: var(--grad); box-shadow: var(--btn-shadow); }
 .mio-console .mr-reopen { list-style: none; margin: 10px 0; padding: 0; display: grid; gap: 8px; }
 .mio-console .mr-reopen-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px;
   align-items: center; padding: 10px 12px; border-radius: var(--r); background: var(--panel2);
   box-shadow: inset 0 0 0 1px var(--line); }
-.mio-console .mr-reopen-stock { display: grid; min-width: 0; }
-.mio-console .mr-reopen-stock .lnote { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mio-console .mr-reopen-stock { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mio-console .mr-reopen-stock .mr-choice-icon, .mio-console .mr-wk-stock .mr-choice-icon { flex: none; }
+.mio-console .mr-reopen-id { display: grid; min-width: 0; }
+.mio-console .mr-reopen-id .lnote { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mio-console .mr-reopen-nums { display: grid; justify-items: end; text-align: right; font-size: var(--fs-sm); }
 .mio-console .mr-reopen-call { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; min-width: 0; }
 .mio-console .mr-reopen-call .mr-scope-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
@@ -1621,8 +1653,18 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-reopen-board th:first-child { width: 2.8em; }
 .mio-console .mr-reopen-board th.r { width: 4.6em; }
 .mio-console .mr-reopen-board td.nm { overflow-wrap: anywhere; }
-.mio-console .mr-reopen-board tr.you td { color: var(--ink); font-weight: 650; }
+.mio-console .mr-reopen-board tr.you td { color: var(--ink); font-weight: 650; background: var(--gsoft); }
 .mio-console .mr-reopen-rules { margin-top: 12px; }
+/* The weekend card's rows: the token's icon beside its name, and the move on
+   Base as a bar either side of the close, scaled to the board's biggest move.
+   Direction is the side the bar grows to; the bar wears the brand either way. */
+.mio-console .mr-wk-stock { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.mio-console .mr-wk-id { min-width: 0; }
+.mio-console .mr-wk-bar { position: relative; display: block; width: 96px; height: 4px; margin: 6px 0 0 auto; border-radius: 4px; background: var(--track-bg); }
+.mio-console .mr-wk-bar::before { content: ''; position: absolute; left: 50%; top: -2px; bottom: -2px; width: 1px; background: var(--line2); }
+.mio-console .mr-wk-bar > span { position: absolute; top: 0; bottom: 0; border-radius: 4px; background: var(--grad); box-shadow: var(--bar-glow); }
+.mio-console .mr-wk-bar[data-side='up'] > span { left: 50%; }
+.mio-console .mr-wk-bar[data-side='down'] > span { right: 50%; }
 .mio-console .mr-reopen-rules summary { cursor: pointer; color: var(--muted); font-size: var(--fs-sm); }
 @media (min-width: 720px) {
   .mio-console .mr-reopen-row { grid-template-columns: minmax(0, 1fr) auto minmax(220px, auto); }

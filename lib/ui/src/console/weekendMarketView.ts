@@ -34,6 +34,12 @@ export interface WeekendMarketRowViewV1 {
   /** Once reopened: which side of the close Base had been on. */
   mark: string | null;
   off: boolean;
+  /** Coinbase's icon for the token, when the list has one. */
+  icon: string | null;
+  /** The move on Base as a share of the board's biggest move, drawn either
+   * side of the close. It carries direction by side, never by colour. Null
+   * without a price on Base. */
+  bar: { side: 'up' | 'down' | 'flat'; share: number } | null;
 }
 
 export interface WeekendMarketViewV1 {
@@ -46,6 +52,12 @@ export interface WeekendMarketViewV1 {
   rows: WeekendMarketRowViewV1[];
   note: string;
   share: { x: string; farcaster: string };
+}
+
+/** How the list shows a token: Coinbase's icon and the company's name. */
+export interface WeekendStockFaceV1 {
+  icon: string | null;
+  name: string | null;
 }
 
 const MINUS = '−';
@@ -72,13 +84,23 @@ export function etLabelV1(iso: string): string {
   return `${value('weekday')} ${value('hour')}:${value('minute')} ET`;
 }
 
-/** "in 3 h", or null once it has passed. */
+/** "1 h 50 min", "45 min", "2 d 5 h"; null once the moment has passed. */
+export function countdownV1(iso: string, now: Date): string | null {
+  const ms = Date.parse(iso) - now.getTime();
+  if (!(ms > 0)) return null;
+  const minutes = Math.ceil(ms / 60_000);
+  if (minutes < 60) return `${minutes} min`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return minutes % 60 ? `${hours} h ${minutes % 60} min` : `${hours} h`;
+  return hours % 24 ? `${Math.floor(hours / 24)} d ${hours % 24} h` : `${Math.floor(hours / 24)} d`;
+}
+
+/** "in 3 h 20 min", or null once it has passed. The same count as the game's
+ * clock: both cards name the reopen, and two roundings of one moment ("in
+ * 4 h" over "3 h 31 min") read as a clock that is wrong. */
 export function untilV1(iso: string, now: Date): string | null {
-  const minutes = Math.round((Date.parse(iso) - now.getTime()) / 60_000);
-  if (minutes <= 0) return null;
-  if (minutes < 60) return `in ${minutes} min`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `in ${hours} h` : `in ${Math.round(hours / 24)} days`;
+  const left = countdownV1(iso, now);
+  return left ? `in ${left}` : null;
 }
 
 const UNAVAILABLE_V1: Record<NonNullable<WeekendMarketStockV1['unavailable']>, string> = {
@@ -86,7 +108,12 @@ const UNAVAILABLE_V1: Record<NonNullable<WeekendMarketStockV1['unavailable']>, s
   too_few_measurements: 'too few measurements',
 };
 
-function rowV1(stock: WeekendMarketStockV1, reopened: boolean): WeekendMarketRowViewV1 {
+function rowV1(
+  stock: WeekendMarketStockV1,
+  reopened: boolean,
+  scale: { biggestBps: number; faces: ReadonlyMap<string, WeekendStockFaceV1> | null },
+): WeekendMarketRowViewV1 {
+  const face = scale.faces?.get(stock.tokenAddress.toLowerCase()) ?? null;
   const mark =
     !reopened || !stock.reopen
       ? null
@@ -98,7 +125,7 @@ function rowV1(stock: WeekendMarketStockV1, reopened: boolean): WeekendMarketRow
   return {
     key: stock.tokenAddress,
     symbol: stock.symbol,
-    name: stock.name,
+    name: face?.name ?? stock.name,
     close: stock.close ? usdV1(stock.close) : '—',
     base: stock.base ? usdV1(stock.base.value) : '—',
     move: stock.base ? signedPercentV1(stock.base.moveBps) : stock.unavailable ? UNAVAILABLE_V1[stock.unavailable] : '',
@@ -106,13 +133,26 @@ function rowV1(stock: WeekendMarketStockV1, reopened: boolean): WeekendMarketRow
     gap: reopened ? (stock.reopen ? signedPercentV1(stock.reopen.gapBps) : 'no print yet') : null,
     mark,
     off: stock.base === null,
+    icon: face?.icon ?? null,
+    bar: stock.base
+      ? {
+          side: stock.base.moveBps > 0 ? 'up' : stock.base.moveBps < 0 ? 'down' : 'flat',
+          share: scale.biggestBps > 0 ? Math.abs(stock.base.moveBps) / scale.biggestBps : 0,
+        }
+      : null,
   };
 }
 
 /** Null when there is no quiet period to show, so the board shows nothing. */
 export function weekendMarketViewV1(
   response: WeekendMarketResponseV1 | null | undefined,
-  input: { now: Date; origin: string },
+  input: {
+    now: Date;
+    origin: string;
+    /** Token address (lowercase) to its icon and company, from the list's
+     * prices. The board's own name is often just the ticker. */
+    faces?: ReadonlyMap<string, WeekendStockFaceV1> | null;
+  },
 ): WeekendMarketViewV1 | null {
   if (!response || response.state === 'none' || !response.window) return null;
   const measured = response.stocks.filter((stock) => stock.base !== null);
@@ -122,7 +162,8 @@ export function weekendMarketViewV1(
   const stamp = weekendStampV1(response.generatedAt);
   const url = `${input.origin.replace(/\/+$/, '')}/stocks${stamp ? `?weekend=${stamp}` : ''}`;
   const reopened = response.state === 'reopened';
-  const rows = response.stocks.map((stock) => rowV1(stock, reopened));
+  const biggestBps = Math.max(0, ...measured.map((stock) => Math.abs(stock.base!.moveBps)));
+  const rows = response.stocks.map((stock) => rowV1(stock, reopened, { biggestBps, faces: input.faces ?? null }));
   const day = etWeekdayV1(response.window.closeAt);
   const close = `${day}'s close`;
 
