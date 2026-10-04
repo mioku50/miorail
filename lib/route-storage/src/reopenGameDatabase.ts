@@ -3,8 +3,10 @@ import {
   assertReopenPicksV1,
   assertReopenPlayerV1,
   assertReopenRoundIdV1,
+  assertReopenShareCodeV1,
   assertReopenTokenHashV1,
   assertReopenWalletV1,
+  isReopenShareCodeV1,
   reopenDevicePlayerIdV1,
   reopenWalletPlayerIdV1,
   type ReopenCrowdV1,
@@ -260,6 +262,51 @@ export function createDatabaseReopenGameRepositoryV1(sql: SqlTemplateExecutor): 
       const row = rows[0];
       if (!row || Number(row.merged) === 0) return null;
       return { moved: Number(row.moved), dropped: Number(row.dropped) };
+    },
+
+    async shareCode(input) {
+      assertReopenRoundIdV1(input.roundId);
+      assertReopenPlayerV1(input.playerId);
+      assertReopenShareCodeV1(input.code);
+      const now = input.now.toISOString();
+      // Copied from the picks in the same statement, and only from a settled
+      // round with something picked in it.
+      const rows = await sql`
+        WITH made AS (
+          INSERT INTO reopen_shares (code, round_id, player_id, picks, created_at)
+          SELECT ${input.code}, p.round_id, p.player_id, p.picks, ${now}::timestamptz
+            FROM reopen_picks AS p
+            JOIN reopen_rounds AS r ON r.round_id = p.round_id
+           WHERE p.round_id = ${input.roundId} AND p.player_id = ${input.playerId}
+             AND r.results IS NOT NULL AND p.picks <> '{}'::jsonb
+          ON CONFLICT (round_id, player_id) DO NOTHING
+          RETURNING code
+        )
+        SELECT code FROM made
+        UNION ALL
+        SELECT code FROM reopen_shares WHERE round_id = ${input.roundId} AND player_id = ${input.playerId}
+        LIMIT 1`;
+      if (rows[0]) return String(rows[0].code);
+      // A code another request made after this statement's snapshot is
+      // visible to the next one.
+      const again = await sql`
+        SELECT code FROM reopen_shares WHERE round_id = ${input.roundId} AND player_id = ${input.playerId}`;
+      return again[0] ? String(again[0].code) : null;
+    },
+
+    async share(code) {
+      if (!isReopenShareCodeV1(code)) return null;
+      const rows = await sql`
+        SELECT code, round_id, picks, created_at FROM reopen_shares WHERE code = ${code}`;
+      const row = rows[0];
+      return row
+        ? {
+            code: String(row.code),
+            roundId: String(row.round_id),
+            picks: row.picks as Record<string, ReopenSideV1>,
+            createdAt: isoV1(row.created_at),
+          }
+        : null;
     },
   };
 }

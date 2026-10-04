@@ -179,6 +179,8 @@ export function MarketRealityPage({ symbol: segment }: { symbol?: string | null 
       }
       navigate(`/market?${searchFromPatchV1(search, stocks.selectedKey, patch)}`);
     },
+    // The ticker's own address: the path is both the stock and the tab.
+    onOpenStock: ({ symbol }) => navigate(`/stocks/${symbol.toLowerCase()}`),
     onInvestigate: (tokenAddress) => navigate(`/investigate?token=${tokenAddress}`),
     onOpenRadar: () => navigate('/radar'),
     onInspectRoute: ({ tokenAddress, goal, minimumVerification }) => {

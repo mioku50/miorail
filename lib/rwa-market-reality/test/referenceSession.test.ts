@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import {
-  REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+  REVIEWED_US_EQUITIES_CALENDAR_V1,
   classifyMarketRealityReferenceV1,
   type ReviewedReferenceConfigurationV1,
   type ReviewedReferenceObservationV1,
@@ -22,7 +22,7 @@ function configuration(
     issuerId: 'coinbase',
     referenceAddress: FEED,
     referenceSource: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base',
-    calendar: REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+    calendar: REVIEWED_US_EQUITIES_CALENDAR_V1,
     outsideRegularHours: 'publishes',
     ...overrides,
   };
@@ -200,11 +200,11 @@ test('missing or out-of-range calendar semantics stay unknown', () => {
     observation: observation(),
   });
   const future = classifyMarketRealityReferenceV1({
-    now: new Date('2027-08-27T14:00:00.000Z'),
+    now: new Date('2028-08-28T14:00:00.000Z'),
     configuration: configuration(),
     observation: observation({
-      observedAt: '2027-08-27T14:00:00.000Z',
-      referenceUpdatedAt: '2027-08-27T13:59:30.000Z',
+      observedAt: '2028-08-28T14:00:00.000Z',
+      referenceUpdatedAt: '2028-08-28T13:59:30.000Z',
     }),
   });
   assert.equal(missing.session, 'unknown');

@@ -460,9 +460,11 @@ describe('the existing execution boundary is unchanged', () => {
     assert.deepEqual(
       names.filter((name) => name.startsWith('miorail_') && !PUBLIC_READ_ONLY_PREFIXES_V1.some((prefix) => name.startsWith(prefix))),
       [
+        'miorail_call_the_reopen',
         'miorail_check_exit_profile',
         'miorail_get_base_mcp_action',
         'miorail_get_execution_status',
+        'miorail_get_my_reopen',
         'miorail_get_my_stocks_today',
         'miorail_get_stock_base_mcp_action',
         'miorail_mark_stock_updates_read',

@@ -287,6 +287,7 @@ describe('§11 — the public MCP surface cannot reach execution', () => {
       'marketRealityTools.ts',
       'mcpServer.test.ts',
       'recordedChangesTool.ts',
+      'reopenTool.ts',
       'server.ts',
       'tools.ts',
       'useAccess.test.ts',
@@ -887,7 +888,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry plus thirteen', async () => {
+  test('the connected surface is exactly the public registry plus fifteen', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -905,7 +906,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 13);
+    assert.equal(connectedNames.size, publicNames.length + 15);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -950,6 +951,8 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'miorail_measure_market_reality',
       'miorail_measure_my_stock_cash_out',
       'miorail_mark_stock_updates_read',
+      // A game entry: replaces this wallet's picks for the stocks it names.
+      'miorail_call_the_reopen',
       // Asks the venue to prepare calldata, executes it against real state and
       // mints a short-lived review draft. Nothing executable leaves, and it is
       // not a read of anything.
@@ -960,6 +963,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'miorail_get_execution_status',
       'miorail_read_borrow_capacity',
       'miorail_get_my_stocks_today',
+      'miorail_get_my_reopen',
     ]);
 
     for (const tool of tools) {

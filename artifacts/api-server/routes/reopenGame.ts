@@ -75,6 +75,8 @@ export const reopenGameRuntime = {
   enabled: (env: NodeJS.ProcessEnv): boolean => publicStocksRuntime.enabled(env),
   now: () => new Date(),
   newDeviceToken: (): string => randomBytes(32).toString('base64url'),
+  /** Nine random bytes: the code a player's settled round is shared by. */
+  newShareCode: (): string => randomBytes(9).toString('base64url'),
 };
 
 /** The round as everyone sees it, once per thirty seconds: the first reader in
@@ -115,10 +117,13 @@ function depsV1(): ReopenGameDepsV1 {
   };
 }
 
-function sharedStateV1(now: Date): Promise<ReopenSharedStateV1> {
+/** The round as everyone sees it at `now`, through the same thirty-second
+ * cache the page reads: the protocol and the page cannot disagree. */
+export function reopenSharedNowV1(now: Date): Promise<ReopenSharedStateV1> {
   const slot = Math.floor(now.getTime() / 30_000);
   return reopenGameCachesV1.shared.read(`reopen|${slot}`, () => reopenSharedStateV1(now, depsV1()));
 }
+const sharedStateV1 = reopenSharedNowV1;
 
 const readLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 90 });
 const pickLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
@@ -197,7 +202,10 @@ reopenGameRouter.get('/', async (req: Request, res: Response) => {
     const now = reopenGameRuntime.now();
     const repository = reopenGameRuntime.repository();
     const [shared, player] = await Promise.all([sharedStateV1(now), playerOfV1(req, repository)]);
-    sendPrivate(res, await reopenGameForV1({ shared, player, now, repository }));
+    sendPrivate(
+      res,
+      await reopenGameForV1({ shared, player, now, repository, newShareCode: reopenGameRuntime.newShareCode }),
+    );
   } catch (error) {
     failed(res, 'read', error);
   }

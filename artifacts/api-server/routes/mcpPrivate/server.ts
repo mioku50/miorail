@@ -36,6 +36,8 @@ import { acknowledgeStockInboxV1, StockInboxErrorV1 } from '../../lib/stockInbox
 import { readMyStocksTodayV1 } from '../../lib/stockBriefRead.js';
 import { StockPositionQuoteInputV1Schema, StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/stockPositionQuoteRead.js';
+import { ReopenCallAgentInputV1Schema, ReopenMineAgentOutputV1Schema } from '@mioagent/rwa-market-reality/reopen-agent';
+import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/reopenAgentRead.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -60,13 +62,15 @@ import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/st
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.5.1';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.6.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound thirteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound fifteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+
+Call the reopen, the weekend game: get_reopen_round reads the round; miorail_get_my_reopen reads this wallet's picks, score and record; miorail_call_the_reopen makes or changes this wallet's picks before the Sunday 17:00 ET lock, for the stocks the USER named and with the side the USER said — never a pick of yours. Nothing is won but the record.
 
 For a daily personal read, use miorail_get_my_stocks_today. It reads this grant’s wallet and reports its own coverage; get_dividend_calendar remains the public calendar. When the owner asks what their position would fetch, use miorail_measure_my_stock_cash_out for that entire current balance, never scale a public ladder quote to it.
 
@@ -126,7 +130,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the thirteen below can be called at all. A client that connected
+  // before any of the fifteen below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -182,6 +186,43 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
       const code = error instanceof StockPositionQuoteErrorV1 ? error.code : 'stock_cash_out_measurement_unread';
       return { isError: true, content: [{ type: 'text' as const, text: `${code}: Cash out could not be measured. This does not establish that the token is untradeable. Nothing was prepared or confirmed.` }] };
     }
+  });
+
+  // Call the reopen: the weekend game, for this grant's own wallet. A pick is
+  // a game entry, not a trade: nothing here touches a balance or a transaction.
+  const reopenRefusal = (error: unknown) => ({
+    isError: true as const,
+    content: [
+      {
+        type: 'text' as const,
+        text:
+          error instanceof ReopenAgentErrorV1
+            ? `${error.code}: ${error.message}`
+            : 'reopen_game_unavailable: Call the reopen could not be read right now. No pick was read or changed.',
+      },
+    ],
+  });
+
+  server.registerTool('miorail_get_my_reopen', {
+    title: 'My Call the reopen: picks, score and record',
+    description: `This grant's wallet in Call the reopen, Miorail's weekend game (five stocks, will each reopen above or below the close). Takes no argument: the grant's own wallet is the only one read. Returns everything get_reopen_round returns, plus \`me\`: this wallet's picks in the round on show (\`up\` is above the close, \`down\` below), its score once the round settles, its record across rounds (played, streak, right of settled, rounds ahead of Base) and its place on the leaderboard. READ \`miorailSummary\` FIRST and prefer its wording. A device that played without signing in is a different player until the person signs in on the page. Reading changes nothing and creates no player.`,
+    inputSchema: {},
+    outputSchema: ReopenMineAgentOutputV1Schema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async () => {
+    try { return reply(await readMyReopenV1(identity.walletAddress)); }
+    catch (error) { return reopenRefusal(error); }
+  });
+
+  server.registerTool('miorail_call_the_reopen', {
+    title: 'Make my Call the reopen picks',
+    description: `Makes or changes this grant's wallet's picks in the open Call the reopen round: for each stock the USER named, whether it reopens \`above\` or \`below\` the close. Only on the user's explicit words, stock by stock: never pick for them, never fill in a stock they did not name, never infer a side from a price, a chart or Base's move. A stock not named keeps the pick it had. Naming a stock again replaces its earlier pick, until the lock on Sunday 17:00 ET; after it, and before the round opens on Friday 20:00 ET, nothing is accepted and the refusal says when the next round opens. Call get_reopen_round first: a stock with no close is not in the round. Returns the round and \`me\`, this wallet's picks as now saved; say them back to the user. A pick is a game entry: no prize, no money, no transaction, no balance read. Up to 20 calls a minute per wallet.`,
+    inputSchema: ReopenCallAgentInputV1Schema.shape,
+    outputSchema: ReopenMineAgentOutputV1Schema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async (args) => {
+    try { return reply(await callTheReopenV1(identity.walletAddress, args)); }
+    catch (error) { return reopenRefusal(error); }
   });
 
   // -------------------------------------------------------------------------

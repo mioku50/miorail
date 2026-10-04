@@ -14,6 +14,7 @@
     "./dividends": "./src/dividends.ts",
     "./execution-handoff": "./src/executionHandoff.ts",
     "./narration-contract": "./src/narrationContract.ts",
+    "./reopen-agent": "./src/reopenAgent.ts",
     "./reopen-game": "./src/reopenGame.ts",
     "./reopen-game-service": "./src/reopenGameService.ts",
     "./weekend-market": "./src/weekendMarket.ts",

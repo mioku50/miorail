@@ -3,8 +3,10 @@ import {
   assertReopenPicksV1,
   assertReopenPlayerV1,
   assertReopenRoundIdV1,
+  assertReopenShareCodeV1,
   assertReopenTokenHashV1,
   assertReopenWalletV1,
+  isReopenShareCodeV1,
   reopenDevicePlayerIdV1,
   reopenWalletPlayerIdV1,
   type ReopenCrowdV1,
@@ -13,6 +15,7 @@ import {
   type ReopenPlayerPicksV1,
   type ReopenRoundOpeningV1,
   type ReopenRoundRowV1,
+  type ReopenShareRowV1,
   type ReopenSideV1,
 } from './reopenGame.js';
 import { RouteStorageIntegrityError } from './types.js';
@@ -24,6 +27,7 @@ export class InMemoryReopenGameRepositoryV1 implements ReopenGameRepositoryV1 {
   private readonly players = new Map<string, { createdAt: string; mergedInto: string | null; number: number }>();
   private nextNumber = 1;
   private readonly picks = new Map<string, { roundId: string; playerId: string; picks: Record<string, ReopenSideV1>; pickedAt: string }>();
+  private readonly shares = new Map<string, ReopenShareRowV1 & { playerId: string }>();
 
   private copy(row: ReopenRoundRowV1): ReopenRoundRowV1 {
     return structuredClone(row);
@@ -194,5 +198,33 @@ export class InMemoryReopenGameRepositoryV1 implements ReopenGameRepositoryV1 {
       moved += 1;
     }
     return { moved, dropped };
+  }
+
+  async shareCode(input: { roundId: string; playerId: string; code: string; now: Date }): Promise<string | null> {
+    assertReopenRoundIdV1(input.roundId);
+    assertReopenPlayerV1(input.playerId);
+    assertReopenShareCodeV1(input.code);
+    const made = [...this.shares.values()].find(
+      (row) => row.roundId === input.roundId && row.playerId === input.playerId,
+    );
+    if (made) return made.code;
+    const round = this.roundRows.get(input.roundId);
+    const picked = this.picks.get(`${input.roundId}|${input.playerId}`);
+    if (!round || round.results === null || !picked || Object.keys(picked.picks).length === 0) return null;
+    if (this.shares.has(input.code)) throw new RouteStorageIntegrityError('duplicate share code');
+    this.shares.set(input.code, {
+      code: input.code,
+      roundId: input.roundId,
+      playerId: input.playerId,
+      picks: { ...picked.picks },
+      createdAt: input.now.toISOString(),
+    });
+    return input.code;
+  }
+
+  async share(code: string): Promise<ReopenShareRowV1 | null> {
+    if (!isReopenShareCodeV1(code)) return null;
+    const row = this.shares.get(code);
+    return row ? { code: row.code, roundId: row.roundId, picks: { ...row.picks }, createdAt: row.createdAt } : null;
   }
 }

@@ -39,6 +39,7 @@ import type {
 import type { ReopenNoticeFactsV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
 import {
   etClockLabelV1,
+  etWeekdayV1,
   weekendWindowV1,
   type WeeklyCloseChangesV1,
 } from '@mioagent/rwa-market-reality/weekend-market';
@@ -1178,11 +1179,13 @@ export function reopenNoticeV1(
 ): { title: string; message: string; targetPath: string } | null {
   const targetPath = '/stocks/weekend';
   const lock = etClockLabelV1(facts.locksAt);
+  // Thursday's before a holiday Friday: the round opens on the day of its close.
+  const close = `${etWeekdayV1(facts.opensAt)}'s close`;
   if (kind === 'open') {
     return {
       title: clipV1(`Call the reopen #${facts.number}`, BASE_APP_TITLE_MAX_V1),
       message: clipV1(
-        `Will ${symbolsSentenceV1(facts.symbols)} reopen above or below Friday's close? Picks close ${lock}, and Base makes its own call at the same minute. No wallet needed.`,
+        `Will ${symbolsSentenceV1(facts.symbols)} reopen above or below ${close}? Picks close ${lock}, and Base makes its own call at the same minute. No wallet needed.`,
         BASE_APP_MESSAGE_MAX_V1,
       ),
       targetPath,
@@ -1192,7 +1195,7 @@ export function reopenNoticeV1(
     return {
       title: clipV1(`Last call: reopen #${facts.number}`, BASE_APP_TITLE_MAX_V1),
       message: clipV1(
-        `Picks close ${lock}. You played before and have no call this weekend yet: ${symbolsSentenceV1(facts.symbols)}, above or below Friday's close.`,
+        `Picks close ${lock}. You played before and have no call this weekend yet: ${symbolsSentenceV1(facts.symbols)}, above or below ${close}.`,
         BASE_APP_MESSAGE_MAX_V1,
       ),
       targetPath,

@@ -96,6 +96,12 @@ test('a visitor calls the reopen without a wallet, and the device keeps the pick
 
   // Five rows of two buttons fit a phone: nothing scrolls sideways.
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+
+  // After a pick, one way out of the game: NVIDIA, whatever was picked.
+  const piece = page.getByRole('link', { name: 'A piece of NVIDIA, from $1' });
+  await expect(piece).toHaveAttribute('href', '/stocks/nvda');
+  await piece.click();
+  await expect(page).toHaveURL(/\/stocks\/nvda$/);
 });
 
 test('a settled round shows the squares, the score and the line to share (390px)', async ({ page }) => {
@@ -110,7 +116,11 @@ test('a settled round shows the squares, the score and the line to share (390px)
     ],
     score: { base: { correct: 0, of: 2, cells: '🟥🟥' }, crowd: { correct: 1, of: 1, cells: '🟩⬜' } },
   });
-  Object.assign(settled.me!, { score: { correct: 2, of: 2, cells: '🟩🟩' }, record: { played: 1, streak: 1, correct: 2, of: 2, beatBase: 1 } });
+  Object.assign(settled.me!, {
+    score: { correct: 2, of: 2, cells: '🟩🟩' },
+    record: { played: 1, streak: 1, correct: 2, of: 2, beatBase: 1 },
+    share: 'Ab3_x-9Zq0Lm',
+  });
   settled.leaderboard = {
     rounds: 1,
     players: 4,
@@ -131,5 +141,7 @@ test('a settled round shows the squares, the score and the line to share (390px)
   await expect(board.locator('tr.you')).toContainText('Player 3 · you');
   const post = page.getByRole('link', { name: 'Post on X' }).first();
   expect(decodeURIComponent((await post.getAttribute('href')) ?? '')).toContain('Call the reopen #1 🟩🟩 2/2 · Base 0/2');
+  // The post links to this result, whose page previews as its picture.
+  expect(decodeURIComponent((await post.getAttribute('href')) ?? '')).toContain('/stocks/weekend?call=Ab3_x-9Zq0Lm');
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });

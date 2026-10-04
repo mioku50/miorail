@@ -13,6 +13,8 @@ export interface ReopenGameModelV1 {
   /** Absent where picks cannot be sent; the round still shows. */
   onPick?: (symbol: string, side: ReopenDirectionV1) => void;
   onSignIn?: () => void;
+  /** Opens a stock's card in place. Absent: the link is followed as a link. */
+  onOpenStock?: (symbol: string) => void;
 }
 
 const SIDES_V1: readonly { side: ReopenDirectionV1; label: string }[] = [
@@ -28,6 +30,8 @@ const SIDES_V1: readonly { side: ReopenDirectionV1; label: string }[] = [
  */
 export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
   const { view } = model;
+  const closeDay = view.closeDay ?? { long: 'Friday', short: 'Fri' };
+  const cta = view.cta;
   return (
     <section className="panel" aria-label="Call the reopen">
       <div className="ph">
@@ -47,13 +51,15 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
                   {row.name !== row.symbol ? <span className="lnote">{row.name}</span> : null}
                 </div>
                 <div className="mr-reopen-nums mono">
-                  <span>Fri {row.close}</span>
+                  <span>
+                    {closeDay.short} {row.close}
+                  </span>
                   {row.baseNow ? <span className="lnote">Base {row.baseNow}</span> : null}
                   {row.baseCall ? <span className="lnote">Base {row.baseCall}</span> : null}
                 </div>
                 <div className="mr-reopen-call">
                   {view.state === 'open' && model.onPick ? (
-                    <div className="mr-scope-switch" role="group" aria-label={`${row.symbol}: above or below Friday's close`}>
+                    <div className="mr-scope-switch" role="group" aria-label={`${row.symbol}: above or below ${closeDay.long}'s close`}>
                       {SIDES_V1.map(({ side, label }) => (
                         <button
                           key={side}
@@ -97,6 +103,22 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
               Cast on Farcaster
             </a>
           </div>
+        ) : null}
+        {cta ? (
+          <p className="mr-reopen-cta">
+            <a
+              className="btn sec"
+              href={cta.href}
+              onClick={(event) => {
+                // A modified click is the reader asking for a new tab or window.
+                if (!model.onOpenStock || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+                event.preventDefault();
+                model.onOpenStock(cta.symbol);
+              }}
+            >
+              {cta.label}
+            </a>
+          </p>
         ) : null}
         {view.leaderboard ? (
           <div className="mr-reopen-board" aria-label={view.leaderboard.title}>

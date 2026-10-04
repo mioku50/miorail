@@ -123,8 +123,37 @@ describe('a round lives inside one weekend', () => {
     assert.equal(weekend.next?.roundId, '2026-10-16');
   });
 
+  test('New Year crosses the year: Thursday 2026-12-31 closes, Sunday 2027-01-03 reopens', () => {
+    const { next } = reopenSchedulesV1(et('2026-12-30', '12:00'));
+    assert.deepEqual(next, {
+      roundId: '2026-12-31',
+      closeAt: iso('2026-12-31', '16:00'),
+      opensAt: iso('2026-12-31', '20:00'),
+      locksAt: iso('2027-01-03', '17:00'),
+      expectedReopenAt: iso('2027-01-03', '20:00'),
+      nextSessionCloseAt: iso('2027-01-04', '16:00'),
+    });
+  });
+
+  test('2027 rounds follow NYSE: a holiday Friday closes on Thursday, a holiday Monday reopens on Monday', () => {
+    const round = (from: string) => reopenSchedulesV1(et(from, '12:00')).next;
+    // Good Friday, Juneteenth observed, Christmas observed: Thursday's close.
+    assert.equal(round('2027-03-24')?.roundId, '2027-03-25');
+    assert.equal(round('2027-03-24')?.locksAt, iso('2027-03-28', '17:00'));
+    assert.equal(round('2027-06-16')?.roundId, '2027-06-17');
+    assert.equal(round('2027-12-21')?.roundId, '2027-12-23');
+    // Independence Day observed on Monday the 5th: the lock stays on Sunday.
+    assert.equal(round('2027-06-30')?.roundId, '2027-07-02');
+    assert.equal(round('2027-06-30')?.locksAt, iso('2027-07-04', '17:00'));
+    assert.equal(round('2027-06-30')?.expectedReopenAt, iso('2027-07-05', '20:00'));
+    // Thanksgiving Thursday is no round; the 13:00 close after it is.
+    assert.equal(round('2027-11-24')?.roundId, '2027-11-26');
+    assert.equal(round('2027-11-24')?.closeAt, iso('2027-11-26', '13:00'));
+  });
+
   test('past the reviewed calendar there is no next round', () => {
-    assert.equal(reopenSchedulesV1(et('2026-12-30', '12:00')).next, null);
+    // Friday 2027-12-31 closes into 2028, which nobody has reviewed yet.
+    assert.equal(reopenSchedulesV1(et('2027-12-29', '12:00')).next, null);
   });
 });
 

@@ -17,9 +17,11 @@ import {
   reopenSchedulesV1,
   reopenScoreV1,
   type ReopenCallV1,
+  type ReopenDirectionV1,
   type ReopenGameResponseV1,
   type ReopenResultV1,
   type ReopenScheduleV1,
+  type ReopenScoreV1,
   type ReopenStandingV1,
   type ReopenStockV1,
 } from './reopenGame.js';
@@ -266,6 +268,9 @@ export async function reopenGameForV1(input: {
   player: ReopenPlayerRefV1 | null;
   now: Date;
   repository: ReopenGameRepositoryV1;
+  /** A fresh random share code, offered when the reader's settled round has
+   * none yet. Absent: no share code is made or read. */
+  newShareCode?: () => string;
 }): Promise<ReopenGameResponseV1> {
   const { shared } = input;
   let me: ReopenGameResponseV1['me'] = null;
@@ -275,6 +280,16 @@ export async function reopenGameForV1(input: {
     const shown = shared.round ? byRound.get(shared.round.roundId) : undefined;
     const shownRow = shared.round ? shared.rows.find((row) => row.roundId === shared.round!.roundId) : undefined;
     const shownResults = shownRow ? resultsOfV1(shownRow) : null;
+    // A settled round the reader picked in gets the code its post links to.
+    const share =
+      input.newShareCode && shown && shownResults && Object.keys(shown.picks).length > 0
+        ? await input.repository.shareCode({
+            roundId: shown.roundId,
+            playerId: input.player.playerId,
+            code: input.newShareCode(),
+            now: input.now,
+          })
+        : null;
     me = {
       picks: shown?.picks ?? {},
       pickedAt: shown?.pickedAt ?? null,
@@ -290,6 +305,7 @@ export async function reopenGameForV1(input: {
         })),
       ),
       signed: input.player.signed,
+      share,
     };
   }
   const board = shared.leaderboard;
@@ -316,6 +332,68 @@ export async function reopenGameForV1(input: {
       : null,
     baseRecord: shared.baseRecord,
     me,
+  };
+}
+
+// --- A shared result -------------------------------------------------------------
+
+/** One player's settled round, as the picture of a shared post draws it. */
+export interface ReopenSharedResultV1 {
+  roundId: string;
+  number: number;
+  closeAt: string;
+  opensAt: string;
+  expectedReopenAt: string;
+  stocks: {
+    symbol: string;
+    name: string;
+    close: string;
+    pick: ReopenDirectionV1 | null;
+    /** Base's call at the lock; null with too few quotes to make one. */
+    baseCall: ReopenDirectionV1 | null;
+    reopen: string | null;
+    outcome: 'up' | 'down' | 'void';
+  }[];
+  mine: ReopenScoreV1;
+  base: ReopenScoreV1;
+}
+
+/**
+ * What a share code names, read back from the database: the round as it was
+ * frozen and the picks as they were copied when the code was made. Nothing
+ * the request carries reaches a number here; the code only picks the row.
+ */
+export async function reopenSharedResultV1(
+  code: string,
+  deps: Pick<ReopenGameDepsV1, 'repository' | 'names'>,
+): Promise<ReopenSharedResultV1 | null> {
+  const share = await deps.repository.share(code);
+  if (!share) return null;
+  const row = await deps.repository.round(share.roundId);
+  const results = row ? resultsOfV1(row) : null;
+  if (!row || results === null) return null;
+  const calls = callsOfV1(row) ?? [];
+  const names = deps.names ? await deps.names().catch(() => null) : null;
+  return {
+    roundId: row.roundId,
+    number: row.number,
+    closeAt: row.closeAt,
+    opensAt: row.opensAt,
+    expectedReopenAt: row.expectedReopenAt,
+    stocks: lineupOfV1(row).map((stock) => {
+      const result = results.find((entry) => entry.symbol === stock.symbol);
+      return {
+        symbol: stock.symbol,
+        name: names?.get(stock.tokenAddress)?.name ?? stock.name,
+        close: stock.close,
+        pick: share.picks[stock.symbol] ?? null,
+        baseCall: calls.find((entry) => entry.symbol === stock.symbol)?.call ?? null,
+        reopen: result?.reopen ?? null,
+        outcome: result?.outcome ?? 'void',
+      };
+    }),
+    mine: reopenScoreV1(share.picks, results),
+    base: reopenScoreV1(reopenBasePicksV1(calls), results),
   };
 }
 

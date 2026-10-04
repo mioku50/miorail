@@ -40,6 +40,25 @@ const IN_PROGRESS: WeekendMarketResponseV1 = {
 };
 
 describe('the weekend card', () => {
+  test('before a holiday Friday the close is Thursday\u2019s, rung at 13:00 on a short day', () => {
+    // Christmas Eve 2026: a 13:00 ET close on Thursday, Christmas on Friday.
+    const christmas: WeekendMarketResponseV1 = {
+      ...IN_PROGRESS,
+      generatedAt: '2026-12-26T15:00:00.000Z',
+      window: {
+        closeAt: '2026-12-24T18:00:00.000Z',
+        darkStartAt: '2026-12-25T01:00:00.000Z',
+        expectedReopenAt: '2026-12-28T01:00:00.000Z',
+        nextSessionCloseAt: '2026-12-28T21:00:00.000Z',
+      },
+    };
+    const view = weekendMarketViewV1(christmas, { now: new Date('2026-12-26T15:00:00.000Z'), origin: 'https://miorail.xyz' })!;
+    assert.equal(view.columns.close, 'Thursday close');
+    assert.match(view.lede, /this is where they trade against Thursday's close\.$/);
+    assert.match(view.note, /Thursday's close: the Chainlink reference at the 13:00 ET bell\./);
+    assert.match(decodeURIComponent(view.share.x), /against Thursday's close\./);
+  });
+
   test('in progress: where the tokens trade against Friday, and when Wall Street reopens', () => {
     const view = weekendMarketViewV1(IN_PROGRESS, { now: new Date('2026-09-20T23:00:00.000Z'), origin: 'https://miorail.xyz' });
     assert.ok(view);

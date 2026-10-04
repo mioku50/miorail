@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { REVIEWED_US_EQUITIES_CALENDAR_2026_V1, type ReviewedReferenceCalendarV1 } from './referenceSession.js';
+import { REVIEWED_US_EQUITIES_CALENDAR_V1, type ReviewedReferenceCalendarV1 } from './referenceSession.js';
 
 // ---------------------------------------------------------------------------
 // The weekend market.
@@ -164,6 +164,24 @@ export function etClockLabelV1(iso: string): string {
   return `${value('weekday')} ${value('hour')}:${value('minute')} ET`;
 }
 
+/**
+ * "Friday" or "Fri": the New York weekday of an instant.
+ *
+ * The close a weekend is measured against is the last session's, and that is
+ * Friday's on most weekends and Thursday's before a holiday Friday (New Year
+ * and Christmas 2026, Good Friday, Juneteenth and Christmas 2027). A quiet
+ * period starts at 20:00 ET on the day of its close, so the weekday of its
+ * start names the close too.
+ */
+export function etWeekdayV1(iso: string, width: 'long' | 'short' = 'long'): string {
+  return new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: width }).format(new Date(iso));
+}
+
+/** "16:00", or "13:00" on an early close: the New York time of an instant. */
+export function etTimeV1(iso: string): string {
+  return etClockLabelV1(iso).split(' ')[1] ?? '';
+}
+
 /** The instant a New York wall clock shows `minuteOfDay` on `localDate`.
  * Tries both of the offsets New York uses and keeps the one that reads back. */
 export function etInstantV1(localDate: string, minuteOfDay: number): Date {
@@ -199,7 +217,7 @@ function sessionOnV1(localDate: string, calendar: ReviewedReferenceCalendarV1): 
  */
 export function weekendWindowV1(
   now: Date,
-  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_V1,
 ): WeekendMarketWindowV1 | null {
   const local = etPartsV1(now);
   let closedDate: string | null = null;
@@ -240,7 +258,7 @@ export function weekendWindowV1(
  */
 export function nextWeekendStartV1(
   now: Date,
-  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_V1,
 ): string | null {
   const today = etPartsV1(now).localDate;
   for (let offset = 0; offset <= 14; offset += 1) {

@@ -140,6 +140,13 @@ export interface StocksConsoleInputV1 {
   sectionHref?: (section: StocksSectionV1) => string;
   /** Apply a change to the question. The caller decides where it is stored. */
   onQuestion: (patch: StocksConsoleQuestionPatchV1) => void;
+  /**
+   * Open one stock's card from another tab, where a surface has addresses:
+   * the web goes to `/stocks/<ticker>`, whose path is both the stock and the
+   * tab. Absent, the tab is switched and the stock chosen in state, which is
+   * what a surface without an address bar does.
+   */
+  onOpenStock?: (stock: { symbol: string; underlyingKey: string | null }) => void;
   /** `routeIntelligenceV1` on this deployment. */
   enabled: boolean;
   /**
@@ -433,6 +440,12 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     return (matches.find((entry) => entry.coinbaseIssued) ?? matches[0])?.underlyingKey ?? null;
   }, [preferredSymbol, index.data]);
   const symbolNotHeld = preferredSymbol && index.data && !symbolKey ? preferredSymbol : null;
+  const keyOfSymbol = (symbol: string): string | null => {
+    const matches = (index.data?.entries ?? []).filter(
+      (entry) => entry.displaySymbol?.toLowerCase() === symbol.toLowerCase(),
+    );
+    return (matches.find((entry) => entry.coinbaseIssued) ?? matches[0])?.underlyingKey ?? null;
+  };
 
   const selectedKey = question.underlyingKey ?? (preferredSymbol ? symbolKey : defaultKey);
   const symbolOf = (underlyingKey: string): string | null =>
@@ -1015,6 +1028,22 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
               }
             : undefined,
         ...(session ? {} : input.onSignInRequired ? { onSignIn: input.onSignInRequired } : {}),
+        // Without a way to open it in place, the link is followed as a link.
+        ...(input.onOpenStock
+          ? {
+              onOpenStock: (symbol: string) =>
+                input.onOpenStock?.({ symbol, underlyingKey: keyOfSymbol(symbol) }),
+            }
+          : input.onSection && reopenView.cta && keyOfSymbol(reopenView.cta.symbol)
+            ? {
+                onOpenStock: (symbol: string) => {
+                  const underlyingKey = keyOfSymbol(symbol);
+                  if (!underlyingKey) return;
+                  input.onSection?.('market');
+                  input.onQuestion({ underlyingKey });
+                },
+              }
+            : {}),
       }
     : null;
 

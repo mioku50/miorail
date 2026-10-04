@@ -56,6 +56,11 @@ import {
   UseAccessAgentOutputV1Schema,
   miorailGetUseAccessV1,
 } from './useAccessTools.js';
+import {
+  ReopenRoundAgentInputV1Schema,
+  ReopenRoundAgentOutputV1Schema,
+  miorailGetReopenRoundV1,
+} from './reopenTool.js';
 
 // ---------------------------------------------------------------------------
 // T72/Phase 12B.1 — eight legacy B20 tools plus three read-only Market Reality
@@ -90,7 +95,7 @@ export const MIORAIL_MCP_NAME_V1 = 'miorail';
  * So this moves whenever the published tool list moves, and
  * `mcpServer.test.ts` refuses a registry change that leaves it behind.
  */
-export const MIORAIL_MCP_VERSION_V1 = '1.5.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.6.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
@@ -117,7 +122,9 @@ get_recorded_changes is the only read here that needs no subject: it answers "di
 
 get_dividend_calendar answers "when does this stock pay next, about how much reaches one token, and what did the last one do". It keeps two parties apart: what the COMPANY declared, quoted from its own release, and what reached the TOKEN, read from the token. A Coinbase token takes a dividend as more shares per token, never as cash, and it reaches whoever holds the token when the multiplier moves, not on the record date. An estimate is Miorail's arithmetic from what reached a token before and must be called an estimate. \`miorailSummary\` is the wording to prefer.
 
-get_use_access reports what one exact representation can be used for and what gates it, including the POOLS that hold it — a question about LP or liquidity is answered from \`pools\`, never from the lending venues in \`defi\`. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. WHO SUPPORTS IT IS A LEDGER, NOT A VERDICT: \`ecosystem\` carries the apps Base’s own stocks page names — thirty of them — each with that page’s claim beside what the app itself answered for this exact address, in the SAME four states. Most of them are apps Miorail does not read at all, and those are \`unchecked\`: reporting them as refusals states our reach as a fact about somebody else’s product. \`ecosystem.summary\` is the deterministic sentence to repeat. A venue listing an address is still not permission to act: caps and pause flags are not read, and the borrower’s own position is not read at all. PER MARKET, NOT PER VENUE: where a venue publishes them, \`defi.venues[].markets\` carries every market for this address with its own curation flag, LLTV in basis points and what is available to borrow in it — one Morpho-curated market at 62.5% beside three anyone deployed is the normal shape, and a figure there says a market could be used, never that this user could use it. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.`;
+get_use_access reports what one exact representation can be used for and what gates it, including the POOLS that hold it — a question about LP or liquidity is answered from \`pools\`, never from the lending venues in \`defi\`. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. WHO SUPPORTS IT IS A LEDGER, NOT A VERDICT: \`ecosystem\` carries the apps Base’s own stocks page names — thirty of them — each with that page’s claim beside what the app itself answered for this exact address, in the SAME four states. Most of them are apps Miorail does not read at all, and those are \`unchecked\`: reporting them as refusals states our reach as a fact about somebody else’s product. \`ecosystem.summary\` is the deterministic sentence to repeat. A venue listing an address is still not permission to act: caps and pause flags are not read, and the borrower’s own position is not read at all. PER MARKET, NOT PER VENUE: where a venue publishes them, \`defi.venues[].markets\` carries every market for this address with its own curation flag, LLTV in basis points and what is available to borrow in it — one Morpho-curated market at 62.5% beside three anyone deployed is the normal shape, and a figure there says a market could be used, never that this user could use it. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.
+
+get_reopen_round reads Call the reopen, Miorail's weekend game: will five stocks reopen above or below the close? Where a token trades on Base over the weekend is not a forecast of the reopen, and Base's own call exists only from the Sunday 17:00 ET lock. Nothing is won but the record. This server makes no pick for anybody.`;
 
 /**
  * The read-only tools, registered onto whichever server asked for them.
@@ -610,6 +617,27 @@ Evidence older than a day is labelled stale and describes what was true when it 
     async (args) => {
       try {
         return reply(await miorailGetRecordedChangesV1(args));
+      } catch (error) {
+        return refuse(error);
+      }
+    },
+  );
+
+  // Call the reopen: the weekend round on the Stocks Weekend tab, read the way
+  // the tab reads it. Picking is not on this surface.
+  server.registerTool(
+    'get_reopen_round',
+    {
+      title: 'Call the reopen: this weekend\u2019s round, Base\u2019s call, the results and the leaderboard',
+      description:
+        'Miorail\u2019s weekend game on tokenized stocks. Each weekend five stocks (NVDA, TSLA, AAPL, AMZN, MSTR, Coinbase\u2019s tokens on Base) and one question each: will it reopen above or below the close? Takes no argument and returns the round on show: `upcoming` rounds are in `next`; `round.state` is `open` (picks accepted until `locksAt`, Sunday 17:00 ET), `locked` (Base\u2019s calls fixed from its price on Base at the lock) or `settled` (each stock\u2019s first Chainlink print after the reopen, and the scores). READ `miorailSummary` FIRST and prefer its wording. `closeDay` names the close: Friday\u2019s, or Thursday\u2019s before a holiday Friday. `baseNow` is where the token trades on Base during the weekend, NOT a forecast of the reopen and NOT Base\u2019s call, which exists only from the lock on. How players split is hidden until the lock. The leaderboard names a wallet only by a Basename it set for itself, everybody else by player number. Nothing is won but the record: there are no prizes, and the tokens are not offered to US persons. This tool takes no player and makes no pick: a person picks on `playUrl`, or through an assistant connected to Miorail Connected with miorail_call_the_reopen, which picks for that grant\u2019s own wallet only.',
+      inputSchema: ReopenRoundAgentInputV1Schema,
+      outputSchema: ReopenRoundAgentOutputV1Schema,
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+    },
+    async () => {
+      try {
+        return reply(await miorailGetReopenRoundV1());
       } catch (error) {
         return refuse(error);
       }

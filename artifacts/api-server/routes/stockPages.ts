@@ -3,12 +3,16 @@ import { promises as fs } from 'node:fs';
 import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
 import { assembleCashExitLadderV1 } from '@mioagent/rwa-cash-exit';
 import { companyDisplayNameV1 } from '@mioagent/rwa-market-reality';
+import { isReopenShareCodeV1 } from '@mioagent/route-storage';
+import { reopenSharedResultV1, type ReopenSharedResultV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
 import { weekendStampInstantV1, type WeekendMarketResponseV1 } from '@mioagent/rwa-market-reality/weekend-market';
 import { logger } from '@mioagent/utils';
 
 import { renderCardPngV1 } from '../lib/cardImage.js';
+import { REOPEN_CARD_HEIGHT_V1, REOPEN_CARD_WIDTH_V1, reopenCardSvgV1, reopenCardV1 } from '../lib/reopenCard.js';
 import { WEEKEND_CARD_HEIGHT_V1, WEEKEND_CARD_WIDTH_V1, weekendCardSvgV1, weekendCardV1 } from '../lib/weekendCard.js';
 import { createPublicReadCacheV1, publicStocksCachesV1, publicStocksRuntime } from './publicStocks.js';
+import { reopenGameRuntime } from './reopenGame.js';
 import { readMarketRealityIndexV1, rwaMarketRealityRuntime } from './rwaMarketReality.js';
 
 // ---------------------------------------------------------------------------
@@ -62,6 +66,14 @@ const previewRoundTripCacheV1 = createPublicReadCacheV1({ ttlMs: 60_000, max: 64
 const weekendShareCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 16 });
 const weekendImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 8 });
 
+/**
+ * A shared Call the reopen result, read and drawn once per code. A settled
+ * round never changes and neither do the picks a code copied, so both hold;
+ * a code nobody was given is remembered as nothing for the same ten minutes.
+ */
+const reopenShareCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 64 });
+const reopenImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 16 });
+
 /** A weekend link older than this is history: it previews as the board. */
 const WEEKEND_SHARE_MAX_AGE_MS_V1 = 10 * 24 * 60 * 60 * 1000;
 
@@ -70,6 +82,8 @@ export function resetStockPagesPreviewCacheV1(): void {
   previewRoundTripCacheV1.clear();
   weekendShareCacheV1.clear();
   weekendImageCacheV1.clear();
+  reopenShareCacheV1.clear();
+  reopenImageCacheV1.clear();
 }
 
 export type StockPageEntryV1 = {
@@ -144,6 +158,9 @@ export const stockPagesRuntime = {
   },
   /** The weekend board at one slot's start: the read the board itself makes. */
   weekend: (at: Date): Promise<WeekendMarketResponseV1> => publicStocksRuntime.readWeekend(at),
+  /** A player's settled round as they shared it, by its code. */
+  reopenShare: (code: string): Promise<ReopenSharedResultV1 | null> =>
+    reopenSharedResultV1(code, { repository: reopenGameRuntime.repository(), names: reopenGameRuntime.names }),
   renderPng: (svg: string): Promise<Uint8Array> => renderCardPngV1(svg),
   now: (): Date => new Date(),
 };
@@ -369,6 +386,35 @@ async function weekendShareV1(stamp: string): Promise<WeekendMarketResponseV1 | 
 }
 
 /**
+ * A shared Call the reopen result's page: the Weekend tab, under a head that
+ * shows how that player's round went. Kept out of search: it is one player's
+ * weekend, and the tab is the page that lasts.
+ */
+export function reopenShareMetaV1(input: {
+  origin: string;
+  code: string;
+  result: ReopenSharedResultV1;
+}): StockPageMetaV1 {
+  const card = reopenCardV1(input.result);
+  return {
+    title: card.pageTitle,
+    description: card.description,
+    canonicalUrl: `${input.origin}/stocks/weekend?call=${input.code}`,
+    imageUrl: `${input.origin}/stocks/weekend/call-${input.code}.png`,
+    image: { width: REOPEN_CARD_WIDTH_V1, height: REOPEN_CARD_HEIGHT_V1, alt: card.alt },
+    noindex: true,
+  };
+}
+
+/** The result a code names, or null for anything that is not a code given
+ * out for a settled round. The code is the only thing read from the request. */
+async function reopenShareV1(code: string): Promise<ReopenSharedResultV1 | null> {
+  if (!isReopenShareCodeV1(code)) return null;
+  if (!stockPagesRuntime.enabled(process.env)) return null;
+  return reopenShareCacheV1.read(code, () => stockPagesRuntime.reopenShare(code));
+}
+
+/**
  * The headers nginx sends with index.html, and not the API's.
  *
  * Helmet's defaults suit JSON, not this document: its CSP would block the
@@ -421,6 +467,41 @@ stockPagesRouter.get('/stocks', async (req: Request, res: Response) => {
 });
 
 /**
+ * The picture a shared Call the reopen result previews as. Like the weekend
+ * picture: a code with nothing to draw is a 404, and a read or a drawing that
+ * fails right now answers with the board's own picture.
+ */
+async function sendReopenCardV1(res: Response, code: string, fallback: string): Promise<void> {
+  let result: ReopenSharedResultV1 | null;
+  try {
+    result = await reopenShareV1(code);
+  } catch (error) {
+    logger.warn('Reopen card could not be read', {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    res.redirect(302, fallback);
+    return;
+  }
+  if (!result) {
+    res.status(404).type('text/plain').send('no shared result under that code');
+    return;
+  }
+  try {
+    const png = await reopenImageCacheV1.read(code, async () =>
+      Buffer.from(await stockPagesRuntime.renderPng(reopenCardSvgV1(reopenCardV1(result)))),
+    );
+    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+    res.setHeader('Cache-Control', 'public, max-age=86400');
+    res.status(200).type('png').send(png);
+  } catch (error) {
+    logger.warn('Reopen card could not be drawn', {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    res.redirect(302, fallback);
+  }
+}
+
+/**
  * The picture a shared weekend post previews as.
  *
  * Its address names the slot, so what it shows never changes, and it may be
@@ -429,8 +510,14 @@ stockPagesRouter.get('/stocks', async (req: Request, res: Response) => {
  * picture rather than none: a feed keeps the first picture it gets.
  */
 stockPagesRouter.get('/stocks/weekend/:file', async (req: Request, res: Response) => {
-  const stamp = /^(\d{8}T\d{4}Z)\.png$/.exec(String(req.params.file ?? ''))?.[1] ?? null;
   const fallback = `${stockPagesRuntime.origin()}/og-stocks.png`;
+  // A shared Call the reopen result: `call-<code>.png`.
+  const code = /^call-([A-Za-z0-9_-]{12})\.png$/.exec(String(req.params.file ?? ''))?.[1] ?? null;
+  if (code) {
+    await sendReopenCardV1(res, code, fallback);
+    return;
+  }
+  const stamp = /^(\d{8}T\d{4}Z)\.png$/.exec(String(req.params.file ?? ''))?.[1] ?? null;
   let response: WeekendMarketResponseV1 | null;
   try {
     response = stamp ? await weekendShareV1(stamp) : null;
@@ -474,6 +561,22 @@ stockPagesRouter.get('/stocks/:symbol', async (req: Request, res: Response) => {
   const origin = stockPagesRuntime.origin();
   const symbol = String(req.params.symbol ?? '');
   const section = STOCK_SECTION_PAGES_V1.find((page) => page === symbol.toLowerCase());
+  // A shared Call the reopen result names its code. A link that names none,
+  // or one nobody was given, previews as the tab.
+  const call = section === 'weekend' && typeof req.query.call === 'string' ? req.query.call : null;
+  if (call !== null) {
+    try {
+      const result = await reopenShareV1(call);
+      if (result) {
+        sendDocumentV1(res, 200, renderStockPageHtmlV1(html, reopenShareMetaV1({ origin, code: call, result })));
+        return;
+      }
+    } catch (error) {
+      logger.warn('Reopen share could not be read', {
+        errorName: error instanceof Error ? error.name : typeof error,
+      });
+    }
+  }
   if (section) {
     sendDocumentV1(res, 200, renderStockPageHtmlV1(html, stockSectionMetaV1(origin, section)));
     return;

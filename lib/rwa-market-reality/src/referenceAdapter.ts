@@ -7,7 +7,7 @@ import type { OfficialAssetRepositoryV1 } from '@mioagent/route-storage';
 
 import type { MarketRealityReferenceStateV1 } from './contracts.js';
 import {
-  REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+  REVIEWED_US_EQUITIES_CALENDAR_V1,
   classifyMarketRealityReferenceV1,
   unknownMarketRealityReferenceV1,
 } from './referenceSession.js';
@@ -140,7 +140,7 @@ export function createReviewedMarketRealityReferenceAdapterV1(deps: {
         issuerId: input.issuerId,
         referenceAddress,
         referenceSource: listing.sourceUrl,
-        calendar: REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+        calendar: REVIEWED_US_EQUITIES_CALENDAR_V1,
         // MEASURED, not assumed. Sixty consecutive rounds of the AAPLc feed
         // read on 2026-09-16 carry prints at 04:35, 17:47, 20:00 and 23:57 ET,
         // each with a different value, and one 56-hour gap from Friday midday

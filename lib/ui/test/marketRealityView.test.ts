@@ -5121,7 +5121,7 @@ describe('trading from the answer card', () => {
                   title: 'The weekend on Base',
                   badge: 'Wall Street closed',
                   lede: '',
-                  columns: { base: 'On Base now', reopen: null },
+                  columns: { close: 'Friday close', base: 'On Base now', reopen: null },
                   rows: [],
                   note: '',
                   share: { x: '', farcaster: '' },

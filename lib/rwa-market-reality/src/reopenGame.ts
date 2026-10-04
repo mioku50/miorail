@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-import { REVIEWED_US_EQUITIES_CALENDAR_2026_V1, type ReviewedReferenceCalendarV1 } from './referenceSession.js';
+import { REVIEWED_US_EQUITIES_CALENDAR_V1, type ReviewedReferenceCalendarV1 } from './referenceSession.js';
 import {
   etInstantV1,
   etLocalDateV1,
@@ -17,7 +17,9 @@ import {
 // From 20:00 ET on Friday until 20:00 ET on Sunday, Wall Street and its
 // reference feeds are dark while Coinbase's stock tokens keep trading on Base.
 // A round asks one question about five stocks: will each reopen above or below
-// Friday's close? Players answer, and so does Base.
+// the last close? Players answer, and so does Base. The close is Friday's on
+// most weekends and Thursday's before a holiday Friday; the round opens at
+// 20:00 ET on the day of its close and is named by that date.
 //
 // THE RULES, AND WHY EACH ONE
 //
@@ -26,12 +28,13 @@ import {
 //    brokers trade from 20:00; a round that locked later would be won by
 //    whoever picked last.
 //  * Base calls at the same instant: up if the price on Base (the weekend
-//    card's six-hour median) is above Friday's close, down if below. Same
+//    card's six-hour median) is above the close, down if below. Same
 //    moment, same information. Base's record is built from rounds actually
 //    played, never from the 19 of 30 measured before the game existed.
-//  * Friday's close is the reference feed's value at the 16:00 ET bell and
-//    the reopen is the first value the feed published after going quiet, as
-//    Miorail's sampler recorded it: the two numbers the weekend card shows.
+//  * The close is the reference feed's value at the closing bell (16:00 ET,
+//    13:00 on a short day) and the reopen is the first value the feed
+//    published after going quiet, as Miorail's sampler recorded it: the two
+//    numbers the weekend card shows.
 //  * Equal to the cent has no direction, and a stock with no reopen print is
 //    void: it counts for nobody, Base included.
 //  * No prizes. The tokens are not offered to US persons, and a contest whose
@@ -132,7 +135,7 @@ export function reopenScheduleOfWindowV1(window: WeekendMarketWindowV1): ReopenS
  */
 export function reopenSchedulesV1(
   now: Date,
-  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_V1,
 ): { current: ReopenScheduleV1 | null; next: ReopenScheduleV1 | null } {
   const nowMs = now.getTime();
   const window = weekendWindowV1(now, calendar);
@@ -161,7 +164,8 @@ export const ReopenStockV1Schema = z
     tokenAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
     symbol: z.string().min(1).max(40),
     name: z.string().min(1).max(200),
-    /** The feed's value at Friday's bell, to the cent: the line every call is about. */
+    /** The feed's value at the last bell before the weekend, to the cent: the
+     * line every call is about. */
     close: CentsV1,
   })
   .strict();
@@ -539,6 +543,10 @@ export const ReopenGameResponseV1Schema = z
         record: ReopenRecordV1Schema,
         /** Whether the picks are kept with a wallet or only on this device. */
         signed: z.boolean(),
+        /** Once the round settled with a pick in it: the code a post of it
+         * links to, whose page previews as a picture of this result.
+         * Optional: for the seconds a new page talks to an older server. */
+        share: z.string().regex(/^[A-Za-z0-9_-]{12}$/).nullable().optional(),
       })
       .strict()
       .nullable(),

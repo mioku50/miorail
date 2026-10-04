@@ -1,6 +1,7 @@
 import {
   WEEKEND_MEANINGFUL_GAP_BPS_V1,
   WEEKEND_MEDIAN_WINDOW_HOURS_V1,
+  etWeekdayV1,
   type WeekendMarketResponseV1,
 } from '@mioagent/rwa-market-reality/weekend-market';
 
@@ -13,9 +14,9 @@ import {
 // the picture with the numbers, because a post is read for days.
 //
 // It says what the board says and nothing more: where the tokens traded
-// against Friday's close, and once the feed printed again, where it reopened
-// and which side Base had been on. No colour says good or bad. A sign and a
-// bar say which way.
+// against the last close (Friday's, or Thursday's before a holiday Friday),
+// and once the feed printed again, where it reopened and which side Base had
+// been on. No colour says good or bad. A sign and a bar say which way.
 // ---------------------------------------------------------------------------
 
 export const WEEKEND_CARD_WIDTH_V1 = 1200;
@@ -28,10 +29,10 @@ export interface WeekendCardRowV1 {
   close: string;
   /** In progress: the price on Base. Reopened: Base's move before the reopen. */
   base: string;
-  /** In progress: the move against Friday's close. Reopened: the reopen's gap. */
+  /** In progress: the move against the close. Reopened: the reopen's gap. */
   last: string;
   bps: number;
-  /** Reopened only: which side of Friday's close Base had been on. */
+  /** Reopened only: which side of the close Base had been on. */
   side: string | null;
 }
 
@@ -90,6 +91,8 @@ function shownV1(shown: number, of: number): string {
 export function weekendCardV1(response: WeekendMarketResponseV1): WeekendCardV1 | null {
   if (response.state === 'none' || !response.window) return null;
   const asOf = etLabelV1(response.generatedAt);
+  const day = etWeekdayV1(response.window.closeAt);
+  const close = `${day}'s close`;
 
   if (response.state === 'in_progress') {
     const measured = response.stocks.filter((stock) => stock.base !== null && stock.close !== null);
@@ -113,11 +116,11 @@ export function weekendCardV1(response: WeekendMarketResponseV1): WeekendCardV1 
       badge: 'Wall Street closed',
       lede: `Wall Street is closed until ${etLabelV1(response.window.expectedReopenAt)}. These tokens keep trading on Base.`,
       asOf,
-      columns: ['Stock', 'Friday close', 'On Base', 'vs Friday'],
+      columns: ['Stock', `${day} close`, 'On Base', `vs ${day}`],
       rows,
       footer: `${shownV1(rows.length, measured.length)}median of $100 quotes, last ${WEEKEND_MEDIAN_WINDOW_HOURS_V1} h · miorail.xyz/stocks`,
-      description: `Wall Street is closed, and tokenized stocks on Base keep trading. As of ${asOf}: ${moves(3)} against Friday's close, the median of Miorail's $100 quotes over the last ${WEEKEND_MEDIAN_WINDOW_HOURS_V1} hours.`,
-      alt: `The weekend on Base, as of ${asOf}. Against Friday's close: ${moves(rows.length)}.`,
+      description: `Wall Street is closed, and tokenized stocks on Base keep trading. As of ${asOf}: ${moves(3)} against ${close}, the median of Miorail's $100 quotes over the last ${WEEKEND_MEDIAN_WINDOW_HOURS_V1} hours.`,
+      alt: `The weekend on Base, as of ${asOf}. Against ${close}: ${moves(rows.length)}.`,
     };
   }
 
@@ -143,14 +146,14 @@ export function weekendCardV1(response: WeekendMarketResponseV1): WeekendCardV1 
     title: 'The weekend on Base',
     badge: 'Reopened',
     lede: called
-      ? `Base had been on the reopen's side of Friday's close for ${called.sameDirection} of ${called.meaningful}.`
-      : "No stock reopened with a clear gap from Friday's close.",
+      ? `Base had been on the reopen's side of ${close} for ${called.sameDirection} of ${called.meaningful}.`
+      : `No stock reopened with a clear gap from ${close}.`,
     asOf,
-    columns: ['Stock', 'Friday close', 'Base before', 'Reopened'],
+    columns: ['Stock', `${day} close`, 'Base before', 'Reopened'],
     rows,
     footer: `${shownV1(rows.length, printed.length)}a gap under ${threshold} has no side · miorail.xyz/stocks`,
     description: called
-      ? `The weekend on Base: before Wall Street reopened, tokenized stocks on Base were on the same side of Friday's close as the reopen for ${called.sameDirection} of ${called.meaningful} with a clear gap. One weekend, not a track record.`
+      ? `The weekend on Base: before Wall Street reopened, tokenized stocks on Base were on the same side of ${close} as the reopen for ${called.sameDirection} of ${called.meaningful} with a clear gap. One weekend, not a track record.`
       : 'The weekend on Base, measured: where tokenized stocks traded while Wall Street was closed, and where they reopened.',
     alt: `The weekend on Base and the reopen, as of ${asOf}: ${rows
       .map((row) => `${row.symbol} ${row.base} on Base before, reopened ${row.last}, ${row.side}`)

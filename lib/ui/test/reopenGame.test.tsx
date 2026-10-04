@@ -211,5 +211,59 @@ describe('Call the reopen, in words', () => {
     ]);
     assert.equal(view.standing, 'Streak 1 weekend · 1/1 right overall · beat Base 1 time.');
     assert.match(decodeURIComponent(view.share!.x), /text=Call the reopen #1 🟩⬜ 1\/1 · Base 0\/1&url=https:\/\/miorail\.xyz\/stocks\/weekend$/);
+
+    // With a code, the post links to this result, whose page previews as its picture.
+    const coded = reopenGameViewV1(
+      game({
+        round: { ...round, state: 'settled', players: 12, stocks: [stock('NVDA', { baseNow: null, result: results.NVDA })], score: { base: { correct: 0, of: 1, cells: '🟥' }, crowd: null } },
+        me: {
+          picks: { NVDA: 'up' },
+          pickedAt: NOW.toISOString(),
+          score: { correct: 1, of: 1, cells: '🟩' },
+          record: { played: 1, streak: 1, correct: 1, of: 1, beatBase: 1 },
+          signed: true,
+          share: 'Ab3_x-9Zq0Lm',
+        },
+      }),
+      { now: new Date('2026-10-12T02:00:00.000Z'), origin: ORIGIN },
+    )!;
+    assert.match(decodeURIComponent(coded.share!.x), /&url=https:\/\/miorail\.xyz\/stocks\/weekend\?call=Ab3_x-9Zq0Lm$/);
+  });
+});
+
+describe('after a pick, one way to the stock itself', () => {
+  const picked = { picks: { TSLA: 'down' as const }, pickedAt: NOW.toISOString(), score: null, record, signed: true };
+
+  test('the same stock whatever was picked, and only once something was', () => {
+    assert.equal(reopenGameViewV1(game(), { now: NOW, origin: ORIGIN })!.cta, null, 'nothing before a pick');
+    const view = reopenGameViewV1(game({ me: picked }), { now: NOW, origin: ORIGIN })!;
+    assert.deepEqual(view.cta, { label: 'A piece of NVIDIA, from $1', symbol: 'NVDA', href: '/stocks/nvda' });
+    const locked = reopenGameViewV1(game({ round: { ...game().round!, state: 'locked' }, me: picked }), {
+      now: new Date('2026-10-11T22:00:00.000Z'),
+      origin: ORIGIN,
+    })!;
+    assert.equal(locked.cta?.symbol, 'NVDA', 'the pick was TSLA down; the way out is still NVIDIA');
+    const html = renderToStaticMarkup(<ReopenGameCard model={{ view, onPick: () => undefined }} />);
+    assert.match(html, /<p class="mr-reopen-cta"><a class="btn sec" href="\/stocks\/nvda">A piece of NVIDIA, from \$1<\/a><\/p>/);
+  });
+});
+
+describe('the close is named by its day', () => {
+  test('before a holiday Friday the round asks about Thursday\u2019s close', () => {
+    // Christmas Eve 2026: the close is Thursday's, at 13:00 ET.
+    const thursday = game({
+      round: { ...game().round!, roundId: '2026-12-24', opensAt: '2026-12-25T01:00:00.000Z', locksAt: '2026-12-27T22:00:00.000Z', expectedReopenAt: '2026-12-28T01:00:00.000Z' },
+    });
+    const view = reopenGameViewV1(thursday, { now: new Date('2026-12-26T15:00:00.000Z'), origin: ORIGIN })!;
+    assert.deepEqual(view.closeDay, { long: 'Thursday', short: 'Thu' });
+    assert.match(view.lede, /^Will each stock reopen above or below Thursday's close\?/);
+    const html = renderToStaticMarkup(<ReopenGameCard model={{ view, onPick: () => undefined }} />);
+    assert.match(html, /aria-label="NVDA: above or below Thursday&#x27;s close"/);
+    assert.match(html, /<span>Thu \$100\.00<\/span>/);
+    const upcoming = reopenGameViewV1(
+      game({ round: null, next: { number: 9, opensAt: '2026-12-25T01:00:00.000Z', locksAt: '2026-12-27T22:00:00.000Z', expectedReopenAt: '2026-12-28T01:00:00.000Z' } }),
+      { now: new Date('2026-12-22T15:00:00.000Z'), origin: ORIGIN },
+    )!;
+    assert.match(upcoming.lede, /will it reopen above or below Thursday's close\?/);
   });
 });

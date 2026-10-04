@@ -35,6 +35,7 @@ const EXPECTED_TOOLS_V1 = [
   'get_dividend_calendar',
   'get_market_changes',
   'get_recorded_changes',
+  'get_reopen_round',
   'get_representations',
   'get_use_access',
   'list_reviewed_stocks',

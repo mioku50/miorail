@@ -64,6 +64,15 @@ export interface ReopenPlayerPicksV1 {
   picks: Record<string, ReopenSideV1>;
 }
 
+/** One player's settled round, as they shared it: the picks copied when the
+ * code was made, so the picture a link draws never changes. */
+export interface ReopenShareRowV1 {
+  code: string;
+  roundId: string;
+  picks: Record<string, ReopenSideV1>;
+  createdAt: string;
+}
+
 export interface ReopenCrowdV1 {
   players: number;
   split: Record<string, { up: number; down: number }>;
@@ -107,6 +116,14 @@ export interface ReopenGameRepositoryV1 {
    * twice. Null when the device is unknown or already merged.
    */
   mergeDevice(input: { tokenHash: string; wallet: string; now: Date }): Promise<{ moved: number; dropped: number } | null>;
+  /**
+   * The code a player's settled round is shared by: made on the first ask
+   * with the code offered, the same one on every ask after. Null while the
+   * round is unsettled, or when the player picked nothing in it.
+   */
+  shareCode(input: { roundId: string; playerId: string; code: string; now: Date }): Promise<string | null>;
+  /** What a code names, or null for a code nobody was given. */
+  share(code: string): Promise<ReopenShareRowV1 | null>;
 }
 
 const ROUND_ID_V1 = /^\d{4}-\d{2}-\d{2}$/;
@@ -114,6 +131,16 @@ const WALLET_V1 = /^0x[0-9a-f]{40}$/;
 const HASH_V1 = /^[0-9a-f]{64}$/;
 const PLAYER_V1 = /^(w:0x[0-9a-f]{40}|d:[0-9a-f]{64})$/;
 const SYMBOL_V1 = /^[A-Z0-9.]{1,12}$/;
+/** Nine random bytes, base64url: 72 bits nobody guesses, short enough for a post. */
+const SHARE_CODE_V1 = /^[A-Za-z0-9_-]{12}$/;
+
+export function isReopenShareCodeV1(code: string): boolean {
+  return SHARE_CODE_V1.test(code);
+}
+
+export function assertReopenShareCodeV1(code: string): void {
+  if (!SHARE_CODE_V1.test(code)) throw new RouteStorageIntegrityError('a share code is twelve base64url characters');
+}
 
 export function assertReopenRoundIdV1(roundId: string): void {
   if (!ROUND_ID_V1.test(roundId)) throw new RouteStorageIntegrityError('a round is named by a New York date');

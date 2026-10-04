@@ -5,6 +5,7 @@ import helmet from 'helmet';
 import request from 'supertest';
 import type { WeekendMarketResponseV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
+import type { ReopenSharedResultV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
 import {
   renderStockPageHtmlV1,
   resetStockPagesPreviewCacheV1,
@@ -362,4 +363,92 @@ test('a picture whose slot cannot be read is the board’s picture too', async (
   });
   const response = await request(appV1()).get('/stocks/weekend/20260926T0740Z.png').expect(302);
   assert.equal(response.headers.location, 'https://miorail.xyz/og-stocks.png');
+});
+
+// --- A shared Call the reopen result ---------------------------------------------
+
+const CODE = 'Ab3_x-9Zq0Lm';
+
+const SHARED_RESULT_V1: ReopenSharedResultV1 = {
+  roundId: '2026-10-09',
+  number: 2,
+  closeAt: '2026-10-09T20:00:00.000Z',
+  opensAt: '2026-10-10T00:00:00.000Z',
+  expectedReopenAt: '2026-10-12T00:00:00.000Z',
+  stocks: [
+    { symbol: 'NVDA', name: 'NVIDIA', close: '100.00', pick: 'up', baseCall: 'up', reopen: '102.00', outcome: 'up' },
+    { symbol: 'TSLA', name: 'Tesla', close: '100.00', pick: 'down', baseCall: 'down', reopen: '101.00', outcome: 'up' },
+    { symbol: 'AAPL', name: 'Apple', close: '100.00', pick: 'down', baseCall: 'up', reopen: '99.00', outcome: 'down' },
+  ],
+  mine: { correct: 2, of: 3, cells: '🟩🟥🟩' },
+  base: { correct: 1, of: 3, cells: '🟩🟥🟥' },
+};
+
+function reopenStubV1(t: test.TestContext, over: Partial<typeof stockPagesRuntime> = {}) {
+  const reads: string[] = [];
+  const drawn: string[] = [];
+  stubV1(t, {
+    reopenShare: async (code: string) => {
+      reads.push(code);
+      return code === CODE ? SHARED_RESULT_V1 : null;
+    },
+    renderPng: async (svg: string) => {
+      drawn.push(svg);
+      return new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    },
+    ...over,
+  });
+  return { reads, drawn };
+}
+
+const WEEKEND_TITLE = /<title>The weekend on Base · Miorail<\/title>/;
+
+test('a shared result previews as that player\u2019s round, named by nobody and kept out of search', async (t) => {
+  const { reads } = reopenStubV1(t);
+  const html = (await request(appV1()).get(`/stocks/weekend?call=${CODE}`).expect(200)).text;
+  assert.match(html, /<title>Call the reopen #2: 2\/3, Base 1\/3 · Miorail<\/title>/);
+  assert.match(html, new RegExp(`property="og:image" content="https://miorail\\.xyz/stocks/weekend/call-${CODE}\\.png"`));
+  assert.match(html, /property="og:image:height" content="630"/);
+  assert.match(html, /<meta name="robots" content="noindex" \/>/);
+  assert.match(html, new RegExp(`property="og:url" content="https://miorail\\.xyz/stocks/weekend\\?call=${CODE}"`));
+  assert.deepEqual(reads, [CODE]);
+});
+
+test('a code nobody was given, or anything that is not a code, previews as the tab', async (t) => {
+  const { reads } = reopenStubV1(t);
+  const app = appV1();
+  for (const code of ['Zz3_x-9Zq0Lm', 'short', '<script>alert(1)</script>', '']) {
+    const html = (await request(app).get(`/stocks/weekend?call=${encodeURIComponent(code)}`).expect(200)).text;
+    assert.match(html, WEEKEND_TITLE, code);
+    assert.doesNotMatch(html, /alert\(1\)/);
+  }
+  assert.match((await request(app).get(`/stocks/weekend?call=${CODE}&call=x`).expect(200)).text, WEEKEND_TITLE);
+  assert.deepEqual(reads, ['Zz3_x-9Zq0Lm'], 'only a well-formed code reaches the database');
+});
+
+test('the result\u2019s picture is drawn once, held a day, and any feed may show it; an unknown code is a 404', async (t) => {
+  const { reads, drawn } = reopenStubV1(t);
+  const app = appV1();
+  const first = await request(app).get(`/stocks/weekend/call-${CODE}.png`).expect(200);
+  await request(app).get(`/stocks/weekend/call-${CODE}.png`).expect(200);
+  assert.equal(first.headers['content-type'], 'image/png');
+  assert.equal(first.headers['cache-control'], 'public, max-age=86400');
+  assert.equal(first.headers['cross-origin-resource-policy'], 'cross-origin');
+  assert.equal(drawn.length, 1);
+  assert.match(drawn[0]!, />2 of 3 right</);
+  assert.deepEqual(reads, [CODE]);
+  await request(app).get('/stocks/weekend/call-Zz3_x-9Zq0Lm.png').expect(404);
+  await request(app).get('/stocks/weekend/call-short.png').expect(404);
+});
+
+test('a result that cannot be read or drawn is the board\u2019s picture', async (t) => {
+  reopenStubV1(t, {
+    reopenShare: async () => {
+      throw new Error('database down');
+    },
+  });
+  const unread = await request(appV1()).get(`/stocks/weekend/call-${CODE}.png`).expect(302);
+  assert.equal(unread.headers.location, 'https://miorail.xyz/og-stocks.png');
+  // And the page itself still serves the tab.
+  assert.match((await request(appV1()).get(`/stocks/weekend?call=${CODE}`).expect(200)).text, WEEKEND_TITLE);
 });

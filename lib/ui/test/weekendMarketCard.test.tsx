@@ -14,7 +14,7 @@ function view(count: number): WeekendMarketViewV1 {
     title: 'The weekend on Base',
     badge: 'Wall Street closed',
     lede: 'Wall Street is closed until Sun 20:00 ET.',
-    columns: { base: 'On Base now', reopen: null },
+    columns: { close: 'Friday close', base: 'On Base now', reopen: null },
     rows: Array.from({ length: count }, (_, index) => ({
       key: `row-${index}`,
       symbol: `S${index}`,

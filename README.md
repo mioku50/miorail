@@ -249,8 +249,8 @@ Requests to act are handed to Routes for fresh quotes and explicit approval.
 
 ## Public Miorail MCP
 
-Miorail MCP `1.5.0` exposes sixteen read-only tools at `https://miorail.xyz/mcp`
-— eight over tokenized stocks, eight over stored B20 evidence:
+Miorail MCP `1.6.0` exposes seventeen read-only tools at `https://miorail.xyz/mcp`
+— nine over tokenized stocks, eight over stored B20 evidence:
 
 ```text
 list_reviewed_stocks        every reviewed security, by ticker, name or ISIN
@@ -261,6 +261,7 @@ get_use_access              what one exact address can be used for, and what gat
 check_address_identity      compare an exact address with the reviewed contract
 get_dividend_calendar       declarations, measured reinvestments and estimates
 get_recorded_changes        recorded changes across the reviewed market
+get_reopen_round            Call the reopen: the weekend round, Base's call, results
 
 miorail_discover_status
 miorail_list_b20_opportunities
@@ -312,11 +313,17 @@ curl -s -X POST https://miorail.xyz/mcp \
 
 ## Connected Miorail MCP
 
-`https://miorail.xyz/mcp/private` is the same sixteen read tools **plus thirteen bound to
+`https://miorail.xyz/mcp/private` is the same seventeen read tools **plus fifteen bound to
 one wallet** — the one that authorised the connection. It cannot read, prepare
 or execute for any other wallet, and no argument would let it try.
 
-One of the thirteen is the verb the read tools were missing.
+Two of the fifteen play Call the reopen, the weekend game on the Stocks Weekend
+tab: `miorail_get_my_reopen` reads the wallet's picks, score and record, and
+`miorail_call_the_reopen` makes or changes picks for the stocks the user named,
+until the Sunday 17:00 ET lock. A stock not named keeps its pick. The public
+`get_reopen_round` reads the same round with nobody's picks in it.
+
+One of the fifteen is the verb the read tools were missing.
 `compare_market_reality` reads stored evidence, so it could truthfully report
 "no fresh answer at this size" and had no way to get one — only the web button
 could measure. `miorail_measure_market_reality` is that button, calling the same
@@ -392,7 +399,7 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.5.1` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.6.0` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
 argument. The shared inbox establishes a fixed 24-hour baseline at first use;
 opening it acknowledges no event. Unread entries persist past seven days and
@@ -410,8 +417,8 @@ proof; a failed receipt leaves events unread. Per-event receipts live in
 PostgreSQL and are shared by web, Base App and Connected MCP for the same wallet.
 `miorail_mark_stock_updates_read` accepts that unchanged proof only after the
 user explicitly asks to mark the shown updates as read. Fetching, explaining
-or sending a notification never grants that authorization. Connected MCP now
-has 29 tools: 16 public reads plus 13 wallet-bound tools. This new tool changes
+or sending a notification never grants that authorization. Connected MCP has
+32 tools: 17 public reads plus 15 wallet-bound tools. The receipt tool changes
 only inbox receipts, never holdings, notification subscriptions or actions.
 The personal inbox groups issuer logs by chain, exact contract and transaction.
 Compatibility multiplier logs and a corporate-action announcement from one

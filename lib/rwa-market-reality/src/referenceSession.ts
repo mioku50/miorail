@@ -9,20 +9,29 @@ const ADDRESS_V1 = /^0x[0-9a-f]{40}$/;
  * Reviewed U.S. equity core-session semantics used by the current Coinbase
  * tokenized-equity reference adapter.
  *
- * The range is deliberately bounded. NYSE and Nasdaq currently publish the
- * same 2026 cash-equity holidays, 09:30–16:00 ET core session, and two 13:00
- * early closes. A date outside the reviewed corpus is `unknown`; this module
- * never grows a holiday calendar from weekday arithmetic.
+ * The range is deliberately bounded. NYSE and Nasdaq publish the same 2026
+ * cash-equity holidays, 09:30–16:00 ET core session, and two 13:00 early
+ * closes. For 2027 the rows are NYSE's own table, read on 2026-10-04: ten
+ * closed days and one 13:00 early close, the day after Thanksgiving. Nasdaq's
+ * page listed only 2026 that day; the two have published the same days every
+ * year. 2027 has no Christmas Eve early close: Christmas falls on a Saturday
+ * and is observed on Friday the 24th, and New Year's Day 2028, a Saturday, is
+ * observed on no day at all.
+ *
+ * One calendar for both years, because a quiet period crosses the year: the
+ * close on Thursday 2026-12-31 reopens on Sunday 2027-01-03. A date outside
+ * the reviewed corpus is `unknown`; this module never grows a holiday
+ * calendar from weekday arithmetic.
  */
-export const REVIEWED_US_EQUITIES_CALENDAR_2026_V1 = {
-  key: 'us_equities_core_2026_v1',
+export const REVIEWED_US_EQUITIES_CALENDAR_V1 = {
+  key: 'us_equities_core_2026_2027_v1',
   sourceUrls: [
     'https://www.nyse.com/trade/hours-calendars',
     'https://www.nasdaq.com/market-activity/stock-market-holiday-schedule',
   ],
   timeZone: 'America/New_York',
   validFrom: '2026-01-01',
-  validThrough: '2026-12-31',
+  validThrough: '2027-12-31',
   regularOpenMinute: 9 * 60 + 30,
   regularCloseMinute: 16 * 60,
   closedDates: [
@@ -36,10 +45,21 @@ export const REVIEWED_US_EQUITIES_CALENDAR_2026_V1 = {
     '2026-09-07',
     '2026-11-26',
     '2026-12-25',
+    '2027-01-01',
+    '2027-01-18',
+    '2027-02-15',
+    '2027-03-26',
+    '2027-05-31',
+    '2027-06-18',
+    '2027-07-05',
+    '2027-09-06',
+    '2027-11-25',
+    '2027-12-24',
   ],
   earlyCloseMinutes: {
     '2026-11-27': 13 * 60,
     '2026-12-24': 13 * 60,
+    '2027-11-26': 13 * 60,
   } as Readonly<Record<string, number>>,
 } as const;
 

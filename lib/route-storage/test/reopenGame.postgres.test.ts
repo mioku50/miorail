@@ -21,7 +21,7 @@ before(async () => {
     : resolve(process.cwd(), 'lib/db/drizzle');
   // Twice: the migration must run again over itself without failing.
   for (let pass = 0; pass < 2; pass += 1) {
-    for (const file of ['0079_reopen_game.sql', '0080_reopen_leaderboard_notices.sql']) {
+    for (const file of ['0079_reopen_game.sql', '0080_reopen_leaderboard_notices.sql', '0081_reopen_shares.sql']) {
       await sql.unsafe(await readFile(resolve(root, file), 'utf8'));
     }
   }
@@ -34,7 +34,7 @@ else
   reopenGameContract('postgres', async () => {
     // RESTART IDENTITY: player numbers start at 1 for every case, as they do
     // on an empty memory store.
-    await sql`TRUNCATE reopen_notices, reopen_picks, reopen_players, reopen_rounds RESTART IDENTITY`;
+    await sql`TRUNCATE reopen_shares, reopen_notices, reopen_picks, reopen_players, reopen_rounds RESTART IDENTITY`;
     return createDatabaseReopenGameRepositoryV1((strings, ...values) =>
       (sql as unknown as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>)(
         strings,
@@ -50,7 +50,7 @@ if (temporary)
         strings,
         ...values,
       );
-    await sql`TRUNCATE reopen_notices, reopen_picks, reopen_players, reopen_rounds RESTART IDENTITY`;
+    await sql`TRUNCATE reopen_shares, reopen_notices, reopen_picks, reopen_players, reopen_rounds RESTART IDENTITY`;
     await createDatabaseReopenGameRepositoryV1(executor).openRound({
       opening: {
         roundId: '2026-10-09',

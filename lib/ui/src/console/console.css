@@ -1607,6 +1607,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mr-reopen-call { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; min-width: 0; }
 .mio-console .mr-reopen-call .mr-scope-switch { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); width: 100%; }
 .mio-console .mr-reopen-call .mr-scope-switch button { text-align: center; }
+.mio-console .mr-reopen-cta { margin: 12px 0 0; }
+.mio-console .mr-reopen-cta .btn { display: inline-flex; align-items: center; text-decoration: none; }
 .mio-console .mr-reopen-board { margin-top: 16px; }
 .mio-console .mr-reopen-board h4 { margin: 0 0 4px; font-size: var(--fs-body); }
 .mio-console .mr-reopen-board table { table-layout: fixed; }

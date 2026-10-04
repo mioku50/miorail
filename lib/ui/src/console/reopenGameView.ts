@@ -3,6 +3,7 @@ import {
   type ReopenDirectionV1,
   type ReopenGameResponseV1,
 } from '@mioagent/rwa-market-reality/reopen-game';
+import { etWeekdayV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import { giftShareLinksV1 } from './giftView';
 import { etLabelV1, signedPercentV1, untilV1 } from './weekendMarketView';
@@ -11,10 +12,14 @@ import { etLabelV1, signedPercentV1, untilV1 } from './weekendMarketView';
 // Call the reopen, in words.
 //
 // One question per stock, said the same way in every state: will it reopen
-// above or below Friday's close. Base is an opponent with a record, never an
-// oracle: its call is its own price at the lock, and its record is the rounds
-// actually played. Up and down carry no colour; only right and wrong do, once a
-// round is settled.
+// above or below the close. The close is named by its day: Friday's on most
+// weekends, Thursday's before a holiday Friday. Base is an opponent with a
+// record, never an oracle: its call is its own price at the lock, and its
+// record is the rounds actually played. Up and down carry no colour; only right
+// and wrong do, once a round is settled.
+//
+// After a pick, one way out of the game: a piece of NVIDIA from $1, the same
+// stock whatever was picked. Nothing in the game says buy what you called.
 // ---------------------------------------------------------------------------
 
 export interface ReopenGameRowViewV1 {
@@ -42,12 +47,19 @@ export interface ReopenLeaderboardViewV1 {
   me: string | null;
 }
 
+/** The stock the game points at once a reader has played: the same one for
+ * everybody, whatever they called. */
+export const REOPEN_CTA_SYMBOL_V1 = 'NVDA';
+
 export interface ReopenGameViewV1 {
   state: 'upcoming' | 'open' | 'locked' | 'settled';
   roundId: string | null;
   title: string;
   badge: string;
   lede: string;
+  /** The day of the close every call is about: "Friday", or "Thursday" before
+   * a holiday Friday. Null before a round is shown. */
+  closeDay: { long: string; short: string } | null;
   rows: ReopenGameRowViewV1[];
   /** The reader's standing, or how to keep it. */
   standing: string | null;
@@ -58,6 +70,9 @@ export interface ReopenGameViewV1 {
   error: string | null;
   /** Everybody who played a settled round; null before the first one. */
   leaderboard: ReopenLeaderboardViewV1 | null;
+  /** Once the reader has picked: the way to the stock itself, unrelated to
+   * any call. */
+  cta: { label: string; symbol: string; href: string } | null;
 }
 
 /** The table, in words. A wallet is named only by a Basename it set for
@@ -86,7 +101,7 @@ export function reopenLeaderboardViewV1(
 }
 
 const RULES_V1 =
-  "Friday's close is the Chainlink price at the 16:00 ET bell. Base's call is its own price at the lock: the median of Miorail's $100 quotes over the six hours before 17:00 ET Sunday, above or below the close. The result is the first Chainlink price Miorail records after Wall Street reopens at 20:00 ET; a stock that reopens exactly at the close, or does not print, counts for nobody. Picks close three hours early because futures open at 18:00 ET and show the way. No prizes: tokenized stocks are not offered to US persons, and this is played for the record.";
+  "The close is the Chainlink price at the last bell before the weekend: Friday's at 16:00 ET, Thursday's before a holiday Friday, 13:00 ET on a short day. Base's call is its own price at the lock: the median of Miorail's $100 quotes over the six hours before 17:00 ET Sunday, above or below the close. The result is the first Chainlink price Miorail records after Wall Street reopens at 20:00 ET; a stock that reopens exactly at the close, or does not print, counts for nobody. Picks close three hours early because futures open at 18:00 ET and show the way. No prizes: tokenized stocks are not offered to US persons, and this is played for the record.";
 
 const ARROW_V1: Readonly<Record<ReopenDirectionV1, string>> = { up: '▲', down: '▼' };
 const WORD_V1: Readonly<Record<ReopenDirectionV1, string>> = { up: 'above', down: 'below' };
@@ -98,6 +113,17 @@ function usdV1(value: string): string {
 function plural(count: number, one: string, many: string): string {
   return `${count} ${count === 1 ? one : many}`;
 }
+
+/** A quiet period opens at 20:00 ET on the day of its close. */
+function closeDayV1(opensAt: string): { long: string; short: string } {
+  return { long: etWeekdayV1(opensAt, 'long'), short: etWeekdayV1(opensAt, 'short') };
+}
+
+const CTA_V1 = {
+  label: 'A piece of NVIDIA, from $1',
+  symbol: REOPEN_CTA_SYMBOL_V1,
+  href: `/stocks/${REOPEN_CTA_SYMBOL_V1.toLowerCase()}`,
+} as const;
 
 export function reopenGameViewV1(
   response: ReopenGameResponseV1 | null | undefined,
@@ -125,7 +151,8 @@ export function reopenGameViewV1(
       roundId: null,
       title: 'Call the reopen',
       badge: 'Next round',
-      lede: `Round #${next.number} opens ${etLabelV1(next.opensAt)}${untilV1(next.opensAt, input.now) ? ` (${untilV1(next.opensAt, input.now)})` : ''}, when Wall Street closes for the weekend: five stocks, and for each one question — will it reopen above or below Friday's close? Picks close ${etLabelV1(next.locksAt)}, and Base makes its own call at the same minute.`,
+      lede: `Round #${next.number} opens ${etLabelV1(next.opensAt)}${untilV1(next.opensAt, input.now) ? ` (${untilV1(next.opensAt, input.now)})` : ''}, when Wall Street closes for the weekend: five stocks, and for each one question — will it reopen above or below ${etWeekdayV1(next.opensAt)}'s close? Picks close ${etLabelV1(next.locksAt)}, and Base makes its own call at the same minute.`,
+      closeDay: null,
       rows: [],
       standing: null,
       keepWithWallet: false,
@@ -133,10 +160,12 @@ export function reopenGameViewV1(
       share: null,
       error,
       leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
+      cta: null,
     };
   }
 
   const me = response.me;
+  const closeDay = closeDayV1(round.opensAt);
   const picks: Readonly<Record<string, ReopenDirectionV1>> = input.pending ?? me?.picks ?? {};
   const picked = Object.keys(picks).length > 0;
   const state = round.state;
@@ -202,7 +231,8 @@ export function reopenGameViewV1(
       roundId: round.roundId,
       title: `Call the reopen · #${round.number}`,
       badge: 'Picks open',
-      lede: `Will each stock reopen above or below Friday's close? Picks close ${etLabelV1(round.locksAt)}${until ? ` (${until})` : ''}. At that minute Base makes its own call from its price on Base, and the reopen at ${etLabelV1(round.expectedReopenAt)} settles both.`,
+      closeDay,
+      lede: `Will each stock reopen above or below ${closeDay.long}'s close? Picks close ${etLabelV1(round.locksAt)}${until ? ` (${until})` : ''}. At that minute Base makes its own call from its price on Base, and the reopen at ${etLabelV1(round.expectedReopenAt)} settles both.`,
       rows,
       standing,
       keepWithWallet: Boolean(me && !me.signed && picked),
@@ -215,6 +245,7 @@ export function reopenGameViewV1(
         : null,
       error,
       leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
+      cta: picked ? CTA_V1 : null,
     };
   }
 
@@ -225,6 +256,7 @@ export function reopenGameViewV1(
       roundId: round.roundId,
       title: `Call the reopen · #${round.number}`,
       badge: 'Picks closed',
+      closeDay,
       lede: `Picks closed ${etLabelV1(round.locksAt)}${round.players !== null ? `, with ${plural(round.players, 'player', 'players')}` : ''}. ${called ? "Base's calls are in." : "Base's call is being fixed from its price at the lock."} The reopen at ${etLabelV1(round.expectedReopenAt)} settles every call.`,
       rows,
       standing,
@@ -233,6 +265,7 @@ export function reopenGameViewV1(
       share: null,
       error,
       leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
+      cta: picked ? CTA_V1 : null,
     };
   }
 
@@ -251,16 +284,23 @@ export function reopenGameViewV1(
     roundId: round.roundId,
     title: `Call the reopen · #${round.number}`,
     badge: 'Results',
+    closeDay,
     lede: `${parts.join(' · ')}.${players}${mine ? '' : ' You did not play this round.'}${nextLine ? ` ${nextLine}` : ''}`,
     rows,
     standing,
     keepWithWallet: Boolean(me && !me.signed && (me.record.played ?? 0) > 0),
     rules: RULES_V1,
+    // The post links to the reader's own result, whose page previews as a
+    // picture of it; without a code, to the tab.
     share:
       mine && base
-        ? giftShareLinksV1({ url, text: reopenShareLineV1({ number: round.number, mine, base }) })
+        ? giftShareLinksV1({
+            url: me?.share ? `${url}?call=${me.share}` : url,
+            text: reopenShareLineV1({ number: round.number, mine, base }),
+          })
         : null,
     error,
     leaderboard: reopenLeaderboardViewV1(response.leaderboard ?? null),
+    cta: picked ? CTA_V1 : null,
   };
 }

@@ -157,5 +157,35 @@ export function reopenGameContract(name: string, factory: () => Promise<ReopenGa
       assert.equal(await repo.mergeDevice({ tokenHash: DEVICE, wallet: WALLET, now: AFTER_LOCK }), null);
       assert.equal((await repo.crowd('2026-10-16')).players, 1, 'nobody is counted twice');
     });
+
+    test('a settled round is shared by one code per player, with the picks as they stood', async () => {
+      const repo = await factory();
+      await repo.openRound({ opening: opening('2026-10-09'), now: BEFORE_LOCK });
+      const device = await repo.createDevicePlayer({ tokenHash: DEVICE, now: BEFORE_LOCK });
+      const quiet = await repo.createDevicePlayer({ tokenHash: OTHER_DEVICE, now: BEFORE_LOCK });
+      await repo.savePicks({ roundId: '2026-10-09', playerId: device, picks: { NVDA: 'up' }, now: BEFORE_LOCK });
+      // Picked, then took the pick back: nothing to share.
+      await repo.savePicks({ roundId: '2026-10-09', playerId: quiet, picks: {}, now: BEFORE_LOCK });
+      const ask = (playerId: string, code: string) => repo.shareCode({ roundId: '2026-10-09', playerId, code, now: AFTER_REOPEN });
+      assert.equal(await ask(device, 'AAAAAAAAAAAA'), null, 'not before the round settles');
+      await repo.fixCalls({ roundId: '2026-10-09', calls: [{ call: 'up' }], at: AFTER_LOCK });
+      await repo.settle({ roundId: '2026-10-09', results: [{ outcome: 'up' }], at: AFTER_REOPEN });
+      assert.equal(await ask(device, 'AAAAAAAAAAAA'), 'AAAAAAAAAAAA');
+      assert.equal(await ask(device, 'BBBBBBBBBBBB'), 'AAAAAAAAAAAA', 'the first code stands');
+      assert.equal(await ask(quiet, 'CCCCCCCCCCCC'), null, 'an empty set of picks has no picture');
+      await assert.rejects(ask(device, 'too-short'));
+      assert.deepEqual(await repo.share('AAAAAAAAAAAA'), {
+        code: 'AAAAAAAAAAAA',
+        roundId: '2026-10-09',
+        picks: { NVDA: 'up' },
+        createdAt: AFTER_REOPEN.toISOString(),
+      });
+      assert.equal(await repo.share('BBBBBBBBBBBB'), null, 'a code nobody was given');
+      assert.equal(await repo.share('not a code'), null);
+      // Signing in moves the device's picks; the picture keeps what was shared.
+      await repo.walletPlayer({ wallet: WALLET, now: AFTER_REOPEN });
+      await repo.mergeDevice({ tokenHash: DEVICE, wallet: WALLET, now: AFTER_REOPEN });
+      assert.deepEqual((await repo.share('AAAAAAAAAAAA'))?.picks, { NVDA: 'up' });
+    });
   });
 }

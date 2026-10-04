@@ -34,9 +34,11 @@ const tokenAddress = process.env.SMOKE_B20_TOKEN_ADDRESS?.trim().toLowerCase() |
 const positionAtomic = process.env.SMOKE_MCP_POSITION_ATOMIC?.trim() || '5000000';
 
 const EXPECTED_TOOLS_V1 = [
+  'miorail_call_the_reopen',
   'miorail_check_exit_profile',
   'miorail_get_base_mcp_action',
   'miorail_get_execution_status',
+  'miorail_get_my_reopen',
   'miorail_get_my_stocks_today',
   'miorail_measure_my_stock_cash_out',
   'miorail_prepare_b20_entry',

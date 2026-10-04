@@ -1,4 +1,6 @@
 import {
+  etTimeV1,
+  etWeekdayV1,
   nextWeekendStartV1,
   weekendStampV1,
   type WeekendMarketResponseV1,
@@ -11,10 +13,13 @@ import { giftShareLinksV1 } from './giftView';
 // The weekend card, in words.
 //
 // It says two things and never a third. While Wall Street is closed: where the
-// tokens trade on Base against Friday's close. Once the feed prints again: where
+// tokens trade on Base against the last close. Once the feed prints again: where
 // it reopened, and whether Base had been on the same side. It never says Base
 // predicts Monday. Over four measured weekends it did not (19 of 30), and one
 // weekend's hit is one weekend.
+//
+// The close is named by its day, because it is not always Friday's: before a
+// holiday Friday it is Thursday's, and on a short day it is rung at 13:00.
 // ---------------------------------------------------------------------------
 
 export interface WeekendMarketRowViewV1 {
@@ -26,7 +31,7 @@ export interface WeekendMarketRowViewV1 {
   move: string;
   reopen: string | null;
   gap: string | null;
-  /** Once reopened: which side of Friday's close Base had been on. */
+  /** Once reopened: which side of the close Base had been on. */
   mark: string | null;
   off: boolean;
 }
@@ -36,7 +41,8 @@ export interface WeekendMarketViewV1 {
   title: string;
   badge: string;
   lede: string;
-  columns: { base: string; reopen: string | null };
+  /** "Friday close", or "Thursday close" before a holiday Friday. */
+  columns: { close: string; base: string; reopen: string | null };
   rows: WeekendMarketRowViewV1[];
   note: string;
   share: { x: string; farcaster: string };
@@ -117,6 +123,8 @@ export function weekendMarketViewV1(
   const url = `${input.origin.replace(/\/+$/, '')}/stocks${stamp ? `?weekend=${stamp}` : ''}`;
   const reopened = response.state === 'reopened';
   const rows = response.stocks.map((stock) => rowV1(stock, reopened));
+  const day = etWeekdayV1(response.window.closeAt);
+  const close = `${day}'s close`;
 
   if (!reopened) {
     const until = untilV1(response.window.expectedReopenAt, input.now);
@@ -128,13 +136,13 @@ export function weekendMarketViewV1(
       state: 'in_progress',
       title: 'The weekend on Base',
       badge: 'Wall Street closed',
-      lede: `Wall Street is closed until ${etLabelV1(response.window.expectedReopenAt)}${until ? ` (${until})` : ''}. These tokens keep trading on Base, and this is where they trade against Friday's close.`,
-      columns: { base: 'On Base now', reopen: null },
+      lede: `Wall Street is closed until ${etLabelV1(response.window.expectedReopenAt)}${until ? ` (${until})` : ''}. These tokens keep trading on Base, and this is where they trade against ${close}.`,
+      columns: { close: `${day} close`, base: 'On Base now', reopen: null },
       rows,
-      note: "On Base: the median of Miorail's $100 quotes over the last six hours, with any quote more than 10% from the reference dropped. Friday's close: the Chainlink reference at the 16:00 ET bell. Where a market trades over the weekend is not a forecast of where it reopens.",
+      note: `On Base: the median of Miorail's $100 quotes over the last six hours, with any quote more than 10% from the reference dropped. ${day}'s close: the Chainlink reference at the ${etTimeV1(response.window.closeAt)} ET bell. Where a market trades over the weekend is not a forecast of where it reopens.`,
       share: giftShareLinksV1({
         url,
-        text: `Wall Street is closed, and tokenized stocks on Base keep trading: ${top} against Friday's close.`,
+        text: `Wall Street is closed, and tokenized stocks on Base keep trading: ${top} against ${close}.`,
       }),
     };
   }
@@ -146,21 +154,21 @@ export function weekendMarketViewV1(
   const called = response.called;
   const tally =
     called && called.meaningful > 0
-      ? `Before it did, Base was on the same side of Friday's close as the reopen for ${called.sameDirection} of ${called.meaningful} stocks with a clear gap.`
-      : "No stock reopened with a clear gap from Friday's close.";
+      ? `Before it did, Base was on the same side of ${close} as the reopen for ${called.sameDirection} of ${called.meaningful} stocks with a clear gap.`
+      : `No stock reopened with a clear gap from ${close}.`;
   return {
     state: 'reopened',
     title: 'The weekend on Base, and the reopen',
     badge: 'Reopened',
     lede: `The reference feeds printed again${reopenedAt ? ` ${etLabelV1(reopenedAt)}` : ''}. ${tally}`,
-    columns: { base: 'On Base before', reopen: 'Reopened at' },
+    columns: { close: `${day} close`, base: 'On Base before', reopen: 'Reopened at' },
     rows,
     note: "On Base before: the median of the six hours before the feed printed again. A gap under 0.20% has no direction and is not counted. This is one weekend, not a track record.",
     share: giftShareLinksV1({
       url,
       text:
         called && called.meaningful > 0
-          ? `The weekend on Base: before Wall Street reopened, tokenized stocks on Base were on the same side of Friday's close as the reopen for ${called.sameDirection} of ${called.meaningful}.`
+          ? `The weekend on Base: before Wall Street reopened, tokenized stocks on Base were on the same side of ${close} as the reopen for ${called.sameDirection} of ${called.meaningful}.`
           : 'The weekend on Base, measured: where tokenized stocks traded while Wall Street was closed, and where they reopened.',
     }),
   };
@@ -177,8 +185,10 @@ export function weekendQuietViewV1(now: Date): WeekendQuietViewV1 {
   const start = nextWeekendStartV1(now);
   const until = start ? untilV1(start, now) : null;
   const when = start ? `${etLabelV1(start)}${until ? ` (${until})` : ''}` : 'on Friday evening';
+  // The weekend starts at 20:00 ET on the day of its close.
+  const close = start ? `${etWeekdayV1(start)}'s close` : 'the last close';
   return {
     title: 'The weekend on Base',
-    lede: `Wall Street is open now. It closes for the weekend ${when}. From then until the reopen, these tokens keep trading on Base, and this tab shows where they trade against Friday's close, then where they reopened.`,
+    lede: `Wall Street is open now. It closes for the weekend ${when}. From then until the reopen, these tokens keep trading on Base, and this tab shows where they trade against ${close}, then where they reopened.`,
   };
 }

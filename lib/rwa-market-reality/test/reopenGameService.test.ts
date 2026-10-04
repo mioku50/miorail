@@ -14,6 +14,7 @@ import {
   reopenGameForV1,
   reopenLineupStocksV1,
   reopenNoticeFactsV1,
+  reopenSharedResultV1,
   reopenSharedStateV1,
   type ReopenGameDepsV1,
 } from '../src/reopenGameService.js';
@@ -244,6 +245,46 @@ describe('the round is brought up to date by whoever asks', () => {
     assert.deepEqual(stocks.map((row) => [row.tokenAddress, row.symbol, row.runs.length]), [
       ['0xaa00000000000000000000000000000000000001', 'NVDA', 1],
     ]);
+  });
+
+  test('a settled round gets one share code per player, and the code reads back the picks it copied', async () => {
+    const { deps, repository } = depsV1();
+    await advanceReopenRoundV1(et('2026-10-10', '12:00'), deps);
+    const me = await repository.walletPlayer({ wallet: '0x1111111111111111111111111111111111111111', now: et('2026-10-10', '12:00') });
+    await repository.savePicks({ roundId: '2026-10-09', playerId: me, picks: { NVDA: 'up', TSLA: 'down', AAPL: 'down' }, now: et('2026-10-11', '12:00') });
+    let codes = 0;
+    const newShareCode = () => `code${String(++codes).padStart(8, '0')}`;
+    const player = { playerId: me, signed: true };
+
+    const open = await reopenSharedStateV1(et('2026-10-11', '12:00'), deps);
+    const before = await reopenGameForV1({ shared: open, player, now: et('2026-10-11', '12:00'), repository, newShareCode });
+    assert.equal(before.me?.share, null, 'nothing to share before the result');
+    assert.equal(codes, 0, 'no code is drawn for a round still open');
+
+    const settled = await reopenSharedStateV1(et('2026-10-11', '21:30'), deps);
+    const first = await reopenGameForV1({ shared: settled, player, now: et('2026-10-11', '21:30'), repository, newShareCode });
+    const again = await reopenGameForV1({ shared: settled, player, now: et('2026-10-11', '21:35'), repository, newShareCode });
+    assert.equal(first.me?.share, 'code00000001');
+    assert.equal(again.me?.share, 'code00000001', 'the first code stands');
+    const withoutCodes = await reopenGameForV1({ shared: settled, player, now: et('2026-10-11', '21:35'), repository });
+    assert.equal(withoutCodes.me?.share, null, 'a caller that offers no code reads none');
+
+    const shared = await reopenSharedResultV1('code00000001', { repository });
+    assert.equal(shared?.number, 1);
+    assert.equal(shared?.opensAt, iso('2026-10-09', '20:00'));
+    assert.deepEqual(
+      shared?.stocks.map((row) => [row.symbol, row.pick, row.baseCall, row.reopen, row.outcome]),
+      [
+        ['NVDA', 'up', 'up', '102.00', 'up'],
+        ['TSLA', 'down', 'down', '101.00', 'up'],
+        ['AAPL', 'down', 'up', '99.00', 'down'],
+        ['AMZN', null, 'down', '99.00', 'down'],
+        ['MSTR', null, 'up', '106.00', 'up'],
+      ],
+    );
+    assert.deepEqual(shared?.mine, { correct: 2, of: 5, cells: '🟩🟥🟩⬜⬜' });
+    assert.deepEqual(shared?.base, { correct: 3, of: 5, cells: '🟩🟥🟥🟩🟩' });
+    assert.equal(await reopenSharedResultV1('code00000009', { repository }), null);
   });
 
   test('a reader with no picks has no game of their own', async () => {

@@ -9,7 +9,7 @@ import {
 import { evaluateMarketRealityBasisV1 } from '../src/basis.js';
 import { effectivePriceV1, normalizedExposureV1 } from '../src/engine.js';
 import {
-  REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+  REVIEWED_US_EQUITIES_CALENDAR_V1,
   classifyMarketRealityReferenceV1,
 } from '../src/referenceSession.js';
 
@@ -484,7 +484,7 @@ function classified(input: { now: string; referenceUpdatedAt: string }) {
       issuerId: 'coinbase',
       referenceAddress: FEED,
       referenceSource: 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base',
-      calendar: REVIEWED_US_EQUITIES_CALENDAR_2026_V1,
+      calendar: REVIEWED_US_EQUITIES_CALENDAR_V1,
       outsideRegularHours: 'publishes',
     },
     observation: {

@@ -1098,6 +1098,10 @@ describe('Call the reopen pushes', () => {
       "Will NVDA, TSLA, AAPL, AMZN and MSTR reopen above or below Friday's close? Picks close Sun 17:00 ET, and Base makes its own call at the same minute. No wallet needed.",
     );
     assert.equal(invite.targetPath, '/stocks/weekend');
+    // Christmas Eve 2026: the round opens Thursday 20:00 ET, on its close's day.
+    const christmas = facts({ roundId: '2026-12-24', opensAt: '2026-12-25T01:00:00.000Z', locksAt: '2026-12-27T22:00:00.000Z' });
+    assert.match(reopenNoticeV1(christmas, 'open', B)!.message, /above or below Thursday's close\?/);
+    assert.match(reopenNoticeV1(christmas, 'last_call', B)!.message, /above or below Thursday's close\.$/);
     const last = reopenNoticeV1(facts(), 'last_call', B)!;
     assert.equal(last.title, 'Last call: reopen #2');
     const result = reopenNoticeV1(

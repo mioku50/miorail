@@ -33,7 +33,7 @@ export function WeekendMarketCard({ view }: { view: WeekendMarketViewV1 }) {
           <thead>
             <tr>
               <th>Stock</th>
-              <th className="r">Friday close</th>
+              <th className="r">{view.columns.close}</th>
               <th className="r">{view.columns.base}</th>
               {view.columns.reopen ? <th className="r">{view.columns.reopen}</th> : null}
             </tr>

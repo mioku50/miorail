@@ -93,9 +93,9 @@ before claiming success.
 
 ## Separate MCP systems
 
-Miorail serves 16 public read-only tools at `/mcp`. Connected MCP 1.5.1 adds thirteen
-wallet-bound tools (29 total) for personal reads, preparation, measurement and
-execution evidence. These
+Miorail serves 17 public read-only tools at `/mcp`. Connected MCP 1.6.0 adds fifteen
+wallet-bound tools (32 total) for personal reads, weekend game picks, preparation,
+measurement and execution evidence. These
 counts describe the audited release; new tools must update schemas, tests,
 client instructions and deployment smoke checks together.
 
