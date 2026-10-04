@@ -8,11 +8,18 @@ import { isNonPublicHostV1 } from './claimFile.js';
 // The rule this file exists to enforce: URLs come out of the search engine's
 // STRUCTURED result, never out of the model's prose. A model asked "what is the
 // site for X" answers with a plausible domain whether or not it looked — that
-// is measurable, not theoretical: OpenRouter's web plugin returned
-// `aerodrome.finance` with no citations, no annotations and no search line in
-// its usage. Correct, and produced from memory. For a token nobody has heard of
-// the same machinery produces a domain that may not exist, and nothing in the
-// answer distinguishes the two cases.
+// is measurable, not theoretical: in August 2026 OpenRouter's web plugin, left
+// to pick its own engine, returned `aerodrome.finance` with no citations, no
+// annotations and no search line in its usage. Correct, and produced from
+// memory. For a token nobody has heard of the same machinery produces a domain
+// that may not exist, and nothing in the answer distinguishes the two cases.
+//
+// Two engines read that structured result. Mistral's `web_search` connector
+// writes Brave's results into a `tool.execution` entry. OpenRouter's `web`
+// plugin, forced onto Exa, searches before the model runs and returns Exa's
+// results as `url_citation` annotations; the model is allowed one token, so
+// its text cannot carry a link. Mistral's account went to a zero allowance on
+// 2026-10-04, and OpenRouter is the default since.
 //
 // So a search that returns no structured results is an ABSENCE here, never an
 // answer. There is no code path from generated text to a candidate.
@@ -260,6 +267,126 @@ export function mistralSearchResultsV1(body: unknown): B20PublicSearchResultV1[]
     seen.add(result.url);
     return true;
   });
+}
+
+/**
+ * Structured results out of one OpenRouter completion run with the `web`
+ * plugin on Exa.
+ *
+ * Reads ONLY `message.annotations`. Measured 2026-10-04 with a one-token
+ * answer: six annotations for `max_results: 6`, each spanning 0-0 of a text
+ * that had no room for a link. They are the engine's list, in the engine's
+ * order, not citations the model chose. The message text is ignored, as it is
+ * for Mistral.
+ */
+export function openRouterSearchResultsV1(body: unknown): B20PublicSearchResultV1[] {
+  if (typeof body !== 'object' || body === null) return [];
+  const choices = (body as { choices?: unknown }).choices;
+  if (!Array.isArray(choices) || choices.length === 0) return [];
+  const message = (choices[0] as { message?: unknown } | null)?.message;
+  if (typeof message !== 'object' || message === null) return [];
+  const annotations = (message as { annotations?: unknown }).annotations;
+  if (!Array.isArray(annotations)) return [];
+
+  const results: B20PublicSearchResultV1[] = [];
+  for (const entry of annotations) {
+    if (typeof entry !== 'object' || entry === null) continue;
+    const record = entry as { type?: unknown; url_citation?: unknown };
+    if (record.type !== 'url_citation') continue;
+    const citation = record.url_citation;
+    if (typeof citation !== 'object' || citation === null) continue;
+    const hit = citation as { url?: unknown; title?: unknown };
+    if (typeof hit.url !== 'string' || hit.url.length === 0) continue;
+    results.push({
+      url: hit.url,
+      title: typeof hit.title === 'string' && hit.title.length > 0 ? hit.title.slice(0, 200) : null,
+      rank: results.length + 1,
+      source: 'exa',
+    });
+  }
+
+  const seen = new Set<string>();
+  return results.filter((result) => {
+    if (seen.has(result.url)) return false;
+    seen.add(result.url);
+    return true;
+  });
+}
+
+export interface OpenRouterPublicSearchConfigV1 {
+  apiKey: string;
+  /** Any model will do: it answers one token and its text is ignored. */
+  model?: string;
+  /** Tried by OpenRouter when `model` cannot serve; null for none. */
+  fallbackModel?: string | null;
+  baseUrl?: string;
+  /** Gateway fields merged into the request, such as `provider.ignore`. */
+  body?: Record<string, unknown>;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+}
+
+/**
+ * The model barely matters here: Exa's search is $0.007, and the model only
+ * reads the results and answers one token. On 2.2k tokens of results that is
+ * $0.00005 with DeepSeek V4 Flash ($0.022/M in) and $0.0003 with Mistral
+ * Small 2603 ($0.15/M), OpenRouter's catalogue on 2026-10-04. The spare is
+ * Mistral Small through OpenRouter's own access, so the search does not go
+ * quiet the day the first leaves the catalogue.
+ */
+export const B20_OPENROUTER_SEARCH_MODEL_V1 = 'deepseek/deepseek-v4-flash';
+export const B20_OPENROUTER_SEARCH_FALLBACK_MODEL_V1 = 'mistralai/mistral-small-2603';
+
+/**
+ * The production search since 2026-10-04: one Exa search of six results,
+ * $0.007 plus about $0.00005 of model, 2.3 s when measured.
+ *
+ * The engine is named, never left to OpenRouter: with no engine the plugin
+ * may use the model's own search, which is how it answered from memory in
+ * August. The hosts that list every token are excluded in the search itself,
+ * so the six results are six chances at a project rather than six explorers.
+ * `data_collection: 'deny'` is NOT asked for: measured, it routed to an
+ * upstream that ignored the one-token limit and took 20.8 s, and the query
+ * carries only public chain data (an address and strings its deployer wrote).
+ */
+export function createOpenRouterPublicSearchV1(config: OpenRouterPublicSearchConfigV1): B20PublicSearchV1 {
+  const base = (config.baseUrl ?? 'https://openrouter.ai/api/v1').replace(/\/+$/, '');
+  const fetchImpl = config.fetchImpl ?? fetch;
+  const timeoutMs = config.timeoutMs ?? 30_000;
+
+  const model = config.model ?? B20_OPENROUTER_SEARCH_MODEL_V1;
+  const fallback = config.fallbackModel === undefined ? B20_OPENROUTER_SEARCH_FALLBACK_MODEL_V1 : config.fallbackModel;
+
+  return async (query: string): Promise<B20PublicSearchResultV1[]> => {
+    const response = await fetchImpl(`${base}/chat/completions`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${config.apiKey}`,
+      },
+      signal: AbortSignal.timeout(timeoutMs),
+      body: JSON.stringify({
+        ...config.body,
+        model,
+        ...(fallback && fallback !== model ? { models: [model, fallback] } : {}),
+        messages: [{ role: 'user', content: query }],
+        plugins: [
+          {
+            id: 'web',
+            engine: 'exa',
+            max_results: B20_SEARCH_CANDIDATE_LIMIT_V1,
+            exclude_domains: [...EXCLUDED_HOSTS_V1],
+          },
+        ],
+        max_tokens: 1,
+        reasoning: { enabled: false },
+      }),
+    });
+    // As for Mistral: a failed search is an absence, said to be about the
+    // search, never a fact about the token.
+    if (!response.ok) return [];
+    return openRouterSearchResultsV1(await response.json());
+  };
 }
 
 export interface MistralPublicSearchConfigV1 {

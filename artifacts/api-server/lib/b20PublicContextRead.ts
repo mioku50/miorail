@@ -10,11 +10,13 @@ import {
   type B20SuppliedDomainRefusalV1,
   createB20HttpFetchV1,
   createMistralPublicSearchV1,
+  createOpenRouterPublicSearchV1,
   probePublicContextV1,
   publicSearchQueryV1,
   widenedSearchQueryV1,
   type B20PublicSearchV1,
 } from '@mioagent/b20-projects';
+import { providerBodyV1 } from '@mioagent/llm';
 
 // ---------------------------------------------------------------------------
 // Unverified public context, on request.
@@ -52,33 +54,52 @@ export function clearB20PublicContextCacheV1(): void {
  *
  * A missing key is NOT an empty result: "nothing was found" and "this server
  * cannot look" are different sentences, and only the first is about the token.
+ *
+ * OpenRouter by default since 2026-10-04, when Mistral's account answered
+ * every request with a zero allowance. Mistral stays reachable by naming
+ * api.mistral.ai in `B20_PUBLIC_SEARCH_BASE_URL`. Any other host has no search
+ * this module knows how to read, so it is "cannot look", not a guess.
  */
 export function b20PublicContextSearchFromEnv(
   env: NodeJS.ProcessEnv = process.env,
 ): B20PublicSearchV1 | null {
-  const baseUrl = (env.B20_PUBLIC_SEARCH_BASE_URL || 'https://api.mistral.ai').trim();
+  const baseUrl = (env.B20_PUBLIC_SEARCH_BASE_URL || 'https://openrouter.ai/api/v1').trim();
   let host: string;
   try {
     host = new URL(baseUrl).host;
   } catch {
     return null;
   }
-  // A bearer credential belongs to one host. `LLM_API_KEY` is currently a
-  // TokenForge key and must never be used against Mistral merely because this
-  // older feature defaults to api.mistral.ai.
-  const apiKey = (
-    env.B20_PUBLIC_SEARCH_API_KEY ||
-    (host === 'api.mistral.ai' ? env.MISTRAL_API_KEY : '') ||
-    ''
-  ).trim();
+  // A bearer credential belongs to one host. `LLM_API_KEY` is never used here:
+  // it belongs to whatever the primary lane points at, which need not be the
+  // host this search calls.
+  const hostKey =
+    host === 'openrouter.ai'
+      ? env.OPENROUTER_API_KEY || env.OPENROUTER_KEY
+      : host === 'api.mistral.ai'
+        ? env.MISTRAL_API_KEY
+        : '';
+  const apiKey = (env.B20_PUBLIC_SEARCH_API_KEY || hostKey || '').trim();
   const model = (env.B20_PUBLIC_SEARCH_MODEL || '').trim();
   if (!apiKey) return null;
-  return createMistralPublicSearchV1({
-    apiKey,
-    baseUrl,
-    ...(model ? { model } : {}),
-    timeoutMs: 30_000,
-  });
+  if (host === 'openrouter.ai') {
+    return createOpenRouterPublicSearchV1({
+      apiKey,
+      baseUrl,
+      ...(model ? { model } : {}),
+      body: providerBodyV1(baseUrl, env),
+      timeoutMs: 30_000,
+    });
+  }
+  if (host === 'api.mistral.ai') {
+    return createMistralPublicSearchV1({
+      apiKey,
+      baseUrl,
+      ...(model ? { model } : {}),
+      timeoutMs: 30_000,
+    });
+  }
+  return null;
 }
 
 /** A caller named a domain Miorail will not fetch. Distinct from an empty

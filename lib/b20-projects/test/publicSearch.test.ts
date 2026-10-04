@@ -2,10 +2,16 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import {
+  B20_OPENROUTER_SEARCH_FALLBACK_MODEL_V1,
+  B20_OPENROUTER_SEARCH_MODEL_V1,
+  B20_SEARCH_CANDIDATE_LIMIT_V1,
   B20_SEARCH_TERM_LIMIT_V1,
+  EXCLUDED_HOSTS_V1,
   classifyCandidateV1,
   createMistralPublicSearchV1,
+  createOpenRouterPublicSearchV1,
   mistralSearchResultsV1,
+  openRouterSearchResultsV1,
   publicSearchQueryV1,
   searchTermV1,
   suppliedDomainCandidateV1,
@@ -115,6 +121,109 @@ describe('URLs come from the connector, never from the model', () => {
     // The query carries a token address and strings a deployer wrote.
     assert.equal((sent as { store?: unknown }).store, false);
     assert.deepEqual((sent as { tools?: unknown }).tools, [{ type: 'web_search' }]);
+  });
+});
+
+// The shape of a live OpenRouter answer on 2026-10-04: the `web` plugin on Exa,
+// a one-token reply, six annotations each spanning 0-0. The hosts and titles
+// are the measured ones; the paths are illustrative.
+const OPENROUTER_RESPONSE = {
+  id: 'gen-1',
+  object: 'chat.completion',
+  choices: [
+    {
+      index: 0,
+      finish_reason: 'length',
+      message: {
+        role: 'assistant',
+        // The model's one token. Even a longer answer is never read.
+        content: 'The official site is [invented](https://invented.example/)',
+        annotations: [
+          { type: 'url_citation', url_citation: { url: 'https://github.com/aerodrome-finance', title: 'Aerodrome Finance', start_index: 0, end_index: 0, content: '…' } },
+          { type: 'url_citation', url_citation: { url: 'https://github.com/aerodrome-finance/contracts', title: 'aerodrome-finance/contracts', start_index: 0, end_index: 0, content: '…' } },
+          { type: 'url_citation', url_citation: { url: 'https://aero.xyz/', title: 'AERO Economics', start_index: 0, end_index: 0, content: '…' } },
+          { type: 'url_citation', url_citation: { url: 'https://aero.xyz/', title: 'duplicate', start_index: 0, end_index: 0 } },
+          { type: 'file', file: { url: 'https://not-a-citation.example/' } },
+          { type: 'url_citation', url_citation: { url: '', title: 'empty' } },
+          { type: 'url_citation', url_citation: { url: 'https://raw.githubusercontent.com/x/y/README.md', title: '' } },
+        ],
+      },
+    },
+  ],
+  usage: { prompt_tokens: 2187, completion_tokens: 1, cost: 0.0070502688 },
+};
+
+describe('OpenRouter: URLs come from the engine\u2019s annotations, never from the text', () => {
+  test('the annotations are read in the engine\u2019s order, and the message text is not', () => {
+    const results = openRouterSearchResultsV1(OPENROUTER_RESPONSE);
+    assert.deepEqual(
+      results.map((result) => [result.url, result.title, result.rank, result.source]),
+      [
+        ['https://github.com/aerodrome-finance', 'Aerodrome Finance', 1, 'exa'],
+        ['https://github.com/aerodrome-finance/contracts', 'aerodrome-finance/contracts', 2, 'exa'],
+        ['https://aero.xyz/', 'AERO Economics', 3, 'exa'],
+        // Its place in the engine's list: the duplicate above still held one.
+        ['https://raw.githubusercontent.com/x/y/README.md', null, 5, 'exa'],
+      ],
+    );
+    assert.ok(!results.some((result) => result.url.includes('invented')), 'nothing from the prose');
+  });
+
+  test('an answer with no annotations is an absence', () => {
+    const noSearch = { choices: [{ message: { role: 'assistant', content: 'aerodrome.finance' } }] };
+    assert.deepEqual(openRouterSearchResultsV1(noSearch), []);
+    assert.deepEqual(openRouterSearchResultsV1({ choices: [] }), []);
+    assert.deepEqual(openRouterSearchResultsV1({}), []);
+    assert.deepEqual(openRouterSearchResultsV1(null), []);
+  });
+
+  test('its results become candidates the same way Brave\u2019s did', () => {
+    const candidates = candidatesFromSearchV1(openRouterSearchResultsV1(OPENROUTER_RESPONSE));
+    assert.ok(candidates.some((candidate) => candidate.kind === 'repository'));
+    assert.ok(candidates.some((candidate) => candidate.url === 'https://aero.xyz/'));
+  });
+
+  test('one Exa search, explorers excluded in the search, one token of model, a spare model', async () => {
+    let sentUrl = '';
+    let sent: Record<string, unknown> = {};
+    let auth: string | null = null;
+    const search = createOpenRouterPublicSearchV1({
+      apiKey: 'or-test',
+      body: { provider: { ignore: ['OpenInference'] } },
+      fetchImpl: (async (url: string, init: RequestInit) => {
+        sentUrl = url;
+        sent = JSON.parse(String(init.body)) as Record<string, unknown>;
+        auth = new Headers(init.headers).get('authorization');
+        return new Response(JSON.stringify(OPENROUTER_RESPONSE), { status: 200 });
+      }) as unknown as typeof fetch,
+    });
+    const results = await search('0xb2 AERO official website github x.com');
+    assert.equal(results.length, 4);
+    assert.equal(sentUrl, 'https://openrouter.ai/api/v1/chat/completions');
+    assert.equal(auth, 'Bearer or-test');
+    assert.deepEqual(sent.plugins, [
+      { id: 'web', engine: 'exa', max_results: B20_SEARCH_CANDIDATE_LIMIT_V1, exclude_domains: [...EXCLUDED_HOSTS_V1] },
+    ]);
+    assert.equal(sent.max_tokens, 1);
+    assert.deepEqual(sent.reasoning, { enabled: false });
+    assert.equal(sent.model, B20_OPENROUTER_SEARCH_MODEL_V1);
+    assert.deepEqual(sent.models, [B20_OPENROUTER_SEARCH_MODEL_V1, B20_OPENROUTER_SEARCH_FALLBACK_MODEL_V1]);
+    assert.deepEqual(sent.provider, { ignore: ['OpenInference'] });
+    assert.deepEqual(sent.messages, [{ role: 'user', content: '0xb2 AERO official website github x.com' }]);
+  });
+
+  test('no spare when told so, and a failed search is an absence', async () => {
+    let sent: Record<string, unknown> = {};
+    const quiet = createOpenRouterPublicSearchV1({
+      apiKey: 'or-test',
+      fallbackModel: null,
+      fetchImpl: (async (_url: string, init: RequestInit) => {
+        sent = JSON.parse(String(init.body)) as Record<string, unknown>;
+        return new Response('{"error":{"message":"no"}}', { status: 402 });
+      }) as unknown as typeof fetch,
+    });
+    assert.deepEqual(await quiet('q'), []);
+    assert.equal('models' in sent, false);
   });
 });
 
