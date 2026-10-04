@@ -364,6 +364,11 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
     assert.match(mini, /const MINIAPP_DRAWER_SECTIONS_V1 = \[[^\]]*"radar"/);
     assert.match(mini, /return "market";/, 'the stored-section fallback must be Stocks');
+    // The server renders Stocks, so the first client render must too: a stored
+    // section read as the initial state was React error #418 on every resume
+    // off Stocks. It is restored after the first render.
+    assert.match(mini, /useState<ConsoleSectionV1>\("market"\)/);
+    assert.doesNotMatch(mini, /useState<ConsoleSectionV1>\(readStoredSectionV1\)/);
     assert.match(mini, /MarketRealityScreen model=\{stocks\.model\}/);
     assert.match(mini, /MarketRealityRadarScreen model=\{radarConsole\.model\}/);
   });

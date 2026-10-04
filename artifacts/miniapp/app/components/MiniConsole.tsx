@@ -267,8 +267,22 @@ export function MiniConsole() {
   // Persisted in sessionStorage rather than a URL: the miniapp is one page, and
   // a Mini App host can remount it on resume. What is stored is the section
   // name and nothing else — no address, no balance, no goal.
-  const [section, setSection] = useState<ConsoleSectionV1>(readStoredSectionV1);
+  //
+  // Restored after the first render, not as the initial state. The server
+  // renders Stocks, and a stored section read during hydration made the first
+  // client render differ from that HTML: React error #418 on every resume to
+  // any other section (walked on production 2026-10-04).
+  const [section, setSection] = useState<ConsoleSectionV1>("market");
+  const sectionRestored = useRef(false);
   useEffect(() => {
+    const stored = readStoredSectionV1();
+    sectionRestored.current = true;
+    if (stored !== "market") setSection(stored);
+  }, []);
+  useEffect(() => {
+    // Not before the restore has read what is stored, or the first render's
+    // Stocks would be written over it.
+    if (!sectionRestored.current) return;
     try {
       globalThis.sessionStorage?.setItem(SECTION_STORAGE_KEY_V1, section);
     } catch {
