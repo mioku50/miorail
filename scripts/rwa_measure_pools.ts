@@ -31,18 +31,24 @@ import {
   encodeNoArgsV1,
 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
+import { createMarketTailSourceV1 } from '@mioagent/market-tail';
 import {
   createDatabaseMarketPoolReadingRepository,
   createDatabaseMarketTailRepository,
+  createDatabasePoolYieldReadingRepository,
   createDatabaseUnderlyingAssetRepository,
 } from '@mioagent/route-storage';
 import {
+  CL_SWAP_TOPIC_V1,
   POOL_SELECTORS_V1,
   measurePoolsV1,
   poolVenueFromIdentityV1,
   readFactoryIdentityV1,
   readPoolShapesV1,
+  readPoolYieldStateV1,
+  sumPoolSwapsV1,
 } from '@mioagent/rwa-issuer';
+import { POOL_YIELD_USDC_BASE_V1 } from '@mioagent/rwa-market-reality/pool-yield';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
@@ -260,6 +266,137 @@ async function main(): Promise<void> {
   console.log(
     `measured ${tokensMeasured} token(s), wrote ${rowsWritten} reading(s); ` +
       `${notPools} address(es) answered no factory, ${unread} balance(s) unread`,
+  );
+
+  await measurePoolYieldsV1({ reader, readings, tokens: [...poolsByToken.keys()], anchor, blockNumber });
+}
+
+/** Blocks per `eth_getLogs`: what mainnet.base.org serves in one answer. */
+const YIELD_LOG_WINDOW_V1 = 10_000;
+/** How far back a pool with no reading yet starts: six windows, about 33
+ * hours at today's 2 s blocks, which is past the one day a fee figure needs.
+ * Later passes read forward from their own last reading. */
+const YIELD_FIRST_WINDOWS_V1 = 6;
+/** The most windows one pass reads for one pool; a longer gap is skipped and
+ * the fee figure says how many days it covers. */
+const YIELD_MAX_WINDOWS_V1 = 12;
+/** The step's share of the unit's 20 minutes. */
+const YIELD_BUDGET_MS_V1 = 8 * 60_000;
+/** A yield looks back a week; a month is kept. */
+const YIELD_KEEP_DAYS_V1 = 35;
+
+/**
+ * What the deepest Aerodrome pool of each stock pays.
+ *
+ * For each stock whose deepest Aerodrome concentrated pool is paired with
+ * USDC: the pool and its gauge at the anchor block, AERO's Chainlink price at
+ * the same block, and the pool's own `Swap` logs since its last reading. The
+ * logs go through the endpoint the market tail reads (`BASE_MAINNET_RPC_URL`),
+ * because the pools endpoint serves ten blocks a call. A reading is stored
+ * whole or not at all; logs that were not read leave its swaps null, which is
+ * "not read" and never "no swaps".
+ */
+async function measurePoolYieldsV1(input: {
+  reader: ReturnType<typeof createB20ReaderV1>;
+  readings: ReturnType<typeof createDatabaseMarketPoolReadingRepository>;
+  tokens: readonly string[];
+  anchor: { blockTag: string };
+  blockNumber: number;
+}): Promise<void> {
+  const started = Date.now();
+  const yields = createDatabasePoolYieldReadingRepository(client);
+  const logsUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
+  const logs = logsUrl ? createMarketTailSourceV1({ rpcUrl: logsUrl }) : null;
+  const header = input.reader.readBlockHeader ? await input.reader.readBlockHeader(input.anchor.blockTag) : null;
+  let blockAt = header?.ok && header.value ? new Date(header.value.timestamp * 1_000).toISOString() : null;
+  if (!blockAt && logs) {
+    const times = await logs.blockTimes([input.blockNumber]);
+    blockAt = times.ok ? (times.value.get(input.blockNumber) ?? null) : null;
+  }
+  if (!blockAt) {
+    console.log('  pool yields: the anchor block could not be dated — nothing stored');
+    return;
+  }
+
+  let recorded = 0;
+  let withSwaps = 0;
+  let unread = 0;
+  let skipped = 0;
+  for (const token of input.tokens) {
+    if (Date.now() - started > YIELD_BUDGET_MS_V1) {
+      skipped += 1;
+      continue;
+    }
+    // Deepest first by the measured balance: the first Aerodrome CL row
+    // against USDC is the stock's deepest such pool.
+    const stored = await input.readings.readingsForToken({ chainId: CHAIN_ID_V1, tokenAddress: token, limit: 10 });
+    const deepest = stored.find((row) => row.venueId === 'aerodrome_cl' && row.pairedTokenAddress === POOL_YIELD_USDC_BASE_V1);
+    if (!deepest) continue;
+    const pool = deepest.poolAddress;
+
+    const state = await readPoolYieldStateV1({ reader: input.reader, poolAddress: pool, blockTag: input.anchor.blockTag });
+    if (!state.ok) {
+      unread += 1;
+      console.log(`  ${token}  yield unread (${state.reason})`);
+      continue;
+    }
+
+    let swaps: { fromBlock: number; fromAt: string; count: number; amount0InAtomic: string; amount1InAtomic: string } | null =
+      null;
+    if (logs) {
+      const previous = await yields.latestWithSwaps({ chainId: CHAIN_ID_V1, poolAddress: pool });
+      const earliest = input.blockNumber - YIELD_MAX_WINDOWS_V1 * YIELD_LOG_WINDOW_V1;
+      const fromBlock = previous
+        ? Math.max(previous.blockNumber, earliest)
+        : input.blockNumber - YIELD_FIRST_WINDOWS_V1 * YIELD_LOG_WINDOW_V1;
+      if (fromBlock < input.blockNumber) {
+        const collected: { address?: unknown; topics?: unknown; data?: unknown }[] = [];
+        let complete = true;
+        for (let start = fromBlock + 1; start <= input.blockNumber; start += YIELD_LOG_WINDOW_V1) {
+          const end = Math.min(start + YIELD_LOG_WINDOW_V1 - 1, input.blockNumber);
+          const read = await logs.eventLogs({ tokens: [pool], topics: [CL_SWAP_TOPIC_V1], fromBlock: start, toBlock: end });
+          if (!read.ok) {
+            complete = false;
+            break;
+          }
+          collected.push(...(read.value as { address?: unknown; topics?: unknown; data?: unknown }[]));
+        }
+        const sum = complete ? sumPoolSwapsV1(pool, collected) : null;
+        const fromAt =
+          previous && previous.blockNumber === fromBlock
+            ? previous.blockAt
+            : await logs.blockTimes([fromBlock]).then((times) => (times.ok ? (times.value.get(fromBlock) ?? null) : null));
+        if (sum && fromAt) {
+          swaps = {
+            fromBlock,
+            fromAt,
+            count: sum.count,
+            amount0InAtomic: sum.amount0In.toString(),
+            amount1InAtomic: sum.amount1In.toString(),
+          };
+        }
+      }
+    }
+
+    const outcome = await yields.record({
+      chainId: CHAIN_ID_V1,
+      tokenAddress: token,
+      blockNumber: input.blockNumber,
+      blockAt,
+      readAt: new Date().toISOString(),
+      ...state.state,
+      swaps,
+    });
+    if (outcome === 'recorded') recorded += 1;
+    if (swaps) withSwaps += 1;
+    console.log(
+      `  ${token}  yield ${pool}  ${swaps ? `${swaps.count} swap(s) since block ${swaps.fromBlock}` : 'swaps not read'}`,
+    );
+  }
+  const pruned = await yields.prune({ before: new Date(Date.now() - YIELD_KEEP_DAYS_V1 * 86_400_000).toISOString() });
+  console.log(
+    `pool yields: ${recorded} reading(s) stored, ${withSwaps} with swaps, ${unread} unread, ` +
+      `${skipped} left for the next pass, ${pruned} old reading(s) removed`,
   );
 }
 

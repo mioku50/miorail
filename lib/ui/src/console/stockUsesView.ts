@@ -1,5 +1,6 @@
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 import { venueAnnouncementReadingsV1 } from '@mioagent/rwa-issuer/venueAnnouncements';
+import type { PoolYieldV1 } from '@mioagent/rwa-market-reality/pool-yield';
 
 import { pairedTokenLabelV1 } from './marketRealityView';
 
@@ -23,7 +24,7 @@ import { pairedTokenLabelV1 } from './marketRealityView';
 // ---------------------------------------------------------------------------
 
 export interface StockUseRowV1 {
-  id: 'pool' | 'borrow' | 'earn' | 'announced';
+  id: 'pool' | 'yield' | 'borrow' | 'earn' | 'announced';
   label: string;
   text: string;
   href: string | null;
@@ -60,6 +61,49 @@ function decimalV1(atomic: string, decimals: number): number {
   return Number(atomic) / 10 ** decimals;
 }
 
+/** `53%`, `4.6%`, `0.42%`: a yearly rate at the precision a reader uses. */
+function percentV1(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return '—';
+  if (value >= 10) return `${Math.round(value)}%`;
+  if (value >= 1) return `${value.toFixed(1)}%`;
+  if (value >= 0.01) return `${value.toFixed(2)}%`;
+  return 'under 0.01%';
+}
+
+/**
+ * What the pool pays, as two alternatives and never their sum: a position
+ * staked in the gauge earns AERO and gives its fees to voters, and one that
+ * is not staked earns the fees and no AERO. Said only for the pool the row
+ * above names, so the two lines never describe two pools.
+ */
+function poolYieldRowV1(yieldView: PoolYieldV1): StockUseRowV1 | null {
+  const parts: string[] = [];
+  if (yieldView.aero) {
+    parts.push(
+      yieldView.aero.aprPercent !== null
+        ? `Staked: about ${percentV1(yieldView.aero.aprPercent)} a year in AERO (this week's rate)`
+        : `Staked: a share of ${Math.round(yieldView.aero.perWeek).toLocaleString('en-US')} AERO this week`,
+    );
+  }
+  if (yieldView.fees) {
+    const days = yieldView.fees.days >= 2 ? `${Math.round(yieldView.fees.days)} days` : `${yieldView.fees.days} days`;
+    parts.push(`Not staked: about ${percentV1(yieldView.fees.aprPercent)} a year in fees (last ${days})`);
+  }
+  if (parts.length === 0) return null;
+  const tail = [
+    // A rate is an average over the pool's money; an amount is not a rate.
+    (yieldView.aero?.aprPercent ?? null) !== null || yieldView.fees ? 'per dollar in the pool, on average' : null,
+    // Staking trades the fees for the AERO, so with a gauge it is either.
+    yieldView.aero ? 'a position earns one or the other' : null,
+  ].filter((part): part is string => part !== null);
+  return {
+    id: 'yield',
+    label: 'Pays',
+    text: `${parts.join(' · ')}${tail.length > 0 ? ` · ${tail.join('; ')}` : ''}`,
+    href: null,
+  };
+}
+
 function ageV1(at: string, now: Date): string {
   const minutes = Math.max(0, Math.round((now.getTime() - Date.parse(at)) / 60_000));
   return minutes < 1 ? 'just now' : minutes < 60 ? `${minutes} min ago` : `${Math.round(minutes / 60)} h ago`;
@@ -70,6 +114,8 @@ export function stockUsesViewV1(input: {
   tokenSymbol: string;
   /** The stock's price on Base, for the pool's size in dollars. */
   priceUsd: number | null;
+  /** What the stock's deepest Aerodrome pool pays, when measured. */
+  poolYield?: PoolYieldV1 | null;
   now: Date;
 }): StockUsesViewV1 | null {
   const { use, tokenSymbol } = input;
@@ -99,6 +145,8 @@ export function stockUsesViewV1(input: {
       text: `${pool.venueName} · ${tokenSymbol}/${paired ?? 'another token'}${size !== null ? ` · about ${compactUsdV1(size)} in it` : ''}`,
       href: pool.venuePageUrl,
     });
+    const paid = input.poolYield && input.poolYield.poolAddress === pool.poolAddress ? poolYieldRowV1(input.poolYield) : null;
+    if (paid) rows.push(paid);
   }
 
   // A Morpho market Morpho itself lists, where this token is the collateral.

@@ -3,7 +3,7 @@ import test, { beforeEach, describe } from 'node:test';
 
 import { rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpPublicError } from './tools.js';
-import { miorailGetUseAccessV1, resetUseAccessCacheV1 } from './useAccessTools.js';
+import { miorailGetUseAccessV1, resetUseAccessCacheV1, useAccessToolRuntimeV1 } from './useAccessTools.js';
 
 const NVDA = '0xb20000000000000000000078ee7ce2fe4908108c';
 const STRANGER = '0x1111111111111111111111111111111111111111';
@@ -20,6 +20,8 @@ let bindings: Record<string, boolean> = {};
 let venueFails = false;
 let poolRowsRead = 0;
 let storedPools: unknown[] = [];
+let storedYields: unknown[] = [];
+let yieldFails = false;
 
 const restore = {
   underlyings: rwaMarketRealityRuntime.underlyings,
@@ -28,6 +30,7 @@ const restore = {
   migrationAvailable: rwaMarketRealityRuntime.migrationAvailable,
   poolReadings: rwaMarketRealityRuntime.poolReadings,
 };
+const restoreYield = { ...useAccessToolRuntimeV1 };
 
 beforeEach(() => {
   resetUseAccessCacheV1();
@@ -46,6 +49,14 @@ beforeEach(() => {
       return storedPools;
     },
   })) as typeof rwaMarketRealityRuntime.poolReadings;
+
+  // The pool yield is a DB read too, stubbed for the same reason.
+  storedYields = [];
+  yieldFails = false;
+  useAccessToolRuntimeV1.poolYieldReadings = (async () => {
+    if (yieldFails) throw new Error('relation "pool_yield_readings" does not exist');
+    return storedYields;
+  }) as typeof useAccessToolRuntimeV1.poolYieldReadings;
 
   rwaMarketRealityRuntime.migrationAvailable = async () => true;
   rwaMarketRealityRuntime.underlyings = (() => ({
@@ -94,6 +105,7 @@ beforeEach(() => {
 
 test.after(() => {
   Object.assign(rwaMarketRealityRuntime, restore);
+  Object.assign(useAccessToolRuntimeV1, restoreYield);
 });
 
 describe('an assistant asking what Base said is answered from both sides', () => {
@@ -164,6 +176,57 @@ describe('an assistant asking about LP is answered from the pools', () => {
     if (out.pools.state !== 'not_measured') return;
     assert.match(out.pools.reason, /Not checked is not the same as none/);
     assert.match(out.miorailSummary.summary, /did not check the pools/);
+  });
+});
+
+describe('an assistant asking what a pool pays gets two alternatives, never a sum', () => {
+  const YIELD_READING = {
+    chainId: 8453,
+    poolAddress: '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9',
+    tokenAddress: NVDA,
+    gaugeAddress: '0x30d1e5af5ce39863e6f69a1f73ffb0e1ac9771a8',
+    blockNumber: 52168748,
+    blockAt: '2026-10-04T15:14:03.000Z',
+    readAt: '2026-10-04T15:14:05.000Z',
+    token0Address: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+    token1Address: NVDA,
+    decimals0: 6,
+    decimals1: 8,
+    balance0Atomic: '1595248000000',
+    balance1Atomic: '374000000000',
+    sqrtPriceX96: '51666644440429115138812345925',
+    liquidity: '222002453296139',
+    stakedLiquidity: '216049702351400',
+    feePips: 500,
+    unstakedFeePips: 100000,
+    rewardRate: '46982049643163578',
+    // Far enough ahead that the period is live whenever this runs.
+    periodFinish: 4102444800,
+    aeroUsd: 0.86524193,
+    aeroUsdUpdatedAt: '2026-10-04T14:50:57.000Z',
+    swaps: null,
+  };
+
+  test('the deepest Aerodrome pool’s pay reaches the agent, with the sentence to repeat', async () => {
+    storedYields = [YIELD_READING];
+    const out = await miorailGetUseAccessV1({ address: NVDA });
+    assert.ok(out.poolYield);
+    assert.equal(out.poolYield!.poolAddress, '0x853f5f1b92b16714fe6cda67caad0856b83c7ab9');
+    assert.ok((out.poolYield!.staked?.aprPercent ?? 0) > 50);
+    // No swaps read: no fee figure is made up.
+    assert.equal(out.poolYield!.notStaked, null);
+    assert.match(out.poolYield!.summary, /earns AERO instead of its fees/);
+    assert.match(out.poolYield!.summary, /never a promise/);
+  });
+
+  test('nothing measured is null, and a failed read leaves the rest of the answer whole', async () => {
+    storedYields = [];
+    assert.equal((await miorailGetUseAccessV1({ address: NVDA })).poolYield, null);
+    resetUseAccessCacheV1();
+    yieldFails = true;
+    const out = await miorailGetUseAccessV1({ address: NVDA });
+    assert.equal(out.poolYield, null);
+    assert.equal(out.walletBound, false);
   });
 });
 

@@ -20,6 +20,7 @@ import { readOfficialAssetDossierV1, rwaDossierRuntime } from './rwaDossier.js';
 import { databaseWeekendRunsV1, readWeekendMarketV1 } from '../lib/weekendMarketRead.js';
 import { databaseDividendReadDepsV1, readDividendCalendarV1 } from '../lib/dividendRead.js';
 import { createCoinbaseStockMetaCacheV1 } from '../lib/coinbaseStockMeta.js';
+import { databasePoolYieldReadingsV1, readPoolYieldV1 } from '../lib/poolYieldRead.js';
 import {
   databaseStockChartPricesV1,
   databaseStockPricesV1,
@@ -128,6 +129,8 @@ export const publicStocksCachesV1 = {
   quotes: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 4 }),
   // One week per stock, from the same hourly ladder.
   chart: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 64 }),
+  // What a stock's deepest Aerodrome pool pays; the worker reads every two hours.
+  poolYield: createPublicReadCacheV1({ ttlMs: 5 * 60_000, max: 64 }),
 };
 
 /** A testing seam; production never replaces any of it. */
@@ -176,6 +179,8 @@ export const publicStocksRuntime = {
     }),
   readChart: (now: Date, tokenAddress: string) =>
     readStockChartV1(now, tokenAddress, { prices: databaseStockChartPricesV1 }),
+  readPoolYield: (now: Date, tokenAddress: string) =>
+    readPoolYieldV1(now, tokenAddress, { readings: databasePoolYieldReadingsV1 }),
   now: () => new Date(),
 };
 
@@ -334,6 +339,44 @@ publicStocksRouter.get('/chart/:tokenAddress', async (req: Request, res: Respons
     );
   } catch (error) {
     failed(res, 'chart', 'stock_chart_failed', error);
+  }
+});
+
+/**
+ * What a Coinbase stock's deepest Aerodrome pool pays, per dollar in it: AERO
+ * to staked positions at this week's rate, and fees to positions that are not
+ * staked over the week measured. Two alternatives, never a sum. `yield: null`
+ * is "not measured", never "pays nothing".
+ */
+publicStocksRouter.get('/pool-yield/:tokenAddress', async (req: Request, res: Response) => {
+  const tokenAddress = String(req.params.tokenAddress ?? '').toLowerCase();
+  if (!/^0x[0-9a-f]{40}$/.test(tokenAddress)) {
+    refuse(res, 400, 'exact_address_required');
+    return;
+  }
+  try {
+    if (!(await publicStocksRuntime.storageAvailable())) {
+      refuse(res, 503, 'market_reality_storage_unavailable');
+      return;
+    }
+    if (!(await publicStocksRuntime.coinbaseUnderlying(tokenAddress))) {
+      refuse(
+        res,
+        404,
+        'stock_not_listed',
+        'Miorail lists no Coinbase stock at that exact Base address. This is a statement about Miorail’s list, never about the token.',
+      );
+      return;
+    }
+    const slot = weekendSlotStartV1(publicStocksRuntime.now());
+    sendPublic(
+      res,
+      await publicStocksCachesV1.poolYield.read(`pool-yield|${tokenAddress}|${slot.getTime()}`, () =>
+        publicStocksRuntime.readPoolYield(slot, tokenAddress),
+      ),
+    );
+  } catch (error) {
+    failed(res, 'pool_yield', 'pool_yield_failed', error);
   }
 });
 

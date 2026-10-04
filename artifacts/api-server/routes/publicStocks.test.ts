@@ -355,6 +355,44 @@ test('a failed chart read is a stable code and is not cached', async (t) => {
   assert.equal(reads, 2);
 });
 
+test('a pool yield is one read per stock per slot, only for a Coinbase stock, and unmeasured reads as null', async (t) => {
+  const reads: string[] = [];
+  stubV1(t, {
+    coinbaseUnderlying: async (tokenAddress: string) => (tokenAddress === NVDAC ? { underlyingKey: NVDA } : null),
+    readPoolYield: async (_now: Date, tokenAddress: string) => {
+      reads.push(tokenAddress);
+      return { schemaVersion: 'pool-yield-response/v1' as const, tokenAddress, yield: null };
+    },
+  });
+  const app = appV1();
+  const first = await request(app).get(`/api/public/stocks/pool-yield/${NVDAC}`).expect(200);
+  await request(app).get(`/api/public/stocks/pool-yield/${NVDAC.toUpperCase().replace('0X', '0x')}`).expect(200);
+  assert.deepEqual(reads, [NVDAC]);
+  // Not measured is said as null, never as a zero yield.
+  assert.deepEqual(first.body, { schemaVersion: 'pool-yield-response/v1', tokenAddress: NVDAC, yield: null });
+  assert.equal(first.headers['x-robots-tag'], 'noindex');
+  const notListed = await request(app).get(`/api/public/stocks/pool-yield/0x${'1'.repeat(40)}`).expect(404);
+  assert.equal(notListed.body.code, 'stock_not_listed');
+  await request(app).get('/api/public/stocks/pool-yield/NVDAc').expect(400);
+  assert.deepEqual(reads, [NVDAC]);
+});
+
+test('a failed pool yield read is a stable code and is not cached', async (t) => {
+  let reads = 0;
+  stubV1(t, {
+    coinbaseUnderlying: async () => ({ underlyingKey: NVDA }),
+    readPoolYield: async () => {
+      reads += 1;
+      throw new Error('relation "pool_yield_readings" does not exist at postgres://user:secret@host/db');
+    },
+  });
+  const app = appV1();
+  const failed = await request(app).get(`/api/public/stocks/pool-yield/${NVDAC}`).expect(500);
+  assert.deepEqual(failed.body, { error: 'pool_yield_failed', code: 'pool_yield_failed' });
+  await request(app).get(`/api/public/stocks/pool-yield/${NVDAC}`).expect(500);
+  assert.equal(reads, 2);
+});
+
 test('an icon is served from our origin as a PNG, and only for an exact address', async (t) => {
   const { publicStockIconsRouter, publicStockIconsRuntime } = await import('./publicStocks.js');
   const saved = { ...publicStockIconsRuntime };

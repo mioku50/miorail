@@ -19,6 +19,7 @@ import {
   useMyStocksToday,
   useMeasureMyStockCashOut,
   useWeekendMarket,
+  usePoolYield,
   useStockChart,
   useStockQuotes,
   useReopenGame,
@@ -885,15 +886,18 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       (row) => row.issuerId === 'coinbase' && row.supply.state === 'positive_supply',
     )?.tokenAddress ?? null;
   const usesRead = useRwaUseAccess(primaryAddress, { enabled: enabled && Boolean(primaryAddress), access: 'public' });
+  // What its deepest Aerodrome pool pays: the same token, the same public door.
+  const yieldRead = usePoolYield(primaryAddress, { enabled: enabled && Boolean(primaryAddress) });
   const uses = useMemo(
     () =>
       stockUsesViewV1({
         use: usesRead.data ?? null,
         tokenSymbol: selectedQuote?.tokenSymbol ?? 'this token',
         priceUsd: selectedQuote?.priceUsd ?? null,
+        poolYield: yieldRead.data?.yield ?? null,
         now: new Date(),
       }),
-    [usesRead.data, selectedQuote],
+    [usesRead.data, selectedQuote, yieldRead.data],
   );
 
   // The week on the card: the same Coinbase token, hourly, from the ladder.

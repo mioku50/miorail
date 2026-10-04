@@ -363,6 +363,42 @@ export const UseAccessAgentOutputV1Schema = z
      * supplied no ecosystem evidence at all.
      */
     ecosystem: EcosystemBlockSchemaV1.nullable(),
+    /**
+     * What the deepest Aerodrome pool pays, per dollar in it: AERO to a
+     * position staked in its gauge at this week's rate, fees to a position
+     * not staked over the days measured. Two alternatives, never a sum: a
+     * staked position gives its fees to voters. Null when not measured or not
+     * readable right now, never "pays nothing". Optional so a server that
+     * predates the field still validates.
+     */
+    poolYield: z
+      .object({
+        poolAddress: z.string().regex(/^0x[0-9a-f]{40}$/),
+        poolUsd: z.number().nonnegative().finite(),
+        stakedSharePercent: z.number().min(0).max(100).nullable(),
+        staked: z
+          .object({
+            aeroPerWeek: z.number().nonnegative().finite(),
+            aeroPriceUsd: z.number().positive().finite(),
+            aprPercent: z.number().nonnegative().finite().nullable(),
+            periodEndsAt: z.string().min(1),
+          })
+          .strict()
+          .nullable(),
+        notStaked: z
+          .object({
+            feesAprPercent: z.number().nonnegative().finite(),
+            days: z.number().nonnegative().finite(),
+            unstakedFeePercent: z.number().min(0).max(100),
+          })
+          .strict()
+          .nullable(),
+        readAt: z.string().min(1),
+        summary: z.string().min(1),
+      })
+      .strict()
+      .nullable()
+      .optional(),
   })
   .strict();
 export type UseAccessAgentOutputV1 = z.infer<typeof UseAccessAgentOutputV1Schema>;
@@ -606,6 +642,8 @@ export function useAccessForAgentV1(input: {
   displaySymbol: string | null;
   issuerId: ReviewedIssuerIdV1 | null;
   announcements?: readonly ReviewedVenueAnnouncementV1[];
+  /** Read beside the assembly by the caller; absent leaves the field out. */
+  poolYield?: UseAccessAgentOutputV1['poolYield'];
 }): UseAccessAgentOutputV1 {
   const { use } = input;
   const readings = venueAnnouncementReadingsV1({
@@ -713,5 +751,6 @@ export function useAccessForAgentV1(input: {
     pools,
     announcements,
     ecosystem,
+    ...(input.poolYield !== undefined ? { poolYield: input.poolYield } : {}),
   });
 }

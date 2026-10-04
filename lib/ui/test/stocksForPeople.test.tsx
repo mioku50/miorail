@@ -212,6 +212,46 @@ describe('what else you can do with the token', () => {
     assert.equal(view.note, "The venues' own figures, read 2 min ago. Rates move. Nothing here is advice.");
   });
 
+  test('what the pool pays sits under it, as two alternatives and never their sum', () => {
+    const poolYield = {
+      schemaVersion: 'pool-yield/v1' as const,
+      tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      poolAddress: `0x${'6'.repeat(40)}`,
+      stockPriceUsd: 235.14,
+      poolUsd: 2_474_672,
+      stakedSharePercent: 97.31,
+      aero: { perWeek: 28_414.7, perWeekUsd: 24_585, aprPercent: 53.2, priceUsd: 0.865, priceAt: '2026-10-04T14:50:57.000Z', periodEndsAt: '2026-10-08T00:00:00.000Z' },
+      fees: { days: 1.4, feesUsd: 96.5, swaps: 812, aprPercent: 0.92, unstakedFeePercent: 10 },
+      readAt: '2026-10-04T15:14:05.000Z',
+      blockNumber: 52168748,
+    };
+    const view = stockUsesViewV1({ use: use(), tokenSymbol: 'NVDAc', priceUsd: 234.31, poolYield, now: NOW })!;
+    assert.deepEqual(view.rows.slice(0, 2).map((row) => [row.id, row.label]), [['pool', 'Pool'], ['yield', 'Pays']]);
+    assert.equal(
+      view.rows[1]!.text,
+      "Staked: about 53% a year in AERO (this week's rate) · Not staked: about 0.92% a year in fees (last 1.4 days) · per dollar in the pool, on average; a position earns one or the other",
+    );
+    assert.equal(view.rows[1]!.href, null);
+    // A yield measured for another pool is never put under this one.
+    const elsewhere = stockUsesViewV1({ use: use(), tokenSymbol: 'NVDAc', priceUsd: 234.31, poolYield: { ...poolYield, poolAddress: `0x${'7'.repeat(40)}` }, now: NOW })!;
+    assert.ok(!elsewhere.rows.some((row) => row.id === 'yield'));
+    // Not measured: no line, never a zero.
+    const unmeasured = stockUsesViewV1({ use: use(), tokenSymbol: 'NVDAc', priceUsd: 234.31, poolYield: null, now: NOW })!;
+    assert.ok(!unmeasured.rows.some((row) => row.id === 'yield'));
+    // Almost nothing staked: the AERO is said as an amount, not a rate.
+    const thin = stockUsesViewV1({
+      use: use(),
+      tokenSymbol: 'NVDAc',
+      priceUsd: 234.31,
+      poolYield: { ...poolYield, aero: { ...poolYield.aero, aprPercent: null }, fees: null },
+      now: NOW,
+    })!;
+    assert.equal(thin.rows[1]!.text, 'Staked: a share of 28,415 AERO this week · a position earns one or the other');
+    // No gauge: fees alone, and nothing to choose between.
+    const feesOnly = stockUsesViewV1({ use: use(), tokenSymbol: 'NVDAc', priceUsd: 234.31, poolYield: { ...poolYield, aero: null }, now: NOW })!;
+    assert.equal(feesOnly.rows[1]!.text, 'Not staked: about 0.92% a year in fees (last 1.4 days) · per dollar in the pool, on average');
+  });
+
   test('a market anybody deployed never reaches the card, and no price means no dollar size', () => {
     const uncurated = use();
     const morpho = uncurated.defi.venues[0]!;

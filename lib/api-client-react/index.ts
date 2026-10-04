@@ -16,6 +16,7 @@ import {
 } from '@mioagent/rwa-market-reality/reopen-game';
 import { StockQuotesResponseV1Schema } from '@mioagent/rwa-market-reality/stock-quotes';
 import { StockChartResponseV1Schema } from '@mioagent/rwa-market-reality/stock-chart';
+import { PoolYieldResponseV1Schema } from '@mioagent/rwa-market-reality/pool-yield';
 import { StockBriefV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { StockPositionQuoteV1Schema } from '@mioagent/rwa-market-reality/stock-position-quote';
 
@@ -1079,6 +1080,23 @@ export function useStockChart(tokenAddress: string | null, options?: { enabled?:
     // The server answers per five-minute slot and the ladder runs about hourly.
     staleTime: 5 * 60_000,
     refetchInterval: 15 * 60_000,
+  });
+}
+
+/** What a stock's deepest Aerodrome pool pays, per dollar in it. Public, like
+ * the list's prices; `yield: null` is "not measured". */
+export function usePoolYield(tokenAddress: string | null, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['pool-yield', tokenAddress?.toLowerCase() ?? null],
+    queryFn: async () =>
+      PoolYieldResponseV1Schema.parse(
+        await fetchApi<unknown>(`/api/public/stocks/pool-yield/${encodeURIComponent(tokenAddress!.toLowerCase())}`),
+      ),
+    retry: false,
+    enabled: options?.enabled !== false && Boolean(tokenAddress),
+    // The pools worker reads every two hours; the server answers per slot.
+    staleTime: 5 * 60_000,
+    refetchInterval: 30 * 60_000,
   });
 }
 

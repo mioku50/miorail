@@ -10,8 +10,32 @@ import {
   type UseAccessAgentOutputV1,
 } from '@mioagent/rwa-issuer/useAccessAgent';
 
+import { logger } from '@mioagent/utils';
+import { poolYieldAgentV1 } from '@mioagent/rwa-market-reality/pool-yield';
+
+import { databasePoolYieldReadingsV1, readPoolYieldV1 } from '../../lib/poolYieldRead.js';
 import { ecosystemEvidenceForV1, rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpPublicError } from './tools.js';
+
+/** A test seam for the stored pool yield; production reads the database. */
+export const useAccessToolRuntimeV1 = {
+  poolYieldReadings: databasePoolYieldReadingsV1,
+};
+
+/** What the deepest Aerodrome pool pays, for the assistant: null when it was
+ * not measured or could not be read, and a failed read never fails the rest
+ * of the answer. */
+async function poolYieldForAgentV1(tokenAddress: string) {
+  try {
+    const read = await readPoolYieldV1(rwaMarketRealityRuntime.now(), tokenAddress, {
+      readings: useAccessToolRuntimeV1.poolYieldReadings,
+    });
+    return read.yield ? poolYieldAgentV1(read.yield) : null;
+  } catch (error) {
+    logger.warn('MCP pool yield read failed', { errorName: error instanceof Error ? error.name : typeof error });
+    return null;
+  }
+}
 
 export { UseAccessAgentInputV1Schema, UseAccessAgentOutputV1Schema };
 
@@ -101,6 +125,7 @@ async function readV1(tokenAddress: string): Promise<UseAccessAgentOutputV1> {
     underlyingKey: identity.binding.underlyingKey,
     displaySymbol: identity.underlying.displaySymbol ?? null,
     issuerId: reviewedIssuerIdOrNullV1(identity.binding.issuerId),
+    poolYield: await poolYieldForAgentV1(tokenAddress),
   });
 }
 
