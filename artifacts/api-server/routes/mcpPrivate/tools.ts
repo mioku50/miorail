@@ -439,7 +439,7 @@ export async function miorailGetBaseMcpActionV1(
     expiresAt: plan.expiresAt,
     review: (begun.body as { review?: unknown }).review ?? null,
     instructions:
-      'Pass these calls to Base MCP send_calls UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute your own recipient, amount or router — a modified batch no longer matches what Miorail simulated, and Miorail will refuse to record it. Then call miorail_record_base_mcp_submission exactly once with what Base MCP returned.',
+      'Pass these calls to Wallet MCP send_calls UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute your own recipient, amount or router — a modified batch no longer matches what Miorail simulated, and Miorail will refuse to record it. Then call miorail_record_base_mcp_submission exactly once with what Base MCP returned.',
     caveats: MIORAIL_PRIVATE_CAVEATS_V1,
   };
 }
@@ -1428,7 +1428,7 @@ export async function miorailGetStockBaseMcpActionV1(
       detail: executorGate.detail,
     },
     instructions:
-      'Pass these calls to Base MCP send_calls UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute your own recipient, amount or router — a modified batch no longer matches what Miorail simulated. Do not describe the terms: the review surface established them and is the only place they are current.',
+      'Pass these calls to Wallet MCP send_calls UNCHANGED. Do not reorder, merge, re-encode, add or drop a call, and do not substitute your own recipient, amount or router — a modified batch no longer matches what Miorail simulated. Do not describe the terms: the review surface established them and is the only place they are current.',
     caveats: MIORAIL_PRIVATE_CAVEATS_V1,
   };
 }

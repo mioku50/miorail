@@ -66,7 +66,7 @@ export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.6.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
-Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own Base Account through Base MCP.
+Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own wallet through Coinbase Wallet MCP (wallet-mcp.coinbase.com, formerly Base MCP at mcp.base.org: the same tools, including send_calls).
 
 THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound fifteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
@@ -80,7 +80,7 @@ The order is fixed and every step exists for a reason:
 2. miorail_prepare_b20_entry — turns a clearance into a persisted, simulated plan. Returns a review, deliberately no calls.
 3. Show the review to the user and get an explicit yes.
 4. miorail_get_base_mcp_action — the exact stored calls.
-5. Base MCP send_calls — unchanged. ${MIORAIL_PRIVATE_CAVEATS_V1.approval}
+5. Wallet MCP send_calls — unchanged. ${MIORAIL_PRIVATE_CAVEATS_V1.approval}
 6. miorail_record_base_mcp_submission — exactly once.
 7. miorail_get_execution_status — a wallet approval is not an entry.
 
@@ -244,7 +244,7 @@ Pass the identity fields exactly as Miorail returned them. A ticker cannot selec
 
 A representation with zero outstanding supply refuses. It is NOT redirected to its wrapper, its underlying, or another issuer's contract — those are different contracts and a different question.
 
-This creates nothing executable. There is no path from here to calldata, an approval or a transaction; the user reviews, and only their own Base Account can move anything.`,
+This creates nothing executable. There is no path from here to calldata, an approval or a transaction; the user reviews, and only their own wallet can move anything.`,
       inputSchema: {
         chainId: z.literal(8453).describe('Base mainnet. The only chain this surface reviews.'),
         tokenAddress: ADDRESS_ARG_V1.describe(
@@ -285,7 +285,7 @@ This creates nothing executable. There is no path from here to calldata, an appr
   server.registerTool(
     'miorail_get_stock_base_mcp_action',
     {
-      title: 'The unsigned Base MCP request for a CONFIRMED stock action',
+      title: 'The unsigned Wallet MCP request for a CONFIRMED stock action',
       description: `Turns a confirmed stock clearance into the same unsigned EIP-5792 request the Miorail web console produces. A clearance comes from the review page after the USER pressed confirm — you cannot mint one, and there is no argument here that would let you act for another wallet.
 
 Nothing about this is a price. Do not describe the terms, restate a figure from earlier in the conversation, or characterise the route as good, cheap or best: the review surface established the terms, it is the only place they are current, and the user approves them there and in their own Base Account.
@@ -294,7 +294,7 @@ Miorail plans, simulates and runs its Safety Kernel over this before returning a
 
 A SELL is confirmed as an exact number of TOKEN atoms, and the user states that number on the review page — a reviewed sell question is "cash worth", and no quote may be spent as the size. You do not supply it and cannot: hand over the review link, and the clearance that comes back already carries what the holder confirmed. A clearance minted without one is refused here.
 
-Pass the calls to Base MCP send_calls UNCHANGED, then record the submission exactly once.`,
+Pass the calls to Wallet MCP send_calls UNCHANGED, then record the submission exactly once.`,
       inputSchema: {
         clearance: z
           .string()
@@ -426,8 +426,8 @@ requestId is an idempotency handle you choose. Reusing it returns the stored pla
   server.registerTool(
     'miorail_get_base_mcp_action',
     {
-      title: 'The exact persisted calls, for Base MCP send_calls',
-      description: `Returns the exact calls Miorail simulated, in the shape Base MCP's send_calls takes. Call this only AFTER the user has seen the review and said yes.
+      title: 'The exact persisted calls, for Wallet MCP send_calls',
+      description: `Returns the exact calls Miorail simulated, in the shape Wallet MCP's send_calls takes. Call this only AFTER the user has seen the review and said yes.
 
 ${MIORAIL_PRIVATE_CAVEATS_V1.approval}
 
@@ -466,12 +466,12 @@ This opens the plan's ONE submission slot. ${MIORAIL_PRIVATE_CAVEATS_V1.onePlanO
   server.registerTool(
     'miorail_record_base_mcp_submission',
     {
-      title: 'Record what Base MCP reported',
-      description: `Tells Miorail what happened when you passed the calls to Base MCP. Call it exactly once per action.
+      title: 'Record what Wallet MCP reported',
+      description: `Tells Miorail what happened when you passed the calls to Wallet MCP. Call it exactly once per action.
 
 You are reporting the WALLET'S BEHAVIOUR, not a result. You cannot tell Miorail that an entry succeeded; only on-chain reconciliation establishes that.
 
-- "submitted": Base MCP returned a batch id. Pass it.
+- "submitted": Wallet MCP returned a batch id. Pass it.
 - "user_rejected": the user declined. Nothing reached the chain.
 - "unknown": you could not establish what happened. Pass the batch id if you have one. If you do not, Miorail records nothing and permanently locks this plan — that is the safe outcome, and you must NOT prepare, fetch or send again. Tell the user to check their wallet activity.
 
@@ -489,7 +489,7 @@ submittedCallsHash must be the callsHash you were given. A mismatch means what w
           .min(1)
           .max(200)
           .nullish()
-          .describe('The Base MCP request/batch id. Required for "submitted".'),
+          .describe('The Wallet MCP request/batch id. Required for "submitted".'),
       },
       outputSchema: MiorailRecordSubmissionOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },

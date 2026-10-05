@@ -5,6 +5,8 @@ import type { OAuthDiscoveryState } from '@modelcontextprotocol/sdk/client/auth.
 import type { OAuthClientInformationMixed, OAuthTokens } from '@modelcontextprotocol/sdk/shared/auth.js';
 import { and, eq } from 'drizzle-orm';
 
+import { baseMcpServerUrlFromEnv } from './baseMcpStatus.js';
+
 const PROVIDER = 'base-mcp';
 const OAUTH_SALT = 'base-mcp-oauth-v1';
 const STATE_TTL_MS = 10 * 60 * 1000;
@@ -29,8 +31,28 @@ export const baseMcpOAuthStoreRuntime = {
   db,
 };
 
+/** The host every grant made before 2026-10-04 belongs to. */
+const ORIGINAL_HOST_V1 = 'mcp.base.org';
+
+/**
+ * The key a grant is stored under: the server that issued it.
+ *
+ * A grant is a client registration plus tokens from ONE authorization server.
+ * mcp.base.org and wallet-mcp.coinbase.com answer with different issuers
+ * (measured 2026-10-02), so a grant from one is a stranger to the other: its
+ * client_id is unknown there and its tokens were issued for another audience.
+ * Keyed by host, moving `BASE_MCP_SERVER_URL` reads every old grant as "not
+ * connected" for the new server and the person reconnects once, and moving
+ * back finds the old grants again. mcp.base.org keeps the original key, so the
+ * grants made before this existed are still its grants.
+ */
+export function baseMcpGrantProviderV1(serverUrl: URL | null = baseMcpServerUrlFromEnv()): string {
+  const host = serverUrl?.host.toLowerCase() ?? '';
+  return !host || host === ORIGINAL_HOST_V1 ? PROVIDER : `${PROVIDER}@${host}`;
+}
+
 function tokenRowId(userId: string): string {
-  return `${userId}:${PROVIDER}`;
+  return `${userId}:${baseMcpGrantProviderV1()}`;
 }
 
 function keyFromSecret(sessionSecret: string): Buffer {
@@ -145,7 +167,7 @@ export async function saveBaseMcpClientInformation(input: {
     .values({
       id: tokenRowId(input.userId),
       userId: input.userId,
-      provider: PROVIDER,
+      provider: baseMcpGrantProviderV1(),
       encryptedClientInfo,
       status: 'pending',
       updatedAt: new Date(),
@@ -179,7 +201,7 @@ export async function saveBaseMcpDiscoveryState(input: {
     .values({
       id: tokenRowId(input.userId),
       userId: input.userId,
-      provider: PROVIDER,
+      provider: baseMcpGrantProviderV1(),
       encryptedDiscoveryState,
       status: 'pending',
       updatedAt: new Date(),
@@ -217,7 +239,7 @@ export async function saveBaseMcpTokens(input: {
     .values({
       id: tokenRowId(input.userId),
       userId: input.userId,
-      provider: PROVIDER,
+      provider: baseMcpGrantProviderV1(),
       encryptedTokens,
       tokenExpiresAt,
       status: 'connected',
@@ -259,7 +281,7 @@ export async function markBaseMcpNeedsReauth(input: {
     .values({
       id: tokenRowId(input.userId),
       userId: input.userId,
-      provider: PROVIDER,
+      provider: baseMcpGrantProviderV1(),
       status: 'needs_reauth',
       lastError: input.error || 'reauthorization_required',
       updatedAt: new Date(),

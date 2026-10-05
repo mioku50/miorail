@@ -2,6 +2,7 @@ import test, { afterEach } from 'node:test';
 import assert from 'node:assert';
 import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
 import {
+  baseMcpGrantProviderV1,
   baseMcpOAuthStoreRuntime,
   clearBaseMcpCredentialScope,
   getBaseMcpAuthStatus,
@@ -186,4 +187,29 @@ test('T43: Base MCP OAuth credentials are stored in distinct authenticated user 
     fake.tokens.get(`${walletA}:base-mcp`)?.encryptedTokens,
     fake.tokens.get(`${walletB}:base-mcp`)?.encryptedTokens,
   );
+});
+
+test('a grant belongs to the server that issued it', async () => {
+  // The original host keeps the original key, so grants made before hosts
+  // were told apart are still found.
+  assert.equal(baseMcpGrantProviderV1(new URL('https://mcp.base.org')), 'base-mcp');
+  assert.equal(baseMcpGrantProviderV1(new URL('https://wallet-mcp.coinbase.com')), 'base-mcp@wallet-mcp.coinbase.com');
+  assert.equal(baseMcpGrantProviderV1(null), 'base-mcp');
+
+  const fake = createFakeDb();
+  baseMcpOAuthStoreRuntime.db = fake.db;
+  const previous = process.env.BASE_MCP_SERVER_URL;
+  try {
+    process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+    await saveBaseMcpTokens({ userId: 'user-1', sessionSecret: 's', tokens: { access_token: 'old', token_type: 'Bearer' } });
+    process.env.BASE_MCP_SERVER_URL = 'https://wallet-mcp.coinbase.com';
+    await saveBaseMcpTokens({ userId: 'user-1', sessionSecret: 's', tokens: { access_token: 'new', token_type: 'Bearer' } });
+    // Two grants, one per server: the move wrote a new row and left the old one.
+    assert.deepEqual([...fake.tokens.keys()].sort(), ['user-1:base-mcp', 'user-1:base-mcp@wallet-mcp.coinbase.com']);
+    assert.equal(fake.tokens.get('user-1:base-mcp@wallet-mcp.coinbase.com')?.provider, 'base-mcp@wallet-mcp.coinbase.com');
+    assert.equal(fake.tokens.get('user-1:base-mcp')?.provider, 'base-mcp');
+  } finally {
+    if (previous === undefined) delete process.env.BASE_MCP_SERVER_URL;
+    else process.env.BASE_MCP_SERVER_URL = previous;
+  }
 });
