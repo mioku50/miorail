@@ -1,6 +1,7 @@
 import { Router, type NextFunction, type Request, type Response } from 'express';
 import crypto from 'node:crypto';
 import { logger } from '@mioagent/utils';
+import { baseMcpClientPoolV1 } from '@mioagent/mcp';
 import {
   BaseMcpConsoleRequestV1Schema,
   BaseMcpConsoleResponseV1Schema,
@@ -158,6 +159,8 @@ mcpBaseRouter.get('/connect', async (req, res) => {
     // decrypt or refresh stale credentials while starting a new browser flow.
     await clearBaseMcpOAuthStatesForUser(userId);
     await clearBaseMcpCredentialScope({ userId, scope: 'all' });
+    // The kept connection belongs to the grant just cleared.
+    baseMcpClientPoolV1().evictUser(userId);
 
     const provider = createBaseMcpOAuthProviderForUser({
       userId,

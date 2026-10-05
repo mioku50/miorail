@@ -62,6 +62,13 @@ export interface CreateToolAggregatorOptions {
    * cached `listTools()` result for up to the cache TTL (~60s).
    */
   dynamicToolsCacheVersion?: string;
+  /**
+   * Which grant the kept Wallet MCP connection belongs to: the grant's
+   * connectedAt. A reconnect changes it and retires the old connection, since
+   * a new grant may be another wallet. The store also rewrites it on a token
+   * refresh, which costs one handshake per token lifetime and nothing else.
+   */
+  baseMcpConnectionGeneration?: string;
 }
 
 function parseBool(value?: string): boolean {
@@ -136,12 +143,20 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
   let mcpClient: any;
 
   if (baseMcpEnabled && baseMcpServerUrl && options.baseMcpOAuthProvider && baseMcpCatalogEnabled(toggles)) {
-    const { BaseMcpClient, createBaseMcpHttpTransport, McpSendCallsClient } = await import('@mioagent/mcp');
+    const { baseMcpClientPoolV1, createBaseMcpHttpTransport, McpSendCallsClient } = await import('@mioagent/mcp');
 
     try {
-      const baseClient = new BaseMcpClient();
-      const transport = createBaseMcpHttpTransport(new URL(baseMcpServerUrl), options.baseMcpOAuthProvider);
-      await baseClient.connect(transport);
+      const serverUrl = new URL(baseMcpServerUrl);
+      const oauthProvider = options.baseMcpOAuthProvider;
+      // The person's kept connection (lib/mcp pool.ts): the first request
+      // opens it, later ones skip the handshake. Cleanup gives it back; the
+      // pool closes it once it has sat unused.
+      const baseClient = await baseMcpClientPoolV1().lease({
+        userId,
+        serverUrl,
+        generation: options.baseMcpConnectionGeneration ?? 'default',
+        createTransport: () => createBaseMcpHttpTransport(serverUrl, oauthProvider),
+      });
       aggregator.registerCleanup(() => baseClient.close());
       mcpClient = new McpSendCallsClient(baseClient);
       if (!options.baseMcpReadOnlyOnly && !baseMcpOnly) {

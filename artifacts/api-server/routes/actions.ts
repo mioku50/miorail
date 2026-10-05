@@ -473,6 +473,10 @@ actionsRouter.post('/recommend', async (req, res, next) => {
 });
 
 actionsRouter.post('/:actionId/execute', async (req, res, next) => {
+  // It may hold the person's Wallet MCP connection, which goes back to the
+  // pool on every way out of this route. It used to be left open on all of
+  // them, including the refusal a few lines down that every mainnet call takes.
+  let aggregator: Awaited<ReturnType<typeof createApiToolAggregatorForUser>> | undefined;
   try {
     console.log("TRACE: execute start");
     const userId = tenantUserId(req);
@@ -490,7 +494,6 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
     }
 
     // Try to get tools
-    let aggregator;
     try {
       const sessionSecret = process.env.SESSION_SECRET;
       if (!sessionSecret) {
@@ -608,6 +611,8 @@ actionsRouter.post('/:actionId/execute', async (req, res, next) => {
     return res.json({ success: false, error: 'Failed to execute action' });
   } catch (error) {
     next(error);
+  } finally {
+    await aggregator?.close().catch(() => undefined);
   }
 });
 

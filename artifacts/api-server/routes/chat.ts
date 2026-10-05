@@ -219,7 +219,9 @@ chatRouter.post('/', async (req, res, next) => {
         // Routes flow and its one submit path.
       },
     );
-    res.once('finish', () => { void tools.close(); });
+    // 'close', not 'finish': a reader who leaves mid-stream never finishes the
+    // response, and the person's Wallet MCP connection must still go back.
+    res.once('close', () => { void tools.close(); });
     const walletMatch = await verifyBaseMcpWalletMatch(tools, walletAddress);
     if (walletMatch.checked && !walletMatch.match) tools.setBaseMcpWalletToolsEnabled(false);
     console.log("TRACE: tools created");

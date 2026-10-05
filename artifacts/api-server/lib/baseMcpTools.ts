@@ -78,5 +78,6 @@ export async function createApiToolAggregatorForUser(
     baseMcpSensitiveResultTools: options.baseMcpSensitiveResultTools,
     baseMcpOnly: options.baseMcpOnly,
     dynamicToolsCacheVersion,
+    baseMcpConnectionGeneration: authStatus?.connectedAt,
   });
 }

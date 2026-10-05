@@ -1,5 +1,6 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert';
+import { baseMcpClientPoolV1 } from '@mioagent/mcp';
 import { attachBaseMcpToolProbeStatus, clearBaseMcpStatusForTests } from './baseMcpStatus.js';
 import {
   baseMcpToolProbeRuntime,
@@ -23,6 +24,9 @@ afterEach(() => {
   baseMcpToolProbeRuntime.createOAuthProvider = originalCreateOAuthProvider;
   baseMcpToolProbeRuntime.createClient = originalCreateClient;
   baseMcpToolProbeRuntime.createTransport = originalCreateTransport;
+  // The probe keeps the person's connection in the process's pool; each test
+  // starts with none, so no test reads through another's fake client.
+  baseMcpClientPoolV1().closeAll();
   clearBaseMcpStatusForTests();
 });
 
@@ -106,6 +110,11 @@ test('probeBaseMcpTools lists sanitized tools without invoking send_calls or cal
   assert.strictEqual(JSON.stringify(result).includes('private/path'), false);
   assert.strictEqual(JSON.stringify(result).includes('token=secret'), false);
   assert.strictEqual(connected, true);
+  // Given back, not closed: the person's next request uses the same connection.
+  assert.strictEqual(closed, false);
+  assert.strictEqual(baseMcpClientPoolV1().size, 1);
+  baseMcpClientPoolV1().closeAll();
+  await new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(closed, true);
   assert.strictEqual(callToolInvoked, false);
   assert.strictEqual(result.protocolToolsStatus, 'unavailable');
@@ -178,7 +187,10 @@ test('probeBaseMcpTools treats OAuth with zero tools as degraded and unusable', 
   baseMcpToolProbeRuntime.createClient = () => ({
     connect: async () => undefined,
     close: async () => undefined,
-    getClient: () => ({ listTools: async () => ({ tools: [] }) }),
+    getClient: () => ({
+      listTools: async () => ({ tools: [] }),
+      callTool: async () => { throw new Error('the probe never calls a tool'); },
+    }),
   });
 
   const result = await probeBaseMcpTools({
@@ -282,7 +294,10 @@ test('probeBaseMcpTools sanitizes undecryptable OAuth credentials and requests r
   baseMcpToolProbeRuntime.createClient = () => ({
     connect: async () => { throw new Error('Unsupported state or unable to authenticate data: secret-value'); },
     close: async () => undefined,
-    getClient: () => ({ listTools: async () => ({ tools: [] }) }),
+    getClient: () => ({
+      listTools: async () => ({ tools: [] }),
+      callTool: async () => { throw new Error('the probe never calls a tool'); },
+    }),
   });
 
   const result = await probeBaseMcpTools({

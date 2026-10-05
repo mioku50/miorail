@@ -1,7 +1,10 @@
 import {
   BaseMcpClient,
+  baseMcpClientPoolV1,
   createBaseMcpHttpTransport,
+  type BaseMcpClientLeaseV1,
   type BaseMcpOAuthProvider,
+  type BaseMcpPoolableClientV1,
   type Transport,
 } from '@mioagent/mcp';
 import {
@@ -64,9 +67,8 @@ function surfaceTools(classified: ClassifiedBaseMcpTool[]): BaseMcpToolProbeResu
   });
 }
 
-type MinimalMcpClient = {
-  connect(transport: Transport): Promise<void>;
-  close(): Promise<void>;
+/** What the probe reads tools through: a pooled lease. */
+type ToolListingClient = {
   getClient(): {
     listTools(params?: { cursor?: string }): Promise<{
       tools?: unknown[];
@@ -80,7 +82,9 @@ export const baseMcpToolProbeRuntime = {
   markBaseMcpNeedsReauth,
   createOAuthProvider: createBaseMcpOAuthProviderForUser,
   refreshOAuthIfNeeded: refreshBaseMcpOAuthIfNeeded,
-  createClient: (): MinimalMcpClient => new BaseMcpClient(),
+  /** A full client: the connection the probe opens is the one the console
+   * then calls tools on, because both use the person's pooled connection. */
+  createClient: (): BaseMcpPoolableClientV1 => new BaseMcpClient(),
   createTransport: (serverUrl: URL, oauthProvider: BaseMcpOAuthProvider): Transport =>
     createBaseMcpHttpTransport(serverUrl, oauthProvider),
 };
@@ -154,7 +158,7 @@ function classifyProbeError(error: unknown): { status: BaseMcpToolProbeStatus; e
   return { status: 'degraded', errorCode: 'tool_probe_failed' };
 }
 
-async function listAllTools(client: MinimalMcpClient): Promise<BaseMcpToolInventoryItem[]> {
+async function listAllTools(client: ToolListingClient): Promise<BaseMcpToolInventoryItem[]> {
   const tools: BaseMcpToolInventoryItem[] = [];
   let cursor: string | undefined;
 
@@ -243,13 +247,20 @@ export async function probeBaseMcpTools(input: {
     sessionSecret: input.sessionSecret,
     redirectUrl: input.redirectUrl,
   });
-  const client = baseMcpToolProbeRuntime.createClient();
+  let client: BaseMcpClientLeaseV1 | null = null;
 
   try {
-    await withTimeout(
-      client.connect(baseMcpToolProbeRuntime.createTransport(serverUrl, oauthProvider)),
-      timeoutMsFromEnv(),
-    );
+    // The person's kept connection (lib/mcp pool.ts), shared with the
+    // console: a probe on page load opens it, and the question that follows
+    // skips the handshake.
+    client = await baseMcpClientPoolV1().lease({
+      userId: input.userId,
+      serverUrl,
+      generation: ('connectedAt' in auth && auth.connectedAt) || 'default',
+      createTransport: () => baseMcpToolProbeRuntime.createTransport(serverUrl, oauthProvider),
+      createClient: () => baseMcpToolProbeRuntime.createClient(),
+      connectTimeoutMs: timeoutMsFromEnv(),
+    });
     const tools = await withTimeout(listAllTools(client), timeoutMsFromEnv());
     const classified = classifyBaseMcpTools(tools);
     const routedTools = surfaceTools(classified.tools);
@@ -296,6 +307,6 @@ export async function probeBaseMcpTools(input: {
       errorCode: classified.errorCode,
     };
   } finally {
-    await client.close().catch(() => undefined);
+    await client?.close().catch(() => undefined);
   }
 }

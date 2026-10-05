@@ -1,4 +1,4 @@
-import { BaseMcpClient } from "./client.js";
+import type { BaseMcpCallsV1 } from "./pool.js";
 import { validateBaseCalls } from "@mioagent/security/baseGuards";
 
 export interface SendCallsResponse {
@@ -7,7 +7,8 @@ export interface SendCallsResponse {
 }
 
 export class McpSendCallsClient {
-  constructor(private client: BaseMcpClient) {}
+  /** A `BaseMcpClient` or a pooled lease: only `callTool` is used. */
+  constructor(private client: { getClient(): Pick<BaseMcpCallsV1, "callTool"> }) {}
 
   async sendCalls(chain: string, calls: { to: string; value?: string; data?: string }[]): Promise<SendCallsResponse> {
     let normalized;
