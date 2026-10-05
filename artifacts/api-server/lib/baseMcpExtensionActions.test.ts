@@ -140,9 +140,52 @@ describe('deterministic Base MCP Extensions intent router', () => {
   test('generic swap/yield hand off, while an unreleased named provider stays out of Routes', () => {
     assert.equal(classifyBaseMcpExtensionIntentV1('Swap 100 USDC to ETH').kind, 'handoff');
     assert.equal(classifyBaseMcpExtensionIntentV1('Find the best yield for USDC').kind, 'handoff');
-    const flaunch = classifyBaseMcpExtensionIntentV1('Buy this Flaunch token with 0.001 ETH');
-    assert.equal(flaunch.kind, 'needs_input');
-    if (flaunch.kind === 'needs_input') assert.equal(flaunch.errorCode, 'base_mcp_flaunch_action_adapter_required');
+    const launch = classifyBaseMcpExtensionIntentV1('Launch a memecoin on Flaunch');
+    assert.equal(launch.kind, 'needs_input');
+    if (launch.kind === 'needs_input') assert.equal(launch.errorCode, 'base_mcp_flaunch_action_adapter_required');
+  });
+
+  test('a buy or a sell is a trade and goes to Routes AI', () => {
+    const token = '0x1111111111111111111111111111111111111111';
+    for (const message of [
+      'Buy BRETT with 50 USDC',
+      'Sell 10 DEGEN',
+      `Buy ${token} with 0.001 ETH`,
+      `Купи ${token} на 5 USDC`,
+      'Продай 100 DEGEN за USDC',
+    ]) {
+      const decision = classifyBaseMcpExtensionIntentV1(message);
+      assert.equal(decision.kind, 'handoff', message);
+      if (decision.kind === 'handoff') assert.equal(decision.provider, null, message);
+    }
+  });
+
+  test('a question about a trade stays a read', () => {
+    for (const message of [
+      'What did I buy last week?',
+      'When did I sell 10 DEGEN?',
+      'Should I buy 100 DEGEN?',
+      'Сколько я купил 0x1111111111111111111111111111111111111111?',
+      'Did I buy anything?',
+    ]) {
+      assert.equal(classifyBaseMcpExtensionIntentV1(message).kind, 'read', message);
+    }
+  });
+
+  test('a launchpad token is named by its address, never picked by Miorail', () => {
+    const unnamed = classifyBaseMcpExtensionIntentV1('Buy this Flaunch token with 0.001 ETH');
+    assert.equal(unnamed.kind, 'needs_input');
+    if (unnamed.kind === 'needs_input') {
+      assert.equal(unnamed.errorCode, 'base_mcp_token_address_required');
+      assert.match(unnamed.reply, /Show the newest Flaunch coins on Base/);
+    }
+    const bankr = classifyBaseMcpExtensionIntentV1('Buy this Bankr token with 0.001 ETH');
+    assert.equal(bankr.kind, 'needs_input');
+    if (bankr.kind === 'needs_input') assert.match(bankr.reply, /Show the latest Bankr launches on Base/);
+
+    const named = classifyBaseMcpExtensionIntentV1('Buy 0x2222222222222222222222222222222222222222 with 0.001 ETH on Flaunch');
+    assert.equal(named.kind, 'handoff');
+    if (named.kind === 'handoff') assert.equal(named.provider, 'flaunch');
   });
 
   test('provider-native reads remain in Extensions and a released Aerodrome swap hands off', () => {

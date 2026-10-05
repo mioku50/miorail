@@ -454,7 +454,7 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
     if (decision.kind === 'handoff') {
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
         status: 'handoff',
-        reply: 'This is a routable intent. It belongs in Routes AI, where providers are compared and the selected path passes the Safety Kernel.',
+        reply: 'This is a trade. Routes AI compares the routes for it and checks the one you choose; nothing moves until you approve it in your wallet.',
         trace: [],
         toolsAvailable: 0,
         truncated: false,

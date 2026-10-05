@@ -53,6 +53,16 @@ export interface BaseMcpProviderIntentSpecV1 {
   productSurface: 'routes' | 'extensions';
   lifecycleStage: BaseMcpProviderLifecycleStageV1;
   examples: readonly BaseMcpProviderExampleV1[];
+  /**
+   * Released swap routers that reach this provider's own pools. Bankr and
+   * Flaunch launch tokens into Uniswap v4 pools with their own hooks, and
+   * KyberSwap routes those pools: on 2026-10-05 it quoted six of six Bankr
+   * tokens through `uniswap-v4-doppler` and four of six Flaunch tokens through
+   * `uniswap-v4-flaunch`. Buying or selling such a token is then an ordinary
+   * Routes AI swap. It is gated on these routers, because no adapter exists for
+   * the provider itself and none is needed.
+   */
+  tradedThrough?: readonly string[];
 }
 
 const e = (
@@ -94,8 +104,11 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
     pluginId: 'bankr', aliases: ['bankr'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
       e('latest', 'Show the latest Bankr launches on Base', 'read', 'read_in_extensions'),
       e('inspect', 'Inspect this Bankr token address on Base', 'read', 'read_in_extensions'),
-      e('buy', 'Buy the newest Bankr launch with 0.001 ETH', 'action', 'adapter_required'),
+      // "The newest launch" would make Miorail pick the token. The person
+      // names it, by the address the read above lists.
+      e('buy', 'Buy this Bankr token with 0.001 ETH', 'routable', 'handoff_to_routes'),
     ],
+    tradedThrough: ['kyberswap'],
   },
   {
     pluginId: 'bitrefill', aliases: ['bitrefill', 'gift card', 'esim'], productSurface: 'extensions', lifecycleStage: 'scored', examples: [
@@ -121,9 +134,10 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
   {
     pluginId: 'flaunch', aliases: ['flaunch'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
       e('latest', 'Show the newest Flaunch coins on Base', 'read', 'read_in_extensions'),
-      e('buy', 'Buy this Flaunch token with 0.001 ETH', 'action', 'adapter_required'),
+      e('buy', 'Buy this Flaunch token with 0.001 ETH', 'routable', 'handoff_to_routes'),
       e('launch', 'Launch a memecoin on Flaunch', 'action', 'adapter_required'),
     ],
+    tradedThrough: ['kyberswap'],
   },
   {
     pluginId: 'gmgn', aliases: ['gmgn', 'gmgh'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [

@@ -2,10 +2,13 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import {
   baseMcpCapabilityMatrixV1,
+  exampleCapabilityStateV1,
   mayHandOffToRoutesV1,
+  pluginRouteProviderV1,
   providerRouteCapabilityV1,
   type BaseMcpRuntimeSnapshotV1,
 } from './baseMcpCapabilityMatrix.js';
+import { BASE_MCP_PROVIDER_INTENTS_BY_ID_V1 } from './baseMcpProviderIntents.js';
 
 function runtimeV1(overrides: Partial<BaseMcpRuntimeSnapshotV1> = {}): BaseMcpRuntimeSnapshotV1 {
   return {
@@ -101,5 +104,40 @@ describe('the matrix answers for every published plugin', () => {
     const row = baseMcpCapabilityMatrixV1(runtimeV1()).find((entry) => entry.pluginId === 'avantis')!;
     assert.equal(row.cells.action.state, 'external_ui');
     assert.equal(row.cells.provider_ui.state, 'external_ui');
+  });
+});
+
+// Bankr and Flaunch launch tokens into their own Uniswap v4 pools, and
+// KyberSwap routes those pools (uniswap-v4-doppler, uniswap-v4-flaunch). A buy
+// is a swap Routes AI can finish; the launch itself still has no adapter.
+describe('a launchpad token trades through the router that reaches its pools', () => {
+  for (const pluginId of ['bankr', 'flaunch']) {
+    it(`releases a ${pluginId} buy through KyberSwap`, () => {
+      const plugin = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[pluginId]!;
+      assert.equal(pluginRouteProviderV1(plugin, runtimeV1()), 'kyberswap');
+      const row = baseMcpCapabilityMatrixV1(runtimeV1()).find((entry) => entry.pluginId === pluginId)!;
+      assert.equal(row.cells.routes.state, 'released');
+      assert.match(row.cells.routes.reason, /which kyberswap routes/);
+      assert.equal(row.cells.quote.state, 'released');
+      const buy = plugin.examples.find((example) => example.id === 'buy')!;
+      assert.equal(exampleCapabilityStateV1(plugin, buy, runtimeV1()).state, 'released');
+    });
+
+    it(`does not release a ${pluginId} buy where KyberSwap is not released`, () => {
+      const runtime = runtimeV1({ releasedRouteProviders: ['uniswap', 'aerodrome', 'balancer'] });
+      const plugin = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[pluginId]!;
+      const buy = plugin.examples.find((example) => example.id === 'buy')!;
+      assert.notEqual(exampleCapabilityStateV1(plugin, buy, runtime).state, 'released');
+    });
+  }
+
+  it('leaves a launch, which no router can do, unbuilt', () => {
+    const plugin = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1.flaunch!;
+    const launch = plugin.examples.find((example) => example.id === 'launch')!;
+    assert.equal(exampleCapabilityStateV1(plugin, launch, runtimeV1()).state, 'unsupported');
+  });
+
+  it('keeps a provider with its own adapter on that adapter', () => {
+    assert.equal(pluginRouteProviderV1(BASE_MCP_PROVIDER_INTENTS_BY_ID_V1.aerodrome!, runtimeV1()), 'aerodrome');
   });
 });

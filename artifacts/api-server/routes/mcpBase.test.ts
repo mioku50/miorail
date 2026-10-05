@@ -796,11 +796,20 @@ test('POST /api/mcp/base/console hands generic swaps to Routes and keeps unrelea
 
   const flaunch = await request(app)
     .post('/api/mcp/base/console')
-    .send({ message: 'Buy this Flaunch token with 0.001 ETH', requestId: 'flaunch-unreleased' });
+    .send({ message: 'Launch a memecoin on Flaunch', requestId: 'flaunch-unreleased' });
   assert.equal(flaunch.status, 200);
   assert.equal(flaunch.body.status, 'needs_input');
   assert.equal(flaunch.body.errorCode, 'base_mcp_flaunch_action_adapter_required');
   assert.equal(flaunch.body.handoff, null);
+
+  // A buy without the token's address asks for it; nothing is quoted.
+  const unnamed = await request(app)
+    .post('/api/mcp/base/console')
+    .send({ message: 'Buy this Flaunch token with 0.001 ETH', requestId: 'flaunch-no-address' });
+  assert.equal(unnamed.status, 200);
+  assert.equal(unnamed.body.status, 'needs_input');
+  assert.equal(unnamed.body.errorCode, 'base_mcp_token_address_required');
+  assert.equal(unnamed.body.handoff, null);
   assert.equal(consoleCalled, false);
   assert.equal(actionCalled, false);
   restoreEnv('SESSION_SECRET', originalSecret);

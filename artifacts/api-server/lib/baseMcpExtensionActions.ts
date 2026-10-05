@@ -1,7 +1,7 @@
 import type { Request } from 'express';
 import type { ToolAggregator, ToolDef } from '@mioagent/tools';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
-import { screenAction } from '@mioagent/security';
+import { BASE_MCP_PROVIDER_INTENTS_BY_ID_V1, screenAction } from '@mioagent/security';
 import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
 import { createApiToolAggregatorForUser } from './baseMcpTools.js';
 import { loadTokenSecurityContext } from './executionSecurity.js';
@@ -95,6 +95,22 @@ export function classifyBaseMcpExtensionIntentV1(
 
   const provider = matchBaseMcpProviderIntentV1(trimmed, runtime);
   if (provider?.disposition === 'handoff_to_routes') {
+    // A launchpad's token is named by its address, and "this Flaunch token"
+    // names none. Miorail does not pick one: the person pastes it, from the
+    // provider's own list if they need one.
+    const spec = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[provider.pluginId];
+    if (spec?.tradedThrough?.length && !/0x[a-fA-F0-9]{40}/u.test(trimmed)) {
+      const list = spec.examples.find((example) => example.id === 'latest')?.prompt;
+      return {
+        kind: 'needs_input',
+        errorCode: 'base_mcp_token_address_required',
+        reply: [
+          'Paste the token’s Base address (0x…) with the amount, for example “Buy 0x… with 0.001 ETH”.',
+          list ? `To find one, ask “${list}”.` : null,
+          'Nothing was quoted or prepared.',
+        ].filter(Boolean).join(' '),
+      };
+    }
     return { kind: 'handoff', originalMessage: trimmed, provider: provider.pluginId };
   }
   // A Routes adapter exists and this runtime cannot finish the journey. The
@@ -164,7 +180,7 @@ export function classifyBaseMcpExtensionIntentV1(
     return {
       kind: 'needs_input',
       errorCode: `base_mcp_${provider.pluginId.replace(/-/g, '_')}_action_adapter_required`,
-      reply: `${provider.pluginId} is assigned to Base MCP plugins and this action is recognized. Its current ${provider.lifecycleStage} stage has no typed action adapter yet, so no write tool was called.`,
+      reply: `Miorail recognises this ${provider.pluginId} action and does not build it yet, so nothing was called and nothing was prepared.`,
     };
   }
   if (provider?.disposition === 'read_in_extensions') {
@@ -206,6 +222,17 @@ export function classifyBaseMcpExtensionIntentV1(
 
   const routable = /\b(?:swap|trade|exchange|best\s+(?:swap|rate|route)|yield|apy)\b|(?:обменяй|обменять|свап|лучший\s+курс|доходност)/iu;
   if (routable.test(lower)) return { kind: 'handoff', originalMessage: trimmed, provider: null };
+
+  // "Buy BRETT with 50 USDC", "sell 10 DEGEN", "купи 0x… на 5 USDC". Routes AI
+  // reads buy and sell as swaps; this console sent them to the read-only model,
+  // which could only say it cannot buy. A trade names an amount or a token
+  // address; a question about one ("what did I buy last week?") asks.
+  const tradeVerb = /\b(?:buy|sell)\b|(?:^|\s)(?:купи|купить|продай|продать)(?=\s|$)/iu;
+  const tradeObject = /\d|0x[a-f0-9]{40}/iu;
+  const asks = /^\s*(?:what|which|when|did|does|do|how|why|should|is|are|show|list|что|какие|какой|когда|сколько|стоит|покажи)(?=\s|$)/iu;
+  if (tradeVerb.test(lower) && tradeObject.test(lower) && !asks.test(lower)) {
+    return { kind: 'handoff', originalMessage: trimmed, provider: null };
+  }
 
   const sendMarker = /\b(?:send|transfer)\b|(?:отправь|отправить|переведи|перевести)/iu;
   if (sendMarker.test(trimmed)) {

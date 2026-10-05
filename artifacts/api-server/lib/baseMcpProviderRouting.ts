@@ -2,6 +2,7 @@ import {
   BASE_MCP_PLUGIN_CATALOGUE_V1,
   BASE_MCP_PROVIDER_INTENTS_V1,
   mayHandOffToRoutesV1,
+  pluginRouteProviderV1,
   providerRouteCapabilityV1,
   type BaseMcpCapabilityCellV1,
   type BaseMcpProviderExampleDispositionV1,
@@ -68,6 +69,20 @@ export function hasReleasedProviderRouteV1(providerId: string, family: ReviewedR
   return RELEASED_PROVIDER_ROUTES_V1[family].has(providerId);
 }
 
+/**
+ * Which adapter carries a provider's intent in this family: its own, or, for
+ * a swap, a released router that reaches its pools (`tradedThrough`). Null
+ * when nobody wrote one.
+ */
+function routeAdapterForV1(
+  provider: Pick<BaseMcpProviderIntentSpecV1, 'pluginId' | 'tradedThrough'>,
+  family: ReviewedRouteFamilyV1,
+): string | null {
+  if (hasReleasedProviderRouteV1(provider.pluginId, family)) return provider.pluginId;
+  if (family !== 'swap') return null;
+  return provider.tradedThrough?.find((router) => hasReleasedProviderRouteV1(router, 'swap')) ?? null;
+}
+
 /** Every provider with a released adapter in any route family. */
 export const ROUTE_ADAPTER_PROVIDERS_V1: readonly string[] = [
   ...new Set(Object.values(RELEASED_PROVIDER_ROUTES_V1).flatMap((set) => [...set])),
@@ -130,8 +145,9 @@ function inferredDisposition(
   // exists and cannot finish is a different fact from one that was never
   // written, and only the first one is fixable by an operator.
   const routableDisposition = (family: ReviewedRouteFamilyV1): BaseMcpProviderExampleDispositionV1 => {
-    if (!hasReleasedProviderRouteV1(provider.pluginId, family)) return 'adapter_required';
-    return handoffToRoutesReleasedV1(provider.pluginId, runtime).released ? 'handoff_to_routes' : 'route_unavailable_here';
+    const adapter = routeAdapterForV1(provider, family);
+    if (!adapter) return 'adapter_required';
+    return handoffToRoutesReleasedV1(adapter, runtime).released ? 'handoff_to_routes' : 'route_unavailable_here';
   };
   if (commerce.test(lower)) return routableDisposition('commerce');
   if (swap.test(lower)) return routableDisposition('swap');
@@ -172,7 +188,9 @@ export function matchBaseMcpProviderIntentV1(
     .sort((left, right) => right.score - left.score);
   const closest = exact || (candidates[0] && candidates[0].score > 0 && candidates[0].score !== candidates[1]?.score
     ? candidates[0].example : null);
-  const routeGate = declared === 'handoff_to_routes' ? handoffToRoutesReleasedV1(provider.pluginId, runtime) : null;
+  const routeGate = declared === 'handoff_to_routes'
+    ? handoffToRoutesReleasedV1(pluginRouteProviderV1(provider, runtime), runtime)
+    : null;
   const disposition: BaseMcpProviderExampleDispositionV1 =
     routeGate && !routeGate.released ? 'route_unavailable_here' : declared;
   const plugin = BASE_MCP_PLUGIN_CATALOGUE_V1.find((entry) => entry.id === provider.pluginId);

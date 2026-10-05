@@ -167,6 +167,35 @@ export function providerRouteCapabilityV1(
   };
 }
 
+/**
+ * The provider whose route a plugin's trade rides on: the plugin's own
+ * adapter, or a released router that reaches its pools (`tradedThrough`).
+ * Bankr and Flaunch have no adapter and need none; KyberSwap routes their
+ * Uniswap v4 pools, so a buy is gated on KyberSwap's capability.
+ */
+export function pluginRouteProviderV1(
+  plugin: Pick<BaseMcpProviderIntentSpecV1, 'pluginId' | 'tradedThrough'>,
+  runtime: BaseMcpRuntimeSnapshotV1,
+): string {
+  if (runtime.releasedRouteProviders.includes(plugin.pluginId) || !plugin.tradedThrough?.length) return plugin.pluginId;
+  return plugin.tradedThrough.find((router) => providerRouteCapabilityV1(router, runtime).state === 'released')
+    ?? plugin.tradedThrough[0]!;
+}
+
+/** `providerRouteCapabilityV1` for a plugin, through the router that carries its trades. */
+export function pluginRouteCapabilityV1(
+  plugin: Pick<BaseMcpProviderIntentSpecV1, 'pluginId' | 'tradedThrough'>,
+  runtime: BaseMcpRuntimeSnapshotV1,
+): BaseMcpCapabilityCellV1 {
+  const provider = pluginRouteProviderV1(plugin, runtime);
+  const capability = providerRouteCapabilityV1(provider, runtime);
+  if (provider === plugin.pluginId) return capability;
+  return {
+    ...capability,
+    reason: `Its tokens trade in its own pools, which ${provider} routes: a buy or sell is a Routes AI swap. ${capability.reason}`,
+  };
+}
+
 function readCapabilityV1(
   plugin: BaseMcpProviderIntentSpecV1,
   runtime: BaseMcpRuntimeSnapshotV1,
@@ -243,15 +272,22 @@ export function pluginCapabilityRowV1(
   runtime: BaseMcpRuntimeSnapshotV1,
 ): BaseMcpPluginCapabilityRowV1 {
   const read = readCapabilityV1(plugin, runtime);
-  const routes = providerRouteCapabilityV1(plugin.pluginId, runtime);
+  const routeProvider = pluginRouteProviderV1(plugin, runtime);
+  const routes = pluginRouteCapabilityV1(plugin, runtime);
   const action = actionCapabilityV1(plugin, runtime);
   const routable = plugin.examples.some((example) => example.surface === 'routable');
 
   // A quote is the first half of a route, and it is genuinely released on its
   // own: comparison works even where signing does not. Saying so is the honest
   // version of the old conflation — it just no longer implies the handoff.
-  const quote: BaseMcpCapabilityCellV1 = routable && runtime.releasedRouteProviders.includes(plugin.pluginId)
-    ? { operation: 'quote', state: 'released', reason: 'This provider is quoted and compared in Routes AI.' }
+  const quote: BaseMcpCapabilityCellV1 = routable && runtime.releasedRouteProviders.includes(routeProvider)
+    ? {
+        operation: 'quote',
+        state: 'released',
+        reason: routeProvider === plugin.pluginId
+          ? 'This provider is quoted and compared in Routes AI.'
+          : `Its pools are quoted through ${routeProvider} and compared in Routes AI.`,
+      }
     : { operation: 'quote', state: 'unsupported', reason: 'No released quote adapter compares this provider.' };
 
   const prepare: BaseMcpCapabilityCellV1 = routes.state === 'released'
@@ -264,7 +300,7 @@ export function pluginCapabilityRowV1(
         }
       : { operation: 'prepare', state: 'unsupported', reason: 'No released builder produces calldata for this provider.' };
 
-  const requiresSimulation = runtime.simulationRequiredProviders.includes(plugin.pluginId);
+  const requiresSimulation = runtime.simulationRequiredProviders.includes(routeProvider);
   const simulate: BaseMcpCapabilityCellV1 = !routable
     ? { operation: 'simulate', state: 'unsupported', reason: 'Nothing routable to simulate.' }
     : !requiresSimulation
