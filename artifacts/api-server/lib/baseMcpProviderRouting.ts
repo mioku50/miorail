@@ -110,6 +110,9 @@ function inferredDisposition(
   runtime: BaseMcpRuntimeSnapshotV1,
 ): BaseMcpProviderExampleDispositionV1 {
   const lower = normalized(message);
+  if (provider.pluginId === 'aerodrome' && /\b(claim|collect)\b|(?:^|\s)(?:забер|забра|собер|получ)\p{L}*/iu.test(lower)) {
+    return 'action_in_extensions';
+  }
   // Cyrillic words are not bounded by JavaScript's ASCII \b.
   if (provider.pluginId === 'avantis' && /(?:^|\s)(?:откр|закр|лонг|шорт|плеч)\p{L}*/iu.test(lower)) return 'handoff_to_provider_ui';
   if (/(?:^|\s)(?:созда|запуст|отправ|установ|зарегистр|одобр)\p{L}*/iu.test(lower)) return 'adapter_required';

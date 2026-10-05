@@ -2,6 +2,7 @@ export * from './provider.js';
 export * from './aggregator.js';
 export * from './native.js';
 export * from './base_mcp.js';
+export * from './prepared_base_calls.js';
 export * from './dynamic_base_mcp.js';
 export * from './dynamicBaseMcpCache.js';
 export * from './morpho_mcp.js';

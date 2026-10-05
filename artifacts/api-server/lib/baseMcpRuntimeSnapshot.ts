@@ -48,7 +48,7 @@ export const REVIEWED_READ_PLUGINS_V1: readonly string[] = [
 ];
 
 /** Plugins with a released typed ACTION adapter in Extensions. */
-export const RELEASED_ACTION_PLUGINS_V1: readonly string[] = ['virtuals'];
+export const RELEASED_ACTION_PLUGINS_V1: readonly string[] = ['virtuals', 'aerodrome'];
 
 /** Plugins whose write path completes in the provider's own interface. */
 export const PROVIDER_UI_PLUGINS_V1: readonly string[] = ['avantis'];

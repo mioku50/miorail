@@ -61,6 +61,25 @@ test('an ACTION renders an approval card and states that it is not a Route Proof
   assert.doesNotMatch(html, /Execution proof/);
 });
 
+test('Aerodrome claim shows the wallet, coverage and passed simulation before approval', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'Claim my Aerodrome fees',
+    onQuestionChange: () => undefined, onAsk: () => undefined, pending: false, unavailableReason: null,
+    answer: answer({ status: 'action', trace: [], action: {
+      approvalUrl: 'https://keys.coinbase.com/approve/claim-1', receipt: {
+        id: 'claim-1', status: 'approval_required', actionType: 'aerodrome_claim', operation: 'claim',
+        provider: 'base-mcp', chainId: 8453, recipient: '0x1111111111111111111111111111111111111111',
+        claimCount: 4, poolsRead: 38_794, poolsTotal: 38_794, readBlock: '100', managedSkipped: 2,
+        simulationStatus: 'passed', reconciliationState: 'not_started', transactionHash: null,
+        blockNumber: null, errorCode: null, routeVerified: false, reconciliationBasis: 'aerodrome_claim_events',
+      },
+    } }),
+  }));
+  assert.match(html, /Aerodrome fees and AERO/); assert.match(html, /4 claims/);
+  assert.match(html, /38794 \/ 38794/); assert.match(html, /Batch simulation/);
+  assert.match(html, /managed or locked/); assert.match(html, /Approve in your wallet/);
+  assert.doesNotMatch(html, /Virtuals action/);
+});
+
 test('a reviewed Virtuals action labels the approval as sign-in and shows agent facts', () => {
   const html = renderToStaticMarkup(BaseMcpConsoleCard({
     question: 'Create a Virtuals agent called Mio Researcher to summarize Base research',

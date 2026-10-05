@@ -85,3 +85,18 @@ test('migration 0049 releases only typed Virtuals receipts and encrypted provide
   assert.equal(journal.entries[49]?.idx, 49);
   assert.equal(journal.entries[49]?.tag, '0049_base_mcp_reviewed_plugin_runtime');
 });
+
+test('Aerodrome receipts require matched chain events and prevent overlapping approvals for one wallet', async () => {
+  const sql = await readFile(drizzlePath('0083_aerodrome_claim_receipts.sql'), 'utf8');
+  assert.match(sql, /"action_type" IN \('send', 'aerodrome_claim'\) AND "reconciliation_state" = 'matched'/);
+  assert.match(sql, /"reconciliation_state" <> 'matched' OR "action_type" IN \('send', 'aerodrome_claim'\)/);
+  assert.match(sql, /"reconciliation_state" <> 'provider_confirmed' OR "action_type" IN \('x402', 'virtuals'\)/);
+  assert.match(sql, /CREATE UNIQUE INDEX "base_mcp_aerodrome_claim_active_wallet_unique"\s+ON "base_mcp_action_receipts" \("tenant_id", "wallet_address"\)/);
+  assert.match(sql, /WHERE "action_type" = 'aerodrome_claim'\s+AND "status" IN \('preparing', 'approval_required', 'pending', 'reconciling'\)/);
+  const journal = JSON.parse(await readFile(drizzlePath('meta/_journal.json'), 'utf8')) as {
+    entries: Array<{ idx: number; tag: string; when: number }>;
+  };
+  const entry = journal.entries.find(entry => entry.tag === '0083_aerodrome_claim_receipts')!;
+  assert.ok(entry);
+  assert.ok(entry.when > journal.entries[entry.idx - 1].when);
+});

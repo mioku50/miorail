@@ -2086,10 +2086,22 @@ export const BaseMcpVirtualsActionReceiptV1Schema = BaseMcpActionReceiptCommonV1
   reconciliationBasis: z.literal('virtuals_provider_response'),
 });
 
+export const BaseMcpAerodromeClaimReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  approvalRequired: z.literal(true),
+  actionType: z.literal('aerodrome_claim'), operation: z.literal('claim'),
+  recipient: AddressV1Schema,
+  claimCount: z.number().int().min(0).max(20),
+  poolsRead: z.number().int().nonnegative(), poolsTotal: z.number().int().nonnegative(),
+  managedSkipped: z.number().int().nonnegative(), readBlock: z.string().regex(/^\d+$/).nullable(),
+  simulationStatus: z.enum(['passed', 'failed', 'unavailable']),
+  reconciliationBasis: z.literal('aerodrome_claim_events'),
+});
+
 export const BaseMcpActionReceiptV1Schema = z.discriminatedUnion('actionType', [
   BaseMcpSendActionReceiptV1Schema,
   BaseMcpX402ActionReceiptV1Schema,
   BaseMcpVirtualsActionReceiptV1Schema,
+  BaseMcpAerodromeClaimReceiptV1Schema,
 ]);
 
 export const BaseMcpActionEnvelopeV1Schema = z.object({

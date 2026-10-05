@@ -49,6 +49,7 @@ import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
 import { verifyBaseMcpWalletMatchViaOAuth } from '../lib/baseMcpWalletReconciliation.js';
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
+import { prepareBaseMcpAerodromeClaimV1 } from '../lib/baseMcpAerodromeClaim.js';
 
 export const mcpBaseRouter = Router();
 /** Public, read-only catalogue surface. Kept separate so mounting it before
@@ -69,6 +70,7 @@ export const mcpBaseRouteRuntime = {
   prepareBaseMcpX402ActionV1,
   reconcileBaseMcpActionV1,
   prepareBaseMcpVirtualsAgentCreateV1,
+  prepareBaseMcpAerodromeClaimV1,
   listBaseMcpActionReceiptsV1,
 };
 
@@ -563,6 +565,21 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
           ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: result.resultPreview }
           : null,
       }));
+    }
+    if (decision.kind === 'aerodrome_claim') {
+      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'disabled', reply: 'Connect Wallet MCP before claiming Aerodrome fees.',
+          trace: [], toolsAvailable: 0, truncated: false, elapsedMs: 0, errorCode: 'base_mcp_disabled', checkedAt: new Date().toISOString() }));
+      }
+      const startedAt = Date.now();
+      const result = await mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1({ req,
+        userId: tenantUserId(req), walletAddress: tenantWalletAddress(req), sessionSecret: secret,
+        idempotencyKey: requestId });
+      res.set('Cache-Control', 'no-store');
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: result.kind, reply: result.reply,
+        trace: [], toolsAvailable: result.toolsAvailable, truncated: false, elapsedMs: Date.now() - startedAt,
+        errorCode: result.errorCode, checkedAt: new Date().toISOString(),
+        action: result.receipt ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: null } : null }));
     }
     if (decision.kind === 'virtuals_create') {
       if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {

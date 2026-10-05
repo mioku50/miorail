@@ -26,6 +26,14 @@ function runtimeV1(overrides: Partial<BaseMcpRuntimeSnapshotV1> = {}): BaseMcpRu
   };
 }
 
+it('Aerodrome claim is released only with a typed action and batch simulation', () => {
+  const plugin = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1.aerodrome;
+  const claim = plugin.examples.find(example => example.id === 'claim')!;
+  assert.equal(exampleCapabilityStateV1(plugin, claim, runtimeV1({ releasedActionPlugins: ['aerodrome'] })).state, 'released');
+  assert.equal(exampleCapabilityStateV1(plugin, claim, runtimeV1({ releasedActionPlugins: ['aerodrome'], batchSimulationAvailable: false })).state, 'unavailable');
+  assert.equal(exampleCapabilityStateV1(plugin, claim, runtimeV1()).state, 'unsupported');
+});
+
 // The invariant: nothing is `released` unless the runtime can carry that exact
 // intent to its honest end point. Production violated it for two providers at
 // once — a quote adapter existed, so the console offered a handoff, and the

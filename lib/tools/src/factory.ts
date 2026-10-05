@@ -1,6 +1,7 @@
 import { ToolAggregator } from './aggregator.js';
 import { NativeToolProvider } from './native.js';
 import { BaseMcpToolProvider } from './base_mcp.js';
+import { PreparedBaseClaimToolProviderV1, type PreparedBaseClaimCallsV1 } from './prepared_base_calls.js';
 import { DynamicBaseMcpToolProvider, type DynamicBaseMcpTool } from './dynamic_base_mcp.js';
 import { listDynamicBaseMcpToolsCached, dynamicBaseMcpCacheKey } from './dynamicBaseMcpCache.js';
 import { MorphoMcpToolProvider } from './morpho_mcp.js';
@@ -36,6 +37,8 @@ export interface CreateToolAggregatorOptions {
    * plugin adapter from live discovery.
    */
   baseMcpAllowedActionTools?: readonly string[];
+  /** Exact calls already validated and simulated by the Aerodrome vertical. */
+  baseMcpPreparedClaim?: PreparedBaseClaimCallsV1;
   /** Exact typed action tools whose sensitive result is consumed in-memory by
    * the vertical. Generic agents must never set this. */
   baseMcpSensitiveResultTools?: readonly string[];
@@ -159,6 +162,9 @@ export async function createToolAggregatorForUser(userId: string, sessionSecret:
       });
       aggregator.registerCleanup(() => baseClient.close());
       mcpClient = new McpSendCallsClient(baseClient);
+      if (baseMcpOnly && options.baseMcpPreparedClaim) {
+        aggregator.registerProvider(new PreparedBaseClaimToolProviderV1(mcpClient, options.baseMcpPreparedClaim));
+      }
       if (!options.baseMcpReadOnlyOnly && !baseMcpOnly) {
         aggregator.registerProvider(new BaseMcpToolProvider(mcpClient));
       }

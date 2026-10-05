@@ -4,6 +4,19 @@ import { McpSendCallsClient } from "../src/send_calls.js";
 import { BaseMcpClient } from "../src/client.js";
 
 describe("McpSendCallsClient security checks", () => {
+  it('sends only shape-checked Aerodrome calls through its closed transport', async () => {
+    let count = 0;
+    const client = new McpSendCallsClient({ getClient: () => ({ callTool: async (input) => {
+      count++;
+      assert.equal(input.name, 'send_calls'); assert.equal(input.arguments?.chain, 'base');
+      return { content: [{ type: 'text', text: '{"approvalUrl":"https://keys.coinbase.com/approve/claim", "requestId":"claim-1"}' }] };
+    } }) });
+    const call = { to: '0x2222222222222222222222222222222222222222', value: '0', data: '0xd294f093' };
+    const wallet = '0x1111111111111111111111111111111111111111';
+    assert.equal((await client.sendAerodromeClaimCalls(wallet, [call])).requestId, 'claim-1');
+    await assert.rejects(client.sendAerodromeClaimCalls(wallet, [{ ...call, data: '0x095ea7b3' }]));
+    await assert.rejects(client.sendCalls('8453', [call])); assert.equal(count, 1);
+  });
   it("should block unsupported chains", async () => {
     const mockClient = { getClient: () => ({ callTool: async () => ({ content: [] }) }) } as unknown as BaseMcpClient;
     const client = new McpSendCallsClient(mockClient);

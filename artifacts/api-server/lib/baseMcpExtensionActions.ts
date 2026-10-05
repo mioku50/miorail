@@ -36,6 +36,7 @@ import {
   type AvantisProviderHandoffV1,
 } from './baseMcpProviderRouting.js';
 import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
+import { reconcileBaseMcpAerodromeClaimV1 } from './baseMcpAerodromeClaim.js';
 import { missingInputsReplyV1, missingProviderInputsV1 } from './baseMcpRequiredInputs.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import type { BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
@@ -55,10 +56,11 @@ export type BaseMcpExtensionIntentV1 =
   | { kind: 'send'; intent: BaseMcpSendActionIntentV1 }
   | { kind: 'x402'; intent: BaseMcpX402ActionIntentV1 }
   | { kind: 'virtuals_create'; intent: BaseMcpVirtualsActionIntentV1 }
+  | { kind: 'aerodrome_claim' }
   | { kind: 'needs_input'; errorCode: string; reply: string };
 
 export interface BaseMcpExtensionActionResultV1 {
-  kind: 'action' | 'failed';
+  kind: 'action' | 'failed' | 'answered';
   reply: string;
   errorCode: string | null;
   toolsAvailable: number;
@@ -84,7 +86,7 @@ function canonicalUsdcAmount(value: string): { amount: string; amountAtomic: str
  *
  * The model never chooses whether a wallet action is a route. Swap/yield are
  * detected before any tool inventory is created and handed to Routes AI.
- * Only a fully specified canonical-USDC transfer reaches the action runner.
+ * Direct actions use closed typed adapters; Aerodrome calls are server-owned.
  */
 export function classifyBaseMcpExtensionIntentV1(
   message: string,
@@ -94,6 +96,19 @@ export function classifyBaseMcpExtensionIntentV1(
   const lower = trimmed.toLowerCase();
 
   const provider = matchBaseMcpProviderIntentV1(trimmed, runtime);
+  if (provider?.disposition === 'action_in_extensions' && provider.pluginId === 'aerodrome') {
+    if (!runtime.releasedActionPlugins.includes('aerodrome') || !runtime.batchSimulationAvailable) {
+      return { kind: 'needs_input', errorCode: 'aerodrome_claim_unavailable',
+        reply: 'Aerodrome claim requires a released adapter and batch simulation on this deployment.' };
+    }
+    if (!/^(?:please\s+)?(?:claim|collect)\b|^(?:забери|собери|получи)\s/iu.test(trimmed)
+      || /0x[a-fA-F0-9]{40}|\b(to|recipient|withdraw|unstake|vot\w*|bribes?|rebase|veaero)\b/iu.test(trimmed)
+      || /(?:^|\s)(?:вывед|вывод|сним|отправ)\p{L}*/iu.test(trimmed)) {
+      return { kind: 'needs_input', errorCode: 'aerodrome_claim_scope_required',
+        reply: 'This claim collects fees and AERO only for your connected wallet. Ask “Claim my Aerodrome fees”.' };
+    }
+    return { kind: 'aerodrome_claim' };
+  }
   if (provider?.disposition === 'handoff_to_routes') {
     // A launchpad's token is named by its address, and "this Flaunch token"
     // names none. Miorail does not pick one: the person pastes it, from the
@@ -1047,6 +1062,9 @@ export async function reconcileBaseMcpActionV1(input: {
   if (!found) return failedWithoutReceipt('That Action Receipt was not found for this account.', 'base_mcp_action_receipt_not_found');
   if (found.actionType === 'virtuals') {
     return reconcileBaseMcpVirtualsActionV1({ ...input, receipt: found });
+  }
+  if (found.actionType === 'aerodrome_claim') {
+    return reconcileBaseMcpAerodromeClaimV1({ ...input, receipt: found });
   }
   const stored = await expireStaleBaseMcpX402ReceiptV1(found, baseMcpExtensionActionRuntime.now());
   if (['completed', 'rejected', 'failed'].includes(stored.status)) {

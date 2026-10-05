@@ -65,3 +65,44 @@ test('the Wallet MCP page fits a phone', async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Sign in to ask' })).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
+
+for (const width of [1280, 390]) {
+  test(`Aerodrome claim shows a simulated Action Receipt and leaves approval to the wallet (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 });
+    const wallet = '0x1111111111111111111111111111111111111111';
+    const posts: string[] = [];
+    await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript',
+      body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
+    await page.route('**/api/**', route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      if (request.method() === 'POST') posts.push(path);
+      if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${wallet}`, address: wallet, chainId: 8453 } } });
+      if (path === '/api/status') return route.fulfill({ json: { baseMcp: { enabled: true, configured: true, auth: { connected: true } } } });
+      if (path === '/api/mcp/base/console') {
+        const input = request.postDataJSON();
+        expect(input.message).toBe('Claim my Aerodrome fees');
+        expect(input.requestId).toBeTruthy();
+        return route.fulfill({ json: { status: 'action', reply: 'Four claim calls passed batch simulation. Review fees and AERO in your wallet.',
+          trace: [], toolsAvailable: 0, truncated: false, elapsedMs: 100, errorCode: null, checkedAt: new Date().toISOString(),
+          action: { approvalUrl: 'https://keys.coinbase.com/approve/fixture-claim', resultPreview: null, receipt: {
+            id: 'fixture-claim', schemaVersion: 'base-mcp-action-receipt/v1', chainId: 8453, provider: 'base-mcp',
+            actionHash: `0x${'a'.repeat(64)}`, walletAddress: wallet, capabilityPolicy: 'passed',
+            actionType: 'aerodrome_claim', operation: 'claim', recipient: wallet, claimCount: 4, poolsRead: 38794, poolsTotal: 38794,
+            managedSkipped: 1, readBlock: '100', simulationStatus: 'passed', status: 'approval_required', reconciliationState: 'not_started',
+            approvalRequired: true, routeVerified: false, reconciliationBasis: 'aerodrome_claim_events', transactionHash: null,
+            blockNumber: null, errorCode: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), finalizedAt: null,
+          } } } });
+      }
+      return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
+    });
+    await page.goto('/extensions');
+    await page.locator('#base-mcp-console-input').fill('Claim my Aerodrome fees');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(page.getByText('4 claims', { exact: true })).toBeVisible();
+    await expect(page.getByText('38794 / 38794', { exact: true })).toBeVisible();
+    await expect(page.getByText('1 managed or locked positions excluded.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: /Approve/ })).toHaveAttribute('href', 'https://keys.coinbase.com/approve/fixture-claim');
+    expect(posts.filter(path => path !== '/api/mcp/base/tools')).toEqual(['/api/mcp/base/console']);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  });
+}

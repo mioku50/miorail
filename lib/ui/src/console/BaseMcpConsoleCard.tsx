@@ -62,6 +62,12 @@ interface BaseMcpActionReceiptCommonUiV1 {
 
 export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
   | {
+      actionType: 'aerodrome_claim'; operation: 'claim'; recipient: string;
+      claimCount: number; poolsRead: number; poolsTotal: number; managedSkipped: number;
+      readBlock: string | null; simulationStatus: 'passed' | 'failed' | 'unavailable';
+      reconciliationBasis: 'aerodrome_claim_events';
+    }
+  | {
       actionType: 'send';
       asset: { symbol: 'USDC'; address: string; decimals: 6 };
       amount: string;
@@ -470,6 +476,14 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                       <span className="v mono">{answer.action.receipt.maxPayment} USDC</span>
                     </div>
                     <p className="lnote mono">{answer.action.receipt.url}</p>
+                  </>
+                ) : answer.action.receipt.actionType === 'aerodrome_claim' ? (
+                  <>
+                    <div className="qrow"><span>Aerodrome fees and AERO</span><span className="v mono">{answer.action.receipt.claimCount} claims</span></div>
+                    <div className="qrow"><span>Recipient</span><span className="v mono">{answer.action.receipt.recipient}</span></div>
+                    <div className="qrow"><span>Pools read</span><span className="v mono">{answer.action.receipt.poolsRead} / {answer.action.receipt.poolsTotal}</span></div>
+                    <div className="qrow"><span>Batch simulation</span><span className="v">{answer.action.receipt.simulationStatus}</span></div>
+                    {answer.action.receipt.managedSkipped > 0 && <p className="lnote">{answer.action.receipt.managedSkipped} managed or locked positions excluded.</p>}
                   </>
                 ) : (
                   <>

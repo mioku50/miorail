@@ -18,6 +18,7 @@ const originalPluginDrift = mcpBaseRouteRuntime.baseMcpPluginDriftV1;
 const originalConsole = mcpBaseRouteRuntime.runBaseMcpConsoleV1;
 const originalReviewedConsole = mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1;
 const originalClassifyExtension = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1;
+const originalPrepareAerodrome = mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1;
 const originalResolveBaseName = mcpBaseRouteRuntime.resolveBaseNameV1;
 const originalPrepareExtension = mcpBaseRouteRuntime.prepareBaseMcpSendActionV1;
 const originalPrepareX402Extension = mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1;
@@ -87,6 +88,7 @@ afterEach(() => {
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = originalConsole;
   mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = originalReviewedConsole;
   mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = originalClassifyExtension;
+  mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = originalPrepareAerodrome;
   mcpBaseRouteRuntime.resolveBaseNameV1 = originalResolveBaseName;
   mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = originalPrepareExtension;
   mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1 = originalPrepareX402Extension;
@@ -875,6 +877,40 @@ test('POST /api/mcp/base/console returns an approval Action Receipt for exact se
   restoreEnv('SESSION_SECRET', originalSecret);
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+});
+
+test('POST /api/mcp/base/console dispatches Aerodrome claim without exposing it to the read agent', async () => {
+  const envKeys = ['SESSION_SECRET', 'BASE_MCP_ENABLED', 'BASE_MCP_SERVER_URL'] as const;
+  const before = envKeys.map(key => process.env[key]);
+  process.env.SESSION_SECRET = 'test-session-secret';
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://wallet-mcp.coinbase.com';
+  let prepared = 0;
+  mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = () => ({ kind: 'aerodrome_claim' });
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('claim must not reach model'); };
+  mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = async (input) => {
+    prepared++; assert.equal(input.idempotencyKey, 'claim-http-1');
+    return { kind: 'action', reply: 'One claim passed batch simulation.', errorCode: null, toolsAvailable: 0,
+      approvalUrl: 'https://keys.coinbase.com/approve/claim-1', receipt: {
+        schemaVersion: 'base-mcp-action-receipt/v1', id: 'claim-http-1', actionHash: `0x${'a'.repeat(64)}`,
+        actionType: 'aerodrome_claim', operation: 'claim', provider: 'base-mcp', chainId: 8453,
+        walletAddress: '0x1111111111111111111111111111111111111111',
+        recipient: '0x1111111111111111111111111111111111111111', status: 'approval_required',
+        capabilityPolicy: 'passed', approvalRequired: true, reconciliationState: 'not_started',
+        transactionHash: null, blockNumber: null, errorCode: null, createdAt: '2026-10-05T16:00:00Z',
+        updatedAt: '2026-10-05T16:00:00Z', finalizedAt: null, routeVerified: false,
+        claimCount: 1, poolsRead: 38_794, poolsTotal: 38_794, managedSkipped: 2,
+        readBlock: '100', simulationStatus: 'passed', reconciliationBasis: 'aerodrome_claim_events',
+      } };
+  };
+  try {
+    const response = await request(app).post('/api/mcp/base/console').send({ message: 'Claim my Aerodrome fees', requestId: 'claim-http-1' });
+    assert.equal(response.status, 200); assert.equal(prepared, 1);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.equal(response.body.action.receipt.actionType, 'aerodrome_claim');
+    assert.equal(response.body.action.receipt.simulationStatus, 'passed');
+    assert.equal(response.body.handoff, null); assert.deepEqual(response.body.trace, []);
+  } finally { envKeys.forEach((key, index) => restoreEnv(key, before[index])); }
 });
 
 test('POST /api/mcp/base/console exposes reviewed Virtuals sign-in as an Action Receipt', async () => {

@@ -1,5 +1,5 @@
 import type { Request } from 'express';
-import { createToolAggregatorForUser } from '@mioagent/tools';
+import { createToolAggregatorForUser, type PreparedBaseClaimCallsV1 } from '@mioagent/tools';
 import {
   baseMcpEnabledFromEnv,
   baseMcpServerUrlFromEnv,
@@ -35,6 +35,7 @@ export async function createApiToolAggregatorForUser(
     includeBaseMcpSend?: boolean;
     baseMcpAllowedActionTools?: readonly string[];
     baseMcpSensitiveResultTools?: readonly string[];
+    baseMcpPreparedClaim?: PreparedBaseClaimCallsV1;
     /** Base MCP and nothing else. Read-only unless an exact typed action is allowed. */
     baseMcpOnly?: boolean;
   } = {},
@@ -76,6 +77,7 @@ export async function createApiToolAggregatorForUser(
     includeBaseMcpSend: options.includeBaseMcpSend,
     baseMcpAllowedActionTools: options.baseMcpAllowedActionTools,
     baseMcpSensitiveResultTools: options.baseMcpSensitiveResultTools,
+    baseMcpPreparedClaim: options.baseMcpPreparedClaim,
     baseMcpOnly: options.baseMcpOnly,
     dynamicToolsCacheVersion,
     baseMcpConnectionGeneration: authStatus?.connectedAt,

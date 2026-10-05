@@ -239,6 +239,10 @@ function actionCapabilityV1(
     return { operation: 'action', state: 'unsupported', reason: 'This plugin declares no direct action in its Base spec.' };
   }
   if (runtime.releasedActionPlugins.includes(plugin.pluginId)) {
+    if (plugin.pluginId === 'aerodrome' && !runtime.batchSimulationAvailable) {
+      return { operation: 'action', state: 'unavailable',
+        reason: 'Aerodrome claim needs an executed batch simulation before wallet approval, and no batch simulator is available here.' };
+    }
     return {
       operation: 'action',
       state: 'released',

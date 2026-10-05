@@ -48,8 +48,9 @@ export interface BaseMcpVirtualsActionIntentV1 {
   agentDescription: string;
 }
 
-export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1;
-export type BaseMcpActionTypeV1 = 'send' | 'x402' | 'virtuals';
+export interface BaseMcpAerodromeClaimIntentV1 { operation: 'claim'; recipient: string }
+export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1 | BaseMcpAerodromeClaimIntentV1;
+export type BaseMcpActionTypeV1 = 'send' | 'x402' | 'virtuals' | 'aerodrome_claim';
 
 export function baseMcpActionHashV1(input: {
   tenantId: string;
@@ -104,6 +105,8 @@ export interface BaseMcpActionReceiptRepositoryV1 {
     now: string;
   }): Promise<{ receipt: StoredBaseMcpActionReceiptV1; created: boolean }>;
   get(id: string, tenantId: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
+  getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
+  getActiveAerodromeClaim(tenantId: string, walletAddress: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
   update(input: {
     id: string;
     tenantId: string;
@@ -210,6 +213,16 @@ function receiptEventV1(receipt: StoredBaseMcpActionReceiptV1) {
 }
 
 export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionReceiptRepositoryV1 {
+  async getActiveAerodromeClaim(tenantId: string, walletAddress: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+    const rows = await client`
+      SELECT * FROM base_mcp_action_receipts
+      WHERE tenant_id = ${tenantId} AND wallet_address = ${walletAddress}
+        AND action_type = 'aerodrome_claim'
+        AND status IN ('preparing', 'approval_required', 'pending', 'reconciling')
+      LIMIT 1
+    `;
+    return rows[0] ? rowToStored(rows[0]) : null;
+  }
   async available(): Promise<boolean> {
     try {
       const rows = await client`SELECT to_regclass('public.base_mcp_action_receipts') AS name`;
@@ -291,7 +304,7 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
     return { receipt, created };
   }
 
-  private async getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+  async getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
     const rows = await client`
       SELECT *
       FROM base_mcp_action_receipts
@@ -399,6 +412,15 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
 }
 
 export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionReceiptRepositoryV1 {
+  async getActiveAerodromeClaim(tenantId: string, walletAddress: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+    const row = [...this.rows.values()].find(row => row.tenantId === tenantId && row.walletAddress === walletAddress
+      && row.actionType === 'aerodrome_claim' && ['preparing', 'approval_required', 'pending', 'reconciling'].includes(row.status));
+    return row ? structuredClone(row) : null;
+  }
+  async getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+    const row = [...this.rows.values()].find(row => row.tenantId === tenantId && row.idempotencyKey === idempotencyKey);
+    return row ? structuredClone(row) : null;
+  }
   availableValue = true;
   private rows = new Map<string, StoredBaseMcpActionReceiptV1>();
 
@@ -418,6 +440,11 @@ export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
       (row) => row.tenantId === input.tenantId && row.idempotencyKey === input.idempotencyKey,
     );
     if (existing) return { receipt: structuredClone(existing), created: false };
+    if (input.actionType === 'aerodrome_claim' && [...this.rows.values()].some(row => row.tenantId === input.tenantId
+      && row.walletAddress === input.walletAddress && row.actionType === 'aerodrome_claim'
+      && ['preparing', 'approval_required', 'pending', 'reconciling'].includes(row.status))) {
+      throw new Error('base_mcp_aerodrome_claim_already_active');
+    }
     const id = `base-mcp-action:${crypto.randomUUID()}`;
     const receipt: StoredBaseMcpActionReceiptV1 = {
       id,
@@ -546,6 +573,18 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
       agentDescription: intent.agentDescription,
       providerObjectId,
       reconciliationBasis: 'virtuals_provider_response',
+    });
+  }
+  if (receipt.actionType === 'aerodrome_claim') {
+    const plan = receipt.durableProof?.claimPlan as { blockNumber?: string; poolsRead?: number; poolsTotal?: number; managedSkipped?: number; calls?: unknown[] } | undefined;
+    return BaseMcpActionReceiptV1Schema.parse({
+      ...common, actionType: 'aerodrome_claim', operation: 'claim',
+      recipient: (receipt.intent as BaseMcpAerodromeClaimIntentV1).recipient,
+      claimCount: plan?.calls?.length ?? 0,
+      poolsRead: plan?.poolsRead ?? 0, poolsTotal: plan?.poolsTotal ?? 0,
+      managedSkipped: plan?.managedSkipped ?? 0, readBlock: plan?.blockNumber ?? null,
+      simulationStatus: (receipt.durableProof?.simulation as { status?: string } | undefined)?.status ?? 'unavailable',
+      reconciliationBasis: 'aerodrome_claim_events',
     });
   }
   const intent = receipt.intent as BaseMcpSendActionIntentV1;
