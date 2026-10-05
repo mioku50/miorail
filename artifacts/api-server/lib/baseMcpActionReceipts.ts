@@ -42,11 +42,12 @@ export interface BaseMcpX402ActionIntentV1 {
   };
 }
 
-export interface BaseMcpVirtualsActionIntentV1 {
+export interface BaseMcpVirtualsCreateIntentV1 {
   operation: 'agent_create';
   agentName: string;
   agentDescription: string;
 }
+export type BaseMcpVirtualsActionIntentV1 = BaseMcpVirtualsCreateIntentV1 | { operation: 'sign_in' };
 
 export interface BaseMcpAerodromeClaimIntentV1 { operation: 'claim'; recipient: string }
 export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1 | BaseMcpAerodromeClaimIntentV1;
@@ -569,8 +570,8 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
       actionType: 'virtuals',
       extensionProvider: 'virtuals',
       operation: intent.operation,
-      agentName: intent.agentName,
-      agentDescription: intent.agentDescription,
+      agentName: intent.operation === 'agent_create' ? intent.agentName : null,
+      agentDescription: intent.operation === 'agent_create' ? intent.agentDescription : null,
       providerObjectId,
       reconciliationBasis: 'virtuals_provider_response',
     });

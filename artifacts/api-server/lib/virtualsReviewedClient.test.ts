@@ -59,3 +59,17 @@ test('Virtuals auth failures become a closed session error without response leak
   const response = await callVirtualsReviewedV1({ method: 'agent_list', args: { token: 'secret' } });
   assert.deepEqual(response, { ok: false, errorCode: 'virtuals_session_expired' });
 });
+
+test('OTP transport releases only exact read arguments and disables redirects', async () => {
+  let called = 0;
+  virtualsReviewedClientRuntimeV1.fetch = async (_scope, _url, init) => {
+    called++; assert.equal(init?.redirect, 'error');
+    assert.deepEqual(JSON.parse(String(init?.body)).params, { name: 'agent_email_extract_otp', arguments: { token: 'test-jwt', agentId: 'agent-1', messageId: 'mail-1' } });
+    return new Response(JSON.stringify({ result: { content: [{ text: '{"otp":null}' }] } }));
+  };
+  assert.deepEqual(await callVirtualsReviewedV1({ method: 'agent_email_extract_otp', args: { token: 'test-jwt', agentId: 'agent-1', messageId: 'mail-1' } }), { ok: true, data: { otp: null } });
+  for (const args of [{ token: 'test-jwt', agentId: 'agent-1' }, { token: 'test-jwt', agentId: '../agent', messageId: 'mail-1' }, { token: 'test-jwt', agentId: 'agent-1', messageId: 'mail-1', to: 'someone' }]) {
+    assert.deepEqual(await callVirtualsReviewedV1({ method: 'agent_email_extract_otp', args }), { ok: false, errorCode: 'virtuals_otp_args_invalid' });
+  }
+  assert.equal(called, 1);
+});

@@ -47,6 +47,7 @@ export const REVIEWED_READ_FACTS_V1: Readonly<Record<string, ReviewedReadFactsV1
   'printr:status': { returns: 'Printr’s per-chain deployment state for one token id — live, pending or failed.' },
   'venice:models': { returns: 'The models Venice publishes, with what each one does.' },
   'virtuals:agents': { returns: 'The Virtuals agents your signed-in account owns.', needsProviderSignIn: true },
+  'virtuals:otp': { returns: 'Whether Virtuals found a candidate verification code in the exact agent message you name; the code is shown only if you explicitly ask.', needsProviderSignIn: true },
 };
 
 export function reviewedReadShapeV1(pluginId: string, exampleId: string): string | null {

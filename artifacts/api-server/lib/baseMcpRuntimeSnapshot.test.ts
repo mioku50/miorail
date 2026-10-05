@@ -79,6 +79,7 @@ const REVIEWED_RECIPE_IDS_V1: ReadonlySet<string> = new Set([
   'printr:status',
   'venice:models',
   'virtuals:agents',
+  'virtuals:otp',
 ]);
 
 describe('the snapshot reports the deployment, not a policy', () => {

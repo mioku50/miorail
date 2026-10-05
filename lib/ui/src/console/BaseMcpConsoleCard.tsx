@@ -87,9 +87,9 @@ export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
   | {
       actionType: 'virtuals';
       extensionProvider: 'virtuals';
-      operation: 'agent_create';
-      agentName: string;
-      agentDescription: string;
+      operation: 'agent_create' | 'sign_in';
+      agentName: string | null;
+      agentDescription: string | null;
       providerObjectId: string | null;
       reconciliationBasis: 'virtuals_provider_response';
     }
@@ -191,6 +191,13 @@ export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null
   // receipt (for example, an idempotency conflict). The receipt and its exact
   // error are more useful than the generic console failure copy.
   if (answer.action) return null;
+  if (answer.status === 'failed' && answer.errorCode?.startsWith('virtuals_')) {
+    const otp = answer.errorCode.startsWith('virtuals_otp_') || answer.trace.some(row => row.tool === 'virtuals_agent_email_extract_otp');
+    return answer.errorCode === 'virtuals_session_expired'
+      ? `Your Virtuals sign-in expired. Ask “Sign in to Virtuals”, then retry.${otp ? ' Whether the message contains a code was not established.' : ''}`
+      : otp ? 'The private Virtuals read could not finish. Whether the message contains a code was not established. Retry; a failed read does not mean there is no code.'
+        : 'The private Virtuals read could not finish. No result was established. Retry or sign in again.';
+  }
   if (answer.status === 'failed' && [
     'hydrex_positions_invalid_response', 'hydrex_positions_incomplete',
     'hydrex_positions_wallet_mismatch', 'hydrex_positions_duplicate',
@@ -325,6 +332,7 @@ const MISSING_INPUT_PLACEHOLDER_V1: Readonly<Record<string, string>> = {
   printr_token_id_required: 'Printr token id from the launch',
   bankr_token_address_required: '0x… Base token address',
   opensea_token_required: '0x… NFT contract address and token id',
+  virtuals_otp_facts_required: 'Virtuals OTP status for agent ID… message ID…',
 };
 
 export function baseMcpInputPlaceholderV1(answer: BaseMcpConsoleAnswerV1 | null): string {
@@ -496,13 +504,17 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                   <>
                     <div className="qrow">
                       <span>Virtuals action</span>
-                      <span className="v mono">agent_create</span>
+                      <span className="v">{answer.action.receipt.operation === 'sign_in' ? 'Sign in' : 'Create agent'}</span>
                     </div>
-                    <div className="qrow">
-                      <span>Agent</span>
-                      <span className="v">{answer.action.receipt.agentName}</span>
-                    </div>
-                    <p className="lnote">{answer.action.receipt.agentDescription}</p>
+                    {answer.action.receipt.operation === 'agent_create' ? (
+                      <>
+                        <div className="qrow">
+                          <span>Agent</span>
+                          <span className="v">{answer.action.receipt.agentName}</span>
+                        </div>
+                        <p className="lnote">{answer.action.receipt.agentDescription}</p>
+                      </>
+                    ) : null}
                     {answer.action.receipt.providerObjectId && (
                       <p className="lnote mono">agent ID {answer.action.receipt.providerObjectId}</p>
                     )}

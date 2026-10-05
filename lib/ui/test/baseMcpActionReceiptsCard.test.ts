@@ -3,6 +3,15 @@ import test from 'node:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { BaseMcpActionReceiptsCard } from '../src/console/BaseMcpActionReceiptsCard';
 
+test('Activity distinguishes Virtuals sign-in from agent creation', () => {
+  const html = renderToStaticMarkup(BaseMcpActionReceiptsCard({ loading: false, unavailableReason: null, receipts: [{
+    id: 'virtuals-sign-in', status: 'completed', provider: 'base-mcp', actionType: 'virtuals', operation: 'sign_in',
+    agentName: null, providerObjectId: null, reconciliationState: 'provider_confirmed', transactionHash: null,
+    blockNumber: null, errorCode: null, createdAt: '2026-10-05T10:00:00Z', routeVerified: false,
+  }] }));
+  assert.match(html, /Virtuals · Sign in/); assert.doesNotMatch(html, /agent ID|Create agent/);
+});
+
 test('Activity renders a completed Virtuals action as an Action Receipt, not a Route Proof', () => {
   const html = renderToStaticMarkup(BaseMcpActionReceiptsCard({
     loading: false,

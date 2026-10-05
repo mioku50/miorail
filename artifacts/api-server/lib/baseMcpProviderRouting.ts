@@ -10,6 +10,7 @@ import {
   type BaseMcpRuntimeSnapshotV1,
 } from '@mioagent/security';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
+import { isVirtualsOtpReadV1 } from './virtualsOtpRead.js';
 
 export interface BaseMcpProviderIntentMatchV1 {
   pluginId: string;
@@ -118,6 +119,9 @@ function inferredDisposition(
   runtime: BaseMcpRuntimeSnapshotV1,
 ): BaseMcpProviderExampleDispositionV1 {
   const lower = normalized(message);
+  if (provider.pluginId === 'virtuals' && /\botp\b|verification code|одноразов\p{L}*\s+код/iu.test(lower)) {
+    return isVirtualsOtpReadV1(message) ? 'read_in_extensions' : 'adapter_required';
+  }
   if (provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message)) return 'read_in_extensions';
   if (provider.pluginId === 'hydrex' && /\bpositions?\b|(?:^|\s)позиц\p{L}*/iu.test(lower) &&
       /\b(?:add|remove|withdraw|deposit|claim|collect|mint|approve|create|transfer)\b|(?:^|\s)(?:добав|удал|вывед|вывести|сним|забер|забра|собер|созда|отправ|одобр)\p{L}*/iu.test(lower)) return 'adapter_required';
@@ -217,7 +221,8 @@ export function matchBaseMcpProviderIntentV1(
     disposition,
     /** Present only when the runtime blocked a handoff the registry declared. */
     routeCapability: routeGate && !routeGate.released ? routeGate.capability : null,
-    exampleId: provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message) ? 'positions' : closest?.id ?? null,
+    exampleId: provider.pluginId === 'virtuals' && isVirtualsOtpReadV1(message) ? 'otp'
+      : provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message) ? 'positions' : closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,
       `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,

@@ -484,7 +484,8 @@ or plugin capabilities. `.env.example` uses the new endpoint for fresh setups.
 - `ROUTABLE` swap/yield requests are handed to Routes; they cannot bypass provider comparison or Route Proof.
 - An `ACTION` is released only through a typed input policy, wallet binding, safety checks, explicit approval, idempotency, persistence, and reconciliation.
 - Reviewed HTTP recipes bypass generic prompting: Moonwell market/health reads use pinned hosts and exact paths.
-- Virtuals agent creation is a typed action: Miorail requests an exact SIWE challenge, pauses for `Approve Sign-In`, keeps the authenticated provider session encrypted, creates the named agent, and records a provider-confirmed Action Receipt. Generic signing, email, OTP, and card actions are not implied.
+- Virtuals has a standalone `Sign in to Virtuals` action: Miorail requests an exact SIWE challenge, pauses for `Approve Sign-In` and keeps the authenticated provider session encrypted. Signing in does not create an agent; explicit agent creation remains a separate typed intent. Both record provider-confirmed Action Receipts.
+- Virtuals email OTP reads require an agent ID and message ID from the signed-in account. `Check my Virtuals email OTP status for agent agent-123 message message-456` hides the code. Only an explicit `Show Virtuals OTP code for agent agent-123 message message-456` reveals bounded candidates. Account ownership is checked first; email bodies, links, tokens and codes are excluded from traces. Unsupported result shapes and provider failures never become “no code”. Code validity/expiry is not verified, and no code is submitted or used. Generic signing, email sending and card actions remain unavailable.
 - Unknown tools, arbitrary calls, and documentation-only plugins remain blocked. Dynamic discovery never grants execution.
 
 Action Receipts are deliberately separate from Route Proofs.

@@ -1,9 +1,9 @@
 import { baseMcpPluginScopeV1, pluginScopedFetch } from '@mioagent/security/httpAllowlist';
 
 const VIRTUALS_URL_V1 = 'https://mcp.acp.virtuals.io/';
-const ALLOWED_METHODS_V1 = new Set(['login_start', 'login_complete', 'agent_list', 'agent_create']);
+const ALLOWED_METHODS_V1 = new Set(['login_start', 'login_complete', 'agent_list', 'agent_create', 'agent_email_extract_otp']);
 
-export type VirtualsReviewedMethodV1 = 'login_start' | 'login_complete' | 'agent_list' | 'agent_create';
+export type VirtualsReviewedMethodV1 = 'login_start' | 'login_complete' | 'agent_list' | 'agent_create' | 'agent_email_extract_otp';
 
 export const virtualsReviewedClientRuntimeV1 = {
   fetch: pluginScopedFetch,
@@ -51,6 +51,12 @@ export async function callVirtualsReviewedV1(input: {
   args: Record<string, unknown>;
 }): Promise<{ ok: true; data: unknown } | { ok: false; errorCode: string }> {
   if (!ALLOWED_METHODS_V1.has(input.method)) return { ok: false, errorCode: 'virtuals_method_not_released' };
+  if (input.method === 'agent_email_extract_otp' &&
+      (Object.keys(input.args).some(key => !['token', 'agentId', 'messageId'].includes(key)) ||
+       typeof input.args.token !== 'string' || !input.args.token || input.args.token.length > 10_000 ||
+       !['agentId', 'messageId'].every(key => typeof input.args[key] === 'string' && /^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$/.test(input.args[key] as string)))) {
+    return { ok: false, errorCode: 'virtuals_otp_args_invalid' };
+  }
   const scope = baseMcpPluginScopeV1('virtuals');
   if (!scope || !scope.hosts.includes('mcp.acp.virtuals.io')) {
     return { ok: false, errorCode: 'virtuals_scope_unavailable' };
@@ -62,6 +68,7 @@ export async function callVirtualsReviewedV1(input: {
       VIRTUALS_URL_V1,
       {
         method: 'POST',
+        redirect: 'error',
         headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
         body: JSON.stringify({
           jsonrpc: '2.0',

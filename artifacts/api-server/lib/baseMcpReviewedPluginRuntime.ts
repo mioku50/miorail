@@ -22,6 +22,7 @@ import { callVirtualsReviewedV1 } from './virtualsReviewedClient.js';
 import { resolveCommerceCatalogSourceV1 } from './commerceRouteConfig.js';
 import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
 import { hydrexPositionsAnswerV1, hydrexPositionsInputErrorV1 } from './hydrexPositionsRead.js';
+import { runVirtualsOtpReadV1 } from './virtualsOtpRead.js';
 
 // ---------------------------------------------------------------------------
 // Reviewed Base plugin recipes.
@@ -418,6 +419,7 @@ function flaunchCoinsReplyV1(result: ReviewedCallResultV1 | undefined): string {
 }
 
 async function runVirtualsReadV1(input: ReviewedPluginReadInputV1): Promise<BaseMcpConsoleResultV1 | null> {
+  if (input.exampleId === 'otp') return runVirtualsOtpReadV1(input, reviewedBaseMcpPluginRuntimeV1);
   if (input.exampleId !== 'agents') return null;
   const checkedAt = reviewedBaseMcpPluginRuntimeV1.now().toISOString();
   if (!input.userId || !input.sessionSecret) return null;
@@ -428,7 +430,7 @@ async function runVirtualsReadV1(input: ReviewedPluginReadInputV1): Promise<Base
   if (!session || session.stage !== 'authenticated' || session.walletAddress.toLowerCase() !== input.walletAddress.toLowerCase()) {
     return {
       status: 'answered',
-      reply: 'Virtuals needs a reviewed wallet sign-in before Miorail can list private agents. Use the Create Virtuals agent example to open Approve Sign-In; no provider request was sent for this read.',
+      reply: 'Virtuals needs a reviewed wallet sign-in before Miorail can list private agents. Ask “Sign in to Virtuals” to open Approve Sign-In; no provider request was sent for this read.',
       trace: [],
       toolsAvailable: 1,
       truncated: false,

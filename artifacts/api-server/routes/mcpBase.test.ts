@@ -6,6 +6,7 @@ import { app } from '../app.js';
 import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
 import { mcpBaseRouteRuntime, mcpBaseRouter } from './mcpBase.js';
 import { enforceTenantBinding } from '../middleware/tenantAuth.js';
+import { BaseMcpActionReceiptV1Schema } from '@mioagent/api-zod';
 import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
 import {
   baseMcpOAuthStoreRuntime,
@@ -996,8 +997,8 @@ test('POST /api/mcp/base/console exposes reviewed Virtuals sign-in as an Action 
       routeVerified: false,
       extensionProvider: 'virtuals',
       operation: 'agent_create',
-      agentName: input.intent.agentName,
-      agentDescription: input.intent.agentDescription,
+      agentName: input.intent.operation === 'agent_create' ? input.intent.agentName : null,
+      agentDescription: input.intent.operation === 'agent_create' ? input.intent.agentDescription : null,
       providerObjectId: null,
       reconciliationBasis: 'virtuals_provider_response',
     },
@@ -1016,6 +1017,62 @@ test('POST /api/mcp/base/console exposes reviewed Virtuals sign-in as an Action 
   restoreEnv('SESSION_SECRET', originalSecret);
   restoreEnv('BASE_MCP_ENABLED', originalEnabled);
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+});
+
+test('Virtuals OTP reads use the session wallet, no-store and the reviewed reader only', async () => {
+  const oldSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  const wallet = '0x1111111111111111111111111111111111111111';
+  const strictApp = express();
+  strictApp.use(express.json());
+  strictApp.use((req, _res, next) => {
+    Object.assign(req, { session: { user: { id: `eip155:8453:${wallet}`, address: wallet, chainId: 8453 } } }); next();
+  });
+  strictApp.use('/api/mcp/base', enforceTenantBinding, mcpBaseRouter);
+  let reads = 0;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('No model for OTP'); };
+  mcpBaseRouteRuntime.prepareBaseMcpVirtualsAgentCreateV1 = async () => { throw new Error('No automatic sign-in'); };
+  mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = async input => {
+    assert.equal(input.providerId, 'virtuals'); assert.equal(input.exampleId, 'otp');
+    assert.equal(input.userId, `eip155:8453:${wallet}`); assert.equal(input.walletAddress, wallet);
+    reads++;
+    return { status: 'answered', reply: 'Virtuals found 1 candidate verification code. The code is hidden.', trace: [],
+      toolsAvailable: 2, truncated: false, elapsedMs: 2, errorCode: null, checkedAt: new Date().toISOString() };
+  };
+  try {
+    const message = 'Check my Virtuals email OTP status for agent agent-1 message mail-1';
+    const response = await request(strictApp).post('/api/mcp/base/console').send({ message });
+    assert.equal(response.status, 200); assert.equal(response.headers['cache-control'], 'no-store');
+    assert.equal(response.body.status, 'answered'); assert.ok(!response.body.action); assert.ok(!response.body.handoff);
+    const foreign = await request(strictApp).post('/api/mcp/base/console').send({ message, walletAddress: '0x3333333333333333333333333333333333333333' });
+    assert.equal(foreign.status, 403); assert.equal(reads, 1);
+    const catalogue = await request(app).get('/api/mcp/base/plugins');
+    const provider = catalogue.body.plugins.find((p: { id: string }) => p.id === 'virtuals');
+    const example = provider.examples.find((e: { id: string }) => e.id === 'otp');
+    assert.equal(example.disposition, 'read_in_extensions'); assert.equal(example.capabilityState, 'requires_input');
+  } finally { restoreEnv('SESSION_SECRET', oldSecret); }
+});
+
+test('standalone Virtuals sign-in projects no agent creation facts and validates the public receipt', async () => {
+  const oldSecret = process.env.SESSION_SECRET, oldEnabled = process.env.BASE_MCP_ENABLED, oldUrl = process.env.BASE_MCP_SERVER_URL;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  process.env.BASE_MCP_ENABLED = 'true'; process.env.BASE_MCP_SERVER_URL = 'https://wallet-mcp.coinbase.com';
+  mcpBaseRouteRuntime.prepareBaseMcpVirtualsAgentCreateV1 = async input => {
+    assert.deepEqual(input.intent, { operation: 'sign_in' });
+    return { kind: 'action', reply: 'Approve only this sign-in.', errorCode: null, toolsAvailable: 2,
+      approvalUrl: 'https://keys.coinbase.com/approve/test-sign-in', resultPreview: null,
+      receipt: { ...ACTION_RECEIPT, actionType: 'virtuals', extensionProvider: 'virtuals', operation: 'sign_in',
+        agentName: null, agentDescription: null, providerObjectId: null, reconciliationBasis: 'virtuals_provider_response' } };
+  };
+  try {
+    const response = await request(app).post('/api/mcp/base/console').send({ message: 'Sign in to Virtuals', requestId: 'virtuals-login-http' });
+    assert.equal(response.status, 200); assert.equal(response.headers['cache-control'], 'no-store');
+    const receipt = response.body.action.receipt;
+    assert.equal(receipt.operation, 'sign_in'); assert.equal(receipt.agentName, null); assert.equal(receipt.agentDescription, null);
+    assert.equal(BaseMcpActionReceiptV1Schema.safeParse(receipt).success, true);
+    assert.equal(BaseMcpActionReceiptV1Schema.safeParse({ ...receipt, agentName: 'Fake agent' }).success, false);
+    assert.equal(BaseMcpActionReceiptV1Schema.safeParse({ ...receipt, operation: 'agent_create' }).success, false);
+  } finally { restoreEnv('SESSION_SECRET', oldSecret); restoreEnv('BASE_MCP_ENABLED', oldEnabled); restoreEnv('BASE_MCP_SERVER_URL', oldUrl); }
 });
 
 test('POST /api/mcp/base/console resolves a Basename before preparing the exact send', async () => {

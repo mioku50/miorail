@@ -58,6 +58,7 @@ const MAX_MODEL_RESULT_CHARS_V1 = 1500;
 
 export type BaseMcpConsoleStatusV1 =
   | 'answered'
+  | 'needs_input'
   | 'no_tools'
   | 'needs_reauth'
   | 'disabled'

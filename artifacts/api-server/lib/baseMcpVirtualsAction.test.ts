@@ -141,3 +141,25 @@ test('Virtuals action refuses incomplete facts before storage or provider calls'
   assert.equal(response.errorCode, 'virtuals_agent_facts_required');
   assert.equal(providerCalled, false);
 });
+
+test('dedicated Virtuals sign-in approves once, establishes a session and never creates an agent', async () => {
+  const repository = new InMemoryBaseMcpActionReceiptRepositoryV1(), sessions = new InMemoryBaseMcpPluginSessionStoreV1();
+  const calls: string[] = [], baseCalls: string[] = [];
+  Object.assign(baseMcpVirtualsActionRuntimeV1, { repository, sessions, createTools: async () => fakeBaseMcpTools(baseCalls), verifyWallet: async () => ({ checked: true, match: true, mcpAddresses: [WALLET] }), now: () => new Date('2099-08-20T20:00:00Z'),
+    callVirtuals: async (input: { method: string }) => {
+      calls.push(input.method);
+      if (input.method === 'login_start') return { ok: true, data: { message: 'Sign in to Virtuals\nNonce: reviewed-1' } };
+      assert.equal(input.method, 'login_complete');
+      return { ok: true, data: { walletAddress: WALLET, token: 'jwt-secret', refreshToken: 'refresh-secret' } };
+    } });
+  const input = { req: {} as Request, userId: 'tenant-sign-in', walletAddress: WALLET, sessionSecret: 'server-secret', idempotencyKey: 'sign-in-1', intent: { operation: 'sign_in' as const } };
+  const prepared = await prepareBaseMcpVirtualsAgentCreateV1(input); assert.equal(prepared.receipt?.status, 'approval_required');
+  const stored = await repository.get(prepared.receipt!.id, input.userId); assert.ok(stored);
+  const done = await reconcileBaseMcpVirtualsActionV1({ ...input, receipt: stored }); assert.equal(done.receipt?.status, 'completed');
+  if (done.receipt?.actionType === 'virtuals') { assert.equal(done.receipt.operation, 'sign_in'); assert.equal(done.receipt.agentName, null); }
+  assert.deepEqual(calls, ['login_start', 'login_complete']); assert.deepEqual(baseCalls, ['sign', 'get_request_status']);
+  assert.doesNotMatch(JSON.stringify(done), /jwt-secret|refresh-secret|sensitive-signature/);
+  await prepareBaseMcpVirtualsAgentCreateV1(input); assert.deepEqual(calls, ['login_start', 'login_complete']);
+  assert.equal((await prepareBaseMcpVirtualsAgentCreateV1({ ...input, idempotencyKey: 'sign-in-2' })).receipt?.status, 'completed');
+  assert.deepEqual(calls, ['login_start', 'login_complete']);
+});

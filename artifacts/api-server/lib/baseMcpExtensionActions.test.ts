@@ -562,3 +562,11 @@ test('capability policy refuses a transfer above the server amount ceiling befor
   assert.equal(toolsCreated, false);
   assert.equal((await repository.list('tenant-1')).length, 0);
 });
+
+test('Virtuals sign-in is an exact separate action, without smuggled agent creation', () => {
+  for (const message of ['Sign in to Virtuals', 'Log me into Virtuals', 'Войди в Virtuals']) {
+    const result = classifyBaseMcpExtensionIntentV1(message); assert.equal(result.kind, 'virtuals_sign_in');
+    if (result.kind === 'virtuals_sign_in') assert.deepEqual(result.intent, { operation: 'sign_in' });
+  }
+  assert.notEqual(classifyBaseMcpExtensionIntentV1('Sign in to Virtuals and create a card').kind, 'virtuals_sign_in');
+});

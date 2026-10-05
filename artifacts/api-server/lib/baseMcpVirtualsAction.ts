@@ -95,11 +95,20 @@ function jwtExpiryV1(token: string, fallbackMs = 55 * 60_000): string {
   return new Date(baseMcpVirtualsActionRuntimeV1.now().getTime() + fallbackMs).toISOString();
 }
 
-async function createAgentV1(input: {
+async function finishVirtualsIntentV1(input: {
   receipt: StoredBaseMcpActionReceiptV1;
   token: string;
   intent: BaseMcpVirtualsActionIntentV1;
 }): Promise<BaseMcpVirtualsActionResultV1> {
+  if (input.intent.operation === 'sign_in') {
+    const now = baseMcpVirtualsActionRuntimeV1.now().toISOString();
+    const completed = await baseMcpVirtualsActionRuntimeV1.repository.update({
+      id: input.receipt.id, tenantId: input.receipt.tenantId, status: 'completed',
+      reconciliationState: 'provider_confirmed', durableProof: { virtualsStage: 'signed_in' },
+      errorCode: null, finalizedAt: now, now,
+    });
+    return result(completed ?? input.receipt, 'You are signed in to Virtuals. Ask “List my Virtuals agents”, or name an agent ID and message ID to check its email OTP.');
+  }
   const response = await baseMcpVirtualsActionRuntimeV1.callVirtuals({
     method: 'agent_create',
     args: {
@@ -156,16 +165,17 @@ export async function prepareBaseMcpVirtualsAgentCreateV1(input: {
   if (!input.walletAddress || !ADDRESS_V1.test(input.walletAddress)) {
     return failed('Connect the same Base Account that will approve Virtuals sign-in.', 'base_mcp_action_wallet_required');
   }
-  const agentName = normalizeName(input.intent.agentName);
-  const agentDescription = normalizeDescription(input.intent.agentDescription);
-  if (!agentName || !agentDescription) {
+  const agentName = input.intent.operation === 'agent_create' ? normalizeName(input.intent.agentName) : null;
+  const agentDescription = input.intent.operation === 'agent_create' ? normalizeDescription(input.intent.agentDescription) : null;
+  if (input.intent.operation === 'agent_create' && (!agentName || !agentDescription)) {
     return failed('Give the Virtuals agent an explicit name and a description of at least 8 characters. Nothing was created.', 'virtuals_agent_facts_required');
   }
   if (!(await baseMcpVirtualsActionRuntimeV1.repository.available()) || !(await baseMcpVirtualsActionRuntimeV1.sessions.available())) {
     return failed('Virtuals Action Receipt/session storage is unavailable, so no sign-in was prepared.', 'virtuals_storage_unavailable');
   }
   const walletAddress = input.walletAddress.toLowerCase() as `0x${string}`;
-  const intent: BaseMcpVirtualsActionIntentV1 = { operation: 'agent_create', agentName, agentDescription };
+  const intent: BaseMcpVirtualsActionIntentV1 = input.intent.operation === 'sign_in'
+    ? { operation: 'sign_in' } : { operation: 'agent_create', agentName: agentName!, agentDescription: agentDescription! };
   const now = baseMcpVirtualsActionRuntimeV1.now();
   const created = await baseMcpVirtualsActionRuntimeV1.repository.create({
     tenantId: input.userId,
@@ -188,7 +198,7 @@ export async function prepareBaseMcpVirtualsAgentCreateV1(input: {
         errorCode: 'base_mcp_action_idempotency_conflict',
       });
     }
-    return result(created.receipt, 'This idempotent Virtuals action already exists. No second agent was created.');
+    return result(created.receipt, 'This Virtuals request already exists. No second sign-in or agent creation was prepared.');
   }
 
   const existingSession = await baseMcpVirtualsActionRuntimeV1.sessions.load({
@@ -196,7 +206,7 @@ export async function prepareBaseMcpVirtualsAgentCreateV1(input: {
     sessionSecret: input.sessionSecret,
   });
   if (existingSession?.stage === 'authenticated' && existingSession.walletAddress.toLowerCase() === walletAddress) {
-    return createAgentV1({ receipt: created.receipt, token: existingSession.token, intent });
+    return finishVirtualsIntentV1({ receipt: created.receipt, token: existingSession.token, intent });
   }
   if (existingSession?.stage === 'awaiting_signature') {
     const failedReceipt = await baseMcpVirtualsActionRuntimeV1.repository.update({
@@ -264,7 +274,9 @@ export async function prepareBaseMcpVirtualsAgentCreateV1(input: {
       errorCode: null,
       now: now.toISOString(),
     });
-    return result(updated ?? created.receipt, 'Virtuals returned a SIWE challenge. Approve only this sign-in message in Base Account; the agent is not created until reconciliation completes.', {
+    return result(updated ?? created.receipt, intent.operation === 'sign_in'
+      ? 'Virtuals returned a sign-in message. Review and approve this sign-in in your wallet, then check its status. This request does not create an agent.'
+      : 'Virtuals returned a SIWE challenge. Approve only this sign-in message in Base Account; the agent is not created until reconciliation completes.', {
       approvalUrl: snapshot.approvalUrl ?? null,
       toolsAvailable,
     });
@@ -367,7 +379,7 @@ export async function reconcileBaseMcpVirtualsActionV1(input: {
         expiresAt: jwtExpiryV1(token),
       },
     });
-    return createAgentV1({ receipt: stored, token, intent: stored.intent as BaseMcpVirtualsActionIntentV1 });
+    return finishVirtualsIntentV1({ receipt: stored, token, intent: stored.intent as BaseMcpVirtualsActionIntentV1 });
   } finally {
     await tools.close().catch(() => undefined);
   }

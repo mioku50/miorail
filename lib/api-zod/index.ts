@@ -2079,9 +2079,9 @@ export const BaseMcpVirtualsActionReceiptV1Schema = BaseMcpActionReceiptCommonV1
   approvalRequired: z.boolean(),
   actionType: z.literal('virtuals'),
   extensionProvider: z.literal('virtuals'),
-  operation: z.literal('agent_create'),
-  agentName: z.string().min(1).max(80),
-  agentDescription: z.string().min(1).max(500),
+  operation: z.enum(['agent_create', 'sign_in']),
+  agentName: z.string().min(1).max(80).nullable(),
+  agentDescription: z.string().min(1).max(500).nullable(),
   providerObjectId: z.string().min(1).max(200).nullable(),
   reconciliationBasis: z.literal('virtuals_provider_response'),
 });
@@ -2102,7 +2102,13 @@ export const BaseMcpActionReceiptV1Schema = z.discriminatedUnion('actionType', [
   BaseMcpX402ActionReceiptV1Schema,
   BaseMcpVirtualsActionReceiptV1Schema,
   BaseMcpAerodromeClaimReceiptV1Schema,
-]);
+]).superRefine((receipt, context) => {
+  if (receipt.actionType !== 'virtuals') return;
+  const valid = receipt.operation === 'sign_in'
+    ? receipt.agentName === null && receipt.agentDescription === null && receipt.providerObjectId === null
+    : receipt.agentName !== null && receipt.agentDescription !== null;
+  if (!valid) context.addIssue({ code: z.ZodIssueCode.custom, message: 'Virtuals receipt facts must match its operation.' });
+});
 
 export const BaseMcpActionEnvelopeV1Schema = z.object({
   receipt: BaseMcpActionReceiptV1Schema,

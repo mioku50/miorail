@@ -67,6 +67,66 @@ test('the Wallet MCP page fits a phone', async ({ page }) => {
 });
 
 for (const width of [1280, 390]) {
+  test(`Virtuals OTP keeps status private, requires explicit reveal and distinguishes failed reads (${width}px)`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const posts: string[] = [];
+    let stage = 0;
+    await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript',
+      body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
+    await page.route('**/api/**', route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      if (request.method() === 'POST') posts.push(path);
+      if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: 'fixture-user', address: '0x1111111111111111111111111111111111111111', chainId: 8453 } } });
+      if (path === '/api/status') return route.fulfill({ json: { baseMcp: { enabled: true, configured: true, auth: { connected: true } } } });
+      if (path === '/api/mcp/base/console') {
+        const statuses = ['needs_input', 'needs_input', 'answered', 'answered', 'answered', 'failed'] as const;
+        const errors = ['virtuals_otp_facts_required', 'virtuals_sign_in_required', null, null, null, 'virtuals_http_403'];
+        const replies = [
+          'Name an agent ID and message ID.',
+          'Ask “Sign in to Virtuals” and approve that sign-in in your wallet, then repeat this OTP request. No agent will be created by sign-in.',
+          'Virtuals found 1 candidate verification code in that message. The code is hidden; explicitly ask “Show Virtuals OTP code” with the same agent ID and message ID to see it.',
+          'Virtuals candidate verification code: 012345. Validity and expiry were not checked. No code was submitted or used.',
+          'Virtuals reports no candidate verification code in that message.',
+          'private-provider-body-987654',
+        ];
+        expect(request.postDataJSON().message).toBe(stage === 0 ? 'Check my Virtuals email OTP status'
+          : stage === 3 ? 'Show Virtuals OTP code for agent agent-1 message mail-1'
+            : 'Check my Virtuals email OTP status for agent agent-1 message mail-1');
+        return route.fulfill({ json: { status: statuses[stage], reply: replies[stage], errorCode: errors[stage],
+          trace: stage < 2 ? [] : [{ tool: 'virtuals_agent_email_extract_otp', args: '{"agentId":"agent-1","messageId":"mail-1"}',
+            ok: stage !== 5, result: stage === 4 ? '{"status":"not_found"}' : '{"privatePayload":"[redacted]"}', errorCode: errors[stage] }],
+          toolsAvailable: 2, truncated: false, elapsedMs: 20, checkedAt: new Date().toISOString() } });
+      }
+      return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
+    });
+    await page.goto('/extensions');
+    for (stage = 0; stage < 6; stage++) {
+      await page.locator('#base-mcp-console-input').fill(stage === 0 ? 'Check my Virtuals email OTP status'
+        : stage === 3 ? 'Show Virtuals OTP code for agent agent-1 message mail-1'
+          : 'Check my Virtuals email OTP status for agent agent-1 message mail-1');
+      await page.getByRole('button', { name: 'Ask', exact: true }).click();
+      if (stage === 0) await expect(page.getByText('Name an agent ID and message ID.', { exact: true })).toBeVisible();
+      if (stage === 1) await expect(page.getByText(/No agent will be created by sign-in/)).toBeVisible();
+      if (stage === 2) {
+        await expect(page.getByText(/The code is hidden/)).toBeVisible();
+        await expect(page.getByText(/012345/)).toHaveCount(0);
+      }
+      if (stage === 3) {
+        await expect(page.getByText(/candidate verification code: 012345/)).toBeVisible();
+        await expect(page.getByText(/Validity and expiry were not checked/)).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath('virtuals-explicit-code.png'), fullPage: false });
+      }
+      if (stage === 4) await expect(page.getByText('Virtuals reports no candidate verification code in that message.', { exact: true })).toBeVisible();
+      if (stage === 5) {
+        await expect(page.getByText(/Whether the message contains a code was not established/)).toBeVisible();
+        await expect(page.getByText(/private-provider-body|987654/)).toHaveCount(0);
+      }
+      await expect(page.getByRole('link', { name: /Approve/ })).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+    expect(posts.filter(path => path !== '/api/mcp/base/tools')).toEqual(Array(6).fill('/api/mcp/base/console'));
+  });
+
   test(`Hydrex positions read renders raw units, empty and failed outcomes without an approval (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const posts: string[] = [];

@@ -15,7 +15,7 @@ interface BaseMcpActivityReceiptCommonV1 {
 export type BaseMcpActivityReceiptV1 = BaseMcpActivityReceiptCommonV1 & (
   | { actionType: 'send'; amount: string; asset: { symbol: string }; recipient: string; recipientName?: string | null }
   | { actionType: 'x402'; method: 'GET'; url: string; maxPayment: string; paymentAsset: { symbol: string }; responseHash: string | null }
-  | { actionType: 'virtuals'; operation: 'agent_create'; agentName: string; providerObjectId: string | null }
+  | { actionType: 'virtuals'; operation: 'agent_create' | 'sign_in'; agentName: string | null; providerObjectId: string | null }
   | { actionType: 'aerodrome_claim'; operation: 'claim'; recipient: string; claimCount: number }
 );
 
@@ -59,7 +59,7 @@ export function BaseMcpActionReceiptsCard(model: {
                       ? `x402 ≤ ${receipt.maxPayment} ${receipt.paymentAsset.symbol}`
                       : receipt.actionType === 'aerodrome_claim'
                         ? `Aerodrome · ${receipt.claimCount} claims`
-                        : `Virtuals · ${receipt.agentName}`}
+                        : receipt.operation === 'sign_in' ? 'Virtuals · Sign in' : `Virtuals · ${receipt.agentName}`}
                 </span>
               </div>
               <p className="lnote mono">

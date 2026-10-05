@@ -24,6 +24,32 @@ const answer = (overrides: Partial<BaseMcpConsoleAnswerV1> = {}): BaseMcpConsole
   ...overrides,
 });
 
+test('Virtuals sign-in displays only sign-in approval and no invented agent facts', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'Sign in to Virtuals', onQuestionChange: () => undefined,
+    onAsk: () => undefined, pending: false, unavailableReason: null, answer: answer({ status: 'action', trace: [], action: {
+      approvalUrl: 'https://keys.coinbase.com/approve/sign-in', receipt: {
+        id: 'virtuals-sign-in', status: 'approval_required', actionType: 'virtuals', operation: 'sign_in', extensionProvider: 'virtuals',
+        agentName: null, agentDescription: null, providerObjectId: null, chainId: 8453, provider: 'base-mcp',
+        reconciliationState: 'not_started', transactionHash: null, blockNumber: null, errorCode: null, routeVerified: false,
+        reconciliationBasis: 'virtuals_provider_response',
+      },
+    } }) }));
+  assert.match(html, /Sign in/); assert.match(html, /Approve Sign-In/);
+  assert.doesNotMatch(html, /Create agent|Description|Agent ID|Agent<\/dt>/);
+});
+
+test('Virtuals failures do not render private provider prose or claim an empty mailbox', () => {
+  for (const errorCode of ['virtuals_http_403', 'virtuals_otp_invalid_response', 'virtuals_session_expired']) {
+    const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'Check OTP status', onQuestionChange: () => undefined,
+      onAsk: () => undefined, pending: false, unavailableReason: null,
+      answer: answer({ status: 'failed', errorCode, reply: 'private-provider-email-012345', trace: [{
+        tool: 'virtuals_agent_email_extract_otp', args: '{}', result: '', ok: false, errorCode,
+      }] }) }));
+    assert.match(html, /Whether the message contains a code was not established/);
+    assert.doesNotMatch(html, /private-provider-email|012345|no candidate verification code/);
+  }
+});
+
 test('an ACTION renders an approval card and states that it is not a Route Proof', () => {
   const html = renderToStaticMarkup(BaseMcpConsoleCard({
     question: 'Send 5 USDC',

@@ -229,7 +229,8 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
     pluginId: 'virtuals', aliases: ['virtuals', 'virtuals protocol'], productSurface: 'extensions', lifecycleStage: 'adapter', examples: [
       e('agents', 'List my Virtuals agents', 'read', 'read_in_extensions'),
       e('create', 'Create a Virtuals agent called Mio Researcher to summarize Base research', 'action', 'action_in_extensions'),
-      e('otp', 'Check my Virtuals email OTP status', 'read', 'adapter_required'),
+      e('sign_in', 'Sign in to Virtuals', 'action', 'action_in_extensions'),
+      e('otp', 'Check my Virtuals email OTP status', 'read', 'read_in_extensions'),
     ],
   },
   {

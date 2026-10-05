@@ -55,7 +55,8 @@ export type BaseMcpExtensionIntentV1 =
     }
   | { kind: 'send'; intent: BaseMcpSendActionIntentV1 }
   | { kind: 'x402'; intent: BaseMcpX402ActionIntentV1 }
-  | { kind: 'virtuals_create'; intent: BaseMcpVirtualsActionIntentV1 }
+  | { kind: 'virtuals_create'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'agent_create' }> }
+  | { kind: 'virtuals_sign_in'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'sign_in' }> }
   | { kind: 'aerodrome_claim' }
   | { kind: 'needs_input'; errorCode: string; reply: string };
 
@@ -96,6 +97,11 @@ export function classifyBaseMcpExtensionIntentV1(
   const lower = trimmed.toLowerCase();
 
   const provider = matchBaseMcpProviderIntentV1(trimmed, runtime);
+  if (provider?.pluginId === 'virtuals' && /^(?:sign\s+in\s+to|log\s+me\s+into|войти\s+в|войди\s+в)\s+virtuals[.!]?$/iu.test(trimmed)) {
+    return runtime.releasedActionPlugins.includes('virtuals')
+      ? { kind: 'virtuals_sign_in', intent: { operation: 'sign_in' } }
+      : { kind: 'needs_input', errorCode: 'virtuals_sign_in_unavailable', reply: 'Virtuals sign-in is unavailable on this deployment.' };
+  }
   if (provider?.disposition === 'action_in_extensions' && provider.pluginId === 'aerodrome') {
     if (!runtime.releasedActionPlugins.includes('aerodrome') || !runtime.batchSimulationAvailable) {
       return { kind: 'needs_input', errorCode: 'aerodrome_claim_unavailable',

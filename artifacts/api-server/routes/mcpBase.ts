@@ -583,7 +583,7 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
         errorCode: result.errorCode, checkedAt: new Date().toISOString(),
         action: result.receipt ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: null } : null }));
     }
-    if (decision.kind === 'virtuals_create') {
+    if (decision.kind === 'virtuals_create' || decision.kind === 'virtuals_sign_in') {
       if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
         return res.json(BaseMcpConsoleResponseV1Schema.parse({
           status: 'disabled', reply: null, trace: [], toolsAvailable: 0, truncated: false,
