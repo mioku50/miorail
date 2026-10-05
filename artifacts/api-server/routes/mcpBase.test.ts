@@ -1,9 +1,11 @@
 import test, { afterEach } from 'node:test';
 import assert from 'node:assert';
 import request from 'supertest';
+import express from 'express';
 import { app } from '../app.js';
 import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
-import { mcpBaseRouteRuntime } from './mcpBase.js';
+import { mcpBaseRouteRuntime, mcpBaseRouter } from './mcpBase.js';
+import { enforceTenantBinding } from '../middleware/tenantAuth.js';
 import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
 import {
   baseMcpOAuthStoreRuntime,
@@ -841,6 +843,52 @@ test('POST /api/mcp/base/console runs a provider-native read before generic Base
   assert.equal(response.body.reply, 'reviewed Balancer pool read');
   assert.equal(genericCalled, false);
   restoreEnv('SESSION_SECRET', originalSecret);
+});
+
+test('Hydrex positions use a tenant-bound reviewed read, never the model or action path', async () => {
+  const oldSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  const wallet = '0x1111111111111111111111111111111111111111';
+  const strictApp = express();
+  strictApp.use(express.json());
+  strictApp.use((req, _res, next) => {
+    Object.assign(req, { session: { user: { id: `eip155:8453:${wallet}`, address: wallet, chainId: 8453 } } });
+    next();
+  });
+  strictApp.use('/api/mcp/base', enforceTenantBinding, mcpBaseRouter);
+  let reads = 0;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('must not run model'); };
+  mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = async () => { throw new Error('must not prepare action'); };
+  mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = async input => {
+    assert.equal(input.providerId, 'hydrex');
+    assert.equal(input.exampleId, 'positions');
+    reads++;
+    assert.equal(input.userId, `eip155:8453:${wallet}`);
+    assert.equal(input.walletAddress, wallet);
+    return { status: 'answered', reply: 'Hydrex reports no concentrated-liquidity positions on Base.',
+      trace: [{ tool: 'hydrex_get_positions', args: '{}', ok: true, result: '{"count":0}', errorCode: null }],
+      toolsAvailable: 1, truncated: false, elapsedMs: 4, errorCode: null, checkedAt: new Date().toISOString() };
+  };
+  try {
+    const response = await request(strictApp).post('/api/mcp/base/console').send({
+      message: 'Show my Hydrex liquidity positions',
+    });
+    assert.equal(response.status, 200);
+    assert.equal(response.headers['cache-control'], 'no-store');
+    assert.equal(response.body.status, 'answered');
+    assert.equal(response.body.trace[0].tool, 'hydrex_get_positions');
+    assert.ok(!response.body.action);
+    assert.ok(!response.body.handoff);
+    const foreign = await request(strictApp).post('/api/mcp/base/console').send({
+      message: 'Show my Hydrex liquidity positions', walletAddress: '0x3333333333333333333333333333333333333333',
+    });
+    assert.equal(foreign.status, 403);
+    assert.equal(reads, 1);
+    const catalogue = await request(app).get('/api/mcp/base/plugins');
+    const hydrex = catalogue.body.plugins.find((p: { id: string }) => p.id === 'hydrex');
+    const positions = hydrex.examples.find((e: { id: string }) => e.id === 'positions');
+    assert.equal(positions.disposition, 'read_in_extensions');
+  } finally { restoreEnv('SESSION_SECRET', oldSecret); }
 });
 
 test('POST /api/mcp/base/console returns an approval Action Receipt for exact send', async () => {

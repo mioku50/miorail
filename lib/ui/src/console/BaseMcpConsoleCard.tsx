@@ -191,6 +191,13 @@ export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null
   // receipt (for example, an idempotency conflict). The receipt and its exact
   // error are more useful than the generic console failure copy.
   if (answer.action) return null;
+  if (answer.status === 'failed' && [
+    'hydrex_positions_invalid_response', 'hydrex_positions_incomplete',
+    'hydrex_positions_wallet_mismatch', 'hydrex_positions_duplicate',
+  ].includes(answer.errorCode ?? '')) {
+    // A reviewed read failure has fixed copy, never provider-supplied text.
+    return 'Hydrex’s position list could not be read in full. Your positions were not established. Try again or open Hydrex.';
+  }
   switch (answer.status) {
     case 'answered':
     case 'handoff':

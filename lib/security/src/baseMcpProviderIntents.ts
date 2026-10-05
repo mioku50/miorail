@@ -153,7 +153,7 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
   {
     pluginId: 'hydrex', aliases: ['hydrex'], productSurface: 'routes', lifecycleStage: 'manifested', examples: [
       e('swap', 'Swap 5 USDC to ETH on Hydrex', 'routable', 'handoff_to_routes'),
-      e('positions', 'Show my Hydrex liquidity positions', 'read', 'adapter_required'),
+      e('positions', 'Show my Hydrex liquidity positions', 'read', 'read_in_extensions'),
       e('liquidity', 'Add 100 USDC and 0.04 ETH liquidity on Hydrex', 'action', 'adapter_required'),
     ],
   },

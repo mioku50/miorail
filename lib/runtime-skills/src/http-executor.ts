@@ -139,6 +139,17 @@ const SECRET_KEY_PATTERN =
 // production message-detection/list registry until the later route cutover.
 const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
   {
+    namespace: 'hydrex', displayName: 'Hydrex', allowedIntents: ['read'],
+    requiredTools: [{ intent: 'read', anyOf: ['hydrex_get_positions'] }],
+    argumentMapper: (_intent, input) => ({ ...input, chain: 'base' }),
+    resultScreener: 'hydrex_positions',
+    manifest: {
+      integration: 'http-api', chains: [8453], auth: 'none', risk: [],
+      allowlist: { hosts: ['hydrex-agent.com'], methods: ['GET'], pathPrefixes: ['/state/positions'] },
+    },
+    instructions: ['Read only the connected wallet’s concentrated-liquidity positions on Base.'],
+  },
+  {
     namespace: 'kyberswap',
     displayName: 'KyberSwap',
     allowedIntents: ['quote', 'read'],
@@ -501,6 +512,7 @@ export async function pluginHttpRequest(
     {
       method: input.method,
       headers,
+      ...(input.plugin === 'hydrex' ? { redirect: 'error' as const } : {}),
       ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
     },
     { timeoutMs: input.timeoutMs ?? 10_000, fetchImpl: input.fetchImpl },
@@ -536,6 +548,11 @@ function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | nu
     manifest,
     allowedPaths: [...manifest.allowlist.pathPrefixes],
     async request({ path, method, body, chainId, timeoutMs, fetchImpl }) {
+      // One exact read, including its query shape. No prepare/calldata path,
+      // arbitrary query parameters, body, or redirect to another service.
+      if (skill.namespace === 'hydrex' && !(
+        method === 'GET' && body === undefined && /^\/state\/positions\?address=0x[0-9a-fA-F]{40}$/.test(path)
+      )) throw new SkillPathNotAllowedError(skill.namespace, path);
       // Printr has a read-only POST and a GET on a different path. A cross
       // product of manifest methods/prefixes must not authorize token writes.
       if (skill.namespace === 'printr' && !(

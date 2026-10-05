@@ -400,6 +400,8 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
 // x402 and reviewed Virtuals verticals can reach an action; see the typed
 // action modules. The generic model still receives read-only tools only.
 mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFunction) => {
+  // Reviewed account reads contain the signed-in wallet's private snapshot.
+  res.setHeader('Cache-Control', 'no-store');
   try {
     // safeParse, because `parse` throws into the generic error handler and a
     // client typo came back as 500 "Internal Server Error" — a request the

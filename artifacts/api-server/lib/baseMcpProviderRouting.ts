@@ -104,12 +104,23 @@ export function handoffToRoutesReleasedV1(
   };
 }
 
+function hydrexPositionsReadV1(message: string): boolean {
+  const text = normalized(message);
+  if (/\b(?:add|remove|withdraw|deposit|swap|sell|buy|claim|collect|mint|approve|create|transfer)\b|(?:^|\s)(?:добав|удал|вывед|вывести|сним|забер|забра|собер|куп|прод|обмен|созда|отправ|одобр)\p{L}*/iu.test(text)) return false;
+  return /\bpositions?\b|(?:^|\s)позиц\p{L}*/iu.test(text) &&
+    (/\b(?:show|list|get|read|view|check|what)\b|(?:^|\s)(?:покаж|показать|прочита|прочти|провер|проверь|мои)\p{L}*/iu.test(text) ||
+      /^(?:my )?hydrex (?:liquidity )?positions?$/.test(text));
+}
+
 function inferredDisposition(
   message: string,
   provider: BaseMcpProviderIntentSpecV1,
   runtime: BaseMcpRuntimeSnapshotV1,
 ): BaseMcpProviderExampleDispositionV1 {
   const lower = normalized(message);
+  if (provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message)) return 'read_in_extensions';
+  if (provider.pluginId === 'hydrex' && /\bpositions?\b|(?:^|\s)позиц\p{L}*/iu.test(lower) &&
+      /\b(?:add|remove|withdraw|deposit|claim|collect|mint|approve|create|transfer)\b|(?:^|\s)(?:добав|удал|вывед|вывести|сним|забер|забра|собер|созда|отправ|одобр)\p{L}*/iu.test(lower)) return 'adapter_required';
   if (provider.pluginId === 'aerodrome' && /\b(claim|collect)\b|(?:^|\s)(?:забер|забра|собер|получ)\p{L}*/iu.test(lower)) {
     return 'action_in_extensions';
   }
@@ -206,7 +217,7 @@ export function matchBaseMcpProviderIntentV1(
     disposition,
     /** Present only when the runtime blocked a handoff the registry declared. */
     routeCapability: routeGate && !routeGate.released ? routeGate.capability : null,
-    exampleId: closest?.id ?? null,
+    exampleId: provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message) ? 'positions' : closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,
       `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,

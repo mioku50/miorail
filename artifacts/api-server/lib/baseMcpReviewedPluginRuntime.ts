@@ -21,6 +21,7 @@ import {
 import { callVirtualsReviewedV1 } from './virtualsReviewedClient.js';
 import { resolveCommerceCatalogSourceV1 } from './commerceRouteConfig.js';
 import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
+import { hydrexPositionsAnswerV1, hydrexPositionsInputErrorV1 } from './hydrexPositionsRead.js';
 
 // ---------------------------------------------------------------------------
 // Reviewed Base plugin recipes.
@@ -834,6 +835,35 @@ function readNeedsInputV1(errorCode: string, reply: string): BaseMcpConsoleResul
 export async function runReviewedBaseMcpPluginReadV1(
   input: ReviewedPluginReadInputV1,
 ): Promise<BaseMcpConsoleResultV1 | null> {
+  if (input.providerId === 'hydrex' && input.exampleId === 'positions') {
+    const russian = /[а-яё]/iu.test(input.message);
+    const inputError = hydrexPositionsInputErrorV1(input.message, input.walletAddress);
+    if (inputError) return readNeedsInputV1(inputError, russian
+      ? 'Это чтение показывает позиции Hydrex только на Base для кошелька, с которым вы вошли. Другой адрес или сеть не подставляются.'
+      : 'This read shows Hydrex positions on Base for the wallet you signed in with. Another address or chain is not substituted.');
+    const executor = reviewedBaseMcpPluginRuntimeV1.loadSkillExecutor('hydrex');
+    if (!executor) return null;
+    const startedAt = Date.now();
+    const called = await callReviewedV1(executor, [{
+      tool: 'hydrex_get_positions',
+      path: `/state/positions?address=${encodeURIComponent(input.walletAddress)}`,
+      timeoutMs: 9_000, args: { chain: 'base', address: input.walletAddress },
+    }]);
+    if (called.error) return called.error;
+    const result = called.results[0]!;
+    const answer = result.payloadOutcome === 'parsed'
+      ? hydrexPositionsAnswerV1(normalizeProviderPayloadV1(result.data).value, input.walletAddress, russian)
+      : { reply: providerPayloadFailureCopyV1('Hydrex', result.payloadOutcome),
+          errorCode: providerPayloadErrorCodeV1(result.payloadOutcome), truncated: false };
+    return {
+      status: answer.errorCode ? 'failed' : 'answered', ...answer,
+      trace: [{ tool: result.tool, args: baseMcpConsoleArgsV1(JSON.stringify(result.args)),
+        ok: answer.errorCode === null, result: baseMcpConsoleResultTextV1(jsonPreviewV1(result.data)), errorCode: answer.errorCode }],
+      toolsAvailable: 1, elapsedMs: Date.now() - startedAt,
+      checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString(),
+      cta: baseMcpProviderCtaV1({ pluginId: 'hydrex' }),
+    };
+  }
   if (input.providerId === 'virtuals') return runVirtualsReadV1(input);
   if (input.providerId === 'venice' && input.exampleId === 'models') {
     return runSimpleReviewedReadV1({

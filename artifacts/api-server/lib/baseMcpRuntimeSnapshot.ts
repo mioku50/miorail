@@ -40,6 +40,7 @@ export const REVIEWED_READ_PLUGINS_V1: readonly string[] = [
   'clawnch',
   'flaunch',
   'gmgn',
+  'hydrex',
   'moonwell',
   'opensea',
   'printr',

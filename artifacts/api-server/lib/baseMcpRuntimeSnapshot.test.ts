@@ -70,6 +70,7 @@ const REVIEWED_RECIPE_IDS_V1: ReadonlySet<string> = new Set([
   'clawnch:volume',
   'flaunch:latest',
   'gmgn:market',
+  'hydrex:positions',
   'moonwell:markets',
   'moonwell:health',
   'opensea:drops',

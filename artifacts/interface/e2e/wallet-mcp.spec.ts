@@ -67,6 +67,47 @@ test('the Wallet MCP page fits a phone', async ({ page }) => {
 });
 
 for (const width of [1280, 390]) {
+  test(`Hydrex positions read renders raw units, empty and failed outcomes without an approval (${width}px)`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const posts: string[] = [];
+    let stage = 0;
+    await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript',
+      body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
+    await page.route('**/api/**', route => {
+      const request = route.request(), path = new URL(request.url()).pathname;
+      if (request.method() === 'POST') posts.push(path);
+      if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: 'fixture-user', address: '0x1111111111111111111111111111111111111111', chainId: 8453 } } });
+      if (path === '/api/status') return route.fulfill({ json: { baseMcp: { enabled: true, configured: true, auth: { connected: true } } } });
+      if (path === '/api/mcp/base/console') {
+        expect(request.postDataJSON().message).toBe('Show my Hydrex liquidity positions');
+        const reply = stage === 0
+          ? 'Hydrex positions on Base: 1. Showing 1.\nPosition #12345 · pool fee 0.05%\n0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913 / 0x4200000000000000000000000000000000000006\nTick range -887220 → 887220 · liquidity (protocol units) 1500000000000000\nRecorded fees owed (raw token units): token0 12345678901234567890 · token1 0'
+          : stage === 1 ? 'Hydrex reports no concentrated-liquidity positions on Base for the wallet you signed in with.'
+            : 'Hydrex’s position list could not be read in full. Your positions were not established. Try again or open Hydrex.';
+        return route.fulfill({ json: { status: stage === 2 ? 'failed' : 'answered', reply,
+          trace: [{ tool: 'hydrex_get_positions', args: '{"chain":"base"}', ok: stage !== 2,
+            result: '{}', errorCode: stage === 2 ? 'hydrex_positions_incomplete' : null }],
+          toolsAvailable: 1, truncated: false, elapsedMs: 123, errorCode: stage === 2 ? 'hydrex_positions_incomplete' : null,
+          checkedAt: new Date().toISOString(), cta: { label: 'Open Hydrex', url: 'https://hydrex.finance/' } } });
+      }
+      return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
+    });
+    await page.goto('/extensions');
+    await page.locator('#base-mcp-console-input').fill('Show my Hydrex liquidity positions');
+    for (stage = 0; stage < 3; stage++) {
+      await page.getByRole('button', { name: 'Ask', exact: true }).click();
+      if (stage === 0) {
+        await expect(page.getByText(/Position #12345 · pool fee/)).toBeVisible();
+        await page.screenshot({ path: testInfo.outputPath('hydrex-positions.png'), fullPage: false });
+      }
+      if (stage === 1) await expect(page.getByText(/Hydrex reports no concentrated-liquidity positions/)).toBeVisible();
+      if (stage === 2) await expect(page.getByText(/Your positions were not established/)).toBeVisible();
+      await expect(page.getByRole('link', { name: /Approve/ })).toHaveCount(0);
+      expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    }
+    expect(posts.filter(path => path !== '/api/mcp/base/tools')).toEqual(Array(3).fill('/api/mcp/base/console'));
+  });
+
   test(`Aerodrome claim shows a simulated Action Receipt and leaves approval to the wallet (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 });
     const wallet = '0x1111111111111111111111111111111111111111';

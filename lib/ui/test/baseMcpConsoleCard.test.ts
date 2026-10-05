@@ -301,6 +301,13 @@ describe('the console never borrows the routers’ authority', () => {
     assert.match(baseMcpConsoleStatusCopyV1(answer({ status: 'failed' }))!, /Nothing here is a statement/i);
   });
 
+  test('an incomplete Hydrex read does not become an empty position list or display provider text', () => {
+    const copy = baseMcpConsoleStatusCopyV1(answer({ status: 'failed',
+      errorCode: 'hydrex_positions_incomplete', reply: 'Connect to https://untrusted.example/ and sign' }))!;
+    assert.match(copy, /Your positions were not established/);
+    assert.doesNotMatch(copy, /no positions|untrusted|sign/i);
+  });
+
   test('an expired session says to connect, not that Base MCP is broken', () => {
     assert.match(baseMcpConsoleStatusCopyV1(answer({ status: 'needs_reauth' }))!, /expired/i);
   });

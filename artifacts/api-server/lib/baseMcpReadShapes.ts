@@ -38,6 +38,7 @@ export const REVIEWED_READ_FACTS_V1: Readonly<Record<string, ReviewedReadFactsV1
   'clawnch:volume': { returns: 'Ten Clawnch tokens ranked by volume, with prices.' },
   'flaunch:latest': { returns: 'The newest Flaunch coins on Base.' },
   'gmgn:market': { returns: 'GMGN’s own list: ten Base tokens by one-hour volume. Not a report about one token — its only per-token endpoint returns swap calldata, which this surface does not release.' },
+  'hydrex:positions': { returns: 'Your Hydrex concentrated-liquidity positions on Base: token addresses, tick ranges, liquidity and recorded fees in raw token units. No USD valuation.' },
   'moonwell:markets': { returns: 'Moonwell supply and borrow rates on Base for the one asset you name.' },
   'moonwell:health': { returns: 'Your Moonwell positions and health factor, for the wallet you connected.' },
   'opensea:drops': { returns: 'Ten popular Base collections by seven-day volume. Not upcoming drops.' },
