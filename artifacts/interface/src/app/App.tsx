@@ -14,6 +14,7 @@ import {
 import { RequireSession } from './RequireSession';
 import { SignInPage } from './SignInPage';
 import { HomeRoute } from '../features/console/HomeRoute';
+import { AppLoading } from './AppLoading';
 
 
 // ---------------------------------------------------------------------------
@@ -110,19 +111,6 @@ const PublicMetricsPage = lazy(() =>
 // to a product that no longer exists.
 // ---------------------------------------------------------------------------
 
-/**
- * What sits there while a screen's own chunk arrives.
- *
- * Deliberately quiet and deliberately NOT a spinner: on a fast connection it is
- * never seen, and on a slow one a spinner claims progress it cannot measure.
- * `aria-busy` is what actually carries the state to anyone not looking at it.
- */
-function RoutePending() {
-  // No class: `console.css` owns the console vocabulary, and inventing a name
-  // here would ship an element no stylesheet knows about.
-  return <div aria-busy="true" aria-live="polite" />;
-}
-
 function ChainEnvMismatchBanner() {
   const { data: sd } = useStatus();
   const backendChainEnv = sd?.chainEnv;
@@ -186,7 +174,7 @@ export function App() {
   return (
     <>
       <ChainEnvMismatchBanner />
-      <Suspense fallback={<RoutePending />}>
+      <Suspense fallback={<AppLoading />}>
       <Switch>
         {/* Public aggregate telemetry. No tenant, wallet or session: grant
             reviewers and builders can inspect what Miorail has actually

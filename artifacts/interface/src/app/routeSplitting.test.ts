@@ -59,6 +59,7 @@ test('every routed screen is reached through its own dynamic import', () => {
 test('the routed screens sit inside a Suspense boundary', () => {
   // Without one, React throws the moment a route is entered — a failure that
   // only appears on the second page a person visits.
-  assert.match(app, /<Suspense fallback=\{<RoutePending \/>\}>/);
+  // The recovery component's name is independent of the splitting boundary.
+  assert.match(app, /<Suspense fallback=\{<\w+\s*\/>\}>/);
   assert.match(app, /<\/Suspense>/);
 });

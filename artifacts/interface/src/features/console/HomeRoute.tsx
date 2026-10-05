@@ -7,6 +7,7 @@ import {
 } from '@mioagent/ui';
 import { useB20Opportunities, useStatus } from '@mioagent/api-client-react';
 import { useAuthGate } from '../../app/AuthProvider';
+import { AppLoading } from '../../app/AppLoading';
 
 // ---------------------------------------------------------------------------
 // T70 §1 — where "/" goes.
@@ -43,18 +44,16 @@ export function HomeRoute() {
   // Every other home is behind the tenant gate, so "/" sent the first visit of
   // everybody to a card that said "Continue with your wallet" and nothing about
   // what Miorail is. `booting` is a session being checked, not a visitor: that
-  // reader is held on the quiet frame until the check settles, and only then
+  // reader is held on the loading frame until the check settles, and only then
   // sent one way or the other.
-  if (gate.phase === 'booting') return <div className="mio-console app" />;
+  if (gate.phase === 'booting') return <AppLoading />;
   if (!gate.showPrivateSurfaces) {
     return <Redirect to={`/stocks${window.location.search}`} replace />;
   }
 
   const resolving = status.isPending || (!stocksOn && discoverOn && feed.isPending);
   if (resolving) {
-    // Deliberately quiet. A spinner here would be the first thing every user
-    // sees on every cold load, for a decision that resolves in one request.
-    return <div className="mio-console app" />;
+    return <AppLoading />;
   }
 
   // Phase 11: the reviewed stock graph is the consumer product. The legacy

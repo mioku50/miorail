@@ -13,6 +13,15 @@ import { detectBaseAppEarly } from './lib/detectBaseAppEarly';
 
 const queryClient = new QueryClient();
 
+// The remote font stylesheet must never hold up the module that mounts React.
+// It starts as print-only in the HTML and becomes active once it has arrived.
+const optionalFonts = document.getElementById('miorail-fonts') as HTMLLinkElement | null;
+if (optionalFonts) {
+  const activateFonts = () => { optionalFonts.media = 'all'; };
+  if (optionalFonts.sheet) activateFonts();
+  else optionalFonts.addEventListener('load', activateFonts, { once: true });
+}
+
 // T48a.1: detect Base App BEFORE building the wagmi config. Base App injects
 // the active Base Account as an EIP-1193 provider (including via EIP-6963
 // announce), so inside Base App we build the connector list WITHOUT
