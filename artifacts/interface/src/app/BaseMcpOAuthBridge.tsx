@@ -53,7 +53,7 @@ export function BaseMcpOAuthBridge() {
       }
     };
 
-    const blocked = () => showToast('Base MCP authorization popup was blocked. Allow popups for Miorail and retry.');
+    const blocked = () => showToast('Wallet MCP authorization popup was blocked. Allow popups for Miorail and retry.');
     window.addEventListener('message', receive);
     window.addEventListener('storage', stored);
     window.addEventListener('miorail:base-mcp-popup-blocked', blocked);

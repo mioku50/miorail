@@ -56,7 +56,7 @@ test('an ACTION renders an approval card and states that it is not a Route Proof
     }),
   }));
   assert.match(html, /Action Receipt/);
-  assert.match(html, /Approve in Base Account/);
+  assert.match(html, /Approve in your wallet/);
   assert.match(html, /not a Miorail verified route/i);
   assert.doesNotMatch(html, /Execution proof/);
 });
@@ -97,7 +97,7 @@ test('a reviewed Virtuals action labels the approval as sign-in and shows agent 
   assert.match(html, /Approve Sign-In/);
   assert.match(html, /Mio Researcher/);
   assert.match(html, /summarize Base research/);
-  assert.doesNotMatch(html, /Approve in Base Account/);
+  assert.doesNotMatch(html, /Approve in your wallet/);
 });
 
 test('a failed deterministic action still renders its immutable receipt', () => {
@@ -183,26 +183,25 @@ test('a ROUTABLE response offers Routes AI and no approval URL', () => {
       handoff: { target: 'routes', path: '/routes', originalMessage: 'Swap 100 USDC to ETH' },
     }),
   }));
-  assert.match(html, /ROUTABLE/);
+  assert.match(html, /<span class="pill br">Routes AI<\/span>/);
   assert.match(html, /Open Routes AI/);
-  assert.doesNotMatch(html, /Approve in Base Account/);
+  assert.doesNotMatch(html, /Approve in your wallet/);
 });
 
 describe('the console never borrows the routers’ authority', () => {
-  test('seven Quick examples demonstrate dispositions without claiming unreleased actions', () => {
-    assert.equal(BASE_MCP_QUICK_EXAMPLES_V1.length, 7);
+  test('four tasks a person asks, one of each kind, and no unreleased action among them', () => {
+    assert.equal(BASE_MCP_QUICK_EXAMPLES_V1.length, 4);
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /hold|transactions/i.test(prompt)));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /send/i.test(prompt)));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /swap/i.test(prompt)));
-    assert.equal(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /sign|launch/i.test(prompt)), false);
-    assert.equal(
-      BASE_MCP_CONSOLE_PROMPTS_V1.includes('Pay x402 GET https://api.venice.ai/api/v1/models, max 0.10 USDC'),
-      false,
+    assert.equal(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /sign|launch|x402|10x/i.test(prompt)), false);
+    assert.deepEqual(
+      BASE_MCP_QUICK_EXAMPLES_V1.map((example) => example.disposition),
+      ['read_in_extensions', 'read_in_extensions', 'action_in_extensions', 'handoff_to_routes'],
     );
-    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.includes('Show the models available from Venice AI'));
   });
 
-  test('the global strip is labelled Quick examples and every shortcut only fills the console', () => {
+  test('the strip says it only fills the box, in plain words, and every shortcut only fills it', () => {
     const selected: string[] = [];
     const html = renderToStaticMarkup(BaseMcpConsoleCard({
       question: '',
@@ -212,11 +211,12 @@ describe('the console never borrows the routers’ authority', () => {
       unavailableReason: null,
       answer: null,
     }));
-    assert.match(html, /Quick examples/);
-    assert.match(html, /routing demonstrations/);
-    assert.match(html, /ROUTES AI/);
-    assert.match(html, /PROVIDER UI/);
-    assert.match(html, /ACTION/);
+    assert.match(html, /<b>Try<\/b><span>fills the box — nothing runs until you ask<\/span>/);
+    assert.match(html, />Routes AI</);
+    assert.match(html, />You approve</);
+    assert.match(html, />Reads</);
+    // The routing vocabulary is gone from the first screen.
+    assert.doesNotMatch(html, /ROUTES AI|PROVIDER UI|ADAPTER REQUIRED|>READ<|>ACTION</);
     assert.deepEqual(selected, []);
   });
 
@@ -231,9 +231,27 @@ describe('the console never borrows the routers’ authority', () => {
       disabledReason: 'Connect your Base wallet to ask or run a plugin prompt.',
     }));
     assert.match(html, /Connect your Base wallet/);
-    assert.match(html, /Ask Base MCP<\/button>/);
-    assert.match(html, /<button type="button" class="btn" disabled=""/);
+    assert.match(html, /<button type="button" class="btn" disabled="">Ask<\/button>/);
     assert.match(html, /Show the models available from Venice AI/);
+  });
+
+  test('a web visitor is offered the sign-in, not a dead button', () => {
+    let signedIn = false;
+    const html = renderToStaticMarkup(BaseMcpConsoleCard({
+      question: '',
+      onQuestionChange: () => undefined,
+      onAsk: () => assert.fail('a visitor cannot ask'),
+      pending: false,
+      unavailableReason: null,
+      answer: null,
+      disabledReason: 'Sign in with your wallet to ask.',
+      onSignIn: () => {
+        signedIn = true;
+      },
+    }));
+    assert.match(html, /<button type="button" class="btn">Sign in to ask<\/button>/);
+    assert.doesNotMatch(html, />Ask<\/button>/);
+    assert.equal(signedIn, false, 'rendering presses nothing');
   });
 
   test('an empty Base MCP inventory is stated as a connection fact', () => {
@@ -267,7 +285,7 @@ describe('the trace summary says where the words came from', () => {
         { tool: 'b', args: '{}', ok: false, result: '{}', errorCode: 'base_mcp_timeout' },
       ],
     }));
-    assert.match(summary, /2 Base MCP tool calls/);
+    assert.match(summary, /2 Wallet MCP tool calls/);
     assert.match(summary, /1 failed/);
   });
 
@@ -276,11 +294,11 @@ describe('the trace summary says where the words came from', () => {
     // third-party tool actually supplied.
     const summary = baseMcpConsoleTraceSummaryV1(answer({ trace: [] }));
     assert.match(summary, /No tool was called/i);
-    assert.match(summary, /no Base MCP data/i);
+    assert.match(summary, /no Wallet MCP data/i);
   });
 
   test('a single call is not called "1 tool calls"', () => {
-    assert.match(baseMcpConsoleTraceSummaryV1(answer()), /1 Base MCP tool call\./);
+    assert.match(baseMcpConsoleTraceSummaryV1(answer()), /1 Wallet MCP tool call\./);
   });
 });
 

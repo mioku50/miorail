@@ -15,6 +15,7 @@ import {
   chainLabelV1,
   consoleSectionPathV1,
   useConsoleTheme,
+  WalletMcpMiorailCard,
   type BaseMcpToolRowV1,
 } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
@@ -26,6 +27,7 @@ import {
   useStatus,
 } from '@mioagent/api-client-react';
 
+import { useAuthGate } from '../../app/AuthProvider';
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
 import { useConsoleNav } from '../console/useConsoleNav';
 
@@ -64,8 +66,14 @@ export function ExtensionsPage() {
   const consoleAsk = useBaseMcpConsole();
   const reconcileAction = useReconcileBaseMcpAction();
   const [question, setQuestion] = useState('');
+  const gate = useAuthGate();
+  // Public since 2026-10-04: one of the four main pages used to open on the
+  // wallet wall, so a visitor never saw a plugin. Signed out, nothing about
+  // this server's switch is known, and the one thing to press is signing in.
+  const signedOut = !gate.showPrivateSurfaces;
 
   const enabled = status.data?.baseMcp?.enabled === true;
+  const connected = probe.data?.status === 'connected';
   const [askedOnce, setAskedOnce] = useState(false);
 
   const projectedTools = baseMcpToolsWithReviewedAdaptersV1(
@@ -130,7 +138,7 @@ export function ExtensionsPage() {
   return (
     <ConsoleShell
       header={{
-        crumb: ['Base MCP plugins'],
+        crumb: ['Wallet MCP'],
         nav: consoleNav.header,
         onNavigate: consoleNav.navigate,
         blockNumber: chainBlockNumberV1(status.data ?? null),
@@ -180,6 +188,7 @@ export function ExtensionsPage() {
               : null
           }
           routingCounts={routingCounts}
+          signedOut={signedOut}
           plugins={plugins.plugins}
           drift={plugins.drift}
           generatedAt={plugins.generatedAt}
@@ -191,7 +200,7 @@ export function ExtensionsPage() {
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
       onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
     >
-      {enabled && (
+      {(enabled || signedOut) && (
         // FIRST, because it is the only thing on this page you DO. It sat
         // below a twenty-row catalogue, so the one interactive control on the
         // surface was the one you had to scroll past everything to reach.
@@ -223,30 +232,48 @@ export function ExtensionsPage() {
               navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(message)}`);
             }}
             onReconcileAction={(receiptId) => reconcileAction.mutate(receiptId)}
+            disabledReason={signedOut ? 'Sign in with your wallet to ask. You can still explore and fill the examples below.' : null}
+            onSignIn={
+              signedOut
+                ? () => navigate(`/signin?next=${encodeURIComponent(consoleSectionPathV1('extensions'))}`)
+                : undefined
+            }
             unavailableReason={
               consoleAsk.error
                 // Never the error's own message: a transport failure can carry
                 // the endpoint, and the endpoint can carry a token.
-                ? 'The console could not reach the server. Nothing here is a statement about Base MCP.'
+                ? 'The console could not reach the server. Nothing here is a statement about Wallet MCP.'
                 : null
             }
           />
         </div>
       )}
-      {/* Reference, below the thing you act with. */}
-      <BaseMcpPluginsCard {...plugins} />
-      <BaseMcpExtensionsCard {...model} />
-      {enabled && (
-        // The connect control is its own component because OAuth must open
-        // synchronously from the click to keep `window.opener` — Base Account
-        // requires it, and an embedded Base App must not navigate its own
-        // frame to keys.coinbase.com.
+      {enabled && !connected && (
+        // Right under the box it unlocks, not below every plugin. The connect
+        // control is its own component because OAuth must open synchronously
+        // from the click to keep `window.opener` — the wallet requires it, and
+        // an embedded Base App must not navigate its own frame to
+        // keys.coinbase.com.
         <div className="ctarow">
           <BaseMcpConnectButton className="btn" returnTo={consoleSectionPathV1('extensions')}>
-            {probe.data?.status === 'connected' ? 'Reconnect Base Account' : 'Connect Base Account'}
+            Connect Wallet MCP
           </BaseMcpConnectButton>
         </div>
       )}
+      <WalletMcpMiorailCard />
+      {/* Reference, below the things you act with. */}
+      <BaseMcpPluginsCard {...plugins} />
+      <details className="mcp-advanced">
+        <summary>Advanced: the tools Wallet MCP exposes</summary>
+        <BaseMcpExtensionsCard {...model} />
+        {enabled && connected && (
+          <div className="ctarow">
+            <BaseMcpConnectButton className="btn sec" returnTo={consoleSectionPathV1('extensions')}>
+              Reconnect Wallet MCP
+            </BaseMcpConnectButton>
+          </div>
+        )}
+      </details>
     </ConsoleShell>
   );
 }

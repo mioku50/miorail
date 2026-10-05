@@ -28,7 +28,7 @@ test('a declared read without a released runtime recipe is not advertised as rea
     disposition: 'read_in_extensions' as const, capabilityState: 'unavailable' as const,
     capabilityReason: 'No reviewed recipe.' };
   const row = plugin({ id: 'aerodrome', examples: [example] });
-  assert.equal(baseMcpExampleBadgeV1(example).label, 'NOT AVAILABLE HERE');
+  assert.equal(baseMcpExampleBadgeV1(example).label, 'Not available here');
   assert.deepEqual(baseMcpPluginCapabilitiesV1(row), ['unavailable']);
   assert.deepEqual(filterBaseMcpPluginsV1([row], '', 'readable_here'), []);
 });
@@ -97,7 +97,7 @@ describe('the rail says what its numbers count, and offers the read', () => {
     // Switched off is a different sentence and offers nothing, because there
     // is nothing on the other end of the button.
     const off = rail({ toolCounts: null, enabled: false, onRefresh: () => {} });
-    assert.match(off, /Base MCP is switched off on this server/);
+    assert.match(off, /Wallet MCP is switched off on this server/);
     assert.doesNotMatch(off, /Read the tool list/);
 
     // A surface with no way to refetch shows no button rather than a dead one.
@@ -184,7 +184,7 @@ describe('a plugin is grouped by whether it can be reached from here', () => {
   });
 
   test('the reachable group still says who approves a transaction', () => {
-    assert.match(BASE_MCP_PLUGIN_REACH_COPY_V1.http, /Base Account/);
+    assert.match(BASE_MCP_PLUGIN_REACH_COPY_V1.http, /approved in your own wallet/);
   });
 
   test('a shell plugin says plainly that it does not work on this surface', () => {
@@ -360,7 +360,7 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
     }),
   ];
 
-  test('cards lead with what you can do here, and keep the plumbing in Technical details', () => {
+  test('cards lead with the app and one example, and keep the plumbing in Details', () => {
     const html = renderToStaticMarkup(React.createElement(BaseMcpPluginsCard, {
       loading: false,
       plugins: catalogue,
@@ -369,7 +369,7 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
       unavailableReason: null,
       onSelectPrompt: () => undefined,
     }));
-    assert.match(html, /Explore Base Plugins/);
+    assert.match(html, /<b>Plugins Wallet MCP can use<\/b>/);
     assert.match(html, /Search plugins…/);
     assert.match(html, /Base plugin spec · v0\.3\.0/);
     assert.match(html, /Owner<\/dt><dd>Routes AI/);
@@ -378,14 +378,18 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
     // here, and `proven` / `scored` / `manifested` under a heading reads as a
     // quality rating rather than as how far our own integration got. Both are
     // still on the page, one fold down, under their real names.
-    assert.match(html, /<summary>Technical details<\/summary>/);
+    assert.match(html, /<summary>Details<\/summary>/);
     assert.match(html, /Transport<\/dt><dd>HTTP path/);
     assert.match(html, /Integration stage<\/dt><dd class="mono">proven/);
     assert.doesNotMatch(html, /Lifecycle<\/dt>/);
-    // What the head carries instead: what a person can do with it, here.
-    assert.match(html, /class="mcp-plugin-caps"/);
-    assert.match(html, /<span class="mcp-disposition read">READ<\/span>/);
-    assert.match(html, /<span class="mcp-disposition provider">OPEN PROVIDER<\/span>/);
+    // The head carries a monogram and the name; what a person can do with it
+    // here moved into Details in plain words (operator, 2026-10-04).
+    assert.match(html, /<span class="mcp-plugin-mark" aria-hidden="true">M<\/span>/);
+    assert.match(html, /<details class="mcp-tech"><summary>Details<\/summary><p class="mcp-plugin-caps">/);
+    assert.match(html, /<span class="mcp-disposition read">Reads<\/span>/);
+    assert.match(html, /<span class="mcp-disposition provider">Opens the app<\/span>/);
+    // Filters are one fold down too, closed while nothing is filtered.
+    assert.match(html, /<details class="mcp-tech"><summary>Filter by what works here<\/summary>/);
     assert.match(html, /Show Morpho vaults/);
     assert.match(html, /Show my Morpho positions/);
     assert.match(html, /Example prompts/);
@@ -405,10 +409,10 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
   });
 
   test('badges are derived from disposition, including provider UI and x402', () => {
-    assert.equal(baseMcpExampleBadgeV1({ surface: 'routable', disposition: 'handoff_to_routes' }).label, 'ROUTES AI');
-    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'handoff_to_provider_ui' }).label, 'PROVIDER UI');
-    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'typed_x402_required' }).label, 'x402');
-    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'adapter_required' }).label, 'ADAPTER REQUIRED');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'routable', disposition: 'handoff_to_routes' }).label, 'Routes AI');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'handoff_to_provider_ui' }).label, 'Opens the app');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'typed_x402_required' }).label, 'Paid read');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'adapter_required' }).label, 'Not built here');
   });
 
   test('selecting an example has only a fill callback and never an execute callback', () => {

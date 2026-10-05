@@ -32,7 +32,7 @@ export function BaseMcpActionReceiptsCard(model: {
   return (
     <div className="rp">
       <div className="rph">
-        <b>Base MCP action receipts</b>
+        <b>Wallet MCP action receipts</b>
         <span className="rt mono">{model.receipts.length || '—'}</span>
       </div>
       <div className="rpb">
@@ -41,11 +41,11 @@ export function BaseMcpActionReceiptsCard(model: {
           Action Receipts, not compared routes and not Route Proofs.
         </p>
         {model.loading && model.receipts.length === 0 ? (
-          <p className="empty">Reading Base MCP action receipts…</p>
+          <p className="empty">Reading Wallet MCP action receipts…</p>
         ) : model.unavailableReason ? (
           <p className="empty">{model.unavailableReason}</p>
         ) : model.receipts.length === 0 ? (
-          <p className="empty">No Base MCP actions have been prepared for this account.</p>
+          <p className="empty">No Wallet MCP actions have been prepared for this account.</p>
         ) : (
           model.receipts.map((receipt) => (
             <div key={receipt.id} className="rcpt">

@@ -17,7 +17,7 @@ export function BaseMcpStatusIndicator() {
     return (
       <span
         className="hidden sm:inline-flex items-center gap-1.5 bg-ok-soft text-ok border border-ok/20 px-2.5 py-1 rounded-full text-[11px] font-medium"
-        title="Base MCP is connected"
+        title="Wallet MCP is connected"
       >
         <span className="w-1.5 h-1.5 rounded-full bg-ok" />
         {label}
@@ -29,7 +29,7 @@ export function BaseMcpStatusIndicator() {
     <BaseMcpConnectButton
       returnTo={returnTo}
       className="hidden sm:inline-flex items-center gap-1.5 bg-panel-2 text-ink-2 border border-line px-2.5 py-1 rounded-full text-[11px] font-medium hover:bg-line/50 transition-colors"
-      title="Base MCP is optional — connect to enable portfolio, send and swap via Base"
+      title="Wallet MCP is optional — connect to enable portfolio, send and swap via Base"
     >
       <span className={`w-1.5 h-1.5 rounded-full ${tone === 'action' ? 'bg-warn' : 'bg-ink-3'}`} />
       {label}

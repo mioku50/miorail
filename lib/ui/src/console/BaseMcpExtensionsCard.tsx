@@ -71,7 +71,7 @@ export interface BaseMcpExtensionsModelV1 {
 export const BASE_MCP_CAPABILITY_COPY_V1: Readonly<Record<BaseMcpCapabilityV1, string>> = {
   read_only: 'Reads only. Returns data and moves nothing.',
   user_confirmed_transaction:
-    'Prepares a transaction and hands back an approval link. You approve it in Base Account — Miorail never signs or sends it.',
+    'Prepares a transaction and hands back an approval link. You approve it in your wallet — Miorail never signs or sends it.',
   forbidden: 'Not callable from Miorail.',
   unknown:
     'Not classified. Treated as not callable, because a tool nobody has categorised might move money.',
@@ -100,19 +100,19 @@ export function groupBaseMcpToolsV1(
 /** The one line at the top. It says what state the connection is in, in words
  * that tell the user whether to act. */
 export function baseMcpStatusCopyV1(status: BaseMcpStatusV1 | null, enabled: boolean): string {
-  if (!enabled) return 'Base MCP is switched off on this server.';
+  if (!enabled) return 'Wallet MCP is switched off on this server.';
   switch (status) {
     case 'connected':
-      return 'Connected to Base MCP with your Base Account.';
+      return 'Connected to Wallet MCP with your wallet.';
     case 'needs_reauth':
-      return 'Your Base MCP session expired. Connect again to keep using it.';
+      return 'Your Wallet MCP session expired. Connect again to keep using it.';
     case 'unreachable':
       // Not a claim about the plugins: we could not ask.
-      return 'Base MCP did not answer. Nothing here is a statement about which tools exist.';
+      return 'Wallet MCP did not answer. Nothing here is a statement about which tools exist.';
     case 'degraded':
-      return 'Base MCP answered only partly, so this list may be incomplete.';
+      return 'Wallet MCP answered only partly, so this list may be incomplete.';
     default:
-      return 'Not connected. Connecting uses your own Base Account.';
+      return 'Not connected. Connecting uses your own wallet.';
   }
 }
 
@@ -135,7 +135,7 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        <b>Base MCP tools</b>
+        <b>Wallet MCP tools</b>
         {model.endpointHost && <span className="rt mono">{model.endpointHost}</span>}
       </div>
       <div className="rpb">
@@ -145,7 +145,7 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
           <div className="ctarow">
             {model.onConnect && (
               <button type="button" className="btn" onClick={model.onConnect}>
-                {model.status === 'connected' ? 'Reconnect' : 'Connect Base Account'}
+                {model.status === 'connected' ? 'Reconnect' : 'Connect Wallet MCP'}
               </button>
             )}
             {model.onRefresh && model.status === 'connected' && (
@@ -162,7 +162,7 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
           <p className="empty">{model.unavailableReason}</p>
         ) : groups.length === 0 ? (
           <p className="empty">
-            No tools have been read yet. Connect your Base Account to see what is available.
+            No tools have been read yet. Connect Wallet MCP to see what is available.
           </p>
         ) : (
           <>
@@ -173,7 +173,7 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
                 fixed. */}
             <p className="lnote">
               The word beside each tool is what it touches: <span className="mono">wallet</span> needs
-              your Base Account, <span className="mono">protocol</span> reads public chain or service
+              your wallet&apos;s approval, <span className="mono">protocol</span> reads public chain or service
               data.
             </p>
             {groups.map((group) => (

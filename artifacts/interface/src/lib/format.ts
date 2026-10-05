@@ -36,12 +36,12 @@ export function formatBaseMcpStatus(baseMcp?: any, pendingLabel = 'Checking...')
 
 export function baseMcpHint(baseMcp?: any): string | null {
   if (!baseMcp) return null;
-  if (baseMcp.readiness === 'oauth_connected' && !baseMcp.usable) return 'OAuth is connected, but no usable tools were verified. Reconnect Base MCP and retry.';
-  if (baseMcp.readiness === 'degraded') return `Base MCP is degraded${baseMcp.errorCode ? ` (${baseMcp.errorCode})` : ''}.`;
-  if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'Optional: connect Base MCP to enable portfolio, send and swap via Base.';
+  if (baseMcp.readiness === 'oauth_connected' && !baseMcp.usable) return 'OAuth is connected, but no usable tools were verified. Reconnect Wallet MCP and retry.';
+  if (baseMcp.readiness === 'degraded') return `Wallet MCP is degraded${baseMcp.errorCode ? ` (${baseMcp.errorCode})` : ''}.`;
+  if (baseMcp.status === 'needs_reauth' || baseMcp.status === 'needs_auth') return 'Optional: connect Wallet MCP to enable portfolio, send and swap via Base.';
   if (baseMcp.status !== 'missing') return null;
-  if (baseMcp.configured && baseMcp.enabled) return 'Optional: connect Base MCP to enable portfolio, send and swap via Base.';
-  return 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
+  if (baseMcp.configured && baseMcp.enabled) return 'Optional: connect Wallet MCP to enable portfolio, send and swap via Base.';
+  return 'Wallet MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.';
 }
 
 export function baseMcpNeedsAuth(baseMcp?: any): boolean {
@@ -53,7 +53,7 @@ export function baseMcpNeedsAuth(baseMcp?: any): boolean {
 }
 
 export function baseMcpConnectLabel(baseMcp?: any): string {
-  return baseMcp?.auth?.connected ? 'Reconnect Base MCP' : 'Connect Base MCP';
+  return baseMcp?.auth?.connected ? 'Reconnect Wallet MCP' : 'Connect Wallet MCP';
 }
 
 export type BaseMcpIndicatorTone = 'connected' | 'action' | 'muted';
@@ -71,7 +71,7 @@ export function baseMcpStatusLabel(baseMcp?: any): {
 } {
   const healthyConnected = baseMcp?.auth?.connected === true && !baseMcpNeedsAuth(baseMcp);
   if (healthyConnected) {
-    return { label: 'Base MCP: Connected', tone: 'connected', action: null };
+    return { label: 'Wallet MCP: Connected', tone: 'connected', action: null };
   }
   return {
     label: baseMcpConnectLabel(baseMcp),
@@ -91,24 +91,24 @@ export function baseMcpOAuthResultMessage(result?: string | null, code?: string 
   if (result === 'connected' && wallet === 'mismatch') {
     return {
       kind: 'warn',
-      text: 'Base MCP is connected to another Coinbase wallet. Miorail will use your current BaseApp wallet for balances and confirmations. Coinbase wallet-specific MCP tools are disabled for this session.',
+      text: 'Wallet MCP is connected to another Coinbase wallet. Miorail will use your current BaseApp wallet for balances and confirmations. Coinbase wallet-specific MCP tools are disabled for this session.',
     };
   }
   if (result === 'connected') {
-    return { kind: 'success', text: 'Base MCP connected. User-scoped tools are authorized.' };
+    return { kind: 'success', text: 'Wallet MCP connected. User-scoped tools are authorized.' };
   }
   if (result === 'cancelled') {
-    return { kind: 'warn', text: 'Base MCP connection was cancelled. Connect again when ready.' };
+    return { kind: 'warn', text: 'Wallet MCP connection was cancelled. Connect again when ready.' };
   }
   if (result === 'error') {
     const messages: Record<string, string> = {
-      expired_token: 'Base MCP authorization expired. Reconnect to continue.',
-      refresh_failed: 'Base MCP token refresh failed. Reconnect to start a clean authorization flow.',
-      credentials_invalid: 'Stored Base MCP credentials cannot be opened. Reconnect to replace them safely.',
-      authorization_failed: 'Base MCP authorization failed or was cancelled. Reconnect when ready.',
-      missing_config: 'Base MCP is not fully configured on the server.',
+      expired_token: 'Wallet MCP authorization expired. Reconnect to continue.',
+      refresh_failed: 'Wallet MCP token refresh failed. Reconnect to start a clean authorization flow.',
+      credentials_invalid: 'Stored Wallet MCP credentials cannot be opened. Reconnect to replace them safely.',
+      authorization_failed: 'Wallet MCP authorization failed or was cancelled. Reconnect when ready.',
+      missing_config: 'Wallet MCP is not fully configured on the server.',
     };
-    return { kind: 'error', text: messages[code || ''] || 'Base MCP connection failed. Connect again to reauthorize.' };
+    return { kind: 'error', text: messages[code || ''] || 'Wallet MCP connection failed. Connect again to reauthorize.' };
   }
   return null;
 }

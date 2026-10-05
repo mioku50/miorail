@@ -159,7 +159,7 @@ export function RouteHistoryPage() {
         receipts={extensionActions.data?.receipts ?? []}
         unavailableReason={
           extensionActions.error
-            ? 'Base MCP action receipts could not be read. This says nothing about whether an action completed.'
+            ? 'Wallet MCP action receipts could not be read. This says nothing about whether an action completed.'
             : null
         }
       />

@@ -49,7 +49,7 @@ describe('a third-party catalogue is grouped by what it may do, not by name', ()
 
   test('a write tool says who signs, and it is not Miorail', () => {
     const copy = BASE_MCP_CAPABILITY_COPY_V1.user_confirmed_transaction;
-    assert.match(copy, /Base Account/);
+    assert.match(copy, /You approve it in your wallet/);
     assert.match(copy, /never signs/i);
   });
 });
@@ -92,7 +92,7 @@ describe('the tool catalogue is scannable, and its column is named', () => {
 
   test('the scope word is explained once, not repeated on every row', () => {
     assert.match(card, /The word beside each tool is what it touches/);
-    assert.match(card, /needs\s*\n?\s*your Base Account/);
+    assert.match(card, /needs\s*\n?\s*your wallet&apos;s approval/);
   });
 
   test('the summary uses the same words as the header and the rail', () => {

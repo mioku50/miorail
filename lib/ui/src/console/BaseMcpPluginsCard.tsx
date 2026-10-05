@@ -126,7 +126,7 @@ export type BaseMcpPluginFilterV1 =
 export type BaseMcpExampleDispositionUiV1 = BaseMcpPluginRowV1['examples'][number]['disposition'];
 
 export interface BaseMcpExampleBadgeV1 {
-  label: 'READ' | 'ROUTES AI' | 'ACTION' | 'PROVIDER UI' | 'ADAPTER REQUIRED' | 'NOT AVAILABLE HERE' | 'x402';
+  label: 'Reads' | 'Routes AI' | 'You approve' | 'Opens the app' | 'Not built here' | 'Not available here' | 'Paid read';
   tone: 'read' | 'routes' | 'action' | 'provider' | 'adapter' | 'x402';
 }
 
@@ -139,28 +139,30 @@ export interface BaseMcpExampleUiV1 {
 /** A display label derived from routing metadata. The prompt never carries a
  * second hand-written label that could drift from its actual disposition. */
 export function baseMcpExampleBadgeV1(example: BaseMcpExampleUiV1): BaseMcpExampleBadgeV1 {
-  if (example.capabilityState === 'unavailable') return { label: 'NOT AVAILABLE HERE', tone: 'adapter' };
+  // Words a person uses for what happens next, not the routing vocabulary
+  // they used to be (READ, PROVIDER UI, ADAPTER REQUIRED, operator 2026-10-04).
+  if (example.capabilityState === 'unavailable') return { label: 'Not available here', tone: 'adapter' };
   switch (example.disposition) {
     case 'handoff_to_routes':
-      return { label: 'ROUTES AI', tone: 'routes' };
+      return { label: 'Routes AI', tone: 'routes' };
     case 'handoff_to_provider_ui':
-      return { label: 'PROVIDER UI', tone: 'provider' };
+      return { label: 'Opens the app', tone: 'provider' };
     case 'typed_x402_required':
-      return { label: 'x402', tone: 'x402' };
+      return { label: 'Paid read', tone: 'x402' };
     case 'adapter_required':
-      return { label: 'ADAPTER REQUIRED', tone: 'adapter' };
+      return { label: 'Not built here', tone: 'adapter' };
     // A Routes adapter EXISTS and this deployment cannot finish the journey.
     // Badging it ROUTES AI is what sent users into a Review screen that always
     // refused; badging it ADAPTER REQUIRED would be a different lie, since the
     // adapter is written. It gets its own label and its own sentence.
     case 'route_unavailable_here':
-      return { label: 'NOT AVAILABLE HERE', tone: 'adapter' };
+      return { label: 'Not available here', tone: 'adapter' };
     case 'action_in_extensions':
-      return { label: 'ACTION', tone: 'action' };
+      return { label: 'You approve', tone: 'action' };
     default:
       return example.surface === 'action'
-        ? { label: 'ACTION', tone: 'action' }
-        : { label: 'READ', tone: 'read' };
+        ? { label: 'You approve', tone: 'action' }
+        : { label: 'Reads', tone: 'read' };
   }
 }
 
@@ -198,11 +200,11 @@ const CAPABILITY_ORDER_V1: readonly BaseMcpPluginCapabilityV1[] = [
 ];
 
 export const BASE_MCP_CAPABILITY_LABEL_V1: Readonly<Record<BaseMcpPluginCapabilityV1, string>> = {
-  read: 'READ',
-  action: 'ACTION',
-  routes: 'ROUTES AI',
-  provider_ui: 'OPEN PROVIDER',
-  unavailable: 'UNAVAILABLE',
+  read: 'Reads',
+  action: 'You approve',
+  routes: 'Routes AI',
+  provider_ui: 'Opens the app',
+  unavailable: 'Not available here',
 };
 
 /** Reuses the `.mcp-disposition` tones so the head badges and the example
@@ -287,9 +289,9 @@ export function baseMcpPluginReachV1(plugin: BaseMcpPluginRowV1): BaseMcpPluginR
 
 export const BASE_MCP_PLUGIN_REACH_COPY_V1: Readonly<Record<BaseMcpPluginReachV1, string>> = {
   http:
-    'A reviewed, host-pinned HTTP path is available on this surface. Having a path is not the same as being callable — what this plugin can actually do here is the capability set on the card. Anything it prepares is approved in your Base Account.',
+    'A reviewed, host-pinned HTTP path is available on this surface. Having a path is not the same as being callable — what this plugin can actually do here is the capability set on the card. Anything it prepares is approved in your own wallet.',
   base_tools:
-    'Uses Base MCP’s own tools and the chain directly — no API host of its own.',
+    'Uses Wallet MCP’s own tools and the chain directly — no API host of its own.',
   external_mcp:
     'Needs a separate MCP server. Not connected here.',
   shell_required:
@@ -474,6 +476,21 @@ export function baseMcpPluginHostsLabelV1(hosts: readonly string[]): string {
   return `${hosts[0]} +${hosts.length - 1}`;
 }
 
+/** "Aerodrome" from "Aerodrome Plugin": every spec titles itself "<Protocol>
+ * Plugin", and twenty cards under a heading that already says Plugins read
+ * the word twenty times. */
+export function baseMcpPluginNameV1(plugin: { title: string; id: string }): string {
+  const name = plugin.title.replace(/\s+plugin$/i, '').trim();
+  return name || plugin.id;
+}
+
+/** "A" for Aerodrome, "O" for o1.exchange: the first letter or digit of the
+ * plugin's own title, upper-cased. */
+export function baseMcpPluginMonogramV1(title: string): string {
+  const first = title.trim().match(/[\p{L}\p{N}]/u)?.[0] ?? '?';
+  return first.toUpperCase();
+}
+
 export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
   const [query, setQuery] = useState('');
   const [filter, setFilter] = useState<BaseMcpPluginFilterV1>('all');
@@ -495,7 +512,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
         type="button"
         className={`mcp-example ${className}`.trim()}
         disabled={!model.onSelectPrompt}
-        title={example.capabilityReason ?? 'Fill the Base MCP AI Console — this does not execute the prompt'}
+        title={example.capabilityReason ?? 'Fills the box above — nothing runs until you ask'}
         onClick={() => selectBaseMcpExampleV1(model.onSelectPrompt, example.prompt)}
       >
         <span className={`mcp-disposition ${badge.tone}`}>{badge.label}</span>
@@ -511,19 +528,14 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
   return (
     <div className="rp mcp-explorer">
       <div className="rph">
-        <b>Explore Base Plugins</b>
+        <b>Plugins Wallet MCP can use</b>
         <span className="rt mono">{model.plugins.length || '—'}</span>
       </div>
       <div className="rpb">
-        {drift && (
-          <div className="qrow">
-            <span className={`pill ${DRIFT_TONE_V1[drift.status]}`}>{DRIFT_LABEL_V1[drift.status]}</span>
-            <span className="v mono">
-              {drift.publishedCount === null ? `${drift.knownCount}` : `${drift.knownCount}/${drift.publishedCount}`}
-            </span>
-          </div>
-        )}
-        <p className="lnote">{baseMcpPluginDriftCopyV1(drift, model.generatedAt)}</p>
+        <p className="lnote">
+          Apps that publish a plugin for Coinbase Wallet MCP. Tap an example to put it in the box
+          above.
+        </p>
 
         {model.loading && model.plugins.length === 0 ? (
           <p className="empty">Reading the plugin catalogue…</p>
@@ -544,19 +556,25 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                   onChange={(event) => setQuery(event.target.value)}
                 />
               </label>
-              <div className="mcp-filters" aria-label="Filter Base plugins">
-                {BASE_MCP_PLUGIN_FILTERS_V1.map((entry) => (
-                  <button
-                    key={entry.id}
-                    type="button"
-                    className={`btn sec ${filter === entry.id ? 'on' : ''}`}
-                    aria-pressed={filter === entry.id}
-                    onClick={() => setFilter(entry.id)}
-                  >
-                    {entry.label}
-                  </button>
-                ))}
-              </div>
+              {/* Folded: these are Miorail's categories of what works on this
+                  surface, useful when looking for something and noise on a
+                  first visit. */}
+              <details className="mcp-tech" open={filter !== 'all'}>
+                <summary>Filter by what works here</summary>
+                <div className="mcp-filters" aria-label="Filter plugins">
+                  {BASE_MCP_PLUGIN_FILTERS_V1.map((entry) => (
+                    <button
+                      key={entry.id}
+                      type="button"
+                      className={`btn sec ${filter === entry.id ? 'on' : ''}`}
+                      aria-pressed={filter === entry.id}
+                      onClick={() => setFilter(entry.id)}
+                    >
+                      {entry.label}
+                    </button>
+                  ))}
+                </div>
+              </details>
             </div>
 
             {filtered.length === 0 ? (
@@ -566,25 +584,21 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                 {filtered.map((plugin) => {
                   const reach = baseMcpPluginReachV1(plugin);
                   const capabilities = baseMcpPluginCapabilitiesV1(plugin);
-                  const owner = plugin.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins';
-                  const moreCount = Math.max(0, plugin.examples.length - 2);
+                  const owner = plugin.productSurface === 'routes' ? 'Routes AI' : 'Wallet MCP';
+                  const moreCount = Math.max(0, plugin.examples.length - 1);
                   return (
                     <article className="mcp-plugin-card" key={plugin.id} data-plugin-id={plugin.id}>
                       <div className="mcp-plugin-head">
+                        {/* A monogram, not the protocol's logo: a logo would be
+                            fetched from each third party's site or copied into
+                            this repo, and neither is ours to do. */}
+                        <span className="mcp-plugin-mark" aria-hidden="true">
+                          {baseMcpPluginMonogramV1(baseMcpPluginNameV1(plugin))}
+                        </span>
                         <div>
-                          <b>{plugin.title}</b>
+                          <b>{baseMcpPluginNameV1(plugin)}</b>
                           <span className="mono">{plugin.id}</span>
                         </div>
-                        <span className="mcp-plugin-caps">
-                          {capabilities.map((capability) => (
-                            <span
-                              key={capability}
-                              className={`mcp-disposition ${BASE_MCP_CAPABILITY_TONE_V1[capability]}`}
-                            >
-                              {BASE_MCP_CAPABILITY_LABEL_V1[capability]}
-                            </span>
-                          ))}
-                        </span>
                       </div>
 
                       <p className="mcp-plugin-summary">{baseMcpPluginSummaryLineV1(plugin.summary || plugin.title, 180)}</p>
@@ -594,7 +608,17 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                           product does not hide how it reached something — but
                           they stop being the first thing a reader meets. */}
                       <details className="mcp-tech">
-                        <summary>Technical details</summary>
+                        <summary>Details</summary>
+                        <p className="mcp-plugin-caps">
+                          {capabilities.map((capability) => (
+                            <span
+                              key={capability}
+                              className={`mcp-disposition ${BASE_MCP_CAPABILITY_TONE_V1[capability]}`}
+                            >
+                              {BASE_MCP_CAPABILITY_LABEL_V1[capability]}
+                            </span>
+                          ))}
+                        </p>
                         <dl className="mcp-plugin-facts">
                           <div><dt>Chain</dt><dd>{chainsLabelV1(plugin.chains)}</dd></div>
                           <div><dt>Owner</dt><dd>{owner}</dd></div>
@@ -611,18 +635,13 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                       </div>
                       <div className="mcp-examples">
                         {plugin.examples[0] && exampleButton(plugin, plugin.examples[0])}
-                        {plugin.examples[1] && exampleButton(plugin, plugin.examples[1], 'mcp-desktop-second')}
                       </div>
 
-                      {plugin.examples.length > 1 && (
-                        <details className={`mcp-more ${plugin.examples.length === 2 ? 'two-only' : ''}`}>
-                          <summary>
-                            <span className="mcp-more-desktop">More examples ({moreCount})</span>
-                            <span className="mcp-more-mobile">Examples ({plugin.examples.length})</span>
-                          </summary>
+                      {moreCount > 0 && (
+                        <details className="mcp-more">
+                          <summary>More examples ({moreCount})</summary>
                           <div className="mcp-examples">
-                            {plugin.examples[1] && exampleButton(plugin, plugin.examples[1], 'mcp-mobile-second')}
-                            {plugin.examples.slice(2).map((example) => exampleButton(plugin, example))}
+                            {plugin.examples.slice(1).map((example) => exampleButton(plugin, example))}
                           </div>
                         </details>
                       )}
@@ -637,10 +656,15 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
         <p className="lnote">
           Plugins are built by third parties. Base does not operate, endorse or audit them, and
           Miorail does not either — a plugin reaches only the hosts its own spec declares, and every
-          transaction is approved in your Base Account. Selecting an example only fills the console;
-          it never runs the prompt. Adding a new plugin here is a reviewed
-          change, which is why the line above tells you when Base is ahead.
+          transaction is approved in your wallet. Selecting an example only fills the box; it never
+          runs the prompt. Adding a new plugin here is a reviewed change.
         </p>
+        {drift ? (
+          <p className="lnote mcp-drift">
+            <span className={`pill ${DRIFT_TONE_V1[drift.status]}`}>{DRIFT_LABEL_V1[drift.status]}</span>{' '}
+            {baseMcpPluginDriftCopyV1(drift, model.generatedAt)}
+          </p>
+        ) : null}
       </div>
     </div>
   );
@@ -682,6 +706,9 @@ export interface BaseMcpRailModelV1 {
    */
   onRefresh?: () => void;
   refreshing?: boolean;
+  /** No session yet: nothing about this server's switch is known, so the rail
+   * asks for a sign-in rather than saying the feature is off. */
+  signedOut?: boolean;
 }
 
 const CONNECTION_TONE_V1: Readonly<Record<string, string>> = {
@@ -700,13 +727,17 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
     <>
       <div className="rp">
         <div className="rph">
-          Base MCP
+          Wallet MCP
           {model.endpointHost && <span className="rt mono">{model.endpointHost}</span>}
         </div>
         <div className="rpb">
           <div className="qrow">
             <span className={`pill ${model.connection ? CONNECTION_TONE_V1[model.connection] ?? 'n' : 'n'}`}>
-              {model.enabled ? (model.connection ?? 'not connected').replace(/_/g, ' ') : 'switched off'}
+              {model.signedOut
+                ? 'sign in'
+                : model.enabled
+                  ? (model.connection ?? 'not connected').replace(/_/g, ' ')
+                  : 'switched off'}
             </span>
             {/* The number used to sit here alone, so "15" beside "connected"
                 could have been tools, plugins or minutes. */}
@@ -731,18 +762,20 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
                 </div>
               ))}
               <p className="lnote">
-                Every read stays here. Every action needs a typed adapter and your Base Account
+                Every read stays here. Every action needs a typed adapter and your wallet&apos;s
                 approval, and every routable intent finishes in Routes AI.
               </p>
             </>
           ) : (
             <>
               <p className="empty">
-                {model.enabled
-                  ? 'The tool list has not been read yet.'
-                  : 'Base MCP is switched off on this server, so there is no tool list to read.'}
+                {model.signedOut
+                  ? 'Sign in with your wallet, then connect Wallet MCP to read its tools.'
+                  : model.enabled
+                    ? 'The tool list has not been read yet.'
+                    : 'Wallet MCP is switched off on this server, so there is no tool list to read.'}
               </p>
-              {model.enabled && model.onRefresh && (
+              {model.enabled && !model.signedOut && model.onRefresh && (
                 <button
                   type="button"
                   className="btn sec"

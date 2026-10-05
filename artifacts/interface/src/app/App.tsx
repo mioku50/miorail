@@ -158,7 +158,7 @@ function BaseMcpOAuthPopup({ message }: { message: BaseMcpOAuthMessageV1 }) {
   // not consider this window script-opened.
   return (
     <main className="mio-console">
-      <p className="note">Base Account authorization finished. You can close this window.</p>
+      <p className="note">Wallet MCP authorization finished. You can close this window.</p>
     </main>
   );
 }
@@ -318,12 +318,12 @@ export function App() {
           </RequireSession>
         </Route>
 
-        {/* Extensions — the Base MCP plugin catalogue. Read and classify; the
-            approval of any write tool happens in Base Account, never here. */}
+        {/* Wallet MCP (formerly Base MCP): plugins, the console and Miorail's
+            own plugin. Public since 2026-10-04, like /stocks: a visitor sees
+            everything, and asking needs a session. Any write is approved in
+            the person's own wallet, never here. */}
         <Route path="/extensions">
-          <RequireSession>
-            <ExtensionsPage />
-          </RequireSession>
+          <ExtensionsPage />
         </Route>
 
         {/* Routes — the goal flow. It kept "/" for two releases; the section

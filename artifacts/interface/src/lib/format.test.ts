@@ -15,7 +15,7 @@ import {
   formatBaseMcpStatus,
 } from './format';
 
-test('Base MCP UI helpers render optional missing state clearly', () => {
+test('Wallet MCP UI helpers render optional missing state clearly', () => {
   const status = {
     status: 'missing',
     provider: 'base-mcp',
@@ -25,56 +25,56 @@ test('Base MCP UI helpers render optional missing state clearly', () => {
 
   assert.strictEqual(baseMcpState(status.status), 'missing');
   assert.strictEqual(formatBaseMcpStatus(status), 'missing');
-  assert.strictEqual(baseMcpHint(status), 'Base MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.');
+  assert.strictEqual(baseMcpHint(status), 'Wallet MCP is optional. Configure BASE_MCP_SERVER_URL to enable tool status.');
 });
 
-test('Base MCP UI helpers classify connected and degraded states', () => {
+test('Wallet MCP UI helpers classify connected and degraded states', () => {
   assert.strictEqual(baseMcpState('connected'), 'live');
   assert.strictEqual(formatBaseMcpStatus({ status: 'connected', endpointHost: 'mcp.example.test' }), 'connected (mcp.example.test)');
 
   assert.strictEqual(baseMcpState('degraded'), 'stale');
   assert.strictEqual(formatBaseMcpStatus({ status: 'degraded', errorCode: 'rate_limited' }), 'degraded (rate limited)');
-  assert.strictEqual(baseMcpHint({ status: 'degraded', readiness: 'degraded', errorCode: 'tool_probe_failed' }), 'Base MCP is degraded (tool_probe_failed).');
+  assert.strictEqual(baseMcpHint({ status: 'degraded', readiness: 'degraded', errorCode: 'tool_probe_failed' }), 'Wallet MCP is degraded (tool_probe_failed).');
   assert.strictEqual(formatBaseMcpStatus({ status: 'connected', readiness: 'tools_available', toolsCount: 14 }), '14 tools available');
   assert.strictEqual(formatBaseMcpStatus({ status: 'degraded', readiness: 'oauth_connected', toolsCount: 0 }), 'OAuth connected · tools unavailable');
 });
 
-test('Base MCP UI helpers classify needs_reauth as reconnectable stale state', () => {
+test('Wallet MCP UI helpers classify needs_reauth as reconnectable stale state', () => {
   assert.strictEqual(baseMcpState('needs_reauth'), 'stale');
   assert.strictEqual(formatBaseMcpStatus({ status: 'needs_reauth' }), 'needs auth');
   assert.strictEqual(
     baseMcpHint({ status: 'needs_reauth' }),
-    'Optional: connect Base MCP to enable portfolio, send and swap via Base.'
+    'Optional: connect Wallet MCP to enable portfolio, send and swap via Base.'
   );
   assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_reauth', configured: true, enabled: true }), true);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'needs_auth', configured: true, enabled: true }), true);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'connected', configured: true, enabled: true, auth: { connected: true } }), false);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'degraded', configured: true, enabled: true, usable: false, auth: { connected: true } }), true);
   assert.strictEqual(baseMcpNeedsAuth({ status: 'connected', configured: true, enabled: true, auth: { connected: true, expired: true } }), true);
-  assert.strictEqual(baseMcpConnectLabel({ auth: { connected: false } }), 'Connect Base MCP');
-  assert.strictEqual(baseMcpConnectLabel({ auth: { connected: true } }), 'Reconnect Base MCP');
+  assert.strictEqual(baseMcpConnectLabel({ auth: { connected: false } }), 'Connect Wallet MCP');
+  assert.strictEqual(baseMcpConnectLabel({ auth: { connected: true } }), 'Reconnect Wallet MCP');
   assert.strictEqual(baseMcpConnectHref('/configure'), '/api/mcp/base/connect?returnTo=%2Fconfigure&popup=1');
   assert.strictEqual(baseMcpConnectHref('https://evil.test/callback'), '/api/mcp/base/connect?returnTo=%2Fbase-mcp&popup=1');
 });
 
 test('T48a.1 baseMcpStatusLabel maps status to a sidebar indicator', () => {
   assert.deepStrictEqual(baseMcpStatusLabel(undefined), {
-    label: 'Connect Base MCP',
+    label: 'Connect Wallet MCP',
     tone: 'muted',
     action: 'connect',
   });
   assert.deepStrictEqual(baseMcpStatusLabel({ status: 'missing', configured: false, enabled: false }), {
-    label: 'Connect Base MCP',
+    label: 'Connect Wallet MCP',
     tone: 'muted',
     action: 'connect',
   });
   assert.deepStrictEqual(
     baseMcpStatusLabel({ status: 'connected', configured: true, enabled: true, auth: { connected: true } }),
-    { label: 'Base MCP: Connected', tone: 'connected', action: null },
+    { label: 'Wallet MCP: Connected', tone: 'connected', action: null },
   );
   assert.deepStrictEqual(
     baseMcpStatusLabel({ status: 'needs_reauth', configured: true, enabled: true, auth: { connected: false } }),
-    { label: 'Connect Base MCP', tone: 'action', action: 'connect' },
+    { label: 'Connect Wallet MCP', tone: 'action', action: 'connect' },
   );
   assert.deepStrictEqual(
     baseMcpStatusLabel({
@@ -84,7 +84,7 @@ test('T48a.1 baseMcpStatusLabel maps status to a sidebar indicator', () => {
       usable: false,
       auth: { connected: true },
     }),
-    { label: 'Reconnect Base MCP', tone: 'action', action: 'reconnect' },
+    { label: 'Reconnect Wallet MCP', tone: 'action', action: 'reconnect' },
   );
   assert.deepStrictEqual(
     baseMcpStatusLabel({
@@ -93,39 +93,39 @@ test('T48a.1 baseMcpStatusLabel maps status to a sidebar indicator', () => {
       enabled: true,
       auth: { connected: true, expired: true },
     }),
-    { label: 'Reconnect Base MCP', tone: 'action', action: 'reconnect' },
+    { label: 'Reconnect Wallet MCP', tone: 'action', action: 'reconnect' },
   );
 });
 
-test('Base MCP OAuth result messages are explicit and non-crashing', () => {
+test('Wallet MCP OAuth result messages are explicit and non-crashing', () => {
   assert.deepStrictEqual(baseMcpOAuthResultMessage('connected'), {
     kind: 'success',
-    text: 'Base MCP connected. User-scoped tools are authorized.',
+    text: 'Wallet MCP connected. User-scoped tools are authorized.',
   });
   assert.deepStrictEqual(baseMcpOAuthResultMessage('cancelled'), {
     kind: 'warn',
-    text: 'Base MCP connection was cancelled. Connect again when ready.',
+    text: 'Wallet MCP connection was cancelled. Connect again when ready.',
   });
   assert.deepStrictEqual(baseMcpOAuthResultMessage('error'), {
     kind: 'error',
-    text: 'Base MCP connection failed. Connect again to reauthorize.',
+    text: 'Wallet MCP connection failed. Connect again to reauthorize.',
   });
   assert.deepStrictEqual(baseMcpOAuthResultMessage('error', 'refresh_failed'), {
     kind: 'error',
-    text: 'Base MCP token refresh failed. Reconnect to start a clean authorization flow.',
+    text: 'Wallet MCP token refresh failed. Reconnect to start a clean authorization flow.',
   });
   assert.deepStrictEqual(baseMcpOAuthResultMessage('error', 'credentials_invalid'), {
     kind: 'error',
-    text: 'Stored Base MCP credentials cannot be opened. Reconnect to replace them safely.',
+    text: 'Stored Wallet MCP credentials cannot be opened. Reconnect to replace them safely.',
   });
   assert.strictEqual(baseMcpOAuthResultMessage('unknown'), null);
   assert.deepStrictEqual(baseMcpOAuthResultMessage('connected', null, 'mismatch'), {
     kind: 'warn',
-    text: 'Base MCP is connected to another Coinbase wallet. Miorail will use your current BaseApp wallet for balances and confirmations. Coinbase wallet-specific MCP tools are disabled for this session.',
+    text: 'Wallet MCP is connected to another Coinbase wallet. Miorail will use your current BaseApp wallet for balances and confirmations. Coinbase wallet-specific MCP tools are disabled for this session.',
   });
 });
 
-test('Base MCP capability breakdown renders disabled unknown tools safely', () => {
+test('Wallet MCP capability breakdown renders disabled unknown tools safely', () => {
   assert.deepStrictEqual(
     baseMcpCapabilityBreakdown({
       toolsCount: 4,

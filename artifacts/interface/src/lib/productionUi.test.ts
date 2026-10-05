@@ -95,12 +95,12 @@ test('the Base MCP reconnect CTA lives outside diagnostics', () => {
   // to open.
   const extensions = source('../features/extensions/ExtensionsPage.tsx');
   assert.match(extensions, /<BaseMcpConnectButton/);
-  assert.match(extensions, /Reconnect Base Account/);
+  assert.match(extensions, /Reconnect Wallet MCP/);
   assert.match(extensions, /returnTo=\{consoleSectionPathV1\('extensions'\)\}/);
 
   // And from the console card itself, which is where an expired session is
   // actually reported.
   const card = source('../../../../lib/ui/src/console/BaseMcpConsoleCard.tsx');
   assert.match(card, /needs_reauth/);
-  assert.match(card, /Connect Base Account/);
+  assert.match(card, /Connect Wallet MCP/);
 });

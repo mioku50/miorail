@@ -142,6 +142,8 @@ export interface BaseMcpConsoleModelV1 {
   /** Keeps the command surface discoverable while making execution state
    * explicit, for example before a Base App wallet session exists. */
   disabledReason?: string | null;
+  /** A visitor with no session: the one thing to press is signing in. */
+  onSignIn?: () => void;
 }
 
 export interface BaseMcpQuickExampleV1 {
@@ -150,16 +152,15 @@ export interface BaseMcpQuickExampleV1 {
   disposition: BaseMcpExampleDispositionUiV1;
 }
 
-/** Seven routing demonstrations, separate from the plugin catalogue. The
- * Venice public model list is a READ; presenting it as a paid x402 GET caused
- * production to wait for a durable request ID that this endpoint never owed. */
+/** Four things a person asks, one of each kind the console answers: two
+ * reads, a send their wallet approves, and a swap that goes to Routes AI. It
+ * used to be seven routing demonstrations, among them a 10x perp, which read
+ * as a capability matrix rather than a first screen (operator, 2026-10-04).
+ * Every plugin's own examples are still one tap away in the catalogue. */
 export const BASE_MCP_QUICK_EXAMPLES_V1: readonly BaseMcpQuickExampleV1[] = [
-  { prompt: 'What does my Base Account hold?', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'What does my wallet hold?', surface: 'read', disposition: 'read_in_extensions' },
   { prompt: 'Show my recent Base transactions', surface: 'read', disposition: 'read_in_extensions' },
   { prompt: 'Send 5 USDC to alice.base.eth', surface: 'action', disposition: 'action_in_extensions' },
-  { prompt: 'Show the models available from Venice AI', surface: 'read', disposition: 'read_in_extensions' },
-  { prompt: 'Show my open Avantis positions and PnL', surface: 'read', disposition: 'read_in_extensions' },
-  { prompt: 'Open a 10x long BTC/USD with 100 USDC on Avantis', surface: 'action', disposition: 'handoff_to_provider_ui' },
   { prompt: 'Swap 100 USDC to ETH', surface: 'routable', disposition: 'handoff_to_routes' },
 ] as const;
 
@@ -192,23 +193,23 @@ export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null
     case 'needs_input':
       return answer.reply;
     case 'no_tools':
-      return 'Base MCP offered no readable tools, so nothing was asked. This is a statement about the connection, not about Base.';
+      return 'Wallet MCP offered no readable tools, so nothing was asked. This is a statement about the connection, not about Base.';
     case 'needs_reauth':
-      return 'Your Base MCP session expired. Connect again and ask once more.';
+      return 'Your Wallet MCP session expired. Connect again and ask once more.';
     case 'disabled':
-      return 'Base MCP is switched off on this server.';
+      return 'Wallet MCP is switched off on this server.';
     default:
-      return 'The console could not complete that. Nothing here is a statement about what Base MCP can do.';
+      return 'The console could not complete that. Nothing here is a statement about what Wallet MCP can do.';
   }
 }
 
 /** The one-line summary above the trace. */
 export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): string {
   if (answer.trace.length === 0) {
-    return 'No tool was called, so this answer used no Base MCP data.';
+    return 'No tool was called, so this answer used no Wallet MCP data.';
   }
   const failed = answer.trace.filter((row) => !row.ok).length;
-  const calls = `${answer.trace.length} Base MCP tool call${answer.trace.length === 1 ? '' : 's'}`;
+  const calls = `${answer.trace.length} Wallet MCP tool call${answer.trace.length === 1 ? '' : 's'}`;
   const failures = failed > 0 ? `, ${failed} failed` : '';
   // The elapsed time belongs next to the call count, because the call count is
   // the explanation: each one is a round trip to somebody else's server with a
@@ -315,7 +316,7 @@ const MISSING_INPUT_PLACEHOLDER_V1: Readonly<Record<string, string>> = {
 
 export function baseMcpInputPlaceholderV1(answer: BaseMcpConsoleAnswerV1 | null): string {
   const named = answer?.errorCode ? MISSING_INPUT_PLACEHOLDER_V1[answer.errorCode] : undefined;
-  return named ?? 'Ask Base MCP to read or act…';
+  return named ?? 'Ask your wallet to read or act…';
 }
 
 export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
@@ -329,7 +330,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
   return (
     <div className="rp">
       <div className="rph">
-        <b>Base MCP plugins</b>
+        <b>Ask Wallet MCP</b>
         {/* This read `— READ · — ACTION` before the tool list was fetched:
             machine words, and two em-dashes where a reader expects a count.
             The rail beside it was already saying the same numbers in words a
@@ -338,9 +339,8 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
       </div>
       <div className="rpb">
         <p className="lnote">
-          AI Console — Base MCP capabilities. Reads stay here, direct actions require an explicit
-          Base Account approval, and routable intents move to Routes AI for comparison and Safety
-          Kernel checks.
+          Ask your Coinbase Wallet in plain words. A read is answered here; sending money opens your
+          wallet for approval; a swap goes to Routes AI to compare routes first. Miorail never signs.
         </p>
         {model.disabledReason && <p className="empty">{model.disabledReason}</p>}
 
@@ -353,18 +353,24 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
           onChange={(event) => model.onQuestionChange(event.target.value)}
         />
         <div className="ctarow">
-          <button type="button" className="btn" onClick={model.onAsk} disabled={!canAsk}>
-            {model.pending ? 'Working…' : 'Ask Base MCP'}
-          </button>
+          {model.onSignIn ? (
+            <button type="button" className="btn" onClick={model.onSignIn}>
+              Sign in to ask
+            </button>
+          ) : (
+            <button type="button" className="btn" onClick={model.onAsk} disabled={!canAsk}>
+              {model.pending ? 'Working…' : 'Ask'}
+            </button>
+          )}
           {model.onConnect && answer?.status === 'needs_reauth' && (
             <button type="button" className="btn sec" onClick={model.onConnect}>
-              Connect Base Account
+              Connect Wallet MCP
             </button>
           )}
         </div>
         <div className="mcp-quick-head">
-          <b>Quick examples</b>
-          <span>routing demonstrations — the full plugin catalogue is below</span>
+          <b>Try</b>
+          <span>fills the box — nothing runs until you ask</span>
         </div>
         <div className="mcp-quick-examples">
           {BASE_MCP_QUICK_EXAMPLES_V1.map((example) => {
@@ -375,7 +381,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
               type="button"
               className="mcp-example"
               disabled={model.pending}
-              title="Fill the console — this does not execute the prompt"
+              title="Fills the box — nothing runs until you ask"
               onClick={() => selectBaseMcpExampleV1(model.onQuestionChange, example.prompt)}
             >
               <span className={`mcp-disposition ${badge.tone}`}>{badge.label}</span>
@@ -388,7 +394,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
         {model.unavailableReason ? (
           <p className="empty">{model.unavailableReason}</p>
         ) : model.pending ? (
-          <p className="empty">Working with Base MCP…</p>
+          <p className="empty">Working with Wallet MCP…</p>
         ) : !answer ? (
           <p className="empty">Nothing asked yet.</p>
         ) : (
@@ -398,7 +404,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
             {answer.status === 'handoff' && answer.handoff && (
               <div>
                 <div className="qrow">
-                  <span className="pill br">ROUTABLE</span>
+                  <span className="pill br">Routes AI</span>
                   <span className="v">
                     {answer.handoff.target === 'routes' ? 'Routes AI' : 'Avantis'}
                   </span>
@@ -483,7 +489,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                 </div>
                 <div className="qrow">
                   <span>Provider</span>
-                  <span className="v">Base MCP</span>
+                  <span className="v">Wallet MCP</span>
                 </div>
                 <div className="qrow">
                   <span>Reconciliation</span>
@@ -501,7 +507,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                       target="_blank"
                       rel="noopener noreferrer"
                     >
-                      {answer.action.receipt.actionType === 'virtuals' ? 'Approve Sign-In' : 'Approve in Base Account'}
+                      {answer.action.receipt.actionType === 'virtuals' ? 'Approve Sign-In' : 'Approve in your wallet'}
                     </a>
                   )}
                   {model.onReconcileAction && !['completed', 'failed', 'rejected'].includes(answer.action.receipt.status) && (
@@ -530,7 +536,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                   </p>
                 )}
                 <p className="note warn">
-                  Base MCP extension action — capability policy passed and Base Account approval is
+                  Wallet MCP action — capability policy passed and your wallet&apos;s approval is
                   required. Send is reconciled against exact onchain transfer facts; x402 is confirmed
                   by the paid endpoint response and stored only as a hash. This is not a Miorail verified route.
                 </p>
@@ -550,7 +556,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                 {answer.reply ? (
                   <pre className="mono aitext">{answer.reply}</pre>
                 ) : (
-                  <p className="empty">Base MCP returned tool results but no written answer.</p>
+                  <p className="empty">Wallet MCP returned tool results but no written answer.</p>
                 )}
 
                 {answer.truncated && (

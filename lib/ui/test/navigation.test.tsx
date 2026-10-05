@@ -183,7 +183,7 @@ describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => 
     const nav = consoleNavModelV1({ mounted: CONSOLE_DRAWER_SECTIONS_V1, active: 'market' });
     assert.deepEqual(
       nav.filter((item) => item.group === 'main').map((item) => item.label),
-      ['Stocks', 'Base MCP plugins', 'Routes AI', 'Settings'],
+      ['Stocks', 'Wallet MCP', 'Routes AI', 'Settings'],
     );
     assert.deepEqual(
       nav.filter((item) => item.group === 'more').map((item) => item.label),
@@ -314,7 +314,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // Phase 15.1 made it Stocks / Radar / B20; the roadmap of 2026-10-04 gave
     // it the web's own main pages, so a reader meets the same product on a
     // phone and on a laptop.
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'MCP plugins', 'Routes AI']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Wallet MCP', 'Routes AI']);
     assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], [...CONSOLE_PRIMARY_SECTIONS_V1]);
   });
 
@@ -342,7 +342,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // one a new reader is most likely to meet -- led with Discover, B20
     // controls and Routes AI. Those are the foundations, not the product.
     const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'market' });
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'MCP plugins', 'Routes AI']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Wallet MCP', 'Routes AI']);
   });
 
   test('a Base App tab always has a handler behind it', () => {
@@ -428,8 +428,8 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // whatever a third-party tool returned — so they must not read as one
     // feature split across two tabs.
     assert.equal(CONSOLE_SECTION_TABLE_V1.routes.label, 'Routes AI');
-    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Base MCP plugins');
-    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.compactLabel, 'MCP plugins');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Wallet MCP');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.compactLabel, 'Wallet MCP');
   });
 
   test('no tab is named for something that only exists after a signature', () => {

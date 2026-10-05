@@ -112,10 +112,10 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     // described the input method, not the product boundary.
     // "Plugins" is the reader's word for what this page lists; "Extensions"
     // was ours for the layer around them (operator, 2026-10-03).
-    label: 'Base MCP plugins',
-    compactLabel: 'MCP plugins',
+    label: 'Wallet MCP',
+    compactLabel: 'Wallet MCP',
     path: '/extensions',
-    blurb: 'Reviewed Base MCP plugins, live tools, and a thread scoped to those capabilities.',
+    blurb: 'Coinbase Wallet MCP in plain words: ask your wallet, the plugins it can use, and Miorail in your AI.',
   },
   routes: {
     id: 'routes',

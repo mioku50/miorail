@@ -114,7 +114,7 @@ export function ActionInbox() {
               Actions represent automated operations recommendations, token approvals, rebalances, or security screens.
             </div>
             <div className="text-xs text-ink-3 font-medium bg-bg px-3 py-1.5 rounded-lg border border-line mt-1">
-              Create a new action recommendation below, or ask Base MCP what your account holds.
+              Create a new action recommendation below, or ask Wallet MCP what your account holds.
             </div>
             <div className="flex gap-2 mt-2">
               <button
@@ -129,7 +129,7 @@ export function ActionInbox() {
                 onClick={() => navigate('/extensions')}
                 className="px-3 py-1.5 bg-bg border border-line text-ink text-xs rounded-lg font-medium hover:bg-panel transition-colors"
               >
-                Open Base MCP plugins
+                Open Wallet MCP
               </button>
             </div>
           </div>

@@ -6,6 +6,9 @@ CHANGELOG.md
 # their upstream Markdown formatting.
 contracts/lib
 lib/runtime-skills/plugins
+# Miorail's own Wallet MCP plugin keeps the layout Base's plugin spec gives
+# every plugin (a frontmatter title, one H1, bold labels), as the ones above do.
+artifacts/interface/public/wallet-mcp
 # Git-ignored user spec/roadmap docs (not part of the repo; left as-is on purpose).
 agent_tasks.md
 Base Agent — *.md

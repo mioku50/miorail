@@ -29,6 +29,7 @@ import {
   BaseMcpExtensionsCard,
   BaseMcpPluginsCard,
   BaseMcpActionReceiptsCard,
+  WalletMcpMiorailCard,
   EXIT_PROFILE_DEFAULTS_V1,
   WalletBalancesCard,
   formatAtomicAmount,
@@ -2457,7 +2458,7 @@ export function MiniConsole() {
             width and keeps the B20 content unmuddled. */}
         <div className="ctarow">
           <button type="button" className="btn sec" onClick={() => setSection("extensions")}>
-            Base MCP plugins →
+            Wallet MCP →
           </button>
         </div>
       </>
@@ -2496,9 +2497,9 @@ export function MiniConsole() {
               !address
                 ? "Connect your Base wallet to ask or run a plugin prompt. You can still explore and fill examples below."
                 : status.isPending
-                  ? "Reading Base MCP availability…"
+                  ? "Reading Wallet MCP availability…"
                   : status.data?.baseMcp?.enabled !== true
-                    ? "Base MCP is not available in this session. You can still explore and fill examples below."
+                    ? "Wallet MCP is not available in this session. You can still explore and fill examples below."
                     : null
             }
             reconcilingAction={reconcileBaseMcpAction.isPending}
@@ -2509,11 +2510,12 @@ export function MiniConsole() {
             onReconcileAction={(receiptId) => reconcileBaseMcpAction.mutate(receiptId)}
             unavailableReason={
               baseMcpAsk.error
-                ? "The console could not reach the server. Nothing here is a statement about Base MCP."
+                ? "The console could not reach the server. Nothing here is a statement about Wallet MCP."
                 : null
             }
           />
         </div>
+        <WalletMcpMiorailCard />
         <BaseMcpPluginsCard
           loading={baseMcpPlugins.isPending}
           plugins={baseMcpPlugins.data?.plugins ?? []}
@@ -2531,21 +2533,24 @@ export function MiniConsole() {
             });
           }}
         />
-        <BaseMcpExtensionsCard
-          enabled={status.data?.baseMcp?.enabled === true}
-          loading={baseMcpProbe.isPending}
-          status={baseMcpProbe.data?.status ?? null}
-          endpointHost={baseMcpProbe.data?.endpointHost ?? null}
-          tools={baseMcpProbe.data?.tools ?? []}
-          unavailableReason={
-            baseMcpProbe.error
-              // Never the error's own message: a transport failure can carry
-              // the endpoint, and the endpoint can carry a token.
-              ? "The tool catalogue could not be read. Nothing here is a statement about which tools exist."
-              : null
-          }
-          onRefresh={() => baseMcpProbe.mutate()}
-        />
+        <details className="mcp-advanced">
+          <summary>Advanced: the tools Wallet MCP exposes</summary>
+          <BaseMcpExtensionsCard
+            enabled={status.data?.baseMcp?.enabled === true}
+            loading={baseMcpProbe.isPending}
+            status={baseMcpProbe.data?.status ?? null}
+            endpointHost={baseMcpProbe.data?.endpointHost ?? null}
+            tools={baseMcpProbe.data?.tools ?? []}
+            unavailableReason={
+              baseMcpProbe.error
+                // Never the error's own message: a transport failure can carry
+                // the endpoint, and the endpoint can carry a token.
+                ? "The tool catalogue could not be read. Nothing here is a statement about which tools exist."
+                : null
+            }
+            onRefresh={() => baseMcpProbe.mutate()}
+          />
+        </details>
         <div className="ctarow">
           <button type="button" className="btn sec" onClick={() => setSection("portfolio")}>
             ← Back to B20
@@ -2571,7 +2576,7 @@ export function MiniConsole() {
           receipts={baseMcpActionReceipts.data?.receipts ?? []}
           unavailableReason={
             baseMcpActionReceipts.error
-              ? "Base MCP action receipts could not be read. This says nothing about whether an action completed."
+              ? "Wallet MCP action receipts could not be read. This says nothing about whether an action completed."
               : null
           }
         />

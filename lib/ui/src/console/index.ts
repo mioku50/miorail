@@ -39,6 +39,7 @@ export * from './ActivityPanels';
 export * from './BaseMcpConsoleCard';
 export * from './BaseMcpExtensionsCard';
 export * from './BaseMcpPluginsCard';
+export * from './WalletMcpMiorailCard';
 export * from './BaseMcpActionReceiptsCard';
 export * from './PublicProofPanels';
 export * from './rwaDiscoverView';

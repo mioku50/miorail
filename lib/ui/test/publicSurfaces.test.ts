@@ -278,3 +278,39 @@ test('the edge serves the x402 discovery document from the API', () => {
   const openapiBlock = nginx.slice(openapi, nginx.indexOf('\n}', openapi));
   assert.match(openapiBlock, /proxy_pass http:\/\/127\.0\.0\.1:8080\/api\/x402\/intelligence\/v1\/openapi\.json;/);
 });
+
+test('the Wallet MCP plugin is served as markdown and follows the plugin spec', () => {
+  const nginx = source('ops/nginx/miorail-app.conf');
+  const block = nginx.slice(nginx.indexOf('location ^~ /wallet-mcp/ {'));
+  assert.ok(nginx.includes('location ^~ /wallet-mcp/ {'), 'nginx serves the plugin directory');
+  assert.match(block.slice(0, 600), /default_type text\/markdown;/);
+  assert.match(block.slice(0, 600), /X-Content-Type-Options "nosniff"/);
+
+  const plugin = source('artifacts/interface/public/wallet-mcp/miorail.md');
+  const front = plugin.slice(0, plugin.indexOf('\n---', 4));
+  for (const field of ['title:', 'description:', 'tags:', 'name: miorail', 'version:', 'integration: external-mcp', 'chains: [base]']) {
+    assert.ok(front.includes(field), `frontmatter carries ${field}`);
+  }
+  assert.match(front, /url: https:\/\/miorail\.xyz\/mcp\/private/);
+  assert.match(front, /auth: oauth-on-install/);
+  assert.match(front, /risk: \[slippage\]/, 'a swap plugin is slippage only, as Uniswap and Aerodrome are');
+
+  // The body's canonical order for an external-mcp plugin, and no Endpoints
+  // or Commands: the agent reads the MCP's own tool catalogue.
+  const order = ['> [!IMPORTANT]', '## Overview', '## Detection', '## Installation', '## Auth', '## Surface Routing', '## Orchestration', '## Submission', '## Example Prompts', '## Risks & Warnings', '## Notes'];
+  // At the start of a line: the callout mentions `## Installation` and
+  // `## Auth` by name before the headings themselves.
+  const positions = order.map((heading) =>
+    plugin.search(new RegExp(`^${heading.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`, 'm')),
+  );
+  assert.ok(positions.every((at) => at > 0), 'every required section is present');
+  assert.deepEqual([...positions].sort((a, b) => a - b), positions, 'in the canonical order');
+  assert.doesNotMatch(plugin, /^## (Endpoints|Commands)/m);
+
+  // A public file: no real address, and the one link that leaves the file
+  // resolves from miorail.xyz rather than from inside base/skills.
+  assert.doesNotMatch(plugin, /0x[0-9a-fA-F]{40}/);
+  assert.doesNotMatch(plugin, /\]\(\.\.\/references\//);
+  assert.match(plugin, /action\.from` equals the Base MCP wallet address/, 'calls prepared for one wallet are never sent from another');
+});
+
