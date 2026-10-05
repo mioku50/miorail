@@ -6,11 +6,14 @@ import { BASE_MCP_PLUGIN_CATALOGUE_V1 } from '@mioagent/security';
 import {
   baseMcpPluginDriftRuntimeV1,
   baseMcpPluginDriftV1,
+  driftFailureClassV1,
   resetBaseMcpPluginDriftCacheV1,
 } from './baseMcpPluginDrift.js';
 
 const realFetch = baseMcpPluginDriftRuntimeV1.fetchImpl;
 const realNow = baseMcpPluginDriftRuntimeV1.now;
+const realWarn = baseMcpPluginDriftRuntimeV1.warn;
+let warned: string[] = [];
 
 function respondWith(names: string[] | null, status = 200) {
   let calls = 0;
@@ -30,11 +33,16 @@ const knownIds = BASE_MCP_PLUGIN_CATALOGUE_V1.map((plugin) => plugin.id);
 beforeEach(() => {
   resetBaseMcpPluginDriftCacheV1();
   delete process.env.BASE_MCP_PLUGIN_DRIFT_CHECK_V1;
+  warned = [];
+  baseMcpPluginDriftRuntimeV1.warn = (failure) => {
+    warned.push(failure);
+  };
 });
 
 afterEach(() => {
   baseMcpPluginDriftRuntimeV1.fetchImpl = realFetch;
   baseMcpPluginDriftRuntimeV1.now = realNow;
+  baseMcpPluginDriftRuntimeV1.warn = realWarn;
   resetBaseMcpPluginDriftCacheV1();
   delete process.env.BASE_MCP_PLUGIN_DRIFT_CHECK_V1;
 });
@@ -81,6 +89,18 @@ describe('a check that did not run is never a finding about Base', () => {
       new Response('rate limited', { status: 403 })) as typeof fetch;
     const drift = await baseMcpPluginDriftV1();
     assert.equal(drift.status, 'unchecked');
+    assert.deepEqual(warned, ['http_403'], 'the operator can see why');
+  });
+
+  test('a failure is logged as its class, never its message', async () => {
+    respondWith(null);
+    await baseMcpPluginDriftV1();
+    assert.deepEqual(warned, ['Error']);
+    const timeout = Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' });
+    assert.equal(driftFailureClassV1(timeout), 'TimeoutError');
+    const reset = new TypeError('fetch failed', { cause: Object.assign(new Error('read ECONNRESET https://x?token=1'), { code: 'ECONNRESET' }) });
+    assert.equal(driftFailureClassV1(reset), 'TypeError/ECONNRESET');
+    assert.equal(driftFailureClassV1('weird'), 'string');
   });
 
   test('an empty listing is unchecked, not "Base removed every plugin"', async () => {

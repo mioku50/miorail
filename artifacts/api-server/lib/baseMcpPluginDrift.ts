@@ -60,6 +60,11 @@ let cache: CacheEntry | null = null;
 export const baseMcpPluginDriftRuntimeV1 = {
   fetchImpl: ((...args: Parameters<typeof fetch>) => fetch(...args)) as typeof fetch,
   now: () => Date.now(),
+  /** One line per failed check (the failure TTL bounds it to one per five
+   * minutes): the failure's class, never its message or the URL. */
+  warn: (failure: string) => {
+    console.warn(`[base-mcp] plugin drift check failed: ${failure}`);
+  },
 };
 
 /** Set false to stop the outbound check entirely. The surface then says the
@@ -96,9 +101,15 @@ async function publishedPluginIdsV1(): Promise<string[] | null> {
       headers: { accept: 'application/vnd.github+json' },
       signal: AbortSignal.timeout(TIMEOUT_MS_V1),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      baseMcpPluginDriftRuntimeV1.warn(`http_${response.status}`);
+      return null;
+    }
     const body: unknown = await response.json();
-    if (!Array.isArray(body)) return null;
+    if (!Array.isArray(body)) {
+      baseMcpPluginDriftRuntimeV1.warn('body_not_a_list');
+      return null;
+    }
     const ids = body
       .filter((entry): entry is { name: string } =>
         Boolean(entry) &&
@@ -108,11 +119,24 @@ async function publishedPluginIdsV1(): Promise<string[] | null> {
       .map((entry) => entry.name.replace(/\.md$/, ''))
       .filter((id) => PLUGIN_ID_V1.test(id));
     return [...new Set(ids)].sort();
-  } catch {
+  } catch (error) {
     // Never the error's own message: a transport failure can carry the URL,
-    // and a URL can carry a token.
+    // and a URL can carry a token. Its NAME and its cause's CODE carry neither,
+    // and without them a failure in production was invisible: the check said
+    // "not checked" for weeks while the same request from the same host
+    // answered in 300 ms.
+    baseMcpPluginDriftRuntimeV1.warn(driftFailureClassV1(error));
     return null;
   }
+}
+
+/** "TimeoutError", "TypeError/ECONNRESET": a class, never a message. */
+export function driftFailureClassV1(error: unknown): string {
+  const name = error instanceof Error ? error.name : typeof error;
+  const cause = (error as { cause?: { code?: unknown; name?: unknown } } | null)?.cause;
+  const code = typeof cause?.code === 'string' ? cause.code : typeof cause?.name === 'string' ? cause.name : null;
+  const clean = (value: string) => value.replace(/[^A-Za-z0-9_]/g, '').slice(0, 40);
+  return code ? `${clean(name)}/${clean(code)}` : clean(name);
 }
 
 export async function baseMcpPluginDriftV1(): Promise<BaseMcpPluginDriftV1> {
