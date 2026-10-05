@@ -251,7 +251,23 @@ describe('the console never borrows the routers’ authority', () => {
     }));
     assert.match(html, /<button type="button" class="btn">Sign in to ask<\/button>/);
     assert.doesNotMatch(html, />Ask<\/button>/);
+    // A visitor has no tool list to wait for.
+    assert.match(html, /<span class="rt">sign in to ask<\/span>/);
+    assert.doesNotMatch(html, /tool list not read yet/);
     assert.equal(signedIn, false, 'rendering presses nothing');
+  });
+
+  test('the footnote names Coinbase, the operator of Wallet MCP, in plain words', () => {
+    const html = renderToStaticMarkup(BaseMcpConsoleCard({
+      question: '',
+      onQuestionChange: () => undefined,
+      onAsk: () => undefined,
+      pending: false,
+      unavailableReason: null,
+      answer: null,
+    }));
+    assert.match(html, /Coinbase does not operate, endorse or audit the plugins/);
+    assert.doesNotMatch(html, /Route Proof|Action Receipt and never/);
   });
 
   test('an empty Base MCP inventory is stated as a connection fact', () => {

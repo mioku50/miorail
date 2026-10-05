@@ -334,8 +334,12 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
         {/* This read `— READ · — ACTION` before the tool list was fetched:
             machine words, and two em-dashes where a reader expects a count.
             The rail beside it was already saying the same numbers in words a
-            person uses, so the two now agree and only the header is shorter. */}
-        <span className="rt">{baseMcpToolSummaryV1({ routing: model.routing })}</span>
+            person uses, so the two now agree and only the header is shorter.
+            A visitor has no tool list to wait for, so the header says what
+            the sentence under it says instead of "tool list not read yet". */}
+        <span className="rt">
+          {model.onSignIn ? 'sign in to ask' : baseMcpToolSummaryV1({ routing: model.routing })}
+        </span>
       </div>
       <div className="rpb">
         <p className="lnote">
@@ -632,9 +636,8 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
         )}
 
         <p className="lnote">
-          Base does not operate, endorse or audit the plugins behind these tools, and Miorail does
-          not either. Swap and yield intents always go to Routes AI. A direct extension action is
-          shown as an Action Receipt and never as a Route Proof.
+          Coinbase does not operate, endorse or audit the plugins behind these tools, and neither
+          does Miorail. Swaps and deposits go to Routes AI, which compares routes first.
         </p>
       </div>
     </div>

@@ -28,6 +28,31 @@ test('a visitor opens Wallet MCP and sees the page, not the wallet wall (390px)'
   await expect(page).toHaveURL(/\/signin\?next=%2Fextensions$/);
 });
 
+// A server session whose wallet is not in this browser is still signed out
+// here. The walk on 10-05 found it offered two next steps at once: "Sign in to
+// ask" in the console and "Connect Wallet MCP" under it.
+test('a session without its wallet in this browser is offered one next step (390px)', async ({ page }) => {
+  const wallet = '0x00000000000000000000000000000000000000a1';
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route('**/api/**', (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path === '/api/auth/session') {
+      return route.fulfill({ json: { user: { id: `eip155:8453:${wallet}`, address: wallet, chainId: 8453 } } });
+    }
+    if (path === '/api/status') {
+      return route.fulfill({
+        json: { baseMcp: { enabled: true, configured: true, status: 'needs_reauth', auth: { connected: false, needsReauth: true } } },
+      });
+    }
+    return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
+  });
+
+  await page.goto('/extensions');
+  await expect(page.getByRole('button', { name: 'Sign in to ask' })).toBeVisible();
+  await expect(page.getByText('sign in to ask', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Connect Wallet MCP' })).toHaveCount(0);
+});
+
 test('the Wallet MCP page fits a phone', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await page.route('**/api/**', (route) => {

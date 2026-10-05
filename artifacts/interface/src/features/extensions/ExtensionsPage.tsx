@@ -248,7 +248,9 @@ export function ExtensionsPage() {
           />
         </div>
       )}
-      {enabled && !connected && (
+      {enabled && !connected && !signedOut && (
+        // Not while the console above says "Sign in to ask": a server session
+        // without a wallet in this browser read as two different next steps.
         // Right under the box it unlocks, not below every plugin. The connect
         // control is its own component because OAuth must open synchronously
         // from the click to keep `window.opener` — the wallet requires it, and
