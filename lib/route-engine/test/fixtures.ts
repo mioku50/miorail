@@ -98,6 +98,7 @@ const providers = {
   balancer: { id: 'balancer', displayName: 'Balancer', kind: 'dex', operator: 'Balancer' },
   hydrex: { id: 'hydrex', displayName: 'Hydrex', kind: 'dex', operator: 'Hydrex' },
   'o1-exchange': { id: 'o1-exchange', displayName: 'o1.exchange', kind: 'aggregator', operator: 'o1.exchange' },
+  gmgn: { id: 'gmgn', displayName: 'GMGN', kind: 'aggregator', operator: 'GMGN' },
 } as const;
 
 interface CandidateOverrides {

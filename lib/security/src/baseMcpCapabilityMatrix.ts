@@ -81,6 +81,8 @@ export interface BaseMcpRuntimeSnapshotV1 {
   reviewedReadPlugins: readonly string[];
   /** Providers whose swap/earn route adapter is released in Routes AI. */
   releasedRouteProviders: readonly string[];
+  /** Explicit price queries only; no builder or wallet approval path. */
+  quoteOnlyRouteProviders?: readonly string[];
   /** Providers whose calldata Miorail refuses to sign without an executed
    * simulation. Their Routes handoff needs `batchSimulationAvailable` too. */
   simulationRequiredProviders: readonly string[];
@@ -136,7 +138,9 @@ export function providerRouteCapabilityV1(
     return {
       operation: 'routes',
       state: 'unsupported',
-      reason: 'No released Routes AI adapter compares or builds this provider.',
+      reason: runtime.quoteOnlyRouteProviders?.includes(pluginId)
+        ? 'GMGN prices can be checked in Routes AI, but GMGN swaps cannot be prepared or approved here.'
+        : 'No released Routes AI adapter compares or builds this provider.',
     };
   }
   if (!runtime.simulationRequiredProviders.includes(pluginId)) {
@@ -284,17 +288,20 @@ export function pluginCapabilityRowV1(
   // A quote is the first half of a route, and it is genuinely released on its
   // own: comparison works even where signing does not. Saying so is the honest
   // version of the old conflation — it just no longer implies the handoff.
-  const quote: BaseMcpCapabilityCellV1 = routable && runtime.releasedRouteProviders.includes(routeProvider)
+  const quoteOnly = runtime.quoteOnlyRouteProviders?.includes(routeProvider) ?? false;
+  const quote: BaseMcpCapabilityCellV1 = routable && (runtime.releasedRouteProviders.includes(routeProvider) || quoteOnly)
     ? {
         operation: 'quote',
         state: 'released',
-        reason: routeProvider === plugin.pluginId
+        reason: quoteOnly ? 'Check GMGN’s quoted output in Routes AI. Quotes only; no transaction is prepared.' : routeProvider === plugin.pluginId
           ? 'This provider is quoted and compared in Routes AI.'
           : `Its pools are quoted through ${routeProvider} and compared in Routes AI.`,
       }
     : { operation: 'quote', state: 'unsupported', reason: 'No released quote adapter compares this provider.' };
 
-  const prepare: BaseMcpCapabilityCellV1 = routes.state === 'released'
+  const prepare: BaseMcpCapabilityCellV1 = quoteOnly
+    ? { operation: 'prepare', state: 'unsupported', reason: routes.reason }
+    : routes.state === 'released'
     ? { operation: 'prepare', state: 'released', reason: 'Routes AI builds the unsigned calls for this provider.' }
     : quote.state === 'released'
       ? {
@@ -305,7 +312,9 @@ export function pluginCapabilityRowV1(
       : { operation: 'prepare', state: 'unsupported', reason: 'No released builder produces calldata for this provider.' };
 
   const requiresSimulation = runtime.simulationRequiredProviders.includes(routeProvider);
-  const simulate: BaseMcpCapabilityCellV1 = !routable
+  const simulate: BaseMcpCapabilityCellV1 = quoteOnly
+    ? { operation: 'simulate', state: 'unsupported', reason: 'No GMGN calls are built or simulated here.' }
+    : !routable
     ? { operation: 'simulate', state: 'unsupported', reason: 'Nothing routable to simulate.' }
     : !requiresSimulation
       ? {
@@ -373,7 +382,8 @@ export function exampleCapabilityStateV1(
     case 'read_in_extensions':
       return row.cells.read;
     case 'handoff_to_routes':
-      return row.cells.routes;
+      return runtime.quoteOnlyRouteProviders?.includes(plugin.pluginId) && example.id === 'quote'
+        ? row.cells.quote : row.cells.routes;
     case 'handoff_to_provider_ui':
       return row.cells.provider_ui;
     case 'action_in_extensions':

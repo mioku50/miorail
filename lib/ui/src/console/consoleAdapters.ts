@@ -26,7 +26,7 @@ import type { RouteGraphModelV1 } from './ConsoleCharts';
 // contract package into the bundle.
 export interface RoutePlanRouteV1 {
   candidateHash: string;
-  provider: { displayName: string };
+  provider: { id?: string; displayName: string };
   // `address` is on the wire (AssetRefV1) and was simply not mirrored here.
   // It is null for the chain's native asset, which is why B20 inspection has a
   // "nothing to inspect" branch rather than treating null as an error.
@@ -335,6 +335,7 @@ export function candidatesFromProjectionV1(
     output: route.expectedOutput.amountDecimal,
     net: route.minimumOutput.amountDecimal,
     scorePercent: routeScorePercent(route),
+    quoteOnly: route.provider.id === 'gmgn',
     why: routeWhyV1(route, route.candidateHash === recommendedHash, comparative),
     state: route.candidateHash === recommendedHash ? 'chosen' : 'available',
   }));

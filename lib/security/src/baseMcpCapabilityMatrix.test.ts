@@ -149,3 +149,17 @@ describe('a launchpad token trades through the router that reaches its pools', (
     assert.equal(pluginRouteProviderV1(BASE_MCP_PROVIDER_INTENTS_BY_ID_V1.aerodrome!, runtimeV1()), 'aerodrome');
   });
 });
+
+it('GMGN releases a price query independently of prepare and simulate', () => {
+  const runtime = runtimeV1({ quoteOnlyRouteProviders: ['gmgn'], singleCallSimulationAvailable: false, batchSimulationAvailable: false });
+  const plugin = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1.gmgn;
+  const example = plugin.examples.find(e => e.id === 'quote')!;
+  const cells = baseMcpCapabilityMatrixV1(runtime).find(row => row.pluginId === 'gmgn')!.cells;
+  assert.equal(cells.quote.state, 'released');
+  assert.equal(cells.prepare.state, 'unsupported');
+  assert.equal(cells.simulate.state, 'unsupported');
+  assert.equal(cells.routes.state, 'unsupported');
+  assert.equal(exampleCapabilityStateV1(plugin, example, runtime).state, 'released');
+  assert.match(exampleCapabilityStateV1(plugin, example, runtime).reason, /Quotes only/i);
+  assert.equal(mayHandOffToRoutesV1('gmgn', runtime), false);
+});

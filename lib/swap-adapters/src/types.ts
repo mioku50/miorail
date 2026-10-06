@@ -4,7 +4,7 @@ export type ReleasedSwapAdapterId = 'uniswap' | 'kyberswap' | 'aerodrome' | 'o1-
 // Kept as a branded string so the generic honest-placeholder adapter remains
 // usable for future manifested providers without pretending Balancer is one.
 export type ManifestedSwapAdapterId = never;
-export type SwapAdapterId = ReleasedSwapAdapterId | ManifestedSwapAdapterId;
+export type SwapAdapterId = ReleasedSwapAdapterId | ManifestedSwapAdapterId | 'gmgn';
 
 export type SwapAdapterFailureOutcome =
   | 'unsupported'

@@ -521,6 +521,9 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     }
 
     // --- Graceful business outcomes ------------------------------------------
+    if (selected.provider.id === 'gmgn') {
+      return unsupportedResultV1('unsupported_provider', 'GMGN quote only. No GMGN transaction is prepared or approved here.');
+    }
     const supportedProviders = this.deps.supportedProviders ?? DEFAULT_SUPPORTED_BUILD_PROVIDERS_V1;
     if (!supportedProviders.includes(selected.provider.id as SwapBuildProviderId)) {
       return unsupportedResultV1(

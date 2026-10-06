@@ -140,14 +140,14 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
     tradedThrough: ['kyberswap'],
   },
   {
-    pluginId: 'gmgn', aliases: ['gmgn', 'gmgh'], productSurface: 'extensions', lifecycleStage: 'documented', examples: [
-      // GMGN's only per-token endpoint returns swap calldata, which this
-      // surface does not release. Its market read is a LIST, so the example
+    pluginId: 'gmgn', aliases: ['gmgn', 'gmgh'], productSurface: 'extensions', lifecycleStage: 'adapter', examples: [
+      // The Routes price reader discards GMGN calldata; this surface does
+      // not release GMGN transaction preparation. Its market read is a LIST, so the example
       // asks for a list -- the same correction the OpenSea drops example
       // needed: a prompt that promises what the handler cannot fetch is a
       // failure the reader blames on the provider.
       e('market', 'Show trending Base tokens on GMGN', 'read', 'read_in_extensions'),
-      e('quote', 'Get a GMGN quote to swap 10 USDC for this Base token', 'action', 'adapter_required'),
+      e('quote', 'Get a GMGN quote to swap 10 USDC for this Base token', 'routable', 'handoff_to_routes'),
     ],
   },
   {

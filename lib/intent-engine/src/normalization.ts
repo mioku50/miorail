@@ -574,19 +574,20 @@ export function mapProtocolConstraintV1(message: string): {
   issues: IntentIssueV1[];
 } {
   const normalized = normalizeText(message);
-  const known = ['uniswap', 'kyberswap', 'aerodrome', 'balancer', 'hydrex', 'o1-exchange'] as const;
+  const known = ['uniswap', 'kyberswap', 'aerodrome', 'balancer', 'hydrex', 'o1-exchange', 'gmgn'] as const;
   const providerPattern: Readonly<Record<(typeof known)[number], string>> = {
     uniswap: 'uniswap',
     kyberswap: 'kyberswap|kyber',
     aerodrome: 'aerodrome',
     balancer: 'balancer',
     hydrex: 'hydrex',
+    gmgn: 'gmgn|gmgh',
     'o1-exchange': 'o1(?:\\.exchange|\\s+exchange|-exchange)',
   };
   const include = new Set<string>();
   const exclude = new Set<string>();
 
-  if (/(?:uniswap|kyberswap|kyber|aerodrome|balancer|hydrex|o1(?:\.exchange|\s+exchange|-exchange)).{0,20}(?:\bor\b|или).{0,20}(?:uniswap|kyberswap|kyber|aerodrome|balancer|hydrex|o1(?:\.exchange|\s+exchange|-exchange))/iu.test(normalized)) {
+  if (/(?:uniswap|kyberswap|kyber|aerodrome|balancer|hydrex|gmgn|gmgh|o1(?:\.exchange|\s+exchange|-exchange)).{0,20}(?:\bor\b|или).{0,20}(?:uniswap|kyberswap|kyber|aerodrome|balancer|hydrex|gmgn|gmgh|o1(?:\.exchange|\s+exchange|-exchange))/iu.test(normalized)) {
     return {
       value: { mode: 'any', protocols: [] },
       issues: [
@@ -624,7 +625,7 @@ export function mapProtocolConstraintV1(message: string): {
     normalized.match(/\buse\s+([a-z][a-z0-9.-]*)/iu)?.[1]
   )?.replace(/[.-]+$/, '');
   const nonProtocolUseWords = new Set(['a', 'base', 'best', 'mev', 'the', 'maximum', 'standard']);
-  const canonicalUnknownUse = unknownUse === 'kyber'
+  const canonicalUnknownUse = unknownUse === 'gmgh' ? 'gmgn' : unknownUse === 'kyber'
     ? 'kyberswap'
     : unknownUse === 'o1.exchange' || unknownUse === 'o1'
       ? 'o1-exchange'
@@ -745,6 +746,7 @@ const CONSTRAINABLE_PROTOCOLS_V2 = [
   'balancer',
   'hydrex',
   'o1-exchange',
+  'gmgn',
 ] as const;
 
 type ConstrainableProtocolV2 = (typeof CONSTRAINABLE_PROTOCOLS_V2)[number];

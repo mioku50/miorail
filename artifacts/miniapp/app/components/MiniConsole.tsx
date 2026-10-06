@@ -770,6 +770,7 @@ export function MiniConsole() {
     () => (projection ? candidateRowsFromProjectionV1(projection, REGISTERED_SWAP_PROVIDERS_V1) : []),
     [projection],
   );
+  const quoteOnly = primaryRoute?.provider.id === "gmgn";
   const selectableCandidates = candidateRows.filter((row) => row.selectable);
   const reviewTarget =
     recommended?.candidateHash ??
@@ -784,6 +785,7 @@ export function MiniConsole() {
   const needsProviderConstraint = providerConstraintResolution.needsConstraint;
 
   const selectCandidateForReview = (candidateHash: string) => {
+    if (projection?.availableRoutes.find((entry) => entry.candidateHash === candidateHash)?.provider.id === "gmgn") return;
     if (projection?.routeCardHash) {
       reviewCandidate(candidateHash);
       return;
@@ -1687,7 +1689,7 @@ export function MiniConsole() {
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
         <div className="herostrip">
           <div className="heroL">
-            <p className="eyebrow">{recommended ? "Recommended route" : "Available route"}</p>
+            <p className="eyebrow">{quoteOnly ? "GMGN quote only" : recommended ? "Recommended route" : "Available route"}</p>
             <div className="amtrow">
               <span className="amount mono">{primaryRoute?.expectedOutput.amountDecimal ?? "—"}</span>
               <span className="unit">{primaryRoute?.expectedOutput.asset.symbol ?? ""}</span>
@@ -1795,17 +1797,20 @@ export function MiniConsole() {
             className="btn lg"
             disabled={
               !connected ||
+              quoteOnly ||
               !reviewTarget ||
               Boolean(providerConstraintResolution.blockedReason)
             }
             onClick={() => reviewTarget && selectCandidateForReview(reviewTarget)}
           >
-            {needsProviderConstraint && primaryRoute
+            {quoteOnly ? "Quote only" : needsProviderConstraint && primaryRoute
               ? `Use ${primaryRoute.provider.displayName} only`
               : "Review transaction"}
           </button>
           <span className="nt">
-            {!connected
+            {quoteOnly
+              ? "GMGN quote only. No transaction is prepared or approved here."
+              : !connected
               ? CONSOLE_COPY_V1.walletDisconnected
               : providerConstraintResolution.blockedReason
                 ? providerConstraintResolution.blockedReason

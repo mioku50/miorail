@@ -195,6 +195,7 @@ export function RoutePlanView({
           </section>
         </div>
       </div>
+      {primary?.provider.id === 'gmgn' && <p className="text-sm text-ink-2">GMGN quote only. No GMGN transaction is prepared or approved here.</p>}
       {reviewable && (
         <section aria-label="Candidate selection" className="rounded-xl border border-line bg-panel p-4">
           <h3 className="font-display text-sm font-semibold text-ink">Select a route to review</h3>

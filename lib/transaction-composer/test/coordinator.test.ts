@@ -833,3 +833,24 @@ describe('a gift', () => {
     assert.equal(result.outcome, 'unsupported');
   });
 });
+
+
+test('GMGN cannot prepare a transaction even if a caller widens the supported provider list', async () => {
+  const scenario = buildScenario();
+  const artifacts = makeCandidateAndEvidence(scenario.intent, 'uniswap', {
+    providerOverride: { id: 'gmgn', displayName: 'GMGN', kind: 'aggregator', operator: 'GMGN' },
+  });
+  const evidenceSet = makeEvidenceSet(scenario.intent, artifacts.candidate, artifacts.evidence);
+  const score = makePathScore(scenario.intent, artifacts.candidate, evidenceSet);
+  scenario.uniswap = { ...artifacts, evidenceSet };
+  scenario.pathScore = score;
+  const card = { ...scenario.card, recommendedCandidate: artifacts.candidate, selectedCandidateHash: artifacts.candidate.candidateHash,
+    evidenceSetHash: evidenceSet.evidenceSetHash, pathScoreHash: score.pathScoreHash, pathScore: score };
+  scenario.card = RouteCardV1Schema.parse({ ...card, routeCardHash: hashRouteCardV1(card) });
+  const repository = await seedRepository(scenario);
+  const composer = createTransactionComposer(baseDeps({ repository, supportedProviders: ['gmgn' as never],
+    contractSecurity: async () => { throw new Error('must not query contracts'); } }));
+  const result = await composer.prepare(prepareInput(scenario));
+  assert.equal(result.outcome, 'unsupported');
+  assert.match(JSON.stringify(result), /GMGN quote only/);
+});

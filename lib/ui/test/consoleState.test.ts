@@ -527,3 +527,13 @@ describe('a prepared route states the simulation its own prepare ran', () => {
     }
   });
 });
+
+
+test('a quote-only price remains visible without a transaction selection', () => {
+  const [row] = deriveCandidateRowsV1([{ id: 'gmgn', name: 'GMGN', output: '0.038', net: '0.038',
+    scorePercent: null, why: 'Quoted output', state: 'available', quoteOnly: true }]);
+  assert.equal(row.outputLabel, '0.038');
+  assert.equal(row.stateLabel, 'Quote only');
+  assert.equal(row.actionLabel, 'Quote only');
+  assert.equal(row.selectable, false);
+});

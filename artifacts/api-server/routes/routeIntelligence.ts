@@ -93,6 +93,7 @@ import {
   AerodromeSwapRouteAdapter,
   aerodromeClReaderFromReaderV1,
   createAerodromeReaderV1,
+  GmgnQuoteRouteAdapter,
   KyberSwapRouteAdapter,
   O1SwapRouteAdapter,
   HydrexSwapRouteAdapter,
@@ -437,6 +438,7 @@ export const routePlanRouteRuntime = {
         new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
         new BalancerSwapRouteAdapter(),
+        new GmgnQuoteRouteAdapter(),
       ],
       repository,
       // T74: naming a token by address. Two conditions, both necessary — the

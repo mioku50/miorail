@@ -29,6 +29,7 @@ export const SWAP_PROVIDER_DISPLAY_NAME_V1: Record<string, string> = {
   balancer: 'Balancer',
   hydrex: 'Hydrex',
   'o1-exchange': 'o1.exchange',
+  gmgn: 'GMGN',
 };
 
 export function swapProviderDisplayNameV1(providerId: string): string {
@@ -83,6 +84,7 @@ export type SwapDiagnosticReasonV1 =
  *   property rather than a data-quality one.
  */
 const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
+  gmgn_wallet_mismatch: 'provider_invalid_schema',
   provider_timeout: 'provider_timeout',
   provider_rate_limited: 'provider_rate_limited',
   provider_http_error: 'provider_http_error',
@@ -128,6 +130,7 @@ const REASON_BY_ERROR_CODE_V1: Record<string, SwapDiagnosticReasonV1> = {
 export function swapDiagnosticReasonV1(errorCode: string): SwapDiagnosticReasonV1 {
   const mapped = REASON_BY_ERROR_CODE_V1[errorCode];
   if (mapped) return mapped;
+  if (/^gmgn_http_[1-5][0-9]{2}$/.test(errorCode)) return 'provider_http_error';
   // Every `engine_*` code is a validation refusal, and new ones get added as
   // the engine's checks grow. Matching the prefix keeps a new check from
   // silently degrading to "unknown".

@@ -87,6 +87,7 @@ export function swapPendingIntentContractV1(
         'balancer',
         'hydrex',
         'o1-exchange',
+        'gmgn',
       ] as const;
 
       for (const protocol of protocols) {

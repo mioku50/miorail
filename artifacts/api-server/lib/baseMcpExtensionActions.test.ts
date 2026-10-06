@@ -188,6 +188,20 @@ describe('deterministic Base MCP Extensions intent router', () => {
     if (named.kind === 'handoff') assert.equal(named.provider, 'flaunch');
   });
 
+  test('a GMGN quote asks for the missing token and preserves a supplied pair', () => {
+    const unnamed = classifyBaseMcpExtensionIntentV1('Get a GMGN quote to swap 10 USDC for this Base token');
+    assert.equal(unnamed.kind, 'needs_input');
+    if (unnamed.kind === 'needs_input') {
+      assert.equal(unnamed.errorCode, 'base_mcp_token_address_required');
+      assert.match(unnamed.reply, /Get a GMGN quote/);
+      assert.match(unnamed.reply, /Show trending Base tokens on GMGN/);
+    }
+    const message = `Get a GMGN quote to swap 10 USDC for ${RECIPIENT}`;
+    const named = classifyBaseMcpExtensionIntentV1(message);
+    assert.deepEqual(named, { kind: 'handoff', originalMessage: message, provider: 'gmgn' });
+    assert.equal(classifyBaseMcpExtensionIntentV1('Buy WETH with 10 USDC on GMGN').kind, 'needs_input');
+  });
+
   test('provider-native reads remain in Extensions and a released Aerodrome swap hands off', () => {
     const balancer = classifyBaseMcpExtensionIntentV1('Show the best Balancer pool for ETH yield on Base');
     assert.equal(balancer.kind, 'read');

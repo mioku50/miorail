@@ -44,6 +44,8 @@ before(async () => {
   );
   await sql.unsafe(migration.replaceAll('--> statement-breakpoint', ''));
   await sql.unsafe(providerExpansion.replaceAll('--> statement-breakpoint', ''));
+  const gmgnExpansion = await readFile(resolve(drizzleDir(), '0084_swap_pending_gmgn.sql'), 'utf8');
+  await sql.unsafe(gmgnExpansion.replaceAll('--> statement-breakpoint', ''));
 });
 
 after(async () => {

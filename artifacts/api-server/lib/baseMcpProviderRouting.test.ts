@@ -153,3 +153,14 @@ test('Avantis never invents BTC when the market is missing or unrecognized', () 
   assert.equal(buildAvantisProviderHandoffV1('Open a long on Avantis'), null);
   assert.equal(buildAvantisProviderHandoffV1('Open DOGE/USD on Avantis'), null);
 });
+
+test('GMGN price questions hand off without releasing GMGN writes', () => {
+  const runtime = noSimulatorRuntimeV1();
+  for (const message of ['Get a GMGN quote to swap 10 USDC for WETH', 'Compare 10 USDC to WETH using GMGN', 'Покажи котировку GMGN для 10 USDC в WETH']) {
+    assert.equal(matchBaseMcpProviderIntentV1(message, runtime)?.disposition, 'handoff_to_routes', message);
+  }
+  for (const message of ['Buy WETH with 10 USDC on GMGN', 'Swap 10 USDC to WETH on GMGN', 'Get a GMGN quote and execute the swap']) {
+    assert.notEqual(matchBaseMcpProviderIntentV1(message, runtime)?.disposition, 'handoff_to_routes', message);
+  }
+  assert.equal(matchBaseMcpProviderIntentV1('Get a GMGN quote for 10 USDC to WETH', { ...runtime, quoteOnlyRouteProviders: [] })?.disposition, 'route_unavailable_here');
+});

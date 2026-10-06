@@ -177,3 +177,11 @@ test('same request and authenticated context produce identical object, JSON, and
   assert.equal(canonicalJsonV1(first.routeIntent), canonicalJsonV1(second.routeIntent));
   assert.equal(first.routeIntent.intentHash, second.routeIntent.intentHash);
 });
+
+test('GMGN and its documented alias retain the explicit provider choice', () => {
+  for (const name of ['GMGN', 'GMGH']) {
+    const result = ready(`Get a ${name} quote to swap 100 USDC for ETH`);
+    assert.deepEqual(result.routeIntent.protocolConstraint, { mode: 'include_only', protocols: ['gmgn'] });
+    assert.equal(result.routeIntent.executionRequested, false);
+  }
+});

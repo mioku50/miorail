@@ -113,6 +113,12 @@ function hydrexPositionsReadV1(message: string): boolean {
       /^(?:my )?hydrex (?:liquidity )?positions?$/.test(text));
 }
 
+export function isGmgnPriceQueryV1(message: string): boolean {
+  return /\b(?:quote|compare)\b|(?:котиров|сравн)\p{L}*/iu.test(message)
+    && !/^(?:please\s+)?(?:swap|buy|sell|trade|execute|prepare|send|sign)\b|^(?:купи|продай|обменяй|отправь|подпиши)/iu.test(message.trim())
+    && !/\b(?:and|then)\s+(?:execute|swap|buy|sell|send|sign|prepare)\b/iu.test(message);
+}
+
 function inferredDisposition(
   message: string,
   provider: BaseMcpProviderIntentSpecV1,
@@ -198,7 +204,8 @@ export function matchBaseMcpProviderIntentV1(
   // the INTENT of an example; whether this deployment can keep it is a runtime
   // question, and answering it from the registry alone is what advertised a
   // dead end as a released capability.
-  const declared = exact ? exact.disposition : inferredDisposition(clean, provider, runtime);
+  const gmgnQuote = provider.pluginId === 'gmgn' && isGmgnPriceQueryV1(message);
+  const declared = gmgnQuote ? 'handoff_to_routes' : exact ? exact.disposition : inferredDisposition(clean, provider, runtime);
   // Never select a write example as the recipe for a paraphrased read.
   const candidates = [...provider.examples]
     .filter(example => example.disposition === declared)
@@ -206,7 +213,8 @@ export function matchBaseMcpProviderIntentV1(
     .sort((left, right) => right.score - left.score);
   const closest = exact || (candidates[0] && candidates[0].score > 0 && candidates[0].score !== candidates[1]?.score
     ? candidates[0].example : null);
-  const routeGate = declared === 'handoff_to_routes'
+  const quoteGate = gmgnQuote && runtime.quoteOnlyRouteProviders?.includes('gmgn');
+  const routeGate = declared === 'handoff_to_routes' && !quoteGate
     ? handoffToRoutesReleasedV1(pluginRouteProviderV1(provider, runtime), runtime)
     : null;
   const disposition: BaseMcpProviderExampleDispositionV1 =

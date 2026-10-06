@@ -362,6 +362,7 @@ describe('the registry', () => {
       'o1-exchange',
       'hydrex',
       'balancer',
+      'gmgn',
     ]);
   });
 

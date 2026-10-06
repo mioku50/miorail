@@ -62,7 +62,7 @@ export interface ClarificationV1 {
  * so a shape outside this type is one the engine never wrote. */
 export interface CarriedProtocolConstraintV2 {
   mode: 'include_only' | 'exclude';
-  protocols: Array<'uniswap' | 'kyberswap' | 'aerodrome' | 'balancer' | 'hydrex' | 'o1-exchange'>;
+  protocols: Array<'uniswap' | 'kyberswap' | 'aerodrome' | 'balancer' | 'hydrex' | 'o1-exchange' | 'gmgn'>;
 }
 
 export interface CarriedSwapConstraintsV2 {

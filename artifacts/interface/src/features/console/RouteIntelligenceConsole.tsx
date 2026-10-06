@@ -817,7 +817,9 @@ export function RouteIntelligenceConsole() {
     providerDisplayName: primaryRoute?.provider.displayName,
   });
   const needsProviderConstraint = providerConstraintResolution.needsConstraint;
+  const quoteOnly = primaryRoute?.provider.id === 'gmgn';
   const reviewDisabledReason =
+    (quoteOnly ? 'GMGN quote only. GMGN swaps cannot be prepared or approved here.' : null) ??
     reviewBlockedReason ??
     providerConstraintResolution.blockedReason ??
     (reviewTarget
@@ -826,6 +828,7 @@ export function RouteIntelligenceConsole() {
         ? 'No provider returned a quotable route for this goal, so there is nothing to review.'
         : 'No route is recommended. Choose one from the candidates below with “Use this”.');
   const candidateSelectionDisabledReason =
+    (quoteOnly ? 'GMGN quote only. No transaction calls are prepared.' : null) ??
     reviewBlockedReason ??
     providerConstraintResolution.blockedReason ??
     (selectableCandidates.length === 0
@@ -840,6 +843,7 @@ export function RouteIntelligenceConsole() {
    * a comparison. Review remains a separate click against that exact card.
    */
   const selectCandidateForReview = (candidateHash: string) => {
+    if (projection?.availableRoutes.find((entry) => entry.candidateHash === candidateHash)?.provider.id === 'gmgn') return;
     if (projection?.routeCardHash) {
       reviewCandidate(candidateHash);
       return;
@@ -1355,7 +1359,7 @@ export function RouteIntelligenceConsole() {
     content = (
       <RouteScreen
         steps={steps}
-        eyebrow={`${recommended ? 'Recommended route' : 'Available route'} · ${goalLabel}`}
+        eyebrow={`${quoteOnly ? 'GMGN quote only' : recommended ? 'Recommended route' : 'Available route'} · ${goalLabel}`}
         amount={primaryRoute?.expectedOutput.amountDecimal ?? '—'}
         unit={primaryRoute?.expectedOutput.asset.symbol ?? ''}
         usd=""
@@ -1385,13 +1389,13 @@ export function RouteIntelligenceConsole() {
             v: primaryRoute?.priceImpact ? `${primaryRoute.priceImpact.percent}%` : 'Not provided',
             d: primaryRoute?.priceImpact ? 'from the quote' : 'provider supplied no reference price',
           },
-          { k: 'Approvals', v: String(primaryRoute?.approvalCount ?? '—'), d: 'exact amount' },
-          { k: 'Calls', v: String(primaryRoute?.callCount ?? '—'), d: 'one batch' },
+          { k: 'Approvals', v: String(primaryRoute?.approvalCount ?? '—'), d: quoteOnly ? 'none prepared' : 'exact amount' },
+          { k: 'Calls', v: String(primaryRoute?.callCount ?? '—'), d: quoteOnly ? 'none prepared' : 'one batch' },
           { k: 'Intelligence', v: spendLabel.split(' · ')[0], d: `${evidenceRows.length} sources` },
         ]}
         graph={routeGraphFromRouteV1(primaryRoute, { amountLabel: goalLabel, walletLabel: walletLabel ?? 'your wallet' })}
         graphUnavailableReason="The provider did not return a pool breakdown for this route, so the path is not drawn."
-        graphLegend={primaryRoute ? [`executed by ${primaryRoute.provider.displayName}`, 'Output returns to your wallet'] : []}
+        graphLegend={quoteOnly ? ['GMGN price query; no transaction prepared'] : primaryRoute ? [`executed by ${primaryRoute.provider.displayName}`, 'Output returns to your wallet'] : []}
         simulatedPill={simulation.passed ? { label: 'simulated', tone: 'g' } : { label: 'not simulated yet', tone: 'n' }}
         scoreRows={scoreRowsFromProjectionV1(projection, primaryRoute?.pathScore ?? null)}
         scoringVersion={scoringVersionLabelV1(primaryRoute?.pathScore ?? null)}
@@ -1408,7 +1412,7 @@ export function RouteIntelligenceConsole() {
         reviewDisabledReason={reviewDisabledReason}
         candidateSelectionDisabledReason={candidateSelectionDisabledReason}
         primaryActionLabel={
-          needsProviderConstraint && reviewTarget && primaryRoute
+          quoteOnly ? 'Quote only' : needsProviderConstraint && reviewTarget && primaryRoute
             ? `Use ${primaryRoute.provider.displayName} only`
             : 'Review transaction'
         }

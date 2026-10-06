@@ -198,11 +198,11 @@ export function ScoreRadar({ rows, label }: { rows: readonly ScoreDimensionViewV
         <line key={`${axis.x2}-${axis.y2}`} className="grid-l" x1={axis.x1} y1={axis.y1} x2={axis.x2} y2={axis.y2} strokeDasharray="3 3" />
       ))}
       <polygon className="ln-b" points={geometry.shape} fill="url(#mio-rg)" strokeWidth="1.4" />
-      {geometry.points.map((point) =>
+      {geometry.points.map((point, index) =>
         point.scored ? (
-          <circle key={`${point.x}-${point.y}`} className="pt" cx={point.x} cy={point.y} r="2.4" />
+          <circle key={rows[index]!.key} className="pt" cx={point.x} cy={point.y} r="2.4" />
         ) : (
-          <circle key={`${point.x}-${point.y}`} className="pt-o" cx={point.x} cy={point.y} r="2.4" strokeDasharray="2 2" />
+          <circle key={rows[index]!.key} className="pt-o" cx={point.x} cy={point.y} r="2.4" strokeDasharray="2 2" />
         ),
       )}
       {geometry.labels.map((entry) => (

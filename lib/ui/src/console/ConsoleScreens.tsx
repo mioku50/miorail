@@ -99,7 +99,7 @@ function CandidateTable({
               {!withAction ? (
                 <span className={row.state === 'unavailable' || row.state === 'blocked' ? 'off' : undefined}>{row.stateLabel}</span>
               ) : row.state === 'chosen' ? (
-                <span className="pill br">chosen</span>
+                <span className="pill br">{row.actionLabel}</span>
               ) : row.selectable && onSelect ? (
                 // `onSelect &&`, not `onSelect?.()`. Optional chaining rendered
                 // a live-looking button that swallowed the click when no

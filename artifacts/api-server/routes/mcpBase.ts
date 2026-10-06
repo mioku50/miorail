@@ -371,7 +371,7 @@ mcpBasePublicRouter.get('/plugins', async (_req: Request, res: Response, next: N
             return {
               ...example,
               disposition: downgraded ? ('route_unavailable_here' as const) : example.disposition,
-              capabilityReason: capability.state === 'released' ? null : capability.reason,
+              capabilityReason: capability.state === 'released' && !(plugin.id === 'gmgn' && example.id === 'quote') ? null : capability.reason,
               capabilityState: capability.state,
               // Only for a read that actually runs here. Describing the shape
               // of an answer nobody is going to get would be a second promise
@@ -458,7 +458,9 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
     if (decision.kind === 'handoff') {
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
         status: 'handoff',
-        reply: 'This is a trade. Routes AI compares the routes for it and checks the one you choose; nothing moves until you approve it in your wallet.',
+        reply: decision.provider === 'gmgn'
+          ? 'Routes AI checks GMGN’s quoted output for the exact tokens and amount. GMGN quotes only: no transaction is prepared or sent.'
+          : 'This is a trade. Routes AI compares the routes for it and checks the one you choose; nothing moves until you approve it in your wallet.',
         trace: [],
         toolsAvailable: 0,
         truncated: false,

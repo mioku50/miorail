@@ -4,6 +4,7 @@ import { KyberSwapRouteAdapter } from './kyberswap.js';
 import { UniswapSwapRouteAdapter } from './uniswap.js';
 import { O1SwapRouteAdapter } from './o1.js';
 import { HydrexSwapRouteAdapter } from './hydrex.js';
+import { GmgnQuoteRouteAdapter } from './gmgn.js';
 import { BalancerSwapRouteAdapter } from './balancer.js';
 import { supportsRoutableSwapIntentV1 } from './normalization.js';
 import type {
@@ -16,6 +17,7 @@ import type {
 const RELEASED_ADAPTER_ORDER: readonly ReleasedSwapAdapterId[] = ['uniswap', 'kyberswap', 'aerodrome', 'o1-exchange', 'hydrex', 'balancer'];
 const ADAPTER_ORDER: readonly SwapAdapterId[] = [
   ...RELEASED_ADAPTER_ORDER,
+  'gmgn',
 ];
 
 export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
@@ -26,6 +28,7 @@ export function createDefaultSwapAdapters(): SwapRouteAdapter[] {
     new O1SwapRouteAdapter(),
     new HydrexSwapRouteAdapter(),
     new BalancerSwapRouteAdapter(),
+    new GmgnQuoteRouteAdapter(),
   ];
 }
 

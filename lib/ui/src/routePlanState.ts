@@ -99,13 +99,13 @@ export function selectableSwapCandidates(
       isRecommended: false,
     });
   }
-  return candidates;
+  return candidates.filter(candidate => candidate.providerId !== 'gmgn');
 }
 
 export function defaultSelectedCandidateHash(
   projection: Pick<RoutePlanProjectionV1, 'recommendedRoute' | 'alternatives'>,
 ): string | null {
-  return projection.recommendedRoute?.candidateHash ?? projection.alternatives[0]?.candidateHash ?? null;
+  return selectableSwapCandidates(projection)[0]?.candidateHash ?? null;
 }
 
 /**

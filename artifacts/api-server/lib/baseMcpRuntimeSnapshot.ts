@@ -117,6 +117,7 @@ export function baseMcpRuntimeSnapshotV1(
     readPluginsNeedingSignIn: credentials.signIn,
     reviewedReadPlugins: REVIEWED_READ_PLUGINS_V1,
     releasedRouteProviders: ROUTE_ADAPTER_PROVIDERS_V1,
+    quoteOnlyRouteProviders: ['gmgn'],
     simulationRequiredProviders: PROVIDERS_REQUIRING_SIMULATION_V1,
     singleCallSimulationAvailable: simulation.singleCall,
     batchSimulationAvailable: simulation.batch,

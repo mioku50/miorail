@@ -296,6 +296,8 @@ export interface CandidateSourceV1 {
   output: string | null;
   net: string | null;
   scorePercent: number | null;
+  /** Display the price without offering a transaction. */
+  quoteOnly?: boolean;
   why: string;
   state: 'chosen' | 'available' | 'unavailable' | 'blocked' | 'simulating' | 'leading';
   /** Required whenever state is unavailable/blocked — the row must explain itself. */
@@ -342,10 +344,10 @@ export function deriveCandidateRowsV1(candidates: readonly CandidateSourceV1[]):
       scoreDim: candidate.state !== 'chosen' && candidate.state !== 'leading',
       why: quotable ? candidate.why : candidate.reason ?? candidate.why,
       state: candidate.state,
-      stateLabel: CANDIDATE_STATE_LABELS_V1[candidate.state],
-      selectable: quotable && candidate.state !== 'chosen',
+      stateLabel: candidate.quoteOnly ? 'Quote only' : CANDIDATE_STATE_LABELS_V1[candidate.state],
+      selectable: quotable && !candidate.quoteOnly && candidate.state !== 'chosen',
       actionLabel:
-        candidate.state === 'chosen'
+        candidate.quoteOnly ? 'Quote only' : candidate.state === 'chosen'
           ? 'chosen'
           : candidate.state === 'blocked'
             ? 'Blocked'

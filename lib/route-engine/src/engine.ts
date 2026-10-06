@@ -203,6 +203,8 @@ function rankRoutes(
   routes: readonly ScoredRouteV1[],
   scoringVersion: SwapPathScoreVersionV1 = SWAP_PATH_SCORE_VERSION_V1,
 ): ScoredRouteV1[] | null {
+  // Price-only sources cannot win an execution recommendation.
+  if (routes.some(route => route.candidate.trustMetadata.riskFlags.includes('quote_only'))) return null;
   const supported =
     scoringVersion === SWAP_PATH_SCORE_VERSION_V2
       ? SUPPORTED_OPTIMIZATION_MODES_V2

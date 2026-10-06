@@ -35,6 +35,7 @@ const ProtocolConstraint = z
       'balancer',
       'hydrex',
       'o1-exchange',
+      'gmgn',
     ])).min(1),
   })
   .refine((value) => new Set(value.protocols).size === value.protocols.length, {

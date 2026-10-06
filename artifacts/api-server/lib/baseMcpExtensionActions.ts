@@ -120,13 +120,15 @@ export function classifyBaseMcpExtensionIntentV1(
     // names none. Miorail does not pick one: the person pastes it, from the
     // provider's own list if they need one.
     const spec = BASE_MCP_PROVIDER_INTENTS_BY_ID_V1[provider.pluginId];
-    if (spec?.tradedThrough?.length && !/0x[a-fA-F0-9]{40}/u.test(trimmed)) {
-      const list = spec.examples.find((example) => example.id === 'latest')?.prompt;
+    if ((spec?.tradedThrough?.length || (provider.pluginId === 'gmgn' && /\bthis Base token\b/iu.test(trimmed))) && !/0x[a-fA-F0-9]{40}/u.test(trimmed)) {
+      const list = spec.examples.find((example) => example.id === 'latest' || example.id === 'market')?.prompt;
       return {
         kind: 'needs_input',
         errorCode: 'base_mcp_token_address_required',
         reply: [
-          'Paste the token’s Base address (0x…) with the amount, for example “Buy 0x… with 0.001 ETH”.',
+          provider.pluginId === 'gmgn'
+            ? 'Paste the token’s Base address (0x…) with the amount: “Get a GMGN quote to swap 10 USDC for 0x…”.'
+            : 'Paste the token’s Base address (0x…) with the amount, for example “Buy 0x… with 0.001 ETH”.',
           list ? `To find one, ask “${list}”.` : null,
           'Nothing was quoted or prepared.',
         ].filter(Boolean).join(' '),

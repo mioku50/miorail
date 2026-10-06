@@ -290,6 +290,20 @@ test('a clarification stores its half-finished goal for the next turn', async ()
   assert.equal(stored?.executionRequested, true);
 });
 
+test('a GMGN clarification keeps its explicit quote provider for the next turn', async () => {
+  const pendingIntents = createMemorySwapPendingIntentRepository();
+  const pending = { ...pendingIntentFixture(), protocolConstraint: { mode: 'include_only' as const, protocols: ['gmgn' as const] }, executionRequested: false };
+  const coordinator = new RoutePlanCoordinator({
+    llm: {} as never, engine: { evaluate: async () => { throw new Error('must not run'); } },
+    adapters: [], repository: new InMemoryRouteStorageRepository(), pendingIntents,
+    resolveIntent: async () => clarificationResolution(pending),
+  });
+  assert.equal((await coordinator.evaluate({ ...input, message: 'Get a GMGN quote for 100 USDC' })).outcome, 'needs_clarification');
+  const stored = await pendingIntents.readPendingIntent({ tenantId: input.tenantId, walletAddress: WALLET }, NOW);
+  assert.deepEqual(stored?.protocolConstraint, pending.protocolConstraint);
+  assert.equal(stored?.executionRequested, false);
+});
+
 test('a stored goal reaches the resolver as authenticated context, not as input', async () => {
   const pendingIntents = createMemorySwapPendingIntentRepository();
   await pendingIntents.upsertPendingIntent(pendingIntentRow(pendingIntentFixture()));
