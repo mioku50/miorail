@@ -154,6 +154,12 @@ describe('the reason taxonomy', () => {
 });
 
 describe('a failure message says what still works', () => {
+  test('GMGN does not promise that retrying in a minute will clear its IP block', () => {
+    const view = providerFailureViewV1({ provider: 'gmgn', errorCode: 'provider_rate_limited' }, ['KyberSwap']);
+    assert.match(view.message, /pauses its GMGN requests/);
+    assert.match(view.message, /KyberSwap comparison still completed/);
+    assert.doesNotMatch(view.message, /in a minute|usually clears/);
+  });
   test('one survivor is named', () => {
     const view = providerFailureViewV1(
       { provider: 'kyberswap', errorCode: 'provider_timeout' },

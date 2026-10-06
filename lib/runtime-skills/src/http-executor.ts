@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { gmgnReadFetchV1 } from './gmgn-read-transport.js';
 
 import {
   baseMcpPluginModeFromEnv,
@@ -491,11 +492,10 @@ export async function pluginHttpRequest(
 
   const credentialHeader = credentialHeaderName(manifest);
   if (credentialHeader) {
-    // A key the provider publishes for read-only use is not a key this
-    // deployment is missing. Reporting one as absent produced the worst
-    // possible answer: "this read is unavailable here" about a read that
-    // answers 200 to anybody who sends the documented header.
-    credential = manifest.publishedCredential ?? resolvePluginCredential(input.plugin, mode);
+    // Prefer a configured server credential. GMGN now describes its public
+    // key as a demo with IP limits; it remains a fallback, not an override of
+    // the operator's own key. Neither credential enters traces or hashes.
+    credential = resolvePluginCredential(input.plugin, mode) ?? manifest.publishedCredential;
     if (!credential) throw new PluginCredentialMissingError(input.plugin);
     headers[credentialHeader] = credential;
   }
@@ -515,7 +515,8 @@ export async function pluginHttpRequest(
       ...(input.plugin === 'hydrex' ? { redirect: 'error' as const } : {}),
       ...(input.body === undefined ? {} : { body: JSON.stringify(input.body) }),
     },
-    { timeoutMs: input.timeoutMs ?? 10_000, fetchImpl: input.fetchImpl },
+    { timeoutMs: input.timeoutMs ?? 10_000,
+      fetchImpl: input.plugin === 'gmgn' ? gmgnReadFetchV1(input.fetchImpl) : input.fetchImpl },
   );
 
   const rawText = await response.text();

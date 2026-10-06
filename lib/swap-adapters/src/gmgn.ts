@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { gmgnReadFetchV1 } from '@mioagent/runtime-skills';
+import { resolvePluginCredential } from '@mioagent/security/httpAllowlist';
 import { buildQuoteArtifacts } from './candidate.js';
 import {
   canonicalRequestHash, canonicalResponseHash, minimumOutputAtomic,
@@ -48,10 +50,10 @@ export class GmgnQuoteRouteAdapter implements SwapRouteAdapter {
   private readonly clock: () => number;
 
   constructor(options: GmgnQuoteAdapterOptionsV1 = {}) {
-    this.fetchImpl = options.fetchImpl ?? fetch;
-    this.credential = options.apiKey ?? PUBLIC_READ_CREDENTIAL;
+    this.credential = options.apiKey ?? resolvePluginCredential('gmgn') ?? PUBLIC_READ_CREDENTIAL;
     this.timeoutMs = options.timeoutMs ?? 12_000;
     this.clock = options.clock ?? Date.now;
+    this.fetchImpl = gmgnReadFetchV1(options.fetchImpl, this.clock);
   }
 
   supports(intent: SwapAdapterQuoteInput['intent']): boolean {
@@ -96,8 +98,12 @@ export class GmgnQuoteRouteAdapter implements SwapRouteAdapter {
         method: 'GET', redirect: 'error', signal: controller.signal,
         headers: { 'X-APIKEY': this.credential, accept: 'application/json' },
       });
-      if (response.status === 429) return failure('provider_rate_limited', 'rate_limited');
-      if (!response.ok) return failure(`gmgn_http_${response.status}`, 'unavailable');
+      if (!response.ok) {
+        await response.body?.cancel();
+        return response.status === 429
+          ? failure('provider_rate_limited', 'rate_limited')
+          : failure(`gmgn_http_${response.status}`, 'unavailable');
+      }
       // Bound the stream before JSON parsing, including chunked responses.
       const reader = response.body?.getReader();
       if (!reader) return failure('provider_invalid_schema', 'invalid_response');

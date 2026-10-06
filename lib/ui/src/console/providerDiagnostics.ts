@@ -203,6 +203,7 @@ export function swapDiagnosticMessageV1(input: SwapDiagnosticMessageInputV1): st
     case 'provider_timeout':
       return `${name} did not answer before the timeout.${stillWorks}`;
     case 'provider_rate_limited':
+      if (name === 'GMGN') return `GMGN is limiting requests. Miorail pauses its GMGN requests to avoid extending the block.${stillWorks} Try again later.`;
       return `${name} is rate limiting Miorail right now.${stillWorks} Comparing again in a minute usually clears it.`;
     case 'provider_http_error':
       return `${name} refused the request.${stillWorks} This is on the provider's side, not your goal.`;

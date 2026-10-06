@@ -7,7 +7,7 @@ import { buildRouteCardV1, buildRoutePlanProjectionV1 } from '../../../../lib/ro
 const now = new Date();
 const intent = makeIntent({ to: 'WETH', protocolConstraint: { mode: 'include_only', protocols: ['gmgn'] } });
 const results = [];
-for (const status of [200, 403]) {
+for (const status of [200, 403, 429]) {
   const adapter = new GmgnQuoteRouteAdapter({ fetchImpl: async () => new globalThis.Response(JSON.stringify({ code: 0, data: {
     input_token: intent.fromAsset.address, output_token: intent.toAsset.address, input_amount: intent.amount.amountAtomic,
     output_amount: '38000000000000000', min_output_amount: '38000000000000000', slippage: 0,

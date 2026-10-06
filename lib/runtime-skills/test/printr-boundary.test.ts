@@ -23,6 +23,26 @@ test('Printr does not cross quote and deployment-read methods or permit building
 // absence about a read that works for everyone else.
 // ---------------------------------------------------------------------------
 describe('GMGN reads are signed the way GMGN documents', () => {
+  test('a personal server credential overrides the public demo and is scrubbed from the result', async () => {
+    const previous = process.env.GMGN_API_KEY;
+    const credential = 'gmgn-personal-fixture';
+    try {
+      process.env.GMGN_API_KEY = credential;
+      let sent = '';
+      const response = await loadSkillExecutor('gmgn')!.request({
+        path: '/v1/trade/gas_price?chain=base', method: 'GET', chainId: 8453,
+        fetchImpl: (async (_url, init) => {
+          sent = (init?.headers as Record<string, string>)['X-APIKEY']!;
+          return new Response(JSON.stringify({ code: 0, data: { echoed: credential } }));
+        }) as typeof fetch,
+      });
+      assert.equal(sent, credential);
+      assert.ok(!JSON.stringify(response).includes(credential));
+    } finally {
+      if (previous === undefined) delete process.env.GMGN_API_KEY;
+      else process.env.GMGN_API_KEY = previous;
+    }
+  });
   test('the published read key travels, under the header GMGN actually names', async () => {
     const seen: { url: string; headers: Record<string, string> }[] = [];
     const executor = loadSkillExecutor('gmgn');

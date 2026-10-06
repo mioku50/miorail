@@ -86,6 +86,22 @@ const uniswapScope: PluginHttpScope = {
   pathPrefixes: ['/v1/quote'],
 };
 
+test('GMGN resolves only a configured server read credential, without inventing one', () => {
+  const previous = process.env.GMGN_API_KEY;
+  try {
+    delete process.env.GMGN_API_KEY;
+    assert.equal(resolvePluginCredential('gmgn'), undefined);
+    process.env.GMGN_API_KEY = '  gmgn-personal-fixture  ';
+    assert.equal(resolvePluginCredential('gmgn', 'mcp'), 'gmgn-personal-fixture');
+    assert.equal(resolvePluginCredential('gmgn', 'direct'), 'gmgn-personal-fixture');
+    process.env.GMGN_API_KEY = '  ';
+    assert.equal(resolvePluginCredential('gmgn'), undefined);
+  } finally {
+    if (previous === undefined) delete process.env.GMGN_API_KEY;
+    else process.env.GMGN_API_KEY = previous;
+  }
+});
+
 test('pluginScopedFetch calls through when host, method, and path all match the plugin scope', async () => {
   let capturedInit: RequestInit | undefined;
   const fetchImpl = (async (_url: unknown, init?: RequestInit) => {

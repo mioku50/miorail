@@ -261,5 +261,6 @@ export function resolvePluginCredential(plugin: string, mode: BaseMcpPluginMode 
   // production, so there is one source and no fallback: an absent key is an
   // unavailable read, never a key this process invents.
   if (plugin === 'opensea') return process.env.OPENSEA_API_KEY?.trim() || undefined;
+  if (plugin === 'gmgn') return process.env.GMGN_API_KEY?.trim() || undefined;
   return undefined;
 }
