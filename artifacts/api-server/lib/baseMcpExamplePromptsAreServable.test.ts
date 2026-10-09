@@ -145,10 +145,20 @@ describe('an example prompt is servable by the handler it points at', () => {
     assert.deepEqual([...runtime.readPluginsNeedingSignIn], ['virtuals']);
   });
 
-  test('a key a plugin spec publishes is not a missing key', () => {
-    // GMGN's read key ships in Base's own spec. Counting it absent would have
-    // labelled a read "unavailable here" while it answered 200 everywhere.
-    assert.ok(!runtime.readPluginsMissingCredential.includes('gmgn'));
+  test('a published key the provider refuses here is a missing key', () => {
+    // GMGN's read key ships in Base's own spec, and counting it absent once
+    // labelled a read "unavailable here" while it answered 200 everywhere. From
+    // 2026-10-06 GMGN refused that demo key from this server, so without the
+    // operator's own key the read is unavailable, and the catalogue says so.
+    const previous = process.env.GMGN_API_KEY;
+    try {
+      delete process.env.GMGN_API_KEY;
+      assert.ok(baseMcpRuntimeSnapshotV1().readPluginsMissingCredential.includes('gmgn'));
+      process.env.GMGN_API_KEY = 'gmgn-operator-fixture';
+      assert.ok(!baseMcpRuntimeSnapshotV1().readPluginsMissingCredential.includes('gmgn'));
+    } finally {
+      if (previous === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = previous;
+    }
   });
 
   test('a read that needs an address the reader owns says so in the prompt', () => {

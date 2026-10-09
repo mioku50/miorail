@@ -83,8 +83,9 @@ const ROUTE_ADAPTER_PROVIDERS_V1: readonly string[] = [
  *
  * Derived on every call, from three facts that are already true somewhere else:
  * Base's own `auth:` frontmatter in the catalogue, the credentials a plugin
- * spec PUBLISHES (GMGN's read key ships in Base's spec and is not a missing
- * key), and what `resolvePluginCredential` resolves in this process. Nothing
+ * spec PUBLISHES and the provider honours (GMGN's no longer counts: it refused
+ * this server from 2026-10-06), and what `resolvePluginCredential` resolves in
+ * this process. Nothing
  * here is a list somebody has to remember to update when a key is rotated or
  * a second deployment runs without one.
  */
@@ -112,12 +113,16 @@ export function baseMcpRuntimeSnapshotV1(
 ): BaseMcpRuntimeSnapshotV1 {
   const simulation = swapSimulationCapabilityV1(env);
   const credentials = readCredentialStateV1(REVIEWED_READ_PLUGINS_V1);
+  // GMGN answers only the operator's own key here (its published demo key is
+  // refused from this server), so without one its quotes are paused too.
+  const gmgnKey = Boolean(resolvePluginCredential('gmgn'));
   return {
     readPluginsMissingCredential: credentials.missing,
     readPluginsNeedingSignIn: credentials.signIn,
     reviewedReadPlugins: REVIEWED_READ_PLUGINS_V1,
     releasedRouteProviders: ROUTE_ADAPTER_PROVIDERS_V1,
-    quoteOnlyRouteProviders: ['gmgn'],
+    quoteOnlyRouteProviders: gmgnKey ? ['gmgn'] : [],
+    quoteOnlyProvidersMissingCredential: gmgnKey ? [] : ['gmgn'],
     simulationRequiredProviders: PROVIDERS_REQUIRING_SIMULATION_V1,
     singleCallSimulationAvailable: simulation.singleCall,
     batchSimulationAvailable: simulation.batch,

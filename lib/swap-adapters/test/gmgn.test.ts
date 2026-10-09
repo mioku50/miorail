@@ -6,6 +6,8 @@ import { makeIntent, NOW, WALLET } from './fixtures.js';
 
 const intent = makeIntent({ to: 'WETH', protocolConstraint: { mode: 'include_only', protocols: ['gmgn'] } });
 const input = { intent, walletAddress: WALLET, now: NOW, requestId: 'gmgn-fixture' };
+// The operator's own key; Base's published demo key is never sent.
+const KEY = 'gmgn-operator-fixture';
 function payload() {
   const output = '38000000000000000';
   return { code: 0, data: {
@@ -22,11 +24,11 @@ function payload() {
   } };
 }
 function adapter(body: unknown = payload(), status = 200, seen: URL[] = []) {
-  return new GmgnQuoteRouteAdapter({ clock: () => NOW.getTime(), fetchImpl: (async (url, init) => {
+  return new GmgnQuoteRouteAdapter({ apiKey: KEY, clock: () => NOW.getTime(), fetchImpl: (async (url, init) => {
     seen.push(new URL(String(url)));
     assert.equal(init?.method, 'GET');
     assert.equal(init?.redirect, 'error');
-    assert.equal((init?.headers as Record<string, string>)['X-APIKEY'], 'gmgn_basesolbscethmonadtron');
+    assert.equal((init?.headers as Record<string, string>)['X-APIKEY'], KEY);
     return new Response(JSON.stringify(body), { status });
   }) as typeof fetch });
 }
@@ -38,6 +40,24 @@ test('GMGN is opt-in and never added to an ordinary execution comparison', () =>
   const explicit = getEligibleSwapAdapters(intent, createDefaultSwapAdapters());
   assert.equal(explicit.outcome, 'selected');
   if (explicit.outcome === 'selected') assert.deepEqual(explicit.adapters.map(a => a.id), ['gmgn']);
+});
+
+test('without the operator\'s key GMGN is paused: never asked, not even with the published demo key', async () => {
+  const previous = process.env.GMGN_API_KEY;
+  try {
+    delete process.env.GMGN_API_KEY;
+    let calls = 0;
+    const reader = new GmgnQuoteRouteAdapter({ clock: () => NOW.getTime(), fetchImpl: (async () => {
+      calls++; return new Response(JSON.stringify(payload()));
+    }) as typeof fetch });
+    const result = await reader.quote(input);
+    assert.equal(result.outcome, 'unavailable');
+    if (result.outcome !== 'quoted') assert.equal(result.errorCode, 'provider_not_configured');
+    assert.equal(calls, 0);
+  } finally {
+    if (previous === undefined) delete process.env.GMGN_API_KEY;
+    else process.env.GMGN_API_KEY = previous;
+  }
 });
 
 test('a configured GMGN server credential is used for quotes without entering evidence', async () => {
@@ -76,7 +96,7 @@ test('a verified quote retains exact outputs, but never provider calls or invent
   assert.ok(result.candidate.trustMetadata.riskFlags.includes('quote_only'));
   assert.equal(result.candidate.quoteExpiresAt, new Date(NOW.getTime() + 20_000).toISOString());
   const serialized = JSON.stringify(result);
-  for (const unsafe of ['deadbeef', 'malicious', 'Execute without', '922086', 'gmgn_basesol', 'approve_txs']) {
+  for (const unsafe of ['deadbeef', 'malicious', 'Execute without', '922086', KEY, 'approve_txs']) {
     assert.ok(!serialized.includes(unsafe), unsafe);
   }
   assert.equal(seen[0]!.searchParams.get('slippage'), '0');
@@ -129,7 +149,7 @@ test('HTTP 403 and rate limiting are provider failures, never an empty market', 
 
 test('malformed and oversized success bodies do not become quotes', async () => {
   for (const body of ['not json', 'x'.repeat(128 * 1024 + 1)]) {
-    const reader = new GmgnQuoteRouteAdapter({ fetchImpl: (async () => new Response(body)) as typeof fetch });
+    const reader = new GmgnQuoteRouteAdapter({ apiKey: KEY, fetchImpl: (async () => new Response(body)) as typeof fetch });
     assert.equal((await reader.quote(input)).outcome, 'invalid_response');
   }
 });
@@ -143,8 +163,8 @@ test('GMGN adapter instances respect one provider cooldown and resume with a fre
       ? new Response('{}', { status: 429, headers: { 'x-ratelimit-reset': String(now / 1000 + 30) } })
       : new Response(JSON.stringify(payload()));
   }) as typeof fetch;
-  const first = new GmgnQuoteRouteAdapter({ fetchImpl, clock: () => now });
-  const second = new GmgnQuoteRouteAdapter({ fetchImpl, clock: () => now });
+  const first = new GmgnQuoteRouteAdapter({ apiKey: KEY, fetchImpl, clock: () => now });
+  const second = new GmgnQuoteRouteAdapter({ apiKey: KEY, fetchImpl, clock: () => now });
   assert.equal((await first.quote(input)).outcome, 'rate_limited');
   assert.equal((await second.quote(input)).outcome, 'rate_limited');
   assert.equal(calls, 1);
@@ -161,11 +181,13 @@ test('a quote 429 suppresses Wallet MCP market reads, while other plugins keep w
     calls++;
     return new Response('{"code":429}', { status: 429, headers: { 'retry-after': '60' } });
   }) as typeof fetch;
-  const reader = new GmgnQuoteRouteAdapter({ fetchImpl: raw });
+  const reader = new GmgnQuoteRouteAdapter({ apiKey: KEY, fetchImpl: raw });
   assert.equal((await reader.quote(input)).outcome, 'rate_limited');
+  const previous = process.env.GMGN_API_KEY;
+  process.env.GMGN_API_KEY = KEY;
   const response = await loadSkillExecutor('gmgn')!.request({
     path: '/v1/market/rank?chain=base&interval=1h&limit=10', method: 'GET', chainId: 8453, fetchImpl: raw,
-  });
+  }).finally(() => { if (previous === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = previous; });
   assert.equal(response.status, 429);
   assert.deepEqual(response.data, { code: 429, error: 'MIORAIL_GMGN_COOLDOWN' });
   assert.equal(calls, 1);
@@ -176,7 +198,7 @@ test('a quote 429 suppresses Wallet MCP market reads, while other plugins keep w
 test('native ETH uses GMGN’s zero address without confusing it with WETH', async () => {
   const nativeIntent = makeIntent({ from: 'ETH', to: 'USDC', protocolConstraint: { mode: 'include_only', protocols: ['gmgn'] } });
   let sent: URL | undefined;
-  const reader = new GmgnQuoteRouteAdapter({ fetchImpl: (async url => {
+  const reader = new GmgnQuoteRouteAdapter({ apiKey: KEY, fetchImpl: (async url => {
     sent = new URL(String(url)); return new Response('', { status: 403 });
   }) as typeof fetch });
   await reader.quote({ ...input, intent: nativeIntent });

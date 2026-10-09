@@ -188,7 +188,26 @@ describe('deterministic Base MCP Extensions intent router', () => {
     if (named.kind === 'handoff') assert.equal(named.provider, 'flaunch');
   });
 
-  test('a GMGN quote asks for the missing token and preserves a supplied pair', () => {
+  test('without the operator\'s GMGN key a quote is paused, before any token is asked for', () => {
+    const previous = process.env.GMGN_API_KEY;
+    delete process.env.GMGN_API_KEY;
+    try {
+      const paused = classifyBaseMcpExtensionIntentV1('Get a GMGN quote to swap 10 USDC for this Base token');
+      assert.equal(paused.kind, 'needs_input');
+      if (paused.kind === 'needs_input') {
+        assert.equal(paused.errorCode, 'base_mcp_gmgn_quotes_paused');
+        assert.match(paused.reply, /GMGN quotes are paused/);
+        assert.doesNotMatch(paused.reply, /Review screen/);
+      }
+    } finally {
+      if (previous === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = previous;
+    }
+  });
+
+  test('a GMGN quote asks for the missing token and preserves a supplied pair', (t) => {
+    const previous = process.env.GMGN_API_KEY;
+    process.env.GMGN_API_KEY = 'gmgn-operator-fixture';
+    t.after(() => { if (previous === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = previous; });
     const unnamed = classifyBaseMcpExtensionIntentV1('Get a GMGN quote to swap 10 USDC for this Base token');
     assert.equal(unnamed.kind, 'needs_input');
     if (unnamed.kind === 'needs_input') {

@@ -23,6 +23,7 @@ import { resolveCommerceCatalogSourceV1 } from './commerceRouteConfig.js';
 import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
 import { hydrexPositionsAnswerV1, hydrexPositionsInputErrorV1 } from './hydrexPositionsRead.js';
 import { runVirtualsOtpReadV1 } from './virtualsOtpRead.js';
+import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 
 // ---------------------------------------------------------------------------
 // Reviewed Base plugin recipes.
@@ -837,6 +838,12 @@ function readNeedsInputV1(errorCode: string, reply: string): BaseMcpConsoleResul
 export async function runReviewedBaseMcpPluginReadV1(
   input: ReviewedPluginReadInputV1,
 ): Promise<BaseMcpConsoleResultV1 | null> {
+  // Paused without the operator's key, as the catalogue says: GMGN is not
+  // called, rather than called and reported as an unreachable endpoint.
+  if (input.providerId === 'gmgn' && baseMcpRuntimeSnapshotV1().readPluginsMissingCredential.includes('gmgn')) {
+    return readNeedsInputV1('gmgn_reads_paused',
+      'GMGN reads are paused here. GMGN limits the public demo key Base publishes by IP and refused this server with it, and Miorail holds no GMGN API key of its own. Nothing was called.');
+  }
   if (input.providerId === 'hydrex' && input.exampleId === 'positions') {
     const russian = /[а-яё]/iu.test(input.message);
     const inputError = hydrexPositionsInputErrorV1(input.message, input.walletAddress);

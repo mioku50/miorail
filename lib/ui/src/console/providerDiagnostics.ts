@@ -210,6 +210,7 @@ export function swapDiagnosticMessageV1(input: SwapDiagnosticMessageInputV1): st
     case 'provider_invalid_schema':
       return `${name} returned a response this version of Miorail could not verify.${stillWorks} Nothing from it was used.`;
     case 'provider_not_configured':
+      if (name === 'GMGN') return `GMGN quotes are paused: no GMGN API key is configured, and GMGN refuses this server the public demo key, so GMGN was never asked.${stillWorks}`;
       return `${name} is not configured on this server, so it was never asked.${stillWorks}`;
     case 'provider_not_released':
       return `${name} is assigned to Routes, but its typed quote adapter has not passed release gates yet, so no substitute route was used.${stillWorks}`;

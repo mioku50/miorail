@@ -12,13 +12,23 @@ import { BASE_MCP_PROVIDER_INTENTS_V1, type BaseMcpRuntimeSnapshotV1 } from '@mi
 // Routing now DEPENDS on the deployment — that is the fix — so a test that read
 // process.env would pass or fail on whether an Alchemy key happened to be set.
 
+/** The operator's GMGN key configured: GMGN quotes and reads are live. */
+function withGmgnKeyV1(runtime: BaseMcpRuntimeSnapshotV1): BaseMcpRuntimeSnapshotV1 {
+  return {
+    ...runtime,
+    quoteOnlyRouteProviders: ['gmgn'],
+    quoteOnlyProvidersMissingCredential: [],
+    readPluginsMissingCredential: runtime.readPluginsMissingCredential.filter((id) => id !== 'gmgn'),
+  };
+}
+
 /** A deployment that can prove an ordered batch: every declared handoff holds. */
 function fullyCapableRuntimeV1(): BaseMcpRuntimeSnapshotV1 {
-  return {
+  return withGmgnKeyV1({
     ...baseMcpRuntimeSnapshotV1({}),
     singleCallSimulationAvailable: true,
     batchSimulationAvailable: true,
-  };
+  });
 }
 
 /** A deployment with no simulator at all: server-written calldata is unsignable. */
@@ -155,7 +165,7 @@ test('Avantis never invents BTC when the market is missing or unrecognized', () 
 });
 
 test('GMGN price questions hand off without releasing GMGN writes', () => {
-  const runtime = noSimulatorRuntimeV1();
+  const runtime = withGmgnKeyV1(noSimulatorRuntimeV1());
   for (const message of ['Get a GMGN quote to swap 10 USDC for WETH', 'Compare 10 USDC to WETH using GMGN', 'Покажи котировку GMGN для 10 USDC в WETH']) {
     assert.equal(matchBaseMcpProviderIntentV1(message, runtime)?.disposition, 'handoff_to_routes', message);
   }
@@ -163,4 +173,10 @@ test('GMGN price questions hand off without releasing GMGN writes', () => {
     assert.notEqual(matchBaseMcpProviderIntentV1(message, runtime)?.disposition, 'handoff_to_routes', message);
   }
   assert.equal(matchBaseMcpProviderIntentV1('Get a GMGN quote for 10 USDC to WETH', { ...runtime, quoteOnlyRouteProviders: [] })?.disposition, 'route_unavailable_here');
+});
+
+test('without the operator\'s GMGN key a quote is paused here, and says why', () => {
+  const paused = matchBaseMcpProviderIntentV1('Get a GMGN quote for 10 USDC to WETH', noSimulatorRuntimeV1());
+  assert.equal(paused?.disposition, 'route_unavailable_here');
+  assert.match(String(paused?.routeCapability?.reason), /GMGN quotes are paused/);
 });

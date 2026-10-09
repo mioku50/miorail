@@ -85,12 +85,20 @@ test('provider unavailable and collection-vs-drop requests do not become invente
   assert.equal(failed?.trace[0]?.ok, false);
 });
 
-// GMGN was reported here as an absent reader. It is not absent: Base's own
-// plugin specification publishes a read key, GMGN signs each request with a
-// timestamp and a client id, and the API answers 200 to that contract and 401
-// to nothing at all. Sending no auth and calling the result "unavailable in
-// this deployment" is our failure wearing the provider's name.
-test('GMGN is read with the auth GMGN documents, and reported as what it is', async () => {
+// GMGN signs each request with a timestamp and a client id. Base's plugin
+// spec publishes a read key that GMGN calls a demo limited per IP, and from
+// 2026-10-06 GMGN refused it from this server, so only the operator's own key
+// is sent; without one the read is paused and nothing is called.
+async function withGmgnKey<T>(value: string | undefined, run: () => Promise<T>): Promise<T> {
+  const previous = process.env.GMGN_API_KEY;
+  try {
+    if (value === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = value;
+    return await run();
+  } finally {
+    if (previous === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = previous;
+  }
+}
+test('GMGN is read with the auth GMGN documents, and reported as what it is', () => withGmgnKey('gmgn-operator-fixture', async () => {
   const calls = capture({ data: { data: { rank: [
     { symbol: 'AERO', address: '0x940181a94a35a4569e4529a3cdfb74e38fd98631', volume: 1234, is_honeypot: 0, rug_ratio: 0.9 },
   ] } } });
@@ -108,16 +116,24 @@ test('GMGN is read with the auth GMGN documents, and reported as what it is', as
   // columns are never repeated as our verdict.
   assert.match(String(result?.reply), /not a Miorail measurement/);
   assert.doesNotMatch(String(result?.reply), /honeypot|rug|safe|scam|best|recommend/i);
-});
+}));
 
-test('the GMGN executor sends the published key and fresh replay parameters', () => {
+test('without the operator\'s key GMGN reads are paused: nothing is called, and the catalogue agrees', () => withGmgnKey(undefined, async () => {
   const executor = loadSkillExecutor('gmgn');
   assert.ok(executor, 'the gmgn namespace is loadable');
   assert.equal(executor!.manifest.auth, 'api-key');
   assert.equal(executor!.manifest.credentialHeader, 'X-APIKEY');
-  // Published by the provider for read-only use, so this deployment needs no
-  // configuration to answer a public read.
-  assert.ok((executor!.manifest.publishedCredential ?? '').length > 0);
+  // The demo key Base publishes is no longer carried.
+  assert.equal(executor!.manifest.publishedCredential, undefined);
   // Calldata stays out of Extensions.
   assert.deepEqual(executor!.allowedPaths, ['/v1/market/rank', '/v1/trade/gas_price']);
-});
+  assert.ok(baseMcpRuntimeSnapshotV1({}).readPluginsMissingCredential.includes('gmgn'));
+  const calls = capture({ data: { data: { rank: [] } } });
+  const result = await read({ providerId: 'gmgn', exampleId: 'market', message: 'Show trending Base tokens on GMGN', walletAddress });
+  assert.equal(result?.errorCode, 'gmgn_reads_paused');
+  assert.match(String(result?.reply), /paused/);
+  assert.equal(calls.length, 0);
+  await withGmgnKey('gmgn-operator-fixture', async () => {
+    assert.ok(!baseMcpRuntimeSnapshotV1({}).readPluginsMissingCredential.includes('gmgn'));
+  });
+}));

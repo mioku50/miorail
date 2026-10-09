@@ -160,6 +160,13 @@ describe('a failure message says what still works', () => {
     assert.match(view.message, /KyberSwap comparison still completed/);
     assert.doesNotMatch(view.message, /in a minute|usually clears/);
   });
+  test('a GMGN quote without a key says it is paused and was never asked', () => {
+    const view = providerFailureViewV1({ provider: 'gmgn', errorCode: 'provider_not_configured' }, []);
+    assert.equal(view.reason, 'provider_not_configured');
+    assert.match(view.message, /GMGN quotes are paused/);
+    assert.match(view.message, /never asked/);
+    assert.doesNotMatch(view.message, /still/);
+  });
   test('one survivor is named', () => {
     const view = providerFailureViewV1(
       { provider: 'kyberswap', errorCode: 'provider_timeout' },

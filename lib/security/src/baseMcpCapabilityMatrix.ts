@@ -83,6 +83,9 @@ export interface BaseMcpRuntimeSnapshotV1 {
   releasedRouteProviders: readonly string[];
   /** Explicit price queries only; no builder or wallet approval path. */
   quoteOnlyRouteProviders?: readonly string[];
+  /** Quote-only providers paused for want of a key the provider honours here.
+   * Nothing is called for them until one is configured. */
+  quoteOnlyProvidersMissingCredential?: readonly string[];
   /** Providers whose calldata Miorail refuses to sign without an executed
    * simulation. Their Routes handoff needs `batchSimulationAvailable` too. */
   simulationRequiredProviders: readonly string[];
@@ -118,6 +121,10 @@ export interface BaseMcpRuntimeSnapshotV1 {
   readPluginsNeedingSignIn: readonly string[];
 }
 
+/** Why GMGN quotes are not offered on a deployment without a GMGN key. */
+export const GMGN_QUOTES_PAUSED_REASON_V1 =
+  'GMGN quotes are paused here: GMGN limits the public demo key Base publishes by IP and refused this server with it, and no GMGN API key is configured. Nothing is called.';
+
 /**
  * Whether a provider's ROUTE is genuinely end to end.
  *
@@ -138,7 +145,9 @@ export function providerRouteCapabilityV1(
     return {
       operation: 'routes',
       state: 'unsupported',
-      reason: runtime.quoteOnlyRouteProviders?.includes(pluginId)
+      reason: runtime.quoteOnlyProvidersMissingCredential?.includes(pluginId)
+        ? GMGN_QUOTES_PAUSED_REASON_V1
+        : runtime.quoteOnlyRouteProviders?.includes(pluginId)
         ? 'GMGN prices can be checked in Routes AI, but GMGN swaps cannot be prepared or approved here.'
         : 'No released Routes AI adapter compares or builds this provider.',
     };
@@ -288,8 +297,11 @@ export function pluginCapabilityRowV1(
   // A quote is the first half of a route, and it is genuinely released on its
   // own: comparison works even where signing does not. Saying so is the honest
   // version of the old conflation — it just no longer implies the handoff.
-  const quoteOnly = runtime.quoteOnlyRouteProviders?.includes(routeProvider) ?? false;
-  const quote: BaseMcpCapabilityCellV1 = routable && (runtime.releasedRouteProviders.includes(routeProvider) || quoteOnly)
+  const paused = runtime.quoteOnlyProvidersMissingCredential?.includes(routeProvider) ?? false;
+  const quoteOnly = paused || (runtime.quoteOnlyRouteProviders?.includes(routeProvider) ?? false);
+  const quote: BaseMcpCapabilityCellV1 = routable && paused
+    ? { operation: 'quote', state: 'unavailable', reason: GMGN_QUOTES_PAUSED_REASON_V1 }
+    : routable && (runtime.releasedRouteProviders.includes(routeProvider) || quoteOnly)
     ? {
         operation: 'quote',
         state: 'released',
@@ -382,7 +394,8 @@ export function exampleCapabilityStateV1(
     case 'read_in_extensions':
       return row.cells.read;
     case 'handoff_to_routes':
-      return runtime.quoteOnlyRouteProviders?.includes(plugin.pluginId) && example.id === 'quote'
+      return (runtime.quoteOnlyRouteProviders?.includes(plugin.pluginId)
+        || runtime.quoteOnlyProvidersMissingCredential?.includes(plugin.pluginId)) && example.id === 'quote'
         ? row.cells.quote : row.cells.routes;
     case 'handoff_to_provider_ui':
       return row.cells.provider_ui;

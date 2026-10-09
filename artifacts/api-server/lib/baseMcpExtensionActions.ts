@@ -139,6 +139,15 @@ export function classifyBaseMcpExtensionIntentV1(
   // A Routes adapter exists and this runtime cannot finish the journey. The
   // user is told exactly that, HERE, rather than being walked into Routes AI
   // to meet a Safety Kernel refusal at the end of a five-step flow.
+  if (provider?.disposition === 'route_unavailable_here' && provider.pluginId === 'gmgn') {
+    // GMGN only ever quotes here, so there is no Review screen to spare
+    // anybody; the honest answer is that it was not asked.
+    return {
+      kind: 'needs_input',
+      errorCode: 'base_mcp_gmgn_quotes_paused',
+      reply: `${provider.routeCapability?.reason ?? 'GMGN quotes are paused here.'} Ask for the swap without naming a provider to compare the released routers.`,
+    };
+  }
   if (provider?.disposition === 'route_unavailable_here') {
     return {
       kind: 'needs_input',

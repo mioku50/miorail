@@ -9,8 +9,6 @@ import {
 } from './normalization.js';
 import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
-// Published by Base's GMGN plugin. This read credential is intentionally public.
-const PUBLIC_READ_CREDENTIAL = 'gmgn_basesolbscethmonadtron';
 const ORIGIN = 'https://openapi.gmgn.ai';
 const NATIVE = '0x0000000000000000000000000000000000000000';
 const UINT = z.string().regex(/^(0|[1-9][0-9]{0,77})$/)
@@ -45,12 +43,16 @@ export interface GmgnQuoteAdapterOptionsV1 {
 export class GmgnQuoteRouteAdapter implements SwapRouteAdapter {
   readonly id = 'gmgn' as const;
   private readonly fetchImpl: typeof fetch;
-  private readonly credential: string;
+  private readonly credential: string | undefined;
   private readonly timeoutMs: number;
   private readonly clock: () => number;
 
   constructor(options: GmgnQuoteAdapterOptionsV1 = {}) {
-    this.credential = options.apiKey ?? resolvePluginCredential('gmgn') ?? PUBLIC_READ_CREDENTIAL;
+    // The operator's own key or nothing. Base's spec publishes a read key that
+    // GMGN calls a demo limited per IP, and from 2026-10-06 GMGN answered it
+    // from this server with 429 on every request; quotes are paused until a
+    // key is configured, and nothing is sent in the meantime.
+    this.credential = options.apiKey ?? resolvePluginCredential('gmgn');
     this.timeoutMs = options.timeoutMs ?? 12_000;
     this.clock = options.clock ?? Date.now;
     this.fetchImpl = gmgnReadFetchV1(options.fetchImpl, this.clock);
@@ -72,6 +74,7 @@ export class GmgnQuoteRouteAdapter implements SwapRouteAdapter {
       retryable: ['unavailable', 'timeout', 'rate_limited'].includes(outcome),
     } as const);
     if (!this.supports(input.intent)) return failure('provider_unsupported_intent', 'unsupported');
+    if (!this.credential) return failure('provider_not_configured', 'unavailable');
     if (!normalizeAddress(input.walletAddress) || input.walletAddress.toLowerCase() !== input.intent.walletAddress) {
       return failure('gmgn_wallet_mismatch', 'invalid_response');
     }

@@ -274,11 +274,12 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
     ],
   },
   {
-    // GMGN publishes a read-only key in Base's own plugin specification, and
-    // signs every request with a fresh timestamp and client id for replay
-    // protection. Sending none of the three is a 401, which this deployment
-    // read as "GMGN is unavailable here" -- a false absence about an API that
-    // answers a public read to anybody who follows its documented contract.
+    // GMGN signs every request with a fresh timestamp and client id for replay
+    // protection. Base's plugin spec publishes a read key, and GMGN's own docs
+    // call it a demo limited per IP: from 2026-10-06 it answered this server
+    // with 429 "IP rate limit exceeded" on every read. It is no longer sent.
+    // Without the operator's own GMGN_API_KEY the read is unavailable here and
+    // nothing is called, which is what the catalogue then says.
     namespace: 'gmgn',
     displayName: 'GMGN',
     allowedIntents: ['read'],
@@ -298,7 +299,6 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
       },
       auth: 'api-key',
       credentialHeader: 'X-APIKEY',
-      publishedCredential: 'gmgn_basesolbscethmonadtron',
       risk: ['low-liquidity'],
     },
     instructions: [
@@ -410,11 +410,11 @@ const REVIEWED_HTTP_SKILLS: readonly RuntimeSkillDefinition[] = [
 /**
  * The credential a plugin's own spec PUBLISHES, if it publishes one.
  *
- * A published read key is not a missing key: GMGN's ships in Base's spec, and
- * a deployment that treated it as absent was one commit from labelling a read
- * "unavailable here" while it answered 200 everywhere. Exported so the runtime
- * snapshot can tell "needs a key nobody gave us" apart from "needs a key that
- * came with the spec".
+ * A published read key is not a missing key, as long as the provider honours
+ * it here. GMGN's shipped in Base's spec until GMGN refused it from this
+ * server's IP (2026-10-06); its manifest no longer carries it. Exported so the
+ * runtime snapshot can tell "needs a key nobody gave us" apart from "needs a
+ * key that came with the spec".
  */
 export function publishedPluginCredentialV1(namespace: string): string | undefined {
   return getExecutorSkill(namespace)?.manifest?.publishedCredential;
@@ -492,9 +492,8 @@ export async function pluginHttpRequest(
 
   const credentialHeader = credentialHeaderName(manifest);
   if (credentialHeader) {
-    // Prefer a configured server credential. GMGN now describes its public
-    // key as a demo with IP limits; it remains a fallback, not an override of
-    // the operator's own key. Neither credential enters traces or hashes.
+    // Prefer a configured server credential; a published one is only the
+    // fallback. Neither credential enters traces or hashes.
     credential = resolvePluginCredential(input.plugin, mode) ?? manifest.publishedCredential;
     if (!credential) throw new PluginCredentialMissingError(input.plugin);
     headers[credentialHeader] = credential;
