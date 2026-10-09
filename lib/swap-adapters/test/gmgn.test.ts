@@ -51,8 +51,8 @@ test('without the operator\'s key GMGN is paused: never asked, not even with the
       calls++; return new Response(JSON.stringify(payload()));
     }) as typeof fetch });
     const result = await reader.quote(input);
-    assert.equal(result.outcome, 'unavailable');
-    if (result.outcome !== 'quoted') assert.equal(result.errorCode, 'provider_not_configured');
+    assert.deepEqual({ outcome: result.outcome, errorCode: 'errorCode' in result ? result.errorCode : null },
+      { outcome: 'unavailable', errorCode: 'provider_not_configured' });
     assert.equal(calls, 0);
   } finally {
     if (previous === undefined) delete process.env.GMGN_API_KEY;

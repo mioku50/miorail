@@ -4,10 +4,11 @@ import { GmgnQuoteRouteAdapter } from '@mioagent/swap-adapters';
 import { createSwapRouteEngine } from '../src/index.js';
 import { makeIntent, NOW, WALLET, WETH, makeCandidate, quotedAdapter } from './fixtures.js';
 
-function reader(status = 200) {
+// The operator's own key: without one GMGN is paused and never asked.
+function reader(status = 200, apiKey: string | null = 'gmgn-operator-fixture') {
   const tokenIn = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
   const tokenOut = '0x4200000000000000000000000000000000000006';
-  return new GmgnQuoteRouteAdapter({ fetchImpl: (async () => new Response(JSON.stringify({ code: 0, data: {
+  return new GmgnQuoteRouteAdapter({ apiKey: apiKey ?? undefined, fetchImpl: (async () => new Response(JSON.stringify({ code: 0, data: {
     input_token: tokenIn, output_token: tokenOut, input_amount: '100000000', output_amount: '38000000000000000',
     min_output_amount: '38000000000000000', slippage: 0, tx: { chain_id: 8453, from_address: WALLET,
       input_token_address: tokenIn, output_token_address: tokenOut, amount_in: '100000000', amount_out: '38000000000000000',
@@ -30,6 +31,22 @@ test('GMGN reaches the quote projection through the engine and its failure keeps
   assert.deepEqual(refused.candidates, []);
   assert.equal(refused.adapterFailures[0]!.provider, 'gmgn');
   assert.equal(refused.adapterFailures[0]!.errorCode, 'gmgn_http_403');
+});
+
+test('without the operator\'s key the engine reports GMGN as not configured, keeping its name', async () => {
+  const previous = process.env.GMGN_API_KEY;
+  delete process.env.GMGN_API_KEY;
+  try {
+    const intent = makeIntent({ toAsset: WETH, protocolConstraint: { mode: 'include_only', protocols: ['gmgn'] } });
+    const paused = await createSwapRouteEngine().evaluate({ intent, walletAddress: WALLET, requestId: 'gmgn-paused', now: NOW,
+      adapters: [reader(200, null)] });
+    assert.equal(paused.outcome, 'failed');
+    assert.deepEqual(paused.candidates, []);
+    assert.equal(paused.adapterFailures[0]!.provider, 'gmgn');
+    assert.equal(paused.adapterFailures[0]!.errorCode, 'provider_not_configured');
+  } finally {
+    if (previous === undefined) delete process.env.GMGN_API_KEY; else process.env.GMGN_API_KEY = previous;
+  }
 });
 
 test('a GMGN price and an executable route cannot form an execution recommendation', async () => {
