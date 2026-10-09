@@ -24,7 +24,7 @@ Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/rwa_read_representation_ratio.ts
 
-TimeoutStartSec=600
+TimeoutStartSec=1800
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict

@@ -24,7 +24,7 @@
  *
  *   pnpm rwa:read-ratio --dry
  *   pnpm rwa:read-ratio
- *   pnpm rwa:read-ratio --gap-ms 2000
+ *   pnpm rwa:read-ratio --gap-ms 2000 --lanes 2
  */
 import {
   B20_SELECTORS_V1,
@@ -57,6 +57,12 @@ const CHAIN_ID_V1 = 8453 as const;
 /** Two reads per representation against an endpoint the measurement workers
  * share. Paced for the same reason they are. */
 const DEFAULT_GAP_MS_V1 = 1_500;
+/** Paced lanes. Each lane still waits the gap after each of its reads, so the
+ * endpoint sees at most this many in flight. One lane needed 7:55-9:46 on
+ * 2026-10-06 against the unit's 10 minutes, and from 2026-10-07 the corpus
+ * outgrew it: every pass was killed among the multipliers, so the same tail of
+ * tokens, every Dinari ratio and the dividend record supply were never read. */
+const DEFAULT_LANES_V1 = 3;
 
 function numericArgV1(flag: string, fallback: number): number {
   const index = process.argv.indexOf(flag);
@@ -66,6 +72,26 @@ function numericArgV1(flag: string, fallback: number): number {
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/** Every item once, by `lanes` paced workers. Items are independent reads, so
+ * only the order of the printed lines depends on the lanes. */
+async function pacedV1<T>(
+  items: readonly T[],
+  lanes: number,
+  gapMs: number,
+  read: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  await Promise.all(
+    Array.from({ length: Math.min(lanes, items.length) }, async () => {
+      while (next < items.length) {
+        const item = items[next++]!;
+        await read(item);
+        await sleep(gapMs);
+      }
+    }),
+  );
+}
 
 /** `1.057380318816778075` from (raw, scale). Decimal-string arithmetic: a
  * float loses the last digits of a WAD, and those digits are the difference
@@ -81,6 +107,7 @@ function normalizedV1(raw: string, scale: string): string {
 async function main(): Promise<void> {
   const dry = process.argv.includes('--dry');
   const gapMs = numericArgV1('--gap-ms', DEFAULT_GAP_MS_V1);
+  const lanes = numericArgV1('--lanes', DEFAULT_LANES_V1);
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 
   const rpcUrl = (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
@@ -153,7 +180,7 @@ async function main(): Promise<void> {
   // Supply is universal ERC-20 evidence, unlike issuer-specific representation
   // ratios. Every reviewed exact address is asked the same pinned
   // totalSupply()/decimals() question; ticker and issuer never select it.
-  for (const binding of reviewedBindings) {
+  await pacedV1(reviewedBindings, lanes, gapMs, async (binding) => {
     const [totalResult, decimalsResult] = await callManyV1(reader, [
       {
         to: binding.tokenAddress,
@@ -215,8 +242,7 @@ async function main(): Promise<void> {
       supplyFailed += 1;
       console.log(`  supply ${binding.tokenAddress}  supply_unknown (${failureCode})`);
     }
-    await sleep(gapMs);
-  }
+  });
 
   console.log(
     `supply read ${supplyRead}, zero ${supplyZero}, unresolved ${supplyFailed} · ` +
@@ -229,7 +255,7 @@ async function main(): Promise<void> {
   const changed: string[] = [];
   const firstSeen: string[] = [];
 
-  for (const asset of coinbaseB20) {
+  await pacedV1(coinbaseB20, lanes, gapMs, async (asset) => {
     const value = await readB20MultiplierV1(reader, {
       tokenAddress: asset.tokenAddress,
       anchor,
@@ -242,8 +268,7 @@ async function main(): Promise<void> {
       if (value.status === 'absent') absent += 1;
       else failed += 1;
       console.log(`  ${asset.tokenAddress}  ${value.status} (${value.unavailableReason})`);
-      await sleep(gapMs);
-      continue;
+      return;
     }
     read += 1;
     const outcome = await ratios.recordRead({
@@ -263,13 +288,12 @@ async function main(): Promise<void> {
     console.log(
       `  ${asset.tokenAddress}  ${normalizedV1(value.rawValue, value.scale)}  ${outcome.outcome}`,
     );
-    await sleep(gapMs);
-  }
+  });
 
   // Dinari, through its own adapter and its own ratio kind. `balanceOf` has
   // already applied this value, so the store carries
   // `already_applied_by_token` and nothing downstream may apply it twice.
-  for (const representation of dinari) {
+  await pacedV1(dinari, lanes, gapMs, async (representation) => {
     const value = await readDinariBalancePerShareV1(reader, {
       tokenAddress: representation.tokenAddress,
       anchor,
@@ -278,8 +302,7 @@ async function main(): Promise<void> {
       if (value.outcome === 'absent') absent += 1;
       else failed += 1;
       console.log(`  ${representation.tokenAddress}  ${value.outcome} (${value.reason})`);
-      await sleep(gapMs);
-      continue;
+      return;
     }
     read += 1;
     const outcome = await ratios.recordRead({
@@ -297,8 +320,7 @@ async function main(): Promise<void> {
     if (outcome.outcome === 'changed') changed.push(value.tokenAddress);
     if (outcome.outcome === 'first_observation') firstSeen.push(value.tokenAddress);
     console.log(`  ${value.tokenAddress}  ${value.normalized}  ${outcome.outcome}`);
-    await sleep(gapMs);
-  }
+  });
 
   console.log(
     `read ${read}, absent ${absent}, failed ${failed} · ${firstSeen.length} first observation(s), ${changed.length} change(s)`,
@@ -306,7 +328,7 @@ async function main(): Promise<void> {
   // A first observation is not a corporate action, and this pass says so out
   // loud: the day this first runs it must not read as thirteen splits.
   if (changed.length > 0) {
-    console.log(`  CHANGED: ${changed.join(', ')}`);
+    console.log(`  CHANGED: ${changed.sort().join(', ')}`);
   }
 
   // How many tokens existed when each dividend's record date closed: read once
