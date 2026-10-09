@@ -184,7 +184,7 @@ test('an aged approval is asked about first: the wallet’s answer is kept, a si
     const submit = tools.callTool;
     tools.callTool = async (name: string, toolArgs: unknown) => name === 'get_request_status'
       ? (counters.status++, { isError: false, content: JSON.stringify({ status: 'rejected' }) })
-      : submit(name, toolArgs as any);
+      : submit(name, toolArgs as Record<string, unknown>);
     return tools;
   };
   runtime.now = () => LATER;
@@ -196,7 +196,7 @@ test('an aged approval is asked about first: the wallet’s answer is kept, a si
     const tools = await create(...args);
     const submit = tools.callTool;
     tools.callTool = async (name: string, toolArgs: unknown) => name === 'get_request_status'
-      ? { isError: false, content: JSON.stringify({ status: 'pending' }) } : submit(name, toolArgs as any);
+      ? { isError: false, content: JSON.stringify({ status: 'pending' }) } : submit(name, toolArgs as Record<string, unknown>);
     return tools;
   };
   runtime.now = () => '2026-10-05T18:00:02.000Z';
