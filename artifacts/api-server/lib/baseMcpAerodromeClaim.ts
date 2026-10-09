@@ -66,14 +66,49 @@ function result(reply: string, errorCode: string | null = null, receipt: StoredB
     receipt: receipt ? publicBaseMcpActionReceiptV1(receipt) : null, approvalUrl };
 }
 function coverage(plan: AerodromeClaimPlanV1): string {
-  return `Read ${plan.poolsRead.toLocaleString('en-US')} of ${plan.poolsTotal.toLocaleString('en-US')} Sugar pools at Base block ${plan.blockNumber}. ${plan.poolsUnread} pools unread. ${plan.managedSkipped} managed or locked positions excluded.`;
+  return `Read ${plan.poolsRead.toLocaleString('en-US')} of ${plan.poolsTotal.toLocaleString('en-US')} Sugar pools at Base block ${plan.blockNumber}. ${plan.poolsUnread} pools unread. Checked ${plan.clPositionsRead} of ${plan.clPositionsTotal} concentrated positions held in your wallet. ${plan.managedSkipped} managed or locked positions excluded.`;
 }
 function repeated(receipt: StoredBaseMcpActionReceiptV1, hash: string): BaseMcpAerodromeClaimResultV1 {
   if (receipt.actionHash !== hash) return result('This request ID belongs to a different action.', 'base_mcp_action_idempotency_conflict');
   return result('This claim already has an Action Receipt. Check that receipt; the approval request was not sent again.', receipt.errorCode, receipt);
 }
 function activeClaim(receipt: StoredBaseMcpActionReceiptV1): BaseMcpAerodromeClaimResultV1 {
-  return result('A claim for this wallet is already in progress. Check its Action Receipt before preparing another claim.', receipt.errorCode, receipt);
+  return result('A claim for this wallet is already in progress. Approve or reject it in your wallet. If its outcome cannot be learned, it stops blocking a new claim one hour after its last update.', receipt.errorCode, receipt);
+}
+
+/** How long an open claim may block the next one. A repeated claim is safe to
+ * prepare: it is read afresh, and whatever an earlier approval took is no
+ * longer claimable. What is not safe is a lock nothing can release: a lost
+ * Wallet MCP response leaves no request ID, and only time can end that wait. */
+export const AERODROME_CLAIM_OPEN_TTL_MS_V1 = 60 * 60_000;
+const FINAL_STATUSES = ['completed', 'rejected', 'failed'];
+function claimAged(receipt: StoredBaseMcpActionReceiptV1, now: string): boolean {
+  const age = Date.parse(now) - Date.parse(receipt.updatedAt);
+  return Number.isFinite(age) && age >= AERODROME_CLAIM_OPEN_TTL_MS_V1;
+}
+async function expireClaim(receipt: StoredBaseMcpActionReceiptV1): Promise<StoredBaseMcpActionReceiptV1 | null> {
+  const now = baseMcpAerodromeClaimRuntimeV1.now();
+  return baseMcpAerodromeClaimRuntimeV1.repository.update({ id: receipt.id, tenantId: receipt.tenantId,
+    status: 'failed', reconciliationState: 'unavailable', errorCode: 'aerodrome_claim_outcome_expired',
+    finalizedAt: now, now });
+}
+/** The wallet's open claim, if it still blocks. An aged one is asked about
+ * once; Wallet MCP's answer wins, and only an unknown or unanswered outcome
+ * expires. A completion still waiting for its events keeps blocking. */
+async function openClaim(input: ClaimInput, wallet: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+  const runtime = baseMcpAerodromeClaimRuntimeV1;
+  const active = await runtime.repository.getActiveAerodromeClaim(input.userId, wallet);
+  if (!active || !claimAged(active, runtime.now())) return active;
+  if (active.providerRequestId) {
+    const checked = await reconcileBaseMcpAerodromeClaimV1({ ...input, receipt: active });
+    const status = checked.receipt?.status;
+    if (status && (status === 'reconciling' || FINAL_STATUSES.includes(status))) {
+      return runtime.repository.getActiveAerodromeClaim(input.userId, wallet);
+    }
+  }
+  const current = await runtime.repository.get(active.id, active.tenantId);
+  if (current && !FINAL_STATUSES.includes(current.status) && current.status !== 'reconciling') await expireClaim(current);
+  return runtime.repository.getActiveAerodromeClaim(input.userId, wallet);
 }
 function withBuilderCode(plan: AerodromeClaimPlanV1): AerodromeClaimPlanV1 {
   const code = baseMcpAerodromeClaimRuntimeV1.builderCode();
@@ -100,7 +135,7 @@ export async function prepareBaseMcpAerodromeClaimV1(input: ClaimInput): Promise
   if (!await runtime.repository.available()) return result('Action Receipt storage is unavailable.', 'base_mcp_action_storage_unavailable');
   const existing = await runtime.repository.getByIdempotency(input.userId, input.idempotencyKey);
   if (existing) return repeated(existing, hash);
-  const active = await runtime.repository.getActiveAerodromeClaim(input.userId, wallet);
+  const active = await openClaim(input, wallet);
   if (active) return activeClaim(active);
   let tools: ToolAggregator | undefined;
   let preparedTools: ToolAggregator | undefined;
@@ -211,7 +246,13 @@ export async function reconcileBaseMcpAerodromeClaimV1(input: ClaimInput & { rec
     return result('Connect the Base Account that prepared this claim.', 'base_mcp_wallet_mismatch');
   }
   if (['completed', 'rejected', 'failed'].includes(stored.status)) return result('This Action Receipt is final.', stored.errorCode, stored);
-  if (!stored.providerRequestId) return result('The original submission has no request ID. Miorail will not submit it again.', 'base_mcp_claim_outcome_unknown', stored);
+  if (!stored.providerRequestId) {
+    if (claimAged(stored, runtime.now())) {
+      return result('Miorail could not learn this claim’s outcome, so it no longer blocks a new claim. Check your wallet activity before claiming again.',
+        'aerodrome_claim_outcome_expired', await expireClaim(stored) ?? stored);
+    }
+    return result('The original submission has no request ID. Miorail will not submit it again; it stops blocking a new claim one hour after its last update.', 'base_mcp_claim_outcome_unknown', stored);
+  }
   let tools: ToolAggregator | undefined;
   try {
     tools = await runtime.createTools(input.req, input.userId, input.sessionSecret, { baseMcpOnly: true });

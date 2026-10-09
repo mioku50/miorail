@@ -18,7 +18,7 @@ const NOW = '2026-10-05T16:00:00.000Z';
 const original = { ...runtime };
 afterEach(() => Object.assign(runtime, original));
 function plan(): AerodromeClaimPlanV1 {
-  return { blockNumber: '100', poolsTotal: 38_794, poolsRead: 38_794, poolsUnread: 0,
+  return { blockNumber: '100', poolsTotal: 38_794, poolsRead: 38_794, poolsUnread: 0, clPositionsTotal: 2, clPositionsRead: 2,
     positionsFound: 1, managedSkipped: 0, errorCode: null, calls: [{ kind: 'basic_fees', pool: POOL, tokenId: '0',
       token0: WALLET, token1: POOL, amount0: '10', amount1: '0', aero: '0',
       call: { index: 0, callType: 'other', to: POOL, valueWei: '0', asset: null, amountAtomic: null,
@@ -42,7 +42,7 @@ function setup() {
   runtime.simulate = async (snapshot) => {
     counters.simulate++;
     assert.ok(snapshot.calls[0].call.data.endsWith('62635f74657374070080218021802180218021802180218021'));
-    return { status: 'passed', observedAt: NOW, blockNumber: '101', requestHash: HASH, responseHash: HASH, errorCode: null };
+    return { status: 'passed', observedAt: runtime.now(), blockNumber: '101', requestHash: HASH, responseHash: HASH, errorCode: null };
   };
   runtime.verifyWallet = async () => ({ checked: true, match: true, mcpAddresses: [WALLET] });
   runtime.createTools = async (_req, _user, _secret, options) => ({
@@ -117,6 +117,7 @@ test('full empty result has no approval or failed receipt; partial empty is expl
   const empty = await prepareBaseMcpAerodromeClaimV1(input());
   assert.equal(empty.kind, 'answered'); assert.equal(empty.receipt, null);
   assert.match(empty.reply, /38,794.*38,794/);
+  assert.match(empty.reply, /Checked 2 of 2 concentrated positions held in your wallet/);
   runtime.readPlan = async () => ({ ...plan(), calls: [], poolsRead: 9_000, poolsUnread: 29_794, errorCode: 'aerodrome_incomplete_coverage' });
   const partial = await prepareBaseMcpAerodromeClaimV1(input());
   assert.equal(partial.kind, 'failed'); assert.match(partial.reply, /29794 pools unread/);
@@ -151,6 +152,84 @@ test('submission uncertainty remains pending and cannot resubmit using the same 
   assert.equal(first.errorCode, 'base_mcp_claim_outcome_unknown');
   await prepareBaseMcpAerodromeClaimV1(input()); assert.equal(counters.submit, 1);
   await prepareBaseMcpAerodromeClaimV1(input('different-id')); assert.equal(counters.submit, 1);
+});
+const LATER = '2026-10-05T17:00:01.000Z';
+test('an unknown outcome stops blocking a new claim after an hour, never sooner', async () => {
+  const { repository, counters } = setup();
+  const create = runtime.createTools;
+  let lose = true;
+  runtime.createTools = async (...args) => {
+    const tools = await create(...args);
+    if (args[3]?.baseMcpPreparedClaim && lose) tools.callTool = async () => { counters.submit++; throw new Error('lost response'); };
+    return tools;
+  };
+  const first = await prepareBaseMcpAerodromeClaimV1(input('lost'));
+  assert.equal(first.receipt?.status, 'pending'); assert.equal(counters.submit, 1);
+  runtime.now = () => '2026-10-05T16:59:59.000Z';
+  assert.equal((await prepareBaseMcpAerodromeClaimV1(input('too-soon'))).receipt?.id, first.receipt?.id);
+  assert.equal(counters.submit, 1);
+  lose = false; runtime.now = () => LATER;
+  const next = await prepareBaseMcpAerodromeClaimV1(input('after-an-hour'));
+  assert.notEqual(next.receipt?.id, first.receipt?.id); assert.equal(counters.submit, 2);
+  const expired = await repository.get(first.receipt!.id, 'tenant-claim');
+  assert.equal(expired?.status, 'failed'); assert.equal(expired?.errorCode, 'aerodrome_claim_outcome_expired');
+});
+test('an aged approval is asked about first: the wallet’s answer is kept, a silent one expires', async () => {
+  const { repository, counters } = setup();
+  const first = await prepareBaseMcpAerodromeClaimV1(input('ignored'));
+  assert.equal(first.receipt?.status, 'approval_required');
+  const create = runtime.createTools;
+  runtime.createTools = async (...args) => {
+    const tools = await create(...args);
+    const submit = tools.callTool;
+    tools.callTool = async (name: string, toolArgs: unknown) => name === 'get_request_status'
+      ? (counters.status++, { isError: false, content: JSON.stringify({ status: 'rejected' }) })
+      : submit(name, toolArgs as any);
+    return tools;
+  };
+  runtime.now = () => LATER;
+  const next = await prepareBaseMcpAerodromeClaimV1(input('after-rejection'));
+  assert.equal(counters.status, 1); assert.equal(counters.submit, 2);
+  assert.notEqual(next.receipt?.id, first.receipt?.id);
+  assert.equal((await repository.get(first.receipt!.id, 'tenant-claim'))?.status, 'rejected');
+  runtime.createTools = async (...args) => {
+    const tools = await create(...args);
+    const submit = tools.callTool;
+    tools.callTool = async (name: string, toolArgs: unknown) => name === 'get_request_status'
+      ? { isError: false, content: JSON.stringify({ status: 'pending' }) } : submit(name, toolArgs as any);
+    return tools;
+  };
+  runtime.now = () => '2026-10-05T18:00:02.000Z';
+  const third = await prepareBaseMcpAerodromeClaimV1(input('after-silence'));
+  assert.notEqual(third.receipt?.id, next.receipt?.id); assert.equal(counters.submit, 3);
+  const silent = await repository.get(next.receipt!.id, 'tenant-claim');
+  assert.equal(silent?.status, 'failed'); assert.equal(silent?.errorCode, 'aerodrome_claim_outcome_expired');
+});
+test('a completion still waiting for its events keeps blocking, however old', async () => {
+  const { repository, counters } = setup();
+  const first = await prepareBaseMcpAerodromeClaimV1(input('mined'));
+  runtime.receiptReader = () => ({ getTransactionReceipt: async () => null });
+  runtime.now = () => LATER;
+  const blocked = await prepareBaseMcpAerodromeClaimV1(input('while-reconciling'));
+  assert.equal(blocked.receipt?.id, first.receipt?.id); assert.equal(counters.submit, 1);
+  assert.equal((await repository.get(first.receipt!.id, 'tenant-claim'))?.status, 'reconciling');
+});
+test('reconciling an unknown outcome releases it only after an hour', async () => {
+  const { repository } = setup();
+  const create = runtime.createTools;
+  runtime.createTools = async (...args) => {
+    const tools = await create(...args);
+    if (args[3]?.baseMcpPreparedClaim) tools.callTool = async () => { throw new Error('lost response'); };
+    return tools;
+  };
+  const first = await prepareBaseMcpAerodromeClaimV1(input('lost'));
+  let stored = (await repository.get(first.receipt!.id, 'tenant-claim'))!;
+  const soon = await reconcileBaseMcpAerodromeClaimV1({ ...input(), receipt: stored });
+  assert.equal(soon.errorCode, 'base_mcp_claim_outcome_unknown'); assert.equal(soon.receipt?.status, 'pending');
+  runtime.now = () => LATER;
+  stored = (await repository.get(first.receipt!.id, 'tenant-claim'))!;
+  const released = await reconcileBaseMcpAerodromeClaimV1({ ...input(), receipt: stored });
+  assert.equal(released.errorCode, 'aerodrome_claim_outcome_expired'); assert.equal(released.receipt?.status, 'failed');
 });
 test('only matching onchain claim events finalize, completion alone stays reconciling', async () => {
   const { repository } = setup();

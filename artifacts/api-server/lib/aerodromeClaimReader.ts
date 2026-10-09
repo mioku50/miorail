@@ -7,16 +7,38 @@ import type { ExecutionCallV1 } from '@mioagent/route-domain';
 export const AERODROME_SUGAR_V1 = '0x69dd9db6d8f8e7d83887a704f447b1a584b599a1';
 export const AERODROME_VOTER_V1 = '0x16613524e02ad97edfef371bc883f2f5d6c480a5';
 export const AERODROME_BASIC_FACTORY_V1 = '0x420dd381b31aef6683db6b902084cb0ffece40da';
+// Every CL factory the Voter's own FactoryRegistry approves, each with the
+// position manager whose factory() names it (read 2026-10-09). The third had
+// no entry until then, so a position in its pools refused the whole claim.
 export const AERODROME_CL_FACTORIES_V1 = [
   '0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a',
   '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef',
+  '0xade65c38cd4849adba595a4323a8c7ddfe89716a',
 ] as const;
+export const AERODROME_CL_NFPMS_V1: Readonly<Record<typeof AERODROME_CL_FACTORIES_V1[number], string>> = {
+  '0x5e7bb104d84c7cb9b682aac2f3d509f5f406809a': '0x827922686190790b37229fd06084350e74485b72',
+  '0xf8f2eb4940cfe7d13603dddd87f123820fc061ef': '0xe1f8cd9ac4e4a65f54f38a5cdafca44f6dd68b53',
+  '0xade65c38cd4849adba595a4323a8c7ddfe89716a': '0xa990c6a764b73bf43cee5bb40339c3322fb9d55f',
+};
 export const AERODROME_AERO_V1 = '0x940181a94a35a4569e4529a3cdfb74e38fd98631';
+// Sugar's own walls. positions() walks at most MAX_ITERATIONS pools of each
+// factory whatever the offset, so a factory's pools past it are never
+// examined. positionsUnstakedConcentrated() returns, and per manager walks, at
+// most MAX_POSITIONS.
+export const SUGAR_MAX_ITERATIONS_V1 = 30_000;
+export const SUGAR_MAX_POSITIONS_V1 = 200;
 const ZERO = '0x0000000000000000000000000000000000000000';
+const POSITION_TUPLE = '(uint256 id,address lp,uint256 liquidity,uint256 staked,uint256 amount0,uint256 amount1,uint256 staked0,uint256 staked1,uint256 unstaked_earned0,uint256 unstaked_earned1,uint256 emissions_earned,int24 tick_lower,int24 tick_upper,uint160 sqrt_ratio_lower,uint160 sqrt_ratio_upper,address locker,uint32 unlocks_at,address alm)';
 export const AERODROME_CLAIM_ABI_V1 = parseAbi([
   'function count() view returns (uint256)',
   'function voter() view returns (address)',
-  'function positions(uint256 _limit,uint256 _offset,address _account) view returns ((uint256 id,address lp,uint256 liquidity,uint256 staked,uint256 amount0,uint256 amount1,uint256 staked0,uint256 staked1,uint256 unstaked_earned0,uint256 unstaked_earned1,uint256 emissions_earned,int24 tick_lower,int24 tick_upper,uint160 sqrt_ratio_lower,uint160 sqrt_ratio_upper,address locker,uint32 unlocks_at,address alm)[])',
+  'function registry() view returns (address)',
+  'function factoryRegistry() view returns (address)',
+  'function poolFactories() view returns (address[])',
+  'function allPoolsLength() view returns (uint256)',
+  `function positions(uint256 _limit,uint256 _offset,address _account) view returns (${POSITION_TUPLE}[])`,
+  `function positionsUnstakedConcentrated(uint256 _limit,uint256 _offset,address _account) view returns (${POSITION_TUPLE}[])`,
+  'function balanceOf(address) view returns (uint256)',
   'function factory() view returns (address)',
   'function isPool(address) view returns (bool)',
   'function getPool(address,address,int24) view returns (address)',
@@ -55,6 +77,9 @@ export interface AerodromeClaimItemV1 {
 export interface AerodromeClaimPlanV1 {
   blockNumber: string;
   poolsTotal: number; poolsRead: number; poolsUnread: number;
+  /** NFTs the wallet itself holds in a reviewed position manager (unstaked
+   * concentrated positions), and how many of them Sugar returned. */
+  clPositionsTotal: number; clPositionsRead: number;
   positionsFound: number; managedSkipped: number;
   calls: AerodromeClaimItemV1[];
   errorCode: string | null;
@@ -91,7 +116,8 @@ function call(to: string, signature: string, args: readonly unknown[] = []): Exe
 }
 
 /** At most two RPCs are in flight. A failed page splits 500→250→125;
- * unread pages and a catalogue beyond the budget prevent any approval. */
+ * unread pages, pools Sugar cannot reach and a catalogue beyond the budget
+ * prevent any approval, and so does a wallet-held position Sugar left out. */
 export async function readAerodromeClaimPlanV1(
   reader: AerodromeClaimReadV1,
   wallet: string,
@@ -101,6 +127,7 @@ export async function readAerodromeClaimPlanV1(
   const deadline = now() + (options.deadlineMs ?? 45_000);
   const plan: AerodromeClaimPlanV1 = {
     blockNumber: String(reader.blockNumber), poolsTotal: 0, poolsRead: 0, poolsUnread: 0,
+    clPositionsTotal: 0, clPositionsRead: 0,
     positionsFound: 0, managedSkipped: 0, calls: [], errorCode: null,
   };
   // The per-read deadline also bounds readers injected by acceptance probes.
@@ -114,13 +141,28 @@ export async function readAerodromeClaimPlanV1(
       })]);
     } finally { clearTimeout(timer!); }
   };
+  const uint = (value: unknown, error: string): number => {
+    if (typeof value !== 'bigint' || value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(error);
+    return Number(value);
+  };
   try {
     address(wallet);
     requireEqual(await read(AERODROME_SUGAR_V1, 'voter'), AERODROME_VOTER_V1);
-    const count = await read(AERODROME_SUGAR_V1, 'count');
-    if (typeof count !== 'bigint' || count < 0n || count > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('aerodrome_catalogue_unreadable');
-    plan.poolsTotal = Number(count);
-    const limit = Math.min(plan.poolsTotal, options.maxPools ?? 50_000);
+    plan.poolsTotal = uint(await read(AERODROME_SUGAR_V1, 'count'), 'aerodrome_catalogue_unreadable');
+    // Sugar walks the Voter's own registry. Its offsets count only the pools
+    // it can reach, so pages stop there; the rest stay unread, not empty.
+    const registry = address(await read(AERODROME_SUGAR_V1, 'registry'));
+    requireEqual(await read(AERODROME_VOTER_V1, 'factoryRegistry'), registry);
+    const factories = await read(registry, 'poolFactories');
+    if (!Array.isArray(factories) || factories.length === 0 || factories.length > 10) throw new Error('aerodrome_catalogue_unreadable');
+    let listed = 0; let reachable = 0;
+    for (const factory of factories) {
+      const pools = uint(await read(address(factory), 'allPoolsLength'), 'aerodrome_catalogue_unreadable');
+      listed += pools;
+      reachable += Math.min(pools, SUGAR_MAX_ITERATIONS_V1);
+    }
+    if (listed !== plan.poolsTotal) throw new Error('aerodrome_catalogue_unreadable');
+    const limit = Math.min(reachable, options.maxPools ?? 50_000);
     const positions: AerodromeSugarPositionV1[] = [];
     let offset = 0;
     const page = async (start: number, size: number): Promise<void> => {
@@ -149,8 +191,40 @@ export async function readAerodromeClaimPlanV1(
     };
     await Promise.all([worker(), worker()]);
     plan.poolsUnread = plan.poolsTotal - plan.poolsRead;
+    if (plan.poolsUnread > 0) {
+      plan.positionsFound = positions.length;
+      plan.errorCode = 'aerodrome_incomplete_coverage';
+      return plan;
+    }
+    // positions() never returns an UNSTAKED concentrated position on Base:
+    // Sugar takes those only from a manager with userPositions(), and none of
+    // these three has it. The legacy call pages the wallet's own NFTs instead,
+    // and each NFT the wallet holds in a reviewed manager must come back.
+    const held = new Map<string, number>();
+    for (const nfpm of Object.values(AERODROME_CL_NFPMS_V1)) {
+      const balance = uint(await read(nfpm, 'balanceOf', [wallet]), 'aerodrome_positions_unreadable');
+      held.set(nfpm, balance);
+      plan.clPositionsTotal += balance;
+    }
+    if (plan.clPositionsTotal > SUGAR_MAX_POSITIONS_V1) throw new Error('aerodrome_positions_limit');
+    if (plan.clPositionsTotal > 0) {
+      const rows = await read(AERODROME_SUGAR_V1, 'positionsUnstakedConcentrated', [BigInt(SUGAR_MAX_POSITIONS_V1), 0n, wallet]);
+      if (!Array.isArray(rows) || rows.length > SUGAR_MAX_POSITIONS_V1) throw new Error('aerodrome_positions_unreadable');
+      const returned = new Map<string, Set<bigint>>();
+      for (const row of rows as AerodromeSugarPositionV1[]) {
+        if (!row || typeof row.id !== 'bigint' || row.id <= 0n) throw new Error('aerodrome_position_unreadable');
+        const nfpm = address(await read(address(row.lp), 'nft'));
+        if (held.has(nfpm)) returned.set(nfpm, (returned.get(nfpm) ?? new Set()).add(row.id));
+        positions.push(row);
+      }
+      for (const [nfpm, balance] of held) {
+        const seen = returned.get(nfpm)?.size ?? 0;
+        if (seen > balance) throw new Error('aerodrome_positions_unreadable');
+        plan.clPositionsRead += seen;
+      }
+    }
     plan.positionsFound = positions.length;
-    if (plan.poolsUnread > 0) { plan.errorCode = 'aerodrome_incomplete_coverage'; return plan; }
+    if (plan.clPositionsRead < plan.clPositionsTotal) { plan.errorCode = 'aerodrome_incomplete_coverage'; return plan; }
     const seen = new Set<string>();
     for (const position of positions) {
       if (!position || typeof position.alm !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(position.alm)
@@ -187,34 +261,40 @@ export async function readAerodromeClaimPlanV1(
           aero: String(position.emissions_earned), call: { ...execution, index: plan.calls.length,
             recipient: wallet as Address } });
       };
-      let nft: string | null = null;
-      if (cl) {
-        nft = address(await read(pool, 'nft'));
-        requireEqual(await read(nft, 'factory'), factory);
-      }
-      // Basic LPs may hold a remainder AND a stake. Both claims are valid.
-      if (fees && (!cl || position.staked === 0n)) {
-        if (cl) {
-          requireEqual(await read(nft!, 'ownerOf', [position.id]), wallet);
-          const max = (1n << 128n) - 1n;
-          item('cl_fees', call(nft!, 'function collect((uint256 tokenId,address recipient,uint128 amount0Max,uint128 amount1Max)) payable returns (uint256,uint256)', [
-            { tokenId: position.id, recipient: wallet, amount0Max: max, amount1Max: max },
-          ]));
-        } else item('basic_fees', call(pool, 'function claimFees() returns (uint256,uint256)'));
-      }
-      if (rewards) {
-        const gauge = address(await read(AERODROME_VOTER_V1, 'gauges', [pool]));
-        requireEqual(await read(gauge, 'rewardToken'), AERODROME_AERO_V1);
-        if (cl) {
-          requireEqual(await read(pool, 'gauge'), gauge);
-          requireEqual(await read(gauge, 'pool'), pool);
-          requireEqual(await read(gauge, 'nft'), nft!);
-          if (await read(gauge, 'stakedContains', [wallet, position.id]) !== true) throw new Error('aerodrome_stake_owner_mismatch');
-          requireEqual(await read(nft!, 'ownerOf', [position.id]), gauge);
-          item('cl_aero', call(gauge, 'function getReward(uint256)', [position.id]));
-        } else {
+      if (!cl) {
+        // Basic LPs may hold a remainder AND a stake. Both claims are valid.
+        if (fees) item('basic_fees', call(pool, 'function claimFees() returns (uint256,uint256)'));
+        if (rewards) {
+          const gauge = address(await read(AERODROME_VOTER_V1, 'gauges', [pool]));
+          requireEqual(await read(gauge, 'rewardToken'), AERODROME_AERO_V1);
           requireEqual(await read(gauge, 'stakingToken'), pool);
           item('basic_aero', call(gauge, 'function getReward(address)', [wallet]));
+        }
+      } else {
+        const nft = address(await read(pool, 'nft'));
+        requireEqual(await read(nft, 'factory'), factory);
+        requireEqual(nft, AERODROME_CL_NFPMS_V1[factory as typeof AERODROME_CL_FACTORIES_V1[number]]);
+        // Who holds the NFT decides, not Sugar's staked figure: an NFT in the
+        // wallet is unstaked and its fees are collectable; one in the gauge is
+        // staked, earns AERO, and its fees go to voters. Anyone else's is not
+        // this wallet's position at all.
+        const owner = address(await read(nft, 'ownerOf', [position.id]));
+        if (owner === wallet) {
+          if (rewards) throw new Error('aerodrome_stake_owner_mismatch');
+          const max = (1n << 128n) - 1n;
+          item('cl_fees', call(nft, 'function collect((uint256 tokenId,address recipient,uint128 amount0Max,uint128 amount1Max)) payable returns (uint256,uint256)', [
+            { tokenId: position.id, recipient: wallet, amount0Max: max, amount1Max: max },
+          ]));
+        } else {
+          const gauge = address(await read(AERODROME_VOTER_V1, 'gauges', [pool]));
+          requireEqual(owner, gauge);
+          if (!rewards) continue;
+          requireEqual(await read(gauge, 'rewardToken'), AERODROME_AERO_V1);
+          requireEqual(await read(pool, 'gauge'), gauge);
+          requireEqual(await read(gauge, 'pool'), pool);
+          requireEqual(await read(gauge, 'nft'), nft);
+          if (await read(gauge, 'stakedContains', [wallet, position.id]) !== true) throw new Error('aerodrome_stake_owner_mismatch');
+          item('cl_aero', call(gauge, 'function getReward(uint256)', [position.id]));
         }
       }
       if (plan.calls.length > 20) throw new Error('aerodrome_claim_batch_limit');
