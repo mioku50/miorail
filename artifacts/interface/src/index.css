@@ -13,6 +13,24 @@ body {
      Desktop layout (lg) enforces h-screen/overflow-hidden via container class. */
 }
 
+/* The loading frame appears only when loading is slow. On a normal load the
+   next screen replaces it before anything shows; a full-screen "Loading…" and
+   a Reload button flashed at every first visit to a screen. */
+.appear-late {
+  opacity: 0;
+  animation: appear-late 0.2s ease-out 1.5s forwards;
+}
+@keyframes appear-late {
+  to {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .appear-late {
+    animation-duration: 0s;
+  }
+}
+
 /* Thin scrollbars */
 ::-webkit-scrollbar {
   width: 5px;

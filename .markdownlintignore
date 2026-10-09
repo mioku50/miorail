@@ -19,5 +19,8 @@ Miorail — Release Roadmap от read-only до mainnet.md
 scratchpad
 videos
 screen
+# Playwright writes an error-context.md beside every failed run.
+test-results
+playwright-report
 .agents
 .claude
