@@ -54,7 +54,12 @@ for (const width of [1280, 390]) {
     await expect(page.getByText('GMGN is limiting requests. Miorail pauses its GMGN requests to avoid extending the block. Try again later.', { exact: true }).first()).toBeVisible();
     await expect(page.getByRole('button', { name: 'Review transaction', exact: true })).toBeDisabled();
     await page.screenshot({ path: testInfo.outputPath(`gmgn-limited-${width}.png`), fullPage: true });
+    responseIndex = 3;
+    await page.getByRole('button', { name: 'Change goal', exact: true }).click();
+    await page.getByRole('button', { name: 'Compare routes', exact: true }).click();
+    await expect(page.getByText('GMGN quotes are paused: no GMGN API key is configured, and GMGN refuses this server the public demo key, so GMGN was never asked.', { exact: true }).first()).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Review transaction', exact: true })).toBeDisabled();
     expect(posts.every(path => path.endsWith('/swap/evaluate'))).toBe(true);
-    expect(posts).toHaveLength(3);
+    expect(posts).toHaveLength(4);
   });
 }
