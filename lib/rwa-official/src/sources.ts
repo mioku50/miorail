@@ -40,6 +40,7 @@ export const OFFICIAL_SOURCES_V1 = {
     humanUrl: 'https://docs.base.org/sdks/tokenized-stocks/overview',
     issuer: 'coinbase',
   },
+  // Retired 2026-10-10 (retiredSources.ts): Base removed its address table.
   base_docs_technical: {
     url: 'https://docs.base.org/build-on-base/integrate-defi/list-tokenized-stocks.md',
     /** Where a human reads the same document. Shown, never fetched. */

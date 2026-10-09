@@ -17,7 +17,11 @@
 import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   OFFICIAL_SOURCES_V1,
+  RETIRED_OFFICIAL_SOURCES_V1,
+  activeSourceDiscrepanciesV1,
   fetchOfficialSourceV1,
+  listedOnlyByRetiredSourcesV1,
+  officialSourceRetiredV1,
   officialCorpusHashV1,
   officialDocumentHashV1,
   officialSourceRegressionsV1,
@@ -79,6 +83,13 @@ async function main(): Promise<void> {
   }
 
   for (const kind of Object.keys(PARSERS_V1) as OfficialSourceKeyV1[]) {
+    const retired = RETIRED_OFFICIAL_SOURCES_V1[kind];
+    if (retired) {
+      // Not fetched and not health-checked. Its last snapshot stays as history.
+      console.log(`\n${kind}`);
+      console.log(`  retired ${retired.retiredOn}: ${retired.reason}; its last snapshot is kept, nothing is read`);
+      continue;
+    }
     const source = OFFICIAL_SOURCES_V1[kind];
     const fetched = await fetchOfficialSourceV1({ url: source.url });
 
@@ -328,7 +339,18 @@ async function main(): Promise<void> {
   }
 
   if (!dry) {
-    const discrepancies = await repository.sourceDiscrepancies({ chainId: CHAIN_ID_V1 });
+    // A frozen snapshot must not be the only thing keeping an asset official.
+    const official = await repository.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 });
+    const orphaned = listedOnlyByRetiredSourcesV1(official);
+    if (orphaned.length > 0) {
+      console.error('\nLISTED ONLY BY A RETIRED SOURCE — no source still read lists these; a person decides');
+      for (const asset of orphaned) {
+        const listing = asset.listings.find((row) => row.currentlyListed);
+        console.error(`  ${String(listing?.ticker).padEnd(7)} ${asset.tokenAddress}  ${asset.listings.filter((row) => row.currentlyListed && officialSourceRetiredV1(row.sourceKind)).map((row) => row.sourceKind).join('+')}`);
+      }
+      process.exitCode = 1;
+    }
+    const discrepancies = activeSourceDiscrepanciesV1(await repository.sourceDiscrepancies({ chainId: CHAIN_ID_V1 }));
     console.log(`\nsource discrepancies: ${discrepancies.length}`);
     for (const row of discrepancies) {
       if (row.kind === 'listed_in_one_source') {
