@@ -1145,8 +1145,15 @@ function ChoiceButton({
         </span>
       )}
       <span className="mr-choice-name">{choice.ticker}</span>
-      {/* A price on Base, or nothing: never $0 and never an old number. */}
-      <span className="mr-choice-px mono">{quote?.price ?? ''}</span>
+      {/* A price on Base, or nothing: never $0 and never an old number. A thin
+          market's price is not the stock's: its label stands in that slot. */}
+      {quote?.price ? (
+        <span className="mr-choice-px mono">{quote.price}</span>
+      ) : quote?.depthLabel ? (
+        <span className="mr-choice-px thin">{quote.depthLabel}</span>
+      ) : (
+        <span className="mr-choice-px mono"></span>
+      )}
       <span className="mr-choice-sub">
         {company ? <span className="mr-choice-company">{company}</span> : null}
         {/* The issuer list is the part that may be shortened; the tag is not.
@@ -1417,6 +1424,10 @@ function HeadlineAnswer({
             <strong className="mono">{quote.price}</strong>
             {quote.change ? <span className="mono d">{quote.change} · 24h</span> : null}
           </div>
+        ) : quote?.depthLabel ? (
+          <div className="mr-stock-px">
+            <span className="pill mr-stock-badge">{quote.depthLabel}</span>
+          </div>
         ) : null}
       </div>
       {priceNote || weekendClosed ? (
@@ -1425,7 +1436,9 @@ function HeadlineAnswer({
           {priceNote ? <span>{priceNote}</span> : null}
         </p>
       ) : null}
-      {chart ? <StockWeekChart view={chart} /> : null}
+      {quote?.depthNote ? <p className="mr-headline-body">{quote.depthNote}</p> : null}
+      {/* The week of a thin market is its pool's swings, not the stock's. */}
+      {chart && !quote?.depthLabel ? <StockWeekChart view={chart} /> : null}
 
       {lead ? null : (
         <p className="mr-headline-body">
@@ -1438,6 +1451,7 @@ function HeadlineAnswer({
         </p>
       )}
 
+      {tradable && quote?.buyWarning ? <p className="note warn">{quote.buyWarning}</p> : null}
       <div className="mr-headline-actions">
         {tradable ? (
           <>

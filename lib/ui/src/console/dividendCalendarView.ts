@@ -295,6 +295,10 @@ export function dividendCalendarViewV1(
   const quiet = silent.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   const unread = silent.filter((stock) => !dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol);
   const read = [...new Set(response.stocks.filter((stock) => dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol))].sort();
+  // Everyone the sentence is about: every stock whose releases are not read,
+  // the ones with a notice in the token included. Counting only the silent
+  // ones said "the other 120" on a board of 127 (2026-10-10).
+  const others = new Set(response.stocks.filter((stock) => !dividendReleasesReadV1(stock.underlyingKey)).map((stock) => stock.symbol)).size;
   const measured = response.passThrough.measuredOn;
   return {
     title: 'Dividends on Base',
@@ -308,7 +312,7 @@ export function dividendCalendarViewV1(
     // dividend-free, only not read.
     unread:
       unread.length > 0
-        ? `Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'}. For ${unread.length === 1 ? 'the other stock' : `the other ${unread.length} stocks`} on this board it shows a dividend only when Coinbase posts a notice in the token before paying it.`
+        ? `Miorail reads the dividend releases of ${read.length > 0 ? listV1(read) : 'none of these companies'}. For ${others === 1 ? 'the other stock' : `the other ${others} stocks`} on this board it shows a dividend only when Coinbase posts a notice in the token before paying it.`
         : null,
     note: [
       "Declared: the company's own release. Estimate: not declared yet — the last dividend again, a quarter later.",

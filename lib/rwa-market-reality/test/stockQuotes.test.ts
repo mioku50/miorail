@@ -106,3 +106,41 @@ test('what the server sends is what the client accepts', async () => {
     false,
   );
 });
+
+test('a price whose $1,000 round trip loses a fifth or more is a thin market, measured from the same runs', () => {
+  // PFEc on 2026-10-10: $100 at $143.21 / $143.06, then $1,000 bought at
+  // $180.33 and sold at $143.03, a 20.7% loss, while Pfizer traded at $28.
+  const thin = stockQuotesV1({
+    now: NOW,
+    stocks: [stock()],
+    prices: [
+      { token: TOKEN, at: hoursAgo(2.5), mid: 143.1, buyAt1k: 180.33, sellAt1k: 143.03 },
+      { token: TOKEN, at: hoursAgo(1.5), mid: 143.1, buyAt1k: 181, sellAt1k: 143 },
+      { token: TOKEN, at: hoursAgo(0.5), mid: 143.1, buyAt1k: null, sellAt1k: null },
+    ],
+  }).rows[0]!;
+  assert.deepEqual(thin.depth, { state: 'thin', roundTripLossBps: 2084, measuredAt: hoursAgo(1.5) }); // median of 2068 and 2099
+  // The price itself is still the measurement; what is shown is the screen's call.
+  assert.equal(thin.priceUsd, 143.1);
+
+  const deep = stockQuotesV1({
+    now: NOW,
+    stocks: [stock()],
+    prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 336.5, buyAt1k: 336.46, sellAt1k: 336.54 }],
+  }).rows[0]!;
+  assert.equal(deep.depth?.state, 'normal');
+  // A spread that keeps 83.5% is a wide market, not a thin one (LIc, NIOc).
+  const wide = stockQuotesV1({
+    now: NOW,
+    stocks: [stock()],
+    prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 11.55, buyAt1k: 12.58, sellAt1k: 10.5 }],
+  }).rows[0]!;
+  assert.deepEqual(wide.depth, { state: 'normal', roundTripLossBps: 1653, measuredAt: hoursAgo(0.5) });
+
+  const unmeasured = stockQuotesV1({
+    now: NOW,
+    stocks: [stock()],
+    prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 18.33 }],
+  }).rows[0]!;
+  assert.deepEqual(unmeasured.depth, { state: 'unmeasured', roundTripLossBps: null, measuredAt: null });
+});

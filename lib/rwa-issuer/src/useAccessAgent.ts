@@ -648,6 +648,7 @@ export function useAccessForAgentV1(input: {
   const { use } = input;
   const readings = venueAnnouncementReadingsV1({
     issuerId: input.issuerId,
+    tokenAddress: use.tokenAddress,
     venues: use.defi.venues,
     announcements: input.announcements,
   });

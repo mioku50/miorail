@@ -701,7 +701,16 @@ export async function readMarketRealityIndexV1(input: {
   scope?: MarketRealityIndexScopeV1;
 }) {
   const index = await rwaMarketRealityRuntime.assembleIndex(
-    { underlyings: rwaMarketRealityRuntime.underlyings(), now: rwaMarketRealityRuntime.now },
+    {
+      underlyings: rwaMarketRealityRuntime.underlyings(),
+      now: rwaMarketRealityRuntime.now,
+      currentOfficialAddresses: async () =>
+        new Set(
+          (await rwaMarketRealityRuntime.official().officialAssets({ chainId: 8453, limit: 500 })).map(
+            (identity) => identity.tokenAddress.toLowerCase(),
+          ),
+        ),
+    },
     input,
   );
   return MarketRealityIndexV1Schema.parse(index);

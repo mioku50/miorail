@@ -69,6 +69,10 @@ export interface PublicLadderPriceRowV1 {
   token: string;
   at: string;
   mid: number;
+  /** The same run's best buy and best sell at $1,000, when both were
+   * priced: how much of a real trade the $100 price survives. */
+  buyAt1k?: number | null;
+  sellAt1k?: number | null;
 }
 
 /**
@@ -89,6 +93,7 @@ export async function readPublicLadderPricesV1(
       SELECT r.token_address AS token,
              r.started_at AS t,
              s->>'direction' AS dir,
+             s->>'requestedCashAtomic' AS size,
              (s->>'effectivePriceAtomic')::numeric / power(10::numeric, (s->>'effectivePriceDecimals')::int) AS px
       FROM official_cash_exit_runs r
       CROSS JOIN LATERAL jsonb_array_elements(r.market_reality_snapshots) s
@@ -97,17 +102,20 @@ export async function readPublicLadderPricesV1(
         AND r.market_reality_snapshots IS NOT NULL
         AND r.completed_at >= ${input.since}
         AND r.started_at <= ${input.until}
-        AND s->>'requestedCashAtomic' = '100000000'
+        AND s->>'requestedCashAtomic' IN ('100000000', '1000000000')
         AND s->>'effectivePriceAtomic' ~ '^[0-9]+$'
         AND s->>'effectivePriceDecimals' ~ '^[0-9]{1,2}$'
     )
     SELECT token,
            t,
-           ((min(px) FILTER (WHERE dir = 'buy') + max(px) FILTER (WHERE dir = 'sell')) / 2)::float8 AS mid
+           ((min(px) FILTER (WHERE dir = 'buy' AND size = '100000000')
+             + max(px) FILTER (WHERE dir = 'sell' AND size = '100000000')) / 2)::float8 AS mid,
+           (min(px) FILTER (WHERE dir = 'buy' AND size = '1000000000'))::float8 AS buy_1k,
+           (max(px) FILTER (WHERE dir = 'sell' AND size = '1000000000'))::float8 AS sell_1k
     FROM snaps
     GROUP BY token, t
-    HAVING min(px) FILTER (WHERE dir = 'buy') IS NOT NULL
-       AND max(px) FILTER (WHERE dir = 'sell') IS NOT NULL
+    HAVING min(px) FILTER (WHERE dir = 'buy' AND size = '100000000') IS NOT NULL
+       AND max(px) FILTER (WHERE dir = 'sell' AND size = '100000000') IS NOT NULL
     ORDER BY t`) as Array<Record<string, unknown>>;
   return pricesFromRowsV1(rows);
 }
@@ -154,11 +162,16 @@ export async function readPublicLadderPricesOfTokenV1(
 }
 
 function pricesFromRowsV1(rows: readonly Record<string, unknown>[]): PublicLadderPriceRowV1[] {
+  const price = (value: unknown): number | null => {
+    const number = value === null || value === undefined ? Number.NaN : Number(value);
+    return Number.isFinite(number) && number > 0 ? number : null;
+  };
   return rows
     .map((row) => ({
       token: String(row.token).toLowerCase(),
       at: new Date(row.t as string | Date).toISOString(),
       mid: Number(row.mid),
+      ...('buy_1k' in row ? { buyAt1k: price(row.buy_1k), sellAt1k: price(row.sell_1k) } : {}),
     }))
     .filter((row) => Number.isFinite(row.mid) && row.mid > 0);
 }

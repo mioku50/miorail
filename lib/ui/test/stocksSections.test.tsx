@@ -77,7 +77,7 @@ describe('Stocks in four tabs', () => {
     const html = screen();
     assert.match(html, /<nav class="tabbar mr-sections" aria-label="Stocks">/);
     assert.match(html, /<a href="\/stocks" class="item on" aria-current="page">Market<\/a>/);
-    assert.match(html, /<a href="\/stocks\/mine" class="item">My stocks<span class="n"> · 2<\/span><\/a>/);
+    assert.match(html, /<a href="\/stocks\/mine" class="item">My stocks<span class="n"> · 2 new<\/span><\/a>/);
     assert.match(html, /<a href="\/stocks\/dividends" class="item">Dividends<\/a>/);
     assert.match(html, /<a href="\/stocks\/weekend" class="item">Weekend<span class="n"> · live<\/span><\/a>/);
   });
@@ -93,7 +93,7 @@ describe('Stocks in four tabs', () => {
         ['Weekend', null, null],
       ],
     );
-    assert.equal(stocksSectionTabsV1({ unread: 3, unreadMore: true, weekendLive: false })[1]!.note, '3+');
+    assert.equal(stocksSectionTabsV1({ unread: 3, unreadMore: true, weekendLive: false })[1]!.note, '3+ new');
   });
 
   test('the market tab shows the board and nothing from the other tabs', () => {

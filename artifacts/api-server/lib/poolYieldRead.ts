@@ -14,7 +14,12 @@ const LOOK_BACK_DAYS_V1 = 8;
 export async function readPoolYieldV1(
   now: Date,
   tokenAddress: string,
-  deps: { readings: (token: string, since: string) => Promise<readonly PoolYieldReadingV1[]> },
+  deps: {
+    readings: (token: string, since: string) => Promise<readonly PoolYieldReadingV1[]>;
+    /** The stock's market price on Base, or null where its market is thin,
+     * unmeasured or unpriced; without one the pool gets no rate. */
+    marketPrice?: (token: string) => Promise<number | null>;
+  },
 ): Promise<PoolYieldResponseV1> {
   const token = tokenAddress.toLowerCase();
   const since = new Date(now.getTime() - LOOK_BACK_DAYS_V1 * 86_400_000).toISOString();
@@ -27,7 +32,10 @@ export async function readPoolYieldV1(
   return {
     schemaVersion: 'pool-yield-response/v1',
     tokenAddress: token,
-    yield: ofPool.length > 0 ? poolYieldV1({ readings: ofPool, now }) : null,
+    yield:
+      ofPool.length > 0
+        ? poolYieldV1({ readings: ofPool, now, marketPriceUsd: deps.marketPrice ? await deps.marketPrice(token).catch(() => null) : null })
+        : null,
   };
 }
 

@@ -14,12 +14,15 @@ import { logger } from '@mioagent/utils';
 import { poolYieldAgentV1 } from '@mioagent/rwa-market-reality/pool-yield';
 
 import { databasePoolYieldReadingsV1, readPoolYieldV1 } from '../../lib/poolYieldRead.js';
+import { stockMarketPriceV1 } from '../publicStocks.js';
 import { ecosystemEvidenceForV1, rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import { McpPublicError } from './tools.js';
 
 /** A test seam for the stored pool yield; production reads the database. */
 export const useAccessToolRuntimeV1 = {
   poolYieldReadings: databasePoolYieldReadingsV1,
+  /** The price the screen values the pool at, so the assistant hears the same rate. */
+  marketPrice: stockMarketPriceV1,
 };
 
 /** What the deepest Aerodrome pool pays, for the assistant: null when it was
@@ -29,6 +32,7 @@ async function poolYieldForAgentV1(tokenAddress: string) {
   try {
     const read = await readPoolYieldV1(rwaMarketRealityRuntime.now(), tokenAddress, {
       readings: useAccessToolRuntimeV1.poolYieldReadings,
+      marketPrice: useAccessToolRuntimeV1.marketPrice,
     });
     return read.yield ? poolYieldAgentV1(read.yield) : null;
   } catch (error) {

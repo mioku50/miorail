@@ -165,6 +165,14 @@ function bestObservationV1(
  * under a larger size's heading is the one thing the preview must not do
  * silently.
  */
+/**
+ * Every official asset, for naming one by its address: the repository's own
+ * cap. It was 64 while the corpus grew past 150 (127 Coinbase stocks on
+ * 2026-10-10), so an update about NVDAc fell outside the page and was titled
+ * with its address instead of its name.
+ */
+export const OFFICIAL_UNIVERSE_LIMIT_V1 = 500;
+
 export function previewLadderFromRunV1(
   run: CashExitMeasurementRunV1 | null,
 ): OfficialCashExitRungPreviewV1[] {
@@ -534,7 +542,7 @@ export async function assembleOfficialLookalikeFeedV1(
       ...(matchedAlias === null ? {} : { matchedAlias }),
       limit,
     }),
-    deps.official.officialAssets({ chainId: 8453, limit: 64 }),
+    deps.official.officialAssets({ chainId: 8453, limit: OFFICIAL_UNIVERSE_LIMIT_V1 }),
   ]);
   // The official side of every card comes from the corpus, not from the stored
   // row: a row carries the resembling contract's own words on purpose, and
@@ -611,7 +619,7 @@ export async function assembleRwaSignalFeedV1(
           ...(input?.timeBasis === undefined ? {} : { timeBasis: input.timeBasis }),
         }),
     deps.signals.signalWatch({ chainId: 8453 }),
-    deps.official.officialAssets({ chainId: 8453, limit: 64, currentlyListedOnly: false }),
+    deps.official.officialAssets({ chainId: 8453, limit: OFFICIAL_UNIVERSE_LIMIT_V1, currentlyListedOnly: false }),
     deps.corporateActions.coverage({ chainId: 8453 }),
   ]);
   const named = new Map(

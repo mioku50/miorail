@@ -9,7 +9,7 @@ import {
 } from '@mioagent/route-storage';
 
 import { rwaRecordedChangesForAgentV1 } from '../src/signalFeedAgent.js';
-import type { OfficialDiscoverDepsV1 } from '../src/overview.js';
+import { assembleRwaSignalFeedV1, type OfficialDiscoverDepsV1 } from '../src/overview.js';
 
 // ---------------------------------------------------------------------------
 // The market-wide read is the only tool on the protocol that answers without
@@ -322,3 +322,34 @@ describe('the market-wide recorded-change read', () => {
     assert.equal(out.marketWide, true);
   });
 });
+
+test('a change about the last of 150 official assets still carries its name', async () => {
+  // The universe was read 64 at a time while the corpus held about 150, so an
+  // update about NVDAc reached a holder titled "0xb200…108c".
+  const universe = Array.from({ length: 150 }, (_, index) => {
+    const tokenAddress = index === 149 ? NVDA : `0xb2000000000000000000000000000000000${String(index).padStart(5, '0')}`;
+    return {
+      chainId: 8453, tokenAddress, issuer: 'coinbase',
+      listings: [{
+        sourceKind: 'coinbase_stocks_api', sourceUrl: 'https://api.coinbase.com/v1/tokenized-stocks',
+        ticker: index === 149 ? 'NVDAc' : `T${index}c`, displayName: null, referenceFeedAddress: null,
+        firstSeenAt: '2026-10-02T00:00:00.000Z', lastSeenAt: '2026-10-10T00:00:00.000Z', currentlyListed: true,
+        sourceCheckedAt: null, sourceStatus: 'ok',
+      }],
+    };
+  });
+  const deps = await depsV1();
+  // Like the repository: never more than the caller asked for.
+  deps.official = {
+    officialAssets: async (input: { limit: number }) => universe.slice(0, input.limit),
+  } as unknown as OfficialDiscoverDepsV1['official'];
+  await deps.signals.openSignalWatch({ chainId: 8453, kinds: ['official_asset_cash_exit_changed'], at: '2026-08-01T00:00:00.000Z' });
+  await deps.signals.recordSignals({
+    chainId: 8453,
+    recordedAt: '2026-09-08T11:00:00.000Z',
+    signals: [costChangeV1({ subject: NVDA, occurredAt: '2026-09-08T09:00:00.000Z', key: 'n', from: '10', to: '90' })],
+  });
+  const feed = await assembleRwaSignalFeedV1(deps);
+  assert.equal(feed.cards[0]!.subjectTicker, 'NVDAc');
+});
+

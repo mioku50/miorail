@@ -23,7 +23,7 @@ import {
   type CashExitChangeV1,
 } from './addressDossier.js';
 import type { OfficialCashExitRungPreviewV1 } from './discover.js';
-import { previewLadderFromRunV1, routeStatusFromPreviewV1 } from './overview.js';
+import { OFFICIAL_UNIVERSE_LIMIT_V1, previewLadderFromRunV1, routeStatusFromPreviewV1 } from './overview.js';
 import { readTokenizedStockReferenceV1, unavailableTokenizedStockReferenceV1 } from './reference.js';
 
 const ZERO_HASH_V1 = `0x${'0'.repeat(64)}` as const;
@@ -375,7 +375,7 @@ export async function assembleAddressDossierV1(
       deps.launches?.getFeedRowForToken({ tokenAddress, historyLimit: 1 }) ?? Promise.resolve(null),
       deps.projects?.readProject({ chainId: 8453, tokenAddress }) ?? Promise.resolve(null),
       deps.official.sourceDiscrepancies({ chainId: 8453 }),
-      deps.official.officialAssets({ chainId: 8453, limit: 64 }),
+      deps.official.officialAssets({ chainId: 8453, limit: OFFICIAL_UNIVERSE_LIMIT_V1 }),
     ]);
   const official = isOfficialV1(identityRow) ? identityRow : null;
 

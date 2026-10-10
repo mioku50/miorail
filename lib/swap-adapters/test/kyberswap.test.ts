@@ -498,3 +498,24 @@ test('with neither a price impact nor a USD pair, the refusal stands', async () 
   ).quote({ intent, walletAddress: WALLET, requestId: 'kyber-no-usd', now: NOW });
   assert.equal(result.outcome, 'invalid_response');
 });
+
+test('a route with one side unpriced is the router not pricing the token, not a broken reply', async () => {
+  // BILIc, PMc and WENc on 2026-10-10: a sale for USDC came back with
+  // `amountInUsd: 0`, and the card said "Read failed".
+  const intent = makeIntent();
+  for (const [label, overrides] of [
+    ['sell side unpriced', { amountInUsd: '0', amountOutUsd: '0.5028141852232951' }],
+    ['buy side unpriced', { amountInUsd: '0.1', amountOutUsd: '0' }],
+    ['one side absent', { amountOutUsd: '0.5' }],
+  ] as const) {
+    const response = liveKyberResponseV1(intent, overrides);
+    // Absent the way the API leaves a field out: no key at all.
+    if (label === 'one side absent') delete (response.data.routeSummary as Record<string, unknown>).amountInUsd;
+    const result = await adapterFor(response).quote({
+      intent, walletAddress: WALLET, requestId: `kyber-unpriced-${label}`, now: NOW,
+    });
+    const code = result.outcome === 'quoted' ? null : result.errorCode;
+    assert.equal(result.outcome, 'unsupported', label);
+    assert.equal(code, 'provider_token_unpriced', label);
+  }
+});

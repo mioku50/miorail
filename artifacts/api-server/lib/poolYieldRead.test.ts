@@ -49,6 +49,8 @@ test('the pool of the newest reading is the one said, over eight days of its rea
       // be mixed into the newest pool's figure.
       return [reading({ poolAddress: SHALLOW, blockNumber: 52100000, blockAt: '2026-10-03T00:00:00.000Z', readAt: '2026-10-03T00:00:02.000Z' }), reading()];
     },
+    // The price the list shows beside the pool; without one there is no rate.
+    marketPrice: async () => 235.14,
   });
   assert.deepEqual(asked, [{ token: NVDA, since: '2026-09-26T15:20:00.000Z' }]);
   assert.equal(answer.schemaVersion, 'pool-yield-response/v1');

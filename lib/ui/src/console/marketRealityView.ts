@@ -844,7 +844,7 @@ function outcomeFromCodesV1(
   errorCodes: readonly (string | null)[],
 ): MarketRealityOutcomeV1 {
   const codes = errorCodes.filter((code): code is string => code !== null);
-  if (codes.some((code) => code === 'provider_unsupported_token')) return 'unsupported_token';
+  if (codes.some((code) => code === 'provider_unsupported_token' || code === 'provider_token_unpriced')) return 'unsupported_token';
   // BEFORE the status, and deliberately. Storage folds a refusal into
   // `measurement_failed` (its `unavailable` state is reserved for an explicit
   // `provider_no_route`), so reading the status first would file a venue's own
@@ -1413,6 +1413,13 @@ export function withheldCauseV1(input: {
         'The router answered that it does not know this contract, so it never looked for a route. That is Miorail\u2019s coverage, not the market\u2019s answer, and it says nothing about whether the token trades.',
     };
   }
+  if (code === 'provider_token_unpriced') {
+    return {
+      headline: 'This route source has no dollar price for this token.',
+      detail:
+        'It quoted a trade but gave the token no dollar value, so what the trip costs could not be checked. That is Miorail\u2019s coverage, not the market\u2019s answer.',
+    };
+  }
   if (code === 'provider_policy_refused') {
     return {
       headline: 'A route source that covers this token declined to quote it.',
@@ -1496,6 +1503,15 @@ export interface ExitCostViewV1 {
   note: string;
 }
 
+/**
+ * How much of the money a severe round trip keeps, in words that match the
+ * number beside them. The band starts at 20%, so "most of the money" was said
+ * of PFEc's 20.68% (2026-10-10), where 79% came back.
+ */
+export function severeLossWordsV1(bps: number): string {
+  return bps >= 5_000 ? 'most of the money does not come back' : 'a fifth or more of the money does not come back';
+}
+
 export function exitCostGradeV1(bps: number): ExitCostGradeV1 {
   // Checked FIRST, because every comparison below it is true of a negative
   // number and each one of them means something good.
@@ -1548,7 +1564,7 @@ export function exitCostViewV1(
         : grade === 'above_policy'
           ? 'buying in and selling straight back costs this much, above the reviewed slippage policy'
           : grade === 'most_value_lost'
-            ? 'buying in and selling straight back costs this much — most of the money does not come back'
+            ? `buying in and selling straight back costs this much — ${severeLossWordsV1(bps)}`
             : 'the round trip returned more than it took, which is not a cost a reader can act on: the two legs are separate quotes taken moments apart, and at small sizes that gap and the token’s own rounding are larger than the market',
   };
 }
@@ -1598,7 +1614,7 @@ function exitViewV1(
           // that the money does not come back, which is a fact about how much
           // sits behind this contract and not about whether anyone would quote.
           `Total cost to buy and exit: ${cost} — ${when}. A price is available at this size; ${
-            grade === 'most_value_lost' ? 'most of the money is not' : 'it costs more than the reviewed slippage policy allows'
+            grade === 'most_value_lost' ? severeLossWordsV1(bps) : 'it costs more than the reviewed slippage policy allows'
           }.`,
       // Never `off`: this console's `off` means nothing was measured, and this
       // was measured. Three bands rather than two, because a 4% round trip and
@@ -1615,7 +1631,7 @@ function exitViewV1(
       : withinBound
       ? `what buying in and selling straight back costs at this size — ${when}`
       : grade === 'most_value_lost'
-        ? `a price is available at this size, and buying in then selling straight back costs this much — ${when}. Most of the money does not come back.`
+        ? `a price is available at this size, and buying in then selling straight back costs this much — ${when}. ${severeLossWordsV1(bps).replace(/^./, (first) => first.toUpperCase())}.`
         : `a price is available at this size, and buying in then selling straight back costs this much — ${when}. That is above the reviewed slippage policy.`,
     tone,
   };
@@ -1631,6 +1647,13 @@ const MEASUREMENT_OUTCOME_V1: Readonly<Record<string, { label: string | null; no
   provider_unsupported_token: {
     label: ROUTER_UNSUPPORTED_SENTENCE_V1,
     note: 'this route source answered that it does not carry this token',
+  },
+  // It said "Read failed" on BILIc, PMc and WENc (2026-10-10): the router
+  // quoted a sale and gave the token no dollar value, which our adapter called
+  // a malformed reply.
+  provider_token_unpriced: {
+    label: 'This route source has no dollar price for this token',
+    note: 'it quoted a trade but gave the token no dollar value, so the cost of the trip could not be checked',
   },
   // The venue could route it and would not. Stated as what happened, with no
   // inference about the reader, the token, or whether the rule is permanent.
@@ -2793,6 +2816,7 @@ function defiSectionV1(
   // nobody checked is `unchecked`, which is a different sentence from silence.
   const announcements = venueAnnouncementReadingsV1({
     issuerId,
+    tokenAddress: use?.tokenAddress ?? null,
     venues: listing?.venues ?? [],
   });
   const announcementFacts = venueAnnouncementFactsV1(announcements);

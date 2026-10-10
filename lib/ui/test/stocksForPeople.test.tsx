@@ -91,6 +91,8 @@ describe('the list reads like a list of stocks', () => {
 describe('what else you can do with the token', () => {
   const use = (over: Partial<RepresentationUseAccessV1> = {}) =>
     ({
+      // NVDAc: one of the thirteen stocks Base's Aave post could be about.
+      tokenAddress: NVDAC,
       observedAt: '2026-10-03T13:58:00Z',
       pools: {
         state: 'measured',
@@ -227,6 +229,10 @@ describe('what else you can do with the token', () => {
     };
     const view = stockUsesViewV1({ use: use(), tokenSymbol: 'NVDAc', priceUsd: 234.31, poolYield, now: NOW })!;
     assert.deepEqual(view.rows.slice(0, 2).map((row) => [row.id, row.label]), [['pool', 'Pool'], ['yield', 'Pays']]);
+    // No yearly rate beside a stock whose price the card does not show (a thin
+    // or unmeasured market): CAKEc's $174 pool read "about 24208% a year in AERO".
+    const withheld = stockUsesViewV1({ use: use(), tokenSymbol: 'NVDAc', priceUsd: null, poolYield, now: NOW })!;
+    assert.equal(withheld.rows.some((row) => row.id === 'yield'), false);
     assert.equal(
       view.rows[1]!.text,
       "Staked: about 53% a year in AERO (this week's rate) · Not staked: about 0.92% a year in fees (last 1.4 days) · per dollar in the pool, on average; a position earns one or the other",
@@ -276,4 +282,50 @@ describe('what else you can do with the token', () => {
     assert.equal(compactUsdV1(537_900), '$537.9K');
     assert.equal(compactUsdV1(152.97), '$153');
   });
+});
+
+describe("a thin market's price is not shown as the stock's", () => {
+  const choice = (key: string, ticker: string, company: string | null): UnderlyingChoiceViewV1 => ({
+    underlyingKey: key, title: ticker, ticker, company, identifier: null, issuerLine: 'Coinbase',
+    issuerIds: ['coinbase'], representationCount: 1, multiIssuer: false, emptyNote: null,
+  });
+  const row = (overrides: Record<string, unknown>) => ({
+    underlyingKey: NVDA, tokenAddress: NVDAC, tokenSymbol: 'PFEc', companyName: 'Pfizer Inc',
+    iconPath: null, priceUsd: 143.13, priceAt: '2026-10-10T10:02:00Z', change24h: 0.0003,
+    changeFromAt: '2026-10-09T10:00:00Z', ...overrides,
+  });
+  const viewOf = (overrides: Record<string, unknown>) =>
+    stockQuoteViewsByKeyV1({ schemaVersion: 'stock-quotes/v1', asOf: NOW.toISOString(), rows: [row(overrides) as never] }).get(NVDA)!;
+
+  test('thin: no price, no change, a label, a sentence and a warning before Buy', () => {
+    // PFEc on 2026-10-10: $143 on Base, $28 on the NYSE, a $1,000 round trip losing 21%.
+    const view = viewOf({ depth: { state: 'thin', roundTripLossBps: 2084, measuredAt: '2026-10-10T10:02:00Z' } });
+    assert.equal(view.price, null);
+    assert.equal(view.priceUsd, null);
+    assert.equal(view.change, null);
+    assert.equal(view.priceAt, null);
+    assert.equal(view.depthLabel, 'Thin market');
+    assert.match(view.depthNote!, /a \$1,000 buy and sell here loses 21%/);
+    assert.match(view.buyWarning!, /can cost far more than the share is worth/);
+    const markup = renderToStaticMarkup(
+      <Chooser choices={[choice(NVDA, 'PFE', 'Pfizer Inc')]} quotes={new Map([[NVDA, view]])} selectedKey={null}
+        loading={false} error={null} onUnderlying={() => undefined} />,
+    );
+    assert.match(markup, /<span class="mr-choice-px thin">Thin market<\/span>/);
+    assert.doesNotMatch(markup, /143/);
+  });
+
+  test('unmeasured depth withholds the price too, in its own words; a deep market and an older reply show it', () => {
+    const unmeasured = viewOf({ depth: { state: 'unmeasured', roundTripLossBps: null, measuredAt: null } });
+    assert.equal(unmeasured.price, null);
+    assert.equal(unmeasured.depthLabel, 'Depth not measured');
+    const deep = viewOf({ depth: { state: 'normal', roundTripLossBps: 3, measuredAt: '2026-10-10T10:02:00Z' } });
+    assert.equal(deep.price, '$143.13');
+    assert.equal(deep.depthLabel, null);
+    assert.equal(deep.buyWarning, null);
+    assert.equal(viewOf({}).price, '$143.13');
+    // No price at all is no label either: nothing was withheld.
+    assert.equal(viewOf({ priceUsd: null, priceAt: null, depth: { state: 'unmeasured', roundTripLossBps: null, measuredAt: null } }).depthLabel, null);
+  });
+
 });

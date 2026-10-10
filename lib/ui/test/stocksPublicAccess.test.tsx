@@ -120,8 +120,8 @@ test('a public reader is served the public cache entry, never the session one', 
     (client) => {
       // Two different corpora under the two keys: whichever the hook reads is
       // the one it selects from.
-      client.setQueryData(['rwa-underlyings', 100, null, 'public'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')]));
-      client.setQueryData(['rwa-underlyings', 100, null, 'session'], indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')]));
+      client.setQueryData(['rwa-underlyings', 500, null, 'public'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')]));
+      client.setQueryData(['rwa-underlyings', 500, null, 'session'], indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')]));
     },
     { access: 'public' },
   );
@@ -132,7 +132,7 @@ test('a ticker in the address selects that security, not the default one', () =>
   const { probe } = probeV1(
     (client) =>
       client.setQueryData(
-        ['rwa-underlyings', 100, null, 'public'],
+        ['rwa-underlyings', 500, null, 'public'],
         indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.'), entryV1(NVDA, 'NVDA', 'NVDA')]),
       ),
     { access: 'public', preferredSymbol: 'nvda' },
@@ -146,7 +146,7 @@ test('a ticker that is not a Coinbase stock selects nothing and says so', () => 
   // fall back to: a link to a Dinari- or Backed-only ticker opens on nothing.
   const { probe } = probeV1(
     (client) =>
-      client.setQueryData(['rwa-underlyings', 100, null, 'public'], indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')])),
+      client.setQueryData(['rwa-underlyings', 500, null, 'public'], indexV1([entryV1(AAPL, 'AAPL', 'Apple Inc.')])),
     { access: 'public', preferredSymbol: 'zzzz' },
   );
   assert.equal(probe.selectedKey, null, 'a link to one stock must never open on another');
@@ -157,7 +157,7 @@ test('signed out, the session-only controls lead to the wallet when there is a d
   const signIns: number[] = [];
   const { probe, markup } = probeV1(
     (client) =>
-      client.setQueryData(['rwa-underlyings', 100, null, 'public'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')])),
+      client.setQueryData(['rwa-underlyings', 500, null, 'public'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')])),
     { access: 'public', onSignInRequired: () => signIns.push(1) },
   );
   assert.equal(probe.visitor, true);
@@ -171,7 +171,7 @@ test('signed out, the session-only controls lead to the wallet when there is a d
 test('signed out with no door, those controls are absent rather than inert', () => {
   const { probe, markup } = probeV1(
     (client) =>
-      client.setQueryData(['rwa-underlyings', 100, null, 'public'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')])),
+      client.setQueryData(['rwa-underlyings', 500, null, 'public'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')])),
     { access: 'public' },
   );
   assert.equal(probe.visitor, true);
@@ -184,7 +184,7 @@ test('signed out with no door, those controls are absent rather than inert', () 
 test('a session reader gets no visitor notice and the full set of controls', () => {
   const { probe } = probeV1(
     (client) =>
-      client.setQueryData(['rwa-underlyings', 100, null, 'session'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')])),
+      client.setQueryData(['rwa-underlyings', 500, null, 'session'], indexV1([entryV1(NVDA, 'NVDA', 'NVDA')])),
     {},
   );
   assert.equal(probe.visitor, false);

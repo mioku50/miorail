@@ -388,6 +388,11 @@ export function providerFailure(
   if (errorCode === 'provider_venue_not_covered') {
     return { outcome: 'unsupported', provider, errorCode, retryable: false };
   }
+  // The router routes the token and gives it no dollar value, so no cost can
+  // be checked: its coverage again, never the market's verdict or our outage.
+  if (errorCode === 'provider_token_unpriced') {
+    return { outcome: 'unsupported', provider, errorCode, retryable: false };
+  }
   // A venue that CAN route this pair and declines to, on its own trading
   // policy. Deliberately not folded into any of its three neighbours: it is
   // not `unavailable` (the market having no route), not `unsupported` (our

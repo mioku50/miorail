@@ -12,6 +12,9 @@ const GAUGE = '0x30d1e5af5ce39863e6f69a1f73ffb0e1ac9771a8';
 const NOW = new Date('2026-10-04T15:20:00.000Z');
 
 /** The NVDAc/USDC pool as read on 2026-10-04 at block 52168748. */
+/** The stock's market price on Base beside the fixture pool: the same as its own. */
+const MARKET = 235.14;
+
 function reading(patch: Partial<PoolYieldReadingV1> = {}): PoolYieldReadingV1 {
   return {
     chainId: 8453,
@@ -43,7 +46,7 @@ function reading(patch: Partial<PoolYieldReadingV1> = {}): PoolYieldReadingV1 {
 
 describe('what an Aerodrome pool pays, per dollar in it', () => {
   test('the NVDAc pool: its own price, its money, and a week of AERO at this rate', () => {
-    const view = poolYieldV1({ readings: [reading()], now: NOW })!;
+    const view = poolYieldV1({ readings: [reading()], now: NOW, marketPriceUsd: MARKET })!;
     PoolYieldV1Schema.parse(view);
     // The pool's price for NVDAc in USDC, from its sqrt price.
     assert.ok(Math.abs(view.stockPriceUsd - 235.14) < 0.05, `price ${view.stockPriceUsd}`);
@@ -90,7 +93,7 @@ describe('what an Aerodrome pool pays, per dollar in it', () => {
     const second = reading({
       swaps: { fromBlock: 52125548, fromAt: '2026-10-03T15:14:03.000Z', count: 600, amount0InAtomic: '500000000000', amount1InAtomic: '50000000000' },
     });
-    const view = poolYieldV1({ readings: [second, first], now: NOW })!;
+    const view = poolYieldV1({ readings: [second, first], now: NOW, marketPriceUsd: MARKET })!;
     assert.equal(view.fees!.days, 2);
     assert.equal(view.fees!.swaps, 1_000);
     // 0.05% of $1,000,000 and of 1,000 NVDAc at the pool's price.
@@ -106,20 +109,20 @@ describe('what an Aerodrome pool pays, per dollar in it', () => {
     const short = reading({
       swaps: { fromBlock: 52158748, fromAt: '2026-10-04T09:40:43.000Z', count: 256, amount0InAtomic: '122214067233', amount1InAtomic: '17000000000' },
     });
-    assert.equal(poolYieldV1({ readings: [short], now: NOW })!.fees, null);
+    assert.equal(poolYieldV1({ readings: [short], now: NOW, marketPriceUsd: MARKET })!.fees, null);
     const old = reading({
       blockNumber: 51000000,
       blockAt: '2026-09-20T00:00:00.000Z',
       readAt: '2026-09-20T00:00:02.000Z',
       swaps: { fromBlock: 50900000, fromAt: '2026-09-17T00:00:00.000Z', count: 9, amount0InAtomic: '1', amount1InAtomic: '1' },
     });
-    assert.equal(poolYieldV1({ readings: [old, reading()], now: NOW })!.fees, null);
+    assert.equal(poolYieldV1({ readings: [old, reading()], now: NOW, marketPriceUsd: MARKET })!.fees, null);
   });
 
   test('a pool that is not paired with USDC is not priced in this version', () => {
     const weth = '0x4200000000000000000000000000000000000006';
     assert.equal(poolYieldV1({ readings: [reading({ token0Address: weth })], now: NOW }), null);
-    assert.equal(poolYieldV1({ readings: [], now: NOW }), null);
+    assert.equal(poolYieldV1({ readings: [], now: NOW, marketPriceUsd: MARKET }), null);
   });
 });
 
@@ -127,7 +130,7 @@ describe('what an Aerodrome pool pays, per dollar in it', () => {
 describe('the same figure for an assistant', () => {
   test('two alternatives by name, and a sentence written by no model', async () => {
     const { poolYieldAgentV1 } = await import('../src/poolYield.js');
-    const view = poolYieldV1({ readings: [reading()], now: NOW })!;
+    const view = poolYieldV1({ readings: [reading()], now: NOW, marketPriceUsd: MARKET })!;
     const agent = poolYieldAgentV1(view);
     assert.equal(agent.poolAddress, POOL);
     assert.ok(agent.staked!.aprPercent! > 50);
@@ -138,4 +141,34 @@ describe('the same figure for an assistant', () => {
     assert.doesNotMatch(agent.summary, /not staked earns fees/);
     assert.match(agent.summary, /never a promise/);
   });
+});
+
+test('a rate needs the market price beside the pool and at least $1,000 in it', () => {
+  const swaps = { fromBlock: 52082348, fromAt: '2026-10-02T15:14:03.000Z', count: 400, amount0InAtomic: '500000000000', amount1InAtomic: '50000000000' };
+  const first = reading({ blockNumber: 52125548, blockAt: '2026-10-03T15:14:03.000Z', readAt: '2026-10-03T15:14:05.000Z', swaps });
+  const second = reading({ swaps: { ...swaps, fromBlock: 52125548, fromAt: '2026-10-03T15:14:03.000Z' } });
+
+  // No market price beside it: the pool's own price values it, and nothing is
+  // called a rate. The week's AERO stays an amount.
+  const unpriced = poolYieldV1({ readings: [second, first], now: NOW })!;
+  assert.equal(unpriced.fees, null);
+  assert.equal(unpriced.aero!.aprPercent, null);
+  assert.ok(unpriced.aero!.perWeek > 28_000);
+
+  // A pool's own price far from the market's (BILIc: $157,235 against
+  // $15.49) does not value it: the market price does.
+  const valued = poolYieldV1({ readings: [second, first], now: NOW, marketPriceUsd: 15.49 })!;
+  assert.equal(valued.stockPriceUsd, 15.49);
+  assert.ok(Math.abs(valued.poolUsd - (1_595_248 + 3_740 * 15.49)) < 1);
+  assert.ok(valued.fees !== null && valued.aero!.aprPercent !== null);
+
+  // CAKEc's pool: about $174, which printed "about 24208% a year in AERO".
+  const tiny = poolYieldV1({
+    readings: [reading({ balance0Atomic: '120000000', balance1Atomic: '500000', swaps: second.swaps })],
+    now: NOW,
+    marketPriceUsd: 108.45,
+  })!;
+  assert.ok(tiny.poolUsd < 1_000);
+  assert.equal(tiny.aero!.aprPercent, null);
+  assert.equal(tiny.fees, null);
 });

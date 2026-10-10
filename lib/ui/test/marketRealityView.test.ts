@@ -5144,6 +5144,9 @@ describe('trading from the answer card', () => {
                 change: '+0.42%',
                 // The card ages a price against the reader's own clock.
                 priceAt: new Date().toISOString(),
+                depthLabel: null,
+                depthNote: null,
+                buyWarning: null,
               },
             ],
           ]),

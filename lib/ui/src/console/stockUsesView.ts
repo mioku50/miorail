@@ -145,7 +145,12 @@ export function stockUsesViewV1(input: {
       text: `${pool.venueName} · ${tokenSymbol}/${paired ?? 'another token'}${size !== null ? ` · about ${compactUsdV1(size)} in it` : ''}`,
       href: pool.venuePageUrl,
     });
-    const paid = input.poolYield && input.poolYield.poolAddress === pool.poolAddress ? poolYieldRowV1(input.poolYield) : null;
+    // No rate beside a stock whose price the card does not show: a thin or
+    // unmeasured market's pool is not worth a yearly figure.
+    const paid =
+      input.priceUsd !== null && input.poolYield && input.poolYield.poolAddress === pool.poolAddress
+        ? poolYieldRowV1(input.poolYield)
+        : null;
     if (paid) rows.push(paid);
   }
 
@@ -181,7 +186,7 @@ export function stockUsesViewV1(input: {
   }
 
   // Announced and not live: said as exactly that, never as a use.
-  for (const reading of venueAnnouncementReadingsV1({ issuerId: 'coinbase', venues: use.defi.venues })) {
+  for (const reading of venueAnnouncementReadingsV1({ issuerId: 'coinbase', tokenAddress: use.tokenAddress, venues: use.defi.venues })) {
     if (reading.measured !== 'not_listed') continue;
     const day = new Date(`${reading.announcement.announcedAt}T00:00:00Z`).toLocaleDateString('en-US', {
       timeZone: 'UTC',

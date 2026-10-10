@@ -31,6 +31,9 @@ const MOONWELL: DefiVenueListingV1 = {
   reason: null,
 };
 
+/** NVDAc, one of the thirteen Coinbase stocks Base listed when it posted. */
+const NVDAC = '0xb20000000000000000000078ee7ce2fe4908108c';
+
 test('every reviewed announcement names a party, a date, a document and a sentence', () => {
   for (const announcement of REVIEWED_VENUE_ANNOUNCEMENTS_V1) {
     assert.ok(REVIEWED_ISSUERS_V1.includes(announcement.issuerId));
@@ -48,6 +51,7 @@ test('every reviewed announcement names a party, a date, a document and a senten
 test('Base announced collateral at Aave and Aave does not list the address', () => {
   const readings = venueAnnouncementReadingsV1({
     issuerId: 'coinbase',
+    tokenAddress: NVDAC,
     venues: [MOONWELL, aave({ state: 'not_listed' })],
   });
   assert.equal(readings.length, 1);
@@ -65,6 +69,7 @@ test('Base announced collateral at Aave and Aave does not list the address', () 
 test('a venue nobody checked is not a venue that said no', () => {
   const readings = venueAnnouncementReadingsV1({
     issuerId: 'coinbase',
+    tokenAddress: NVDAC,
     venues: [MOONWELL],
   });
   assert.equal(readings[0]?.measured, 'unchecked');
@@ -73,6 +78,7 @@ test('a venue nobody checked is not a venue that said no', () => {
 test('a venue that could not be read carries our reason, not a verdict', () => {
   const readings = venueAnnouncementReadingsV1({
     issuerId: 'coinbase',
+    tokenAddress: NVDAC,
     venues: [aave({ state: 'unread', reason: 'aave read rpc_error' })],
   });
   assert.equal(readings[0]?.measured, 'unread');
@@ -82,6 +88,7 @@ test('a venue that could not be read carries our reason, not a verdict', () => {
 test('a listed reserve still does not state whether collateral is enabled', () => {
   const readings = venueAnnouncementReadingsV1({
     issuerId: 'coinbase',
+    tokenAddress: NVDAC,
     venues: [aave({ state: 'listed', uses: { lend: true, borrow: true, collateral: null } })],
   });
   assert.equal(readings[0]?.measured, 'listed');
@@ -92,6 +99,7 @@ test('a listed reserve still does not state whether collateral is enabled', () =
 test('a venue that does state the announced use establishes it', () => {
   const readings = venueAnnouncementReadingsV1({
     issuerId: 'coinbase',
+    tokenAddress: NVDAC,
     venues: [aave({ state: 'listed', uses: { lend: true, borrow: true, collateral: true } })],
   });
   assert.deepEqual(readings[0]?.establishedUses, ['collateral']);
@@ -101,12 +109,36 @@ test('a venue that does state the announced use establishes it', () => {
 test('an announcement about one issuer never reaches another issuer', () => {
   for (const issuerId of ['backed', 'dinari'] as const) {
     assert.deepEqual(
-      venueAnnouncementReadingsV1({ issuerId, venues: [aave({ state: 'not_listed' })] }),
+      venueAnnouncementReadingsV1({ issuerId, tokenAddress: NVDAC, venues: [aave({ state: 'not_listed' })] }),
       [],
     );
   }
   assert.deepEqual(
-    venueAnnouncementReadingsV1({ issuerId: null, venues: [aave({ state: 'not_listed' })] }),
+    venueAnnouncementReadingsV1({ issuerId: null, tokenAddress: NVDAC, venues: [aave({ state: 'not_listed' })] }),
     [],
   );
 });
+
+test('a stock the issuer launched after the post was not announced as anything', () => {
+  // BILIc, listed by Coinbase on 2026-10-09, read "Base announced it as
+  // collateral on Aug 24".
+  const bilic = '0xb200000000000000000000ca7c6d1438e7245eb6';
+  assert.deepEqual(
+    venueAnnouncementReadingsV1({ issuerId: 'coinbase', tokenAddress: bilic, venues: [aave({ state: 'not_listed' })] }),
+    [],
+  );
+  assert.deepEqual(
+    venueAnnouncementReadingsV1({ issuerId: 'coinbase', tokenAddress: null, venues: [aave({ state: 'not_listed' })] }),
+    [],
+  );
+  // Case is not identity's business: the same contract in mixed case is covered.
+  assert.equal(
+    venueAnnouncementReadingsV1({
+      issuerId: 'coinbase',
+      tokenAddress: '0xB20000000000000000000078EE7CE2FE4908108C',
+      venues: [aave({ state: 'not_listed' })],
+    }).length,
+    1,
+  );
+});
+

@@ -180,9 +180,22 @@ export const publicStocksRuntime = {
   readChart: (now: Date, tokenAddress: string) =>
     readStockChartV1(now, tokenAddress, { prices: databaseStockChartPricesV1 }),
   readPoolYield: (now: Date, tokenAddress: string) =>
-    readPoolYieldV1(now, tokenAddress, { readings: databasePoolYieldReadingsV1 }),
+    readPoolYieldV1(now, tokenAddress, { readings: databasePoolYieldReadingsV1, marketPrice: stockMarketPriceV1 }),
   now: () => new Date(),
 };
+
+/**
+ * A stock's market price on Base, as the list shows it, or null where the
+ * list withholds it: a thin or unmeasured market, or no price at all. The
+ * same cached five-minute computation as the list, so a pool is valued at the
+ * price beside it and never at its own.
+ */
+export async function stockMarketPriceV1(tokenAddress: string): Promise<number | null> {
+  const slot = weekendSlotStartV1(publicStocksRuntime.now());
+  const quotes = await publicStocksCachesV1.quotes.read(`quotes|${slot.getTime()}`, () => publicStocksRuntime.readQuotes(slot));
+  const row = quotes.rows.find((candidate) => candidate.tokenAddress === tokenAddress.toLowerCase());
+  return row && row.priceUsd !== null && (row.depth?.state ?? 'normal') === 'normal' ? row.priceUsd : null;
+}
 
 const PUBLIC_LADDER_SIZES_V1: readonly string[] = CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1;
 

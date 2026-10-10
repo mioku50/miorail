@@ -24,7 +24,7 @@ import {
   type MarketRealityIndexScopeV1,
   type MarketRealityResponseV2,
 } from './contracts.js';
-import { canonicalReviewedBindingV1 } from './canonicalBinding.js';
+import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1, canonicalReviewedBindingV1 } from './canonicalBinding.js';
 import { unknownMarketRealityReferenceV1 } from './referenceSession.js';
 import { evaluateMarketRealityBasisV1 } from './basis.js';
 
@@ -668,7 +668,17 @@ export async function assembleMarketRealityV2(
  * nothing on the other side of it.
  */
 export async function assembleMarketRealityIndexV1(
-  deps: Pick<MarketRealityDepsV1, 'underlyings' | 'now'>,
+  deps: Pick<MarketRealityDepsV1, 'underlyings' | 'now'> & {
+    /**
+     * The addresses a reviewed official source lists right now. In the
+     * Coinbase scope a company stays on the board only while one of its
+     * Coinbase contracts is listed: COIN's contract exists, but Base dropped
+     * it on 2026-09-10 and Coinbase's own API never listed it, and the board
+     * counted 128 stocks where the issuer lists 127. Null, or absent, when the
+     * corpus could not be read: then nothing is dropped.
+     */
+    currentOfficialAddresses?: () => Promise<ReadonlySet<string> | null>;
+  },
   input: { limit: number; scope?: MarketRealityIndexScopeV1 },
 ): Promise<MarketRealityIndexV1> {
   // This endpoint backs the consumer `Stocks` screen, not a generic securities
@@ -696,10 +706,39 @@ export async function assembleMarketRealityIndexV1(
   // else: the Stocks screens show no other issuer (operator, 2026-10-03, "to
   // not confuse people"). COIN read as a live market because Backed's bCOIN
   // had supply while COINc had none; here it is the empty market it is.
+  const listed = scope === 'coinbase_b20' && deps.currentOfficialAddresses
+    ? await deps.currentOfficialAddresses().catch(() => null)
+    : null;
+  const listedKeys = listed === null
+    ? null
+    : new Set(
+        (
+          await Promise.all(
+            stockRows
+              .filter((row) => row.issuerIds.includes('coinbase'))
+              .map(async (row) => {
+                const representations = await deps.underlyings.representationsOf({
+                  chainId: 8453,
+                  underlyingKey: row.underlying.underlyingKey,
+                });
+                // Coinbase's own contract: Backed's bCOIN being listed does not
+                // put COIN on a board of Coinbase stocks.
+                return representations.some(
+                  (binding) =>
+                    (binding.issuerId ?? ISSUER_BY_REVIEWED_SOURCE_KIND_V1[binding.sourceKind as keyof typeof ISSUER_BY_REVIEWED_SOURCE_KIND_V1]) === 'coinbase' &&
+                    listed.has(binding.tokenAddress.toLowerCase()),
+                )
+                  ? row.underlying.underlyingKey
+                  : null;
+              }),
+          )
+        ).filter((key): key is string => key !== null),
+      );
   const scopedRows =
     scope === 'coinbase_b20'
       ? stockRows
           .filter((row) => row.issuerIds.includes('coinbase'))
+          .filter((row) => listedKeys === null || listedKeys.has(row.underlying.underlyingKey))
           .map((row) => ({
             ...row,
             representationCount: row.representationCountsByIssuer?.coinbase ?? 0,

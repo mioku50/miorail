@@ -639,6 +639,46 @@ test('in the Coinbase scope a company is as live as its Coinbase contract', asyn
   );
 });
 
+test('the Coinbase board keeps a company only while a Coinbase contract of it is listed', async () => {
+  // COINc exists but no source lists it (Base dropped it 2026-09-10, the API
+  // never had it), while Backed's bCOIN is listed: the board said 128 stocks
+  // where Coinbase lists 127.
+  const row = (key: string) => ({
+    underlying: {
+      underlyingKey: key, assetClass: 'equity' as const, canonicalName: key, displaySymbol: null,
+      identifierScheme: null, identifierValue: null, sourceKind: 'coinbase_b20_metadata' as const,
+      sourceRef: 'https://docs.base.org/specifications/b20/tokenized-stocks-on-base', sourceHash: 'cd'.repeat(32),
+      observedAt: '2026-09-01T12:00:00.000Z',
+    },
+    representationCount: 2, liveRepresentationCount: 1, issuerIds: ['backed', 'coinbase'],
+    representationCountsByIssuer: { backed: 1, coinbase: 1 }, liveRepresentationCountsByIssuer: { backed: 1 },
+  });
+  const bindings: Record<string, { tokenAddress: string; issuerId: string; sourceKind: string }[]> = {
+    'security:isin:coin': [
+      { tokenAddress: '0xb200000000000000000000000000000000000c01', issuerId: 'coinbase', sourceKind: 'coinbase_b20_metadata' },
+      { tokenAddress: '0x00000000000000000000000000000000000bc01', issuerId: 'backed', sourceKind: 'backed_assets_api' },
+    ],
+    'security:isin:nvda': [
+      { tokenAddress: '0xb20000000000000000000078ee7ce2fe4908108c', issuerId: 'coinbase', sourceKind: 'coinbase_stocks_api' },
+    ],
+  };
+  const underlyings = {
+    listUnderlyings: async () => [row('security:isin:coin'), row('security:isin:nvda')],
+    representationsOf: async (input: { underlyingKey: string }) => bindings[input.underlyingKey] ?? [],
+  } as unknown as UnderlyingAssetRepositoryV1;
+  const now = () => new Date('2026-10-10T12:00:00.000Z');
+  const listed = new Set(['0xb20000000000000000000078ee7ce2fe4908108c', '0x00000000000000000000000000000000000bc01']);
+  const board = await assembleMarketRealityIndexV1({ underlyings, now, currentOfficialAddresses: async () => listed }, { limit: 50 });
+  assert.deepEqual(board.entries.map((entry) => entry.underlyingKey), ['security:isin:nvda']);
+  assert.equal(board.totals.underlyings, 1);
+  // A corpus that cannot be read drops nothing.
+  const unread = await assembleMarketRealityIndexV1(
+    { underlyings, now, currentOfficialAddresses: async () => { throw new Error('storage down'); } },
+    { limit: 50 },
+  );
+  assert.equal(unread.totals.underlyings, 2);
+});
+
 test('a security with tokens outstanding is not ranked below an empty contract', async () => {
   // Nine of the thirteen Coinbase tokenized stocks hold exactly zero. Ranking
   // on `representationCount` alone counts CONTRACTS, so an empty security with

@@ -82,6 +82,20 @@ function priceImpactFromUsdV1(routeSummary: Record<string, unknown>): number | n
   return Math.max(0, bps);
 }
 
+/**
+ * A route quoted with one side unpriced: one of KyberSwap's two USD figures is
+ * zero or absent while the other is a dollar amount. BILIc, PMc and WENc
+ * answered this way on 2026-10-10 (`amountInUsd: 0` on a sell for USDC). The
+ * reply is well formed and the route exists; what is missing is the router's
+ * dollar value for the token, so no price impact can be derived from it. That
+ * is the router's coverage stopping short, not a malformed answer.
+ */
+function oneSideUnpricedV1(routeSummary: Record<string, unknown>): boolean {
+  const usd = (key: string) => Number(parseProviderDecimal(field(routeSummary, key)) ?? Number.NaN);
+  const priced = (value: number) => Number.isFinite(value) && value > 0;
+  return priced(usd('amountInUsd')) !== priced(usd('amountOutUsd'));
+}
+
 function providerMessageV1(value: unknown): string {
   if (!value || typeof value !== 'object') return '';
   const record = value as Record<string, unknown>;
@@ -265,6 +279,10 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
       return providerFailure(this.id, 'provider_invalid_schema');
     }
     const rawPriceImpactBps = field(routeSummary, 'priceImpactBps');
+    const statedImpact = field(routeSummary, 'priceImpact', 'priceImpactPct');
+    if (rawPriceImpactBps === undefined && (statedImpact === undefined || statedImpact === null) && oneSideUnpricedV1(routeSummary)) {
+      return providerFailure(this.id, 'provider_token_unpriced');
+    }
     const parsedImpactBps = parseUnsignedAtomic(rawPriceImpactBps);
     const priceImpactBps =
       rawPriceImpactBps === undefined

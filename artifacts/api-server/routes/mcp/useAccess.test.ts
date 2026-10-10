@@ -57,6 +57,8 @@ beforeEach(() => {
     if (yieldFails) throw new Error('relation "pool_yield_readings" does not exist');
     return storedYields;
   }) as typeof useAccessToolRuntimeV1.poolYieldReadings;
+  // The market price the Stocks list shows for NVDAc beside its pool.
+  useAccessToolRuntimeV1.marketPrice = async () => 235.14;
 
   rwaMarketRealityRuntime.migrationAvailable = async () => true;
   rwaMarketRealityRuntime.underlyings = (() => ({

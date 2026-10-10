@@ -1536,7 +1536,9 @@ export function useRwaUnderlyings(options?: {
   scope?: 'coinbase_b20' | 'all_representations';
   access?: StocksReadAccessV1;
 }) {
-  const limit = options?.limit ?? 100;
+  // The server's cap, so the board holds every stock. It asked for 100 while
+  // 128 existed (2026-10-10), and 28 of them could not even be searched for.
+  const limit = options?.limit ?? 500;
   const scope = options?.scope ?? null;
   const access = options?.access ?? 'session';
   return useQuery({

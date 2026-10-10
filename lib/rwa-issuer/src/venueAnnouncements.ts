@@ -44,6 +44,13 @@ export interface ReviewedVenueAnnouncementV1 {
   sourceRef: string;
   /** The sentence the claim rests on, verbatim. */
   quote: string;
+  /**
+   * The exact contracts the announcement could have been about, when it names
+   * an issuer rather than addresses: what that issuer had on Base when it was
+   * published. A token the issuer launched later was not announced as
+   * anything, so it gets no reading at all.
+   */
+  coversTokenAddresses?: readonly string[];
 }
 
 /**
@@ -74,6 +81,24 @@ export const REVIEWED_VENUE_ANNOUNCEMENTS_V1: readonly ReviewedVenueAnnouncement
     sourceRef: 'https://blog.base.org',
     quote:
       'Use your tokenized NVIDIA stock as collateral for an onchain loan on Aave, supply Apple to a decentralized exchange to earn yield, or build automated trading strategies.',
+    // The thirteen Coinbase stocks Base listed on 2026-08-25, the day after
+    // the post. Every Coinbase stock read "Base announced it as collateral on
+    // Aug 24" — BILIc too, which Coinbase listed on 2026-10-09.
+    coversTokenAddresses: [
+      '0xb200000000000000000000c2e324d24d7eecd1fb', // AAPLc
+      '0xb200000000000000000000d9192b6b456483c2e8', // AMZNc
+      '0xb200000000000000000000c85a31389d71f3ecfb', // COINc
+      '0xb20000000000000000000019f6e7c675b73c2e4d', // CRCLc
+      '0xb2000000000000000000002d0ba3164cc74f58b7', // GOOGLc
+      '0xb2000000000000000000004aff16039ba04bdfbc', // INTCc
+      '0xb2000000000000000000008bc8786b856e61707c', // METAc
+      '0xb200000000000000000000ab99cfa739e253872b', // MSFTc
+      '0xb2000000000000000000004884b426556b92883d', // MSTRc
+      '0xb20000000000000000000078ee7ce2fe4908108c', // NVDAc
+      '0xb200000000000000000000397293cb8cda9a10c5', // SNDKc
+      '0xb2000000000000000000007b9fcbd005511acbd5', // SPCXc
+      '0xb2000000000000000000001e800a7f5189430cd0', // TSLAc
+    ],
   },
 ];
 
@@ -112,14 +137,23 @@ export interface VenueAnnouncementReadingV1 {
  */
 export function venueAnnouncementReadingsV1(input: {
   issuerId: ReviewedIssuerIdV1 | null;
+  /** The token the card is about. An announcement scoped to exact contracts
+   * says nothing about an unknown one. */
+  tokenAddress: string | null;
   venues: readonly DefiVenueListingV1[];
   announcements?: readonly ReviewedVenueAnnouncementV1[];
 }): VenueAnnouncementReadingV1[] {
   const { issuerId } = input;
   if (issuerId === null) return [];
+  const token = input.tokenAddress?.toLowerCase() ?? null;
   const catalogue = input.announcements ?? REVIEWED_VENUE_ANNOUNCEMENTS_V1;
   return catalogue
     .filter((announcement) => announcement.issuerId === issuerId)
+    .filter(
+      (announcement) =>
+        announcement.coversTokenAddresses === undefined ||
+        (token !== null && announcement.coversTokenAddresses.includes(token)),
+    )
     .map((announcement) => {
       const listing = input.venues.find((venue) => venue.venueId === announcement.venueId);
       if (!listing) {

@@ -30,12 +30,24 @@ const SECONDS_PER_WEEK_V1 = 7 * 24 * 3_600;
 /** The window fees are measured over, and the least of it worth a figure. */
 export const POOL_YIELD_FEE_WINDOW_DAYS_V1 = 7;
 export const POOL_YIELD_FEE_MIN_DAYS_V1 = 1;
+/**
+ * The least a pool must hold, at the stock's market price, for a yearly rate.
+ *
+ * Rates were divided by the pool's own price, and a concentrated pool's
+ * current price is wherever its last trade left it: BILIc's read $157,235 on
+ * 2026-10-10 (the share: $15.49), and pools of a few hundred dollars printed
+ * "about 24208% a year in AERO" (CAKEc) and "about $0 in it · 121892% a year
+ * in fees" (DUOLc). A rate now needs the stock's market price on Base and at
+ * least this much in the pool; otherwise the amounts stay and the rates go.
+ */
+export const POOL_YIELD_MIN_POOL_USD_V1 = 1_000;
 
 export interface PoolYieldV1 {
   schemaVersion: 'pool-yield/v1';
   tokenAddress: string;
   poolAddress: string;
-  /** The pool's own price for the stock, in USDC. */
+  /** The price the pool is valued at, in USDC: the stock's market price on
+   * Base when the caller has one, else the pool's own (and then no rate). */
   stockPriceUsd: number;
   /** What the pool holds, both sides, at that price. */
   poolUsd: number;
@@ -55,7 +67,8 @@ export interface PoolYieldV1 {
     priceAt: string;
     periodEndsAt: string;
   } | null;
-  /** Positions not staked: the fees, over the days measured. Null under a day. */
+  /** Positions not staked: the fees, over the days measured. Null under a
+   * day, and for a pool too small or too unpriced to rate. */
   fees: {
     days: number;
     feesUsd: number;
@@ -131,6 +144,10 @@ function stockPriceUsdV1(reading: PoolYieldReadingV1, stockIs0: boolean): number
 export function poolYieldV1(input: {
   readings: readonly PoolYieldReadingV1[];
   now: Date;
+  /** The stock's market price on Base (the ladder's $100 mid where its market
+   * is not thin). Without it the pool is valued at its own price and no rate
+   * is given. */
+  marketPriceUsd?: number | null;
 }): PoolYieldV1 | null {
   const sorted = [...input.readings].sort((a, b) => a.blockNumber - b.blockNumber);
   const latest = sorted[sorted.length - 1];
@@ -139,7 +156,11 @@ export function poolYieldV1(input: {
   const usdcIs1 = latest.token1Address === POOL_YIELD_USDC_BASE_V1;
   if (usdcIs0 === usdcIs1) return null;
   const stockIs0 = usdcIs1;
-  const price = stockPriceUsdV1(latest, stockIs0);
+  const market =
+    input.marketPriceUsd != null && Number.isFinite(input.marketPriceUsd) && input.marketPriceUsd > 0
+      ? input.marketPriceUsd
+      : null;
+  const price = market ?? stockPriceUsdV1(latest, stockIs0);
   if (price === null) return null;
 
   const usd0 = (atomic: string, reading: PoolYieldReadingV1, p: number) =>
@@ -148,6 +169,7 @@ export function poolYieldV1(input: {
     (Number(BigInt(atomic)) / 10 ** reading.decimals1) * (stockIs0 ? 1 : p);
   const poolUsd = usd0(latest.balance0Atomic, latest, price) + usd1(latest.balance1Atomic, latest, price);
   if (!Number.isFinite(poolUsd) || poolUsd <= 0) return null;
+  const rated = market !== null && poolUsd >= POOL_YIELD_MIN_POOL_USD_V1;
 
   const liquidity = BigInt(latest.liquidity);
   const staked = BigInt(latest.stakedLiquidity);
@@ -166,7 +188,9 @@ export function poolYieldV1(input: {
           perWeek: perSecond * SECONDS_PER_WEEK_V1,
           perWeekUsd: perSecond * SECONDS_PER_WEEK_V1 * latest.aeroUsd,
           aprPercent:
-            stakedShare === null ? null : ((perSecond * SECONDS_PER_YEAR_V1 * latest.aeroUsd) / (poolUsd * stakedShare)) * 100,
+            !rated || stakedShare === null
+              ? null
+              : ((perSecond * SECONDS_PER_YEAR_V1 * latest.aeroUsd) / (poolUsd * stakedShare)) * 100,
           priceUsd: latest.aeroUsd,
           priceAt: latest.aeroUsdUpdatedAt,
           periodEndsAt: new Date(latest.periodFinish * 1_000).toISOString(),
@@ -181,7 +205,9 @@ export function poolYieldV1(input: {
   let swaps = 0;
   for (const reading of sorted) {
     if (!reading.swaps || Date.parse(reading.swaps.fromAt) < windowStart) continue;
-    const readingPrice = stockPriceUsdV1(reading, stockIs0) ?? price;
+    // At the market price when there is one: a pool's own price wanders
+    // with every trade in a thin pool.
+    const readingPrice = market ?? stockPriceUsdV1(reading, stockIs0) ?? price;
     const feeShare = reading.feePips / 1_000_000;
     feesUsd +=
       usd0(reading.swaps.amount0InAtomic, reading, readingPrice) * feeShare +
@@ -191,7 +217,7 @@ export function poolYieldV1(input: {
   }
   const days = coveredMs / 86_400_000;
   const fees =
-    days >= POOL_YIELD_FEE_MIN_DAYS_V1
+    rated && days >= POOL_YIELD_FEE_MIN_DAYS_V1
       ? {
           days: Math.round(days * 10) / 10,
           feesUsd,

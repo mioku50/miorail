@@ -46,7 +46,7 @@ export function stocksSectionOfSegmentV1(segment: string | null | undefined): St
 export interface StocksSectionTabV1 {
   key: StocksSectionV1;
   label: string;
-  /** "2" unread updates, or "live" while Wall Street is closed. Words, never a
+  /** "2 new" unread updates, or "live" while Wall Street is closed. Words, never a
    * colour: a dot that means "news" would also be read as "good" or "bad". */
   note: string | null;
   /** Where the tab lives, on a surface with addresses. Null in the Base App. */
@@ -73,7 +73,9 @@ export function stocksSectionTabsV1(input: {
     label: STOCKS_SECTION_LABELS_V1[key],
     note:
       key === 'mine' && input.unread !== null && input.unread > 0
-        ? `${input.unread}${input.unreadMore ? '+' : ''}`
+        ? // "new", because a bare "4" beside "My stocks" read as four stocks
+          // held, on a wallet that held one (2026-10-10).
+          `${input.unread}${input.unreadMore ? '+' : ''} new`
         : key === 'weekend' && input.weekendLive
           ? 'live'
           : null,
