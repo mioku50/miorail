@@ -29,3 +29,22 @@ export function telegramStartUrlV1(botUsername: string, code: string): string {
   if (!USERNAME_V1.test(botUsername) || !CODE_V1.test(code)) throw new Error('invalid telegram start link');
   return `https://t.me/${botUsername}?start=${code}`;
 }
+
+/**
+ * Service alerts use the same kind of code under a prefix the website never
+ * issues, so one /start tells the two apart: `ops-` and 32 characters is 36,
+ * inside Telegram's 64, and a website code is exactly 32.
+ */
+export const TELEGRAM_OPS_ALERT_PREFIX_V1 = 'ops-';
+
+/** The inner code of a service-alert /start, or null for anything else. */
+export function telegramOpsAlertCodeV1(start: string): string | null {
+  if (!start.startsWith(TELEGRAM_OPS_ALERT_PREFIX_V1)) return null;
+  const code = start.slice(TELEGRAM_OPS_ALERT_PREFIX_V1.length);
+  return CODE_V1.test(code) ? code : null;
+}
+
+export function telegramOpsAlertStartUrlV1(botUsername: string, code: string): string {
+  if (!USERNAME_V1.test(botUsername) || !CODE_V1.test(code)) throw new Error('invalid telegram start link');
+  return `https://t.me/${botUsername}?start=${TELEGRAM_OPS_ALERT_PREFIX_V1}${code}`;
+}

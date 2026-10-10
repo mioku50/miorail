@@ -3,8 +3,10 @@ import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 
-import { InMemoryTelegramLinkRepositoryV1 } from '@mioagent/route-storage';
-import { TelegramBotErrorV1, telegramConfigV1, type TelegramBotClientV1 } from '@mioagent/telegram';
+import { InMemoryOpsAlertChatRepositoryV1, InMemoryTelegramLinkRepositoryV1 } from '@mioagent/route-storage';
+import {
+  TelegramBotErrorV1, newTelegramLinkCodeV1, telegramConfigV1, telegramOpsAlertStartUrlV1, type TelegramBotClientV1,
+} from '@mioagent/telegram';
 
 import { resetTelegramBotUsernameV1, telegramLinkRouter, telegramRuntime, telegramWebhookRouter } from './telegram.js';
 
@@ -28,12 +30,14 @@ function app(user: unknown = { id: `eip155:8453:${WALLET}`, address: WALLET, cha
 
 const original = { ...telegramRuntime };
 let links: InMemoryTelegramLinkRepositoryV1;
+let opsChats: InMemoryOpsAlertChatRepositoryV1;
 let sent: { chatId: string; html: string; button?: { text: string; url: string } }[];
 let getMeCalls: number;
 let bot: TelegramBotClientV1;
 
 beforeEach(() => {
   links = new InMemoryTelegramLinkRepositoryV1();
+  opsChats = new InMemoryOpsAlertChatRepositoryV1();
   sent = [];
   getMeCalls = 0;
   bot = {
@@ -51,6 +55,7 @@ beforeEach(() => {
   Object.assign(telegramRuntime, {
     config: () => CONFIG,
     links: () => links,
+    opsChats: () => opsChats,
     bot: () => bot,
     now: () => NOW,
   });
@@ -194,5 +199,44 @@ describe('the website reads and ends the connection', () => {
     const response = await request(app()).post('/telegram/link');
     assert.equal(response.status, 503);
     assert.equal(response.body.code, 'telegram_unavailable');
+  });
+});
+
+describe('service alerts: a code the operator issues on the server', () => {
+  async function opsStart(): Promise<string> {
+    const { code, hash } = newTelegramLinkCodeV1();
+    await opsChats.issueCode({ codeHash: hash, now: NOW, expiresAt: new Date(NOW.getTime() + 600_000) });
+    return new URL(telegramOpsAlertStartUrlV1('miorailbot', code)).searchParams.get('start')!;
+  }
+
+  test('/start with it subscribes this chat, once; a spent code is refused like an expired one', async () => {
+    const start = await opsStart();
+    assert.match(start, /^ops-[A-Za-z0-9_-]{32}$/);
+    await fromTelegram(update(`/start ${start}`));
+    assert.deepEqual(await opsChats.chats(), [String(CHAT)]);
+    assert.match(sent.at(-1)!.html, /Service alerts are on here/);
+    // The website's links are untouched: this chat follows no wallet.
+    assert.deepEqual(await links.walletsOfChat(String(CHAT)), []);
+    await fromTelegram(update(`/start ${start}`));
+    assert.match(sent.at(-1)!.html, /expired or was already used/);
+  });
+
+  test('/status says so, and /stop turns service alerts off with everything else', async () => {
+    await fromTelegram(update(`/start ${await opsStart()}`));
+    await fromTelegram(update('/status'));
+    assert.match(sent.at(-1)!.html, /Service alerts are on here/);
+    await fromTelegram(update('/stop'));
+    assert.match(sent.at(-1)!.html, /^Disconnected/);
+    assert.deepEqual(await opsChats.chats(), []);
+    await fromTelegram(update('/stop'));
+    assert.equal(sent.at(-1)!.html, 'Nothing is connected here.');
+  });
+
+  test('a website code wearing the prefix, or a malformed one, subscribes nothing', async () => {
+    const website = await connect();
+    await fromTelegram(update(`/start ops-${website}`));
+    await fromTelegram(update('/start ops-short'));
+    assert.deepEqual(await opsChats.chats(), []);
+    assert.deepEqual(await links.walletsOfChat(String(CHAT)), []);
   });
 });

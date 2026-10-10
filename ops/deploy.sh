@@ -293,7 +293,7 @@ install -m 0644 "$B20_MEASURE_DROPIN_SOURCE" "$B20_MEASURE_DROPIN_TARGET"
 # and nobody can restore. Each pair is (service, timer) with the same stem, and
 # the loop refuses a pair that is missing half of itself rather than leaving a
 # timer pointing at a unit that is not there.
-for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify; do
+for stem in rwa-official rwa-cash-exit rwa-lookalikes rwa-market-tail rwa-watchlist rwa-ratio rwa-issuer rwa-pools rwa-dividends base-app-notify ops-alerts; do
   unit_source="$REPO/ops/systemd/miorail-$stem.service"
   timer_source="$REPO/ops/systemd/miorail-$stem.timer"
   if [ ! -f "$unit_source" ] || [ ! -f "$timer_source" ]; then
@@ -579,6 +579,12 @@ case "$telegram_state" in
   on*|off*) printf '  telegram bot   %s\n' "$telegram_state" ;;
   *)        printf '  telegram bot   WARNING: %s\n' "$telegram_state" ;;
 esac
+
+# Service alerts: whether their timer runs, and how many miorail units are
+# failed right now. Which chats hear them is not printed: chat ids are people.
+alerts_timer=$(systemctl is-active miorail-ops-alerts.timer 2>/dev/null || true)
+failed_units=$(systemctl list-units --failed --plain --no-legend 'miorail-*' 2>/dev/null | wc -l)
+printf '  service alerts %-28s %s\n' "timer ${alerts_timer:-unknown}" "failed units now: $failed_units"
 
 # The language lane, asked to answer.
 #

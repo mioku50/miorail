@@ -62,7 +62,9 @@
     "rwa:verify-issuer": "node --import tsx scripts/rwa_verify_issuer_membership.ts",
     "rwa:enrich-underlying": "node --import tsx scripts/rwa_enrich_underlying_identity.ts",
     "rwa:watchlist-sweep": "tsx scripts/rwa_watchlist_sweep.ts",
-    "base-app:notify": "tsx scripts/base_app_notify.ts"
+    "base-app:notify": "tsx scripts/base_app_notify.ts",
+    "ops:alerts": "tsx scripts/ops_unit_alerts.ts",
+    "ops:alert-link": "tsx scripts/ops_alert_link.ts"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

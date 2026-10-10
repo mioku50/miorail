@@ -2,7 +2,12 @@ import { timingSafeEqual } from 'node:crypto';
 import { Router, type Request, type Response } from 'express';
 import { client } from '@mioagent/db';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
-import { createDatabaseTelegramLinkRepositoryV1, type TelegramLinkRepositoryV1 } from '@mioagent/route-storage';
+import {
+  createDatabaseOpsAlertChatRepositoryV1,
+  createDatabaseTelegramLinkRepositoryV1,
+  type OpsAlertChatRepositoryV1,
+  type TelegramLinkRepositoryV1,
+} from '@mioagent/route-storage';
 import {
   TELEGRAM_LINK_TTL_MS_V1,
   TELEGRAM_REPLIES_V1,
@@ -12,6 +17,7 @@ import {
   telegramCommandV1,
   telegramConfigV1,
   telegramLinkCodeHashV1,
+  telegramOpsAlertCodeV1,
   telegramStartUrlV1,
   type TelegramBotClientV1,
   type TelegramCommandV1,
@@ -39,6 +45,8 @@ import { sessionWalletV1 } from '../lib/sessionWallet';
 export const telegramRuntime = {
   config: (): TelegramConfigV1 | null => telegramConfigV1(process.env),
   links: (): TelegramLinkRepositoryV1 => createDatabaseTelegramLinkRepositoryV1(client as never),
+  /** Chats that hear about failed services: scripts/ops_unit_alerts.ts. */
+  opsChats: (): OpsAlertChatRepositoryV1 => createDatabaseOpsAlertChatRepositoryV1(client as never),
   bot: (config: TelegramConfigV1): TelegramBotClientV1 => createTelegramBotClientV1({ token: config.token }),
   now: () => new Date(),
   newCode: newTelegramLinkCodeV1,
@@ -91,14 +99,25 @@ async function answerV1(
   command: AnsweredCommandV1,
   config: TelegramConfigV1,
   links: TelegramLinkRepositoryV1,
+  opsChats: OpsAlertChatRepositoryV1,
 ): Promise<{ outcome: string; html: string; button?: { text: string; url: string } }> {
   const now = telegramRuntime.now();
   switch (command.kind) {
     case 'start': {
+      // A service-alert code, issued on the server by the operator.
+      const opsCode = command.code === null ? null : telegramOpsAlertCodeV1(command.code);
+      if (opsCode !== null) {
+        const redeemed = await opsChats.redeemCode({ codeHash: telegramLinkCodeHashV1(opsCode)!, chatId: command.chatId, now });
+        if (!redeemed) return { outcome: 'ops_code_refused', html: TELEGRAM_REPLIES_V1.expired };
+        return redeemed.subscribedNow
+          ? { outcome: 'ops_subscribed', html: TELEGRAM_REPLIES_V1.opsSubscribed }
+          : { outcome: 'ops_already_subscribed', html: TELEGRAM_REPLIES_V1.opsAlreadySubscribed };
+      }
       if (command.code === null) {
         const wallets = await links.walletsOfChat(command.chatId);
-        return wallets.length > 0
-          ? { outcome: 'status', html: TELEGRAM_REPLIES_V1.status(wallets) }
+        const serviceAlerts = await opsChats.isSubscribed(command.chatId);
+        return wallets.length > 0 || serviceAlerts
+          ? { outcome: 'status', html: TELEGRAM_REPLIES_V1.status(wallets, serviceAlerts) }
           : {
               outcome: 'how_to_connect',
               html: TELEGRAM_REPLIES_V1.howToConnect,
@@ -116,13 +135,18 @@ async function answerV1(
       };
     }
     case 'stop': {
+      // /stop means this bot goes quiet here: wallets and service alerts alike.
       const removed = await links.unlinkChat(command.chatId);
-      return removed > 0
+      const alertsRemoved = await opsChats.unsubscribe(command.chatId);
+      return removed > 0 || alertsRemoved
         ? { outcome: 'stopped', html: TELEGRAM_REPLIES_V1.stopped }
         : { outcome: 'nothing_to_stop', html: TELEGRAM_REPLIES_V1.nothingToStop };
     }
     case 'status':
-      return { outcome: 'status', html: TELEGRAM_REPLIES_V1.status(await links.walletsOfChat(command.chatId)) };
+      return {
+        outcome: 'status',
+        html: TELEGRAM_REPLIES_V1.status(await links.walletsOfChat(command.chatId), await opsChats.isSubscribed(command.chatId)),
+      };
     case 'help':
       return { outcome: 'help', html: TELEGRAM_REPLIES_V1.help };
   }
@@ -147,7 +171,7 @@ telegramWebhookRouter.post('/webhook', async (req: Request, res: Response) => {
   }
   let answer: Awaited<ReturnType<typeof answerV1>>;
   try {
-    answer = await answerV1(command, config, telegramRuntime.links());
+    answer = await answerV1(command, config, telegramRuntime.links(), telegramRuntime.opsChats());
   } catch (cause) {
     logger.warn('Telegram command failed', { kind: command.kind, code: failureCodeV1(cause) });
     answer = { outcome: 'failed', html: TELEGRAM_REPLIES_V1.unavailable };

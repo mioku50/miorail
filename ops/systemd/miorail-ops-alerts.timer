@@ -1,0 +1,12 @@
+[Unit]
+# Every two minutes. The fastest workers run every five, so a failure that a
+# clean next run would clear is still seen; a pass with nothing failed and
+# nothing open stops at the unit's ExecCondition without starting Node.
+Description=Check Miorail units for failures
+
+[Timer]
+OnCalendar=*:0/2
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target

@@ -40,10 +40,17 @@ export const TELEGRAM_REPLIES_V1 = {
   disconnectedOnWebsite: (wallet: string) =>
     `${shortWalletV1(wallet)} was disconnected on the Miorail website. Nothing more about it will be sent here.`,
   nothingToStop: 'Nothing is connected here.',
-  status: (wallets: readonly string[]) =>
-    wallets.length === 0
-      ? 'Nothing is connected here yet. Open Miorail and press Connect Telegram.'
-      : `Connected: ${wallets.map(shortWalletV1).join(', ')}. /stop disconnects.`,
+  status: (wallets: readonly string[], serviceAlerts = false) =>
+    (wallets.length === 0
+      ? serviceAlerts
+        ? 'No wallet is connected here.'
+        : 'Nothing is connected here yet. Open Miorail and press Connect Telegram.'
+      : `Connected: ${wallets.map(shortWalletV1).join(', ')}. /stop disconnects.`) +
+    (serviceAlerts ? ' Service alerts are on here; /stop turns them off.' : ''),
+  opsSubscribed:
+    'Service alerts are on here. You will hear when a Miorail service fails, once a day while it stays failed, ' +
+    'and when it recovers. /stop turns them off.',
+  opsAlreadySubscribed: 'Service alerts are already on here. /stop turns them off.',
   help: `This bot only sends Miorail alerts. /status shows what is connected, /stop disconnects. ${NEVER_SIGN_V1}`,
   unavailable: 'Something went wrong on our side. Please try again in a minute.',
 } as const;

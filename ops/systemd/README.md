@@ -111,6 +111,34 @@ Stopping is clean: `SIGTERM` ends the loop after the pass in flight, so a
 restart never interrupts a commit and never leaves a lease held by a process
 that no longer exists (the lease expires on its own regardless).
 
+## Service alerts
+
+`miorail-ops-alerts` is a oneshot on a two-minute timer, installed by the same
+loop in `ops/deploy.sh`. It exists because a failed unit used to be a line in
+a journal nobody reads: `miorail-rwa-official` failed every hour from
+2026-10-07 to 2026-10-09 before anyone looked.
+
+A pass reads every `miorail-*` unit's state and keeps one episode per failed
+unit in `/var/lib/miorail-ops-alerts/state.json`. Each episode is announced
+once in Telegram, reminded once a day while the unit stays failed, and closed
+with one message once the unit has settled and stayed out of `failed` for ten
+minutes. Units that fail together go out as one message. The message names
+the unit, systemd's result and the time, never a journal line, so nothing a
+failing process printed can reach a chat. While nothing is failed and no
+episode is open, the unit's `ExecCondition` ends the pass in a shell and Node
+never starts.
+
+Chats subscribe with a one-time link issued on the server:
+
+```bash
+sudo -u miorail bash -c 'cd /home/miorail/mioagent && node --import tsx scripts/ops_alert_link.ts'
+```
+
+The link works once, for ten minutes. `/stop` in the chat turns the alerts
+off, together with any wallet the chat follows. The subscribed chats are also
+kept in the state directory, so a pass can still speak while the database is
+the thing that is down.
+
 ## Prerequisites
 
 `B20_DISCOVER_START_BLOCK` must be set once, before the first run, or discovery

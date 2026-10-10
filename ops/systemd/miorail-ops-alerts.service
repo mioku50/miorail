@@ -1,0 +1,43 @@
+[Unit]
+# Service alerts: tells the subscribed Telegram chats when a miorail-* unit
+# fails, once a day while it stays failed, and when it recovers. The pass is
+# scripts/ops_unit_alerts.ts and the rules scripts/opsUnitAlerts.ts; a chat
+# subscribes with a link from scripts/ops_alert_link.ts.
+#
+# Oneshot, driven by miorail-ops-alerts.timer. Reads systemd's unit states and
+# the subscribed chats; writes its own state directory and drops a chat that
+# blocked the bot. No signer, no chain, no wallet, no journal read.
+Description=Miorail service alerts
+Documentation=https://github.com/mioku50/miorail
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=miorail
+Group=miorail
+WorkingDirectory=/home/miorail/mioagent
+EnvironmentFile=/home/miorail/mioagent/.env
+Environment=NODE_ENV=production
+Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
+# Open episodes and the last known chats, kept out of the database: the
+# database being down is one of the things this reports.
+StateDirectory=miorail-ops-alerts
+StateDirectoryMode=0700
+# Node starts only when a unit is failed or an episode is still open; any
+# other pass ends here, in a shell.
+ExecCondition=/bin/sh -c 'systemctl list-units --failed --plain --no-legend "miorail-*" | grep -q . || test -s /var/lib/miorail-ops-alerts/state.json'
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/ops_unit_alerts.ts
+
+TimeoutStartSec=120
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-ops-alerts
