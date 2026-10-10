@@ -119,7 +119,8 @@ test('a price whose $1,000 round trip loses a fifth or more is a thin market, me
       { token: TOKEN, at: hoursAgo(0.5), mid: 143.1, buyAt1k: null, sellAt1k: null },
     ],
   }).rows[0]!;
-  assert.deepEqual(thin.depth, { state: 'thin', roundTripLossBps: 2084, measuredAt: hoursAgo(1.5) }); // median of 2068 and 2099
+  // Medians: round trip of 2068 and 2099; a $1,000 buy 26% above the $100 price.
+  assert.deepEqual(thin.depth, { state: 'thin', roundTripLossBps: 2084, buyMoveBps: 2625, sellMoveBps: 6, measuredAt: hoursAgo(1.5) });
   // The price itself is still the measurement; what is shown is the screen's call.
   assert.equal(thin.priceUsd, 143.1);
 
@@ -135,12 +136,21 @@ test('a price whose $1,000 round trip loses a fifth or more is a thin market, me
     stocks: [stock()],
     prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 11.55, buyAt1k: 12.58, sellAt1k: 10.5 }],
   }).rows[0]!;
-  assert.deepEqual(wide.depth, { state: 'normal', roundTripLossBps: 1653, measuredAt: hoursAgo(0.5) });
+  assert.deepEqual(wide.depth, { state: 'normal', roundTripLossBps: 1653, buyMoveBps: 892, sellMoveBps: 909, measuredAt: hoursAgo(0.5) });
+
+  // PFEc an hour later: the round trip at 19.4%, just under the line, while
+  // a $1,000 buy still paid 24% more than a $100 one. One side is enough.
+  const oneSided = stockQuotesV1({
+    now: NOW,
+    stocks: [stock()],
+    prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 143.13, buyAt1k: 177.6, sellAt1k: 143.13 }],
+  }).rows[0]!;
+  assert.deepEqual(oneSided.depth, { state: 'thin', roundTripLossBps: 1941, buyMoveBps: 2408, sellMoveBps: 0, measuredAt: hoursAgo(0.5) });
 
   const unmeasured = stockQuotesV1({
     now: NOW,
     stocks: [stock()],
     prices: [{ token: TOKEN, at: hoursAgo(0.5), mid: 18.33 }],
   }).rows[0]!;
-  assert.deepEqual(unmeasured.depth, { state: 'unmeasured', roundTripLossBps: null, measuredAt: null });
+  assert.deepEqual(unmeasured.depth, { state: 'unmeasured', roundTripLossBps: null, buyMoveBps: null, sellMoveBps: null, measuredAt: null });
 });

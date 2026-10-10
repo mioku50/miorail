@@ -68,7 +68,16 @@ export function stockQuoteViewsByKeyV1(
     const depth = row.depth ?? { state: 'normal' as const, roundTripLossBps: null, measuredAt: null };
     const shown = row.priceUsd !== null && depth.state === 'normal';
     const withheld = row.priceUsd !== null && !shown;
-    const loss = depth.roundTripLossBps === null ? null : `${Math.round(depth.roundTripLossBps / 100)}%`;
+    const percent = (value: number | null | undefined) => (value == null ? null : `${Math.round(value / 100)}%`);
+    // The figure that made it thin: the round trip when that is a fifth or
+    // more, else the one leg that moved that far on its own.
+    const roundTripThin = (depth.roundTripLossBps ?? 0) >= 2_000;
+    const buyThin = (depth.buyMoveBps ?? 0) >= (depth.sellMoveBps ?? 0);
+    const how = roundTripThin || depth.roundTripLossBps === null
+      ? `a $1,000 buy and sell here loses ${percent(depth.roundTripLossBps) ?? 'a fifth or more'}`
+      : buyThin
+        ? `a $1,000 buy here pays ${percent(depth.buyMoveBps)} more than a $100 one`
+        : `a $1,000 sale here gets ${percent(depth.sellMoveBps)} less than a $100 one`;
     views.set(row.underlyingKey, {
       tokenAddress: row.tokenAddress,
       iconPath: row.iconPath,
@@ -81,7 +90,7 @@ export function stockQuoteViewsByKeyV1(
       depthLabel: withheld ? (depth.state === 'thin' ? 'Thin market' : 'Depth not measured') : null,
       depthNote: withheld
         ? depth.state === 'thin'
-          ? `Thin market on Base: a $1,000 buy and sell here loses ${loss ?? 'a fifth or more'}. A price taken from a market this thin can be far from the share's own price, so none is shown.`
+          ? `Thin market on Base: ${how}. A price taken from a market this thin can be far from the share's own price, so none is shown.`
           : "Depth not measured: Miorail priced a $100 trade here but not a $1,000 one, so that price is not shown as the stock's."
         : null,
       buyWarning: withheld

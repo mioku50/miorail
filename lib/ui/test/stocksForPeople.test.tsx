@@ -315,6 +315,12 @@ describe("a thin market's price is not shown as the stock's", () => {
     assert.doesNotMatch(markup, /143/);
   });
 
+  test('thin by one leg: the sentence names the leg that moved', () => {
+    const view = viewOf({ depth: { state: 'thin', roundTripLossBps: 1941, buyMoveBps: 2408, sellMoveBps: 0, measuredAt: '2026-10-10T11:02:00Z' } });
+    assert.equal(view.price, null);
+    assert.match(view.depthNote!, /a \$1,000 buy here pays 24% more than a \$100 one/);
+  });
+
   test('unmeasured depth withholds the price too, in its own words; a deep market and an older reply show it', () => {
     const unmeasured = viewOf({ depth: { state: 'unmeasured', roundTripLossBps: null, measuredAt: null } });
     assert.equal(unmeasured.price, null);

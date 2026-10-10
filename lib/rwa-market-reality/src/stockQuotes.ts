@@ -28,11 +28,18 @@ import { z } from 'zod';
 export type StockQuoteDepthStateV1 = 'normal' | 'thin' | 'unmeasured';
 
 export interface StockQuoteDepthV1 {
-  /** normal: a $1,000 buy-and-sell keeps more than 80%. thin: it does not.
-   * unmeasured: no run in the window priced both legs at $1,000. */
+  /** thin: a $1,000 buy-and-sell loses a fifth or more, or one $1,000 leg
+   * alone moves a fifth or more from the $100 price. unmeasured: no run in
+   * the window priced both legs at $1,000. normal: neither. */
   state: StockQuoteDepthStateV1;
   /** The median loss of those round trips, in basis points. */
   roundTripLossBps: number | null;
+  /** How far a $1,000 buy pays above the $100 price, and a $1,000 sale gets
+   * below it, in basis points (medians). One side can be the whole story:
+   * PFEc's round trip sat at 19.4–20.7% while a $1,000 buy paid 24% more
+   * than a $100 one, at five times Pfizer's own price (2026-10-10). */
+  buyMoveBps?: number | null;
+  sellMoveBps?: number | null;
   /** The newest run that measured it. */
   measuredAt: string | null;
 }
@@ -97,6 +104,8 @@ export const StockQuotesResponseV1Schema = z
               .object({
                 state: z.enum(['normal', 'thin', 'unmeasured']),
                 roundTripLossBps: z.number().int().min(-1_000_000).max(10_000).nullable(),
+                buyMoveBps: z.number().int().min(-1_000_000).max(10_000_000).nullable().optional(),
+                sellMoveBps: z.number().int().min(-1_000_000).max(10_000).nullable().optional(),
                 measuredAt: IsoV1.nullable(),
               })
               .strict()
@@ -133,16 +142,27 @@ function medianV1(values: readonly number[]): number {
 
 /** The depth the price's own runs measured: the median $1,000 round trip. */
 export function stockQuoteDepthV1(
-  runs: readonly { at: number; buyAt1k?: number | null; sellAt1k?: number | null }[],
+  runs: readonly { at: number; mid: number; buyAt1k?: number | null; sellAt1k?: number | null }[],
 ): StockQuoteDepthV1 {
   const measured = runs.filter(
     (run) => run.buyAt1k != null && run.sellAt1k != null && run.buyAt1k > 0 && run.sellAt1k > 0,
   );
-  if (measured.length === 0) return { state: 'unmeasured', roundTripLossBps: null, measuredAt: null };
-  const loss = Math.round(medianV1(measured.map((run) => (1 - run.sellAt1k! / run.buyAt1k!) * 10_000)));
+  if (measured.length === 0) {
+    return { state: 'unmeasured', roundTripLossBps: null, buyMoveBps: null, sellMoveBps: null, measuredAt: null };
+  }
+  const bps = (values: number[]) => Math.round(medianV1(values) * 10_000);
+  const loss = bps(measured.map((run) => 1 - run.sellAt1k! / run.buyAt1k!));
+  const buyMove = bps(measured.map((run) => run.buyAt1k! / run.mid - 1));
+  const sellMove = bps(measured.map((run) => 1 - run.sellAt1k! / run.mid));
+  const thin =
+    loss >= STOCK_THIN_MARKET_LOSS_BPS_V1 ||
+    buyMove >= STOCK_THIN_MARKET_LOSS_BPS_V1 ||
+    sellMove >= STOCK_THIN_MARKET_LOSS_BPS_V1;
   return {
-    state: loss >= STOCK_THIN_MARKET_LOSS_BPS_V1 ? 'thin' : 'normal',
+    state: thin ? 'thin' : 'normal',
     roundTripLossBps: loss,
+    buyMoveBps: buyMove,
+    sellMoveBps: sellMove,
     measuredAt: new Date(Math.max(...measured.map((run) => run.at))).toISOString(),
   };
 }
