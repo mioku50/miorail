@@ -25,8 +25,11 @@ import {
   officialDocumentHashV1,
   officialSourceRegressionsV1,
   parseBaseDocsCorpusV1,
+  parseBaseDocsFeedTableV1,
   parseBaseProductListV1,
   parseCoinbaseStocksApiV1,
+  watchReferenceFeedsV1,
+  type BaseDocsFeedTableV1,
   type OfficialSourceAssetV1,
   type OfficialParseResultV1,
   type OfficialSourceCheckV1,
@@ -37,6 +40,7 @@ import {
   createDatabaseOfficialAssetRepository,
   createDatabaseRwaSignalRepository,
   createDatabaseUnderlyingAssetRepository,
+  type OfficialAssetIdentityV1,
   type OfficialAssetInputV1,
   type OfficialSourceSnapshotV1,
 } from '@mioagent/route-storage';
@@ -46,6 +50,12 @@ import { bindCoinbaseStocksApiV1 } from './coinbaseStockBindings.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 
 const CHAIN_ID_V1 = 8453 as const;
+
+/** The feed Miorail holds for an asset: a current listing's first, else any. */
+function heldReferenceFeedV1(identity: OfficialAssetIdentityV1): string | null {
+  const withFeed = identity.listings.filter((listing) => listing.referenceFeedAddress !== null);
+  return (withFeed.find((listing) => listing.currentlyListed) ?? withFeed[0])?.referenceFeedAddress ?? null;
+}
 
 const PARSERS_V1: Record<OfficialSourceKeyV1, (body: string) => OfficialParseResultV1> = {
   base_docs_technical: parseBaseDocsCorpusV1,
@@ -64,6 +74,10 @@ async function main(): Promise<void> {
    * code. Recording it here rather than reacting in place keeps a failure from
    * skipping the sources that come after it. */
   const checks: OfficialSourceCheckV1[] = [];
+  /** The retired page's feed table, and the issuer API's assets, compared
+   * after the loop (referenceFeedWatch.ts). */
+  let feedTable: BaseDocsFeedTableV1 | { unreachable: string } | null = null;
+  let apiAssets: OfficialSourceAssetV1[] | null = null;
 
   // Opened before the first source is fetched, and the pass that opens it says
   // nothing. Coinbase issued these thirteen equities well before Miorail first
@@ -84,9 +98,14 @@ async function main(): Promise<void> {
   for (const kind of Object.keys(PARSERS_V1) as OfficialSourceKeyV1[]) {
     const retired = RETIRED_OFFICIAL_SOURCES_V1[kind];
     if (retired) {
-      // Not fetched and not health-checked. Its last snapshot stays as history.
+      // Its membership is not read or health-checked; its last snapshot stays
+      // as history. The docs page's feed table is still published, and read.
       console.log(`\n${kind}`);
-      console.log(`  retired ${retired.retiredOn}: ${retired.reason}; its last snapshot is kept, nothing is read`);
+      console.log(`  retired ${retired.retiredOn}: ${retired.reason}; its last snapshot is kept and lists nothing new`);
+      if (kind === 'base_docs_technical') {
+        const page = await fetchOfficialSourceV1({ url: OFFICIAL_SOURCES_V1.base_docs_technical.url });
+        feedTable = page.ok ? parseBaseDocsFeedTableV1(page.body) : { unreachable: page.detail };
+      }
       continue;
     }
     const source = OFFICIAL_SOURCES_V1[kind];
@@ -132,6 +151,7 @@ async function main(): Promise<void> {
               : null,
         };
         sourceAssets = parsed.assets;
+        if (kind === 'coinbase_stocks_api') apiAssets = parsed.assets;
         assets = parsed.assets.map((asset) => ({
           chainId: CHAIN_ID_V1,
           tokenAddress: asset.tokenAddress,
@@ -218,6 +238,55 @@ async function main(): Promise<void> {
       console.log(
         `  signals: ${recorded.recorded.length} recorded, ${recorded.alreadyRecorded.length} already on file`,
       );
+    }
+  }
+
+  // The feeds Base still publishes, against the ones Miorail holds. A feed to
+  // bind or one that moved fails the pass; nothing here binds one.
+  console.log('\nreference feeds (the feed table on the retired docs page)');
+  if (feedTable === null || 'unreachable' in feedTable) {
+    // A blip like any other: the next pass reads it again.
+    console.log(`  not read this pass${feedTable ? ` — ${feedTable.unreachable}` : ''}`);
+  } else if (!feedTable.ok) {
+    console.error(`  FEED TABLE NOT UNDERSTOOD — ${feedTable.refusal}: ${feedTable.detail}`);
+    process.exitCode = 1;
+  } else if (apiAssets === null) {
+    console.log(`  ${feedTable.feeds.length} published; not compared, the issuer API was not read this pass`);
+  } else {
+    const held = new Map(
+      (await repository.officialAssets({ chainId: CHAIN_ID_V1, limit: 500 })).map((identity) => [
+        identity.tokenAddress,
+        heldReferenceFeedV1(identity),
+      ]),
+    );
+    const watch = watchReferenceFeedsV1({
+      feeds: feedTable.feeds,
+      assets: apiAssets.map((asset) => ({
+        tokenAddress: asset.tokenAddress,
+        ticker: asset.ticker,
+        heldFeedAddress: held.get(asset.tokenAddress) ?? null,
+        referenceValuePublished: asset.referenceValuePublished === true,
+      })),
+    });
+    const published = apiAssets.filter((asset) => asset.referenceValuePublished === true).length;
+    console.log(`  ${feedTable.feeds.length} published, ${watch.matched.length} at the address Miorail holds`);
+    console.log(
+      `  the issuer API publishes a reference value for ${published} token(s), ` +
+        `${watch.referenceValueWithoutFeed.length} without a feed Miorail holds` +
+        (watch.referenceValueWithoutFeed.length > 0 ? `: ${watch.referenceValueWithoutFeed.join(', ')}` : ''),
+    );
+    for (const row of watch.unmatched) {
+      console.log(`  ${row.label} ${row.feedAddress}: ${row.candidates === 0 ? 'no token the issuer lists answers to it' : `${row.candidates} tokens answer to it`}`);
+    }
+    if (watch.unbound.length > 0 || watch.moved.length > 0) {
+      console.error('\nREFERENCE FEED TO REVIEW — the page publishes a feed Miorail does not hold; a person reviews the binding');
+      for (const row of watch.unbound) {
+        console.error(`  ${row.ticker.padEnd(7)} ${row.tokenAddress}  ${row.label} ${row.feedAddress}  no feed held`);
+      }
+      for (const row of watch.moved) {
+        console.error(`  ${row.ticker.padEnd(7)} ${row.tokenAddress}  ${row.label} ${row.feedAddress}  holds ${row.heldFeedAddress}`);
+      }
+      process.exitCode = 1;
     }
   }
 

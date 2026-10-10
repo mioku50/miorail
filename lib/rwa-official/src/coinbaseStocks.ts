@@ -89,6 +89,7 @@ export function parseCoinbaseStocksApiV1(body: string): OfficialParseResultV1 {
       referenceFeedAddress: null,
       underlyingIsin: row.isin,
       tokenDecimals: row.decimals,
+      referenceValuePublished: row.nav_price != null,
     });
   }
   return { ok: true, assets, otherEntries: [] };

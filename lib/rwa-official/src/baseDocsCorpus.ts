@@ -78,10 +78,53 @@ function addressSectionV1(markdown: string): { start: number; block: string } | 
  * asset is worse than no reference value at all.
  */
 function feedForTickerV1(ticker: string, feeds: Map<string, string>): string | null {
-  const exact = feeds.get(`Coinbase ${ticker}`);
-  if (exact) return exact;
-  if (!ticker.endsWith('c')) return null;
-  return feeds.get(`Coinbase ${ticker.slice(0, -1)}`) ?? null;
+  for (const label of baseDocsFeedLabelsV1(ticker)) {
+    const feed = feeds.get(label);
+    if (feed) return feed;
+  }
+  return null;
+}
+
+/** The feed-table labels a token ticker answers to, exact match first. */
+export function baseDocsFeedLabelsV1(ticker: string): string[] {
+  return ticker.endsWith('c') ? [`Coinbase ${ticker}`, `Coinbase ${ticker.slice(0, -1)}`] : [`Coinbase ${ticker}`];
+}
+
+const FEED_TABLE_HEADER_V1 = /^[ \t]*\|[ \t]*Feed[ \t]*\|[ \t]*Address[ \t]*\|[^\n]*$/im;
+
+export type BaseDocsFeedTableV1 =
+  | { ok: true; feeds: { label: string; feedAddress: string }[] }
+  | { ok: false; refusal: 'feed_table_missing' | 'no_feed_rows' | 'duplicate_feed'; detail: string };
+
+/**
+ * The page's "Chainlink data feeds on Base" table on its own: the rows that
+ * follow its `| Feed | Address |` header, up to the first line that is not a
+ * table row. It survived the address table's removal on 2026-10-07, and it
+ * names underlyings, not tokens.
+ */
+export function parseBaseDocsFeedTableV1(markdown: string): BaseDocsFeedTableV1 {
+  const header = FEED_TABLE_HEADER_V1.exec(markdown);
+  if (!header) {
+    return { ok: false, refusal: 'feed_table_missing', detail: 'the document carries no "| Feed | Address |" table' };
+  }
+  const lines = markdown.slice(header.index).split('\n');
+  const table: string[] = [];
+  for (const line of lines) {
+    if (!line.trimStart().startsWith('|')) break;
+    table.push(line);
+  }
+  const feeds: { label: string; feedAddress: string }[] = [];
+  for (const row of tableRowsV1(table.join('\n'))) {
+    const feedAddress = row.address.toLowerCase();
+    if (feeds.some((feed) => feed.label === row.label || feed.feedAddress === feedAddress)) {
+      return { ok: false, refusal: 'duplicate_feed', detail: `the table lists ${row.label} or ${feedAddress} more than once` };
+    }
+    feeds.push({ label: row.label, feedAddress });
+  }
+  if (feeds.length === 0) {
+    return { ok: false, refusal: 'no_feed_rows', detail: 'the feed table carries no row with an address' };
+  }
+  return { ok: true, feeds };
 }
 
 export function parseBaseDocsCorpusV1(markdown: string): OfficialParseResultV1 {

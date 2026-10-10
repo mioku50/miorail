@@ -6,3 +6,4 @@ export * from './fetchSource.js';
 export * from './sourceHealth.js';
 export * from './coinbaseStocks.js';
 export * from './retiredSources.js';
+export * from './referenceFeedWatch.js';

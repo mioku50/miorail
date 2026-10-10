@@ -66,6 +66,9 @@ export interface OfficialSourceAssetV1 {
   referenceFeedAddress: string | null;
   /** Only an issuer-published exact-address ISIN establishes this join. */
   underlyingIsin?: string;
+  /** The issuer publishes a Chainlink reference value (`nav_price`) for this
+   * token: a feed exists, whether or not anyone has published its address. */
+  referenceValuePublished?: boolean;
   tokenDecimals?: number;
 }
 
