@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 
 import {
+  OPS_ALERT_CHAT_CACHE_MAX_AGE_MS_V1,
   OPS_ALERT_QUIET_MS_V1,
   OPS_ALERT_REMIND_AFTER_MS_V1,
   deliveredOpsAlertsV1,
+  opsAlertChatCacheStaleV1,
   opsAlertHtmlV1,
   parseOpsAlertStateV1,
   parseSystemctlShowV1,
@@ -124,4 +127,18 @@ test('systemctl show is read block by block; a state file that is not one starts
   assert.deepEqual(parseOpsAlertStateV1('{not json'), { episodes: [] });
   const episode = { unit: 'miorail-api.service', sinceMs: T0, lastSeenFailedMs: T0, result: 'exit-code', exitStatus: 1, notifiedMs: null };
   assert.deepEqual(parseOpsAlertStateV1(JSON.stringify({ episodes: [episode, { unit: '../etc', sinceMs: 1 }] })), { episodes: [episode] });
+});
+
+test('the copy of the chats is renewed when missing or six hours old, the age the unit starts Node at', () => {
+  assert.equal(opsAlertChatCacheStaleV1(null, T0), true);
+  assert.equal(opsAlertChatCacheStaleV1(T0 - 359 * MIN, T0), false);
+  assert.equal(opsAlertChatCacheStaleV1(T0 - 360 * MIN, T0), true);
+  // The unit decides in a shell whether Node starts at all: the same age, or
+  // a stale copy would never be renewed (or Node would start every pass).
+  const unitFile = readFileSync(new URL('../ops/systemd/miorail-ops-alerts.service', import.meta.url), 'utf8');
+  const condition = unitFile.split('\n').find((line) => line.startsWith('ExecCondition=')) ?? '';
+  assert.ok(
+    condition.includes(`! find /var/lib/miorail-ops-alerts/chats.json -mmin -${OPS_ALERT_CHAT_CACHE_MAX_AGE_MS_V1 / MIN} `),
+    condition,
+  );
 });

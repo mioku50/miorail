@@ -4,14 +4,15 @@
  * Reads systemd's view of every miorail-* unit, keeps the open failure
  * episodes in $STATE_DIRECTORY/state.json, and writes one message to each chat
  * subscribed in `ops_alert_chats` (scripts/ops_alert_link.ts subscribes one).
- * The chats are also kept in chats.json beside it, so a pass can still speak
- * while the database is the thing that is down. No signer, no chain, no
- * wallet; the bot token is never printed, and no journal line is ever read.
+ * The chats are also kept in chats.json beside it, renewed by a quiet pass
+ * once it is six hours old, so a pass can still speak while the database is
+ * the thing that is down. No signer, no chain, no wallet; the bot token is
+ * never printed, and no journal line is ever read.
  *
  *   node --import tsx scripts/ops_unit_alerts.ts --dry   plans and prints, sends and writes nothing
  */
 import { execFile } from 'node:child_process';
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
 
@@ -22,6 +23,7 @@ import { TelegramBotErrorV1, createTelegramBotClientV1, telegramConfigV1 } from 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
   deliveredOpsAlertsV1,
+  opsAlertChatCacheStaleV1,
   opsAlertHtmlV1,
   parseOpsAlertStateV1,
   parseSystemctlShowV1,
@@ -36,6 +38,14 @@ const SHOW_V1 = 'Id,LoadState,ActiveState,Result,ExecMainStatus,ExecMainExitTime
 function readText(path: string): string | null {
   try {
     return readFileSync(path, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+function modifiedAtMs(path: string): number | null {
+  try {
+    return statSync(path).mtimeMs;
   } catch {
     return null;
   }
@@ -81,9 +91,21 @@ async function main(): Promise<void> {
     return;
   }
   mkdirSync(dir, { recursive: true });
+  const subscriptions = createDatabaseOpsAlertChatRepositoryV1(client);
   if (html === null) {
     writeJson(statePath, pass.state, pass.state.episodes.length > 0);
-    console.log(JSON.stringify({ ...summary, outcome: 'quiet' }));
+    // A quiet pass keeps the copy of the chats current too, so a chat is in it
+    // before the first failure, which may be the database's own.
+    let chatCache: 'fresh' | 'renewed' | 'unreadable' = 'fresh';
+    if (opsAlertChatCacheStaleV1(modifiedAtMs(chatsPath), nowMs)) {
+      try {
+        writeJson(chatsPath, await subscriptions.chats(), true);
+        chatCache = 'renewed';
+      } catch {
+        chatCache = 'unreadable';
+      }
+    }
+    console.log(JSON.stringify({ ...summary, outcome: 'quiet', chatCache }));
     return;
   }
 
@@ -93,7 +115,6 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ ...summary, outcome: 'telegram_off' }));
     return;
   }
-  const subscriptions = createDatabaseOpsAlertChatRepositoryV1(client);
   let chats: string[];
   let chatsFrom: 'database' | 'cache';
   try {

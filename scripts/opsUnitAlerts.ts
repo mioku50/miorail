@@ -63,6 +63,19 @@ export const OPS_ALERT_REMIND_AFTER_MS_V1 = 24 * 60 * 60 * 1000;
 /** How long a unit must stay out of `failed` before it is called recovered,
  * so one that fails on every run is not reported as healing in between. */
 export const OPS_ALERT_QUIET_MS_V1 = 10 * 60 * 1000;
+/** How old the copy of the subscribed chats may grow before a quiet pass
+ * renews it. The copy is what a pass falls back on when the database is the
+ * thing that is down, and only a pass that sent something used to write it:
+ * the first chat, subscribed on 2026-10-10, was in no copy until a failure
+ * reached it. The unit's ExecCondition starts Node at the same age
+ * (`-mmin -360` in miorail-ops-alerts.service). */
+export const OPS_ALERT_CHAT_CACHE_MAX_AGE_MS_V1 = 6 * 60 * 60 * 1000;
+
+/** Whether the copy of the subscribed chats is missing or old enough to renew. */
+export function opsAlertChatCacheStaleV1(modifiedAtMs: number | null, nowMs: number): boolean {
+  return modifiedAtMs === null || nowMs - modifiedAtMs >= OPS_ALERT_CHAT_CACHE_MAX_AGE_MS_V1;
+}
+
 /** Still deciding: a run in progress is neither a failure nor a recovery. */
 const SETTLING_V1 = new Set(['activating', 'deactivating', 'reloading', 'refreshing']);
 

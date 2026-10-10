@@ -24,9 +24,10 @@ Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/u
 # database being down is one of the things this reports.
 StateDirectory=miorail-ops-alerts
 StateDirectoryMode=0700
-# Node starts only when a unit is failed or an episode is still open; any
-# other pass ends here, in a shell.
-ExecCondition=/bin/sh -c 'systemctl list-units --failed --plain --no-legend "miorail-*" | grep -q . || test -s /var/lib/miorail-ops-alerts/state.json'
+# Node starts only when a unit is failed, an episode is still open, or the
+# copy of the subscribed chats is missing or six hours old (a quiet pass
+# renews it); any other pass ends here, in a shell.
+ExecCondition=/bin/sh -c 'systemctl list-units --failed --plain --no-legend "miorail-*" | grep -q . || test -s /var/lib/miorail-ops-alerts/state.json || ! find /var/lib/miorail-ops-alerts/chats.json -mmin -360 2>/dev/null | grep -q .'
 ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/ops_unit_alerts.ts
 
 TimeoutStartSec=120

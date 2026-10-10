@@ -124,20 +124,23 @@ once in Telegram, reminded once a day while the unit stays failed, and closed
 with one message once the unit has settled and stayed out of `failed` for ten
 minutes. Units that fail together go out as one message. The message names
 the unit, systemd's result and the time, never a journal line, so nothing a
-failing process printed can reach a chat. While nothing is failed and no
-episode is open, the unit's `ExecCondition` ends the pass in a shell and Node
-never starts.
+failing process printed can reach a chat. While nothing is failed, no
+episode is open and the copy of the chats below is fresh, the unit's
+`ExecCondition` ends the pass in a shell and Node never starts.
 
-Chats subscribe with a one-time link issued on the server:
+Chats subscribe with a one-time link issued on the server (node by its full
+path: a non-interactive shell does not load nvm):
 
 ```bash
-sudo -u miorail bash -c 'cd /home/miorail/mioagent && node --import tsx scripts/ops_alert_link.ts'
+sudo -u miorail bash -c 'cd /home/miorail/mioagent && /home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/ops_alert_link.ts'
 ```
 
 The link works once, for ten minutes. `/stop` in the chat turns the alerts
 off, together with any wallet the chat follows. The subscribed chats are also
-kept in the state directory, so a pass can still speak while the database is
-the thing that is down.
+copied to `chats.json` in the state directory, so a pass can still speak while
+the database is the thing that is down. A pass that sends something writes
+the copy, and so does a quiet pass once the copy is missing or six hours old,
+so a new chat is in it within six hours, before anything fails.
 
 ## Prerequisites
 
