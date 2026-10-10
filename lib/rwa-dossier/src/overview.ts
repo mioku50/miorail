@@ -18,7 +18,7 @@ import type {
   RwaSignalRepositoryV1,
   RwaSignalRowV1,
 } from '@mioagent/route-storage';
-import { isOfficialV1 } from '@mioagent/route-storage';
+import { citedListingsV1, isOfficialV1 } from '@mioagent/route-storage';
 
 import type { ExecutableValueV1 } from './contracts.js';
 import {
@@ -92,7 +92,7 @@ function currentTickerV1(identity: OfficialAssetIdentityV1): {
   return {
     ticker: rows[0]!.ticker,
     displayName: rows.find((row) => row.displayName !== null)?.displayName ?? null,
-    listedIn: [...new Set(listed.map((row) => row.sourceKind))].sort(),
+    listedIn: [...new Set(citedListingsV1(listed).map((row) => row.sourceKind))].sort(),
   };
 }
 

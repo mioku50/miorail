@@ -11,7 +11,7 @@ import type {
   OfficialCashExitRepositoryV1,
   OfficialLookalikeRepositoryV1,
 } from '@mioagent/route-storage';
-import { isOfficialV1 } from '@mioagent/route-storage';
+import { citedListingsV1, isOfficialV1 } from '@mioagent/route-storage';
 
 import { controlsFromSnapshotV1, marketProjectionV1 } from './assemble.js';
 import {
@@ -477,7 +477,7 @@ export async function assembleAddressDossierV1(
             ticker: (listed[0] ?? official.listings[0]!).ticker,
             displayName: listed.map((row) => row.displayName).find((name) => name) ?? null,
             issuer: official.issuer,
-            listedIn: [...new Set(listed.map((row) => row.sourceKind))].sort(),
+            listedIn: [...new Set(citedListingsV1(listed).map((row) => row.sourceKind))].sort(),
             sourceDiscrepancy: discrepancies.some(
               (item) => 'tokenAddress' in item && item.tokenAddress === tokenAddress,
             ),

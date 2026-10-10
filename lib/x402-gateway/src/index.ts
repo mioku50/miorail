@@ -21,6 +21,7 @@ import {
   type RoutesConfig,
   type SettleResultContext,
 } from '@x402/core/server';
+import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from '@x402/core/http';
 import type { PaymentRequirements, SettleResponse, SupportedResponse } from '@x402/core/types';
 import { paymentMiddlewareFromHTTPServer } from '@x402/express';
 import { ExactEvmScheme } from '@x402/evm/exact/server';
@@ -1145,6 +1146,74 @@ function createOfficialX402HttpServer(
   return httpServer;
 }
 
+/** Why a payment was refused, from the headers the official middleware set:
+ * the challenge's `error` when it re-issued one, the settlement's
+ * `errorReason` when settling failed, otherwise `unknown`. */
+export function x402RefusalReasonV1(headers: {
+  paymentRequired?: unknown;
+  paymentResponse?: unknown;
+}): string {
+  const read = (decode: () => string | undefined) => {
+    try {
+      const reason = decode();
+      return typeof reason === 'string' && reason.trim() ? reason.trim().slice(0, 300) : null;
+    } catch {
+      return null;
+    }
+  };
+  const { paymentRequired, paymentResponse } = headers;
+  return (
+    (typeof paymentRequired === 'string' ? read(() => decodePaymentRequiredHeader(paymentRequired).error) : null) ??
+    (typeof paymentResponse === 'string' ? read(() => decodePaymentResponseHeader(paymentResponse).errorReason) : null) ??
+    'unknown'
+  );
+}
+
+/**
+ * A refused payment, said in the body and in our log as well as the header.
+ *
+ * The official middleware answers a payment it will not take with a 402 whose
+ * body is `{}`; the reason travels only inside the base64 PAYMENT-REQUIRED
+ * header. On 2026-10-10 an assistant paying through a wallet read that empty
+ * body, reported "an empty 402", and had to guess what to change before its
+ * second try, while our own log held no line about it either.
+ *
+ * Only a request that carried a payment is touched, and only an empty 402 or
+ * 412 body is replaced: the unpaid challenge and every answer a handler wrote
+ * pass through as they were.
+ */
+export function explainRefusedPaymentsV1(handler: RequestHandler): RequestHandler {
+  return (req, res, next) => {
+    if (req.header('payment-signature') === undefined && req.header('x-payment') === undefined) {
+      return handler(req, res, next);
+    }
+    const json = res.json.bind(res);
+    res.json = ((body?: unknown) => {
+      const empty = body === undefined || body === null
+        || (typeof body === 'object' && !Array.isArray(body) && Object.keys(body).length === 0);
+      if ((res.statusCode !== 402 && res.statusCode !== 412) || !empty) return json(body);
+      const reason = x402RefusalReasonV1({
+        paymentRequired: res.getHeader('PAYMENT-REQUIRED'),
+        paymentResponse: res.getHeader('PAYMENT-RESPONSE'),
+      });
+      // The reason can quote a payload, so an address in it is cut short here.
+      console.warn('[x402] payment refused', {
+        path: req.path,
+        status: res.statusCode,
+        reason: reason.replace(/0x[0-9a-fA-F]{8,}/g, '0x…'),
+      });
+      return json({
+        error: 'payment_refused',
+        code: 'payment_refused',
+        reason,
+        detail:
+          'The payment was refused for the reason above. The PAYMENT-REQUIRED header carries the current x402 v2 challenge; a new payment must match it exactly, resource included.',
+      });
+    }) as Response['json'];
+    return handler(req, res, next);
+  };
+}
+
 async function createInitializedOfficialX402Middleware(
   config: X402RuntimeConfig,
   options: CreateX402MiddlewareOptions = {},
@@ -1156,7 +1225,7 @@ async function createInitializedOfficialX402Middleware(
     status: 'connected',
     checkedAt: new Date().toISOString(),
   });
-  return paymentMiddlewareFromHTTPServer(
+  return explainRefusedPaymentsV1(paymentMiddlewareFromHTTPServer(
     httpServer,
     {
       appName: options.serviceName || 'Miorail',
@@ -1164,7 +1233,7 @@ async function createInitializedOfficialX402Middleware(
     },
     undefined,
     false,
-  );
+  ));
 }
 
 export function createOfficialX402Middleware(
@@ -1176,7 +1245,7 @@ export function createOfficialX402Middleware(
     throw new Error(`x402 is not configured: ${config.missingConfig.join(', ')}`);
   }
   const httpServer = createOfficialX402HttpServer(config, options, env);
-  return paymentMiddlewareFromHTTPServer(
+  return explainRefusedPaymentsV1(paymentMiddlewareFromHTTPServer(
     httpServer,
     {
       appName: options.serviceName || 'Miorail',
@@ -1184,7 +1253,7 @@ export function createOfficialX402Middleware(
     },
     undefined,
     false,
-  );
+  ));
 }
 
 function unavailablePayload(

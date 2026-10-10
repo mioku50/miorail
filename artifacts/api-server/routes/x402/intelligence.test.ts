@@ -566,6 +566,94 @@ test('an address is refused before any evidence read when it is not an address',
 });
 
 // ---------------------------------------------------------------------------
+// A wallet is not a token.
+//
+// The corpus can only ever call a wallet `unknown_to_miorail`, and on
+// 2026-10-10 an assistant paid 0.002 USDC to learn that about its own wallet.
+// An address nothing here knows is now asked ERC-20's own question before the
+// paywall, and one that does not answer it is refused for free.
+// ---------------------------------------------------------------------------
+const WALLET_V1 = '0x2222222222222222222222222222222222222222';
+
+function unknownDossierV1(lookalike: unknown = null) {
+  return dossierFixtureV1({
+    tokenAddress: WALLET_V1,
+    identity: { ...dossierFixtureV1().identity, standing: 'unknown_to_miorail', official: null, lookalike },
+  });
+}
+
+function countingAppV1(options: Record<string, unknown>) {
+  const seen = { charges: 0, asked: [] as string[] };
+  const app = paidAppV1({
+    middlewareFactory: () => ((_req, _res, next) => {
+      seen.charges += 1;
+      next();
+    }) as RequestHandler,
+    ...options,
+    readTokenSupply: async (tokenAddress: string) => {
+      seen.asked.push(tokenAddress);
+      return (options.answer as string | undefined) ?? 'token';
+    },
+  });
+  return { app, seen };
+}
+
+test('an address that is not a token is refused before the paywall, and nothing is charged', async () => {
+  const { app, seen } = countingAppV1({ loadIdentity: async () => unknownDossierV1(), answer: 'not_token' });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/address/identity')
+    .query({ tokenAddress: WALLET_V1 })
+    .expect(422);
+  assert.equal(response.body.code, 'not_a_token');
+  assert.match(response.body.message, /totalSupply\(\).*Nothing was charged/);
+  assert.deepEqual(seen.asked, [WALLET_V1]);
+  assert.equal(seen.charges, 0);
+});
+
+test('when Base cannot be asked, the answer is a retry, never a charge', async () => {
+  const { app, seen } = countingAppV1({ loadIdentity: async () => unknownDossierV1(), answer: 'unreadable' });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/address/identity')
+    .query({ tokenAddress: WALLET_V1 })
+    .expect(503);
+  assert.equal(response.body.code, 'token_check_unavailable');
+  assert.equal(response.headers['retry-after'], '30');
+  assert.equal(seen.charges, 0);
+});
+
+test('an unknown address that answers as a token is still sold its unknown standing', async () => {
+  const { app, seen } = countingAppV1({ loadIdentity: async () => unknownDossierV1(), answer: 'token' });
+  const response = await request(app)
+    .get('/api/x402/intelligence/v1/address/identity')
+    .query({ tokenAddress: WALLET_V1 })
+    .expect(200);
+  assert.equal(response.body.standing, 'unknown_to_miorail');
+  assert.equal(seen.charges, 1);
+});
+
+test('an address the corpus knows is never asked about on the chain', async () => {
+  for (const dossier of [
+    dossierFixtureV1(),
+    unknownDossierV1({
+      officialAddress: '0xb20000000000000000000078ee7ce2fe4908108c',
+      officialTicker: 'NVDAc',
+      matchKind: 'symbol_exact',
+      matchedAlias: 'published_ticker',
+      matchedValue: 'NVDAc',
+      firstFlaggedAt: '2026-09-01T00:00:00.000Z',
+    }),
+  ]) {
+    const { app, seen } = countingAppV1({ loadIdentity: async () => dossier, answer: 'not_token' });
+    await request(app)
+      .get('/api/x402/intelligence/v1/address/identity')
+      .query({ tokenAddress: dossier.tokenAddress })
+      .expect(200);
+    assert.deepEqual(seen.asked, []);
+    assert.equal(seen.charges, 1);
+  }
+});
+
+// ---------------------------------------------------------------------------
 // "What does this cost?" is not a malformed request for the answer.
 //
 // Every route validated its arguments before the paywall, so a request with no

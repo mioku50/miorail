@@ -37,6 +37,7 @@ import { answerB20CopilotV1 } from '../../lib/b20Copilot.js';
 // The ONE exit judgement. A paid answer and a holder's own portfolio must not
 // disagree about whether a sale was measured, or at what size.
 import { decimalToAtomicUsdcV1, referenceExitAssessmentV1 } from '../../lib/b20ExitAssessment.js';
+import { readTokenSupplyAnswerV1, type TokenSupplyAnswerV1 } from '../../lib/tokenSupplyProbe.js';
 import { readB20EvidenceForTokenV1 } from '../b20Control.js';
 import { readAddressDossierForX402V1 } from '../rwaInvestigate.js';
 import { readMarketRealityForX402V1 } from '../rwaMarketReality.js';
@@ -87,6 +88,9 @@ interface CreateX402IntelligenceRouterOptionsV1 {
     requestedCashAtomic: string;
   }) => Promise<unknown | null>;
   loadIdentity?: (tokenAddress: string) => Promise<unknown | null>;
+  /** Whether an address nothing here knows answers as a token, read from
+   * Base before the identity check can charge for it. */
+  readTokenSupply?: (tokenAddress: string) => Promise<TokenSupplyAnswerV1>;
 }
 
 const requestContext = new AsyncLocalStorage<SellerRequestContextV1>();
@@ -174,8 +178,20 @@ export function x402OpenApiDocumentV1(input: {
             },
           },
           '400': { description: 'Malformed input, refused before the price. Nothing is charged.' },
-          '402': { description: 'Payment required. The x402 v2 challenge is in the PAYMENT-REQUIRED header.' },
+          '402': {
+            description:
+              'Payment required. The x402 v2 challenge is in the PAYMENT-REQUIRED header; a refused payment also says why in the body (`payment_refused`).',
+          },
           '404': { description: 'No stored evidence for this input, refused before the price. Nothing is charged.' },
+          ...(service.id === 'address_identity_check'
+            ? {
+                '422': {
+                  description:
+                    'Not a token: the address does not answer ERC-20 totalSupply(), refused before the price. Nothing is charged.',
+                },
+                '503': { description: 'Base could not be asked whether the address is a token. Nothing is charged; ask again.' },
+              }
+            : {}),
         },
         'x-payment-info': {
           price: { mode: 'fixed', currency: 'USD', amount: input.payment.amountUsdc },
@@ -491,6 +507,7 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
   const loadBundle = options.loadBundle ?? loadPublicBundleV1;
   const loadRepresentations = options.loadRepresentations ?? readMarketRealityForX402V1;
   const loadIdentity = options.loadIdentity ?? readAddressDossierForX402V1;
+  const readTokenSupply = options.readTokenSupply ?? ((tokenAddress: string) => readTokenSupplyAnswerV1(tokenAddress, env));
 
   const featureGate: RequestHandler = (_req, res, next) => {
     if (!sellerEnabledV1(env)) {
@@ -886,6 +903,32 @@ export function createX402IntelligenceRouterV1(options: CreateX402IntelligenceRo
       if (!dossier) {
         res.status(503).json({ error: 'address_dossier_unavailable', code: 'address_dossier_unavailable' });
         return;
+      }
+      // A wallet is not a token, and the corpus can only call one unknown: on
+      // 2026-10-10 an assistant paid to learn that about its own wallet. An
+      // address nothing here knows is asked ERC-20's own question first, and
+      // one that does not answer it is refused before the paywall, free.
+      const known = (dossier as { identity?: { standing?: string; lookalike?: unknown } }).identity;
+      if (known?.standing === 'unknown_to_miorail' && !known.lookalike) {
+        const answer = await readTokenSupply(tokenAddress);
+        if (answer === 'not_token') {
+          res.status(422).json({
+            error: 'not_a_token',
+            code: 'not_a_token',
+            message:
+              'This address does not answer ERC-20 totalSupply(): it is a wallet or a contract that is not a token. Nothing was charged.',
+          });
+          return;
+        }
+        if (answer === 'unreadable') {
+          res.setHeader('Retry-After', '30');
+          res.status(503).json({
+            error: 'token_check_unavailable',
+            code: 'token_check_unavailable',
+            message: 'Base could not be asked whether this address is a token. Nothing was charged; ask again shortly.',
+          });
+          return;
+        }
       }
       res.locals.x402IntelligenceDossier = dossier;
       res.locals.x402IntelligenceRequestHash = stableHashV1('x402-intelligence-request/v1', {

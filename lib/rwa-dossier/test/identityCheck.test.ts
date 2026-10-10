@@ -110,6 +110,30 @@ describe('is this the real one', () => {
     assert.equal(result.lookalike, null);
   });
 
+  test('a retired source is not cited as still listing the address', async () => {
+    // `base_docs_technical` is no longer read: Base took its table down on
+    // 2026-10-07, so its "listed" rows are frozen at the last reading.
+    const result = await assembleAddressIdentityCheckV1(
+      depsV1({
+        identities: {
+          [OFFICIAL]: {
+            chainId: 8453,
+            tokenAddress: OFFICIAL,
+            issuer: 'coinbase',
+            listings: [
+              listing(),
+              listing({ sourceKind: 'coinbase_stocks_api', sourceUrl: 'https://api.coinbase.com/tokenized-stocks' }),
+            ],
+          },
+        },
+      }),
+      { chainId: 8453, tokenAddress: OFFICIAL },
+    );
+    assert.equal(result.standing, 'reviewed_official');
+    assert.deepEqual(result.official?.listedIn.map((row) => row.sourceKind), ['coinbase_stocks_api']);
+    assert.match(result.answer, /and 1 reviewed source\(s\) still list this exact address/);
+  });
+
   test('an address a source dropped is not demoted to impostor', async () => {
     const result = await assembleAddressIdentityCheckV1(
       depsV1({

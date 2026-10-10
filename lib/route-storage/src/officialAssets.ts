@@ -415,6 +415,24 @@ export function isOfficialV1(identity: OfficialAssetIdentityV1 | null): boolean 
   return Boolean(identity?.listings.some((listing) => listing.currentlyListed));
 }
 
+/**
+ * The listings a surface may cite as a source's word about now.
+ *
+ * A retired source is no longer read, so its rows stay as its last reading
+ * left them, "listed" included. On 2026-10-10 a paid identity answer still
+ * said NVDAc was listed in `base_docs_technical`, three days after Base took
+ * that table down. A retired source's rows are cited only when no source that
+ * is still read lists the address at all, a state the official worker fails
+ * on rather than leaving quiet; citing nothing there would contradict the
+ * OFFICIAL standing the same rows decide.
+ */
+export function citedListingsV1<T extends { sourceKind: string; currentlyListed: boolean }>(
+  listings: readonly T[],
+): T[] {
+  const read = listings.filter((listing) => !officialSourceRetiredV1(listing.sourceKind));
+  return read.some((listing) => listing.currentlyListed) ? read : [...listings];
+}
+
 export interface OfficialAssetRepositoryV1 {
   /**
    * One check of one source, written as a unit.

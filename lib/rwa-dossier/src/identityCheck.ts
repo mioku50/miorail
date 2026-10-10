@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import {
+  citedListingsV1,
   isOfficialV1,
   type IssuerRepresentationRepositoryV1,
   type OfficialAssetIdentityV1,
@@ -168,7 +169,7 @@ function officialViewV1(identity: OfficialAssetIdentityV1) {
     ticker: newest?.ticker ?? '',
     displayName: newest?.displayName ?? null,
     issuer: identity.issuer,
-    listedIn: identity.listings.slice(0, 8).map((row) => ({
+    listedIn: citedListingsV1(identity.listings).slice(0, 8).map((row) => ({
       sourceKind: row.sourceKind,
       currentlyListed: row.currentlyListed,
       lastSeenAt: row.lastSeenAt,

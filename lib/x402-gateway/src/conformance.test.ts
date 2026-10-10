@@ -4,7 +4,12 @@ import { createServer, type Server } from 'node:http';
 import { AddressInfo } from 'node:net';
 
 import express from 'express';
-import { decodePaymentRequiredHeader, decodePaymentResponseHeader } from '@x402/core/http';
+import {
+  decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
+  decodePaymentSignatureHeader,
+  encodePaymentSignatureHeader,
+} from '@x402/core/http';
 import { x402Client } from '@x402/fetch';
 import { wrapFetchWithPayment } from '@x402/fetch';
 import { registerExactEvmScheme } from '@x402/evm/exact/client';
@@ -48,10 +53,12 @@ interface FakeFacilitator {
   close(): Promise<void>;
   settleCalls: number;
   verifyCalls: number;
+  /** Refuse every verification with this reason, or approve again with null. */
+  refuseVerify(reason: string | null): void;
 }
 
 async function startFakeFacilitator(): Promise<FakeFacilitator> {
-  const state = { settleCalls: 0, verifyCalls: 0 };
+  const state = { settleCalls: 0, verifyCalls: 0, refuse: null as string | null };
   const server: Server = createServer((req, res) => {
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
@@ -66,7 +73,7 @@ async function startFakeFacilitator(): Promise<FakeFacilitator> {
       }
       if (path?.endsWith('/verify')) {
         state.verifyCalls += 1;
-        return json(200, { isValid: true });
+        return json(200, state.refuse ? { isValid: false, invalidReason: state.refuse } : { isValid: true });
       }
       if (path?.endsWith('/settle')) {
         state.settleCalls += 1;
@@ -91,6 +98,9 @@ async function startFakeFacilitator(): Promise<FakeFacilitator> {
     },
     get verifyCalls() {
       return state.verifyCalls;
+    },
+    refuseVerify(reason: string | null) {
+      state.refuse = reason;
     },
   };
 }
@@ -219,6 +229,77 @@ describe('Miorail speaks x402 to the official client', () => {
     const response = await paidFetch(`${miorail.url}/paid`);
     assert.equal(response.status, 200);
     assert.equal(facilitator.settleCalls, before + 1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A refused payment says why in the body.
+//
+// The official middleware answers a payment it will not take with a 402 and
+// an empty `{}` body; the reason is only inside the base64 PAYMENT-REQUIRED
+// header. On 2026-10-10 an assistant paying through a wallet read the empty
+// body, called it "an empty 402" and guessed what to change, and our log held
+// no line about it either.
+// ---------------------------------------------------------------------------
+
+/** One payment the official client signs for `/paid`, as its header. The paid
+ * call it rides on settles against the fake like any other. */
+async function signedPaymentHeaderV1(): Promise<string> {
+  let header: string | null = null;
+  const capture: typeof globalThis.fetch = async (input, init) => {
+    const request = new Request(input as never, init);
+    header ??= request.headers.get('PAYMENT-SIGNATURE');
+    return globalThis.fetch(request);
+  };
+  const response = await wrapFetchWithPayment(capture, officialClient())(`${miorail.url}/paid`);
+  assert.equal(response.status, 200);
+  assert.ok(header, 'the official client sends its payment in PAYMENT-SIGNATURE');
+  return header;
+}
+
+describe('a refused payment says why', () => {
+  test('a payment that matches no requirement is refused with that reason in the body', async () => {
+    const signed = decodePaymentSignatureHeader(await signedPaymentHeaderV1());
+    const tampered = encodePaymentSignatureHeader({ ...signed, accepted: { ...signed.accepted, amount: '999' } });
+    const settles = facilitator.settleCalls;
+
+    const response = await fetch(`${miorail.url}/paid`, { headers: { 'PAYMENT-SIGNATURE': tampered } });
+
+    assert.equal(response.status, 402);
+    const body = (await response.json()) as { error: string; code: string; reason: string; detail: string };
+    assert.equal(body.error, 'payment_refused');
+    assert.equal(body.code, 'payment_refused');
+    assert.equal(body.reason, 'No matching payment requirements');
+    assert.match(body.detail, /PAYMENT-REQUIRED/);
+    // The challenge is still where the official client reads it, unchanged.
+    const challenge = decodePaymentRequiredHeader(response.headers.get('PAYMENT-REQUIRED')!);
+    assert.equal(challenge.error, 'No matching payment requirements');
+    assert.equal(challenge.accepts[0]!.amount, '1000');
+    assert.equal(facilitator.settleCalls, settles, 'a refused payment is never settled');
+  });
+
+  test("a payment the facilitator refuses carries the facilitator's reason", async () => {
+    const header = await signedPaymentHeaderV1();
+    const settles = facilitator.settleCalls;
+    facilitator.refuseVerify('invalid_exact_evm_payload_signature');
+    try {
+      const response = await fetch(`${miorail.url}/paid`, { headers: { 'PAYMENT-SIGNATURE': header } });
+      assert.equal(response.status, 402);
+      const body = (await response.json()) as { error: string; reason: string };
+      assert.equal(body.error, 'payment_refused');
+      assert.equal(body.reason, 'invalid_exact_evm_payload_signature');
+    } finally {
+      facilitator.refuseVerify(null);
+    }
+    assert.equal(facilitator.settleCalls, settles, 'a refused payment is never settled');
+  });
+
+  test('the unpaid challenge is left as the gateway wrote it', async () => {
+    const response = await fetch(`${miorail.url}/paid`);
+    assert.equal(response.status, 402);
+    const body = (await response.json()) as { error: string; accepts: unknown[] };
+    assert.equal(body.error, 'Payment Required');
+    assert.equal(body.accepts.length, 1);
   });
 });
 
