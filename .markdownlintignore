@@ -6,6 +6,9 @@ CHANGELOG.md
 # their upstream Markdown formatting.
 contracts/lib
 lib/runtime-skills/plugins
+# Pages Base and Coinbase publish, kept byte for byte as served: the parsers
+# are tested against what the source really says, formatting included.
+lib/rwa-official/test/fixtures
 # Miorail's own Wallet MCP plugin keeps the layout Base's plugin spec gives
 # every plugin (a frontmatter title, one H1, bold labels), as the ones above do.
 artifacts/interface/public/wallet-mcp
