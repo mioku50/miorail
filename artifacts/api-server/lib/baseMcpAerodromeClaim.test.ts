@@ -18,7 +18,7 @@ const NOW = '2026-10-05T16:00:00.000Z';
 const original = { ...runtime };
 afterEach(() => Object.assign(runtime, original));
 function plan(): AerodromeClaimPlanV1 {
-  return { blockNumber: '100', poolsTotal: 38_794, poolsRead: 38_794, poolsUnread: 0, clPositionsTotal: 2, clPositionsRead: 2,
+  return { blockNumber: '100', poolsTotal: 38_794, poolsRead: 38_794, poolsUnread: 0, poolsReadDirect: 0, clPositionsTotal: 2, clPositionsRead: 2,
     positionsFound: 1, managedSkipped: 0, errorCode: null, calls: [{ kind: 'basic_fees', pool: POOL, tokenId: '0',
       token0: WALLET, token1: POOL, amount0: '10', amount1: '0', aero: '0',
       call: { index: 0, callType: 'other', to: POOL, valueWei: '0', asset: null, amountAtomic: null,

@@ -4,7 +4,8 @@ import { decodeFunctionData, decodeFunctionResult, encodeFunctionResult, type Ab
 import {
   AERODROME_SUGAR_V1, AERODROME_VOTER_V1, AERODROME_BASIC_FACTORY_V1,
   AERODROME_CL_FACTORIES_V1, AERODROME_CL_NFPMS_V1, AERODROME_AERO_V1, AERODROME_CLAIM_ABI_V1,
-  SUGAR_MAX_ITERATIONS_V1, readAerodromeClaimPlanV1, type AerodromeClaimReadV1, type AerodromeSugarPositionV1,
+  AERODROME_BATCH_CALLS_V1, SUGAR_MAX_ITERATIONS_V1, readAerodromeClaimPlanV1,
+  type AerodromeClaimCallV1, type AerodromeClaimReadV1, type AerodromeSugarPositionV1,
 } from './aerodromeClaimReader.js';
 
 export const WALLET = '0x1111111111111111111111111111111111111111';
@@ -19,6 +20,11 @@ const REGISTRY = '0x9999999999999999999999999999999999999999';
 const ZERO = '0x0000000000000000000000000000000000000000';
 const CL_FACTORY = AERODROME_CL_FACTORIES_V1[1];
 const NFPM = AERODROME_CL_NFPMS_V1[CL_FACTORY];
+/** The basic factory's pool at `index`, as allPools() answers in the fixture. */
+export function basicPool(index: number): string {
+  return `0xab${index.toString(16).padStart(38, '0')}`;
+}
+const isBasicPool = (target: string) => target === POOL || target.startsWith('0xab');
 export function position(overrides: Partial<AerodromeSugarPositionV1> = {}): AerodromeSugarPositionV1 {
   return { id: 0n, lp: POOL, liquidity: 0n, staked: 0n, unstaked_earned0: 10n,
     unstaked_earned1: 0n, emissions_earned: 0n, alm: ZERO, locker: ZERO, ...overrides };
@@ -30,9 +36,11 @@ export function fixtureReader(options: {
   held?: AerodromeSugarPositionV1[]; heldBalance?: number;
   override?: (target: string, name: string, args: readonly unknown[]) => unknown;
   page?: (limit: number, offset: number) => Promise<AerodromeSugarPositionV1[]>;
+  /** Batched reads, answered call by call; each batch's size is recorded. */
+  batches?: number[];
 } = {}): AerodromeClaimReadV1 {
   const count = options.count ?? 500;
-  return { blockNumber: 100n, async read(target, name, args = []) {
+  const reader: AerodromeClaimReadV1 = { blockNumber: 100n, async read(target, name, args = []) {
     const replacement = options.override?.(target, name, args);
     if (replacement !== undefined) return replacement;
     if (target === AERODROME_SUGAR_V1 && name === 'count') return BigInt(count);
@@ -47,9 +55,11 @@ export function fixtureReader(options: {
       return offset <= at && at < offset + limit ? options.rows ?? [position()] : [];
     }
     if (name === 'balanceOf') return target === NFPM ? BigInt(options.heldBalance ?? options.held?.length ?? 0) : 0n;
+    if (name === 'allPools') return basicPool(Number(args[0]));
+    if (['claimable0', 'claimable1', 'index0', 'index1', 'supplyIndex0', 'supplyIndex1', 'earned'].includes(name)) return 0n;
     if (name === 'positionsUnstakedConcentrated') return options.held ?? [];
     if (name === 'voter') return AERODROME_VOTER_V1;
-    if (name === 'factory') return target === POOL ? AERODROME_BASIC_FACTORY_V1 : CL_FACTORY;
+    if (name === 'factory') return isBasicPool(target) ? AERODROME_BASIC_FACTORY_V1 : CL_FACTORY;
     if (name === 'isPool') return true;
     if (name === 'token0') return TOKEN0;
     if (name === 'token1') return TOKEN1;
@@ -65,6 +75,16 @@ export function fixtureReader(options: {
     if (name === 'stakedContains') return true;
     throw new Error(`unexpected fixture read: ${name}`);
   } };
+  if (options.batches) {
+    const batches = options.batches;
+    reader.readMany = async (calls: readonly AerodromeClaimCallV1[]) => {
+      batches.push(calls.length);
+      const answers: unknown[] = [];
+      for (const one of calls) answers.push(await reader.read(one.address, one.name, one.args));
+      return answers;
+    };
+  }
+  return reader;
 }
 const unstaked = position({ lp: CL_POOL, id: 41n, liquidity: 5n });
 
@@ -114,15 +134,66 @@ test('the third approved CL factory and its manager are reviewed', async () => {
   assert.equal(plan.errorCode, null);
   assert.deepEqual(plan.calls.map(item => [item.kind, item.call.to]), [['cl_fees', nfpm]]);
 });
-test('pools past Sugar’s per-factory walk are unread and never paged', async () => {
+test('Sugar is never paged past its walk; the basic pools past it are read from the pools', async () => {
   let furthest = 0;
+  const batches: number[] = [];
   const count = SUGAR_MAX_ITERATIONS_V1 + 500;
-  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count, page: async (limit, offset) => {
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count, batches, page: async (limit, offset) => {
     furthest = Math.max(furthest, offset + limit); return [];
   } }), WALLET);
   assert.equal(furthest, SUGAR_MAX_ITERATIONS_V1);
-  assert.equal(plan.poolsRead, SUGAR_MAX_ITERATIONS_V1); assert.equal(plan.poolsUnread, 500);
+  assert.equal(plan.errorCode, null);
+  assert.equal(plan.poolsRead, count); assert.equal(plan.poolsReadDirect, 500); assert.equal(plan.poolsUnread, 0);
+  assert.equal(plan.calls.length, 0);
+  assert.ok(batches.length > 0 && batches.every(size => size <= AERODROME_BATCH_CALLS_V1));
+});
+test('a basic position past the walk is claimed like one Sugar returned, with the fees accrued since its index moved', async () => {
+  const pool = basicPool(SUGAR_MAX_ITERATIONS_V1 + 123);
+  const tailGauge = '0xcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd';
+  const wad = 10n ** 18n;
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: SUGAR_MAX_ITERATIONS_V1 + 500, rows: [], batches: [],
+    override: (target, name, args) => {
+      if (target !== pool && target !== tailGauge && !(target === AERODROME_VOTER_V1 && args[0] === pool)) return undefined;
+      if (name === 'gauges') return tailGauge;
+      if (target === tailGauge) return { balanceOf: 3n, earned: 9n, rewardToken: AERODROME_AERO_V1, stakingToken: pool }[name];
+      return { balanceOf: 7n * wad, claimable0: 5n, claimable1: 0n, index0: 3n * wad, supplyIndex0: wad,
+        index1: wad, supplyIndex1: wad }[name];
+    } }), WALLET);
+  assert.equal(plan.errorCode, null);
+  assert.equal(plan.positionsFound, 1);
+  assert.deepEqual(plan.calls.map(item => [item.kind, item.call.to]), [['basic_fees', pool], ['basic_aero', tailGauge]]);
+  // 5 stored, plus 7 LP × (3 − 1) per LP of fees accrued since the index moved.
+  assert.equal(plan.calls[0].amount0, String(5n + 14n * wad)); assert.equal(plan.calls[0].amount1, '0');
+  assert.equal(plan.calls[1].aero, '9');
+});
+test('a CL factory past the walk stays unread, and its pools are never listed', async () => {
+  const listed: string[] = [];
+  const clFactory = AERODROME_CL_FACTORIES_V1[0];
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: 500 + SUGAR_MAX_ITERATIONS_V1 + 10, override: (target, name) => {
+    if (name === 'allPools') listed.push(target);
+    if (name === 'allPoolsLength') return target === clFactory ? BigInt(SUGAR_MAX_ITERATIONS_V1 + 10) : target === AERODROME_BASIC_FACTORY_V1 ? 500n : 0n;
+    return undefined;
+  } }), WALLET);
   assert.equal(plan.errorCode, 'aerodrome_incomplete_coverage');
+  assert.equal(plan.poolsUnread, 10); assert.equal(plan.poolsReadDirect, 0);
+  assert.deepEqual(listed, []);
+});
+test('a direct read that fails, or a budget that ends before the pools do, is unread rather than empty', async () => {
+  const count = SUGAR_MAX_ITERATIONS_V1 + 500;
+  const failing = fixtureReader({ count, rows: [] });
+  failing.readMany = async () => { throw new Error('multicall unavailable'); };
+  const failed = await readAerodromeClaimPlanV1(failing, WALLET);
+  assert.notEqual(failed.errorCode, null); assert.equal(failed.poolsUnread, 500); assert.equal(failed.calls.length, 0);
+  const capped = await readAerodromeClaimPlanV1(fixtureReader({ count, rows: [] }), WALLET, { maxPools: SUGAR_MAX_ITERATIONS_V1 + 100 });
+  assert.equal(capped.errorCode, 'aerodrome_incomplete_coverage');
+  assert.equal(capped.poolsReadDirect, 100); assert.equal(capped.poolsUnread, 400);
+});
+test('an index behind the wallet’s own is unreadable, never a negative fee', async () => {
+  const pool = basicPool(SUGAR_MAX_ITERATIONS_V1);
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: SUGAR_MAX_ITERATIONS_V1 + 1, rows: [],
+    override: (target, name) => target !== pool ? undefined
+      : ({ balanceOf: 1n, index0: 1n, supplyIndex0: 2n } as Record<string, bigint>)[name] }), WALLET);
+  assert.equal(plan.errorCode, 'aerodrome_position_unreadable'); assert.equal(plan.poolsUnread, 1);
 });
 test('a catalogue the registry does not account for is unreadable', async () => {
   const short = await readAerodromeClaimPlanV1(fixtureReader({ override: (target, name) =>

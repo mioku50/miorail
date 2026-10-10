@@ -21,12 +21,16 @@ export const AERODROME_CL_NFPMS_V1: Readonly<Record<typeof AERODROME_CL_FACTORIE
   '0xade65c38cd4849adba595a4323a8c7ddfe89716a': '0xa990c6a764b73bf43cee5bb40339c3322fb9d55f',
 };
 export const AERODROME_AERO_V1 = '0x940181a94a35a4569e4529a3cdfb74e38fd98631';
-// Sugar's own walls. positions() walks at most MAX_ITERATIONS pools of each
-// factory whatever the offset, so a factory's pools past it are never
+// Sugar's own walls, as its MAX_ITERATIONS() and MAX_POSITIONS() getters
+// answer (read 2026-10-10). positions() walks at most MAX_ITERATIONS pools of
+// each factory whatever the offset, so a factory's pools past it are never
 // examined. positionsUnstakedConcentrated() returns, and per manager walks, at
 // most MAX_POSITIONS.
 export const SUGAR_MAX_ITERATIONS_V1 = 30_000;
 export const SUGAR_MAX_POSITIONS_V1 = 200;
+/** Calls per batched read. Each one is a cheap view, so a batch stays far
+ * below an eth_call gas cap. */
+export const AERODROME_BATCH_CALLS_V1 = 300;
 const ZERO = '0x0000000000000000000000000000000000000000';
 const POSITION_TUPLE = '(uint256 id,address lp,uint256 liquidity,uint256 staked,uint256 amount0,uint256 amount1,uint256 staked0,uint256 staked1,uint256 unstaked_earned0,uint256 unstaked_earned1,uint256 emissions_earned,int24 tick_lower,int24 tick_upper,uint160 sqrt_ratio_lower,uint160 sqrt_ratio_upper,address locker,uint32 unlocks_at,address alm)';
 export const AERODROME_CLAIM_ABI_V1 = parseAbi([
@@ -36,6 +40,14 @@ export const AERODROME_CLAIM_ABI_V1 = parseAbi([
   'function factoryRegistry() view returns (address)',
   'function poolFactories() view returns (address[])',
   'function allPoolsLength() view returns (uint256)',
+  'function allPools(uint256) view returns (address)',
+  'function claimable0(address) view returns (uint256)',
+  'function claimable1(address) view returns (uint256)',
+  'function index0() view returns (uint256)',
+  'function index1() view returns (uint256)',
+  'function supplyIndex0(address) view returns (uint256)',
+  'function supplyIndex1(address) view returns (uint256)',
+  'function earned(address) view returns (uint256)',
   `function positions(uint256 _limit,uint256 _offset,address _account) view returns (${POSITION_TUPLE}[])`,
   `function positionsUnstakedConcentrated(uint256 _limit,uint256 _offset,address _account) view returns (${POSITION_TUPLE}[])`,
   'function balanceOf(address) view returns (uint256)',
@@ -64,9 +76,13 @@ export interface AerodromeSugarPositionV1 {
   unstaked_earned0: bigint; unstaked_earned1: bigint; emissions_earned: bigint;
   alm: string; locker: string;
 }
+export interface AerodromeClaimCallV1 { address: string; name: string; args?: readonly unknown[] }
 export interface AerodromeClaimReadV1 {
   blockNumber: bigint;
   read(address: string, name: string, args?: readonly unknown[]): Promise<unknown>;
+  /** The same reads at the same block in one request, answered in order. A
+   * reader without it is asked one call at a time. */
+  readMany?(calls: readonly AerodromeClaimCallV1[]): Promise<unknown[]>;
 }
 export interface AerodromeClaimItemV1 {
   kind: 'basic_fees' | 'cl_fees' | 'basic_aero' | 'cl_aero';
@@ -77,6 +93,8 @@ export interface AerodromeClaimItemV1 {
 export interface AerodromeClaimPlanV1 {
   blockNumber: string;
   poolsTotal: number; poolsRead: number; poolsUnread: number;
+  /** Of poolsRead, the basic pools past Sugar's walk, read from the pools. */
+  poolsReadDirect: number;
   /** NFTs the wallet itself holds in a reviewed position manager (unstaked
    * concentrated positions), and how many of them Sugar returned. */
   clPositionsTotal: number; clPositionsRead: number;
@@ -92,10 +110,21 @@ export async function createAerodromeClaimReadV1(): Promise<AerodromeClaimReadV1
   ) });
   if (await client.getChainId() !== 8453) throw new Error('aerodrome_chain_mismatch');
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
-  return { blockNumber, read: (address, name, args = []) => client.readContract({
-    address: address as Address, abi: AERODROME_CLAIM_ABI_V1 as Abi,
-    functionName: name, args, blockNumber,
-  }) };
+  return {
+    blockNumber,
+    read: (address, name, args = []) => client.readContract({
+      address: address as Address, abi: AERODROME_CLAIM_ABI_V1 as Abi,
+      functionName: name, args, blockNumber,
+    }),
+    // One Multicall3 request per batch (batchSize 0 turns viem's own chunking
+    // off), and any revert fails the batch rather than leaving a gap in it.
+    readMany: (calls) => client.multicall({
+      contracts: calls.map(({ address, name, args = [] }) => ({
+        address: address as Address, abi: AERODROME_CLAIM_ABI_V1 as Abi, functionName: name, args,
+      })),
+      allowFailure: false, batchSize: 0, blockNumber,
+    }) as Promise<unknown[]>,
+  };
 }
 
 function address(value: unknown): string {
@@ -114,10 +143,69 @@ function call(to: string, signature: string, args: readonly unknown[] = []): Exe
     data: encodeFunctionData({ abi: abi as Abi, functionName, args }),
     asset: null, amountAtomic: null, recipient: null, spender: null };
 }
+function amount(value: unknown): bigint {
+  if (typeof value !== 'bigint' || value < 0n) throw new Error('aerodrome_position_unreadable');
+  return value;
+}
+/** Pool._updateFor credits a balance with balance × (index − supplyIndex) /
+ * 1e18 of the fees accrued since its index last moved. */
+function accrued(balance: bigint, index: unknown, supplyIndex: unknown): bigint {
+  const delta = amount(index) - amount(supplyIndex);
+  if (delta < 0n) throw new Error('aerodrome_position_unreadable');
+  return balance * delta / 10n ** 18n;
+}
+
+/**
+ * The wallet's position in the basic factory's pools [from, to), read from
+ * the pools themselves the way Sugar's `_v2_position` reads one: the LP
+ * balance, the fees it can claim (stored, plus its share of fees accrued since
+ * its index last moved) and, through the Voter's gauge, the stake and the
+ * unclaimed AERO. A pool where all of that is zero holds no position.
+ */
+export async function readAerodromeBasicPositionsV1(
+  readBatch: (calls: readonly AerodromeClaimCallV1[]) => Promise<unknown[]>,
+  wallet: string, from: number, to: number,
+): Promise<AerodromeSugarPositionV1[]> {
+  const indexes = Array.from({ length: Math.max(0, to - from) }, (_, offset) => BigInt(from + offset));
+  const pools = (await readBatch(indexes.map(index => ({ address: AERODROME_BASIC_FACTORY_V1, name: 'allPools', args: [index] }))))
+    .map(address);
+  const own = await readBatch(pools.flatMap(pool => [
+    { address: pool, name: 'balanceOf', args: [wallet] },
+    { address: pool, name: 'claimable0', args: [wallet] },
+    { address: pool, name: 'claimable1', args: [wallet] },
+    { address: AERODROME_VOTER_V1, name: 'gauges', args: [pool] },
+  ]));
+  const rows = pools.map((pool, i) => {
+    const gauge = own[i * 4 + 3];
+    return { pool, liquidity: amount(own[i * 4]), fees0: amount(own[i * 4 + 1]), fees1: amount(own[i * 4 + 2]),
+      gauge: typeof gauge === 'string' && gauge.toLowerCase() === ZERO ? null : address(gauge), staked: 0n, earned: 0n };
+  });
+  const gauged = rows.filter(row => row.gauge !== null);
+  const stakes = await readBatch(gauged.flatMap(row => [
+    { address: row.gauge!, name: 'balanceOf', args: [wallet] },
+    { address: row.gauge!, name: 'earned', args: [wallet] },
+  ]));
+  gauged.forEach((row, i) => { row.staked = amount(stakes[i * 2]); row.earned = amount(stakes[i * 2 + 1]); });
+  const holders = rows.filter(row => row.liquidity > 0n);
+  const indexReads = await readBatch(holders.flatMap(row => [
+    { address: row.pool, name: 'index0' }, { address: row.pool, name: 'index1' },
+    { address: row.pool, name: 'supplyIndex0', args: [wallet] }, { address: row.pool, name: 'supplyIndex1', args: [wallet] },
+  ]));
+  holders.forEach((row, i) => {
+    row.fees0 += accrued(row.liquidity, indexReads[i * 4], indexReads[i * 4 + 2]);
+    row.fees1 += accrued(row.liquidity, indexReads[i * 4 + 1], indexReads[i * 4 + 3]);
+  });
+  return rows.filter(row => row.liquidity + row.staked + row.earned + row.fees0 + row.fees1 > 0n).map(row => ({
+    id: 0n, lp: row.pool, liquidity: row.liquidity, staked: row.staked, unstaked_earned0: row.fees0,
+    unstaked_earned1: row.fees1, emissions_earned: row.earned, alm: ZERO, locker: ZERO,
+  }));
+}
 
 /** At most two RPCs are in flight. A failed page splits 500→250→125;
- * unread pages, pools Sugar cannot reach and a catalogue beyond the budget
- * prevent any approval, and so does a wallet-held position Sugar left out. */
+ * unread pages, pools nobody read and a catalogue beyond the budget prevent
+ * any approval, and so does a wallet-held position Sugar left out. Past
+ * Sugar's walk the basic factory's pools are read directly; any other
+ * factory's stay unread. */
 export async function readAerodromeClaimPlanV1(
   reader: AerodromeClaimReadV1,
   wallet: string,
@@ -126,20 +214,42 @@ export async function readAerodromeClaimPlanV1(
   const now = options.now ?? Date.now;
   const deadline = now() + (options.deadlineMs ?? 45_000);
   const plan: AerodromeClaimPlanV1 = {
-    blockNumber: String(reader.blockNumber), poolsTotal: 0, poolsRead: 0, poolsUnread: 0,
+    blockNumber: String(reader.blockNumber), poolsTotal: 0, poolsRead: 0, poolsUnread: 0, poolsReadDirect: 0,
     clPositionsTotal: 0, clPositionsRead: 0,
     positionsFound: 0, managedSkipped: 0, calls: [], errorCode: null,
   };
   // The per-read deadline also bounds readers injected by acceptance probes.
-  const read = async (target: string, name: string, args?: readonly unknown[]) => {
+  const bounded = async <T>(work: () => Promise<T>): Promise<T> => {
     const remaining = deadline - now();
     if (remaining <= 0) throw new Error('aerodrome_read_deadline');
     let timer: ReturnType<typeof setTimeout>;
     try {
-      return await Promise.race([reader.read(target, name, args), new Promise<never>((_, reject) => {
+      return await Promise.race([work(), new Promise<never>((_, reject) => {
         timer = setTimeout(() => reject(new Error('aerodrome_read_deadline')), Math.min(6_000, remaining));
       })]);
     } finally { clearTimeout(timer!); }
+  };
+  const read = (target: string, name: string, args?: readonly unknown[]) => bounded(() => reader.read(target, name, args));
+  // Two batches in flight, and the first failure stops both.
+  const readBatch = async (calls: readonly AerodromeClaimCallV1[]): Promise<unknown[]> => {
+    const answers: unknown[] = new Array(calls.length);
+    let next = 0; let failed = false;
+    const worker = async () => {
+      while (next < calls.length && !failed) {
+        const start = next;
+        const chunk = calls.slice(start, start + AERODROME_BATCH_CALLS_V1);
+        next += chunk.length;
+        try {
+          let values: unknown[];
+          if (reader.readMany) values = await bounded(() => reader.readMany!(chunk));
+          else { values = []; for (const one of chunk) values.push(await read(one.address, one.name, one.args)); }
+          if (!Array.isArray(values) || values.length !== chunk.length) throw new Error('aerodrome_positions_unreadable');
+          values.forEach((value, offset) => { answers[start + offset] = value; });
+        } catch (error) { failed = true; throw error; }
+      }
+    };
+    await Promise.all([worker(), worker()]);
+    return answers;
   };
   const uint = (value: unknown, error: string): number => {
     if (typeof value !== 'bigint' || value < 0n || value > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error(error);
@@ -156,13 +266,16 @@ export async function readAerodromeClaimPlanV1(
     const factories = await read(registry, 'poolFactories');
     if (!Array.isArray(factories) || factories.length === 0 || factories.length > 10) throw new Error('aerodrome_catalogue_unreadable');
     let listed = 0; let reachable = 0;
+    const pastWall: { factory: string; pools: number }[] = [];
     for (const factory of factories) {
       const pools = uint(await read(address(factory), 'allPoolsLength'), 'aerodrome_catalogue_unreadable');
       listed += pools;
       reachable += Math.min(pools, SUGAR_MAX_ITERATIONS_V1);
+      if (pools > SUGAR_MAX_ITERATIONS_V1) pastWall.push({ factory: address(factory), pools });
     }
     if (listed !== plan.poolsTotal) throw new Error('aerodrome_catalogue_unreadable');
-    const limit = Math.min(reachable, options.maxPools ?? 50_000);
+    const budget = options.maxPools ?? 50_000;
+    const limit = Math.min(reachable, budget);
     const positions: AerodromeSugarPositionV1[] = [];
     let offset = 0;
     const page = async (start: number, size: number): Promise<void> => {
@@ -190,6 +303,19 @@ export async function readAerodromeClaimPlanV1(
       }
     };
     await Promise.all([worker(), worker()]);
+    // Only once Sugar's part is whole: a claim missing pages fails anyway.
+    if (plan.poolsRead === reachable) {
+      for (const { factory, pools } of pastWall) {
+        if (factory !== AERODROME_BASIC_FACTORY_V1) continue;
+        const to = Math.min(pools, SUGAR_MAX_ITERATIONS_V1 + budget - plan.poolsRead);
+        if (to <= SUGAR_MAX_ITERATIONS_V1) continue;
+        const rows = await readAerodromeBasicPositionsV1(readBatch, wallet, SUGAR_MAX_ITERATIONS_V1, to);
+        if (positions.length + rows.length > SUGAR_MAX_POSITIONS_V1) throw new Error('aerodrome_positions_limit');
+        positions.push(...rows);
+        plan.poolsRead += to - SUGAR_MAX_ITERATIONS_V1;
+        plan.poolsReadDirect += to - SUGAR_MAX_ITERATIONS_V1;
+      }
+    }
     plan.poolsUnread = plan.poolsTotal - plan.poolsRead;
     if (plan.poolsUnread > 0) {
       plan.positionsFound = positions.length;

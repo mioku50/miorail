@@ -14,7 +14,7 @@ import {
   type BaseMcpActionReceiptRepositoryV1, type StoredBaseMcpActionReceiptV1,
 } from './baseMcpActionReceipts.js';
 import {
-  createAerodromeClaimReadV1, readAerodromeClaimPlanV1, type AerodromeClaimPlanV1,
+  SUGAR_MAX_ITERATIONS_V1, createAerodromeClaimReadV1, readAerodromeClaimPlanV1, type AerodromeClaimPlanV1,
 } from './aerodromeClaimReader.js';
 
 export interface BaseMcpAerodromeClaimResultV1 {
@@ -66,7 +66,10 @@ function result(reply: string, errorCode: string | null = null, receipt: StoredB
     receipt: receipt ? publicBaseMcpActionReceiptV1(receipt) : null, approvalUrl };
 }
 function coverage(plan: AerodromeClaimPlanV1): string {
-  return `Read ${plan.poolsRead.toLocaleString('en-US')} of ${plan.poolsTotal.toLocaleString('en-US')} Sugar pools at Base block ${plan.blockNumber}. ${plan.poolsUnread} pools unread. Checked ${plan.clPositionsRead} of ${plan.clPositionsTotal} concentrated positions held in your wallet. ${plan.managedSkipped} managed or locked positions excluded.`;
+  const direct = plan.poolsReadDirect > 0
+    ? `, ${plan.poolsReadDirect.toLocaleString('en-US')} of them past Sugar's ${SUGAR_MAX_ITERATIONS_V1.toLocaleString('en-US')}-pool limit, read from the pools themselves`
+    : '';
+  return `Read ${plan.poolsRead.toLocaleString('en-US')} of ${plan.poolsTotal.toLocaleString('en-US')} Aerodrome pools at Base block ${plan.blockNumber}${direct}. ${plan.poolsUnread} pools unread. Checked ${plan.clPositionsRead} of ${plan.clPositionsTotal} concentrated positions held in your wallet. ${plan.managedSkipped} managed or locked positions excluded.`;
 }
 function repeated(receipt: StoredBaseMcpActionReceiptV1, hash: string): BaseMcpAerodromeClaimResultV1 {
   if (receipt.actionHash !== hash) return result('This request ID belongs to a different action.', 'base_mcp_action_idempotency_conflict');
