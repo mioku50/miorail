@@ -43,6 +43,50 @@ export const OFFICIAL_SOURCE_ISSUERS_V1: Readonly<Record<OfficialSourceKindV1, s
 };
 
 /**
+ * Sources that publish a selection, not the list of what is issued.
+ *
+ * brand.base.org/stocks shows what the product surface offers: four of the
+ * thirteen issued equities on 2026-08-25, ten of the 127 the issuer's API
+ * lists on 2026-10-10. Being absent from it, or rotated off it, is not a
+ * disagreement with the issuer, so it never makes a discrepancy; an asset it
+ * shows that no complete source lists still does. Whether an asset is on offer
+ * is read from its listings, which keep every source that names it.
+ */
+export const OFFICIAL_SELECTION_SOURCES_V1: readonly OfficialSourceKindV1[] = ['base_product_list'];
+
+// ---------------------------------------------------------------------------
+// Sources Miorail no longer reads.
+//
+// On 2026-10-07 Base removed the contract-address table from its "List
+// Tokenized Stocks" page, the `base_docs_technical` source. The page now sends
+// readers to base.org/assets and to the List Tokenized Stocks API, which is
+// `coinbase_stocks_api`, and it will never parse back into a corpus: every
+// hourly pass failed from then on, and the red unit went unnoticed for days.
+//
+// Retired is not deleted. The source's last complete snapshot stays exactly as
+// it was recorded: it is the history of what Base published, and it still
+// carries the Chainlink reference feeds Base goes on publishing for the same
+// equities. What it may no longer do is keep an asset official on its own, so
+// a pass that finds such an asset fails and a person decides, nor be a place
+// an asset goes missing from: every listing the API added after the page
+// stopped would otherwise read as a disagreement.
+// ---------------------------------------------------------------------------
+
+export const RETIRED_OFFICIAL_SOURCES_V1: Readonly<
+  Partial<Record<OfficialSourceKindV1, { retiredOn: string; reason: string }>>
+> = {
+  base_docs_technical: {
+    retiredOn: '2026-10-10',
+    reason:
+      'Base removed the contract-address table on 2026-10-07 and points to the List Tokenized Stocks API instead',
+  },
+};
+
+export function officialSourceRetiredV1(kind: string): boolean {
+  return Object.hasOwn(RETIRED_OFFICIAL_SOURCES_V1, kind);
+}
+
+/**
  * How a check ended.
  *
  * `unreachable` is the network; `unparsable` is a document we fetched and could
@@ -135,10 +179,10 @@ export interface OfficialAssetIdentityV1 {
 /**
  * Two reviewed sources saying different things.
  *
- * Rendered, never reconciled. `listed_in_one_source` is the ordinary state of
- * the Coinbase corpus today -- thirteen equities are issued and four are on
- * the product page -- and collapsing it would delete the most useful sentence
- * the surface can say about an asset.
+ * Rendered, never reconciled. Only a source that is still read and that
+ * publishes the whole list can be where an asset is missing or dropped: the
+ * product page is a selection (most issued equities are not on offer, which
+ * the listings already say) and a retired page lists nothing new.
  */
 export type OfficialSourceDiscrepancyV1 =
   | {
@@ -272,12 +316,19 @@ export interface OfficialMembershipRowV1 {
  * Passing every declared kind instead would report "missing from the product
  * list" for the whole technical corpus before that list has ever been read --
  * our own gap, dressed as a disagreement between sources.
+ *
+ * Of those, only a complete source that is still read decides what is
+ * missing or dropped (`OFFICIAL_SELECTION_SOURCES_V1`,
+ * `RETIRED_OFFICIAL_SOURCES_V1`). Listing in any source still counts.
  */
 export function officialSourceDiscrepanciesV1(input: {
   reviewedKinds: readonly OfficialSourceKindV1[];
   rows: readonly OfficialMembershipRowV1[];
 }): OfficialSourceDiscrepancyV1[] {
   const found: OfficialSourceDiscrepancyV1[] = [];
+  const decisive = input.reviewedKinds.filter(
+    (kind) => !officialSourceRetiredV1(kind) && !OFFICIAL_SELECTION_SOURCES_V1.includes(kind),
+  );
   const listedBy = new Map<string, { ticker: string; kinds: OfficialSourceKindV1[] }>();
   const ordered = [...input.rows].sort(
     (left, right) =>
@@ -288,7 +339,7 @@ export function officialSourceDiscrepanciesV1(input: {
   for (const row of ordered) {
     if (!row.currentlyListed) {
       // A source that has never completed a check has not dropped anything.
-      if (input.reviewedKinds.includes(row.sourceKind)) {
+      if (decisive.includes(row.sourceKind)) {
         found.push({
           kind: 'delisted_by_source',
           tokenAddress: row.tokenAddress,
@@ -308,9 +359,7 @@ export function officialSourceDiscrepanciesV1(input: {
     left.localeCompare(right),
   )) {
     const issuer = OFFICIAL_SOURCE_ISSUERS_V1[entry.kinds[0]!];
-    const comparableKinds = input.reviewedKinds.filter(
-      (kind) => OFFICIAL_SOURCE_ISSUERS_V1[kind] === issuer,
-    );
+    const comparableKinds = decisive.filter((kind) => OFFICIAL_SOURCE_ISSUERS_V1[kind] === issuer);
     const missingFrom = comparableKinds.filter((kind) => !entry.kinds.includes(kind));
     if (missingFrom.length === 0) continue;
     found.push({

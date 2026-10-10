@@ -18,7 +18,6 @@ import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   OFFICIAL_SOURCES_V1,
   RETIRED_OFFICIAL_SOURCES_V1,
-  activeSourceDiscrepanciesV1,
   fetchOfficialSourceV1,
   listedOnlyByRetiredSourcesV1,
   officialSourceRetiredV1,
@@ -350,7 +349,7 @@ async function main(): Promise<void> {
       }
       process.exitCode = 1;
     }
-    const discrepancies = activeSourceDiscrepanciesV1(await repository.sourceDiscrepancies({ chainId: CHAIN_ID_V1 }));
+    const discrepancies = await repository.sourceDiscrepancies({ chainId: CHAIN_ID_V1 });
     console.log(`\nsource discrepancies: ${discrepancies.length}`);
     for (const row of discrepancies) {
       if (row.kind === 'listed_in_one_source') {

@@ -16,6 +16,11 @@ const SNDK = '0xb200000000000000000000397293cb8cda9a10c5';
 
 const DOCS_URL = 'https://docs.base.org/base-chain/asset-issuance/tokenized-stocks-on-base.md';
 const LIST_URL = 'https://brand.base.org/stocks';
+const API_URL = 'https://api.coinbase.com/v1/tokenized-stocks';
+/** A source that is still read and lists everything issued. */
+const API_SNAPSHOT = { sourceKind: 'coinbase_stocks_api', sourceUrl: API_URL } as const;
+const API_ASSET = { sourceKind: 'coinbase_stocks_api', referenceFeedAddress: null } as const;
+const SPCX = '0xb200000000000000000000000000000000005bc0';
 const BACKED_URL = 'https://api.xstocks.fi/api/v1/token?type=btokens';
 
 const HASH_A = 'a'.repeat(64);
@@ -186,20 +191,20 @@ export function officialAssetContractV1(
     test('a source dropping an asset is reported once, on the check that dropped it', async () => {
       const { repository } = await open();
       await repository.recordSnapshot({
-        snapshot: snapshotFixtureV1(),
-        assets: [assetFixtureV1(), assetFixtureV1({ tokenAddress: SNDK, ticker: 'SNDKc', displayName: null })],
+        snapshot: snapshotFixtureV1(API_SNAPSHOT),
+        assets: [assetFixtureV1(API_ASSET), assetFixtureV1({ ...API_ASSET, tokenAddress: SNDK, ticker: 'SNDKc', displayName: null })],
       });
       const dropped = await repository.recordSnapshot({
-        snapshot: snapshotFixtureV1({ observedAt: '2026-08-25T10:00:00.000Z', corpusHash: 'c'.repeat(64) }),
-        assets: [assetFixtureV1()],
+        snapshot: snapshotFixtureV1({ ...API_SNAPSHOT, observedAt: '2026-08-25T10:00:00.000Z', corpusHash: 'c'.repeat(64) }),
+        assets: [assetFixtureV1(API_ASSET)],
       });
       assert.deepEqual(dropped.delisted, [SNDK]);
       assert.deepEqual(dropped.stillListed, [AAPL]);
       assert.deepEqual(dropped.added, []);
 
       const again = await repository.recordSnapshot({
-        snapshot: snapshotFixtureV1({ observedAt: '2026-08-25T11:00:00.000Z', corpusHash: 'c'.repeat(64) }),
-        assets: [assetFixtureV1()],
+        snapshot: snapshotFixtureV1({ ...API_SNAPSHOT, observedAt: '2026-08-25T11:00:00.000Z', corpusHash: 'c'.repeat(64) }),
+        assets: [assetFixtureV1(API_ASSET)],
       });
       // An event that re-fires every pass is noise wearing an event's name.
       assert.deepEqual(again.delisted, []);
@@ -213,7 +218,7 @@ export function officialAssetContractV1(
           kind: 'delisted_by_source',
           tokenAddress: SNDK,
           ticker: 'SNDKc',
-          sourceKind: 'base_docs_technical',
+          sourceKind: 'coinbase_stocks_api',
           lastSeenAt: '2026-08-25T09:00:00.000Z',
         },
       ]);
@@ -258,9 +263,10 @@ export function officialAssetContractV1(
 
     test('two reviewed sources disagreeing is rendered, not reconciled', async () => {
       const { repository } = await open();
+      await repository.recordSnapshot({ snapshot: snapshotFixtureV1(), assets: [assetFixtureV1()] });
       await repository.recordSnapshot({
-        snapshot: snapshotFixtureV1(),
-        assets: [assetFixtureV1(), assetFixtureV1({ tokenAddress: SNDK, ticker: 'SNDKc', displayName: null })],
+        snapshot: snapshotFixtureV1({ ...API_SNAPSHOT, observedAt: '2026-08-25T09:10:00.000Z' }),
+        assets: [assetFixtureV1(API_ASSET), assetFixtureV1({ ...API_ASSET, tokenAddress: SNDK, ticker: 'SNDKc', displayName: null })],
       });
       // Before the product list has ever been read, its silence is our gap.
       assert.deepEqual(await repository.sourceDiscrepancies({ chainId: 8453 }), []);
@@ -273,30 +279,33 @@ export function officialAssetContractV1(
         }),
         assets: [
           assetFixtureV1({ sourceKind: 'base_product_list', referenceFeedAddress: null }),
+          assetFixtureV1({ sourceKind: 'base_product_list', tokenAddress: SPCX, ticker: 'SPCXc', displayName: null, referenceFeedAddress: null }),
         ],
       });
 
+      // SNDK is issued and not on offer, which is no disagreement: the product
+      // list is a selection. SPCX is on offer and the issuer does not list it.
       const discrepancies = await repository.sourceDiscrepancies({ chainId: 8453 });
       assert.deepEqual(discrepancies, [
         {
           kind: 'listed_in_one_source',
-          tokenAddress: SNDK,
-          ticker: 'SNDKc',
-          listedIn: ['base_docs_technical'],
-          missingFrom: ['base_product_list'],
+          tokenAddress: SPCX,
+          ticker: 'SPCXc',
+          listedIn: ['base_product_list'],
+          missingFrom: ['coinbase_stocks_api'],
         },
       ]);
 
       const identity = await repository.officialIdentity({ chainId: 8453, tokenAddress: AAPL });
       assert.deepEqual(
         identity?.listings.map((listing) => listing.sourceKind),
-        ['base_docs_technical', 'base_product_list'],
+        ['base_docs_technical', 'base_product_list', 'coinbase_stocks_api'],
       );
-      // The feed the technical corpus binds is not invented for the source
-      // that does not publish one.
+      // The feed the technical corpus binds is not invented for the sources
+      // that do not publish one.
       assert.deepEqual(
         identity?.listings.map((listing) => listing.referenceFeedAddress),
-        ['0x787f13dea48db0897cbcdd985de77809d837f988', null],
+        ['0x787f13dea48db0897cbcdd985de77809d837f988', null, null],
       );
     });
 

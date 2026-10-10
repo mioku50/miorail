@@ -45,6 +45,10 @@ before(async () => {
   // from 0059; its remaining statements concern separate identity tables.
   const backedMigration = await readFile(resolve(drizzleDir(), '0059_underlying_identity_and_backed.sql'), 'utf8');
   await sql.unsafe(backedMigration.split('ALTER TABLE underlying_asset')[0]!);
+  // And the issuer API's source kind from 0078, which the contract now reads
+  // as the source that decides what is missing.
+  const apiMigration = await readFile(resolve(drizzleDir(), '0078_coinbase_stocks_api.sql'), 'utf8');
+  await sql.unsafe(apiMigration.split('ALTER TABLE underlying_asset')[0]!);
 });
 
 after(async () => {
