@@ -288,7 +288,9 @@ export async function readAerodromeClaimPlanV1(
     const limit = Math.min(reachable, budget);
     const positions: AerodromeSugarPositionV1[] = [];
     let offset = 0;
-    const page = async (start: number, size: number): Promise<void> => {
+    // The smallest page is tried twice: one hiccup of the RPC on the first
+    // reading in production left 125 pools unread, and the whole answer with it.
+    const page = async (start: number, size: number, retried = false): Promise<void> => {
       try {
         const rows = await read(AERODROME_SUGAR_V1, 'positions', [BigInt(size), BigInt(start), wallet]);
         if (!Array.isArray(rows) || rows.length > 200 || positions.length + rows.length > 200) {
@@ -297,10 +299,13 @@ export async function readAerodromeClaimPlanV1(
         positions.push(...rows as AerodromeSugarPositionV1[]);
         plan.poolsRead += size;
       } catch {
-        if (size > 125 && now() < deadline && positions.length < 200) {
+        if (now() >= deadline || positions.length >= 200) return;
+        if (size > 125) {
           const half = Math.floor(size / 2);
           await page(start, half);
           await page(start + half, size - half);
+        } else if (!retried) {
+          await page(start, size, true);
         }
       }
     };

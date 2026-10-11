@@ -253,6 +253,20 @@ test('splits failed pages, with at most two requests in flight', async () => {
   assert.equal(plan.poolsRead, 1_000); assert.equal(plan.poolsUnread, 0);
   assert.equal(plan.calls.length, 1); assert.ok(maxActive <= 2);
 });
+test('the smallest page is tried a second time, and only a second time', async () => {
+  const tries = new Map<number, number>();
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: 500, page: async (limit, offset) => {
+    if (limit > 125) throw new Error('page unavailable');
+    tries.set(offset, (tries.get(offset) ?? 0) + 1);
+    // The page at 250 fails once, then answers; the page at 375 never does.
+    if (offset === 250 && tries.get(offset) === 1) throw new Error('rpc hiccup');
+    if (offset === 375) throw new Error('rpc down');
+    return offset === 250 ? [position()] : [];
+  } }), WALLET);
+  assert.deepEqual([...tries.entries()].sort((a, b) => a[0] - b[0]), [[0, 1], [125, 1], [250, 2], [375, 2]]);
+  assert.equal(plan.poolsRead, 375); assert.equal(plan.poolsUnread, 125);
+  assert.equal(plan.errorCode, 'aerodrome_incomplete_coverage');
+});
 test('unread pages and capped catalogue cannot become no fees', async () => {
   const failed = await readAerodromeClaimPlanV1(fixtureReader({ page: async () => { throw new Error('offline'); } }), WALLET);
   assert.equal(failed.poolsUnread, 500); assert.equal(failed.errorCode, 'aerodrome_incomplete_coverage');
