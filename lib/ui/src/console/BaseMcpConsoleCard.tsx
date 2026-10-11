@@ -68,6 +68,12 @@ export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
       reconciliationBasis: 'aerodrome_claim_events';
     }
   | {
+      actionType: 'uniswap_collect'; operation: 'collect'; recipient: string;
+      positionCount: number; positionsHeld: number;
+      readBlock: string | null; simulationStatus: 'passed' | 'failed' | 'unavailable';
+      reconciliationBasis: 'uniswap_collect_events';
+    }
+  | {
       actionType: 'send';
       asset: { symbol: 'USDC'; address: string; decimals: 6 };
       amount: string;
@@ -524,6 +530,13 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                     <div className="qrow"><span>Pools read</span><span className="v mono">{answer.action.receipt.poolsRead} / {answer.action.receipt.poolsTotal}</span></div>
                     <div className="qrow"><span>Batch simulation</span><span className="v">{answer.action.receipt.simulationStatus}</span></div>
                     {answer.action.receipt.managedSkipped > 0 && <p className="lnote">{answer.action.receipt.managedSkipped} managed or locked positions excluded.</p>}
+                  </>
+                ) : answer.action.receipt.actionType === 'uniswap_collect' ? (
+                  <>
+                    <div className="qrow"><span>Uniswap v3 fees</span><span className="v mono">{answer.action.receipt.positionCount} position{answer.action.receipt.positionCount === 1 ? '' : 's'}</span></div>
+                    <div className="qrow"><span>Recipient</span><span className="v mono">{answer.action.receipt.recipient}</span></div>
+                    <div className="qrow"><span>Positions read</span><span className="v mono">{answer.action.receipt.positionsHeld}</span></div>
+                    <div className="qrow"><span>Batch simulation</span><span className="v">{answer.action.receipt.simulationStatus}</span></div>
                   </>
                 ) : (
                   <>

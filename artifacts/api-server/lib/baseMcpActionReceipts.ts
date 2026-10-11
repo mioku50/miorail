@@ -50,8 +50,13 @@ export interface BaseMcpVirtualsCreateIntentV1 {
 export type BaseMcpVirtualsActionIntentV1 = BaseMcpVirtualsCreateIntentV1 | { operation: 'sign_in' };
 
 export interface BaseMcpAerodromeClaimIntentV1 { operation: 'claim'; recipient: string }
-export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1 | BaseMcpAerodromeClaimIntentV1;
-export type BaseMcpActionTypeV1 = 'send' | 'x402' | 'virtuals' | 'aerodrome_claim';
+export interface BaseMcpUniswapCollectIntentV1 { operation: 'collect'; recipient: string }
+export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1
+  | BaseMcpAerodromeClaimIntentV1 | BaseMcpUniswapCollectIntentV1;
+export type BaseMcpActionTypeV1 = 'send' | 'x402' | 'virtuals' | 'aerodrome_claim' | 'uniswap_collect';
+/** Found's claims: one open per wallet at a time, each kind on its own. */
+export type BaseMcpClaimActionTypeV1 = 'aerodrome_claim' | 'uniswap_collect';
+const OPEN_STATUSES_V1 = ['preparing', 'approval_required', 'pending', 'reconciling'];
 
 export function baseMcpActionHashV1(input: {
   tenantId: string;
@@ -108,6 +113,8 @@ export interface BaseMcpActionReceiptRepositoryV1 {
   get(id: string, tenantId: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
   getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
   getActiveAerodromeClaim(tenantId: string, walletAddress: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
+  /** The wallet's open claim of this kind, if any. */
+  getActiveClaim(tenantId: string, walletAddress: string, actionType: BaseMcpClaimActionTypeV1): Promise<StoredBaseMcpActionReceiptV1 | null>;
   update(input: {
     id: string;
     tenantId: string;
@@ -215,10 +222,13 @@ function receiptEventV1(receipt: StoredBaseMcpActionReceiptV1) {
 
 export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionReceiptRepositoryV1 {
   async getActiveAerodromeClaim(tenantId: string, walletAddress: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+    return this.getActiveClaim(tenantId, walletAddress, 'aerodrome_claim');
+  }
+  async getActiveClaim(tenantId: string, walletAddress: string, actionType: BaseMcpClaimActionTypeV1): Promise<StoredBaseMcpActionReceiptV1 | null> {
     const rows = await client`
       SELECT * FROM base_mcp_action_receipts
       WHERE tenant_id = ${tenantId} AND wallet_address = ${walletAddress}
-        AND action_type = 'aerodrome_claim'
+        AND action_type = ${actionType}
         AND status IN ('preparing', 'approval_required', 'pending', 'reconciling')
       LIMIT 1
     `;
@@ -414,8 +424,11 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
 
 export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionReceiptRepositoryV1 {
   async getActiveAerodromeClaim(tenantId: string, walletAddress: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
+    return this.getActiveClaim(tenantId, walletAddress, 'aerodrome_claim');
+  }
+  async getActiveClaim(tenantId: string, walletAddress: string, actionType: BaseMcpClaimActionTypeV1): Promise<StoredBaseMcpActionReceiptV1 | null> {
     const row = [...this.rows.values()].find(row => row.tenantId === tenantId && row.walletAddress === walletAddress
-      && row.actionType === 'aerodrome_claim' && ['preparing', 'approval_required', 'pending', 'reconciling'].includes(row.status));
+      && row.actionType === actionType && OPEN_STATUSES_V1.includes(row.status));
     return row ? structuredClone(row) : null;
   }
   async getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
@@ -441,10 +454,12 @@ export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
       (row) => row.tenantId === input.tenantId && row.idempotencyKey === input.idempotencyKey,
     );
     if (existing) return { receipt: structuredClone(existing), created: false };
-    if (input.actionType === 'aerodrome_claim' && [...this.rows.values()].some(row => row.tenantId === input.tenantId
-      && row.walletAddress === input.walletAddress && row.actionType === 'aerodrome_claim'
-      && ['preparing', 'approval_required', 'pending', 'reconciling'].includes(row.status))) {
-      throw new Error('base_mcp_aerodrome_claim_already_active');
+    // The partial unique indexes' twin: one open claim of each kind per wallet.
+    if ((input.actionType === 'aerodrome_claim' || input.actionType === 'uniswap_collect')
+      && [...this.rows.values()].some(row => row.tenantId === input.tenantId
+      && row.walletAddress === input.walletAddress && row.actionType === input.actionType
+      && OPEN_STATUSES_V1.includes(row.status))) {
+      throw new Error(`base_mcp_${input.actionType}_already_active`);
     }
     const id = `base-mcp-action:${crypto.randomUUID()}`;
     const receipt: StoredBaseMcpActionReceiptV1 = {
@@ -586,6 +601,17 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
       managedSkipped: plan?.managedSkipped ?? 0, readBlock: plan?.blockNumber ?? null,
       simulationStatus: (receipt.durableProof?.simulation as { status?: string } | undefined)?.status ?? 'unavailable',
       reconciliationBasis: 'aerodrome_claim_events',
+    });
+  }
+  if (receipt.actionType === 'uniswap_collect') {
+    const plan = receipt.durableProof?.collectPlan as { blockNumber?: string; positionsHeld?: number; calls?: unknown[] } | undefined;
+    return BaseMcpActionReceiptV1Schema.parse({
+      ...common, actionType: 'uniswap_collect', operation: 'collect',
+      recipient: (receipt.intent as BaseMcpUniswapCollectIntentV1).recipient,
+      positionCount: plan?.calls?.length ?? 0, positionsHeld: plan?.positionsHeld ?? 0,
+      readBlock: plan?.blockNumber ?? null,
+      simulationStatus: (receipt.durableProof?.simulation as { status?: string } | undefined)?.status ?? 'unavailable',
+      reconciliationBasis: 'uniswap_collect_events',
     });
   }
   const intent = receipt.intent as BaseMcpSendActionIntentV1;

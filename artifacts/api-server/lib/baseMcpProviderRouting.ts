@@ -11,7 +11,7 @@ import {
 } from '@mioagent/security';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import { isVirtualsOtpReadV1 } from './virtualsOtpRead.js';
-import { aerodromeRewardsReadV1 } from './aerodromeRewardIntents.js';
+import { aerodromeRewardsReadV1, uniswapCollectOrderV1, uniswapFeesReadV1 } from './aerodromeRewardIntents.js';
 
 export interface BaseMcpProviderIntentMatchV1 {
   pluginId: string;
@@ -138,6 +138,9 @@ function inferredDisposition(
   if (provider.pluginId === 'aerodrome' && /\b(claim|collect)\b|(?:^|\s)(?:забер|забра|собер|получ)\p{L}*/iu.test(lower)) {
     return 'action_in_extensions';
   }
+  // The same for Uniswap's v3 fees: a question reads them, an order collects.
+  if (provider.pluginId === 'uniswap' && uniswapFeesReadV1(lower)) return 'read_in_extensions';
+  if (provider.pluginId === 'uniswap' && uniswapCollectOrderV1(lower)) return 'action_in_extensions';
   // Cyrillic words are not bounded by JavaScript's ASCII \b.
   if (provider.pluginId === 'avantis' && /(?:^|\s)(?:откр|закр|лонг|шорт|плеч)\p{L}*/iu.test(lower)) return 'handoff_to_provider_ui';
   if (/(?:^|\s)(?:созда|запуст|отправ|установ|зарегистр|одобр)\p{L}*/iu.test(lower)) return 'adapter_required';
@@ -235,7 +238,9 @@ export function matchBaseMcpProviderIntentV1(
     routeCapability: routeGate && !routeGate.released ? routeGate.capability : null,
     exampleId: provider.pluginId === 'virtuals' && isVirtualsOtpReadV1(message) ? 'otp'
       : provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message) ? 'positions'
-        : provider.pluginId === 'aerodrome' && aerodromeRewardsReadV1(clean) ? 'rewards' : closest?.id ?? null,
+        : provider.pluginId === 'aerodrome' && aerodromeRewardsReadV1(clean) ? 'rewards'
+          : provider.pluginId === 'uniswap' && uniswapFeesReadV1(clean) ? 'v3-fees'
+            : provider.pluginId === 'uniswap' && uniswapCollectOrderV1(clean) ? 'v3-collect' : closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,
       `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,

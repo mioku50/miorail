@@ -2097,11 +2097,25 @@ export const BaseMcpAerodromeClaimReceiptV1Schema = BaseMcpActionReceiptCommonV1
   reconciliationBasis: z.literal('aerodrome_claim_events'),
 });
 
+/** Found's Uniswap v3 collect: every owed fee of up to 20 positions, to the
+ * wallet itself, reconciled against the manager's Collect events. */
+export const BaseMcpUniswapCollectReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
+  approvalRequired: z.literal(true),
+  actionType: z.literal('uniswap_collect'), operation: z.literal('collect'),
+  recipient: AddressV1Schema,
+  positionCount: z.number().int().min(0).max(20),
+  positionsHeld: z.number().int().nonnegative(),
+  readBlock: z.string().regex(/^\d+$/).nullable(),
+  simulationStatus: z.enum(['passed', 'failed', 'unavailable']),
+  reconciliationBasis: z.literal('uniswap_collect_events'),
+});
+
 export const BaseMcpActionReceiptV1Schema = z.discriminatedUnion('actionType', [
   BaseMcpSendActionReceiptV1Schema,
   BaseMcpX402ActionReceiptV1Schema,
   BaseMcpVirtualsActionReceiptV1Schema,
   BaseMcpAerodromeClaimReceiptV1Schema,
+  BaseMcpUniswapCollectReceiptV1Schema,
 ]).superRefine((receipt, context) => {
   if (receipt.actionType !== 'virtuals') return;
   const valid = receipt.operation === 'sign_in'

@@ -100,3 +100,19 @@ test('Aerodrome receipts require matched chain events and prevent overlapping ap
   assert.ok(entry);
   assert.ok(entry.when > journal.entries[entry.idx - 1].when);
 });
+
+test('migration 0087 adds the Uniswap collect, matched only by events, one open per wallet', async () => {
+  const sql = await readFile(drizzlePath('0087_uniswap_collect_receipts.sql'), 'utf8');
+  assert.match(sql, /"action_type" IN \('send', 'x402', 'virtuals', 'aerodrome_claim', 'uniswap_collect'\)/);
+  assert.match(sql, /"action_type" IN \('send', 'aerodrome_claim', 'uniswap_collect'\) AND "reconciliation_state" = 'matched'/);
+  assert.match(sql, /"reconciliation_state" <> 'matched' OR "action_type" IN \('send', 'aerodrome_claim', 'uniswap_collect'\)/);
+  assert.match(sql, /"reconciliation_state" <> 'provider_confirmed' OR "action_type" IN \('x402', 'virtuals'\)/);
+  assert.match(sql, /CREATE UNIQUE INDEX "base_mcp_uniswap_collect_active_wallet_unique"\s+ON "base_mcp_action_receipts" \("tenant_id", "wallet_address"\)/);
+  assert.match(sql, /WHERE "action_type" = 'uniswap_collect'\s+AND "status" IN \('preparing', 'approval_required', 'pending', 'reconciling'\)/);
+  const journal = JSON.parse(await readFile(drizzlePath('meta/_journal.json'), 'utf8')) as {
+    entries: Array<{ idx: number; tag: string; when: number }>;
+  };
+  const entry = journal.entries.find(entry => entry.tag === '0087_uniswap_collect_receipts')!;
+  assert.ok(entry);
+  assert.ok(entry.when > journal.entries[entry.idx - 1].when);
+});

@@ -42,10 +42,10 @@ import {
 } from './baseAppNotify.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
-  AERODROME_REWARD_FRESH_FOR_MS_V1,
-  aerodromeRewardNoticeV1,
-  refreshAerodromeRewardAlertsV1,
-} from '../artifacts/api-server/lib/aerodromeRewards.js';
+  FOUND_FRESH_FOR_MS_V1,
+  foundRewardNoticeV1,
+  refreshFoundAlertsV1,
+} from '../artifacts/api-server/lib/found.js';
 import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 
 async function main(): Promise<void> {
@@ -93,23 +93,24 @@ async function main(): Promise<void> {
   };
 
   // Found: the wallets due for a reading are read once, for both channels.
-  // Each reading walks every Aerodrome pool, so a pass reads only a few.
+  // Each reading walks every Aerodrome pool and every Uniswap v3 position the
+  // wallet holds, so a pass reads only a few.
   const rewardAlerts = createDatabaseAerodromeRewardAlertRepositoryV1(client);
   try {
-    const refreshed = await refreshAerodromeRewardAlertsV1({ alerts: rewardAlerts, now: new Date(), dry });
-    if (refreshed.due > 0) console.log(JSON.stringify({ event: 'aerodrome_rewards_read', dry, ...refreshed }));
+    const refreshed = await refreshFoundAlertsV1({ alerts: rewardAlerts, now: new Date(), dry });
+    if (refreshed.due > 0) console.log(JSON.stringify({ event: 'found_rewards_read', dry, ...refreshed }));
   } catch (cause) {
-    console.log(JSON.stringify({ event: 'aerodrome_rewards_read', outcome: 'failed',
+    console.log(JSON.stringify({ event: 'found_rewards_read', outcome: 'failed',
       error: cause instanceof Error ? cause.message.slice(0, 80) : 'unknown' }));
   }
   const aerodromeRewardsFor = (channel: NotificationChannelV1) => ({
     due: async () =>
-      (await rewardAlerts.reached({ freshSince: new Date(Date.now() - AERODROME_REWARD_FRESH_FOR_MS_V1) }))
+      (await rewardAlerts.reached({ freshSince: new Date(Date.now() - FOUND_FRESH_FOR_MS_V1) }))
         .filter((alert) => alert.told[channel] !== alert.episode && alert.readUsdCents !== null)
         .map((alert) => ({
           walletAddress: alert.walletAddress,
           episode: alert.episode,
-          ...aerodromeRewardNoticeV1({ usdCents: alert.readUsdCents! }),
+          ...foundRewardNoticeV1({ usdCents: alert.readUsdCents! }),
         })),
     told: (input: { walletAddress: string; episode: number }) => rewardAlerts.markTold({ ...input, channel }),
   });

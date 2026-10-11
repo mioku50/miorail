@@ -216,7 +216,12 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
     ],
   },
   {
+    // Found first, as on Aerodrome: v3 fees are read and collected here. v4
+    // positions sit in a manager with no per-owner index, so their fees stay
+    // an unreleased read.
     pluginId: 'uniswap', aliases: ['uniswap', 'uni v4', 'uniswap v4'], productSurface: 'routes', lifecycleStage: 'proven', examples: [
+      e('v3-fees', 'Check my Uniswap fees', 'read', 'read_in_extensions'),
+      e('v3-collect', 'Collect my Uniswap fees', 'action', 'action_in_extensions'),
       e('swap', 'Swap 100 USDC to ETH with Uniswap on Base', 'routable', 'handoff_to_routes'),
       e('create-lp', 'Create a Uniswap V4 liquidity position on Base', 'action', 'adapter_required'),
       e('fees', 'Show fees for my Uniswap V4 liquidity positions on Base', 'read', 'read_in_extensions'),

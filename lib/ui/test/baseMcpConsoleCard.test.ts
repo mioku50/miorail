@@ -24,6 +24,23 @@ const answer = (overrides: Partial<BaseMcpConsoleAnswerV1> = {}): BaseMcpConsole
   ...overrides,
 });
 
+test('a Uniswap collect receipt says what is collected, for whom, and that the wallet approves it', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'Collect my Uniswap fees', onQuestionChange: () => undefined,
+    onAsk: () => undefined, pending: false, unavailableReason: null, answer: answer({ status: 'action', trace: [],
+      reply: 'Read 3 Uniswap v3 positions at Base block 100; 2 owe fees.', action: {
+        approvalUrl: 'https://keys.coinbase.com/approve/collect-1', receipt: {
+          id: 'collect-1', status: 'approval_required', actionType: 'uniswap_collect', operation: 'collect',
+          recipient: '0x1111111111111111111111111111111111111111', positionCount: 2, positionsHeld: 3, readBlock: '100',
+          simulationStatus: 'passed', chainId: 8453, provider: 'base-mcp', reconciliationState: 'not_started',
+          transactionHash: null, blockNumber: null, errorCode: null, routeVerified: false, reconciliationBasis: 'uniswap_collect_events',
+        },
+      } }) }));
+  assert.match(html, /Uniswap v3 fees<\/span><span class="v mono">2 positions/);
+  assert.match(html, /Positions read<\/span><span class="v mono">3/);
+  assert.match(html, /Batch simulation<\/span><span class="v">passed/);
+  assert.match(html, /Approve in your wallet/);
+});
+
 test('Virtuals sign-in displays only sign-in approval and no invented agent facts', () => {
   const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'Sign in to Virtuals', onQuestionChange: () => undefined,
     onAsk: () => undefined, pending: false, unavailableReason: null, answer: answer({ status: 'action', trace: [], action: {

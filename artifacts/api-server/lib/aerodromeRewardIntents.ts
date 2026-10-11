@@ -6,17 +6,38 @@ import {
 
 // ---------------------------------------------------------------------------
 // The words of Found, inside Wallet MCP: a question about the person's own
-// Aerodrome rewards, or a request to hear when they build up. Kept apart from
-// the reading itself so the room's routing can ask without loading it.
+// rewards on Aerodrome and fees on Uniswap, or a request to hear when they
+// build up. Kept apart from the readings so the room's routing can ask
+// without loading them.
 // ---------------------------------------------------------------------------
 
 // Cyrillic letters are not word characters to JavaScript's \b.
 const EDGE = '(?:^|[^\\p{L}\\p{N}])';
 const END = '(?=$|[^\\p{L}\\p{N}])';
 const AERODROME_V1 = new RegExp(`aerodrome|аэродром|${EDGE}aero${END}`, 'iu');
+const UNISWAP_V1 = new RegExp(`uniswap|юнисв[оа]п|${EDGE}uni${END}`, 'iu');
+/** v4 positions are counted, not read: a question about them is not this read. */
+const V4_V1 = new RegExp(`${EDGE}(?:v4|в4)${END}`, 'iu');
+/** "My rewards", "what can I claim": one's own, with no protocol named. */
+const NEUTRAL_V1 = new RegExp(
+  [
+    '\\bmy\\s+(?:unclaimed\\s+|claimable\\s+|uncollected\\s+)?(?:rewards?|fees?)\\b',
+    '\\bwhat\\s+(?:can\\s+i|i\\s+can)\\s+(?:claim|collect)\\b',
+    '\\b(?:do|did)\\s+i\\s+have\\s+(?:any(?:thing)?\\s+)?(?:unclaimed\\s+|uncollected\\s+)?(?:rewards?|fees?|to\\s+claim)\\b',
+    `${EDGE}мо[ийея]\\p{L}*\\s+(?:несобранн\\p{L}*\\s+)?(?:наград|комисси)\\p{L}*`,
+    `${EDGE}(?:что|сколько)\\s+(?:я\\s+)?могу\\s+(?:забрать|собрать)`,
+    `${EDGE}есть\\s+ли\\s+у\\s+меня`,
+  ].join('|'),
+  'iu',
+);
+/** A question about paying, trading or moving money is not about rewards. */
+const ELSEWHERE_V1 = new RegExp(
+  `\\b(?:swap|trade|buy|sell|send|pay|paid|gas|bridge|transfer|deposit|withdraw)\\b|${EDGE}(?:обмен|свап|куп|прод|отправ|плат|газ|перев|депози|вывед|вывод)\\p{L}*`,
+  'iu',
+);
 const OWN_V1 = new RegExp(`\\b(?:my|me|i)\\b|${EDGE}(?:мо[йияеёю]\\p{L}*|мне|меня|я)${END}`, 'iu');
 const TOPIC_V1 = new RegExp(
-  `\\b(?:rewards?|fees?|claimable|unclaimed|earned|earnings|claim)\\b|${EDGE}(?:наград\\p{L}*|комисси\\p{L}*|заработ\\p{L}*|забрать|собрать|накопил\\p{L}*)`,
+  `\\b(?:rewards?|fees?|claimable|unclaimed|uncollected|earned|earnings|claim|collect(?:ed|able)?)\\b|${EDGE}(?:наград\\p{L}*|комисси\\p{L}*|заработ\\p{L}*|забрать|собрать|накопил\\p{L}*)`,
   'iu',
 );
 const ASK_V1 = new RegExp(
@@ -53,16 +74,53 @@ export function aerodromeRewardsReadV1(message: string): boolean {
   return OWN_V1.test(text) && TOPIC_V1.test(text) && ASK_V1.test(text);
 }
 
+/** "Check my Uniswap fees", «Сколько я могу забрать на Uniswap?»: the v3
+ * positions this wallet holds. Not an order to collect, not an alert, and not
+ * a question about v4 positions, which are counted and not read. */
+export function uniswapFeesReadV1(message: string): boolean {
+  const text = message.trim();
+  if (!UNISWAP_V1.test(text) || V4_V1.test(text) || CLAIM_ORDER_V1.test(text) || aerodromeRewardAlertV1(text)) return false;
+  return OWN_V1.test(text) && TOPIC_V1.test(text) && ASK_V1.test(text);
+}
+
+/** An order to collect Uniswap fees: "Collect my Uniswap fees", «Забери мои
+ * комиссии Uniswap». Scope (no other recipient, nothing withdrawn) is the
+ * classifier's to check, as it is for Aerodrome's claim. */
+export function uniswapCollectOrderV1(message: string): boolean {
+  const text = message.trim();
+  return UNISWAP_V1.test(text) && !V4_V1.test(text) && CLAIM_ORDER_V1.test(text) && TOPIC_V1.test(text);
+}
+
+/** Which of Found's protocols a message names. */
+export function foundProtocolsNamedV1(message: string): ('aerodrome' | 'uniswap')[] {
+  return [...(AERODROME_V1.test(message) ? ['aerodrome' as const] : []), ...(UNISWAP_V1.test(message) ? ['uniswap' as const] : [])];
+}
+
+/**
+ * "What can I claim?", "Check my rewards", «Что я могу забрать?»: a question
+ * about one's own rewards that names no protocol, read across Aerodrome and
+ * Uniswap at once. A question about swap fees, gas or a payment is not one.
+ */
+export function foundReadV1(message: string): boolean {
+  const text = message.trim();
+  if (CLAIM_ORDER_V1.test(text) || ELSEWHERE_V1.test(text) || aerodromeRewardAlertV1(text)) return false;
+  return NEUTRAL_V1.test(text) && TOPIC_V1.test(text) && ASK_V1.test(text);
+}
+
 export type AerodromeRewardAlertIntentV1 =
   | { kind: 'on'; thresholdUsdCents: number }
   | { kind: 'off' }
   | { kind: 'invalid'; reason: 'below_min' | 'above_max' };
 
-/** "Notify me when my Aerodrome rewards reach $5" / "Stop Aerodrome reward
- * alerts", in English or Russian. Null for anything else. */
+/** "Notify me when my rewards reach $5", "…my Aerodrome rewards…", "…my
+ * Uniswap fees…" / "Stop reward alerts", in English or Russian. One alert per
+ * wallet covers everything Found reads. Null for anything else, including a
+ * protocol Found does not read ("my Morpho rewards"). */
 export function aerodromeRewardAlertV1(message: string): AerodromeRewardAlertIntentV1 | null {
   const text = message.trim();
-  if (!AERODROME_V1.test(text) || !TOPIC_V1.test(text) && !ALERT_WORD_V1.test(text)) return null;
+  const scoped = AERODROME_V1.test(text) || UNISWAP_V1.test(text) || NEUTRAL_V1.test(text)
+    || ALERT_OFF_V1.test(text) && /\b(?:reward|fee)\s+alerts?\b|уведомлени\p{L}*\s+о\s+(?:наград|комисси)/iu.test(text);
+  if (!scoped || !TOPIC_V1.test(text) && !ALERT_WORD_V1.test(text)) return null;
   if (ALERT_OFF_V1.test(text) && ALERT_WORD_V1.test(text)) return { kind: 'off' };
   if (!ALERT_ON_V1.test(text) || !TOPIC_V1.test(text)) return null;
   const cents = aerodromeRewardThresholdCentsV1(text);
@@ -105,9 +163,9 @@ export function aerodromeRewardAlertReplyV1(input: {
     case 'above_max':
       return russian ? 'Выберите сумму до $10,000.' : 'Pick an amount up to $10,000.';
     case 'stopped':
-      return russian ? 'Уведомления о наградах Aerodrome для этого кошелька выключены.' : 'Aerodrome reward alerts are off for this wallet.';
+      return russian ? 'Уведомления о наградах для этого кошелька выключены.' : 'Reward alerts are off for this wallet.';
     case 'none':
-      return russian ? 'Для этого кошелька уведомлений о наградах Aerodrome не было.' : 'There was no Aerodrome reward alert for this wallet.';
+      return russian ? 'Для этого кошелька уведомлений о наградах не было.' : 'There was no reward alert for this wallet.';
     default: {
       const head = input.outcome === 'unchanged'
         ? russian ? `Уже включено: порог ${amount}.` : `Already on at ${amount}.`
@@ -115,8 +173,8 @@ export function aerodromeRewardAlertReplyV1(input: {
           ? russian ? `Порог изменён на ${amount}.` : `Moved to ${amount}.`
           : russian ? 'Готово.' : 'Done.';
       const how = russian
-        ? `Когда награды, которые этот кошелёк может забрать на Aerodrome, дойдут до ${amount}, Miorail сообщит один раз — в Telegram и в Base App, где уведомления доходят до этого кошелька. Все пулы читаются примерно раз в 6 часов; после сбора следующее накопление снова будет сообщено.`
-        : `When what this wallet can claim on Aerodrome reaches ${amount}, Miorail tells you once, in Telegram and in Base App, wherever notifications reach this wallet. Every pool is read about every 6 hours; after you claim, the next build-up is told again.`;
+        ? `Когда то, что этот кошелёк может забрать на Aerodrome и Uniswap, дойдёт до ${amount}, Miorail сообщит один раз — в Telegram и в Base App, где уведомления доходят до этого кошелька. Всё читается примерно раз в 6 часов; после сбора следующее накопление снова будет сообщено.`
+        : `When what this wallet can claim on Aerodrome and Uniswap reaches ${amount}, Miorail tells you once, in Telegram and in Base App, wherever notifications reach this wallet. Both are read about every 6 hours; after you claim, the next build-up is told again.`;
       const telegram = input.telegram === false
         ? [russian ? 'Telegram к этому кошельку пока не подключён: Settings → Telegram.' : 'Telegram is not connected to this wallet yet: Settings → Telegram.']
         : [];

@@ -1,25 +1,19 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { InMemoryAerodromeRewardAlertRepositoryV1 } from '@mioagent/route-storage';
-
 import { AERODROME_AERO_V1, type AerodromeClaimPlanV1 } from './aerodromeClaimReader.js';
 import {
-  aerodromeRewardNoticeV1,
   aerodromeRewardsNextV1,
   aerodromeRewardTotalsV1,
   aerodromeRewardsReplyV1,
-  refreshAerodromeRewardAlertsV1,
   usdcAtomicToCentsV1,
   valueAerodromeRewardsV1,
-  type AerodromeRewardsReadV1,
 } from './aerodromeRewards.js';
 import { CANONICAL_BASE_USDC_V1 } from './stockGift.js';
 
 const WETH = '0x4200000000000000000000000000000000000006';
 const MEME = '0x7777777777777777777777777777777777777777';
 const POOL = '0x2222222222222222222222222222222222222222';
-const WALLET = '0x4e2e3d4c5b6a79880716253443526170e8f9a0b1';
 
 function item(kind: AerodromeClaimPlanV1['calls'][number]['kind'], over: Partial<AerodromeClaimPlanV1['calls'][number]> = {}) {
   return {
@@ -145,43 +139,4 @@ test('a reading offers the claim and the alert as buttons, in the language it wa
   assert.deepEqual(aerodromeRewardsNextV1({ ok: true, rewards: nothing }, { russian: false, claimReleased: true }).map((next) => next.kind), ['alert']);
   // A reading that failed has nothing to act on.
   assert.deepEqual(aerodromeRewardsNextV1({ ok: false, errorCode: 'aerodrome_read_deadline', poolsRead: 1, poolsTotal: 2 }, { russian: false, claimReleased: true }), []);
-});
-
-test('the push fits Base App and leads to Wallet MCP', () => {
-  const notice = aerodromeRewardNoticeV1({ usdCents: 1_238 });
-  assert.equal(notice.title, 'Aerodrome rewards: $12.38');
-  assert.ok(notice.title.length <= 30 && notice.message.length <= 200, JSON.stringify(notice));
-  assert.equal(notice.targetPath, '/extensions');
-  assert.match(notice.message, /“Claim my Aerodrome fees”/);
-  assert.ok(aerodromeRewardNoticeV1({ usdCents: 99_999_999 }).title.length <= 30);
-});
-
-test('the reading pass reads the wallets due, keeps each reading, and a dry pass keeps none', async () => {
-  const alerts = new InMemoryAerodromeRewardAlertRepositoryV1();
-  const now = new Date('2026-10-11T12:00:00.000Z');
-  const other = '0x1111111111111111111111111111111111111111';
-  const third = '0x3333333333333333333333333333333333333333';
-  for (const wallet of [WALLET, other, third]) await alerts.subscribe({ walletAddress: wallet, thresholdUsdCents: 500, at: now });
-  const readings: Record<string, AerodromeRewardsReadV1> = {
-    [WALLET]: { ok: true, rewards: { blockNumber: '42', poolsRead: 1, clPositionsHeld: 0, positionsFound: 1, managedSkipped: 0, claims: 1,
-      aero: null, fees: [], totalUsdcAtomic: '6789999', unpriced: 0 } },
-    [other]: { ok: false, errorCode: 'aerodrome_read_deadline', poolsRead: 0, poolsTotal: 0 },
-  };
-  const read = async (wallet: string) => {
-    if (wallet === third) throw new Error('rpc down');
-    return readings[wallet]!;
-  };
-  assert.deepEqual(await refreshAerodromeRewardAlertsV1({ alerts, now, dry: true, read, limit: 5 }), { due: 3, read: 1, failed: 2 });
-  assert.equal((await alerts.get(WALLET))!.readAt, null, 'a dry pass keeps nothing');
-  // Two a pass, never-read first in address order: both of these fail, and a
-  // read that throws is kept as a failure like one that answered with one.
-  assert.deepEqual(await refreshAerodromeRewardAlertsV1({ alerts, now, read, limit: 2 }), { due: 2, read: 0, failed: 2 });
-  assert.equal((await alerts.get(other))!.readError, 'aerodrome_read_deadline');
-  assert.equal((await alerts.get(third))!.readError, 'aerodrome_read_unavailable');
-  assert.deepEqual(await refreshAerodromeRewardAlertsV1({ alerts, now, read, limit: 2 }), { due: 1, read: 1, failed: 0 });
-  const kept = (await alerts.get(WALLET))!;
-  assert.deepEqual([kept.readUsdCents, kept.readBlock, kept.readError], [678, '42', null]);
-  // A failure is tried again after half an hour; a good reading after six.
-  const soon = new Date(now.getTime() + 31 * 60_000);
-  assert.deepEqual(await refreshAerodromeRewardAlertsV1({ alerts, now: soon, read, limit: 5 }), { due: 2, read: 0, failed: 2 });
 });

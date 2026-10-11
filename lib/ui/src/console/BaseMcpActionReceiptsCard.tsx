@@ -17,6 +17,7 @@ export type BaseMcpActivityReceiptV1 = BaseMcpActivityReceiptCommonV1 & (
   | { actionType: 'x402'; method: 'GET'; url: string; maxPayment: string; paymentAsset: { symbol: string }; responseHash: string | null }
   | { actionType: 'virtuals'; operation: 'agent_create' | 'sign_in'; agentName: string | null; providerObjectId: string | null }
   | { actionType: 'aerodrome_claim'; operation: 'claim'; recipient: string; claimCount: number }
+  | { actionType: 'uniswap_collect'; operation: 'collect'; recipient: string; positionCount: number }
 );
 
 function tone(status: string): string {
@@ -59,7 +60,9 @@ export function BaseMcpActionReceiptsCard(model: {
                       ? `x402 ≤ ${receipt.maxPayment} ${receipt.paymentAsset.symbol}`
                       : receipt.actionType === 'aerodrome_claim'
                         ? `Aerodrome · ${receipt.claimCount} claims`
-                        : receipt.operation === 'sign_in' ? 'Virtuals · Sign in' : `Virtuals · ${receipt.agentName}`}
+                        : receipt.actionType === 'uniswap_collect'
+                          ? `Uniswap · ${receipt.positionCount} position${receipt.positionCount === 1 ? '' : 's'}`
+                          : receipt.operation === 'sign_in' ? 'Virtuals · Sign in' : `Virtuals · ${receipt.agentName}`}
                 </span>
               </div>
               <p className="lnote mono">
@@ -69,6 +72,8 @@ export function BaseMcpActionReceiptsCard(model: {
                     ? receipt.url
                     : receipt.actionType === 'aerodrome_claim'
                       ? `fees and AERO to ${receipt.recipient}`
+                      : receipt.actionType === 'uniswap_collect'
+                      ? `v3 fees to ${receipt.recipient}`
                       : receipt.providerObjectId
                       ? `agent ID ${receipt.providerObjectId}`
                       : 'agent creation'}

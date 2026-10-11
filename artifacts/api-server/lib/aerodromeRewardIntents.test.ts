@@ -7,6 +7,10 @@ import {
   aerodromeRewardThresholdCentsV1,
   aerodromeRewardsReadV1,
   centsV1,
+  foundProtocolsNamedV1,
+  foundReadV1,
+  uniswapCollectOrderV1,
+  uniswapFeesReadV1,
 } from './aerodromeRewardIntents.js';
 
 test('a question about my own Aerodrome rewards is a reading, in English and Russian', () => {
@@ -65,13 +69,42 @@ test('the alert replies say what was kept and where it is told', () => {
   assert.equal(centsV1(1_250), '$12.50');
   assert.equal(centsV1(125_000), '$1,250');
   const created = aerodromeRewardAlertReplyV1({ outcome: 'created', thresholdUsdCents: 500, telegram: false, russian: false });
-  assert.match(created, /^Done\.\nWhen what this wallet can claim on Aerodrome reaches \$5, Miorail tells you once/);
+  assert.match(created, /^Done\.\nWhen what this wallet can claim on Aerodrome and Uniswap reaches \$5, Miorail tells you once/);
   assert.match(created, /Telegram is not connected to this wallet yet: Settings → Telegram\.$/);
   assert.doesNotMatch(aerodromeRewardAlertReplyV1({ outcome: 'created', thresholdUsdCents: 500, telegram: true, russian: false }), /not connected/);
   assert.doesNotMatch(aerodromeRewardAlertReplyV1({ outcome: 'created', thresholdUsdCents: 500, telegram: null, russian: false }), /not connected/);
   assert.match(aerodromeRewardAlertReplyV1({ outcome: 'moved', thresholdUsdCents: 2_000, russian: false }), /^Moved to \$20\./);
   assert.match(aerodromeRewardAlertReplyV1({ outcome: 'unchanged', thresholdUsdCents: 500, russian: true }), /^Уже включено: порог \$5\./);
-  assert.equal(aerodromeRewardAlertReplyV1({ outcome: 'stopped', russian: false }), 'Aerodrome reward alerts are off for this wallet.');
-  assert.equal(aerodromeRewardAlertReplyV1({ outcome: 'none', russian: true }), 'Для этого кошелька уведомлений о наградах Aerodrome не было.');
+  assert.equal(aerodromeRewardAlertReplyV1({ outcome: 'stopped', russian: false }), 'Reward alerts are off for this wallet.');
+  assert.equal(aerodromeRewardAlertReplyV1({ outcome: 'none', russian: true }), 'Для этого кошелька уведомлений о наградах не было.');
   assert.match(aerodromeRewardAlertReplyV1({ outcome: 'below_min', russian: false }), /smallest amount is \$1/);
+});
+
+test('Uniswap fees: a question reads v3, an order collects, v4 is neither', () => {
+  for (const message of ['Check my Uniswap fees', 'How much can I collect on Uniswap?', 'Show my unclaimed Uniswap fees', 'Сколько я могу забрать на Uniswap?']) {
+    assert.equal(uniswapFeesReadV1(message), true, message);
+  }
+  for (const message of ['Collect my Uniswap fees', 'Show fees for my Uniswap V4 liquidity positions', 'Swap 100 USDC on Uniswap', 'Notify me when my Uniswap fees reach $5']) {
+    assert.equal(uniswapFeesReadV1(message), false, message);
+  }
+  assert.equal(uniswapCollectOrderV1('Collect my Uniswap fees'), true);
+  assert.equal(uniswapCollectOrderV1('Забери мои комиссии Uniswap'), true);
+  assert.equal(uniswapCollectOrderV1('Collect my Uniswap v4 fees'), false);
+  assert.equal(uniswapCollectOrderV1('Check my Uniswap fees'), false);
+});
+
+test('Found with no protocol named: my rewards, what I can claim; never swap fees or another protocol', () => {
+  for (const message of ['What can I claim?', 'Check my rewards', 'Do I have unclaimed fees?', 'Show my fees', 'Что я могу забрать?', 'Проверь мои награды', 'Есть ли у меня несобранные комиссии?']) {
+    assert.equal(foundReadV1(message), true, message);
+  }
+  for (const message of ['What fees will I pay to swap?', 'Check my Moonwell rewards', 'Claim my rewards', 'Notify me when my rewards reach $5', 'What does my wallet hold?']) {
+    assert.equal(foundReadV1(message), false, message);
+  }
+  assert.deepEqual(foundProtocolsNamedV1('What can I claim on Aerodrome and Uniswap?'), ['aerodrome', 'uniswap']);
+  assert.deepEqual(foundProtocolsNamedV1('What can I claim?'), []);
+  // One alert covers both, by any of their names or none.
+  assert.deepEqual(aerodromeRewardAlertV1('Notify me when my rewards reach $5'), { kind: 'on', thresholdUsdCents: 500 });
+  assert.deepEqual(aerodromeRewardAlertV1('Tell me when my Uniswap fees reach 10 USD'), { kind: 'on', thresholdUsdCents: 1_000 });
+  assert.deepEqual(aerodromeRewardAlertV1('Сообщи, когда мои награды дойдут до $5'), { kind: 'on', thresholdUsdCents: 500 });
+  assert.deepEqual(aerodromeRewardAlertV1('Stop reward alerts'), { kind: 'off' });
 });

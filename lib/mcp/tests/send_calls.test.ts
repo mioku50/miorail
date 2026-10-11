@@ -17,6 +17,23 @@ describe("McpSendCallsClient security checks", () => {
     await assert.rejects(client.sendAerodromeClaimCalls(wallet, [{ ...call, data: '0x095ea7b3' }]));
     await assert.rejects(client.sendCalls('8453', [call])); assert.equal(count, 1);
   });
+  it('sends only the pinned Uniswap collect shape through its own closed transport', async () => {
+    const sent: unknown[] = [];
+    const client = new McpSendCallsClient({ getClient: () => ({ callTool: async (input) => {
+      sent.push(input.arguments?.calls);
+      return { content: [{ type: 'text', text: '{"approvalUrl":"https://keys.coinbase.com/approve/collect", "requestId":"collect-1"}' }] };
+    } }) });
+    const wallet = '0x1111111111111111111111111111111111111111';
+    const max = 'f'.repeat(32).padStart(64, '0');
+    const call = { to: '0x03a520b32c04bf3beef7beb72e919cf822ed34f1', value: '0',
+      data: `0xfc6f7865${(41).toString(16).padStart(64, '0')}${wallet.slice(2).padStart(64, '0')}${max}${max}` };
+    assert.equal((await client.sendUniswapCollectCalls(wallet, [call])).requestId, 'collect-1');
+    // An Aerodrome claim shape is not a Uniswap collect, and a collect sent
+    // to another manager is refused before anything reaches the wallet.
+    await assert.rejects(client.sendUniswapCollectCalls(wallet, [{ ...call, data: '0xd294f093' }]));
+    await assert.rejects(client.sendUniswapCollectCalls(wallet, [{ ...call, to: '0x2222222222222222222222222222222222222222' }]));
+    assert.equal(sent.length, 1);
+  });
   it("should block unsupported chains", async () => {
     const mockClient = { getClient: () => ({ callTool: async () => ({ content: [] }) }) } as unknown as BaseMcpClient;
     const client = new McpSendCallsClient(mockClient);

@@ -1,6 +1,7 @@
 import type { BaseMcpCallsV1 } from "./pool.js";
 import { validateBaseCalls } from "@mioagent/security/baseGuards";
 import { validateAerodromeClaimCallsV1 } from '@mioagent/security/aerodromeClaimGuard';
+import { validateUniswapCollectCallsV1 } from '@mioagent/security/uniswapCollectGuard';
 
 export interface SendCallsResponse {
   approvalUrl: string;
@@ -14,6 +15,13 @@ export class McpSendCallsClient {
   /** Closed claim-only transport; the generic sendCalls guard stays intact. */
   async sendAerodromeClaimCalls(wallet: string, calls: { to: string; value: string; data: string }[]): Promise<SendCallsResponse> {
     validateAerodromeClaimCallsV1(wallet, calls);
+    const result = await this.client.getClient().callTool({ name: 'send_calls', arguments: { chain: 'base', calls } });
+    return this.approvalResponse(result);
+  }
+
+  /** Closed collect-only transport for Found's Uniswap v3 fees. */
+  async sendUniswapCollectCalls(wallet: string, calls: { to: string; value: string; data: string }[]): Promise<SendCallsResponse> {
+    validateUniswapCollectCallsV1(wallet, calls);
     const result = await this.client.getClient().callTool({ name: 'send_calls', arguments: { chain: 'base', calls } });
     return this.approvalResponse(result);
   }

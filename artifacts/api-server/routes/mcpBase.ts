@@ -57,6 +57,9 @@ import { verifyBaseMcpWalletMatchViaOAuth } from '../lib/baseMcpWalletReconcilia
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
 import { prepareBaseMcpAerodromeClaimV1 } from '../lib/baseMcpAerodromeClaim.js';
+import { prepareBaseMcpUniswapCollectV1 } from '../lib/baseMcpUniswapCollect.js';
+import { runFoundReadV1 } from '../lib/found.js';
+import { foundClaimsReleasedV1 } from '../lib/baseMcpRuntimeSnapshot.js';
 
 export const mcpBaseRouter = Router();
 /** Public, read-only catalogue surface. Kept separate so mounting it before
@@ -78,6 +81,8 @@ export const mcpBaseRouteRuntime = {
   reconcileBaseMcpActionV1,
   prepareBaseMcpVirtualsAgentCreateV1,
   prepareBaseMcpAerodromeClaimV1,
+  prepareBaseMcpUniswapCollectV1,
+  runFoundReadV1,
   listBaseMcpActionReceiptsV1,
   aerodromeRewardAlerts: (): AerodromeRewardAlertRepositoryV1 => createDatabaseAerodromeRewardAlertRepositoryV1(client as never),
   /** Whether a Telegram chat hears this wallet; null when that cannot be read. */
@@ -543,6 +548,15 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'answered', reply, trace: [], toolsAvailable: 0,
         truncated: false, elapsedMs: Date.now() - startedAt, errorCode: null, checkedAt: new Date().toISOString() }));
     }
+    // Found across Aerodrome and Uniswap: Miorail's own reading of the wallet
+    // you signed in with. No Wallet MCP connection, no provider, nothing
+    // prepared.
+    if (decision.kind === 'found_read') {
+      const result = await mcpBaseRouteRuntime.runFoundReadV1({ walletAddress: tenantWalletAddress(req), message,
+        protocols: decision.protocols, ...foundClaimsReleasedV1() });
+      res.set('Cache-Control', 'no-store');
+      return res.json(BaseMcpConsoleResponseV1Schema.parse(result));
+    }
     if (decision.kind === 'send') {
       if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
         return res.json(BaseMcpConsoleResponseV1Schema.parse({
@@ -619,6 +633,21 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       }
       const startedAt = Date.now();
       const result = await mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1({ req,
+        userId: tenantUserId(req), walletAddress: tenantWalletAddress(req), sessionSecret: secret,
+        idempotencyKey: requestId });
+      res.set('Cache-Control', 'no-store');
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: result.kind, reply: result.reply,
+        trace: [], toolsAvailable: result.toolsAvailable, truncated: false, elapsedMs: Date.now() - startedAt,
+        errorCode: result.errorCode, checkedAt: new Date().toISOString(),
+        action: result.receipt ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: null } : null }));
+    }
+    if (decision.kind === 'uniswap_collect') {
+      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'disabled', reply: 'Connect Wallet MCP before collecting Uniswap fees.',
+          trace: [], toolsAvailable: 0, truncated: false, elapsedMs: 0, errorCode: 'base_mcp_disabled', checkedAt: new Date().toISOString() }));
+      }
+      const startedAt = Date.now();
+      const result = await mcpBaseRouteRuntime.prepareBaseMcpUniswapCollectV1({ req,
         userId: tenantUserId(req), walletAddress: tenantWalletAddress(req), sessionSecret: secret,
         idempotencyKey: requestId });
       res.set('Cache-Control', 'no-store');

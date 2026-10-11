@@ -37,9 +37,10 @@ import {
 } from './baseMcpProviderRouting.js';
 import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
 import { reconcileBaseMcpAerodromeClaimV1 } from './baseMcpAerodromeClaim.js';
+import { reconcileBaseMcpUniswapCollectV1 } from './baseMcpUniswapCollect.js';
 import { missingInputsReplyV1, missingProviderInputsV1 } from './baseMcpRequiredInputs.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
-import { aerodromeRewardAlertReplyV1, aerodromeRewardAlertV1, russianV1 } from './aerodromeRewardIntents.js';
+import { aerodromeRewardAlertReplyV1, aerodromeRewardAlertV1, foundProtocolsNamedV1, foundReadV1, russianV1 } from './aerodromeRewardIntents.js';
 import type { BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
 
 const ADDRESS_V1 = /^0x[a-fA-F0-9]{40}$/;
@@ -59,6 +60,9 @@ export type BaseMcpExtensionIntentV1 =
   | { kind: 'virtuals_create'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'agent_create' }> }
   | { kind: 'virtuals_sign_in'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'sign_in' }> }
   | { kind: 'aerodrome_claim' }
+  | { kind: 'uniswap_collect' }
+  /** Found across protocols: "What can I claim?" names none, or names both. */
+  | { kind: 'found_read'; protocols: ('aerodrome' | 'uniswap')[] }
   | { kind: 'aerodrome_rewards_alert'; thresholdUsdCents: number }
   | { kind: 'aerodrome_rewards_alert_off' }
   | { kind: 'needs_input'; errorCode: string; reply: string };
@@ -110,6 +114,12 @@ export function classifyBaseMcpExtensionIntentV1(
   }
 
   const provider = matchBaseMcpProviderIntentV1(trimmed, runtime);
+  // Found's question about one's own rewards: with no protocol named it reads
+  // both; with both named, both. A protocol it does not read is not asked.
+  if (foundReadV1(trimmed)) {
+    const named = foundProtocolsNamedV1(trimmed);
+    if ((!provider && named.length === 0) || named.length === 2) return { kind: 'found_read', protocols: ['aerodrome', 'uniswap'] };
+  }
   if (provider?.pluginId === 'virtuals' && /^(?:sign\s+in\s+to|log\s+me\s+into|войти\s+в|войди\s+в)\s+virtuals[.!]?$/iu.test(trimmed)) {
     return runtime.releasedActionPlugins.includes('virtuals')
       ? { kind: 'virtuals_sign_in', intent: { operation: 'sign_in' } }
@@ -127,6 +137,19 @@ export function classifyBaseMcpExtensionIntentV1(
         reply: 'This claim collects fees and AERO only for your connected wallet. Ask “Claim my Aerodrome fees”.' };
     }
     return { kind: 'aerodrome_claim' };
+  }
+  // Uniswap's collect, by the same rule: v3 fees to the connected wallet only.
+  if (provider?.disposition === 'action_in_extensions' && provider.pluginId === 'uniswap') {
+    if (!runtime.releasedActionPlugins.includes('uniswap') || !runtime.batchSimulationAvailable) {
+      return { kind: 'needs_input', errorCode: 'uniswap_collect_unavailable',
+        reply: 'Collecting Uniswap fees requires a released adapter and batch simulation on this deployment.' };
+    }
+    if (/0x[a-fA-F0-9]{40}|\b(to|recipient|withdraw|remove|decrease|burn|close)\b/iu.test(trimmed)
+      || /(?:^|\s)(?:вывед|вывод|сним|отправ|удал|закр)\p{L}*/iu.test(trimmed)) {
+      return { kind: 'needs_input', errorCode: 'uniswap_collect_scope_required',
+        reply: 'This collects the fees your Uniswap v3 positions owe, to your connected wallet only; it removes no liquidity. Ask “Collect my Uniswap fees”.' };
+    }
+    return { kind: 'uniswap_collect' };
   }
   if (provider?.disposition === 'handoff_to_routes') {
     // A launchpad's token is named by its address, and "this Flaunch token"
@@ -1095,6 +1118,9 @@ export async function reconcileBaseMcpActionV1(input: {
   }
   if (found.actionType === 'aerodrome_claim') {
     return reconcileBaseMcpAerodromeClaimV1({ ...input, receipt: found });
+  }
+  if (found.actionType === 'uniswap_collect') {
+    return reconcileBaseMcpUniswapCollectV1({ ...input, receipt: found });
   }
   const stored = await expireStaleBaseMcpX402ReceiptV1(found, baseMcpExtensionActionRuntime.now());
   if (['completed', 'rejected', 'failed'].includes(stored.status)) {

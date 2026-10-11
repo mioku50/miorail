@@ -23,9 +23,8 @@ import { resolveCommerceCatalogSourceV1 } from './commerceRouteConfig.js';
 import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
 import { hydrexPositionsAnswerV1, hydrexPositionsInputErrorV1 } from './hydrexPositionsRead.js';
 import { runVirtualsOtpReadV1 } from './virtualsOtpRead.js';
-import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
-import { aerodromeRewardsNextV1, aerodromeRewardsReplyV1, readAerodromeRewardsV1 } from './aerodromeRewards.js';
-import { russianV1 } from './aerodromeRewardIntents.js';
+import { baseMcpRuntimeSnapshotV1, foundClaimsReleasedV1 } from './baseMcpRuntimeSnapshot.js';
+import { runFoundReadV1 } from './found.js';
 
 // ---------------------------------------------------------------------------
 // Reviewed Base plugin recipes.
@@ -51,7 +50,6 @@ export const reviewedBaseMcpPluginRuntimeV1 = {
   resolveCommerceCatalogSource: resolveCommerceCatalogSourceV1 as () => CommerceCatalogSourceV1,
   sessions: new PostgresBaseMcpPluginSessionStoreV1() as BaseMcpPluginSessionStoreV1,
   callVirtuals: callVirtualsReviewedV1,
-  readAerodromeRewards: readAerodromeRewardsV1,
   now: () => new Date(),
 };
 
@@ -847,25 +845,13 @@ export async function runReviewedBaseMcpPluginReadV1(
     return readNeedsInputV1('gmgn_reads_paused',
       'GMGN reads are paused here. GMGN limits the public demo key Base publishes by IP and refused this server with it, and Miorail holds no GMGN API key of its own. Nothing was called.');
   }
-  // Found: Miorail's own reading, by the claim's reader, of the wallet you
-  // signed in with. No provider is called and nothing is prepared.
-  if (input.providerId === 'aerodrome' && input.exampleId === 'rewards') {
-    const startedAt = Date.now();
-    const read = await reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards(input.walletAddress);
-    const russian = russianV1(input.message);
-    const answer = aerodromeRewardsReplyV1(read, russian);
-    // The claim button only where the classifier would prepare one.
-    const runtime = baseMcpRuntimeSnapshotV1();
-    return {
-      status: answer.errorCode ? 'failed' : 'answered', reply: answer.reply,
-      trace: [{ tool: 'aerodrome_rewards_read',
-        args: baseMcpConsoleArgsV1(JSON.stringify({ chain: 'base', wallet: input.walletAddress.toLowerCase() })),
-        ok: answer.errorCode === null, result: baseMcpConsoleResultTextV1(jsonPreviewV1(read)), errorCode: answer.errorCode }],
-      toolsAvailable: 1, truncated: false, elapsedMs: Date.now() - startedAt, errorCode: answer.errorCode,
-      checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString(),
-      next: aerodromeRewardsNextV1(read, { russian,
-        claimReleased: runtime.releasedActionPlugins.includes('aerodrome') && runtime.batchSimulationAvailable }),
-    };
+  // Found: Miorail's own reading of the wallet you signed in with, by the
+  // claim's own readers. No provider is called and nothing is prepared.
+  if ((input.providerId === 'aerodrome' && input.exampleId === 'rewards')
+    || (input.providerId === 'uniswap' && input.exampleId === 'v3-fees')) {
+    return runFoundReadV1({ walletAddress: input.walletAddress, message: input.message,
+      protocols: [input.providerId === 'aerodrome' ? 'aerodrome' : 'uniswap'], ...foundClaimsReleasedV1(),
+      now: reviewedBaseMcpPluginRuntimeV1.now });
   }
   if (input.providerId === 'hydrex' && input.exampleId === 'positions') {
     const russian = /[а-яё]/iu.test(input.message);

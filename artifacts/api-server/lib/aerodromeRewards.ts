@@ -1,7 +1,6 @@
 import { createPublicClient, formatUnits, http, parseAbi, type Address } from 'viem';
 import { base } from 'viem/chains';
 import { assetIdV1, type AssetRefV1 } from '@mioagent/route-domain';
-import type { AerodromeRewardAlertRepositoryV1 } from '@mioagent/route-storage';
 
 import {
   AERODROME_AERO_V1,
@@ -9,7 +8,6 @@ import {
   readAerodromeClaimPlanV1,
   type AerodromeClaimPlanV1,
 } from './aerodromeClaimReader.js';
-import { centsV1 } from './aerodromeRewardIntents.js';
 import type { BaseMcpConsoleNextV1 } from './baseMcpConsole.js';
 import { valueStockInUsdcV1 } from './giftSendValuation.js';
 import { CANONICAL_BASE_USDC_V1 } from './stockGift.js';
@@ -29,15 +27,6 @@ import { CANONICAL_BASE_USDC_V1 } from './stockGift.js';
 // USDC from the routers trades already ask; an amount no router prices is
 // named and left out of the dollar figure, never counted as zero.
 // ---------------------------------------------------------------------------
-
-/** How often the notifier reads a wallet that asked for an alert. */
-export const AERODROME_REWARD_READ_EVERY_MS_V1 = 6 * 3_600_000;
-/** A reading that failed is tried again after this. */
-export const AERODROME_REWARD_RETRY_AFTER_MS_V1 = 30 * 60_000;
-/** A reading older than this is not told: the rewards may be gone. */
-export const AERODROME_REWARD_FRESH_FOR_MS_V1 = 12 * 3_600_000;
-/** Readings per notifier pass: each walks every pool, 20-45 s. */
-export const AERODROME_REWARD_READS_PER_PASS_V1 = 2;
 
 export interface AerodromeRewardAmountV1 {
   token: string;
@@ -91,29 +80,39 @@ export interface AerodromeRewardValueDepsV1 {
   value(asset: AssetRefV1, amountAtomic: string): Promise<string | null>;
 }
 
+/** One amount of one token, valued by what a sell would fetch in USDC. USDC
+ * is itself; AERO's metadata is known; anything else is read from Base. Used
+ * by every reading Found makes, Aerodrome's and Uniswap's alike. */
+export async function valueRewardAmountV1(token: string, amount: bigint, deps: AerodromeRewardValueDepsV1): Promise<AerodromeRewardAmountV1> {
+  const meta = token === AERODROME_AERO_V1 ? { symbol: 'AERO', decimals: 18 }
+    : token === CANONICAL_BASE_USDC_V1 ? { symbol: 'USDC', decimals: 6 } : await deps.tokenMeta(token);
+  let usdcAtomic: string | null;
+  if (token === CANONICAL_BASE_USDC_V1) usdcAtomic = amount.toString();
+  else {
+    const asset: AssetRefV1 = {
+      assetId: assetIdV1({ chainId: 8453, kind: 'erc20', address: token as `0x${string}` }),
+      chainId: 8453, kind: 'erc20', address: token as `0x${string}`,
+      symbol: meta.symbol.slice(0, 32) || 'TOKEN', decimals: meta.decimals,
+    };
+    usdcAtomic = await deps.value(asset, amount.toString()).catch(() => null);
+  }
+  return { token, ...meta, amountAtomic: amount.toString(), usdcAtomic };
+}
+
+/** The largest dollar value first; unpriced last, by address. */
+export function byValueV1(a: AerodromeRewardAmountV1, b: AerodromeRewardAmountV1): number {
+  return Number(BigInt(b.usdcAtomic ?? '0') - BigInt(a.usdcAtomic ?? '0')) || a.token.localeCompare(b.token);
+}
+
 export async function valueAerodromeRewardsV1(plan: AerodromeClaimPlanV1, deps: AerodromeRewardValueDepsV1): Promise<AerodromeRewardsV1> {
   const totals = aerodromeRewardTotalsV1(plan);
-  const priced = async (token: string, amount: bigint): Promise<AerodromeRewardAmountV1> => {
-    const meta = token === AERODROME_AERO_V1 ? { symbol: 'AERO', decimals: 18 }
-      : token === CANONICAL_BASE_USDC_V1 ? { symbol: 'USDC', decimals: 6 } : await deps.tokenMeta(token);
-    let usdcAtomic: string | null;
-    if (token === CANONICAL_BASE_USDC_V1) usdcAtomic = amount.toString();
-    else {
-      const asset: AssetRefV1 = {
-        assetId: assetIdV1({ chainId: 8453, kind: 'erc20', address: token as `0x${string}` }),
-        chainId: 8453, kind: 'erc20', address: token as `0x${string}`,
-        symbol: meta.symbol.slice(0, 32) || 'TOKEN', decimals: meta.decimals,
-      };
-      usdcAtomic = await deps.value(asset, amount.toString()).catch(() => null);
-    }
-    return { token, ...meta, amountAtomic: amount.toString(), usdcAtomic };
-  };
+  const priced = (token: string, amount: bigint) => valueRewardAmountV1(token, amount, deps);
   // Every amount is priced at once: a router is waited for up to 8 s.
   const [aero, fees] = await Promise.all([
     totals.aeroAtomic > 0n ? priced(AERODROME_AERO_V1, totals.aeroAtomic) : Promise.resolve(null),
     Promise.all([...totals.fees].map(([token, amount]) => priced(token, amount))),
   ]);
-  fees.sort((a, b) => Number(BigInt(b.usdcAtomic ?? '0') - BigInt(a.usdcAtomic ?? '0')) || a.token.localeCompare(b.token));
+  fees.sort(byValueV1);
   const all = [...(aero ? [aero] : []), ...fees];
   return {
     blockNumber: plan.blockNumber, poolsRead: plan.poolsRead, clPositionsHeld: plan.clPositionsTotal,
@@ -178,14 +177,14 @@ export function usdcAtomicToCentsV1(usdcAtomic: string): number {
 
 /** "about $12.38", or "under $0.01" for less than a cent: an estimate
  * that small is not "about" anything. */
-function aboutDollarsV1(usdcAtomic: string, russian: boolean): string {
+export function aboutDollarsV1(usdcAtomic: string, russian: boolean): string {
   const cents = usdcAtomicToCentsV1(usdcAtomic);
   if (cents < 1) return russian ? 'меньше $0.01' : 'under $0.01';
   const dollars = `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   return russian ? `около ${dollars}` : `about ${dollars}`;
 }
 
-function unitsV1(amount: AerodromeRewardAmountV1): string {
+export function unitsV1(amount: AerodromeRewardAmountV1): string {
   const exact = formatUnits(BigInt(amount.amountAtomic), amount.decimals);
   const [whole, fraction = ''] = exact.split('.');
   // Four significant digits after the point are enough to recognise an amount.
@@ -221,7 +220,12 @@ export function aerodromeRewardsNextV1(
 }
 
 /** The console's answer to a reading, in the language it was asked in. */
-export function aerodromeRewardsReplyV1(read: AerodromeRewardsReadV1, russian: boolean): { reply: string; errorCode: string | null } {
+export function aerodromeRewardsReplyV1(
+  read: AerodromeRewardsReadV1,
+  russian: boolean,
+  options: { say?: boolean } = {},
+): { reply: string; errorCode: string | null } {
+  const say = options.say ?? true;
   if (!read.ok) {
     const partial = read.poolsTotal > 0 && read.poolsRead < read.poolsTotal;
     const reply = read.errorCode === 'aerodrome_positions_limit'
@@ -250,7 +254,7 @@ export function aerodromeRewardsReplyV1(read: AerodromeRewardsReadV1, russian: b
       reply: [
         russian ? 'Сейчас этому кошельку на Aerodrome забирать нечего: ни комиссий, ни AERO.' : 'Nothing to claim on Aerodrome for this wallet right now: no fees and no AERO.',
         scope, ...managed,
-        russian ? `Скажите ${ALERT_PROMPT_V1.ru}, чтобы узнать, когда появится.` : `Say ${ALERT_PROMPT_V1.en} to hear when there is.`,
+        ...(say ? [russian ? `Скажите ${ALERT_PROMPT_V1.ru}, чтобы узнать, когда появится.` : `Say ${ALERT_PROMPT_V1.en} to hear when there is.`] : []),
       ].join('\n'),
       errorCode: null,
     };
@@ -270,52 +274,8 @@ export function aerodromeRewardsReplyV1(read: AerodromeRewardsReadV1, russian: b
   if (rewards.fees.length) lines.push(`• ${russian ? 'Комиссии пулов' : 'Pool fees'}: ${rewards.fees.map(valued).join(', ')}`);
   lines.push(scope, ...managed);
   lines.push(russian ? 'Оценка — сколько дала бы продажа в USDC сейчас.' : 'Values are what a sell would fetch in USDC now.');
-  lines.push(russian
+  if (say) lines.push(russian
     ? `Скажите ${CLAIM_PROMPT_V1.ru}, чтобы забрать, или ${ALERT_PROMPT_V1.ru}, чтобы узнать, когда накопится.`
     : `Say ${CLAIM_PROMPT_V1.en} to collect it, or ${ALERT_PROMPT_V1.en} to hear when it builds up.`);
   return { reply: lines.join('\n'), errorCode: null };
-}
-
-/** The push: Base App takes a title of 30 characters and a message of 200. */
-export function aerodromeRewardNoticeV1(input: { usdCents: number }): { title: string; message: string; targetPath: string } {
-  const amount = centsV1(input.usdCents);
-  return {
-    title: `Aerodrome rewards: ${amount}`.slice(0, 30),
-    message: `This wallet can claim about ${amount} in fees and AERO on Aerodrome. Open Wallet MCP in Miorail and say ${CLAIM_PROMPT_V1.en}.`,
-    targetPath: '/extensions',
-  };
-}
-
-/** The notifier's reading pass: the wallets due, read and kept. A dry pass
- * reads and keeps nothing. */
-export async function refreshAerodromeRewardAlertsV1(input: {
-  alerts: AerodromeRewardAlertRepositoryV1;
-  now: Date;
-  dry?: boolean;
-  limit?: number;
-  read?: (walletAddress: string) => Promise<AerodromeRewardsReadV1>;
-}): Promise<{ due: number; read: number; failed: number }> {
-  const read = input.read ?? readAerodromeRewardsV1;
-  const due = await input.alerts.dueForRead({
-    readBefore: new Date(input.now.getTime() - AERODROME_REWARD_READ_EVERY_MS_V1),
-    retryBefore: new Date(input.now.getTime() - AERODROME_REWARD_RETRY_AFTER_MS_V1),
-    limit: input.limit ?? AERODROME_REWARD_READS_PER_PASS_V1,
-  });
-  const report = { due: due.length, read: 0, failed: 0 };
-  for (const walletAddress of due) {
-    const reading = await read(walletAddress).catch((): AerodromeRewardsReadV1 => ({
-      ok: false, errorCode: 'aerodrome_read_unavailable', poolsRead: 0, poolsTotal: 0,
-    }));
-    if (reading.ok) report.read += 1;
-    else report.failed += 1;
-    if (input.dry) continue;
-    await input.alerts.recordRead({
-      walletAddress,
-      at: input.now,
-      block: reading.ok ? reading.rewards.blockNumber : null,
-      usdCents: reading.ok ? usdcAtomicToCentsV1(reading.rewards.totalUsdcAtomic) : null,
-      error: reading.ok ? null : reading.errorCode,
-    });
-  }
-  return report;
 }

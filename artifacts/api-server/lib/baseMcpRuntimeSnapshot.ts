@@ -48,11 +48,25 @@ export const REVIEWED_READ_PLUGINS_V1: readonly string[] = [
   'virtuals',
 ];
 
-/** Plugins with a released typed ACTION adapter in Extensions. */
-export const RELEASED_ACTION_PLUGINS_V1: readonly string[] = ['virtuals', 'aerodrome'];
+/** Plugins with a released typed ACTION adapter in Extensions. Uniswap's is
+ * Found's collect of v3 fees, and nothing else: its other writes stay
+ * adapter-less. */
+export const RELEASED_ACTION_PLUGINS_V1: readonly string[] = ['virtuals', 'aerodrome', 'uniswap'];
 /** Reads answered from Base by Miorail's own code, one example at a time:
- * Aerodrome's rewards come from the claim's reader (Found). */
-export const OWN_READ_EXAMPLES_V1: readonly string[] = ['aerodrome:rewards'];
+ * Found's readings come from the claim's own readers. */
+export const OWN_READ_EXAMPLES_V1: readonly string[] = ['aerodrome:rewards', 'uniswap:v3-fees'];
+
+/** Whether each of Found's claims can be prepared here, by the classifier's
+ * own test: a released adapter and a batch simulator. A button is offered
+ * only where pressing it would prepare something. */
+export function foundClaimsReleasedV1(
+  runtime: BaseMcpRuntimeSnapshotV1 = baseMcpRuntimeSnapshotV1(),
+): { aerodromeClaimReleased: boolean; uniswapCollectReleased: boolean } {
+  return {
+    aerodromeClaimReleased: runtime.releasedActionPlugins.includes('aerodrome') && runtime.batchSimulationAvailable,
+    uniswapCollectReleased: runtime.releasedActionPlugins.includes('uniswap') && runtime.batchSimulationAvailable,
+  };
+}
 
 /** Plugins whose write path completes in the provider's own interface. */
 export const PROVIDER_UI_PLUGINS_V1: readonly string[] = ['avantis'];

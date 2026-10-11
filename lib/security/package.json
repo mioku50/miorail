@@ -14,6 +14,7 @@
     "./kyberGuard": "./src/kyberGuard.ts",
     "./aerodromeGuard": "./src/aerodromeGuard.ts",
     "./aerodromeClaimGuard": "./src/aerodromeClaimGuard.ts",
+    "./uniswapCollectGuard": "./src/uniswapCollectGuard.ts",
     "./o1Guard": "./src/o1Guard.ts",
     "./hydrexGuard": "./src/hydrexGuard.ts",
     "./balancerGuard": "./src/balancerGuard.ts"

@@ -6,7 +6,7 @@ import { app } from '../app.js';
 import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
 import { mcpBaseRouteRuntime, mcpBaseRouter } from './mcpBase.js';
 import { InMemoryAerodromeRewardAlertRepositoryV1 } from '@mioagent/route-storage';
-import { reviewedBaseMcpPluginRuntimeV1 } from '../lib/baseMcpReviewedPluginRuntime.js';
+import { foundRuntimeV1 } from '../lib/found.js';
 import { enforceTenantBinding } from '../middleware/tenantAuth.js';
 import { BaseMcpActionReceiptV1Schema } from '@mioagent/api-zod';
 import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
@@ -908,13 +908,16 @@ test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wa
   const alerts = new InMemoryAerodromeRewardAlertRepositoryV1();
   const originalAlerts = mcpBaseRouteRuntime.aerodromeRewardAlerts;
   const originalTelegram = mcpBaseRouteRuntime.telegramLinked;
-  const originalRead = reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards;
+  const originalRead = foundRuntimeV1.readAerodrome;
+  const originalUniswap = foundRuntimeV1.readUniswap;
   mcpBaseRouteRuntime.aerodromeRewardAlerts = () => alerts;
   mcpBaseRouteRuntime.telegramLinked = async () => false;
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('must not run model'); };
   mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = async () => { throw new Error('must not prepare a claim'); };
   const readFor: string[] = [];
-  reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards = async (address) => {
+  foundRuntimeV1.readUniswap = async () => ({ ok: true, fees: { blockNumber: '37123460', positionsHeld: 0, positionsOpen: 0,
+    v4PositionsHeld: 0, unreadable: 0, positions: [], fees: [], totalUsdcAtomic: '0', unpriced: 0 } });
+  foundRuntimeV1.readAerodrome = async (address) => {
     readFor.push(address);
     return { ok: true, rewards: { blockNumber: '37123456', poolsRead: 39_243, clPositionsHeld: 0, positionsFound: 1,
       managedSkipped: 0, claims: 1, fees: [], totalUsdcAtomic: '7750000', unpriced: 0,
@@ -937,14 +940,24 @@ test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wa
     assert.deepEqual(read.body.next.at(-1), { prompt: 'Notify me when my Aerodrome rewards reach $5', kind: 'alert' });
     assert.ok(read.body.next.every((next: { kind: string; prompt: string }) =>
       next.kind !== 'claim' || next.prompt === 'Claim my Aerodrome fees'));
+    // "What can I claim?" names no protocol and reads both, for this wallet.
+    const both = await ask('What can I claim?');
+    assert.equal(both.body.status, 'answered');
+    assert.equal(both.headers['cache-control'], 'no-store');
+    assert.deepEqual(both.body.trace.map((row: { tool: string }) => row.tool), ['aerodrome_rewards_read', 'uniswap_fees_read']);
+    assert.match(both.body.reply, /^You can claim about \$7\.75 now\./);
+    assert.match(both.body.reply, /Nothing to collect on Uniswap for this wallet right now\./);
+    assert.deepEqual(both.body.next.at(-1), { prompt: 'Notify me when my rewards reach $5', kind: 'alert' });
+    assert.deepEqual(readFor, [wallet, wallet]);
+    readFor.length = 1;
 
     const on = await ask('Notify me when my Aerodrome rewards reach $20');
     assert.equal(on.body.status, 'answered');
-    assert.match(on.body.reply, /^Done\.\nWhen what this wallet can claim on Aerodrome reaches \$20/);
+    assert.match(on.body.reply, /^Done\.\nWhen what this wallet can claim on Aerodrome and Uniswap reaches \$20/);
     assert.match(on.body.reply, /Telegram is not connected to this wallet yet/);
     assert.equal((await alerts.get(wallet))?.thresholdUsdCents, 2_000);
     assert.match((await ask('Notify me when my Aerodrome rewards reach $20')).body.reply, /^Already on at \$20\./);
-    assert.equal((await ask('Stop Aerodrome reward alerts')).body.reply, 'Aerodrome reward alerts are off for this wallet.');
+    assert.equal((await ask('Stop Aerodrome reward alerts')).body.reply, 'Reward alerts are off for this wallet.');
     assert.equal(await alerts.get(wallet), null);
     // Nobody names another wallet into it.
     const foreign = await ask('Notify me when my Aerodrome rewards reach $5', { walletAddress: '0x3333333333333333333333333333333333333333' });
@@ -962,7 +975,8 @@ test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wa
   } finally {
     mcpBaseRouteRuntime.aerodromeRewardAlerts = originalAlerts;
     mcpBaseRouteRuntime.telegramLinked = originalTelegram;
-    reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards = originalRead;
+    foundRuntimeV1.readAerodrome = originalRead;
+    foundRuntimeV1.readUniswap = originalUniswap;
     restoreEnv('SESSION_SECRET', oldSecret);
   }
 });

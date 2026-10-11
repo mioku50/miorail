@@ -46,6 +46,7 @@ export const REVIEWED_READ_FACTS_V1: Readonly<Record<string, ReviewedReadFactsV1
   'opensea:listing': { returns: 'A pointer into the NFT route family, where one listing is priced under its own checks — this read lists collections only.' },
   'printr:cost': { returns: 'Printr’s launch cost per chain for the chains, initial buy and graduation target you name.' },
   'printr:status': { returns: 'Printr’s per-chain deployment state for one token id — live, pending or failed.' },
+  'uniswap:v3-fees': { returns: 'What the wallet you signed in with can collect from its Uniswap v3 positions now, read from Base by a dry-run collect, each fee valued by a sell quote in USDC.' },
   'venice:models': { returns: 'The models Venice publishes, with what each one does.' },
   'virtuals:agents': { returns: 'The Virtuals agents your signed-in account owns.', needsProviderSignIn: true },
   'virtuals:otp': { returns: 'Whether Virtuals found a candidate verification code in the exact agent message you name; the code is shown only if you explicitly ask.', needsProviderSignIn: true },

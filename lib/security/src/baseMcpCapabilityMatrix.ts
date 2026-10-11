@@ -263,6 +263,10 @@ function actionCapabilityV1(
       return { operation: 'action', state: 'unavailable',
         reason: 'Aerodrome claim needs an executed batch simulation before wallet approval, and no batch simulator is available here.' };
     }
+    if (plugin.pluginId === 'uniswap' && !runtime.batchSimulationAvailable) {
+      return { operation: 'action', state: 'unavailable',
+        reason: 'Collecting Uniswap fees needs an executed batch simulation before wallet approval, and no batch simulator is available here.' };
+    }
     return {
       operation: 'action',
       state: 'released',

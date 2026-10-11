@@ -37,7 +37,8 @@ export interface CreateToolAggregatorOptions {
    * plugin adapter from live discovery.
    */
   baseMcpAllowedActionTools?: readonly string[];
-  /** Exact calls already validated and simulated by the Aerodrome vertical. */
+  /** Exact calls already validated and simulated by a claim vertical
+   * (Aerodrome claim or Uniswap collect). */
   baseMcpPreparedClaim?: PreparedBaseClaimCallsV1;
   /** Exact typed action tools whose sensitive result is consumed in-memory by
    * the vertical. Generic agents must never set this. */

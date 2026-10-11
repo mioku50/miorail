@@ -610,6 +610,13 @@
       "when": 1791741107333,
       "tag": "0086_aerodrome_reward_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 87,
+      "version": "7",
+      "when": 1791751174528,
+      "tag": "0087_uniswap_collect_receipts",
+      "breakpoints": true
     }
   ]
 }
