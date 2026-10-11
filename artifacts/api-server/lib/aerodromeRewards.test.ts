@@ -89,6 +89,21 @@ test('amounts are valued by a sell quote; USDC is itself; an unpriced one is nam
   assert.match(russian, /«Забери мои комиссии Aerodrome»/);
 });
 
+test('less than a cent is "under $0.01", and amounts nobody priced are not "$0.00"', async () => {
+  const tiny = await valueAerodromeRewardsV1(plan([item('cl_fees', { token0: CANONICAL_BASE_USDC_V1, token1: MEME, amount0: '112200', amount1: '19549308011258976323710' })]), {
+    tokenMeta: async () => ({ symbol: 'RWACu', decimals: 18 }),
+    value: async () => '3',
+  });
+  const english = aerodromeRewardsReplyV1({ ok: true, rewards: tiny }, false).reply.split('\n');
+  assert.equal(english[0], 'Found on Aerodrome: about $0.11 you can claim now.');
+  assert.equal(english[1], '• Pool fees: 0.1122 USDC (about $0.11), 19,549.308 RWACu (under $0.01)');
+  assert.match(aerodromeRewardsReplyV1({ ok: true, rewards: tiny }, true).reply, /19,549\.308 RWACu \(меньше \$0\.01\)/);
+  const unpriced = await valueAerodromeRewardsV1(plan([item('cl_fees', { token0: MEME, token1: MEME, amount0: '5', amount1: '0' })]), {
+    tokenMeta: async () => ({ symbol: 'MEME', decimals: 18 }),
+    value: async () => null,
+  });
+  assert.equal(aerodromeRewardsReplyV1({ ok: true, rewards: unpriced }, false).reply.split('\n')[0], 'Found on Aerodrome: rewards no router could price right now.');
+});
 test('nothing to claim is said only after every pool was read', async () => {
   const rewards = await valueAerodromeRewardsV1(plan([], { clPositionsTotal: 0, positionsFound: 2, managedSkipped: 1 }), {
     tokenMeta: async () => assert.fail('nothing to price'),

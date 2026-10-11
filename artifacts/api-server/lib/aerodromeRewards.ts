@@ -175,10 +175,13 @@ export function usdcAtomicToCentsV1(usdcAtomic: string): number {
   return Number(BigInt(usdcAtomic) / 10_000n);
 }
 
-function dollarsV1(usdcAtomic: string): string {
+/** "about $12.38", or "under $0.01" for less than a cent: an estimate
+ * that small is not "about" anything. */
+function aboutDollarsV1(usdcAtomic: string, russian: boolean): string {
   const cents = usdcAtomicToCentsV1(usdcAtomic);
-  if (cents < 1) return BigInt(usdcAtomic) > 0n ? 'under $0.01' : '$0.00';
-  return `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  if (cents < 1) return russian ? 'меньше $0.01' : 'under $0.01';
+  const dollars = `$${(cents / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return russian ? `около ${dollars}` : `about ${dollars}`;
 }
 
 function unitsV1(amount: AerodromeRewardAmountV1): string {
@@ -229,13 +232,16 @@ export function aerodromeRewardsReplyV1(read: AerodromeRewardsReadV1, russian: b
     };
   }
   const lines: string[] = [];
-  const total = dollarsV1(rewards.totalUsdcAtomic);
-  lines.push(russian
-    ? `Найдено на Aerodrome: можно забрать около ${total}${rewards.unpriced ? ' (без того, что не удалось оценить)' : ''}.`
-    : `Found on Aerodrome: about ${total} you can claim now${rewards.unpriced ? ', not counting what could not be priced' : ''}.`);
+  const total = aboutDollarsV1(rewards.totalUsdcAtomic, russian);
+  const pricedNothing = rewards.totalUsdcAtomic === '0' && rewards.unpriced > 0;
+  lines.push(pricedNothing
+    ? russian ? 'Найдено на Aerodrome: награды, которые сейчас не оценил ни один роутер.' : 'Found on Aerodrome: rewards no router could price right now.'
+    : russian
+      ? `Найдено на Aerodrome: можно забрать ${total}${rewards.unpriced ? ' (без того, что не удалось оценить)' : ''}.`
+      : `Found on Aerodrome: ${total} you can claim now${rewards.unpriced ? ', not counting what could not be priced' : ''}.`);
   const valued = (amount: AerodromeRewardAmountV1) => amount.usdcAtomic === null
     ? `${unitsV1(amount)} (${russian ? 'ни один роутер не оценил' : 'no router priced it'})`
-    : `${unitsV1(amount)} (${russian ? 'около' : 'about'} ${dollarsV1(amount.usdcAtomic)})`;
+    : `${unitsV1(amount)} (${aboutDollarsV1(amount.usdcAtomic, russian)})`;
   if (rewards.aero) lines.push(`• ${valued(rewards.aero)} ${russian ? 'за застейканные позиции' : 'from staked positions'}`);
   if (rewards.fees.length) lines.push(`• ${russian ? 'Комиссии пулов' : 'Pool fees'}: ${rewards.fees.map(valued).join(', ')}`);
   lines.push(scope, ...managed);
