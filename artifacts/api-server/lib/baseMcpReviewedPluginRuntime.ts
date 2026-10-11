@@ -24,6 +24,8 @@ import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
 import { hydrexPositionsAnswerV1, hydrexPositionsInputErrorV1 } from './hydrexPositionsRead.js';
 import { runVirtualsOtpReadV1 } from './virtualsOtpRead.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
+import { aerodromeRewardsReplyV1, readAerodromeRewardsV1 } from './aerodromeRewards.js';
+import { russianV1 } from './aerodromeRewardIntents.js';
 
 // ---------------------------------------------------------------------------
 // Reviewed Base plugin recipes.
@@ -49,6 +51,7 @@ export const reviewedBaseMcpPluginRuntimeV1 = {
   resolveCommerceCatalogSource: resolveCommerceCatalogSourceV1 as () => CommerceCatalogSourceV1,
   sessions: new PostgresBaseMcpPluginSessionStoreV1() as BaseMcpPluginSessionStoreV1,
   callVirtuals: callVirtualsReviewedV1,
+  readAerodromeRewards: readAerodromeRewardsV1,
   now: () => new Date(),
 };
 
@@ -843,6 +846,21 @@ export async function runReviewedBaseMcpPluginReadV1(
   if (input.providerId === 'gmgn' && baseMcpRuntimeSnapshotV1().readPluginsMissingCredential.includes('gmgn')) {
     return readNeedsInputV1('gmgn_reads_paused',
       'GMGN reads are paused here. GMGN limits the public demo key Base publishes by IP and refused this server with it, and Miorail holds no GMGN API key of its own. Nothing was called.');
+  }
+  // Found: Miorail's own reading, by the claim's reader, of the wallet you
+  // signed in with. No provider is called and nothing is prepared.
+  if (input.providerId === 'aerodrome' && input.exampleId === 'rewards') {
+    const startedAt = Date.now();
+    const read = await reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards(input.walletAddress);
+    const answer = aerodromeRewardsReplyV1(read, russianV1(input.message));
+    return {
+      status: answer.errorCode ? 'failed' : 'answered', reply: answer.reply,
+      trace: [{ tool: 'aerodrome_rewards_read',
+        args: baseMcpConsoleArgsV1(JSON.stringify({ chain: 'base', wallet: input.walletAddress.toLowerCase() })),
+        ok: answer.errorCode === null, result: baseMcpConsoleResultTextV1(jsonPreviewV1(read)), errorCode: answer.errorCode }],
+      toolsAvailable: 1, truncated: false, elapsedMs: Date.now() - startedAt, errorCode: answer.errorCode,
+      checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString(),
+    };
   }
   if (input.providerId === 'hydrex' && input.exampleId === 'positions') {
     const russian = /[а-яё]/iu.test(input.message);

@@ -1248,6 +1248,52 @@ export function planReopenNoticesV1(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Found: unclaimed Aerodrome rewards that reached the amount a wallet asked for
+// ---------------------------------------------------------------------------
+
+/** One wallet's notice, built by the caller from its last reading. */
+export interface AerodromeRewardDueV1 {
+  walletAddress: string;
+  /** What "once" counts in: the episode this notice tells. */
+  episode: number;
+  title: string;
+  message: string;
+  targetPath: string;
+}
+
+/** One push per wallet (each names its own amount), to wallets this channel
+ * reaches, never past the day's cap. */
+export function planAerodromeRewardNoticesV1(input: {
+  due: readonly AerodromeRewardDueV1[];
+  enabled: ReadonlySet<string>;
+  sentToday: ReadonlyMap<string, number>;
+  limits?: Partial<BaseAppNotifyLimitsV1>;
+}): { groups: (BaseAppPushGroupV1 & { episode: number })[]; capped: number; notEnabled: number } {
+  const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...input.limits };
+  const groups: (BaseAppPushGroupV1 & { episode: number })[] = [];
+  let capped = 0;
+  let notEnabled = 0;
+  for (const due of [...input.due].sort((a, b) => a.walletAddress.localeCompare(b.walletAddress))) {
+    if (!input.enabled.has(due.walletAddress)) {
+      notEnabled += 1;
+      continue;
+    }
+    if ((input.sentToday.get(due.walletAddress) ?? 0) >= limits.dailyCap) {
+      capped += 1;
+      continue;
+    }
+    groups.push({
+      title: clipV1(due.title, BASE_APP_TITLE_MAX_V1),
+      message: clipV1(due.message, BASE_APP_MESSAGE_MAX_V1),
+      targetPath: due.targetPath,
+      wallets: [due.walletAddress],
+      episode: due.episode,
+    });
+  }
+  return { groups, capped, notEnabled };
+}
+
+// ---------------------------------------------------------------------------
 // One pass
 // ---------------------------------------------------------------------------
 
@@ -1270,6 +1316,13 @@ export interface BaseAppNotifyReportV1 {
   weekly: { weekCloseAt: string; due: number; sent: number; capped: number } | null;
   /** Call the reopen: null when no round notice was due. */
   reopen: { roundId: string; kind: ReopenNoticeKindV1; due: number; sent: number; capped: number } | null;
+  /** Found's Aerodrome reward alerts: null when none had reached its amount. */
+  aerodromeRewards: { due: number; sent: number; capped: number; notEnabled: number } | null;
+}
+
+/** Pushes the clock-driven phases sent this pass. */
+function phasesSentV1(report: BaseAppNotifyReportV1): number {
+  return (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) + (report.aerodromeRewards?.sent ?? 0);
 }
 
 function utcDayV1(at: Date): string {
@@ -1296,6 +1349,12 @@ export async function runBaseAppNotifyV1(deps: {
   /** Call the reopen's current round, brought up to date. A failure skips
    * the round's notices for this pass and nothing else. */
   reopen?: (now: Date) => Promise<ReopenNoticeFactsV1 | null>;
+  /** Found: this channel's untold Aerodrome reward notices, and how one is
+   * marked told. A failure to read them skips them for this pass. */
+  aerodromeRewards?: {
+    due: () => Promise<readonly AerodromeRewardDueV1[]>;
+    told: (input: { walletAddress: string; episode: number }) => Promise<void>;
+  };
 }): Promise<BaseAppNotifyReportV1> {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...deps.limits };
   const report: BaseAppNotifyReportV1 = {
@@ -1314,6 +1373,7 @@ export async function runBaseAppNotifyV1(deps: {
     stoppedBy: null,
     weekly: null,
     reopen: null,
+    aerodromeRewards: null,
   };
   if (!deps.client) return { ...report, outcome: 'off' };
   const now = deps.now();
@@ -1421,6 +1481,47 @@ export async function runBaseAppNotifyV1(deps: {
     }
   }
 
+  // Found: told once per episode and channel, like the reopen's notices, and
+  // marked only for a wallet this channel actually reached.
+  if (deps.aerodromeRewards) {
+    let due: readonly AerodromeRewardDueV1[];
+    try {
+      due = await deps.aerodromeRewards.due();
+    } catch {
+      due = [];
+    }
+    if (due.length > 0) {
+      let enabledNow: Set<string>;
+      try {
+        enabledNow = await deps.client.enabledWallets();
+      } catch (cause) {
+        return { ...report, outcome: 'stopped', stoppedBy: cause instanceof BaseAppNotifyErrorV1 ? cause.message : 'base_app_error' };
+      }
+      const day = utcDayV1(now);
+      const reached = due.filter((row) => enabledNow.has(row.walletAddress)).map((row) => row.walletAddress);
+      const sentToday = reached.length > 0 ? await deps.repository.sentOn({ day, wallets: reached }) : new Map<string, number>();
+      const plan = planAerodromeRewardNoticesV1({ due, enabled: enabledNow, sentToday, limits });
+      report.aerodromeRewards = { due: plan.groups.length, sent: 0, capped: plan.capped, notEnabled: plan.notEnabled };
+      if (!deps.dry) {
+        for (const { episode, ...group } of plan.groups) {
+          try {
+            const result = await deps.client.send(group);
+            report.failed += result.failed.notSaved + result.failed.disabled + result.failed.other;
+            if (result.sent.length > 0) {
+              report.aerodromeRewards.sent += result.sent.length;
+              await deps.repository.recordSent({ day, wallets: result.sent });
+              for (const walletAddress of result.sent) await deps.aerodromeRewards.told({ walletAddress, episode });
+            }
+          } catch (cause) {
+            const error = cause instanceof BaseAppNotifyErrorV1 ? cause : null;
+            if (error && error.status === 400) continue;
+            return { ...report, outcome: 'stopped', stoppedBy: error ? error.message : 'base_app_error' };
+          }
+        }
+      }
+    }
+  }
+
   // A dry pass writes nothing, so it cannot open a cursor; it reads from one
   // that is already open, or reports that none is.
   const cursors = {
@@ -1470,7 +1571,7 @@ export async function runBaseAppNotifyV1(deps: {
       const weekAgo = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
       await deps.repository.pruneDaily({ before: utcDayV1(weekAgo) });
     }
-    return (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) > 0 ? { ...report, outcome: 'delivered' } : report;
+    return phasesSentV1(report) > 0 ? { ...report, outcome: 'delivered' } : report;
   }
 
   // Only rows this module could send are worth asking Base about.
@@ -1493,7 +1594,7 @@ export async function runBaseAppNotifyV1(deps: {
       ...report,
       stale: plan.stale,
       unsent: plan.unsent,
-      outcome: deps.dry ? 'dry' : (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) > 0 ? 'delivered' : 'idle',
+      outcome: deps.dry ? 'dry' : phasesSentV1(report) > 0 ? 'delivered' : 'idle',
     };
   }
 
@@ -1594,6 +1695,6 @@ export async function runBaseAppNotifyV1(deps: {
   await advance();
   return {
     ...report,
-    outcome: plan.groups.length > 0 || (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) > 0 ? 'delivered' : 'idle',
+    outcome: plan.groups.length > 0 || phasesSentV1(report) > 0 ? 'delivered' : 'idle',
   };
 }

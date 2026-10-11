@@ -17,6 +17,7 @@
 import { callManyV1, createB20ReaderV1 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import {
+  createDatabaseAerodromeRewardAlertRepositoryV1,
   createDatabaseBaseAppNotificationRepositoryV1,
   createDatabaseOfficialAssetRepository,
   createDatabaseReopenGameRepositoryV1,
@@ -24,6 +25,7 @@ import {
   createDatabaseRepresentationRatioRepository,
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
+  type NotificationChannelV1,
 } from '@mioagent/route-storage';
 import { ISSUER_BY_REVIEWED_SOURCE_KIND_V1 } from '@mioagent/rwa-market-reality';
 import { reopenLineupStocksV1, reopenNoticeFactsV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
@@ -39,6 +41,11 @@ import {
   type StockNamesV1,
 } from './baseAppNotify.js';
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
+import {
+  AERODROME_REWARD_FRESH_FOR_MS_V1,
+  aerodromeRewardNoticeV1,
+  refreshAerodromeRewardAlertsV1,
+} from '../artifacts/api-server/lib/aerodromeRewards.js';
 import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 
 async function main(): Promise<void> {
@@ -84,6 +91,28 @@ async function main(): Promise<void> {
     });
     return held;
   };
+
+  // Found: the wallets due for a reading are read once, for both channels.
+  // Each reading walks every Aerodrome pool, so a pass reads only a few.
+  const rewardAlerts = createDatabaseAerodromeRewardAlertRepositoryV1(client);
+  try {
+    const refreshed = await refreshAerodromeRewardAlertsV1({ alerts: rewardAlerts, now: new Date(), dry });
+    if (refreshed.due > 0) console.log(JSON.stringify({ event: 'aerodrome_rewards_read', dry, ...refreshed }));
+  } catch (cause) {
+    console.log(JSON.stringify({ event: 'aerodrome_rewards_read', outcome: 'failed',
+      error: cause instanceof Error ? cause.message.slice(0, 80) : 'unknown' }));
+  }
+  const aerodromeRewardsFor = (channel: NotificationChannelV1) => ({
+    due: async () =>
+      (await rewardAlerts.reached({ freshSince: new Date(Date.now() - AERODROME_REWARD_FRESH_FOR_MS_V1) }))
+        .filter((alert) => alert.told[channel] !== alert.episode && alert.readUsdCents !== null)
+        .map((alert) => ({
+          walletAddress: alert.walletAddress,
+          episode: alert.episode,
+          ...aerodromeRewardNoticeV1({ usdCents: alert.readUsdCents! }),
+        })),
+    told: (input: { walletAddress: string; episode: number }) => rewardAlerts.markTold({ ...input, channel }),
+  });
 
   const shared: Omit<Parameters<typeof runBaseAppNotifyV1>[0], 'repository' | 'client'> = {
     // A lookup that fails fails the pass, which advances nothing: a push is
@@ -193,6 +222,7 @@ async function main(): Promise<void> {
       ...shared,
       repository: createDatabaseBaseAppNotificationRepositoryV1(client),
       client: createBaseAppNotifyClientV1({ config }),
+      aerodromeRewards: aerodromeRewardsFor('base_app'),
     });
     console.log(JSON.stringify({ event: 'base_app_notify', dry, ...report }));
     // Base down or throttling is a later pass's problem; a key Base no longer
@@ -209,6 +239,7 @@ async function main(): Promise<void> {
         links: createDatabaseTelegramLinkRepositoryV1(client),
         origin: telegram.origin,
       }),
+      aerodromeRewards: aerodromeRewardsFor('telegram'),
     });
     console.log(JSON.stringify({ event: 'telegram_notify', dry, ...report }));
     // A token BotFather revoked is the operator's to replace.

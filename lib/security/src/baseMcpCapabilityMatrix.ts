@@ -119,6 +119,13 @@ export interface BaseMcpRuntimeSnapshotV1 {
    * read needs and must not say what the reader has.
    */
   readPluginsNeedingSignIn: readonly string[];
+  /**
+   * Single reads Miorail answers from Base itself, `plugin:example`, for a
+   * plugin whose other reads have no recipe. Aerodrome's rewards are read by
+   * the claim's own reader; its pool read is not, and marking the whole
+   * plugin read as released would have said so about both.
+   */
+  ownReadExamples?: readonly string[];
 }
 
 /** Why GMGN quotes are not offered on a deployment without a GMGN key. */
@@ -392,6 +399,9 @@ export function exampleCapabilityStateV1(
   const row = pluginCapabilityRowV1(plugin, runtime);
   switch (example.disposition) {
     case 'read_in_extensions':
+      if (runtime.ownReadExamples?.includes(`${plugin.pluginId}:${example.id}`)) {
+        return { operation: 'read', state: 'released', reason: 'Miorail reads this from Base itself; no provider is called.' };
+      }
       return row.cells.read;
     case 'handoff_to_routes':
       return (runtime.quoteOnlyRouteProviders?.includes(plugin.pluginId)

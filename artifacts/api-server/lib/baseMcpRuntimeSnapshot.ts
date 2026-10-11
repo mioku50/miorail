@@ -50,6 +50,9 @@ export const REVIEWED_READ_PLUGINS_V1: readonly string[] = [
 
 /** Plugins with a released typed ACTION adapter in Extensions. */
 export const RELEASED_ACTION_PLUGINS_V1: readonly string[] = ['virtuals', 'aerodrome'];
+/** Reads answered from Base by Miorail's own code, one example at a time:
+ * Aerodrome's rewards come from the claim's reader (Found). */
+export const OWN_READ_EXAMPLES_V1: readonly string[] = ['aerodrome:rewards'];
 
 /** Plugins whose write path completes in the provider's own interface. */
 export const PROVIDER_UI_PLUGINS_V1: readonly string[] = ['avantis'];
@@ -129,5 +132,6 @@ export function baseMcpRuntimeSnapshotV1(
     releasedActionPlugins: RELEASED_ACTION_PLUGINS_V1,
     providerUiPlugins: PROVIDER_UI_PLUGINS_V1,
     typedX402Plugins: TYPED_X402_PLUGINS_V1,
+    ownReadExamples: OWN_READ_EXAMPLES_V1,
   };
 }

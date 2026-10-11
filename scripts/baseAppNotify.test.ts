@@ -12,6 +12,8 @@ import {
 import {
   BASE_APP_MESSAGE_MAX_V1,
   BASE_APP_NOTIFY_ENDPOINT_V1,
+  planAerodromeRewardNoticesV1,
+  type AerodromeRewardDueV1,
   BASE_APP_TITLE_MAX_V1,
   BaseAppNotifyErrorV1,
   baseAppNotifyConfigV1,
@@ -1175,3 +1177,73 @@ describe('Call the reopen pushes', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// Found: the Aerodrome reward alerts a wallet asked for.
+// ---------------------------------------------------------------------------
+
+describe('Found: one notice per episode, to the wallets this channel reaches', () => {
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0x2222222222222222222222222222222222222222';
+  const at = (iso: string) => new Date(iso);
+  const due = (walletAddress: string, episode = 0): AerodromeRewardDueV1 => ({
+    walletAddress,
+    episode,
+    title: 'Aerodrome rewards: $12.38',
+    message: 'This wallet can claim about $12.38 in fees and AERO on Aerodrome. Open Wallet MCP in Miorail and say “Claim my Aerodrome fees”.',
+    targetPath: '/extensions',
+  });
+
+  test('the plan leaves out wallets this channel does not reach and those at the cap, one push each', () => {
+    const plan = planAerodromeRewardNoticesV1({ due: [due(B), due(A), due(ME)], enabled: new Set([A, B]), sentToday: new Map([[B, 4]]) });
+    assert.deepEqual(plan.groups.map((group) => [group.wallets, group.episode]), [[[A], 0]]);
+    assert.deepEqual([plan.capped, plan.notEnabled], [1, 1]);
+    const long = planAerodromeRewardNoticesV1({
+      due: [{ ...due(A), title: 'x'.repeat(40), message: 'y'.repeat(250) }],
+      enabled: new Set([A]),
+      sentToday: new Map(),
+    });
+    assert.ok(long.groups[0]!.title.length <= BASE_APP_TITLE_MAX_V1 && long.groups[0]!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+  });
+
+  test('a pass sends it, counts it and marks it told; a dry pass or a failed read changes nothing', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client, sends } = fakeClient({ enabledWallets: async () => new Set([A]) });
+    const told: string[] = [];
+    let pending = [due(A, 3), due(B, 1)];
+    const aerodromeRewards = {
+      due: async () => pending,
+      told: async (input: { walletAddress: string; episode: number }) => {
+        told.push(`${input.walletAddress}:${input.episode}`);
+        pending = pending.filter((row) => row.walletAddress !== input.walletAddress);
+      },
+    };
+    const now = () => at('2026-10-11T15:00:00.000Z');
+    const dry = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, aerodromeRewards, dry: true });
+    assert.deepEqual(dry.aerodromeRewards, { due: 1, sent: 0, capped: 0, notEnabled: 1 });
+    assert.deepEqual([sends.length, told], [0, []]);
+
+    const report = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, aerodromeRewards });
+    assert.deepEqual(report.aerodromeRewards, { due: 1, sent: 1, capped: 0, notEnabled: 1 });
+    assert.deepEqual(sends.map((send) => [send.title, [...send.wallets], send.targetPath]), [['Aerodrome rewards: $12.38', [A], '/extensions']]);
+    assert.deepEqual(told, [`${A}:3`]);
+    assert.equal((await repository.sentOn({ day: '2026-10-11', wallets: [A] })).get(A), 1, 'it counts toward the cap');
+    const again = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, aerodromeRewards });
+    assert.deepEqual(again.aerodromeRewards, { due: 0, sent: 0, capped: 0, notEnabled: 1 });
+    assert.equal(sends.length, 1, 'told once');
+
+    const broken = await runBaseAppNotifyV1({
+      repository,
+      client,
+      names: async () => names,
+      now,
+      aerodromeRewards: {
+        due: async () => {
+          throw new Error('database unavailable');
+        },
+        told: async () => {},
+      },
+    });
+    assert.equal(broken.aerodromeRewards, null);
+    assert.notEqual(broken.outcome, 'stopped');
+  });
+});

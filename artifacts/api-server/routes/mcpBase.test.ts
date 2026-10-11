@@ -5,6 +5,8 @@ import express from 'express';
 import { app } from '../app.js';
 import { baseMcpOauthStates, baseMcpOauthTokens } from '@mioagent/db';
 import { mcpBaseRouteRuntime, mcpBaseRouter } from './mcpBase.js';
+import { InMemoryAerodromeRewardAlertRepositoryV1 } from '@mioagent/route-storage';
+import { reviewedBaseMcpPluginRuntimeV1 } from '../lib/baseMcpReviewedPluginRuntime.js';
 import { enforceTenantBinding } from '../middleware/tenantAuth.js';
 import { BaseMcpActionReceiptV1Schema } from '@mioagent/api-zod';
 import { clearBaseMcpStatusForTests } from '../lib/baseMcpStatus.js';
@@ -890,6 +892,72 @@ test('Hydrex positions use a tenant-bound reviewed read, never the model or acti
     const positions = hydrex.examples.find((e: { id: string }) => e.id === 'positions');
     assert.equal(positions.disposition, 'read_in_extensions');
   } finally { restoreEnv('SESSION_SECRET', oldSecret); }
+});
+
+test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wallet only', async () => {
+  const oldSecret = process.env.SESSION_SECRET;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  const wallet = '0x1111111111111111111111111111111111111111';
+  const strictApp = express();
+  strictApp.use(express.json());
+  strictApp.use((req, _res, next) => {
+    Object.assign(req, { session: { user: { id: `eip155:8453:${wallet}`, address: wallet, chainId: 8453 } } });
+    next();
+  });
+  strictApp.use('/api/mcp/base', enforceTenantBinding, mcpBaseRouter);
+  const alerts = new InMemoryAerodromeRewardAlertRepositoryV1();
+  const originalAlerts = mcpBaseRouteRuntime.aerodromeRewardAlerts;
+  const originalTelegram = mcpBaseRouteRuntime.telegramLinked;
+  const originalRead = reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards;
+  mcpBaseRouteRuntime.aerodromeRewardAlerts = () => alerts;
+  mcpBaseRouteRuntime.telegramLinked = async () => false;
+  mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('must not run model'); };
+  mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = async () => { throw new Error('must not prepare a claim'); };
+  const readFor: string[] = [];
+  reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards = async (address) => {
+    readFor.push(address);
+    return { ok: true, rewards: { blockNumber: '37123456', poolsRead: 39_243, clPositionsHeld: 0, positionsFound: 1,
+      managedSkipped: 0, claims: 1, fees: [], totalUsdcAtomic: '7750000', unpriced: 0,
+      aero: { token: '0x940181a94a35a4569e4529a3cdfb74e38fd98631', symbol: 'AERO', decimals: 18,
+        amountAtomic: '8120000000000000000', usdcAtomic: '7750000' } } };
+  };
+  const ask = (message: string, extra: Record<string, unknown> = {}) =>
+    request(strictApp).post('/api/mcp/base/console').send({ message, ...extra });
+  try {
+    const read = await ask('Check my Aerodrome rewards');
+    assert.equal(read.status, 200);
+    assert.equal(read.headers['cache-control'], 'no-store');
+    assert.equal(read.body.status, 'answered');
+    assert.match(read.body.reply, /^Found on Aerodrome: about \$7\.75 you can claim now\./);
+    assert.equal(read.body.trace[0].tool, 'aerodrome_rewards_read');
+    assert.ok(!read.body.action);
+    assert.deepEqual(readFor, [wallet]);
+
+    const on = await ask('Notify me when my Aerodrome rewards reach $20');
+    assert.equal(on.body.status, 'answered');
+    assert.match(on.body.reply, /^Done\.\nWhen what this wallet can claim on Aerodrome reaches \$20/);
+    assert.match(on.body.reply, /Telegram is not connected to this wallet yet/);
+    assert.equal((await alerts.get(wallet))?.thresholdUsdCents, 2_000);
+    assert.match((await ask('Notify me when my Aerodrome rewards reach $20')).body.reply, /^Already on at \$20\./);
+    assert.equal((await ask('Stop Aerodrome reward alerts')).body.reply, 'Aerodrome reward alerts are off for this wallet.');
+    assert.equal(await alerts.get(wallet), null);
+    // Nobody names another wallet into it.
+    const foreign = await ask('Notify me when my Aerodrome rewards reach $5', { walletAddress: '0x3333333333333333333333333333333333333333' });
+    assert.equal(foreign.status, 403);
+    assert.equal(await alerts.get('0x3333333333333333333333333333333333333333'), null);
+    assert.deepEqual(readFor, [wallet]);
+
+    const catalogue = await request(app).get('/api/mcp/base/plugins');
+    const rewards = catalogue.body.plugins.find((p: { id: string }) => p.id === 'aerodrome')
+      .examples.find((e: { id: string }) => e.id === 'rewards');
+    assert.deepEqual([rewards.disposition, rewards.capabilityState], ['read_in_extensions', 'released']);
+    assert.match(rewards.returns, /read from Base across every pool/);
+  } finally {
+    mcpBaseRouteRuntime.aerodromeRewardAlerts = originalAlerts;
+    mcpBaseRouteRuntime.telegramLinked = originalTelegram;
+    reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards = originalRead;
+    restoreEnv('SESSION_SECRET', oldSecret);
+  }
 });
 
 test('POST /api/mcp/base/console returns an approval Action Receipt for exact send', async () => {

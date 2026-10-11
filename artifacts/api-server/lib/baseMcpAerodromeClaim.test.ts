@@ -7,6 +7,7 @@ import {
   reconcileBaseMcpAerodromeClaimV1, aerodromeClaimEventsMatchV1,
 } from './baseMcpAerodromeClaim.js';
 import { InMemoryBaseMcpActionReceiptRepositoryV1 } from './baseMcpActionReceipts.js';
+import { BASE_MCP_PROVIDER_INTENTS_V1, exampleCapabilityStateV1 } from '@mioagent/security';
 import { classifyBaseMcpExtensionIntentV1 } from './baseMcpExtensionActions.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import type { AerodromeClaimPlanV1 } from './aerodromeClaimReader.js';
@@ -78,6 +79,35 @@ test('claim is deterministic, runtime-gated, and refuses injected receiver or ex
   for (const text of ['How do I claim Aerodrome fees?', 'Claim my Aerodrome voting bribes', 'Claim Aerodrome veAERO rebase']) {
     assert.notEqual(classifyBaseMcpExtensionIntentV1(text, snapshot).kind, 'aerodrome_claim');
   }
+});
+test('Found sits beside the claim: a question reads, an alert is kept, an order still claims', () => {
+  const snapshot = { ...baseMcpRuntimeSnapshotV1(), batchSimulationAvailable: true, releasedActionPlugins: ['aerodrome'] };
+  for (const text of ['Check my Aerodrome rewards', 'What can I claim on Aerodrome?', 'Сколько я могу забрать в Aerodrome?']) {
+    // A reading needs no batch simulation: nothing is signed.
+    for (const runtime of [snapshot, { ...snapshot, batchSimulationAvailable: false }]) {
+      const intent = classifyBaseMcpExtensionIntentV1(text, runtime);
+      assert.deepEqual(intent.kind === 'read' ? [intent.kind, intent.providerId, intent.exampleId] : intent, ['read', 'aerodrome', 'rewards'], text);
+    }
+  }
+  assert.deepEqual(classifyBaseMcpExtensionIntentV1('Notify me when my Aerodrome rewards reach $20', snapshot),
+    { kind: 'aerodrome_rewards_alert', thresholdUsdCents: 2_000 });
+  assert.deepEqual(classifyBaseMcpExtensionIntentV1('Сообщи, когда награды Aerodrome дойдут до $5', snapshot),
+    { kind: 'aerodrome_rewards_alert', thresholdUsdCents: 500 });
+  assert.deepEqual(classifyBaseMcpExtensionIntentV1('Stop Aerodrome reward alerts', snapshot), { kind: 'aerodrome_rewards_alert_off' });
+  const tooSmall = classifyBaseMcpExtensionIntentV1('Notify me when my Aerodrome rewards reach $0.50', snapshot);
+  assert.deepEqual(tooSmall.kind === 'needs_input' ? tooSmall.errorCode : tooSmall, 'aerodrome_reward_alert_below_min');
+  assert.equal(classifyBaseMcpExtensionIntentV1('Claim my Aerodrome fees', snapshot).kind, 'aerodrome_claim');
+  const pool = classifyBaseMcpExtensionIntentV1('Show the WETH/USDC Aerodrome pool and its liquidity', snapshot);
+  assert.deepEqual(pool.kind === 'read' ? [pool.providerId, pool.exampleId] : pool, ['aerodrome', 'liquidity']);
+  // "How do I claim" is neither a reading of my rewards nor an order.
+  assert.equal(classifyBaseMcpExtensionIntentV1('How do I claim Aerodrome fees?', snapshot).kind, 'needs_input');
+});
+test('only the rewards read is released for Aerodrome: its pool read still has no recipe', () => {
+  const runtime = baseMcpRuntimeSnapshotV1();
+  const aerodrome = BASE_MCP_PROVIDER_INTENTS_V1.find((plugin) => plugin.pluginId === 'aerodrome')!;
+  const cell = (id: string) => exampleCapabilityStateV1(aerodrome, aerodrome.examples.find((example) => example.id === id)!, runtime);
+  assert.deepEqual([cell('rewards').state, cell('rewards').reason], ['released', 'Miorail reads this from Base itself; no provider is called.']);
+  assert.equal(cell('liquidity').state, 'unavailable');
 });
 test('simulated claim is durable, idempotent across refreshes and concurrent prepares', async () => {
   const { repository, counters } = setup();

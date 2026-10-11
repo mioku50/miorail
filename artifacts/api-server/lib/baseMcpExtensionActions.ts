@@ -39,6 +39,7 @@ import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
 import { reconcileBaseMcpAerodromeClaimV1 } from './baseMcpAerodromeClaim.js';
 import { missingInputsReplyV1, missingProviderInputsV1 } from './baseMcpRequiredInputs.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
+import { aerodromeRewardAlertReplyV1, aerodromeRewardAlertV1, russianV1 } from './aerodromeRewardIntents.js';
 import type { BaseMcpRuntimeSnapshotV1 } from '@mioagent/security';
 
 const ADDRESS_V1 = /^0x[a-fA-F0-9]{40}$/;
@@ -58,6 +59,8 @@ export type BaseMcpExtensionIntentV1 =
   | { kind: 'virtuals_create'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'agent_create' }> }
   | { kind: 'virtuals_sign_in'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'sign_in' }> }
   | { kind: 'aerodrome_claim' }
+  | { kind: 'aerodrome_rewards_alert'; thresholdUsdCents: number }
+  | { kind: 'aerodrome_rewards_alert_off' }
   | { kind: 'needs_input'; errorCode: string; reply: string };
 
 export interface BaseMcpExtensionActionResultV1 {
@@ -95,6 +98,16 @@ export function classifyBaseMcpExtensionIntentV1(
 ): BaseMcpExtensionIntentV1 {
   const trimmed = message.trim();
   const lower = trimmed.toLowerCase();
+
+  // Found's alert belongs to Miorail, not to the plugin: nothing is asked of
+  // Aerodrome or Wallet MCP to keep it.
+  const rewardAlert = aerodromeRewardAlertV1(trimmed);
+  if (rewardAlert?.kind === 'off') return { kind: 'aerodrome_rewards_alert_off' };
+  if (rewardAlert?.kind === 'on') return { kind: 'aerodrome_rewards_alert', thresholdUsdCents: rewardAlert.thresholdUsdCents };
+  if (rewardAlert?.kind === 'invalid') {
+    return { kind: 'needs_input', errorCode: `aerodrome_reward_alert_${rewardAlert.reason}`,
+      reply: aerodromeRewardAlertReplyV1({ outcome: rewardAlert.reason, russian: russianV1(trimmed) }) };
+  }
 
   const provider = matchBaseMcpProviderIntentV1(trimmed, runtime);
   if (provider?.pluginId === 'virtuals' && /^(?:sign\s+in\s+to|log\s+me\s+into|войти\s+в|войди\s+в)\s+virtuals[.!]?$/iu.test(trimmed)) {

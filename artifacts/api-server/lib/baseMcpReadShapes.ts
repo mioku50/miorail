@@ -28,6 +28,7 @@ export interface ReviewedReadFactsV1 {
 }
 
 export const REVIEWED_READ_FACTS_V1: Readonly<Record<string, ReviewedReadFactsV1>> = {
+  'aerodrome:rewards': { returns: 'What the wallet you signed in with can claim on Aerodrome now: pool fees and AERO, read from Base across every pool, each valued by a sell quote in USDC.' },
   'avantis:positions': { returns: 'Your open Avantis positions and their PnL, for the wallet you connected.' },
   'balancer:yield': { returns: 'Balancer pools on Base ranked by yield, from a pinned pool query.' },
   'bankr:latest': { returns: 'The ten most recent Bankr launches on Base.' },

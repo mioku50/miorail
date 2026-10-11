@@ -16,6 +16,13 @@ import {
   BASE_MCP_PROVIDER_INTENTS_BY_ID_V1,
   exampleCapabilityStateV1,
 } from '@mioagent/security';
+import { client } from '@mioagent/db';
+import {
+  createDatabaseAerodromeRewardAlertRepositoryV1,
+  createDatabaseTelegramLinkRepositoryV1,
+  type AerodromeRewardAlertRepositoryV1,
+} from '@mioagent/route-storage';
+import { aerodromeRewardAlertReplyV1, russianV1 } from '../lib/aerodromeRewardIntents.js';
 import { baseMcpPluginDriftV1 } from '../lib/baseMcpPluginDrift.js';
 import { baseMcpRuntimeSnapshotV1 } from '../lib/baseMcpRuntimeSnapshot.js';
 import { runBaseMcpConsoleV1 } from '../lib/baseMcpConsole.js';
@@ -72,6 +79,15 @@ export const mcpBaseRouteRuntime = {
   prepareBaseMcpVirtualsAgentCreateV1,
   prepareBaseMcpAerodromeClaimV1,
   listBaseMcpActionReceiptsV1,
+  aerodromeRewardAlerts: (): AerodromeRewardAlertRepositoryV1 => createDatabaseAerodromeRewardAlertRepositoryV1(client as never),
+  /** Whether a Telegram chat hears this wallet; null when that cannot be read. */
+  telegramLinked: async (wallet: string): Promise<boolean | null> => {
+    try {
+      return ((await createDatabaseTelegramLinkRepositoryV1(client as never).chatsOf([wallet])).get(wallet)?.length ?? 0) > 0;
+    } catch {
+      return null;
+    }
+  },
 };
 
 function sessionSecret(): string {
@@ -500,6 +516,32 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
         errorCode: decision.errorCode,
         checkedAt: new Date().toISOString(),
       }));
+    }
+    // Found's alert: kept for the wallet you signed in with, by Miorail. It
+    // needs no Wallet MCP connection and touches no wallet.
+    if (decision.kind === 'aerodrome_rewards_alert' || decision.kind === 'aerodrome_rewards_alert_off') {
+      const startedAt = Date.now();
+      const wallet = tenantWalletAddress(req).toLowerCase();
+      const russian = russianV1(message);
+      let reply: string;
+      try {
+        const alerts = mcpBaseRouteRuntime.aerodromeRewardAlerts();
+        if (decision.kind === 'aerodrome_rewards_alert_off') {
+          reply = aerodromeRewardAlertReplyV1({ outcome: await alerts.unsubscribe(wallet) ? 'stopped' : 'none', russian });
+        } else {
+          const kept = await alerts.subscribe({ walletAddress: wallet, thresholdUsdCents: decision.thresholdUsdCents, at: new Date() });
+          reply = aerodromeRewardAlertReplyV1({ outcome: kept.outcome, thresholdUsdCents: kept.alert.thresholdUsdCents,
+            telegram: await mcpBaseRouteRuntime.telegramLinked(wallet), russian });
+        }
+      } catch (cause) {
+        mcpBaseRouteRuntime.logger.warn('Aerodrome reward alert not kept', { error: cause instanceof Error ? cause.message : 'unknown' });
+        return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'failed',
+          reply: russian ? 'Не удалось сохранить уведомление, ничего не изменилось. Попробуйте ещё раз.' : 'The alert could not be kept just now, and nothing changed. Try again.',
+          trace: [], toolsAvailable: 0, truncated: false, elapsedMs: Date.now() - startedAt,
+          errorCode: 'aerodrome_reward_alert_unavailable', checkedAt: new Date().toISOString() }));
+      }
+      return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'answered', reply, trace: [], toolsAvailable: 0,
+        truncated: false, elapsedMs: Date.now() - startedAt, errorCode: null, checkedAt: new Date().toISOString() }));
     }
     if (decision.kind === 'send') {
       if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {

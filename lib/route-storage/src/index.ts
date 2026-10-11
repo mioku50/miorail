@@ -116,6 +116,7 @@ export * from './telegramLinks.js';
 export * from './telegramLinksMemory.js';
 export * from './telegramLinksDatabase.js';
 export * from './opsAlertChats.js';
+export * from './aerodromeRewardAlerts.js';
 export * from './reopenGame.js';
 export * from './reopenGameMemory.js';
 export * from './reopenGameDatabase.js';

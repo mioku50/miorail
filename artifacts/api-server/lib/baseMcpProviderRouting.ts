@@ -11,6 +11,7 @@ import {
 } from '@mioagent/security';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import { isVirtualsOtpReadV1 } from './virtualsOtpRead.js';
+import { aerodromeRewardsReadV1 } from './aerodromeRewardIntents.js';
 
 export interface BaseMcpProviderIntentMatchV1 {
   pluginId: string;
@@ -131,6 +132,9 @@ function inferredDisposition(
   if (provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message)) return 'read_in_extensions';
   if (provider.pluginId === 'hydrex' && /\bpositions?\b|(?:^|\s)позиц\p{L}*/iu.test(lower) &&
       /\b(?:add|remove|withdraw|deposit|claim|collect|mint|approve|create|transfer)\b|(?:^|\s)(?:добав|удал|вывед|вывести|сним|забер|забра|собер|созда|отправ|одобр)\p{L}*/iu.test(lower)) return 'adapter_required';
+  // Found: a question about one's own rewards reads them; "what can I
+  // claim" asks, it does not order a claim.
+  if (provider.pluginId === 'aerodrome' && aerodromeRewardsReadV1(lower)) return 'read_in_extensions';
   if (provider.pluginId === 'aerodrome' && /\b(claim|collect)\b|(?:^|\s)(?:забер|забра|собер|получ)\p{L}*/iu.test(lower)) {
     return 'action_in_extensions';
   }
@@ -230,7 +234,8 @@ export function matchBaseMcpProviderIntentV1(
     /** Present only when the runtime blocked a handoff the registry declared. */
     routeCapability: routeGate && !routeGate.released ? routeGate.capability : null,
     exampleId: provider.pluginId === 'virtuals' && isVirtualsOtpReadV1(message) ? 'otp'
-      : provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message) ? 'positions' : closest?.id ?? null,
+      : provider.pluginId === 'hydrex' && hydrexPositionsReadV1(message) ? 'positions'
+        : provider.pluginId === 'aerodrome' && aerodromeRewardsReadV1(clean) ? 'rewards' : closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,
       `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,

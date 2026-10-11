@@ -82,6 +82,7 @@ export const BASE_MCP_PROVIDER_INTENTS_V1: readonly BaseMcpProviderIntentSpecV1[
       e('swap', 'Swap 0.001 ETH to USDC on Aerodrome', 'routable', 'handoff_to_routes'),
       e('buy', 'Buy AERO with 1 USDC on Aerodrome', 'routable', 'handoff_to_routes'),
       e('liquidity', 'Show the WETH/USDC Aerodrome pool and its liquidity', 'read', 'read_in_extensions'),
+      e('rewards', 'Check my Aerodrome rewards', 'read', 'read_in_extensions'),
       e('claim', 'Claim my Aerodrome fees', 'action', 'action_in_extensions'),
     ],
   },
