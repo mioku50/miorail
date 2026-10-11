@@ -191,11 +191,12 @@ export interface BaseMcpQuickExampleV1 {
  * Every plugin's own examples are still one tap away in the catalogue.
  *
  * Found is here too: the operator could not find it when it lived only
- * under Aerodrome's "More examples" (2026-10-11). Its answer carries the
- * claim and the alert as buttons. */
+ * under Aerodrome's "More examples" (2026-10-11). It reads Aerodrome and
+ * Uniswap at once, and its answer carries each claim and the alert as
+ * buttons. */
 export const BASE_MCP_QUICK_EXAMPLES_V1: readonly BaseMcpQuickExampleV1[] = [
   { prompt: 'What does my wallet hold?', surface: 'read', disposition: 'read_in_extensions' },
-  { prompt: 'What can I claim on Aerodrome?', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'What can I claim?', surface: 'read', disposition: 'read_in_extensions' },
   { prompt: 'Show my recent Base transactions', surface: 'read', disposition: 'read_in_extensions' },
   { prompt: 'Send 5 USDC to alice.base.eth', surface: 'action', disposition: 'action_in_extensions' },
   { prompt: 'Swap 100 USDC to ETH', surface: 'routable', disposition: 'handoff_to_routes' },

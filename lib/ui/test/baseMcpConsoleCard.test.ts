@@ -254,7 +254,7 @@ describe('the console never borrows the routers’ authority', () => {
   test('tasks a person asks, one of each kind, Found among them, and no unreleased action', () => {
     assert.equal(BASE_MCP_QUICK_EXAMPLES_V1.length, 5);
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /hold|transactions/i.test(prompt)));
-    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.includes('What can I claim on Aerodrome?'));
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.includes('What can I claim?'));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /send/i.test(prompt)));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /swap/i.test(prompt)));
     assert.equal(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /sign|launch|x402|10x/i.test(prompt)), false);
