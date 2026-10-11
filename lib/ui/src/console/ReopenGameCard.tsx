@@ -5,6 +5,7 @@ import React, { useEffect, useState } from 'react';
 import type { ReopenDirectionV1 } from '@mioagent/rwa-market-reality/reopen-game';
 
 import { countdownV1, type ReopenGameViewV1 } from './reopenGameView';
+import { ShareLinkV1 } from './shareHost';
 
 void React;
 
@@ -175,12 +176,12 @@ export function ReopenGameCard({ model }: { model: ReopenGameModelV1 }) {
         {view.error ? <p className="note warn">{view.error}</p> : null}
         {view.share ? (
           <div className="gift-share-row">
-            <a className="btn sec" href={view.share.x} target="_blank" rel="noreferrer">
+            <ShareLinkV1 className="btn sec" href={view.share.x}>
               Post on X
-            </a>
-            <a className="btn sec" href={view.share.farcaster} target="_blank" rel="noreferrer">
+            </ShareLinkV1>
+            <ShareLinkV1 className="btn sec" href={view.share.farcaster}>
               Cast on Farcaster
-            </a>
+            </ShareLinkV1>
           </div>
         ) : null}
         {cta ? (

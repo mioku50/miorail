@@ -64,6 +64,7 @@
     "zod": "^3.25.76"
   },
   "devDependencies": {
+    "@farcaster/miniapp-core": "0.6.0",
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/express-session": "^1.19.0",

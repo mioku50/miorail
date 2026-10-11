@@ -15,6 +15,7 @@
   "dependencies": {
     "@base-org/account": "^2.5.6",
     "@coinbase/wallet-sdk": "^4.3.7",
+    "@farcaster/miniapp-sdk": "0.3.0",
     "@metamask/connect-evm": "^2.1.0",
     "@mioagent/api-client-react": "workspace:*",
     "@mioagent/opportunity-rail": "workspace:*",

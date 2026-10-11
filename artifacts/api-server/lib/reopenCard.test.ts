@@ -74,4 +74,14 @@ describe('the picture under a shared Call the reopen result', () => {
     assert.equal(png.readUInt32BE(16), 1200);
     assert.equal(png.readUInt32BE(20), 630);
   });
+
+  test('for a Farcaster embed it is drawn 3:2 with the same marks', async () => {
+    const svg = reopenCardSvgV1(reopenCardV1(SHARED_RESULT_V1), 'embed');
+    assert.match(svg, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="1200" height="800"/);
+    assert.equal(svg.match(/fill="#2ea043"/g)?.length, 2);
+    assert.equal(svg.match(/fill="#da3633"/g)?.length, 1);
+    const png = Buffer.from(await renderCardPngV1(svg));
+    assert.equal(png.readUInt32BE(16), 1200);
+    assert.equal(png.readUInt32BE(20), 800);
+  });
 });

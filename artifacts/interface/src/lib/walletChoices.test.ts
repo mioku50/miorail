@@ -109,6 +109,25 @@ test('inside Base App: its own wallet only, and the way to use another one', () 
   assert.deepEqual(names(leaked), ['Base App wallet']);
 });
 
+test('inside Farcaster: the wallet Farcaster announces, no Base Account popup and no app links', () => {
+  // The mini app SDK relays Farcaster's EIP-6963 announcement; no window.ethereum.
+  const FARCASTER: WalletConnectorViewV1 = { id: 'farcaster', name: 'Farcaster Wallet', type: 'injected', icon: 'data:image/png;base64,AA==' };
+  const result = walletChoicesV1({
+    connectors: [GENERIC, BASE_ACCOUNT, FARCASTER],
+    inBaseApp: false,
+    inFarcaster: true,
+    hasWindowProvider: false,
+    mobile: true,
+    pageUrl: PAGE,
+  });
+  assert.deepEqual(names(result), ['Farcaster Wallet']);
+  assert.equal(result.choices[0]!.detail, 'The wallet Farcaster gives this page.');
+  assert.equal(
+    result.note,
+    'Inside Farcaster a page can use only the wallet Farcaster gives it. To connect MetaMask or a Base Account, open miorail.xyz in your phone’s browser.',
+  );
+});
+
 test('a desktop browser with nothing installed says so, and still offers Base Account', () => {
   const result = walletChoicesV1({
     connectors: [GENERIC, BASE_ACCOUNT],

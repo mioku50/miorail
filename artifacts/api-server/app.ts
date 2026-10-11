@@ -122,6 +122,7 @@ import { mcpServerRouter } from './routes/mcp/index.js';
 import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
 import { stockPagesRouter } from './routes/stockPages.js';
 import { giftPagesRouter } from './routes/giftPages.js';
+import { farcasterManifestRouter } from './routes/farcasterManifest.js';
 import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 
 // T72-B §1 — the AUTHENTICATED MCP endpoint, mounted before the public one.
@@ -153,6 +154,8 @@ app.use(stockPagesRouter);
 // `/gift/<publicId>`: the same document, headed for the gift it shows, so a
 // gift shared on X or Farcaster previews as what it is.
 app.use(giftPagesRouter);
+// `/.well-known/farcaster.json`: Miorail as a Farcaster mini app.
+app.use(farcasterManifestRouter);
 
 // Health route
 app.get('/health', (_req: Request, res: Response) => {

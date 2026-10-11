@@ -135,6 +135,7 @@ export function giftPageMetaV1(input: { origin: string; summary: GiftSummaryV1 }
     canonicalUrl: null,
     imageUrl: `${input.origin}/og-gift.png`,
     noindex: true,
+    miniApp: { imageUrl: `${input.origin}/og-gift-3x2.png`, buttonTitle: 'See the gift' },
   };
 }
 
@@ -145,6 +146,7 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
     canonicalUrl: null,
     imageUrl: `${origin}/og-gift.png`,
     noindex: true,
+    miniApp: { imageUrl: `${origin}/og-gift-3x2.png`, buttonTitle: 'Open Miorail' },
   };
 }
 
@@ -155,6 +157,7 @@ function genericMetaV1(origin: string): StockPageMetaV1 {
     canonicalUrl: null,
     imageUrl: `${origin}/og-gift.png`,
     noindex: true,
+    miniApp: { imageUrl: `${origin}/og-gift-3x2.png`, buttonTitle: 'See the gift' },
   };
 }
 

@@ -9,6 +9,8 @@ import { weekendStampInstantV1, type WeekendMarketResponseV1 } from '@mioagent/r
 import { logger } from '@mioagent/utils';
 
 import { renderCardPngV1 } from '../lib/cardImage.js';
+import { cardFileSuffixV1, type CardShapeV1 } from '../lib/cardShape.js';
+import { miniAppEmbedJsonV1, type MiniAppEmbedV1 } from '../lib/miniApp.js';
 import { REOPEN_CARD_HEIGHT_V1, REOPEN_CARD_WIDTH_V1, reopenCardSvgV1, reopenCardV1 } from '../lib/reopenCard.js';
 import { WEEKEND_CARD_HEIGHT_V1, WEEKEND_CARD_WIDTH_V1, weekendCardSvgV1, weekendCardV1 } from '../lib/weekendCard.js';
 import { createPublicReadCacheV1, publicStocksCachesV1, publicStocksRuntime } from './publicStocks.js';
@@ -64,7 +66,8 @@ const previewRoundTripCacheV1 = createPublicReadCacheV1({ ttlMs: 60_000, max: 64
  * held. A slot is five minutes, so the links that can exist are bounded too.
  */
 const weekendShareCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 16 });
-const weekendImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 8 });
+/** Each slot is drawn twice: for a link (1200x630) and for a Farcaster embed (3:2). */
+const weekendImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 16 });
 
 /**
  * A shared Call the reopen result, read and drawn once per code. A settled
@@ -72,7 +75,7 @@ const weekendImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 8
  * a code nobody was given is remembered as nothing for the same ten minutes.
  */
 const reopenShareCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 64 });
-const reopenImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 16 });
+const reopenImageCacheV1 = createPublicReadCacheV1({ ttlMs: 60 * 60_000, max: 32 });
 
 /** A weekend link older than this is history: it previews as the board. */
 const WEEKEND_SHARE_MAX_AGE_MS_V1 = 10 * 24 * 60 * 60 * 1000;
@@ -208,6 +211,9 @@ export type StockPageMetaV1 = {
   /** Said when the image is drawn from data: its size and what it shows. */
   image?: { width: number; height: number; alt: string };
   noindex: boolean;
+  /** How a Farcaster cast shows the page: a 3:2 picture, and a button that
+   * opens the page inside Farcaster as a mini app. */
+  miniApp: MiniAppEmbedV1;
 };
 
 /**
@@ -236,10 +242,14 @@ export function renderStockPageHtmlV1(template: string, meta: StockPageMetaV1): 
     `<meta name="twitter:description" content="${escapeHtmlV1(meta.description)}" />`,
     `<meta name="twitter:image" content="${escapeHtmlV1(meta.imageUrl)}" />`,
     meta.image ? `<meta name="twitter:image:alt" content="${escapeHtmlV1(meta.image.alt)}" />` : null,
+    `<meta name="fc:miniapp" content="${escapeHtmlV1(miniAppEmbedJsonV1(meta.miniApp, 'launch_miniapp'))}" />`,
+    `<meta name="fc:frame" content="${escapeHtmlV1(miniAppEmbedJsonV1(meta.miniApp, 'launch_frame'))}" />`,
   ].filter((tag): tag is string => tag !== null);
   return template
     .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtmlV1(meta.title)}</title>`)
     .replace(/<meta\s+name=["']description["'][^>]*>\s*/gi, '')
+    // The static document carries a generic embed; this page's replaces it.
+    .replace(/<meta\s+name=["']fc:(?:miniapp|frame)["'][^>]*>\s*/gi, '')
     .replace(/<\/head>/i, `    ${tags.join('\n    ')}\n  </head>`);
 }
 
@@ -282,6 +292,7 @@ export function stockPageMetaV1(input: {
     canonicalUrl: `${input.origin}/stocks/${symbol.toLowerCase()}`,
     imageUrl: `${input.origin}/og-stocks.png`,
     noindex: false,
+    miniApp: { imageUrl: `${input.origin}/og-stocks-3x2.png`, buttonTitle: `Open ${symbol} on Base` },
   };
 }
 
@@ -303,6 +314,7 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
       canonicalUrl: null,
       imageUrl: `${origin}/og-stocks.png`,
       noindex: true,
+      miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Open my stocks' },
     };
   }
   if (section === 'dividends') {
@@ -313,6 +325,7 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
       canonicalUrl: `${origin}/stocks/dividends`,
       imageUrl: `${origin}/og-stocks.png`,
       noindex: false,
+      miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'See the dividends' },
     };
   }
   return {
@@ -322,6 +335,7 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
     canonicalUrl: `${origin}/stocks/weekend`,
     imageUrl: `${origin}/og-stocks.png`,
     noindex: false,
+    miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Call the reopen' },
   };
 }
 
@@ -333,6 +347,7 @@ function listMetaV1(origin: string): StockPageMetaV1 {
     canonicalUrl: `${origin}/stocks`,
     imageUrl: `${origin}/og-stocks.png`,
     noindex: false,
+    miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Open the stocks board' },
   };
 }
 
@@ -344,6 +359,7 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
     canonicalUrl: null,
     imageUrl: `${origin}/og-stocks.png`,
     noindex: true,
+    miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Open the stocks board' },
   };
 }
 
@@ -366,6 +382,10 @@ export function weekendShareMetaV1(input: {
     imageUrl: `${input.origin}/stocks/weekend/${input.stamp}.png`,
     image: { width: WEEKEND_CARD_WIDTH_V1, height: WEEKEND_CARD_HEIGHT_V1, alt: card.alt },
     noindex: true,
+    miniApp: {
+      imageUrl: `${input.origin}/stocks/weekend/${input.stamp}${cardFileSuffixV1('embed')}.png`,
+      buttonTitle: 'Call the reopen',
+    },
   };
 }
 
@@ -403,6 +423,10 @@ export function reopenShareMetaV1(input: {
     imageUrl: `${input.origin}/stocks/weekend/call-${input.code}.png`,
     image: { width: REOPEN_CARD_WIDTH_V1, height: REOPEN_CARD_HEIGHT_V1, alt: card.alt },
     noindex: true,
+    miniApp: {
+      imageUrl: `${input.origin}/stocks/weekend/call-${input.code}${cardFileSuffixV1('embed')}.png`,
+      buttonTitle: 'Make your call',
+    },
   };
 }
 
@@ -423,6 +447,9 @@ async function reopenShareV1(code: string): Promise<ReopenSharedResultV1 | null>
  */
 export function sendDocumentV1(res: Response, status: number, html: string): void {
   res.removeHeader('Content-Security-Policy');
+  // Nor its frame guard: Farcaster on the web opens a mini app in a frame of
+  // its own page, and the static copy has never refused one.
+  res.removeHeader('X-Frame-Options');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Cache-Control', 'no-cache, no-store, must-revalidate');
   res.status(status).type('html').send(html);
@@ -471,7 +498,7 @@ stockPagesRouter.get('/stocks', async (req: Request, res: Response) => {
  * picture: a code with nothing to draw is a 404, and a read or a drawing that
  * fails right now answers with the board's own picture.
  */
-async function sendReopenCardV1(res: Response, code: string, fallback: string): Promise<void> {
+async function sendReopenCardV1(res: Response, code: string, shape: CardShapeV1, fallback: string): Promise<void> {
   let result: ReopenSharedResultV1 | null;
   try {
     result = await reopenShareV1(code);
@@ -487,8 +514,8 @@ async function sendReopenCardV1(res: Response, code: string, fallback: string): 
     return;
   }
   try {
-    const png = await reopenImageCacheV1.read(code, async () =>
-      Buffer.from(await stockPagesRuntime.renderPng(reopenCardSvgV1(reopenCardV1(result)))),
+    const png = await reopenImageCacheV1.read(`${code}|${shape}`, async () =>
+      Buffer.from(await stockPagesRuntime.renderPng(reopenCardSvgV1(reopenCardV1(result), shape))),
     );
     res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
     res.setHeader('Cache-Control', 'public, max-age=86400');
@@ -510,14 +537,17 @@ async function sendReopenCardV1(res: Response, code: string, fallback: string): 
  * picture rather than none: a feed keeps the first picture it gets.
  */
 stockPagesRouter.get('/stocks/weekend/:file', async (req: Request, res: Response) => {
-  const fallback = `${stockPagesRuntime.origin()}/og-stocks.png`;
+  const file = String(req.params.file ?? '');
+  // `-3x2` is the same card drawn for a Farcaster embed, which must be 3:2.
+  const shape: CardShapeV1 = /-3x2\.png$/.test(file) ? 'embed' : 'link';
+  const fallback = `${stockPagesRuntime.origin()}/og-stocks${cardFileSuffixV1(shape)}.png`;
   // A shared Call the reopen result: `call-<code>.png`.
-  const code = /^call-([A-Za-z0-9_-]{12})\.png$/.exec(String(req.params.file ?? ''))?.[1] ?? null;
+  const code = /^call-([A-Za-z0-9_-]{12})(?:-3x2)?\.png$/.exec(file)?.[1] ?? null;
   if (code) {
-    await sendReopenCardV1(res, code, fallback);
+    await sendReopenCardV1(res, code, shape, fallback);
     return;
   }
-  const stamp = /^(\d{8}T\d{4}Z)\.png$/.exec(String(req.params.file ?? ''))?.[1] ?? null;
+  const stamp = /^(\d{8}T\d{4}Z)(?:-3x2)?\.png$/.exec(file)?.[1] ?? null;
   let response: WeekendMarketResponseV1 | null;
   try {
     response = stamp ? await weekendShareV1(stamp) : null;
@@ -534,8 +564,8 @@ stockPagesRouter.get('/stocks/weekend/:file', async (req: Request, res: Response
     return;
   }
   try {
-    const png = await weekendImageCacheV1.read(stamp, async () =>
-      Buffer.from(await stockPagesRuntime.renderPng(weekendCardSvgV1(card))),
+    const png = await weekendImageCacheV1.read(`${stamp}|${shape}`, async () =>
+      Buffer.from(await stockPagesRuntime.renderPng(weekendCardSvgV1(card, shape))),
     );
     // Shown by whoever unfurls the link, from their own page: helmet's
     // same-origin resource policy would stop one that shows it directly.

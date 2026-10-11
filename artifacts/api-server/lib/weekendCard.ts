@@ -5,6 +5,8 @@ import {
   type WeekendMarketResponseV1,
 } from '@mioagent/rwa-market-reality/weekend-market';
 
+import { cardHeightV1, cardYV1, type CardShapeV1 } from './cardShape.js';
+
 // ---------------------------------------------------------------------------
 // The picture under a shared weekend post.
 //
@@ -209,14 +211,15 @@ function badgeV1(label: string, right: number, top: number): string {
   ].join('');
 }
 
-export function weekendCardSvgV1(card: WeekendCardV1): string {
+export function weekendCardSvgV1(card: WeekendCardV1, shape: CardShapeV1 = 'link'): string {
   const W = WEEKEND_CARD_WIDTH_V1;
-  const H = WEEKEND_CARD_HEIGHT_V1;
+  const H = cardHeightV1(shape);
+  const at = (y: number) => cardYV1(y, H);
   const left = 72;
   const right = W - 72;
-  const header = 270;
-  const firstRow = 324;
-  const step = 54;
+  const header = at(270);
+  const firstRow = at(324);
+  const step = at(54);
   const reopened = card.state === 'reopened';
   // Right edges of the three number columns, and where the fourth begins.
   const cols = reopened ? [436, 646, 856, 900] : [480, 730, 915, 950];
@@ -229,11 +232,11 @@ export function weekendCardSvgV1(card: WeekendCardV1): string {
     '</defs>',
     `<rect width="${W}" height="${H}" fill="${INK_V1.page}"/>`,
     `<rect width="${W}" height="${H}" fill="url(#glow)"/>`,
-    textV1(left, 88, 'MIORAIL', { font: MONO_V1, size: 20, fill: INK_V1.brand, spacing: 6 }),
-    textV1(left + 150, 88, `as of ${card.asOf}`, { font: MONO_V1, size: 20, fill: INK_V1.soft }),
-    badgeV1(card.badge, right, 58),
-    textV1(left, 158, card.title, { font: SANS_V1, size: 58, weight: 600, fill: INK_V1.text }),
-    textV1(left, 206, card.lede, { font: SANS_V1, size: 24, fill: INK_V1.soft }),
+    textV1(left, at(88), 'MIORAIL', { font: MONO_V1, size: 20, fill: INK_V1.brand, spacing: 6 }),
+    textV1(left + 150, at(88), `as of ${card.asOf}`, { font: MONO_V1, size: 20, fill: INK_V1.soft }),
+    badgeV1(card.badge, right, at(58)),
+    textV1(left, at(158), card.title, { font: SANS_V1, size: 58, weight: 600, fill: INK_V1.text }),
+    textV1(left, at(206), card.lede, { font: SANS_V1, size: 24, fill: INK_V1.soft }),
   ];
 
   const head = { font: MONO_V1, size: 15, fill: INK_V1.faint, spacing: 1.5 };
@@ -274,11 +277,11 @@ export function weekendCardSvgV1(card: WeekendCardV1): string {
       }
     }
     if (index < card.rows.length - 1) {
-      out.push(`<rect x="${left}" y="${y + 20}" width="${right - left}" height="1" fill="${INK_V1.rule}"/>`);
+      out.push(`<rect x="${left}" y="${y + at(20)}" width="${right - left}" height="1" fill="${INK_V1.rule}"/>`);
     }
   });
 
-  out.push(textV1(right, 598, card.footer, { font: MONO_V1, size: 18, fill: INK_V1.faint, anchor: 'end' }));
+  out.push(textV1(right, at(598), card.footer, { font: MONO_V1, size: 18, fill: INK_V1.faint, anchor: 'end' }));
   out.push('</svg>');
   return out.join('');
 }

@@ -127,4 +127,18 @@ describe('the picture under a shared weekend post', () => {
     // Text drawn with no font at all leaves a near-empty picture.
     assert.ok(bytes.length > 60_000, `only ${bytes.length} bytes`);
   });
+
+  test('for a Farcaster embed the same card is drawn 3:2, every number still on it', async () => {
+    const link = weekendCardSvgV1(weekendCardV1(IN_PROGRESS)!);
+    const embed = weekendCardSvgV1(weekendCardV1(IN_PROGRESS)!, 'embed');
+    assert.match(embed, /^<svg xmlns="http:\/\/www\.w3\.org\/2000\/svg" width="1200" height="800" viewBox="0 0 1200 800"/);
+    const texts = (svg: string) => [...svg.matchAll(/>([^<]+)<\/text>/g)].map((match) => match[1]);
+    assert.deepEqual(texts(embed), texts(link), 'the same words, only set further apart');
+    // The footer stays inside the picture.
+    const ys = [...embed.matchAll(/<text x="\d+" y="(\d+)"/g)].map((match) => Number(match[1]));
+    assert.ok(Math.max(...ys) < 800 - 20, `lowest line at ${Math.max(...ys)}`);
+    const png = Buffer.from(await renderCardPngV1(embed));
+    assert.equal(png.readUInt32BE(16), 1200);
+    assert.equal(png.readUInt32BE(20), 800);
+  });
 });

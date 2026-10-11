@@ -1,14 +1,16 @@
 import React from 'react';
 
 import { GIFT_SHARE_WARNING_V1, type PublicGiftPageViewV1 } from './giftView';
+import { ShareLinkV1 } from './shareHost';
 
 // ---------------------------------------------------------------------------
 // Growth plan step 4: a gift on the proof screen, and the page it is shared as.
 //
 // X and Farcaster are the two buttons that matter (the operator's call,
 // 2026-09-23), so they are the large ones; copying the link is the small one.
-// Both open the network's own composer in a new tab — nothing is posted from
-// here, and the person edits the text before it goes anywhere.
+// Both open the network's own composer (inside Farcaster, Farcaster's own: see
+// shareHost.tsx) — nothing is posted from here, and the person edits the text
+// before it goes anywhere.
 // ---------------------------------------------------------------------------
 
 export interface GiftShareModelV1 {
@@ -52,14 +54,14 @@ function FarcasterMark() {
 export function GiftShareButtons({ x, farcaster }: { x: string; farcaster: string }) {
   return (
     <div className="gift-share-row">
-      <a className="btn lg share-x" href={x} target="_blank" rel="noopener noreferrer">
+      <ShareLinkV1 className="btn lg share-x" href={x}>
         <XMark />
         Post on X
-      </a>
-      <a className="btn lg share-fc" href={farcaster} target="_blank" rel="noopener noreferrer">
+      </ShareLinkV1>
+      <ShareLinkV1 className="btn lg share-fc" href={farcaster}>
         <FarcasterMark />
         Cast on Farcaster
-      </a>
+      </ShareLinkV1>
     </div>
   );
 }

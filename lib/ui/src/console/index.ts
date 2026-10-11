@@ -18,6 +18,7 @@ export * from './providerDiagnostics';
 export * from './consoleAdapters';
 export * from './giftView';
 export * from './GiftPanels';
+export * from './shareHost';
 export * from './ConsoleCharts';
 export * from './ConsoleShell';
 export * from './ConsoleScreens';

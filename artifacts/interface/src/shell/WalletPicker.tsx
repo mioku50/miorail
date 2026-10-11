@@ -2,12 +2,13 @@ import { useEffect, useState } from 'react';
 import { useConnect } from 'wagmi';
 import { useUiStore } from '../lib/state';
 import { detectBaseAppEarly } from '../lib/detectBaseAppEarly';
+import { farcasterHostV1 } from '../lib/miniAppHost';
 import { isMobileBrowserV1, walletChoicesV1 } from '../lib/walletChoices';
 
 // The person picks the wallet. What is offered is decided by
 // `walletChoicesV1` from what this page can actually reach — announced
-// wallets, Base Account outside Base App, and on a bare phone browser a link
-// that reopens this page inside a wallet app. Connecting never signs anything;
+// wallets, Base Account outside Base App and Farcaster, and on a bare phone
+// browser a link that reopens this page inside a wallet app. Connecting never signs anything;
 // the one signature is the sign-in the gate asks for next.
 
 const ROW =
@@ -36,6 +37,7 @@ export function WalletPicker() {
       icon: connector.icon,
     })),
     inBaseApp: detectBaseAppEarly({ userAgent, ethereum }),
+    inFarcaster: farcasterHostV1() !== null,
     hasWindowProvider: Boolean(ethereum),
     mobile: isMobileBrowserV1({
       userAgent,

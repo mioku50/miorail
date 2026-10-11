@@ -2,6 +2,7 @@
 
 import React, { useState } from 'react';
 
+import { ShareLinkV1 } from './shareHost';
 import type { WeekendMarketViewV1 } from './weekendMarketView';
 
 void React;
@@ -80,12 +81,12 @@ export function WeekendMarketCard({ view }: { view: WeekendMarketViewV1 }) {
         ) : null}
         <p className="lnote">{view.note}</p>
         <div className="gift-share-row">
-          <a className="btn sec" href={view.share.x} target="_blank" rel="noreferrer">
+          <ShareLinkV1 className="btn sec" href={view.share.x}>
             Post on X
-          </a>
-          <a className="btn sec" href={view.share.farcaster} target="_blank" rel="noreferrer">
+          </ShareLinkV1>
+          <ShareLinkV1 className="btn sec" href={view.share.farcaster}>
             Cast on Farcaster
-          </a>
+          </ShareLinkV1>
         </div>
       </div>
     </section>

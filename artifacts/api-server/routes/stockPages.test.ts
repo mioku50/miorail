@@ -6,6 +6,8 @@ import request from 'supertest';
 import type { WeekendMarketResponseV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import type { ReopenSharedResultV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
+// Farcaster's own schema for an embed, as its clients parse one.
+import { miniAppEmbedNextSchema } from '@farcaster/miniapp-core/dist/schemas/embeds.js';
 import {
   renderStockPageHtmlV1,
   resetStockPagesPreviewCacheV1,
@@ -451,4 +453,121 @@ test('a result that cannot be read or drawn is the board\u2019s picture', async 
   assert.equal(unread.headers.location, 'https://miorail.xyz/og-stocks.png');
   // And the page itself still serves the tab.
   assert.match((await request(appV1()).get(`/stocks/weekend?call=${CODE}`).expect(200)).text, WEEKEND_TITLE);
+});
+
+// ---------------------------------------------------------------------------
+// Farcaster: every page is a mini app embed, checked against Farcaster's own
+// schema, with a 3:2 picture.
+// ---------------------------------------------------------------------------
+
+function unescapeHtmlV1(value: string): string {
+  return value
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&');
+}
+
+/** Every embed of one name in a document, parsed the way a client reads it. */
+function embedsV1(html: string, name: 'fc:miniapp' | 'fc:frame'): unknown[] {
+  return [...html.matchAll(new RegExp(`<meta name="${name}" content="([^"]*)" />`, 'g'))].map((match) =>
+    JSON.parse(unescapeHtmlV1(match[1]!)),
+  );
+}
+
+test('every page casts as a mini app Farcaster accepts, opening the page itself', async (t) => {
+  stubV1(t);
+  const app = appV1();
+  const pages: Array<[string, number, string]> = [
+    ['/stocks', 200, 'Open the stocks board'],
+    ['/stocks/nvda', 200, 'Open NVDA on Base'],
+    ['/stocks/weekend', 200, 'Call the reopen'],
+    ['/stocks/dividends', 200, 'See the dividends'],
+    ['/stocks/mine', 200, 'Open my stocks'],
+    ['/stocks/zzzz', 404, 'Open the stocks board'],
+  ];
+  for (const [path, status, title] of pages) {
+    const html = (await request(app).get(path).expect(status)).text;
+    const [miniApp, ...more] = embedsV1(html, 'fc:miniapp');
+    const [frame] = embedsV1(html, 'fc:frame');
+    assert.equal(more.length, 0, `${path}: one embed, never two`);
+    const parsed = miniAppEmbedNextSchema.safeParse(miniApp);
+    assert.ok(parsed.success, `${path}: ${JSON.stringify(parsed.error?.issues)}`);
+    assert.ok(miniAppEmbedNextSchema.safeParse(frame).success, path);
+    const embed = miniApp as { imageUrl: string; button: { title: string; action: Record<string, unknown> } };
+    assert.equal(embed.imageUrl, 'https://miorail.xyz/og-stocks-3x2.png', path);
+    assert.equal(embed.button.title, title, path);
+    assert.equal(embed.button.action.type, 'launch_miniapp', path);
+    assert.equal((frame as typeof embed).button.action.type, 'launch_frame', path);
+    // No url: the button opens the page it was cast from, query and all.
+    assert.equal(embed.button.action.url, undefined, path);
+    assert.equal(embed.button.action.splashImageUrl, 'https://miorail.xyz/miniapp-splash.png', path);
+  }
+});
+
+test('a page replaces the static document’s embed rather than adding a second', () => {
+  const template = TEMPLATE.replace(
+    '</head>',
+    `<meta name="fc:miniapp" content='{"version":"1","imageUrl":"https://miorail.xyz/og-stocks-3x2.png","button":{"title":"Open Miorail","action":{"type":"launch_miniapp","name":"Miorail"}}}' />\n` +
+      `<meta name="fc:frame" content='{"version":"1"}' />\n</head>`,
+  );
+  const html = renderStockPageHtmlV1(
+    template,
+    stockPageMetaV1({ origin: 'https://miorail.xyz', entry: NVDA, roundTrip: null, now: NOW }),
+  );
+  assert.equal(html.match(/name="fc:miniapp"/g)?.length, 1);
+  assert.equal(html.match(/name="fc:frame"/g)?.length, 1);
+  assert.match(html, /Open NVDA on Base/);
+});
+
+test('a button title Farcaster would refuse becomes one it takes', () => {
+  const html = renderStockPageHtmlV1(TEMPLATE, {
+    ...stockPageMetaV1({ origin: 'https://miorail.xyz', entry: NVDA, roundTrip: null, now: NOW }),
+    miniApp: { imageUrl: 'https://miorail.xyz/og-stocks-3x2.png', buttonTitle: 'x'.repeat(33) },
+  });
+  const [embed] = embedsV1(html, 'fc:miniapp') as Array<{ button: { title: string } }>;
+  assert.equal(embed!.button.title, 'Open Miorail');
+});
+
+test('the page may sit in Farcaster’s frame on the web, like the static file', async (t) => {
+  stubV1(t);
+  const response = await request(appV1()).get('/stocks/weekend').expect(200);
+  assert.equal(response.headers['x-frame-options'], undefined);
+});
+
+test('a shared weekend slot and a shared result cast as their own 3:2 picture', async (t) => {
+  const { drawn } = weekendStubV1(t, {
+    reopenShare: async (code: string) => (code === CODE ? SHARED_RESULT_V1 : null),
+  });
+  const app = appV1();
+  const weekend = (await request(app).get('/stocks?weekend=20260926T0740Z').expect(200)).text;
+  const [slot] = embedsV1(weekend, 'fc:miniapp') as Array<{ imageUrl: string; button: { title: string } }>;
+  assert.equal(slot!.imageUrl, 'https://miorail.xyz/stocks/weekend/20260926T0740Z-3x2.png');
+  assert.equal(slot!.button.title, 'Call the reopen');
+  const result = (await request(app).get(`/stocks/weekend?call=${CODE}`).expect(200)).text;
+  const [call] = embedsV1(result, 'fc:miniapp') as Array<{ imageUrl: string; button: { title: string } }>;
+  assert.equal(call!.imageUrl, `https://miorail.xyz/stocks/weekend/call-${CODE}-3x2.png`);
+  assert.equal(call!.button.title, 'Make your call');
+
+  // Each shape is drawn once, at its own height, and held apart.
+  await request(app).get('/stocks/weekend/20260926T0740Z.png').expect(200);
+  await request(app).get('/stocks/weekend/20260926T0740Z-3x2.png').expect(200);
+  await request(app).get('/stocks/weekend/20260926T0740Z-3x2.png').expect(200);
+  await request(app).get(`/stocks/weekend/call-${CODE}-3x2.png`).expect(200);
+  assert.deepEqual(
+    drawn.map((svg) => /^<svg [^>]*height="(\d+)"/.exec(svg)?.[1]),
+    ['630', '800', '800'],
+  );
+  await request(app).get('/stocks/weekend/20260926T0740Z-4x3.png').expect(404);
+});
+
+test('a 3:2 picture that cannot be drawn falls back to the board’s 3:2 picture', async (t) => {
+  weekendStubV1(t, {
+    renderPng: async () => {
+      throw new Error('wasm gone');
+    },
+  });
+  const response = await request(appV1()).get('/stocks/weekend/20260926T0740Z-3x2.png').expect(302);
+  assert.equal(response.headers.location, 'https://miorail.xyz/og-stocks-3x2.png');
 });

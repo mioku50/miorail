@@ -10,8 +10,8 @@
 // Offered, in order:
 //   1. every wallet this browser announces (EIP-6963), by its own name — or,
 //      when a host injects one without announcing it, that one;
-//   2. Base Account, which needs nothing installed (never inside Base App,
-//      where its popup cannot open — see main.tsx);
+//   2. Base Account, which needs nothing installed (never inside Base App or
+//      Farcaster, where its popup cannot open — see main.tsx);
 //   3. on a phone with no wallet in the page, links that reopen this same page
 //      inside MetaMask or Base App, where their wallet connects.
 // ---------------------------------------------------------------------------
@@ -63,12 +63,16 @@ export function isMobileBrowserV1(input: { userAgent: string; maxTouchPoints?: n
 export function walletChoicesV1(input: {
   connectors: readonly WalletConnectorViewV1[];
   inBaseApp: boolean;
+  /** Running as a Farcaster mini app (lib/miniAppHost.ts). */
+  inFarcaster?: boolean;
   hasWindowProvider: boolean;
   mobile: boolean;
   pageUrl: string;
 }): WalletChoicesV1 {
   const choices: WalletChoiceV1[] = [];
   const seen = new Set<string>();
+  // An app that hosts the page gives it one wallet, and only that one.
+  const host = input.inBaseApp ? 'Base App' : input.inFarcaster ? 'Farcaster' : null;
 
   // 1. What this browser announced. The generic connector reaches the same
   // wallet a second time, so it is offered only when nothing announced itself
@@ -86,7 +90,7 @@ export function walletChoicesV1(input: {
       connectorId: connector.id,
       name: walletDisplayNameV1(connector, input.inBaseApp),
       icon: connector.icon?.trim() ? connector.icon : null,
-      detail: input.inBaseApp ? 'The wallet Base App gives this page.' : 'Found in this browser.',
+      detail: host ? `The wallet ${host} gives this page.` : 'Found in this browser.',
     });
   }
   const generic = input.connectors.find((connector) => connector.id === GENERIC_INJECTED_ID);
@@ -97,15 +101,15 @@ export function walletChoicesV1(input: {
       connectorId: generic.id,
       name: walletDisplayNameV1(generic, input.inBaseApp),
       icon: null,
-      detail: input.inBaseApp ? 'The wallet Base App gives this page.' : 'The wallet this browser gives the page.',
+      detail: host ? `The wallet ${host} gives this page.` : 'The wallet this browser gives the page.',
     });
   }
   const walletInPage = choices.length > 0;
 
-  if (input.inBaseApp) {
+  if (host) {
     return {
       choices,
-      note: 'Inside Base App a page can use only the wallet Base App gives it. To connect MetaMask or a Base Account, open miorail.xyz in your phone’s browser.',
+      note: `Inside ${host} a page can use only the wallet ${host} gives it. To connect MetaMask or a Base Account, open miorail.xyz in your phone’s browser.`,
     };
   }
 
