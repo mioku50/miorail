@@ -932,6 +932,11 @@ test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wa
     assert.equal(read.body.trace[0].tool, 'aerodrome_rewards_read');
     assert.ok(!read.body.action);
     assert.deepEqual(readFor, [wallet]);
+    // The next steps ride the response as exact phrases; the claim only
+    // where this deployment can prepare one.
+    assert.deepEqual(read.body.next.at(-1), { prompt: 'Notify me when my Aerodrome rewards reach $5', kind: 'alert' });
+    assert.ok(read.body.next.every((next: { kind: string; prompt: string }) =>
+      next.kind !== 'claim' || next.prompt === 'Claim my Aerodrome fees'));
 
     const on = await ask('Notify me when my Aerodrome rewards reach $20');
     assert.equal(on.body.status, 'answered');
@@ -948,10 +953,12 @@ test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wa
     assert.deepEqual(readFor, [wallet]);
 
     const catalogue = await request(app).get('/api/mcp/base/plugins');
-    const rewards = catalogue.body.plugins.find((p: { id: string }) => p.id === 'aerodrome')
-      .examples.find((e: { id: string }) => e.id === 'rewards');
+    const aerodrome = catalogue.body.plugins.find((p: { id: string }) => p.id === 'aerodrome');
+    const rewards = aerodrome.examples.find((e: { id: string }) => e.id === 'rewards');
     assert.deepEqual([rewards.disposition, rewards.capabilityState], ['read_in_extensions', 'released']);
     assert.match(rewards.returns, /read from Base across every pool/);
+    // A card shows its first example; Found's read leads, the claim next.
+    assert.deepEqual(aerodrome.examples.slice(0, 2).map((e: { id: string }) => e.id), ['rewards', 'claim']);
   } finally {
     mcpBaseRouteRuntime.aerodromeRewardAlerts = originalAlerts;
     mcpBaseRouteRuntime.telegramLinked = originalTelegram;

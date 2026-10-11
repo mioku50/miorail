@@ -9,7 +9,7 @@ import type { AerodromeRewardAlertRepositoryV1 } from '../src/aerodromeRewardAle
 // store and on Postgres, so the fake cannot drift from the SQL.
 // ---------------------------------------------------------------------------
 
-const ME = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
+const ME = '0x4e2e3d4c5b6a79880716253443526170e8f9a0b1';
 const YOU = '0x1111111111111111111111111111111111111111';
 const AT = new Date('2026-10-11T12:00:00.000Z');
 const later = (hours: number) => new Date(AT.getTime() + hours * 3_600_000);

@@ -18,9 +18,11 @@ const mini = readFileSync(
 );
 
 describe('plugin examples fill and focus the same console on both surfaces', () => {
-  for (const [surface, source, start, setter] of [
-    ['desktop/BaseApp', web, 'onSelectPrompt: (prompt', 'setQuestion(prompt)'],
-    ['MiniApp', mini, 'onSelectPrompt={(prompt', 'setBaseMcpQuestion(prompt)'],
+  for (const [surface, source, start, setter, end, wiring] of [
+    ['desktop/BaseApp', web, 'onSelectPrompt: (prompt', 'setQuestion(prompt)', '\n    },',
+      [/onSelectNext=\{plugins\.onSelectPrompt\}/]],
+    ['MiniApp', mini, 'const fillBaseMcpPrompt = (prompt', 'setBaseMcpQuestion(prompt)', '\n    };',
+      [/onSelectPrompt=\{fillBaseMcpPrompt\}/, /onSelectNext=\{fillBaseMcpPrompt\}/]],
   ] as const) {
     test(surface, () => {
       const selection = source.slice(source.indexOf(start));
@@ -31,8 +33,11 @@ describe('plugin examples fill and focus the same console on both surfaces', () 
 
       // The catalogue callback owns only the input value and focus. Execution
       // remains under the explicit Ask button's separate onAsk handler.
-      const callback = selection.slice(0, 700);
+      const callback = selection.slice(0, selection.indexOf(end));
+      assert.ok(callback.length > 0 && callback.length < 700, `${surface}: the callback was not found whole`);
       assert.doesNotMatch(callback, /\.mutate\(|onAsk/);
+      // A next step under an answer is filled the same way as an example.
+      for (const pattern of wiring) assert.match(source, pattern);
     });
   }
 });

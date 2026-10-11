@@ -91,6 +91,16 @@ export interface BaseMcpConsoleResultV1 {
    * `baseMcpProviderCtaV1` from the plugin id the ROUTER resolved, never from
    * anything the model wrote. Null when there is no honest next step there. */
   cta?: { label: string; url: string } | null;
+  /** Exact phrases the reader can ask next, from the reviewed code that wrote
+   * the answer. Pressing one fills the box; nothing runs until they ask. */
+  next?: BaseMcpConsoleNextV1[];
+}
+
+export interface BaseMcpConsoleNextV1 {
+  prompt: string;
+  /** What asking it does: read, prepare a claim the wallet approves, or keep
+   * an alert. */
+  kind: 'read' | 'claim' | 'alert';
 }
 
 export const baseMcpConsoleRuntimeV1 = {

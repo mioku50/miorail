@@ -2469,12 +2469,23 @@ export function MiniConsole() {
       </>
     );
   } else if (section === "extensions") {
+    // An example far below the box, or a next step under a long answer:
+    // fill the box, scroll up to it, focus it. Nothing is asked.
+    const fillBaseMcpPrompt = (prompt: string) => {
+      setBaseMcpQuestion(prompt);
+      globalThis.requestAnimationFrame?.(() => {
+        globalThis.document?.getElementById("base-mcp-console")?.scrollIntoView({ behavior: "smooth", block: "start" });
+        const input = globalThis.document?.getElementById(BASE_MCP_CONSOLE_INPUT_ID_V1) as HTMLTextAreaElement | null;
+        input?.focus({ preventScroll: true });
+      });
+    };
     sectionContent = (
       <>
         <div id="base-mcp-console">
           <BaseMcpConsoleCard
             question={baseMcpQuestion}
             onQuestionChange={setBaseMcpQuestion}
+            onSelectNext={fillBaseMcpPrompt}
             onAsk={() => {
               const message = baseMcpQuestion.trim();
               if (message) {
@@ -2529,14 +2540,7 @@ export function MiniConsole() {
           unavailableReason={
             baseMcpPlugins.error ? "The plugin catalogue could not be read from this server." : null
           }
-          onSelectPrompt={(prompt) => {
-            setBaseMcpQuestion(prompt);
-            globalThis.requestAnimationFrame?.(() => {
-              globalThis.document?.getElementById("base-mcp-console")?.scrollIntoView({ behavior: "smooth", block: "start" });
-              const input = globalThis.document?.getElementById(BASE_MCP_CONSOLE_INPUT_ID_V1) as HTMLTextAreaElement | null;
-              input?.focus({ preventScroll: true });
-            });
-          }}
+          onSelectPrompt={fillBaseMcpPrompt}
         />
         <details className="mcp-advanced">
           <summary>Advanced: the tools Wallet MCP exposes</summary>

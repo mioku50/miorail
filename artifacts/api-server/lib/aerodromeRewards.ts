@@ -10,6 +10,7 @@ import {
   type AerodromeClaimPlanV1,
 } from './aerodromeClaimReader.js';
 import { centsV1 } from './aerodromeRewardIntents.js';
+import type { BaseMcpConsoleNextV1 } from './baseMcpConsole.js';
 import { valueStockInUsdcV1 } from './giftSendValuation.js';
 import { CANONICAL_BASE_USDC_V1 } from './stockGift.js';
 
@@ -193,8 +194,31 @@ function unitsV1(amount: AerodromeRewardAmountV1): string {
   return `${Number(whole).toLocaleString('en-US')}${trimmed ? `.${trimmed}` : ''} ${amount.symbol}`;
 }
 
-const ALERT_PROMPT_V1 = { en: '“Notify me when my Aerodrome rewards reach $5”', ru: '«Сообщи, когда награды Aerodrome дойдут до $5»' };
-const CLAIM_PROMPT_V1 = { en: '“Claim my Aerodrome fees”', ru: '«Забери мои комиссии Aerodrome»' };
+/** The phrases a reader presses next, exactly as the router reads them. */
+export const AERODROME_CLAIM_PROMPT_V1 = { en: 'Claim my Aerodrome fees', ru: 'Забери мои комиссии Aerodrome' } as const;
+export const AERODROME_ALERT_PROMPT_V1 = {
+  en: 'Notify me when my Aerodrome rewards reach $5',
+  ru: 'Сообщи, когда награды Aerodrome дойдут до $5',
+} as const;
+const ALERT_PROMPT_V1 = { en: `“${AERODROME_ALERT_PROMPT_V1.en}”`, ru: `«${AERODROME_ALERT_PROMPT_V1.ru}»` };
+const CLAIM_PROMPT_V1 = { en: `“${AERODROME_CLAIM_PROMPT_V1.en}”`, ru: `«${AERODROME_CLAIM_PROMPT_V1.ru}»` };
+
+/**
+ * The buttons under a reading. The claim is offered only when this reading
+ * found something and the deployment can prepare a claim; the alert whenever
+ * every pool was read. A reading that failed offers nothing to act on.
+ */
+export function aerodromeRewardsNextV1(
+  read: AerodromeRewardsReadV1,
+  input: { russian: boolean; claimReleased: boolean },
+): BaseMcpConsoleNextV1[] {
+  if (!read.ok) return [];
+  const lang = input.russian ? 'ru' : 'en';
+  const alert: BaseMcpConsoleNextV1 = { prompt: AERODROME_ALERT_PROMPT_V1[lang], kind: 'alert' };
+  return read.rewards.claims > 0 && input.claimReleased
+    ? [{ prompt: AERODROME_CLAIM_PROMPT_V1[lang], kind: 'claim' }, alert]
+    : [alert];
+}
 
 /** The console's answer to a reading, in the language it was asked in. */
 export function aerodromeRewardsReplyV1(read: AerodromeRewardsReadV1, russian: boolean): { reply: string; errorCode: string | null } {
@@ -257,7 +281,7 @@ export function aerodromeRewardNoticeV1(input: { usdCents: number }): { title: s
   const amount = centsV1(input.usdCents);
   return {
     title: `Aerodrome rewards: ${amount}`.slice(0, 30),
-    message: `This wallet can claim about ${amount} in fees and AERO on Aerodrome. Open Wallet MCP in Miorail and say “Claim my Aerodrome fees”.`,
+    message: `This wallet can claim about ${amount} in fees and AERO on Aerodrome. Open Wallet MCP in Miorail and say ${CLAIM_PROMPT_V1.en}.`,
     targetPath: '/extensions',
   };
 }

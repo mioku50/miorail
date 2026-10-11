@@ -14,7 +14,7 @@ import { aerodromeRewardAlertsContractV1 } from './aerodromeRewardAlerts.contrac
 // next build-up may be told again.
 // ---------------------------------------------------------------------------
 
-const ME = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
+const ME = '0x4e2e3d4c5b6a79880716253443526170e8f9a0b1';
 
 aerodromeRewardAlertsContractV1('memory', async () => new InMemoryAerodromeRewardAlertRepositoryV1());
 

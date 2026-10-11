@@ -128,6 +128,23 @@ export interface BaseMcpConsoleAnswerV1 {
    * our own simulator fell short hands the user our unfinished work.
    */
   cta?: { label: string; url: string } | null;
+  /** Exact phrases to ask next, written by the reviewed code that answered,
+   * never by the model: "Claim my Aerodrome fees" under a reading that found
+   * some. Pressing one fills the box like any example. */
+  next?: readonly BaseMcpConsoleNextUiV1[];
+}
+
+export interface BaseMcpConsoleNextUiV1 {
+  prompt: string;
+  kind: 'read' | 'claim' | 'alert';
+}
+
+/** The badge on a next step, in the words the examples already use, plus one
+ * for an alert: keeping one is neither a read nor a wallet approval. */
+export function baseMcpNextBadgeV1(kind: BaseMcpConsoleNextUiV1['kind']): { label: string; tone: string } {
+  if (kind === 'claim') return { label: 'You approve', tone: 'action' };
+  if (kind === 'alert') return { label: 'Alert', tone: 'read' };
+  return { label: 'Reads', tone: 'read' };
 }
 
 export interface BaseMcpConsoleModelV1 {
@@ -150,6 +167,9 @@ export interface BaseMcpConsoleModelV1 {
   disabledReason?: string | null;
   /** A visitor with no session: the one thing to press is signing in. */
   onSignIn?: () => void;
+  /** Fills the box from a next step under the answer, which can sit a screen
+   * below it. Falls back to `onQuestionChange`. */
+  onSelectNext?: (prompt: string) => void;
 }
 
 export interface BaseMcpQuickExampleV1 {
@@ -158,13 +178,18 @@ export interface BaseMcpQuickExampleV1 {
   disposition: BaseMcpExampleDispositionUiV1;
 }
 
-/** Four things a person asks, one of each kind the console answers: two
- * reads, a send their wallet approves, and a swap that goes to Routes AI. It
- * used to be seven routing demonstrations, among them a 10x perp, which read
- * as a capability matrix rather than a first screen (operator, 2026-10-04).
- * Every plugin's own examples are still one tap away in the catalogue. */
+/** Things a person asks, one of each kind the console answers: reads, a send
+ * their wallet approves, and a swap that goes to Routes AI. It used to be
+ * seven routing demonstrations, among them a 10x perp, which read as a
+ * capability matrix rather than a first screen (operator, 2026-10-04).
+ * Every plugin's own examples are still one tap away in the catalogue.
+ *
+ * Found is here too: the operator could not find it when it lived only
+ * under Aerodrome's "More examples" (2026-10-11). Its answer carries the
+ * claim and the alert as buttons. */
 export const BASE_MCP_QUICK_EXAMPLES_V1: readonly BaseMcpQuickExampleV1[] = [
   { prompt: 'What does my wallet hold?', surface: 'read', disposition: 'read_in_extensions' },
+  { prompt: 'What can I claim on Aerodrome?', surface: 'read', disposition: 'read_in_extensions' },
   { prompt: 'Show my recent Base transactions', surface: 'read', disposition: 'read_in_extensions' },
   { prompt: 'Send 5 USDC to alice.base.eth', surface: 'action', disposition: 'action_in_extensions' },
   { prompt: 'Swap 100 USDC to ETH', surface: 'routable', disposition: 'handoff_to_routes' },
@@ -594,6 +619,37 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                   <pre className="mono aitext">{answer.reply}</pre>
                 ) : (
                   <p className="empty">Wallet MCP returned tool results but no written answer.</p>
+                )}
+
+                {/* The answer names what to ask next; these are those exact
+                    phrases, so nobody has to retype "Claim my Aerodrome
+                    fees" from the text above. They fill the box, like every
+                    example on this page. */}
+                {answer.next && answer.next.length > 0 && (
+                  <>
+                    <div className="mcp-quick-head">
+                      <b>Next</b>
+                      <span>fills the box — nothing runs until you ask</span>
+                    </div>
+                    <div className="mcp-quick-examples">
+                      {answer.next.map((item) => {
+                        const badge = baseMcpNextBadgeV1(item.kind);
+                        return (
+                          <button
+                            key={item.prompt}
+                            type="button"
+                            className="mcp-example"
+                            disabled={model.pending}
+                            title="Fills the box — nothing runs until you ask"
+                            onClick={() => selectBaseMcpExampleV1(model.onSelectNext ?? model.onQuestionChange, item.prompt)}
+                          >
+                            <span className={`mcp-disposition ${badge.tone}`}>{badge.label}</span>
+                            <span>{item.prompt}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  </>
                 )}
 
                 {answer.truncated && (

@@ -24,7 +24,7 @@ import { moonwellAssetV1, printrQuoteInputV1 } from './baseMcpReadInputs.js';
 import { hydrexPositionsAnswerV1, hydrexPositionsInputErrorV1 } from './hydrexPositionsRead.js';
 import { runVirtualsOtpReadV1 } from './virtualsOtpRead.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
-import { aerodromeRewardsReplyV1, readAerodromeRewardsV1 } from './aerodromeRewards.js';
+import { aerodromeRewardsNextV1, aerodromeRewardsReplyV1, readAerodromeRewardsV1 } from './aerodromeRewards.js';
 import { russianV1 } from './aerodromeRewardIntents.js';
 
 // ---------------------------------------------------------------------------
@@ -852,7 +852,10 @@ export async function runReviewedBaseMcpPluginReadV1(
   if (input.providerId === 'aerodrome' && input.exampleId === 'rewards') {
     const startedAt = Date.now();
     const read = await reviewedBaseMcpPluginRuntimeV1.readAerodromeRewards(input.walletAddress);
-    const answer = aerodromeRewardsReplyV1(read, russianV1(input.message));
+    const russian = russianV1(input.message);
+    const answer = aerodromeRewardsReplyV1(read, russian);
+    // The claim button only where the classifier would prepare one.
+    const runtime = baseMcpRuntimeSnapshotV1();
     return {
       status: answer.errorCode ? 'failed' : 'answered', reply: answer.reply,
       trace: [{ tool: 'aerodrome_rewards_read',
@@ -860,6 +863,8 @@ export async function runReviewedBaseMcpPluginReadV1(
         ok: answer.errorCode === null, result: baseMcpConsoleResultTextV1(jsonPreviewV1(read)), errorCode: answer.errorCode }],
       toolsAvailable: 1, truncated: false, elapsedMs: Date.now() - startedAt, errorCode: answer.errorCode,
       checkedAt: reviewedBaseMcpPluginRuntimeV1.now().toISOString(),
+      next: aerodromeRewardsNextV1(read, { russian,
+        claimReleased: runtime.releasedActionPlugins.includes('aerodrome') && runtime.batchSimulationAvailable }),
     };
   }
   if (input.providerId === 'hydrex' && input.exampleId === 'positions') {

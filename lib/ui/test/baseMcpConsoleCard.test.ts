@@ -234,16 +234,68 @@ test('a ROUTABLE response offers Routes AI and no approval URL', () => {
 });
 
 describe('the console never borrows the routers’ authority', () => {
-  test('four tasks a person asks, one of each kind, and no unreleased action among them', () => {
-    assert.equal(BASE_MCP_QUICK_EXAMPLES_V1.length, 4);
+  test('tasks a person asks, one of each kind, Found among them, and no unreleased action', () => {
+    assert.equal(BASE_MCP_QUICK_EXAMPLES_V1.length, 5);
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /hold|transactions/i.test(prompt)));
+    assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.includes('What can I claim on Aerodrome?'));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /send/i.test(prompt)));
     assert.ok(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /swap/i.test(prompt)));
     assert.equal(BASE_MCP_CONSOLE_PROMPTS_V1.some((prompt) => /sign|launch|x402|10x/i.test(prompt)), false);
     assert.deepEqual(
       BASE_MCP_QUICK_EXAMPLES_V1.map((example) => example.disposition),
-      ['read_in_extensions', 'read_in_extensions', 'action_in_extensions', 'handoff_to_routes'],
+      ['read_in_extensions', 'read_in_extensions', 'read_in_extensions', 'action_in_extensions', 'handoff_to_routes'],
     );
+  });
+
+  test('a reading names its next steps as buttons that only fill the box', () => {
+    const filled: string[] = [];
+    const jumped: string[] = [];
+    const model = {
+      question: '',
+      onQuestionChange: (prompt: string) => filled.push(prompt),
+      onSelectNext: (prompt: string) => jumped.push(prompt),
+      onAsk: () => assert.fail('a next step must not execute'),
+      pending: false,
+      unavailableReason: null,
+      answer: answer({
+        status: 'answered',
+        reply: 'Found on Aerodrome: about $12.38 you can claim now.',
+        trace: [{ tool: 'aerodrome_rewards_read', args: '{}', ok: true, result: '{}', errorCode: null }],
+        next: [
+          { prompt: 'Claim my Aerodrome fees', kind: 'claim' },
+          { prompt: 'Notify me when my Aerodrome rewards reach $5', kind: 'alert' },
+        ],
+      }),
+    };
+    const html = renderToStaticMarkup(BaseMcpConsoleCard(model));
+    assert.match(html, /<b>Next<\/b>/);
+    assert.match(html, /You approve<\/span><span>Claim my Aerodrome fees/);
+    assert.match(html, /Alert<\/span><span>Notify me when my Aerodrome rewards reach \$5/);
+    // Press each button in the element tree: the page's own jump (fill,
+    // scroll, focus) is used, and nothing is asked.
+    const buttons: { text: string; onClick: () => void }[] = [];
+    const walk = (node: unknown): void => {
+      if (Array.isArray(node)) { node.forEach(walk); return; }
+      if (!node || typeof node !== 'object' || !('props' in node)) return;
+      const element = node as unknown as { type: unknown; props: Record<string, unknown> };
+      const props = element.props;
+      if (element.type === 'button' && typeof props.onClick === 'function') {
+        buttons.push({ text: renderToStaticMarkup(node as never), onClick: props.onClick as () => void });
+      }
+      walk(props.children);
+    };
+    walk(BaseMcpConsoleCard(model));
+    buttons.filter((button) => /Claim my Aerodrome fees|reach \$5/.test(button.text)).forEach((button) => button.onClick());
+    assert.deepEqual(jumped, ['Claim my Aerodrome fees', 'Notify me when my Aerodrome rewards reach $5']);
+    assert.deepEqual(filled, []);
+    // Without the page's jump, a press still only fills the box.
+    const plain = { ...model, onSelectNext: undefined };
+    buttons.length = 0;
+    walk(BaseMcpConsoleCard(plain));
+    buttons.find((button) => /Claim my Aerodrome fees/.test(button.text))!.onClick();
+    assert.deepEqual(filled, ['Claim my Aerodrome fees']);
+    const none = renderToStaticMarkup(BaseMcpConsoleCard({ ...model, answer: answer({ status: 'answered', reply: 'x', trace: [] }) }));
+    assert.doesNotMatch(none, /<b>Next<\/b>/);
   });
 
   test('the strip says it only fills the box, in plain words, and every shortcut only fills it', () => {

@@ -2243,6 +2243,21 @@ export const BaseMcpConsoleResponseV1Schema = z.object({
     })
     .nullable()
     .default(null),
+  /**
+   * What the reader can ask next, as exact phrases the router reads: "Claim
+   * my Aerodrome fees" under a reading that found some. Built by the reviewed
+   * code that produced the answer, never by the model, and pressing one only
+   * fills the box.
+   */
+  next: z
+    .array(
+      z.object({
+        prompt: z.string().min(1).max(200),
+        kind: z.enum(['read', 'claim', 'alert']),
+      }),
+    )
+    .max(4)
+    .default([]),
 });
 
 export const BaseMcpActionReconcileResponseV1Schema = BaseMcpActionEnvelopeV1Schema;

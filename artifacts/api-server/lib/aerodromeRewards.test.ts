@@ -6,6 +6,7 @@ import { InMemoryAerodromeRewardAlertRepositoryV1 } from '@mioagent/route-storag
 import { AERODROME_AERO_V1, type AerodromeClaimPlanV1 } from './aerodromeClaimReader.js';
 import {
   aerodromeRewardNoticeV1,
+  aerodromeRewardsNextV1,
   aerodromeRewardTotalsV1,
   aerodromeRewardsReplyV1,
   refreshAerodromeRewardAlertsV1,
@@ -18,7 +19,7 @@ import { CANONICAL_BASE_USDC_V1 } from './stockGift.js';
 const WETH = '0x4200000000000000000000000000000000000006';
 const MEME = '0x7777777777777777777777777777777777777777';
 const POOL = '0x2222222222222222222222222222222222222222';
-const WALLET = '0x4de27ead5a3c9aeb58c7f812178ddde282670d70';
+const WALLET = '0x4e2e3d4c5b6a79880716253443526170e8f9a0b1';
 
 function item(kind: AerodromeClaimPlanV1['calls'][number]['kind'], over: Partial<AerodromeClaimPlanV1['calls'][number]> = {}) {
   return {
@@ -123,6 +124,27 @@ test('nothing to claim is said only after every pool was read', async () => {
   assert.equal(unread.reply, 'Could not read all of Aerodrome just now (38,000 of 39,243 pools), so this is not “nothing to claim”. Try again in a minute.');
   assert.match(aerodromeRewardsReplyV1({ ok: false, errorCode: 'aerodrome_positions_limit', poolsRead: 0, poolsTotal: 0 }, false).reply, /more Aerodrome positions than Miorail reads at once \(200\)/);
   assert.match(aerodromeRewardsReplyV1({ ok: false, errorCode: 'aerodrome_target_mismatch', poolsRead: 1, poolsTotal: 1 }, true).reply, /не может проверить \(aerodrome_target_mismatch\)/);
+});
+
+test('a reading offers the claim and the alert as buttons, in the language it was asked in', async () => {
+  const rewards = await valueAerodromeRewardsV1(plan(CALLS), {
+    tokenMeta: async () => ({ symbol: 'MEME', decimals: 18 }),
+    value: async () => '1000000',
+  });
+  assert.deepEqual(aerodromeRewardsNextV1({ ok: true, rewards }, { russian: false, claimReleased: true }), [
+    { prompt: 'Claim my Aerodrome fees', kind: 'claim' },
+    { prompt: 'Notify me when my Aerodrome rewards reach $5', kind: 'alert' },
+  ]);
+  assert.deepEqual(aerodromeRewardsNextV1({ ok: true, rewards }, { russian: true, claimReleased: true }).map((next) => next.prompt), [
+    'Забери мои комиссии Aerodrome',
+    'Сообщи, когда награды Aerodrome дойдут до $5',
+  ]);
+  // No claim where this deployment could not prepare one.
+  assert.deepEqual(aerodromeRewardsNextV1({ ok: true, rewards }, { russian: false, claimReleased: false }).map((next) => next.kind), ['alert']);
+  const nothing = await valueAerodromeRewardsV1(plan([]), { tokenMeta: async () => assert.fail(), value: async () => assert.fail() });
+  assert.deepEqual(aerodromeRewardsNextV1({ ok: true, rewards: nothing }, { russian: false, claimReleased: true }).map((next) => next.kind), ['alert']);
+  // A reading that failed has nothing to act on.
+  assert.deepEqual(aerodromeRewardsNextV1({ ok: false, errorCode: 'aerodrome_read_deadline', poolsRead: 1, poolsTotal: 2 }, { russian: false, claimReleased: true }), []);
 });
 
 test('the push fits Base App and leads to Wallet MCP', () => {

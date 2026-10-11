@@ -232,6 +232,8 @@ export function ExtensionsPage() {
               navigate(`${consoleSectionPathV1('routes')}?goal=${encodeURIComponent(message)}`);
             }}
             onReconcileAction={(receiptId) => reconcileAction.mutate(receiptId)}
+            // A next step sits under a long answer: fill, scroll up, focus.
+            onSelectNext={plugins.onSelectPrompt}
             disabledReason={signedOut ? 'Sign in with your wallet to ask. You can still explore and fill the examples below.' : null}
             onSignIn={
               signedOut
