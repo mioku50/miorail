@@ -1,4 +1,4 @@
-import { createPublicClient, http, parseAbi, encodeFunctionData, type Address, type Abi } from 'viem';
+import { createPublicClient, fallback, http, parseAbi, encodeFunctionData, type Address, type Abi } from 'viem';
 import { base } from 'viem/chains';
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
 
@@ -31,6 +31,9 @@ export const SUGAR_MAX_POSITIONS_V1 = 200;
 /** Calls per batched read. Each one is a cheap view, so a batch stays far
  * below an eth_call gas cap. */
 export const AERODROME_BATCH_CALLS_V1 = 300;
+/** How long a refused Sugar page waits before it is asked again. */
+export const AERODROME_PAGE_PAUSE_MS_V1 = 700;
+const pause = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms));
 const ZERO = '0x0000000000000000000000000000000000000000';
 const POSITION_TUPLE = '(uint256 id,address lp,uint256 liquidity,uint256 staked,uint256 amount0,uint256 amount1,uint256 staked0,uint256 staked1,uint256 unstaked_earned0,uint256 unstaked_earned1,uint256 emissions_earned,int24 tick_lower,int24 tick_upper,uint160 sqrt_ratio_lower,uint160 sqrt_ratio_upper,address locker,uint32 unlocks_at,address alm)';
 export const AERODROME_CLAIM_ABI_V1 = parseAbi([
@@ -106,11 +109,26 @@ export interface AerodromeClaimPlanV1 {
   errorCode: string | null;
 }
 
+/** Base's own public endpoint: the second opinion for a read the configured
+ * provider refused. Measured 2026-10-11 from the server: 12 of 12 Sugar pages,
+ * 318 ms each. */
+export const BASE_PUBLIC_RPC_V1 = 'https://mainnet.base.org';
+
+/** The configured provider first, Base's public endpoint when it refuses.
+ * On 2026-10-11 the configured key answered 60 of 60 Sugar pages one at a
+ * time and left more than half the pools unread when pages ran side by side
+ * with the server's other reads: a per-second limit, not a broken page. */
+export function aerodromeReadTransportV1(configured: string | undefined) {
+  const primary = configured?.trim() || BASE_PUBLIC_RPC_V1;
+  const options = { timeout: 6_000, retryCount: 0 } as const;
+  return primary === BASE_PUBLIC_RPC_V1
+    ? http(primary, options)
+    : fallback([http(primary, options), http(BASE_PUBLIC_RPC_V1, options)], { rank: false, retryCount: 0 });
+}
+
 export async function createAerodromeClaimReadV1(): Promise<AerodromeClaimReadV1> {
-  const client = createPublicClient({ chain: base, transport: http(
-    process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || 'https://mainnet.base.org',
-    { timeout: 6_000, retryCount: 0 },
-  ) });
+  const client = createPublicClient({ chain: base,
+    transport: aerodromeReadTransportV1(process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL) });
   if (await client.getChainId() !== 8453) throw new Error('aerodrome_chain_mismatch');
   const blockNumber = await client.getBlockNumber({ cacheTime: 0 });
   return {
@@ -219,9 +237,10 @@ export async function readAerodromeBasicPositionsV1(
 export async function readAerodromeClaimPlanV1(
   reader: AerodromeClaimReadV1,
   wallet: string,
-  options: { maxPools?: number; deadlineMs?: number; now?: () => number } = {},
+  options: { maxPools?: number; deadlineMs?: number; now?: () => number; pause?: (ms: number) => Promise<void> } = {},
 ): Promise<AerodromeClaimPlanV1> {
   const now = options.now ?? Date.now;
+  const wait = options.pause ?? pause;
   const deadline = now() + (options.deadlineMs ?? 45_000);
   const plan: AerodromeClaimPlanV1 = {
     blockNumber: String(reader.blockNumber), poolsTotal: 0, poolsRead: 0, poolsUnread: 0, poolsReadDirect: 0,
@@ -288,8 +307,11 @@ export async function readAerodromeClaimPlanV1(
     const limit = Math.min(reachable, budget);
     const positions: AerodromeSugarPositionV1[] = [];
     let offset = 0;
-    // The smallest page is tried twice: one hiccup of the RPC on the first
-    // reading in production left 125 pools unread, and the whole answer with it.
+    // A refused page is asked again after a pause, then split: a provider's
+    // per-second limit refuses whatever arrives next, so asking at once only
+    // spends the next second's allowance. The smallest page gets its pause
+    // too: one hiccup on the first production reading left 125 pools unread,
+    // and the whole answer with them.
     const page = async (start: number, size: number, retried = false): Promise<void> => {
       try {
         const rows = await read(AERODROME_SUGAR_V1, 'positions', [BigInt(size), BigInt(start), wallet]);
@@ -300,24 +322,24 @@ export async function readAerodromeClaimPlanV1(
         plan.poolsRead += size;
       } catch {
         if (now() >= deadline || positions.length >= 200) return;
-        if (size > 125) {
+        if (!retried) {
+          await wait(Math.min(AERODROME_PAGE_PAUSE_MS_V1, Math.max(0, deadline - now())));
+          await page(start, size, true);
+        } else if (size > 125) {
           const half = Math.floor(size / 2);
           await page(start, half);
           await page(start + half, size - half);
-        } else if (!retried) {
-          await page(start, size, true);
         }
       }
     };
-    const worker = async () => {
-      while (offset < limit && now() < deadline && positions.length < 200) {
-        const start = offset;
-        const size = Math.min(500, limit - start);
-        offset += size;
-        await page(start, size);
-      }
-    };
-    await Promise.all([worker(), worker()]);
+    // One page at a time: sixty pages take about 12 s alone, and two side by
+    // side were what tripped the provider's limit.
+    while (offset < limit && now() < deadline && positions.length < 200) {
+      const start = offset;
+      const size = Math.min(500, limit - start);
+      offset += size;
+      await page(start, size);
+    }
     // Only once Sugar's part is whole: a claim missing pages fails anyway.
     if (plan.poolsRead === reachable) {
       for (const { factory, pools } of pastWall) {

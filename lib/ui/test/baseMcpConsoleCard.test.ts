@@ -24,6 +24,23 @@ const answer = (overrides: Partial<BaseMcpConsoleAnswerV1> = {}): BaseMcpConsole
   ...overrides,
 });
 
+test('a Found reading that could not finish shows its own words, not the generic failure line', () => {
+  const failed = answer({
+    status: 'failed', errorCode: 'aerodrome_incomplete_coverage', elapsedMs: 14_700,
+    reply: 'Could not read all of Aerodrome just now (17,375 of 39,256 pools), so this is not “nothing to claim”. Try again in a minute.',
+    trace: [{ tool: 'aerodrome_rewards_read', args: '{}', ok: false, result: '{}', errorCode: 'aerodrome_incomplete_coverage' }],
+  });
+  assert.equal(baseMcpConsoleStatusCopyV1(failed), null);
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: '', onQuestionChange: () => undefined, onAsk: () => undefined,
+    pending: false, unavailableReason: null, answer: failed }));
+  assert.match(html, /17,375 of 39,256 pools/);
+  assert.match(html, /not read in full/);
+  assert.match(html, /Read by Miorail from Base itself; no Wallet MCP tool and no provider was called\. Took 14\.7s\./);
+  assert.doesNotMatch(html, /The console could not complete that/);
+  // A model-console failure keeps the generic line: its text is not ours to show.
+  assert.match(baseMcpConsoleStatusCopyV1(answer({ status: 'failed', reply: 'model words', errorCode: 'x' })) ?? '', /could not complete that/);
+});
+
 test('a Uniswap collect receipt says what is collected, for whom, and that the wallet approves it', () => {
   const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'Collect my Uniswap fees', onQuestionChange: () => undefined,
     onAsk: () => undefined, pending: false, unavailableReason: null, answer: answer({ status: 'action', trace: [],

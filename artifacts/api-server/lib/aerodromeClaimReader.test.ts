@@ -4,7 +4,8 @@ import { decodeFunctionData, decodeFunctionResult, encodeFunctionResult, type Ab
 import {
   AERODROME_SUGAR_V1, AERODROME_VOTER_V1, AERODROME_BASIC_FACTORY_V1,
   AERODROME_CL_FACTORIES_V1, AERODROME_CL_NFPMS_V1, AERODROME_AERO_V1, AERODROME_CLAIM_ABI_V1,
-  AERODROME_BATCH_CALLS_V1, SUGAR_MAX_ITERATIONS_V1, readAerodromeClaimPlanV1,
+  AERODROME_BATCH_CALLS_V1, AERODROME_PAGE_PAUSE_MS_V1, BASE_PUBLIC_RPC_V1, SUGAR_MAX_ITERATIONS_V1,
+  aerodromeReadTransportV1, readAerodromeClaimPlanV1,
   type AerodromeClaimCallV1, type AerodromeClaimReadV1, type AerodromeSugarPositionV1,
 } from './aerodromeClaimReader.js';
 
@@ -242,18 +243,25 @@ test('reads count instead of SDK 9000 bound; empty pages do not stop it', async 
   assert.equal(plan.poolsUnread, 0);
   assert.equal(plan.calls.length, 1);
 });
-test('splits failed pages, with at most two requests in flight', async () => {
+const noPause = async () => {};
+test('a refused page is asked again after a pause, then split, one request at a time', async () => {
   let active = 0; let maxActive = 0;
+  const pauses: number[] = [];
   const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: 1_000, page: async (limit, offset) => {
     active++; maxActive = Math.max(maxActive, active);
     await new Promise(resolve => setTimeout(resolve, 1)); active--;
     if (limit > 125) throw new Error('page unavailable');
     return offset === 875 ? [position()] : [];
-  } }), WALLET);
+  } }), WALLET, { pause: async (ms) => { pauses.push(ms); } });
   assert.equal(plan.poolsRead, 1_000); assert.equal(plan.poolsUnread, 0);
-  assert.equal(plan.calls.length, 1); assert.ok(maxActive <= 2);
+  assert.equal(plan.calls.length, 1);
+  // Side by side was what tripped the provider's per-second limit.
+  assert.equal(maxActive, 1);
+  // Two 500-pool pages and four 250-pool pages each waited once before asking again.
+  assert.equal(pauses.length, 6);
+  assert.ok(pauses.every((ms) => ms === AERODROME_PAGE_PAUSE_MS_V1));
 });
-test('the smallest page is tried a second time, and only a second time', async () => {
+test('a page answering on its second ask is read whole; one that never answers stays unread', async () => {
   const tries = new Map<number, number>();
   const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: 500, page: async (limit, offset) => {
     if (limit > 125) throw new Error('page unavailable');
@@ -262,13 +270,13 @@ test('the smallest page is tried a second time, and only a second time', async (
     if (offset === 250 && tries.get(offset) === 1) throw new Error('rpc hiccup');
     if (offset === 375) throw new Error('rpc down');
     return offset === 250 ? [position()] : [];
-  } }), WALLET);
+  } }), WALLET, { pause: noPause });
   assert.deepEqual([...tries.entries()].sort((a, b) => a[0] - b[0]), [[0, 1], [125, 1], [250, 2], [375, 2]]);
   assert.equal(plan.poolsRead, 375); assert.equal(plan.poolsUnread, 125);
   assert.equal(plan.errorCode, 'aerodrome_incomplete_coverage');
 });
 test('unread pages and capped catalogue cannot become no fees', async () => {
-  const failed = await readAerodromeClaimPlanV1(fixtureReader({ page: async () => { throw new Error('offline'); } }), WALLET);
+  const failed = await readAerodromeClaimPlanV1(fixtureReader({ page: async () => { throw new Error('offline'); } }), WALLET, { pause: noPause });
   assert.equal(failed.poolsUnread, 500); assert.equal(failed.errorCode, 'aerodrome_incomplete_coverage');
   const capped = await readAerodromeClaimPlanV1(fixtureReader({ count: 1_000 }), WALLET, { maxPools: 500 });
   assert.equal(capped.poolsUnread, 500); assert.equal(capped.errorCode, 'aerodrome_incomplete_coverage');
@@ -328,3 +336,12 @@ for (const [label, target, name, replacement] of [
     override: (t, n) => t === target && n === name ? replacement : undefined }), WALLET);
   assert.notEqual(plan.errorCode, null);
 });
+
+test('the configured provider answers first, and Base’s public endpoint when it refuses', () => {
+  const both = aerodromeReadTransportV1('https://base-mainnet.example/v3/key')({ chain: undefined, retryCount: 0 });
+  assert.equal(both.config.type, 'fallback');
+  // With nothing configured, or Base's own endpoint configured, there is one.
+  assert.equal(aerodromeReadTransportV1(undefined)({ chain: undefined, retryCount: 0 }).config.type, 'http');
+  assert.equal(aerodromeReadTransportV1(BASE_PUBLIC_RPC_V1)({ chain: undefined, retryCount: 0 }).config.type, 'http');
+});
+

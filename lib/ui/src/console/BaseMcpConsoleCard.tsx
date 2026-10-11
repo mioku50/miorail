@@ -235,8 +235,23 @@ export const BASE_MCP_CONSOLE_INPUT_ID_V1 = 'base-mcp-console-input';
  * "Base MCP returned nothing" and "here is what I recall about Base" are
  * different claims and only the first one is true.
  */
+/** Found's own readings: Miorail's code, never the model's. */
+const FOUND_READ_TOOLS_V1 = new Set(['aerodrome_rewards_read', 'uniswap_fees_read']);
+
+/**
+ * A Found reading that could not finish still says what it read and what it
+ * did not: "Could not read all of Aerodrome just now (17,375 of 39,256
+ * pools), so this is not 'nothing to claim'". Those words are code-owned, so
+ * they are shown in place of the generic failure line, which told the operator
+ * nothing at all (2026-10-11).
+ */
+export function baseMcpFoundReadingV1(answer: Pick<BaseMcpConsoleAnswerV1, 'trace' | 'reply'>): boolean {
+  return Boolean(answer.reply) && answer.trace.length > 0 && answer.trace.every((row) => FOUND_READ_TOOLS_V1.has(row.tool));
+}
+
 export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null): string | null {
   if (!answer) return null;
+  if (answer.status === 'failed' && baseMcpFoundReadingV1(answer)) return null;
   // A failed deterministic action can still carry the original immutable
   // receipt (for example, an idempotency conflict). The receipt and its exact
   // error are more useful than the generic console failure copy.
@@ -277,6 +292,11 @@ export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null
 export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): string {
   if (answer.trace.length === 0) {
     return 'No tool was called, so this answer used no Wallet MCP data.';
+  }
+  // Found is not a Wallet MCP call: Miorail read the chain itself.
+  if (answer.trace.every((row) => FOUND_READ_TOOLS_V1.has(row.tool))) {
+    const took = answer.elapsedMs ? ` Took ${(answer.elapsedMs / 1000).toFixed(1)}s.` : '';
+    return `Read by Miorail from Base itself; no Wallet MCP tool and no provider was called.${took}`;
   }
   const failed = answer.trace.filter((row) => !row.ok).length;
   const calls = `${answer.trace.length} Wallet MCP tool call${answer.trace.length === 1 ? '' : 's'}`;
@@ -664,11 +684,11 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
               </div>
             )}
 
-            {answer.status === 'answered' && (
+            {(answer.status === 'answered' || (answer.status === 'failed' && baseMcpFoundReadingV1(answer))) && (
               <>
                 <div className="qrow">
-                  <span className={`pill ${answer.trace.length > 0 ? 'g' : 'n'}`}>
-                    {answer.trace.length > 0 ? 'answered from tools' : 'no tool used'}
+                  <span className={`pill ${answer.status === 'failed' ? 'n' : answer.trace.length > 0 ? 'g' : 'n'}`}>
+                    {answer.status === 'failed' ? 'not read in full' : answer.trace.length > 0 ? 'answered from tools' : 'no tool used'}
                   </span>
                   <span className="v mono">{answer.trace.length}</span>
                 </div>
