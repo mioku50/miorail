@@ -50,6 +50,9 @@ export const AERODROME_CLAIM_ABI_V1 = parseAbi([
   'function earned(address) view returns (uint256)',
   `function positions(uint256 _limit,uint256 _offset,address _account) view returns (${POSITION_TUPLE}[])`,
   `function positionsUnstakedConcentrated(uint256 _limit,uint256 _offset,address _account) view returns (${POSITION_TUPLE}[])`,
+  // A Slipstream manager's own record of a position (one argument, so viem
+  // never confuses it with Sugar's positions page above).
+  'function positions(uint256 tokenId) view returns (uint96 nonce,address operator,address token0,address token1,int24 tickSpacing,int24 tickLower,int24 tickUpper,uint128 liquidity,uint256 feeGrowthInside0LastX128,uint256 feeGrowthInside1LastX128,uint128 tokensOwed0,uint128 tokensOwed1)',
   'function balanceOf(address) view returns (uint256)',
   'function factory() view returns (address)',
   'function isPool(address) view returns (bool)',
@@ -135,6 +138,13 @@ function address(value: unknown): string {
 }
 function requireEqual(actual: unknown, expected: string): void {
   if (address(actual) !== expected.toLowerCase()) throw new Error('aerodrome_target_mismatch');
+}
+/** The position manager reviewed for a concentrated factory, or null. A
+ * pool's own nft() cannot say: Slipstream writes it only when a gauge is made
+ * for the pool, so a pool without a gauge answers 0x0 there. */
+function reviewedClManager(factory: string): string | null {
+  return Object.hasOwn(AERODROME_CL_NFPMS_V1, factory)
+    ? AERODROME_CL_NFPMS_V1[factory as typeof AERODROME_CL_FACTORIES_V1[number]] : null;
 }
 function call(to: string, signature: string, args: readonly unknown[] = []): ExecutionCallV1 {
   const abi = parseAbi([signature]);
@@ -339,8 +349,13 @@ export async function readAerodromeClaimPlanV1(
       const returned = new Map<string, Set<bigint>>();
       for (const row of rows as AerodromeSugarPositionV1[]) {
         if (!row || typeof row.id !== 'bigint' || row.id <= 0n) throw new Error('aerodrome_position_unreadable');
-        const nfpm = address(await read(address(row.lp), 'nft'));
-        if (held.has(nfpm)) returned.set(nfpm, (returned.get(nfpm) ?? new Set()).add(row.id));
+        // The manager is known by the pool's factory, never by its nft(): one
+        // position in a pool without a gauge refused the whole wallet when it
+        // was (four wallets in the 2026-10-11 measurement). A row from an
+        // unreviewed factory counts for no manager, and is refused below only
+        // if it has something to claim.
+        const nfpm = reviewedClManager(address(await read(address(row.lp), 'factory')));
+        if (nfpm && held.has(nfpm)) returned.set(nfpm, (returned.get(nfpm) ?? new Set()).add(row.id));
         positions.push(row);
       }
       for (const [nfpm, balance] of held) {
@@ -397,9 +412,18 @@ export async function readAerodromeClaimPlanV1(
           item('basic_aero', call(gauge, 'function getReward(address)', [wallet]));
         }
       } else {
-        const nft = address(await read(pool, 'nft'));
+        // The manager reviewed for the factory. A pool with a gauge names one
+        // and it must be that one; a pool without a gauge names none (0x0),
+        // and its unstaked fees are collectable all the same. Either way the
+        // NFT's own record has to lead back to this pool.
+        const nft = reviewedClManager(factory)!;
+        const named = await read(pool, 'nft');
+        if (typeof named !== 'string' || !/^0x[0-9a-fA-F]{40}$/u.test(named)) throw new Error('aerodrome_target_unverified');
+        if (named.toLowerCase() !== ZERO) requireEqual(named, nft);
         requireEqual(await read(nft, 'factory'), factory);
-        requireEqual(nft, AERODROME_CL_NFPMS_V1[factory as typeof AERODROME_CL_FACTORIES_V1[number]]);
+        const minted = await read(nft, 'positions', [position.id]);
+        if (!Array.isArray(minted) || minted.length !== 12) throw new Error('aerodrome_position_unreadable');
+        requireEqual(await read(factory, 'getPool', [address(minted[2]), address(minted[3]), minted[4]]), pool);
         // Who holds the NFT decides, not Sugar's staked figure: an NFT in the
         // wallet is unstaked and its fees are collectable; one in the gauge is
         // staked, earns AERO, and its fees go to voters. Anyone else's is not

@@ -48,6 +48,8 @@ export function fixtureReader(options: {
     if (target === AERODROME_VOTER_V1 && name === 'factoryRegistry') return REGISTRY;
     if (target === REGISTRY && name === 'poolFactories') return [AERODROME_BASIC_FACTORY_V1, ...AERODROME_CL_FACTORIES_V1];
     if (name === 'allPoolsLength') return target === AERODROME_BASIC_FACTORY_V1 ? BigInt(count) : 0n;
+    // A manager's own record of one position: its tokens and tick spacing.
+    if (name === 'positions' && args.length === 1) return [0n, ZERO, TOKEN0, TOKEN1, 100, -60, 60, 5n, 0n, 0n, 0n, 0n];
     if (name === 'positions') {
       const [limit, offset] = args.map(Number);
       if (options.page) return options.page(limit, offset);
@@ -133,6 +135,37 @@ test('the third approved CL factory and its manager are reviewed', async () => {
   } }), WALLET);
   assert.equal(plan.errorCode, null);
   assert.deepEqual(plan.calls.map(item => [item.kind, item.call.to]), [['cl_fees', nfpm]]);
+});
+test('a pool without a gauge names no manager; its fees are still collected, and the wallet’s other claims stand', async () => {
+  // Slipstream writes a pool's nft() and gauge() only when a gauge is made for
+  // it. One such position used to refuse the whole wallet (2026-10-11).
+  const bare = '0x3434343434343434343434343434343434343434';
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({
+    rows: [position({ emissions_earned: 5n, staked: 10n })],
+    held: [unstaked, position({ lp: bare, id: 43n, liquidity: 5n })],
+    override: (target, name, args) => {
+      if (target === bare && (name === 'nft' || name === 'gauge')) return ZERO;
+      if (target === bare && name === 'tickSpacing') return 200;
+      if (target === AERODROME_VOTER_V1 && name === 'gauges' && args[0] === bare) return ZERO;
+      if (name === 'positions' && args.length === 1 && args[0] === 43n) return [0n, ZERO, TOKEN0, TOKEN1, 200, -400, 400, 5n, 0n, 0n, 0n, 0n];
+      if (name === 'getPool' && args[2] === 200) return bare;
+      return undefined;
+    } }), WALLET);
+  assert.equal(plan.errorCode, null);
+  assert.equal(plan.clPositionsTotal, 2); assert.equal(plan.clPositionsRead, 2);
+  assert.deepEqual(plan.calls.map(item => [item.kind, item.call.to, item.tokenId]), [
+    ['basic_fees', POOL, '0'], ['basic_aero', GAUGE, '0'], ['cl_fees', NFPM, '41'], ['cl_fees', NFPM, '43'],
+  ]);
+  assert.equal(plan.calls[3].pool, bare);
+});
+test('an NFT whose own record leads to another pool is refused', async () => {
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ rows: [], held: [unstaked], override: (_target, name, args) => {
+    if (name === 'positions' && args.length === 1) return [0n, ZERO, TOKEN0, TOKEN1, 300, -60, 60, 5n, 0n, 0n, 0n, 0n];
+    if (name === 'getPool' && args[2] === 300) return TOKEN1;
+    return undefined;
+  } }), WALLET);
+  assert.equal(plan.errorCode, 'aerodrome_target_mismatch');
+  assert.equal(plan.calls.length, 0);
 });
 test('Sugar is never paged past its walk; the basic pools past it are read from the pools', async () => {
   let furthest = 0;
