@@ -726,6 +726,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .mcp-evidence-open { margin-top: 8px; }
 .mio-console .mcp-cta { margin: 10px 0 0; }
 .mio-console .mcp-cta > a { text-decoration: none; }
+/* Found's share card offer under a completed claim or collect: the note, then the buttons. */
+.mio-console .found-share { margin: 12px 0 0; padding-top: 10px; border-top: 1px solid var(--line); }
 .mio-console .mcp-plugin-summary { min-height: 34px; margin: 9px 0; color: var(--muted); font-size: var(--fs-meta); line-height: var(--lh-snug); }
 .mio-console .mcp-plugin-facts { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 6px; margin: 0; }
 .mio-console .mcp-plugin-facts > div { min-width: 0; padding: 7px 8px; border-radius: 7px; background: var(--field); }

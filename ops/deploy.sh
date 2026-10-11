@@ -543,6 +543,13 @@ printf '%s' "$gift_page" | grep -q '<title>Gift not found · Miorail</title>' \
   || { echo 'FAILED: /gift/<id> came back without its own head (nginx served the static file)'; exit 1; }
 printf '  gifts          %-28s %s\n' "$oauth_origin/gift/…" 'unknown id answers with the gift head'
 
+# Found cards (2026-10-11), the same way: a code nobody was given must come
+# back as the API's own "Card not found" head, not the static file's.
+found_page=$(curl -sS --max-time 20 "$oauth_origin/found/ZZZZZZZZZZZZ" 2>/dev/null) || found_page=''
+printf '%s' "$found_page" | grep -q '<title>Card not found · Miorail</title>' \
+  || { echo 'FAILED: /found/<code> came back without its own head (nginx served the static file)'; exit 1; }
+printf '  found cards    %-28s %s\n' "$oauth_origin/found/…" 'unknown code answers with the card head'
+
 # Farcaster mini app (2026-10-11). The manifest must be the API's, for the
 # board; the /app shell used to serve one, unsigned and pointing at /app.
 # Whether Farcaster can tie it to an account is printed, not required: only

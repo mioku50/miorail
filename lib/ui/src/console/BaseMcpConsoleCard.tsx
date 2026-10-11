@@ -4,6 +4,8 @@ import {
   selectBaseMcpExampleV1,
   type BaseMcpExampleDispositionUiV1,
 } from './BaseMcpPluginsCard';
+import { giftShareLinksV1 } from './giftView';
+import { ShareLinkV1 } from './shareHost';
 
 // The app uses the automatic JSX runtime; the node render suite uses the
 // classic transform and needs this binding.
@@ -176,6 +178,22 @@ export interface BaseMcpConsoleModelV1 {
   /** Fills the box from a next step under the answer, which can sit a screen
    * below it. Falls back to `onQuestionChange`. */
   onSelectNext?: (prompt: string) => void;
+  /** Makes the share card of a completed Found claim or collect. */
+  onShareAction?: (receiptId: string) => void;
+  /** The card, once made: its link and the post that goes with it. */
+  share?: { url: string; text: string } | null;
+  sharing?: boolean;
+  shareError?: string | null;
+}
+
+/** What a Found card makes public, said before it is made. */
+export const FOUND_SHARE_NOTE_V1 =
+  'A card shows what arrived (the dollar value when shared, the tokens and the block). It names no wallet and no transaction.';
+
+/** Whether a receipt is a Found claim that completed on its own events. */
+export function foundShareableV1(receipt: Pick<BaseMcpActionReceiptUiV1, 'actionType' | 'status' | 'reconciliationState'>): boolean {
+  return (receipt.actionType === 'aerodrome_claim' || receipt.actionType === 'uniswap_collect')
+    && receipt.status === 'completed' && receipt.reconciliationState === 'matched';
 }
 
 export interface BaseMcpQuickExampleV1 {
@@ -597,6 +615,33 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                     </button>
                   )}
                 </div>
+                {/* A completed claim or collect can become a card to post.
+                    Made by this click and never before; the note says what
+                    it shows before anything is made. */}
+                {foundShareableV1(answer.action.receipt) && (model.share ? (
+                  <div className="found-share">
+                    <p className="lnote">Your card is ready: {model.share.url}</p>
+                    <div className="ctarow">
+                      <ShareLinkV1 className="btn" href={giftShareLinksV1(model.share).x}>Post on X</ShareLinkV1>
+                      <ShareLinkV1 className="btn sec" href={giftShareLinksV1(model.share).farcaster}>Cast on Farcaster</ShareLinkV1>
+                    </div>
+                  </div>
+                ) : model.onShareAction ? (
+                  <div className="found-share">
+                    <p className="lnote">{FOUND_SHARE_NOTE_V1}</p>
+                    <div className="ctarow">
+                      <button
+                        type="button"
+                        className="btn"
+                        disabled={model.sharing}
+                        onClick={() => model.onShareAction?.(answer.action!.receipt.id)}
+                      >
+                        {model.sharing ? 'Making the card…' : 'Make a share card'}
+                      </button>
+                    </div>
+                    {model.shareError && <p className="note warn">{model.shareError}</p>}
+                  </div>
+                ) : null)}
                 {answer.action.receipt.transactionHash && (
                   <p className="lnote">
                     tx{' '}

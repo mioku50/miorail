@@ -122,6 +122,7 @@ import { mcpServerRouter } from './routes/mcp/index.js';
 import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
 import { stockPagesRouter } from './routes/stockPages.js';
 import { giftPagesRouter } from './routes/giftPages.js';
+import { foundPagesRouter } from './routes/foundPages.js';
 import { farcasterManifestRouter } from './routes/farcasterManifest.js';
 import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 
@@ -154,6 +155,8 @@ app.use(stockPagesRouter);
 // `/gift/<publicId>`: the same document, headed for the gift it shows, so a
 // gift shared on X or Farcaster previews as what it is.
 app.use(giftPagesRouter);
+// `/found/<code>`: a Found card, headed with what it shows, and its picture.
+app.use(foundPagesRouter);
 // `/.well-known/farcaster.json`: Miorail as a Farcaster mini app.
 app.use(farcasterManifestRouter);
 

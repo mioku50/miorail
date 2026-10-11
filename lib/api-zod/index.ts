@@ -2275,6 +2275,22 @@ export const BaseMcpConsoleResponseV1Schema = z.object({
 });
 
 export const BaseMcpActionReconcileResponseV1Schema = BaseMcpActionEnvelopeV1Schema;
+
+/**
+ * Found's share card for a completed claim or collect: its code, its link, and
+ * the post that goes with it. Only what the picture shows: no wallet, no
+ * transaction.
+ */
+export const FoundShareResponseV1Schema = z.object({
+  code: z.string().regex(/^[A-Za-z0-9_-]{12}$/),
+  url: z.string().url().max(300).startsWith('https://'),
+  text: z.string().min(1).max(280),
+  protocol: z.enum(['aerodrome', 'uniswap']),
+  usdCents: z.number().int().nonnegative(),
+  tokens: z.array(z.object({ symbol: z.string().min(1).max(16), amount: z.string().min(1).max(32) })).min(1).max(4),
+  blockNumber: z.string().regex(/^\d+$/),
+});
+export type FoundShareResponseV1 = z.infer<typeof FoundShareResponseV1Schema>;
 export const BaseMcpActionReceiptListResponseV1Schema = z.object({
   receipts: z.array(BaseMcpActionReceiptV1Schema).max(100),
 });

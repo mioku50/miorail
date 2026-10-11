@@ -170,6 +170,7 @@ import {
   useBaseMcpToolsProbe,
   useBaseMcpActionReceipts,
   useReconcileBaseMcpAction,
+  useShareFoundReceipt,
   usePortfolio,
   useRouteHistory,
   useX402Ledger,
@@ -1106,6 +1107,7 @@ export function MiniConsole() {
   // measured routes, this carries whatever a third-party tool returned.
   const baseMcpAsk = useBaseMcpConsole();
   const reconcileBaseMcpAction = useReconcileBaseMcpAction();
+  const shareFound = useShareFoundReceipt();
   const baseMcpActionReceipts = useBaseMcpActionReceipts({ enabled: section === "activity" });
   const [baseMcpQuestion, setBaseMcpQuestion] = useState("");
 
@@ -2490,6 +2492,7 @@ export function MiniConsole() {
               const message = baseMcpQuestion.trim();
               if (message) {
                 reconcileBaseMcpAction.reset();
+                shareFound.reset();
                 baseMcpAsk.mutate(message);
               }
             }}
@@ -2524,6 +2527,10 @@ export function MiniConsole() {
               setSection("routes");
             }}
             onReconcileAction={(receiptId) => reconcileBaseMcpAction.mutate(receiptId)}
+            onShareAction={(receiptId) => shareFound.mutate(receiptId)}
+            share={shareFound.data ? { url: shareFound.data.url, text: shareFound.data.text } : null}
+            sharing={shareFound.isPending}
+            shareError={shareFound.error ? "The card could not be made just now. Nothing was posted; try again." : null}
             unavailableReason={
               baseMcpAsk.error
                 ? "The console could not reach the server. Nothing here is a statement about Wallet MCP."

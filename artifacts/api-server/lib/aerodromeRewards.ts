@@ -184,13 +184,19 @@ export function aboutDollarsV1(usdcAtomic: string, russian: boolean): string {
   return russian ? `около ${dollars}` : `about ${dollars}`;
 }
 
-export function unitsV1(amount: AerodromeRewardAmountV1): string {
+/** "19,549.308", "0.0042": the number as every Found answer and card writes
+ * it, without its symbol. */
+export function amountDigitsV1(amount: Pick<AerodromeRewardAmountV1, 'amountAtomic' | 'decimals'>): string {
   const exact = formatUnits(BigInt(amount.amountAtomic), amount.decimals);
   const [whole, fraction = ''] = exact.split('.');
   // Four significant digits after the point are enough to recognise an amount.
   const kept = whole === '0' ? fraction.replace(/^(0*\d{0,4}).*$/u, '$1') : fraction.slice(0, 4);
   const trimmed = kept.replace(/0+$/u, '');
-  return `${Number(whole).toLocaleString('en-US')}${trimmed ? `.${trimmed}` : ''} ${amount.symbol}`;
+  return `${BigInt(whole!).toLocaleString('en-US')}${trimmed ? `.${trimmed}` : ''}`;
+}
+
+export function unitsV1(amount: AerodromeRewardAmountV1): string {
+  return `${amountDigitsV1(amount)} ${amount.symbol}`;
 }
 
 /** The phrases a reader presses next, exactly as the router reads them. */

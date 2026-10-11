@@ -24,6 +24,7 @@ import {
   useBaseMcpPlugins,
   useBaseMcpToolsProbe,
   useReconcileBaseMcpAction,
+  useShareFoundReceipt,
   useStatus,
 } from '@mioagent/api-client-react';
 
@@ -65,6 +66,7 @@ export function ExtensionsPage() {
   const catalogue = useBaseMcpPlugins();
   const consoleAsk = useBaseMcpConsole();
   const reconcileAction = useReconcileBaseMcpAction();
+  const shareFound = useShareFoundReceipt();
   const [question, setQuestion] = useState('');
   const gate = useAuthGate();
   // Public since 2026-10-04: one of the four main pages used to open on the
@@ -216,6 +218,7 @@ export function ExtensionsPage() {
               const message = question.trim();
               if (message) {
                 reconcileAction.reset();
+                shareFound.reset();
                 consoleAsk.mutate(message);
               }
             }}
@@ -234,6 +237,10 @@ export function ExtensionsPage() {
             onReconcileAction={(receiptId) => reconcileAction.mutate(receiptId)}
             // A next step sits under a long answer: fill, scroll up, focus.
             onSelectNext={plugins.onSelectPrompt}
+            onShareAction={(receiptId) => shareFound.mutate(receiptId)}
+            share={shareFound.data ? { url: shareFound.data.url, text: shareFound.data.text } : null}
+            sharing={shareFound.isPending}
+            shareError={shareFound.error ? 'The card could not be made just now. Nothing was posted; try again.' : null}
             disabledReason={signedOut ? 'Sign in with your wallet to ask. You can still explore and fill the examples below.' : null}
             onSignIn={
               signedOut

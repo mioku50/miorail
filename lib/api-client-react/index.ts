@@ -2619,6 +2619,23 @@ export function useReconcileBaseMcpAction(
   });
 }
 
+/** Makes (or reads back) the share card of a completed Found claim. */
+export function useShareFoundReceipt(
+  options?: Omit<UseMutationOptions<apiSpec.FoundShareResponseV1, Error, string>, 'mutationFn' | 'retry'>,
+) {
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async (receiptId: string) => {
+      const response = await fetchApi<unknown>(
+        `/api/mcp/base/actions/${encodeURIComponent(receiptId)}/share`,
+        { method: 'POST' },
+      );
+      return apiSpec.FoundShareResponseV1Schema.parse(response);
+    },
+  });
+}
+
 export function useBaseMcpToolsProbe(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpToolProbeResponse, Error, void>, 'mutationFn'>
 ) {

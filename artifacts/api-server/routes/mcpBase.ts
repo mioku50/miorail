@@ -6,6 +6,7 @@ import {
   BaseMcpConsoleRequestV1Schema,
   BaseMcpConsoleResponseV1Schema,
   BaseMcpActionReconcileResponseV1Schema,
+  FoundShareResponseV1Schema,
   BaseMcpActionReceiptListResponseV1Schema,
   BaseMcpPluginCatalogueResponseSchema,
   BaseMcpToolProbeResponseSchema,
@@ -59,6 +60,7 @@ import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
 import { prepareBaseMcpAerodromeClaimV1 } from '../lib/baseMcpAerodromeClaim.js';
 import { prepareBaseMcpUniswapCollectV1 } from '../lib/baseMcpUniswapCollect.js';
 import { runFoundReadV1 } from '../lib/found.js';
+import { makeFoundShareV1 } from '../lib/foundShare.js';
 import { foundClaimsReleasedV1 } from '../lib/baseMcpRuntimeSnapshot.js';
 
 export const mcpBaseRouter = Router();
@@ -83,6 +85,7 @@ export const mcpBaseRouteRuntime = {
   prepareBaseMcpAerodromeClaimV1,
   prepareBaseMcpUniswapCollectV1,
   runFoundReadV1,
+  makeFoundShareV1,
   listBaseMcpActionReceiptsV1,
   aerodromeRewardAlerts: (): AerodromeRewardAlertRepositoryV1 => createDatabaseAerodromeRewardAlertRepositoryV1(client as never),
   /** Whether a Telegram chat hears this wallet; null when that cannot be read. */
@@ -723,6 +726,26 @@ mcpBaseRouter.get('/actions', async (req: Request, res: Response, next: NextFunc
   try {
     const receipts = await mcpBaseRouteRuntime.listBaseMcpActionReceiptsV1(tenantUserId(req), 50);
     return res.json(BaseMcpActionReceiptListResponseV1Schema.parse({ receipts }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * Found's share card for a completed claim or collect: made by its owner's
+ * click, once per receipt, from the amounts the transaction's own events
+ * paid. Another tenant's receipt is a 404, an unfinished one a 409.
+ */
+mcpBaseRouter.post('/actions/:receiptId/share', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const receiptId = String(req.params.receiptId || '').slice(0, 200);
+    const result = await mcpBaseRouteRuntime.makeFoundShareV1({ receiptId, tenantId: tenantUserId(req),
+      walletAddress: tenantWalletAddress(req) });
+    res.setHeader('Cache-Control', 'no-store');
+    if (!result.ok) return res.status(result.status).json({ error: result.errorCode, code: result.errorCode });
+    return res.json(FoundShareResponseV1Schema.parse({ code: result.share.code, url: result.url, text: result.text,
+      protocol: result.share.protocol, usdCents: result.share.usdCents, tokens: result.share.tokens,
+      blockNumber: result.share.blockNumber }));
   } catch (error) {
     next(error);
   }

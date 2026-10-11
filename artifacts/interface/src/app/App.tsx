@@ -55,6 +55,10 @@ const PublicProofPage = lazy(() =>
 const PublicGiftPage = lazy(() =>
   import('../features/proof/PublicGiftPage').then((m) => ({ default: m.PublicGiftPage })),
 );
+const PublicFoundPage = lazy(() =>
+  import('../features/proof/PublicFoundPage').then((m) => ({ default: m.PublicFoundPage })),
+);
+
 const B20WatchPage = lazy(() =>
   import('../features/b20/B20WatchPage').then((m) => ({ default: m.B20WatchPage })),
 );
@@ -194,6 +198,12 @@ export function App() {
             no session, for the same reason a proof has none. */}
         <Route path="/gift/:publicId">
           <PublicGiftPage />
+        </Route>
+
+        {/* A Found card, as its owner shared it on X or Farcaster: what the
+            card shows, and the reader's own check. No session. */}
+        <Route path="/found/:code">
+          <PublicFoundPage />
         </Route>
 
         {/* "Is this the real one" — no session, for the same reason. The reader

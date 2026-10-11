@@ -210,7 +210,7 @@ test('Stocks is sessionless on web, at an address worth sharing', () => {
 
 test('the edge sends stock and gift pages to the API for their head, and falls back to the file', () => {
   const nginx = source('ops/nginx/miorail-app.conf');
-  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {', 'location ^~ /gift/ {']) {
+  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {', 'location ^~ /gift/ {', 'location ^~ /found/ {']) {
     const at = nginx.indexOf(location);
     assert.ok(at >= 0, `Nginx has no ${location}`);
     const block = nginx.slice(at, nginx.indexOf('\n}', at));
@@ -231,6 +231,18 @@ test('the deploy proves a stock page left with its own head', () => {
   assert.match(deploy, /nginx served the static file/);
   // And a gift page: an unknown id must answer with the API's head.
   assert.match(deploy, /<title>Gift not found · Miorail<\/title>/);
+  // And a Found card: an unknown code must answer with the API's head.
+  assert.match(deploy, /<title>Card not found · Miorail<\/title>/);
+});
+
+test('a Found card opens with no session, and the app reads only what the card shows', () => {
+  const app = source('artifacts/interface/src/app/App.tsx');
+  const foundRoute = app.indexOf('<Route path="/found/:code">');
+  const firstSessionGate = app.indexOf('<RequireSession>');
+  assert.ok(foundRoute >= 0 && foundRoute < firstSessionGate, '/found/:code must render before any session gate');
+  const page = source('artifacts/interface/src/features/proof/PublicFoundPage.tsx');
+  assert.match(page, /\/api\/public\/found\//);
+  assert.doesNotMatch(page, /walletAddress|transactionHash/);
 });
 
 test('a gift page opens with no session, and never reads its recipient from the address bar', () => {

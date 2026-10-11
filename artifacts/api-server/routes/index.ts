@@ -17,6 +17,7 @@ import { authRouter } from './auth';
 import { routeIntelligenceRouter } from './routeIntelligence';
 import { publicProofRouter } from './publicProof';
 import { publicGiftRouter } from './giftPages';
+import { publicFoundRouter } from './foundPages';
 import { publicMetricsRouter } from './publicMetrics';
 import { publicIdentityRouter } from './publicIdentity';
 import { publicStockIconsRouter, publicStocksRouter } from './publicStocks';
@@ -36,6 +37,8 @@ routes.use('/auth', authRouter);
 routes.use('/public', publicProofRouter);
 // A gift's labels (two Basenames, a company), beside the proof they label.
 routes.use('/public', publicGiftRouter);
+// A Found card's figures, for the page a shared card opens.
+routes.use('/public', publicFoundRouter);
 routes.use('/public', publicMetricsRouter);
 // "Is this the real one" opens with no session for the same reason a proof
 // does: the reader holding an unknown address is the reader with no account.
