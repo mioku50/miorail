@@ -52,7 +52,8 @@ export type BaseMcpConsoleStatusV1 =
 interface BaseMcpActionReceiptCommonUiV1 {
   id: string;
   status: 'preparing' | 'approval_required' | 'pending' | 'reconciling' | 'completed' | 'rejected' | 'failed';
-  provider: 'base-mcp';
+  /** Wallet MCP, or the wallet in use on the page (Found's claims only). */
+  provider: 'base-mcp' | 'wallet';
   chainId: 8453;
   reconciliationState: 'not_started' | 'pending' | 'matched' | 'provider_confirmed' | 'mismatched' | 'unavailable';
   transactionHash: string | null;
@@ -140,6 +141,10 @@ export interface BaseMcpConsoleAnswerV1 {
    * never by the model: "Claim my Aerodrome fees" under a reading that found
    * some. Pressing one fills the box like any example. */
   next?: readonly BaseMcpConsoleNextUiV1[];
+  /** Found's claim: the exact calls the server read, guarded and simulated,
+   * for the wallet in use on this page to send. Only while the receipt waits
+   * for that wallet. */
+  walletCalls?: readonly { to: string; value: string; data: string }[] | null;
 }
 
 export interface BaseMcpConsoleNextUiV1 {
@@ -184,6 +189,26 @@ export interface BaseMcpConsoleModelV1 {
   share?: { url: string; text: string } | null;
   sharing?: boolean;
   shareError?: string | null;
+  /** Sends a Found claim from the wallet in use on this page. Absent where the
+   * page has no wallet to send it with. */
+  walletClaim?: BaseMcpWalletClaimUiV1 | null;
+}
+
+export interface BaseMcpWalletClaimUiV1 {
+  onConfirm: () => void;
+  /** From the press until the server has the transactions. */
+  busy: boolean;
+  /** What is happening now, in words; null at rest. */
+  note: string | null;
+  error: string | null;
+  /** The transactions the wallet reported, linked while they are checked. */
+  transactionHashes?: readonly string[];
+}
+
+/** Whether this answer holds a Found claim waiting for the page's wallet. */
+export function baseMcpWalletClaimReadyV1(answer: Pick<BaseMcpConsoleAnswerV1, 'action' | 'walletCalls'> | null): boolean {
+  return Boolean(answer?.action && answer.action.receipt.provider === 'wallet'
+    && answer.action.receipt.status === 'approval_required' && answer.walletCalls?.length);
 }
 
 /** What a Found card makes public, said before it is made. */
@@ -252,6 +277,10 @@ export function baseMcpFoundReadingV1(answer: Pick<BaseMcpConsoleAnswerV1, 'trac
 export function baseMcpConsoleStatusCopyV1(answer: BaseMcpConsoleAnswerV1 | null): string | null {
   if (!answer) return null;
   if (answer.status === 'failed' && baseMcpFoundReadingV1(answer)) return null;
+  // A Found claim that was not prepared says why in reviewed words: what the
+  // reading covered and the step that stopped it. Never model text.
+  if (answer.status === 'failed' && !answer.action && answer.reply
+    && /^(aerodrome|uniswap|found)_/u.test(answer.errorCode ?? '')) return answer.reply;
   // A failed deterministic action can still carry the original immutable
   // receipt (for example, an idempotency conflict). The receipt and its exact
   // error are more useful than the generic console failure copy.
@@ -602,8 +631,8 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                   <span className="v">Base</span>
                 </div>
                 <div className="qrow">
-                  <span>Provider</span>
-                  <span className="v">Wallet MCP</span>
+                  <span>Sent by</span>
+                  <span className="v">{answer.action.receipt.provider === 'wallet' ? 'Your wallet' : 'Wallet MCP'}</span>
                 </div>
                 <div className="qrow">
                   <span>Reconciliation</span>
@@ -612,6 +641,40 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                 {answer.reply && <p className="lnote">{answer.reply}</p>}
                 {answer.action.resultPreview && (
                   <pre className="mono aitext">{answer.action.resultPreview}</pre>
+                )}
+                {/* Found's claim, sent from the wallet on this page: one press,
+                    one wallet prompt, and nothing sent again on its own. */}
+                {baseMcpWalletClaimReadyV1(answer) && model.walletClaim && (
+                  <div className="ctarow">
+                    <button
+                      type="button"
+                      className="btn"
+                      disabled={model.walletClaim.busy}
+                      onClick={model.walletClaim.onConfirm}
+                    >
+                      {model.walletClaim.busy ? 'Waiting for your wallet…' : 'Confirm in your wallet'}
+                    </button>
+                  </div>
+                )}
+                {answer.action.receipt.provider === 'wallet' && model.walletClaim?.note && (
+                  <p className="lnote">{model.walletClaim.note}</p>
+                )}
+                {answer.action.receipt.provider === 'wallet' && model.walletClaim?.error && (
+                  <p className="note warn">{model.walletClaim.error}</p>
+                )}
+                {answer.action.receipt.provider === 'wallet' && !answer.action.receipt.transactionHash
+                  && (model.walletClaim?.transactionHashes?.length ?? 0) > 0 && (
+                  <p className="lnote">
+                    sent{' '}
+                    {model.walletClaim!.transactionHashes!.map((hash, index) => (
+                      <span key={hash}>
+                        {index > 0 ? ', ' : ''}
+                        <a className="mono" href={`https://basescan.org/tx/${hash}`} target="_blank" rel="noopener noreferrer">
+                          {hash.slice(0, 10)}…
+                        </a>
+                      </span>
+                    ))}
+                  </p>
                 )}
                 <div className="ctarow">
                   {answer.action.approvalUrl && (
@@ -624,7 +687,9 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                       {answer.action.receipt.actionType === 'virtuals' ? 'Approve Sign-In' : 'Approve in your wallet'}
                     </a>
                   )}
-                  {model.onReconcileAction && !['completed', 'failed', 'rejected'].includes(answer.action.receipt.status) && (
+                  {model.onReconcileAction && !['completed', 'failed', 'rejected'].includes(answer.action.receipt.status)
+                    // A claim still waiting for this page's wallet has nothing on Base to check.
+                    && !(answer.action.receipt.provider === 'wallet' && answer.action.receipt.status === 'approval_required') && (
                     <button
                       type="button"
                       className="btn sec"
@@ -676,11 +741,19 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                     {answer.action.receipt.blockNumber ? ` · block ${answer.action.receipt.blockNumber}` : ''}
                   </p>
                 )}
-                <p className="note warn">
-                  Wallet MCP action — capability policy passed and your wallet&apos;s approval is
-                  required. Send is reconciled against exact onchain transfer facts; x402 is confirmed
-                  by the paid endpoint response and stored only as a hash. This is not a Miorail verified route.
-                </p>
+                {answer.action.receipt.provider === 'wallet' ? (
+                  <p className="note warn">
+                    Sent from your own wallet, not Wallet MCP. Miorail wrote these calls from its own reading,
+                    checked each one and simulated them together; the claim counts only when Base&apos;s events
+                    pay this wallet for every one. This is not a Miorail verified route.
+                  </p>
+                ) : (
+                  <p className="note warn">
+                    Wallet MCP action — capability policy passed and your wallet&apos;s approval is
+                    required. Send is reconciled against exact onchain transfer facts; x402 is confirmed
+                    by the paid endpoint response and stored only as a hash. This is not a Miorail verified route.
+                  </p>
+                )}
               </div>
             )}
 

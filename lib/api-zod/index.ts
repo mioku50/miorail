@@ -2029,7 +2029,8 @@ const BaseMcpActionReceiptCommonV1Schema = z.object({
   schemaVersion: z.literal('base-mcp-action-receipt/v1'),
   id: z.string().min(1).max(200),
   actionHash: HashV1Schema,
-  provider: z.literal('base-mcp'),
+  /** Wallet MCP, or the wallet the person is using (Found's claims only). */
+  provider: z.enum(['base-mcp', 'wallet']),
   chainId: z.literal(8453),
   walletAddress: AddressV1Schema,
   status: BaseMcpActionReceiptStatusV1Schema,
@@ -2272,7 +2273,29 @@ export const BaseMcpConsoleResponseV1Schema = z.object({
     )
     .max(4)
     .default([]),
+  /**
+   * Found's claim for the wallet the person is using: the exact calls the
+   * server read, guarded and simulated, for that wallet to send. Present only
+   * while the receipt waits for the wallet.
+   */
+  walletCalls: z
+    .array(
+      z.object({
+        to: AddressV1Schema,
+        value: z.literal('0'),
+        data: z.string().regex(/^0x(?:[0-9a-fA-F]{2})+$/).max(4_000),
+      }),
+    )
+    .min(1)
+    .max(20)
+    .nullable()
+    .default(null),
 });
+
+/** What the wallet sent for a Found claim: its transaction hashes. */
+export const FoundWalletSubmissionRequestV1Schema = z.object({
+  transactionHashes: z.array(z.string().regex(/^0x[0-9a-fA-F]{64}$/)).min(1).max(20),
+}).strict();
 
 export const BaseMcpActionReconcileResponseV1Schema = BaseMcpActionEnvelopeV1Schema;
 

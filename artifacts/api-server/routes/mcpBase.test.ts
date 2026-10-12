@@ -23,7 +23,8 @@ const originalPluginDrift = mcpBaseRouteRuntime.baseMcpPluginDriftV1;
 const originalConsole = mcpBaseRouteRuntime.runBaseMcpConsoleV1;
 const originalReviewedConsole = mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1;
 const originalClassifyExtension = mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1;
-const originalPrepareAerodrome = mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1;
+const originalPrepareFoundClaim = mcpBaseRouteRuntime.prepareFoundWalletClaimV1;
+const originalRecordFoundSubmission = mcpBaseRouteRuntime.recordFoundWalletSubmissionV1;
 const originalResolveBaseName = mcpBaseRouteRuntime.resolveBaseNameV1;
 const originalPrepareExtension = mcpBaseRouteRuntime.prepareBaseMcpSendActionV1;
 const originalPrepareX402Extension = mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1;
@@ -93,7 +94,8 @@ afterEach(() => {
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = originalConsole;
   mcpBaseRouteRuntime.runReviewedBaseMcpPluginReadV1 = originalReviewedConsole;
   mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = originalClassifyExtension;
-  mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = originalPrepareAerodrome;
+  mcpBaseRouteRuntime.prepareFoundWalletClaimV1 = originalPrepareFoundClaim;
+  mcpBaseRouteRuntime.recordFoundWalletSubmissionV1 = originalRecordFoundSubmission;
   mcpBaseRouteRuntime.resolveBaseNameV1 = originalResolveBaseName;
   mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = originalPrepareExtension;
   mcpBaseRouteRuntime.prepareBaseMcpX402ActionV1 = originalPrepareX402Extension;
@@ -913,7 +915,7 @@ test('Found in Wallet MCP: the rewards read and the alert serve the signed-in wa
   mcpBaseRouteRuntime.aerodromeRewardAlerts = () => alerts;
   mcpBaseRouteRuntime.telegramLinked = async () => false;
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('must not run model'); };
-  mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = async () => { throw new Error('must not prepare a claim'); };
+  mcpBaseRouteRuntime.prepareFoundWalletClaimV1 = async () => { throw new Error('must not prepare a claim'); };
   const readFor: string[] = [];
   foundRuntimeV1.readUniswap = async () => ({ ok: true, fees: { blockNumber: '37123460', positionsHeld: 0, positionsOpen: 0,
     v4PositionsHeld: 0, unreadable: 0, positions: [], fees: [], totalUsdcAtomic: '0', unpriced: 0 } });
@@ -1017,38 +1019,80 @@ test('POST /api/mcp/base/console returns an approval Action Receipt for exact se
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
 });
 
-test('POST /api/mcp/base/console dispatches Aerodrome claim without exposing it to the read agent', async () => {
+const FOUND_CLAIM_RECEIPT = {
+  schemaVersion: 'base-mcp-action-receipt/v1', id: 'base-mcp-action:claim-http-1', actionHash: `0x${'a'.repeat(64)}`,
+  actionType: 'aerodrome_claim', operation: 'claim', provider: 'wallet', chainId: 8453,
+  walletAddress: '0x1111111111111111111111111111111111111111',
+  recipient: '0x1111111111111111111111111111111111111111', status: 'approval_required',
+  capabilityPolicy: 'passed', approvalRequired: true, reconciliationState: 'not_started',
+  transactionHash: null, blockNumber: null, errorCode: null, createdAt: '2026-10-05T16:00:00Z',
+  updatedAt: '2026-10-05T16:00:00Z', finalizedAt: null, routeVerified: false,
+  claimCount: 1, poolsRead: 38_794, poolsTotal: 38_794, managedSkipped: 2,
+  readBlock: '100', simulationStatus: 'passed', reconciliationBasis: 'aerodrome_claim_events',
+} as const;
+
+test('POST /api/mcp/base/console prepares a Found claim for the page wallet, with no Wallet MCP and no read agent', async () => {
   const envKeys = ['SESSION_SECRET', 'BASE_MCP_ENABLED', 'BASE_MCP_SERVER_URL'] as const;
   const before = envKeys.map(key => process.env[key]);
   process.env.SESSION_SECRET = 'test-session-secret';
-  process.env.BASE_MCP_ENABLED = 'true';
-  process.env.BASE_MCP_SERVER_URL = 'https://wallet-mcp.coinbase.com';
-  let prepared = 0;
-  mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = () => ({ kind: 'aerodrome_claim' });
+  // Wallet MCP switched off entirely: the claim does not need it.
+  delete process.env.BASE_MCP_ENABLED;
+  delete process.env.BASE_MCP_SERVER_URL;
+  const asked: string[] = [];
+  mcpBaseRouteRuntime.classifyBaseMcpExtensionIntentV1 = (message) =>
+    ({ kind: /Uniswap/.test(message) ? 'uniswap_collect' : 'aerodrome_claim' });
   mcpBaseRouteRuntime.runBaseMcpConsoleV1 = async () => { throw new Error('claim must not reach model'); };
-  mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1 = async (input) => {
-    prepared++; assert.equal(input.idempotencyKey, 'claim-http-1');
-    return { kind: 'action', reply: 'One claim passed batch simulation.', errorCode: null, toolsAvailable: 0,
-      approvalUrl: 'https://keys.coinbase.com/approve/claim-1', receipt: {
-        schemaVersion: 'base-mcp-action-receipt/v1', id: 'claim-http-1', actionHash: `0x${'a'.repeat(64)}`,
-        actionType: 'aerodrome_claim', operation: 'claim', provider: 'base-mcp', chainId: 8453,
-        walletAddress: '0x1111111111111111111111111111111111111111',
-        recipient: '0x1111111111111111111111111111111111111111', status: 'approval_required',
-        capabilityPolicy: 'passed', approvalRequired: true, reconciliationState: 'not_started',
-        transactionHash: null, blockNumber: null, errorCode: null, createdAt: '2026-10-05T16:00:00Z',
-        updatedAt: '2026-10-05T16:00:00Z', finalizedAt: null, routeVerified: false,
-        claimCount: 1, poolsRead: 38_794, poolsTotal: 38_794, managedSkipped: 2,
-        readBlock: '100', simulationStatus: 'passed', reconciliationBasis: 'aerodrome_claim_events',
-      } };
+  mcpBaseRouteRuntime.prepareFoundWalletClaimV1 = async (input) => {
+    asked.push(`${input.protocol}:${input.idempotencyKey}`);
+    if (input.protocol === 'uniswap') {
+      return { kind: 'answered', reply: 'No fees to collect.', errorCode: null, receipt: null, calls: null };
+    }
+    return { kind: 'action', reply: 'One call passed batch simulation. Confirm it in your wallet.', errorCode: null,
+      receipt: FOUND_CLAIM_RECEIPT, calls: [{ to: '0x2222222222222222222222222222222222222222', value: '0', data: '0xc00007b0' }] };
   };
   try {
     const response = await request(app).post('/api/mcp/base/console').send({ message: 'Claim my Aerodrome fees', requestId: 'claim-http-1' });
-    assert.equal(response.status, 200); assert.equal(prepared, 1);
+    assert.equal(response.status, 200);
     assert.equal(response.headers['cache-control'], 'no-store');
-    assert.equal(response.body.action.receipt.actionType, 'aerodrome_claim');
-    assert.equal(response.body.action.receipt.simulationStatus, 'passed');
+    assert.equal(response.body.status, 'action');
+    assert.equal(response.body.action.receipt.provider, 'wallet');
+    assert.equal(response.body.action.approvalUrl, null, 'nothing goes to keys.coinbase.com');
+    assert.deepEqual(response.body.walletCalls, [{ to: '0x2222222222222222222222222222222222222222', value: '0', data: '0xc00007b0' }]);
     assert.equal(response.body.handoff, null); assert.deepEqual(response.body.trace, []);
+    const none = await request(app).post('/api/mcp/base/console').send({ message: 'Collect my Uniswap fees', requestId: 'collect-http-1' });
+    assert.deepEqual([none.body.status, none.body.walletCalls, none.body.action ?? null], ['answered', null, null]);
+    assert.deepEqual(asked, ['aerodrome:claim-http-1', 'uniswap:collect-http-1']);
   } finally { envKeys.forEach((key, index) => restoreEnv(key, before[index])); }
+});
+
+test('POST /api/mcp/base/actions/:id/submitted records what the wallet sent, and refuses what it cannot check', async () => {
+  const seen: { receiptId: string; transactionHashes: readonly string[] }[] = [];
+  const hash = `0x${'c'.repeat(64)}` as const;
+  mcpBaseRouteRuntime.recordFoundWalletSubmissionV1 = async (input) => {
+    seen.push({ receiptId: input.receiptId, transactionHashes: input.transactionHashes });
+    if (input.receiptId === 'base-mcp-action:nobody') {
+      return { kind: 'failed', reply: 'not found', errorCode: 'base_mcp_action_receipt_not_found', receipt: null, calls: null };
+    }
+    if (input.receiptId === 'base-mcp-action:other-hashes') {
+      return { kind: 'failed', reply: 'already', errorCode: 'found_claim_already_submitted', receipt: FOUND_CLAIM_RECEIPT, calls: null };
+    }
+    return { kind: 'action', reply: 'Sent.', errorCode: null, calls: null,
+      receipt: { ...FOUND_CLAIM_RECEIPT, status: 'pending', reconciliationState: 'pending', transactionHash: hash } };
+  };
+  const post = (id: string, body: unknown) => request(app).post(`/api/mcp/base/actions/${id}/submitted`).send(body as object);
+  const ok = await post('base-mcp-action:claim-http-1', { transactionHashes: [hash] });
+  assert.equal(ok.status, 200);
+  assert.equal(ok.headers['cache-control'], 'no-store');
+  assert.deepEqual([ok.body.receipt.status, ok.body.receipt.transactionHash, ok.body.approvalUrl], ['pending', hash, null]);
+  // A body the schema refuses never reaches the store.
+  for (const body of [{}, { transactionHashes: [] }, { transactionHashes: ['0x12'] },
+    { transactionHashes: Array.from({ length: 21 }, () => hash) }, { transactionHashes: [hash], extra: 1 }]) {
+    assert.equal((await post('base-mcp-action:claim-http-1', body)).status, 400, JSON.stringify(body).slice(0, 60));
+  }
+  assert.equal((await post('base-mcp-action:nobody', { transactionHashes: [hash] })).status, 404);
+  const conflict = await post('base-mcp-action:other-hashes', { transactionHashes: [hash] });
+  assert.deepEqual([conflict.status, conflict.body.code], [409, 'found_claim_already_submitted']);
+  assert.equal(seen.length, 3);
 });
 
 test('POST /api/mcp/base/console exposes reviewed Virtuals sign-in as an Action Receipt', async () => {

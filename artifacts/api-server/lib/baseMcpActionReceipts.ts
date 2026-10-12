@@ -54,9 +54,21 @@ export interface BaseMcpUniswapCollectIntentV1 { operation: 'collect'; recipient
 export type BaseMcpActionIntentV1 = BaseMcpSendActionIntentV1 | BaseMcpX402ActionIntentV1 | BaseMcpVirtualsActionIntentV1
   | BaseMcpAerodromeClaimIntentV1 | BaseMcpUniswapCollectIntentV1;
 export type BaseMcpActionTypeV1 = 'send' | 'x402' | 'virtuals' | 'aerodrome_claim' | 'uniswap_collect';
+/** Who carries the action to the chain: Coinbase's Wallet MCP, or the wallet
+ * the person is using on the page (Found's claims only). */
+export type BaseMcpActionProviderV1 = 'base-mcp' | 'wallet';
 /** Found's claims: one open per wallet at a time, each kind on its own. */
 export type BaseMcpClaimActionTypeV1 = 'aerodrome_claim' | 'uniswap_collect';
 const OPEN_STATUSES_V1 = ['preparing', 'approval_required', 'pending', 'reconciling'];
+
+/** A receipt rides the person's own wallet only for Found's claims. */
+function providerForV1(input: { actionType: BaseMcpActionTypeV1; provider?: BaseMcpActionProviderV1 }): BaseMcpActionProviderV1 {
+  const provider = input.provider ?? 'base-mcp';
+  if (provider === 'wallet' && input.actionType !== 'aerodrome_claim' && input.actionType !== 'uniswap_collect') {
+    throw new Error('base_mcp_action_provider_invalid');
+  }
+  return provider;
+}
 
 export function baseMcpActionHashV1(input: {
   tenantId: string;
@@ -81,7 +93,7 @@ export interface StoredBaseMcpActionReceiptV1 {
   chainId: 8453;
   schemaVersion: 'base-mcp-action-receipt/v1';
   actionType: BaseMcpActionTypeV1;
-  provider: 'base-mcp';
+  provider: BaseMcpActionProviderV1;
   status: BaseMcpActionReceiptStatusV1;
   idempotencyKey: string;
   actionHash: HashV1;
@@ -109,6 +121,8 @@ export interface BaseMcpActionReceiptRepositoryV1 {
     actionType: BaseMcpActionTypeV1;
     intent: BaseMcpActionIntentV1;
     now: string;
+    /** 'base-mcp' unless named: only Found's claims ride the person's wallet. */
+    provider?: BaseMcpActionProviderV1;
   }): Promise<{ receipt: StoredBaseMcpActionReceiptV1; created: boolean }>;
   get(id: string, tenantId: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
   getByIdempotency(tenantId: string, idempotencyKey: string): Promise<StoredBaseMcpActionReceiptV1 | null>;
@@ -162,7 +176,7 @@ function rowToStored(row: Record<string, unknown>): StoredBaseMcpActionReceiptV1
     chainId: 8453,
     schemaVersion: 'base-mcp-action-receipt/v1',
     actionType: String(value('actionType', 'action_type')) as BaseMcpActionTypeV1,
-    provider: 'base-mcp',
+    provider: String(row.provider ?? 'base-mcp') === 'wallet' ? 'wallet' : 'base-mcp',
     status: String(row.status) as BaseMcpActionReceiptStatusV1,
     idempotencyKey: String(value('idempotencyKey', 'idempotency_key')),
     actionHash: String(value('actionHash', 'action_hash')) as HashV1,
@@ -250,7 +264,9 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
     actionType: BaseMcpActionTypeV1;
     intent: BaseMcpActionIntentV1;
     now: string;
+    provider?: BaseMcpActionProviderV1;
   }): Promise<{ receipt: StoredBaseMcpActionReceiptV1; created: boolean }> {
+    const provider = providerForV1(input);
     const id = `base-mcp-action:${crypto.randomUUID()}`;
     const actionHash = baseMcpActionHashV1(input);
     const preparingReceipt: StoredBaseMcpActionReceiptV1 = {
@@ -260,7 +276,7 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
       chainId: 8453,
       schemaVersion: 'base-mcp-action-receipt/v1',
       actionType: input.actionType,
-      provider: 'base-mcp',
+      provider,
       status: 'preparing',
       idempotencyKey: input.idempotencyKey,
       actionHash,
@@ -286,7 +302,7 @@ export class PostgresBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
           reconciliation_state, next_event_sequence, created_at, updated_at
         ) VALUES (
           ${id}, ${input.tenantId}, ${input.walletAddress}, 8453,
-          'base-mcp-action-receipt/v1', ${input.actionType}, 'base-mcp', 'preparing',
+          'base-mcp-action-receipt/v1', ${input.actionType}, ${provider}, 'preparing',
           ${input.idempotencyKey}, ${actionHash}, ${JSON.stringify(input.intent)}::jsonb,
           'not_started', 1, ${input.now}::timestamptz, ${input.now}::timestamptz
         )
@@ -449,7 +465,9 @@ export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
     actionType: BaseMcpActionTypeV1;
     intent: BaseMcpActionIntentV1;
     now: string;
+    provider?: BaseMcpActionProviderV1;
   }): Promise<{ receipt: StoredBaseMcpActionReceiptV1; created: boolean }> {
+    const provider = providerForV1(input);
     const existing = [...this.rows.values()].find(
       (row) => row.tenantId === input.tenantId && row.idempotencyKey === input.idempotencyKey,
     );
@@ -469,7 +487,7 @@ export class InMemoryBaseMcpActionReceiptRepositoryV1 implements BaseMcpActionRe
       chainId: 8453,
       schemaVersion: 'base-mcp-action-receipt/v1',
       actionType: input.actionType,
-      provider: 'base-mcp',
+      provider,
       status: 'preparing',
       idempotencyKey: input.idempotencyKey,
       actionHash: baseMcpActionHashV1(input),

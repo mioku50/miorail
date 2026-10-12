@@ -46,7 +46,10 @@ test('every wallet call site in the repository wires ERC-8021 attribution', () =
     const attributed =
       /dataSuffix:\s*\{\s*value:/.test(text) ||
       // A hook may take the suffix as a prop and attach it from there.
-      /capabilities:\s*dataSuffix/.test(text);
+      /capabilities:\s*dataSuffix/.test(text) ||
+      // Or the server wrote the code into each call's data, and the file
+      // refuses a call without it before the wallet opens (Found's claim).
+      /callBuilderCodesV1\(call\.data\)\.length === 0/.test(text);
     if (!attributed) unattributed.push(path.relative(root, file));
   }
   assert.deepEqual(

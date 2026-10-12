@@ -624,6 +624,13 @@
       "when": 1791752889946,
       "tag": "0088_found_shares",
       "breakpoints": true
+    },
+    {
+      "idx": 89,
+      "version": "7",
+      "when": 1791756864685,
+      "tag": "0089_found_wallet_claims",
+      "breakpoints": true
     }
   ]
 }

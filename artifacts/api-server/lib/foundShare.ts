@@ -14,6 +14,7 @@ import { aerodromeRewardsRuntimeV1, amountDigitsV1, byValueV1, usdcAtomicToCents
 import { PostgresBaseMcpActionReceiptRepositoryV1, type BaseMcpActionReceiptRepositoryV1, type StoredBaseMcpActionReceiptV1 } from './baseMcpActionReceipts.js';
 import { createViemBaseReceiptReader } from './baseReceiptReader.js';
 import type { UniswapCollectPlanV1 } from './baseMcpUniswapCollect.js';
+import { foundWalletChainReceiptV1 } from './foundWalletClaim.js';
 import { cardHeightV1, cardYV1, type CardShapeV1 } from './cardShape.js';
 import { UNISWAP_V3_POSITION_MANAGER_V1 } from './uniswapFeesReader.js';
 
@@ -147,7 +148,12 @@ export async function makeFoundShareV1(input: { receiptId: string; tenantId: str
   let arrived: FoundArrivedV1[];
   let blockNumber: string;
   try {
-    const chain = await runtime.receiptReader().getTransactionReceipt(receipt.transactionHash as HashV1);
+    // A claim the person's wallet sent may span several transactions (a
+    // wallet without atomic batches sends them one by one): read them as one.
+    const read = receipt.provider === 'wallet'
+      ? await foundWalletChainReceiptV1(receipt, runtime.receiptReader())
+      : await runtime.receiptReader().getTransactionReceipt(receipt.transactionHash as HashV1);
+    const chain = read && read !== 'missing' && read !== 'reverted' ? read : null;
     if (!chain || chain.status !== 'success') return { ok: false, status: 503, errorCode: 'found_share_receipt_unavailable' };
     blockNumber = String(chain.blockNumber);
     arrived = arrivedV1(receipt, chain);

@@ -10,6 +10,7 @@ export {
   builderCodeForSurfaceV1,
   builderCodeFromEnvV1,
   builderCodeToDataSuffix,
+  callBuilderCodesV1,
   dataSuffixSupportV1,
   resolveBuilderCodeV1,
 } from './src/attribution';
@@ -104,3 +105,20 @@ export type {
   UseSpendPermissionOnboardingArgs,
   UseSpendPermissionOnboardingResultV1,
 } from './src/useSpendPermissionOnboarding';
+
+// Found's claim: the server's exact calls, sent by the wallet the person is
+// using on the page (Farcaster's, Base App's, a browser wallet), checked by the
+// server against Base's events. Not the trade path: no atomic batch, and a
+// wallet without batches is asked one transaction at a time.
+export {
+  useFoundWalletClaim,
+  foundWalletClaimPreflightV1,
+  foundWalletClaimOutcomeV1,
+  FOUND_WALLET_CLAIM_COPY_V1,
+} from './src/useFoundWalletClaim';
+export type {
+  FoundWalletClaimV1,
+  FoundWalletClaimStatusV1,
+  UseFoundWalletClaimArgsV1,
+  UseFoundWalletClaimResultV1,
+} from './src/useFoundWalletClaim';

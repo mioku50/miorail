@@ -3,7 +3,8 @@ import { activityBaseScanTxUrlV1, activityShortHashV1 } from './ActivityPanels';
 interface BaseMcpActivityReceiptCommonV1 {
   id: string;
   status: string;
-  provider: 'base-mcp';
+  /** Wallet MCP, or the wallet in use on the page (Found's claims only). */
+  provider: 'base-mcp' | 'wallet';
   reconciliationState: string;
   transactionHash: string | null;
   blockNumber: string | null;
@@ -79,7 +80,7 @@ export function BaseMcpActionReceiptsCard(model: {
                       : 'agent creation'}
               </p>
               <p className="lnote">
-                Base MCP · {receipt.reconciliationState} · {new Date(receipt.createdAt).toLocaleString()}
+                {receipt.provider === 'wallet' ? 'Your wallet' : 'Base MCP'} · {receipt.reconciliationState} · {new Date(receipt.createdAt).toLocaleString()}
               </p>
               {receipt.transactionHash && (
                 <p className="lnote">

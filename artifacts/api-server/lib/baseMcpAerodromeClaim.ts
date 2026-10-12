@@ -65,7 +65,7 @@ function result(reply: string, errorCode: string | null = null, receipt: StoredB
   return { kind: errorCode ? 'failed' : receipt ? 'action' : 'answered', reply, errorCode, toolsAvailable: 0,
     receipt: receipt ? publicBaseMcpActionReceiptV1(receipt) : null, approvalUrl };
 }
-function coverage(plan: AerodromeClaimPlanV1): string {
+export function aerodromeClaimCoverageV1(plan: AerodromeClaimPlanV1): string {
   const direct = plan.poolsReadDirect > 0
     ? `, ${plan.poolsReadDirect.toLocaleString('en-US')} of them past Sugar's ${SUGAR_MAX_ITERATIONS_V1.toLocaleString('en-US')}-pool limit, read from the pools themselves`
     : '';
@@ -101,7 +101,8 @@ async function expireClaim(receipt: StoredBaseMcpActionReceiptV1): Promise<Store
 async function openClaim(input: ClaimInput, wallet: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
   const runtime = baseMcpAerodromeClaimRuntimeV1;
   const active = await runtime.repository.getActiveAerodromeClaim(input.userId, wallet);
-  if (!active || !claimAged(active, runtime.now())) return active;
+  // A claim the person's own wallet carries is never Wallet MCP's to ask about.
+  if (!active || active.provider === 'wallet' || !claimAged(active, runtime.now())) return active;
   if (active.providerRequestId) {
     const checked = await reconcileBaseMcpAerodromeClaimV1({ ...input, receipt: active });
     const status = checked.receipt?.status;
@@ -113,7 +114,7 @@ async function openClaim(input: ClaimInput, wallet: string): Promise<StoredBaseM
   if (current && !FINAL_STATUSES.includes(current.status) && current.status !== 'reconciling') await expireClaim(current);
   return runtime.repository.getActiveAerodromeClaim(input.userId, wallet);
 }
-function withBuilderCode(plan: AerodromeClaimPlanV1): AerodromeClaimPlanV1 {
+export function aerodromeClaimWithBuilderCodeV1(plan: AerodromeClaimPlanV1): AerodromeClaimPlanV1 {
   const code = baseMcpAerodromeClaimRuntimeV1.builderCode();
   if (!code) throw new Error('aerodrome_builder_code_unavailable');
   // ERC-8021 schema 0: ASCII code || byte length || schema id || marker.
@@ -150,10 +151,10 @@ export async function prepareBaseMcpAerodromeClaimV1(input: ClaimInput): Promise
     if (!match.checked || !match.match) return result('Reconnect Wallet MCP with the same Base Account before claiming.',
       match.checked ? 'base_mcp_wallet_mismatch' : 'base_mcp_wallet_unverified');
     const rawPlan = await runtime.readPlan(await runtime.createReader(), wallet);
-    const summary = coverage(rawPlan);
+    const summary = aerodromeClaimCoverageV1(rawPlan);
     if (rawPlan.errorCode) return result(`${summary} The claim was not prepared because the reads or target checks are incomplete.`, rawPlan.errorCode);
     if (!rawPlan.calls.length) return result(`${summary} No claimable fees or AERO were found in the supported positions at that block.`);
-    const plan = withBuilderCode(rawPlan);
+    const plan = aerodromeClaimWithBuilderCodeV1(rawPlan);
     const created = await runtime.repository.create({ tenantId: input.userId, walletAddress: wallet,
       idempotencyKey: input.idempotencyKey, actionType: 'aerodrome_claim', intent, now: runtime.now() });
     stored = created.receipt;

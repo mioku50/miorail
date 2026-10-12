@@ -187,6 +187,7 @@ import {
   builderCodeToDataSuffix,
   isWalletRejectionError,
   transactionHashesFromReceipts,
+  useFoundWalletClaim,
   useSpendPermissionGrant,
   type BlueprintSubmitStatus,
 } from "@mioagent/wallet-actions";
@@ -1108,6 +1109,15 @@ export function MiniConsole() {
   const baseMcpAsk = useBaseMcpConsole();
   const reconcileBaseMcpAction = useReconcileBaseMcpAction();
   const shareFound = useShareFoundReceipt();
+  // Found's claim, sent by this Base App wallet when an answer holds one.
+  const baseMcpAsked = baseMcpAsk.data;
+  const foundWalletClaim = useFoundWalletClaim({
+    claim: baseMcpAsked?.walletCalls && baseMcpAsked.action?.receipt.provider === "wallet"
+      ? { receiptId: baseMcpAsked.action.receipt.id, walletAddress: baseMcpAsked.action.receipt.walletAddress, calls: baseMcpAsked.walletCalls }
+      : null,
+    reconcile: reconcileBaseMcpAction.mutateAsync,
+    onSettled: baseMcpAsk.startFresh,
+  });
   const baseMcpActionReceipts = useBaseMcpActionReceipts({ enabled: section === "activity" });
   const [baseMcpQuestion, setBaseMcpQuestion] = useState("");
 
@@ -2531,12 +2541,20 @@ export function MiniConsole() {
             share={shareFound.data ? { url: shareFound.data.url, text: shareFound.data.text } : null}
             sharing={shareFound.isPending}
             shareError={shareFound.error ? "The card could not be made just now. Nothing was posted; try again." : null}
+            walletClaim={{
+              onConfirm: () => void foundWalletClaim.confirm(),
+              busy: foundWalletClaim.busy,
+              note: foundWalletClaim.note,
+              error: foundWalletClaim.error,
+              transactionHashes: foundWalletClaim.transactionHashes,
+            }}
             unavailableReason={
               baseMcpAsk.error
                 ? "The console could not reach the server. Nothing here is a statement about Wallet MCP."
                 : null
             }
           />
+          {foundWalletClaim.poller}
         </div>
         <WalletMcpMiorailCard />
         <BaseMcpPluginsCard

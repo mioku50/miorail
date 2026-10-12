@@ -38,6 +38,7 @@ import {
 import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
 import { reconcileBaseMcpAerodromeClaimV1 } from './baseMcpAerodromeClaim.js';
 import { reconcileBaseMcpUniswapCollectV1 } from './baseMcpUniswapCollect.js';
+import { reconcileFoundWalletClaimV1 } from './foundWalletClaim.js';
 import { missingInputsReplyV1, missingProviderInputsV1 } from './baseMcpRequiredInputs.js';
 import { baseMcpRuntimeSnapshotV1 } from './baseMcpRuntimeSnapshot.js';
 import { aerodromeRewardAlertReplyV1, aerodromeRewardAlertV1, foundProtocolsNamedV1, foundReadV1, russianV1 } from './aerodromeRewardIntents.js';
@@ -1115,6 +1116,13 @@ export async function reconcileBaseMcpActionV1(input: {
   if (!found) return failedWithoutReceipt('That Action Receipt was not found for this account.', 'base_mcp_action_receipt_not_found');
   if (found.actionType === 'virtuals') {
     return reconcileBaseMcpVirtualsActionV1({ ...input, receipt: found });
+  }
+  // Found's claim sent by the person's own wallet: the chain is asked, not
+  // Wallet MCP.
+  if ((found.actionType === 'aerodrome_claim' || found.actionType === 'uniswap_collect') && found.provider === 'wallet') {
+    const checked = await reconcileFoundWalletClaimV1({ userId: input.userId, walletAddress: input.walletAddress, receipt: found });
+    return { kind: checked.kind, reply: checked.reply, errorCode: checked.errorCode, toolsAvailable: 0,
+      receipt: checked.receipt, approvalUrl: null };
   }
   if (found.actionType === 'aerodrome_claim') {
     return reconcileBaseMcpAerodromeClaimV1({ ...input, receipt: found });

@@ -34,6 +34,22 @@ export function resetAttributionWarningForTest() {
   warnedMissing = false;
 }
 
+/**
+ * The builder codes a call already carries at the end of its own data
+ * (ERC-8021), or none. Calls the server wrote with the code inside them need
+ * no `dataSuffix` capability: the wallet would append a second suffix after
+ * the first, and a guard that checked the exact data would no longer match.
+ */
+export function callBuilderCodesV1(data: string): readonly string[] {
+  if (!/^0x(?:[0-9a-fA-F]{2})+$/u.test(data)) return [];
+  try {
+    const attribution = Attribution.fromData(data as Hex);
+    return attribution && 'codes' in attribution && Array.isArray(attribution.codes) ? attribution.codes : [];
+  } catch {
+    return [];
+  }
+}
+
 // Converts a builder code (e.g. "bc_a1b2c3d4") to an ERC-8021 data suffix.
 // Returns undefined when no code is provided, is a placeholder, is malformed,
 // or when BASE_BUILDER_CODE and the deprecated BUILDER_CODE alias disagree —

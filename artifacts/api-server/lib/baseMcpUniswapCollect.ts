@@ -93,7 +93,7 @@ function result(reply: string, errorCode: string | null = null, receipt: StoredB
   return { kind: errorCode ? 'failed' : receipt ? 'action' : 'answered', reply, errorCode, toolsAvailable: 0,
     receipt: receipt ? publicBaseMcpActionReceiptV1(receipt) : null, approvalUrl };
 }
-function coverage(plan: UniswapFeesPlanV1): string {
+export function uniswapCollectCoverageV1(plan: UniswapFeesPlanV1): string {
   const v4 = plan.v4PositionsHeld ? ` ${plan.v4PositionsHeld} v4 position${plan.v4PositionsHeld === 1 ? ' is' : 's are'} not read here.` : '';
   const unread = plan.unreadable ? ` ${plan.unreadable} position${plan.unreadable === 1 ? '' : 's'} could not be read and ${plan.unreadable === 1 ? 'is' : 'are'} left out.` : '';
   return `Read ${plan.positionsHeld} Uniswap v3 position${plan.positionsHeld === 1 ? '' : 's'} at Base block ${plan.blockNumber}; ${plan.positions.length} owe${plan.positions.length === 1 ? 's' : ''} fees.${unread}${v4}`;
@@ -122,7 +122,8 @@ async function expireCollect(receipt: StoredBaseMcpActionReceiptV1): Promise<Sto
 async function openCollect(input: CollectInput, wallet: string): Promise<StoredBaseMcpActionReceiptV1 | null> {
   const runtime = baseMcpUniswapCollectRuntimeV1;
   const active = await runtime.repository.getActiveClaim(input.userId, wallet, 'uniswap_collect');
-  if (!active || !collectAged(active, runtime.now())) return active;
+  // A collect the person's own wallet carries is never Wallet MCP's to ask about.
+  if (!active || active.provider === 'wallet' || !collectAged(active, runtime.now())) return active;
   if (active.providerRequestId) {
     const checked = await reconcileBaseMcpUniswapCollectV1({ ...input, receipt: active });
     const status = checked.receipt?.status;
@@ -183,7 +184,7 @@ export async function prepareBaseMcpUniswapCollectV1(input: CollectInput): Promi
     if (!match.checked || !match.match) return result('Reconnect Wallet MCP with the same Base Account before collecting.',
       match.checked ? 'base_mcp_wallet_mismatch' : 'base_mcp_wallet_unverified');
     const read = await runtime.readPlan(await runtime.createReader(), wallet);
-    const summary = coverage(read);
+    const summary = uniswapCollectCoverageV1(read);
     if (read.errorCode) return result(`${summary} The collect was not prepared because the positions could not all be read.`, read.errorCode);
     if (!read.positions.length) return result(`${summary} No fees to collect in this wallet's Uniswap v3 positions at that block.`);
     const code = runtime.builderCode();

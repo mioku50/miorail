@@ -19,6 +19,7 @@ import {
   type BaseMcpToolRowV1,
 } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
+import { useFoundWalletClaim } from '@mioagent/wallet-actions';
 import {
   useBaseMcpConsole,
   useBaseMcpPlugins,
@@ -30,6 +31,7 @@ import {
 
 import { useAuthGate } from '../../app/AuthProvider';
 import { BaseMcpConnectButton } from '../../components/BaseMcpConnectButton';
+import { farcasterHostV1 } from '../../lib/miniAppHost';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 // ---------------------------------------------------------------------------
@@ -76,6 +78,19 @@ export function ExtensionsPage() {
 
   const enabled = status.data?.baseMcp?.enabled === true;
   const connected = probe.data?.status === 'connected';
+  // Farcaster hosts this page in its own webview: a Base Account popup has
+  // nowhere to open there, so Wallet MCP's connect is not offered. Found's
+  // reads and claims never needed it.
+  const inFarcaster = farcasterHostV1() !== null;
+  // Found's claim, when the answer holds one for this page's wallet to send.
+  const asked = consoleAsk.data;
+  const walletClaim = useFoundWalletClaim({
+    claim: asked?.walletCalls && asked.action?.receipt.provider === 'wallet'
+      ? { receiptId: asked.action.receipt.id, walletAddress: asked.action.receipt.walletAddress, calls: asked.walletCalls }
+      : null,
+    reconcile: reconcileAction.mutateAsync,
+    onSettled: consoleAsk.startFresh,
+  });
   const [askedOnce, setAskedOnce] = useState(false);
 
   const projectedTools = baseMcpToolsWithReviewedAdaptersV1(
@@ -241,6 +256,13 @@ export function ExtensionsPage() {
             share={shareFound.data ? { url: shareFound.data.url, text: shareFound.data.text } : null}
             sharing={shareFound.isPending}
             shareError={shareFound.error ? 'The card could not be made just now. Nothing was posted; try again.' : null}
+            walletClaim={{
+              onConfirm: () => void walletClaim.confirm(),
+              busy: walletClaim.busy,
+              note: walletClaim.note,
+              error: walletClaim.error,
+              transactionHashes: walletClaim.transactionHashes,
+            }}
             disabledReason={signedOut ? 'Sign in with your wallet to ask. You can still explore and fill the examples below.' : null}
             onSignIn={
               signedOut
@@ -255,9 +277,16 @@ export function ExtensionsPage() {
                 : null
             }
           />
+          {walletClaim.poller}
         </div>
       )}
-      {enabled && !connected && !signedOut && (
+      {enabled && !connected && !signedOut && inFarcaster && (
+        <p className="lnote">
+          In Farcaster, Found&apos;s reads and claims use the wallet you signed in with. Wallet MCP&apos;s own
+          tools need a Base Account, which opens in a browser.
+        </p>
+      )}
+      {enabled && !connected && !signedOut && !inFarcaster && (
         // Not while the console above says "Sign in to ask": a server session
         // without a wallet in this browser read as two different next steps.
         // Right under the box it unlocks, not below every plugin. The connect
@@ -277,7 +306,7 @@ export function ExtensionsPage() {
       <details className="mcp-advanced">
         <summary>Advanced: the tools Wallet MCP exposes</summary>
         <BaseMcpExtensionsCard {...model} />
-        {enabled && connected && (
+        {enabled && connected && !inFarcaster && (
           <div className="ctarow">
             <BaseMcpConnectButton className="btn sec" returnTo={consoleSectionPathV1('extensions')}>
               Reconnect Wallet MCP

@@ -7,6 +7,7 @@ import {
   BaseMcpConsoleResponseV1Schema,
   BaseMcpActionReconcileResponseV1Schema,
   FoundShareResponseV1Schema,
+  FoundWalletSubmissionRequestV1Schema,
   BaseMcpActionReceiptListResponseV1Schema,
   BaseMcpPluginCatalogueResponseSchema,
   BaseMcpToolProbeResponseSchema,
@@ -57,10 +58,9 @@ import { probeBaseMcpTools } from '../lib/baseMcpToolProbe.js';
 import { verifyBaseMcpWalletMatchViaOAuth } from '../lib/baseMcpWalletReconciliation.js';
 import { tenantUserId, tenantWalletAddress } from '../middleware/tenantAuth';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
-import { prepareBaseMcpAerodromeClaimV1 } from '../lib/baseMcpAerodromeClaim.js';
-import { prepareBaseMcpUniswapCollectV1 } from '../lib/baseMcpUniswapCollect.js';
 import { runFoundReadV1 } from '../lib/found.js';
 import { makeFoundShareV1 } from '../lib/foundShare.js';
+import { prepareFoundWalletClaimV1, recordFoundWalletSubmissionV1 } from '../lib/foundWalletClaim.js';
 import { foundClaimsReleasedV1 } from '../lib/baseMcpRuntimeSnapshot.js';
 
 export const mcpBaseRouter = Router();
@@ -82,10 +82,10 @@ export const mcpBaseRouteRuntime = {
   prepareBaseMcpX402ActionV1,
   reconcileBaseMcpActionV1,
   prepareBaseMcpVirtualsAgentCreateV1,
-  prepareBaseMcpAerodromeClaimV1,
-  prepareBaseMcpUniswapCollectV1,
   runFoundReadV1,
   makeFoundShareV1,
+  prepareFoundWalletClaimV1,
+  recordFoundWalletSubmissionV1,
   listBaseMcpActionReceiptsV1,
   aerodromeRewardAlerts: (): AerodromeRewardAlertRepositoryV1 => createDatabaseAerodromeRewardAlertRepositoryV1(client as never),
   /** Whether a Telegram chat hears this wallet; null when that cannot be read. */
@@ -629,35 +629,20 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
           : null,
       }));
     }
-    if (decision.kind === 'aerodrome_claim') {
-      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
-        return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'disabled', reply: 'Connect Wallet MCP before claiming Aerodrome fees.',
-          trace: [], toolsAvailable: 0, truncated: false, elapsedMs: 0, errorCode: 'base_mcp_disabled', checkedAt: new Date().toISOString() }));
-      }
+    // Found's claims ride the wallet the person is using on the page: no Wallet
+    // MCP, no Base Account, no trip to the browser. The server reads, guards
+    // and simulates; the page's wallet sends; the chain's events complete it.
+    if (decision.kind === 'aerodrome_claim' || decision.kind === 'uniswap_collect') {
       const startedAt = Date.now();
-      const result = await mcpBaseRouteRuntime.prepareBaseMcpAerodromeClaimV1({ req,
-        userId: tenantUserId(req), walletAddress: tenantWalletAddress(req), sessionSecret: secret,
-        idempotencyKey: requestId });
+      const result = await mcpBaseRouteRuntime.prepareFoundWalletClaimV1({ userId: tenantUserId(req),
+        walletAddress: tenantWalletAddress(req), idempotencyKey: requestId,
+        protocol: decision.kind === 'aerodrome_claim' ? 'aerodrome' : 'uniswap' });
       res.set('Cache-Control', 'no-store');
       return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: result.kind, reply: result.reply,
-        trace: [], toolsAvailable: result.toolsAvailable, truncated: false, elapsedMs: Date.now() - startedAt,
+        trace: [], toolsAvailable: 0, truncated: false, elapsedMs: Date.now() - startedAt,
         errorCode: result.errorCode, checkedAt: new Date().toISOString(),
-        action: result.receipt ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: null } : null }));
-    }
-    if (decision.kind === 'uniswap_collect') {
-      if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
-        return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: 'disabled', reply: 'Connect Wallet MCP before collecting Uniswap fees.',
-          trace: [], toolsAvailable: 0, truncated: false, elapsedMs: 0, errorCode: 'base_mcp_disabled', checkedAt: new Date().toISOString() }));
-      }
-      const startedAt = Date.now();
-      const result = await mcpBaseRouteRuntime.prepareBaseMcpUniswapCollectV1({ req,
-        userId: tenantUserId(req), walletAddress: tenantWalletAddress(req), sessionSecret: secret,
-        idempotencyKey: requestId });
-      res.set('Cache-Control', 'no-store');
-      return res.json(BaseMcpConsoleResponseV1Schema.parse({ status: result.kind, reply: result.reply,
-        trace: [], toolsAvailable: result.toolsAvailable, truncated: false, elapsedMs: Date.now() - startedAt,
-        errorCode: result.errorCode, checkedAt: new Date().toISOString(),
-        action: result.receipt ? { receipt: result.receipt, approvalUrl: result.approvalUrl, resultPreview: null } : null }));
+        action: result.receipt ? { receipt: result.receipt, approvalUrl: null, resultPreview: null } : null,
+        walletCalls: result.calls }));
     }
     if (decision.kind === 'virtuals_create' || decision.kind === 'virtuals_sign_in') {
       if (!baseMcpEnabledFromEnv() || !baseMcpServerUrlFromEnv()) {
@@ -726,6 +711,27 @@ mcpBaseRouter.get('/actions', async (req: Request, res: Response, next: NextFunc
   try {
     const receipts = await mcpBaseRouteRuntime.listBaseMcpActionReceiptsV1(tenantUserId(req), 50);
     return res.json(BaseMcpActionReceiptListResponseV1Schema.parse({ receipts }));
+  } catch (error) {
+    next(error);
+  }
+});
+
+/**
+ * What the person's wallet sent for a Found claim: its transaction hashes.
+ * Kept as the wallet's word until the chain's events confirm them; the
+ * receipt completes only on reconcile.
+ */
+mcpBaseRouter.post('/actions/:receiptId/submitted', async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const body = FoundWalletSubmissionRequestV1Schema.safeParse(req.body);
+    if (!body.success) return res.status(400).json({ error: 'found_claim_hashes_invalid', code: 'found_claim_hashes_invalid' });
+    const receiptId = String(req.params.receiptId || '').slice(0, 200);
+    const result = await mcpBaseRouteRuntime.recordFoundWalletSubmissionV1({ userId: tenantUserId(req),
+      walletAddress: tenantWalletAddress(req), receiptId, transactionHashes: body.data.transactionHashes });
+    res.setHeader('Cache-Control', 'no-store');
+    if (!result.receipt) return res.status(404).json({ error: result.errorCode, code: result.errorCode });
+    if (result.errorCode) return res.status(409).json({ error: result.errorCode, code: result.errorCode });
+    return res.json(BaseMcpActionReconcileResponseV1Schema.parse({ receipt: result.receipt, approvalUrl: null, resultPreview: null }));
   } catch (error) {
     next(error);
   }

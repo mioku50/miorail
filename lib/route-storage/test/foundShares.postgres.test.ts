@@ -10,8 +10,8 @@ import { createDatabaseFoundShareRepositoryV1 } from '../src/foundShares.js';
 
 // ---------------------------------------------------------------------------
 // Found's share cards against real Postgres: the receipt table they point at
-// (0038 through 0087), then 0088. It DROPS tables, so it runs only against a
-// throwaway local database.
+// (0038 through 0087), then 0088, and 0089's wallet-carried claims. It DROPS
+// tables, so it runs only against a throwaway local database.
 //
 //   MIOAGENT_MIGRATION_TEST_URL=postgres://postgres:x@127.0.0.1:55438/t \
 //     npx tsx --test lib/route-storage/test/foundShares.postgres.test.ts
@@ -36,7 +36,7 @@ before(async () => {
   await sql.unsafe('DROP TABLE IF EXISTS found_shares, base_mcp_action_receipt_events, base_mcp_plugin_sessions, base_mcp_action_receipts, users CASCADE');
   await sql.unsafe('CREATE TABLE users ("id" text PRIMARY KEY)');
   for (const file of ['0038_base_mcp_action_receipts', '0040_base_mcp_action_event_sequence', '0049_base_mcp_reviewed_plugin_runtime',
-    '0083_aerodrome_claim_receipts', '0087_uniswap_collect_receipts', '0088_found_shares']) {
+    '0083_aerodrome_claim_receipts', '0087_uniswap_collect_receipts', '0088_found_shares', '0089_found_wallet_claims']) {
     await sql.unsafe((await readFile(resolve(drizzleDir(), `${file}.sql`), 'utf8')).replaceAll('--> statement-breakpoint', ''));
   }
   await sql.unsafe(`INSERT INTO users VALUES ('tenant-a')`);
@@ -87,6 +87,23 @@ if (!throwaway) {
       await assert.rejects(sql!.unsafe(`INSERT INTO found_shares VALUES ('short', '${RECEIPT}', 't', 'uniswap', 1, '[{}]', '1', now())`));
       await assert.rejects(sql!.unsafe(`INSERT INTO found_shares VALUES ('ZZZZZZZZZZZZ', 'base-mcp-action:nope', 't', 'uniswap', 1, '[{}]', '1', now())`));
       await assert.rejects(sql!.unsafe(`INSERT INTO found_shares VALUES ('YYYYYYYYYYYY', '${RECEIPT}x', 't', 'morpho', 1, '[{}]', '1', now())`));
+    });
+
+    test('0089: only Found\'s two claims may ride the person\'s own wallet, still one open per wallet', async () => {
+      const insert = (id: string, actionType: string, provider: string) => sql!.unsafe(`INSERT INTO base_mcp_action_receipts (id, tenant_id,
+        wallet_address, chain_id, schema_version, action_type, provider, status, idempotency_key, action_hash, intent_payload,
+        reconciliation_state, created_at, updated_at, next_event_sequence) VALUES ('base-mcp-action:${id}', 'tenant-a',
+        '0x1111111111111111111111111111111111111111', 8453, 'base-mcp-action-receipt/v1', '${actionType}', '${provider}',
+        'approval_required', '${id}', '0x${'b'.repeat(64)}', '{}', 'not_started', now(), now(), 1)`);
+      await insert('wallet-collect', 'uniswap_collect', 'wallet');
+      await insert('wallet-claim', 'aerodrome_claim', 'wallet');
+      await assert.rejects(insert('wallet-send', 'send', 'wallet'), /provider_check/);
+      await assert.rejects(insert('wallet-x402', 'x402', 'wallet'), /provider_check/);
+      await assert.rejects(insert('other-provider', 'uniswap_collect', 'coinbase'), /provider_check/);
+      // Wallet MCP's own rows are untouched by the change.
+      await insert('mcp-send', 'send', 'base-mcp');
+      // An open wallet claim still blocks an open Wallet MCP one of its kind.
+      await assert.rejects(insert('mcp-collect', 'uniswap_collect', 'base-mcp'), /active_wallet_unique/);
     });
   });
 }

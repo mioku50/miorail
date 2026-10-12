@@ -116,3 +116,17 @@ test('migration 0087 adds the Uniswap collect, matched only by events, one open 
   assert.ok(entry);
   assert.ok(entry.when > journal.entries[entry.idx - 1].when);
 });
+
+test('migration 0089 lets only Found\'s claims ride the person\'s own wallet', async () => {
+  const sql = await readFile(drizzlePath('0089_found_wallet_claims.sql'), 'utf8');
+  assert.match(sql, /DROP CONSTRAINT "base_mcp_action_receipts_provider_check"/);
+  assert.match(sql, /ADD CONSTRAINT "base_mcp_action_receipts_provider_check" CHECK \(\s+"provider" = 'base-mcp'\s+OR \("provider" = 'wallet' AND "action_type" IN \('aerodrome_claim', 'uniswap_collect'\)\)\s+\)/);
+  // Nothing else moves: the claim indexes and state checks stay as 0083/0087 left them.
+  assert.doesNotMatch(sql.replace(/^--.*$/gmu, ''), /INDEX|reconciliation_state|status/u);
+  const journal = JSON.parse(await readFile(drizzlePath('meta/_journal.json'), 'utf8')) as {
+    entries: Array<{ idx: number; tag: string; when: number }>;
+  };
+  const entry = journal.entries.find(entry => entry.tag === '0089_found_wallet_claims')!;
+  assert.ok(entry);
+  assert.ok(entry.when > journal.entries[entry.idx - 1].when);
+});

@@ -2561,7 +2561,7 @@ export function useBaseMcpConsole(
   options?: Omit<UseMutationOptions<apiSpec.BaseMcpConsoleResponseV1, Error, string>, 'mutationFn'>,
 ) {
   const requestIdentity = useRef<{ message: string; requestId: string } | null>(null);
-  return useMutation({
+  const mutation = useMutation({
     ...options,
     retry: false,
     mutationFn: async (message: string) => {
@@ -2583,6 +2583,12 @@ export function useBaseMcpConsole(
       if (!actionPending) requestIdentity.current = null;
       return parsed;
     },
+  });
+  return Object.assign(mutation, {
+    /** Forgets the request ID kept for a pending action, so the same words
+     * ask anew: called once that action has settled elsewhere, as a Found
+     * claim does on Base after its wallet sent it. */
+    startFresh: () => { requestIdentity.current = null; },
   });
 }
 
@@ -2611,6 +2617,37 @@ export function useReconcileBaseMcpAction(
       const response = await fetchApi<unknown>(
         `/api/mcp/base/actions/${encodeURIComponent(receiptId)}/reconcile`,
         { method: 'POST' },
+      );
+      const parsed = apiSpec.BaseMcpActionReconcileResponseV1Schema.parse(response);
+      await queryClient.invalidateQueries({ queryKey: ['base-mcp-action-receipts'] });
+      return parsed;
+    },
+  });
+}
+
+/**
+ * Tells the server which transactions the person's wallet sent for a Found
+ * claim. Kept as the wallet's word: the receipt completes only when Base's
+ * events pay that wallet for every prepared call, on reconcile.
+ */
+export function useRecordFoundWalletSubmission(
+  options?: Omit<
+    UseMutationOptions<apiSpec.BaseMcpActionReconcileResponseV1, Error, { receiptId: string; transactionHashes: readonly string[] }>,
+    'mutationFn' | 'retry'
+  >,
+) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    ...options,
+    retry: false,
+    mutationFn: async ({ receiptId, transactionHashes }: { receiptId: string; transactionHashes: readonly string[] }) => {
+      const response = await fetchApi<unknown>(
+        `/api/mcp/base/actions/${encodeURIComponent(receiptId)}/submitted`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ transactionHashes }),
+        },
       );
       const parsed = apiSpec.BaseMcpActionReconcileResponseV1Schema.parse(response);
       await queryClient.invalidateQueries({ queryKey: ['base-mcp-action-receipts'] });

@@ -10,6 +10,7 @@ import {
   baseMcpCapabilityTallyV1,
   baseMcpToolSummaryV1,
   baseMcpConsoleTraceSummaryV1,
+  baseMcpWalletClaimReadyV1,
   type BaseMcpConsoleAnswerV1,
 } from '../src/console/BaseMcpConsoleCard';
 
@@ -56,6 +57,49 @@ test('a Uniswap collect receipt says what is collected, for whom, and that the w
   assert.match(html, /Positions read<\/span><span class="v mono">3/);
   assert.match(html, /Batch simulation<\/span><span class="v">passed/);
   assert.match(html, /Approve in your wallet/);
+});
+
+test('a Found claim for the page wallet offers one confirm there, and nothing about Wallet MCP', () => {
+  const receipt = {
+    id: 'claim-1', status: 'approval_required' as const, actionType: 'aerodrome_claim' as const, operation: 'claim' as const,
+    recipient: '0x1111111111111111111111111111111111111111', claimCount: 2, poolsRead: 39_257, poolsTotal: 39_257,
+    managedSkipped: 0, readBlock: '100', simulationStatus: 'passed' as const, chainId: 8453 as const, provider: 'wallet' as const,
+    reconciliationState: 'not_started' as const, transactionHash: null, blockNumber: null, errorCode: null, routeVerified: false as const,
+    reconciliationBasis: 'aerodrome_claim_events' as const,
+  };
+  const waiting = answer({ status: 'action', trace: [], reply: '2 calls passed batch simulation. Confirm them in your wallet.',
+    action: { approvalUrl: null, receipt },
+    walletCalls: [{ to: '0x2222222222222222222222222222222222222222', value: '0', data: '0xd294f093' }] });
+  let pressed = 0;
+  const render = (model: Partial<Parameters<typeof BaseMcpConsoleCard>[0]> = {}, shown = waiting) =>
+    renderToStaticMarkup(BaseMcpConsoleCard({ question: '', onQuestionChange: () => undefined, onAsk: () => undefined,
+      pending: false, unavailableReason: null, answer: shown, onReconcileAction: () => undefined,
+      walletClaim: { onConfirm: () => { pressed++; }, busy: false, note: null, error: null }, ...model }));
+  assert.equal(baseMcpWalletClaimReadyV1(waiting), true);
+  const html = render();
+  assert.match(html, /Confirm in your wallet/);
+  assert.match(html, /Sent by<\/span><span class="v">Your wallet/);
+  assert.match(html, /Sent from your own wallet, not Wallet MCP/);
+  assert.doesNotMatch(html, /Approve in your wallet|Check status|Wallet MCP action —/);
+  assert.match(render({ walletClaim: { onConfirm: () => undefined, busy: true, note: 'Confirm the claim in your wallet.', error: null } }),
+    /disabled="">Waiting for your wallet…[\s\S]*Confirm the claim in your wallet\./);
+  // Once the wallet reported its transactions, the button goes and the check stays.
+  const sent = { ...waiting, action: { approvalUrl: null, receipt: { ...receipt, status: 'pending' as const, reconciliationState: 'pending' as const } } };
+  const after = render({ walletClaim: { onConfirm: () => undefined, busy: true, note: 'Included on Base.', error: null,
+    transactionHashes: [`0x${'c'.repeat(64)}`] } }, sent);
+  assert.doesNotMatch(after, /Confirm in your wallet/);
+  assert.match(after, /Check status/);
+  assert.match(after, /href="https:\/\/basescan\.org\/tx\/0xc{64}"/);
+  // Without a wallet on the page, nothing to press.
+  assert.doesNotMatch(render({ walletClaim: null }), /Confirm in your wallet/);
+  assert.equal(pressed, 0);
+});
+
+test('a Found claim that was not prepared says why in its own words', () => {
+  const refused = answer({ status: 'failed', trace: [], errorCode: 'aerodrome_incomplete_coverage',
+    reply: 'Read 17,375 of 39,256 Aerodrome pools at Base block 100. The claim was not prepared because the reads or target checks are incomplete.' });
+  assert.match(baseMcpConsoleStatusCopyV1(refused) ?? '', /^Read 17,375 of 39,256 Aerodrome pools/);
+  assert.match(baseMcpConsoleStatusCopyV1(answer({ status: 'failed', trace: [], errorCode: 'found_claim_already_submitted', reply: 'x' })) ?? '', /^x$/);
 });
 
 test('Virtuals sign-in displays only sign-in approval and no invented agent facts', () => {
