@@ -320,7 +320,10 @@ export async function readAerodromeClaimPlanV1(
         }
         positions.push(...rows as AerodromeSugarPositionV1[]);
         plan.poolsRead += size;
-      } catch {
+      } catch (error) {
+        // More positions than Sugar returns is the wallet's answer, not a
+        // page the provider refused: asking again cannot change it.
+        if (error instanceof Error && error.message === 'aerodrome_positions_limit') throw error;
         if (now() >= deadline || positions.length >= 200) return;
         if (!retried) {
           await wait(Math.min(AERODROME_PAGE_PAUSE_MS_V1, Math.max(0, deadline - now())));

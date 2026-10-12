@@ -345,3 +345,13 @@ test('the configured provider answers first, and Base’s public endpoint when i
   assert.equal(aerodromeReadTransportV1(BASE_PUBLIC_RPC_V1)({ chain: undefined, retryCount: 0 }).config.type, 'http');
 });
 
+test('a wallet with more positions than Sugar returns is told so, not read as unread pages', async () => {
+  let pages = 0;
+  const plan = await readAerodromeClaimPlanV1(fixtureReader({ count: 1_000, page: async () => {
+    pages += 1;
+    // Burned LP tokens pile up on one address: 150 rows a page.
+    return Array.from({ length: 150 }, () => position());
+  } }), WALLET, { pause: noPause });
+  assert.equal(plan.errorCode, 'aerodrome_positions_limit');
+  assert.equal(pages, 2, 'no page is asked again once the limit is passed');
+});
