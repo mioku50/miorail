@@ -75,3 +75,26 @@ test('an icon is fetched once, only from the URL Coinbase gave, and only if it i
   assert.equal(isPngV1(PNG), true);
   assert.equal(isPngV1(PNG.slice(0, 8)), false);
 });
+
+test('every page is read, and a page that fails keeps the last full answer', async () => {
+  const AMZNC = '0xb200000000000000000000d9192b6b456483c2e8';
+  const amazon = { contract_address: AMZNC, symbol: 'AMZNc', name: 'Amazon.com Inc.', icon_url: ICON };
+  const asked: string[] = [];
+  let pageTwoFails = false;
+  let clock = 0;
+  const fetchImpl = (async (url: unknown) => {
+    asked.push(String(url));
+    if (String(url) === 'https://api.coinbase.com/v1/tokenized-stocks') {
+      return new Response(JSON.stringify({ tokens: [nvidia], next_page_token: 'MHhi/=' }));
+    }
+    assert.equal(String(url), 'https://api.coinbase.com/v1/tokenized-stocks?page_token=MHhi%2F%3D');
+    if (pageTwoFails) return new Response('{}', { status: 503 });
+    return new Response(JSON.stringify(body([amazon])));
+  }) as typeof fetch;
+  const cache = createCoinbaseStockMetaCacheV1({ fetchImpl, now: () => clock, ttlMs: 1_000, retryMs: 100 });
+  assert.deepEqual([...(await cache.read()).keys()], [NVDAC, AMZNC]);
+  assert.equal(asked.length, 2);
+  clock = 1_001;
+  pageTwoFails = true;
+  assert.deepEqual([...(await cache.read()).keys()], [NVDAC, AMZNC], 'page one alone does not replace the list');
+});

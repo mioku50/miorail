@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import {
   parseCoinbaseStocksApiV1,
+  readCoinbaseStocksApiV1,
   officialCorpusHashV1,
   type OfficialSourceAssetV1,
 } from '../src/index.js';
@@ -105,4 +106,80 @@ test('identity hash ignores market movement but includes an ISIN reassignment', 
   assert.ok(first.ok && moved.ok && reassigned.ok);
   assert.equal(officialCorpusHashV1(first.assets), officialCorpusHashV1(moved.assets));
   assert.notEqual(officialCorpusHashV1(first.assets), officialCorpusHashV1(reassigned.assets));
+});
+
+const PAGE_URL = 'https://api.coinbase.com/v1/tokenized-stocks';
+const other = { ...netflix, contract_address: '0xb200000000000000000000000000000000000002' };
+const pages =
+  (bodies: Record<string, unknown>) =>
+  async (url: string): Promise<{ ok: true; body: string } | { ok: false; detail: string }> => {
+    const body = bodies[url];
+    if (body instanceof Error) return { ok: false, detail: body.message };
+    return { ok: true, body: typeof body === 'string' ? body : JSON.stringify(body) };
+  };
+
+test('one page of several is refused, so it can never withdraw the rest', () => {
+  const page = parseCoinbaseStocksApiV1(JSON.stringify({ tokens: [netflix], next_page_token: 'MHhi' }));
+  assert.ok(!page.ok && /next_page_token is set/.test(page.detail));
+  for (const end of [{}, { next_page_token: '' }, { next_page_token: null }])
+    assert.ok(parseCoinbaseStocksApiV1(JSON.stringify({ tokens: [netflix], ...end })).ok, JSON.stringify(end));
+});
+
+test('every page is read and handed over as one list', async () => {
+  const asked: string[] = [];
+  const fetchPage = pages({
+    [PAGE_URL]: { tokens: [netflix], next_page_token: 'MHhi/+=' },
+    [`${PAGE_URL}?page_token=MHhi%2F%2B%3D`]: { tokens: [other] },
+  });
+  const read = await readCoinbaseStocksApiV1({
+    url: PAGE_URL,
+    fetchPage: (url) => (asked.push(url), fetchPage(url)),
+  });
+  assert.deepEqual(asked, [PAGE_URL, `${PAGE_URL}?page_token=MHhi%2F%2B%3D`]);
+  assert.ok(read.ok);
+  const parsed = parseCoinbaseStocksApiV1(read.body);
+  assert.ok(parsed.ok);
+  assert.deepEqual(
+    parsed.assets.map((asset) => asset.tokenAddress),
+    [netflix.contract_address.toLowerCase(), other.contract_address],
+  );
+});
+
+test('a page that fails makes the whole read fail, never a shorter list', async () => {
+  const unreachable = await readCoinbaseStocksApiV1({
+    url: PAGE_URL,
+    fetchPage: pages({
+      [PAGE_URL]: { tokens: [netflix], next_page_token: 'p2' },
+      [`${PAGE_URL}?page_token=p2`]: new Error('http 503'),
+    }),
+  });
+  assert.deepEqual(unreachable, { ok: false, detail: 'page 2: http 503' });
+  const garbled = await readCoinbaseStocksApiV1({
+    url: PAGE_URL,
+    fetchPage: pages({
+      [PAGE_URL]: { tokens: [netflix], next_page_token: 'p2' },
+      [`${PAGE_URL}?page_token=p2`]: '<html>',
+    }),
+  });
+  assert.ok(garbled.ok);
+  assert.equal(parseCoinbaseStocksApiV1(garbled.body).ok, false);
+  // A list that loops, or runs past the page bound, keeps its token and is refused.
+  for (const read of [
+    await readCoinbaseStocksApiV1({
+      url: PAGE_URL,
+      fetchPage: pages({
+        [PAGE_URL]: { tokens: [netflix], next_page_token: 'p2' },
+        [`${PAGE_URL}?page_token=p2`]: { tokens: [other], next_page_token: 'p2' },
+      }),
+    }),
+    await readCoinbaseStocksApiV1({
+      url: PAGE_URL,
+      maxPages: 1,
+      fetchPage: pages({ [PAGE_URL]: { tokens: [netflix], next_page_token: 'p2' } }),
+    }),
+  ]) {
+    assert.ok(read.ok);
+    const parsed = parseCoinbaseStocksApiV1(read.body);
+    assert.ok(!parsed.ok && /next_page_token is set/.test(parsed.detail));
+  }
 });

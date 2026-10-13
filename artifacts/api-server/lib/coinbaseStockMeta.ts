@@ -21,6 +21,9 @@ export const COINBASE_TOKENIZED_STOCKS_URL_V1 = 'https://api.coinbase.com/v1/tok
 const ICON_URL_SHAPE_V1 = /^https:\/\/metadata\.coinbase\.com\/equity_icons\/[0-9a-f]{64}\.png$/;
 const ADDRESS_SHAPE_V1 = /^0x[0-9a-f]{40}$/;
 const PNG_SIGNATURE_V1 = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
+/** The API answers in pages of 100 since 2026-10-12 (`next_page_token`, sent
+ * back as `page_token`); ten pages is twice the 500 rows the parser keeps. */
+const MAX_PAGES_V1 = 10;
 /** Coinbase's icons are about 21 KB; a quarter of a megabyte is headroom. */
 export const STOCK_ICON_MAX_BYTES_V1 = 256 * 1024;
 
@@ -75,13 +78,26 @@ export function createCoinbaseStockMetaCacheV1(options: CoinbaseStockMetaCacheOp
 
   async function fetchMeta(): Promise<Map<string, CoinbaseStockMetaV1>> {
     try {
-      const response = await partnerFetch(
-        COINBASE_TOKENIZED_STOCKS_URL_V1,
-        { headers: { accept: 'application/json' } },
-        { timeoutMs: 8_000, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) },
-      );
-      if (!response.ok) throw new Error(`coinbase_stocks_http_${response.status}`);
-      const parsed = parseCoinbaseStockMetaV1(await response.json());
+      // Every page or none. Page one alone left AMZN, AVGO and 33 other
+      // stocks with a letter for an icon.
+      const tokens: unknown[] = [];
+      let next: string | null = null;
+      for (let page = 0; ; page += 1) {
+        if (page === MAX_PAGES_V1) throw new Error('coinbase_stocks_too_many_pages');
+        const response = await partnerFetch(
+          next === null
+            ? COINBASE_TOKENIZED_STOCKS_URL_V1
+            : `${COINBASE_TOKENIZED_STOCKS_URL_V1}?page_token=${encodeURIComponent(next)}`,
+          { headers: { accept: 'application/json' } },
+          { timeoutMs: 8_000, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) },
+        );
+        if (!response.ok) throw new Error(`coinbase_stocks_http_${response.status}`);
+        const body = (await response.json()) as { tokens?: unknown; next_page_token?: unknown } | null;
+        if (Array.isArray(body?.tokens)) tokens.push(...body.tokens);
+        next = typeof body?.next_page_token === 'string' && body.next_page_token !== '' ? body.next_page_token : null;
+        if (next === null) break;
+      }
+      const parsed = parseCoinbaseStockMetaV1({ tokens });
       if (parsed.size === 0) throw new Error('coinbase_stocks_empty');
       good = parsed;
       nextAt = now() + ttlMs;
@@ -132,7 +148,7 @@ export function createCoinbaseStockMetaCacheV1(options: CoinbaseStockMetaCacheOp
       icons.set(meta.iconUrl, loading);
       const bytes = await loading;
       if (bytes === null) icons.delete(meta.iconUrl);
-      // A bound, not a policy: Coinbase lists 58 tokens today.
+      // A bound, not a policy: Coinbase lists 135 tokens on 2026-10-13.
       while (icons.size > 256) {
         const oldest = icons.keys().next();
         if (oldest.done) break;

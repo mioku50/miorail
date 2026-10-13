@@ -1,9 +1,59 @@
 import { isValidIsinV1 } from '@mioagent/route-storage';
+import type { OfficialFetchResultV1 } from './fetchSource.js';
 import {
   TICKER_SHAPE_V1,
   type OfficialParseResultV1,
   type OfficialSourceAssetV1,
 } from './sources.js';
+
+/** Ten pages of 100 is twice the 500 records the parser accepts. */
+export const COINBASE_STOCKS_MAX_PAGES_V1 = 10;
+
+/**
+ * Every page of the issuer's list, handed to the parser as one document.
+ *
+ * Coinbase began answering in pages of 100 on 2026-10-12: `tokens` plus a
+ * `next_page_token`, sent back as `page_token`. A page that cannot be fetched
+ * makes the whole read unreachable. A list that cannot be followed to its end
+ * keeps its `next_page_token`, which the parser refuses. Either way the
+ * previous complete snapshot stays, and no address is withdrawn because a
+ * request failed.
+ */
+export async function readCoinbaseStocksApiV1(input: {
+  url: string;
+  fetchPage: (url: string) => Promise<OfficialFetchResultV1>;
+  maxPages?: number;
+}): Promise<OfficialFetchResultV1> {
+  const maxPages = input.maxPages ?? COINBASE_STOCKS_MAX_PAGES_V1;
+  const tokens: unknown[] = [];
+  const followed = new Set<string>();
+  let next: string | null = null;
+  for (let page = 1; page <= maxPages; page += 1) {
+    const fetched = await input.fetchPage(
+      next === null ? input.url : `${input.url}?page_token=${encodeURIComponent(next)}`,
+    );
+    if (!fetched.ok) {
+      return page === 1 ? fetched : { ok: false, detail: `page ${page}: ${fetched.detail}` };
+    }
+    let value: { tokens?: unknown; next_page_token?: unknown } | null;
+    try {
+      value = JSON.parse(fetched.body);
+    } catch {
+      // The parser names what is wrong with this page.
+      return fetched;
+    }
+    if (!value || typeof value !== 'object' || !Array.isArray(value.tokens)) return fetched;
+    tokens.push(...value.tokens);
+    const token = value.next_page_token;
+    if (token == null || token === '') return { ok: true, body: JSON.stringify({ tokens }) };
+    if (typeof token !== 'string' || followed.has(token)) {
+      return { ok: true, body: JSON.stringify({ tokens, next_page_token: token }) };
+    }
+    followed.add(token);
+    next = token;
+  }
+  return { ok: true, body: JSON.stringify({ tokens, next_page_token: next }) };
+}
 
 /** The issuer API is a separate trust root from Base's illustrative tables.
  * Accept the whole response or refuse it; a truncated/malformed row must never
@@ -22,6 +72,20 @@ export function parseCoinbaseStocksApiV1(body: string): OfficialParseResultV1 {
     value = JSON.parse(body);
   } catch {
     return refuse('response is not JSON');
+  }
+  // The API answers in pages since 2026-10-12, which its OpenAPI document does
+  // not say: `next_page_token` names the next one. A page is not the list.
+  // Read as the list, page one withdrew the 35 stocks on page two for a night,
+  // so a document that says it continues is refused and nothing moves.
+  // `readCoinbaseStocksApiV1` follows the pages and hands over one document.
+  if (
+    value &&
+    typeof value === 'object' &&
+    'next_page_token' in value &&
+    value.next_page_token != null &&
+    value.next_page_token !== ''
+  ) {
+    return refuse('the list continues on another page (next_page_token is set); one page is not the list');
   }
   if (
     !value ||

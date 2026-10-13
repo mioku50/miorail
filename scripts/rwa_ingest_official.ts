@@ -28,6 +28,7 @@ import {
   parseBaseDocsFeedTableV1,
   parseBaseProductListV1,
   parseCoinbaseStocksApiV1,
+  readCoinbaseStocksApiV1,
   watchReferenceFeedsV1,
   type BaseDocsFeedTableV1,
   type OfficialSourceAssetV1,
@@ -109,7 +110,11 @@ async function main(): Promise<void> {
       continue;
     }
     const source = OFFICIAL_SOURCES_V1[kind];
-    const fetched = await fetchOfficialSourceV1({ url: source.url });
+    // The issuer API answers in pages; Base's product page is one document.
+    const fetched =
+      kind === 'coinbase_stocks_api'
+        ? await readCoinbaseStocksApiV1({ url: source.url, fetchPage: (url) => fetchOfficialSourceV1({ url }) })
+        : await fetchOfficialSourceV1({ url: source.url });
 
     let snapshot: OfficialSourceSnapshotV1;
     let assets: OfficialAssetInputV1[] = [];
