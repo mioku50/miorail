@@ -87,6 +87,8 @@ export interface RwaDiscoverScreenModelV1 {
   officialLoading: boolean;
   /** Why there is no overview. Never a claim about the assets. */
   officialError: string | null;
+  /** Open another page of cards. Absent where the surface cannot page. */
+  onOfficialPage?: (offset: number) => void;
 
   lookalikes: LookalikeFeedViewV1 | null;
   lookalikesLoading: boolean;
@@ -214,11 +216,13 @@ function OfficialTab({
   loading,
   error,
   actions,
+  onPage,
 }: {
   view: OfficialAssetsViewV1 | null;
   loading: boolean;
   error: string | null;
   actions: RwaDiscoverActionsV1;
+  onPage?: (offset: number) => void;
 }) {
   if (error) return <p className="note warn">{error}</p>;
   if (!view) return <p className="empty">{loading ? 'Reading the official corpus…' : 'No overview.'}</p>;
@@ -251,17 +255,42 @@ function OfficialTab({
           </p>
         ))}
 
+      {view.page ? <p className="lnote">{view.page.label}</p> : null}
       <div className="cardrows">
         {view.assets.map((card) => (
           <OfficialAssetCard key={card.tokenAddress} card={card} actions={actions} />
         ))}
       </div>
-      {view.assets.length === 0 && (
+      {view.assets.length === 0 && view.page === null && (
         <p className="empty">
           No reviewed source currently lists an asset. That is a reading about our source checks, not
           about what Coinbase has issued.
         </p>
       )}
+      {view.page && onPage && (view.page.previousOffset !== null || view.page.nextOffset !== null) ? (
+        <p>
+          {view.page.previousOffset !== null ? (
+            <button
+              type="button"
+              className="btn sec"
+              disabled={loading}
+              onClick={() => onPage(view.page!.previousOffset!)}
+            >
+              Previous assets
+            </button>
+          ) : null}{' '}
+          {view.page.nextOffset !== null ? (
+            <button
+              type="button"
+              className="btn sec"
+              disabled={loading}
+              onClick={() => onPage(view.page!.nextOffset!)}
+            >
+              More assets
+            </button>
+          ) : null}
+        </p>
+      ) : null}
     </>
   );
 }
@@ -502,6 +531,7 @@ export function RwaDiscoverScreen({ model }: { model: RwaDiscoverScreenModelV1 }
             loading={model.officialLoading}
             error={model.officialError}
             actions={model.actions}
+            onPage={model.onOfficialPage}
           />
         )}
         {model.tab === 'lookalikes' && (

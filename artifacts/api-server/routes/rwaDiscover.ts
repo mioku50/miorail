@@ -15,6 +15,8 @@ import {
   assembleOfficialAssetsOverviewV1,
   assembleOfficialLookalikeFeedV1,
   assembleRwaSignalFeedV1,
+  OFFICIAL_OVERVIEW_PAGE_LIMIT_V1,
+  OFFICIAL_UNIVERSE_LIMIT_V1,
   OfficialAssetsOverviewV1Schema,
   OfficialLookalikeFeedV1Schema,
   RwaSignalFeedV1Schema,
@@ -129,11 +131,19 @@ function boundedLimitV1(raw: unknown, fallback: number, max: number): number {
   return Math.max(1, Math.min(max, value));
 }
 
+/** Where a page starts. Anything unreadable is the first page. */
+function boundedOffsetV1(raw: unknown, max: number): number {
+  const value = Number.parseInt(String(raw ?? ''), 10);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(max, value));
+}
+
 rwaDiscoverRouter.get('/rwa/official/assets', async (req, res) => {
   if (!(await discoverGuardV1(req, res))) return;
   try {
     const overview = await rwaDiscoverRuntime.overview(rwaDiscoverRuntime.deps(), {
-      limit: boundedLimitV1(req.query.limit, 64, 64),
+      limit: boundedLimitV1(req.query.limit, OFFICIAL_OVERVIEW_PAGE_LIMIT_V1, OFFICIAL_OVERVIEW_PAGE_LIMIT_V1),
+      offset: boundedOffsetV1(req.query.offset, OFFICIAL_UNIVERSE_LIMIT_V1),
     });
     res.status(200).json(OfficialAssetsOverviewV1Schema.parse(overview));
   } catch {

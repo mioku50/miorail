@@ -86,6 +86,7 @@ export function RwaDiscoverPage() {
 
   const tab = useMemo(() => tabFromSearchV1(search), [search]);
   const [aliasFilter, setAliasFilter] = useState<LookalikeAliasFilterV1>('all');
+  const [officialOffset, setOfficialOffset] = useState(0);
 
   const showToast = useUiStore((state) => state.showToast);
   const enabled = status.data?.productMigration?.routeIntelligenceV1 === true;
@@ -100,7 +101,7 @@ export function RwaDiscoverPage() {
     // carry a key.
     onError: () => showToast('Miorail could not add this token to your watchlist.'),
   });
-  const official = useRwaOfficialAssets({ enabled });
+  const official = useRwaOfficialAssets({ enabled, offset: officialOffset });
   // Only fetched when the tab is open. The Official tab is the default and the
   // other two cost a database read each; a reader who never opens them should
   // not pay for them.
@@ -184,7 +185,8 @@ export function RwaDiscoverPage() {
             navigate(next === 'official' ? '/opportunities' : `/opportunities?tab=${next}`),
 
           official: officialView,
-          officialLoading: official.isLoading,
+          officialLoading: official.isLoading || official.isPlaceholderData,
+          onOfficialPage: setOfficialOffset,
           officialError:
             disabledNotice ??
             (official.error ? failureCopyV1(official.error, 'the official corpus') : null),

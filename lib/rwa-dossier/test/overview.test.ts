@@ -1,9 +1,16 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
-import type { CashExitMeasurementRunV1 } from '@mioagent/route-storage';
+import {
+  createMemoryMarketTailRepository,
+  createMemoryOfficialAssetRepository,
+  createMemoryOfficialCashExitRepository,
+  createMemoryOfficialLookalikeRepository,
+  type CashExitMeasurementRunV1,
+} from '@mioagent/route-storage';
 
 import {
+  assembleOfficialAssetsOverviewV1,
   executableFromRunV1,
   previewLadderFromRunV1,
   routeStatusFromPreviewV1,
@@ -249,5 +256,140 @@ describe('the Discover ladder preview', () => {
     );
     assert.equal(preview[0]!.status, 'full');
     assert.equal(preview[0]!.roundTripCostBps, '9');
+  });
+});
+
+describe('the overview counts the whole list and pages the cards', () => {
+  const NOW = new Date('2026-10-13T12:00:00.000Z');
+  const REGISTRY = '0x3f3e8cf41cdd3b1d118c16471ab0113dfddd5cad';
+  const address = (index: number) => `0xb200${index.toString(16).padStart(36, '0')}`;
+  const ticker = (index: number) => `T${String(index).padStart(2, '0')}c`;
+
+  async function depsV1(count: number) {
+    const official = createMemoryOfficialAssetRepository();
+    const ok = (sourceKind: 'coinbase_stocks_api' | 'base_product_list' | 'base_docs_technical' | 'backed_assets_api', at: string) => ({
+      sourceKind,
+      sourceUrl: 'https://example.com/source',
+      observedAt: at,
+      status: 'ok' as const,
+      documentHash: 'a'.repeat(64),
+      corpusHash: 'b'.repeat(64),
+      detail: null,
+    });
+    const asset = (index: number, sourceKind: 'coinbase_stocks_api' | 'base_product_list' | 'base_docs_technical') => ({
+      chainId: 8453 as const,
+      tokenAddress: address(index),
+      sourceKind,
+      ticker: ticker(index),
+      displayName: `Company ${index}`,
+      issuer: 'Coinbase',
+      // A feed for every asset, so each card on a page makes its live read.
+      referenceFeedAddress: `0x11${index.toString(16).padStart(38, '0')}`,
+    });
+    await official.recordSnapshot({
+      snapshot: ok('coinbase_stocks_api', '2026-10-13T11:00:00.000Z'),
+      assets: Array.from({ length: count }, (_, index) => asset(index, 'coinbase_stocks_api')),
+    });
+    await official.recordSnapshot({
+      snapshot: ok('base_product_list', '2026-10-13T11:00:00.000Z'),
+      assets: [asset(0, 'base_product_list')],
+    });
+    await official.recordSnapshot({
+      snapshot: ok('backed_assets_api', '2026-10-13T11:00:00.000Z'),
+      assets: [
+        {
+          chainId: 8453,
+          tokenAddress: '0x' + '7'.repeat(40),
+          sourceKind: 'backed_assets_api',
+          ticker: 'bTEST',
+          displayName: 'Backed Test',
+          issuer: 'Backed',
+          referenceFeedAddress: null,
+        },
+      ],
+    });
+    // The retired source: read once, then its last check failed, then retired.
+    await official.recordSnapshot({
+      snapshot: ok('base_docs_technical', '2026-10-07T10:00:00.000Z'),
+      assets: [asset(0, 'base_docs_technical')],
+    });
+    await official.recordSnapshot({
+      snapshot: {
+        ...ok('base_docs_technical', '2026-10-10T10:00:00.000Z'),
+        status: 'unparsable',
+        documentHash: null,
+        corpusHash: null,
+        detail: 'no_asset_rows',
+      },
+      assets: [],
+    });
+
+    const registryCalls: string[] = [];
+    const reader = {
+      async readBlockAnchor() {
+        return {
+          ok: true as const,
+          value: { blockNumber: '5000', blockHash: `0x${'ab'.repeat(32)}`, blockTag: '0x1388' },
+          raw: '',
+        };
+      },
+      async call(call: { to: string; data: string }) {
+        if (call.to === REGISTRY) registryCalls.push(`0xb200${call.data.slice(-36)}`);
+        return { ok: false as const, reason: 'reverted' as const, revertSelector: null };
+      },
+    };
+    return {
+      registryCalls,
+      deps: {
+        official,
+        cashExit: createMemoryOfficialCashExitRepository(),
+        marketTail: createMemoryMarketTailRepository(),
+        lookalikes: createMemoryOfficialLookalikeRepository(),
+        signals: {} as never,
+        corporateActions: {} as never,
+        reader: reader as never,
+        now: () => NOW,
+      },
+    };
+  }
+
+  test('70 listed assets are counted as 70, and the cards come 64 at a time', async () => {
+    // 2026-10-13: the overview read 64 assets and printed "Official issuance
+    // 64" while Coinbase alone listed 135; the other 71 had no card at all.
+    const { deps } = await depsV1(70);
+    const first = await assembleOfficialAssetsOverviewV1(deps);
+    // 70 Coinbase assets and one Backed one.
+    assert.equal(first.counts.officialIssuance, 71);
+    assert.equal(first.counts.notMeasured, 71);
+    assert.deepEqual(first.page, { offset: 0, limit: 64, total: 71 });
+    assert.equal(first.assets.length, 64);
+
+    const second = await assembleOfficialAssetsOverviewV1(deps, { offset: 64 });
+    assert.deepEqual(second.counts, first.counts);
+    assert.deepEqual(second.page, { offset: 64, limit: 64, total: 71 });
+    assert.equal(second.assets.length, 7);
+    const seen = new Set([...first.assets, ...second.assets].map((asset) => asset.tokenAddress));
+    assert.equal(seen.size, 71);
+  });
+
+  test('the price feed is read live only for the cards on the page', async () => {
+    const { deps, registryCalls } = await depsV1(70);
+    const second = await assembleOfficialAssetsOverviewV1(deps, { offset: 64 });
+    const coinbaseOnPage = second.assets
+      .filter((asset) => asset.issuer === 'Coinbase')
+      .map((asset) => asset.tokenAddress)
+      .sort();
+    assert.deepEqual([...new Set(registryCalls)].sort(), coinbaseOnPage);
+  });
+
+  test('a retired source is marked, and its last failure is no longer a gap', async () => {
+    const { deps } = await depsV1(3);
+    const overview = await assembleOfficialAssetsOverviewV1(deps);
+    const docs = overview.sources.find((source) => source.sourceKind === 'base_docs_technical')!;
+    assert.equal(docs.status, 'unparsable');
+    assert.equal(docs.retiredOn, '2026-10-10');
+    const api = overview.sources.find((source) => source.sourceKind === 'coinbase_stocks_api')!;
+    assert.equal(api.retiredOn, null);
+    assert.equal(overview.gaps.includes('official_source_check_incomplete'), false);
   });
 });

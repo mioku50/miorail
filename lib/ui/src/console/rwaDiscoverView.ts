@@ -134,6 +134,8 @@ export interface OfficialAssetsOverviewWireV1 {
     status: 'ok' | 'unreachable' | 'unparsable' | null;
     assetCount: number | null;
     lastSuccessfulAt: string | null;
+    /** The day Miorail stopped reading it, as YYYY-MM-DD; null while read. */
+    retiredOn: string | null;
   }[];
   marketObservation: {
     status: 'observed' | 'never_run';
@@ -142,6 +144,8 @@ export interface OfficialAssetsOverviewWireV1 {
     identifiedVenueCount: number | null;
     candidatesPendingIdentification: number | null;
   };
+  /** Which part of the list `assets` is. `total` is the issuance. */
+  page: { offset: number; limit: number; total: number };
   assets: readonly OfficialAssetWireV1[];
 }
 
@@ -728,6 +732,8 @@ export interface OfficialAssetsViewV1 {
   counters: CounterViewV1[];
   sources: { label: string; value: string; note: string | null; tone: ToneV1 }[];
   marketObservation: string;
+  /** Which cards of the list these are. Null when they are the whole list. */
+  page: { label: string; previousOffset: number | null; nextOffset: number | null } | null;
   assets: OfficialAssetCardViewV1[];
 }
 
@@ -785,6 +791,22 @@ export function officialAssetsViewV1(
   }
 
   const sources = wire.sources.map((source) => {
+    if (source.retiredOn !== null) {
+      // No longer read, so its last check is history rather than an outage.
+      // Shown as "check failed" it kept a warning on the page for a source
+      // Miorail had stopped reading on purpose.
+      const day = new Date(`${source.retiredOn}T00:00:00Z`).toLocaleDateString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        timeZone: 'UTC',
+      });
+      return {
+        label: SOURCE_LABEL_V1[source.sourceKind],
+        value: `retired ${day}`,
+        note: null,
+        tone: 'off' as ToneV1,
+      };
+    }
     const age = rwaAgeLabelV1(source.checkedAt, now);
     return {
       label: SOURCE_LABEL_V1[source.sourceKind],
@@ -838,10 +860,26 @@ export function officialAssetsViewV1(
               : ''
           }.`;
 
+  // The counters are the whole list; the cards may be one page of it, and the
+  // page says so rather than letting 64 cards stand in for 135 assets.
+  const { offset, limit, total } = wire.page;
+  const page =
+    offset === 0 && total <= limit
+      ? null
+      : {
+          label:
+            wire.assets.length === 0
+              ? `No assets on this page; the list has ${total}.`
+              : `Assets ${offset + 1}–${offset + wire.assets.length} of ${total}. Those with a cash route come first.`,
+          previousOffset: offset > 0 ? Math.max(0, Math.min(offset, total) - limit) : null,
+          nextOffset: offset + limit < total ? offset + limit : null,
+        };
+
   return {
     counters,
     sources,
     marketObservation,
+    page,
     assets: wire.assets.map((asset) => officialAssetCardViewV1(asset, now)),
   };
 }

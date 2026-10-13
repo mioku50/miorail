@@ -45,8 +45,8 @@ const OVERVIEW_V1: OfficialAssetsOverviewV1 = {
   chainId: 8453 as const,
   observedAt: '2026-08-25T12:00:00.000Z',
   counts: {
-    officialIssuance: 1,
-    cashRouteEstablished: 1,
+    officialIssuance: 0,
+    cashRouteEstablished: 0,
     noRouteAtMeasuredSizes: 0,
     noEntryRouteAtMeasuredSizes: 0,
     measurementFailed: 0,
@@ -58,8 +58,9 @@ const OVERVIEW_V1: OfficialAssetsOverviewV1 = {
       sourceUrl: 'https://docs.base.org/x.md',
       checkedAt: '2026-08-25T11:00:00.000Z',
       status: 'ok' as const,
-      assetCount: 1,
+      assetCount: 0,
       lastSuccessfulAt: '2026-08-25T11:00:00.000Z',
+      retiredOn: null,
     },
   ],
   marketObservation: {
@@ -69,6 +70,7 @@ const OVERVIEW_V1: OfficialAssetsOverviewV1 = {
     identifiedVenueCount: null,
     candidatesPendingIdentification: null,
   },
+  page: { offset: 0, limit: 64, total: 0 },
   assets: [],
   gaps: [],
 };
@@ -102,19 +104,42 @@ describe('GET the official assets overview', () => {
     assert.equal(response.body.code, 'rwa_discover_storage_unavailable');
   });
 
-  test('serves the overview and bounds the limit', async () => {
-    let seen = -1;
+  test('serves the overview and bounds the limit and the offset', async () => {
+    const seen: { limit?: number; offset?: number }[] = [];
     rwaDiscoverRuntime.deps = () => ({}) as never;
     rwaDiscoverRuntime.overview = async (_deps, input) => {
-      seen = input?.limit ?? -1;
+      seen.push({ limit: input?.limit, offset: input?.offset });
       return OVERVIEW_V1;
     };
     const response = await request(app()).get(
-      '/api/route-intelligence/rwa/official/assets?limit=9999',
+      '/api/route-intelligence/rwa/official/assets?limit=9999&offset=-5',
     );
     assert.equal(response.status, 200);
-    assert.equal(seen, 64);
-    assert.equal(response.body.counts.officialIssuance, 1);
+    assert.equal(response.body.page.total, 0);
+    await request(app()).get('/api/route-intelligence/rwa/official/assets?offset=64');
+    await request(app()).get('/api/route-intelligence/rwa/official/assets?offset=99999');
+    await request(app()).get('/api/route-intelligence/rwa/official/assets?offset=next');
+    assert.deepEqual(seen, [
+      { limit: 64, offset: 0 },
+      { limit: 64, offset: 64 },
+      { limit: 64, offset: 500 },
+      { limit: 64, offset: 0 },
+    ]);
+  });
+
+  test('a page presented as the whole list is refused, not served', async () => {
+    // 64 cards under "Official issuance 64" while Coinbase listed 135: the
+    // contract now says which part of the list the cards are.
+    rwaDiscoverRuntime.deps = () => ({}) as never;
+    rwaDiscoverRuntime.overview = async () => ({
+      ...OVERVIEW_V1,
+      counts: { ...OVERVIEW_V1.counts, officialIssuance: 1, notMeasured: 1 },
+      page: { offset: 0, limit: 64, total: 1 },
+      assets: [],
+    });
+    const response = await request(app()).get('/api/route-intelligence/rwa/official/assets');
+    assert.equal(response.status, 500);
+    assert.equal(response.body.code, 'official_assets_overview_failed');
   });
 
   test('an assembler failure never forwards the upstream message', async () => {

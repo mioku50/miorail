@@ -167,6 +167,15 @@ export const OfficialSourceStatusV1Schema = z
     /** The newest SUCCESSFUL check, which is the freshness clock. A failed
      * check moves `checkedAt` and never this one. */
     lastSuccessfulAt: Timestamp.nullable(),
+    /**
+     * The day Miorail stopped reading this source, or null while it is read.
+     * A retired source's last check stays as it was, so without this its
+     * final failure would read as an outage forever.
+     */
+    retiredOn: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .nullable(),
   })
   .strict();
 
@@ -211,12 +220,24 @@ export const OfficialAssetsOverviewV1Schema = z
         candidatesPendingIdentification: z.number().int().min(0).nullable(),
       })
       .strict(),
+    /**
+     * Which part of the list `assets` is. The counts always describe the whole
+     * list; the cards are one page of it, so `total` is the issuance and a
+     * page can never be read as the list.
+     */
+    page: z
+      .object({
+        offset: z.number().int().min(0),
+        limit: z.number().int().min(1).max(64),
+        total: z.number().int().min(0),
+      })
+      .strict(),
     assets: z.array(OfficialAssetSummaryV1Schema).max(64),
     gaps: z.array(z.string().min(1).max(120)).max(32),
   })
   .strict()
   .superRefine((value, ctx) => {
-    const { counts } = value;
+    const { counts, page } = value;
     const sum =
       counts.cashRouteEstablished +
       counts.noRouteAtMeasuredSizes +
@@ -228,6 +249,21 @@ export const OfficialAssetsOverviewV1Schema = z
         code: z.ZodIssueCode.custom,
         path: ['counts'],
         message: `the route counts sum to ${sum} and the issuance is ${counts.officialIssuance}`,
+      });
+    }
+    if (page.total !== counts.officialIssuance) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['page', 'total'],
+        message: `the page is out of ${page.total} and the issuance is ${counts.officialIssuance}`,
+      });
+    }
+    const expected = Math.max(0, Math.min(page.limit, page.total - page.offset));
+    if (value.assets.length !== expected) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ['assets'],
+        message: `a page of ${page.limit} from ${page.offset} of ${page.total} holds ${expected} assets, not ${value.assets.length}`,
       });
     }
   });

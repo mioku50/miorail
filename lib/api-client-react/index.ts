@@ -1,4 +1,4 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useRef, useState } from 'react';
 import type { QueryClient, UseQueryOptions, UseMutationOptions } from '@tanstack/react-query';
 import * as apiSpec from '@mioagent/api-spec';
@@ -1453,18 +1453,27 @@ export function useB20Opportunities(
  * migration, an unreachable database — so `retry: false`, and the body's own
  * counts and gaps say which one it was.
  */
-export function useRwaOfficialAssets(options?: { enabled?: boolean; limit?: number }) {
+export function useRwaOfficialAssets(options?: {
+  enabled?: boolean;
+  limit?: number;
+  /** Where the page of cards starts. The counts always cover the whole list. */
+  offset?: number;
+}) {
   const limit = options?.limit ?? 64;
+  const offset = options?.offset ?? 0;
   return useQuery({
-    queryKey: ['rwa-official-assets', limit],
+    queryKey: ['rwa-official-assets', limit, offset],
     queryFn: async () => {
       const response = await fetchApi<unknown>(
-        `/api/route-intelligence/rwa/official/assets?limit=${limit}`,
+        `/api/route-intelligence/rwa/official/assets?limit=${limit}&offset=${offset}`,
       );
       return apiSpec.OfficialAssetsOverviewV1Schema.parse(response);
     },
     retry: false,
     enabled: options?.enabled !== false,
+    // The page being left stays on screen until the next one arrives, so the
+    // counters above the cards do not blink out between pages.
+    placeholderData: keepPreviousData,
   });
 }
 

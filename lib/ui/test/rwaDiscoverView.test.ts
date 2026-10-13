@@ -83,7 +83,7 @@ function assetV1(overrides: Partial<OfficialAssetWireV1> = {}): OfficialAssetWir
 test('an API-only official listing keeps its issuer provenance on the card', () => {
   const wire = overviewV1([assetV1({ ticker: 'NFLXc', listedIn: ['coinbase_stocks_api'], sourceDiscrepancy: true })], {
     sources: [{ sourceKind: 'coinbase_stocks_api', sourceUrl: 'https://api.coinbase.com/v1/tokenized-stocks',
-      checkedAt: NOW.toISOString(), status: 'ok', assetCount: 58, lastSuccessfulAt: NOW.toISOString() }],
+      checkedAt: NOW.toISOString(), status: 'ok', assetCount: 58, lastSuccessfulAt: NOW.toISOString(), retiredOn: null }],
   });
   const view = officialAssetsViewV1(wire, NOW);
   assert.equal(view.assets[0]!.listedIn, 'Coinbase Stocks API');
@@ -118,6 +118,7 @@ function overviewV1(
         status: 'ok',
         assetCount: 13,
         lastSuccessfulAt: '2026-08-25T11:00:00.000Z',
+        retiredOn: null,
       },
       {
         sourceKind: 'base_product_list',
@@ -126,6 +127,7 @@ function overviewV1(
         status: 'ok',
         assetCount: 4,
         lastSuccessfulAt: '2026-08-25T11:00:00.000Z',
+        retiredOn: null,
       },
     ],
     marketObservation: {
@@ -135,6 +137,7 @@ function overviewV1(
       identifiedVenueCount: null,
       candidatesPendingIdentification: null,
     },
+    page: { offset: 0, limit: 64, total: assets.length },
     assets,
     ...overrides,
   };
@@ -392,6 +395,7 @@ describe('rwa discover view — official assets', () => {
             status: 'unreachable',
             assetCount: 13,
             lastSuccessfulAt: '2026-08-25T06:00:00.000Z',
+            retiredOn: null,
           },
         ],
       }),
@@ -401,6 +405,66 @@ describe('rwa discover view — official assets', () => {
     assert.equal(source.value, 'check failed · 5m ago');
     assert.match(source.note!, /Membership is unchanged/);
     assert.match(source.note!, /6h ago/);
+  });
+
+  test('a retired source is history, not an outage', () => {
+    // Base docs was retired on 2026-10-10 after Base removed its address
+    // table. Its last check had failed, and the page kept a warning about a
+    // source Miorail had stopped reading on purpose.
+    const view = officialAssetsViewV1(
+      overviewV1([assetV1()], {
+        sources: [
+          {
+            sourceKind: 'base_docs_technical',
+            sourceUrl: 'https://docs.base.org/x.md',
+            checkedAt: '2026-08-25T11:55:00.000Z',
+            status: 'unparsable',
+            assetCount: 13,
+            lastSuccessfulAt: '2026-08-25T06:00:00.000Z',
+            retiredOn: '2026-10-10',
+          },
+        ],
+      }),
+      NOW,
+    );
+    const source = view.sources[0]!;
+    assert.equal(source.value, 'retired Oct 10');
+    assert.equal(source.note, null);
+    assert.equal(source.tone, 'off');
+  });
+
+  test('the counters are the whole list and the cards say which page they are', () => {
+    // 2026-10-13: "Official issuance 64" over 64 cards, while Coinbase alone
+    // listed 135. The counts now cover every asset and the cards name their page.
+    const wire = overviewV1([assetV1()], {
+      counts: {
+        officialIssuance: 135,
+        cashRouteEstablished: 14,
+        noRouteAtMeasuredSizes: 0,
+        noEntryRouteAtMeasuredSizes: 90,
+        measurementFailed: 22,
+        notMeasured: 9,
+      },
+      page: { offset: 64, limit: 64, total: 135 },
+    });
+    const view = officialAssetsViewV1(wire, NOW);
+    assert.equal(view.counters[0]!.value, '135');
+    assert.equal(view.page!.label, 'Assets 65–65 of 135. Those with a cash route come first.');
+    assert.equal(view.page!.previousOffset, 0);
+    assert.equal(view.page!.nextOffset, 128);
+
+    const first = officialAssetsViewV1({ ...wire, page: { offset: 0, limit: 64, total: 135 } }, NOW);
+    assert.equal(first.page!.previousOffset, null);
+    assert.equal(first.page!.nextOffset, 64);
+
+    const last = officialAssetsViewV1({ ...wire, page: { offset: 128, limit: 64, total: 135 } }, NOW);
+    assert.equal(last.page!.nextOffset, null);
+    assert.equal(last.page!.previousOffset, 64);
+  });
+
+  test('a list that fits on one page names no page', () => {
+    const view = officialAssetsViewV1(overviewV1([assetV1()]), NOW);
+    assert.equal(view.page, null);
   });
 
   test('identity comes before price, and both halves of it travel', () => {

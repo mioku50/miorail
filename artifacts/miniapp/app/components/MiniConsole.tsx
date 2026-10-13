@@ -1058,8 +1058,12 @@ export function MiniConsole() {
   const [discoverView, setDiscoverView] = useState<"official" | "launches">("official");
   const [discoverTab, setDiscoverTab] = useState<RwaDiscoverTabV1>("official");
   const [lookalikeAlias, setLookalikeAlias] = useState<LookalikeAliasFilterV1>("all");
+  const [officialOffset, setOfficialOffset] = useState(0);
   const onOfficial = section === "opportunities" && discoverView === "official";
-  const rwaOfficial = useRwaOfficialAssets({ enabled: routeIntelligenceOn && onOfficial });
+  const rwaOfficial = useRwaOfficialAssets({
+    enabled: routeIntelligenceOn && onOfficial,
+    offset: officialOffset,
+  });
   const rwaLookalikes = useRwaLookalikes(
     { alias: lookalikeAlias === "all" ? null : lookalikeAlias },
     { enabled: routeIntelligenceOn && onOfficial && discoverTab === "lookalikes" },
@@ -2159,7 +2163,8 @@ export function MiniConsole() {
           tab: discoverTab,
           onTab: setDiscoverTab,
           official: officialView,
-          officialLoading: rwaOfficial.isPending && routeIntelligenceOn,
+          officialLoading: (rwaOfficial.isPending || rwaOfficial.isPlaceholderData) && routeIntelligenceOn,
+          onOfficialPage: setOfficialOffset,
           officialError: routeIntelligenceOn
             ? rwaOfficial.error
               ? "The official corpus could not be read on this server. Nothing here is a statement about the assets."

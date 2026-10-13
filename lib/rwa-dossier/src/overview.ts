@@ -1,6 +1,9 @@
 import { B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1, type B20ReaderV1 } from '@mioagent/b20-control';
 import { OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 } from '@mioagent/market-tail';
-import { CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1 } from '@mioagent/route-storage';
+import {
+  CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
+  RETIRED_OFFICIAL_SOURCES_V1,
+} from '@mioagent/route-storage';
 import type {
   CashExitMeasurementRunV1,
   CashExitSourceObservationV1,
@@ -300,14 +303,24 @@ export function executableFromRunV1(
   };
 }
 
+/** Cards on one page of the overview. The counts above them are never paged. */
+export const OFFICIAL_OVERVIEW_PAGE_LIMIT_V1 = 64;
+
 export async function assembleOfficialAssetsOverviewV1(
   deps: OfficialDiscoverDepsV1,
-  input?: { limit?: number },
+  input?: { limit?: number; offset?: number },
 ): Promise<OfficialAssetsOverviewV1> {
   const now = deps.now();
-  const limit = Math.max(1, Math.min(64, input?.limit ?? 64));
+  const limit = Math.max(
+    1,
+    Math.min(OFFICIAL_OVERVIEW_PAGE_LIMIT_V1, input?.limit ?? OFFICIAL_OVERVIEW_PAGE_LIMIT_V1),
+  );
+  const offset = Math.max(0, Math.min(OFFICIAL_UNIVERSE_LIMIT_V1, Math.floor(input?.offset ?? 0)));
   const [universe, discrepancies, lookalikeCounts, cursor] = await Promise.all([
-    deps.official.officialAssets({ chainId: 8453, limit }),
+    // The whole list, not one page of it. The counts say how many assets a
+    // reviewed source lists; read with the page size, they printed "Official
+    // issuance 64" while Coinbase alone listed 135, and the rest had no card.
+    deps.official.officialAssets({ chainId: 8453, limit: OFFICIAL_UNIVERSE_LIMIT_V1 }),
     deps.official.sourceDiscrepancies({ chainId: 8453 }),
     deps.lookalikes.lookalikeCountsByOfficial({ chainId: 8453 }),
     deps.marketTail.readCursor({ tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1 }),
@@ -327,6 +340,7 @@ export async function assembleOfficialAssetsOverviewV1(
         status: latest?.status ?? null,
         assetCount: ok?.assetCount ?? null,
         lastSuccessfulAt: ok?.observedAt ?? null,
+        retiredOn: RETIRED_OFFICIAL_SOURCES_V1[sourceKind]?.retiredOn ?? null,
       };
     }),
   );
@@ -381,8 +395,69 @@ export async function assembleOfficialAssetsOverviewV1(
   const anchorRead = await deps.reader.readBlockAnchor();
   const anchor = anchorRead.ok ? anchorRead.value : null;
 
+  // Every asset's newest run, sixteen queries at a time: the counts need all of
+  // them, and each is one indexed read of what the measuring worker stored.
+  const runs: (CashExitMeasurementRunV1 | null)[] = [];
+  for (let start = 0; start < assets.length; start += 16) {
+    runs.push(
+      ...(await Promise.all(
+        assets.slice(start, start + 16).map((identity) =>
+          deps.cashExit.latestCompletedRun({
+            chainId: 8453,
+            tokenAddress: identity.tokenAddress,
+            scope: 'public_ladder',
+            // Same reason as the dossier: the board renders a ladder, so it must
+            // ask for the run that measured one.
+            containingAllRequestedCashAtomic: CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
+          }),
+        ),
+      )),
+    );
+  }
+  const measured = assets.map((identity, index) => {
+    const run = runs[index] ?? null;
+    const preview = previewLadderFromRunV1(run);
+    return {
+      identity,
+      run,
+      preview,
+      routeStatus: routeStatusFromPreviewV1(preview),
+      ticker: currentTickerV1(identity).ticker,
+    };
+  });
+
+  // Assets with a route first, then by ticker. The ones that can be exited are
+  // the working part of this corpus and a reader should meet them first --
+  // without the others being hidden, which is the whole point of the page.
+  const rank: Readonly<Record<OfficialRouteStatusV1, number>> = {
+    cash_route_established: 0,
+    no_route_at_measured_sizes: 1,
+    no_entry_route_at_measured_sizes: 2,
+    measurement_failed: 3,
+    not_measured: 4,
+  };
+  measured.sort(
+    (left, right) =>
+      rank[left.routeStatus] - rank[right.routeStatus] ||
+      left.ticker.localeCompare(right.ticker) ||
+      left.identity.tokenAddress.localeCompare(right.identity.tokenAddress),
+  );
+
+  const counted = (status: OfficialRouteStatusV1) =>
+    measured.filter((entry) => entry.routeStatus === status).length;
+  const counts = {
+    officialIssuance: measured.length,
+    cashRouteEstablished: counted('cash_route_established'),
+    noRouteAtMeasuredSizes: counted('no_route_at_measured_sizes'),
+    noEntryRouteAtMeasuredSizes: counted('no_entry_route_at_measured_sizes'),
+    measurementFailed: counted('measurement_failed'),
+    notMeasured: counted('not_measured'),
+  };
+
+  // Only the page shown is read live. The reference feed is the one chain read
+  // per card, so a list three pages long costs the RPC what one page did.
   const summaries: OfficialAssetSummaryV1[] = [];
-  for (const identity of assets) {
+  for (const { identity, run, preview, routeStatus } of measured.slice(offset, offset + limit)) {
     const { ticker, displayName, listedIn } = currentTickerV1(identity);
     const feedAddress =
       identity.listings.find((listing) => listing.referenceFeedAddress !== null)
@@ -407,16 +482,6 @@ export async function assembleOfficialAssetsOverviewV1(
             registryToken: identity.tokenAddress,
           });
 
-    const run = await deps.cashExit.latestCompletedRun({
-      chainId: 8453,
-      tokenAddress: identity.tokenAddress,
-      scope: 'public_ladder',
-      // Same reason as the dossier: the board renders a ladder, so it must ask
-      // for the run that measured one.
-      containingAllRequestedCashAtomic: CASH_EXIT_DEFAULT_USDC_SIZES_ATOMIC_V1,
-    });
-    const preview = previewLadderFromRunV1(run);
-    const routeStatus = routeStatusFromPreviewV1(preview);
     const executableValue = executableFromRunV1(run, preview);
     const observed = activityByToken.get(identity.tokenAddress);
     const market: OfficialAssetMarketV1 = {
@@ -466,46 +531,13 @@ export async function assembleOfficialAssetsOverviewV1(
     });
   }
 
-  // Assets with a route first, then by ticker. The four that can be exited are
-  // the working part of this corpus and a reader should meet them first --
-  // without the other nine being hidden, which is the whole point of the page.
-  const rank: Readonly<Record<OfficialRouteStatusV1, number>> = {
-    cash_route_established: 0,
-    no_route_at_measured_sizes: 1,
-    no_entry_route_at_measured_sizes: 2,
-    measurement_failed: 3,
-    not_measured: 4,
-  };
-  summaries.sort(
-    (left, right) =>
-      rank[left.market.routeStatus] - rank[right.market.routeStatus] ||
-      left.ticker.localeCompare(right.ticker) ||
-      left.tokenAddress.localeCompare(right.tokenAddress),
-  );
-
-  const counts = {
-    officialIssuance: summaries.length,
-    cashRouteEstablished: summaries.filter(
-      (asset) => asset.market.routeStatus === 'cash_route_established',
-    ).length,
-    noRouteAtMeasuredSizes: summaries.filter(
-      (asset) => asset.market.routeStatus === 'no_route_at_measured_sizes',
-    ).length,
-    noEntryRouteAtMeasuredSizes: summaries.filter(
-      (asset) => asset.market.routeStatus === 'no_entry_route_at_measured_sizes',
-    ).length,
-    measurementFailed: summaries.filter(
-      (asset) => asset.market.routeStatus === 'measurement_failed',
-    ).length,
-    notMeasured: summaries.filter((asset) => asset.market.routeStatus === 'not_measured').length,
-  };
-
   const gaps = new Set<string>();
   if (anchor === null) gaps.add('base_block_anchor_unavailable');
   if (cursor === null) gaps.add('market_tail_never_run');
   if (cursor !== null && !attributionReady) gaps.add('market_tail_has_identified_no_venue');
   if (counts.notMeasured > 0) gaps.add('cash_exit_not_measured_for_every_asset');
-  if (sources.some((source) => source.status !== 'ok'))
+  // A retired source is no longer checked, so its last failure is history.
+  if (sources.some((source) => source.status !== 'ok' && source.retiredOn === null))
     gaps.add('official_source_check_incomplete');
   if (discrepancies.length > 0) gaps.add('official_sources_disagree');
   gaps.add('confirmed_swap_semantics_not_implemented');
@@ -523,6 +555,7 @@ export async function assembleOfficialAssetsOverviewV1(
       identifiedVenueCount: cursor === null ? null : identified.length,
       candidatesPendingIdentification: cursor === null ? null : pending.length,
     },
+    page: { offset, limit, total: measured.length },
     assets: summaries,
     gaps: [...gaps].sort(),
   });
