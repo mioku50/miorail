@@ -115,7 +115,7 @@ export function SettingsPage() {
         blockNumber: chainBlockNumberV1(status.data ?? null),
       }}
       // Nothing here is a goal being analysed: an empty "No active analysis"
-      // rail beside the settings was Routes AI's, not this page's.
+      // rail beside the settings was Swap AI's, not this page's.
       right={null}
       theme={theme}
       onThemeChange={setTheme}

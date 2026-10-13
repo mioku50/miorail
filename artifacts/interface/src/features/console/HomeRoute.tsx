@@ -60,6 +60,10 @@ export function HomeRoute() {
   // evidence index remains reachable, but it is no longer the first screen
   // when route intelligence is available on this deployment.
   if (stocksOn) {
+    // 2026-10-13 — a wallet that signed in opens on Today, which leads with
+    // what Miorail already knows about it. A link that carries a query still
+    // lands on Stocks, as it always has: Today reads nothing from the address.
+    if (!window.location.search) return <Redirect to={consoleSectionPathV1('today')} replace />;
     return <Redirect to={`${consoleSectionPathV1('market')}${window.location.search}`} replace />;
   }
 

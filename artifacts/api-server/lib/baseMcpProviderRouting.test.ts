@@ -112,7 +112,7 @@ test('provider-specific reads stay in Extensions while released adapters alone h
   }
 });
 
-test('a named provider with no released route adapter never enters Routes AI', () => {
+test('a named provider with no released route adapter never enters Swap AI', () => {
   const runtime = fullyCapableRuntimeV1();
   for (const prompt of [
     'Buy this Clawnch token with 0.001 ETH',
@@ -124,7 +124,7 @@ test('a named provider with no released route adapter never enters Routes AI', (
   }
 });
 
-test('a Bankr or Flaunch token buy enters Routes AI through the router that reaches its pools', () => {
+test('a Bankr or Flaunch token buy enters Swap AI through the router that reaches its pools', () => {
   // KyberSwap quoted their Uniswap v4 pools on 2026-10-05 (uniswap-v4-doppler,
   // uniswap-v4-flaunch); before that measurement these were adapter_required.
   for (const prompt of [
@@ -137,7 +137,7 @@ test('a Bankr or Flaunch token buy enters Routes AI through the router that reac
   }
 });
 
-test('a launchpad token buy stays out of Routes AI where its router is not released', () => {
+test('a launchpad token buy stays out of Swap AI where its router is not released', () => {
   const runtime = { ...fullyCapableRuntimeV1(), releasedRouteProviders: ['uniswap', 'aerodrome'] };
   const match = matchBaseMcpProviderIntentV1('Buy this Flaunch token with 0.001 ETH', runtime);
   assert.notEqual(match?.disposition, 'handoff_to_routes');

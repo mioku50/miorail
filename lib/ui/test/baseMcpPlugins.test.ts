@@ -51,7 +51,7 @@ test('the rail counts capabilities exactly once, in the header\'s own words', ()
   assert.match(html, /Reads<\/span><span class="v mono">8</);
   assert.match(html, /Actions ready<\/span><span class="v mono">3</);
   assert.match(html, /Actions needing an adapter<\/span><span class="v mono">1</);
-  assert.match(html, /Routes AI handoffs<\/span><span class="v mono">1</);
+  assert.match(html, /Swap AI handoffs<\/span><span class="v mono">1</);
   assert.match(html, /Not callable here<\/span><span class="v mono">2</);
   assert.doesNotMatch(html, /Needs your approval/);
   assert.doesNotMatch(html, /typed ACTION tools are released/);
@@ -372,7 +372,7 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
     assert.match(html, /<b>Plugins Wallet MCP can use<\/b>/);
     assert.match(html, /Search plugins…/);
     assert.match(html, /Base plugin spec · v0\.3\.0/);
-    assert.match(html, /Owner<\/dt><dd>Routes AI/);
+    assert.match(html, /Owner<\/dt><dd>Swap AI/);
     // The transport pill and the lifecycle word used to be the first things on
     // the card. "HTTP path" reads as a promise that the plugin does something
     // here, and `proven` / `scored` / `manifested` under a heading reads as a
@@ -401,7 +401,7 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
   test('the required filters exist and select from current truth', () => {
     assert.deepEqual(
       BASE_MCP_PLUGIN_FILTERS_V1.map((entry) => entry.label),
-      ['All', 'Readable here', 'Routes AI', 'Actions', 'Requires external UI', 'Shell required'],
+      ['All', 'Readable here', 'Swap AI', 'Actions', 'Requires external UI', 'Shell required'],
     );
     assert.deepEqual(filterBaseMcpPluginsV1(catalogue, '', 'external_ui').map((row) => row.id), ['avantis']);
     assert.deepEqual(filterBaseMcpPluginsV1(catalogue, '', 'shell_required').map((row) => row.id), ['gmgn']);
@@ -409,7 +409,7 @@ describe('the plugin catalogue is an immediately usable explorer', () => {
   });
 
   test('badges are derived from disposition, including provider UI and x402', () => {
-    assert.equal(baseMcpExampleBadgeV1({ surface: 'routable', disposition: 'handoff_to_routes' }).label, 'Routes AI');
+    assert.equal(baseMcpExampleBadgeV1({ surface: 'routable', disposition: 'handoff_to_routes' }).label, 'Swap AI');
     assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'handoff_to_provider_ui' }).label, 'Opens the app');
     assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'typed_x402_required' }).label, 'Paid read');
     assert.equal(baseMcpExampleBadgeV1({ surface: 'action', disposition: 'adapter_required' }).label, 'Not built here');

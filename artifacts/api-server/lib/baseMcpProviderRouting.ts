@@ -62,7 +62,7 @@ const RELEASED_PROVIDER_ROUTES_V1: Readonly<Record<ReviewedRouteFamilyV1, Readon
  *
  * This predicate answers only the first question: is there an adapter for this
  * provider in this route family at all. It used to be the whole gate, and that
- * is how a user asking for an Aerodrome swap was sent into Routes AI to reach
+ * is how a user asking for an Aerodrome swap was sent into Swap AI to reach
  * a Safety Kernel refusal nobody could clear. The second question — can this
  * runtime carry the intent to a signature — is `handoffToRoutesReleasedV1`
  * below, and both must pass before anything hands off.
@@ -91,7 +91,7 @@ export const ROUTE_ADAPTER_PROVIDERS_V1: readonly string[] = [
 ];
 
 /**
- * The end-to-end gate. A provider-specific intent may be sent to Routes AI
+ * The end-to-end gate. A provider-specific intent may be sent to Swap AI
  * only when the runtime can carry THIS operation to its honest end point, and
  * the reason is returned alongside so a refusal can name what is missing
  * instead of stranding the user on a Review screen.
@@ -243,7 +243,7 @@ export function matchBaseMcpProviderIntentV1(
             : provider.pluginId === 'uniswap' && uniswapCollectOrderV1(clean) ? 'v3-collect' : closest?.id ?? null,
     providerPrompt: [
       `The user explicitly selected the ${provider.pluginId} plugin. Do not substitute another provider.`,
-      `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Routes AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,
+      `Its reviewed product owner is ${provider.productSurface === 'routes' ? 'Swap AI' : 'Base MCP plugins'} and its current lifecycle stage is ${provider.lifecycleStage}.`,
       `For a read, use Base MCP help for ${provider.pluginId} and then at most one GET request to its declared scope (${hosts}). Never invent an endpoint or a result.`,
     ].join(' '),
   };

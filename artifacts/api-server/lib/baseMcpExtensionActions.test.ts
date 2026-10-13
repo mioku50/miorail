@@ -145,7 +145,7 @@ describe('deterministic Base MCP Extensions intent router', () => {
     if (launch.kind === 'needs_input') assert.equal(launch.errorCode, 'base_mcp_flaunch_action_adapter_required');
   });
 
-  test('a buy or a sell is a trade and goes to Routes AI', () => {
+  test('a buy or a sell is a trade and goes to Swap AI', () => {
     const token = '0x1111111111111111111111111111111111111111';
     for (const message of [
       'Buy BRETT with 50 USDC',
@@ -242,7 +242,7 @@ describe('deterministic Base MCP Extensions intent router', () => {
     if (aerodrome.kind === 'handoff') assert.equal(aerodrome.provider, 'aerodrome');
   });
 
-  test('a swap this runtime cannot sign is refused here, not in Routes AI', () => {
+  test('a swap this runtime cannot sign is refused here, not in Swap AI', () => {
     // The production dead end: the console offered ROUTES AI, the user walked
     // five screens, and the Safety Kernel refused for want of a simulation
     // nobody could run. The refusal now arrives at the first screen, with the

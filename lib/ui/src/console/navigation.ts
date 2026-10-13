@@ -15,7 +15,7 @@
 
 /** Every place a user can be. `settings` is deliberately last: it is where you
  * go to change something, not a surface you work in. */
-export const CONSOLE_SECTIONS_V1 = ['market', 'radar', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
+export const CONSOLE_SECTIONS_V1 = ['today', 'market', 'radar', 'opportunities', 'investigate', 'portfolio', 'routes', 'activity', 'extensions', 'settings'] as const;
 
 export type ConsoleSectionV1 = (typeof CONSOLE_SECTIONS_V1)[number];
 
@@ -36,6 +36,13 @@ export interface ConsoleSectionDefinitionV1 {
 }
 
 export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, ConsoleSectionDefinitionV1>> = {
+  today: {
+    id: 'today',
+    label: 'Today',
+    compactLabel: 'Today',
+    path: '/today',
+    blurb: 'What Miorail already knows about your wallet, and one line that takes a question to the page that answers it.',
+  },
   opportunities: {
     id: 'opportunities',
     // "Discover B20" was exactly right while this surface WAS the launch feed:
@@ -121,8 +128,9 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
     id: 'routes',
     // Routes produces a measured Route Card; Base MCP Extensions exposes
     // reviewed third-party capabilities. Their names keep that boundary clear.
-    label: 'Routes AI',
-    compactLabel: 'Routes AI',
+    // "Routes AI" until 2026-10-13, renamed by the operator with the Today menu.
+    label: 'Swap AI',
+    compactLabel: 'Swap AI',
     path: '/routes',
     blurb: 'State a goal and compare the ways to reach it.',
   },
@@ -148,25 +156,22 @@ export const CONSOLE_SECTION_TABLE_V1: Readonly<Record<ConsoleSectionV1, Console
 };
 
 /**
- * The primary navigation, in order.
+ * The primary navigation, in order (operator, 2026-10-13): Today, Stocks,
+ * Swap AI, Wallet MCP, and everything else behind "More".
  *
- * Stocks first: it is the product a new reader meets. Then the two surfaces
- * the operator named as the console's core on 2026-10-03 — Base MCP plugins and
- * Routes AI. Settings completes the four main pages in the drawer
- * (`CONSOLE_MAIN_SECTIONS_V1`); Radar, Discover, Investigate, B20 controls and
- * Activity moved behind "More", reachable by a tap and never removed.
+ * Today leads because it answers before it is asked: what Miorail already
+ * knows about the reader's wallet. Stocks is the product a new reader meets.
+ * Settings, Radar, Discover, Investigate, B20 controls and Activity sit behind
+ * "More", reachable by a tap and never removed.
  */
-export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'extensions', 'routes'] as const;
+export const CONSOLE_PRIMARY_SECTIONS_V1 = ['today', 'market', 'routes', 'extensions'] as const;
 
 /**
  * What the Base App MiniApp's bar shows, in order.
  *
- * The same three pages as the web's primary navigation, so a reader who
- * learns Miorail on a phone finds the same pages on a laptop (operator
- * roadmap, 2026-10-04). Settings, the fourth main page, leads the Base App's
- * drawer, and Radar, Discover, B20 controls and Activity follow it behind
- * "More", exactly as on the web. Three tabs, because three get ~130px each on
- * a 390px screen and "MCP plugins" does not survive ~90px.
+ * The web's primary pages without Today, which the Base App does not mount
+ * yet; the order is the web's, so a reader who learns Miorail on a phone finds
+ * the same pages on a laptop. Three tabs get ~130px each on a 390px screen.
  *
  * Deliberately its own list all the same. It used to BE
  * `CONSOLE_PRIMARY_SECTIONS_V1`, on the rule that a tab must have a real
@@ -177,20 +182,20 @@ export const CONSOLE_PRIMARY_SECTIONS_V1 = ['market', 'extensions', 'routes'] as
  * Adding a section here without adding its screen is the bug this separation
  * exists to make visible, and `navigation.test.tsx` fails on it.
  */
-export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'extensions', 'routes'] as const;
+export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'routes', 'extensions'] as const;
 
 /**
- * The four pages the console leads with, in order (operator, 2026-10-03):
- * Stocks, Base MCP plugins, Routes AI and Settings.
+ * The four pages the console leads with, in order (operator, 2026-10-13):
+ * Today, Stocks, Swap AI and Wallet MCP. Settings moved behind "More".
  */
-export const CONSOLE_MAIN_SECTIONS_V1 = ['market', 'extensions', 'routes', 'settings'] as const;
+export const CONSOLE_MAIN_SECTIONS_V1 = ['today', 'market', 'routes', 'extensions'] as const;
 
 /**
  * Everything else, behind "More" and opened on a tap. Nothing here is removed:
  * every one of them is still a page with its own path, and the drawer lists
  * them the moment a reader asks — or by itself, when the reader is on one.
  */
-export const CONSOLE_MORE_SECTIONS_V1 = ['radar', 'opportunities', 'investigate', 'portfolio', 'activity'] as const;
+export const CONSOLE_MORE_SECTIONS_V1 = ['radar', 'opportunities', 'investigate', 'portfolio', 'activity', 'settings'] as const;
 
 /** T70 §3 — the mobile drawer is the complete map of mounted sections. */
 export const CONSOLE_DRAWER_SECTIONS_V1 = [...CONSOLE_MAIN_SECTIONS_V1, ...CONSOLE_MORE_SECTIONS_V1] as const;

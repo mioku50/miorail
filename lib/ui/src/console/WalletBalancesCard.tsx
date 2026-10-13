@@ -77,7 +77,7 @@ export function walletRegistryMarkViewV1(registry: WalletRegistryMarkV1 | null |
   };
 }
 
-/** One row of Routes AI's "Your wallet". */
+/** One row of Swap AI's "Your wallet". */
 export interface PlanWalletRowV1 {
   asset: string;
   amount: string;
@@ -86,7 +86,7 @@ export interface PlanWalletRowV1 {
 }
 
 /**
- * Routes AI's "Your wallet", from the same balances the card reads.
+ * Swap AI's "Your wallet", from the same balances the card reads.
  *
  * Both surfaces mapped the provider's rows by hand and read `balanceUsd`, a
  * field the portfolio answer does not carry, so every dollar cell was a dash,

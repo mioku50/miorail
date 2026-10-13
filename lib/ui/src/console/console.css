@@ -2026,6 +2026,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .radar-counts span { display: grid; gap: 2px; padding: 9px 11px; border-radius: 8px;
   background: var(--panel); box-shadow: inset 0 0 0 1px var(--line); color: var(--faint); font-size: var(--fs-micro); }
 .mio-console .radar-counts strong { color: var(--ink); font-size: var(--fs-xl); font-weight: 700; }
+/* Today wears Radar's hero and sections. Amber marks a finding and nothing else. */
+.mio-console .today .radar-counts span[data-tone="attention"] strong { color: var(--amber); }
+.mio-console .today .cardrow[data-tone="attention"] { border-left: 2px solid var(--amber); }
+.mio-console .today .today-ask { margin: 12px 0 6px; }
 .mio-console .radar-section { display: grid; gap: 10px; }
 .mio-console .radar-section-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px;
   padding-bottom: 7px; border-bottom: 1px solid var(--line); }

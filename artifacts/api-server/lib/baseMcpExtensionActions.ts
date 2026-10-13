@@ -94,7 +94,7 @@ function canonicalUsdcAmount(value: string): { amount: string; amountAtomic: str
  * Deterministic intent boundary for the Extensions room.
  *
  * The model never chooses whether a wallet action is a route. Swap/yield are
- * detected before any tool inventory is created and handed to Routes AI.
+ * detected before any tool inventory is created and handed to Swap AI.
  * Direct actions use closed typed adapters; Aerodrome calls are server-owned.
  */
 export function classifyBaseMcpExtensionIntentV1(
@@ -174,7 +174,7 @@ export function classifyBaseMcpExtensionIntentV1(
     return { kind: 'handoff', originalMessage: trimmed, provider: provider.pluginId };
   }
   // A Routes adapter exists and this runtime cannot finish the journey. The
-  // user is told exactly that, HERE, rather than being walked into Routes AI
+  // user is told exactly that, HERE, rather than being walked into Swap AI
   // to meet a Safety Kernel refusal at the end of a five-step flow.
   if (provider?.disposition === 'route_unavailable_here' && provider.pluginId === 'gmgn') {
     // GMGN only ever quotes here, so there is no Review screen to spare
@@ -292,7 +292,7 @@ export function classifyBaseMcpExtensionIntentV1(
   const routable = /\b(?:swap|trade|exchange|best\s+(?:swap|rate|route)|yield|apy)\b|(?:обменяй|обменять|свап|лучший\s+курс|доходност)/iu;
   if (routable.test(lower)) return { kind: 'handoff', originalMessage: trimmed, provider: null };
 
-  // "Buy BRETT with 50 USDC", "sell 10 DEGEN", "купи 0x… на 5 USDC". Routes AI
+  // "Buy BRETT with 50 USDC", "sell 10 DEGEN", "купи 0x… на 5 USDC". Swap AI
   // reads buy and sell as swaps; this console sent them to the read-only model,
   // which could only say it cannot buy. A trade names an amount or a token
   // address; a question about one ("what did I buy last week?") asks.

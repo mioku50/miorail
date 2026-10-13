@@ -68,17 +68,17 @@ export function compactStepLabelV1(activeStep: number): string {
  * Where you are, starting from the section you clicked.
  *
  * Every crumb here used to start with "Session" or "Proofs" — words that are
- * on no tab and in no menu. A reader who pressed **Routes AI** landed on a page
+ * on no tab and in no menu. A reader who pressed **Swap AI** landed on a page
  * headed `Session / New goal` and had to work out that the two were the same
  * place. A breadcrumb's first element is the section's own name or the trail
  * starts somewhere the reader has never been.
  */
 export const CONSOLE_BREADCRUMB_V1: Record<ConsoleScreenV1, (goal: string) => string[]> = {
-  plan: () => ['Routes AI', 'New goal'],
-  comparing: (goal) => ['Routes AI', goal, 'Comparing'],
-  route: (goal) => ['Routes AI', goal, 'Route card'],
-  review: (goal) => ['Routes AI', goal, 'Review'],
-  proof: (goal) => ['Routes AI', 'Proofs', goal],
+  plan: () => ['Swap AI', 'New goal'],
+  comparing: (goal) => ['Swap AI', goal, 'Comparing'],
+  route: (goal) => ['Swap AI', goal, 'Route card'],
+  review: (goal) => ['Swap AI', goal, 'Review'],
+  proof: (goal) => ['Swap AI', 'Proofs', goal],
 };
 
 // --- Microcopy --------------------------------------------------------------

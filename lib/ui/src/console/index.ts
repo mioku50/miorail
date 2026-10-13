@@ -67,3 +67,6 @@ export * from './StocksAskPanel';
 export * from './stocksConsole';
 export * from './stocksSections';
 export * from './stockChartView';
+export * from './todayView';
+export * from './TodayScreen';
+export * from './todayConsole';

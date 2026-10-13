@@ -101,7 +101,7 @@ describe('the tool catalogue is scannable, and its column is named', () => {
     }
     assert.match(card, /Readable here/);
     assert.match(card, /Need your approval/);
-    assert.match(card, /Hand off to Routes AI/);
+    assert.match(card, /Hand off to Swap AI/);
   });
 });
 

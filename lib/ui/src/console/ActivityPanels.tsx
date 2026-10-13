@@ -114,7 +114,7 @@ export interface ActivityProofItemV1 {
 /**
  * The rail's "Recent proofs": runs that have one, newest first.
  *
- * It listed the newest runs whatever they reached, so Routes AI showed five
+ * It listed the newest runs whatever they reached, so Swap AI showed five
  * never-sent runs under "Recent proofs", while Activity, reading the same
  * runs, counted six proofs and listed none. The date is part of the line
  * because a proof is often days old, and a bare time read as today.

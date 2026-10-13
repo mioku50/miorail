@@ -85,6 +85,9 @@ const BorrowReviewPage = lazy(() =>
 const MarketRealityRadarPage = lazy(() =>
   import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
 );
+const TodayPage = lazy(() =>
+  import('../features/today/TodayPage').then((m) => ({ default: m.TodayPage })),
+);
 const SettingsPage = lazy(() =>
   import('../features/settings/SettingsPage').then((m) => ({ default: m.SettingsPage })),
 );
@@ -289,6 +292,13 @@ export function App() {
           <RequireSession>
             <BorrowReviewPage />
           </RequireSession>
+        </Route>
+
+        {/* Today — the first screen for a wallet that signed in, and the
+            public "is it real, can I sell it" check for one that has not. No
+            session gate: the page draws both, as the Stocks board does. */}
+        <Route path="/today">
+          <TodayPage />
         </Route>
 
         {/* Phase 12.2 — tenant-scoped changes to exact watched market

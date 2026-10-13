@@ -188,7 +188,7 @@ describe('the page moves only when it has just answered a question', () => {
 // 2026-09-06 — one purchase had two doors and two answers.
 //
 // A clearance minted on the review page pins `enhanced` and is simulated.
-// `Prepare buy` handed a sentence to Routes AI, where depth comes from the
+// `Prepare buy` handed a sentence to Swap AI, where depth comes from the
 // reader's own words and defaults to `standard` — so the door the card puts in
 // front of people was the one that skipped the simulation, and a batch that
 // reverted on chain reached the wallet behind eight green checks.

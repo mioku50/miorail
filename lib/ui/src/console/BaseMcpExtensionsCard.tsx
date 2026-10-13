@@ -221,13 +221,13 @@ export function BaseMcpExtensionsCard(model: BaseMcpExtensionsModelV1) {
               </span>
             </div>
             <div className="qrow">
-              <span>Hand off to Routes AI</span>
+              <span>Hand off to Swap AI</span>
               <span className="v mono">{model.tools.filter((tool) => tool.surface === 'routable').length}</span>
             </div>
             <p className="lnote">
               Read live from Base MCP, so a tool Base adds appears here on the next read. Discovery
               never grants execution: each ACTION needs a released typed adapter; ROUTABLE tools
-              hand off to Routes AI. Base does not operate, endorse or audit the protocols these
+              hand off to Swap AI. Base does not operate, endorse or audit the protocols these
               reach, and Miorail does not either. Transactions are irreversible.
             </p>
           </>

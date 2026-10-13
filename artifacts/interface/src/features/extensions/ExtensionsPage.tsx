@@ -69,7 +69,14 @@ export function ExtensionsPage() {
   const consoleAsk = useBaseMcpConsole();
   const reconcileAction = useReconcileBaseMcpAction();
   const shareFound = useShareFoundReceipt();
-  const [question, setQuestion] = useState('');
+  // A question handed over from Today arrives in `?ask=` and is filled into
+  // the box, never asked: like Swap AI's `?goal=`, the text is one a link can
+  // choose, so the reader presses Ask themselves.
+  const [question, setQuestion] = useState(() =>
+    typeof window === 'undefined'
+      ? ''
+      : (new URLSearchParams(window.location.search).get('ask') ?? '').trim().slice(0, 500),
+  );
   const gate = useAuthGate();
   // Public since 2026-10-04: one of the four main pages used to open on the
   // wallet wall, so a visitor never saw a plugin. Signed out, nothing about

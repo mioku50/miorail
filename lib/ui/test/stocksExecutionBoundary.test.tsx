@@ -553,7 +553,7 @@ describe('Phase 17.9 — one purchase, two doors, one verification depth', () =>
 
   test('both doors quote one constant instead of writing the depth out twice', () => {
     // They disagreed. A clearance minted on the review page pinned `enhanced`
-    // and was simulated; `Prepare buy` handed a sentence to Routes AI, where
+    // and was simulated; `Prepare buy` handed a sentence to Swap AI, where
     // depth comes from the reader's own words and defaults to `standard` — so
     // the button the card actually shows was the one that skipped the check.
     assert.match(handoff, /STOCK_EXECUTION_VERIFICATION_DEPTH_V1 = 'enhanced'/);

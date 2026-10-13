@@ -126,7 +126,7 @@ export type BaseMcpPluginFilterV1 =
 export type BaseMcpExampleDispositionUiV1 = BaseMcpPluginRowV1['examples'][number]['disposition'];
 
 export interface BaseMcpExampleBadgeV1 {
-  label: 'Reads' | 'Routes AI' | 'You approve' | 'Opens the app' | 'Not built here' | 'Not available here' | 'Paid read';
+  label: 'Reads' | 'Swap AI' | 'You approve' | 'Opens the app' | 'Not built here' | 'Not available here' | 'Paid read';
   tone: 'read' | 'routes' | 'action' | 'provider' | 'adapter' | 'x402';
 }
 
@@ -144,7 +144,7 @@ export function baseMcpExampleBadgeV1(example: BaseMcpExampleUiV1): BaseMcpExamp
   if (example.capabilityState === 'unavailable') return { label: 'Not available here', tone: 'adapter' };
   switch (example.disposition) {
     case 'handoff_to_routes':
-      return { label: 'Routes AI', tone: 'routes' };
+      return { label: 'Swap AI', tone: 'routes' };
     case 'handoff_to_provider_ui':
       return { label: 'Opens the app', tone: 'provider' };
     case 'typed_x402_required':
@@ -202,7 +202,7 @@ const CAPABILITY_ORDER_V1: readonly BaseMcpPluginCapabilityV1[] = [
 export const BASE_MCP_CAPABILITY_LABEL_V1: Readonly<Record<BaseMcpPluginCapabilityV1, string>> = {
   read: 'Reads',
   action: 'You approve',
-  routes: 'Routes AI',
+  routes: 'Swap AI',
   provider_ui: 'Opens the app',
   unavailable: 'Not available here',
 };
@@ -329,7 +329,7 @@ export const BASE_MCP_PLUGIN_FILTERS_V1: readonly {
 }[] = [
   { id: 'all', label: 'All' },
   { id: 'readable_here', label: 'Readable here' },
-  { id: 'routes_ai', label: 'Routes AI' },
+  { id: 'routes_ai', label: 'Swap AI' },
   { id: 'actions', label: 'Actions' },
   { id: 'external_ui', label: 'Requires external UI' },
   { id: 'shell_required', label: 'Shell required' },
@@ -584,7 +584,7 @@ export function BaseMcpPluginsCard(model: BaseMcpPluginsModelV1) {
                 {filtered.map((plugin) => {
                   const reach = baseMcpPluginReachV1(plugin);
                   const capabilities = baseMcpPluginCapabilitiesV1(plugin);
-                  const owner = plugin.productSurface === 'routes' ? 'Routes AI' : 'Wallet MCP';
+                  const owner = plugin.productSurface === 'routes' ? 'Swap AI' : 'Wallet MCP';
                   const moreCount = Math.max(0, plugin.examples.length - 1);
                   return (
                     <article className="mcp-plugin-card" key={plugin.id} data-plugin-id={plugin.id}>
@@ -763,7 +763,7 @@ export function BaseMcpSummaryRail(model: BaseMcpRailModelV1) {
               ))}
               <p className="lnote">
                 Every read stays here. Every action needs a typed adapter and your wallet&apos;s
-                approval, and every routable intent finishes in Routes AI.
+                approval, and every routable intent finishes in Swap AI.
               </p>
             </>
           ) : (

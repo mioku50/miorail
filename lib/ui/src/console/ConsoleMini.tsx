@@ -22,10 +22,10 @@ void React;
 // ---------------------------------------------------------------------------
 
 export interface ConsoleMiniShellProps {
-  /** The header's first line: the active goal on Routes AI, the section's
+  /** The header's first line: the active goal on Swap AI, the section's
    * name everywhere else. */
   goalLine: string;
-  /** The second line, when the section has one. Routes AI's progress. */
+  /** The second line, when the section has one. Swap AI's progress. */
   stepLine?: string | null;
   /** The current section. The drawer closes when it changes, so picking a
    * section in the drawer shows it instead of leaving the drawer over it. */

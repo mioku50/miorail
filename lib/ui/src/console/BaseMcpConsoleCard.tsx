@@ -133,7 +133,7 @@ export interface BaseMcpConsoleAnswerV1 {
    * Built server-side from a code-owned registry keyed by the plugin the router
    * resolved — never by the model, which is the whole reason this is a field
    * and not a URL inside `reply`. Absent for routable intents on purpose: a
-   * swap finishes in Routes AI, and offering "go do it on Aerodrome" because
+   * swap finishes in Swap AI, and offering "go do it on Aerodrome" because
    * our own simulator fell short hands the user our unfinished work.
    */
   cta?: { label: string; url: string } | null;
@@ -228,7 +228,7 @@ export interface BaseMcpQuickExampleV1 {
 }
 
 /** Things a person asks, one of each kind the console answers: reads, a send
- * their wallet approves, and a swap that goes to Routes AI. It used to be
+ * their wallet approves, and a swap that goes to Swap AI. It used to be
  * seven routing demonstrations, among them a 10x perp, which read as a
  * capability matrix rather than a first screen (operator, 2026-10-04).
  * Every plugin's own examples are still one tap away in the catalogue.
@@ -341,7 +341,7 @@ export function baseMcpConsoleTraceSummaryV1(answer: BaseMcpConsoleAnswerV1): st
 // ONE way to count a capability on this page.
 //
 // The header said `8 readable · 4 of 5 requiring approval are released · 1 hand
-// off to Routes AI` while the rail beside it said `Readable 8 · Needs your
+// off to Swap AI` while the rail beside it said `Readable 8 · Needs your
 // approval 7 · Not callable here 0`. Both were computed correctly, from two
 // different taxonomies over the same fifteen tools: the rail grouped them by
 // SAFETY CLASS (may this be called without approval), the header by ROUTING
@@ -390,7 +390,7 @@ export function baseMcpCapabilityTallyV1(
       one: 'action needing an adapter',
       many: 'actions needing an adapter',
     },
-    { label: 'Routes AI handoffs', count: routing.routable, one: 'Routes AI handoff', many: 'Routes AI handoffs' },
+    { label: 'Swap AI handoffs', count: routing.routable, one: 'Swap AI handoff', many: 'Swap AI handoffs' },
     { label: 'Not callable here', count: routing.blocked, one: 'not callable here', many: 'not callable here' },
   ];
 }
@@ -464,7 +464,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
       <div className="rpb">
         <p className="lnote">
           Ask your Coinbase Wallet in plain words. A read is answered here; sending money opens your
-          wallet for approval; a swap goes to Routes AI to compare routes first. Miorail never signs.
+          wallet for approval; a swap goes to Swap AI to compare routes first. Miorail never signs.
         </p>
         {model.disabledReason && <p className="empty">{model.disabledReason}</p>}
 
@@ -528,9 +528,9 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
             {answer.status === 'handoff' && answer.handoff && (
               <div>
                 <div className="qrow">
-                  <span className="pill br">Routes AI</span>
+                  <span className="pill br">Swap AI</span>
                   <span className="v">
-                    {answer.handoff.target === 'routes' ? 'Routes AI' : 'Avantis'}
+                    {answer.handoff.target === 'routes' ? 'Swap AI' : 'Avantis'}
                   </span>
                 </div>
                 <p className="lnote">{answer.reply}</p>
@@ -542,7 +542,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                       className="btn"
                       onClick={() => model.onOpenRoutes?.(answer.handoff!.originalMessage)}
                     >
-                      Open Routes AI
+                      Open Swap AI
                     </button>
                   </div>
                 )}
@@ -878,7 +878,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
 
         <p className="lnote">
           Coinbase does not operate, endorse or audit the plugins behind these tools, and neither
-          does Miorail. Swaps and deposits go to Routes AI, which compares routes first.
+          does Miorail. Swaps and deposits go to Swap AI, which compares routes first.
         </p>
       </div>
     </div>

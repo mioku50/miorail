@@ -117,7 +117,7 @@ describe('the matrix answers for every published plugin', () => {
 
 // Bankr and Flaunch launch tokens into their own Uniswap v4 pools, and
 // KyberSwap routes those pools (uniswap-v4-doppler, uniswap-v4-flaunch). A buy
-// is a swap Routes AI can finish; the launch itself still has no adapter.
+// is a swap Swap AI can finish; the launch itself still has no adapter.
 describe('a launchpad token trades through the router that reaches its pools', () => {
   for (const pluginId of ['bankr', 'flaunch']) {
     it(`releases a ${pluginId} buy through KyberSwap`, () => {

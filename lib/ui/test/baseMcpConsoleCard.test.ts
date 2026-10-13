@@ -292,7 +292,7 @@ test('a Basename send shows both the human name and resolved Base address', () =
   assert.match(html, /0x2222222222222222222222222222222222222222/);
 });
 
-test('a ROUTABLE response offers Routes AI and no approval URL', () => {
+test('a ROUTABLE response offers Swap AI and no approval URL', () => {
   const html = renderToStaticMarkup(BaseMcpConsoleCard({
     question: 'Swap 100 USDC to ETH',
     onQuestionChange: () => undefined,
@@ -306,8 +306,8 @@ test('a ROUTABLE response offers Routes AI and no approval URL', () => {
       handoff: { target: 'routes', path: '/routes', originalMessage: 'Swap 100 USDC to ETH' },
     }),
   }));
-  assert.match(html, /<span class="pill br">Routes AI<\/span>/);
-  assert.match(html, /Open Routes AI/);
+  assert.match(html, /<span class="pill br">Swap AI<\/span>/);
+  assert.match(html, /Open Swap AI/);
   assert.doesNotMatch(html, /Approve in your wallet/);
 });
 
@@ -387,7 +387,7 @@ describe('the console never borrows the routers’ authority', () => {
       answer: null,
     }));
     assert.match(html, /<b>Try<\/b><span>fills the box — nothing runs until you ask<\/span>/);
-    assert.match(html, />Routes AI</);
+    assert.match(html, />Swap AI</);
     assert.match(html, />You approve</);
     assert.match(html, />Reads</);
     // The routing vocabulary is gone from the first screen.
@@ -509,14 +509,14 @@ describe('the trace summary says where the words came from', () => {
 describe('the console header counts tools in words', () => {
   test('it says what a reader would say, in the rail\'s own words', () => {
     // These strings used to be `8 readable · 3 of 7 requiring approval are
-    // released · 1 hand off to Routes AI`, counted by safety class, beside a
+    // released · 1 hand off to Swap AI`, counted by safety class, beside a
     // rail counting the same tools by routing. Two taxonomies, one page, and a
     // reader with no way to reconcile 7 against 5. One tally now.
     assert.equal(
       baseMcpToolSummaryV1({
         routing: { read: 8, action: 7, routable: 1, blocked: 0, releasedActions: 3 },
       }),
-      '8 reads · 3 actions ready · 4 actions needing an adapter · 1 Routes AI handoff',
+      '8 reads · 3 actions ready · 4 actions needing an adapter · 1 Swap AI handoff',
     );
   });
 
@@ -538,7 +538,7 @@ describe('the console header counts tools in words', () => {
         ['Reads', 8],
         ['Actions ready', 4],
         ['Actions needing an adapter', 1],
-        ['Routes AI handoffs', 1],
+        ['Swap AI handoffs', 1],
         ['Not callable here', 2],
       ],
     );
@@ -549,7 +549,7 @@ describe('the console header counts tools in words', () => {
     }
     // One is one: "1 actions needing an adapter" and "1 routes ai handoffs"
     // were printed on production, 2026-09-28.
-    assert.equal(summary, '8 reads · 4 actions ready · 1 action needing an adapter · 1 Routes AI handoff · 2 not callable here');
+    assert.equal(summary, '8 reads · 4 actions ready · 1 action needing an adapter · 1 Swap AI handoff · 2 not callable here');
   });
 
   test('an unread list is a sentence, not an em-dash', () => {

@@ -38,6 +38,7 @@ import {
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 
 import { cashExitLadderRungsV1, roundTripHeadlineV1 } from './rwaDiscoverView';
+import type { MyStocksTodayModelV1 } from './MyStocksTodayCard';
 import { weekendMarketViewV1, weekendQuietViewV1 } from './weekendMarketView';
 import { reopenGameViewV1 } from './reopenGameView';
 import { stocksSectionTabsV1, type StocksSectionV1 } from './stocksSections';
@@ -396,6 +397,25 @@ export interface StocksConsoleResultV1 {
   symbolOf: (underlyingKey: string) => string | null;
   /** How many representations this read put on the board. */
   representationCount: number;
+}
+
+/** "My stocks today" from its read: the same card on Stocks and on Today. */
+export function myStocksTodayModelV1(
+  read: ReturnType<typeof useMyStocksToday>,
+  cashOut: ReturnType<typeof useMeasureMyStockCashOut>,
+): MyStocksTodayModelV1 {
+  return {
+    data: read.data ?? null, loading: read.isPending, failed: read.isError,
+    refreshing: read.isFetching, returning: read.returning,
+    onRefresh: read.refresh,
+    walletKey: read.wallet ?? '',
+    onMeasureCashOut: (tokenAddress) => cashOut.mutateAsync(tokenAddress),
+    onMarkRead: read.markRead,
+    markedRead: read.markedRead,
+    marking: read.marking, markFailed: read.markFailed,
+    onView: read.onView, onNextPage: read.onNextPage, onFirstPage: read.onFirstPage,
+    isLaterPage: read.isLaterPage,
+  };
 }
 
 /**
@@ -1110,18 +1130,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     uses,
     chart,
     heldTokenAddresses,
-    today: session ? {
-      data: todayRead.data ?? null, loading: todayRead.isPending, failed: todayRead.isError,
-      refreshing: todayRead.isFetching, returning: todayRead.returning,
-      onRefresh: todayRead.refresh,
-      walletKey: todayRead.wallet ?? '',
-      onMeasureCashOut: (tokenAddress) => cashOut.mutateAsync(tokenAddress),
-      onMarkRead: todayRead.markRead,
-      markedRead: todayRead.markedRead,
-      marking: todayRead.marking, markFailed: todayRead.markFailed,
-      onView: todayRead.onView, onNextPage: todayRead.onNextPage, onFirstPage: todayRead.onFirstPage,
-      isLaterPage: todayRead.isLaterPage,
-    } : null,
+    today: session ? myStocksTodayModelV1(todayRead, cashOut) : null,
     telegram,
     // The decimals travel per address so the card can read a SELL amount in
     // the exact contract's own scale; null where nobody read it.

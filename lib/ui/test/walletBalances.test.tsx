@@ -21,7 +21,7 @@ const row = (over: Partial<WalletBalanceEntryV1> & Pick<WalletBalanceEntryV1, 's
 
 // Production, 2026-09-28: 15 "AAPLc" named "Apple Inc," at 0x2a97…8636 sat in
 // both balance lists as one more holding. The official AAPLc is another
-// contract. Routes AI's list also read a field the answer does not carry, so
+// contract. Swap AI's list also read a field the answer does not carry, so
 // every dollar cell was a dash, USDC's included.
 describe('what the wallet holds, against the official registry', () => {
   const rows: WalletBalanceEntryV1[] = [
@@ -39,7 +39,7 @@ describe('what the wallet holds, against the official registry', () => {
     row({ symbol: 'SPAM', address: '0x5555555555555555555555555555555555555555', possibleSpam: true }),
   ];
 
-  test('Routes AI shows dollars, leads with what has a price, and drops zero and spam', () => {
+  test('Swap AI shows dollars, leads with what has a price, and drops zero and spam', () => {
     const plan = planWalletRowsV1(rows);
     // Priced first, by value; the rest alphabetically, as the balances card lists them.
     assert.deepEqual(plan.map((entry) => entry.asset), ['ETH', 'USDC', 'NVDA', 'AAPLc', 'ABTC']);

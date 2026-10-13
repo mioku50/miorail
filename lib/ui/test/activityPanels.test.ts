@@ -163,7 +163,7 @@ describe('proof details', () => {
 // Production, 2026-09-28: six runs had a proof, and every one of them still
 // read `ready`, so each said "Never signed, so there is no proof" beside a
 // pill reading `pending` or `reconciliation_required`. One was the first real
-// stock trade. Routes AI's rail meanwhile listed five never-sent runs under
+// stock trade. Swap AI's rail meanwhile listed five never-sent runs under
 // "Recent proofs", and Activity's rail counted six and listed none.
 // ---------------------------------------------------------------------------
 describe('a run with a proof is described by its proof', () => {

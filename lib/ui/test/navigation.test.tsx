@@ -165,29 +165,30 @@ describe('§9.2 — an unconfigured pipeline is never an empty feed', () => {
 describe('§9.5/§9.6 — the drawer is navigation, not a control panel', () => {
   const shell = read('../src/console/ConsoleShell.tsx');
 
-  test('Stocks leads and the evidence tools remain reachable after it', () => {
-    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 9);
-    // Four pages lead (operator, 2026-10-03); the other five follow behind
-    // "More", in the order the drawer lists them.
+  test('Today leads and the evidence tools remain reachable after it', () => {
+    assert.equal(CONSOLE_DRAWER_SECTIONS_V1.length, 10);
+    // Four pages lead (operator, 2026-10-13: Today, Stocks, Swap AI, Wallet
+    // MCP); the other six follow behind "More", Settings among them.
     assert.deepEqual([...CONSOLE_DRAWER_SECTIONS_V1], [
+      'today',
       'market',
-      'extensions',
       'routes',
-      'settings',
+      'extensions',
       'radar',
       'opportunities',
       'investigate',
       'portfolio',
       'activity',
+      'settings',
     ]);
     const nav = consoleNavModelV1({ mounted: CONSOLE_DRAWER_SECTIONS_V1, active: 'market' });
     assert.deepEqual(
       nav.filter((item) => item.group === 'main').map((item) => item.label),
-      ['Stocks', 'Wallet MCP', 'Routes AI', 'Settings'],
+      ['Today', 'Stocks', 'Swap AI', 'Wallet MCP'],
     );
     assert.deepEqual(
       nav.filter((item) => item.group === 'more').map((item) => item.label),
-      ['Radar', 'Discover', 'Investigate', 'B20 controls', 'Activity'],
+      ['Radar', 'Discover', 'Investigate', 'B20 controls', 'Activity', 'Settings'],
     );
   });
 
@@ -314,24 +315,29 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // Phase 15.1 made it Stocks / Radar / B20; the roadmap of 2026-10-04 gave
     // it the web's own main pages, so a reader meets the same product on a
     // phone and on a laptop.
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Wallet MCP', 'Routes AI']);
-    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], [...CONSOLE_PRIMARY_SECTIONS_V1]);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Swap AI', 'Wallet MCP']);
+    // The web's pages in the web's order, without Today until the Base App
+    // mounts it.
+    assert.deepEqual(
+      [...CONSOLE_MINIAPP_SECTIONS_V1],
+      CONSOLE_PRIMARY_SECTIONS_V1.filter((section) => section !== 'today'),
+    );
   });
 
-  test('the Base App drawer leads with Settings, then what the web keeps behind More', () => {
+  test('the Base App drawer is what the web keeps behind More', () => {
     const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
     const drawer = /const MINIAPP_DRAWER_SECTIONS_V1 = \[([^\]]+)\]/.exec(mini);
     const listed = [...drawer![1]!.matchAll(/"([a-z]+)"/g)].map((match) => match[1]!);
-    // Every main page is reachable: three in the bar, Settings in the drawer.
+    // Every main page but Today is in the bar; Today is the web's until the
+    // Base App mounts it.
     assert.deepEqual(
       [...CONSOLE_MAIN_SECTIONS_V1].filter((section) => !(CONSOLE_MINIAPP_SECTIONS_V1 as readonly string[]).includes(section)),
-      ['settings'],
+      ['today'],
     );
-    assert.equal(listed[0], 'settings');
-    // The rest is the web's "More", minus Investigate, which the Base App does
-    // not mount.
+    // The web's "More", Settings last, minus Investigate, which the Base App
+    // does not mount.
     assert.deepEqual(
-      listed.slice(1),
+      listed,
       CONSOLE_MORE_SECTIONS_V1.filter((section) => section !== 'investigate'),
     );
     assert.match(mini, /<span>More<\/span>/);
@@ -340,9 +346,9 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
   test('the web tab bar opens on the product, not on what it was built from', () => {
     // Phase 15.1. Stocks lived in the drawer only, so the narrow surface -- the
     // one a new reader is most likely to meet -- led with Discover, B20
-    // controls and Routes AI. Those are the foundations, not the product.
+    // controls and Swap AI. Those are the foundations, not the product.
     const nav = consoleNavModelV1({ mounted: CONSOLE_PRIMARY_SECTIONS_V1, active: 'market' });
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Wallet MCP', 'Routes AI']);
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Today', 'Stocks', 'Swap AI', 'Wallet MCP']);
   });
 
   test('a Base App tab always has a handler behind it', () => {
@@ -427,7 +433,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // They answer with different guarantees — a measured Route Card versus
     // whatever a third-party tool returned — so they must not read as one
     // feature split across two tabs.
-    assert.equal(CONSOLE_SECTION_TABLE_V1.routes.label, 'Routes AI');
+    assert.equal(CONSOLE_SECTION_TABLE_V1.routes.label, 'Swap AI');
     assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.label, 'Wallet MCP');
     assert.equal(CONSOLE_SECTION_TABLE_V1.extensions.compactLabel, 'Wallet MCP');
   });
@@ -455,8 +461,8 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
   });
 
   test('both surfaces read the same table, in each surface\u2019s own order', () => {
-    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['market', 'extensions', 'routes']);
-    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'extensions', 'routes']);
+    assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['today', 'market', 'routes', 'extensions']);
+    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'routes', 'extensions']);
     // Whatever each surface lists, the words come from the shared table.
     for (const section of [...CONSOLE_PRIMARY_SECTIONS_V1, ...CONSOLE_MINIAPP_SECTIONS_V1]) {
       assert.ok(CONSOLE_SECTION_TABLE_V1[section].compactLabel.length > 0);
@@ -1413,7 +1419,7 @@ describe('Phase 15.1 — a signed-out reader is told about the session, not the 
 // The sidebar said "Evidence index", the page header on that same screen said
 // "Discover", Base App's bar said "Discover", and the launch feed one level
 // down said "Discover B20". Four words, one place. The same happened at
-// "B20 controls / Control watch" and at "Routes AI" opening on
+// "B20 controls / Control watch" and at "Swap AI" opening on
 // "Session / New goal" — a breadcrumb that starts somewhere the reader has
 // never been.
 //
@@ -1454,7 +1460,7 @@ describe('every surface carries one name', () => {
     assert.doesNotMatch(launches, /'Discover B20'/);
   });
 
-  test('the Routes AI trail starts at Routes AI, never at "Session"', () => {
+  test('the Swap AI trail starts at Swap AI, never at "Session"', () => {
     for (const crumb of Object.values(CONSOLE_BREADCRUMB_V1)) {
       assert.equal(crumb('swap 100 USDC to ETH')[0], consoleSectionLabelV1('routes'));
     }

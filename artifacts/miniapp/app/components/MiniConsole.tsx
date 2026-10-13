@@ -258,7 +258,7 @@ const MINIAPP_SECTIONS_V1 = CONSOLE_MINIAPP_SECTIONS_V1;
 /** Sections the Base App renders that the tab bar has no room for: Settings,
  * the fourth main page, and then what the web keeps behind "More". Every one
  * has a handler below; `navigation.test.tsx` holds both lists to that rule. */
-const MINIAPP_DRAWER_SECTIONS_V1 = ["settings", "radar", "opportunities", "portfolio", "activity"] as const;
+const MINIAPP_DRAWER_SECTIONS_V1 = ["radar", "opportunities", "portfolio", "activity", "settings"] as const;
 
 
 export function MiniConsole() {
@@ -2131,7 +2131,7 @@ export function MiniConsole() {
     //
     // Preparing is a READ of the reviewed representation, exactly as on the
     // web: it produces a goal sentence and nothing executable. Where the web
-    // hands that to Routes AI, Base App has no such surface, so the reader is
+    // hands that to Swap AI, Base App has no such surface, so the reader is
     // taken to the B20 tab with the exact address — the wallet-bound checks
     // live there, and an address is what they take.
     onPrepare: ({ tokenAddress }) => {
@@ -2686,7 +2686,7 @@ export function MiniConsole() {
   return (
     <ConsoleMiniShell
       // The header says where the reader is. A goal and its eight steps are
-      // Routes AI's; on every other section they described a planner the
+      // Swap AI's; on every other section they described a planner the
       // reader never opened: "New goal · Not started · 8 steps · $0" above
       // the Stocks board.
       goalLine={section === "routes" ? goalLabel : consoleSectionLabelV1(section)}

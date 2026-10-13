@@ -59,7 +59,7 @@ export interface BaseMcpProviderIntentSpecV1 {
    * KyberSwap routes those pools: on 2026-10-05 it quoted six of six Bankr
    * tokens through `uniswap-v4-doppler` and four of six Flaunch tokens through
    * `uniswap-v4-flaunch`. Buying or selling such a token is then an ordinary
-   * Routes AI swap. It is gated on these routers, because no adapter exists for
+   * Swap AI swap. It is gated on these routers, because no adapter exists for
    * the provider itself and none is needed.
    */
   tradedThrough?: readonly string[];

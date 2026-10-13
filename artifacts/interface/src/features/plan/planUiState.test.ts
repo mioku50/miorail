@@ -18,12 +18,13 @@ const here = path.dirname(url.fileURLToPath(import.meta.url));
 //
 // Both tables are DERIVED from the shared section table in lib/ui, so this test
 // also pins that the web app has no navigation vocabulary of its own.
-test('the header names Stocks, Wallet MCP and Routes AI', () => {
+test('the header names Today, Stocks, Swap AI and Wallet MCP', () => {
   const tabs = navTabs();
   // 2026-10-03: the operator named the console's main pages — Stocks, Base MCP
-  // plugins, Routes AI and Settings. Radar, Discover and the rest sit behind
+  // plugins, Swap AI and Settings. Radar, Discover and the rest sit behind
   // "More" in the drawer, a tap away.
-  assert.deepEqual(tabs.map((route) => route.path), ['/market', '/extensions', '/routes']);
+  // 2026-10-13: Today leads, Settings moved behind "More".
+  assert.deepEqual(tabs.map((route) => route.path), ['/today', '/market', '/routes', '/extensions']);
   // Named for what each surface CONTAINS. "Opportunities" described the shape
   // of a list and "Portfolio" the generic category, and neither told a user
   // which flow they were in — the compact bar had already said "B20" for the
@@ -44,7 +45,7 @@ test('the header names Stocks, Wallet MCP and Routes AI', () => {
   // four where one is empty.
   // Phase 15.1 — the header opens on the product, not on the surfaces it was
   // built from. Stocks was reachable only from the drawer.
-  assert.deepEqual(tabs.map((route) => route.label), ['Stocks', 'Wallet MCP', 'Routes AI']);
+  assert.deepEqual(tabs.map((route) => route.label), ['Today', 'Stocks', 'Swap AI', 'Wallet MCP']);
 });
 
 test('the web tabs come from the shared table, not from a list typed here', () => {
@@ -79,7 +80,8 @@ test('no command carries an emoji or the retired vocabulary', () => {
   // each is entered with something you already have, an address or a company —
   // and a wider bar would push every label into an ellipsis at 390px to make
   // room for the surfaces used least often.
-  assert.equal(commands.length, 9, 'the console exposes exactly nine entries');
+  assert.equal(commands.length, 10, 'the console exposes exactly ten entries');
+  assert.equal(commands.some((command) => command.path === '/today'), true);
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
   assert.equal(commands.some((command) => command.path === '/portfolio'), true);
   assert.equal(commands.some((command) => command.path === '/opportunities'), true);

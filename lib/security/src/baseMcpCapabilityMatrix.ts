@@ -16,7 +16,7 @@ import {
 // That is not what the registry used to say. `handoff_to_routes` meant "a
 // quote adapter exists for this provider", and a quote adapter is the FIRST
 // step of a swap, not the last one. Aerodrome and Balancer both had one, so
-// both were routed into Routes AI, where the user reached a Review screen, the
+// both were routed into Swap AI, where the user reached a Review screen, the
 // Safety Kernel refused for want of a simulation nobody could run, and the
 // journey ended in a dead end that the Extensions card had advertised as
 // working. The capability was released; the path was not.
@@ -79,7 +79,7 @@ export interface BaseMcpPluginCapabilityRowV1 {
 export interface BaseMcpRuntimeSnapshotV1 {
   /** Plugin ids with a reviewed, code-owned HTTP read recipe in this build. */
   reviewedReadPlugins: readonly string[];
-  /** Providers whose swap/earn route adapter is released in Routes AI. */
+  /** Providers whose swap/earn route adapter is released in Swap AI. */
   releasedRouteProviders: readonly string[];
   /** Explicit price queries only; no builder or wallet approval path. */
   quoteOnlyRouteProviders?: readonly string[];
@@ -155,15 +155,15 @@ export function providerRouteCapabilityV1(
       reason: runtime.quoteOnlyProvidersMissingCredential?.includes(pluginId)
         ? GMGN_QUOTES_PAUSED_REASON_V1
         : runtime.quoteOnlyRouteProviders?.includes(pluginId)
-        ? 'GMGN prices can be checked in Routes AI, but GMGN swaps cannot be prepared or approved here.'
-        : 'No released Routes AI adapter compares or builds this provider.',
+        ? 'GMGN prices can be checked in Swap AI, but GMGN swaps cannot be prepared or approved here.'
+        : 'No released Swap AI adapter compares or builds this provider.',
     };
   }
   if (!runtime.simulationRequiredProviders.includes(pluginId)) {
     return {
       operation: 'routes',
       state: 'released',
-      reason: 'Partner-built calldata: compared in Routes AI and signable without a fork simulation.',
+      reason: 'Partner-built calldata: compared in Swap AI and signable without a fork simulation.',
     };
   }
   if (runtime.batchSimulationAvailable) {
@@ -212,7 +212,7 @@ export function pluginRouteCapabilityV1(
   if (provider === plugin.pluginId) return capability;
   return {
     ...capability,
-    reason: `Its tokens trade in its own pools, which ${provider} routes: a buy or sell is a Routes AI swap. ${capability.reason}`,
+    reason: `Its tokens trade in its own pools, which ${provider} routes: a buy or sell is a Swap AI swap. ${capability.reason}`,
   };
 }
 
@@ -316,16 +316,16 @@ export function pluginCapabilityRowV1(
     ? {
         operation: 'quote',
         state: 'released',
-        reason: quoteOnly ? 'Check GMGN’s quoted output in Routes AI. Quotes only; no transaction is prepared.' : routeProvider === plugin.pluginId
-          ? 'This provider is quoted and compared in Routes AI.'
-          : `Its pools are quoted through ${routeProvider} and compared in Routes AI.`,
+        reason: quoteOnly ? 'Check GMGN’s quoted output in Swap AI. Quotes only; no transaction is prepared.' : routeProvider === plugin.pluginId
+          ? 'This provider is quoted and compared in Swap AI.'
+          : `Its pools are quoted through ${routeProvider} and compared in Swap AI.`,
       }
     : { operation: 'quote', state: 'unsupported', reason: 'No released quote adapter compares this provider.' };
 
   const prepare: BaseMcpCapabilityCellV1 = quoteOnly
     ? { operation: 'prepare', state: 'unsupported', reason: routes.reason }
     : routes.state === 'released'
-    ? { operation: 'prepare', state: 'released', reason: 'Routes AI builds the unsigned calls for this provider.' }
+    ? { operation: 'prepare', state: 'released', reason: 'Swap AI builds the unsigned calls for this provider.' }
     : quote.state === 'released'
       ? {
           operation: 'prepare',

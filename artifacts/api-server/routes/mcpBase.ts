@@ -483,8 +483,8 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
         status: 'handoff',
         reply: decision.provider === 'gmgn'
-          ? 'Routes AI checks GMGN’s quoted output for the exact tokens and amount. GMGN quotes only: no transaction is prepared or sent.'
-          : 'This is a trade. Routes AI compares the routes for it and checks the one you choose; nothing moves until you approve it in your wallet.',
+          ? 'Swap AI checks GMGN’s quoted output for the exact tokens and amount. GMGN quotes only: no transaction is prepared or sent.'
+          : 'This is a trade. Swap AI compares the routes for it and checks the one you choose; nothing moves until you approve it in your wallet.',
         trace: [],
         toolsAvailable: 0,
         truncated: false,

@@ -47,7 +47,7 @@ export interface GoalHandoffV1 {
    *
    * It exists because the same purchase had two doors with two answers. A
    * clearance minted on the review page pins `enhanced`; `Prepare buy` handed
-   * a sentence to Routes AI, where depth comes from the reader's own words and
+   * a sentence to Swap AI, where depth comes from the reader's own words and
    * defaults to `standard`. So the door the card actually puts in front of
    * people was the one that skipped the simulation.
    */
