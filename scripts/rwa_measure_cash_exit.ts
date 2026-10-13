@@ -289,7 +289,7 @@ async function main(): Promise<void> {
       `${universe.length - fromRegistry} reviewed with tokens outstanding, ${gapMs}ms between assets\n`,
   );
   let measured = 0;
-  // Counted BY NAME, all five of them.
+  // Counted by outcome, including source coverage and unavailable valuation.
   //
   // The summary used to fold everything that was not a route into "unfinished",
   // which put `no_entry_route_at_measured_sizes` — the router refusing to SELL

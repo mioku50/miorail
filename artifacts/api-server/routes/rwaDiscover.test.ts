@@ -49,6 +49,8 @@ const OVERVIEW_V1: OfficialAssetsOverviewV1 = {
     cashRouteEstablished: 0,
     noRouteAtMeasuredSizes: 0,
     noEntryRouteAtMeasuredSizes: 0,
+    sourceNotCovered: 0,
+    sourcePriceUnavailable: 0,
     measurementFailed: 0,
     notMeasured: 0,
   },

@@ -888,12 +888,19 @@ describe('five venues, asked together', () => {
     // Sorting by who replied first would put our own network on the card as if
     // it were the ecosystem's shape — and asking them one at a time made the
     // section's worst case the sum of five timeouts.
-    const slow = (venueId: string, ms: number): DefiListingSourceV1 => ({
+    const started: string[] = [];
+    const answered: string[] = [];
+    const releases: (() => void)[] = [];
+    const held = (venueId: string): DefiListingSourceV1 => {
+      const gate = new Promise<void>((done) => releases.push(done));
+      return {
       venueId,
       venueName: venueId,
       kind: 'venue_catalogue',
       async lookup() {
-        await new Promise((done) => setTimeout(done, ms));
+        started.push(venueId);
+        await gate;
+        answered.push(venueId);
         return {
           venueId,
           venueName: venueId,
@@ -904,16 +911,23 @@ describe('five venues, asked together', () => {
           reason: null,
         };
       },
-    });
-    const started = Date.now();
-    const listing = await defiListingV1(
+      };
+    };
+    const listingPromise = defiListingV1(
       '0xb2000000000000000000002d0ba3164cc74f58b7',
-      [slow('first', 120), slow('second', 10), slow('third', 60)],
+      [held('first'), held('second'), held('third')],
       () => new Date('2026-09-12T12:00:00.000Z'),
     );
+    // All three network reads must start before any response is released.
+    // This proves overlap without a wall-clock limit on a busy test machine.
+    try {
+      assert.deepEqual(started, ['first', 'second', 'third']);
+    } finally {
+      releases[1]!(); releases[2]!(); releases[0]!();
+    }
+    const listing = await listingPromise;
+    assert.deepEqual(answered, ['second', 'third', 'first']);
     assert.deepEqual(listing.venues.map((venue) => venue.venueId), ['first', 'second', 'third']);
-    // Together, not one after another: sequential would be at least 190ms.
-    assert.ok(Date.now() - started < 190, 'the reads overlapped');
   });
 });
 

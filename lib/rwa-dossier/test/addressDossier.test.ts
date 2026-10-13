@@ -324,6 +324,23 @@ describe('what the read settled, and what it did not', () => {
     );
   });
 
+  test('source limitations settle coverage and valuation, not whether the market can be exited', () => {
+    for (const status of ['source_not_covered', 'source_price_unavailable'] as const) {
+      const { established, unknown } = addressAssertionsV1({
+        identity: identityV1(),
+        referenceValue: null,
+        controls: CONTROLS_V1 as never,
+        market: marketV1(status) as never,
+      });
+      assert.equal(established.length, 1);
+      assert.match(established[0]!.claim, status === 'source_not_covered' ? /does not index/ : /valuation needed to check price impact/);
+      const exit = unknown.find((row) => row.claim === 'What it costs to get out.')!;
+      assert.ok(exit);
+      assert.doesNotMatch(JSON.stringify(established), /would sell|market.*closed/);
+      assert.doesNotMatch(exit.reason, /Our own router call did not complete/);
+    }
+  });
+
   test('who holds a control is always unknown, because B20 does not enumerate', () => {
     const { unknown } = addressAssertionsV1({
       identity: identityV1(),

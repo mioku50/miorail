@@ -155,7 +155,7 @@ export function cashExitSignalsV1(input: {
   // A measurement that failed says nothing about the market. Reporting it as a
   // market closing would be our outage wearing the token's name -- a bug class
   // this product has shipped three times.
-  if (nextStatus === 'measurement_failed' || nextStatus === 'not_measured') return [];
+  if (['measurement_failed', 'not_measured', 'source_not_covered', 'source_price_unavailable'].includes(nextStatus)) return [];
 
   // Both no-route words are market findings, so both close a market. They stay
   // separate everywhere a reader can see them and are treated alike only here,

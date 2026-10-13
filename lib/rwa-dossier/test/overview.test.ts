@@ -150,6 +150,7 @@ describe('the Discover ladder preview', () => {
         roundTripCostBps: '9',
         derivedFromExactRung: false,
         lowerBoundRequestedCashAtomic: null,
+        sourceLimitation: null,
         entryRouteRefused: false,
       },
     ]);
@@ -213,6 +214,60 @@ describe('the Discover ladder preview', () => {
       ]),
     );
     assert.equal(routeStatusFromPreviewV1(preview), 'measurement_failed');
+  });
+
+  test('a source that does not index the token completed its response, not a measurement outage', () => {
+    const preview = previewLadderFromRunV1(runV1([
+      observationV1({ size: '100000000', status: 'measurement_failed', errorCode: 'provider_unsupported_token' }),
+    ]));
+    assert.equal(preview[0]!.sourceLimitation, 'token_not_covered');
+    assert.equal(preview[0]!.entryRouteRefused, false);
+    assert.equal(routeStatusFromPreviewV1(preview), 'source_not_covered');
+  });
+
+  test('missing source valuation stays separate even when other exact sizes had no buy route', () => {
+    const preview = previewLadderFromRunV1(runV1([
+      observationV1({ size: '100000000', status: 'measurement_failed', errorCode: 'provider_token_unpriced' }),
+      observationV1({ size: '1000000000', status: 'measurement_failed', errorCode: 'cash_size_anchor_no_route' }),
+    ]));
+    assert.equal(preview[0]!.sourceLimitation, 'token_price_unavailable');
+    assert.equal(routeStatusFromPreviewV1(preview), 'source_price_unavailable');
+  });
+
+  test('a transport failure among source limitations remains an outage', () => {
+    for (const errorCode of ['provider_timeout', 'provider_rate_limited', 'provider_invalid_schema']) {
+      const preview = previewLadderFromRunV1(runV1([
+        observationV1({ size: '100000000', status: 'measurement_failed', errorCode: 'provider_unsupported_token' }),
+        observationV1({ size: '1000000000', status: 'measurement_failed', errorCode }),
+      ]));
+      assert.equal(routeStatusFromPreviewV1(preview), 'measurement_failed');
+    }
+  });
+
+  test('one source limitation never conceals a failed source at the same exact size', () => {
+    const preview = previewLadderFromRunV1(runV1([
+      observationV1({ size: '100000000', status: 'measurement_failed', source: 'alpha', errorCode: 'provider_unsupported_token' }),
+      observationV1({ size: '100000000', status: 'measurement_failed', source: 'kyberswap', errorCode: 'provider_timeout' }),
+    ]));
+    assert.equal(preview[0]!.sourceLimitation, null);
+    assert.equal(routeStatusFromPreviewV1(preview), 'measurement_failed');
+  });
+
+  test('a failed source at the same size as a refused anchor is not a no-entry finding', () => {
+    const preview = previewLadderFromRunV1(runV1([
+      observationV1({ size: '100000000', status: 'measurement_failed', source: 'alpha', errorCode: 'cash_size_anchor_no_route' }),
+      observationV1({ size: '100000000', status: 'measurement_failed', source: 'kyberswap', errorCode: 'provider_timeout' }),
+    ]));
+    assert.equal(preview[0]!.entryRouteRefused, false);
+    assert.equal(routeStatusFromPreviewV1(preview), 'measurement_failed');
+  });
+
+  test('a completed exact route still wins over a limitation at another size', () => {
+    const preview = previewLadderFromRunV1(runV1([
+      observationV1({ size: '100000000', status: 'full' }),
+      observationV1({ size: '1000000000', status: 'measurement_failed', errorCode: 'provider_token_unpriced' }),
+    ]));
+    assert.equal(routeStatusFromPreviewV1(preview), 'cash_route_established');
   });
 
   test('sizes are ordered smallest first and never interpolated between', () => {
@@ -370,6 +425,25 @@ describe('the overview counts the whole list and pages the cards', () => {
     assert.equal(second.assets.length, 7);
     const seen = new Set([...first.assets, ...second.assets].map((asset) => asset.tokenAddress));
     assert.equal(seen.size, 71);
+  });
+
+  test('source limitations are counted across every page while outages keep their own count', async () => {
+    const { deps } = await depsV1(70);
+    deps.cashExit.latestCompletedRun = async (input) => {
+      const index = Number.parseInt(input.tokenAddress.slice(4), 16);
+      const errorCode = index < 30 ? 'provider_unsupported_token' : index < 60 ? 'provider_token_unpriced' : 'provider_timeout';
+      const run = runV1([observationV1({ size: '100000000', status: 'measurement_failed', errorCode })]);
+      return { ...run, tokenAddress: input.tokenAddress };
+    };
+    const first = await assembleOfficialAssetsOverviewV1(deps);
+    const second = await assembleOfficialAssetsOverviewV1(deps, { offset: 64 });
+    assert.equal(first.counts.officialIssuance, 71);
+    assert.equal(first.counts.sourceNotCovered, 30);
+    assert.equal(first.counts.sourcePriceUnavailable, 30);
+    assert.equal(first.counts.measurementFailed, 11);
+    assert.equal(first.counts.noEntryRouteAtMeasuredSizes, 0);
+    assert.deepEqual(second.counts, first.counts);
+    assert.equal(second.assets.length, 7);
   });
 
   test('the price feed is read live only for the cards on the page', async () => {

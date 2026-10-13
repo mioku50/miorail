@@ -259,3 +259,25 @@ describe('Investigate — absences are not findings', () => {
     assert.match(row.note!, /says nothing about the contract/);
   });
 });
+
+
+test('Investigate distinguishes source limitations and outages without inventing an exit refusal', () => {
+  for (const [routeStatus, sourceLimitation, expected] of [
+    ['source_not_covered', 'token_not_covered', 'not covered'],
+    ['source_price_unavailable', 'token_price_unavailable', 'source price unavailable'],
+    ['measurement_failed', null, 'did not finish'],
+  ] as const) {
+    const base = wireV1();
+    const view = investigateViewV1(wireV1({market: {
+      ...base.market,
+      routeStatus,
+      ladder: [{
+        requestedCashAtomic: '100000000', destination: 'USDC', status: 'measurement_failed',
+        roundTripCostBps: null, derivedFromExactRung: false, lowerBoundRequestedCashAtomic: null,
+        entryRouteRefused: false, sourceLimitation,
+      }],
+    }}), NOW);
+    assert.equal(view.ladder[0]!.value, expected);
+    assert.doesNotMatch(JSON.stringify(view.ladder), /no exit route|no buy route/);
+  }
+});

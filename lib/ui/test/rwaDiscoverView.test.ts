@@ -104,6 +104,8 @@ function overviewV1(
     noEntryRouteAtMeasuredSizes: assets.filter(
       (a) => a.market.routeStatus === 'no_entry_route_at_measured_sizes',
     ).length,
+    sourceNotCovered: assets.filter((a) => a.market.routeStatus === 'source_not_covered').length,
+    sourcePriceUnavailable: assets.filter((a) => a.market.routeStatus === 'source_price_unavailable').length,
     measurementFailed: assets.filter((a) => a.market.routeStatus === 'measurement_failed').length,
     notMeasured: assets.filter((a) => a.market.routeStatus === 'not_measured').length,
   };
@@ -1282,4 +1284,33 @@ describe('the round trip in one sentence', () => {
     assert.equal(roundTripHeadlineV1([rung('100000000', null)]), null);
     assert.equal(roundTripHeadlineV1([]), null);
   });
+});
+
+
+test('source coverage and missing valuation are findings separate from an outage', () => {
+  const base = assetV1();
+  const uncovered = assetV1({
+    executableValue: { ...base.executableValue, status: 'measurement_failed', valueAtomic: null },
+    comparison: { status: 'withheld', differenceBps: null, reason: 'executable_value_measurement_failed' },
+    market: { ...base.market, routeStatus: 'source_not_covered', ladder: [{
+      ...base.market.ladder[0]!, status: 'measurement_failed', roundTripCostBps: null,
+      sourceLimitation: 'token_not_covered',
+    }] },
+  });
+  const unpriced = assetV1({
+    ...uncovered,
+    ticker: 'TSTc',
+    market: { ...uncovered.market, routeStatus: 'source_price_unavailable', ladder: [{
+      ...uncovered.market.ladder[0]!, sourceLimitation: 'token_price_unavailable',
+    }] },
+  });
+  const view = officialAssetsViewV1(overviewV1([uncovered, unpriced]), NOW);
+  assert.equal(view.counters.find((counter) => counter.label === 'Not covered by route source')?.value, '1');
+  assert.equal(view.counters.find((counter) => counter.label === 'Source price unavailable')?.value, '1');
+  assert.equal(view.counters.some((counter) => counter.label === 'Measurement did not finish'), false);
+  assert.equal(view.assets[0]!.status.chip, 'SOURCE DOES NOT COVER THIS TOKEN');
+  assert.equal(view.assets[1]!.status.chip, 'SOURCE PRICE UNAVAILABLE');
+  assert.equal(view.assets[0]!.ladder[0]!.value, 'not covered');
+  assert.equal(view.assets[1]!.ladder[0]!.value, 'source price unavailable');
+  assert.doesNotMatch(JSON.stringify(view.assets), /did not finish|no buy route|NO EXIT/);
 });

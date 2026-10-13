@@ -2,6 +2,8 @@ import {
   rwaAgeLabelV1,
   rwaBpsLabelV1,
   cashSizeLabelV1,
+  cashExitLadderRungsV1,
+  type OfficialLadderRungWireV1,
   moneyLabelV1,
   type FactViewV1,
   type ToneV1,
@@ -101,19 +103,13 @@ export interface AddressDossierWireV1 {
       | 'cash_route_established'
       | 'no_route_at_measured_sizes'
       | 'no_entry_route_at_measured_sizes'
+      | 'source_not_covered'
+      | 'source_price_unavailable'
       | 'measurement_failed'
       | 'not_measured';
     measuredAt: string | null;
     approvedSources: readonly string[];
-    ladder: readonly {
-      requestedCashAtomic: string;
-      destination: 'USDC' | 'ETH';
-      status: string;
-      roundTripCostBps: string | null;
-      derivedFromExactRung: boolean;
-      lowerBoundRequestedCashAtomic: string | null;
-      entryRouteRefused: boolean;
-    }[];
+    ladder: readonly OfficialLadderRungWireV1[];
     change: {
       status: 'compared' | 'first_reading' | 'not_comparable';
       previousMeasuredAt: string | null;
@@ -382,25 +378,9 @@ export function investigateViewV1(wire: AddressDossierWireV1, now: Date): Invest
     tone: field.status === 'exact_chain_read' ? 'neutral' : 'off',
   }));
 
-  const ladder: FactViewV1[] = market.ladder
-    .filter((rung) => rung.destination === 'USDC' && rung.status !== 'not_measured')
-    .map((rung) => ({
-      label: cashSizeLabelV1(rung.requestedCashAtomic),
-      value:
-        rwaBpsLabelV1(rung.roundTripCostBps) ??
-        (rung.entryRouteRefused
-          // The SAME words Discover and Stocks use. This was a second,
-          // independent copy of the label, so fixing one screen would have
-          // left the product naming one state two ways.
-          ? 'no buy route'
-          : rung.status === 'full'
-            ? 'round trip'
-            : 'no exit route'),
-      note: rung.derivedFromExactRung
-        ? `carried from ${cashSizeLabelV1(rung.lowerBoundRequestedCashAtomic ?? '0')}`
-        : null,
-      tone: rung.status === 'full' ? 'good' : 'warn',
-    }));
+  // The stored preview carries the same source limitations and exact sizes as
+  // Discover. A failed or unpriced measurement is never a no-exit finding.
+  const ladder = cashExitLadderRungsV1(market.ladder, now);
 
   const changeRows: FactViewV1[] = market.change.rungs.map((rung) => {
     const move = rwaBpsLabelV1(rung.changeBps);

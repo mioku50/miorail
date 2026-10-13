@@ -192,6 +192,17 @@ export function previewLadderFromRunV1(
     .sort(([left], [right]) => (BigInt(left) < BigInt(right) ? -1 : 1))
     .map(([size, rows]) => {
       const best = bestObservationV1(rows);
+      // A mixed failure at this size remains unknown. A successful response
+      // saying it does not index the token must never conceal another source
+      // that timed out or returned an invalid answer.
+      const failures = rows.filter((row) => row.status === 'measurement_failed');
+      const sourceLimitation = best.status !== 'measurement_failed'
+        ? null
+        : failures.every((row) => row.errorCode === 'provider_unsupported_token')
+          ? 'token_not_covered' as const
+          : failures.every((row) => row.errorCode === 'provider_token_unpriced')
+            ? 'token_price_unavailable' as const
+            : null;
       return {
         requestedCashAtomic: size,
         destination: 'USDC' as const,
@@ -202,8 +213,10 @@ export function previewLadderFromRunV1(
         // The measurement's own code for "the router refused the buy leg".
         // Read here once and carried as a flag, so no surface has to know an
         // error string to tell a market finding from an outage.
+        sourceLimitation,
         entryRouteRefused:
-          best.status === 'measurement_failed' && best.errorCode === 'cash_size_anchor_no_route',
+          best.status === 'measurement_failed' &&
+          failures.every((row) => row.errorCode === 'cash_size_anchor_no_route'),
       };
     });
 }
@@ -232,8 +245,17 @@ export function routeStatusFromPreviewV1(
   if (failed.length > 0 && failed.every((rung) => rung.entryRouteRefused)) {
     return 'no_entry_route_at_measured_sizes';
   }
-  // Anything else that failed is our outage; the router answering "no route"
-  // is the asset's. They are never merged into one word.
+  // Source coverage and a missing USD valuation are completed responses, not
+  // outages. Ignore the separately proven entry refusals when deciding which
+  // limitation prevented the remaining exact questions from being answered.
+  const unanswered = failed.filter((rung) => !rung.entryRouteRefused);
+  if (unanswered.length > 0 && unanswered.every((rung) => rung.sourceLimitation === 'token_not_covered')) {
+    return 'source_not_covered';
+  }
+  if (unanswered.length > 0 && unanswered.every((rung) => rung.sourceLimitation === 'token_price_unavailable')) {
+    return 'source_price_unavailable';
+  }
+  // Unknown and transport failures never become a market verdict.
   if (failed.length > 0) return 'measurement_failed';
   return 'no_route_at_measured_sizes';
 }
@@ -433,8 +455,10 @@ export async function assembleOfficialAssetsOverviewV1(
     cash_route_established: 0,
     no_route_at_measured_sizes: 1,
     no_entry_route_at_measured_sizes: 2,
-    measurement_failed: 3,
-    not_measured: 4,
+    source_not_covered: 3,
+    source_price_unavailable: 4,
+    measurement_failed: 5,
+    not_measured: 6,
   };
   measured.sort(
     (left, right) =>
@@ -450,6 +474,8 @@ export async function assembleOfficialAssetsOverviewV1(
     cashRouteEstablished: counted('cash_route_established'),
     noRouteAtMeasuredSizes: counted('no_route_at_measured_sizes'),
     noEntryRouteAtMeasuredSizes: counted('no_entry_route_at_measured_sizes'),
+    sourceNotCovered: counted('source_not_covered'),
+    sourcePriceUnavailable: counted('source_price_unavailable'),
     measurementFailed: counted('measurement_failed'),
     notMeasured: counted('not_measured'),
   };

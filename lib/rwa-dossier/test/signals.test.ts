@@ -268,6 +268,17 @@ describe('cash exit transitions', () => {
     assert.deepEqual(failed, []);
   });
 
+  test('source coverage and missing valuation never announce that a market closed', () => {
+    for (const errorCode of ['provider_unsupported_token', 'provider_token_unpriced']) {
+      const next = runV1({
+        runId: '0x' + '4'.repeat(64),
+        completedAt: '2026-08-25T12:00:00.000Z',
+        observations: [{ ...observationV1({ size: '100000000', status: 'measurement_failed' }), errorCode }],
+      });
+      assert.deepEqual(cashExitSignalsV1({ previous: withRoute, next, ticker: 'AAPLc' }), []);
+    }
+  });
+
   test('a lapsed quote is still a measurement, so nothing re-fires as it ages', () => {
     // The bug this pins: comparing two runs through the freshness-gated
     // ladder read the previous one as `not_measured` twenty seconds after it

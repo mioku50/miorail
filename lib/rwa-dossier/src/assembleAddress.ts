@@ -314,6 +314,26 @@ export function addressAssertionsV1(input: {
         reason: 'The ladder is sized in cash, so with no buy route the sell was never attempted.',
       });
       break;
+    case 'source_not_covered':
+      established.push({
+        claim: 'The approved route source does not index this exact token.',
+        evidence: 'The stored route-source response reported that the token was not covered.',
+      });
+      unknown.push({
+        claim: 'What it costs to get out.',
+        reason: 'The source did not test a cash route. Another source may cover it; no market verdict was made.',
+      });
+      break;
+    case 'source_price_unavailable':
+      established.push({
+        claim: 'The route source answered without the token valuation needed to check price impact.',
+        evidence: 'The stored response carried exact quote amounts but no usable USD valuation for the token.',
+      });
+      unknown.push({
+        claim: 'What it costs to get out.',
+        reason: 'Miorail withheld the quote because its price impact could not be checked. This is not an outage or a no-route finding.',
+      });
+      break;
     case 'measurement_failed':
       unknown.push({
         claim: 'What it costs to get out.',

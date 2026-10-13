@@ -69,6 +69,7 @@ export interface OfficialLadderRungWireV1 {
   derivedFromExactRung: boolean;
   lowerBoundRequestedCashAtomic: string | null;
   entryRouteRefused: boolean;
+  sourceLimitation?: 'token_not_covered' | 'token_price_unavailable' | null;
 }
 
 export interface OfficialAssetWireV1 {
@@ -103,6 +104,8 @@ export interface OfficialAssetWireV1 {
       | 'cash_route_established'
       | 'no_route_at_measured_sizes'
       | 'no_entry_route_at_measured_sizes'
+      | 'source_not_covered'
+      | 'source_price_unavailable'
       | 'measurement_failed'
       | 'not_measured';
     measuredAt: string | null;
@@ -124,6 +127,8 @@ export interface OfficialAssetsOverviewWireV1 {
     cashRouteEstablished: number;
     noRouteAtMeasuredSizes: number;
     noEntryRouteAtMeasuredSizes: number;
+    sourceNotCovered?: number;
+    sourcePriceUnavailable?: number;
     measurementFailed: number;
     notMeasured: number;
   };
@@ -338,6 +343,16 @@ const ROUTE_STATUS_V1: Readonly<
     // position nobody tested.
     body: 'The asset is officially issued and no approved router would sell it to you for cash at any measured size, so a round trip could not be started. Selling a position already held was never tested and is not claimed either way.',
   },
+  source_not_covered: {
+    chip: 'SOURCE DOES NOT COVER THIS TOKEN',
+    tone: 'off',
+    body: 'The approved route source answered that it does not index this exact token. It did not test a cash route; this says nothing about whether another source could trade it.',
+  },
+  source_price_unavailable: {
+    chip: 'SOURCE PRICE UNAVAILABLE',
+    tone: 'off',
+    body: 'The approved route source returned a route without the token valuation needed to check its price impact. Miorail withheld the quote; this is not an outage or a no-route finding.',
+  },
   measurement_failed: {
     chip: 'MEASUREMENT DID NOT FINISH',
     tone: 'off',
@@ -366,6 +381,7 @@ export interface CashExitRungInputV1 {
   lowerBoundRequestedCashAtomic: string | null;
   /** Discover's list wire carries this; the dossier's does not. */
   entryRouteRefused?: boolean;
+  sourceLimitation?: 'token_not_covered' | 'token_price_unavailable' | null;
   /**
    * What the last completed run found at this rung, whether or not its quote is
    * still open. The dossier carries it; Discover's list preview does not need
@@ -554,7 +570,13 @@ export function cashExitLadderRungsV1(
     .map((rung) => {
       const history = rung.status === 'not_measured' ? (rung.lastMeasured ?? null) : null;
       const cost = rwaBpsLabelV1(history ? history.roundTripCostBps : rung.roundTripCostBps);
-      const coded = history?.errorCode ? (RUNG_ERROR_LABEL_V1[history.errorCode] ?? null) : null;
+      const sourceCode = rung.sourceLimitation === 'token_not_covered'
+        ? 'provider_unsupported_token'
+        : rung.sourceLimitation === 'token_price_unavailable'
+          ? 'provider_token_unpriced'
+          : null;
+      const code = history?.errorCode ?? sourceCode;
+      const coded = code ? (RUNG_ERROR_LABEL_V1[code] ?? null) : null;
       const refused = history ? false : rung.entryRouteRefused === true;
       const meta =
         coded ??
@@ -612,6 +634,7 @@ const RUNG_ERROR_LABEL_V1: Readonly<Record<string, { label: string; tone: ToneV1
   // "This route source does not cover this token" -- is said once on the card,
   // where a reader meets it before the ladder.
   provider_unsupported_token: { label: 'not covered', tone: 'warn' },
+  provider_token_unpriced: { label: 'source price unavailable', tone: 'off' },
   // A venue that CAN route this and declined to, on its own trading rules.
   // `warn`, not `off`: nothing was found wrong with the token or the market.
   provider_policy_refused: { label: 'venue declined', tone: 'warn' },
@@ -778,6 +801,22 @@ export function officialAssetsViewV1(
       label: 'Not measured',
       value: String(wire.counts.notMeasured),
       note: 'Miorail has not measured these yet',
+      tone: 'off',
+    });
+  }
+  if ((wire.counts.sourceNotCovered ?? 0) > 0) {
+    counters.push({
+      label: 'Not covered by route source',
+      value: String(wire.counts.sourceNotCovered),
+      note: 'The source does not index these tokens; no cash-route finding was made',
+      tone: 'off',
+    });
+  }
+  if ((wire.counts.sourcePriceUnavailable ?? 0) > 0) {
+    counters.push({
+      label: 'Source price unavailable',
+      value: String(wire.counts.sourcePriceUnavailable),
+      note: 'A route answered without the valuation needed to check price impact',
       tone: 'off',
     });
   }
@@ -955,14 +994,18 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
       label: executable
         ? `${compactCashSizeLabelV1(asset.executableValue.requestedSizeAtomic ?? '0')} cash-out`
         : 'Cash-out at a measured size',
-      value: executable ?? 'not measured',
+      value: executable ?? (['source_not_covered', 'source_price_unavailable'].includes(asset.market.routeStatus) ? 'not established' : 'not measured'),
       note:
         executable === null
           ? asset.market.routeStatus === 'no_route_at_measured_sizes'
             ? 'Bought, and no approved router would sell it back'
             : asset.market.routeStatus === 'no_entry_route_at_measured_sizes'
               ? 'No approved router would sell it to you for cash'
-              : 'No completed round trip on file'
+              : asset.market.routeStatus === 'source_not_covered'
+                ? 'The approved route source does not index this token'
+                : asset.market.routeStatus === 'source_price_unavailable'
+                  ? 'The source did not provide the valuation needed to accept its quote'
+                  : 'No completed round trip on file'
           : `Router quote · measured ${
               rwaAgeLabelV1(asset.executableValue.observedAt, now) ?? 'at an unknown time'
             }`,
@@ -990,7 +1033,11 @@ function officialAssetCardViewV1(asset: OfficialAssetWireV1, now: Date): Officia
     facts.push({
       label: 'Reference vs executable',
       value: 'withheld',
-      note: `Not comparable: ${COMPARISON_REASON_V1[asset.comparison.reason] ?? asset.comparison.reason}`,
+      note: asset.market.routeStatus === 'source_not_covered'
+        ? 'Not comparable: the route source does not cover this token'
+        : asset.market.routeStatus === 'source_price_unavailable'
+          ? 'Not comparable: the source token valuation was unavailable'
+          : `Not comparable: ${COMPARISON_REASON_V1[asset.comparison.reason] ?? asset.comparison.reason}`,
       tone: 'off',
     });
   }

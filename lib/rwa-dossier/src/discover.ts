@@ -75,6 +75,8 @@ export const OFFICIAL_ROUTE_STATUSES_V1 = [
   'cash_route_established',
   'no_route_at_measured_sizes',
   'no_entry_route_at_measured_sizes',
+  'source_not_covered',
+  'source_price_unavailable',
   'measurement_failed',
   'not_measured',
 ] as const;
@@ -107,6 +109,10 @@ export const OfficialCashExitRungPreviewV1Schema = z
      * fact about the market that a surface is entitled to state.
      */
     entryRouteRefused: z.boolean(),
+    /** A completed source response that could not establish a quote, separate
+     * from a transport failure or an explicit no-route answer. The default
+     * lets older overview payloads keep their existing, conservative status. */
+    sourceLimitation: z.enum(['token_not_covered', 'token_price_unavailable']).nullable().default(null),
   })
   .strict();
 export type OfficialCashExitRungPreviewV1 = z.infer<typeof OfficialCashExitRungPreviewV1Schema>;
@@ -185,9 +191,9 @@ export const OfficialAssetsOverviewV1Schema = z
     chainId: z.literal(8453),
     observedAt: Timestamp,
     /**
-     * Four counts that add up to the issuance, which is why the fourth is here
-     * even when it is zero: three counts that do not sum invite the reader to
-     * do the subtraction themselves and get a fifth number nobody measured.
+     * Every outcome adds up to the issuance. Source coverage and unavailable
+     * source valuation are counted separately from failed measurements so a
+     * completed negative response cannot be mistaken for a transport outage.
      */
     counts: z
       .object({
@@ -195,6 +201,8 @@ export const OfficialAssetsOverviewV1Schema = z
         cashRouteEstablished: z.number().int().min(0),
         noRouteAtMeasuredSizes: z.number().int().min(0),
         noEntryRouteAtMeasuredSizes: z.number().int().min(0),
+        sourceNotCovered: z.number().int().min(0).default(0),
+        sourcePriceUnavailable: z.number().int().min(0).default(0),
         measurementFailed: z.number().int().min(0),
         notMeasured: z.number().int().min(0),
       })
@@ -242,6 +250,8 @@ export const OfficialAssetsOverviewV1Schema = z
       counts.cashRouteEstablished +
       counts.noRouteAtMeasuredSizes +
       counts.noEntryRouteAtMeasuredSizes +
+      counts.sourceNotCovered +
+      counts.sourcePriceUnavailable +
       counts.measurementFailed +
       counts.notMeasured;
     if (sum !== counts.officialIssuance) {
