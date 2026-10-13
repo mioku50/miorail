@@ -190,7 +190,7 @@ test('nothing to claim, an incomplete reading, or a failed simulation hands noth
   assert.deepEqual([refused.errorCode, refused.calls, refused.receipt?.status], ['uniswap_simulation_required', null, 'failed']);
   assert.match(refused.reply, /nothing was handed to your wallet/);
 
-  uni.builderCode = () => null;
+  uni.builderCode = () => undefined;
   const unattributed = await prepare('collect-4');
   assert.deepEqual([unattributed.errorCode, unattributed.calls], ['uniswap_builder_code_unavailable', null]);
   assert.equal((await repository.list(TENANT)).filter((row) => row.status !== 'failed').length, 0);
