@@ -107,18 +107,34 @@ contracts, not either model, decide which reads and actions are allowed.
 
 | Surface | Web path | What it owns |
 | --- | --- | --- |
+| **Today** | `/today` | Wallet findings, stock updates, and a question handed to the page that owns its evidence. |
 | **Stocks** | `/market` | One security, every reviewed way to hold it on Base, at one exact size: market reality, use & access, the Chainlink reference, and `Ask Miorail` over that page's own evidence. |
 | **Radar** | `/radar` | Watched representation/size/direction/destination questions, and what changed since the last look. |
 | **Investigate** | `/investigate` | Any Base address, read as deeply as the evidence allows: identity, four trust roots stated apart, controls, topology and exit. |
 | **Discover** | `/opportunities` | B20 launch measurements, market rails, Fundamental Intelligence, global `Ask Miorail`, evidence gaps, and focused measurement views. |
 | **B20 controls** | `/portfolio` | Wallet B20 holdings, control snapshots, exit-first checks, watchlists, simulation review, and B20 entry reconciliation. |
-| **Routes AI** | `/routes` | Intent, provider-neutral candidates, Route Cards, Blueprint review, Safety Kernel, Base Account approval, and Route Proof. |
+| **Swap AI** | `/routes` | Intent, provider-neutral candidates, Route Cards, Blueprint review, Safety Kernel, Base Account approval, and Route Proof. |
 | **Activity** | `/plan/history` | Route runs and proofs, Base MCP Action Receipts, and intelligence/x402 charge history. |
-| **Base MCP Extensions** | `/extensions` | Live Base MCP reads, capability truth, deterministic Routes handoff, and released typed direct actions. |
+| **Wallet MCP** | `/extensions` | Live Wallet MCP reads, capability truth, deterministic Swap AI handoff, and released typed direct actions. |
 | **Settings** | `/settings` | Connected apps, adapter health, providers, network state, and — under Advanced — the agent spending budget. |
 | **Public Metrics** | `/metrics` | Sessionless Base telemetry with exact definitions, caveats, and a deterministic snapshot hash. |
 
-Stocks, Radar and Discover are the three tabs; the rest sit in the drawer under **Advanced evidence**.
+Today, Stocks, Swap AI and Wallet MCP are the main pages. Radar, Discover,
+B20 controls, Activity and Settings sit under **More**.
+
+### Editorial drafts
+
+An operator can generate a daily draft pack from recorded public stock signals
+and settled weekend rounds:
+
+```bash
+node --import tsx scripts/editorial_draft.ts --out work/editorial/review-pack
+```
+
+The generator only reads the configured database. Each pack contains text, source facts and
+1200×630 cards for human review. It never publishes or sends a notification,
+does not overwrite a previous pack, and produces no news when no fresh verified
+facts are available. Use `--snapshot <snapshot.json>` for an offline review.
 
 Web and Base App share the same typed product contracts so financial copy and capability state cannot silently diverge between clients.
 

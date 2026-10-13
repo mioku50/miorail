@@ -144,7 +144,7 @@ export function todayWalletCheckV1(rows: readonly WalletBalanceEntryV1[]): Today
   for (const row of rows) {
     const address = row.address.toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(address)) continue;
-    const amount = Number(row.balanceFormatted ?? '0');
+    const amount = row.balanceFormatted == null ? NaN : Number(row.balanceFormatted);
     // A balance the server could not format is still a holding.
     if (Number.isFinite(amount) && amount === 0) continue;
     const token = { symbol: row.symbol, address, balance: row.balanceFormatted ?? null };

@@ -111,11 +111,14 @@ import {
   RwaDiscoverScreen,
   MarketRealityScreen,
   MarketRealityRadarScreen,
+  TodayScreen,
   nothingSpentDetailV1,
   reviewCallRowsV1,
   STOCKS_CONSOLE_DEFAULT_SIZE_V1,
   useStocksConsoleV1,
   useRadarConsoleV1,
+  useTodayConsoleV1,
+  type TodayConsoleInputV1,
   type StocksConsoleQuestionV1,
   type StocksSectionV1,
   lookalikeFeedViewV1,
@@ -176,6 +179,7 @@ import {
   useX402Ledger,
   useSimulateWithBudget,
   useStatus,
+  useSession,
   type NftProofResponseV1,
   type SimulateWithBudgetResponseV1,
 } from "@mioagent/api-client-react";
@@ -193,6 +197,13 @@ import {
 } from "@mioagent/wallet-actions";
 import { SimulateButton, useB20ExitProofPayment, type SimulateBlueprintResponseV1 } from "@mioagent/x402-actions";
 import { WalletConnect } from "./WalletConnect";
+import {
+  miniTodayDraftFromSearchV1,
+  miniTodayHandoffV1,
+  miniTodayHomeSectionV1,
+  miniTodaySessionReadyV1,
+  type MiniTodayHandoffV1,
+} from "./todayMiniNavigation";
 
 // ---------------------------------------------------------------------------
 // The miniapp console: the centre column and the status bar.
@@ -231,38 +242,43 @@ const RECONCILABLE: BlueprintSubmitStatus[] = ["confirmed", "failed", "submitted
 
 const SECTION_STORAGE_KEY_V1 = "miorail.section.v1";
 
-function readStoredSectionV1(): ConsoleSectionV1 {
+function readStoredSectionV1(): string | null {
   try {
     const stored = globalThis.sessionStorage?.getItem(SECTION_STORAGE_KEY_V1);
-    // Any section a reader can reach, the drawer's included: a reader on
-    // Radar who leaves and comes back should come back to Radar.
-    if (stored && ([...MINIAPP_SECTIONS_V1, ...MINIAPP_DRAWER_SECTIONS_V1] as readonly string[]).includes(stored)) {
-      return stored as ConsoleSectionV1;
-    }
+    return stored;
   } catch {
-    /* storage can be blocked; Stocks is the default either way */
+    /* a blocked store only loses the saved section */
   }
-  // Phase 15.1 — Stocks is the product, so it is what the Base App opens on.
-  // It used to be Discover, which is one of the surfaces Stocks is built from.
-  return "market";
+  return null;
 }
 
 /** T70 §4 — every one of these has a real handler below. A section with none
  * would be absent from this list, not present and inert.
  *
- * Phase 15.1: Stocks and Radar are the first two, and both have a handler now.
+ * Today leads, and its shared screen is mounted below.
  * The list is its own constant rather than the web tab bar's, so the two
  * surfaces can differ without either shipping a tab that renders nothing. */
 const MINIAPP_SECTIONS_V1 = CONSOLE_MINIAPP_SECTIONS_V1;
 
-/** Sections the Base App renders that the tab bar has no room for: Settings,
- * the fourth main page, and then what the web keeps behind "More". Every one
+/** Sections the Base App renders behind More, with Settings last. Every one
  * has a handler below; `navigation.test.tsx` holds both lists to that rule. */
 const MINIAPP_DRAWER_SECTIONS_V1 = ["radar", "opportunities", "portfolio", "activity", "settings"] as const;
 
+// The shared Today reads mount only while its screen is open. Opening Swap AI
+// or Wallet MCP does not fetch a second wallet dashboard in the background.
+function MiniTodayScreen({ input }: { input: TodayConsoleInputV1 }) {
+  const model = useTodayConsoleV1(input);
+  return <TodayScreen model={model} />;
+}
 
 export function MiniConsole() {
-  const { address, chainId } = useAccount();
+  const { address, chainId, isReconnecting } = useAccount();
+  const session = useSession({ retry: false, staleTime: 0 });
+  const todaySignedIn = miniTodaySessionReadyV1({
+    walletAddress: address,
+    walletChainId: chainId,
+    sessionUser: session.data?.user,
+  });
   const { theme, setTheme } = useConsoleTheme();
 
   // T70 §4/§8 — the Base App section, from the SAME table the web header reads.
@@ -276,12 +292,28 @@ export function MiniConsole() {
   // client render differ from that HTML: React error #418 on every resume to
   // any other section (walked on production 2026-10-04).
   const [section, setSection] = useState<ConsoleSectionV1>("market");
+  const [sectionReady, setSectionReady] = useState(false);
   const sectionRestored = useRef(false);
   useEffect(() => {
-    const stored = readStoredSectionV1();
+    if (sectionRestored.current || session.isPending || isReconnecting) return;
+    const draft = miniTodayDraftFromSearchV1(globalThis.location?.search ?? "");
+    const stored = miniTodayHomeSectionV1({
+      stored: readStoredSectionV1(),
+      mounted: [...MINIAPP_SECTIONS_V1, ...MINIAPP_DRAWER_SECTIONS_V1],
+      signedIn: todaySignedIn,
+    });
     sectionRestored.current = true;
-    if (stored !== "market") setSection(stored);
-  }, []);
+    setSectionReady(true);
+    if (draft?.kind === "wallet") {
+      setBaseMcpQuestion(draft.question);
+      setSection("extensions");
+    } else if (draft?.kind === "routes") {
+      setGoal(draft.goal);
+      setSection("routes");
+    } else if (stored !== "market") {
+      setSection(stored);
+    }
+  }, [session.isPending, isReconnecting, todaySignedIn]);
   useEffect(() => {
     // Not before the restore has read what is stored, or the first render's
     // Stocks would be written over it.
@@ -292,6 +324,14 @@ export function MiniConsole() {
       /* a blocked store costs the section on resume and nothing else */
     }
   }, [section]);
+  const navigateSection = (next: ConsoleSectionV1) => {
+    // A deliberate tap wins over an auth read that is still finishing.
+    // Otherwise a slow session restore could send a reader off the tab they
+    // just chose when the first-visit default finally becomes known.
+    sectionRestored.current = true;
+    setSectionReady(true);
+    setSection(next);
+  };
 
   const [screen, setScreen] = useState<ConsoleScreenV1>("plan");
   const [goal, setGoal] = useState("");
@@ -346,7 +386,7 @@ export function MiniConsole() {
   // route runs which never reached a signature.
   const ledger = useX402Ledger({ enabled: section === "activity" });
   const market = useMarketSnapshot();
-  const portfolio = usePortfolio(address);
+  const portfolio = usePortfolio(address, { enabled: todaySignedIn && Boolean(address) });
 
   const connected = Boolean(address);
   // Not having the server's flags yet is a different state from having them
@@ -935,7 +975,7 @@ export function MiniConsole() {
       key={id}
       type="button"
       className={`item${section === id ? " on" : ""}`}
-      onClick={() => setSection(id)}
+      onClick={() => navigateSection(id)}
     >
       <span className="t">{consoleSectionLabelV1(id)}</span>
     </button>
@@ -2081,6 +2121,7 @@ export function MiniConsole() {
   // what happens when a reader asks to leave a screen.
   // -------------------------------------------------------------------------
   const [stocksSection, setStocksSection] = useState<StocksSectionV1>("market");
+  const [stocksSymbol, setStocksSymbol] = useState<string | null>(null);
   const [stocksQuestion, setStocksQuestion] = useState<StocksConsoleQuestionV1>({
     underlyingKey: null,
     direction: "sell",
@@ -2089,19 +2130,20 @@ export function MiniConsole() {
     surface: "market",
     historyPeriod: "now",
   });
-  // Signed out, `/status` answers 401. Until 2026-09-22 that left this tab
-  // with two orange "you are not signed in" banners over an empty board; the
-  // board now reads the public door instead, the same evidence minus what only
-  // a session can do. Measure, Watch and Ask are absent here rather than
-  // leading anywhere: this surface signs in through its own header.
-  const stocksSignedOut =
-    status.isError && String((status.error as Error | null)?.message ?? "").includes("authentication_required");
+  // A successful capabilities read is not proof of a wallet session. Read
+  // the public Stocks door until the connected Base wallet matches the
+  // session, including while wallet restoration is still in progress.
+  const stocksSignedOut = !todaySignedIn;
   const stocks = useStocksConsoleV1({
     question: stocksQuestion,
+    preferredSymbol: stocksSymbol,
     // The same four tabs as the web. No address bar here, so the tab is state.
     section: stocksSection,
     onSection: setStocksSection,
-    enabled: stocksSignedOut ? true : routeIntelligenceOn,
+    // The SSR placeholder is Stocks, but a returning session can restore
+    // Today. Do not spend a route measurement before that choice is known,
+    // or while Stocks is hidden behind another tab.
+    enabled: sectionReady && section === "market" && (stocksSignedOut || routeIntelligenceOn),
     access: stocksSignedOut ? "public" : "session",
     // Signed out, `/status` answers 401 and every flag reads false. The Base
     // App told those visitors the server had route intelligence switched off,
@@ -2143,14 +2185,64 @@ export function MiniConsole() {
     enabled: routeIntelligenceOn,
     configurationRead: status.isSuccess,
     onOpenMarket: (question) => {
+      setStocksSymbol(null);
       setStocksQuestion(question);
       setSection("market");
     },
   });
 
+  const applyTodayHandoff = (handoff: MiniTodayHandoffV1) => {
+    if (handoff.kind === "navigate") {
+      globalThis.location?.assign(handoff.href);
+    } else if (handoff.kind === "stock") {
+      // Resolve the ticker against the shared Stocks corpus. Never guess an
+      // underlying key, and clear a prior selection so it cannot override it.
+      setStocksSymbol(handoff.symbol);
+      setStocksQuestion((current) => ({ ...current, underlyingKey: null, surface: "market" }));
+      setStocksSection("market");
+      setSection("market");
+    } else if (handoff.kind === "wallet") {
+      setBaseMcpQuestion(handoff.question);
+      setSection("extensions");
+    } else {
+      setGoal(handoff.goal);
+      setScreen("plan");
+      setSection("routes");
+    }
+  };
+  const todayInput: TodayConsoleInputV1 = {
+    signedIn: todaySignedIn,
+    address: address ?? null,
+    stocksOn: routeIntelligenceOn,
+    b20On: b20GateOn,
+    actions: {
+      onRoute: (route) => applyTodayHandoff(miniTodayHandoffV1(
+        route,
+        todaySignedIn,
+        process.env.NEXT_PUBLIC_BASE_PATH ?? "/app",
+      )),
+      // Base App mounts no Investigate screen. This public page gives the
+      // same exact-address evidence and never opens a wallet operation.
+      onInvestigate: (tokenAddress) => applyTodayHandoff(miniTodayHandoffV1(
+        { kind: "investigate", tokenAddress }, todaySignedIn,
+      )),
+      onOpenRadar: () => setSection("radar"),
+      onOpenB20: () => setSection("portfolio"),
+      onAskWallet: (question) => applyTodayHandoff(miniTodayHandoffV1(
+        { kind: "wallet", question }, todaySignedIn, process.env.NEXT_PUBLIC_BASE_PATH ?? "/app",
+      )),
+      onOpenStock: (symbol) => applyTodayHandoff({ kind: "stock", symbol }),
+      onSignIn: () => globalThis.location?.assign(`/signin?next=${encodeURIComponent(
+        process.env.NEXT_PUBLIC_BASE_PATH ?? "/app",
+      )}`),
+    },
+  };
+
   const now = new Date();
   let sectionContent: ReactNode = content;
-  if (section === "market") {
+  if (section === "today") {
+    sectionContent = <MiniTodayScreen input={todayInput} />;
+  } else if (section === "market") {
     sectionContent = <MarketRealityScreen model={stocks.model} />;
   } else if (section === "radar") {
     sectionContent = <MarketRealityRadarScreen model={radarConsole.model} />;
@@ -2704,7 +2796,7 @@ export function MiniConsole() {
       drawer={drawer}
       panels={section === "routes" ? panels : null}
       nav={nav}
-      onNavigate={setSection}
+      onNavigate={navigateSection}
     >
       {/* T67C.2: the SAME rail the web console mounts. Recovery orchestration
           is written once — two copies would mean two answers to "did we

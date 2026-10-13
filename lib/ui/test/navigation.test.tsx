@@ -315,12 +315,11 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     // Phase 15.1 made it Stocks / Radar / B20; the roadmap of 2026-10-04 gave
     // it the web's own main pages, so a reader meets the same product on a
     // phone and on a laptop.
-    assert.deepEqual(nav.map((item) => item.compactLabel), ['Stocks', 'Swap AI', 'Wallet MCP']);
-    // The web's pages in the web's order, without Today until the Base App
-    // mounts it.
+    assert.deepEqual(nav.map((item) => item.compactLabel), ['Today', 'Stocks', 'Swap AI', 'Wallet MCP']);
+    // Every primary web page now has a shared screen in Base App too.
     assert.deepEqual(
       [...CONSOLE_MINIAPP_SECTIONS_V1],
-      CONSOLE_PRIMARY_SECTIONS_V1.filter((section) => section !== 'today'),
+      [...CONSOLE_PRIMARY_SECTIONS_V1],
     );
   });
 
@@ -328,11 +327,10 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
     const drawer = /const MINIAPP_DRAWER_SECTIONS_V1 = \[([^\]]+)\]/.exec(mini);
     const listed = [...drawer![1]!.matchAll(/"([a-z]+)"/g)].map((match) => match[1]!);
-    // Every main page but Today is in the bar; Today is the web's until the
-    // Base App mounts it.
+    // Every main page is in the bar.
     assert.deepEqual(
       [...CONSOLE_MAIN_SECTIONS_V1].filter((section) => !(CONSOLE_MINIAPP_SECTIONS_V1 as readonly string[]).includes(section)),
-      ['today'],
+      [],
     );
     // The web's "More", Settings last, minus Investigate, which the Base App
     // does not mount.
@@ -363,13 +361,11 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
     }
   });
 
-  test('the Base App opens on Stocks, and Radar is one tap away in the drawer', () => {
-    // Phase 15.1. The Base App is the narrow surface and it opened on Discover
-    // -- one of the surfaces Stocks is built from.
-    assert.equal(CONSOLE_MINIAPP_SECTIONS_V1[0], 'market');
+  test('Today leads Base App, with Stocks during hydration and Radar in the drawer', () => {
+    assert.equal(CONSOLE_MINIAPP_SECTIONS_V1[0], 'today');
     const mini = read('../../../artifacts/miniapp/app/components/MiniConsole.tsx');
     assert.match(mini, /const MINIAPP_DRAWER_SECTIONS_V1 = \[[^\]]*"radar"/);
-    assert.match(mini, /return "market";/, 'the stored-section fallback must be Stocks');
+    assert.match(mini, /miniTodayHomeSectionV1\(/, 'resume and session choose the landing screen');
     // The server renders Stocks, so the first client render must too: a stored
     // section read as the initial state was React error #418 on every resume
     // off Stocks. It is restored after the first render.
@@ -462,7 +458,7 @@ describe('§9.7/§9.9 — one vocabulary, two surfaces', () => {
 
   test('both surfaces read the same table, in each surface\u2019s own order', () => {
     assert.deepEqual([...CONSOLE_PRIMARY_SECTIONS_V1], ['today', 'market', 'routes', 'extensions']);
-    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['market', 'routes', 'extensions']);
+    assert.deepEqual([...CONSOLE_MINIAPP_SECTIONS_V1], ['today', 'market', 'routes', 'extensions']);
     // Whatever each surface lists, the words come from the shared table.
     for (const section of [...CONSOLE_PRIMARY_SECTIONS_V1, ...CONSOLE_MINIAPP_SECTIONS_V1]) {
       assert.ok(CONSOLE_SECTION_TABLE_V1[section].compactLabel.length > 0);

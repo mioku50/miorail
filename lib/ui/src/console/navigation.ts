@@ -169,9 +169,9 @@ export const CONSOLE_PRIMARY_SECTIONS_V1 = ['today', 'market', 'routes', 'extens
 /**
  * What the Base App MiniApp's bar shows, in order.
  *
- * The web's primary pages without Today, which the Base App does not mount
- * yet; the order is the web's, so a reader who learns Miorail on a phone finds
- * the same pages on a laptop. Three tabs get ~130px each on a 390px screen.
+ * The same four primary pages as the web, with shared reads behind Today.
+ * The order is the web's, so a reader who learns Miorail on a phone finds the
+ * same pages on a laptop. Compact labels fit four equal columns at 390px.
  *
  * Deliberately its own list all the same. It used to BE
  * `CONSOLE_PRIMARY_SECTIONS_V1`, on the rule that a tab must have a real
@@ -182,7 +182,7 @@ export const CONSOLE_PRIMARY_SECTIONS_V1 = ['today', 'market', 'routes', 'extens
  * Adding a section here without adding its screen is the bug this separation
  * exists to make visible, and `navigation.test.tsx` fails on it.
  */
-export const CONSOLE_MINIAPP_SECTIONS_V1 = ['market', 'routes', 'extensions'] as const;
+export const CONSOLE_MINIAPP_SECTIONS_V1 = ['today', 'market', 'routes', 'extensions'] as const;
 
 /**
  * The four pages the console leads with, in order (operator, 2026-10-13):

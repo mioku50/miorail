@@ -45,5 +45,7 @@ test('a delayed entry module keeps the HTML recovery frame visible', async ({ pa
   await expect(page.getByRole('heading', { name: 'Loading Miorail…', exact: true })).toBeVisible();
   await expect(page.getByText('If this takes longer, reload this page.', { exact: true })).toBeVisible();
   release();
-  await expect(page).toHaveURL(/\/stocks$/);
+  // Loading the released entry also loads its dependencies on a cold dev server.
+  await expect(page).toHaveURL(/\/stocks$/, { timeout: 30_000 });
+  await expect(page.getByRole('heading', { name: 'Reading without signing in', exact: true })).toBeVisible();
 });

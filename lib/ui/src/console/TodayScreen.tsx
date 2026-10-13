@@ -40,40 +40,6 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
         ) : null}
       </header>
 
-      <form
-        className="b20-ask-form today-ask"
-        onSubmit={(event) => {
-          event.preventDefault();
-          model.ask.onSubmit();
-        }}
-      >
-        <label htmlFor="today-ask-input" className="sr-only">
-          Ask about a token, a stock, your rewards or a swap
-        </label>
-        <div>
-          <input
-            id="today-ask-input"
-            value={model.ask.value}
-            maxLength={500}
-            placeholder={model.ask.placeholder}
-            autoComplete="off"
-            onChange={(event) => model.ask.onChange(event.currentTarget.value)}
-          />
-          <button type="submit" className="btn" disabled={model.ask.value.trim().length === 0}>
-            Go
-          </button>
-        </div>
-      </form>
-      {model.ask.reply ? <p className="lnote">{model.ask.reply}</p> : null}
-      {model.ask.suggestions.length > 0 ? (
-        <div className="mcp-filters" aria-label="Try">
-          {model.ask.suggestions.map((suggestion) => (
-            <button key={suggestion.label} type="button" className="btn sec" onClick={suggestion.onClick}>
-              {suggestion.label}
-            </button>
-          ))}
-        </div>
-      ) : null}
 
       {wallet ? (
         <section className="radar-section" aria-labelledby="today-items-title">
@@ -118,6 +84,42 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
       ) : null}
 
       {model.stocksToday ? <MyStocksTodayCard model={model.stocksToday} /> : null}
+
+      <form
+        className="b20-ask-form today-ask"
+        onSubmit={(event) => {
+          event.preventDefault();
+          model.ask.onSubmit();
+        }}
+      >
+        <label htmlFor="today-ask-input" className="sr-only">
+          Ask about a token, a stock, your rewards or a swap
+        </label>
+        <div>
+          <input
+            id="today-ask-input"
+            value={model.ask.value}
+            maxLength={500}
+            placeholder={model.ask.placeholder}
+            autoComplete="off"
+            onChange={(event) => model.ask.onChange(event.currentTarget.value)}
+          />
+          <button type="submit" className="btn" disabled={model.ask.value.trim().length === 0}>
+            Go
+          </button>
+        </div>
+      </form>
+      {model.ask.reply ? <p className="lnote">{model.ask.reply}</p> : null}
+      {model.ask.suggestions.length > 0 ? (
+        <div className="mcp-filters" aria-label="Try">
+          {model.ask.suggestions.map((suggestion) => (
+            <button key={suggestion.label} type="button" className="btn sec" onClick={suggestion.onClick}>
+              {suggestion.label}
+            </button>
+          ))}
+        </div>
+      ) : null}
+
     </section>
   );
 }

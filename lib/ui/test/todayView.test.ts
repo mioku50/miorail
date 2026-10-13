@@ -83,6 +83,16 @@ describe("what the wallet's balances already say", () => {
     assert.equal(check.possibleSpam, 1);
   });
 
+  test('a missing formatted balance keeps the holding visible instead of becoming zero', () => {
+    const check = todayWalletCheckV1([
+      { symbol: 'NVDAc', address: OFFICIAL, registry: { standing: 'official', ticker: 'NVDAc' } },
+      { symbol: 'AAPLc', address: TOKEN, balanceFormatted: null, registry: { standing: 'lookalike', ticker: 'AAPLc' } },
+    ]);
+    assert.equal(check.official.length, 1);
+    assert.equal(check.lookalikes.length, 1);
+    assert.equal(check.lookalikes[0]!.balance, null);
+  });
+
   function input(overrides: Partial<TodayInputV1> = {}): { input: TodayInputV1; routed: TodayRouteV1[]; opened: string[] } {
     const routed: TodayRouteV1[] = [];
     const opened: string[] = [];
