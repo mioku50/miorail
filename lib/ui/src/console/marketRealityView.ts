@@ -1565,7 +1565,7 @@ export function exitCostViewV1(
           ? 'buying in and selling straight back costs this much, above the reviewed slippage policy'
           : grade === 'most_value_lost'
             ? `buying in and selling straight back costs this much — ${severeLossWordsV1(bps)}`
-            : 'the round trip returned more than it took, which is not a cost a reader can act on: the two legs are separate quotes taken moments apart, and at small sizes that gap and the token’s own rounding are larger than the market',
+            : 'separate buy and sell quotes imply more cash back than entered; they do not include both trades executed in sequence or prove a realizable return',
   };
 }
 

@@ -13,6 +13,8 @@ export function MyStockCashOut(props: {
   tokenSymbol: string;
   overviewTokens: string;
   onMeasure: (tokenAddress: string) => Promise<StockPositionQuoteV1>;
+  compact?: boolean;
+  additionalActions?: React.ReactNode;
 }) {
   const [quote, setQuote] = useState<StockPositionQuoteV1 | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -91,9 +93,10 @@ export function MyStockCashOut(props: {
         >
           {checking ? 'Checking cash out…' : quote ? 'Check cash out again' : 'Check cash out'}
         </button>
-        <span className="lnote">
+        {!props.compact ? <span className="lnote">
           Quote your entire current {props.tokenSymbol} balance into USDC.
-        </span>
+        </span> : null}
+        {props.additionalActions}
       </div>
       <div role="status" aria-live="polite">
         {error ? (

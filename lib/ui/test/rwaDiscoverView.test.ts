@@ -857,7 +857,7 @@ describe('rwa discover view — signals', () => {
     assert.equal(card.subject.label, 'COINc');
     assert.equal(card.occurred, '1h ago');
     assert.match(card.detail, /at \$10,000/);
-    assert.match(card.detail, /for 1\.50%/);
+    assert.match(card.detail, /cash back 1\.5% below cash input/);
     assert.match(card.detail, /previous measurement found no route/);
     assert.equal(view.emptyNote, null);
   });

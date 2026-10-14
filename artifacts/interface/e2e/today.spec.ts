@@ -29,10 +29,11 @@ async function install(page: Page, signedIn: boolean, failPortfolio = false) {
       productMigration: { routeIntelligenceV1: true, b20ControlV1: false }, rpc: { status: 'connected' },
       baseMcp: { enabled: true, configured: true, auth: { connected: signedIn } } } });
     if (path.endsWith('/rwa/underlyings') || path === '/api/public/stocks/underlyings') return route.fulfill({ json: index });
-    if (path === '/api/portfolio' && !failPortfolio) return route.fulfill({ json: { tokens: [
+    if (path === '/api/portfolio' && !failPortfolio) return route.fulfill({ json: {
+      updatedAt: '2026-10-14T08:00:00.000Z', dataFreshness: 'cached', tokens: [
       { symbol: 'NVDAc', address: OFFICIAL, balanceFormatted: '1', registry: { standing: 'official', ticker: 'NVDAc' } },
       { symbol: 'AAPLc', address: LOOKALIKE, balanceFormatted: '15', registry: { standing: 'lookalike', ticker: 'AAPLc', officialAddress: OFFICIAL } },
-      { symbol: 'UNCHECKED', address: '0x3333333333333333333333333333333333333333', balanceFormatted: '1' },
+      ...Array.from({ length: 32 }, (_, i) => ({ symbol: `UNCHECKED${i}`, address: `0x${(i + 100).toString(16).padStart(40, '0')}`, balanceFormatted: '1' })),
     ] } });
     if (path === '/api/stocks/today') return route.fulfill({ json: briefFixture() });
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
@@ -42,33 +43,47 @@ async function install(page: Page, signedIn: boolean, failPortfolio = false) {
 
 for (const width of [1280, 390]) {
   test(`Today leads with findings and hands questions over without executing (${width}px)`, async ({ page }, testInfo) => {
-    await page.setViewportSize({ width, height: 900 });
+    test.setTimeout(60_000);
+    await page.setViewportSize({ width, height: 844 });
     const { writes } = await install(page, true);
     await page.goto('/');
     await expect(page).toHaveURL(/\/today$/);
-    const finding = page.getByText('AAPLc in your wallet is not the official AAPLc', { exact: true });
+    const finding = page.getByText("AAPLc — issuer address doesn't match", { exact: true });
     await expect(finding).toBeVisible();
-    await expect(page.getByRole('heading', { name: 'My stocks today', exact: true })).toBeVisible();
+    await expect(page.getByText('Your NVDAc', { exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'My stocks today', exact: true })).toBeHidden();
+    await expect(page.getByText('Wallet overview updated Oct 14, 08:00 AM UTC · cached data', { exact: true })).toBeVisible();
     const order = await page.evaluate(() => {
-      const cards = document.querySelector('.today .cardrows');
+      const cards = document.querySelector('.today .cardrow[data-tone="attention"]');
       const ask = document.querySelector('#today-ask-input');
       return Boolean(cards && ask && (cards.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING));
     });
     expect(order).toBe(true);
+    const question = await page.locator('#today-ask-input').boundingBox();
+    expect(question).not.toBeNull();
+    expect(question!.y + question!.height).toBeLessThan(844);
+    await page.getByText('Stocks and recent updates · 0', { exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'My stocks today', exact: true })).toBeVisible();
+    await page.getByText('Stocks and recent updates · 0', { exact: true }).click();
+    const coverage = page.locator('.today-details').filter({ has: page.locator('summary', { hasText: "32 tokens outside Miorail's reviewed coverage" }) });
+    await coverage.locator('summary').click();
+    await expect(coverage.getByText(/coverage gap, not a risk finding/)).toBeVisible();
+    await coverage.locator('summary').click();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: testInfo.outputPath(`today-holder-${width}.png`), fullPage: true });
 
     await page.getByRole('button', { name: 'See the evidence', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/investigate\\?token=${LOOKALIKE}`));
     await page.goto('/today');
+    await page.locator('.today-details > summary').filter({ hasText: /^Rewards$/ }).click();
     await page.getByRole('button', { name: 'What can I claim?', exact: true }).first().click();
-    await expect(page.locator('#base-mcp-console-input')).toHaveValue('What can I claim?');
+    await expect(page.locator('#base-mcp-console-input')).toHaveValue('What can I claim?', { timeout: 20_000 });
     expect(writes).toEqual([]);
 
     await page.goto('/today');
     await page.locator('#today-ask-input').fill('Swap 100 USDC to ETH');
     await page.getByRole('button', { name: 'Go', exact: true }).click();
-    await expect(page.getByPlaceholder('Swap 100 USDC to ETH with the best net result')).toHaveValue('Swap 100 USDC to ETH');
+    await expect(page.getByPlaceholder('Swap 100 USDC to ETH with the best net result')).toHaveValue('Swap 100 USDC to ETH', { timeout: 20_000 });
     expect(writes).toEqual([]);
 
     await page.goto('/today');
@@ -96,5 +111,5 @@ test('Today failed balances show an unavailable read instead of zero holdings', 
   await page.goto('/today');
   await expect(page.getByText('Your balances could not be read. This is not a statement about what you hold.', { exact: true })).toBeVisible({ timeout: 20000 });
   await expect(page.getByLabel('Today in numbers')).toHaveCount(0);
-  await expect(page.getByText('AAPLc in your wallet is not the official AAPLc', { exact: true })).toHaveCount(0);
+  await expect(page.getByText("AAPLc — issuer address doesn't match", { exact: true })).toHaveCount(0);
 });

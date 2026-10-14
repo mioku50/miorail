@@ -2232,6 +2232,10 @@ export function MiniConsole() {
         { kind: "wallet", question }, todaySignedIn, process.env.NEXT_PUBLIC_BASE_PATH ?? "/app",
       )),
       onOpenStock: (symbol) => applyTodayHandoff({ kind: "stock", symbol }),
+      onOpenDividends: () => {
+        setStocksSection("dividends");
+        setSection("market");
+      },
       onSignIn: () => globalThis.location?.assign(`/signin?next=${encodeURIComponent(
         process.env.NEXT_PUBLIC_BASE_PATH ?? "/app",
       )}`),

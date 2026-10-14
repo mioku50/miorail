@@ -1,5 +1,6 @@
 import { stockInboxGroupKeyV1 } from '@mioagent/route-storage/stock-inbox';
 import type { RwaSignalCardV1 } from '@mioagent/rwa-dossier/discover';
+import { quotedRoundTripOutcomeV1, ROUND_TRIP_QUOTE_NOTE_V1 } from './quotedRoundTrip.js';
 
 /**
  * A dividend that reached a token this wallet held, as the dividend read
@@ -151,12 +152,12 @@ function signalWordsV1(card: RwaSignalCardV1): { headline: string | null; summar
   const size = cashV1(text('requestedCashAtomic'));
   switch (card.kind) {
     case 'official_asset_market_became_active': {
-      const cost = percentV1(text('roundTripCostBps'));
+      const outcome = quotedRoundTripOutcomeV1(text('roundTripCostBps'));
       return {
         headline: `Can be sold for ${destination} again`,
         summary: `Miorail found a route to sell ${token} for ${destination} again; the measurement before found none.${
-          size ? ` The largest size that went through was ${size}${cost ? `, for a round trip of ${cost}` : ''}.` : ''
-        }`,
+          size ? ` The largest size quoted was ${size}${outcome ? `, implying cash back ${outcome}` : ''}.` : ''
+        } ${ROUND_TRIP_QUOTE_NOTE_V1}`,
       };
     }
     case 'official_asset_market_became_unreachable':
@@ -167,13 +168,13 @@ function signalWordsV1(card: RwaSignalCardV1): { headline: string | null; summar
         }; the one before found a route. The measurement itself worked.`,
       };
     case 'official_asset_cash_exit_changed': {
-      const before = percentV1(text('previousRoundTripCostBps'));
-      const after = percentV1(text('roundTripCostBps'));
+      const before = quotedRoundTripOutcomeV1(text('previousRoundTripCostBps'));
+      const after = quotedRoundTripOutcomeV1(text('roundTripCostBps'));
       return {
-        headline: 'Cost to sell changed',
-        summary: `A ${size ?? 'measured'} round trip in ${token} now costs ${after ?? 'a new amount'}, against ${
-          before ?? 'an earlier reading'
-        } at the measurement before.`,
+        headline: 'Quoted round trip changed',
+        summary: `At the ${size ?? 'measured'} size in ${token}, the quotes implied cash back ${after ?? 'at an unread difference'}, compared with ${
+          before ?? 'an unread difference'
+        } in the previous measurement. ${ROUND_TRIP_QUOTE_NOTE_V1}`,
       };
     }
     case 'official_asset_dividend_declared': {
@@ -241,12 +242,6 @@ function cashV1(atomic: string | null): string | null {
   if (atomic === null || !/^[0-9]{1,30}$/.test(atomic)) return null;
   const dollars = Number(BigInt(atomic) / 1_000_000n);
   return `$${dollars.toLocaleString('en-US')}`;
-}
-
-/** "0.08%" from basis points. */
-function percentV1(bps: string | null): string | null {
-  if (bps === null || !/^-?[0-9]{1,9}$/.test(bps)) return null;
-  return `${(Number(bps) / 100).toLocaleString('en-US', { maximumFractionDigits: 2 })}%`;
 }
 
 /** "Oct 1" from a New York date. */

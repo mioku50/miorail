@@ -89,6 +89,34 @@ function adapterV1(): SwapRouteAdapter {
   };
 }
 
+test('quote excess retains the exact cash and token chain, including an excess rounded to zero bps', async () => {
+  for (const [returned, bps] of [['103156089', '-315'], ['100008714', '0']]) {
+    const asked: string[] = [];
+    const adapter: SwapRouteAdapter = {
+      id: 'kyberswap', supports: () => true,
+      async quote(input) {
+        asked.push(input.intent.amount.amountAtomic);
+        return quoted(input, input.intent.fromAsset!.symbol === 'USDC' ? '42828740' : returned);
+      },
+    };
+    const run = await measureOfficialCashExitV1({
+      repository: createMemoryOfficialCashExitRepository(), adapters: [adapter],
+      token: { address: TOKEN, symbol: 'NVDAc', decimals: 8 },
+      tenantId: 'quote-excess-fixture', walletAddress: WALLET, scope: 'public_ladder',
+      cashSizesAtomic: ['100000000'], destinations: ['USDC'], now: () => NOW,
+    });
+    assert.deepEqual(asked, ['100000000', '42828740']);
+    const observation = run.observations[0]!;
+    assert.equal(observation.buyQuote!.outputAtomic, observation.sellQuote!.inputAtomic);
+    assert.equal(observation.sellQuote!.outputAtomic, returned);
+    assert.equal(observation.executionProven, false);
+    const rung = assembleCashExitLadderV1({ publicRun: run, now: NOW }).rungs[0]!;
+    assert.equal(rung.roundTripCostBps, bps);
+    assert.equal(rung.returnedAtomic, returned, 'sub-basis-point excess must not disappear from cash evidence');
+    assert.equal(rung.simulationEvidence.status, 'not_simulated');
+  }
+});
+
 async function publicRun(repository: OfficialCashExitRepositoryV1) {
   return measureOfficialCashExitV1({
     repository,

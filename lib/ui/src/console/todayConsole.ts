@@ -42,6 +42,7 @@ export interface TodayConsoleInputV1 {
     onOpenB20: () => void;
     onAskWallet: (question: string) => void;
     onOpenStock: (symbol: string) => void;
+    onOpenDividends: () => void;
     onSignIn: () => void;
   };
 }
@@ -85,6 +86,8 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
           check,
           loading: portfolio.isPending && Boolean(input.address),
           failed: Boolean(portfolio.error),
+          overviewUpdatedAt: portfolio.data?.updatedAt ?? null,
+          dataFreshness: portfolio.data?.dataFreshness ?? null,
           radar: radarView,
           trackedB20: watchlist.data?.tokens.length ?? null,
         }

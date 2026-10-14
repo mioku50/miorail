@@ -152,15 +152,15 @@ test('every market, listing and lookalike item has words an assistant can repeat
   const words = new Map(items.map((item) => [item.signalId, [item.headline, item.summary]]));
   assert.deepEqual(words.get('1'), [
     'Can be sold for USDC again',
-    'Miorail found a route to sell NVDAc for USDC again; the measurement before found none. The largest size that went through was $10,000, for a round trip of 0.08%.',
+    'Miorail found a route to sell NVDAc for USDC again; the measurement before found none. The largest size quoted was $10,000, implying cash back 0.08% below cash input. Separate buy and sell quotes; not an executed return or a verified trading opportunity.',
   ]);
   assert.deepEqual(words.get('2'), [
     'No route to sell found',
     "Miorail's latest measurement found no route to sell NVDAc for USDC, even at $100; the one before found a route. The measurement itself worked.",
   ]);
   assert.deepEqual(words.get('3'), [
-    'Cost to sell changed',
-    'A $100 round trip in NVDAc now costs 0.35%, against 0.08% at the measurement before.',
+    'Quoted round trip changed',
+    'At the $100 size in NVDAc, the quotes implied cash back 0.35% below cash input, compared with 0.08% below cash input in the previous measurement. Separate buy and sell quotes; not an executed return or a verified trading opportunity.',
   ]);
   assert.deepEqual(words.get('4'), [
     'NVIDIA declared a dividend',

@@ -1,4 +1,5 @@
 import { formatAtomicAmount } from '../formatAtomicAmount';
+import { quotedRoundTripOutcomeV1, ROUND_TRIP_QUOTE_NOTE_V1 } from '@mioagent/rwa-market-reality/quoted-round-trip';
 
 // ---------------------------------------------------------------------------
 // Phase 6 — turning the three Discover reads into something a person reads.
@@ -692,7 +693,7 @@ const SIGNAL_TITLE_V1: Readonly<Record<string, string>> = {
   official_asset_lookalike_created: 'A contract started wearing an official name',
   official_asset_market_became_active: 'A cash route appeared',
   official_asset_market_became_unreachable: 'The cash route is gone',
-  official_asset_cash_exit_changed: 'Round-trip cost moved',
+  official_asset_cash_exit_changed: 'Round-trip quote changed',
   official_asset_corporate_action_announced: 'The issuer announced a corporate action',
   official_asset_multiplier_changed: 'Shares per token changed',
   official_asset_multiplier_change_scheduled: 'Shares per token scheduled to change',
@@ -1260,10 +1261,10 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
     case 'official_asset_market_became_active': {
       const ticker = text('ticker') ?? card.subjectTicker ?? 'an asset';
       const size = text('requestedCashAtomic');
-      const cost = rwaBpsLabelV1(text('roundTripCostBps'));
-      return `${ticker} completed a round trip${size ? ` at ${cashSizeLabelV1(size)}` : ''}${
-        cost ? ` for ${cost}` : ''
-      }, where the previous measurement found no route.`;
+      const outcome = quotedRoundTripOutcomeV1(text('roundTripCostBps'));
+      return `${ticker} returned buy and sell quotes${size ? ` at ${cashSizeLabelV1(size)}` : ''}${
+        outcome ? ` implying cash back ${outcome}` : ''
+      }, where the previous measurement found no route. ${ROUND_TRIP_QUOTE_NOTE_V1}`;
     }
     case 'official_asset_market_became_unreachable': {
       const ticker = text('ticker') ?? card.subjectTicker ?? 'an asset';
@@ -1273,11 +1274,11 @@ function signalDetailV1(card: RwaSignalCardWireV1): string {
     case 'official_asset_cash_exit_changed': {
       const ticker = text('ticker') ?? card.subjectTicker ?? 'an asset';
       const size = text('requestedCashAtomic');
-      const before = rwaBpsLabelV1(text('previousRoundTripCostBps'));
-      const after = rwaBpsLabelV1(text('roundTripCostBps'));
-      return `${ticker} round trip${size ? ` at ${cashSizeLabelV1(size)}` : ''} moved from ${before ?? 'an earlier reading'} to ${
-        after ?? 'a new reading'
-      }.`;
+      const before = quotedRoundTripOutcomeV1(text('previousRoundTripCostBps'));
+      const after = quotedRoundTripOutcomeV1(text('roundTripCostBps'));
+      return `${ticker} quotes${size ? ` at ${cashSizeLabelV1(size)}` : ''} implied cash back ${after ?? 'at an unread difference'}, compared with ${
+        before ?? 'an unread difference'
+      } in the previous measurement. ${ROUND_TRIP_QUOTE_NOTE_V1}`;
     }
     case 'official_asset_corporate_action_announced': {
       const ticker = card.subjectTicker ?? 'an asset';

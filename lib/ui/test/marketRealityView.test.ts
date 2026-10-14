@@ -4620,9 +4620,9 @@ describe('a round trip cannot claim a gain and wear the success colour', () => {
     assert.match(view.chip, /-5\.29%/);
     // But it must not be taken for a cost.
     assert.match(view.chip, /not a cost reading/);
-    assert.match(view.note, /returned more than it took/);
-    // The note names the cause rather than blaming the market.
-    assert.match(view.note, /separate quotes|rounding/);
+    assert.match(view.note, /more cash back than entered/);
+    // The note states the evidence limit without guessing why prices differ.
+    assert.match(view.note, /separate buy and sell quotes/);
   });
 
   test('the positive bands are untouched', () => {

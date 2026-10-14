@@ -37,6 +37,7 @@ import type {
   RwaSignalRowV1,
 } from '@mioagent/route-storage';
 import type { ReopenNoticeFactsV1 } from '@mioagent/rwa-market-reality/reopen-game-service';
+import { quotedRoundTripOutcomeV1 } from '@mioagent/rwa-market-reality/quoted-round-trip';
 import {
   etClockLabelV1,
   etWeekdayV1,
@@ -444,27 +445,26 @@ export function noticeForSignalV1(signal: RwaSignalRowV1, names: NamesOfV1): Not
   switch (signal.kind) {
     case 'official_asset_cash_exit_changed': {
       const size = usdV1(facts.requestedCashAtomic);
-      const now = percentFromBpsV1(facts.roundTripCostBps);
-      const was = percentFromBpsV1(facts.previousRoundTripCostBps);
+      const now = quotedRoundTripOutcomeV1(typeof facts.roundTripCostBps === 'string' ? facts.roundTripCostBps : null);
+      const was = quotedRoundTripOutcomeV1(typeof facts.previousRoundTripCostBps === 'string' ? facts.previousRoundTripCostBps : null);
       const change = digitsV1(facts.changeBps, true);
-      if (!size || !now || !was || change === null || change === 0n) return null;
-      const direction = change > 0n ? 'up' : 'down';
+      if (!size || !now || !was || change === null || change === 0n || destination !== 'USDC') return null;
       return noticeV1({
         key,
-        label: `${who} exit cost ${direction}`,
-        title: `${who}: exit cost ${direction}`,
-        message: `Round trip at ${size} (${destination} → ${representation} → ${destination}) now costs ${now}, was ${was}. Measured on Base.`,
+        label: `${who} round-trip quote changed`,
+        title: `${who}: round-trip quote changed`,
+        message: `At ${size} in USDC, quoted cash back: ${now}; previous ${was}. Separate quotes, not an executed return.`,
         targetPath,
       });
     }
     case 'official_asset_market_became_active': {
       const size = usdV1(facts.requestedCashAtomic);
-      const cost = percentFromBpsV1(facts.roundTripCostBps);
+      const outcome = quotedRoundTripOutcomeV1(typeof facts.roundTripCostBps === 'string' ? facts.roundTripCostBps : null);
       return noticeV1({
         key,
-        label: `${who} tradable on Base`,
-        title: `${who}: tradable on Base`,
-        message: `A reviewed route now buys and sells ${representation} for ${destination} on Base.${size && cost ? ` Round trip at ${size}: ${cost}.` : ''}`,
+        label: `${who} buy/sell quotes returned`,
+        title: `${who}: quotes returned`,
+        message: `A reviewed router quoted both legs for ${representation} on Base.${size && outcome ? ` At ${size}, implied cash back ${outcome}.` : ''} Separate quotes, not an executed return.`,
         targetPath,
       });
     }

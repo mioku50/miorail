@@ -198,7 +198,14 @@ export interface TodayModelV1 {
     loading: boolean;
     /** Why the wallet could not be read. Never a claim about what it holds. */
     unavailable: string | null;
+    /** Response assembly time, not a promise that cached balances were reread. */
+    overviewUpdatedAt: string | null;
+    dataFreshness: string | null;
   } | null;
+  stockActions: {
+    onOpenStock: (symbol: string) => void;
+    onOpenDividends: (() => void) | null;
+  };
   ask: {
     value: string;
     onChange: (value: string) => void;
@@ -217,6 +224,8 @@ export interface TodayInputV1 {
     check: TodayWalletCheckV1 | null;
     loading: boolean;
     failed: boolean;
+    overviewUpdatedAt?: string | null;
+    dataFreshness?: string | null;
     /** Radar's own projection, so a change reads here as it reads there. */
     radar: {
       watches: readonly unknown[];
@@ -235,6 +244,7 @@ export interface TodayInputV1 {
     onOpenB20: () => void;
     onAskWallet: (question: string) => void;
     onOpenStock: (symbol: string) => void;
+    onOpenDividends?: () => void;
     onSignIn: () => void;
   };
 }
@@ -265,6 +275,7 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
   if (!input.signedIn || !input.wallet) {
     return {
       wallet: null,
+      stockActions: { onOpenStock: actions.onOpenStock, onOpenDividends: null },
       ask: { ...ask, placeholder: 'Paste a token address (0x…) or name a stock', suggestions: [] },
       onSignIn: actions.onSignIn,
     };
@@ -275,8 +286,8 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
   for (const token of check?.lookalikes.slice(0, 3) ?? []) {
     items.push({
       key: `lookalike:${token.address}`,
-      title: `${token.symbol} in your wallet is not the official ${token.officialTicker}`,
-      body: `${token.balance ? `${token.balance} tokens at ` : 'A contract at '}${shortV1(token.address)}. Its issuer lists ${token.officialTicker} at another address, so this is a different contract wearing the name.`,
+      title: `${token.symbol} — issuer address doesn't match`,
+      body: `${token.balance ? `${token.balance} tokens at ` : 'A contract at '}${shortV1(token.address)}. The issuer lists ${token.officialTicker} at a different address.`,
       attention: true,
       actions: [{ label: 'See the evidence', onClick: () => actions.onInvestigate(token.address) }],
     });
@@ -291,8 +302,8 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
   if (check && check.unchecked.length > 0) {
     items.push({
       key: 'unchecked',
-      title: `${plural(check.unchecked.length, 'token')} no list vouches for`,
-      body: 'Not a verdict: nobody has looked yet. Investigate reads one address and says whether it can be sold, and what getting out costs.',
+      title: `${plural(check.unchecked.length, 'token')} outside Miorail's reviewed coverage`,
+      body: 'This is a coverage gap, not a risk finding. These addresses have no reviewed issuer match or completed verification in this overview. Check an address for its evidence.',
       attention: false,
       actions: check.unchecked.slice(0, 3).map((token) => ({
         label: `Check ${token.symbol}`,
@@ -334,9 +345,9 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
 
   const tiles: TodayTileV1[] = check
     ? [
-        { label: 'official stocks held', value: String(check.official.length), attention: false },
-        { label: 'lookalikes in your wallet', value: String(check.lookalikes.length), attention: check.lookalikes.length > 0 },
-        { label: 'tokens nobody checked', value: String(check.unchecked.length), attention: false },
+        { label: check.official.length === 1 ? 'stock held' : 'stocks held', value: String(check.official.length), attention: false },
+        { label: check.lookalikes.length === 1 ? 'address to check' : 'addresses to check', value: String(check.lookalikes.length), attention: check.lookalikes.length > 0 },
+        { label: "tokens outside Miorail's reviewed coverage", value: String(check.unchecked.length), attention: false },
         { label: 'markets under watch', value: radar ? String(radar.watches.length) : '—', attention: false },
       ]
     : [];
@@ -358,10 +369,13 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
       tiles,
       items,
       loading: input.wallet.loading,
+      overviewUpdatedAt: input.wallet.overviewUpdatedAt ?? null,
+      dataFreshness: input.wallet.dataFreshness ?? null,
       unavailable: input.wallet.failed
         ? 'Your balances could not be read. This is not a statement about what you hold.'
         : null,
     },
+    stockActions: { onOpenStock: actions.onOpenStock, onOpenDividends: actions.onOpenDividends ?? null },
     ask: {
       ...ask,
       placeholder: 'Paste a token address, name a stock, or ask what you can claim',

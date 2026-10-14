@@ -130,11 +130,11 @@ describe("what the wallet's balances already say", () => {
     const { input: value, opened } = input();
     const model = todayModelV1(value);
     const first = model.wallet!.items[0]!;
-    assert.equal(first.title, 'AAPLc in your wallet is not the official AAPLc');
+    assert.equal(first.title, "AAPLc — issuer address doesn't match");
     assert.equal(first.attention, true);
     first.actions[0]!.onClick();
     assert.deepEqual(opened, [`investigate:${TOKEN}`]);
-    const lookalikeTile = model.wallet!.tiles.find((tile) => tile.label === 'lookalikes in your wallet')!;
+    const lookalikeTile = model.wallet!.tiles.find((tile) => tile.label === 'address to check')!;
     assert.equal(lookalikeTile.value, '1');
     assert.equal(lookalikeTile.attention, true);
   });

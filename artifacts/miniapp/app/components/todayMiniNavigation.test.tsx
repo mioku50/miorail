@@ -119,9 +119,9 @@ test('the four-tab mini shell renders shared Today findings only for a proven se
   const signed = screenV1(true);
   assert.match(signed, /aria-current="page">Today<\/button>/);
   assert.match(signed, /AAPLc/);
-  assert.match(signed, /Worth a look/);
+  assert.match(signed, /Worth your attention/);
   const guest = screenV1(false);
-  assert.doesNotMatch(guest, /AAPLc|Worth a look/);
+  assert.doesNotMatch(guest, /AAPLc|Worth your attention/);
   assert.match(guest, /Is it the real one, and can you sell it/);
   for (const label of ['Stocks', 'Swap AI', 'Wallet MCP']) assert.ok(guest.includes(label));
 });

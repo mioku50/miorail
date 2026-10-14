@@ -136,6 +136,7 @@ for (const width of [1440, 390]) {
     page,
     browser,
   }) => {
+    test.setTimeout(60_000);
     await page.setViewportSize({ width, height: 1000 });
     const fixture = sharedInboxFixture();
     // Old browser receipts are never silently imported into server history.

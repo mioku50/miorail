@@ -392,10 +392,10 @@ describe('what a push says', () => {
 
   test('an exit-cost move names the size, both costs and which way it went', () => {
     const notice = noticeForSignalV1(exitCostChanged(), names)!;
-    assert.equal(notice.title, 'MSTR: exit cost up');
+    assert.equal(notice.title, 'MSTR: round-trip quote changed');
     assert.equal(
       notice.message,
-      'Round trip at $100,000 (USDC → MSTRc → USDC) now costs 2.18%, was 1.50%. Measured on Base.',
+      'At $100,000 in USDC, quoted cash back: 2.18% below cash input; previous 1.5% below cash input. Separate quotes, not an executed return.',
     );
     assert.equal(notice.targetPath, '/stocks/mstr');
   });
@@ -431,6 +431,21 @@ describe('what a push says', () => {
       scheduled.message,
       'The NVDAc contract scheduled a share multiplier change to 2, effective Sep 30, 2026 14:00 UTC. Until then it stays as it is.',
     );
+  });
+
+  test('round-trip notices describe an excess or a rounded-zero difference without claiming a cost or profit', () => {
+    const original = exitCostChanged();
+    for (const [before, after, change] of [['2', '-315', '-317'], ['-315', '0', '315']]) {
+      const notice = noticeForSignalV1({ ...original,
+        facts: { ...original.facts, requestedCashAtomic: '100000000',
+          previousRoundTripCostBps: before, roundTripCostBps: after, changeBps: change },
+      }, names)!;
+      assert.ok(notice);
+      assert.match(notice.message, after === '-315' ? /3\.15% above cash input/ : /within 0\.01% of cash input/);
+      assert.match(notice.message, /not an executed return/);
+      assert.doesNotMatch(notice.title + notice.message, /cost|profit|free/i);
+    }
+    assert.equal(noticeForSignalV1({ ...original, facts: { ...original.facts, destination: 'ETH' } }, names), null);
   });
 
   test('a lookalike names the official token, never the new token’s own words', () => {
@@ -510,7 +525,7 @@ describe('what a push says', () => {
       noticeForRadarEventV1(radarEvent(), names)!,
     ]);
     assert.equal(summary.title, 'Miorail: 3 updates');
-    assert.equal(summary.message, 'MSTR exit cost up; NVDA corporate action; NVDA exit cost up. Open Miorail for the details.');
+    assert.equal(summary.message, 'MSTR round-trip quote changed; NVDA corporate action; NVDA exit cost up. Open Miorail for the details.');
     assert.equal(summary.targetPath, '/stocks');
   });
 

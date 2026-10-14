@@ -59,6 +59,7 @@ export function TodayPage() {
       onOpenB20: () => navigate(consoleSectionPathV1('portfolio')),
       onAskWallet: askWallet,
       onOpenStock: openStock,
+      onOpenDividends: () => navigate('/stocks/dividends'),
       onSignIn: signIn,
     },
   });
