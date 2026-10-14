@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react';
 import {
+  useAaveV4Position,
   useB20Watchlist,
   useMarketRealityRadar,
   useMeasureMyStockCashOut,
@@ -56,6 +57,7 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
   const watchlist = useB20Watchlist({ enabled: signedIn && input.b20On });
   const todayRead = useMyStocksToday({ enabled: signedIn && input.stocksOn });
   const cashOut = useMeasureMyStockCashOut();
+  const aave = useAaveV4Position(signedIn ? input.address : null);
   const [question, setQuestion] = useState('');
   const [reply, setReply] = useState<string | null>(null);
 
@@ -117,5 +119,11 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
   return {
     ...model,
     stocksToday: signedIn && input.stocksOn ? myStocksTodayModelV1(todayRead, cashOut) : null,
+    aavePosition: signedIn && input.address ? {
+      data: aave.data?.walletAddress === input.address.toLowerCase() ? aave.data : null,
+      loading: aave.isFetching,
+      failed: Boolean(aave.error),
+      onRead: () => { void aave.refetch(); },
+    } : null,
   };
 }

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AaveV4ConditionsSchemaV1, type AaveV4ConditionsV1 } from './aaveV4.js';
 
 import {
   B20_POLICY_REGISTRY_V1,
@@ -185,6 +186,8 @@ export interface DefiMarketV1 {
    */
   supplyApyBps?: number | null;
   borrowApyBps?: number | null;
+  /** V4 configuration, distinct from LLTV and from personal borrowing power. */
+  aaveV4?: AaveV4ConditionsV1;
 }
 
 export interface DefiVenueListingV1 extends DefiVenueReadingV1 {
@@ -408,6 +411,7 @@ export const RepresentationUseAccessV1Schema = z
                       liquidityUsd: z.number().min(0).nullable(),
                       supplyApyBps: z.number().int().min(0).max(10_000_000).nullable().optional(),
                       borrowApyBps: z.number().int().min(0).max(10_000_000).nullable().optional(),
+                      aaveV4: AaveV4ConditionsSchemaV1.optional(),
                     })
                     .strict(),
                 )

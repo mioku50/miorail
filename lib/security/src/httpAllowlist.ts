@@ -14,6 +14,8 @@ export const ALLOWED_PARTNER_HOSTS = [
   'mcp.morpho.org',
   // T63A: the official Morpho GraphQL API, read-only earn vault data.
   'api.morpho.org',
+  // Aave's official V4 GraphQL API: pinned read queries for Base Equities.
+  'api.v4.aave.com',
   // T64: the official Bitrefill commerce API (catalogue reads and checkout).
   // Only the pinned /x402/* paths in lib/commerce-engine are ever requested.
   'api.bitrefill.com',

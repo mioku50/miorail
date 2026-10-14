@@ -2047,6 +2047,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .today-details > summary { padding: 12px 16px; cursor: pointer; font-weight: 650; }
 .mio-console .today-details > .cardrows { padding: 0 12px 12px; }
 .mio-console .today-details > .stocks-today { border: 0; margin: 0; }
+.mio-console .today-aave-facts dd { margin: 0; text-align: right; color: var(--ink); overflow-wrap: anywhere; }
+.mio-console .today-aave-facts dt { min-width: 0; }
 .mio-console .today-wallet { min-width: 0; padding: 14px 16px; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); }
 .mio-console .today-wallet-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 16px; }
 .mio-console .today-wallet-head h3 { margin: 0; font-size: var(--fs-lg); }

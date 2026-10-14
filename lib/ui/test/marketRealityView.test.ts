@@ -4045,11 +4045,11 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
   const withAave = (over: Record<string, unknown>) =>
     use({
       defi: {
-        checkedVenues: ['Moonwell', 'Morpho', 'Aave v3', 'Compound v3'],
+        checkedVenues: ['Moonwell', 'Morpho', 'Aave v4 Equities', 'Compound v3'],
         venues: [
           {
-            venueId: 'aave_v3',
-            venueName: 'Aave v3',
+            venueId: 'aave_v4_equities',
+            venueName: 'Aave v4 Equities',
             state: 'not_listed',
             uses: { lend: null, borrow: null, collateral: null },
             curated: null,
@@ -4145,15 +4145,15 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
 
   test('an announced venue that has not listed the address says so, with the date', () => {
     const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: withAave({}) }).find((section) => section.id === 'defi')!;
-    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
+    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v4 Equities');
     assert.ok(fact);
-    assert.equal(fact.value, 'Not there yet');
-    assert.match(fact.note ?? '', /Base announced use as collateral at Aave v3 on 24 Aug 2026/);
+    assert.equal(fact.value, 'Not listed at this reading');
+    assert.match(fact.note ?? '', /Aave Labs announced use as collateral at Aave v4 Equities on 25 Sep 2026/);
     assert.match(fact.note ?? '', /does not list this exact address/);
     assert.match(fact.note ?? '', /Announced is not the same as live/);
     assert.ok(
       defi.evidence.some(
-        (row) => row.label === 'Base announcement' && /blog\.base\.org/.test(row.value),
+        (row) => row.label === 'Aave Labs announcement' && /aave\.com\/blog\/coinbase-tokenized-stocks/.test(row.value),
       ),
     );
   });
@@ -4172,7 +4172,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
 
   test('a venue nobody checked is not a venue that refused', () => {
     const defi = useSectionsV1({ ...base, issuerId: 'coinbase', use: use() }).find((section) => section.id === 'defi')!;
-    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
+    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v4 Equities');
     assert.equal(fact?.value, 'Not checked here');
     assert.match(fact?.note ?? '', /not among the venues this reading checked/);
     assert.doesNotMatch(fact?.note ?? '', /does not list/);
@@ -4184,7 +4184,7 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
       issuerId: 'coinbase',
       use: withAave({ state: 'listed', uses: { lend: true, borrow: true, collateral: null } }),
     }).find((section) => section.id === 'defi')!;
-    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v3');
+    const fact = defi.facts.find((entry) => entry.label === 'Announced at Aave v4 Equities');
     assert.equal(fact?.value, 'Listed, use as collateral not read');
     assert.match(fact?.note ?? '', /venue configuration this reading does not cover/);
   });

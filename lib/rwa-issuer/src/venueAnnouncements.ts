@@ -1,29 +1,10 @@
 import type { ReviewedIssuerIdV1 } from './issuers.js';
 import type { DefiUseKindV1, DefiVenueListingV1 } from './useAccess.js';
 
-// ---------------------------------------------------------------------------
-// What a named party ANNOUNCED about a venue, kept apart from what the venue
-// answers.
-//
-// Base published, on 24 August 2026, that Coinbase tokenized stocks can be
-// used as collateral on Aave. Read Aave's own reserve list on Base today and
-// there are fifteen reserves, not one of them a B20 address. Both sentences
-// are true, and the DeFi card said only the second one — "No reviewed
-// integration found in the venues Miorail checked" — to a reader who had just
-// read the first. That reader concludes our data is stale. It is not; the
-// listing has not happened yet.
-//
-// So an announcement is stored as what it is: a dated claim by a named party,
-// with the sentence it rests on, and NEVER as a use. It cannot make a use
-// axis true, cannot colour a chip, cannot enter `establishedDefiUsesV1`. The
-// only thing it does is stand beside the measurement and say who expected
-// what, so the reader can tell "not yet" from "we did not look" from "we
-// looked and it is there".
-//
-// The four readings below are that distinction, and the fourth one is the
-// reason this file exists twice over: a venue nobody checked must never
-// render as a venue that said no.
-// ---------------------------------------------------------------------------
+// Announcements are dated source claims, never measured permissions. The
+// August Base post did not name a protocol version; binding it to V3 created a
+// false "not there yet" after the Equities Hub launched. The current reviewed
+// announcement explicitly names V4 and its seven Coinbase assets.
 
 export interface ReviewedVenueAnnouncementV1 {
   announcementId: string;
@@ -53,50 +34,25 @@ export interface ReviewedVenueAnnouncementV1 {
   coversTokenAddresses?: readonly string[];
 }
 
-/**
- * Base, 24 August 2026.
- *
- * Two sentences in that post name Aave by name; the second is the one a user
- * acts on, so it is the one quoted. Neither names a date, a market, or a
- * contract — which is exactly why it is filed as an announcement and not as
- * evidence about an address.
- *
- * Coinbase only. The post is about "tokenized stocks issued by Coinbase, built
- * on the B20 standard"; a Backed tracker certificate is not in it, and must
- * not inherit it.
- */
 export const REVIEWED_VENUE_ANNOUNCEMENTS_V1: readonly ReviewedVenueAnnouncementV1[] = [
   {
-    announcementId: 'base-2026-08-24-aave-collateral',
-    venueId: 'aave_v3',
-    venueName: 'Aave v3',
+    announcementId: 'aave-2026-09-25-v4-equities',
+    venueId: 'aave_v4_equities',
+    venueName: 'Aave v4 Equities',
     issuerId: 'coinbase',
     uses: ['collateral'],
-    announcedBy: 'Base',
-    announcedAt: '2026-08-24',
-    sourceTitle: 'Stocks just got updated.',
-    // The post itself refuses every non-browser client, so this is the
-    // publisher's blog rather than a deep link we could not verify. The title
-    // and date above identify the document.
-    sourceRef: 'https://blog.base.org',
-    quote:
-      'Use your tokenized NVIDIA stock as collateral for an onchain loan on Aave, supply Apple to a decentralized exchange to earn yield, or build automated trading strategies.',
-    // The thirteen Coinbase stocks Base listed on 2026-08-25, the day after
-    // the post. Every Coinbase stock read "Base announced it as collateral on
-    // Aug 24" — BILIc too, which Coinbase listed on 2026-10-09.
+    announcedBy: 'Aave Labs',
+    announcedAt: '2026-09-25',
+    sourceTitle: 'Coinbase Tokenized Stocks Now Live on Aave V4',
+    sourceRef: 'https://aave.com/blog/coinbase-tokenized-stocks',
+    quote: 'The equities are collateral-only at launch',
     coversTokenAddresses: [
       '0xb200000000000000000000c2e324d24d7eecd1fb', // AAPLc
       '0xb200000000000000000000d9192b6b456483c2e8', // AMZNc
-      '0xb200000000000000000000c85a31389d71f3ecfb', // COINc
-      '0xb20000000000000000000019f6e7c675b73c2e4d', // CRCLc
       '0xb2000000000000000000002d0ba3164cc74f58b7', // GOOGLc
-      '0xb2000000000000000000004aff16039ba04bdfbc', // INTCc
       '0xb2000000000000000000008bc8786b856e61707c', // METAc
       '0xb200000000000000000000ab99cfa739e253872b', // MSFTc
-      '0xb2000000000000000000004884b426556b92883d', // MSTRc
       '0xb20000000000000000000078ee7ce2fe4908108c', // NVDAc
-      '0xb200000000000000000000397293cb8cda9a10c5', // SNDKc
-      '0xb2000000000000000000007b9fcbd005511acbd5', // SPCXc
       '0xb2000000000000000000001e800a7f5189430cd0', // TSLAc
     ],
   },

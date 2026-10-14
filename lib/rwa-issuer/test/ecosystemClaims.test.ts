@@ -239,6 +239,16 @@ describe('the summary a reader may repeat', () => {
 });
 
 describe('the block a payload carries', () => {
+  test('Aave V3 absence cannot hide V4 membership or stand in for an unread V4 deployment', () => {
+    const v3 = { venueId: 'aave_v3', venueName: 'Aave v3', state: 'not_listed' as const };
+    for (const state of ['listed', 'unread', 'not_listed'] as const) {
+      const rows = ecosystemClaimReadingsV1(evidence({ venues: [v3, {
+        venueId: 'aave_v4_equities', venueName: 'Aave v4 Equities', state, curated: true,
+      }] }));
+      assert.equal(rows.find(r => r.app.appId === 'aave')?.measured, state);
+    }
+    assert.equal(ecosystemClaimReadingsV1(evidence({ venues: [v3] })).find(r => r.app.appId === 'aave')?.measured, 'unread');
+  });
   test('it travels with its source, its tally and every row', () => {
     const block = ecosystemBlockV1(
       evidence({ venues: [{ venueId: 'aave_v3', venueName: 'Aave v3', state: 'not_listed' }] }),
@@ -252,7 +262,7 @@ describe('the block a payload carries', () => {
       30,
     );
     const aave = block.rows.find((row) => row.appId === 'aave')!;
-    assert.equal(aave.measured, 'not_listed');
+    assert.equal(aave.measured, 'unread');
     assert.equal(aave.category, 'lending');
     // Base's own sentence, unrewritten.
     assert.equal(aave.claim, 'Lend and borrow against tokenized stock positions.');

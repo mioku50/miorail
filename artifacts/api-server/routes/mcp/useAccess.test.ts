@@ -121,7 +121,9 @@ describe('an assistant asking what Base said is answered from both sides', () =>
     assert.equal(ecosystem.rows.length, ecosystem.tally.named);
 
     const aave = ecosystem.rows.find((row) => row.appId === 'aave')!;
-    assert.equal(aave.measured, 'not_listed');
+    assert.equal(reading.defi.venues[0]!.state, 'not_listed');
+    assert.equal(aave.measured, 'unread', 'V3 absence does not establish absence on V4');
+    assert.match(aave.reason!, /Not all reviewed Aave deployments were checked/);
     // The issuer of record is established by the binding this tool already
     // resolved, so one row is always read even with no venue at all.
     const coinbase = ecosystem.rows.find((row) => row.appId === 'coinbase')!;

@@ -858,10 +858,10 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
     assert.equal(listing.uses.lend, null);
   });
 
-  test('a caller with no chain reader still gets the three HTTP venues', () => {
+  test('a caller with no chain reader still gets the four HTTP venues', () => {
     assert.deepEqual(
       reviewedDefiSourcesV1().map((source) => source.venueId),
-      ['moonwell', 'morpho', 'euler'],
+      ['moonwell', 'morpho', 'euler', 'aave_v4_equities'],
     );
     const reader = {
       async readBlockAnchor() {
@@ -878,7 +878,7 @@ describe('Aave and Compound, read from Base rather than from an API', () => {
     // worth more than a narrow one.
     assert.deepEqual(
       reviewedDefiSourcesV1(reader).map((source) => source.venueId),
-      ['moonwell', 'morpho', 'euler', 'aave_v3', 'compound_v3'],
+      ['moonwell', 'morpho', 'euler', 'aave_v4_equities', 'aave_v3', 'compound_v3'],
     );
   });
 });

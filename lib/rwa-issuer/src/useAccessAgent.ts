@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { AaveV4ConditionsSchemaV1 } from './aaveV4.js';
 
 import {
   POOL_VENUE_TIERS_V1,
@@ -56,7 +57,7 @@ export const USE_ACCESS_AGENT_SCHEMA_VERSION_V1 = 'miorail-agent-use-access/v1';
  * true on every call.
  */
 export const USE_ACCESS_NOT_STATED_V1: readonly string[] = [
-  'Whether a listed asset can be borrowed, supplied or posted as collateral RIGHT NOW BY THE PERSON ASKING: caps and pause flags are not read, and a borrower’s own position is not read at all. Where a venue publishes them, each market’s terms and what is available to borrow in it are in `defi.venues[].markets` — a figure there is a fact about the market and never a permission.',
+  'Whether a listed asset can be borrowed, supplied or posted as collateral RIGHT NOW BY THE PERSON ASKING: this public tool does not read a borrower’s own position. Where a venue publishes them, each market’s terms, caps, pause flags and available liquidity are in `defi.venues[].markets`; missing fields are not read. A market figure is never a personal permission.',
   'Whether any particular wallet may transfer or use this token. This is a public read and holds no wallet.',
   'Whether anybody has been seized. `seizure` is the issuer’s configuration at the block, never an event, and the deprecated `burnBlocked` path — which can burn the balance of a wallet the sender policy blocks — is not read.',
   'Eligibility of any kind — KYC, jurisdiction, or legal permission to hold or trade a security.',
@@ -150,6 +151,7 @@ const VenueRowSchemaV1 = z
              * figure, not Miorail's measurement. */
             supplyApyBps: z.number().int().nullable().optional(),
             borrowApyBps: z.number().int().nullable().optional(),
+            aaveV4: AaveV4ConditionsSchemaV1.optional(),
           })
           .strict(),
       )
@@ -554,7 +556,7 @@ export function useAccessAgentSummaryV1(input: {
       `At the venues Miorail checked (${input.checkedVenues.join(', ')}), ${name} can be ${useSentenceV1(input.uses)}.`,
     );
     parts.push(
-      'A venue listing this address is not a statement that the operation would succeed right now: caps and pause flags were not read, and whether a particular wallet could borrow depends on the position it already holds, which this tool does not read. Where a venue publishes per-market figures they are in `defi.venues[].markets`, one row per market.',
+      'A venue listing this address is not a statement that the operation would succeed right now: caps and pause flags are only established where returned in the market row, and this public tool does not read the borrower’s position. Per-market figures in `defi.venues[].markets` are not a personal permission.',
     );
     if (input.unreadVenues.length > 0) {
       parts.push(
@@ -587,7 +589,7 @@ export function useAccessAgentSummaryV1(input: {
       );
     } else if (announcement.measured === 'not_listed') {
       parts.push(
-        `${said}. ${announcement.venueName} does not name this exact address today. Both are true: the announcement is real and the listing has not happened. Do not tell a user they can do this now.`,
+        `${said}. ${announcement.venueName} does not name this exact address today. Both are true: the announcement is real, but this exact deployment did not list the address at this reading. Do not tell a user they can do this now.`,
       );
     } else if (announcement.measured === 'unread') {
       parts.push(

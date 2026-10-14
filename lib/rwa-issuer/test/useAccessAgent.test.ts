@@ -138,7 +138,7 @@ describe('announced is not live, all the way to the assistant', () => {
     // The announcement can never become a use.
     assert.deepEqual(announcement.establishedUses, []);
     assert.deepEqual(projected.miorailSummary.establishedUses, []);
-    assert.match(projected.miorailSummary.summary, /the listing has not happened/);
+    assert.match(projected.miorailSummary.summary, /deployment did not list the address at this reading/);
     assert.match(projected.miorailSummary.summary, /Do not tell a user they can do this now/);
   });
 
@@ -274,7 +274,7 @@ describe('announced is not live, all the way to the assistant', () => {
     // The deterministic sentence states a listing and refuses the leap from it
     // to "you can do this now" — at any size of market.
     assert.match(summary, /not a statement that the operation would succeed right now/);
-    assert.match(summary, /the position it already holds, which this tool does not read/);
+    assert.match(summary, /this public tool does not read the borrower’s position/);
     assert.doesNotMatch(summary, /you can borrow|you could borrow/i);
     // It also makes no aggregate availability claim of its own, so it cannot
     // disagree with the per-market rows shipped beside it.
@@ -287,7 +287,7 @@ describe('announced is not live, all the way to the assistant', () => {
     // own reach tells an assistant we lack something we ship.
     const notStated = USE_ACCESS_NOT_STATED_V1.join(' ');
     assert.doesNotMatch(notStated, /available liquidity and risk parameters are not read/);
-    assert.match(notStated, /caps and pause flags are not read/);
+    assert.match(notStated, /caps, pause flags and available liquidity/);
     assert.match(notStated, /defi\.venues\[\]\.markets/);
   });
 

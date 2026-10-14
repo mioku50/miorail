@@ -55,7 +55,7 @@ describe('one lending market at a time', () => {
     assert.equal(view.caveats.length, 2);
     assert.equal(view.caveats[0], LENDING_PERSONAL_CAVEAT_V1);
     assert.match(view.caveats[0]!, /Whether YOU could borrow/);
-    assert.match(view.caveats[0]!, /does not answer that/);
+    assert.match(view.caveats[0]!, /does not read your position or establish your personal borrowing limit/);
   });
 
   test('a curated market with nothing in it says so instead of looking available', () => {

@@ -129,7 +129,7 @@ describe('what else you can do with the token', () => {
         ],
       },
       defi: {
-        checkedVenues: ['morpho', 'aave_v3', 'euler'],
+        checkedVenues: ['morpho', 'aave_v4_equities', 'euler'],
         venues: [
           {
             venueId: 'morpho',
@@ -171,8 +171,8 @@ describe('what else you can do with the token', () => {
             ],
           },
           {
-            venueId: 'aave_v3',
-            venueName: 'Aave v3',
+            venueId: 'aave_v4_equities',
+            venueName: 'Aave v4 Equities',
             state: 'not_listed',
             uses: { lend: null, borrow: null, collateral: null },
             marketRef: null,
@@ -208,7 +208,7 @@ describe('what else you can do with the token', () => {
           'Lend USDC in that Morpho market · 4.08% a year · $855 lent so far',
           `https://app.morpho.org/base/market/${MARKET}`,
         ],
-        ['announced', 'Aave', 'Base announced it as collateral on Aug 24 — not live yet', null],
+        ['announced', 'Aave v4 Equities', 'Aave Labs announced it as collateral on Sep 25 — not listed at this reading', null],
       ],
     );
     assert.equal(view.note, "The venues' own figures, read 2 min ago. Rates move. Nothing here is advice.");

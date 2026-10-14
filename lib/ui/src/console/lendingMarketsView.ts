@@ -106,7 +106,7 @@ export interface LendingMarketsViewV1 {
 /** Claim (3), refused by name. A constant of the view: the alternative is a
  * reader taking a non-zero liquidity figure as permission. */
 export const LENDING_PERSONAL_CAVEAT_V1 =
-  'Whether YOU could borrow here depends on what you already hold and on the venue’s own checks at the moment you try. Miorail does not read your position and does not answer that.';
+  'Whether YOU could borrow here depends on what you already hold and on the venue’s own checks at the moment you try. This market comparison does not read your position or establish your personal borrowing limit. Today offers a separate Aave v4 position read.';
 
 /** The venue's figure, normalised once. Everything else reads this, so the
  * rendered cell and the sentence above the table cannot disagree about what

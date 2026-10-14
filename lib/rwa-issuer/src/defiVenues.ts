@@ -1,4 +1,5 @@
 import { partnerFetch } from '@mioagent/security/httpAllowlist';
+import { aaveV4DefiSourceV1 } from './aaveV4.js';
 
 import type {
   DefiListingSourceV1,
@@ -682,7 +683,7 @@ export function reviewedDefiSourcesV1(reader?: UseAccessReaderV1): DefiListingSo
   // this list read two of them until Euler was added. Moonwell and Compound are
   // ours, not Base's, and they stay because a bounded "not at these five" is
   // worth more than a bounded "not at these four".
-  const sources = [moonwellDefiSourceV1(), morphoDefiSourceV1(), eulerDefiSourceV1()];
+  const sources = [moonwellDefiSourceV1(), morphoDefiSourceV1(), eulerDefiSourceV1(), aaveV4DefiSourceV1()];
   if (reader) sources.push(aaveDefiSourceV1(reader), compoundDefiSourceV1(reader));
   return sources;
 }

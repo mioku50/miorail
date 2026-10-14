@@ -51,6 +51,7 @@ export type EcosystemCategoryV1 =
  */
 export type EcosystemBindingV1 =
   | { kind: 'defi_venue'; venueId: string }
+  | { kind: 'defi_venues'; venueIds: readonly string[] }
   | { kind: 'pool_venue'; venueIds: readonly string[] }
   | { kind: 'route_source'; sourceId: string }
   | { kind: 'reference_feed' }
@@ -104,7 +105,7 @@ export const BASE_STOCKS_ECOSYSTEM_V1: readonly ReviewedEcosystemAppV1[] = [
     appName: 'Aave',
     claim: 'Lend and borrow against tokenized stock positions.',
     category: 'lending',
-    binding: { kind: 'defi_venue', venueId: 'aave_v3' },
+    binding: { kind: 'defi_venues', venueIds: ['aave_v3', 'aave_v4_equities'] },
   },
   {
     appId: 'chainlink',
@@ -421,6 +422,22 @@ export function ecosystemClaimReadingsV1(
     switch (app.binding.kind) {
       case 'defi_venue':
         return venueReadingV1(app, app.binding.venueId, evidence.venues);
+      case 'defi_venues': {
+        const readings = app.binding.venueIds.map(id => venueReadingV1(app, id, evidence.venues));
+        // A positive in either reviewed deployment establishes membership.
+        // A negative requires BOTH reads, never V3's absence beside unread V4.
+        const positive = readings.find(row => row.measured === 'listed');
+        if (positive) return positive;
+        const unread = readings.find(row => row.measured === 'unread');
+        if (unread) return unread;
+        const missing = readings.filter(row => row.measured === 'unchecked');
+        if (missing.length > 0 && missing.length < readings.length) {
+          // Partial coverage is not an app we "do not read at all" either.
+          return { app, measured: 'unread', evidence: null, detail: null,
+            reason: 'Not all reviewed Aave deployments were checked; absence is not established' };
+        }
+        return missing[0] ?? readings[0]!;
+      }
       case 'pool_venue': {
         const rows = evidence.poolRows;
         if (!rows) return { app, measured: 'unchecked', evidence: null, detail: null, reason: null };

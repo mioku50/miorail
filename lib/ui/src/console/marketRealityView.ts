@@ -2449,7 +2449,7 @@ function venueAnnouncementFactsV1(readings: readonly VenueAnnouncementReadingV1[
     if (reading.measured === 'not_listed') {
       facts.push({
         label,
-        value: 'Not there yet',
+        value: 'Not listed at this reading',
         // The sentence the announcement layer exists for. A reader who
         // arrived from that post must not read our "none found" as staleness.
         note: `${said} Read just now, ${announcement.venueName} does not list this exact address. Announced is not the same as live.`,
@@ -2781,6 +2781,30 @@ function lendingMarketFactsV1(
         note: row.note,
         tone: row.tone,
       });
+      const market = venue.markets?.find(item => item.marketId === row.marketId);
+      const v4 = market?.aaveV4;
+      if (v4) {
+        const pct = (bps: number) => `${bps / 100}%`;
+        const loanSymbol = market?.loanAssetSymbol ?? 'Loan asset';
+        const blocked = !v4.active || v4.paused || v4.frozen;
+        facts.push({ label: 'Aave v4 collateral factor', value: pct(v4.collateralFactorBps),
+          note: 'Protocol collateral factor; not a personal borrowing limit or a Morpho LLTV.', tone: 'neutral' });
+        facts.push({ label: 'Adding this asset',
+          value: !v4.collateralEnabled && market?.role === 'collateral' ? 'Collateral disabled'
+            : !v4.active ? 'Inactive' : v4.paused ? 'Paused' : v4.frozen ? 'Frozen' : 'Not paused or frozen',
+          note: `Supply cap ${v4.supplyCapTokens} tokens · remaining capacity ${v4.suppliableTokens} tokens. Listed reserves can be paused during corporate actions.`,
+          tone: blocked ? 'warn' : 'neutral' });
+        facts.push({ label: `${loanSymbol} borrowing`,
+          value: !v4.loanActive ? 'Inactive' : v4.loanPaused ? 'Paused' : v4.loanFrozen ? 'Frozen'
+            : !v4.loanBorrowEnabled ? 'Disabled' : 'Enabled at this reading',
+          note: `Borrow cap ${v4.loanBorrowCapTokens} ${loanSymbol} · borrowable ${v4.loanBorrowableTokens} ${loanSymbol} across the shared Equities market. This is not your borrowing power.`, tone: 'neutral' });
+        facts.push({ label: `${loanSymbol} variable rates`,
+          value: `Borrow ${market?.borrowApyBps == null ? '—' : pct(market.borrowApyBps)} APY · supply ${market?.supplyApyBps == null ? '—' : pct(market.supplyApyBps)} APY`,
+          note: 'Aave API rates at this reading. A borrower may pay an additional position risk premium. Supplying a collateral-only stock does not earn this USDC rate.', tone: 'neutral' });
+        facts.push({ label: 'Aave v4 liquidation terms',
+          value: `Maximum bonus ${pct(v4.maxLiquidationBonusBps)} · fee ${pct(v4.liquidationFeeBps)} of the bonus`,
+          note: `Collateral risk ${pct(v4.collateralRiskBps)}. Actual liquidation terms depend on position health; these are protocol settings.`, tone: 'neutral' });
+      }
     }
   }
   // Said once for the whole section rather than once per row, and never
@@ -2900,6 +2924,17 @@ function defiSectionV1(
       facts: [...uses.map(useFactV1), ...marketFacts, ...announcementFacts],
       evidence,
       edges: [],
+    };
+  }
+  const listed = (listing?.venues ?? []).filter(venue => venue.state === 'listed' && venue.curated !== false);
+  if (listed.length > 0 || unread.length > 0) {
+    return {
+      collapsed: false, id: 'defi', label: 'Lend and borrow',
+      headline: listed.length > 0
+        ? `${listed.map(venue => venue.venueName).join(', ')} names a market for this exact address. This reading does not establish a currently available lending or collateral operation. Read its restrictions below.`
+        : `Miorail could not read ${unread.map(venue => venue.venueName).join(', ')}. No lending use was established by the venues that answered; this is not a finding of absence across all checked venues.`,
+      chip: listed.length > 0 ? 'Listed; uses not established' : 'Not confirmed',
+      tone: 'neutral', facts: [...marketFacts, ...announcementFacts], evidence, edges: [],
     };
   }
   return {

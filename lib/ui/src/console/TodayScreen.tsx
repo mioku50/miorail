@@ -4,11 +4,15 @@ import React from 'react';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
 import { MyStockCashOut } from './MyStockCashOut';
 import { TodayWallet } from './TodayWallet';
+import { TodayAavePosition, type TodayAavePositionModelV1 } from './TodayAavePosition';
 import type { TodayModelV1, TodayItemV1 } from './todayView';
 
 void React;
 
-export type TodayScreenModelV1 = TodayModelV1 & { stocksToday: MyStocksTodayModelV1 | null };
+export type TodayScreenModelV1 = TodayModelV1 & {
+  stocksToday: MyStocksTodayModelV1 | null;
+  aavePosition?: TodayAavePositionModelV1 | null;
+};
 
 function dateV1(iso: string | null): string | null {
   if (!iso || !Number.isFinite(Date.parse(iso))) return null;
@@ -135,6 +139,8 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
       </div> : null}
 
       {wallet?.balances ? <TodayWallet model={wallet.balances} onInvestigate={wallet.onInvestigate} /> : null}
+
+      {wallet && model.aavePosition ? <TodayAavePosition model={model.aavePosition} /> : null}
 
       {wallet && model.stocksToday ? <details className="today-details">
         <summary>Stocks and recent updates{updates !== null ? ` · ${updates}` : ''}</summary>

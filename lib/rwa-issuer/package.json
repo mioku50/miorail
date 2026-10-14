@@ -14,6 +14,7 @@
     "./useAccessAgent": "./src/useAccessAgent.ts",
     "./onchainUse": "./src/onchainUse.ts",
     "./defiVenues": "./src/defiVenues.ts",
+    "./aaveV4": "./src/aaveV4.ts",
     "./venueAnnouncements": "./src/venueAnnouncements.ts",
     "./dinariSymbolBinding": "./src/dinariSymbolBinding.ts",
     "./openFigi": "./src/openFigi.ts",

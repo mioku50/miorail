@@ -1,4 +1,5 @@
 import { z } from 'zod';
+export { AaveV4PositionV1Schema, type AaveV4PositionV1 } from '@mioagent/rwa-issuer/aaveV4';
 import {
   AddressV1Schema,
   CommerceInvoiceV1Schema,

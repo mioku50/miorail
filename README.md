@@ -122,6 +122,15 @@ contracts, not either model, decide which reads and actions are allowed.
 Today, Stocks, Swap AI and Wallet MCP are the main pages. Radar, Discover,
 B20 controls, Activity and Settings sit under **More**.
 
+Stocks reads Aave V3 membership separately from the Base **Aave V4 Equities
+market**, using Aave's official API and exact token addresses. V4 cards show
+collateral factors, reserve restrictions, supply/borrow caps, shared USDC
+availability and variable rates. Today offers an explicit, session-bound
+position read for that MAG7 market: collateral, debt, net accrued interest,
+net borrow APY and health factor. Other Aave markets are outside that personal
+read. API conditions and borrowing power are informational; Miorail does not
+prepare or execute Aave transactions.
+
 ### Editorial drafts
 
 An operator can generate a daily draft pack from recorded public stock signals

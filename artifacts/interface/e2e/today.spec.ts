@@ -134,3 +134,44 @@ test('Today failed balances show an unavailable read instead of zero holdings', 
   await expect(page.getByLabel('Today in numbers')).toHaveCount(0);
   await expect(page.getByText("AAPLc — issuer address doesn't match", { exact: true })).toHaveCount(0);
 });
+
+for (const width of [1280, 390]) {
+  test(`Aave position is requested explicitly; errors and another wallet cannot replace it (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const { writes } = await install(page, true);
+    let calls = 0;
+    const position = {
+      schemaVersion: 'aave-v4-position/v1', chainId: 8453, walletAddress: WALLET,
+      spokeAddress: '0x17905db0e4a3514467539956c084180616ae7b8d', observedAt: '2026-10-14T12:00:00Z',
+      source: 'aave_api', state: 'read', collateralUsd: '2000', debtUsd: '500',
+      netAccruedInterestUsd: '-0.125', netBorrowApyBps: 333, healthFactor: '0.99', remainingBorrowingPowerUsd: '0',
+    };
+    await page.route('**/api/aave/position', route => {
+      calls++;
+      expect(route.request().method()).toBe('GET');
+      expect(new URL(route.request().url()).search).toBe('');
+      if (calls === 2) return route.fulfill({ status: 503, json: { code: 'aave_v4_position_unread' } });
+      return route.fulfill({ json: calls === 3 ? { ...position, walletAddress: LOOKALIKE, debtUsd: '9999' } : position });
+    });
+    await page.goto('/today');
+    const section = page.locator('.today-details').filter({ has: page.locator('summary', { hasText: 'Your Aave v4 stock position' }) });
+    await section.locator('summary').click();
+    await expect(section.getByRole('button', { name: 'Read my Aave position', exact: true })).toBeVisible();
+    expect(calls).toBe(0);
+    await section.getByRole('button', { name: 'Read my Aave position', exact: true }).click();
+    await expect(section.getByText('$500.00', { exact: true })).toBeVisible();
+    await expect(section.getByText(/Liquidation threshold: health factor 1/)).toBeVisible();
+    await expect(section.getByText('3.33%', { exact: true })).toBeVisible();
+    expect(calls).toBe(1);
+    await section.getByRole('button', { name: 'Read again', exact: true }).click();
+    await expect(section.getByRole('status')).toContainText('does not mean you have no position');
+    await expect(section.getByText('$500.00', { exact: true })).toBeVisible();
+    expect(calls).toBe(2);
+    await section.getByRole('button', { name: 'Read again', exact: true }).click();
+    await expect.poll(() => calls).toBe(3);
+    await expect(section.getByRole('status')).toContainText('previous result');
+    await expect(section.getByText('$9,999.00', { exact: true })).toHaveCount(0);
+    expect(writes).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+  });
+}

@@ -10,8 +10,8 @@ import {
 
 function aave(overrides: Partial<DefiVenueListingV1>): DefiVenueListingV1 {
   return {
-    venueId: 'aave_v3',
-    venueName: 'Aave v3',
+    venueId: 'aave_v4_equities',
+    venueName: 'Aave v4 Equities',
     state: 'not_listed',
     uses: { lend: null, borrow: null, collateral: null },
     curated: null,
@@ -48,7 +48,7 @@ test('every reviewed announcement names a party, a date, a document and a senten
   }
 });
 
-test('Base announced collateral at Aave and Aave does not list the address', () => {
+test('Aave Labs announced collateral at V4 and Aave does not list the address', () => {
   const readings = venueAnnouncementReadingsV1({
     issuerId: 'coinbase',
     tokenAddress: NVDAC,
@@ -57,7 +57,7 @@ test('Base announced collateral at Aave and Aave does not list the address', () 
   assert.equal(readings.length, 1);
   const reading = readings[0]!;
   assert.equal(reading.measured, 'not_listed');
-  assert.equal(reading.announcement.announcedBy, 'Base');
+  assert.equal(reading.announcement.announcedBy, 'Aave Labs');
   assert.deepEqual(reading.announcement.uses, ['collateral']);
   // Nothing about a use survives a miss. This is the whole point: an
   // announcement cannot fill in what the venue declined to say.

@@ -1,5 +1,6 @@
 import type { RepresentationUseAccessV1 } from '@mioagent/rwa-issuer/useAccess';
 import { venueAnnouncementReadingsV1 } from '@mioagent/rwa-issuer/venueAnnouncements';
+import { AAVE_V4_BASE_PAGE_V1 } from '@mioagent/rwa-issuer/aaveV4';
 import type { PoolYieldV1 } from '@mioagent/rwa-market-reality/pool-yield';
 
 import { pairedTokenLabelV1 } from './marketRealityView';
@@ -24,7 +25,7 @@ import { pairedTokenLabelV1 } from './marketRealityView';
 // ---------------------------------------------------------------------------
 
 export interface StockUseRowV1 {
-  id: 'pool' | 'yield' | 'borrow' | 'earn' | 'announced';
+  id: 'pool' | 'yield' | 'borrow' | 'earn' | 'announced' | 'aave-borrow';
   label: string;
   text: string;
   href: string | null;
@@ -185,7 +186,25 @@ export function stockUsesViewV1(input: {
     }
   }
 
-  // Announced and not live: said as exactly that, never as a use.
+  const aave = use.defi.venues.find(venue => venue.venueId === 'aave_v4_equities' && venue.state === 'listed');
+  const aaveMarket = aave?.markets?.find(item => item.role === 'collateral' && item.aaveV4);
+  if (aaveMarket?.aaveV4) {
+    const terms = aaveMarket.aaveV4;
+    const status = !terms.collateralEnabled ? 'Collateral disabled' : !terms.active ? 'Collateral inactive' : terms.paused ? 'Adding collateral paused'
+      : terms.frozen ? 'Adding collateral frozen' : Number(terms.suppliableTokens) === 0 ? 'Collateral capacity full'
+        : `${terms.collateralFactorBps / 100}% collateral factor`;
+    const loan = !terms.loanActive || terms.loanPaused || terms.loanFrozen || !terms.loanBorrowEnabled
+      ? 'USDC borrowing blocked at this reading'
+      : `shared market has ${aaveMarket.liquidityUsd === null ? 'unread liquidity'
+        : aaveMarket.liquidityUsd > 0 && aaveMarket.liquidityUsd < 1 ? 'less than $1'
+          : compactUsdV1(aaveMarket.liquidityUsd)} available to borrow`;
+    rows.push({ id: 'aave-borrow', label: 'Aave v4',
+      text: `${status} · ${loan}${aaveMarket.borrowApyBps == null ? '' : ` · ${rateV1(aaveMarket.borrowApyBps)} base variable APY`} · not your borrowing power`,
+      href: AAVE_V4_BASE_PAGE_V1,
+    });
+  }
+
+  // A dated announcement cannot replace the current membership read.
   for (const reading of venueAnnouncementReadingsV1({ issuerId: 'coinbase', tokenAddress: use.tokenAddress, venues: use.defi.venues })) {
     if (reading.measured !== 'not_listed') continue;
     const day = new Date(`${reading.announcement.announcedAt}T00:00:00Z`).toLocaleDateString('en-US', {
@@ -196,7 +215,7 @@ export function stockUsesViewV1(input: {
     rows.push({
       id: 'announced',
       label: reading.announcement.venueName.replace(/ v\d+$/, ''),
-      text: `${reading.announcement.announcedBy} announced it as collateral on ${day} — not live yet`,
+      text: `${reading.announcement.announcedBy} announced it as collateral on ${day} — not listed at this reading`,
       href: null,
     });
   }

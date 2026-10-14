@@ -1952,6 +1952,21 @@ export function useRwaUseAccess(
   });
 }
 
+/** Explicitly requested Aave position, isolated by the connected wallet key. */
+export function useAaveV4Position(walletAddress: string | null) {
+  const wallet = walletAddress?.toLowerCase() ?? null;
+  return useQuery({
+    queryKey: ['aave-v4-position', wallet],
+    enabled: false, retry: false, staleTime: 60_000,
+    queryFn: async () => {
+      if (!wallet) throw new Error('authentication_required');
+      const result = apiSpec.AaveV4PositionV1Schema.parse(await fetchApi<unknown>('/api/aave/position'));
+      if (result.walletAddress !== wallet) throw new Error('aave_v4_position_wallet_mismatch');
+      return result;
+    },
+  });
+}
+
 /** Phase 12.2 — tenant-scoped exact market watches and their transition feed. */
 export function useMarketRealityRadar(options?: { enabled?: boolean }) {
   return useQuery({
