@@ -292,9 +292,9 @@ describe('a B20 token can be tracked by hand', () => {
     assert.match(page, /addWatch\.mutate\(\{ tokenAddress: token \}\)/);
   });
 
-  test('the page claims background watching, and each row makes the claim checkable', () => {
-    assert.match(screen, /Miorail reads these on its own/);
-    assert.match(screen, /Opening this page is not what\s*\n?\s*makes that happen/);
+  test('the page separates background market watching from requested control reads', () => {
+    assert.match(screen, /Market measurements run in the background/);
+    assert.match(screen, /Controls are read when you press/);
     // The ROW renders the exact timestamp, not only the age. Asserted on the
     // projection rather than on a call site: the row now reads the EVIDENCE
     // clock, so a scan for `trackedReadAtLabelV1(entry)` would be checking that

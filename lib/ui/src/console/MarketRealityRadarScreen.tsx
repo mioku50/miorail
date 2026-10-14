@@ -49,7 +49,7 @@ export function MarketRealityRadarScreen({
             {model.view.watches.length === 0 ? (
               <div className="radar-empty">
                 <strong>No exact market is under watch.</strong>
-                <p>Open Stocks, choose one representation and use “Watch this market”.</p>
+                <p>Open Stocks, choose a representation, direction and size, then use “Watch exit conditions” or “Watch buy conditions”.</p>
               </div>
             ) : (
               <div className="radar-watch-grid">

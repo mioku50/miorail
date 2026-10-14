@@ -3,6 +3,7 @@
 import React from 'react';
 import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCard';
 import { MyStockCashOut } from './MyStockCashOut';
+import { TodayWallet } from './TodayWallet';
 import type { TodayModelV1, TodayItemV1 } from './todayView';
 
 void React;
@@ -20,6 +21,14 @@ function TodayItem({ item }: { item: TodayItemV1 }) {
   return <article className="cardrow" data-tone={item.attention ? 'attention' : undefined}>
     <span className="cr-name">{item.title}</span>
     <p className="lnote">{item.body}</p>
+    {item.clocks ? <dl className="today-watch-clocks">
+      {item.clocks.map(clock => <div key={clock.id} data-tone={clock.tone === 'warn' ? 'attention' : undefined}>
+        <dt>{clock.label}</dt><dd><strong>{clock.state}</strong>
+          {clock.detail ? <span>{clock.detail}</span> : null}
+          {clock.note ? <span>{clock.note}</span> : null}
+        </dd>
+      </div>)}
+    </dl> : null}
     {item.actions.length > 0 ? <div className="card-actions">
       {item.actions.map(action => <button key={action.label} type="button" className="btn sec" onClick={action.onClick}>
         {action.label}
@@ -124,6 +133,8 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
         <p className="lnote">Sign in for your holdings, rewards and updates.</p>
         <button type="button" className="btn sec" onClick={model.onSignIn}>Continue with your wallet</button>
       </div> : null}
+
+      {wallet?.balances ? <TodayWallet model={wallet.balances} onInvestigate={wallet.onInvestigate} /> : null}
 
       {wallet && model.stocksToday ? <details className="today-details">
         <summary>Stocks and recent updates{updates !== null ? ` · ${updates}` : ''}</summary>

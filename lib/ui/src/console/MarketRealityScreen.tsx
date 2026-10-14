@@ -501,6 +501,7 @@ function RepresentationCard({
   representation,
   actions,
   surface,
+  direction,
   watched,
   watching,
   removing,
@@ -513,6 +514,7 @@ function RepresentationCard({
   representation: RepresentationViewV1;
   actions: MarketRealityActionsV1;
   surface: MarketRealitySurfaceV1;
+  direction: MarketRealityDirectionV1;
   watched: boolean;
   watching: boolean;
   removing: boolean;
@@ -1008,7 +1010,7 @@ function RepresentationCard({
                   ? 'Removing watch…'
                   : watched
                     ? 'Remove watch'
-                    : 'Watch this market'}
+                    : direction === 'sell' ? 'Watch exit conditions' : 'Watch buy conditions'}
             </button>
           ) : null}
           {actions.onInvestigate ? (
@@ -2319,6 +2321,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                     representation={representation}
                     actions={actions}
                     surface={model.surface}
+                    direction={model.direction}
                     watched={
                       model.watchedTokenAddresses?.includes(representation.tokenAddress) ?? false
                     }
@@ -2368,6 +2371,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           representation={representation}
                           actions={actions}
                           surface={model.surface}
+                          direction={model.direction}
                           watched={
                             model.watchedTokenAddresses?.includes(representation.tokenAddress) ??
                             false
@@ -2404,6 +2408,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
                           representation={representation}
                           actions={actions}
                           surface={model.surface}
+                          direction={model.direction}
                           watched={
                             model.watchedTokenAddresses?.includes(representation.tokenAddress) ??
                             false

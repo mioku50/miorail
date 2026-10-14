@@ -2364,6 +2364,28 @@ describe('Phase 12.2 exact-market watch control', () => {
     assert.doesNotMatch(markup, /disabled=""[^>]*>Remove watch/);
     assert.doesNotMatch(markup, />Watching this market</);
   });
+
+  test('the watch label names the selected direction without changing the exact watch action', () => {
+    const view = marketRealityViewV1({ wire: wire(), choice: null, now: NOW });
+    assert.ok(view);
+    for (const direction of ['buy', 'sell'] as const) {
+      const markup = renderToStaticMarkup(React.createElement(MarketRealityScreen, {
+        model: { choices: [], choicesLoading: false, choicesError: null, counters: [],
+          selectedKey: 'security:isin:US67066G1040', direction,
+          requestedCashAtomic: MARKET_REALITY_SIZES_V1[0]!.requestedCashAtomic,
+          surface: 'market', historyPeriod: 'now', view, viewLoading: false, viewError: null,
+          history: null, historyLoading: false, historyError: null, measuring: false,
+          measurementNote: null, measurementError: null,
+          watchedTokenAddresses: [], watchingTokenAddress: null,
+          removingWatchTokenAddress: null, watchError: null,
+          actions: { onUnderlying: () => {}, onDirection: () => {}, onSize: () => {},
+            onSurface: () => {}, onHistoryPeriod: () => {}, onWatch: () => {} },
+        },
+      }));
+      assert.match(markup, direction === 'sell' ? />Watch exit conditions</ : />Watch buy conditions</);
+      assert.doesNotMatch(markup, direction === 'sell' ? />Watch buy conditions</ : />Watch exit conditions</);
+    }
+  });
 });
 
 describe('the question is restated where the answer is', () => {

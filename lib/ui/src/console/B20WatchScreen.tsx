@@ -317,6 +317,8 @@ export interface B20WatchScreenModelV1 {
   /** Enrols the official corpus. Absent when the surface is not wired — a
    * control that leads to a refusal is worse than an absent one. */
   onWatchOfficialAssets?: (() => void) | null;
+  officialAssetsPending?: boolean;
+  officialAssetsResult?: string | null;
   /** Addresses this page has already read a balance for and which are not yet
    * watched. Suggested, never enrolled: reading a wallet changes what the
    * operator pays for and what the account discloses. */
@@ -513,13 +515,10 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
               is reported as holding nothing. Miorail never receives the address from a balance
               lookup, so pasting it here is the only complete path.
             </p>
-            {/* The retention claim, and the only one this page is allowed to
-                make: Miorail reads these when nobody is here. Each row says when
-                it last did, so the claim is checkable rather than reassuring. */}
-            <p>
-              Miorail reads these on its own and records what changed. Opening this page is not what
-              makes that happen.
-            </p>
+            {/* Only the market clock belongs to the background schedule.
+                The controls clock must keep the date of the requested read. */}
+            <p>Market measurements run in the background. Controls are read when you press
+              Read B20 controls. Each row shows these two reading times separately.</p>
           </details>
           {model.trackError && <p className="note warn">{model.trackError}</p>}
           <form
@@ -560,8 +559,9 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
           {(model.onWatchOfficialAssets || (model.suggestedFromHoldings?.length ?? 0) > 0) && (
             <div className="ctarow">
               {model.onWatchOfficialAssets && (
-                <button type="button" className="btn sec" onClick={model.onWatchOfficialAssets}>
-                  Watch every official asset
+                <button type="button" className="btn sec" onClick={model.onWatchOfficialAssets}
+                  disabled={model.officialAssetsPending || model.trackRemaining === 0}>
+                  {model.officialAssetsPending ? 'Adding official assets…' : 'Add official assets to watchlist'}
                 </button>
               )}
               {(model.suggestedFromHoldings?.length ?? 0) > 0 && (
@@ -574,6 +574,14 @@ export function B20WatchScreen(model: B20WatchScreenModelV1): React.ReactElement
               )}
             </div>
           )}
+
+          {model.onWatchOfficialAssets ? <p className="lnote">
+            Adds addresses from Miorail's official list, including assets you do not hold,
+            {model.trackRemaining === null ? ' within your account limit.'
+              : ` up to ${model.trackRemaining} available ${model.trackRemaining === 1 ? 'slot' : 'slots'}.`}
+            {' '}Other wallet tokens are added individually by address.
+          </p> : null}
+          {model.officialAssetsResult ? <p className="lnote" role="status">{model.officialAssetsResult}</p> : null}
 
           {model.trackedTokens.length > 0 && (
             <ul className="watchrows">

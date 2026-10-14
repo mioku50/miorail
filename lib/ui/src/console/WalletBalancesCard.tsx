@@ -141,11 +141,14 @@ export function walletBalanceRowsV1(
   let hiddenSpam = 0;
   const shown: WalletBalanceEntryV1[] = [];
   for (const row of rows) {
-    if (row.possibleSpam === true) {
+    // An issuer-address match or mismatch is stronger evidence than a
+    // provider's spam heuristic. Keep the identity finding visible.
+    if (row.possibleSpam === true && !row.registry) {
       hiddenSpam += 1;
       continue;
     }
-    const amount = Number(row.balanceFormatted ?? '0');
+    const amount = row.balanceFormatted == null || row.balanceFormatted.trim() === ''
+      ? NaN : Number(row.balanceFormatted);
     // Not `> 0`: a formatted string the server could not parse arrives as NaN,
     // and dropping it silently would hide a token the wallet does hold.
     if (Number.isFinite(amount) && amount === 0) {

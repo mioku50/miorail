@@ -88,6 +88,8 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
           failed: Boolean(portfolio.error),
           overviewUpdatedAt: portfolio.data?.updatedAt ?? null,
           dataFreshness: portfolio.data?.dataFreshness ?? null,
+          rows: portfolio.data?.tokens ?? null,
+          controlWatches: watchlist.data?.tokens,
           radar: radarView,
           trackedB20: watchlist.data?.tokens.length ?? null,
         }

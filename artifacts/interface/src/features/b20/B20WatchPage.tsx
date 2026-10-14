@@ -224,6 +224,7 @@ export function B20WatchPage() {
   // goes through the ordinary add: enrolling them here would change what the
   // operator pays for and what the account discloses without anyone agreeing.
   const watchPreset = useB20WatchPreset();
+  const [officialAssetsResult, setOfficialAssetsResult] = useState<string | null>(null);
   const addWatch = useAddB20Watch();
   const removeWatch = useRemoveB20Watch();
   const tracked = useMemo(
@@ -612,7 +613,7 @@ export function B20WatchPage() {
   // banner. A full list and an unreadable chain are different problems and only
   // one of them is fixed by pressing Read B20 controls again.
   const trackError = (() => {
-    const error = addWatch.error ?? removeWatch.error ?? watchlist.error;
+    const error = watchPreset.error ?? addWatch.error ?? removeWatch.error ?? watchlist.error;
     if (!error) return null;
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes('b20_watchlist_full')) {
@@ -850,8 +851,19 @@ export function B20WatchPage() {
         trackRemaining={watchlist.data?.remaining ?? null}
         watchSla={watchlist.data?.sla ?? null}
         onWatchOfficialAssets={
-          watchlist.data ? () => watchPreset.mutate({ preset: 'official_assets' }) : null
+          watchlist.data ? () => {
+            const before = new Set((watchlist.data?.tokens ?? []).map(entry => entry.tokenAddress));
+            setOfficialAssetsResult(null);
+            watchPreset.mutate({ preset: 'official_assets' }, {
+              onSuccess: data => {
+                const added = data.tokens.filter(entry => !before.has(entry.tokenAddress)).length;
+                setOfficialAssetsResult(`${added} official ${added === 1 ? 'address' : 'addresses'} added. ${data.remaining} ${data.remaining === 1 ? 'slot remains' : 'slots remain'}.`);
+              },
+            });
+          } : null
         }
+        officialAssetsPending={watchPreset.isPending}
+        officialAssetsResult={officialAssetsResult}
         suggestedFromHoldings={(() => {
           const watched = new Set<string>(
             (watchlist.data?.tokens ?? []).map((entry) => String(entry.tokenAddress).toLowerCase()),
@@ -862,8 +874,14 @@ export function B20WatchPage() {
           return held.filter((token) => /^0x[0-9a-f]{40}$/.test(token) && !watched.has(token));
         })()}
         trackError={trackError}
-        onTrackToken={(token) => addWatch.mutate({ tokenAddress: token })}
-        onUntrackToken={(token) => removeWatch.mutate({ tokenAddress: token })}
+        onTrackToken={(token) => {
+          setOfficialAssetsResult(null);
+          addWatch.mutate({ tokenAddress: token });
+        }}
+        onUntrackToken={(token) => {
+          setOfficialAssetsResult(null);
+          removeWatch.mutate({ tokenAddress: token });
+        }}
         // Swapping a held B20 token is the Routes flow's job, not a second
         // execution path. The tab hands the goal over rather than growing one.
         //

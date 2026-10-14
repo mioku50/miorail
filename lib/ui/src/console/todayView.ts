@@ -1,5 +1,6 @@
 import { routeFamilyForGoalV1 } from './consoleFlow';
-import type { WalletBalanceEntryV1 } from './WalletBalancesCard';
+import type { WalletBalanceEntryV1, WalletBalancesModelV1 } from './WalletBalancesCard';
+import { trackedRowClocksV1, type B20TrackedTokenLikeV1, type TrackedRowClockV1 } from './B20WatchScreen';
 
 // ---------------------------------------------------------------------------
 // Today — the first screen, with the answers before the question.
@@ -144,7 +145,8 @@ export function todayWalletCheckV1(rows: readonly WalletBalanceEntryV1[]): Today
   for (const row of rows) {
     const address = row.address.toLowerCase();
     if (!/^0x[0-9a-f]{40}$/.test(address)) continue;
-    const amount = row.balanceFormatted == null ? NaN : Number(row.balanceFormatted);
+    const amount = row.balanceFormatted == null || row.balanceFormatted.trim() === ''
+      ? NaN : Number(row.balanceFormatted);
     // A balance the server could not format is still a holding.
     if (Number.isFinite(amount) && amount === 0) continue;
     const token = { symbol: row.symbol, address, balance: row.balanceFormatted ?? null };
@@ -188,6 +190,8 @@ export interface TodayItemV1 {
   body: string;
   attention: boolean;
   actions: TodayActionV1[];
+  /** The controls and market clocks belong to this one exact address. */
+  clocks?: readonly TrackedRowClockV1[];
 }
 
 export interface TodayModelV1 {
@@ -201,6 +205,8 @@ export interface TodayModelV1 {
     /** Response assembly time, not a promise that cached balances were reread. */
     overviewUpdatedAt: string | null;
     dataFreshness: string | null;
+    balances: WalletBalancesModelV1 | null;
+    onInvestigate: (tokenAddress: string) => void;
   } | null;
   stockActions: {
     onOpenStock: (symbol: string) => void;
@@ -226,6 +232,9 @@ export interface TodayInputV1 {
     failed: boolean;
     overviewUpdatedAt?: string | null;
     dataFreshness?: string | null;
+    /** Passed from the portfolio query already mounted by Today. */
+    rows?: readonly WalletBalanceEntryV1[] | null;
+    controlWatches?: readonly B20TrackedTokenLikeV1[];
     /** Radar's own projection, so a change reads here as it reads there. */
     radar: {
       watches: readonly unknown[];
@@ -234,6 +243,7 @@ export interface TodayInputV1 {
     trackedB20: number | null;
   } | null;
   question: string;
+  now?: Date;
   reply: string | null;
   stocks: readonly TodayStockNameV1[];
   actions: {
@@ -337,10 +347,22 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
     items.push({
       key: 'b20',
       title: `${plural(input.wallet.trackedB20!, 'B20 token')} tracked`,
-      body: 'Their controls are read in the background. B20 controls shows what changed and when it was last read.',
+      body: 'Market watches run in the background. Controls are read when you request them; their last read can be older than the market measurement.',
       attention: false,
       actions: [{ label: 'Open B20 controls', onClick: actions.onOpenB20 }],
     });
+    for (const entry of input.wallet.controlWatches?.slice(0, 3) ?? []) {
+      const held = input.wallet.rows?.find(row => row.address.toLowerCase() === entry.tokenAddress.toLowerCase());
+      const reading = trackedRowClocksV1(entry, input.now ?? new Date());
+      items.push({
+        key: `b20:${entry.tokenAddress}`,
+        title: `${held?.symbol ?? shortV1(entry.tokenAddress)} — controls and market`,
+        body: reading.failure ?? 'Each date describes its own reading.',
+        attention: false,
+        clocks: reading.clocks,
+        actions: [{ label: 'Open B20 controls', onClick: actions.onOpenB20 }],
+      });
+    }
   }
 
   const tiles: TodayTileV1[] = check
@@ -371,6 +393,12 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
       loading: input.wallet.loading,
       overviewUpdatedAt: input.wallet.overviewUpdatedAt ?? null,
       dataFreshness: input.wallet.dataFreshness ?? null,
+      balances: input.wallet.rows !== undefined ? {
+        rows: input.wallet.rows ?? [],
+        loading: input.wallet.loading,
+        unavailableReason: input.wallet.failed ? 'Your balances could not be refreshed. Try again later.' : null,
+      } : null,
+      onInvestigate: actions.onInvestigate,
       unavailable: input.wallet.failed
         ? 'Your balances could not be read. This is not a statement about what you hold.'
         : null,

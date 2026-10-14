@@ -31,7 +31,8 @@ async function install(page: Page, signedIn: boolean, failPortfolio = false) {
     if (path.endsWith('/rwa/underlyings') || path === '/api/public/stocks/underlyings') return route.fulfill({ json: index });
     if (path === '/api/portfolio' && !failPortfolio) return route.fulfill({ json: {
       updatedAt: '2026-10-14T08:00:00.000Z', dataFreshness: 'cached', tokens: [
-      { symbol: 'NVDAc', address: OFFICIAL, balanceFormatted: '1', registry: { standing: 'official', ticker: 'NVDAc' } },
+      { symbol: 'ETH', address: 'native', balanceFormatted: '0.0003' },
+      { symbol: 'NVDAc', address: OFFICIAL, balanceFormatted: '1', usdValue: '0.20', registry: { standing: 'official', ticker: 'NVDAc' } },
       { symbol: 'AAPLc', address: LOOKALIKE, balanceFormatted: '15', registry: { standing: 'lookalike', ticker: 'AAPLc', officialAddress: OFFICIAL } },
       ...Array.from({ length: 32 }, (_, i) => ({ symbol: `UNCHECKED${i}`, address: `0x${(i + 100).toString(16).padStart(40, '0')}`, balanceFormatted: '1' })),
     ] } });
@@ -45,7 +46,7 @@ for (const width of [1280, 390]) {
   test(`Today leads with findings and hands questions over without executing (${width}px)`, async ({ page }, testInfo) => {
     test.setTimeout(60_000);
     await page.setViewportSize({ width, height: 844 });
-    const { writes } = await install(page, true);
+    const { reads, writes } = await install(page, true);
     await page.goto('/');
     await expect(page).toHaveURL(/\/today$/);
     const finding = page.getByText("AAPLc — issuer address doesn't match", { exact: true });
@@ -62,6 +63,25 @@ for (const width of [1280, 390]) {
     const question = await page.locator('#today-ask-input').boundingBox();
     expect(question).not.toBeNull();
     expect(question!.y + question!.height).toBeLessThan(844);
+    const wallet = page.getByRole('region', { name: 'My wallet', exact: true });
+    await expect(wallet).toBeVisible();
+    await expect(wallet.getByLabel('Search by symbol or address')).toBeHidden();
+    const portfolioReads = reads.filter(path => path === '/api/portfolio').length;
+    await wallet.getByText('View all · 35 balances', { exact: true }).click();
+    const search = wallet.getByLabel('Search by symbol or address');
+    await search.fill(' nvdac ');
+    await expect(wallet.getByText('1 of 35 balances', { exact: true })).toBeVisible();
+    await expect(wallet.getByText('≈ $0.20', { exact: true })).toBeVisible();
+    await search.fill(LOOKALIKE.toUpperCase());
+    await expect(wallet.locator('li')).toHaveCount(1);
+    await expect(wallet.getByText('AAPLc', { exact: true })).toBeVisible();
+    await search.fill('nothing like this');
+    await expect(wallet.getByText('No balance matches this search.', { exact: true })).toBeVisible();
+    await search.fill('ETH');
+    await expect(wallet.locator('li')).toHaveCount(1);
+    await expect(wallet.getByRole('button', { name: /^Check / })).toHaveCount(0);
+    await wallet.getByText('View all · 35 balances', { exact: true }).click();
+    expect(reads.filter(path => path === '/api/portfolio').length).toBe(portfolioReads);
     await page.getByText('Stocks and recent updates · 0', { exact: true }).click();
     await expect(page.getByRole('heading', { name: 'My stocks today', exact: true })).toBeVisible();
     await page.getByText('Stocks and recent updates · 0', { exact: true }).click();
@@ -74,6 +94,7 @@ for (const width of [1280, 390]) {
 
     await page.getByRole('button', { name: 'See the evidence', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/investigate\\?token=${LOOKALIKE}`));
+    await expect.poll(() => reads.includes(`/api/route-intelligence/rwa/investigate/${LOOKALIKE}`)).toBe(true);
     await page.goto('/today');
     await page.locator('.today-details > summary').filter({ hasText: /^Rewards$/ }).click();
     await page.getByRole('button', { name: 'What can I claim?', exact: true }).first().click();
