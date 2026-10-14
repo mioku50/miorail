@@ -252,7 +252,7 @@ describe('the Base Dashboard client', () => {
   });
 
   test('a refusal is a status code, marked worth retrying or not, and never carries the key', async () => {
-    const statuses = [401, 403, 400, 429, 503];
+    const statuses = [401, 403, 404, 400, 429, 503];
     const { fetchImpl } = fakeFetch(statuses.map((status) => () => json(status, { message: `invalid API key ${KEY}` })));
     const client = createBaseAppNotifyClientV1({
       config: { apiKey: KEY, appUrl: 'https://miorail.xyz' },
@@ -285,10 +285,78 @@ describe('the Base Dashboard client', () => {
     assert.doesNotMatch(error.message, new RegExp(KEY));
   });
 
+  test('a confirmed empty subscriber page is a valid list', async () => {
+    const { fetchImpl, calls } = fakeFetch([() => json(200, { success: true, users: [], nextCursor: null })]);
+    const client = createBaseAppNotifyClientV1({
+      config: { apiKey: KEY, appUrl: 'https://miorail.xyz' }, fetch: fetchImpl, sleep: async () => {},
+    });
+    assert.deepEqual(await client.enabledWallets(), new Set());
+    assert.equal(calls.length, 1);
+  });
+
+  test('an unfamiliar successful body fails closed without repeating its contents', async () => {
+    const bodies = [
+      null,
+      { message: KEY },
+      { success: false, users: [] },
+      { success: true, users: {} },
+      { success: true, users: [null] },
+      { success: true, users: [{ address: YOU }] },
+      { success: true, users: [{ address: YOU, notificationsEnabled: 'true' }] },
+      { success: true, users: [{ address: 'invalid', notificationsEnabled: true }] },
+      { success: true, users: [], nextCursor: 2 },
+    ];
+    const { fetchImpl, calls } = fakeFetch(bodies.map((body) => () => json(200, body)));
+    const client = createBaseAppNotifyClientV1({
+      config: { apiKey: KEY, appUrl: 'https://miorail.xyz' }, fetch: fetchImpl, sleep: async () => {},
+    });
+    for (const body of bodies) {
+      await assert.rejects(client.enabledWallets(), (cause: unknown) => {
+        assert.ok(cause instanceof BaseAppNotifyErrorV1);
+        assert.equal(cause.status, 200);
+        assert.equal(cause.transient, true);
+        assert.equal(cause.message, 'base_app_unreadable_body');
+        assert.doesNotMatch(`${cause.message} ${cause.stack}`, new RegExp(KEY));
+        return true;
+      }, JSON.stringify(body));
+    }
+    assert.equal(calls.length, bodies.length);
+    assert.ok(calls.every((call) => call.method === 'GET'));
+  });
+
+  test('a bounded subscriber read never returns the partial list as complete', async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      () => json(200, { success: true, users: [{ address: YOU, notificationsEnabled: true }], nextCursor: 'page-2' }),
+      () => json(200, { success: true, users: [{ address: THEM, notificationsEnabled: true }], nextCursor: 'page-3' }),
+    ]);
+    const client = createBaseAppNotifyClientV1({
+      config: { apiKey: KEY, appUrl: 'https://miorail.xyz' }, fetch: fetchImpl, sleep: async () => {}, maxPages: 2,
+    });
+    await assert.rejects(client.enabledWallets(), (cause: unknown) => {
+      assert.ok(cause instanceof BaseAppNotifyErrorV1);
+      assert.equal(cause.message, 'base_app_subscribers_incomplete');
+      assert.equal(cause.transient, true);
+      return true;
+    });
+    assert.equal(calls.length, 2, 'the configured request bound is kept');
+  });
+
+  test('a repeated pagination cursor leaves the subscriber list unread', async () => {
+    const { fetchImpl, calls } = fakeFetch([
+      () => json(200, { success: true, users: [{ address: YOU, notificationsEnabled: true }], nextCursor: 'page-2' }),
+      () => json(200, { success: true, users: [{ address: THEM, notificationsEnabled: true }], nextCursor: 'page-2' }),
+    ]);
+    const client = createBaseAppNotifyClientV1({
+      config: { apiKey: KEY, appUrl: 'https://miorail.xyz' }, fetch: fetchImpl, sleep: async () => {}, maxPages: 3,
+    });
+    await assert.rejects(client.enabledWallets(), { message: 'base_app_subscribers_incomplete' });
+    assert.equal(calls.length, 2, 'a pagination loop is stopped before another request');
+  });
+
   test('keeps its requests apart, because Base counts twenty a minute', async () => {
     let clock = 1_000;
     const waits: number[] = [];
-    const { fetchImpl } = fakeFetch([() => json(200, { users: [] }), () => json(200, { users: [] })]);
+    const { fetchImpl } = fakeFetch([() => json(200, { success: true, users: [] }), () => json(200, { success: true, users: [] })]);
     const client = createBaseAppNotifyClientV1({
       config: { apiKey: KEY, appUrl: 'https://miorail.xyz' },
       fetch: fetchImpl,
@@ -580,6 +648,53 @@ describe('one pass', () => {
     const retried = await runBaseAppNotifyV1({ repository, client: healthy.client, names: namesFor, now: () => NOW });
     assert.equal(retried.outcome, 'delivered');
     assert.equal(healthy.sends.length, 1);
+  });
+
+  test('a 404 listing or sending keeps both cursors and delivery counts for a later successful pass', async () => {
+    for (const phase of ['listing', 'sending'] as const) {
+      const repository = new InMemoryBaseAppNotificationRepositoryV1();
+      const healthy = fakeClient({ enabledWallets: async () => new Set([YOU, THEM]) });
+      await open(repository, healthy.client);
+      const before = await Promise.all([repository.cursor('rwa_signal'), repository.cursor('radar_event')]);
+      await repository.recordSent({ day: '2026-09-23', wallets: [YOU] });
+      repository.seedSignal(corporateAction({ signalId: '7' }));
+      const event = radarEvent({ userId: `eip155:8453:${YOU}` });
+      repository.seedRadarEvent(event);
+      const refuse = async (): Promise<never> => { throw new BaseAppNotifyErrorV1(404, false, 'base_app_http_404'); };
+      const unavailable = fakeClient({
+        enabledWallets: phase === 'listing' ? refuse : async () => new Set([YOU, THEM]),
+        ...(phase === 'sending' ? { send: refuse } : {}),
+      });
+      const stopped = await runBaseAppNotifyV1({ repository, client: unavailable.client, names: namesFor, now: () => NOW });
+      assert.deepEqual([stopped.outcome, stopped.stoppedBy, stopped.sent, stopped.failed], ['stopped', 'base_app_http_404', 0, 0], phase);
+      assert.deepEqual(await Promise.all([repository.cursor('rwa_signal'), repository.cursor('radar_event')]), before, phase);
+      const counts = await repository.sentOn({ day: '2026-09-23', wallets: [YOU, THEM] });
+      assert.equal(counts.get(YOU), 1, phase);
+      assert.equal(counts.get(THEM) ?? 0, 0, phase);
+      const retried = await runBaseAppNotifyV1({ repository, client: healthy.client, names: namesFor, now: () => NOW });
+      assert.equal(retried.outcome, 'delivered', phase);
+      assert.equal(retried.sent, 2, phase);
+      assert.equal((await repository.cursor('rwa_signal'))!.cursorId, '7', phase);
+      assert.equal((await repository.cursor('radar_event'))!.cursorId, event.eventId, phase);
+    }
+  });
+
+  test('a malformed successful subscriber response cannot discard a pending notice', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const healthy = fakeClient({ enabledWallets: async () => new Set([YOU]) });
+    await open(repository, healthy.client);
+    const before = await repository.cursor('rwa_signal');
+    repository.seedSignal(corporateAction({ signalId: '7' }));
+    const { fetchImpl, calls } = fakeFetch([() => json(200, { success: true, message: KEY })]);
+    const unread = createBaseAppNotifyClientV1({
+      config: { apiKey: KEY, appUrl: 'https://miorail.xyz' }, fetch: fetchImpl, sleep: async () => {},
+    });
+    const stopped = await runBaseAppNotifyV1({ repository, client: unread, names: namesFor, now: () => NOW });
+    assert.deepEqual([stopped.outcome, stopped.stoppedBy, stopped.sent], ['stopped', 'base_app_unreadable_body', 0]);
+    assert.deepEqual(await repository.cursor('rwa_signal'), before);
+    assert.equal((await repository.sentOn({ day: '2026-09-23', wallets: [YOU] })).get(YOU) ?? 0, 0);
+    assert.deepEqual(calls.map((call) => call.method), ['GET']);
+    assert.equal((await runBaseAppNotifyV1({ repository, client: healthy.client, names: namesFor, now: () => NOW })).sent, 1);
   });
 
   test('a send Base refuses as malformed is counted and passed; a throttle stops the pass', async () => {
@@ -1017,9 +1132,13 @@ test('the worker is installed by the deploy, runs this script, and prints no key
   assert.match(service, /^User=miorail$/m);
   assert.match(timer, /^OnUnitActiveSec=5min$/m);
   assert.match(deploy, /for stem in [^;]*\bbase-app-notify\b[^;]*; do/);
-  // The deploy says whether the key is there without ever reading it out.
-  const keyLine = deploy.split('\n').find((line) => line.includes('BASE_DEV_API'));
-  assert.ok(keyLine && /grep -qE/.test(keyLine), keyLine);
+  // Read provider health and last worker result; never invoke the sender as
+  // part of a deploy and never read the credential into shell output.
+  const health = deploy.slice(deploy.indexOf('# The provider can retire'), deploy.indexOf('# The Telegram bot'));
+  assert.match(health, /node --import tsx scripts\/base_app_notify_status\.ts/);
+  assert.doesNotMatch(health, /node --import tsx scripts\/base_app_notify\.ts/);
+  assert.match(health, /-p Result --value/);
+  assert.match(health, /-p ExecMainStatus --value/);
   assert.doesNotMatch(deploy, /echo[^\n]*\$BASE_DEV_API|cut[^\n]*BASE_DEV_API/);
 });
 

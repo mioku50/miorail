@@ -149,6 +149,10 @@ export interface BaseAppNotifyClientV1 {
 
 const WALLET_V1 = /^0x[0-9a-f]{40}$/;
 
+function notifyRecordV1(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 export function createBaseAppNotifyClientV1(input: {
   config: BaseAppNotifyConfigV1;
   fetch?: typeof fetch;
@@ -185,6 +189,18 @@ export function createBaseAppNotifyClientV1(input: {
       throw new BaseAppNotifyErrorV1(null, true, `base_app_unreachable:${cause instanceof Error ? cause.name : 'unknown'}`);
     }
     if (!response.ok) {
+      // The Dashboard now returns this explicit retirement notice after
+      // authentication. Ordinary 404s still mean an unknown provider refusal;
+      // neither is an empty opt-in list. Never propagate provider prose.
+      if (response.status === 404) {
+        const body: unknown = await response.json().catch(() => null);
+        if (body && typeof body === 'object' &&
+            'code' in body && body.code === 5 && 'message' in body &&
+            typeof body.message === 'string' &&
+            /^notification endpoint has been retired\.?$/i.test(body.message.trim())) {
+          throw new BaseAppNotifyErrorV1(404, false, 'base_app_notifications_retired');
+        }
+      }
       const transient = response.status === 429 || response.status >= 500;
       throw new BaseAppNotifyErrorV1(response.status, transient, `base_app_http_${response.status}`);
     }
@@ -198,6 +214,7 @@ export function createBaseAppNotifyClientV1(input: {
   return {
     async enabledWallets() {
       const wallets = new Set<string>();
+      const seenCursors = new Set<string>();
       let cursor: string | null = null;
       for (let page = 0; page < maxPages; page += 1) {
         const query = new URLSearchParams({
@@ -206,18 +223,31 @@ export function createBaseAppNotifyClientV1(input: {
           limit: '500',
           ...(cursor ? { cursor } : {}),
         });
-        const body = (await request(`/app/users?${query.toString()}`, { method: 'GET' })) as {
-          users?: { address?: unknown; notificationsEnabled?: unknown }[];
-          nextCursor?: unknown;
-        } | null;
-        for (const user of body?.users ?? []) {
-          const address = typeof user.address === 'string' ? user.address.toLowerCase() : '';
-          if (user.notificationsEnabled === true && WALLET_V1.test(address)) wallets.add(address);
+        const body = await request(`/app/users?${query.toString()}`, { method: 'GET' });
+        // An unfamiliar successful response is an unread list, never proof
+        // that nobody opted in. Returning an empty or partial list would let
+        // the pass advance its cursors and lose these wallets' notices.
+        if (!notifyRecordV1(body) || body.success !== true || !Array.isArray(body.users)) {
+          throw new BaseAppNotifyErrorV1(200, true, 'base_app_unreadable_body');
         }
-        cursor = typeof body?.nextCursor === 'string' && body.nextCursor !== '' ? body.nextCursor : null;
-        if (!cursor) break;
+        for (const user of body.users) {
+          if (!notifyRecordV1(user) || typeof user.address !== 'string' ||
+            !WALLET_V1.test(user.address.toLowerCase()) || typeof user.notificationsEnabled !== 'boolean') {
+            throw new BaseAppNotifyErrorV1(200, true, 'base_app_unreadable_body');
+          }
+          if (user.notificationsEnabled) wallets.add(user.address.toLowerCase());
+        }
+        if (body.nextCursor !== undefined && body.nextCursor !== null && typeof body.nextCursor !== 'string') {
+          throw new BaseAppNotifyErrorV1(200, true, 'base_app_unreadable_body');
+        }
+        cursor = typeof body.nextCursor === 'string' && body.nextCursor !== '' ? body.nextCursor : null;
+        if (!cursor) return wallets;
+        if (seenCursors.has(cursor)) {
+          throw new BaseAppNotifyErrorV1(200, true, 'base_app_subscribers_incomplete');
+        }
+        seenCursors.add(cursor);
       }
-      return wallets;
+      throw new BaseAppNotifyErrorV1(200, true, 'base_app_subscribers_incomplete');
     },
 
     async send(notice) {

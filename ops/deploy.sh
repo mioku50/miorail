@@ -575,14 +575,20 @@ gas_cors=$(curl -sS -o /dev/null -D - --max-time 20 -X OPTIONS "$oauth_origin/ap
 [ -n "$gas_cors" ] || { echo 'FAILED: the paymaster preflight came back with no allowed origin; a wallet cannot reach it'; exit 1; }
 printf '  sponsored gas  %-28s %s\n' "$oauth_origin/api/paymaster" "$gas_state (limit/wallet/day: $(printf '%s' "$gas_status" | jq -r '.dailyLimitPerWallet // "-"'))"
 
-# Base App notifications: whether the key is there — read with grep -q, so the
-# value never reaches this output — and whether the timer that sends them runs.
-# Informational: a missing key means the notifier reports "off" and sends
-# nothing, which is a state, not a broken deploy.
-notify_key=off
-grep -qE '^(BASE_DEV_API|BASE_DASHBOARD_API_KEY)=.+' "$REPO/.env" && notify_key=on
+# The provider can retire its API while the key and timer remain in place.
+# This probe is GET-only; never run the sender to verify a deploy. An off or
+# unavailable channel is informational and cannot conceal its last failure.
+notify_provider=$(cd "$REPO" && as_service_user node --import tsx scripts/base_app_notify_status.ts 2>/dev/null | tail -1) \
+  || notify_provider='unavailable status_check_failed'
+case "$notify_provider" in
+  off|ready|unavailable\ *) ;;
+  *) notify_provider='unavailable status_check_failed' ;;
+esac
 notify_timer=$(systemctl is-active miorail-base-app-notify.timer 2>/dev/null || true)
-printf '  base app push  %-28s %s\n' "key $notify_key" "timer ${notify_timer:-unknown}"
+notify_result=$(systemctl show miorail-base-app-notify.service -p Result --value 2>/dev/null || true)
+notify_exit=$(systemctl show miorail-base-app-notify.service -p ExecMainStatus --value 2>/dev/null || true)
+printf '  base app push  %-28s timer %s; last result %s (exit %s)\n' "$notify_provider" \
+  "${notify_timer:-unknown}" "${notify_result:-unknown}" "${notify_exit:-unknown}"
 
 # The Telegram bot: its webhook pointed at this deployment, with the secret
 # derived from the token. Set on every deploy, because a token revoked in

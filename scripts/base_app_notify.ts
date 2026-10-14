@@ -228,7 +228,8 @@ async function main(): Promise<void> {
     console.log(JSON.stringify({ event: 'base_app_notify', dry, ...report }));
     // Base down or throttling is a later pass's problem; a key Base no longer
     // takes is the operator's, and a failed unit is how that gets seen.
-    if (report.stoppedBy && /http_(401|403|404)$/.test(report.stoppedBy)) process.exitCode = 1;
+    if (report.stoppedBy && (/http_(401|403|404)$/.test(report.stoppedBy) ||
+        report.stoppedBy === 'base_app_notifications_retired')) process.exitCode = 1;
   }
 
   if (telegram) {
