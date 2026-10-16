@@ -35,6 +35,11 @@ test('one finding and one holding lead; the question precedes the full feed and 
   assert.doesNotMatch(html, /<details[^>]* open|tokens nobody checked|no list vouches/);
   assert.match(html, />Dividends<\/button>/);
   assert.match(html, />View market<\/button>/);
+  const lead = html.slice(html.indexOf('class="today-stock"'), html.indexOf('id="today-ask-input"'));
+  assert.match(lead, /aria-label="Share NVDA stock card"/);
+  assert.match(lead, />Post on X<\/a>/);
+  assert.match(lead, />Cast on Farcaster<\/a>/);
+  assert.match(lead, /miorail.xyz%2Fstocks%2Fnvda/);
   assert.match(html, /Oct 14, 08:00 AM UTC · cached data/);
 });
 

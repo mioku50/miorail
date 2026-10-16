@@ -22,6 +22,9 @@ const DB_TEST_FILES = new Set([
 
 const ignoredDirectories = new Set([
   '.git', '.next', 'coverage', 'dist', 'node_modules', 'playwright-report', 'test-results',
+  // Local production/media work is not project source. Unpacked video skills
+  // can contain their own tests for tools this workspace does not install.
+  'work', 'brag-output',
 ]);
 
 async function testFiles(directory: string): Promise<string[]> {

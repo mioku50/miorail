@@ -5,6 +5,7 @@ import { MyStocksTodayCard, type MyStocksTodayModelV1 } from './MyStocksTodayCar
 import { MyStockCashOut } from './MyStockCashOut';
 import { TodayWallet } from './TodayWallet';
 import { TodayAavePosition, type TodayAavePositionModelV1 } from './TodayAavePosition';
+import { StockShareLinks } from './StockShareLinks';
 import type { TodayModelV1, TodayItemV1 } from './todayView';
 
 void React;
@@ -75,6 +76,7 @@ function TodayStock({ model }: { model: TodayScreenModelV1 }) {
       tokenAddress={holding.tokenAddress} tokenSymbol={holding.tokenSymbol}
       overviewTokens={holding.tokens} onMeasure={stocks.onMeasureCashOut} compact additionalActions={actions} />
       : <div className="card-actions">{actions}</div>}
+    <StockShareLinks symbol={holding.symbol} />
     {(stocks.data?.holdings.length ?? 0) > 1 ? <p className="lnote">More holdings in Stocks and recent updates below.</p> : null}
   </article>;
 }

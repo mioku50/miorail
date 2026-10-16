@@ -47,6 +47,7 @@ import { stockPriceNoteV1, type StockQuoteViewV1 } from './stockQuotesView';
 import type { StockUsesViewV1 } from './stockUsesView';
 import type { StockChartViewV1 } from './stockChartView';
 import { StockWeekChart } from './ConsoleCharts';
+import { StockShareLinks } from './StockShareLinks';
 import {
   MARKET_REALITY_HISTORY_PERIODS_V1,
   type ComparableMarketHistoryRepresentationV1,
@@ -1511,6 +1512,7 @@ function HeadlineAnswer({
         />
       ) : null}
       {tradable && trade?.note ? <p className="lnote">{trade.note}</p> : null}
+      <StockShareLinks symbol={ticker} />
 
       {/* What a round trip costs, in one line, with its age. The measurement
           stays whatever the twenty-second quote is doing: an expired quote

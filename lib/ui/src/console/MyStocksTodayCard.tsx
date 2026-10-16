@@ -7,6 +7,7 @@ import { multiplierDecimalV1 } from './multiplierScheduleView';
 import { signalFeedViewV1 } from './rwaDiscoverView';
 import type { StockPositionQuoteV1 } from '@mioagent/rwa-market-reality/stock-position-quote';
 import { MyStockCashOut } from './MyStockCashOut';
+import { StockShareLinks } from './StockShareLinks';
 
 export interface MyStocksTodayModelV1 {
   data: StockBriefV1 | null;
@@ -189,6 +190,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                         onMeasure={model.onMeasureCashOut}
                       />
                     ) : null}
+                    <StockShareLinks symbol={holding.symbol} />
                     {mine?.lead ? <p>{mine.lead}</p> : null}
                     {holding.schedule ? (
                       <p className="stocks-today-schedule">

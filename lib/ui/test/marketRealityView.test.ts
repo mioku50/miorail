@@ -3955,7 +3955,8 @@ describe('Phase 17.4 — Use & access answers, then cites', () => {
     }).find((s) => s.id === 'defi')!;
     const caveats = defi.facts.filter((fact) => fact.label === 'Whether you could borrow');
     assert.equal(caveats.length, 1);
-    assert.match(caveats[0]!.value, /Miorail does not read your position and does not answer that/);
+    assert.match(caveats[0]!.value, /This market comparison does not read your position or establish your personal borrowing limit/);
+    assert.match(caveats[0]!.value, /Today offers a separate Aave v4 position read/);
     assert.match(defi.facts.find((f) => f.label === 'Morpho markets')!.value, /\$10,000,000/);
   });
 
@@ -5107,11 +5108,15 @@ describe('trading from the answer card', () => {
     questionFixed?: boolean;
     weekendOpen?: boolean;
     chart?: StockChartViewV1 | null;
+    ticker?: string;
   }) => {
     const markup = renderToStaticMarkup(
       React.createElement(MarketRealityScreen, {
         model: {
-          choices: [],
+          choices: over.ticker ? [{ underlyingKey: wire.question.underlyingKey,
+            title: over.ticker, ticker: over.ticker, company: null, identifier: null,
+            issuerLine: 'Coinbase', issuerIds: ['coinbase'], representationCount: 1,
+            multiIssuer: false, emptyNote: null }] : [],
           choicesLoading: false,
           choicesError: null,
           counters: [],
@@ -5190,6 +5195,15 @@ describe('trading from the answer card', () => {
     const card = markup.slice(markup.indexOf('class="mr-headline"'));
     return card.slice(0, card.indexOf('</section>'));
   };
+
+  test('the selected stock shares publicly without trade access or a wallet', () => {
+    const card = render({ ticker: 'NVDA', trade: null });
+    assert.match(card, /aria-label="Share NVDA stock card"/);
+    assert.match(card, />Post on X<\/a>/);
+    assert.match(card, />Cast on Farcaster<\/a>/);
+    assert.match(card, /miorail.xyz%2Fstocks%2Fnvda/);
+    assert.doesNotMatch(render({ trade: null }), /aria-label="Share .* stock card"/);
+  });
 
   test('the card leads with the stock and its price on Base, the evidence folded below it', () => {
     const card = render({ trade: { note: null, tokenDecimals: { [LEAD]: 8 } }, onTrade: () => null });

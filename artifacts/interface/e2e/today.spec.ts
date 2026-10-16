@@ -52,6 +52,14 @@ for (const width of [1280, 390]) {
     const finding = page.getByText("AAPLc — issuer address doesn't match", { exact: true });
     await expect(finding).toBeVisible();
     await expect(page.getByText('Your NVDAc', { exact: true })).toBeVisible();
+    const share = page.locator('.today-stock').getByRole('group', { name: 'Share NVDA stock card' });
+    await expect(share.getByRole('link', { name: 'Post on X', exact: true })).toBeVisible();
+    await expect(share.getByRole('link', { name: 'Cast on Farcaster', exact: true })).toBeVisible();
+    for (const href of await share.locator('a').evaluateAll(links => links.map(link => link.href))) {
+      expect(decodeURIComponent(href)).toContain('https://miorail.xyz/stocks/nvda');
+      expect(decodeURIComponent(href)).not.toContain(WALLET);
+      expect(decodeURIComponent(href)).not.toContain('0.00088158');
+    }
     await expect(page.getByRole('heading', { name: 'My stocks today', exact: true })).toBeHidden();
     await expect(page.getByText('Wallet overview updated Oct 14, 08:00 AM UTC · cached data', { exact: true })).toBeVisible();
     const order = await page.evaluate(() => {

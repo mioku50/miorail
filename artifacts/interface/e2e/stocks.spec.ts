@@ -114,10 +114,17 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     const nvda = page.getByRole('option', { name: /^NVDA / });
     const coin = page.getByRole('option', { name: /^COIN / });
     await expect(nvda).toHaveAttribute('aria-selected', 'true');
+    const nvdaShare = page.getByRole('group', { name: 'Share NVDA stock card' });
+    await expect(nvdaShare.getByRole('link', { name: 'Post on X' })).toBeVisible();
+    await expect(nvdaShare.getByRole('link', { name: 'Cast on Farcaster' })).toHaveAttribute('href', /miorail.xyz%2Fstocks%2Fnvda/);
     await expect.poll(() => nvda.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     await coin.click();
     await expect(coin).toHaveAttribute('aria-selected', 'true');
     await expect(nvda).toHaveAttribute('aria-selected', 'false');
+    await expect(nvdaShare).toHaveCount(0);
+    const coinShare = page.getByRole('group', { name: 'Share COIN stock card' });
+    await expect(coinShare.getByRole('link', { name: 'Post on X' })).toHaveAttribute('href', /miorail.xyz%2Fstocks%2Fcoin/);
+    await expect(coinShare.getByRole('link', { name: 'Cast on Farcaster' })).toBeVisible();
     await expect(page).toHaveURL(new RegExp(encodeURIComponent(COIN)));
     await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
     await page.reload();
