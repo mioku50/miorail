@@ -1,3 +1,4 @@
+import { REVIEWED_DISCOVERY_ALIASES_V1 } from '@mioagent/rwa-market-reality/discovery-aliases';
 import { routeFamilyForGoalV1 } from './consoleFlow';
 import type { WalletBalanceEntryV1, WalletBalancesModelV1 } from './WalletBalancesCard';
 import { trackedRowClocksV1, type B20TrackedTokenLikeV1, type TrackedRowClockV1 } from './B20WatchScreen';
@@ -31,6 +32,38 @@ export interface TodayStockNameV1 {
   /** The board's display symbol, which is what `/stocks/:symbol` matches. */
   symbol: string;
   name: string;
+  /**
+   * Reviewed names a person types for a stock stored under its ticker alone:
+   * "nvidia" for NVDA. Each is bound to the row's own ISIN, never to a ticker.
+   */
+  aliases?: readonly string[];
+}
+
+/**
+ * The board's entries as names Today can recognise.
+ *
+ * Six of the most asked-about stocks (NVDA, TSLA, MSFT, GOOGL, GME, MSTR) are
+ * stored with the ticker as their name, so "Nvidia" matched nothing while
+ * "Apple" found AAPL (production, 2026-10-17). Discovery already keeps a
+ * reviewed alias list for exactly those rows; an alias attaches only where the
+ * entry's own identifier is the ISIN it was reviewed for.
+ */
+export function todayStockNamesV1(
+  entries: readonly {
+    displaySymbol: string | null;
+    canonicalName: string;
+    identifierScheme: string | null;
+    identifierValue: string | null;
+  }[],
+): TodayStockNameV1[] {
+  return entries.flatMap((entry) => {
+    if (!entry.displaySymbol) return [];
+    const isin = entry.identifierScheme?.toLowerCase() === 'isin' ? entry.identifierValue : null;
+    const aliases = isin
+      ? REVIEWED_DISCOVERY_ALIASES_V1.filter((alias) => alias.isin === isin).map((alias) => alias.name)
+      : [];
+    return [{ symbol: entry.displaySymbol, name: entry.canonicalName, ...(aliases.length > 0 ? { aliases } : {}) }];
+  });
 }
 
 const ADDRESS_V1 = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/;
@@ -85,9 +118,10 @@ export function stockNamedV1(
   }
   const lower = text.toLowerCase();
   for (const stock of stocks) {
-    const core = coreNameV1(stock.name);
-    if (core.length < 4) continue;
-    if (new RegExp(`(^|[^a-z0-9])${escapeV1(core)}([^a-z0-9]|$)`).test(lower)) return stock;
+    for (const name of [coreNameV1(stock.name), ...(stock.aliases ?? [])]) {
+      if (name.length < 4) continue;
+      if (new RegExp(`(^|[^a-z0-9])${escapeV1(name)}([^a-z0-9]|$)`).test(lower)) return stock;
+    }
   }
   return null;
 }

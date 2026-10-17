@@ -15,6 +15,7 @@ import type { TodayScreenModelV1 } from './TodayScreen';
 import {
   TODAY_UNROUTED_REPLY_V1,
   todayModelV1,
+  todayStockNamesV1,
   todayWalletCheckV1,
   type TodayRouteV1,
 } from './todayView';
@@ -61,13 +62,7 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
   const [question, setQuestion] = useState('');
   const [reply, setReply] = useState<string | null>(null);
 
-  const stocks = useMemo(
-    () =>
-      (index.data?.entries ?? []).flatMap((entry) =>
-        entry.displaySymbol ? [{ symbol: entry.displaySymbol, name: entry.canonicalName }] : [],
-      ),
-    [index.data],
-  );
+  const stocks = useMemo(() => todayStockNamesV1(index.data?.entries ?? []), [index.data]);
   const choices = useMemo(() => underlyingChoicesV1(index.data ?? null), [index.data]);
   const radarView = useMemo(
     () =>

@@ -6,6 +6,7 @@ import {
   routeTodayQuestionV1,
   stockNamedV1,
   todayModelV1,
+  todayStockNamesV1,
   todayWalletCheckV1,
   type TodayInputV1,
   type TodayRouteV1,
@@ -60,6 +61,33 @@ describe('Today hands a question to the page that owns it', () => {
     assert.equal(routeTodayQuestionV1('обменять ETH на USDC', STOCKS).kind, 'routes');
     assert.equal(routeTodayQuestionV1('hello there', STOCKS).kind, 'unknown');
     assert.equal(routeTodayQuestionV1('   ', STOCKS).kind, 'unknown');
+  });
+
+  test('a stock stored under its ticker alone is found by its reviewed name', () => {
+    // How production stores six of the most asked-about stocks (2026-10-17):
+    // the ticker as the name, so "Nvidia" used to match nothing at all.
+    const board = todayStockNamesV1([
+      { displaySymbol: 'NVDA', canonicalName: 'NVDA', identifierScheme: 'isin', identifierValue: 'US67066G1040' },
+      { displaySymbol: 'TSLA', canonicalName: 'TSLA', identifierScheme: 'isin', identifierValue: 'US88160R1014' },
+      { displaySymbol: 'AAPL', canonicalName: 'Apple Inc.', identifierScheme: 'isin', identifierValue: 'US0378331005' },
+      { displaySymbol: null, canonicalName: 'No symbol', identifierScheme: null, identifierValue: null },
+    ]);
+    assert.deepEqual(board.map((stock) => stock.symbol), ['NVDA', 'TSLA', 'AAPL']);
+    assert.equal((routeTodayQuestionV1('как продать Nvidia', board) as { symbol: string }).symbol, 'NVDA');
+    assert.equal((routeTodayQuestionV1('NVIDIA earnings', board) as { symbol: string }).symbol, 'NVDA');
+    assert.equal((routeTodayQuestionV1('tesla dividends', board) as { symbol: string }).symbol, 'TSLA');
+    assert.equal(board.find((stock) => stock.symbol === 'AAPL')?.aliases, undefined);
+  });
+
+  test('an alias attaches only where the row carries the ISIN it was reviewed for', () => {
+    // A ticker rebound to another security, or a row with no ISIN, keeps its
+    // stored name and gains nothing.
+    const board = todayStockNamesV1([
+      { displaySymbol: 'NVDA', canonicalName: 'NVDA', identifierScheme: 'isin', identifierValue: 'US0000000001' },
+      { displaySymbol: 'TSLA', canonicalName: 'TSLA', identifierScheme: null, identifierValue: null },
+    ]);
+    assert.deepEqual(board.map((stock) => stock.aliases), [undefined, undefined]);
+    assert.equal(routeTodayQuestionV1('nvidia', board).kind, 'unknown');
   });
 });
 

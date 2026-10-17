@@ -16,8 +16,10 @@ export interface TodayAavePositionModelV1 {
 function money(value: string | null): string {
   if (value === null || !Number.isFinite(Number(value))) return 'Not read';
   const n = Number(value);
-  if (n !== 0 && Math.abs(n) < 0.01) return `${n < 0 ? '−' : ''}less than $0.01`;
-  return `$${n.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  // Net accrued interest is negative for most borrowers: "−$1.50", not "$-1.50".
+  const sign = n < 0 ? '−' : '';
+  if (n !== 0 && Math.abs(n) < 0.01) return `${sign}less than $0.01`;
+  return `${sign}$${Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 export function TodayAavePosition({ model }: { model: TodayAavePositionModelV1 }) {

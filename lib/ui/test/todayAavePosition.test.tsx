@@ -28,6 +28,8 @@ test('Aave debt, health and net interest are shown with their source, threshold 
   assert.match(html, /−less than \$0.01/); assert.match(html, /Liquidation threshold: health factor 1/);
   assert.match(html, /class="note warn"/); assert.match(html, /Aave API read/); assert.match(html, /Base MAG7 market only/);
   assert.doesNotMatch(html, /You can borrow|Safe|guaranteed/i);
+  const charged = renderToStaticMarkup(<TodayAavePosition model={model({ data: { ...data, netAccruedInterestUsd: '-1234.5' } })} />);
+  assert.match(charged, /−\$1,234.50/); assert.doesNotMatch(charged, /\$-/);
 });
 test('empty and no-debt positions remain distinct, and refresh failure retains the date', () => {
   const empty = renderToStaticMarkup(<TodayAavePosition model={model({ data: { ...data, state: 'empty',

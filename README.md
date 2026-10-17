@@ -120,7 +120,7 @@ contracts, not either model, decide which reads and actions are allowed.
 | **Public Metrics** | `/metrics` | Sessionless Base telemetry with exact definitions, caveats, and a deterministic snapshot hash. |
 
 Today, Stocks, Swap AI and Wallet MCP are the main pages. Radar, Discover,
-B20 controls, Activity and Settings sit under **More**.
+Investigate, B20 controls, Activity and Settings sit under **More**.
 
 Stocks reads Aave V3 membership separately from the Base **Aave V4 Equities
 market**, using Aave's official API and exact token addresses. V4 cards show
