@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { BaseAppNotifyErrorV1, createBaseAppNotifyClientV1, type BaseAppNotifyClientV1 } from './baseAppNotify.js';
+import { fileURLToPath } from 'node:url';
+import {
+  BaseAppNotifyErrorV1,
+  createBaseAppNotifyClientV1,
+  notifyPassFailsUnitV1,
+  type BaseAppNotifyClientV1,
+} from './baseAppNotify.js';
 import { baseAppNotifyStatusV1 } from './baseAppNotifyStatus.js';
 
 const KEY = 'fixture-notification-key';
@@ -79,4 +87,27 @@ test('incomplete subscribers and provider failures stay distinct and leak no pro
     };
     assert.deepEqual(await baseAppNotifyStatusV1({ config, client }), { state: 'unavailable', reason, optedIn: null });
   }
+});
+
+test('a key the provider stopped taking fails the unit; a retired API, an outage or a throttle does not', () => {
+  // A unit failed for good by a retired API hid every later failure of the
+  // same unit, Telegram's included (one alert episode open from 2026-10-13).
+  for (const stoppedBy of ['base_app_http_401', 'base_app_http_403', 'base_app_http_404']) {
+    assert.equal(notifyPassFailsUnitV1('base_app', stoppedBy), true, stoppedBy);
+  }
+  for (const stoppedBy of [null, 'base_app_notifications_retired', 'base_app_http_429', 'base_app_http_503',
+    'base_app_unreachable:TimeoutError', 'base_app_unreadable_body', 'base_app_subscribers_incomplete']) {
+    assert.equal(notifyPassFailsUnitV1('base_app', stoppedBy), false, String(stoppedBy));
+  }
+  assert.equal(notifyPassFailsUnitV1('telegram', 'telegram_unauthorized'), true);
+  assert.equal(notifyPassFailsUnitV1('telegram', null), false);
+  assert.equal(notifyPassFailsUnitV1('telegram', 'base_app_http_401'), false);
+});
+
+test('the sender asks the shared rule, so the retired API cannot fail the unit again', () => {
+  const sender = readFileSync(join(dirname(fileURLToPath(import.meta.url)), 'base_app_notify.ts'), 'utf8');
+  assert.equal((sender.match(/process\.exitCode = 1/g) ?? []).length, 3, 'two channel rules and the crash handler');
+  assert.match(sender, /notifyPassFailsUnitV1\('base_app', report\.stoppedBy\)/);
+  assert.match(sender, /notifyPassFailsUnitV1\('telegram', report\.stoppedBy\)/);
+  assert.doesNotMatch(sender, /base_app_notifications_retired/);
 });

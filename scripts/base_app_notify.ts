@@ -36,6 +36,7 @@ import {
   baseAppNotifyConfigV1,
   createBaseAppNotifyClientV1,
   multiplierChangePpmV1,
+  notifyPassFailsUnitV1,
   runBaseAppNotifyV1,
   type HoldingsV1,
   type StockNamesV1,
@@ -226,10 +227,7 @@ async function main(): Promise<void> {
       aerodromeRewards: aerodromeRewardsFor('base_app'),
     });
     console.log(JSON.stringify({ event: 'base_app_notify', dry, ...report }));
-    // Base down or throttling is a later pass's problem; a key Base no longer
-    // takes is the operator's, and a failed unit is how that gets seen.
-    if (report.stoppedBy && (/http_(401|403|404)$/.test(report.stoppedBy) ||
-        report.stoppedBy === 'base_app_notifications_retired')) process.exitCode = 1;
+    if (notifyPassFailsUnitV1('base_app', report.stoppedBy)) process.exitCode = 1;
   }
 
   if (telegram) {
@@ -244,8 +242,7 @@ async function main(): Promise<void> {
       aerodromeRewards: aerodromeRewardsFor('telegram'),
     });
     console.log(JSON.stringify({ event: 'telegram_notify', dry, ...report }));
-    // A token BotFather revoked is the operator's to replace.
-    if (report.stoppedBy && /^telegram_unauthorized/.test(report.stoppedBy)) process.exitCode = 1;
+    if (notifyPassFailsUnitV1('telegram', report.stoppedBy)) process.exitCode = 1;
   }
 }
 
