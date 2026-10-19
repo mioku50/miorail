@@ -94,7 +94,11 @@ export const DIVIDEND_NOTICE_PENDING_DAYS_V1 = 45;
  * For every other stock on the calendar nothing about dividends has been read,
  * and that is Miorail's gap, not the company's policy. The calendar grew from
  * thirteen stocks to sixty when the issuer API was added, and the board then
- * said "No dividend on record" for Pfizer, Philip Morris and Broadcom.
+ * said "No dividend on record" for Pfizer, Philip Morris and Broadcom. Twelve
+ * that publish the declaration with an 8-K were added on 2026-10-19; Papa
+ * John's was not, because it suspended its dividend from the third quarter of
+ * 2026 (its 8-K of 2026-08-06), and a last payment would be extended into a
+ * quarter that will not come.
  */
 export const DIVIDEND_RELEASES_READ_V1: readonly string[] = [
   'security:isin:US0378331005', // AAPL
@@ -102,6 +106,18 @@ export const DIVIDEND_RELEASES_READ_V1: readonly string[] = [
   'security:isin:US30303M1027', // META
   'security:isin:US5949181045', // MSFT
   'security:isin:US67066G1040', // NVDA
+  'security:isin:US11135F1012', // AVGO
+  'security:isin:US5002551043', // KSS
+  'security:isin:US5951121038', // MU
+  'security:isin:US5738741041', // MRVL
+  'security:isin:US68389X1054', // ORCL
+  'security:isin:US7181721090', // PM
+  'security:isin:US70450Y1038', // PYPL
+  'security:isin:US21036P1084', // STZ
+  'security:isin:US8317541063', // SWBI
+  'security:isin:US9581021055', // WDC
+  'security:isin:US95058W1009', // WEN
+  'security:isin:US9741551033', // WING
 ];
 
 export function dividendReleasesReadV1(underlyingKey: string): boolean {
@@ -225,6 +241,279 @@ export const DIVIDEND_DECLARATIONS_V1: readonly DividendDeclarationV1[] = [
       url: 'https://www.sec.gov/Archives/edgar/data/1045810/000104581026000073/q2fy27pr.htm',
       quote:
         'NVIDIA will pay its next quarterly cash dividend of $0.25 per share on October 1, 2026, to all shareholders of record on September 10, 2026.',
+    },
+  },  // 2026-10-19: the twelve read from their 8-Ks, each one's latest declaration,
+  // and the one before it where the latest is not paid yet.
+  {
+    underlyingKey: 'security:isin:US11135F1012',
+    symbol: 'AVGO',
+    company: 'Broadcom',
+    amountPerShare: '0.65',
+    declaredOn: '2026-09-02',
+    exDate: null,
+    recordDate: '2026-09-21',
+    payDate: '2026-09-30',
+    source: {
+      publisher: 'Broadcom Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1730168/000173016826000076/avgo-08022026x8kxex99.htm',
+      quote:
+        'The Board of Directors of Broadcom has approved a quarterly cash dividend of $0.65 per share. The dividend is payable on September 30, 2026 to stockholders of record at the close of business (5:00 p.m. Eastern Time) on September 21, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5002551043',
+    symbol: 'KSS',
+    company: "Kohl's",
+    amountPerShare: '0.125',
+    declaredOn: '2026-08-18',
+    exDate: null,
+    recordDate: '2026-09-09',
+    payDate: '2026-09-23',
+    source: {
+      publisher: "Kohl's Corporation, Form 8-K, exhibit 99.1",
+      url: 'https://www.sec.gov/Archives/edgar/data/885639/000119312526355669/kss-ex99_1.htm',
+      quote:
+        'The Board of Directors of Kohl’s Corporation (NYSE: KSS) (“Kohl’s” or the “Company”) today declared a regular quarterly dividend of $0.125 per share on the Company’s common stock. The dividend is payable September 23, 2026, to shareholders of record at the close of business on September 9, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5951121038',
+    symbol: 'MU',
+    company: 'Micron',
+    amountPerShare: '0.15',
+    declaredOn: '2026-06-24',
+    exDate: null,
+    recordDate: '2026-07-06',
+    payDate: '2026-07-21',
+    source: {
+      publisher: 'Micron Technology, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/723125/000072312526000013/a2026q3ex991-pressrelease.htm',
+      quote:
+        'On June 24, 2026, Micron’s Board of Directors declared a quarterly dividend of $0.15 per share, payable in cash on July 21, 2026, to shareholders of record as of the close of business on July 6, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5951121038',
+    symbol: 'MU',
+    company: 'Micron',
+    amountPerShare: '0.15',
+    declaredOn: '2026-09-30',
+    exDate: null,
+    recordDate: '2026-10-14',
+    payDate: '2026-10-29',
+    source: {
+      publisher: 'Micron Technology, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/723125/000072312526000018/a2026q4ex991-pressrelease.htm',
+      quote:
+        'On September 30, 2026, Micron’s Board of Directors declared a quarterly dividend of $0.15 per share, payable in cash on October 29, 2026, to shareholders of record as of the close of business on October 14, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5738741041',
+    symbol: 'MRVL',
+    company: 'Marvell',
+    amountPerShare: '0.06',
+    declaredOn: '2026-06-25',
+    exDate: null,
+    recordDate: '2026-07-10',
+    payDate: '2026-07-30',
+    source: {
+      publisher: 'Marvell Technology, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1835632/000162828026045564/a20260625dividendpressrele.htm',
+      quote:
+        'Marvell Technology, Inc. (NASDAQ: MRVL), today announced a quarterly dividend of $0.06 per share of common stock, including preferred stock on an as converted to common stock basis, payable on July 30, 2026 to stockholders of record as of July 10, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5738741041',
+    symbol: 'MRVL',
+    company: 'Marvell',
+    amountPerShare: '0.06',
+    declaredOn: '2026-09-25',
+    exDate: null,
+    recordDate: '2026-10-09',
+    payDate: '2026-10-29',
+    source: {
+      publisher: 'Marvell Technology, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1835632/000162828026063592/a20260925dividendpressrele.htm',
+      quote:
+        'Marvell Technology, Inc. (NASDAQ: MRVL), today announced a quarterly dividend of $0.06 per share of common stock, including preferred stock on an as converted to common stock basis, payable on October 29, 2026 to stockholders of record as of October 9, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US68389X1054',
+    symbol: 'ORCL',
+    company: 'Oracle',
+    amountPerShare: '0.50',
+    declaredOn: '2026-06-10',
+    exDate: null,
+    recordDate: '2026-07-10',
+    payDate: '2026-07-24',
+    source: {
+      publisher: 'Oracle Corporation, Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1341439/000119312526265848/orcl-ex99_1.htm',
+      quote:
+        'The board of directors declared a quarterly cash dividend of $0.50 per share of outstanding common stock. This dividend will be paid to stockholders of record as of the close of business on July 10, 2026, with a payment date of July 24, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US68389X1054',
+    symbol: 'ORCL',
+    company: 'Oracle',
+    amountPerShare: '0.50',
+    declaredOn: '2026-09-10',
+    exDate: null,
+    recordDate: '2026-10-09',
+    payDate: '2026-10-23',
+    source: {
+      publisher: 'Oracle Corporation, Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1341439/000119312526387905/orcl-ex99_1.htm',
+      quote:
+        'The board of directors declared a quarterly cash dividend of $0.50 per share of outstanding common stock. This dividend will be paid to stockholders of record as of the close of business on October 9, 2026, with a payment date of October 23, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US7181721090',
+    symbol: 'PM',
+    company: 'Philip Morris International',
+    amountPerShare: '1.47',
+    declaredOn: '2026-06-11',
+    exDate: '2026-06-25',
+    recordDate: '2026-06-25',
+    payDate: '2026-07-20',
+    source: {
+      publisher: 'Philip Morris International Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1413329/000162828026042357/june2026dividend.htm',
+      quote:
+        'The Board of Directors of Philip Morris International Inc. (NYSE: PM) today declared a regular quarterly dividend of $1.47 per common share, payable on July 20, 2026, to shareholders of record as of June 25, 2026. The ex-dividend date is June 25, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US7181721090',
+    symbol: 'PM',
+    company: 'Philip Morris International',
+    amountPerShare: '1.60',
+    declaredOn: '2026-09-18',
+    exDate: '2026-10-02',
+    recordDate: '2026-10-02',
+    payDate: '2026-10-26',
+    source: {
+      publisher: 'Philip Morris International Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1413329/000162828026062621/september2026dividend.htm',
+      quote:
+        'The new quarterly dividend of $1.60 per share, up from $1.47 per share, is payable on October 26, 2026, to shareholders of record as of October 2, 2026. The ex-dividend date is October 2, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US70450Y1038',
+    symbol: 'PYPL',
+    company: 'PayPal',
+    amountPerShare: '0.14',
+    declaredOn: '2026-07-28',
+    exDate: null,
+    recordDate: '2026-09-04',
+    payDate: '2026-09-25',
+    source: {
+      publisher: 'PayPal Holdings, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1633917/000163391726000080/pypl2q-26earningsrelease.htm',
+      quote:
+        'PayPal’s Board of Directors declared a cash dividend of $0.14 per share on the Company’s common stock, payable on September 25, 2026, to stockholders of record as of the close of business on September 4, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US21036P1084',
+    symbol: 'STZ',
+    company: 'Constellation Brands',
+    amountPerShare: '1.03',
+    declaredOn: '2026-06-30',
+    exDate: null,
+    recordDate: '2026-07-30',
+    payDate: '2026-08-13',
+    source: {
+      publisher: 'Constellation Brands, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/16918/000001691826000028/stzex991_53120268kearnings.htm',
+      quote:
+        'On June 30, 2026, Constellation’s board of directors declared a quarterly cash dividend of $1.03 per share of Class A Common Stock payable on August 13, 2026, to stockholders of record as of the close of business on July 30, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US21036P1084',
+    symbol: 'STZ',
+    company: 'Constellation Brands',
+    amountPerShare: '1.03',
+    declaredOn: '2026-10-06',
+    exDate: null,
+    recordDate: '2026-10-30',
+    payDate: '2026-11-13',
+    source: {
+      publisher: 'Constellation Brands, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/16918/000001691826000039/stzex991_83120268kearnings.htm',
+      quote:
+        'On October 6, 2026, Constellation’s board of directors declared a quarterly cash dividend of $1.03 per share of Class A Common Stock payable on November 13, 2026, to stockholders of record as of the close of business on October 30, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US8317541063',
+    symbol: 'SWBI',
+    company: 'Smith & Wesson',
+    amountPerShare: '0.13',
+    declaredOn: '2026-09-03',
+    exDate: null,
+    recordDate: '2026-09-17',
+    payDate: '2026-10-01',
+    source: {
+      publisher: 'Smith & Wesson Brands, Inc., Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/1092796/000119312526381907/swbi-ex99_1.htm',
+      quote:
+        'Consistent with our capital allocation strategy, our board of directors has authorized a $0.13 per share quarterly dividend, which will be paid to stockholders of record on September 17, 2026, with payment to be made on October 1, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US9581021055',
+    symbol: 'WDC',
+    company: 'Western Digital',
+    amountPerShare: '0.15',
+    declaredOn: '2026-08-05',
+    exDate: null,
+    recordDate: '2026-09-08',
+    payDate: '2026-09-17',
+    source: {
+      publisher: 'Western Digital Corporation, Form 8-K, exhibit 99.1',
+      url: 'https://www.sec.gov/Archives/edgar/data/106040/000162828026053305/a4ex991-pressreleaseq426.htm',
+      quote:
+        'WD’s Board of Directors declared a cash dividend of $0.15 per share of the company’s common stock, which will be paid on September 17, 2026 to stockholders of record as of the close of business on September 8, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US95058W1009',
+    symbol: 'WEN',
+    company: "Wendy's",
+    amountPerShare: '0.07',
+    declaredOn: '2026-08-07',
+    exDate: null,
+    recordDate: '2026-09-01',
+    payDate: '2026-09-15',
+    source: {
+      publisher: "The Wendy's Company, Form 8-K, exhibit 99.1",
+      url: 'https://www.sec.gov/Archives/edgar/data/30697/000119312526339132/d130352dex991.htm',
+      quote:
+        'The Company announced today the declaration of a quarterly cash dividend payment of $0.07 per share. The dividend is payable on September 15, 2026, to shareholders of record as of September 1, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US9741551033',
+    symbol: 'WING',
+    company: 'Wingstop',
+    amountPerShare: '0.33',
+    declaredOn: '2026-07-29',
+    exDate: null,
+    recordDate: '2026-08-15',
+    payDate: '2026-09-05',
+    source: {
+      publisher: 'Wingstop Inc., Form 8-K',
+      url: 'https://www.sec.gov/Archives/edgar/data/1636222/000162828026050401/wing-20260723.htm',
+      quote:
+        'On July 28, 2026, the Company’s Board of Directors (the “Board”) declared a quarterly cash dividend of $0.33 per share of common stock. The dividend is payable on September 5, 2026 to stockholders of record as of the close of business on August 15, 2026.',
     },
   },
 ];

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
 
 import { InMemoryDividendDeclarationRepositoryV1, createMemoryRwaSignalRepository } from '@mioagent/route-storage';
+import { DIVIDEND_ISSUERS_V1 } from '@mioagent/rwa-market-reality/dividend-sources';
 
 import { SEC_USER_AGENT_V1, runDividendDeclarationWatchV1, type DividendFetchV1 } from './dividendDeclarationWatch.js';
 
@@ -54,6 +55,13 @@ function metaFeed(published: string): string {
  * its own on PR Newswire. */
 function pagesV1(over: Record<string, string | number> = {}): Record<string, string | number> {
   return {
+    // Every other company the watcher reads filed nothing that week.
+    ...Object.fromEntries(
+      DIVIDEND_ISSUERS_V1.filter((issuer) => issuer.cik).map((issuer) => [
+        `https://data.sec.gov/submissions/CIK${issuer.cik!.padStart(10, '0')}.json`,
+        submissions([]),
+      ]),
+    ),
     'https://data.sec.gov/submissions/CIK0000320193.json': submissions([
       { accession: APPLE_FILING, accepted: '2026-10-29T20:30:12.000Z', items: '2.02,9.01' },
     ]),
@@ -190,6 +198,49 @@ describe('new dividend declarations, from the companies’ own releases', () => 
     assert.deepEqual(pass.failed, ['META:sec:dividend_source_http_403']);
     assert.deepEqual(pass.unmatched, [`AAPL:${APPLE_FOLDER}/a8-kex991q4.htm`]);
     assert.equal(pass.recorded, 1, 'Meta, from its feed');
+  });
+
+  test('a filing whose release was read is read; a restatement of a declaration is not a new one', async () => {
+    // Philip Morris, 2026-09-18: the cover page restates the declaration
+    // without its dates, beside the release that has them.
+    const PM_FOLDER = 'https://www.sec.gov/Archives/edgar/data/1413329/000162828026062621';
+    // Kohl's, 2026-08-26: its results 8-K repeats the dividend declared on
+    // 2026-08-18, and that release was read a week before.
+    const KSS_FOLDER = 'https://www.sec.gov/Archives/edgar/data/885639/000119312526365860';
+    const pages = pagesV1({
+      'https://data.sec.gov/submissions/CIK0001413329.json': submissions([
+        { accession: '0001628280-26-062621', accepted: '2026-09-18T12:04:53.000Z', items: '8.01,9.01' },
+      ]),
+      [`${PM_FOLDER}/index.json`]: JSON.stringify({ directory: { item: [{ name: 'pm-20260918.htm' }, { name: 'september2026dividend.htm' }] } }),
+      [`${PM_FOLDER}/pm-20260918.htm`]:
+        '<p>On September 18, 2026, Philip Morris International Inc. issued a press release announcing that its Board of Directors declared a regular quarterly dividend of $1.60 per common share, which press release is attached as Exhibit 99.</p>',
+      [`${PM_FOLDER}/september2026dividend.htm`]:
+        '<p>The new quarterly dividend of $1.60 per share, up from $1.47 per share, is payable on October 26, 2026, to shareholders of record as of October 2, 2026. The ex-dividend date is October 2, 2026.</p>',
+      'https://data.sec.gov/submissions/CIK0000885639.json': submissions([
+        { accession: '0001193125-26-365860', accepted: '2026-08-26T15:00:10.000Z', items: '2.02,8.01,9.01' },
+      ]),
+      [`${KSS_FOLDER}/index.json`]: JSON.stringify({ directory: { item: [{ name: 'd171200d8k.htm' }] } }),
+      [`${KSS_FOLDER}/d171200d8k.htm`]:
+        '<p>Item 8.01 Other Events . As previously announced, on August 18, 2026, the Board of Directors of the Company declared a quarterly cash dividend of $0.125 per share. The dividend will be paid on September 23, 2026, to all shareholders of record at the close of business on September 9, 2026.</p>',
+    });
+    const pass = await runDividendDeclarationWatchV1({
+      fetch: webV1(pages).fetch,
+      now: new Date('2026-09-18T14:00:00Z'),
+      declarations: new InMemoryDividendDeclarationRepositoryV1(),
+      signals: createMemoryRwaSignalRepository(),
+      tokensOf,
+      issuers: DIVIDEND_ISSUERS_V1.filter((issuer) => issuer.symbol === 'PM'),
+    });
+    assert.deepEqual([pass.found, pass.known, pass.unmatched], [1, 1, []], 'the registry already names it');
+    const kohls = await runDividendDeclarationWatchV1({
+      fetch: webV1(pages).fetch,
+      now: new Date('2026-08-27T02:00:00Z'),
+      declarations: new InMemoryDividendDeclarationRepositoryV1(),
+      signals: createMemoryRwaSignalRepository(),
+      tokensOf,
+      issuers: DIVIDEND_ISSUERS_V1.filter((issuer) => issuer.symbol === 'KSS'),
+    });
+    assert.deepEqual([kohls.found, kohls.unmatched], [0, []]);
   });
 
   test('a release dated a few minutes ahead of our clock is read as published now', async () => {

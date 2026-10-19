@@ -37,7 +37,7 @@ function patternV1(source: string): RegExp {
   return new RegExp(source.replaceAll('DATE', DATE_V1).replaceAll('AMOUNT', AMOUNT_V1));
 }
 
-/** The five that pay, with the sentence each one used in 2026. */
+/** The companies whose declarations are read, with the sentence each one used in 2026. */
 export const DIVIDEND_ISSUERS_V1: readonly DividendIssuerV1[] = [
   {
     underlyingKey: 'security:isin:US0378331005',
@@ -113,6 +113,185 @@ export const DIVIDEND_ISSUERS_V1: readonly DividendIssuerV1[] = [
     patterns: [
       patternV1(
         'NVIDIA will pay its next quarterly cash dividend of AMOUNT per share on (?<pay>DATE),? to all shareholders of record on (?<record>DATE)\\.',
+      ),
+    ],
+  },  // 2026-10-19: twelve more that publish the declaration with an 8-K, each
+  // pattern read against that company's 2026 filings before it was added.
+  {
+    underlyingKey: 'security:isin:US11135F1012',
+    symbol: 'AVGO',
+    company: 'Broadcom',
+    cik: '1730168',
+    feed: null,
+    filer: 'Broadcom Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'has approved a quarterly cash dividend of AMOUNT per share\\. The dividend is payable on (?<pay>DATE),? to stockholders of record at the close of business(?: \\([^)]{1,40}\\))? on (?<record>DATE)\\.',
+      ),
+      // The 8-K's own Item 8.01, in the same filing.
+      patternV1(
+        "declared a quarterly cash dividend on the Company's common stock of AMOUNT per share\\. This dividend is payable on (?<pay>DATE),? to common stockholders of record at the close of business(?: \\([^)]{1,40}\\))? on (?<record>DATE)\\.",
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US5002551043',
+    symbol: 'KSS',
+    company: "Kohl's",
+    cik: '885639',
+    feed: null,
+    filer: "Kohl's Corporation, Form 8-K, exhibit 99.1",
+    patterns: [
+      patternV1(
+        "declared a regular quarterly dividend of AMOUNT per share on the Company's common stock\\. The dividend is payable (?<pay>DATE),? to shareholders of record at the close of business on (?<record>DATE)\\.",
+      ),
+      patternV1(
+        'declared a quarterly cash dividend of AMOUNT per share\\. The dividend will be payable on (?<pay>DATE),? to shareholders of record at the close of business on (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US5951121038',
+    symbol: 'MU',
+    company: 'Micron',
+    cik: '723125',
+    feed: null,
+    filer: 'Micron Technology, Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'declared a quarterly dividend of AMOUNT per share, payable in cash on (?<pay>DATE),? to shareholders of record as of the close of business on (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US5738741041',
+    symbol: 'MRVL',
+    company: 'Marvell',
+    cik: '1835632',
+    feed: null,
+    filer: 'Marvell Technology, Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'announced a quarterly dividend of AMOUNT per share of common stock,?(?: including preferred stock on an as converted to common stock basis,)? payable on (?<pay>DATE),? to (?:stockholders|shareholders) of record as of (?<record>DATE)\\.',
+      ),
+      patternV1(
+        'declared the payment of its quarterly dividend of AMOUNT per share to be paid on (?<pay>DATE),? to stockholders of common stock,(?: including preferred stock on an as converted to common stock basis,)? of record as of (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US68389X1054',
+    symbol: 'ORCL',
+    company: 'Oracle',
+    cik: '1341439',
+    feed: null,
+    filer: 'Oracle Corporation, Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'declared a quarterly cash dividend of AMOUNT per share of outstanding common stock\\. This dividend will be paid to stockholders of record as of the close of business on (?<record>DATE),? with a payment date of (?<pay>DATE)\\.',
+      ),
+      // Item 8.01 names the preferred dividend first, with its own dates; the
+      // common one's come after it, and no other amount in between.
+      patternV1(
+        'and AMOUNT per share of our outstanding common stock\\.(?:(?!\\$\\d).){0,400}?the common stock dividend is payable on (?<pay>DATE),? to stockholders of record as of the close of business on (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US7181721090',
+    symbol: 'PM',
+    company: 'Philip Morris International',
+    cik: '1413329',
+    feed: null,
+    filer: 'Philip Morris International Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'declared a regular quarterly dividend of AMOUNT per common share, payable on (?<pay>DATE),? to shareholders of record as of (?<record>DATE)\\.(?: The ex-dividend date is (?<ex>DATE)\\.)?',
+      ),
+      // The September release that raises it.
+      patternV1(
+        'The new quarterly dividend of AMOUNT per share, up from \\$\\d+\\.\\d{2,4} per share, is payable on (?<pay>DATE),? to shareholders of record as of (?<record>DATE)\\.(?: The ex-dividend date is (?<ex>DATE)\\.)?',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US70450Y1038',
+    symbol: 'PYPL',
+    company: 'PayPal',
+    cik: '1633917',
+    feed: null,
+    filer: 'PayPal Holdings, Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        "declared a cash dividend of AMOUNT per share on the Company's common stock,? payable on (?<pay>DATE),? to stockholders of record as of the close of business on (?<record>DATE)\\.",
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US21036P1084',
+    symbol: 'STZ',
+    company: 'Constellation Brands',
+    cik: '16918',
+    feed: null,
+    filer: 'Constellation Brands, Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'declared a quarterly cash dividend of AMOUNT per share of Class A Common Stock payable on (?<pay>DATE),? to stockholders of record as of the close of business on (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US8317541063',
+    symbol: 'SWBI',
+    company: 'Smith & Wesson',
+    cik: '1092796',
+    feed: null,
+    filer: 'Smith & Wesson Brands, Inc., Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        'authorized a AMOUNT per share quarterly dividend, which will be paid to stockholders of record on (?<record>DATE),? with payment to be made on (?<pay>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US9581021055',
+    symbol: 'WDC',
+    company: 'Western Digital',
+    cik: '106040',
+    feed: null,
+    filer: 'Western Digital Corporation, Form 8-K, exhibit 99.1',
+    patterns: [
+      patternV1(
+        "(?:WD|Western Digital)'s Board of Directors declared a cash dividend of AMOUNT per share of the company's common stock, which will be paid on (?<pay>DATE),? to stockholders of record as of the close of business on (?<record>DATE)\\.",
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US95058W1009',
+    symbol: 'WEN',
+    company: "Wendy's",
+    cik: '30697',
+    feed: null,
+    filer: "The Wendy's Company, Form 8-K, exhibit 99.1",
+    patterns: [
+      patternV1(
+        'the declaration of (?:its regular quarterly cash dividend|a quarterly cash dividend payment) of AMOUNT per share\\. The dividend is payable on (?<pay>DATE),? to shareholders of record as of (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US9741551033',
+    symbol: 'WING',
+    company: 'Wingstop',
+    cik: '1636222',
+    feed: null,
+    filer: 'Wingstop Inc., Form 8-K',
+    patterns: [
+      patternV1(
+        'declared a quarterly cash dividend of AMOUNT per share of common stock\\. The dividend is payable on (?<pay>DATE),? to stockholders of record as of the close of business on (?<record>DATE)\\.',
+      ),
+      patternV1(
+        'authorized and declared a quarterly dividend of AMOUNT per share of common stock, resulting in a total dividend of approximately \\$[\\d.]+ (?:million|billion)\\. This dividend will be paid on (?<pay>DATE),? to stockholders of record as of (?<record>DATE)\\.',
       ),
     ],
   },

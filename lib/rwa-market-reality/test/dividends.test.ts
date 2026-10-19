@@ -58,7 +58,13 @@ describe('the declarations are the companies’ own words', () => {
   test('every amount and date appears in the sentence it was read from', () => {
     for (const declaration of DIVIDEND_DECLARATIONS_V1) {
       const label = `${declaration.symbol} ${declaration.payDate}`;
-      assert.ok(declaration.source.quote.includes(`$${declaration.amountPerShare} per share`), `${label}: amount`);
+      // "per share", or "per common share" as Philip Morris writes it.
+      assert.ok(
+        [`$${declaration.amountPerShare} per share`, `$${declaration.amountPerShare} per common share`].some((s) =>
+          declaration.source.quote.includes(s),
+        ),
+        `${label}: amount`,
+      );
       assert.ok(spellingsV1(declaration.payDate).some((s) => declaration.source.quote.includes(s)), `${label}: payment date`);
       assert.ok(spellingsV1(declaration.recordDate).some((s) => declaration.source.quote.includes(s)), `${label}: record date`);
       if (declaration.exDate) {

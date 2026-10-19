@@ -87,6 +87,50 @@ describe('a declaration is the company’s own sentence, in full', () => {
     }
   });
 
+  test('the twelve added 2026-10-19: every document of their filings reads as the registry has it', () => {
+    // [symbol, the document as EDGAR serves it, when EDGAR accepted the filing].
+    // Where a filing restates the declaration in its own words (Item 8.01),
+    // both documents are here, and both must find the same payment.
+    const cases: Array<[string, string, string]> = [
+      ['AVGO', '<p>Quarterly Dividends</p><p>The Board of Directors of Broadcom has approved a quarterly cash dividend of $0.65 per share. The dividend is payable on September 30, 2026 to stockholders of record at the close of business (5:00 p.m. Eastern Time) on September 21, 2026.</p>', '2026-09-02T20:26:04Z'],
+      ['AVGO', '<p>On September 2, 2026 , the Company announced that the Board of Directors has declared a quarterly cash dividend on the Company&#8217;s common stock of $0.65 per share. This dividend is payable on September 30, 2026 to common stockholders of record at the close of business (5:00 p.m., Eastern Time) on September 21, 2026.</p>', '2026-09-02T20:26:04Z'],
+      ['KSS', '<p>August 18, 2026 &#8212;The Board of Directors of Kohl&#8217;s Corporation (NYSE: KSS) (&#8220;Kohl&#8217;s&#8221; or the &#8220;Company&#8221;) today declared a regular quarterly dividend of $0.125 per share on the Company&#8217;s common stock. The dividend is payable September 23, 2026, to shareholders of record at the close of business on September 9, 2026.</p>', '2026-08-19T01:05:15Z'],
+      ['KSS', '<p>On August 18, 2026, the Board of Directors of Kohl\'s Corporation ("the Company") declared a quarterly cash dividend of $0.125 per share. The dividend will be payable on September 23, 2026, to shareholders of record at the close of business on September 9, 2026.</p>', '2026-08-19T01:05:15Z'],
+      ['MU', '<p>On June 24, 2026, Micron&#8217;s Board of Directors declared a quarterly dividend of $0.15 per share, payable in cash on July 21, 2026, to shareholders of record as of the close of business on July 6, 2026.</p>', '2026-06-25T00:02:01Z'],
+      ['MU', '<p>On September 30, 2026, Micron&#8217;s Board of Directors declared a quarterly dividend of $0.15 per share, payable in cash on October 29, 2026, to shareholders of record as of the close of business on October 14, 2026.</p>', '2026-10-01T00:02:22Z'],
+      ['MRVL', '<p>Santa Clara, Calif. (June 25, 2026) &#8212; Marvell Technology, Inc. (NASDAQ: MRVL), today announced a quarterly dividend of $0.06 per share of common stock, including preferred stock on an as converted to common stock basis, payable on July 30, 2026 to stockholders of record as of July 10, 2026.</p>', '2026-06-26T00:43:43Z'],
+      ['MRVL', '<p>Item 8.01 Other Events. On September 25, 2026, the Board of Directors of Marvell Technology, Inc. declared the payment of its quarterly dividend of $0.06 per share to be paid on October 29, 2026 to stockholders of common stock, including preferred stock on an as converted to common stock basis, of record as of October 9, 2026.</p>', '2026-09-26T00:35:56Z'],
+      ['ORCL', '<p>The board of directors declared a quarterly cash dividend of $0.50 per share of outstanding common stock. This dividend will be paid to stockholders of record as of the close of business on July 10, 2026, with a payment date of July 24, 2026.</p>', '2026-06-10T20:13:46Z'],
+      ['ORCL', '<p>Oracle announced that its Board of Directors has declared a cash dividend of $1,625 per share of our outstanding Mandatory Convertible Preferred Stock and $0.50 per share of our outstanding common stock. The Mandatory Convertible Preferred Stock dividend is payable on October 15, 2026 to stockholders of record as of the close of business on October 1, 2026 and the common stock dividend is payable on October 23, 2026 to stockholders of record as of the close of business on October 9, 2026.</p>', '2026-09-10T20:16:50Z'],
+      ['PM', '<p>STAMFORD, CT, June 11, 2026 &#8211; The Board of Directors of Philip Morris International Inc. (NYSE: PM) today declared a regular quarterly dividend of $1.47 per common share, payable on July 20, 2026, to shareholders of record as of June 25, 2026. The ex-dividend date is June 25, 2026.</p>', '2026-06-11T10:04:11Z'],
+      ['PM', '<p>The new quarterly dividend of $1.60 per share, up from $1.47 per share, is payable on October 26, 2026, to shareholders of record as of October 2, 2026. The ex-dividend date is October 2, 2026.</p>', '2026-09-18T12:04:53Z'],
+      ['PYPL', '<p>&#8226; PayPal&#8217;s Board of Directors declared a cash dividend of $0.14 per share on the Company&#8217;s common stock, payable on September 25, 2026, to stockholders of record as of the close of business on September 4, 2026.</p>', '2026-07-28T15:02:42Z'],
+      ['STZ', '<p>QUARTERLY DIVIDEND</p><p>On June 30, 2026, Constellation&#8217;s board of directors declared a quarterly cash dividend of $1.03 per share of Class A Common Stock payable on August 13, 2026, to stockholders of record as of the close of business on July 30, 2026.</p>', '2026-07-01T00:08:55Z'],
+      ['STZ', '<p>QUARTERLY DIVIDEND</p><p>On October 6, 2026, Constellation&#8217;s board of directors declared a quarterly cash dividend of $1.03 per share of Class A Common Stock payable on November 13, 2026, to stockholders of record as of the close of business on October 30, 2026.</p>', '2026-10-07T00:18:54Z'],
+      ['SWBI', '<p>Consistent with our capital allocation strategy, our board of directors has authorized a $0.13 per share quarterly dividend, which will be paid to stockholders of record on September 17, 2026, with payment to be made on October 1, 2026.&#8221;</p>', '2026-09-03T20:15:14Z'],
+      ['WDC', '<p>Dividend</p><p>WD&#8217;s Board of Directors declared a cash dividend of $0.15 per share of the company&#8217;s common stock, which will be paid on September 17, 2026 to stockholders of record as of the close of business on September 8, 2026.</p>', '2026-08-06T00:04:35Z'],
+      ['WEN', '<p>The Company announced today the declaration of a quarterly cash dividend payment of $0.07 per share. The dividend is payable on September 15, 2026, to shareholders of record as of September 1, 2026.</p>', '2026-08-07T11:06:14Z'],
+      ['WING', '<p>On July 28, 2026, the Company&#8217;s Board of Directors (the &#8220;Board&#8221;) declared a quarterly cash dividend of $0.33 per share of common stock. The dividend is payable on September 5, 2026 to stockholders of record as of the close of business on August 15, 2026.</p>', '2026-07-29T11:43:53Z'],
+      ['WING', '<p>In recognition of our strong cash flow generation and our commitment to returning value to stockholders, on July 28, 2026, our board of directors authorized and declared a quarterly dividend of $0.33 per share of common stock, resulting in a total dividend of approximately $9.0 million. This dividend will be paid on September 5, 2026 to stockholders of record as of August 15, 2026.</p>', '2026-07-29T11:43:53Z'],
+    ];
+    for (const [symbol, html, publishedAt] of cases) {
+      const reading = read(symbol, html, publishedAt);
+      assert.deepEqual(reading.refused, [], symbol);
+      assert.equal(reading.declarations.length, 1, `${symbol} ${publishedAt}`);
+      const [found] = reading.declarations;
+      const registered = DIVIDEND_DECLARATIONS_V1.find((row) => row.symbol === symbol && row.payDate === found!.payDate);
+      assert.ok(registered, `${symbol} ${found!.payDate}`);
+      assert.deepEqual(
+        [found!.amountPerShare, found!.recordDate, found!.payDate, found!.exDate, found!.declaredOn],
+        [registered.amountPerShare, registered.recordDate, registered.payDate, registered.exDate, registered.declaredOn],
+        `${symbol} ${found!.payDate}`,
+      );
+    }
+    // Oracle's preferred dividend is $1,625 with its own dates; the common one never borrows them.
+    const [oracle] = read('ORCL', cases[9]![1], cases[9]![2]).declarations;
+    assert.deepEqual([oracle!.amountPerShare, oracle!.recordDate, oracle!.payDate], ['0.50', '2026-10-09', '2026-10-23']);
+  });
+
   test('a reworded release is nothing, and an impossible one is refused', () => {
     // A sentence the pattern was not written for: no guess at all.
     assert.deepEqual(read('AAPL', '<p>Apple declared a dividend of $0.28 per share, paid in November.</p>'), {

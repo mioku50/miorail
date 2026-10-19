@@ -20,11 +20,12 @@ import type {
 // ---------------------------------------------------------------------------
 // New dividend declarations, read from the companies' own releases.
 //
-// EDGAR for the three that file the declaration in an 8-K exhibit (Apple,
-// Alphabet, NVIDIA), Microsoft's newsroom and PR Newswire for the two that
-// announce it in a standalone release (Microsoft, Meta). Only a release from
-// the last three days is read, so a pass is a few requests: the submissions
-// list per company and one feed each, then only what is new.
+// EDGAR for the companies that file the declaration with an 8-K (Apple,
+// Alphabet, NVIDIA, and since 2026-10-19 twelve more), Microsoft's newsroom
+// and PR Newswire for the two that announce it in a standalone release
+// (Microsoft, Meta). Only a release from the last three days is read, so a
+// pass is a few requests: the submissions list per company and one feed each,
+// then only what is new.
 //
 // A declaration the registry already names is left to the registry. A new one
 // is stored (migration 0076) and becomes a signal per Coinbase token of that
@@ -142,6 +143,17 @@ async function feedReleasesV1(fetch: DividendFetchV1, issuer: DividendIssuerV1, 
   return releases;
 }
 
+/** A filing on EDGAR is its folder; anything else is its own release. */
+function filingOfV1(release: DividendReleaseV1): string {
+  return release.kind === 'sec_8k' ? release.url.slice(0, release.url.lastIndexOf('/')) : release.url;
+}
+
+/** A sentence that reads like a declaration, other than one restating a
+ * declaration already made: Kohl's results 8-K says "As previously
+ * announced, on August 18, 2026, the Board … declared …" a week after the
+ * release that was read. */
+const DECLARATION_LIKE_V1 = /(?:^|[.!?]\s)(?!As previously (?:announced|reported|disclosed))[^.]{0,200}?declared[^.]{0,120}dividend of \$\d/i;
+
 export interface DividendWatchPassV1 {
   releasesRead: number;
   found: number;
@@ -150,7 +162,8 @@ export interface DividendWatchPassV1 {
   /** Same company and payment date, different words: left for review. */
   conflicts: string[];
   signalled: number;
-  /** A release that reads like a declaration and matched no pattern. */
+  /** A release that reads like a declaration and matched no pattern, in a
+   * filing nothing else was read from. */
   unmatched: string[];
   refused: string[];
   failed: string[];
@@ -205,17 +218,34 @@ export async function runDividendDeclarationWatchV1(deps: {
   const today = newYorkDateV1(deps.now);
   const oldest = shiftDateV1(today, -30);
   const signals: RwaSignalV1[] = [];
-  for (const release of releases) {
+  const readings = releases.map((release) => {
     const text = releaseTextV1(release.html);
-    const reading = readDividendReleaseV1({
-      issuer: release.issuer,
+    return {
+      release,
       text,
-      publishedAt: release.publishedAt,
-      url: release.url,
-      publisher: release.publisher,
-    });
+      reading: readDividendReleaseV1({
+        issuer: release.issuer,
+        text,
+        publishedAt: release.publishedAt,
+        url: release.url,
+        publisher: release.publisher,
+      }),
+    };
+  });
+  // A filing whose press release was read is a filing that was read: its
+  // cover page restates the declaration, sometimes with no dates at all
+  // (Philip Morris, 2026-09-18), and is not a release nobody could read.
+  const readFilings = new Set(
+    readings.filter(({ reading }) => reading.declarations.length > 0).map(({ release }) => filingOfV1(release)),
+  );
+  for (const { release, text, reading } of readings) {
     pass.refused.push(...reading.refused);
-    if (reading.declarations.length === 0 && reading.refused.length === 0 && /declared[^.]{0,120}dividend of \$\d/i.test(text)) {
+    if (
+      reading.declarations.length === 0 &&
+      reading.refused.length === 0 &&
+      !readFilings.has(filingOfV1(release)) &&
+      DECLARATION_LIKE_V1.test(text)
+    ) {
       pass.unmatched.push(`${release.issuer.symbol}:${release.url}`);
     }
     for (const declaration of reading.declarations) {
