@@ -1,4 +1,4 @@
-import express, { Router, type Request, type Response } from 'express';
+import express, { Router, type NextFunction, type Request, type Response } from 'express';
 import { logger } from '@mioagent/utils';
 
 import {
@@ -167,7 +167,28 @@ function loggableMethodV1(method: unknown): string | null {
   return typeof method === 'string' && /^[A-Za-z][A-Za-z0-9_]{0,63}$/.test(method) ? method : null;
 }
 
-sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64kb' }), async (req: Request, res: Response) => {
+/**
+ * How large a request the wallet may send.
+ *
+ * It was 64 KB until 2026-10-19. That day Base Account, told that no token
+ * pays gas, went on past its four stubs and sent requests larger than that:
+ * Express refused them before this route read them, with a 500 from the app's
+ * handler, and the wallet, whose sponsorship is `optional`, paid both trades'
+ * fees itself. What it sent is not known, because nothing was read; the log
+ * lines below now carry each request's method and size. nginx leaves this
+ * location at its default 1 MB, and this matches it.
+ */
+export const SPONSORED_GAS_BODY_LIMIT_V1 = '1mb';
+
+/** A request's size from its own header: enough to tell what the wallet sent
+ * apart by weight, without keeping any of it. */
+function requestBytesV1(req: Request): number | null {
+  const length = Number(req.headers['content-length']);
+  return Number.isSafeInteger(length) && length >= 0 ? length : null;
+}
+
+sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPONSORED_GAS_BODY_LIMIT_V1 }), async (req: Request, res: Response) => {
+  const bytes = requestBytesV1(req);
   const body = req.body as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown } | undefined;
   const id = typeof body?.id === 'number' || typeof body?.id === 'string' ? body.id : null;
   const reply = (payload: { result: unknown } | { error: { code: number; message: string; data?: unknown } }) => {
@@ -194,6 +215,7 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64k
     logger.info('Sponsored gas tokens answered', {
       outcome: answer.ok ? 'none_accepted' : answer.code,
       tokenUrl: urlToken !== null,
+      bytes,
     });
     if (answer.ok) {
       reply({ result: answer.result });
@@ -218,8 +240,9 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64k
     // tells an old offer from a lost token.
     logger.info('Sponsored gas refused', {
       reason: decision.code,
-      method: decision.code === 'method_not_supported' ? loggableMethodV1(body.method) : undefined,
+      method: loggableMethodV1(body.method),
       tokenUrl: urlToken !== null,
+      bytes,
     });
     reply({
       error: {
@@ -273,11 +296,40 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64k
   // estimate, and an operation the upstream refused was never sponsored.
   if (decision.method === 'pm_getPaymasterData') {
     sponsorshipLedgerV1.record(decision.wallet, decision.nonce);
-    logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource });
+    logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource, bytes });
   } else {
     // A stub sponsors nothing, but without this line "the wallet never asked"
     // and "it asked, then paid the fee itself" read the same in the journal.
-    logger.info('Sponsored gas stub served', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource });
+    logger.info('Sponsored gas stub served', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource, bytes });
   }
   reply({ result: answer.result });
+});
+
+/**
+ * A body this route could not read is answered in JSON-RPC, like any other
+ * refusal. Left to the app, it became a 500, which a wallet takes for a
+ * paymaster that is down. The log says why and how large, never what it held.
+ */
+sponsoredGasRouter.use((error: unknown, req: Request, res: Response, next: NextFunction) => {
+  const type = (error as { type?: unknown } | null)?.type;
+  // body-parser names its failures; anything else is not ours to answer.
+  if (typeof type !== 'string' || !/^(entity|request|charset|encoding)\./.test(type)) {
+    next(error);
+    return;
+  }
+  const reason = type === 'entity.too.large' ? 'request_too_large' : 'request_unreadable';
+  logger.warn('Sponsored gas request unreadable', {
+    reason,
+    bytes: requestBytesV1(req),
+    tokenUrl: req.path.startsWith('/sponsorship/'),
+  });
+  res.status(200).json({
+    jsonrpc: '2.0',
+    id: null,
+    error: {
+      code: reason === 'request_too_large' ? -32600 : -32700,
+      message: reason === 'request_too_large' ? 'The request is larger than this paymaster reads.' : 'The request is not readable JSON.',
+      data: { reason },
+    },
+  });
 });

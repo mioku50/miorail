@@ -266,6 +266,36 @@ test('something that is not JSON-RPC gets a JSON-RPC error', async (t) => {
   assert.equal(response.body.error.code, -32600);
 });
 
+test('a request over the old 64 KB is read and sponsored', async (t) => {
+  // 2026-10-19: Base Account's requests after its stubs were larger than 64 KB,
+  // were refused unread, and both trades went out with no paymaster.
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  const body = rpc('pm_getPaymasterData', { ...offer.context, padding: 'a'.repeat(200_000) });
+  const response = await request(routerApp()).post(offerPath(offer)).send(body).expect(200);
+  assert.ok(response.body.result, JSON.stringify(response.body.error));
+  assert.equal(forwarded.length, 1);
+});
+
+test('a body this route cannot read is a JSON-RPC refusal, not a 500', async (t) => {
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
+  const large = await request(app)
+    .post(offerPath(offer))
+    .set('Content-Type', 'application/json')
+    .send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'pm_getPaymasterData', params: ['a'.repeat(1_100_000)] }))
+    .expect(200);
+  assert.equal(large.body.error.data.reason, 'request_too_large');
+  assert.equal(large.headers['access-control-allow-origin'], '*', 'the wallet can read the refusal from its own origin');
+  const broken = await request(app)
+    .post('/api/paymaster')
+    .set('Content-Type', 'application/json')
+    .send('{"jsonrpc": "2.0",')
+    .expect(200);
+  assert.equal(broken.body.error.data.reason, 'request_unreadable');
+  assert.equal(forwarded.length, 0);
+});
+
 test('the wallet’s preflight is answered through the real app, past its CORS', async (t) => {
   stubV1(t);
   // The app's own CORS allows only its configured origins and would end this
