@@ -448,3 +448,90 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
     onSignIn: null,
   };
 }
+
+// ---------------------------------------------------------------------------
+// The holdings, by name and face.
+//
+// "Official stocks 2" told the operator a count and nothing else (2026-10-19:
+// «даже нет лого акций … не понятно … какие именно у него в кошельке бумаги
+// лежат»), and the first screen showed one holding of the two. Every holding
+// now leads with Coinbase's own icon, its ticker and its company, the largest
+// first. The value is the issuer's reference value, as before: it is said as
+// one, beside its own date, and never as what a sale would return. The price
+// on Base is a different number on a different clock and is labelled so.
+// ---------------------------------------------------------------------------
+
+/** The fields of a My stocks holding this view reads, structurally. */
+export interface TodayHoldingSourceV1 {
+  tokenAddress: string;
+  tokenSymbol: string;
+  symbol: string;
+  company: string;
+  tokens: string;
+  reference: { valueUsd: string; publishedAt: string } | null;
+}
+
+/** What the Stocks board knows about a token: its icon and its price on Base. */
+export interface TodayHoldingQuoteV1 {
+  iconPath: string | null;
+  price: string | null;
+  change: string | null;
+}
+
+export interface TodayHoldingTileV1 {
+  tokenAddress: string;
+  tokenSymbol: string;
+  symbol: string;
+  company: string;
+  iconPath: string | null;
+  tokens: string;
+  value: number | null;
+  /** `≈ $0.19`, or what stands in for a value nobody published. */
+  valueLabel: string;
+  referenceAt: string | null;
+  /** `$214.30 on Base · +0.42% 24h`, or null when the board priced nothing. */
+  baseLine: string | null;
+}
+
+export interface TodayHoldingsViewV1 {
+  tiles: TodayHoldingTileV1[];
+  /** Null when no holding has a reference value to add up. */
+  total: { label: string; priced: number; unpriced: number } | null;
+}
+
+function approxUsdV1(value: number): string {
+  return value > 0 && value < 0.01
+    ? '≈ less than $0.01'
+    : `≈ $${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
+export function todayHoldingsViewV1(
+  holdings: readonly TodayHoldingSourceV1[],
+  quotes: ReadonlyMap<string, TodayHoldingQuoteV1> | null | undefined,
+): TodayHoldingsViewV1 {
+  const tiles = holdings.map((holding): TodayHoldingTileV1 => {
+    const quote = quotes?.get(holding.tokenAddress.toLowerCase()) ?? null;
+    const value = holding.reference ? Number(holding.reference.valueUsd) : NaN;
+    const known = Number.isFinite(value) && value >= 0;
+    return {
+      tokenAddress: holding.tokenAddress,
+      tokenSymbol: holding.tokenSymbol,
+      symbol: holding.symbol,
+      company: holding.company,
+      iconPath: quote?.iconPath ?? null,
+      tokens: holding.tokens,
+      value: known ? value : null,
+      valueLabel: known ? approxUsdV1(value) : 'Reference value unavailable',
+      referenceAt: known ? holding.reference!.publishedAt : null,
+      baseLine: quote?.price ? `${quote.price} on Base${quote.change ? ` · ${quote.change} 24h` : ''}` : null,
+    };
+  });
+  tiles.sort((left, right) =>
+    (right.value ?? -1) - (left.value ?? -1) || left.tokenSymbol.localeCompare(right.tokenSymbol));
+  const priced = tiles.filter((tile) => tile.value !== null);
+  const sum = priced.reduce((total, tile) => total + tile.value!, 0);
+  return {
+    tiles,
+    total: priced.length > 0 ? { label: approxUsdV1(sum), priced: priced.length, unpriced: tiles.length - priced.length } : null,
+  };
+}

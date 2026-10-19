@@ -7,7 +7,7 @@ import {
   type WalletBalanceEntryV1,
   type WalletBalancesModelV1,
 } from './WalletBalancesCard';
-import { todayWalletCheckV1 } from './todayView';
+import { todayWalletCheckV1, type TodayHoldingQuoteV1 } from './todayView';
 
 void React;
 
@@ -19,9 +19,22 @@ export function searchWalletBalancesV1(rows: readonly WalletBalanceEntryV1[], qu
     .some(value => value?.toLowerCase().includes(term)));
 }
 
-export function TodayWallet({ model, onInvestigate }: {
+/** A token's face where the Stocks board has one: Coinbase's icon, or the
+ * first letter. Nothing for a token the board does not know. */
+function TokenFace({ quote, symbol, size }: { quote: TodayHoldingQuoteV1 | null | undefined; symbol: string; size: 'sm' | 'lg' }) {
+  if (!quote) return null;
+  const className = size === 'lg' ? 'mr-stock-icon' : 'mr-choice-icon';
+  return quote.iconPath
+    ? <img className={className} src={quote.iconPath} alt="" width={size === 'lg' ? 40 : 24} height={size === 'lg' ? 40 : 24}
+      loading="lazy" decoding="async" />
+    : <span className={`${className} mr-choice-letter`} aria-hidden="true">{symbol.slice(0, 1)}</span>;
+}
+
+export function TodayWallet({ model, onInvestigate, quotes }: {
   model: WalletBalancesModelV1;
   onInvestigate: (tokenAddress: string) => void;
+  /** The Stocks board's icons, by token address; absent, rows show names alone. */
+  quotes?: ReadonlyMap<string, TodayHoldingQuoteV1> | null;
 }) {
   const [query, setQuery] = useState('');
   const searchId = useId();
@@ -38,7 +51,14 @@ export function TodayWallet({ model, onInvestigate }: {
       : model.loading ? <p className="lnote" role="status">Reading balances…</p>
         : <>
           <dl className="today-wallet-counts">
-            <div><dt>{check.official.length === 1 ? 'Official stock' : 'Official stocks'}</dt><dd>{check.official.length}</dd></div>
+            <div><dt>{check.official.length === 1 ? 'Official stock' : 'Official stocks'}</dt><dd>{check.official.length}</dd>
+              {/* Which ones, by face: a count alone does not say what is held. */}
+              {check.official.length > 0 ? <dd className="today-wallet-held">
+                {check.official.map(token => <span key={token.address} className="today-wallet-chip">
+                  <TokenFace quote={quotes?.get(token.address)} symbol={token.symbol} size="sm" />{token.symbol}
+                </span>)}
+              </dd> : null}
+            </div>
             <div data-tone={check.lookalikes.length > 0 ? 'attention' : undefined}>
               <dt>{check.lookalikes.length === 1 ? 'Address mismatch' : 'Address mismatches'}</dt><dd>{check.lookalikes.length}</dd>
             </div>
@@ -62,7 +82,8 @@ export function TodayWallet({ model, onInvestigate }: {
                   const usd = value > 0 && value < 0.01 ? 'less than $0.01' : balanceUsdLabelV1(row.usdValue);
                   return <li key={row.address.toLowerCase()} data-tone={mark?.tone === 'a' ? 'attention' : undefined}>
                     <div className="today-wallet-row">
-                      <div><strong>{row.symbol}</strong>
+                      <div><TokenFace quote={quotes?.get(row.address.toLowerCase())} symbol={row.symbol} size="sm" />
+                        <strong>{row.symbol}</strong>
                         {mark ? <span className={`tag${mark.tone === 'a' ? ' a' : ''}`} title={mark.title}>{mark.label}</span>
                           : <span className="tag">{native ? 'native' : row.verified ? 'Provider verified' : 'Outside reviewed coverage'}</span>}
                       </div>

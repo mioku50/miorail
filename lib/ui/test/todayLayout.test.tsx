@@ -46,6 +46,43 @@ test('one finding and one holding lead; the question precedes the full feed and 
   assert.match(html, /Oct 14, 08:00 AM UTC · cached data/);
 });
 
+test('the hero carries the one big number; each holding leads by its face', () => {
+  const quotes = new Map([[TOKEN, { iconPath: `/api/public/stocks/icons/${TOKEN}.png`, price: '$228.78', change: '+0.10%' }]]);
+  const html = renderToStaticMarkup(<TodayScreen model={{ ...modelV1(), stockQuotes: quotes }} />);
+  const hero = html.slice(html.indexOf('class="radar-hero"'), html.indexOf('</header>'));
+  assert.match(hero, /<span class="amount mono">≈ \$0\.20<\/span><span class="unit">in 1 stock<\/span>/);
+  assert.match(hero, /reference value, not what a sale would return/);
+  const tile = html.slice(html.indexOf('class="today-stock"'), html.indexOf('id="today-ask-input"'));
+  assert.match(tile, new RegExp(`<img class="mr-stock-icon" src="/api/public/stocks/icons/${TOKEN}.png"`));
+  assert.match(tile, /<strong class="today-stock-name">NVDAc<\/strong><span class="today-stock-company">NVIDIA<\/span>/);
+  assert.match(tile, /\$228\.78 on Base · \+0\.10% 24h/);
+  // Without the board's reading the tile still names the stock, by its letter.
+  const bare = renderToStaticMarkup(<TodayScreen model={modelV1()} />);
+  assert.match(bare, /<span class="mr-stock-icon mr-choice-letter" aria-hidden="true">N<\/span>/);
+  assert.doesNotMatch(bare, /on Base · /);
+});
+
+test('three holdings lead as rows that open to their actions; the rest wait below', () => {
+  const model = modelV1();
+  const [first] = model.stocksToday.data.holdings;
+  model.stocksToday.data.holdings = ['AAPL', 'AMZN', 'META', 'MSFT', 'TSLA'].map((symbol, i) => ({
+    ...first!, symbol, company: symbol, tokenSymbol: `${symbol}c`,
+    tokenAddress: `0x${(i + 1).toString(16).padStart(40, '0')}`,
+    reference: { ...first!.reference!, valueUsd: String(i + 1) },
+  }));
+  const html = renderToStaticMarkup(<TodayScreen model={model} />);
+  const lead = html.slice(html.indexOf('id="today-stocks-title"'), html.indexOf('id="today-ask-input"'));
+  assert.deepEqual([...lead.matchAll(/class="today-stock-name">(\w+)</g)].map(match => match[1]), ['TSLAc', 'MSFTc', 'METAc']);
+  assert.match(lead, /2 more in Stocks and recent updates below\./);
+  // A row is closed until opened, so three of them still leave the question on a phone's first screen.
+  assert.equal((lead.match(/<details><summary class="today-stock-id">/g) ?? []).length, 3);
+  // The total counts the stocks; the line under it does not count them again.
+  const hero = html.slice(html.indexOf('class="radar-hero"'), html.indexOf('</header>'));
+  assert.match(hero, /≈ \$15\.00<\/span><span class="unit">in 5 stocks</);
+  assert.doesNotMatch(hero, /stocks? held/);
+  assert.match(hero, /address to check/);
+});
+
 test('outside coverage is neutral and never becomes a suspicious-token finding', () => {
   const model = modelV1();
   const coverage = model.wallet!.items.find(item => item.key === 'unchecked')!;

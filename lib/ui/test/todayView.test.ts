@@ -5,6 +5,7 @@ import {
   TODAY_REWARDS_QUESTION_V1,
   routeTodayQuestionV1,
   stockNamedV1,
+  todayHoldingsViewV1,
   todayModelV1,
   todayStockNamesV1,
   todayWalletCheckV1,
@@ -205,5 +206,56 @@ describe("what the wallet's balances already say", () => {
     assert.match(model.ask.placeholder, /token address/);
     model.onSignIn!();
     assert.deepEqual(opened, ['signin']);
+  });
+});
+
+describe('the holdings lead by face, the largest first', () => {
+  const SONY = `0x${'5'.repeat(40)}`;
+  const NVDA = `0x${'6'.repeat(40)}`;
+  const holding = (tokenAddress: string, tokenSymbol: string, company: string, tokens: string, valueUsd: string | null) => ({
+    tokenAddress, tokenSymbol, symbol: tokenSymbol.replace(/c$/, ''), company, tokens,
+    reference: valueUsd === null ? null : { valueUsd, publishedAt: '2026-10-19T03:23:00.000Z' },
+  });
+  const quotes = new Map([
+    [SONY, { iconPath: `/api/public/stocks/icons/${SONY}.png`, price: '$25.56', change: '+0.42%' }],
+    [NVDA, { iconPath: null, price: null, change: null }],
+  ]);
+
+  test('each holding carries its face, company and Base price; the total adds reference values', () => {
+    const view = todayHoldingsViewV1([
+      holding(NVDA, 'NVDAc', 'NVIDIA', '0.00088158', '0.19'),
+      holding(SONY, 'SONYc', 'Sony Group Corporation', '0.59', '15.08'),
+    ], quotes);
+    assert.deepEqual(view.tiles.map((tile) => tile.tokenSymbol), ['SONYc', 'NVDAc']);
+    assert.deepEqual(view.tiles[0], {
+      tokenAddress: SONY,
+      tokenSymbol: 'SONYc',
+      symbol: 'SONY',
+      company: 'Sony Group Corporation',
+      iconPath: `/api/public/stocks/icons/${SONY}.png`,
+      tokens: '0.59',
+      value: 15.08,
+      valueLabel: '≈ $15.08',
+      referenceAt: '2026-10-19T03:23:00.000Z',
+      baseLine: '$25.56 on Base · +0.42% 24h',
+    });
+    // No price on Base is said as nothing, never as $0.
+    assert.equal(view.tiles[1]!.baseLine, null);
+    assert.equal(view.tiles[1]!.iconPath, null);
+    assert.deepEqual(view.total, { label: '≈ $15.27', priced: 2, unpriced: 0 });
+  });
+
+  test('a holding without a reference value goes last and is counted apart', () => {
+    const view = todayHoldingsViewV1([
+      holding(SONY, 'SONYc', 'Sony Group Corporation', '0.59', null),
+      holding(NVDA, 'NVDAc', 'NVIDIA', '0.00088158', '0.004'),
+    ], null);
+    assert.deepEqual(view.tiles.map((tile) => [tile.tokenSymbol, tile.valueLabel]), [
+      ['NVDAc', '≈ less than $0.01'],
+      ['SONYc', 'Reference value unavailable'],
+    ]);
+    assert.deepEqual(view.total, { label: '≈ less than $0.01', priced: 1, unpriced: 1 });
+    assert.equal(todayHoldingsViewV1([holding(SONY, 'SONYc', 'Sony', '1', null)], null).total, null);
+    assert.deepEqual(todayHoldingsViewV1([], quotes), { tiles: [], total: null });
   });
 });

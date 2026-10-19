@@ -82,3 +82,16 @@ test('Today carries the supplied portfolio and keeps old controls separate from 
   assert.match(html, /Market watch<\/dt>/);
   assert.doesNotMatch(html, /Their controls are read in the background/);
 });
+
+test('the official stocks are named by face, not only counted', () => {
+  // 2026-10-19: «Official stocks 2» said how many and not which.
+  const quotes = new Map([[official, { iconPath: `/api/public/stocks/icons/${official}.png`, price: '$228.78', change: '+0.10%' }]]);
+  const html = renderToStaticMarkup(<TodayWallet model={{ rows, loading: false, unavailableReason: null }}
+    onInvestigate={noop} quotes={quotes} />);
+  const held = html.slice(html.indexOf('class="today-wallet-held"'));
+  assert.match(held, new RegExp(`^class="today-wallet-held"><span class="today-wallet-chip"><img class="mr-choice-icon" src="/api/public/stocks/icons/${official}.png"[^>]*>NVDAc</span>`));
+  // The same face beside the row in the full list; a token the board does not
+  // know keeps its name alone.
+  assert.equal((html.match(new RegExp(`src="/api/public/stocks/icons/${official}.png"`, 'g')) ?? []).length, 2);
+  assert.match(html, /<div><strong>UNKNOWN<\/strong>/);
+});

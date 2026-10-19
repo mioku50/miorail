@@ -2039,8 +2039,36 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .today .today-ask { margin: 0; }
 .mio-console .today-stock { min-width: 0; padding: 12px 16px; border: 1px solid var(--line);
   border-radius: var(--r); background: var(--panel); }
-.mio-console .today-stock-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px;
-  font-size: var(--fs-lg); }
+/* Today, dressed (2026-10-19, «сделать более премиально»): the hero is the
+   brand wash with the page's one big number, and every holding leads with its
+   own face. Colour stays where it answers: the change on Base takes none. */
+.mio-console .today .radar-hero { background: var(--glow-bg), var(--hero-bg); }
+.mio-console .today .radar-hero h2 { background: var(--hero-text); -webkit-background-clip: text; background-clip: text; color: transparent; }
+.mio-console .today-total { margin: 12px 0 2px; }
+.mio-console .today-total .amount { font-size: clamp(var(--fs-title),5vw,var(--fs-hero)); }
+.mio-console .today-total .unit { font-size: var(--fs-base); }
+.mio-console .today-stocks { display: grid; grid-template-columns: repeat(auto-fit,minmax(300px,1fr)); align-items: start;
+  gap: 12px; margin-top: 10px; }
+.mio-console .today-stocks .today-stock { box-shadow: var(--rep-shadow); }
+/* A holding is one row that opens to its record and actions, so three of them
+   and a finding still leave the question on a phone's first screen. */
+.mio-console .today-stock-id { display: grid; grid-template-columns: auto minmax(0,1fr) auto auto; align-items: center; gap: 2px 12px;
+  list-style: none; cursor: pointer; }
+.mio-console .today-stock-id::-webkit-details-marker { display: none; }
+.mio-console .today-stock-id::after { content: ""; grid-column: 4; grid-row: 1 / span 2; width: 7px; height: 7px; margin: 0 4px 3px;
+  border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); transform: rotate(-45deg); transition: transform .15s; }
+.mio-console .today-stock > details[open] > .today-stock-id::after { transform: rotate(45deg); }
+.mio-console .today-stock-id .mr-stock-icon { grid-column: 1; grid-row: 1 / span 2; }
+.mio-console .today-stock-name { grid-column: 2; grid-row: 1; min-width: 0; font-size: var(--fs-lg); letter-spacing: -.01em; }
+.mio-console .today-stock-company { grid-column: 2; grid-row: 2; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--muted); font-size: var(--fs-sm); }
+.mio-console .today-stock-value { grid-column: 3; grid-row: 1; justify-self: end; max-width: 16ch; text-align: end;
+  font-size: var(--fs-lg); font-variant-numeric: tabular-nums; }
+.mio-console .today-stock-px { grid-column: 3; grid-row: 2; justify-self: end; color: var(--muted); font-size: var(--fs-meta); }
+@media (max-width: 480px) {
+  .mio-console .today-stocks { grid-template-columns: minmax(0,1fr); }
+  .mio-console .today-stock-px { grid-column: 2 / span 2; grid-row: 3; justify-self: start; }
+}
 .mio-console .today-stock .lnote { margin: 6px 0; }
 .mio-console .today-stock .stocks-today-cash-out { border-top: 0; margin-top: 8px; padding-top: 0; }
 .mio-console .today-details { min-width: 0; border: 1px solid var(--line); border-radius: var(--r); }
@@ -2057,6 +2085,13 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .today-wallet-counts dt { color: var(--muted); font-size: var(--fs-sm); }
 .mio-console .today-wallet-counts dd { margin: 4px 0 0; font-size: var(--fs-title); font-weight: 650; }
 .mio-console .today-wallet-counts [data-tone="attention"] dd { color: var(--amber); }
+.mio-console .today-wallet-counts dd.today-wallet-held { display: flex; flex-wrap: wrap; gap: 6px; margin: 10px 0 0;
+  font-size: var(--fs-meta); font-weight: 650; }
+.mio-console .today-wallet-chip { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px 3px 3px; border-radius: 999px;
+  background: var(--panel2); box-shadow: inset 0 0 0 1px var(--line); color: var(--ink); }
+.mio-console .today-wallet-chip .mr-choice-icon { width: 20px; height: 20px; }
+.mio-console .today-wallet-chip .mr-choice-letter, .mio-console .today-wallet-row .mr-choice-letter { display: inline-grid; }
+.mio-console .today-wallet-row .mr-choice-icon { vertical-align: middle; margin-right: 8px; }
 .mio-console .today-wallet-all { min-width: 0; border-top: 1px solid var(--line); }
 .mio-console .today-wallet-all > summary { padding-top: 12px; cursor: pointer; font-weight: 650; }
 .mio-console .today-wallet-search { display: grid; gap: 6px; margin-top: 14px; }
@@ -2199,7 +2234,7 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .stock-share-row.gift-share-row .btn { flex: 0 1 auto; padding: 6px 10px; }
 /* One "Share" among a card's actions; open, it takes its own line so the two
    places to post never squeeze the row they came from. */
-.mio-console .share-fold > summary { list-style: none; cursor: pointer; }
+.mio-console .share-fold > summary { display: inline-block; list-style: none; cursor: pointer; }
 .mio-console .share-fold > summary::-webkit-details-marker { display: none; }
 .mio-console .share-fold[open] { flex-basis: 100%; }
 .mio-console .share-fold[open] > summary { color: var(--ink); }

@@ -6,14 +6,27 @@ import { MyStockCashOut } from './MyStockCashOut';
 import { TodayWallet } from './TodayWallet';
 import { TodayAavePosition, type TodayAavePositionModelV1 } from './TodayAavePosition';
 import { StockShareLinks } from './StockShareLinks';
-import type { TodayModelV1, TodayItemV1 } from './todayView';
+import {
+  todayHoldingsViewV1,
+  type TodayHoldingQuoteV1,
+  type TodayHoldingTileV1,
+  type TodayHoldingsViewV1,
+  type TodayModelV1,
+  type TodayItemV1,
+} from './todayView';
 
 void React;
 
 export type TodayScreenModelV1 = TodayModelV1 & {
   stocksToday: MyStocksTodayModelV1 | null;
   aavePosition?: TodayAavePositionModelV1 | null;
+  /** The Stocks board's icons and Base prices, by token address. */
+  stockQuotes?: ReadonlyMap<string, TodayHoldingQuoteV1> | null;
 };
+
+/** How many holdings lead above the question. Three rows and a finding still
+ * leave the question on a phone's first screen; the rest stay in the full card. */
+export const TODAY_LEAD_HOLDINGS_V1 = 3;
 
 function dateV1(iso: string | null): string | null {
   if (!iso || !Number.isFinite(Date.parse(iso))) return null;
@@ -42,43 +55,66 @@ function TodayItem({ item }: { item: TodayItemV1 }) {
   </article>;
 }
 
-/** One holding above the question; all holdings and source records stay below.
- * A reference value cannot become cash proceeds. The quote request requires
- * pressing Check cash out, through the existing guarded control. */
-function TodayStock({ model }: { model: TodayScreenModelV1 }) {
-  const stocks = model.stocksToday;
-  const holding = stocks?.data?.holdings[0];
-  if (!stocks) return null;
-  if (!holding) return stocks.loading || stocks.failed
-    ? <p className="lnote" role="status">{stocks.failed
-      ? 'Your stock overview could not be refreshed. This says nothing about your holdings.'
-      : 'Reading your stocks…'}</p>
-    : null;
-  const value = holding.reference ? Number(holding.reference.valueUsd) : null;
+/** Coinbase's own icon, served from our origin; the ticker's letter where
+ * there is none. Decorative: the ticker beside it is the name. */
+function StockFace({ tile }: { tile: TodayHoldingTileV1 }) {
+  return tile.iconPath
+    ? <img className="mr-stock-icon" src={tile.iconPath} alt="" width={40} height={40} decoding="async" />
+    : <span className="mr-stock-icon mr-choice-letter" aria-hidden="true">{tile.symbol.slice(0, 1)}</span>;
+}
+
+/** A holding, by its face: icon, ticker, company and reference value, one row
+ * that opens to its record and its actions. A reference value cannot become
+ * cash proceeds; the quote request requires pressing Check cash out, through
+ * the existing guarded control. */
+function TodayStockTile({ tile, model }: { tile: TodayHoldingTileV1; model: TodayScreenModelV1 }) {
+  const stocks = model.stocksToday!;
   const actions = <>
     {model.stockActions.onOpenDividends ? <button type="button" className="btn sec"
       onClick={model.stockActions.onOpenDividends}>Dividends</button> : null}
     <button type="button" className="btn sec"
-      onClick={() => model.stockActions.onOpenStock(holding.symbol)}>View market</button>
-    <StockShareLinks symbol={holding.symbol} folded />
+      onClick={() => model.stockActions.onOpenStock(tile.symbol)}>View market</button>
+    <StockShareLinks symbol={tile.symbol} folded />
   </>;
-  return <article className="today-stock" aria-label={`Your ${holding.tokenSymbol}`}>
-    <div className="today-stock-head">
-      <strong>Your {holding.tokenSymbol}</strong>
-      <strong>{value !== null && Number.isFinite(value)
-        ? value > 0 && value < 0.01 ? '≈ less than $0.01'
-          : `≈ $${value.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-        : 'Reference value unavailable'}</strong>
-    </div>
-    <p className="lnote">{holding.tokens} held{holding.reference
-      ? ` · Reference value · ${dateV1(holding.reference.publishedAt) ?? 'publication time unavailable'}` : ''}</p>
-    {stocks.failed ? <p className="lnote" role="status">The overview could not be refreshed; this is the last dated reading.</p> : null}
-    {stocks.onMeasureCashOut ? <MyStockCashOut key={`${stocks.walletKey}:${holding.tokenAddress}`}
-      tokenAddress={holding.tokenAddress} tokenSymbol={holding.tokenSymbol}
-      overviewTokens={holding.tokens} onMeasure={stocks.onMeasureCashOut} compact additionalActions={actions} />
-      : <div className="card-actions">{actions}</div>}
-    {(stocks.data?.holdings.length ?? 0) > 1 ? <p className="lnote">More holdings in Stocks and recent updates below.</p> : null}
+  return <article className="today-stock" aria-label={`Your ${tile.tokenSymbol}`}>
+    <details>
+      <summary className="today-stock-id">
+        <StockFace tile={tile} />
+        <strong className="today-stock-name">{tile.tokenSymbol}</strong>
+        <span className="today-stock-company">{tile.company}</span>
+        <strong className="today-stock-value">{tile.valueLabel}</strong>
+        <span className="today-stock-px mono">{tile.baseLine ?? ''}</span>
+      </summary>
+      <p className="lnote">{tile.tokens} held{tile.referenceAt
+        ? ` · Reference value · ${dateV1(tile.referenceAt) ?? 'publication time unavailable'}` : ''}</p>
+      {stocks.onMeasureCashOut ? <MyStockCashOut key={`${stocks.walletKey}:${tile.tokenAddress}`}
+        tokenAddress={tile.tokenAddress} tokenSymbol={tile.tokenSymbol}
+        overviewTokens={tile.tokens} onMeasure={stocks.onMeasureCashOut} compact additionalActions={actions} />
+        : <div className="card-actions">{actions}</div>}
+    </details>
   </article>;
+}
+
+/** The holdings above the question, the largest first; all of them, with
+ * their records, stay in the full card below. */
+function TodayStocks({ model, view }: { model: TodayScreenModelV1; view: TodayHoldingsViewV1 }) {
+  const stocks = model.stocksToday;
+  if (!stocks) return null;
+  if (view.tiles.length === 0) return stocks.loading || stocks.failed
+    ? <p className="lnote" role="status">{stocks.failed
+      ? 'Your stock overview could not be refreshed. This says nothing about your holdings.'
+      : 'Reading your stocks…'}</p>
+    : null;
+  const lead = view.tiles.slice(0, TODAY_LEAD_HOLDINGS_V1);
+  const more = view.tiles.length - lead.length;
+  return <section className="radar-section" aria-labelledby="today-stocks-title">
+    <h3 id="today-stocks-title">Your stocks</h3>
+    {stocks.failed ? <p className="lnote" role="status">The overview could not be refreshed; these are the last dated readings.</p> : null}
+    <div className="today-stocks">
+      {lead.map(tile => <TodayStockTile key={tile.tokenAddress} tile={tile} model={model} />)}
+    </div>
+    {more > 0 ? <p className="lnote">{more} more in Stocks and recent updates below.</p> : null}
+  </section>;
 }
 
 export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
@@ -96,20 +132,31 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
   const updates = data && !data.changesUnavailable && !data.changesTruncated
     ? data.inbox.heldCount + data.inbox.watchedCount : null;
   const updatedAt = dateV1(wallet?.overviewUpdatedAt ?? null);
+  const holdings = todayHoldingsViewV1(wallet ? model.stocksToday?.data?.holdings ?? [] : [], model.stockQuotes);
+  // The total already counts the stocks; the line under it says the rest.
+  const counted = wallet?.tiles.filter(tile => (holdings.total ? /address(es)? to check/u
+    : /stock(s)? held|address(es)? to check/u).test(tile.label)) ?? [];
   return (
     <section className="radar today" aria-label="Today">
       <header className="radar-hero">
         <div>
           <p className="eyebrow">Today on Base</p>
           <h2>{wallet ? 'Your Base Today' : 'Is it the real one, and can you sell it?'}</h2>
+          {wallet && holdings.total ? <div className="amtrow today-total" aria-label="Your stocks in reference value">
+            <span className="amount mono">{holdings.total.label}</span>
+            <span className="unit">in {holdings.total.priced} {holdings.total.priced === 1 ? 'stock' : 'stocks'}
+              {holdings.total.unpriced > 0 ? ` · ${holdings.total.unpriced} without a reference value` : ''}</span>
+          </div> : null}
           {wallet ? <>
-            {wallet.tiles.length > 0 ? <p className="today-summary" aria-label="Today in numbers">
-              {wallet.tiles.filter(tile => /stock(s)? held|address(es)? to check/u.test(tile.label)).map(tile =>
+            {wallet.tiles.length > 0 && (counted.length > 0 || updates !== null)
+              ? <p className="today-summary" aria-label="Today in numbers">
+              {counted.map(tile =>
                 <span key={tile.label} data-tone={tile.attention ? 'attention' : undefined}>
                   <strong>{tile.value}</strong> {tile.label}
                 </span>)}
               {updates !== null ? <span><strong>{updates}</strong> {updates === 1 ? 'update' : 'updates'} on this page</span> : null}
             </p> : null}
+            {holdings.total ? <p className="lnote">The issuer's reference value, not what a sale would return.</p> : null}
             <p className="lnote">{updatedAt ? `Wallet overview updated ${updatedAt}` : 'Wallet overview time unavailable'}
               {wallet.dataFreshness && wallet.dataFreshness !== 'live' ? ` · ${wallet.dataFreshness} data` : ''}
             </p>
@@ -123,7 +170,7 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
         <h3 id="today-items-title">Worth your attention</h3>
         <TodayItem item={lead} />
       </section> : null}
-      {wallet ? <TodayStock model={model} /> : null}
+      {wallet ? <TodayStocks model={model} view={holdings} /> : null}
 
       <form className="b20-ask-form today-ask" onSubmit={event => { event.preventDefault(); model.ask.onSubmit(); }}>
         <label htmlFor="today-ask-input" className="sr-only">Ask about a token, a stock, your rewards or a swap</label>
@@ -140,7 +187,8 @@ export function TodayScreen({ model }: { model: TodayScreenModelV1 }) {
         <button type="button" className="btn sec" onClick={model.onSignIn}>Continue with your wallet</button>
       </div> : null}
 
-      {wallet?.balances ? <TodayWallet model={wallet.balances} onInvestigate={wallet.onInvestigate} /> : null}
+      {wallet?.balances ? <TodayWallet model={wallet.balances} onInvestigate={wallet.onInvestigate}
+        quotes={model.stockQuotes ?? null} /> : null}
 
       {wallet && model.aavePosition ? <TodayAavePosition model={model.aavePosition} /> : null}
 

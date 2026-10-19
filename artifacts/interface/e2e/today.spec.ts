@@ -6,6 +6,12 @@ const WALLET = '0x1111111111111111111111111111111111111111';
 const LOOKALIKE = '0x2222222222222222222222222222222222222222';
 const OFFICIAL = '0xb20000000000000000000078ee7ce2fe4908108c';
 const index = JSON.parse(readFileSync(new URL('./fixtures/underlyings.json', import.meta.url), 'utf8'));
+// The Stocks board's reading of the official NVDAc: its icon and its price on Base.
+const QUOTES = { schemaVersion: 'stock-quotes/v1', asOf: '2026-10-14T08:00:00.000Z', rows: [{
+  underlyingKey: 'security:isin:US67066G1040', tokenAddress: OFFICIAL, tokenSymbol: 'NVDAc', companyName: 'NVIDIA Corporation',
+  iconPath: `/api/public/stocks/icons/${OFFICIAL}.png`, priceUsd: 217.882337005, priceAt: '2026-10-14T07:15:26.994Z',
+  change24h: 0.02123820995496839, changeFromAt: '2026-10-13T07:27:00.402Z' }] };
+const ICON = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
 // Fixtures exercise the real page, hooks and routing without an operator
 // session or a wallet capable of signing. Every API request is intercepted.
@@ -37,6 +43,8 @@ async function install(page: Page, signedIn: boolean, failPortfolio = false) {
       ...Array.from({ length: 32 }, (_, i) => ({ symbol: `UNCHECKED${i}`, address: `0x${(i + 100).toString(16).padStart(40, '0')}`, balanceFormatted: '1' })),
     ] } });
     if (path === '/api/stocks/today') return route.fulfill({ json: briefFixture() });
+    if (path === '/api/public/stocks/quotes') return route.fulfill({ json: QUOTES });
+    if (path.startsWith('/api/public/stocks/icons/')) return route.fulfill({ contentType: 'image/png', body: ICON });
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });
   return { reads, writes };
@@ -51,9 +59,27 @@ for (const width of [1280, 390]) {
     await expect(page).toHaveURL(/\/today$/);
     const finding = page.getByText('Not the official AAPLc', { exact: true });
     await expect(finding).toBeVisible();
-    await expect(page.getByText('Your NVDAc', { exact: true })).toBeVisible();
-    // Both places to post sit behind one "Share" among the card's actions.
-    const stockCard = page.locator('.today-stock');
+    // The holding leads by its face: Coinbase's icon, ticker and company, and the price on Base.
+    const stockCard = page.getByRole('article', { name: 'Your NVDAc' });
+    await expect(stockCard).toBeVisible();
+    await expect(stockCard.locator('.today-stock-name', { hasText: 'NVDAc' })).toBeVisible();
+    await expect(stockCard.getByText('$217.88 on Base · +2.12% 24h', { exact: true })).toBeVisible();
+    await expect.poll(() => stockCard.locator('img.mr-stock-icon').evaluate(img => (img as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
+    // The first screen, as it loads: the finding and the holding, then the question.
+    const order = await page.evaluate(() => {
+      const [finding, holding, ask] = ['.today .cardrow[data-tone="attention"]', '.today-stock', '#today-ask-input']
+        .map(selector => document.querySelector(selector));
+      const follows = (first: Element | null, next: Element | null) =>
+        Boolean(first && next && (first.compareDocumentPosition(next) & Node.DOCUMENT_POSITION_FOLLOWING));
+      return follows(finding, holding) && follows(holding, ask);
+    });
+    expect(order).toBe(true);
+    const question = await page.locator('#today-ask-input').boundingBox();
+    expect(question).not.toBeNull();
+    expect(question!.y + question!.height).toBeLessThan(844);
+    // The row opens to its actions; both places to post sit behind one "Share" among them.
+    await stockCard.locator('summary.today-stock-id').click();
+    await expect(stockCard.getByRole('button', { name: 'View market', exact: true })).toBeVisible();
     await stockCard.locator('summary', { hasText: 'Share' }).click();
     const share = stockCard.getByRole('group', { name: 'Share NVDA stock card' });
     await expect(share.getByRole('link', { name: 'Post on X', exact: true })).toBeVisible();
@@ -65,15 +91,6 @@ for (const width of [1280, 390]) {
     }
     await expect(page.getByRole('heading', { name: 'My stocks today', exact: true })).toBeHidden();
     await expect(page.getByText('Wallet overview updated Oct 14, 08:00 AM UTC · cached data', { exact: true })).toBeVisible();
-    const order = await page.evaluate(() => {
-      const cards = document.querySelector('.today .cardrow[data-tone="attention"]');
-      const ask = document.querySelector('#today-ask-input');
-      return Boolean(cards && ask && (cards.compareDocumentPosition(ask) & Node.DOCUMENT_POSITION_FOLLOWING));
-    });
-    expect(order).toBe(true);
-    const question = await page.locator('#today-ask-input').boundingBox();
-    expect(question).not.toBeNull();
-    expect(question!.y + question!.height).toBeLessThan(844);
     const wallet = page.getByRole('region', { name: 'My wallet', exact: true });
     await expect(wallet).toBeVisible();
     await expect(wallet.getByLabel('Search by symbol or address')).toBeHidden();

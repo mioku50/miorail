@@ -7,10 +7,12 @@ import {
   useMyStocksToday,
   usePortfolio,
   useRwaUnderlyings,
+  useStockQuotes,
 } from '@mioagent/api-client-react';
 import { underlyingChoicesV1 } from './marketRealityView';
 import { marketRealityRadarViewV1 } from './marketRealityRadarView';
 import { myStocksTodayModelV1 } from './stocksConsole';
+import { stockQuoteViewsByKeyV1, type StockQuoteViewV1 } from './stockQuotesView';
 import type { TodayScreenModelV1 } from './TodayScreen';
 import {
   TODAY_UNROUTED_REPLY_V1,
@@ -59,10 +61,20 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
   const todayRead = useMyStocksToday({ enabled: signedIn && input.stocksOn });
   const cashOut = useMeasureMyStockCashOut();
   const aave = useAaveV4Position(signedIn ? input.address : null);
+  // The board's icons and Base prices, the same read Stocks makes, keyed here
+  // by token address because that is what a wallet holds.
+  const quotesRead = useStockQuotes({ enabled: signedIn && input.stocksOn });
   const [question, setQuestion] = useState('');
   const [reply, setReply] = useState<string | null>(null);
 
   const stocks = useMemo(() => todayStockNamesV1(index.data?.entries ?? []), [index.data]);
+  const stockQuotes = useMemo(() => {
+    const byToken = new Map<string, StockQuoteViewV1>();
+    for (const view of stockQuoteViewsByKeyV1(quotesRead.data ?? null).values()) {
+      byToken.set(view.tokenAddress.toLowerCase(), view);
+    }
+    return byToken;
+  }, [quotesRead.data]);
   const choices = useMemo(() => underlyingChoicesV1(index.data ?? null), [index.data]);
   const radarView = useMemo(
     () =>
@@ -114,6 +126,7 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
   return {
     ...model,
     stocksToday: signedIn && input.stocksOn ? myStocksTodayModelV1(todayRead, cashOut) : null,
+    stockQuotes: signedIn && input.stocksOn ? stockQuotes : null,
     aavePosition: signedIn && input.address ? {
       data: aave.data?.walletAddress === input.address.toLowerCase() ? aave.data : null,
       loading: aave.isFetching,
