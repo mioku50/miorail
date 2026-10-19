@@ -98,7 +98,10 @@ export const DIVIDEND_NOTICE_PENDING_DAYS_V1 = 45;
  * that publish the declaration with an 8-K were added on 2026-10-19; Papa
  * John's was not, because it suspended its dividend from the third quarter of
  * 2026 (its 8-K of 2026-08-06), and a last payment would be extended into a
- * quarter that will not come.
+ * quarter that will not come. Cheesecake Factory, from its results 8-K, and
+ * McDonald's, Hershey, Lilly and Southwest, from PR Newswire, followed the
+ * same day. Pfizer, UnitedHealth, Walmart and the others that announce on
+ * Business Wire are not read: it publishes no feed of dividend releases.
  */
 export const DIVIDEND_RELEASES_READ_V1: readonly string[] = [
   'security:isin:US0378331005', // AAPL
@@ -118,6 +121,11 @@ export const DIVIDEND_RELEASES_READ_V1: readonly string[] = [
   'security:isin:US9581021055', // WDC
   'security:isin:US95058W1009', // WEN
   'security:isin:US9741551033', // WING
+  'security:isin:US1630721017', // CAKE
+  'security:isin:US4278661081', // HSY
+  'security:isin:US5324571083', // LLY
+  'security:isin:US5801351017', // MCD
+  'security:isin:US8447411088', // LUV
 ];
 
 export function dividendReleasesReadV1(underlyingKey: string): boolean {
@@ -514,6 +522,102 @@ export const DIVIDEND_DECLARATIONS_V1: readonly DividendDeclarationV1[] = [
       url: 'https://www.sec.gov/Archives/edgar/data/1636222/000162828026050401/wing-20260723.htm',
       quote:
         'On July 28, 2026, the Company’s Board of Directors (the “Board”) declared a quarterly cash dividend of $0.33 per share of common stock. The dividend is payable on September 5, 2026 to stockholders of record as of the close of business on August 15, 2026.',
+    },
+  },  // 2026-10-19, second: Cheesecake Factory and the four on PR Newswire.
+  {
+    underlyingKey: 'security:isin:US1630721017',
+    symbol: 'CAKE',
+    company: 'The Cheesecake Factory',
+    amountPerShare: '0.30',
+    declaredOn: '2026-07-28',
+    exDate: null,
+    recordDate: '2026-08-11',
+    payDate: '2026-08-25',
+    source: {
+      publisher: 'The Cheesecake Factory Incorporated, Form 8-K',
+      url: 'https://www.sec.gov/Archives/edgar/data/887596/000110465926087561/tm2621325d1_8k.htm',
+      quote:
+        'Additionally, on July 23, 2026, the Board of Directors of the Company (the “Board”) declared a quarterly cash dividend of $0.30 per share which will be paid on August 25, 2026 to the stockholders of record of each share of the Company’s common stock at the close of business on August 11, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US4278661081',
+    symbol: 'HSY',
+    company: 'Hershey',
+    amountPerShare: '1.452',
+    declaredOn: '2026-07-30',
+    exDate: null,
+    recordDate: '2026-08-14',
+    payDate: '2026-09-15',
+    source: {
+      publisher: 'The Hershey Company, press release via PR Newswire',
+      url: 'https://www.prnewswire.com/news-releases/hershey-declares-quarterly-dividends-302838130.html',
+      quote:
+        'The Board of Directors of The Hershey Company (NYSE: HSY) today announced quarterly dividends of $1.452 on the Common Stock and $1.320 on the Class B Common Stock. The dividends were declared July 29, 2026, and are payable September 15, 2026, to stockholders of record as of August 14, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5324571083',
+    symbol: 'LLY',
+    company: 'Lilly',
+    amountPerShare: '1.73',
+    declaredOn: '2026-06-22',
+    exDate: null,
+    recordDate: '2026-08-14',
+    payDate: '2026-09-10',
+    source: {
+      publisher: 'Eli Lilly and Company, press release via PR Newswire',
+      url: 'https://www.prnewswire.com/news-releases/lilly-declares-third-quarter-2026-dividend-302806483.html',
+      quote:
+        'The board of directors of Eli Lilly and Company (NYSE: LLY) has declared a dividend for the third quarter of 2026 of $1.73 per share on outstanding common stock. The dividend is payable on September 10, 2026, to shareholders of record at the close of business on August 14, 2026.',
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5801351017',
+    symbol: 'MCD',
+    company: "McDonald's",
+    amountPerShare: '1.86',
+    declaredOn: '2026-07-23',
+    exDate: null,
+    recordDate: '2026-09-01',
+    payDate: '2026-09-16',
+    source: {
+      publisher: "McDonald's Corporation, press release via PR Newswire",
+      url: 'https://www.prnewswire.com/news-releases/mcdonalds-announces-quarterly-cash-dividend-302833615.html',
+      quote:
+        "Today, McDonald's Board of Directors declared a quarterly cash dividend of $1.86 per share of common stock payable on September 16, 2026 to shareholders of record at the close of business on September 1, 2026.",
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US5801351017',
+    symbol: 'MCD',
+    company: "McDonald's",
+    amountPerShare: '1.93',
+    declaredOn: '2026-09-17',
+    exDate: null,
+    recordDate: '2026-12-01',
+    payDate: '2026-12-15',
+    source: {
+      publisher: "McDonald's Corporation, press release via PR Newswire",
+      url: 'https://www.prnewswire.com/news-releases/mcdonalds-marks-50-consecutive-years-of-dividend-increases-joining-the-ranks-of-dividend-kings-302882422.html',
+      quote:
+        "Today, McDonald's Board of Directors declared a quarterly cash dividend of $1.93 per share of common stock, a 4% increase over the Company's previous quarterly dividend. The dividend is payable on December 15, 2026 to shareholders of record at the close of business on December 1, 2026.",
+    },
+  },
+  {
+    underlyingKey: 'security:isin:US8447411088',
+    symbol: 'LUV',
+    company: 'Southwest Airlines',
+    amountPerShare: '0.18',
+    declaredOn: '2026-07-30',
+    exDate: null,
+    recordDate: '2026-09-03',
+    payDate: '2026-09-24',
+    source: {
+      publisher: 'Southwest Airlines Co., press release via PR Newswire',
+      url: 'https://www.prnewswire.com/news-releases/southwest-airlines-declares-190th-quarterly-dividend-302839214.html',
+      quote:
+        'Southwest Airlines Co. (NYSE: LUV) Board of Directors declared a quarterly cash dividend of $.18 per share to Shareholders of record at the close of business on September 3, 2026, on all shares then issued and outstanding. The quarterly dividend will be paid on September 24, 2026.',
     },
   },
 ];

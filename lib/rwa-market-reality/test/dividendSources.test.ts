@@ -131,6 +131,44 @@ describe('a declaration is the company’s own sentence, in full', () => {
     assert.deepEqual([oracle!.amountPerShare, oracle!.recordDate, oracle!.payDate], ['0.50', '2026-10-09', '2026-10-23']);
   });
 
+  test('the second five: Cheesecake Factory from its 8-K, four from PR Newswire', () => {
+    const cases: Array<[string, string, string]> = [
+      ['CAKE', '<p>ITEM 8.01 OTHER EVENTS</p><p>Additionally, on July 23, 2026, the Board of Directors of the Company (the &#8220;Board&#8221;) declared a quarterly cash dividend of $0.30 per share which will be paid on August 25, 2026 to the stockholders of record of each share of the Company&#8217;s common stock at the close of business on August 11, 2026.</p>', '2026-07-28T20:30:45Z'],
+      ['HSY', '<p>HERSHEY, Pa., July 30, 2026 /PRNewswire/ -- The Board of Directors of The Hershey Company (NYSE: <a href="https://www.prnewswire.com/news/the-hershey-company/">HSY</a>) today announced quarterly dividends of $1.452 on the Common Stock and $1.320 on the Class B Common Stock. The dividends were declared July 29, 2026, and are payable September 15, 2026, to stockholders of record as of August 14, 2026.</p>', '2026-07-30T11:00:00Z'],
+      ['LLY', '<p>INDIANAPOLIS, June 22, 2026 /PRNewswire/ -- The board of directors of Eli Lilly and Company (NYSE: LLY) has declared a dividend for the third quarter of 2026 of $1.73 per share on outstanding common stock. The dividend is payable on September 10, 2026, to shareholders of record at the close of business on August 14, 2026.</p>', '2026-06-22T15:00:00Z'],
+      ['MCD', "<p>CHICAGO, July 23, 2026 /PRNewswire/ -- Today, McDonald's Board of Directors declared a quarterly cash dividend of $1.86 per share of common stock payable on September 16, 2026 to shareholders of record at the close of business on September 1, 2026.</p>", '2026-07-23T21:00:00Z'],
+      ['MCD', "<p>CHICAGO, Sept. 17, 2026 /PRNewswire/ -- Today, McDonald's Board of Directors declared a quarterly cash dividend of $1.93 per share of common stock, a 4% increase over the Company's previous quarterly dividend. The dividend is payable on December 15, 2026 to shareholders of record at the close of business on December 1, 2026.</p>", '2026-09-17T21:00:00Z'],
+      ['LUV', '<p>DALLAS, July 30, 2026 /PRNewswire/ -- Southwest Airlines Co. (NYSE: LUV) Board of Directors declared a quarterly cash dividend of $.18 per share to Shareholders of record at the close of business on September 3, 2026, on all shares then issued and outstanding. The quarterly dividend will be paid on September 24, 2026.</p>', '2026-07-30T15:11:00Z'],
+    ];
+    for (const [symbol, html, publishedAt] of cases) {
+      const reading = read(symbol, html, publishedAt);
+      assert.deepEqual(reading.refused, [], symbol);
+      assert.equal(reading.declarations.length, 1, `${symbol} ${publishedAt}`);
+      const [found] = reading.declarations;
+      const registered = DIVIDEND_DECLARATIONS_V1.find((row) => row.symbol === symbol && row.payDate === found!.payDate);
+      assert.ok(registered, `${symbol} ${found!.payDate}`);
+      assert.deepEqual(
+        [found!.amountPerShare, found!.recordDate, found!.payDate, found!.exDate, found!.declaredOn],
+        [registered.amountPerShare, registered.recordDate, registered.payDate, registered.exDate, registered.declaredOn],
+        `${symbol} ${found!.payDate}`,
+      );
+    }
+    // Hershey's Common Stock, never the Class B beside it; Southwest's "$.18" is eighteen cents.
+    assert.equal(read('HSY', cases[1]![1], cases[1]![2]).declarations[0]!.amountPerShare, '1.452');
+    assert.equal(read('LUV', cases[5]![1], cases[5]![2]).declarations[0]!.amountPerShare, '0.18');
+    // The feed is shared with Meta, so a title decides whose release a page is.
+    const titles: Array<[string, string, boolean]> = [
+      ['MCD', "McDONALD'S MARKS 50 CONSECUTIVE YEARS OF DIVIDEND INCREASES, JOINING THE RANKS OF DIVIDEND KINGS", true],
+      ['MCD', "McDONALD'S ANNOUNCES QUARTERLY CASH DIVIDEND", true],
+      ['MCD', "McDONALD'S REPORTS THIRD QUARTER 2026 RESULTS", false],
+      ['HSY', 'Hershey Declares Quarterly Dividends', true],
+      ['LLY', 'Lilly declares fourth-quarter 2026 dividend', true],
+      ['LUV', 'SOUTHWEST AIRLINES DECLARES 190th QUARTERLY DIVIDEND', true],
+      ['LUV', 'Southwest Gas Holdings Declares Fourth Quarter 2026 Dividend', false],
+    ];
+    for (const [symbol, title, matches] of titles) assert.equal(issuer(symbol).feed!.title.test(title), matches, title);
+  });
+
   test('a reworded release is nothing, and an impossible one is refused', () => {
     // A sentence the pattern was not written for: no guess at all.
     assert.deepEqual(read('AAPL', '<p>Apple declared a dividend of $0.28 per share, paid in November.</p>'), {

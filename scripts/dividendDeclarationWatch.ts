@@ -21,11 +21,11 @@ import type {
 // New dividend declarations, read from the companies' own releases.
 //
 // EDGAR for the companies that file the declaration with an 8-K (Apple,
-// Alphabet, NVIDIA, and since 2026-10-19 twelve more), Microsoft's newsroom
-// and PR Newswire for the two that announce it in a standalone release
-// (Microsoft, Meta). Only a release from the last three days is read, so a
-// pass is a few requests: the submissions list per company and one feed each,
-// then only what is new.
+// Alphabet, NVIDIA, and since 2026-10-19 thirteen more), Microsoft's newsroom,
+// and PR Newswire's dividends feed for those that announce it there (Meta,
+// and since 2026-10-19 McDonald's, Hershey, Lilly and Southwest). Only a
+// release from the last three days is read, so a pass is a few requests: the
+// submissions list per company and each feed once, then only what is new.
 //
 // A declaration the registry already names is left to the registry. A new one
 // is stored (migration 0076) and becomes a signal per Coinbase token of that
@@ -122,9 +122,14 @@ function tagV1(item: string, name: string): string | null {
 }
 
 /** The company's own release, found by its title in a feed. */
-async function feedReleasesV1(fetch: DividendFetchV1, issuer: DividendIssuerV1, now: Date): Promise<DividendReleaseV1[]> {
+async function feedReleasesV1(
+  fetch: DividendFetchV1,
+  issuer: DividendIssuerV1,
+  now: Date,
+  feedText: (url: string) => Promise<string>,
+): Promise<DividendReleaseV1[]> {
   const feed = issuer.feed!;
-  const xml = await textOfV1(fetch, feed.url, false);
+  const xml = await feedText(feed.url);
   const releases: DividendReleaseV1[] = [];
   for (const [, item] of xml.matchAll(/<item>([\s\S]*?)<\/item>/gi)) {
     const title = releaseTextV1(tagV1(item!, 'title') ?? '');
@@ -151,8 +156,9 @@ function filingOfV1(release: DividendReleaseV1): string {
 /** A sentence that reads like a declaration, other than one restating a
  * declaration already made: Kohl's results 8-K says "As previously
  * announced, on August 18, 2026, the Board … declared …" a week after the
- * release that was read. */
-const DECLARATION_LIKE_V1 = /(?:^|[.!?]\s)(?!As previously (?:announced|reported|disclosed))[^.]{0,200}?declared[^.]{0,120}dividend of \$\d/i;
+ * release that was read. "Announced … dividends of" is Hershey's wording. */
+const DECLARATION_LIKE_V1 =
+  /(?:^|[.!?]\s)(?!As previously (?:announced|reported|disclosed))[^.]{0,200}?(?:declared|announced)[^.]{0,120}dividends? of \$\.?\d/i;
 
 export interface DividendWatchPassV1 {
   releasesRead: number;
@@ -199,11 +205,17 @@ export async function runDividendDeclarationWatchV1(deps: {
   pass.openedWatch = watch?.openedNow ?? false;
   const watchingSince = Date.parse(watch?.watchingSince ?? nowIso);
 
+  // One read of a feed per pass, however many companies come through it.
+  const feeds = new Map<string, Promise<string>>();
+  const feedText = (url: string): Promise<string> => {
+    if (!feeds.has(url)) feeds.set(url, textOfV1(deps.fetch, url, false));
+    return feeds.get(url)!;
+  };
   const releases: DividendReleaseV1[] = [];
   for (const issuer of issuers) {
     for (const [source, read] of [
       ['sec', issuer.cik ? () => secReleasesV1(deps.fetch, issuer, deps.now) : null],
-      ['feed', issuer.feed ? () => feedReleasesV1(deps.fetch, issuer, deps.now) : null],
+      ['feed', issuer.feed ? () => feedReleasesV1(deps.fetch, issuer, deps.now, feedText) : null],
     ] as const) {
       if (!read) continue;
       try {

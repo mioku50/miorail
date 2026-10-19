@@ -243,6 +243,20 @@ describe('new dividend declarations, from the companies’ own releases', () => 
     assert.deepEqual([kohls.found, kohls.unmatched], [0, []]);
   });
 
+  test('a feed is read once a pass, however many companies come through it', async () => {
+    const web = webV1(pagesV1());
+    await runDividendDeclarationWatchV1({
+      fetch: web.fetch,
+      now: new Date('2026-10-30T02:00:00Z'),
+      declarations: new InMemoryDividendDeclarationRepositoryV1(),
+      signals: createMemoryRwaSignalRepository(),
+      tokensOf,
+    });
+    const feed = 'https://www.prnewswire.com/rss/financial-services-latest-news/dividends-list.rss';
+    assert.ok(DIVIDEND_ISSUERS_V1.filter((issuer) => issuer.feed?.url === feed).length >= 5);
+    assert.equal(web.asked.filter((request) => request.url === feed).length, 1);
+  });
+
   test('a release dated a few minutes ahead of our clock is read as published now', async () => {
     const declarations = new InMemoryDividendDeclarationRepositoryV1();
     const pass = await runDividendDeclarationWatchV1({

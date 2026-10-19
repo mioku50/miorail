@@ -58,10 +58,12 @@ describe('the declarations are the companies’ own words', () => {
   test('every amount and date appears in the sentence it was read from', () => {
     for (const declaration of DIVIDEND_DECLARATIONS_V1) {
       const label = `${declaration.symbol} ${declaration.payDate}`;
-      // "per share", or "per common share" as Philip Morris writes it.
+      // "per share"; "per common share" (Philip Morris); "on the Common Stock"
+      // (Hershey); and "$.18", without its zero (Southwest).
+      const amounts = [declaration.amountPerShare, declaration.amountPerShare.replace(/^0\./, '.')];
       assert.ok(
-        [`$${declaration.amountPerShare} per share`, `$${declaration.amountPerShare} per common share`].some((s) =>
-          declaration.source.quote.includes(s),
+        amounts.some((amount) =>
+          [' per share', ' per common share', ' on the Common Stock'].some((unit) => declaration.source.quote.includes(`$${amount}${unit}`)),
         ),
         `${label}: amount`,
       );

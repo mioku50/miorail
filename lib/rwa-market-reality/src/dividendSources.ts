@@ -31,7 +31,8 @@ export interface DividendIssuerV1 {
 const MONTH_V1 =
   '(?:January|February|March|April|May|June|July|August|September|October|November|December|Jan\\.|Feb\\.|Mar\\.|Apr\\.|Aug\\.|Sept\\.|Sep\\.|Oct\\.|Nov\\.|Dec\\.)';
 const DATE_V1 = `${MONTH_V1} \\d{1,2}, \\d{4}`;
-const AMOUNT_V1 = '\\$(?<amount>\\d+\\.\\d{2,4})';
+// Southwest writes eighteen cents as "$.18".
+const AMOUNT_V1 = '\\$(?<amount>\\d*\\.\\d{2,4})';
 
 function patternV1(source: string): RegExp {
   return new RegExp(source.replaceAll('DATE', DATE_V1).replaceAll('AMOUNT', AMOUNT_V1));
@@ -294,6 +295,98 @@ export const DIVIDEND_ISSUERS_V1: readonly DividendIssuerV1[] = [
         'authorized and declared a quarterly dividend of AMOUNT per share of common stock, resulting in a total dividend of approximately \\$[\\d.]+ (?:million|billion)\\. This dividend will be paid on (?<pay>DATE),? to stockholders of record as of (?<record>DATE)\\.',
       ),
     ],
+  },  // 2026-10-19, second: Cheesecake Factory, whose results 8-K declares it,
+  // and four that announce it on PR Newswire, read from the dividends feed
+  // Meta's release already comes through.
+  {
+    underlyingKey: 'security:isin:US1630721017',
+    symbol: 'CAKE',
+    company: 'The Cheesecake Factory',
+    cik: '887596',
+    feed: null,
+    filer: 'The Cheesecake Factory Incorporated, Form 8-K',
+    patterns: [
+      patternV1(
+        "declared a quarterly cash dividend of AMOUNT per share,? which will be paid on (?<pay>DATE),? to the stockholders of record of each share of the Company's common stock at the close of business on (?<record>DATE)\\.",
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US4278661081',
+    symbol: 'HSY',
+    company: 'Hershey',
+    cik: null,
+    feed: {
+      kind: 'press_wire',
+      url: 'https://www.prnewswire.com/rss/financial-services-latest-news/dividends-list.rss',
+      title: /^Hershey (?:Declares|Raises) Quarterly Dividends?$/i,
+      publisher: 'The Hershey Company, press release via PR Newswire',
+    },
+    filer: null,
+    patterns: [
+      // The Common Stock's dividend, never the Class B one beside it.
+      patternV1(
+        'announced quarterly dividends of AMOUNT on the Common Stock and \\$\\d+\\.\\d{2,4} on the Class B Common Stock\\. The dividends were declared DATE, and are payable (?<pay>DATE),? to stockholders of record as of (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US5324571083',
+    symbol: 'LLY',
+    company: 'Lilly',
+    cik: null,
+    feed: {
+      kind: 'press_wire',
+      url: 'https://www.prnewswire.com/rss/financial-services-latest-news/dividends-list.rss',
+      title: /^Lilly declares (?:first|second|third|fourth)-quarter \d{4} dividend$/i,
+      publisher: 'Eli Lilly and Company, press release via PR Newswire',
+    },
+    filer: null,
+    patterns: [
+      patternV1(
+        'has declared a dividend for the (?:first|second|third|fourth) quarter of \\d{4} of AMOUNT per share on outstanding common stock\\. The dividend is payable on (?<pay>DATE),? to shareholders of record at the close of business on (?<record>DATE)\\.',
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US5801351017',
+    symbol: 'MCD',
+    company: "McDonald's",
+    cik: null,
+    feed: {
+      kind: 'press_wire',
+      url: 'https://www.prnewswire.com/rss/financial-services-latest-news/dividends-list.rss',
+      title: /^McDonald's\b.*\bdividends?\b/i,
+      publisher: "McDonald's Corporation, press release via PR Newswire",
+    },
+    filer: null,
+    patterns: [
+      patternV1(
+        'declared a quarterly cash dividend of AMOUNT per share of common stock payable on (?<pay>DATE),? to shareholders of record at the close of business on (?<record>DATE)\\.',
+      ),
+      // The September release that raises it.
+      patternV1(
+        "declared a quarterly cash dividend of AMOUNT per share of common stock, a \\d+% increase over the Company's previous quarterly dividend\\. The dividend is payable on (?<pay>DATE),? to shareholders of record at the close of business on (?<record>DATE)\\.",
+      ),
+    ],
+  },
+  {
+    underlyingKey: 'security:isin:US8447411088',
+    symbol: 'LUV',
+    company: 'Southwest Airlines',
+    cik: null,
+    feed: {
+      kind: 'press_wire',
+      url: 'https://www.prnewswire.com/rss/financial-services-latest-news/dividends-list.rss',
+      title: /^Southwest Airlines Declares \d+(?:st|nd|rd|th) Quarterly Dividend$/i,
+      publisher: 'Southwest Airlines Co., press release via PR Newswire',
+    },
+    filer: null,
+    patterns: [
+      patternV1(
+        'declared a quarterly cash dividend of AMOUNT per share to Shareholders of record at the close of business on (?<record>DATE),? on all shares then issued and outstanding\\. The quarterly dividend will be paid on (?<pay>DATE)\\.',
+      ),
+    ],
   },
 ];
 
@@ -380,7 +473,7 @@ export function readDividendReleaseV1(input: {
   for (const pattern of input.issuer.patterns) {
     for (const match of input.text.matchAll(new RegExp(pattern.source, 'g'))) {
       const groups = match.groups ?? {};
-      const amount = groups.amount ?? '';
+      const amount = (groups.amount ?? '').replace(/^\./, '0.');
       const payDate = usDateV1(groups.pay ?? '');
       const recordDate = usDateV1(groups.record ?? '');
       const exDate = groups.ex ? usDateV1(groups.ex) : null;
