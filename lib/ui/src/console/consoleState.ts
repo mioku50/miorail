@@ -694,6 +694,13 @@ export interface RouteProofSourceV1 {
 export interface RouteProofViewV1 {
   /** Null when the chain's answer cannot be read, never a guess. */
   actualOutputDecimal: string | null;
+  /**
+   * What the approved Blueprint promised: the figure the difference is
+   * measured from. Not the route card's quote, which prepare re-quotes — on
+   * 2026-10-19 the screen showed the card's 0.08022226 as Expected above a
+   * difference computed from the Blueprint's 0.08022194.
+   */
+  expectedOutputDecimal: string | null;
   /** Why it is null — a sentence, shown where the number would be. */
   actualOutputReason: string;
   statusLabel: string;
@@ -730,6 +737,7 @@ export function routeProofViewV1(proof: RouteProofSourceV1): RouteProofViewV1 {
     proof.finalStatus === 'completed' ? 'g' : proof.finalStatus === 'failed' ? 'a' : 'n';
   return {
     actualOutputDecimal,
+    expectedOutputDecimal: atomicToDecimalV1(proof.expectedOutput.amountAtomic, proof.expectedOutput.asset.decimals),
     // A native output emits no ERC-20 Transfer log, so there is nothing to read
     // and Miorail declines to invent a figure. That is a different statement
     // from "we tried and failed", and the screen must not blur them.

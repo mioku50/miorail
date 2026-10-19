@@ -224,6 +224,14 @@ describe('api-client-react', () => {
     assert.equal(apiClient.freshestRouteProofV1(polled, later), later, 'between two pending readings, the later write');
     assert.equal(apiClient.freshestRouteProofV1(null, polled), polled);
     assert.equal(apiClient.freshestRouteProofV1(undefined, undefined), null);
+
+    // The mutation keeps the last swap's answer after a new goal starts.
+    const answer = { proof: { proofId: 'route-proof:first' } };
+    assert.equal(apiClient.reconcileAnswerForV1(answer, 'route-proof:first'), answer);
+    assert.equal(apiClient.reconcileAnswerForV1(answer, 'route-proof:second'), undefined);
+    assert.equal(apiClient.reconcileAnswerForV1(answer, null), undefined);
+    assert.match(source, /reconcileAnswerForV1\(reconcile\.data,\s*proofId\)/, 'every reading of the answer goes through the id check');
+    assert.doesNotMatch(source, /reconcile\.data\?\.(proof|lifecycle|outcome)/, 'nothing reads the answer unchecked');
   });
 
   it('T60 Intelligence Budget hooks are all exported', () => {

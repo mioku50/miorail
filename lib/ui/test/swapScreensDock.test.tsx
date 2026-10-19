@@ -11,7 +11,9 @@ import {
   type RouteScreenModelV1,
 } from '../src/console/ConsoleScreens';
 import { B20ControlSection, b20ControlSummaryV1, type B20CardLikeV1, type B20WatchLikeV1 } from '../src/console/B20Panels';
-import { ActivityProofCard, ActivityRunsCard, mergeActivityRunsV1, type ActivityRunRowV1 } from '../src/console/ActivityPanels';
+import { ActivityProofCard, ActivityRunsCard, activeSessionTagV1, mergeActivityRunsV1, type ActivityRunRowV1 } from '../src/console/ActivityPanels';
+import { routeProofViewV1 } from '../src/console/consoleState';
+import { proofOutputDifferenceV1 } from '../src/console/proofFigures';
 import { reviewBalanceViewV1, reviewCallRowsV1 } from '../src/console/giftView';
 
 void React;
@@ -298,5 +300,52 @@ describe('Activity opens a proof where it was asked for', () => {
     };
     assert.match(renderToStaticMarkup(<ProofScreen {...base} onExport={null} />), /<button type="button" class="btn sec" disabled="">Export proof<\/button>/);
     assert.match(renderToStaticMarkup(<ProofScreen {...base} onExport={() => undefined} />), /<button type="button" class="btn sec">Export proof<\/button>/);
+  });
+});
+
+// The operator's next trade, 2026-10-19 15:42 UTC: sponsored, exported, and
+// two lines of its proof screen still disagreed with the record beside them.
+describe('the proof reads one record', () => {
+  const proof = {
+    proofId: 'route-proof:dd8872cb0212',
+    finalStatus: 'completed' as const,
+    actualOutput: '8022103',
+    actualOutputUnavailableReason: null,
+    expectedOutput: { amountAtomic: '8022194', asset: { symbol: 'SONYc', decimals: 8 } },
+    actualGas: { gasUnits: '496278' },
+    receipts: [{ blockNumber: '52817607' }],
+  };
+
+  test('Expected is the figure the difference is measured from', () => {
+    // The route card had quoted 0.08022226; prepare re-quoted 0.08022194, and
+    // that is what was approved and what the difference used.
+    const view = routeProofViewV1(proof);
+    assert.equal(view.expectedOutputDecimal, '0.08022194');
+    assert.equal(view.actualOutputDecimal, '0.08022103');
+    const { difference } = proofOutputDifferenceV1({
+      expectedAtomic: proof.expectedOutput.amountAtomic,
+      actualAtomic: proof.actualOutput,
+      decimals: 8,
+      symbol: 'SONYc',
+      minimumSatisfied: true,
+    });
+    assert.equal(difference, '−0.00000091 SONYc (−0.0011%) · within your slippage');
+    // The shown figure IS the one measured from, digit for digit.
+    assert.equal(view.expectedOutputDecimal!.replace('.', '').replace(/^0+/, ''), proof.expectedOutput.amountAtomic);
+  });
+
+  test('the open goal reads as far as it got, not "ready" beside its own completed proof', () => {
+    assert.deepEqual(activeSessionTagV1({ planOutcome: 'ready' }), { label: 'ready', tone: 'b' });
+    assert.deepEqual(activeSessionTagV1({ planOutcome: 'ready', submissionStatus: 'submitting' }), { label: 'in your wallet', tone: 'n' });
+    assert.deepEqual(activeSessionTagV1({ planOutcome: 'ready', submissionStatus: 'confirmed' }), { label: 'pending', tone: 'n' });
+    assert.deepEqual(
+      activeSessionTagV1({ planOutcome: 'ready', submissionStatus: 'confirmed', proofFinalStatus: 'completed' }),
+      { label: 'completed', tone: 'g' },
+    );
+    assert.deepEqual(activeSessionTagV1({ planOutcome: 'ready', submissionStatus: 'cancelled' }), { label: 'cancelled', tone: 'n' });
+    assert.deepEqual(
+      activeSessionTagV1({ planOutcome: 'ready', proofFinalStatus: 'reconciliation_required' }),
+      { label: 'needs review', tone: 'n' },
+    );
   });
 });

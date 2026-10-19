@@ -174,6 +174,37 @@ export function activityProofItemsV1(
     });
 }
 
+/**
+ * The open goal's tag on the left rail: how far the goal has got. It used to
+ * be the comparison's outcome alone, so on 2026-10-19 a swap whose proof read
+ * "completed" in Recent proofs still read "ready" one line above it. The
+ * proof's status wins, then the wallet's, then the comparison's.
+ */
+export function activeSessionTagV1(input: {
+  planOutcome: string;
+  submissionStatus?: string | null;
+  proofFinalStatus?: string | null;
+}): { label: string; tone: 'b' | 'g' | 'n' } {
+  const proof = input.proofFinalStatus;
+  if (proof) return { label: ACTIVITY_PROOF_TAG_LABELS_V1[proof] ?? proof.replace(/_/g, ' '), tone: proof === 'completed' ? 'g' : 'n' };
+  switch (input.submissionStatus) {
+    case 'approving':
+    case 'submitting':
+      return { label: 'in your wallet', tone: 'n' };
+    case 'submitted':
+    case 'confirmed':
+    case 'submitted_unknown':
+      return { label: 'pending', tone: 'n' };
+    case 'failed':
+    case 'cancelled':
+    case 'expired':
+    case 'blocked':
+      return { label: input.submissionStatus, tone: 'n' };
+    default:
+      return { label: input.planOutcome, tone: input.planOutcome === 'ready' ? 'b' : 'n' };
+  }
+}
+
 /** True while a run has not reached a wallet. Most of them, today. */
 export function activityRunUnsignedV1(runStatus: string): boolean {
   return [

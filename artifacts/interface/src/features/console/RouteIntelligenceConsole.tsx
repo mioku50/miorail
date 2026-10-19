@@ -90,6 +90,7 @@ import {
   AiReviewPanel,
   AiResultPanel,
   AiProofPanel,
+  activeSessionTagV1,
   activityProofCountV1,
   activityProofItemsV1,
   activityBaseScanTxUrlV1,
@@ -372,6 +373,12 @@ export function RouteIntelligenceConsole() {
     recommended ?? (projection?.availableRoutes.length === 1 ? projection.availableRoutes[0]! : null);
   const goalLabel = projection?.goalSummary ?? (goal.trim() || 'New goal');
   const prepared = prepare.data?.outcome === 'prepared' ? prepare.data : null;
+  // The route the Blueprint was prepared from, which a person may have picked
+  // over the recommended one: its router is the approval's spender, and it is
+  // the route the proof records.
+  const preparedRoute = prepared
+    ? (projection?.availableRoutes.find((entry) => entry.candidateHash === prepared.blueprint.selectedCandidateHash) ?? null)
+    : null;
 
   const dispatch = useMemo(
     () =>
@@ -1053,7 +1060,11 @@ export function RouteIntelligenceConsole() {
         {
           id: 'active',
           title: goalLabel,
-          tag: { label: projection.outcome, tone: projection.outcome === 'ready' ? 'b' : 'n' },
+          tag: activeSessionTagV1({
+            planOutcome: projection.outcome,
+            submissionStatus: submission?.status ?? null,
+            proofFinalStatus: reconciliation.proof?.finalStatus ?? null,
+          }),
           meta: `${projection.availableRoutes.length} route${projection.availableRoutes.length === 1 ? '' : 's'}`,
           active: true,
         },
@@ -1492,12 +1503,7 @@ export function RouteIntelligenceConsole() {
       expectedChanges: prepared?.blueprint.expectedAssetChanges ?? [],
       simulationAvailable: simulation.available,
     });
-    // The route the Blueprint was prepared from, which a person may have
-    // picked over the recommended one; its router is the approval's spender.
-    const preparedProvider = prepared
-      ? (projection?.availableRoutes.find((entry) => entry.candidateHash === prepared.blueprint.selectedCandidateHash)
-          ?.provider.displayName ?? null)
-      : null;
+    const preparedProvider = preparedRoute?.provider.displayName ?? null;
 
     content = (
       <>
@@ -1814,11 +1820,13 @@ export function RouteIntelligenceConsole() {
           ...(proof ? [{ title: 'Reconciled onchain', detail: `block ${proofView!.blockNumber ?? '—'}`, done: true }] : []),
         ]}
         planVsActual={
-          proof && recommended
+          proof
             ? [
                 {
                   label: 'Output',
-                  expected: `${recommended.expectedOutput.amountDecimal} ${recommended.expectedOutput.asset.symbol}`,
+                  expected: proofView!.expectedOutputDecimal
+                    ? `${proofView!.expectedOutputDecimal} ${proof.expectedOutput.asset.symbol}`
+                    : '—',
                   actual: proofView!.actualOutputDecimal
                     ? `${proofView!.actualOutputDecimal} ${proof.expectedOutput.asset.symbol}`
                     : 'not verifiable',
@@ -1839,7 +1847,7 @@ export function RouteIntelligenceConsole() {
             ? [
                 { label: 'Proof id', value: proof.proofId },
                 { label: 'Transactions', value: (proof.transactionHashes.length ? proof.transactionHashes : submission?.txHashes ?? []).join(', ') || '—' },
-                { label: 'Route chosen', value: recommended?.provider.displayName ?? '—' },
+                { label: 'Route chosen', value: (preparedRoute ?? recommended)?.provider.displayName ?? proof.provider ?? '—' },
                 { label: 'Not scored', value: 'MEV protection — no approved source connected', dim: true },
               ]
             : [

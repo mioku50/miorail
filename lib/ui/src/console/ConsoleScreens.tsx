@@ -1332,7 +1332,9 @@ type EvidenceFeedEntryV1 = RightRailModelV1['evidenceFeed'][number];
  * line. Mid-purchase on 2026-10-19 this panel read "Aerodrome RPC unavailable",
  * "Balancer no route", "o1.exchange preflight failed", "MEV feed no source" —
  * accurate, and alarming to someone about to sign. The fold says how many and
- * keeps every line one click away.
+ * keeps every line one click away. Its line first said they "did not answer",
+ * which was true of one: Balancer answered "no route", o1.exchange was refused
+ * by our own router check, and the MEV feed has no source to ask.
  */
 function EvidenceFeed({ entries }: { entries: readonly EvidenceFeedEntryV1[] }) {
   const row = (entry: EvidenceFeedEntryV1) => (
@@ -1351,7 +1353,7 @@ function EvidenceFeed({ entries }: { entries: readonly EvidenceFeedEntryV1[] }) 
       {silent.length > 0 && (
         <details className="mcp-tech">
           <summary>
-            {silent.length} {silent.length === 1 ? 'source' : 'sources'} did not answer for this goal
+            {silent.length} {silent.length === 1 ? 'source' : 'sources'} gave no evidence for this goal
           </summary>
           <ul className="feed">{silent.map(row)}</ul>
         </details>

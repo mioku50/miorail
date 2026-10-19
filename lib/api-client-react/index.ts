@@ -3312,6 +3312,18 @@ export function freshestRouteProofV1<T extends { finalStatus: string; updatedAt:
   return Date.parse(reconciled.updatedAt) > Date.parse(polled.updatedAt) ? reconciled : polled;
 }
 
+/**
+ * The reconcile answer, only while it is about the proof being watched. A
+ * mutation keeps its last answer after the proof id changes, so without this
+ * the next goal would read the previous swap's proof as its own.
+ */
+export function reconcileAnswerForV1<T extends { proof: { proofId: string } }>(
+  answer: T | null | undefined,
+  proofId: string | null,
+): T | undefined {
+  return answer && proofId && answer.proof.proofId === proofId ? answer : undefined;
+}
+
 export interface UseBoundedProofReconciliationArgs {
   proofId: string | null;
   routeRunId: string | null;
@@ -3370,7 +3382,8 @@ export function useBoundedProofReconciliation({
   const polledStatus = query.data?.proof.finalStatus ?? null;
   const retriedAtRef = useRef<string | null>(null);
   const reconciling = reconcile.isPending;
-  const reconciledSettled = isTerminalProofFinalStatus(reconcile.data?.proof.finalStatus);
+  const answer = active ? reconcileAnswerForV1(reconcile.data, proofId) : undefined;
+  const reconciledSettled = isTerminalProofFinalStatus(answer?.proof.finalStatus);
   useEffect(() => {
     // Never two at once (both would append the same event to the proof), and
     // never after a reconcile has already settled it.
@@ -3383,8 +3396,8 @@ export function useBoundedProofReconciliation({
     reconcileMutate({ proofId, routeRunId, walletAddress });
   }, [active, answeredAt, polledStatus, reconciling, reconciledSettled, proofId, routeRunId, walletAddress, reconcileMutate, queryClient]);
 
-  const proof = freshestRouteProofV1(query.data?.proof, reconcile.data?.proof);
-  const reconciledShown = proof !== null && proof === reconcile.data?.proof && proof !== query.data?.proof;
+  const proof = freshestRouteProofV1(query.data?.proof, answer?.proof);
+  const reconciledShown = proof !== null && proof === answer?.proof && proof !== query.data?.proof;
 
   // "Recent proofs" reads the route history once per visit, so on 2026-10-19
   // a swap that had just completed was missing from it. A proof that opens or
@@ -3397,9 +3410,9 @@ export function useBoundedProofReconciliation({
 
   return {
     proof,
-    lifecycle: (reconciledShown ? reconcile.data?.lifecycle : query.data?.lifecycle) ?? reconcile.data?.lifecycle ?? null,
+    lifecycle: (reconciledShown ? answer?.lifecycle : query.data?.lifecycle) ?? answer?.lifecycle ?? null,
     events: query.data?.events ?? [],
-    outcome: reconcile.data?.outcome ?? null,
+    outcome: answer?.outcome ?? null,
     isLoading: active && query.isPending && reconcile.isPending,
     error: (query.error ?? reconcile.error) as Error | null,
   };

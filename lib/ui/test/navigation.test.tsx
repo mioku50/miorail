@@ -582,7 +582,7 @@ describe('§9.12 — the empty right rail is one block, not five', () => {
     assert.ok(!markup.includes(CONSOLE_NO_ANALYSIS_TITLE_V1));
   });
 
-  test('sources that did not answer fold into one line; the ones that did stay in view', () => {
+  test('sources that gave nothing fold into one line; the ones that did stay in view', () => {
     // Mid-purchase on 2026-10-19 the stream was four lines of failures.
     const off = (id: string, source: string, text: string) => ({ id, time: '—', source, text, available: false });
     const markup = renderToStaticMarkup(
@@ -603,7 +603,8 @@ describe('§9.12 — the empty right rail is one block, not five', () => {
       />,
     );
     const answered = markup.indexOf('KyberSwap');
-    const fold = markup.indexOf('<details class="mcp-tech"><summary>4 sources did not answer for this goal</summary>');
+    // Not "did not answer": of these four, only Aerodrome was not reached.
+    const fold = markup.indexOf('<details class="mcp-tech"><summary>4 sources gave no evidence for this goal</summary>');
     assert.ok(answered > 0 && fold > answered, 'the answering source leads, the fold follows');
     // Folded, not hidden: every line is still in the page.
     for (const source of ['Aerodrome', 'Balancer', 'o1.exchange', 'MEV feed']) assert.ok(markup.indexOf(source) > fold);

@@ -2065,11 +2065,13 @@ export function MiniConsole() {
           <div className="pb tight">
             <PlanVsActualCards
               rows={
-                proof && recommended && proofFee
+                proof && proofFee
                   ? [
                       {
                         label: "Output",
-                        expected: `${recommended.expectedOutput.amountDecimal} ${recommended.expectedOutput.asset.symbol}`,
+                        expected: proofView!.expectedOutputDecimal
+                          ? `${proofView!.expectedOutputDecimal} ${proof.expectedOutput.asset.symbol}`
+                          : "—",
                         actual: proofView!.actualOutputDecimal
                           ? `${proofView!.actualOutputDecimal} ${proof.expectedOutput.asset.symbol}`
                           : proofView!.actualOutputReason,
