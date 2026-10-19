@@ -249,6 +249,23 @@ describe('the console is Base MCP and nothing else', () => {
     assert.match(extra, /no access to Miorail route intelligence/i);
     assert.match(extra, /Route Card/);
   });
+
+  test('the model reads Base only, points a send at the send line, and writes no Markdown', async () => {
+    // 2026-10-19: «Sent 0.0001 eth to 0x…» reached the model, which searched
+    // other chains, spent all eight calls and answered with "**read-only
+    // mode**" printed as literal asterisks.
+    let config: Record<string, unknown> = {};
+    stubTools(BASE_MCP_INVENTORY);
+    stubAgent([{ type: 'message', content: 'ok' }], (captured) => {
+      config = captured;
+    });
+    await ask();
+    const extra = (config.systemPromptExtra as string[]).join(' ');
+    assert.match(extra, /reads Base mainnet only/i);
+    assert.match(extra, /Never query or report another chain/i);
+    assert.match(extra, /Send 0\.001 ETH to 0x…/);
+    assert.match(extra, /no Markdown/i);
+  });
 });
 
 describe('no tools means no answer, not an answer from memory', () => {

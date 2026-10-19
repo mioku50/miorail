@@ -16,12 +16,14 @@ export type BaseMcpActionReconciliationStateV1 =
   | 'mismatched'
   | 'unavailable';
 
+/** ETH is the chain's own asset: no contract, so no address. A USDC intent
+ * keeps the shape it was first hashed with. */
+export type BaseMcpSendAssetV1 =
+  | { symbol: 'USDC'; address: `0x${string}`; decimals: 6 }
+  | { symbol: 'ETH'; address: null; decimals: 18 };
+
 export interface BaseMcpSendActionIntentV1 {
-  asset: {
-    symbol: 'USDC';
-    address: `0x${string}`;
-    decimals: 6;
-  };
+  asset: BaseMcpSendAssetV1;
   amount: string;
   amountAtomic: string;
   recipient: `0x${string}`;
@@ -640,6 +642,6 @@ export function publicBaseMcpActionReceiptV1(receipt: StoredBaseMcpActionReceipt
     amount: intent.amount,
     recipient: intent.recipient,
     recipientName: intent.recipientName ?? null,
-    reconciliationBasis: 'erc20_transfer_event',
+    reconciliationBasis: intent.asset.symbol === 'ETH' ? 'native_value_call' : 'erc20_transfer_event',
   });
 }

@@ -2,6 +2,7 @@ import type { BaseMcpCallsV1 } from "./pool.js";
 import { validateBaseCalls } from "@mioagent/security/baseGuards";
 import { validateAerodromeClaimCallsV1 } from '@mioagent/security/aerodromeClaimGuard';
 import { validateUniswapCollectCallsV1 } from '@mioagent/security/uniswapCollectGuard';
+import { validateNativeSendCallsV1 } from '@mioagent/security/nativeSendGuard';
 
 export interface SendCallsResponse {
   approvalUrl: string;
@@ -23,6 +24,17 @@ export class McpSendCallsClient {
   async sendUniswapCollectCalls(wallet: string, calls: { to: string; value: string; data: string }[]): Promise<SendCallsResponse> {
     validateUniswapCollectCallsV1(wallet, calls);
     const result = await this.client.getClient().callTool({ name: 'send_calls', arguments: { chain: 'base', calls } });
+    return this.approvalResponse(result);
+  }
+
+  /** Closed transport for one ETH send. The amount arrives as decimal wei and
+   * leaves as the hex quantity `send_calls` reads; no other call rides along. */
+  async sendNativeTransferCalls(wallet: string, calls: { to: string; value: string; data: string }[]): Promise<SendCallsResponse> {
+    validateNativeSendCallsV1(wallet, calls);
+    const [call] = calls;
+    const result = await this.client.getClient().callTool({ name: 'send_calls', arguments: { chain: 'base', calls: [
+      { to: call!.to, value: `0x${BigInt(call!.value).toString(16)}`, data: '0x' },
+    ] } });
     return this.approvalResponse(result);
   }
 

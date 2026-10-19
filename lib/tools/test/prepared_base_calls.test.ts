@@ -40,3 +40,27 @@ test('a bound Uniswap collect has its own tool, its own guard and its own closed
     calls: [{ to: collect.to, value: '0', data: '0xd294f093' }] }));
   assert.throws(() => new PreparedBaseClaimToolProviderV1({} as any, { actionType: 'send' as any, walletAddress: wallet, calls: [collect] }));
 });
+test('a bound ETH send has its own tool and transport, and carries exactly the one transfer it was given', async () => {
+  const wallet = '0x1111111111111111111111111111111111111111';
+  const transfer = { to: '0x2222222222222222222222222222222222222222', value: '100000000000000', data: '0x' };
+  const sent: unknown[] = [];
+  const provider = new PreparedBaseClaimToolProviderV1({
+    sendNativeTransferCalls: async (_wallet: string, actual: unknown[]) => { sent.push(actual); return { approvalUrl: 'https://keys.coinbase.com/x', requestId: 'r' }; },
+    sendAerodromeClaimCalls: async () => assert.fail('a send never rides the claim transport'),
+  } as any, { actionType: 'native_send', walletAddress: wallet, calls: [transfer] });
+  assert.deepEqual((await provider.listTools()).map((tool) => tool.name), ['prepared_native_send']);
+  assert.equal((await provider.callTool('prepared_native_send', { to: wallet })).isError, true);
+  assert.equal((await provider.callTool('prepared_native_send', {})).isError, false);
+  assert.equal((await provider.callTool('prepared_native_send', {})).isError, true, 'submitted once');
+  assert.deepEqual(sent, [[transfer]]);
+  // Calldata, a second call or the wallet itself as recipient are refused at construction.
+  assert.throws(() => new PreparedBaseClaimToolProviderV1({} as any, { actionType: 'native_send', walletAddress: wallet,
+    calls: [{ ...transfer, data: '0xa9059cbb' }] }));
+  assert.throws(() => new PreparedBaseClaimToolProviderV1({} as any, { actionType: 'native_send', walletAddress: wallet,
+    calls: [transfer, transfer] }));
+  assert.throws(() => new PreparedBaseClaimToolProviderV1({} as any, { actionType: 'native_send', walletAddress: wallet,
+    calls: [{ ...transfer, to: wallet }] }));
+  // A claim still never moves ETH.
+  assert.throws(() => new PreparedBaseClaimToolProviderV1({} as any, { actionType: 'aerodrome_claim', walletAddress: wallet,
+    calls: [{ to: transfer.to, value: '1', data: '0xd294f093' }] }));
+});

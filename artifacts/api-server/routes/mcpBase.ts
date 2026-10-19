@@ -477,6 +477,7 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
           recipient: resolution.address.toLowerCase() as `0x${string}`,
           recipientName: resolution.name,
         },
+        note: decision.note,
       };
     }
     if (decision.kind === 'handoff') {
@@ -585,7 +586,7 @@ mcpBaseRouter.post('/console', async (req: Request, res: Response, next: NextFun
       });
       return res.json(BaseMcpConsoleResponseV1Schema.parse({
         status: result.kind,
-        reply: result.reply,
+        reply: [decision.note, result.reply].filter(Boolean).join(' '),
         trace: [],
         toolsAvailable: result.toolsAvailable,
         truncated: false,

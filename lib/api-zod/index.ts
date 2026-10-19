@@ -2068,18 +2068,22 @@ const BaseMcpActionReceiptCommonV1Schema = z.object({
   routeVerified: z.literal(false),
 });
 
+/** USDC is read back from its Transfer event; ETH has no token contract and
+ * emits none, so it is read from the wallet's own decoded operation. */
+export const BaseMcpSendAssetV1Schema = z.discriminatedUnion('symbol', [
+  z.object({ symbol: z.literal('USDC'), address: AddressV1Schema, decimals: z.literal(6) }),
+  z.object({ symbol: z.literal('ETH'), address: z.null(), decimals: z.literal(18) }),
+]);
+
 export const BaseMcpSendActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
   approvalRequired: z.literal(true),
   actionType: z.literal('send'),
-  asset: z.object({
-    symbol: z.literal('USDC'),
-    address: AddressV1Schema,
-    decimals: z.literal(6),
-  }),
-  amount: UsdcAmountSchema.refine((value) => Number(value) > 0, 'Amount must be positive'),
+  asset: BaseMcpSendAssetV1Schema,
+  // Bounded by the asset's own decimals in the union's refinement below.
+  amount: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d{1,18})?$/).refine((value) => /[1-9]/.test(value), 'Amount must be positive'),
   recipient: AddressV1Schema,
   recipientName: z.string().min(1).max(255).endsWith('.base.eth').nullable().default(null),
-  reconciliationBasis: z.literal('erc20_transfer_event').default('erc20_transfer_event'),
+  reconciliationBasis: z.enum(['erc20_transfer_event', 'native_value_call']).default('erc20_transfer_event'),
 });
 
 export const BaseMcpX402ActionReceiptV1Schema = BaseMcpActionReceiptCommonV1Schema.extend({
@@ -2139,6 +2143,14 @@ export const BaseMcpActionReceiptV1Schema = z.discriminatedUnion('actionType', [
   BaseMcpAerodromeClaimReceiptV1Schema,
   BaseMcpUniswapCollectReceiptV1Schema,
 ]).superRefine((receipt, context) => {
+  if (receipt.actionType === 'send') {
+    const decimals = receipt.amount.split('.')[1]?.length ?? 0;
+    const basis = receipt.asset.symbol === 'ETH' ? 'native_value_call' : 'erc20_transfer_event';
+    if (decimals > receipt.asset.decimals || receipt.reconciliationBasis !== basis) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: 'Send receipt facts must match its asset.' });
+    }
+    return;
+  }
   if (receipt.actionType !== 'virtuals') return;
   const valid = receipt.operation === 'sign_in'
     ? receipt.agentName === null && receipt.agentDescription === null && receipt.providerObjectId === null

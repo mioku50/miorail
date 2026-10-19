@@ -1,13 +1,14 @@
 import { McpSendCallsClient } from '@mioagent/mcp';
 import { validateAerodromeClaimCallsV1 } from '@mioagent/security/aerodromeClaimGuard';
 import { validateUniswapCollectCallsV1 } from '@mioagent/security/uniswapCollectGuard';
+import { validateNativeSendCallsV1 } from '@mioagent/security/nativeSendGuard';
 import type { ToolDef, ToolProvider } from './provider.js';
 
-/** Server-owned calls already validated and simulated by a claim vertical:
- * Aerodrome's claim or Uniswap's collect. Discovery grants no authority; the
- * tool accepts no caller-authored calls. */
+/** Server-owned calls already validated by a typed vertical: Aerodrome's
+ * claim or Uniswap's collect (simulated too), or one ETH send. Discovery
+ * grants no authority; the tool accepts no caller-authored calls. */
 export interface PreparedBaseClaimCallsV1 {
-  actionType: 'aerodrome_claim' | 'uniswap_collect';
+  actionType: 'aerodrome_claim' | 'uniswap_collect' | 'native_send';
   walletAddress: string;
   calls: readonly { to: string; value: string; data: string }[];
 }
@@ -24,6 +25,12 @@ const PREPARED_V1 = {
     validate: validateUniswapCollectCallsV1,
     send: (client: McpSendCallsClient, wallet: string, calls: { to: string; value: string; data: string }[]) =>
       client.sendUniswapCollectCalls(wallet, calls),
+  },
+  native_send: {
+    tool: 'prepared_native_send', description: 'Approve the exact server-prepared ETH send.',
+    validate: validateNativeSendCallsV1,
+    send: (client: McpSendCallsClient, wallet: string, calls: { to: string; value: string; data: string }[]) =>
+      client.sendNativeTransferCalls(wallet, calls),
   },
 } as const;
 
@@ -44,7 +51,10 @@ export class PreparedBaseClaimToolProviderV1 implements ToolProvider {
     this.calls = prepared.calls.map(call => ({ ...call }));
     this.wallet = prepared.walletAddress;
     this.kind.validate(this.wallet, this.calls);
-    if (this.calls.some(call => call.value !== '0')) throw new Error('base_mcp_prepared_claim_value');
+    // Only a send moves ETH, and its guard has just bounded it to one call.
+    if (prepared.actionType !== 'native_send' && this.calls.some(call => call.value !== '0')) {
+      throw new Error('base_mcp_prepared_claim_value');
+    }
   }
   async listTools(): Promise<ToolDef[]> {
     return [this.tool];

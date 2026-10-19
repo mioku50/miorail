@@ -34,6 +34,23 @@ describe("McpSendCallsClient security checks", () => {
     await assert.rejects(client.sendUniswapCollectCalls(wallet, [{ ...call, to: '0x2222222222222222222222222222222222222222' }]));
     assert.equal(sent.length, 1);
   });
+  it('sends one ETH transfer with its amount as hex wei, and nothing that carries calldata', async () => {
+    const sent: unknown[] = [];
+    const client = new McpSendCallsClient({ getClient: () => ({ callTool: async (input) => {
+      assert.equal(input.name, 'send_calls'); assert.equal(input.arguments?.chain, 'base');
+      sent.push(input.arguments?.calls);
+      return { content: [{ type: 'text', text: '{"approvalUrl":"https://keys.coinbase.com/approve/send", "requestId":"send-1"}' }] };
+    } }) });
+    const wallet = '0x1111111111111111111111111111111111111111';
+    const call = { to: '0x2222222222222222222222222222222222222222', value: '100000000000000', data: '0x' };
+    assert.equal((await client.sendNativeTransferCalls(wallet, [call])).requestId, 'send-1');
+    // 0.0001 ETH. Sent as decimal it would read as 0x100000000000000 wei.
+    assert.deepEqual(sent, [[{ to: call.to, value: '0x5af3107a4000', data: '0x' }]]);
+    await assert.rejects(client.sendNativeTransferCalls(wallet, [{ ...call, data: '0xa9059cbb' }]));
+    await assert.rejects(client.sendNativeTransferCalls(wallet, [{ ...call, to: wallet }]));
+    await assert.rejects(client.sendNativeTransferCalls(wallet, [call, call]));
+    assert.equal(sent.length, 1);
+  });
   it("should block unsupported chains", async () => {
     const mockClient = { getClient: () => ({ callTool: async () => ({ content: [] }) }) } as unknown as BaseMcpClient;
     const client = new McpSendCallsClient(mockClient);

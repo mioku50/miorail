@@ -110,6 +110,7 @@ import {
 import { watchlistCapacityV1 } from '@mioagent/rwa-dossier';
 import { client } from '@mioagent/db';
 import { stableHashV1 } from '@mioagent/route-domain';
+import type { BaseReceiptReader } from '@mioagent/route-proof';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { reconcileB20EntryFromBaseV1 } from '../lib/b20EntryChainReconciler.js';
 import {
@@ -325,7 +326,7 @@ export const b20RouteRuntime = {
     createDatabaseB20EntrySubmissionRepository(client),
   entryProofs: (): B20EntryRouteProofRepositoryV1 =>
     createDatabaseB20EntryRouteProofRepository(client),
-  receiptReader: createViemBaseReceiptReader,
+  receiptReader: createViemBaseReceiptReader as () => BaseReceiptReader,
   observations: (): B20ObservationRepositoryV1 => createDatabaseB20ObservationRepository(client),
   discover: () => createDatabaseB20DiscoverRepository(client),
   deployers: (): B20LaunchDeployerRepositoryV1 => createDatabaseB20LaunchDeployerRepository(client),

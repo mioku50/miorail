@@ -23,6 +23,7 @@ const USDC = canonicalUsdcForBaseChain(8453).toLowerCase();
 
 const original = { ...baseMcpExtensionActionRuntime };
 const originalSendMax = process.env.BASE_MCP_ACTION_SEND_MAX_USDC;
+const originalSendMaxEth = process.env.BASE_MCP_ACTION_SEND_MAX_ETH;
 const originalX402Max = process.env.BASE_MCP_ACTION_X402_MAX_USDC;
 const originalX402Hosts = process.env.BASE_MCP_ACTION_X402_ALLOWED_HOSTS;
 const originalX402Ttl = process.env.BASE_MCP_ACTION_X402_TTL_SECONDS;
@@ -31,6 +32,8 @@ afterEach(() => {
   Object.assign(baseMcpExtensionActionRuntime, original);
   if (originalSendMax === undefined) delete process.env.BASE_MCP_ACTION_SEND_MAX_USDC;
   else process.env.BASE_MCP_ACTION_SEND_MAX_USDC = originalSendMax;
+  if (originalSendMaxEth === undefined) delete process.env.BASE_MCP_ACTION_SEND_MAX_ETH;
+  else process.env.BASE_MCP_ACTION_SEND_MAX_ETH = originalSendMaxEth;
   if (originalX402Max === undefined) delete process.env.BASE_MCP_ACTION_X402_MAX_USDC;
   else process.env.BASE_MCP_ACTION_X402_MAX_USDC = originalX402Max;
   if (originalX402Hosts === undefined) delete process.env.BASE_MCP_ACTION_X402_ALLOWED_HOSTS;
@@ -287,9 +290,69 @@ describe('deterministic Base MCP Extensions intent router', () => {
     const named = classifyBaseMcpExtensionIntentV1('Send 5 USDC to alice.base.eth');
     assert.equal(named.kind, 'send_name');
     assert.equal(named.intent.recipientName, 'alice.base.eth');
-    const incomplete = classifyBaseMcpExtensionIntentV1('Send 5 ETH to alice.base.eth');
-    assert.equal(incomplete.kind, 'needs_input');
+    const ether = classifyBaseMcpExtensionIntentV1('Send 5 ETH to alice.base.eth');
+    assert.equal(ether.kind, 'send_name');
+    assert.deepEqual(ether.intent.asset, { symbol: 'ETH', address: null, decimals: 18 });
+    const unsupported = classifyBaseMcpExtensionIntentV1('Send 5 DEGEN to alice.base.eth');
+    assert.equal(unsupported.kind, 'needs_input');
     assert.equal(classifyBaseMcpExtensionIntentV1('Sign this EIP-712 message').kind, 'needs_input');
+  });
+
+  test('an ETH send is read in 18 decimals, in English or Russian', () => {
+    const english = classifyBaseMcpExtensionIntentV1(`send 0.0001 ETH to ${RECIPIENT}`);
+    assert.equal(english.kind, 'send');
+    assert.deepEqual(english.intent.asset, { symbol: 'ETH', address: null, decimals: 18 });
+    assert.equal(english.intent.amount, '0.0001');
+    assert.equal(english.intent.amountAtomic, '100000000000000');
+    assert.equal(english.note, null);
+    const russian = classifyBaseMcpExtensionIntentV1(`Отправь 0,000000000000000001 eth на ${RECIPIENT}`);
+    assert.equal(russian.kind, 'send');
+    assert.equal(russian.intent.amountAtomic, '1');
+    // The amount may touch its symbol.
+    const joined = classifyBaseMcpExtensionIntentV1(`Send 0.5ETH to ${RECIPIENT}`);
+    assert.equal(joined.kind, 'send');
+    assert.equal(joined.intent.amountAtomic, '500000000000000000');
+  });
+
+  test('"Sent" as the whole command is a send, said so; a sentence about something sent stays a question', () => {
+    // 2026-10-19 on prod: «Sent 0.0001 eth to 0x…» reached the read model,
+    // which spent its eight tool calls looking for a past transfer.
+    const typo = classifyBaseMcpExtensionIntentV1(`Sent 0.0001 eth to ${RECIPIENT}`);
+    assert.equal(typo.kind, 'send');
+    assert.equal(typo.intent.amountAtomic, '100000000000000');
+    assert.equal(typo.note, 'Read “Sent” as “Send”.');
+    for (const question of [
+      `I sent 0.0001 ETH to ${RECIPIENT} yesterday`,
+      `Sent 0.0001 ETH to ${RECIPIENT} — did it arrive?`,
+      'Was my USDC sent?',
+      'Show my last transfer',
+      'How do I send ETH?',
+      'Как отправить USDC?',
+    ]) {
+      assert.equal(classifyBaseMcpExtensionIntentV1(question).kind, 'read', question);
+    }
+  });
+
+  test('a send missing its facts, in an asset not sent here, or in too many decimals says what works', () => {
+    const needsInput = (message: string) => {
+      const decision = classifyBaseMcpExtensionIntentV1(message);
+      assert.equal(decision.kind, 'needs_input', message);
+      return decision;
+    };
+    const missing = needsInput('Send ETH');
+    assert.equal(missing.errorCode, 'base_mcp_send_exact_input_required');
+    assert.match(missing.reply, /Send 0\.001 ETH to 0x…/);
+    assert.doesNotMatch(missing.reply, /V1|vertical|released/);
+    const other = needsInput(`Send 5 DAI to ${RECIPIENT}`);
+    assert.equal(other.errorCode, 'base_mcp_send_asset_unsupported');
+    assert.match(other.reply, /does not send DAI yet: it sends ETH and USDC on Base/);
+    // WETH is a token, not the chain's own ETH.
+    assert.equal(needsInput(`Send 1 WETH to ${RECIPIENT}`).errorCode, 'base_mcp_send_asset_unsupported');
+    assert.match(needsInput(`Отправь 5 DAI на ${RECIPIENT}`).reply, /эта консоль пока не делает/);
+    const precise = needsInput(`Send 1.1234567 USDC to ${RECIPIENT}`);
+    assert.equal(precise.errorCode, 'base_mcp_send_amount_invalid');
+    assert.match(precise.reply, /at most 6 decimal places for USDC/);
+    assert.equal(needsInput(`Send 0 ETH to ${RECIPIENT}`).errorCode, 'base_mcp_send_amount_invalid');
   });
 
   test('reviewed x402 GET is normalized and Avantis writes become a provider handoff', () => {
@@ -505,6 +568,7 @@ test('completion becomes completed only after exact USDC Transfer reconciliation
   });
   installHappyRuntime(tools);
   baseMcpExtensionActionRuntime.createReceiptReader = () => ({
+    async getTransaction() { return null; },
     async getTransactionReceipt() {
       return {
         transactionHash: TX_HASH,
@@ -546,6 +610,7 @@ test('a successful receipt with different transfer facts fails reconciliation', 
   });
   installHappyRuntime(tools);
   baseMcpExtensionActionRuntime.createReceiptReader = () => ({
+    async getTransaction() { return null; },
     async getTransactionReceipt() {
       return {
         transactionHash: TX_HASH,
@@ -602,4 +667,126 @@ test('Virtuals sign-in is an exact separate action, without smuggled agent creat
     if (result.kind === 'virtuals_sign_in') assert.deepEqual(result.intent, { operation: 'sign_in' });
   }
   assert.notEqual(classifyBaseMcpExtensionIntentV1('Sign in to Virtuals and create a card').kind, 'virtuals_sign_in');
+});
+
+function fakeNativeTools(options: { initial?: unknown; status?: unknown; isError?: boolean; onSend?: () => void }) {
+  return {
+    async listProviderTools() {
+      return [
+        { providerId: 'base-mcp-prepared-claim', tools: [{ name: 'prepared_native_send', description: 'send', inputSchema: { type: 'object', properties: {} } }] },
+        { providerId: 'base-mcp-dynamic', tools: [{ name: 'get_request_status', description: 'status', inputSchema: { type: 'object', properties: { requestId: {} } } }] },
+      ];
+    },
+    async callTool(name: string) {
+      if (name === 'prepared_native_send') {
+        options.onSend?.();
+        return { content: JSON.stringify(options.initial ?? {}), isError: options.isError ?? false };
+      }
+      return { content: JSON.stringify(options.status ?? {}), isError: false };
+    },
+    async close() {},
+  } as any;
+}
+
+function prepareNativeInput(requestId = 'eth-request-1') {
+  const message = `Send 0.0001 ETH to ${RECIPIENT}`;
+  const decision = classifyBaseMcpExtensionIntentV1(message);
+  assert.equal(decision.kind, 'send');
+  return { req: {} as Request, userId: 'tenant-1', walletAddress: WALLET, sessionSecret: 'secret', idempotencyKey: requestId, message, intent: decision.intent };
+}
+
+describe('an ETH send', () => {
+  test('binds one exact call to the wallet connection and never asks a token check about ETH', async () => {
+    const approvalUrl = 'https://keys.coinbase.com/approve/eth-1';
+    const repository = installHappyRuntime(fakeNativeTools({ initial: { approvalUrl, requestId: 'provider-eth-1', status: 'approval_required' } }));
+    let bound: unknown;
+    baseMcpExtensionActionRuntime.createTools = async (_req, _user, _secret, options) => {
+      bound = options?.baseMcpPreparedClaim;
+      return fakeNativeTools({ initial: { approvalUrl, requestId: 'provider-eth-1', status: 'approval_required' } });
+    };
+    baseMcpExtensionActionRuntime.loadTokenSecurityContext = async () => assert.fail('ETH has no contract to check');
+
+    const result = await prepareBaseMcpSendActionV1(prepareNativeInput());
+    assert.equal(result.kind, 'action');
+    assert.equal(result.approvalUrl, approvalUrl);
+    assert.equal(result.reply, 'Base MCP prepared 0.0001 ETH. Review and approve the exact transfer in Base Account.');
+    assert.deepEqual(bound, {
+      actionType: 'native_send',
+      walletAddress: WALLET,
+      calls: [{ to: RECIPIENT, value: '100000000000000', data: '0x' }],
+    });
+    assert.equal(result.receipt?.actionType, 'send');
+    if (result.receipt?.actionType === 'send') {
+      assert.deepEqual(result.receipt.asset, { symbol: 'ETH', address: null, decimals: 18 });
+      assert.equal(result.receipt.amount, '0.0001');
+      assert.equal(result.receipt.reconciliationBasis, 'native_value_call');
+    }
+    const stored = await repository.list('tenant-1');
+    assert.equal(stored[0].providerRequestId, 'provider-eth-1');
+  });
+
+  test('is confirmed only by the chain, from the transfer itself', async () => {
+    const tools = fakeNativeTools({
+      initial: { approvalUrl: 'https://keys.coinbase.com/approve/eth-1', requestId: 'provider-eth-1' },
+      status: { status: 'completed', requestId: 'provider-eth-1', txHash: TX_HASH },
+    });
+    installHappyRuntime(tools);
+    let value = 100_000_000_000_000n;
+    baseMcpExtensionActionRuntime.createReceiptReader = () => ({
+      async getTransaction() { return { from: WALLET, to: RECIPIENT, value, input: '0x' }; },
+      async getTransactionReceipt() {
+        return { transactionHash: TX_HASH, status: 'success' as const, blockNumber: 52_000_000n, gasUsed: 21_000n, effectiveGasPriceWei: 1n, logs: [] };
+      },
+    });
+    const reconcile = async (requestId: string) => {
+      const prepared = await prepareBaseMcpSendActionV1(prepareNativeInput(requestId));
+      return reconcileBaseMcpActionV1({ req: {} as Request, userId: 'tenant-1', walletAddress: WALLET, sessionSecret: 'secret', receiptId: prepared.receipt!.id });
+    };
+
+    const matched = await reconcile('eth-matched');
+    assert.equal(matched.receipt?.status, 'completed');
+    assert.equal(matched.receipt?.reconciliationState, 'matched');
+    assert.equal(matched.receipt?.blockNumber, '52000000');
+    assert.match(matched.reply, /sent exactly 0\.0001 ETH to the recipient/);
+
+    value = 99_999_999_999_999n;
+    const short = await reconcile('eth-short');
+    assert.equal(short.receipt?.status, 'failed');
+    assert.equal(short.receipt?.errorCode, 'base_mcp_transfer_facts_mismatch');
+  });
+
+  test('whose submission gets no answer is pending with an unknown outcome, never failed or resent', async () => {
+    let sends = 0;
+    const tools = fakeNativeTools({ isError: true, onSend: () => { sends += 1; } });
+    installHappyRuntime(tools);
+    const input = prepareNativeInput('eth-uncertain');
+    const result = await prepareBaseMcpSendActionV1(input);
+    assert.equal(result.receipt?.status, 'pending');
+    assert.equal(result.errorCode, 'base_mcp_send_outcome_unknown');
+    assert.equal(result.approvalUrl, null);
+    assert.match(result.reply, /Check your wallet for a waiting approval/);
+    await prepareBaseMcpSendActionV1(input);
+    assert.equal(sends, 1);
+  });
+
+  test('above its own limit is refused before storage or tools, naming the limit', async () => {
+    process.env.BASE_MCP_ACTION_SEND_MAX_ETH = '0.00005';
+    let toolsCreated = false;
+    const repository = new InMemoryBaseMcpActionReceiptRepositoryV1();
+    installHappyRuntime(fakeNativeTools({}), repository);
+    baseMcpExtensionActionRuntime.createTools = async () => {
+      toolsCreated = true;
+      return fakeNativeTools({});
+    };
+    const result = await prepareBaseMcpSendActionV1(prepareNativeInput());
+    assert.equal(result.errorCode, 'base_mcp_send_capability_limit_exceeded');
+    assert.match(result.reply, /send limit of 0\.00005 ETH/);
+    assert.equal(toolsCreated, false);
+    assert.equal((await repository.list('tenant-1')).length, 0);
+    // The USDC limit is its own.
+    process.env.BASE_MCP_ACTION_SEND_MAX_USDC = '4.99';
+    delete process.env.BASE_MCP_ACTION_SEND_MAX_ETH;
+    const usdc = await prepareBaseMcpSendActionV1(prepareInput());
+    assert.match(usdc.reply, /send limit of 4\.99 USDC/);
+  });
 });

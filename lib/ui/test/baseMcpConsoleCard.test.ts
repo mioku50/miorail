@@ -11,6 +11,7 @@ import {
   baseMcpToolSummaryV1,
   baseMcpConsoleTraceSummaryV1,
   baseMcpWalletClaimReadyV1,
+  baseMcpPlainReplyV1,
   type BaseMcpConsoleAnswerV1,
 } from '../src/console/BaseMcpConsoleCard';
 
@@ -557,5 +558,46 @@ describe('the console header counts tools in words', () => {
     // A dash where a number belongs reads as a count of nothing rather than as
     // an absence of counting.
     assert.doesNotMatch(baseMcpToolSummaryV1({}), /—/);
+  });
+});
+
+test('an ETH send names ETH, never a USDC it was not', () => {
+  const html = renderToStaticMarkup(BaseMcpConsoleCard({
+    question: 'Send 0.0001 ETH', onQuestionChange: () => undefined, onAsk: () => undefined, pending: false, unavailableReason: null,
+    answer: answer({ status: 'action', trace: [], action: {
+      approvalUrl: 'https://keys.coinbase.com/approve/eth-1',
+      receipt: {
+        id: 'action-eth', status: 'approval_required', actionType: 'send', provider: 'base-mcp', chainId: 8453,
+        asset: { symbol: 'ETH', address: null, decimals: 18 }, amount: '0.0001',
+        recipient: '0x2222222222222222222222222222222222222222', reconciliationState: 'not_started',
+        transactionHash: null, blockNumber: null, errorCode: null, routeVerified: false, reconciliationBasis: 'native_value_call',
+      },
+    } }),
+  }));
+  // The page's own examples name USDC; the receipt's row must not.
+  assert.match(html, /<span>Send<\/span><span class="v mono">0\.0001 ETH<\/span>/);
+  assert.doesNotMatch(html, /0\.0001 USDC/);
+});
+
+describe('the reply is plain text', () => {
+  test('Markdown marks are removed and the words stay', () => {
+    // Prod, 2026-10-19: the console printed "**read-only mode**".
+    assert.equal(baseMcpPlainReplyV1('This console is in **read-only mode**.'), 'This console is in read-only mode.');
+    assert.equal(baseMcpPlainReplyV1('## Balance\nYou hold __0.0002 ETH__ via `get_portfolio`.'), 'Balance\nYou hold 0.0002 ETH via get_portfolio.');
+    assert.equal(baseMcpPlainReplyV1('An *estimate*, not a quote.'), 'An estimate, not a quote.');
+  });
+
+  test('an asterisk that is not emphasis, and a snake_case name, are left alone', () => {
+    assert.equal(baseMcpPlainReplyV1('2 * 3 = 6'), '2 * 3 = 6');
+    assert.equal(baseMcpPlainReplyV1('get_request_status returned pending'), 'get_request_status returned pending');
+    assert.equal(baseMcpPlainReplyV1('- 5 USDC\n- 0.1 ETH'), '- 5 USDC\n- 0.1 ETH');
+  });
+
+  test('the card shows the reply without its marks', () => {
+    const html = renderToStaticMarkup(BaseMcpConsoleCard({ question: 'What does my wallet hold?', onQuestionChange: () => undefined,
+      onAsk: () => undefined, pending: false, unavailableReason: null,
+      answer: answer({ reply: 'You hold **0.0002 ETH**.' }) }));
+    assert.match(html, /You hold 0\.0002 ETH\./);
+    assert.doesNotMatch(html, /\*\*/);
   });
 });

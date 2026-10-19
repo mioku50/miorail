@@ -1241,6 +1241,40 @@ test('POST /api/mcp/base/console resolves a Basename before preparing the exact 
   restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
 });
 
+test('POST /api/mcp/base/console reads a typed "Sent" as a send of ETH, and says so before the reply', async () => {
+  const originalSecret = process.env.SESSION_SECRET;
+  const originalEnabled = process.env.BASE_MCP_ENABLED;
+  const originalUrl = process.env.BASE_MCP_SERVER_URL;
+  process.env.SESSION_SECRET = 'test-session-secret';
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://mcp.base.org';
+  const ethReceipt = { ...ACTION_RECEIPT, asset: { symbol: 'ETH' as const, address: null, decimals: 18 as const },
+    amount: '0.0001', recipientName: 'mioku.base.eth', reconciliationBasis: 'native_value_call' as const };
+  mcpBaseRouteRuntime.resolveBaseNameV1 = async (name) => ({ outcome: 'resolved', name, address: ACTION_RECEIPT.recipient });
+  mcpBaseRouteRuntime.prepareBaseMcpSendActionV1 = async (input) => {
+    assert.deepEqual(input.intent.asset, { symbol: 'ETH', address: null, decimals: 18 });
+    assert.equal(input.intent.amountAtomic, '100000000000000');
+    assert.equal(input.intent.recipient, ACTION_RECEIPT.recipient);
+    return { kind: 'action', reply: 'Base MCP prepared 0.0001 ETH. Review and approve the exact transfer in Base Account.',
+      errorCode: null, toolsAvailable: 15, receipt: ethReceipt, approvalUrl: 'https://keys.coinbase.com/approve/sent-1' };
+  };
+  try {
+    const response = await request(app).post('/api/mcp/base/console').send({ message: 'Sent 0.0001 eth to mioku.base.eth', requestId: 'sent-1' });
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, 'action');
+    assert.equal(response.body.reply, 'Read “Sent” as “Send”. Base MCP prepared 0.0001 ETH. Review and approve the exact transfer in Base Account.');
+    assert.equal(response.body.action.receipt.asset.symbol, 'ETH');
+    // A receipt whose facts disagree with its asset is refused by the contract.
+    assert.equal(BaseMcpActionReceiptV1Schema.safeParse({ ...ethReceipt, reconciliationBasis: 'erc20_transfer_event' }).success, false);
+    assert.equal(BaseMcpActionReceiptV1Schema.safeParse({ ...ACTION_RECEIPT, amount: '0.0000001' }).success, false);
+    assert.equal(BaseMcpActionReceiptV1Schema.safeParse({ ...ethReceipt, amount: '0.000000000000000001' }).success, true);
+  } finally {
+    restoreEnv('SESSION_SECRET', originalSecret);
+    restoreEnv('BASE_MCP_ENABLED', originalEnabled);
+    restoreEnv('BASE_MCP_SERVER_URL', originalUrl);
+  }
+});
+
 test('POST /api/mcp/base/console never prepares a send when the Basename is unresolved', async () => {
   const originalSecret = process.env.SESSION_SECRET;
   process.env.SESSION_SECRET = 'test-session-secret';

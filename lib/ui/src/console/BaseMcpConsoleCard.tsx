@@ -78,11 +78,13 @@ export type BaseMcpActionReceiptUiV1 = BaseMcpActionReceiptCommonUiV1 & (
     }
   | {
       actionType: 'send';
-      asset: { symbol: 'USDC'; address: string; decimals: 6 };
+      /** ETH is the chain's own asset: no contract, read back from the
+       * wallet's operation rather than a Transfer event. */
+      asset: { symbol: 'USDC'; address: string; decimals: 6 } | { symbol: 'ETH'; address: null; decimals: 18 };
       amount: string;
       recipient: string;
       recipientName?: string | null;
-      reconciliationBasis: 'erc20_transfer_event';
+      reconciliationBasis: 'erc20_transfer_event' | 'native_value_call';
     }
   | {
       actionType: 'x402';
@@ -251,6 +253,21 @@ export const BASE_MCP_CONSOLE_PROMPTS_V1: readonly string[] =
   BASE_MCP_QUICK_EXAMPLES_V1.map((example) => example.prompt);
 
 export const BASE_MCP_CONSOLE_INPUT_ID_V1 = 'base-mcp-console-input';
+
+/**
+ * The reply is shown as written text, so Markdown arrives as literal marks:
+ * "**read-only mode**" on prod, 2026-10-19. Emphasis, heading and inline-code
+ * marks are removed and the words stay. A lone asterisk between spaces, as in
+ * arithmetic, is not emphasis and stays too.
+ */
+export function baseMcpPlainReplyV1(reply: string): string {
+  return reply
+    .replace(/\*\*(?=\S)([^*]+?)\*\*/gu, '$1')
+    .replace(/__(?=\S)([^_]+?)__/gu, '$1')
+    .replace(/(^|[\s(])\*(?=\S)([^*\n]+?)\*(?=[\s).,;:!?]|$)/gmu, '$1$2')
+    .replace(/^#{1,6}\s+/gmu, '')
+    .replace(/`([^`\n]+)`/gu, '$1');
+}
 
 /**
  * What the console says about its own outcome.
@@ -568,7 +585,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                   <>
                     <div className="qrow">
                       <span>Send</span>
-                      <span className="v mono">{answer.action.receipt.amount} USDC</span>
+                      <span className="v mono">{answer.action.receipt.amount} {answer.action.receipt.asset.symbol}</span>
                     </div>
                     <div className="qrow">
                       <span>To</span>
@@ -768,7 +785,7 @@ export function BaseMcpConsoleCard(model: BaseMcpConsoleModelV1) {
                 <p className="lnote">{baseMcpConsoleTraceSummaryV1(answer)}</p>
 
                 {answer.reply ? (
-                  <pre className="mono aitext">{answer.reply}</pre>
+                  <pre className="mono aitext">{baseMcpPlainReplyV1(answer.reply)}</pre>
                 ) : (
                   <p className="empty">Wallet MCP returned tool results but no written answer.</p>
                 )}

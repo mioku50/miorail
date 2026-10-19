@@ -25,6 +25,7 @@ import {
   publicBaseMcpActionReceiptV1,
   type BaseMcpActionReceiptRepositoryV1,
   type BaseMcpSendActionIntentV1,
+  type BaseMcpSendAssetV1,
   type BaseMcpX402ActionIntentV1,
   type BaseMcpVirtualsActionIntentV1,
   type StoredBaseMcpActionReceiptV1,
@@ -36,6 +37,7 @@ import {
   type AvantisProviderHandoffV1,
 } from './baseMcpProviderRouting.js';
 import { reconcileBaseMcpVirtualsActionV1 } from './baseMcpVirtualsAction.js';
+import { nativeSendCheckV1 } from './nativeSendReconciliation.js';
 import { reconcileBaseMcpAerodromeClaimV1 } from './baseMcpAerodromeClaim.js';
 import { reconcileBaseMcpUniswapCollectV1 } from './baseMcpUniswapCollect.js';
 import { reconcileFoundWalletClaimV1 } from './foundWalletClaim.js';
@@ -55,8 +57,10 @@ export type BaseMcpExtensionIntentV1 =
   | {
       kind: 'send_name';
       intent: Omit<BaseMcpSendActionIntentV1, 'recipient'> & { recipientName: string };
+      /** Said before the reply when the words were read as something else. */
+      note?: string | null;
     }
-  | { kind: 'send'; intent: BaseMcpSendActionIntentV1 }
+  | { kind: 'send'; intent: BaseMcpSendActionIntentV1; note?: string | null }
   | { kind: 'x402'; intent: BaseMcpX402ActionIntentV1 }
   | { kind: 'virtuals_create'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'agent_create' }> }
   | { kind: 'virtuals_sign_in'; intent: Extract<BaseMcpVirtualsActionIntentV1, { operation: 'sign_in' }> }
@@ -78,16 +82,92 @@ export interface BaseMcpExtensionActionResultV1 {
   resultPreview?: string | null;
 }
 
-function canonicalUsdcAmount(value: string): { amount: string; amountAtomic: string } | null {
+/** A positive amount in the asset's own decimals, exactly, or null. */
+function canonicalAmountV1(value: string, decimals: number): { amount: string; amountAtomic: string } | null {
   const normalized = value.replace(',', '.');
-  if (!/^\d+(?:\.\d{1,6})?$/.test(normalized)) return null;
+  if (!new RegExp(`^\\d+(?:\\.\\d{1,${decimals}})?$`).test(normalized)) return null;
   const [wholeRaw, fractionRaw = ''] = normalized.split('.');
   const whole = wholeRaw.replace(/^0+(?=\d)/, '') || '0';
   const fraction = fractionRaw.replace(/0+$/, '');
   const amount = fraction ? `${whole}.${fraction}` : whole;
-  const amountAtomic = `${whole}${fractionRaw.padEnd(6, '0')}`.replace(/^0+(?=\d)/, '') || '0';
+  const amountAtomic = `${whole}${fractionRaw.padEnd(decimals, '0')}`.replace(/^0+(?=\d)/, '') || '0';
   if (BigInt(amountAtomic) <= 0n) return null;
   return { amount, amountAtomic };
+}
+
+function canonicalUsdcAmount(value: string): { amount: string; amountAtomic: string } | null {
+  return canonicalAmountV1(value, 6);
+}
+
+/** What the console sends. ETH is the chain's own asset and has no contract. */
+function sendAssetV1(symbol: string): BaseMcpSendAssetV1 | null {
+  if (symbol === 'USDC') return { symbol: 'USDC', address: canonicalUsdcForBaseChain(8453).toLowerCase() as `0x${string}`, decimals: 6 };
+  if (symbol === 'ETH') return { symbol: 'ETH', address: null, decimals: 18 };
+  return null;
+}
+
+const SEND_RECIPIENT_V1 = String.raw`(0x[a-fA-F0-9]{40}|[^\s,!?]{1,255}\.base\.eth)`;
+/** "Send 0.001 ETH to 0x…", "переведи 5 USDC на alice.base.eth". The asset is
+ * read as any symbol, so one this console does not send is named back. */
+const SEND_COMMAND_V1 = new RegExp(
+  String.raw`(?:^|\s)(?:send|transfer|отправь|отправьте|отправить|отправляй|переведи|переведите|перевести)\s+(\d+(?:[.,]\d+)?)\s*([a-z][a-z0-9]{1,15})\s+(?:to(?:\s+address)?|on(?:\s+address)?|на(?:\s+адрес)?|по\s+адресу|в)\s*${SEND_RECIPIENT_V1}(?:\s|[.,!?]|$)`,
+  'iu',
+);
+/** "Sent 0.0001 eth to 0x…" was typed for "send" on 2026-10-19 and read as a
+ * question about a past transfer. Only the whole command, nothing around it,
+ * is read as one: a sentence about something sent stays a question. */
+const SENT_COMMAND_V1 = new RegExp(
+  String.raw`^sent\s+(\d+(?:[.,]\d+)?)\s*([a-z][a-z0-9]{1,15})\s+to(?:\s+address)?\s*${SEND_RECIPIENT_V1}\s*[.!]?$`,
+  'iu',
+);
+const SEND_VERB_V1 = /\b(?:send|transfer)\b|(?:^|\s)(?:отправь|отправьте|отправить|отправляй|переведи|переведите|перевести)(?=\s|$)/iu;
+const QUESTION_V1 = /^\s*(?:what|which|when|where|did|does|do|how|why|should|can|could|is|are|was|were|show|list|что|какие|какой|когда|где|как|почему|сколько|стоит|покажи|можно)(?=\s|$)|\?\s*$/iu;
+
+function sendHowToReplyV1(russian: boolean): string {
+  return russian
+    ? 'Чтобы отправить, напишите сумму, ETH или USDC и адрес в Base или Basename, например «Отправь 0.001 ETH на 0x…» или «Отправь 5 USDC на alice.base.eth». Ничего не подготовлено.'
+    : 'To send, write the amount, ETH or USDC, and a Base address or Basename, for example “Send 0.001 ETH to 0x…” or “Send 5 USDC to alice.base.eth”. Nothing was prepared.';
+}
+
+/** A send, a send missing its facts, or null when the message is not one. */
+function sendIntentV1(trimmed: string): BaseMcpExtensionIntentV1 | null {
+  const russian = russianV1(trimmed);
+  const typed = trimmed.match(SEND_COMMAND_V1);
+  const sent = typed ? null : trimmed.match(SENT_COMMAND_V1);
+  const command = typed ?? sent;
+  if (!command) {
+    // A question that mentions sending is still a question for the reader.
+    if (!SEND_VERB_V1.test(trimmed) || QUESTION_V1.test(trimmed)) return null;
+    return { kind: 'needs_input', errorCode: 'base_mcp_send_exact_input_required', reply: sendHowToReplyV1(russian) };
+  }
+  const symbol = command[2]!.toUpperCase();
+  const asset = sendAssetV1(symbol);
+  if (!asset) {
+    return {
+      kind: 'needs_input',
+      errorCode: 'base_mcp_send_asset_unsupported',
+      reply: russian
+        ? `Отправку ${symbol} эта консоль пока не делает: она отправляет ETH и USDC в Base. Ничего не подготовлено.`
+        : `This console does not send ${symbol} yet: it sends ETH and USDC on Base. Nothing was prepared.`,
+    };
+  }
+  const money = canonicalAmountV1(command[1]!, asset.decimals);
+  if (!money) {
+    return {
+      kind: 'needs_input',
+      errorCode: 'base_mcp_send_amount_invalid',
+      reply: russian
+        ? `Укажите сумму больше нуля, не больше ${asset.decimals} знаков после запятой для ${symbol}. Ничего не подготовлено.`
+        : `Use an amount above zero with at most ${asset.decimals} decimal places for ${symbol}. Nothing was prepared.`,
+    };
+  }
+  const recipientInput = command[3]!.toLowerCase();
+  const note = sent ? 'Read “Sent” as “Send”.' : null;
+  const facts = { asset, amount: money.amount, amountAtomic: money.amountAtomic };
+  if (!ADDRESS_V1.test(recipientInput)) {
+    return { kind: 'send_name', intent: { ...facts, recipientName: recipientInput }, note };
+  }
+  return { kind: 'send', intent: { ...facts, recipient: recipientInput as `0x${string}`, recipientName: null }, note };
 }
 
 /**
@@ -303,55 +383,8 @@ export function classifyBaseMcpExtensionIntentV1(
     return { kind: 'handoff', originalMessage: trimmed, provider: null };
   }
 
-  const sendMarker = /\b(?:send|transfer)\b|(?:отправь|отправить|переведи|перевести)/iu;
-  if (sendMarker.test(trimmed)) {
-    const match = trimmed.match(
-      /(?:^|\s)(?:send|transfer|отправь|отправить|переведи|перевести)\s+(\d+(?:[.,]\d{1,6})?)\s+USDC\s+(?:to(?:\s+address)?|on(?:\s+address)?|на(?:\s+адрес)?|по\s+адресу|в)\s*(0x[a-fA-F0-9]{40}|[^\s,!?]{1,255}\.base\.eth)(?:\s|[.,!?]|$)/iu,
-    );
-    if (!match) {
-      return {
-        kind: 'needs_input',
-        errorCode: 'base_mcp_send_exact_input_required',
-        reply: 'Send V1 needs an exact USDC amount and either a Base address (0x…) or a Basename (*.base.eth). ETH and other ERC-20 assets are not released in this action vertical yet.',
-      };
-    }
-    const money = canonicalUsdcAmount(match[1]);
-    if (!money) {
-      return {
-        kind: 'needs_input',
-        errorCode: 'base_mcp_send_amount_invalid',
-        reply: 'Use a positive USDC amount with no more than 6 decimal places.',
-      };
-    }
-    const recipientInput = match[2].toLowerCase();
-    const asset = {
-      symbol: 'USDC' as const,
-      address: canonicalUsdcForBaseChain(8453).toLowerCase() as `0x${string}`,
-      decimals: 6 as const,
-    };
-    if (!ADDRESS_V1.test(recipientInput)) {
-      return {
-        kind: 'send_name',
-        intent: {
-          asset,
-          amount: money.amount,
-          amountAtomic: money.amountAtomic,
-          recipientName: recipientInput,
-        },
-      };
-    }
-    const recipient = recipientInput as `0x${string}`;
-    return {
-      kind: 'send',
-      intent: {
-        asset,
-        amount: money.amount,
-        amountAtomic: money.amountAtomic,
-        recipient,
-        recipientName: null,
-      },
-    };
-  }
+  const send = sendIntentV1(trimmed);
+  if (send) return send;
 
   if (/\b(?:sign|signature|eip-?712|launch|mint)\b|(?:подпиши|создай\s+токен)/iu.test(trimmed)) {
     return {
@@ -522,10 +555,15 @@ function terminal(state: BaseMcpApprovalState): boolean {
   return ['completed', 'rejected', 'failed'].includes(state);
 }
 
-function maximumSendAtomicV1(): bigint {
-  const configured = (process.env.BASE_MCP_ACTION_SEND_MAX_USDC || '1000').trim();
-  const parsed = canonicalUsdcAmount(configured);
-  return parsed ? BigInt(parsed.amountAtomic) : 1_000_000_000n;
+/** The server's ceiling for one send, per asset. ETH's is a fixed amount set
+ * low on purpose, not one converted from a price that moves. */
+function maximumSendV1(asset: BaseMcpSendAssetV1): { amount: string; amountAtomic: bigint } {
+  const [variable, fallback] = asset.symbol === 'ETH'
+    ? ['BASE_MCP_ACTION_SEND_MAX_ETH', '0.25'] as const
+    : ['BASE_MCP_ACTION_SEND_MAX_USDC', '1000'] as const;
+  const parsed = canonicalAmountV1((process.env[variable] || fallback).trim(), asset.decimals)
+    ?? canonicalAmountV1(fallback, asset.decimals)!;
+  return { amount: parsed.amount, amountAtomic: BigInt(parsed.amountAtomic) };
 }
 
 function durableProofRecord(proof?: BaseMcpDurableProof): Record<string, unknown> | null {
@@ -597,7 +635,9 @@ async function expireStaleBaseMcpX402ReceiptV1(
   })) ?? receipt;
 }
 
-async function verifyUsdcTransferOnchain(input: {
+/** A USDC send is its Transfer event; an ETH send is its wallet's decoded
+ * operation (nativeSendReconciliation.ts), since ETH emits no event. */
+async function verifySendOnchainV1(input: {
   transactionHash: HashV1;
   walletAddress: `0x${string}`;
   intent: BaseMcpSendActionIntentV1;
@@ -614,9 +654,23 @@ async function verifyUsdcTransferOnchain(input: {
     return { state: 'mismatched', blockNumber, errorCode: 'base_mcp_transaction_reverted' };
   }
 
+  const asset = input.intent.asset;
+  if (asset.symbol === 'ETH') {
+    const transaction = await input.reader.getTransaction(input.transactionHash);
+    if (!transaction) return { state: 'unavailable', blockNumber, errorCode: 'base_mcp_transaction_unavailable' };
+    const checked = nativeSendCheckV1({
+      walletAddress: input.walletAddress,
+      recipient: input.intent.recipient,
+      amountWei: BigInt(input.intent.amountAtomic),
+      transaction,
+      receipt,
+    });
+    return { state: checked.state, blockNumber, errorCode: checked.errorCode };
+  }
+
   const expectedFrom = input.walletAddress.toLowerCase();
   const expectedTo = input.intent.recipient.toLowerCase();
-  const expectedToken = input.intent.asset.address.toLowerCase();
+  const expectedToken = asset.address.toLowerCase();
   const matched = receipt.logs.some((log) => {
     if (log.address.toLowerCase() !== expectedToken) return false;
     if (log.topics[0]?.toLowerCase() !== TRANSFER_TOPIC_V1 || log.topics.length < 3) return false;
@@ -654,7 +708,7 @@ async function reconcileCompletedReceipt(input: {
     }))!;
   }
 
-  const verified = await verifyUsdcTransferOnchain({
+  const verified = await verifySendOnchainV1({
     transactionHash,
     walletAddress: input.receipt.walletAddress,
     intent: input.receipt.intent as BaseMcpSendActionIntentV1,
@@ -705,6 +759,127 @@ async function createExtensionTools(input: {
   );
 }
 
+/** What the person is told about a send, by its approval state. */
+function sendReplyV1(
+  state: BaseMcpApprovalState,
+  receipt: StoredBaseMcpActionReceiptV1,
+  intent: BaseMcpSendActionIntentV1,
+  approvalUrl: string | null | undefined,
+): string {
+  const native = intent.asset.symbol === 'ETH';
+  if (state === 'completed') {
+    if (receipt.status === 'completed') {
+      return native
+        ? `Confirmed on Base: your wallet’s operation sent exactly ${intent.amount} ETH to the recipient, and it ran.`
+        : 'The Base MCP transfer was matched to the expected USDC Transfer event on Base.';
+    }
+    return native
+      ? 'Base MCP reports completion; Miorail is still reading the ETH transfer from your wallet’s operation on Base.'
+      : 'Base MCP reports completion; Miorail is still reconciling the exact USDC Transfer event.';
+  }
+  if (state === 'rejected') return 'The Base Account approval was rejected.';
+  if (state === 'failed') return 'The Base MCP approval request failed.';
+  return approvalUrl
+    ? `Base MCP prepared ${intent.amount} ${intent.asset.symbol}. Review and approve the exact transfer in Base Account.`
+    : 'The Base MCP approval request is pending. Check its Action Receipt before trying again.';
+}
+
+/**
+ * An ETH send rides the wallet's batched-calls tool as one exact call: to the
+ * recipient, the amount as its value, no data. What the wallet is asked to
+ * approve is then the transfer itself, encoded here, rather than a guess at
+ * how another tool spells its asset argument. The call is bound before the
+ * connection opens and can be submitted once.
+ */
+async function prepareNativeSendV1(
+  input: { req: Request; userId: string; sessionSecret: string; intent: BaseMcpSendActionIntentV1 },
+  walletAddress: `0x${string}`,
+  created: StoredBaseMcpActionReceiptV1,
+): Promise<BaseMcpExtensionActionResultV1> {
+  const runtime = baseMcpExtensionActionRuntime;
+  const now = runtime.now();
+  const refuse = async (errorCode: string, reply: string) => {
+    const failed = await runtime.repository.update({
+      id: created.id,
+      tenantId: input.userId,
+      status: 'failed',
+      reconciliationState: 'not_started',
+      errorCode,
+      finalizedAt: now,
+      now,
+    });
+    return publicResult(failed!, null, reply, errorCode);
+  };
+
+  let tools: ToolAggregator;
+  try {
+    tools = await runtime.createTools(input.req, input.userId, input.sessionSecret, {
+      baseMcpOnly: true,
+      baseMcpPreparedClaim: {
+        actionType: 'native_send',
+        walletAddress,
+        calls: [{ to: input.intent.recipient, value: input.intent.amountAtomic, data: '0x' }],
+      },
+    });
+  } catch {
+    return refuse('base_mcp_connect_failed', 'Base MCP could not be reached. No approval request was returned.');
+  }
+
+  try {
+    const walletMatch = await runtime.verifyWallet(tools, walletAddress);
+    if (!walletMatch.checked || !walletMatch.match) {
+      return walletMatch.checked
+        ? refuse(BASE_MCP_WALLET_MISMATCH_ERROR_CODE, BASE_MCP_WALLET_MISMATCH_MESSAGE)
+        : refuse(BASE_MCP_WALLET_UNVERIFIED_ERROR_CODE, BASE_MCP_WALLET_UNVERIFIED_MESSAGE);
+    }
+
+    let called: { content: string; isError: boolean };
+    try {
+      called = await tools.callTool('prepared_native_send', {});
+    } catch {
+      called = { content: '{}', isError: true };
+    }
+    const snapshot = called.isError ? null : extractBaseMcpApprovalSnapshot(called.content);
+    if (!snapshot?.requestId) {
+      // The request may have reached the wallet without an answer coming
+      // back, so this is not "failed": an approval may be waiting there.
+      const uncertain = await runtime.repository.update({
+        id: created.id,
+        tenantId: input.userId,
+        status: 'pending',
+        reconciliationState: 'unavailable',
+        durableProof: durableProofRecord(snapshot?.proof),
+        errorCode: 'base_mcp_send_outcome_unknown',
+        now,
+      });
+      return publicResult(
+        uncertain!,
+        null,
+        'Wallet MCP did not confirm the request, so its outcome is unknown. Check your wallet for a waiting approval before sending again; this request will not be sent twice.',
+        'base_mcp_send_outcome_unknown',
+      );
+    }
+
+    const state: BaseMcpApprovalState = snapshot.state || (snapshot.approvalUrl ? 'approval_required' : 'pending');
+    let receipt = await runtime.repository.update({
+      id: created.id,
+      tenantId: input.userId,
+      status: state === 'completed' ? 'reconciling' : state,
+      reconciliationState: state === 'completed' ? 'pending' : 'not_started',
+      providerRequestId: snapshot.requestId,
+      durableProof: durableProofRecord(snapshot.proof),
+      errorCode: null,
+      ...(terminal(state) && state !== 'completed' ? { finalizedAt: now } : {}),
+      now,
+    });
+    if (!receipt) return failedWithoutReceipt('The Action Receipt could not be updated.', 'base_mcp_action_storage_failed');
+    if (state === 'completed') receipt = await reconcileCompletedReceipt({ receipt, proof: snapshot.proof, now });
+    return publicResult(receipt, snapshot.approvalUrl ?? null, sendReplyV1(state, receipt, input.intent, snapshot.approvalUrl), receipt.errorCode);
+  } finally {
+    await tools.close().catch(() => undefined);
+  }
+}
+
 export async function prepareBaseMcpSendActionV1(input: {
   req: Request;
   userId: string;
@@ -724,9 +899,11 @@ export async function prepareBaseMcpSendActionV1(input: {
   if (input.intent.recipient === ZERO_ADDRESS || input.intent.recipient === walletAddress) {
     return failedWithoutReceipt('The recipient must be a different, non-zero Base address.', 'base_mcp_send_recipient_invalid');
   }
-  if (BigInt(input.intent.amountAtomic) > maximumSendAtomicV1()) {
+  const asset = input.intent.asset;
+  const limit = maximumSendV1(asset);
+  if (BigInt(input.intent.amountAtomic) > limit.amountAtomic) {
     return failedWithoutReceipt(
-      `The transfer exceeds this server’s Base MCP action limit (${process.env.BASE_MCP_ACTION_SEND_MAX_USDC || '1000'} USDC).`,
+      `The transfer exceeds this server’s send limit of ${limit.amount} ${asset.symbol}. Nothing was prepared.`,
       'base_mcp_send_capability_limit_exceeded',
     );
   }
@@ -734,17 +911,24 @@ export async function prepareBaseMcpSendActionV1(input: {
     return failedWithoutReceipt('Action Receipt storage is unavailable, so no Base MCP action was prepared.', 'base_mcp_action_storage_unavailable');
   }
 
-  const security = await baseMcpExtensionActionRuntime.loadTokenSecurityContext(8453, [input.intent.asset.address]);
-  const tokenVerdict = security.tokenSecurity.find(
-    (item) => item.address.toLowerCase() === input.intent.asset.address,
-  );
-  const screening = baseMcpExtensionActionRuntime.screenAction({
-    instruction: input.message,
-    providerContext: { ...security.providerContext, requiresTokenSecurity: true },
-  });
-  if (!screening.allowed || !tokenVerdict || tokenVerdict.provider !== 'goplus'
-    || !['ok', 'warning'].includes(tokenVerdict.status)) {
-    return failedWithoutReceipt('The transfer did not pass the live canonical-USDC safety check.', 'base_mcp_send_safety_check_failed');
+  if (asset.symbol === 'USDC') {
+    const security = await baseMcpExtensionActionRuntime.loadTokenSecurityContext(8453, [asset.address]);
+    const tokenVerdict = security.tokenSecurity.find((item) => item.address.toLowerCase() === asset.address);
+    const screening = baseMcpExtensionActionRuntime.screenAction({
+      instruction: input.message,
+      providerContext: { ...security.providerContext, requiresTokenSecurity: true },
+    });
+    if (!screening.allowed || !tokenVerdict || tokenVerdict.provider !== 'goplus'
+      || !['ok', 'warning'].includes(tokenVerdict.status)) {
+      return failedWithoutReceipt('The transfer did not pass the live canonical-USDC safety check.', 'base_mcp_send_safety_check_failed');
+    }
+  } else {
+    // ETH has no contract for a token check to read; the instruction is still
+    // screened like every other action's.
+    const screening = baseMcpExtensionActionRuntime.screenAction({ instruction: input.message });
+    if (!screening.allowed) {
+      return failedWithoutReceipt('The transfer did not pass the action safety policy.', 'base_mcp_send_safety_check_failed');
+    }
   }
 
   const now = baseMcpExtensionActionRuntime.now();
@@ -774,6 +958,8 @@ export async function prepareBaseMcpSendActionV1(input: {
       created.receipt.status === 'preparing' ? 'base_mcp_action_outcome_unknown' : created.receipt.errorCode,
     );
   }
+
+  if (input.intent.asset.symbol === 'ETH') return prepareNativeSendV1(input, walletAddress, created.receipt);
 
   let tools: ToolAggregator;
   try {
@@ -892,17 +1078,7 @@ export async function prepareBaseMcpSendActionV1(input: {
     if (!receipt) return failedWithoutReceipt('The Action Receipt could not be updated.', 'base_mcp_action_storage_failed');
     if (state === 'completed') receipt = await reconcileCompletedReceipt({ receipt, proof: snapshot.proof, now });
 
-    const reply = state === 'completed'
-      ? receipt.status === 'completed'
-        ? 'The Base MCP transfer was matched to the expected USDC Transfer event on Base.'
-        : 'Base MCP reports completion; Miorail is still reconciling the exact USDC Transfer event.'
-      : state === 'rejected'
-        ? 'The Base Account approval was rejected.'
-        : state === 'failed'
-          ? 'The Base MCP approval request failed.'
-          : snapshot.approvalUrl
-            ? `Base MCP prepared ${input.intent.amount} USDC. Review and approve the exact transfer in Base Account.`
-            : 'The Base MCP approval request is pending. Check its Action Receipt before trying again.';
+    const reply = sendReplyV1(state, receipt, input.intent, snapshot.approvalUrl);
     return publicResult(receipt, snapshot.approvalUrl ?? null, reply, receipt.errorCode, toolsAvailable);
   } finally {
     await tools.close().catch(() => undefined);
@@ -1249,9 +1425,13 @@ export async function reconcileBaseMcpActionV1(input: {
     const reply = receipt.status === 'completed'
       ? receipt.actionType === 'x402'
         ? 'The approved x402 request completed and the paid endpoint returned a response. Miorail stored only its hash.'
-        : 'Confirmed and reconciled: the exact expected USDC Transfer event was observed on Base.'
+        : (receipt.intent as BaseMcpSendActionIntentV1).asset.symbol === 'ETH'
+          ? `Confirmed on Base: your wallet’s operation sent exactly ${(receipt.intent as BaseMcpSendActionIntentV1).amount} ETH to the recipient, and it ran.`
+          : 'Confirmed and reconciled: the exact expected USDC Transfer event was observed on Base.'
       : receipt.status === 'reconciling'
-        ? 'Base MCP reports completion, but the exact onchain transfer is not matched yet.'
+        ? receipt.errorCode === 'base_mcp_operation_unreadable'
+          ? 'Base MCP reports completion, but the transaction it named is not a shape Miorail can read the transfer from. Check the transaction in your wallet.'
+          : 'Base MCP reports completion, but the exact onchain transfer is not matched yet.'
         : receipt.status === 'rejected'
           ? 'The Base Account approval was rejected.'
           : receipt.status === 'failed'
