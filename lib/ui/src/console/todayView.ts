@@ -330,8 +330,10 @@ export function todayModelV1(input: TodayInputV1): TodayModelV1 {
   for (const token of check?.lookalikes.slice(0, 3) ?? []) {
     items.push({
       key: `lookalike:${token.address}`,
-      title: `${token.symbol} — issuer address doesn't match`,
-      body: `${token.balance ? `${token.balance} tokens at ` : 'A contract at '}${shortV1(token.address)}. The issuer lists ${token.officialTicker} at a different address.`,
+      // A name matched and an address did not: that is the whole finding, in
+      // words someone holding the token reads without a glossary.
+      title: `Not the official ${token.officialTicker}`,
+      body: `${token.balance ? `You hold ${token.balance} of a token named ${token.symbol}` : `A token named ${token.symbol}`} at ${shortV1(token.address)}. The official ${token.officialTicker} lives at a different address, so this is another token with the same name.`,
       attention: true,
       actions: [{ label: 'See the evidence', onClick: () => actions.onInvestigate(token.address) }],
     });

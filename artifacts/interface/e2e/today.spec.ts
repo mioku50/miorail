@@ -49,10 +49,13 @@ for (const width of [1280, 390]) {
     const { reads, writes } = await install(page, true);
     await page.goto('/');
     await expect(page).toHaveURL(/\/today$/);
-    const finding = page.getByText("AAPLc — issuer address doesn't match", { exact: true });
+    const finding = page.getByText('Not the official AAPLc', { exact: true });
     await expect(finding).toBeVisible();
     await expect(page.getByText('Your NVDAc', { exact: true })).toBeVisible();
-    const share = page.locator('.today-stock').getByRole('group', { name: 'Share NVDA stock card' });
+    // Both places to post sit behind one "Share" among the card's actions.
+    const stockCard = page.locator('.today-stock');
+    await stockCard.locator('summary', { hasText: 'Share' }).click();
+    const share = stockCard.getByRole('group', { name: 'Share NVDA stock card' });
     await expect(share.getByRole('link', { name: 'Post on X', exact: true })).toBeVisible();
     await expect(share.getByRole('link', { name: 'Cast on Farcaster', exact: true })).toBeVisible();
     for (const href of await share.locator('a').evaluateAll(links => links.map(link => link.href))) {
@@ -140,7 +143,7 @@ test('Today failed balances show an unavailable read instead of zero holdings', 
   await page.goto('/today');
   await expect(page.getByText('Your balances could not be read. This is not a statement about what you hold.', { exact: true })).toBeVisible({ timeout: 20000 });
   await expect(page.getByLabel('Today in numbers')).toHaveCount(0);
-  await expect(page.getByText("AAPLc — issuer address doesn't match", { exact: true })).toHaveCount(0);
+  await expect(page.getByText('Not the official AAPLc', { exact: true })).toHaveCount(0);
 });
 
 for (const width of [1280, 390]) {

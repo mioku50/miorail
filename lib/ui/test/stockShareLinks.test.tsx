@@ -36,6 +36,14 @@ test('both composer buttons are ordinary safe links, available without a session
   assert.equal((html.match(/target="_blank" rel="noopener noreferrer"/g) ?? []).length, 2);
 });
 
+test('folded, both places to post sit behind one Share; open is the default', () => {
+  const folded = renderToStaticMarkup(<StockShareLinks symbol="NVDA" folded />);
+  assert.match(folded, /^<details class="share-fold"><summary class="btn sec">Share<\/summary><div [^>]*aria-label="Share NVDA stock card"/);
+  assert.match(folded, />Post on X<\/a>/);
+  assert.match(folded, />Cast on Farcaster<\/a>/);
+  assert.doesNotMatch(renderToStaticMarkup(<StockShareLinks symbol="NVDA" />), /<details|<summary/);
+});
+
 test('the My stocks holding exposes the public card, not its position', () => {
   const data = briefFixture();
   const html = renderToStaticMarkup(<MyStocksTodayCard model={{ data, loading: false, failed: false,

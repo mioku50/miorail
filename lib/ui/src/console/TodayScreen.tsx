@@ -60,6 +60,7 @@ function TodayStock({ model }: { model: TodayScreenModelV1 }) {
       onClick={model.stockActions.onOpenDividends}>Dividends</button> : null}
     <button type="button" className="btn sec"
       onClick={() => model.stockActions.onOpenStock(holding.symbol)}>View market</button>
+    <StockShareLinks symbol={holding.symbol} folded />
   </>;
   return <article className="today-stock" aria-label={`Your ${holding.tokenSymbol}`}>
     <div className="today-stock-head">
@@ -76,7 +77,6 @@ function TodayStock({ model }: { model: TodayScreenModelV1 }) {
       tokenAddress={holding.tokenAddress} tokenSymbol={holding.tokenSymbol}
       overviewTokens={holding.tokens} onMeasure={stocks.onMeasureCashOut} compact additionalActions={actions} />
       : <div className="card-actions">{actions}</div>}
-    <StockShareLinks symbol={holding.symbol} />
     {(stocks.data?.holdings.length ?? 0) > 1 ? <p className="lnote">More holdings in Stocks and recent updates below.</p> : null}
   </article>;
 }

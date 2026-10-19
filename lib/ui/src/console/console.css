@@ -2197,6 +2197,12 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .gift-share-row .btn { display: inline-flex; align-items: center; gap: 8px; text-decoration: none; }
 .mio-console .stock-share-row { margin-top: 10px; gap: 8px; }
 .mio-console .stock-share-row.gift-share-row .btn { flex: 0 1 auto; padding: 6px 10px; }
+/* One "Share" among a card's actions; open, it takes its own line so the two
+   places to post never squeeze the row they came from. */
+.mio-console .share-fold > summary { list-style: none; cursor: pointer; }
+.mio-console .share-fold > summary::-webkit-details-marker { display: none; }
+.mio-console .share-fold[open] { flex-basis: 100%; }
+.mio-console .share-fold[open] > summary { color: var(--ink); }
 .mio-console .btn.share-x { background: var(--ink); color: var(--bg); box-shadow: none; }
 .mio-console .btn.share-fc { background: var(--violet); color: var(--on-accent); box-shadow: none; }
 .mio-console .share-mark { width: 16px; height: 16px; flex: none; fill: currentColor; }

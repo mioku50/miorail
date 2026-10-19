@@ -27,7 +27,7 @@ function modelV1(signedIn = true) {
 test('one finding and one holding lead; the question precedes the full feed and coverage', () => {
   const html = renderToStaticMarkup(<TodayScreen model={modelV1()} />);
   assert.match(html, /Your Base Today/);
-  assert.match(html, /issuer address doesn&#x27;t match/);
+  assert.match(html, /Not the official AAPLc/);
   assert.match(html, /Your NVDAc/);
   assert.ok(html.indexOf('Your NVDAc') < html.indexOf('id="today-ask-input"'));
   assert.ok(html.indexOf('id="today-ask-input"') < html.indexOf('id="my-stocks-today"'));
@@ -37,6 +37,9 @@ test('one finding and one holding lead; the question precedes the full feed and 
   assert.match(html, />View market<\/button>/);
   const lead = html.slice(html.indexOf('class="today-stock"'), html.indexOf('id="today-ask-input"'));
   assert.match(lead, /aria-label="Share NVDA stock card"/);
+  // One "Share" among the card's actions, not two more buttons on their own row.
+  assert.equal((lead.match(/<summary class="btn sec">Share<\/summary>/g) ?? []).length, 1);
+  assert.ok(lead.indexOf('>View market</button>') < lead.indexOf('<details class="share-fold">'));
   assert.match(lead, />Post on X<\/a>/);
   assert.match(lead, />Cast on Farcaster<\/a>/);
   assert.match(lead, /miorail.xyz%2Fstocks%2Fnvda/);

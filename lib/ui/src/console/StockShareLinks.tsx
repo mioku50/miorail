@@ -17,11 +17,19 @@ export function stockShareLinksV1(symbol: string | null) {
   }) };
 }
 
-export function StockShareLinks({ symbol }: { symbol: string | null }) {
+/** `folded` puts both places behind one "Share" in a card's own action row:
+ * a holding worth $0.19 carried five buttons on Today, two of them for
+ * posting. The stock page keeps them open, since sharing it is its point. */
+export function StockShareLinks({ symbol, folded = false }: { symbol: string | null; folded?: boolean }) {
   const links = stockShareLinksV1(symbol);
   if (!links) return null;
-  return <div className="gift-share-row stock-share-row" role="group" aria-label={`Share ${links.ticker} stock card`}>
+  const row = <div className="gift-share-row stock-share-row" role="group" aria-label={`Share ${links.ticker} stock card`}>
     <ShareLinkV1 className="btn sec" href={links.x}>Post on X</ShareLinkV1>
     <ShareLinkV1 className="btn sec" href={links.farcaster}>Cast on Farcaster</ShareLinkV1>
   </div>;
+  if (!folded) return row;
+  return <details className="share-fold">
+    <summary className="btn sec">Share</summary>
+    {row}
+  </details>;
 }

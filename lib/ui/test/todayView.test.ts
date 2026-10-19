@@ -158,7 +158,8 @@ describe("what the wallet's balances already say", () => {
     const { input: value, opened } = input();
     const model = todayModelV1(value);
     const first = model.wallet!.items[0]!;
-    assert.equal(first.title, "AAPLc — issuer address doesn't match");
+    assert.equal(first.title, 'Not the official AAPLc');
+    assert.match(first.body, /^You hold .* of a token named AAPLc at 0x.*The official AAPLc lives at a different address/);
     assert.equal(first.attention, true);
     first.actions[0]!.onClick();
     assert.deepEqual(opened, [`investigate:${TOKEN}`]);

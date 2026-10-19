@@ -190,7 +190,7 @@ export function MyStocksTodayCard({ model }: { model: MyStocksTodayModelV1 }) {
                         onMeasure={model.onMeasureCashOut}
                       />
                     ) : null}
-                    <StockShareLinks symbol={holding.symbol} />
+                    <StockShareLinks symbol={holding.symbol} folded />
                     {mine?.lead ? <p>{mine.lead}</p> : null}
                     {holding.schedule ? (
                       <p className="stocks-today-schedule">
