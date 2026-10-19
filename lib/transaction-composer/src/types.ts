@@ -78,6 +78,11 @@ export const TransactionPreparationResultV1Schema = z.discriminatedUnion('outcom
       routeRunId: z.string().min(1).max(200),
       blueprint: ExecutionBlueprintV1Schema,
       review: TransactionReviewProjectionV1Schema,
+      /** How long this prepare's own simulation ran, measured here. The
+       * screen's stage rail measures only what it saw, and the simulation
+       * runs inside prepare — so it read "Simulation —" above a timeline
+       * saying "Simulation passed". Absent when no simulation ran. */
+      simulationMs: z.number().int().min(0).max(600_000).optional(),
     })
     .strict(),
   z
@@ -115,8 +120,15 @@ export function preparedResultV1(input: {
   routeRunId: string;
   blueprint: ExecutionBlueprintV1;
   review: TransactionReviewProjectionV1;
+  simulationMs?: number;
 }): TransactionPreparationResultV1 {
-  return { outcome: 'prepared', routeRunId: input.routeRunId, blueprint: input.blueprint, review: input.review };
+  return {
+    outcome: 'prepared',
+    routeRunId: input.routeRunId,
+    blueprint: input.blueprint,
+    review: input.review,
+    ...(input.simulationMs === undefined ? {} : { simulationMs: input.simulationMs }),
+  };
 }
 
 export function refreshRequiredResultV1(

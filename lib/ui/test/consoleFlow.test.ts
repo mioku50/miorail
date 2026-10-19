@@ -28,6 +28,7 @@ import {
   swapPrepareRequestFailedNoticeV1,
   swapTerminalFailureV1,
   stepperFromClockV1,
+  recordMeasuredStageV1,
 } from '../src/console/consoleFlow';
 
 // ---------------------------------------------------------------------------
@@ -732,4 +733,13 @@ describe('a prepare that never answered still explains itself', () => {
     // A server-side failure is worth retrying with a fresh comparison.
     assert.equal(notice.canCompareAgain, true);
   });
+});
+
+test('a stage the server measured is shown with its duration, and never over the screen’s own reading', () => {
+  // 2026-10-19: "Simulation —" on the rail, "Simulation passed" in the timeline.
+  const clock = recordMeasuredStageV1(emptyStageClockV1(), 'simulation', 900, 10_000);
+  assert.equal(deriveStageTimingsV1(clock)[CONSOLE_STAGES_V1.indexOf('simulation')], '0.9s');
+  const measuredHere = completeStageV1(startStageV1(emptyStageClockV1(), 'simulation', 1_000), 'simulation', 1_200);
+  assert.equal(recordMeasuredStageV1(measuredHere, 'simulation', 900, 10_000), measuredHere);
+  assert.equal(recordMeasuredStageV1(emptyStageClockV1(), 'simulation', Number.NaN, 10_000)['simulation'], undefined);
 });

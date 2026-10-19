@@ -76,6 +76,10 @@ import {
 import { approvedStockSponsorshipV1, sponsoredGasConfiguredV1, type SponsorshipOfferV1 } from './sponsoredGas.js';
 import { swapPrepareOutcomeMetaV1 } from '../lib/swapPrepareLog.js';
 import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
+import { readChainConditionsV1 } from '../lib/chainConditions.js';
+import { readFeeCalibrationV1 } from '../lib/feeCalibration.js';
+import { readMarketSnapshotV1 } from '../lib/marketSnapshot.js';
+import { BASE_PUBLIC_RPC_URL_V1 } from '../lib/baseRpcSwapSimulation.js';
 import { checkStockGiftSendV1, checkStockGiftV1, resolveGiftRecipientV1 } from '../lib/stockGift.js';
 import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { valueStockInUsdcV1 } from '../lib/giftSendValuation.js';
@@ -101,6 +105,9 @@ import {
   UniswapSwapRouteAdapter,
   createO1RouterPinReaderV1,
   createHydrexRouterPinReaderV1,
+  createEthSimulateGasMeterV1,
+  type SwapGasMeterV1,
+  type SwapGasPriceV1,
 } from '@mioagent/swap-adapters';
 import {
   BlueprintSubmissionConflictError,
@@ -418,6 +425,7 @@ export const routePlanRouteRuntime = {
             })
         : undefined,
       engine: createSwapRouteEngine(),
+      feeCalibration: (tenantId) => readFeeCalibrationV1(tenantId),
       // T67B: Aerodrome quotes over the Base RPC this deployment already has,
       // so it needs no key of its own — but with no RPC URL configured it
       // reports `not_configured` rather than pretending to have asked.
@@ -435,8 +443,8 @@ export const routePlanRouteRuntime = {
         // concentrated liquidity — measured at $76,263 a token against a true
         // ~$219 (2026-08-31).
         aerodromeAdapterV1(),
-        new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
-        new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1() }),
+        new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1(), gasMeter: swapGasMeterV1() }),
+        new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1(), gasMeter: swapGasMeterV1() }),
         new BalancerSwapRouteAdapter(),
         new GmgnQuoteRouteAdapter(),
       ],
@@ -465,7 +473,7 @@ export const routePlanRouteRuntime = {
  * throttle pacing rather than answering "unavailable" under rate limiting. */
 function aerodromeAdapterV1(): AerodromeSwapRouteAdapter {
   const rpcUrl = baseMainnetRpcUrlV1();
-  const reader = rpcUrl ? createAerodromeReaderV1({ rpcUrl }) : null;
+  const reader = rpcUrl ? createAerodromeReaderV1({ rpcUrl, fallbackRpcUrl: baseFallbackRpcUrlV1() }) : null;
   return new AerodromeSwapRouteAdapter({
     rpcUrl,
     ...(reader ? { reader, clReader: aerodromeClReaderFromReaderV1(reader) } : {}),
@@ -477,6 +485,41 @@ function aerodromeAdapterV1(): AerodromeSwapRouteAdapter {
  * `not_configured` instead of quoting. */
 function baseMainnetRpcUrlV1(): string {
   return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
+}
+
+/**
+ * Gas for a quote that states none, measured by simulating its own approval
+ * and swap. On the endpoint that serves `eth_simulateV1` — the read path's
+ * Infura answers -32601 for it — and priced with the readings the status rail
+ * already shows: the chain's gas price and the ETH price.
+ */
+function swapGasMeterV1(): SwapGasMeterV1 {
+  return createEthSimulateGasMeterV1({
+    rpcUrl: (process.env.MIORAIL_SIMULATION_RPC_URL || BASE_PUBLIC_RPC_URL_V1).trim(),
+    price: swapGasPriceNowV1,
+  });
+}
+
+async function swapGasPriceNowV1(): Promise<SwapGasPriceV1 | null> {
+  // The same switch the price rail obeys: a deployment told not to read
+  // CoinGecko has no ETH price, so it measures no dollar figure.
+  if ((process.env.PRICE_PROVIDER ?? 'coingecko').trim().toLowerCase() !== 'coingecko') return null;
+  const [chain, market] = await Promise.all([
+    readChainConditionsV1(baseMainnetRpcUrlV1() || undefined),
+    readMarketSnapshotV1(
+      { fetch: (...args) => globalThis.fetch(...args), now: () => new Date() },
+      { apiKey: (process.env.COINGECKO_API_KEY ?? '').trim() || null },
+    ).catch(() => null),
+  ]);
+  if (!chain.gasPriceWei || !market?.ok) return null;
+  return { gasPriceWei: BigInt(chain.gasPriceWei), ethUsd: market.snapshot.price };
+}
+
+/** The deployment's other Base endpoint, asked only when the first fails for
+ * a reason about itself. Empty when there is none or it is the same one. */
+function baseFallbackRpcUrlV1(): string {
+  const fallback = (process.env.BASE_RPC_URL || '').trim();
+  return fallback && fallback !== baseMainnetRpcUrlV1() ? fallback : '';
 }
 
 /** Upgradeable provider boundaries are re-pinned before both review and

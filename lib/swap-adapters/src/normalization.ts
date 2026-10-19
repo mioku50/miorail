@@ -10,6 +10,31 @@ import {
 import type { SwapAdapterFailure, SwapAdapterId } from './types.js';
 
 export const BASE_MAINNET_CHAIN_ID = 8453 as const;
+
+/**
+ * How long a comparison may reuse a router pin that passed. Review and
+ * approval never do: they read the chain again before any call is built.
+ */
+export const QUOTE_PIN_REUSE_MS_V1 = 60_000;
+
+/**
+ * Reuses a check that PASSED for `ttlMs`. A refusal or an unreadable answer
+ * is never kept, so a changed contract is seen the next time it is asked.
+ * `ttlMs <= 0` reads every time.
+ */
+export async function reusePassingCheckV1<T extends { ok: boolean }>(
+  cache: Map<string, { until: number; value: T }>,
+  key: string,
+  options: { ttlMs: number; now: () => number },
+  read: () => Promise<T>,
+): Promise<T> {
+  if (options.ttlMs <= 0) return read();
+  const hit = cache.get(key);
+  if (hit && hit.until > options.now()) return hit.value;
+  const value = await read();
+  if (value.ok) cache.set(key, { until: options.now() + options.ttlMs, value });
+  return value;
+}
 export const UNISWAP_NATIVE_ETH = '0x0000000000000000000000000000000000000000' as const;
 export const KYBERSWAP_NATIVE_ETH = '0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee' as const;
 export const KYBERSWAP_BASE_ROUTER = '0x6131b5fae19ea4f9d964eac0408e4408b66337b5' as const;

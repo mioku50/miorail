@@ -90,6 +90,7 @@ import {
   deriveSimulationViewV1,
   dispatchRouteFamilyV1,
   emptyStageClockV1,
+  recordMeasuredStageV1,
   evidenceRowsFromProjectionV1,
   evidenceSourcesFromProjectionV1,
   intelligenceSpendLabelV1,
@@ -645,6 +646,14 @@ export function MiniConsole() {
   useEffect(() => {
     if (prepared) mark("review", "complete");
   }, [prepared, mark]);
+
+  // The simulation ran inside prepare; its duration is the server's reading.
+  useEffect(() => {
+    const simulationMs = prepared?.simulationMs;
+    if (simulationMs === undefined) return;
+    const at = Date.now();
+    setClock((current) => recordMeasuredStageV1(current, "simulation", simulationMs, at));
+  }, [prepared]);
 
   useEffect(() => {
     if (simulateResponse) mark("simulation", "complete");

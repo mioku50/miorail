@@ -38,6 +38,13 @@ export type AerodromeRpcResultV1<T> =
 
 export interface AerodromeRpcConfigV1 {
   rpcUrl: string;
+  /**
+   * Asked once more when the primary still fails for a reason about the
+   * endpoint rather than the pair. On 2026-10-19 the primary throttled five
+   * comparisons in seven, and each was reported as "Aerodrome unreachable"
+   * while the second endpoint the server already had answered "no route".
+   */
+  fallbackRpcUrl?: string;
   timeoutMs?: number;
   fetchImpl?: typeof fetch;
   /** How many times a THROTTLED read is repeated. A revert is never repeated. */
@@ -134,15 +141,35 @@ function decodeAmountsOutV1(
   return { ok: true, value: amounts };
 }
 
+/**
+ * Whether an endpoint is telling us to slow down. Read from every signal a
+ * provider uses, because each uses a different one: the public Base endpoint
+ * says "over rate limit" in a 200, Infura answers HTTP 429 with code -32005
+ * ("project ID request rate exceeded") or 429 / event -33200 ("Too Many
+ * Requests"), and EIP-1474 reserves -32005 for "limit exceeded". Matching
+ * only the first wording read Infura's throttle as a broken endpoint.
+ */
+export function rpcThrottleSignalV1(input: { status?: number; code?: unknown; message?: unknown }): boolean {
+  if (input.status === 429) return true;
+  if (input.code === -32005 || input.code === 429 || input.code === -33200 || input.code === -33300) return true;
+  return /rate limit|rate exceeded|too many requests|credits per second/i.test(String(input.message ?? ''));
+}
+
 /** A revert is Aerodrome saying "no such pool", which is an ANSWER. Only a
  * transport or shape problem is a failure. */
-function classifyRpcErrorV1(message: string): AerodromeRpcReasonV1 {
+function classifyRpcErrorV1(message: string, code?: unknown): AerodromeRpcReasonV1 {
   if (/execution reverted|revert/i.test(message)) return 'no_route';
   // `over rate limit` used to land in `rpc_error`, which meant a throttled
   // quote was never repeated and a whole exit check could be decided by how
   // fast we asked.
-  if (/rate limit|too many requests/i.test(message)) return 'rate_limited';
+  if (rpcThrottleSignalV1({ code, message })) return 'rate_limited';
   return 'rpc_error';
+}
+
+/** A failure about the endpoint, not the pair: the reasons the adapter counts
+ * as a transport failure, and the only ones a second endpoint can change. */
+function endpointFailureV1(result: AerodromeRpcResultV1<unknown>): boolean {
+  return !result.ok && result.reason !== 'no_route' && result.reason !== 'invalid_response' && result.reason !== 'not_configured';
 }
 
 /**
@@ -160,7 +187,7 @@ export const AERODROME_THROTTLED_GAP_MS_V1 = 400;
  * pool", which is an ANSWER — repeating it only makes it slower. */
 const AERODROME_RETRYABLE_V1: readonly AerodromeRpcReasonV1[] = ['rate_limited', 'rpc_timeout'];
 
-export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): AerodromeReaderV1 {
+function createSingleEndpointReaderV1(config: AerodromeRpcConfigV1): AerodromeReaderV1 {
   const timeoutMs = config.timeoutMs ?? 8_000;
   const fetchImpl = config.fetchImpl ?? fetch;
   const maxRetries = config.maxRetries ?? 2;
@@ -214,7 +241,15 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
         ? { ok: false, reason: 'rpc_timeout' }
         : { ok: false, reason: 'rpc_unavailable' };
     }
-    if (!response.ok) return { ok: false, reason: 'rpc_unavailable', detail: `status ${response.status}` };
+    if (!response.ok) {
+      // Infura throttles with an HTTP 429, not a 200 carrying an error: read
+      // as "unavailable" it was never repeated and never paced.
+      if (rpcThrottleSignalV1({ status: response.status })) {
+        noteThrottled();
+        return { ok: false, reason: 'rate_limited', detail: `status ${response.status}` };
+      }
+      return { ok: false, reason: 'rpc_unavailable', detail: `status ${response.status}` };
+    }
 
     let envelope: JsonRpcEnvelope;
     try {
@@ -224,7 +259,7 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
     }
     if (envelope.error) {
       const message = envelope.error.message ?? '';
-      const reason = classifyRpcErrorV1(message);
+      const reason = classifyRpcErrorV1(message, envelope.error.code);
       // A throttle arrives as a 200 with a JSON-RPC error body, so pacing is
       // driven by the classified reason rather than by the HTTP status.
       if (reason === 'rate_limited') noteThrottled();
@@ -305,7 +340,13 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
       const name = error instanceof Error ? error.name : '';
       return all(name === 'TimeoutError' || name === 'AbortError' ? 'rpc_timeout' : 'rpc_unavailable');
     }
-    if (!response.ok) return all('rpc_unavailable', `status ${response.status}`);
+    if (!response.ok) {
+      if (rpcThrottleSignalV1({ status: response.status })) {
+        noteThrottled();
+        return all('rate_limited', `status ${response.status}`);
+      }
+      return all('rpc_unavailable', `status ${response.status}`);
+    }
 
     let payload: unknown;
     try {
@@ -337,7 +378,7 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
         const message = envelope.error.message ?? '';
         results[index] = {
           ok: false,
-          reason: classifyRpcErrorV1(message),
+          reason: classifyRpcErrorV1(message, envelope.error.code),
           detail: redactRpcTextV1(message),
         };
         continue;
@@ -424,6 +465,43 @@ export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): Aerodrome
       } catch {
         return null;
       }
+    },
+  };
+}
+
+/**
+ * The reader the adapters use: one endpoint, or a primary with a fallback.
+ *
+ * Each endpoint keeps its own pacing, so a throttled primary does not slow the
+ * fallback down. Only a failure about the endpoint is asked again — a revert
+ * is Aerodrome's answer about the pair and is never re-asked elsewhere.
+ */
+export function createAerodromeReaderV1(config: AerodromeRpcConfigV1): AerodromeReaderV1 {
+  const primary = createSingleEndpointReaderV1(config);
+  const fallbackUrl = config.fallbackRpcUrl?.trim() ?? '';
+  if (fallbackUrl.length === 0 || fallbackUrl === config.rpcUrl.trim()) return primary;
+  const fallback = createSingleEndpointReaderV1({ ...config, rpcUrl: fallbackUrl, fallbackRpcUrl: undefined });
+  const either = async <T>(ask: (reader: AerodromeReaderV1) => Promise<AerodromeRpcResultV1<T>>) => {
+    const first = await ask(primary);
+    return endpointFailureV1(first) ? ask(fallback) : first;
+  };
+  return {
+    readCall: (input) => either((reader) => reader.readCall!(input)),
+    readDefaultFactory: () => either((reader) => reader.readDefaultFactory()),
+    readAmountsOut: (input) => either((reader) => reader.readAmountsOut(input)),
+    readAllowance: (input) => either((reader) => reader.readAllowance(input)),
+    async readAmountsOutMany(inputs) {
+      const first = await readAmountsOutManyV1(primary, inputs);
+      const again = first.flatMap((result, index) => (endpointFailureV1(result) ? [index] : []));
+      if (again.length === 0) return first;
+      const second = await readAmountsOutManyV1(fallback, again.map((index) => inputs[index]!));
+      again.forEach((index, position) => {
+        first[index] = second[position]!;
+      });
+      return first;
+    },
+    async readBlockNumber() {
+      return (await primary.readBlockNumber()) ?? fallback.readBlockNumber();
     },
   };
 }

@@ -265,6 +265,13 @@ function baseMainnetRpcUrlV1(): string {
   return (process.env.BASE_MAINNET_RPC_URL || process.env.BASE_RPC_URL || '').trim();
 }
 
+/** The deployment's other Base endpoint, asked only when the first fails for
+ * a reason about itself. Empty when there is none or it is the same one. */
+function baseFallbackRpcUrlV1(): string {
+  const fallback = (process.env.BASE_RPC_URL || '').trim();
+  return fallback && fallback !== baseMainnetRpcUrlV1() ? fallback : '';
+}
+
 function ttlMsV1(): number {
   const raw = Number.parseInt((process.env.MIORAIL_B20_CONTROL_TTL_MS ?? '').trim(), 10);
   return Number.isFinite(raw) && raw >= 0 ? raw : 30_000;
@@ -384,7 +391,7 @@ export const b20RouteRuntime = {
   /** The Aerodrome Router, read-only. A separate reader from the B20 one
    * because they speak to different contracts with different decoders — sharing
    * one would mean a change to either could quietly alter the other. */
-  aerodromeReader: () => createAerodromeReaderV1({ rpcUrl: baseMainnetRpcUrlV1() }),
+  aerodromeReader: () => createAerodromeReaderV1({ rpcUrl: baseMainnetRpcUrlV1(), fallbackRpcUrl: baseFallbackRpcUrlV1() }),
   rpcConfigured: () => baseMainnetRpcUrlV1().length > 0,
   ttlMs: ttlMsV1,
   watchTtlMs: watchTtlMsV1,

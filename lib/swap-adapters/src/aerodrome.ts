@@ -10,7 +10,7 @@ import {
   candidateRoutesV1,
   type AerodromeRouteLegV1,
 } from './aerodrome-pinned.js';
-import { createAerodromeReaderV1, type AerodromeReaderV1 } from './aerodrome-client.js';
+import { createAerodromeReaderV1, readAmountsOutManyV1, type AerodromeReaderV1 } from './aerodrome-client.js';
 import { aerodromeClHasMarketV1, type AerodromeClReaderV1 } from './aerodrome-cl.js';
 import {
   canonicalRequestHash,
@@ -208,8 +208,12 @@ export class AerodromeSwapRouteAdapter implements SwapRouteAdapter {
 
       let best: { route: AerodromeRouteLegV1[]; amounts: bigint[] } | null = null;
       let sawTransportFailure = false;
-      for (const route of routes) {
-        const quoted = await reader.readAmountsOut({ amountIn, route });
+      // One batch for every candidate route, not one round trip each: the
+      // routes are independent questions, and asked in sequence they were a
+      // second or more of the comparison's wait on a throttled endpoint.
+      const answers = await readAmountsOutManyV1(reader, routes.map((route) => ({ amountIn, route })));
+      for (const [index, route] of routes.entries()) {
+        const quoted = answers[index]!;
         if (!quoted.ok) {
           // `no_route` is expected for most combinations — most pairs do not
           // have all four stable/volatile permutations. Anything else means

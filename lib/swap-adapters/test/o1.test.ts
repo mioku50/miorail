@@ -206,6 +206,38 @@ describe('o1 route adapter', () => {
     assert.ok(!JSON.stringify(result).includes('fixture-shared-token'));
   });
 
+  test('a gas meter replaces the order gas LIMIT with a measured, priced figure', async () => {
+    // 2026-10-19: the order states a gas limit and no dollar figure, so an o1
+    // route could never be ranked even once its router pin passed again.
+    const measured = {
+      gasUnits: '402118', maxFeePerGasWei: null, estimatedCostNative: '0.000002412708', estimatedCostUsd: '0.0057928',
+    };
+    const asked: { approval: unknown; call: { to: string } }[] = [];
+    const quote = (measure: () => Promise<typeof measured | null>) => new O1SwapRouteAdapter({
+      sharedToken: 'fixture-shared-token',
+      pinReader: verifiedPin,
+      gasMeter: { async measure(input) { asked.push(input); return measure(); } },
+      fetchImpl: (async () => new Response(JSON.stringify(response()), {
+        status: 201, headers: { 'content-type': 'application/json' },
+      })) as typeof fetch,
+    }).quote({ intent: makeIntent({ from: 'USDC', to: 'WETH', amount: '100' }), walletAddress: WALLET, requestId: 'o1-gas', now: NOW });
+
+    const priced = await quote(async () => measured);
+    assert.equal(priced.outcome, 'quoted');
+    if (priced.outcome !== 'quoted') return;
+    assert.deepEqual(priced.candidate.estimatedGas, measured);
+    assert.ok(priced.candidate.trustMetadata.riskFlags.includes('gas_simulated'));
+    assert.ok(!priced.candidate.trustMetadata.riskFlags.includes('gas_limit_not_estimate'));
+    assert.equal(asked[0]!.call.to, O1_BASE_ROUTER_PROXY_V1, 'the exact swap the order returned');
+    assert.deepEqual(asked[0]!.approval, { token: USDC, spender: O1_BASE_ROUTER_PROXY_V1, amountAtomic: '100000000' });
+
+    const limitOnly = await quote(async () => null);
+    assert.equal(limitOnly.outcome, 'quoted');
+    if (limitOnly.outcome !== 'quoted') return;
+    assert.equal(limitOnly.candidate.estimatedGas.estimatedCostUsd, null);
+    assert.ok(limitOnly.candidate.trustMetadata.riskFlags.includes('gas_limit_not_estimate'));
+  });
+
   test('does not call o1 when the onchain pin no longer matches', async () => {
     let called = false;
     const adapter = new O1SwapRouteAdapter({

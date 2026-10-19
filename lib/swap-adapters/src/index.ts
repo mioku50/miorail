@@ -29,3 +29,4 @@ export * from './balancer-build.js';
 export * from './uniswap-v4-quoter.js';
 export * from './uniswap-v4-b20.js';
 export * from './gmgn.js';
+export * from './swap-gas-meter.js';

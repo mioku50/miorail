@@ -1,3 +1,4 @@
+import { rpcThrottleSignalV1 } from '@mioagent/swap-adapters';
 import { logger } from '@mioagent/utils';
 
 // ---------------------------------------------------------------------------
@@ -119,7 +120,14 @@ async function rpcBatchV1(
     if (response.status === 429) return { ok: false, reason: 'rpc_rate_limited' };
     if (!response.ok) return { ok: false, reason: 'rpc_http_error' };
     const payload: unknown = await response.json();
-    if (!Array.isArray(payload)) return { ok: false, reason: 'rpc_invalid_response' };
+    // A throttled batch can come back as ONE error object instead of an array.
+    // Infura's says "project ID request rate exceeded" with code -32005; the
+    // twelve `rpc_invalid_response` lines of 2026-10-19 all fell inside the
+    // operator's own sessions, which is what a per-second limit looks like.
+    if (!Array.isArray(payload)) {
+      const error = (payload as { error?: { code?: unknown; message?: unknown } } | null)?.error;
+      return { ok: false, reason: error && rpcThrottleSignalV1(error) ? 'rpc_rate_limited' : 'rpc_invalid_response' };
+    }
     const byId = new Map<number, unknown>();
     let rateLimited = false;
     for (const entry of payload) {
@@ -129,10 +137,8 @@ async function rpcBatchV1(
       }
       // Some providers answer 200 and put the throttle inside the envelope,
       // per-call. Reading that as an unreadable response would blame the shape.
-      const error = (entry as { error?: { message?: unknown } }).error;
-      if (error && /rate limit|too many requests/i.test(String(error.message ?? ''))) {
-        rateLimited = true;
-      }
+      const error = (entry as { error?: { code?: unknown; message?: unknown } }).error;
+      if (error && rpcThrottleSignalV1(error)) rateLimited = true;
     }
     const block = byId.get(1);
     const gas = byId.get(2);

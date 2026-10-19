@@ -6,12 +6,14 @@ import {
   normalizeAddress,
   protocolAllowsAdapter,
   providerFailure,
+  QUOTE_PIN_REUSE_MS_V1,
   routablePairV1,
   supportsRoutableSwapIntentV1,
 } from './normalization.js';
 import { HydrexClientV1, type HydrexClientV1Options, type HydrexQuoteRequestV1 } from './hydrex-client.js';
 import { parseHydrexQuoteV1 } from './hydrex-order.js';
-import { createHydrexRouterPinReaderV1, type HydrexRouterPinReaderV1 } from './hydrex-pinned.js';
+import { HYDREX_BASE_ROUTER_PROXY_V1, createHydrexRouterPinReaderV1, type HydrexRouterPinReaderV1 } from './hydrex-pinned.js';
+import type { SwapGasMeterV1 } from './swap-gas-meter.js';
 import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
 export const HYDREX_PROVIDER_V1 = {
@@ -44,6 +46,9 @@ export interface HydrexSwapRouteAdapterOptions extends HydrexClientV1Options {
   pinReader?: HydrexRouterPinReaderV1 | null;
   rpcUrl?: string;
   freshnessTtlMs?: number;
+  /** Measures the swap's gas, which Hydrex's quote does not state. Without
+   * it the candidate carries the missing-gas sentinel and is not scored. */
+  gasMeter?: SwapGasMeterV1 | null;
 }
 
 export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
@@ -51,11 +56,13 @@ export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
   private readonly client: HydrexClientV1;
   private readonly pinReader: HydrexRouterPinReaderV1 | null;
   private readonly freshnessTtlMs: number;
+  private readonly gasMeter: SwapGasMeterV1 | null;
 
   constructor(options: HydrexSwapRouteAdapterOptions = {}) {
+    this.gasMeter = options.gasMeter ?? null;
     this.client = options.client ?? new HydrexClientV1(options);
     this.pinReader = options.pinReader ??
-      (options.rpcUrl?.trim() ? createHydrexRouterPinReaderV1({ rpcUrl: options.rpcUrl }) : null);
+      (options.rpcUrl?.trim() ? createHydrexRouterPinReaderV1({ rpcUrl: options.rpcUrl, cacheTtlMs: QUOTE_PIN_REUSE_MS_V1 }) : null);
     this.freshnessTtlMs = options.freshnessTtlMs ?? 30_000;
   }
 
@@ -70,12 +77,13 @@ export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
     const request = hydrexQuoteRequestFromIntentV1(input.intent, input.walletAddress);
     if (!request) return providerFailure(this.id, 'provider_unsupported_intent');
     if (!this.pinReader) return providerFailure(this.id, 'provider_not_configured');
-    const outerPin = await this.pinReader.verify();
+    // Asked together: the quote is a read and builds nothing, and in sequence
+    // the router check and the API added their waits.
+    const [outerPin, transport] = await Promise.all([this.pinReader.verify(), this.client.quote(request)]);
     if (!outerPin.ok) {
       return providerFailure(this.id, outerPin.reason === 'not_configured' ? 'provider_not_configured' :
         outerPin.reason === 'mismatch' ? 'provider_router_mismatch' : 'provider_unreachable');
     }
-    const transport = await this.client.quote(request);
     if (transport.outcome !== 'response') {
       return providerFailure(this.id, transport.outcome === 'timeout' ? 'provider_timeout' :
         transport.outcome === 'rate_limited' ? 'provider_rate_limited' : 'provider_unreachable', transport.status ?? undefined);
@@ -85,16 +93,30 @@ export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
       outputAsset: input.intent.toAsset!, now: input.now,
     });
     if (!parsed.ok) return providerFailure(this.id, parsed.errorCode);
-    const routePin = await this.pinReader.verifyUpstream(parsed.value.upstreamRouter);
+    // The upstream check and the gas measurement are independent reads.
+    const [routePin, measuredGas] = await Promise.all([
+      this.pinReader.verifyUpstream(parsed.value.upstreamRouter),
+      this.gasMeter
+        ? this.gasMeter
+            .measure({
+              walletAddress: input.walletAddress,
+              approval: { token: request.tokenIn, spender: HYDREX_BASE_ROUTER_PROXY_V1, amountAtomic: request.amount },
+              call: parsed.value.swapCall,
+            })
+            .catch(() => null)
+        : Promise.resolve(null),
+    ]);
     if (!routePin.ok) {
       return providerFailure(this.id, routePin.reason === 'mismatch' ? 'provider_router_mismatch' : 'provider_unreachable');
     }
     const observedAt = input.now.toISOString();
     const providerDeadlineMs = Number(BigInt(parsed.value.deadline) * 1000n);
     const expiresAt = new Date(Math.min(providerDeadlineMs, input.now.getTime() + this.freshnessTtlMs)).toISOString();
-    const gas: GasEstimateV1 = {
-      // The provider supplies no estimate. Zero is V1's missing-evidence sentinel;
-      // Route Engine does not score it and the clients render "Not provided".
+    // The provider supplies no estimate, so it is measured by simulating this
+    // wallet's approval and swap. When that is not possible, zero is V1's
+    // missing-evidence sentinel: Route Engine does not score it and the
+    // clients render "Not provided".
+    const gas: GasEstimateV1 = measuredGas ?? {
       gasUnits: '0', maxFeePerGasWei: null, estimatedCostNative: null, estimatedCostUsd: null,
     };
     const artifacts = buildQuoteArtifacts({
@@ -113,7 +135,10 @@ export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
       expiresAt,
       blockNumber: routePin.blockNumber,
       provenance: { pools: [], liquiditySources: parsed.value.liquiditySources },
-      riskFlags: ['aggregated-route', 'price_impact_unmeasured', 'gas_unmeasured', 'nested_upstream_calldata', `hydrex_fee_${routePin.feeBps}_bps`],
+      riskFlags: [
+        'aggregated-route', 'price_impact_unmeasured', measuredGas ? 'gas_simulated' : 'gas_unmeasured',
+        'nested_upstream_calldata', `hydrex_fee_${routePin.feeBps}_bps`,
+      ],
       usesExternalAggregators: true,
       sourceIndependence: 'overlapping',
     });

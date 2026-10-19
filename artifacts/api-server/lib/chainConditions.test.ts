@@ -123,6 +123,28 @@ describe('the reason says which failure it was', () => {
     assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_rate_limited');
   });
 
+  test("Infura's throttle is a throttle in either of its forms", async () => {
+    // 2026-10-19: twelve "rpc_invalid_response" lines, every one inside the
+    // operator's own sessions. Infura says "project ID request rate exceeded"
+    // (-32005), which the old /rate limit|too many requests/ never matched,
+    // and may answer a throttled batch with one error object, not an array.
+    globalThis.fetch = (async () =>
+      new Response(
+        JSON.stringify([
+          { jsonrpc: '2.0', id: 1, error: { code: -32005, message: 'project ID request rate exceeded' } },
+          { jsonrpc: '2.0', id: 2, error: { code: -32005, message: 'project ID request rate exceeded' } },
+        ]),
+        { status: 200 },
+      )) as typeof globalThis.fetch;
+    assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_rate_limited');
+    resetChainConditionsForTests();
+    globalThis.fetch = (async () =>
+      new Response(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32005, message: 'project ID request rate exceeded' } }), {
+        status: 200,
+      })) as typeof globalThis.fetch;
+    assert.equal((await readChainConditionsV1(RPC)).reason, 'rpc_rate_limited');
+  });
+
   test('our own abort is a timeout, not an unreachable endpoint', async () => {
     globalThis.fetch = ((_url: string, init?: { signal?: AbortSignal }) =>
       new Promise((_resolve, reject) => {

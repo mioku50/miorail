@@ -17,7 +17,7 @@ import {
   routeCardIntentFixture,
   routeCardQuotedAdapterFixture,
 } from '../../../lib/route-card/test/fixtures.js';
-import { raiseVerificationDepthV1, RoutePlanCoordinator } from './routePlanCoordinator.js';
+import { raiseVerificationDepthV1, RoutePlanCoordinator, timedSwapAdaptersV1 } from './routePlanCoordinator.js';
 
 const input = {
   tenantId: 'tenant-card',
@@ -411,5 +411,26 @@ describe('a verification floor raises and never lowers', () => {
       { ...run.intent, verificationDepth: 'standard', intentHash: intent.intentHash },
       intent,
     );
+  });
+});
+
+describe('the comparison says which provider it waited for', () => {
+  test('each quote is timed under its own id, failures included, and nothing else changes', async () => {
+    let clock = 0;
+    const durations: Record<string, number> = {};
+    const quoted = { outcome: 'unavailable', provider: 'kyberswap', errorCode: 'provider_no_route', retryable: false } as const;
+    const [fast, broken] = timedSwapAdaptersV1(
+      [
+        { id: 'kyberswap', supports: () => true, quote: async () => { clock += 900; return quoted; } },
+        { id: 'hydrex', supports: () => false, quote: async () => { clock += 6_300; throw new Error('boom'); } },
+      ],
+      durations,
+      () => clock,
+    );
+    assert.equal(fast!.id, 'kyberswap');
+    assert.equal(broken!.supports(routeCardIntentFixture()), false);
+    assert.equal(await fast!.quote({} as never), quoted);
+    await assert.rejects(() => broken!.quote({} as never), /boom/);
+    assert.deepEqual(durations, { kyberswap: 900, hydrex: 6_300 });
   });
 });

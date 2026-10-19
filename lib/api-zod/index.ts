@@ -619,6 +619,17 @@ export const ClarificationV1Schema = z
   })
   .strict();
 
+/** Gas a person's operation adds to a provider's swap figure, measured on
+ * recorded operations (see api-server lib/feeCalibration.ts). */
+export const FeeCalibrationV1Schema = z
+  .object({
+    overheadGasUnits: z.string().regex(/^[1-9][0-9]{0,11}$/),
+    samples: z.number().int().min(1).max(50),
+    basis: z.enum(['your_operations', 'recent_operations']),
+  })
+  .strict();
+export type FeeCalibrationV1 = z.infer<typeof FeeCalibrationV1Schema>;
+
 export const RoutePlanResponseV1Schema = z.discriminatedUnion('outcome', [
   z
     .object({
@@ -640,6 +651,9 @@ export const RoutePlanResponseV1Schema = z.discriminatedUnion('outcome', [
       evaluation: SwapRouteEvaluationV1Schema,
       routeCard: RouteCardV1Schema.nullable(),
       projection: RoutePlanProjectionV1Schema,
+      // Optional: a response written before it existed keeps parsing, and
+      // null means nothing has been measured yet.
+      feeCalibration: FeeCalibrationV1Schema.nullable().optional(),
     })
     .strict(),
 ]);
@@ -829,6 +843,9 @@ export const SwapPrepareResponseV1Schema = z.discriminatedUnion('outcome', [
       // Optional so any caller reading a stale cached response before this
       // field existed keeps parsing.
       simulationPriceUsdc: z.string().min(1).max(40).nullable().optional(),
+      // How long this prepare's own simulation ran, measured on the server;
+      // the stage rail shows it. Absent when no simulation ran.
+      simulationMs: z.number().int().min(0).max(600_000).optional(),
     })
     .strict(),
   z

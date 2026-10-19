@@ -7,6 +7,7 @@ import {
   normalizeAddress,
   protocolAllowsAdapter,
   providerFailure,
+  QUOTE_PIN_REUSE_MS_V1,
   routablePairV1,
   supportsRoutableSwapIntentV1,
 } from './normalization.js';
@@ -16,7 +17,8 @@ import {
   type O1OrderRequestV1,
 } from './o1-client.js';
 import { parseO1OrderV1 } from './o1-order.js';
-import { createO1RouterPinReaderV1, type O1RouterPinReaderV1 } from './o1-pinned.js';
+import { O1_BASE_ROUTER_PROXY_V1, createO1RouterPinReaderV1, type O1RouterPinReaderV1 } from './o1-pinned.js';
+import type { SwapGasMeterV1 } from './swap-gas-meter.js';
 import type { SwapAdapterQuoteInput, SwapAdapterResult, SwapRouteAdapter } from './types.js';
 
 export const O1_PROVIDER_V1 = {
@@ -81,6 +83,10 @@ export interface O1SwapRouteAdapterOptions extends O1OrderClientV1Options {
   pinReader?: O1RouterPinReaderV1 | null;
   rpcUrl?: string;
   fallbackTtlMs?: number;
+  /** Measures the swap's gas: the order states a gas LIMIT, which is not an
+   * estimate, and no dollar figure, so without it the candidate is not
+   * scored. */
+  gasMeter?: SwapGasMeterV1 | null;
 }
 
 export class O1SwapRouteAdapter implements SwapRouteAdapter {
@@ -88,12 +94,14 @@ export class O1SwapRouteAdapter implements SwapRouteAdapter {
   private readonly client: O1OrderClientV1;
   private readonly pinReader: O1RouterPinReaderV1 | null;
   private readonly fallbackTtlMs: number;
+  private readonly gasMeter: SwapGasMeterV1 | null;
 
   constructor(options: O1SwapRouteAdapterOptions = {}) {
+    this.gasMeter = options.gasMeter ?? null;
     this.client = options.client ?? new O1OrderClientV1(options);
     this.pinReader =
       options.pinReader ??
-      (options.rpcUrl?.trim() ? createO1RouterPinReaderV1({ rpcUrl: options.rpcUrl }) : null);
+      (options.rpcUrl?.trim() ? createO1RouterPinReaderV1({ rpcUrl: options.rpcUrl, cacheTtlMs: QUOTE_PIN_REUSE_MS_V1 }) : null);
     this.fallbackTtlMs = options.fallbackTtlMs ?? 20_000;
   }
 
@@ -152,7 +160,18 @@ export class O1SwapRouteAdapter implements SwapRouteAdapter {
     const maxFee = parsed.value.maxFeePerGasWei;
     const estimatedCostWei =
       maxFee === null ? null : (BigInt(maxFee) * BigInt(parsed.value.gasUnits)).toString();
-    const gas: GasEstimateV1 = {
+    const measuredGas = this.gasMeter
+      ? await this.gasMeter
+          .measure({
+            walletAddress: input.walletAddress,
+            approval: { token: input.intent.fromAsset!.address!, spender: O1_BASE_ROUTER_PROXY_V1, amountAtomic: input.intent.amount.amountAtomic },
+            call: parsed.value.swapCall,
+          })
+          .catch(() => null)
+      : null;
+    // A measured figure replaces the order's gas LIMIT; without one the limit
+    // stays, priced in ETH only, and the route is not scored.
+    const gas: GasEstimateV1 = measuredGas ?? {
       gasUnits: parsed.value.gasUnits,
       maxFeePerGasWei: maxFee,
       estimatedCostNative:
@@ -184,7 +203,7 @@ export class O1SwapRouteAdapter implements SwapRouteAdapter {
       riskFlags: [
         'aggregated-route',
         'price_impact_unmeasured',
-        'gas_limit_not_estimate',
+        measuredGas ? 'gas_simulated' : 'gas_limit_not_estimate',
         'expected_output_derived_from_slippage_floor',
         'public_mempool',
       ],

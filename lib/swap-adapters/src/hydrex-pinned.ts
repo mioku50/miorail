@@ -1,5 +1,6 @@
 import { createPublicClient, getAddress, http, keccak256, type Hex } from 'viem';
 import { base } from 'viem/chains';
+import { reusePassingCheckV1 } from './normalization.js';
 
 /**
  * Hydrex swap boundary observed at Base block 49,890,160 on 2026-08-12.
@@ -113,10 +114,36 @@ export interface HydrexRouterPinReaderV1 {
   verifyAll(): Promise<HydrexPinResultV1>;
 }
 
-export function createHydrexRouterPinReaderV1(input: { rpcUrl: string }): HydrexRouterPinReaderV1 {
-  const rpcUrl = input.rpcUrl.trim();
+/**
+ * Comparison-time verdicts, shared by every reader built with the same
+ * endpoint and a cache window. Only a pass is kept: a refusal or an
+ * unreadable answer is asked again next time.
+ */
+const HYDREX_PIN_CACHE_V1 = new Map<string, { until: number; value: HydrexPinResultV1 }>();
 
-  async function verifyOuter(): Promise<HydrexPinResultV1> {
+export function createHydrexRouterPinReaderV1(input: {
+  rpcUrl: string;
+  /**
+   * How long a pass is reused. For comparison only: on 2026-10-19 every
+   * comparison re-read both routers' code — fifteen calls, two of them full
+   * bytecode — on an endpoint that was throttling the operator's own session.
+   * Review and approval build their readers without it, so the calls a
+   * person signs are always checked against the chain as it is then. A reused
+   * pass carries the block it was read at.
+   */
+  cacheTtlMs?: number;
+  now?: () => number;
+}): HydrexRouterPinReaderV1 {
+  const rpcUrl = input.rpcUrl.trim();
+  const ttlMs = input.cacheTtlMs ?? 0;
+  const now = input.now ?? Date.now;
+
+  const reused = (key: string, read: () => Promise<HydrexPinResultV1>): Promise<HydrexPinResultV1> =>
+    reusePassingCheckV1(HYDREX_PIN_CACHE_V1, `${rpcUrl}|${key}`, { ttlMs, now }, read);
+
+  const verifyOuter = (): Promise<HydrexPinResultV1> => reused('outer', readOuter);
+
+  async function readOuter(): Promise<HydrexPinResultV1> {
     if (!rpcUrl) return { ok: false, reason: 'not_configured' };
     try {
       const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
@@ -146,7 +173,10 @@ export function createHydrexRouterPinReaderV1(input: { rpcUrl: string }): Hydrex
     }
   }
 
-  async function verifyUpstream(router: string): Promise<HydrexPinResultV1> {
+  const verifyUpstream = (router: string): Promise<HydrexPinResultV1> =>
+    reused(`upstream:${router.toLowerCase()}`, () => readUpstream(router));
+
+  async function readUpstream(router: string): Promise<HydrexPinResultV1> {
     const outer = await verifyOuter();
     if (!outer.ok) return outer;
     const hash = expectedUpstreamHash(router);

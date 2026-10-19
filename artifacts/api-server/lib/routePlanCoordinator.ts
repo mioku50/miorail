@@ -17,6 +17,7 @@ import {
   type PendingSwapIntentV2,
 } from '@mioagent/intent-engine';
 import type { TokenIdentityReaderV1 } from '@mioagent/intent-core';
+import type { FeeCalibrationV1 } from './feeCalibration.js';
 import type { LlmProvider } from '@mioagent/llm';
 import type { ProviderReliabilityAssessmentV1 } from '@mioagent/route-outcomes';
 import { hashRouteIntentV1, type RouteCandidateV1, type RouteIntentV1 } from '@mioagent/route-domain';
@@ -46,6 +47,10 @@ export interface RoutePlanCoordinatorDependencies {
    * never called, no reliability evidence is created, and the evaluation
    * canonicalises exactly as it did before this task. */
   reliabilityLoaderFactory?: ReliabilityLoaderFactoryV1;
+  /** What a person's operation adds to a provider's swap gas, measured on
+   * recorded operations. Absent means the route screen shows the provider's
+   * figure alone, as before. */
+  feeCalibration?: (tenantId: string) => Promise<FeeCalibrationV1 | null>;
 }
 
 export interface RoutePlanCoordinatorInput {
@@ -106,6 +111,30 @@ function toPendingIntentRowV1(pending: PendingSwapIntentV2): SwapPendingIntentRo
   return row;
 }
 
+/**
+ * Each adapter, timed. The engine waits for the slowest quote, and on
+ * 2026-10-19 a comparison took 11.7 s with nothing saying which provider the
+ * person had waited for. Ids and milliseconds only.
+ */
+export function timedSwapAdaptersV1(
+  adapters: readonly SwapRouteAdapter[],
+  durations: Record<string, number>,
+  clock: () => number = Date.now,
+): SwapRouteAdapter[] {
+  return adapters.map((adapter) => ({
+    id: adapter.id,
+    supports: (intent) => adapter.supports(intent),
+    async quote(input) {
+      const started = clock();
+      try {
+        return await adapter.quote(input);
+      } finally {
+        durations[adapter.id] = clock() - started;
+      }
+    },
+  }));
+}
+
 export class RoutePlanCoordinator {
   constructor(private readonly dependencies: RoutePlanCoordinatorDependencies) {}
 
@@ -145,6 +174,7 @@ export class RoutePlanCoordinator {
   }
 
   async evaluate(input: RoutePlanCoordinatorInput): Promise<RoutePlanResponseV1> {
+    const startedAt = Date.now();
     const resolveIntent = this.dependencies.resolveIntent ?? resolveSwapIntentWithLlmV2;
     const binding = { tenantId: input.tenantId, walletAddress: input.walletAddress };
     // Server-side only. The half-finished goal is looked up by the
@@ -207,6 +237,7 @@ export class RoutePlanCoordinator {
       ),
     };
     const intent = { ...raised, intentHash: hashRouteIntentV1(raised) };
+    const intentMs = Date.now() - startedAt;
     const routeRun = await this.dependencies.repository.createRouteRun(
       intent,
       routeEngineV1IdempotencyKey(intent, input.requestId),
@@ -219,12 +250,18 @@ export class RoutePlanCoordinator {
       // a repeat of the same idempotency key.
       runStartedAt: new Date(routeRun.createdAt),
     });
+    // Read beside the quotes, so it adds nothing to the wait.
+    const calibration = this.dependencies.feeCalibration
+      ? this.dependencies.feeCalibration(input.tenantId).catch(() => null)
+      : Promise.resolve(null);
+    const quoteMs: Record<string, number> = {};
+    const evaluateStartedAt = Date.now();
     const evaluation = await this.dependencies.engine.evaluate({
       intent,
       walletAddress: input.walletAddress,
       requestId: input.requestId,
       now: input.now,
-      adapters: this.dependencies.adapters,
+      adapters: timedSwapAdaptersV1(this.dependencies.adapters, quoteMs),
       repository: this.dependencies.repository,
       loadReliability: loader
         ? async (candidates) => {
@@ -243,6 +280,7 @@ export class RoutePlanCoordinator {
           }
         : undefined,
     });
+    const evaluateMs = Date.now() - evaluateStartedAt;
     const routeCard = buildRouteCardV1(evaluation);
 
     // Why a comparison came out the way it did — the one line that was missing.
@@ -273,6 +311,9 @@ export class RoutePlanCoordinator {
         .filter((metric) => metric.status !== 'computed')
         .map((metric) => metric.reason ?? 'not_scored')
         .sort(),
+      // Where the wait went: the goal read, the quotes (each provider's own),
+      // and the comparison with its storage.
+      durationsMs: { intent: intentMs, evaluate: evaluateMs, quotes: quoteMs },
     });
     if (routeCard) {
       await this.dependencies.repository.insertRouteCard(routeRun.id, routeCard);
@@ -289,6 +330,7 @@ export class RoutePlanCoordinator {
       evaluation,
       routeCard,
       projection,
+      feeCalibration: await calibration,
     });
   }
 }

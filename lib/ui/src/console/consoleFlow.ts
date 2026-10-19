@@ -56,6 +56,25 @@ export function completeStageV1(clock: ConsoleStageClockV1, stage: ConsoleStageV
   return { ...clock, [stage]: { startedAt: existing.startedAt, completedAt: at } };
 }
 
+/**
+ * Records a stage the SERVER measured, as a window of that length ending when
+ * its answer arrived. The swap's simulation runs inside prepare, so the rail
+ * read "Simulation —" above a timeline saying "Simulation passed" (2026-10-19).
+ * Still a measured interval — just measured where it happened. A window this
+ * screen measured itself is never replaced.
+ */
+export function recordMeasuredStageV1(
+  clock: ConsoleStageClockV1,
+  stage: ConsoleStageV1,
+  durationMs: number,
+  endedAt: number,
+): ConsoleStageClockV1 {
+  if (!Number.isFinite(durationMs) || durationMs < 0 || !Number.isFinite(endedAt)) return clock;
+  const existing = clock[stage];
+  if (existing && existing.startedAt !== null) return clock;
+  return { ...clock, [stage]: { startedAt: endedAt - durationMs, completedAt: endedAt } };
+}
+
 export function stageDurationMsV1(clock: ConsoleStageClockV1, stage: ConsoleStageV1): number | null {
   const mark = clock[stage];
   if (!mark || mark.startedAt === null || mark.completedAt === null) return null;

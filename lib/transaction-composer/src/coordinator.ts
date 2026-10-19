@@ -730,10 +730,12 @@ export class DeterministicTransactionComposer implements TransactionComposer {
     // behaviour byte for byte: no request, no charge, and an honestly
     // `unavailable` state.
     let simulationState: SimulationStateV1 = unsimulatedStateV1();
+    let simulationMs: number | undefined;
     // The same predicate the kernel checks. Written as a literal provider list
     // before, which is how the run and the requirement came to disagree about
     // an intent that asked for enhanced verification.
     if (simulationIsRequiredV1(providerId, intent)) {
+      const simulationStartedAt = Date.now();
       simulationState = this.deps.simulate
         ? await this.deps.simulate({
             chainId: 8453,
@@ -744,6 +746,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
             spend: { asset: inputAsset, amountAtomic: intent.amount.amountAtomic },
           })
         : unsimulatedStateV1('no_simulation_provider');
+      if (this.deps.simulate) simulationMs = Date.now() - simulationStartedAt;
     }
 
     // --- Safety Kernel ----------------------------------------------------------
@@ -830,7 +833,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
       simulationWarning: simulation.acceptable ? simulation.detail : null,
     });
 
-    return preparedResultV1({ routeRunId: input.routeRunId, blueprint, review });
+    return preparedResultV1({ routeRunId: input.routeRunId, blueprint, review, simulationMs });
   }
 
   /** Idempotent replay: re-derives the review projection over the ALREADY

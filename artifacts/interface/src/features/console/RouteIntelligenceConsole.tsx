@@ -37,6 +37,7 @@ import {
   routeProofViewV1,
   dispatchRouteFamilyV1,
   emptyStageClockV1,
+  recordMeasuredStageV1,
   haltStageRailV1,
   intelligenceSpendLabelV1,
   marketRailFromSnapshotV1,
@@ -95,7 +96,7 @@ import {
   activityProofItemsV1,
   activityBaseScanTxUrlV1,
   activityShortHashV1,
-  feeUsdLabelV1,
+  operationFeeEstimateV1,
   planWalletRowsV1,
   proofFeeV1,
   proofOutputDifferenceV1,
@@ -483,6 +484,14 @@ export function RouteIntelligenceConsole() {
   useEffect(() => {
     if (prepared) mark('review', 'complete');
   }, [prepared, mark]);
+
+  // The simulation ran inside prepare; its duration is the server's reading.
+  useEffect(() => {
+    const simulationMs = prepared?.simulationMs;
+    if (simulationMs === undefined) return;
+    const at = Date.now();
+    setClock((current) => recordMeasuredStageV1(current, 'simulation', simulationMs, at));
+  }, [prepared]);
 
   useEffect(() => {
     if (simulateResponse) mark('simulation', 'complete');
@@ -1401,11 +1410,16 @@ export function RouteIntelligenceConsole() {
           { k: 'Minimum output', v: primaryRoute?.minimumOutput.amountDecimal ?? '—', d: `slippage ${primaryRoute?.slippage.percent ?? '—'}%` },
           {
             k: 'Network cost',
-            // The provider's figure carries seventeen digits; a reader needs two.
-            v: feeUsdLabelV1(primaryRoute?.estimatedGas.estimatedCostUsd) ? `≈ ${feeUsdLabelV1(primaryRoute?.estimatedGas.estimatedCostUsd)}` : '—',
-            d: primaryRoute && primaryRoute.estimatedGas.gasUnits !== '0'
-              ? `est. ${primaryRoute.estimatedGas.gasUnits} gas`
-              : 'provider supplied no gas estimate',
+            // The provider's figure is its swap's; the wallet's own steps are
+            // added once measured. See operationFeeEstimateV1.
+            ...(() => {
+              const cost = operationFeeEstimateV1({
+                gasUnits: primaryRoute?.estimatedGas.gasUnits ?? '0',
+                estimatedCostUsd: primaryRoute?.estimatedGas.estimatedCostUsd ?? null,
+                calibration: result?.outcome === 'evaluated' ? result.feeCalibration : null,
+              });
+              return { v: cost.value, d: cost.detail };
+            })(),
           },
           {
             k: 'Price impact',

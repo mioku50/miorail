@@ -85,6 +85,45 @@ export function proofOutputDifferenceV1(input: {
   return { difference: head, tone: 'none' };
 }
 
+export interface FeeCalibrationViewV1 {
+  overheadGasUnits: string;
+  samples: number;
+  basis: 'your_operations' | 'recent_operations';
+}
+
+/**
+ * The route screen's network cost: the provider's figure for its swap, plus —
+ * once it has been measured — what the person's operation adds to it.
+ *
+ * On 2026-10-19 this read "≈ $0.0048" and the operation cost $0.0077: the
+ * provider prices only its swap, while the wallet also runs the approval, its
+ * own signature check and the bundler's share. The addition is the median the
+ * server measured on recorded operations, priced at the provider's own rate
+ * per gas so both parts share one price. Unmeasured, the figure is the
+ * provider's and says it is the swap's.
+ */
+export function operationFeeEstimateV1(input: {
+  gasUnits: string;
+  estimatedCostUsd: string | null;
+  calibration: FeeCalibrationViewV1 | null | undefined;
+}): { value: string; detail: string } {
+  const swap = feeUsdLabelV1(input.estimatedCostUsd);
+  const units = /^[1-9][0-9]*$/.test(input.gasUnits) ? BigInt(input.gasUnits) : 0n;
+  if (!swap) return { value: '—', detail: units > 0n ? `est. ${units} gas` : 'provider supplied no gas estimate' };
+  const overhead = input.calibration && /^[1-9][0-9]*$/.test(input.calibration.overheadGasUnits)
+    ? BigInt(input.calibration.overheadGasUnits)
+    : 0n;
+  if (units === 0n || overhead === 0n) return { value: `≈ ${swap}`, detail: units > 0n ? `swap · est. ${units} gas` : 'swap' };
+  const usdPerGas = Number(input.estimatedCostUsd) / Number(units);
+  const wallet = feeUsdLabelV1(usdPerGas * Number(overhead));
+  const total = feeUsdLabelV1(usdPerGas * Number(units + overhead));
+  const samples = input.calibration!.samples;
+  const basis = input.calibration!.basis === 'your_operations'
+    ? `your last ${samples === 1 ? 'swap' : `${samples} swaps`}`
+    : `the last ${samples === 1 ? 'swap' : `${samples} swaps`} here`;
+  return { value: `≈ ${total}`, detail: `swap ${swap} + wallet ${wallet}, measured on ${basis}` };
+}
+
 export type FeePaidByV1 = 'wallet' | 'sponsor' | 'mixed';
 
 export interface ProofFeeV1 {
@@ -120,7 +159,9 @@ export function proofFeeV1(input: {
   ethUsd: string | number | null;
 }): ProofFeeV1 {
   const estimate = feeUsdLabelV1(input.estimatedUsd);
-  const expected = estimate ? `≈ ${estimate}` : 'Not provided';
+  // The recorded estimate is the provider's, for its swap alone — said so,
+  // because the route screen now adds what the wallet's own steps cost.
+  const expected = estimate ? `≈ ${estimate} · swap` : 'Not provided';
   if (input.feePaidBy === undefined) {
     const units = input.actualGasUnits ? `${input.actualGasUnits} gas` : '—';
     return {

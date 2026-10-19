@@ -149,6 +149,37 @@ describe('Hydrex quote adapter', () => {
     assert.ok(result.candidate.trustMetadata.riskFlags.includes('price_impact_unmeasured'));
   });
 
+  test('a gas meter makes the candidate rankable; without a figure it says so', async () => {
+    // 2026-10-19: Hydrex's quote carries no gas, so it was never ranked — once
+    // while quoting 0.1% above KyberSwap.
+    const measured = {
+      gasUnits: '411283', maxFeePerGasWei: null, estimatedCostNative: '0.000002467698', estimatedCostUsd: '0.0059248195131',
+    };
+    const asked: unknown[] = [];
+    const quote = (measure: () => Promise<typeof measured | null>) => new HydrexSwapRouteAdapter({
+      pinReader: pin,
+      gasMeter: { async measure(input) { asked.push(input); return measure(); } },
+      fetchImpl: (async () => new Response(JSON.stringify(response()), { status: 200 })) as typeof fetch,
+    }).quote({ intent: makeIntent({ from: 'USDC', to: 'WETH', amount: '100' }), walletAddress: WALLET, requestId: 'gas', now: NOW });
+
+    const priced = await quote(async () => measured);
+    assert.equal(priced.outcome, 'quoted');
+    if (priced.outcome !== 'quoted') return;
+    assert.deepEqual(priced.candidate.estimatedGas, measured);
+    assert.ok(priced.candidate.trustMetadata.riskFlags.includes('gas_simulated'));
+    assert.deepEqual(asked[0], {
+      walletAddress: WALLET,
+      approval: { token: USDC, spender: HYDREX_BASE_ROUTER_PROXY_V1, amountAtomic: AMOUNT_IN.toString() },
+      call: { to: HYDREX_BASE_ROUTER_PROXY_V1, value: '0', data: calldata().toLowerCase() },
+    }, 'the wallet\'s own approval and the exact call the quote returned');
+
+    const unmeasured = await quote(async () => null);
+    assert.equal(unmeasured.outcome, 'quoted');
+    if (unmeasured.outcome !== 'quoted') return;
+    assert.equal(unmeasured.candidate.estimatedGas.gasUnits, '0');
+    assert.ok(unmeasured.candidate.trustMetadata.riskFlags.includes('gas_unmeasured'));
+  });
+
   test('does not accept an upstream that fails the independent code pin', async () => {
     const adapter = new HydrexSwapRouteAdapter({
       pinReader: { ...pin, async verifyUpstream() { return { ok: false, reason: 'mismatch' }; } },
