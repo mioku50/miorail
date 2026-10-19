@@ -276,6 +276,12 @@ const RouteProofV1ObjectSchema = z
     actualResult: ExecutionResultV1Schema.nullable(),
     estimatedGas: GasEstimateV1Schema,
     actualGas: GasEstimateV1Schema.nullable(),
+    /** Who paid the network fee of the person's own operations: their wallet,
+     * a paymaster, or some of each — read from the EntryPoint's
+     * UserOperationEvent (lib/route-proof/src/fee.ts). Optional and never
+     * defaulted: proofs written before 2026-10-19 carry none, and a default
+     * would change their hash. */
+    feePaidBy: z.enum(['wallet', 'sponsor', 'mixed']).nullable().optional(),
     deviation: RouteProofDeviationV1Schema,
     transactionHashes: z.array(HashV1Schema),
     receipts: z.array(TransactionReceiptV1Schema),

@@ -1067,6 +1067,9 @@ export const RouteProofProjectionV1Schema = z
     minimumSatisfied: z.boolean().nullable(),
     estimatedGas: GasEstimateV1Schema,
     actualGas: GasEstimateV1Schema.nullable(),
+    // Who paid the person's network fee, from the EntryPoint's
+    // UserOperationEvent. Optional: older proofs carry none.
+    feePaidBy: z.enum(['wallet', 'sponsor', 'mixed']).nullable().optional(),
     transactionHashes: z.array(HashV1Schema),
     receipts: z.array(TransactionReceiptV1Schema),
     finalStatus: z.enum([

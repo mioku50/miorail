@@ -41,6 +41,7 @@ export function createViemBaseReceiptReader(): BaseReceiptReader {
           topics: log.topics as readonly string[],
           data: log.data,
         })),
+        from: receipt.from.toLowerCase(),
       };
     },
   };

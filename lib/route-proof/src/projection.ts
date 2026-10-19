@@ -54,6 +54,9 @@ export const RouteProofProjectionV1Schema = z
     minimumSatisfied: z.boolean().nullable(),
     estimatedGas: GasEstimateV1Schema,
     actualGas: GasEstimateV1Schema.nullable(),
+    /** Who paid the person's network fee. Absent on proofs written before
+     * 2026-10-19, which recorded the whole bundle's gas instead. */
+    feePaidBy: z.enum(['wallet', 'sponsor', 'mixed']).nullable().optional(),
     transactionHashes: z.array(HashV1Schema),
     receipts: z.array(TransactionReceiptV1Schema),
     finalStatus: z.enum(['pending', 'completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required']),
@@ -113,6 +116,7 @@ export function toRouteProofProjectionV1(
     minimumSatisfied: proof.deviation.withinTolerance,
     estimatedGas: proof.estimatedGas,
     actualGas: proof.actualGas,
+    ...(proof.feePaidBy !== undefined ? { feePaidBy: proof.feePaidBy } : {}),
     transactionHashes: proof.transactionHashes,
     receipts: proof.receipts,
     finalStatus: proof.finalStatus,

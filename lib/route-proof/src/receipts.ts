@@ -22,6 +22,9 @@ export interface VerifiedReceiptSourceV1 {
   gasUsed: bigint;
   effectiveGasPriceWei: bigint | null;
   logs: readonly VerifiedReceiptLogV1[];
+  /** Who sent the transaction. A wallet that sent its own paid its own gas;
+   * a smart account's fee is in its UserOperationEvent instead (`fee.ts`). */
+  from?: string | null;
 }
 
 export interface BaseReceiptReader {

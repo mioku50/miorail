@@ -17,7 +17,8 @@ import {
   toRouteProofProjectionV1,
   type RouteProofReconciliationResultV1,
 } from './projection.js';
-import { verifyTransactionReceiptsV1, type BaseReceiptReader, type VerifiedReceiptSourceV1 } from './receipts.js';
+import { actualFeeV1 } from './fee.js';
+import { verifyTransactionReceiptsV1, type BaseReceiptReader } from './receipts.js';
 
 // T58: orchestrates receipt verification -> asset reconstruction ->
 // finalization -> append-only events for one Route Proof, bounded to a
@@ -180,30 +181,6 @@ function receiptsEqualV1(a: readonly TransactionReceiptV1[], b: readonly Transac
       existing.gasUsed === receipt.gasUsed
     );
   });
-}
-
-function atomicDecimalFromWeiV1(amount: bigint): string {
-  const base = BigInt(10) ** BigInt(18);
-  const whole = amount / base;
-  const frac = amount % base;
-  if (frac === BigInt(0)) return whole.toString();
-  const fracStr = frac.toString().padStart(18, '0').replace(/0+$/, '');
-  return fracStr.length > 0 ? `${whole.toString()}.${fracStr}` : whole.toString();
-}
-
-function computeActualGasV1(
-  sources: readonly (VerifiedReceiptSourceV1 | null)[],
-): RouteProofV1['actualGas'] {
-  const verified = sources.filter((source): source is VerifiedReceiptSourceV1 => source !== null);
-  if (verified.length === 0) return null;
-  const gasUnits = verified.reduce((sum, source) => sum + source.gasUsed, BigInt(0));
-  const allHavePrice = verified.every((source) => source.effectiveGasPriceWei !== null);
-  const estimatedCostNative = allHavePrice
-    ? atomicDecimalFromWeiV1(
-        verified.reduce((sum, source) => sum + source.gasUsed * (source.effectiveGasPriceWei as bigint), BigInt(0)),
-      )
-    : null;
-  return { gasUnits: gasUnits.toString(), maxFeePerGasWei: null, estimatedCostNative, estimatedCostUsd: null };
 }
 
 async function appendProofEventV1(
@@ -396,9 +373,11 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
 
       // actualGas is persisted only when THIS pass finalizes the proof — a
       // partial sum over the receipts that happened to verify while others
-      // are still unavailable would be a lie in the projection.
+      // are still unavailable would be a lie in the projection. It is the
+      // person's own operation, not the bundle it rode in (fee.ts).
       const stillPending = hasUnavailable && !conflict;
-      const actualGas = stillPending ? proof.actualGas : computeActualGasV1(gasSources);
+      const fee = stillPending ? null : actualFeeV1(gasSources, walletAddress);
+      const actualGas = fee ? fee.actualGas : proof.actualGas;
       const finalStatusChanged = nextFinalStatus !== proof.finalStatus;
       const reconciliationStateChanged = nextReconciliationState !== proof.reconciliationState;
 
@@ -406,6 +385,7 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
         ...proof,
         actualResult,
         actualGas,
+        ...(fee ? { feePaidBy: fee.feePaidBy } : {}),
         deviation,
         receipts: mergedReceipts,
         finalStatus: nextFinalStatus,
