@@ -12,8 +12,11 @@ import type { DividendRecordSupplyRepositoryV1 } from '@mioagent/route-storage';
 // it (migration 0075). A date still ahead is left for a later pass.
 //
 // A token with no code at that block did not exist yet: its supply then was
-// zero, and that is recorded as zero. Decimals never change, so they are read
-// at the latest block.
+// zero, and that is recorded as zero. A call to such an address reverts rather
+// than returning nothing: on 2026-10-19 seventeen record dates read
+// "reverted", every one before its token was created, so a revert is followed
+// by a read of the code. Decimals never change, so they are read at the latest
+// block.
 // ---------------------------------------------------------------------------
 
 const TOTAL_SUPPLY_V1 = '0x18160ddd';
@@ -71,12 +74,13 @@ export async function recordDividendSuppliesV1(input: {
         decimals = read.ok ? Number(BigInt(read.value)) : null;
         decimalsOf.set(token.tokenAddress, decimals);
       }
-      const supply = await input.reader.call({
-        to: token.tokenAddress,
-        data: TOTAL_SUPPLY_V1,
-        blockTag: `0x${block.blockNumber.toString(16)}`,
-      });
-      const atomic = supply.ok ? BigInt(supply.value).toString() : supply.reason === 'empty_result' ? '0' : null;
+      const blockTag = `0x${block.blockNumber.toString(16)}`;
+      const supply = await input.reader.call({ to: token.tokenAddress, data: TOTAL_SUPPLY_V1, blockTag });
+      let atomic = supply.ok ? BigInt(supply.value).toString() : supply.reason === 'empty_result' ? '0' : null;
+      if (atomic === null && !supply.ok && supply.reason === 'reverted' && input.reader.readCode) {
+        const code = await input.reader.readCode(token.tokenAddress, blockTag);
+        if (code.ok && code.value === '0x') atomic = '0';
+      }
       if (atomic === null || decimals === null) {
         pass.failed.push(`${token.tokenAddress}:${declaration.recordDate}:${supply.ok ? 'decimals' : supply.reason}`);
         continue;

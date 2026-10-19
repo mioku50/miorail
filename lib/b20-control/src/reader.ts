@@ -176,6 +176,15 @@ export interface B20ReaderV1 {
    * means the endpoint answered and has no such block yet.
    */
   readBlockHeader?(blockTag: string): Promise<B20RpcResultV1<B20BlockHeaderV1 | null>>;
+  /**
+   * The code at an address at one block, lowercase hex (`0x` for none).
+   *
+   * Optional for the same reason: only the dividend supply read needs it. A
+   * B20 token has code from the block it was created in; before that, a call
+   * to its address reverts (measured 2026-10-19), so a revert alone cannot
+   * tell a token that did not exist yet from a read that failed.
+   */
+  readCode?(address: string, blockTag: string): Promise<B20RpcResultV1<string>>;
 }
 
 export interface B20BlockHeaderV1 {
@@ -583,6 +592,14 @@ export function createB20ReaderV1(config: B20ReaderConfigV1): B20ReaderV1 {
         value: { blockNumber: Number(blockNumber), blockHash: hash as HashV1, timestamp: Number(timestamp) },
         raw: hash,
       };
+    },
+
+    async readCode(address: string, blockTag: string) {
+      const result = await rpc('eth_getCode', [address, blockTag]);
+      if (!result.ok) return result;
+      const code = typeof result.value === 'string' ? result.value.toLowerCase() : null;
+      if (!code || !/^0x(?:[0-9a-f]{2})*$/.test(code)) return { ok: false as const, reason: 'invalid_response' as const };
+      return { ok: true as const, value: code, raw: code };
     },
 
     async readBlockAnchor() {

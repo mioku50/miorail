@@ -27,7 +27,8 @@ function declaration(underlyingKey: string, recordDate: string, payDate: string)
 }
 
 /** Two-second blocks from block 1 at 2026-07-01T00:00:00Z, head at 3,000,000.
- * AAPLc has no code before block 2,000,000; GOOGLc always has supply. */
+ * AAPLc has no code before block 2,000,000, and a call to it there reverts, as
+ * the chain answers (2026-10-19); GOOGLc always has supply. */
 function readerV1() {
   const start = Date.parse('2026-07-01T00:00:00Z') / 1000;
   const head = 3_000_000;
@@ -42,8 +43,13 @@ function readerV1() {
       calls.push(`${input.to.slice(-4)}:${input.data}:${input.blockTag}`);
       if (input.data === '0x313ce567') return { ok: true as const, value: `0x${(8).toString(16).padStart(64, '0')}`, raw: 'x' };
       const block = Number.parseInt(input.blockTag, 16);
-      if (input.to === AAPLC && block < 2_000_000) return { ok: false as const, reason: 'empty_result' as const };
+      if (input.to === AAPLC && block < 2_000_000) return { ok: false as const, reason: 'reverted' as const };
       return { ok: true as const, value: `0x${(611369380000).toString(16).padStart(64, '0')}`, raw: 'x' };
+    },
+    async readCode(address: string, blockTag: string) {
+      calls.push(`${address.slice(-4)}:code:${blockTag}`);
+      const block = Number.parseInt(blockTag, 16);
+      return { ok: true as const, value: address === AAPLC && block < 2_000_000 ? '0x' : '0xfe', raw: 'x' };
     },
   } as unknown as B20ReaderV1;
   return { reader, calls };
@@ -81,6 +87,24 @@ describe('supply at each record date', () => {
     // The next pass reads nothing it already has.
     const again = await recordDividendSuppliesV1({ reader, repository, tokens, declarations, now });
     assert.deepEqual(again, { recorded: 0, known: 2, pending: 1, failed: [] });
+  });
+
+  test('a revert where the token has code is a failed read, not a token that did not exist', async () => {
+    const repository = new InMemoryDividendRecordSupplyRepositoryV1();
+    const { reader } = readerV1();
+    const failing = {
+      ...reader,
+      async call(input: { to: string; data: string; blockTag: string }) {
+        if (input.data === '0x18160ddd') return { ok: false as const, reason: 'reverted' as const };
+        return reader.call(input as never);
+      },
+    } as unknown as B20ReaderV1;
+    const pass = await recordDividendSuppliesV1({ reader: failing, repository, tokens, declarations, now: new Date('2026-09-27T12:00:00Z') });
+    // AAPLc had no code then: none existed. GOOGLc had code: the read failed.
+    assert.equal(pass.recorded, 1);
+    assert.deepEqual(pass.failed, [`${GOOGLC}:2026-09-07:reverted`]);
+    const rows = await repository.supplies({ chainId: 8453, tokenAddresses: [AAPLC, GOOGLC] });
+    assert.deepEqual(rows.map((row) => `${row.tokenAddress.slice(-4)}:${row.totalSupplyAtomic}`), ['d1fb:0']);
   });
 
   test('an endpoint that fails is a failure, recorded as nothing', async () => {
