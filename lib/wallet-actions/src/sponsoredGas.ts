@@ -28,7 +28,10 @@ export interface SponsoredGasOfferV1 {
 export type SponsoredGasStateV1 = 'sponsored' | 'offered' | 'unsupported_by_wallet' | 'declined' | 'not_offered';
 
 export const SPONSORED_GAS_LABELS_V1: Readonly<Record<SponsoredGasStateV1, string | null>> = {
-  sponsored: 'Miorail pays the network fee for this transaction.',
+  // "Supports a sponsor" is not "will use it": on 2026-10-19 Base Account
+  // reported paymaster support and then charged the person. The wallet's own
+  // fee line is where the answer is, and the proof reads it back from chain.
+  sponsored: 'Miorail offered to pay the network fee. Your wallet shows who pays before you confirm.',
   offered: 'Miorail offered to pay the network fee; your wallet decides whether to use it.',
   unsupported_by_wallet: 'You pay the network fee: this wallet cannot take a fee sponsor.',
   declined:

@@ -149,14 +149,32 @@ test('a token URL that was not minted here is refused before the paymaster is as
   assert.equal(forwarded.length, 0);
 });
 
-test('an ERC-7677 method we do not serve is refused as one', async (t) => {
+test('the wallet’s first question, which tokens pay gas, is answered: none', async (t) => {
+  // Base Account opens with this before the stub. Refused as unknown, it made
+  // the wallet give up on 2026-10-19 and the person paid the fee; the honest
+  // answer is an empty list, and it never needs the paymaster's URL.
   const forwarded = stubV1(t);
   const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
-  // Base Account opens with this before the stub; the sponsor has no token to
-  // accept, and the refusal is what let the wallet carry on to the stub.
+  const tokens = (path: string, params: unknown[]) =>
+    request(routerApp()).post(path).send({ jsonrpc: '2.0', id: 3, method: 'pm_getAcceptedPaymentTokens', params });
+  const answered = await tokens(offerPath(offer), [SPONSORED_GAS_ENTRY_POINT_V1, '0x2105', {}]).expect(200);
+  assert.deepEqual(answered.body, { jsonrpc: '2.0', id: 3, result: { acceptedTokens: [] } });
+  // An empty list grants nothing, so the bare endpoint may say it too.
+  const bare = await tokens('/api/paymaster', [SPONSORED_GAS_ENTRY_POINT_V1, '0x2105', {}]).expect(200);
+  assert.deepEqual(bare.body.result, { acceptedTokens: [] });
+  const sepolia = await tokens(offerPath(offer), [SPONSORED_GAS_ENTRY_POINT_V1, '0x14a34', {}]).expect(200);
+  assert.equal(sepolia.body.error.data.reason, 'wrong_chain');
+  const v07 = await tokens(offerPath(offer), ['0x0000000071727De22E5E9d8BAf0edAc6f37da032', '0x2105', {}]).expect(200);
+  assert.equal(v07.body.error.data.reason, 'wrong_entry_point');
+  assert.equal(forwarded.length, 0);
+});
+
+test('a paymaster method we do not serve is refused as one', async (t) => {
+  const forwarded = stubV1(t);
+  const offer = offerSponsorshipV1({ wallet: WALLET, blueprintId: 'bp-1', calls: CALLS })!;
   const response = await request(routerApp())
     .post(offerPath(offer))
-    .send({ jsonrpc: '2.0', id: 3, method: 'pm_getAcceptedPaymentTokens', params: [SPONSORED_GAS_ENTRY_POINT_V1, '0x2105', {}] })
+    .send({ jsonrpc: '2.0', id: 4, method: 'pm_sponsorUserOperation', params: [{}, SPONSORED_GAS_ENTRY_POINT_V1] })
     .expect(200);
   assert.equal(response.body.error.code, -32601);
   assert.equal(response.body.error.data.reason, 'method_not_supported');

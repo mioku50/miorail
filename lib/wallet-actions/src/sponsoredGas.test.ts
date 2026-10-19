@@ -40,6 +40,9 @@ test('no offer, no capability — the batch goes exactly as before', () => {
 test('an offer to a wallet that takes a sponsor is sent, optional, to Miorail’s URL', () => {
   const plan = sponsoredGasPlanV1({ offer: OFFER, capabilities: SUPPORTED, declinedBefore: false });
   assert.equal(plan.state, 'sponsored');
+  // Reported support is not a payment: the wallet decides, and its fee line says.
+  assert.doesNotMatch(SPONSORED_GAS_LABELS_V1.sponsored!, /^Miorail pays/);
+  assert.match(SPONSORED_GAS_LABELS_V1.sponsored!, /Your wallet shows who pays/);
   assert.deepEqual(plan.capability, {
     paymasterService: { url: 'https://miorail.xyz/api/paymaster', context: { sponsorship: 'signed-token' }, optional: true },
   });

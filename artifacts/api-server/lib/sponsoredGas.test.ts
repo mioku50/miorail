@@ -4,6 +4,7 @@ import { encodeFunctionData, parseAbi, type Hex } from 'viem';
 
 import {
   SPONSORED_GAS_ENTRY_POINT_V1,
+  acceptedPaymentTokensV1,
   createSponsorshipLedgerV1,
   decideSponsoredGasV1,
   issueSponsorshipTokenV1,
@@ -213,6 +214,23 @@ test('only Base mainnet, only EntryPoint v0.6, only the two ERC-7677 methods', (
   assert.deepEqual(v07.ok ? null : v07.code, 'wrong_entry_point');
   const other = decide({ method: 'eth_sendUserOperation' });
   assert.deepEqual(other.ok ? null : other.code, 'method_not_supported');
+});
+
+test('no token pays gas here: the sponsor or the person’s ETH does', () => {
+  assert.deepEqual(acceptedPaymentTokensV1([SPONSORED_GAS_ENTRY_POINT_V1, '0x2105', {}]), {
+    ok: true,
+    result: { acceptedTokens: [] },
+  });
+  // The wallet spells the entry point in mixed case and may omit the context.
+  assert.equal(acceptedPaymentTokensV1(['0x5FF137D4b0FDCD49DcA30c7CF57E578a026d2789', '0x2105']).ok, true);
+  const code = (params: unknown) => {
+    const answer = acceptedPaymentTokensV1(params);
+    return answer.ok ? null : answer.code;
+  };
+  assert.equal(code([SPONSORED_GAS_ENTRY_POINT_V1, '0x14a34', {}]), 'wrong_chain');
+  assert.equal(code(['0x0000000071727de22e5e9d8baf0edac6f37da032', '0x2105', {}]), 'wrong_entry_point');
+  assert.equal(code([SPONSORED_GAS_ENTRY_POINT_V1]), 'invalid_request');
+  assert.equal(code(null), 'invalid_request');
 });
 
 test('the daily limit counts operations, not requests', () => {

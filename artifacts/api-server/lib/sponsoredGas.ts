@@ -31,6 +31,38 @@ export const SPONSORED_GAS_ENTRY_POINT_V1 = '0x5ff137d4b0fdcd49dca30c7cf57e578a0
 export const SPONSORED_GAS_METHODS_V1 = ['pm_getPaymasterStubData', 'pm_getPaymasterData'] as const;
 export type SponsoredGasMethodV1 = (typeof SPONSORED_GAS_METHODS_V1)[number];
 
+/**
+ * Asked before the stub: which ERC-20 tokens the person may pay gas with.
+ *
+ * Coinbase's paymasters serve it beside the two ERC-7677 methods. Miorail's
+ * answer is none: the fee is sponsored, or the person pays it in ETH. It was
+ * refused as an unknown method until 2026-10-19, and that morning the wallet
+ * stopped at the refusal and asked for nothing else, so three web trades that
+ * were offered a sponsored fee were paid by the person. On 2026-09-23 it had
+ * carried on to the stub after the same kind of refusal.
+ */
+export const SPONSORED_GAS_TOKENS_METHOD_V1 = 'pm_getAcceptedPaymentTokens';
+
+export type AcceptedPaymentTokensAnswerV1 =
+  | { ok: true; result: { acceptedTokens: [] } }
+  | { ok: false; code: 'invalid_request' | 'wrong_chain' | 'wrong_entry_point'; message: string };
+
+/** The answer to `pm_getAcceptedPaymentTokens([entryPoint, chainId, context])`,
+ * for Base mainnet's EntryPoint v0.6 like everything else served here. */
+export function acceptedPaymentTokensV1(params: unknown): AcceptedPaymentTokensAnswerV1 {
+  if (!Array.isArray(params) || params.length < 2) {
+    return { ok: false, code: 'invalid_request', message: 'Expected [entryPoint, chainId, context].' };
+  }
+  const [entryPoint, chainId] = params as [unknown, unknown];
+  if (typeof chainId !== 'string' || chainId.toLowerCase() !== SPONSORED_GAS_CHAIN_ID_V1) {
+    return { ok: false, code: 'wrong_chain', message: 'Gas is sponsored on Base mainnet only.' };
+  }
+  if (typeof entryPoint !== 'string' || entryPoint.toLowerCase() !== SPONSORED_GAS_ENTRY_POINT_V1) {
+    return { ok: false, code: 'wrong_entry_point', message: 'Gas is sponsored for EntryPoint v0.6 user operations only.' };
+  }
+  return { ok: true, result: { acceptedTokens: [] } };
+}
+
 /** Default sponsored operations per wallet per UTC day. */
 export const SPONSORED_GAS_DAILY_LIMIT_DEFAULT_V1 = 3;
 
@@ -328,7 +360,10 @@ export function decideSponsoredGasV1(input: {
     message,
   });
   if (!SPONSORED_GAS_METHODS_V1.includes(input.method as SponsoredGasMethodV1)) {
-    return refuse('method_not_supported', 'Only pm_getPaymasterStubData and pm_getPaymasterData are served here.');
+    return refuse(
+      'method_not_supported',
+      'Only pm_getAcceptedPaymentTokens, pm_getPaymasterStubData and pm_getPaymasterData are served here.',
+    );
   }
   if (!Array.isArray(input.params) || input.params.length < 3) {
     return refuse('invalid_request', 'Expected [userOperation, entryPoint, chainId, context].');

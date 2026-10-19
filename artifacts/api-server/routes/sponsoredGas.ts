@@ -3,7 +3,9 @@ import { logger } from '@mioagent/utils';
 
 import {
   SPONSORED_GAS_RPC_ERROR_CODE_V1,
+  SPONSORED_GAS_TOKENS_METHOD_V1,
   SPONSORED_GAS_TOKEN_TTL_MS_V1,
+  acceptedPaymentTokensV1,
   createSponsorshipLedgerV1,
   decideSponsoredGasV1,
   issueSponsorshipTokenV1,
@@ -185,6 +187,23 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64k
   }
 
   const urlToken = typeof req.params.token === 'string' ? req.params.token : null;
+  if (body.method === SPONSORED_GAS_TOKENS_METHOD_V1) {
+    // "None" needs no token: it grants nothing, and the stub that follows is
+    // where the sponsorship itself is checked.
+    const answer = acceptedPaymentTokensV1(body.params);
+    logger.info('Sponsored gas tokens answered', {
+      outcome: answer.ok ? 'none_accepted' : answer.code,
+      tokenUrl: urlToken !== null,
+    });
+    if (answer.ok) {
+      reply({ result: answer.result });
+    } else {
+      reply({
+        error: { code: SPONSORED_GAS_RPC_ERROR_CODE_V1[answer.code], message: answer.message, data: { reason: answer.code } },
+      });
+    }
+    return;
+  }
   const decision = decideSponsoredGasV1({
     method: body.method,
     params: body.params,
@@ -255,6 +274,10 @@ sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: '64k
   if (decision.method === 'pm_getPaymasterData') {
     sponsorshipLedgerV1.record(decision.wallet, decision.nonce);
     logger.info('Sponsored gas granted', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource });
+  } else {
+    // A stub sponsors nothing, but without this line "the wallet never asked"
+    // and "it asked, then paid the fee itself" read the same in the journal.
+    logger.info('Sponsored gas stub served', { blueprintId: decision.claim.blueprintId, tokenSource: decision.tokenSource });
   }
   reply({ result: answer.result });
 });
