@@ -83,6 +83,7 @@ import {
   giftSendNoticeV1,
   giftShareForProofV1,
   giftUrlV1,
+  reviewBalanceViewV1,
   reviewCallRowsV1,
   type RoutePlanProjectionV1,
   AiRouteCardPanel,
@@ -125,6 +126,7 @@ import {
 } from '@mioagent/api-client-react';
 import { BlueprintSubmitButton, EarnDepositFlow, SubmissionRecoveryRail, builderCodeForSurfaceV1, type BlueprintSubmitStatus } from '@mioagent/wallet-actions';
 import { useConsoleNav } from './useConsoleNav';
+import { downloadRouteProofV1, routeProofExportV1 } from '../proof/exportProof';
 import { SimulateButton, type SimulateBlueprintResponseV1 } from '@mioagent/x402-actions';
 
 // ---------------------------------------------------------------------------
@@ -891,6 +893,9 @@ export function RouteIntelligenceConsole() {
       unavailableReason={b20Card ? null : b20Unavailable}
       cached={b20.data?.cached === true}
       detailed={detailed}
+      // Context for the swap, not its subject: one line that opens to the
+      // controls. Unfolded, they were most of both screens (2026-10-19).
+      folded
     />
   );
 
@@ -1482,6 +1487,17 @@ export function RouteIntelligenceConsole() {
     const budgetHasHeadroom = Boolean(budgetRecord && Number(budgetRecord.remainingUsdc) > 0);
     const simulationEvidence =
       simulateResponse?.outcome === 'simulated' || simulateResponse?.outcome === 'cached' ? simulateResponse.evidence : null;
+    const balances = reviewBalanceViewV1({
+      simulatedChanges: simulationEvidence?.stateChanges ?? null,
+      expectedChanges: prepared?.blueprint.expectedAssetChanges ?? [],
+      simulationAvailable: simulation.available,
+    });
+    // The route the Blueprint was prepared from, which a person may have
+    // picked over the recommended one; its router is the approval's spender.
+    const preparedProvider = prepared
+      ? (projection?.availableRoutes.find((entry) => entry.candidateHash === prepared.blueprint.selectedCandidateHash)
+          ?.provider.displayName ?? null)
+      : null;
 
     content = (
       <>
@@ -1499,25 +1515,16 @@ export function RouteIntelligenceConsole() {
                   calls: prepared.blueprint.calls,
                   quoteExpiry: prepared.blueprint.quoteExpiry,
                   recipientName: gift?.recipientName ?? null,
+                  spenderName: preparedProvider,
                 })
               : []
           }
           notice={prepareNotice}
           simulation={simulation}
-          balanceChanges={(simulationEvidence?.stateChanges ?? []).map(
-            (change: { address: string; kind: string; summary: string }) => ({
-              asset: change.address,
-              before: '—',
-              after: '—',
-              change: change.summary,
-              tone: 'none' as const,
-            }),
-          )}
-          balanceUnavailableReason={
-            simulation.available
-              ? 'The simulation reported no decodable asset movement for this wallet.'
-              : 'Simulated balance changes appear once the Alchemy simulation runs.'
-          }
+          balanceTitle={balances.title}
+          balanceBasis={balances.basis}
+          balanceChanges={balances.rows}
+          balanceUnavailableReason={balances.unavailableReason}
           /* The kernel's OWN checks, by their own descriptions. These were six
              hard-coded labels every one of which read `Boolean(prepared)` — so
              the screen restated the server's verdict in its own words instead
@@ -1843,7 +1850,11 @@ export function RouteIntelligenceConsole() {
                 },
               ]
         }
-        onExport={() => consoleNav.navigate('activity')}
+        onExport={
+          proof
+            ? () => downloadRouteProofV1(routeProofExportV1({ proof, lifecycle: reconciliation.lifecycle, events: reconciliation.events }))
+            : null
+        }
         onNewGoal={() => {
           setScreen('plan');
           setGoal('');
@@ -1907,7 +1918,7 @@ export function RouteIntelligenceConsole() {
         evaluationSettled.current = false;
       }}
       onSelectSession={() => setScreen(projection ? 'route' : 'plan')}
-      onSelectProof={() => consoleNav.navigate('activity')}
+      onSelectProof={(routeRunId) => consoleNav.openActivityRun(routeRunId)}
     >
       {/* T67C.2: an unfinished submission surfaces above everything else. A
           user who reloaded mid-flight needs to finish CHECKING that batch

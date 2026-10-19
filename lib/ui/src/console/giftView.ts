@@ -134,6 +134,74 @@ export interface ReviewCallRowV1 {
   mono: boolean;
 }
 
+export interface ReviewBalanceViewV1 {
+  title: string;
+  /** What the rows are a reading of, beside the simulation's own label. */
+  basis: string | null;
+  rows: { asset: string; before: string; after: string; change: string; tone: 'none' }[];
+  /** Said instead of rows, when there are none. */
+  unavailableReason: string;
+}
+
+/**
+ * What the review says the wallet's balances will do.
+ *
+ * A paid simulation's decoded movements, when one ran; otherwise the
+ * Blueprint's own expected changes: the exact amount out, and the quoted
+ * amount in with its minimum. Before this, a swap that had only its prepare
+ * simulation read "The simulation reported no decodable asset movement for
+ * this wallet" (2026-10-19). That simulation's movements are never sent to
+ * the screen, and the sentence blamed it for their absence.
+ */
+export function reviewBalanceViewV1(input: {
+  simulatedChanges: readonly { address: string; summary: string }[] | null;
+  expectedChanges: readonly {
+    asset: { symbol: string; decimals: number };
+    direction: 'debit' | 'credit';
+    amountAtomic: string;
+    minimumAmountAtomic: string | null;
+  }[];
+  simulationAvailable: boolean;
+}): ReviewBalanceViewV1 {
+  if (input.simulatedChanges && input.simulatedChanges.length > 0) {
+    return {
+      title: 'Simulated balance changes',
+      basis: null,
+      rows: input.simulatedChanges.map((change) => ({
+        asset: change.address,
+        before: '—',
+        after: '—',
+        change: change.summary,
+        tone: 'none' as const,
+      })),
+      unavailableReason: '',
+    };
+  }
+  const rows = input.expectedChanges.flatMap((change) => {
+    const amount = unitsV1(change.amountAtomic, change.asset.decimals);
+    if (!amount) return [];
+    const minimum = change.direction === 'credit' ? unitsV1(change.minimumAmountAtomic, change.asset.decimals) : null;
+    return [{
+      asset: change.asset.symbol,
+      before: '—',
+      after: '—',
+      change: `${change.direction === 'debit' ? '−' : '+'}${amount} ${change.asset.symbol}${
+        minimum && minimum !== amount ? ` · at least ${minimum}` : ''
+      }`,
+      tone: 'none' as const,
+    }];
+  });
+  if (rows.length > 0) return { title: 'Balance changes', basis: 'from the quote', rows, unavailableReason: '' };
+  return {
+    title: 'Simulated balance changes',
+    basis: null,
+    rows: [],
+    unavailableReason: input.simulationAvailable
+      ? 'The simulation did not return balance changes for this wallet.'
+      : 'Balance changes appear once the simulation runs.',
+  };
+}
+
 /** The review's list of calls to sign, each named for what it does. */
 export function reviewCallRowsV1(input: {
   calls: readonly {
@@ -147,13 +215,22 @@ export function reviewCallRowsV1(input: {
   quoteExpiry: string;
   /** The name the gift recipient was typed as, when there is a gift. */
   recipientName?: string | null;
+  /** The selected route's provider, whose router the Safety Kernel pinned. */
+  spenderName?: string | null;
 }): ReviewCallRowV1[] {
   return input.calls.map((call, index) => {
     if (call.callType === 'approval') {
+      // In the token's own units when the call names its token: on 2026-10-19
+      // a 7 USDC approval read "spend exactly 7000000". The addresses stay in
+      // the detail, in full, for whoever checks them.
+      const amount = call.asset ? unitsV1(call.amountAtomic, call.asset.decimals) : null;
+      const named = Boolean(input.spenderName && call.spender);
       return {
         index: index + 1,
-        title: `Allow ${call.spender ?? 'the router'} to spend exactly ${call.amountAtomic ?? 'the quoted amount'}`,
-        detail: `${call.to} · exact amount, no unlimited approval`,
+        title: `Allow ${named ? input.spenderName : (call.spender ?? 'the router')} to spend exactly ${
+          amount ? `${amount} ${call.asset!.symbol}` : (call.amountAtomic ?? 'the quoted amount')
+        }`,
+        detail: `${named ? `spender ${call.spender} · token ` : ''}${call.to} · exact amount, no unlimited approval`,
         mono: true,
       };
     }

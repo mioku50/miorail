@@ -41,6 +41,20 @@ export interface ConsoleNavV1 {
   /** Six entries for the rail, which is the drawer on a phone. */
   rail: readonly ConsoleNavItemV1[];
   navigate: (section: ConsoleSectionV1) => void;
+  /** Activity, opened on one run's proof. */
+  openActivityRun: (routeRunId: string) => void;
+}
+
+/**
+ * The run Activity opens on, carried in the history entry's state.
+ *
+ * "Recent proofs" and the proof screen sent people to Activity and selected
+ * nothing, so a proof clicked in the rail was not on the page it led to. The
+ * run rides in history state rather than the URL, which carries the section
+ * only.
+ */
+export interface ActivityNavStateV1 {
+  activityRun?: string;
 }
 
 export function useConsoleNav(active: ConsoleSectionV1 | null): ConsoleNavV1 {
@@ -79,5 +93,11 @@ export function useConsoleNav(active: ConsoleSectionV1 | null): ConsoleNavV1 {
     [setLocation],
   );
 
-  return { header, rail, navigate };
+  const openActivityRun = useCallback(
+    (routeRunId: string) =>
+      setLocation(consoleSectionPathV1('activity'), { state: { activityRun: routeRunId } satisfies ActivityNavStateV1 }),
+    [setLocation],
+  );
+
+  return { header, rail, navigate, openActivityRun };
 }

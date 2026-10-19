@@ -182,6 +182,14 @@ test('T58: recordSafely captures proofId/finalStatus from the record response, a
   assert.ok(/setProofId\(\s*null\s*\)/.test(source), 'a new submit must reset proofId');
 });
 
+test('a terminal status is set only once its record has reached the server', () => {
+  // Surfaces start checking the chain on `confirmed`. Set before the record,
+  // the check reached the server ahead of the hashes (2026-10-19).
+  const source = mod.useSubmitApprovedBlueprint.toString();
+  assert.match(source, /status:\s*["']confirmed["'][\s\S]{0,200}\}\)\.then\(\(\)\s*=>\s*setStatus\(["']confirmed["']\)\)/);
+  assert.match(source, /status:\s*["']failed["'][\s\S]{0,300}\}\)\.then\(\(\)\s*=>\s*\{\s*setStatus\(["']failed["']\)/);
+});
+
 test('T58: the wallet hook still sends exactly one batch and never reconciles itself', () => {
   const source = mod.useSubmitApprovedBlueprint.toString();
   const sendCallsInvocations = source.match(/sendCalls\.mutateAsync\(/g) ?? [];

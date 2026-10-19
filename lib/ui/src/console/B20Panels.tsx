@@ -307,6 +307,49 @@ export interface B20ControlSectionPropsV1 {
   cached?: boolean;
   /** Full detail (fields + evidence). Review shows it; Route stays compact. */
   detailed?: boolean;
+  /** Under one summary line that opens to the panels — the swap screens,
+   * where the controls are context for an action rather than the subject. */
+  folded?: boolean;
+}
+
+/**
+ * The line a folded Token controls block shows: what the token is, how many
+ * of its controls were open or constrained at the block read, and whether any
+ * changed since the last reading. Counts of read states, never a grade. A
+ * change is not summarised away: it opens the fold.
+ */
+export function b20ControlSummaryV1(
+  card: B20CardLikeV1,
+  watch: B20WatchLikeV1 | null = null,
+): { line: string; open: boolean } {
+  const isB20 = card.detectionOutcome === 'b20' || card.detectionOutcome === 'b20_uninitialised';
+  const parts: string[] = [];
+  if (!isB20) {
+    parts.push(B20_DETECTION_COPY_V1[card.detectionOutcome] ?? 'Nothing was determined.');
+  } else {
+    const name = card.displayName
+      ? `${card.displayName}${card.displaySymbol ? ` (${card.displaySymbol})` : ''}`
+      : (card.displaySymbol ?? shortB20HashV1(card.tokenAddress));
+    parts.push(card.variant ? `${name} · ${card.variant}` : name);
+    const states = (['unconstrained', 'constrained', 'unknown'] as const)
+      .map((state) => ({ state, count: card.statements.filter((statement) => statement.observedState === state).length }))
+      .filter(({ count }) => count > 0)
+      .map(({ state, count }) => `${count} ${B20_STATE_LABEL_V1[state]}`);
+    if (states.length > 0) {
+      parts.push(`${card.statements.length} control${card.statements.length === 1 ? '' : 's'}: ${states.join(', ')}`);
+    }
+  }
+  const changes = watch?.status === 'compared' ? watch.changes.length : 0;
+  if (watch?.status === 'compared') {
+    parts.push(
+      changes > 0
+        ? `${changes} changed since block ${watch.fromBlock ?? 'unknown'}`
+        : watch.gaps.length > 0
+          ? `${watch.gaps.length} not compared since block ${watch.fromBlock ?? 'unknown'}`
+          : `no change since block ${watch.fromBlock ?? 'unknown'}`,
+    );
+  }
+  return { line: parts.join(' · '), open: changes > 0 };
 }
 
 export function B20ControlSection({
@@ -316,6 +359,7 @@ export function B20ControlSection({
   unavailableReason = null,
   cached = false,
   detailed = false,
+  folded = false,
 }: B20ControlSectionPropsV1): React.ReactElement | null {
   if (loading) {
     return (
@@ -336,7 +380,7 @@ export function B20ControlSection({
       </section>
     );
   }
-  return (
+  const panels = (
     <>
       <B20ControlCardPanel card={card} />
       {cached && (
@@ -351,6 +395,17 @@ export function B20ControlSection({
       {detailed && <B20FieldsPanel card={card} />}
       {detailed && <B20EvidencePanel card={card} />}
     </>
+  );
+  if (!folded) return panels;
+  const summary = b20ControlSummaryV1(card, watch);
+  return (
+    <details className="evidence-fold" open={summary.open}>
+      <summary>
+        <span className="evidence-fold-k">Token controls</span>
+        <span className="evidence-fold-v">{summary.line}</span>
+      </summary>
+      {panels}
+    </details>
   );
 }
 

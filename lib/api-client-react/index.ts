@@ -3253,9 +3253,11 @@ export function useRouteHistory(
  * surfaces render honest copy about when polling stops. */
 export const MAX_PROOF_POLL_ATTEMPTS = 10;
 export const PROOF_POLL_INTERVAL_MS = 4000;
-/** Poll attempts at which reconcile is re-run when the proof is still
- * pending (receipts may have landed since the previous pass). */
-export const PROOF_RECONCILE_RETRY_ATTEMPTS: readonly number[] = [3, 6];
+/** Answered polls after which reconcile is run again while the proof is still
+ * pending: a receipt our RPC had not seen yet may have landed since. The
+ * first answer is the mount's read, which races the opening reconcile and
+ * says nothing; the second comes four seconds in. */
+export const PROOF_RECONCILE_RETRY_ATTEMPTS: readonly number[] = [2, 4, 7];
 
 export const PROOF_TERMINAL_FINAL_STATUSES: readonly string[] = [
   'completed',
@@ -3267,6 +3269,47 @@ export const PROOF_TERMINAL_FINAL_STATUSES: readonly string[] = [
 
 export function isTerminalProofFinalStatus(status: string | null | undefined): boolean {
   return typeof status === 'string' && PROOF_TERMINAL_FINAL_STATUSES.includes(status);
+}
+
+/** A proof poll, counted by the answers its query has had. */
+export interface ProofPollStateV1 {
+  finalStatus: string | null | undefined;
+  /** Answers so far, data and errors alike. */
+  polls: number;
+}
+
+/**
+ * The next poll's delay, or false to stop.
+ *
+ * Pure, because react-query asks for it on every render and every fetch, not
+ * once per poll. The counter it replaced was bumped in here: on 2026-10-19
+ * renders spent all ten attempts within a second of a swap, the poll stopped,
+ * and a proof the server had completed read "pending" until the page was left.
+ */
+export function proofPollIntervalV1(state: ProofPollStateV1): number | false {
+  if (isTerminalProofFinalStatus(state.finalStatus)) return false;
+  return state.polls >= MAX_PROOF_POLL_ATTEMPTS ? false : PROOF_POLL_INTERVAL_MS;
+}
+
+/** Whether the poll that just answered is one to reconcile again after. */
+export function proofReconcileDueV1(state: ProofPollStateV1): boolean {
+  return state.finalStatus === 'pending' && PROOF_RECONCILE_RETRY_ATTEMPTS.includes(state.polls);
+}
+
+/**
+ * Which of the hook's two readings to show: the poll's or the reconcile's. A
+ * settled proof wins, then the later write. The poll's used to win outright,
+ * so a reconcile that completed the proof was shown as the pending read that
+ * had raced it.
+ */
+export function freshestRouteProofV1<T extends { finalStatus: string; updatedAt: string }>(
+  polled: T | null | undefined,
+  reconciled: T | null | undefined,
+): T | null {
+  if (!polled || !reconciled) return polled ?? reconciled ?? null;
+  const polledSettled = isTerminalProofFinalStatus(polled.finalStatus);
+  if (polledSettled !== isTerminalProofFinalStatus(reconciled.finalStatus)) return polledSettled ? polled : reconciled;
+  return Date.parse(reconciled.updatedAt) > Date.parse(polled.updatedAt) ? reconciled : polled;
 }
 
 export interface UseBoundedProofReconciliationArgs {
@@ -3287,10 +3330,10 @@ export interface UseBoundedProofReconciliationResult {
 
 /**
  * Composition: one reconcile POST when polling starts, then a GET-backed
- * query whose refetchInterval CALLBACK enforces the bound — it returns false
- * (stop) on any terminal finalStatus and after MAX_PROOF_POLL_ATTEMPTS
- * (~40s at 4s intervals); at attempts 3 and 6 it re-runs reconcile if the
- * proof is still pending. Unmount stops the query automatically. Mutations
+ * query polled every PROOF_POLL_INTERVAL_MS until the proof settles or
+ * MAX_PROOF_POLL_ATTEMPTS answers have come back (~40s). After the answers in
+ * PROOF_RECONCILE_RETRY_ATTEMPTS it reconciles again if the proof is still
+ * pending, once per answer. Unmount stops the query automatically. Mutations
  * themselves never poll.
  */
 export function useBoundedProofReconciliation({
@@ -3300,7 +3343,6 @@ export function useBoundedProofReconciliation({
   enabled,
 }: UseBoundedProofReconciliationArgs): UseBoundedProofReconciliationResult {
   const reconcile = useReconcileRouteProof();
-  const attemptsRef = useRef(0);
   const startedForRef = useRef<string | null>(null);
   const active = Boolean(enabled && proofId && routeRunId && walletAddress);
 
@@ -3309,41 +3351,53 @@ export function useBoundedProofReconciliation({
     if (!active || !proofId || !routeRunId || !walletAddress) return;
     if (startedForRef.current === proofId) return;
     startedForRef.current = proofId;
-    attemptsRef.current = 0;
     reconcileMutate({ proofId, routeRunId, walletAddress });
   }, [active, proofId, routeRunId, walletAddress, reconcileMutate]);
 
   const query = useRouteProof(active ? proofId : null, {
     enabled: active,
-    refetchInterval: (current) => {
-      const finalStatus = current.state.data?.proof.finalStatus ?? null;
-      if (isTerminalProofFinalStatus(finalStatus)) return false;
-      attemptsRef.current += 1;
-      if (attemptsRef.current >= MAX_PROOF_POLL_ATTEMPTS) return false;
-      if (
-        PROOF_RECONCILE_RETRY_ATTEMPTS.includes(attemptsRef.current) &&
-        finalStatus === 'pending' &&
-        proofId && routeRunId && walletAddress
-      ) {
-        reconcileMutate({ proofId, routeRunId, walletAddress });
-      }
-      return PROOF_POLL_INTERVAL_MS;
-    },
+    refetchInterval: (current) =>
+      proofPollIntervalV1({
+        finalStatus: current.state.data?.proof.finalStatus,
+        polls: current.state.dataUpdateCount + current.state.errorUpdateCount,
+      }),
   });
+
+  // Keyed on the answer, so it runs once per poll and not once per render; the
+  // ref only keeps one answer from being acted on twice.
+  const queryClient = useQueryClient();
+  const answeredAt = Math.max(query.dataUpdatedAt, query.errorUpdatedAt);
+  const polledStatus = query.data?.proof.finalStatus ?? null;
+  const retriedAtRef = useRef<string | null>(null);
+  const reconciling = reconcile.isPending;
+  const reconciledSettled = isTerminalProofFinalStatus(reconcile.data?.proof.finalStatus);
+  useEffect(() => {
+    // Never two at once (both would append the same event to the proof), and
+    // never after a reconcile has already settled it.
+    if (!active || !proofId || !routeRunId || !walletAddress || answeredAt === 0 || reconciling || reconciledSettled) return;
+    const state = queryClient.getQueryState(['route-proof', proofId]);
+    const polls = (state?.dataUpdateCount ?? 0) + (state?.errorUpdateCount ?? 0);
+    const key = `${proofId}:${polls}`;
+    if (retriedAtRef.current === key || !proofReconcileDueV1({ finalStatus: polledStatus, polls })) return;
+    retriedAtRef.current = key;
+    reconcileMutate({ proofId, routeRunId, walletAddress });
+  }, [active, answeredAt, polledStatus, reconciling, reconciledSettled, proofId, routeRunId, walletAddress, reconcileMutate, queryClient]);
+
+  const proof = freshestRouteProofV1(query.data?.proof, reconcile.data?.proof);
+  const reconciledShown = proof !== null && proof === reconcile.data?.proof && proof !== query.data?.proof;
 
   // "Recent proofs" reads the route history once per visit, so on 2026-10-19
   // a swap that had just completed was missing from it. A proof that opens or
   // settles belongs at its top: the history is read again when that happens.
-  const queryClient = useQueryClient();
-  const settledStatus = query.data?.proof.finalStatus ?? reconcile.data?.proof.finalStatus ?? null;
+  const settledStatus = proof?.finalStatus ?? null;
   useEffect(() => {
     if (!active || !settledStatus) return;
     void queryClient.invalidateQueries({ queryKey: ['route-history'] });
   }, [active, proofId, settledStatus, queryClient]);
 
   return {
-    proof: query.data?.proof ?? reconcile.data?.proof ?? null,
-    lifecycle: query.data?.lifecycle ?? reconcile.data?.lifecycle ?? null,
+    proof,
+    lifecycle: (reconciledShown ? reconcile.data?.lifecycle : query.data?.lifecycle) ?? reconcile.data?.lifecycle ?? null,
     events: query.data?.events ?? [],
     outcome: reconcile.data?.outcome ?? null,
     isLoading: active && query.isPending && reconcile.isPending,

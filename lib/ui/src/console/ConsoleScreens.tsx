@@ -227,69 +227,80 @@ export function RouteScreen(model: RouteScreenModelV1) {
 
       {model.tokenPanels}
 
-      <ProviderDiagnosticsPanel
-        rows={model.diagnostics ?? []}
-        claimHeadline={model.claimHeadline ?? null}
-        onCompareAgain={model.onCompareAgain}
-        comparePending={model.comparePending}
-      />
-
-      <div className="panel">
-        <div className="ph">
-          <h3>Path score</h3>
-          <span className="sub">{model.scoringVersion}</span>
-          <span className="rt">
-            <span className="pill n">{scoredCountLabelV1(model.scoreRows)}</span>
+      {/* How the comparison was made, folded under a line that says what it
+          found. Every provider's answer is also in All candidates below; the
+          fold opens itself when a provider could be asked again. */}
+      <details className="evidence-fold" open={(model.diagnostics ?? []).some((row) => row.retryable)}>
+        <summary>
+          <span className="evidence-fold-k">How the routes were compared</span>
+          <span className="evidence-fold-v">
+            {candidateSummaryV1(model.candidates)} · path score {scoredCountLabelV1(model.scoreRows)}
           </span>
-        </div>
-        <div className="pb">
-          <div className="scorewrap">
-            <ScoreRadar
-              rows={model.scoreRows}
-              label={`Radar chart. ${model.scoreRows
-                .map((row) => `${row.label} ${row.scored ? row.numberLabel : 'not scored'}`)
-                .join(', ')}`}
-            />
-            <ScoreRows rows={model.scoreRows} />
-          </div>
-        </div>
-      </div>
+        </summary>
+        <ProviderDiagnosticsPanel
+          rows={model.diagnostics ?? []}
+          claimHeadline={model.claimHeadline ?? null}
+          onCompareAgain={model.onCompareAgain}
+          comparePending={model.comparePending}
+        />
 
-      {(model.providerHistory ?? []).length > 0 && (
         <div className="panel">
           <div className="ph">
-            <h3>Provider history</h3>
-            <span className="sub">verified routes only</span>
+            <h3>Path score</h3>
+            <span className="sub">{model.scoringVersion}</span>
+            <span className="rt">
+              <span className="pill n">{scoredCountLabelV1(model.scoreRows)}</span>
+            </span>
           </div>
-          <div className="pb tight">
-            {(model.providerHistory ?? []).map((entry) => (
-              <div key={entry.providerName} className="note" style={{ marginBottom: 10 }}>
-                <b>{entry.providerName}</b>
-                <p className="lnote" style={{ margin: '4px 0 8px' }}>{entry.headline}</p>
-                <div>
-                  {entry.rows.map((row) => (
-                    <div className="kv" key={row.label}>
-                      <span className="k">{row.label}</span>
-                      <span className="v mono">{row.value}</span>
-                    </div>
-                  ))}
-                  <div className="kv">
-                    <span className="k">Provider quote</span>
-                    <span className="v mono">{entry.quotedResult ?? 'Not available'}</span>
-                  </div>
-                  <div className="kv">
-                    <span className="k">History-adjusted estimate</span>
-                    <span className="v mono">{entry.historyAdjustedResult ?? 'Not available'}</span>
-                  </div>
-                </div>
-                {entry.uncalibratedNote && (
-                  <p className="lnote" style={{ marginTop: 8 }}>{entry.uncalibratedNote}</p>
-                )}
-              </div>
-            ))}
+          <div className="pb">
+            <div className="scorewrap">
+              <ScoreRadar
+                rows={model.scoreRows}
+                label={`Radar chart. ${model.scoreRows
+                  .map((row) => `${row.label} ${row.scored ? row.numberLabel : 'not scored'}`)
+                  .join(', ')}`}
+              />
+              <ScoreRows rows={model.scoreRows} />
+            </div>
           </div>
         </div>
-      )}
+
+        {(model.providerHistory ?? []).length > 0 && (
+          <div className="panel">
+            <div className="ph">
+              <h3>Provider history</h3>
+              <span className="sub">verified routes only</span>
+            </div>
+            <div className="pb tight">
+              {(model.providerHistory ?? []).map((entry) => (
+                <div key={entry.providerName} className="note" style={{ marginBottom: 10 }}>
+                  <b>{entry.providerName}</b>
+                  <p className="lnote" style={{ margin: '4px 0 8px' }}>{entry.headline}</p>
+                  <div>
+                    {entry.rows.map((row) => (
+                      <div className="kv" key={row.label}>
+                        <span className="k">{row.label}</span>
+                        <span className="v mono">{row.value}</span>
+                      </div>
+                    ))}
+                    <div className="kv">
+                      <span className="k">Provider quote</span>
+                      <span className="v mono">{entry.quotedResult ?? 'Not available'}</span>
+                    </div>
+                    <div className="kv">
+                      <span className="k">History-adjusted estimate</span>
+                      <span className="v mono">{entry.historyAdjustedResult ?? 'Not available'}</span>
+                    </div>
+                  </div>
+                  {entry.uncalibratedNote && (
+                    <p className="lnote" style={{ marginTop: 8 }}>{entry.uncalibratedNote}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </details>
 
       <div className="panel">
         <div className="ph">
@@ -314,7 +325,9 @@ export function RouteScreen(model: RouteScreenModelV1) {
         </div>
       </div>
 
-      <div className="ctarow">
+      {/* Docked: it stays on screen while the evidence above it scrolls. On
+          2026-10-19 the person had to guess that Review was down there. */}
+      <div className="ctarow cta-dock">
         <button type="button" className="btn lg" onClick={model.onReview} disabled={Boolean(model.reviewDisabledReason)}>
           {model.primaryActionLabel ?? 'Review transaction'}
         </button>
@@ -663,6 +676,9 @@ export interface ReviewScreenModelV1 {
   simulation: SimulationViewV1;
   balanceChanges: BalanceChangeRowV1[];
   balanceUnavailableReason: string | null;
+  /** What the balance rows are: a simulation's reading, or the quote's. */
+  balanceTitle?: string;
+  balanceBasis?: string | null;
   checks: PreflightCheckV1[];
   limits: LimitFieldV1[];
   onLimitChange: (id: string, value: string) => void;
@@ -717,6 +733,8 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
   // nothing to sign.
   const refused = Boolean(model.notice);
   const allClear = !refused && model.checks.every((check) => check.passed) && model.simulation.passed;
+  // Two columns of dashes say nothing; they show once a balance is known.
+  const knownBalances = model.balanceChanges.some((row) => row.before !== '—' || row.after !== '—');
   return (
     <section aria-label="Review transaction">
       <ConsoleStepper steps={model.steps} />
@@ -767,8 +785,10 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
 
         <div className="panel">
           <div className="ph">
-            <h3>Simulated balance changes</h3>
-            <span className="sub">{model.simulation.subLabel}</span>
+            <h3>{model.balanceTitle ?? 'Simulated balance changes'}</h3>
+            <span className="sub">
+              {model.balanceBasis ? `${model.balanceBasis} · ${model.simulation.subLabel}` : model.simulation.subLabel}
+            </span>
           </div>
           <div className="pb tight">
             {model.balanceChanges.length === 0 ? (
@@ -778,8 +798,8 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
                 <thead>
                   <tr>
                     <th>Asset</th>
-                    <th>Before</th>
-                    <th>After</th>
+                    {knownBalances && <th>Before</th>}
+                    {knownBalances && <th>After</th>}
                     <th className="r">Change</th>
                   </tr>
                 </thead>
@@ -787,8 +807,8 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
                   {model.balanceChanges.map((row) => (
                     <tr key={row.asset}>
                       <td className="nm">{row.asset}</td>
-                      <td className="mono">{row.before}</td>
-                      <td className="mono">{row.after}</td>
+                      {knownBalances && <td className="mono">{row.before}</td>}
+                      {knownBalances && <td className="mono">{row.after}</td>}
                       <td className={`r mono${row.tone === 'good' ? ' good' : row.tone === 'warn' ? ' warn' : ''}`}>{row.change}</td>
                     </tr>
                   ))}
@@ -898,7 +918,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
       </div>
       )}
 
-      <div className="ctarow">
+      <div className="ctarow cta-dock">
         {/* The REAL signing control, when the container has one to give. It
             used to live in its own panel far below, while this row showed a
             large primary button wired to `() => undefined` — so the obvious
@@ -957,7 +977,8 @@ export interface ProofScreenModelV1 {
   timeline: TimelineEntryV1[];
   planVsActual: PlanVsActualRowV1[];
   record: { label: string; value: string; dim?: boolean }[];
-  onExport: () => void;
+  /** Saves the proof as a file; null while there is no proof to save. */
+  onExport: (() => void) | null;
   onNewGoal: () => void;
   /** Growth plan step 4: set only when the approved batch carried a gift. */
   gift?: ProofGiftModelV1 | null;
@@ -1045,7 +1066,7 @@ export function ProofScreen(model: ProofScreenModelV1) {
           <h3>Record</h3>
           <span className="sub">immutable · exportable as JSON</span>
           <span className="rt">
-            <button type="button" className="btn sec" onClick={model.onExport}>
+            <button type="button" className="btn sec" onClick={model.onExport ?? undefined} disabled={!model.onExport}>
               Export proof
             </button>
             <button type="button" className="btn" onClick={model.onNewGoal}>

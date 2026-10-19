@@ -116,6 +116,7 @@ import {
   MarketRealityRadarScreen,
   TodayScreen,
   nothingSpentDetailV1,
+  reviewBalanceViewV1,
   reviewCallRowsV1,
   STOCKS_CONSOLE_DEFAULT_SIZE_V1,
   useStocksConsoleV1,
@@ -870,6 +871,7 @@ export function MiniConsole() {
       unavailableReason={b20Card ? null : b20Unavailable}
       cached={b20.data?.cached === true}
       detailed={detailed}
+      folded
     />
   );
   const adapterRows = useMemo(
@@ -1887,6 +1889,15 @@ export function MiniConsole() {
     const budgetHasHeadroom = Boolean(budgetRecord && Number(budgetRecord.remainingUsdc) > 0);
     const simulationEvidence =
       simulateResponse?.outcome === "simulated" || simulateResponse?.outcome === "cached" ? simulateResponse.evidence : null;
+    const balances = reviewBalanceViewV1({
+      simulatedChanges: simulationEvidence?.stateChanges ?? null,
+      expectedChanges: prepared?.blueprint.expectedAssetChanges ?? [],
+      simulationAvailable: simulation.available,
+    });
+    const preparedProvider = prepared
+      ? (projection?.availableRoutes.find((entry) => entry.candidateHash === prepared.blueprint.selectedCandidateHash)
+          ?.provider.displayName ?? null)
+      : null;
     content = (
       <>
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
@@ -1907,28 +1918,27 @@ export function MiniConsole() {
           // of what that call does.
           calls={
             prepared
-              ? reviewCallRowsV1({ calls: prepared.blueprint.calls, quoteExpiry: prepared.blueprint.quoteExpiry })
+              ? reviewCallRowsV1({
+                  calls: prepared.blueprint.calls,
+                  quoteExpiry: prepared.blueprint.quoteExpiry,
+                  spenderName: preparedProvider,
+                })
               : []
           }
           simulation={simulation}
-          balanceChanges={(simulationEvidence?.stateChanges ?? []).map((change: { address: string; summary: string }) => ({
-            asset: change.address,
-            before: "—",
-            after: "—",
-            change: change.summary,
-            tone: "none" as const,
-          }))}
-          balanceUnavailableReason={
-            simulation.available
-              ? "The simulation reported no decodable asset movement for this wallet."
-              : "Simulated balance changes appear once the Alchemy simulation runs."
+          balanceTitle={balances.title}
+          balanceBasis={balances.basis}
+          balanceChanges={balances.rows}
+          balanceUnavailableReason={balances.unavailableReason}
+          // The Safety Kernel's own checks, as the web review shows them. These
+          // four labels each read `Boolean(prepared)`, so a check the kernel
+          // skipped looked the same as one it passed.
+          checks={
+            prepared?.review.safety.checks.map((check) => ({
+              label: check.description,
+              passed: check.status === "passed",
+            })) ?? []
           }
-          checks={[
-            { label: "Chain is Base mainnet", passed: Boolean(prepared) },
-            { label: "Recipient is your wallet", passed: Boolean(prepared) },
-            { label: "Approval exact, not unlimited", passed: Boolean(prepared) },
-            { label: "Simulation passed", passed: simulation.passed },
-          ]}
           limits={[
             {
               id: "monthly",

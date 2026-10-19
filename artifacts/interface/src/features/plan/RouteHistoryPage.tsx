@@ -17,8 +17,9 @@
 // Read-only, as before: the page never reconciles and never re-runs.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
+import { useHistoryState } from 'wouter/use-browser-location';
 import {
   useRevokeProofShare,
   useBaseMcpActionReceipts,
@@ -42,12 +43,14 @@ import {
   chainUnavailableReasonV1,
   chainLabelV1,
   consoleSectionPathV1,
+  mergeActivityRunsV1,
   useConsoleTheme,
   type ActivityRunRowV1,
 } from '@mioagent/ui';
 import { useAccount } from 'wagmi';
 
-import { useConsoleNav } from '../console/useConsoleNav';
+import { useConsoleNav, type ActivityNavStateV1 } from '../console/useConsoleNav';
+import { downloadRouteProofV1, routeProofExportV1 } from '../proof/exportProof';
 
 /** `0x1234…abcd`, or nothing when no wallet is connected. */
 function shortAddress(address: string | undefined): string | null {
@@ -62,7 +65,10 @@ export function RouteHistoryPage() {
 
   const [runs, setRuns] = useState<ActivityRunRowV1[]>([]);
   const [cursor, setCursor] = useState<string | undefined>(undefined);
-  const [selected, setSelected] = useState<ActivityRunRowV1 | null>(null);
+  // By id, so the open run is always the latest reading of it.
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const selected = runs.find((run) => run.routeRunId === selectedId) ?? null;
+  const navState = useHistoryState<ActivityNavStateV1 | null>();
 
   const status = useStatus();
   const history = useRouteHistory({ limit: 20, cursor });
@@ -84,11 +90,30 @@ export function RouteHistoryPage() {
 
   useEffect(() => {
     if (!history.data) return;
-    setRuns((current) => {
-      const known = new Set(current.map((item) => item.routeRunId));
-      return [...current, ...history.data.items.filter((item) => !known.has(item.routeRunId))];
-    });
+    setRuns((current) => mergeActivityRunsV1(current, history.data.items));
   }, [history.data]);
+
+  // A run opened from a rail, here or on another page, is scrolled to once it
+  // is among the runs read; one the page has not read yet waits for them.
+  const scrollToRef = useRef<string | null>(null);
+  const openRun = (routeRunId: string) => {
+    setSelectedId(routeRunId);
+    scrollToRef.current = routeRunId;
+  };
+  const askedRef = useRef<string | null>(null);
+  useEffect(() => {
+    const asked = navState?.activityRun;
+    if (!asked || askedRef.current === asked || !runs.some((run) => run.routeRunId === asked)) return;
+    askedRef.current = asked;
+    setSelectedId(asked);
+    scrollToRef.current = asked;
+  }, [navState?.activityRun, runs]);
+  useEffect(() => {
+    const id = scrollToRef.current;
+    if (!id || !selected || selected.routeRunId !== id) return;
+    scrollToRef.current = null;
+    document.querySelector(`[data-run-id="${CSS.escape(id)}"]`)?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+  }, [selected]);
 
   const spend = useMemo(
     () => ({
@@ -146,7 +171,7 @@ export function RouteHistoryPage() {
       onThemeChange={setTheme}
       onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
       onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
-      onSelectProof={() => undefined}
+      onSelectProof={openRun}
     >
       {/* Wallet actions first. The ledger used to open this page, on the rule
           that it was the only part with content — true when it was written and
@@ -169,7 +194,60 @@ export function RouteHistoryPage() {
         loading={history.isPending}
         runs={runs}
         selectedRunId={selected?.routeRunId ?? null}
-        onSelect={setSelected}
+        onSelect={(run) => setSelectedId((current) => (current === run.routeRunId ? null : run.routeRunId))}
+        selectedDetail={
+          selected ? (
+            <>
+              <ActivityProofCard
+                runLabel={selected.intentSummary || selected.routeRunId}
+                loading={Boolean(selected.proofId) && proof.isPending}
+                proof={selected.proofId && proof.data ? proof.data.proof : null}
+                lifecycle={proof.data?.lifecycle ?? null}
+                unavailableReason={
+                  selected.proofId && proof.isError
+                    ? 'That execution proof could not be read. It exists; this server did not return it.'
+                    : null
+                }
+                onExport={
+                  selected.proofId && proof.data
+                    ? () =>
+                        downloadRouteProofV1(
+                          routeProofExportV1({
+                            proof: proof.data.proof,
+                            lifecycle: proof.data.lifecycle,
+                            events: proof.data.events,
+                          }),
+                        )
+                    : null
+                }
+              />
+              {publishable && (
+                <ShareProofPanel
+                  publicUrl={publicUrl}
+                  pending={share.isPending || revoke.isPending}
+                  onShare={() => {
+                    const proofId = selected?.proofId;
+                    if (!proofId) return;
+                    share.mutate({ proofId }, { onSuccess: (result) => setPublicUrl(result.url) });
+                  }}
+                  onRevoke={() => {
+                    const proofId = selected?.proofId;
+                    if (!proofId) return;
+                    revoke.mutate({ proofId }, { onSuccess: () => setPublicUrl(null) });
+                  }}
+                  onCopy={() => {
+                    if (publicUrl) void navigator.clipboard?.writeText(new URL(publicUrl, location.origin).toString());
+                  }}
+                  onDownload={() => {
+                    // The public id is in the URL the server returned; the download
+                    // route serves the canonical bundle under it.
+                    if (publicUrl) location.href = `/api/public/proofs/${publicUrl.split('/').pop()}/bundle`;
+                  }}
+                />
+              )}
+            </>
+          ) : null
+        }
         hasMore={Boolean(history.data?.nextCursor)}
         onLoadMore={() => setCursor(history.data?.nextCursor ?? undefined)}
         unavailableReason={
@@ -179,49 +257,10 @@ export function RouteHistoryPage() {
         }
       />
 
-      {selected && (
-        <ActivityProofCard
-          runLabel={selected.intentSummary || selected.routeRunId}
-          loading={Boolean(selected.proofId) && proof.isPending}
-          proof={selected.proofId && proof.data ? proof.data.proof : null}
-          lifecycle={proof.data?.lifecycle ?? null}
-          unavailableReason={
-            selected.proofId && proof.isError
-              ? 'That execution proof could not be read. It exists; this server did not return it.'
-              : null
-          }
-        />
-      )}
-
       {/* Below the wallet's own actions, where a ledger of what we spent on
           intelligence belongs. Its total and its summary sentence are still
           unexpanded; only the repeated rows fold. */}
       <ActivitySpendCard {...spend} />
-
-      {publishable && (
-        <ShareProofPanel
-          publicUrl={publicUrl}
-          pending={share.isPending || revoke.isPending}
-          onShare={() => {
-            const proofId = selected?.proofId;
-            if (!proofId) return;
-            share.mutate({ proofId }, { onSuccess: (result) => setPublicUrl(result.url) });
-          }}
-          onRevoke={() => {
-            const proofId = selected?.proofId;
-            if (!proofId) return;
-            revoke.mutate({ proofId }, { onSuccess: () => setPublicUrl(null) });
-          }}
-          onCopy={() => {
-            if (publicUrl) void navigator.clipboard?.writeText(new URL(publicUrl, location.origin).toString());
-          }}
-          onDownload={() => {
-            // The public id is in the URL the server returned; the download
-            // route serves the canonical bundle under it.
-            if (publicUrl) location.href = `/api/public/proofs/${publicUrl.split('/').pop()}/bundle`;
-          }}
-        />
-      )}
     </ConsoleShell>
   );
 }

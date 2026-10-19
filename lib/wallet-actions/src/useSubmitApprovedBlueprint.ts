@@ -304,9 +304,12 @@ export function useSubmitApprovedBlueprint({
       // `unknown` placeholder — otherwise a genuine confirmation would never
       // read as `confirmed` server-side.
       const normalizedReceipts = normalizeWalletReceipts(rawReceipts);
+      // The terminal status follows its record: a surface asks the server to
+      // check the chain on it, and the server can only check hashes it has.
+      // On 2026-10-19 both swaps were checked some 30 ms before their hashes
+      // were recorded, and read "pending" until a retry happened to run.
       if (cs.status === 'success') {
         setTxHashes(hashes);
-        setStatus('confirmed');
         void recordSafely({
           walletAddress: payload.from,
           routeRunId,
@@ -316,10 +319,8 @@ export function useSubmitApprovedBlueprint({
           batchId,
           transactionHashes: hashes,
           receipts: normalizedReceipts,
-        });
+        }).then(() => setStatus('confirmed'));
       } else {
-        setStatus('failed');
-        setError('Wallet reported the batch as failed');
         void recordSafely({
           walletAddress: payload.from,
           routeRunId,
@@ -330,6 +331,9 @@ export function useSubmitApprovedBlueprint({
           transactionHashes: hashes,
           receipts: normalizedReceipts,
           error: 'Wallet reported the batch as failed',
+        }).then(() => {
+          setStatus('failed');
+          setError('Wallet reported the batch as failed');
         });
       }
     },

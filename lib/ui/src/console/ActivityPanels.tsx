@@ -216,11 +216,44 @@ export function activityRunsSummaryV1(runs: readonly ActivityRunRowV1[]): string
   return `${runs.length} run${runs.length === 1 ? '' : 's'}, ${withProof} with an execution proof.`;
 }
 
+/**
+ * The page's runs after another read of the history: every run it already
+ * shows takes the newer reading, new ones join, newest first.
+ *
+ * Only new runs used to be added. A swap read while its proof was pending
+ * kept reading "pending" in Activity after the server had completed it,
+ * beside a rail that said "completed" (2026-10-19).
+ */
+export function mergeActivityRunsV1(
+  current: readonly ActivityRunRowV1[],
+  incoming: readonly ActivityRunRowV1[],
+): ActivityRunRowV1[] {
+  const fresh = new Map(incoming.map((run) => [run.routeRunId, run]));
+  const known = new Set(current.map((run) => run.routeRunId));
+  const merged = [
+    ...current.map((run) => fresh.get(run.routeRunId) ?? run),
+    ...incoming.filter((run) => !known.has(run.routeRunId)),
+  ];
+  const at = (run: ActivityRunRowV1) => {
+    const time = Date.parse(run.createdAt);
+    return Number.isFinite(time) ? time : 0;
+  };
+  return merged
+    .map((run, index) => ({ run, index }))
+    .sort((a, b) => at(b.run) - at(a.run) || a.index - b.index)
+    .map(({ run }) => run);
+}
+
 export interface ActivityRunsModelV1 {
   loading: boolean;
   runs: readonly ActivityRunRowV1[];
   selectedRunId: string | null;
+  /** Selecting the open run again closes it. */
   onSelect: (run: ActivityRunRowV1) => void;
+  /** The open run's proof, shown under its own row. It used to render below
+   * the whole list, out of sight of the click, so a click seemed to do
+   * nothing. */
+  selectedDetail?: React.ReactNode;
   onLoadMore?: () => void;
   hasMore: boolean;
   /** Rendered INSTEAD of the list. */
@@ -246,28 +279,32 @@ export function ActivityRunsCard(model: ActivityRunsModelV1) {
         ) : (
           <>
             <p className="lnote">{activityRunsSummaryV1(model.runs)}</p>
-            {model.runs.map((run) => (
-              <div key={run.routeRunId} className="rcpt">
-                <div className="qrow">
-                  <button
-                    type="button"
-                    className="btn sec"
-                    onClick={() => model.onSelect(run)}
-                    disabled={model.selectedRunId === run.routeRunId}
-                  >
-                    {run.intentSummary || run.routeRunId}
-                  </button>
-                  <span className={`pill ${activityRunPillToneV1(run)}`}>
-                    {run.proofFinalStatus ?? run.runStatus}
-                  </span>
+            {model.runs.map((run) => {
+              const open = model.selectedRunId === run.routeRunId;
+              return (
+                <div key={run.routeRunId} className="rcpt" data-run-id={run.routeRunId}>
+                  <div className="qrow">
+                    <button
+                      type="button"
+                      className="btn sec"
+                      onClick={() => model.onSelect(run)}
+                      aria-expanded={open}
+                    >
+                      {run.intentSummary || run.routeRunId}
+                    </button>
+                    <span className={`pill ${activityRunPillToneV1(run)}`}>
+                      {run.proofFinalStatus ?? run.runStatus}
+                    </span>
+                  </div>
+                  <p className="lnote">{activityRunSentenceV1(run)}</p>
+                  <p className="lnote">
+                    {new Date(run.createdAt).toLocaleString()}
+                    {run.provider ? ` · ${run.provider}` : ''}
+                  </p>
+                  {open ? model.selectedDetail : null}
                 </div>
-                <p className="lnote">{activityRunSentenceV1(run)}</p>
-                <p className="lnote">
-                  {new Date(run.createdAt).toLocaleString()}
-                  {run.provider ? ` · ${run.provider}` : ''}
-                </p>
-              </div>
-            ))}
+              );
+            })}
             {model.hasMore && model.onLoadMore && (
               <div className="ctarow">
                 <button type="button" className="btn sec" onClick={model.onLoadMore} disabled={model.loading}>
@@ -527,6 +564,8 @@ export interface ActivityProofModelV1 {
   } | null;
   lifecycle: string | null;
   unavailableReason: string | null;
+  /** Saves the proof as a file, when there is one. */
+  onExport?: (() => void) | null;
 }
 
 /** `+0.12%` / `-0.40%`, or nothing when the deviation was never computed. */
@@ -637,6 +676,13 @@ export function ActivityProofCard(model: ActivityProofModelV1) {
               {activityShortHashV1(proof.approvedCallsHash)}
               {model.lifecycle ? ` · lifecycle ${model.lifecycle}` : ''}
             </p>
+            {model.onExport ? (
+              <div className="ctarow">
+                <button type="button" className="btn sec" onClick={model.onExport}>
+                  Export proof
+                </button>
+              </div>
+            ) : null}
           </>
         )}
       </div>

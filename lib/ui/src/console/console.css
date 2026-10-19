@@ -481,6 +481,29 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .btn[disabled]:hover { filter: none; }
 .mio-console .ctarow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .mio-console .ctarow .nt { font-size: var(--fs-sm); color: var(--dim); }
+/* The swap screens' action, docked to the bottom of the scrolling column so it
+   stays on screen while the evidence above it scrolls. On 2026-10-19 Review
+   and Confirm sat under screens of evidence, and the person had to guess they
+   were down there at all. */
+.mio-console .ctarow.cta-dock { position: sticky; bottom: 0; z-index: 2; margin-top: 14px; padding: 12px 14px;
+  border-radius: var(--r); background: var(--chrome-bg); backdrop-filter: blur(16px);
+  box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); }
+/* Evidence on the swap screens, folded under a line that names what is inside
+   and carries its state, like Settings' Advanced: a closed row is still a
+   reading, and a change opens it. */
+.mio-console .evidence-fold { min-width: 0; margin: 0 0 14px; border: 1px solid var(--line); border-radius: var(--r); }
+.mio-console .evidence-fold > summary { display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px;
+  cursor: pointer; list-style: none; padding: 12px 14px; }
+.mio-console .evidence-fold > summary::-webkit-details-marker { display: none; }
+.mio-console .evidence-fold > summary::before { content: '▸'; color: var(--faint); font-size: var(--fs-meta); }
+.mio-console .evidence-fold[open] > summary::before { content: '▾'; }
+.mio-console .evidence-fold[open] > summary { border-bottom: 1px solid var(--line); }
+.mio-console .evidence-fold-k { font-size: var(--fs-meta); font-weight: 650; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--faint); }
+.mio-console .evidence-fold-v { min-width: 0; font-size: var(--fs-body); color: var(--muted); overflow-wrap: anywhere; }
+.mio-console .evidence-fold > summary:hover .evidence-fold-v { color: var(--ink); }
+.mio-console .evidence-fold > :not(summary) { margin: 12px 12px 0; }
+.mio-console .evidence-fold > :last-child:not(summary) { margin-bottom: 12px; }
 
 .mio-console .lsteps { list-style: none; margin: 0; padding: 0; }
 .mio-console .lsteps li { display: flex; align-items: center; gap: 12px; padding: 11px 0; border-bottom: 1px solid var(--line); font-size: var(--fs-body); }
@@ -603,6 +626,8 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .rcpt:first-of-type { padding-top: 4px; }
 .mio-console .rcpt:last-child { border-bottom: 0; padding-bottom: 0; }
 .mio-console .rcpt > .qrow { border-bottom: 0; padding: 0; align-items: center; }
+/* An opened run's proof, under the row that opened it. */
+.mio-console .rcpt > .rp { margin: 10px 0 0; }
 .mio-console .qrow > span { min-width: 0; }
 .mio-console .qrow .rail-token .btn { max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
 .mio-console .qrow .v { color: var(--ink); font-weight: 500; text-align: right; }

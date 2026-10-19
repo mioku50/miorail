@@ -154,7 +154,7 @@ describe('api-client-react', () => {
     assert.ok(apiClient.useBoundedProofReconciliation, 'useBoundedProofReconciliation should be exported');
     assert.strictEqual(apiClient.MAX_PROOF_POLL_ATTEMPTS, 10);
     assert.strictEqual(apiClient.PROOF_POLL_INTERVAL_MS, 4000);
-    assert.deepStrictEqual([...apiClient.PROOF_RECONCILE_RETRY_ATTEMPTS], [3, 6]);
+    assert.deepStrictEqual([...apiClient.PROOF_RECONCILE_RETRY_ATTEMPTS], [2, 4, 7]);
     assert.deepStrictEqual(
       [...apiClient.PROOF_TERMINAL_FINAL_STATUSES],
       ['completed', 'partial_failure', 'failed', 'cancelled', 'reconciliation_required'],
@@ -188,17 +188,42 @@ describe('api-client-react', () => {
 
   it('T58 bounded reconciliation stops on terminal statuses and at the attempt cap', () => {
     const source = apiClient.useBoundedProofReconciliation.toString();
-    assert.ok(source.includes('isTerminalProofFinalStatus'), 'polling must stop on a terminal finalStatus');
-    assert.ok(source.includes('MAX_PROOF_POLL_ATTEMPTS'), 'polling must be capped by MAX_PROOF_POLL_ATTEMPTS');
-    assert.ok(source.includes('PROOF_RECONCILE_RETRY_ATTEMPTS'), 're-reconcile must use the shared attempt list');
-    assert.ok(source.includes('attemptsRef'), 'attempts must be counted through a ref');
-    assert.ok(/return\s+(false|!1)/.test(source), 'the refetchInterval callback must be able to stop polling');
+    assert.ok(source.includes('proofPollIntervalV1'), 'the poll interval must come from the pure helper');
+    assert.ok(source.includes('proofReconcileDueV1'), 're-reconcile must use the shared attempt list');
+    assert.ok(source.includes('dataUpdateCount'), 'polls are counted by the answers the query has had');
+    assert.equal(apiClient.proofPollIntervalV1({ finalStatus: 'completed', polls: 1 }), false);
+    assert.equal(apiClient.proofPollIntervalV1({ finalStatus: 'pending', polls: apiClient.MAX_PROOF_POLL_ATTEMPTS }), false);
     assert.strictEqual(
       apiClient.isTerminalProofFinalStatus('completed') && apiClient.isTerminalProofFinalStatus('reconciliation_required'),
       true,
     );
     assert.strictEqual(apiClient.isTerminalProofFinalStatus('pending'), false);
     assert.strictEqual(apiClient.isTerminalProofFinalStatus(null), false);
+  });
+
+  it('a proof poll survives renders, retries once per answer, and shows the settled reading', () => {
+    // 2026-10-19: the interval callback counted its own calls, which are made
+    // on every render. Asked a thousand times about the same answer, it must
+    // say the same thing.
+    const pending = { finalStatus: 'pending', polls: 2 };
+    const asked = Array.from({ length: 1000 }, () => apiClient.proofPollIntervalV1(pending));
+    assert.deepEqual(new Set(asked), new Set([apiClient.PROOF_POLL_INTERVAL_MS]));
+
+    assert.equal(apiClient.proofReconcileDueV1({ finalStatus: 'pending', polls: 1 }), false, 'the mount read races the first reconcile');
+    assert.equal(apiClient.proofReconcileDueV1({ finalStatus: 'pending', polls: 2 }), true, 'four seconds in');
+    assert.equal(apiClient.proofReconcileDueV1({ finalStatus: 'completed', polls: 4 }), false);
+    const source = apiClient.useBoundedProofReconciliation.toString();
+    assert.match(source, /reconcile\.isPending/, 'a retry never runs beside a reconcile in flight');
+
+    // The poll read "pending" while the reconcile that raced it completed it.
+    const polled = { finalStatus: 'pending', updatedAt: '2026-10-19T13:37:15.461Z' };
+    const reconciled = { finalStatus: 'completed', updatedAt: '2026-10-19T13:37:19.050Z' };
+    assert.equal(apiClient.freshestRouteProofV1(polled, reconciled), reconciled);
+    assert.equal(apiClient.freshestRouteProofV1(reconciled, polled), reconciled, 'settled wins whichever side it is on');
+    const later = { finalStatus: 'pending', updatedAt: '2026-10-19T13:37:20.000Z' };
+    assert.equal(apiClient.freshestRouteProofV1(polled, later), later, 'between two pending readings, the later write');
+    assert.equal(apiClient.freshestRouteProofV1(null, polled), polled);
+    assert.equal(apiClient.freshestRouteProofV1(undefined, undefined), null);
   });
 
   it('T60 Intelligence Budget hooks are all exported', () => {
