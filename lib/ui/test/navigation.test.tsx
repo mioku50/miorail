@@ -581,6 +581,33 @@ describe('§9.12 — the empty right rail is one block, not five', () => {
     assert.match(markup, /Freshness/);
     assert.ok(!markup.includes(CONSOLE_NO_ANALYSIS_TITLE_V1));
   });
+
+  test('sources that did not answer fold into one line; the ones that did stay in view', () => {
+    // Mid-purchase on 2026-10-19 the stream was four lines of failures.
+    const off = (id: string, source: string, text: string) => ({ id, time: '—', source, text, available: false });
+    const markup = renderToStaticMarkup(
+      <ConsoleRightRail
+        price={null}
+        priceUnavailableReason={null}
+        depth={null}
+        depthUnavailableReason={null}
+        evidenceFeed={[
+          { id: 'kyber', time: '0s', source: 'KyberSwap', text: 'quoted 0.3937027 SONYc', available: true },
+          off('aero', 'Aerodrome', 'RPC unavailable'),
+          off('bal', 'Balancer', 'no route'),
+          off('o1', 'o1.exchange', 'preflight failed'),
+          off('mev', 'MEV feed', 'no source'),
+        ]}
+        spend={null}
+        freshness={[]}
+      />,
+    );
+    const answered = markup.indexOf('KyberSwap');
+    const fold = markup.indexOf('<details class="mcp-tech"><summary>4 sources did not answer for this goal</summary>');
+    assert.ok(answered > 0 && fold > answered, 'the answering source leads, the fold follows');
+    // Folded, not hidden: every line is still in the page.
+    for (const source of ['Aerodrome', 'Balancer', 'o1.exchange', 'MEV feed']) assert.ok(markup.indexOf(source) > fold);
+  });
 });
 
 describe('§9.11 — the first mobile screen is the work, not the settings', () => {

@@ -9,6 +9,8 @@
 // could not back with risk evidence arrives here as a degraded card.
 // ---------------------------------------------------------------------------
 
+import { feeUsdLabelV1 } from './console/proofFigures';
+
 export interface EarnScoreDimensionSourceV1 {
   dimension: string;
   status: string;
@@ -258,7 +260,7 @@ function rowView(comparison: EarnComparisonSourceV1, recommendedHash: string | n
     withdrawalLabel: WITHDRAWAL_LABELS[candidate.withdrawalModel] ?? humanizeEarnTokenV1(candidate.withdrawalModel),
     freshnessLabel: FRESHNESS_LABELS[comparison.freshnessState] ?? 'Unknown',
     callsLabel: callsLabelForProtocolV1(candidate.protocol),
-    gasLabel: candidate.estimatedGas.estimatedCostUsd ? `$${candidate.estimatedGas.estimatedCostUsd}` : 'USD unavailable',
+    gasLabel: feeUsdLabelV1(candidate.estimatedGas.estimatedCostUsd) ?? 'USD unavailable',
     missingEvidenceLabels: comparison.missingEvidence.map(evidenceLabel),
     dimensions: comparison.score.dimensions.map(dimensionView),
     isRecommended: candidate.candidateHash === recommendedHash,

@@ -9,6 +9,7 @@ import React from 'react';
 import { Badge } from './Badge';
 import { baseExplorerTxUrl } from './SubmissionStatus';
 import { formatAtomicAmount } from './formatAtomicAmount';
+import { feeUsdLabelV1 } from './console/proofFigures';
 
 void React;
 
@@ -157,7 +158,7 @@ export function ExecutionProofPanel({ proof, lifecycle, explorerTxUrl = baseExpl
           <dt className="text-ink-3">Estimated gas</dt>
           <dd className="mt-0.5 font-mono text-ink">
             {proof.estimatedGas.gasUnits} units
-            {proof.estimatedGas.estimatedCostUsd ? ` · $${proof.estimatedGas.estimatedCostUsd}` : ''}
+            {feeUsdLabelV1(proof.estimatedGas.estimatedCostUsd) ? ` · ${feeUsdLabelV1(proof.estimatedGas.estimatedCostUsd)}` : ''}
           </dd>
         </div>
         <div>

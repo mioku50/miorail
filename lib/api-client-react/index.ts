@@ -3331,6 +3331,16 @@ export function useBoundedProofReconciliation({
     },
   });
 
+  // "Recent proofs" reads the route history once per visit, so on 2026-10-19
+  // a swap that had just completed was missing from it. A proof that opens or
+  // settles belongs at its top: the history is read again when that happens.
+  const queryClient = useQueryClient();
+  const settledStatus = query.data?.proof.finalStatus ?? reconcile.data?.proof.finalStatus ?? null;
+  useEffect(() => {
+    if (!active || !settledStatus) return;
+    void queryClient.invalidateQueries({ queryKey: ['route-history'] });
+  }, [active, proofId, settledStatus, queryClient]);
+
   return {
     proof: query.data?.proof ?? reconcile.data?.proof ?? null,
     lifecycle: query.data?.lifecycle ?? reconcile.data?.lifecycle ?? null,

@@ -112,6 +112,37 @@ export interface ActivityProofItemV1 {
 }
 
 /**
+ * A proof still pending an hour after its run began never reached the chain:
+ * the wallet was closed or never answered. On 2026-10-19 four of those from
+ * early September sat in "Recent proofs" as `pending`, above nothing of that
+ * morning's three completed swaps. Activity still lists every one of them.
+ */
+export const ACTIVITY_PROOF_STALE_PENDING_MS_V1 = 60 * 60 * 1000;
+
+const ACTIVITY_PROOF_TAG_LABELS_V1: Readonly<Record<string, string>> = {
+  completed: 'completed',
+  pending: 'pending',
+  failed: 'failed',
+  cancelled: 'cancelled',
+  partial_failure: 'partly failed',
+  reconciliation_required: 'needs review',
+};
+
+type ActivityProofRunV1 = Pick<ActivityRunRowV1, 'routeRunId' | 'createdAt' | 'intentSummary' | 'proofId' | 'proofFinalStatus'>;
+
+function activityProofShownV1(run: ActivityProofRunV1, now: Date): boolean {
+  if (!run.proofId) return false;
+  if (run.proofFinalStatus && run.proofFinalStatus !== 'pending') return true;
+  const startedAt = Date.parse(run.createdAt);
+  return !Number.isFinite(startedAt) || now.getTime() - startedAt < ACTIVITY_PROOF_STALE_PENDING_MS_V1;
+}
+
+/** How many entries "Recent proofs" has to show — the count beside its title. */
+export function activityProofCountV1(runs: readonly ActivityProofRunV1[], now = new Date()): number {
+  return runs.filter((run) => activityProofShownV1(run, now)).length;
+}
+
+/**
  * The rail's "Recent proofs": runs that have one, newest first.
  *
  * It listed the newest runs whatever they reached, so Swap AI showed five
@@ -120,20 +151,27 @@ export interface ActivityProofItemV1 {
  * because a proof is often days old, and a bare time read as today.
  */
 export function activityProofItemsV1(
-  runs: readonly Pick<ActivityRunRowV1, 'routeRunId' | 'createdAt' | 'intentSummary' | 'proofId' | 'proofFinalStatus'>[],
+  runs: readonly ActivityProofRunV1[],
   limit = 5,
+  now = new Date(),
 ): ActivityProofItemV1[] {
   return runs
-    .filter((run) => run.proofId)
+    .filter((run) => activityProofShownV1(run, now))
     .slice(0, limit)
-    .map((run) => ({
-      id: run.routeRunId,
-      title: run.intentSummary || run.routeRunId,
-      tag: { label: run.proofFinalStatus ?? 'pending', tone: run.proofFinalStatus === 'completed' ? 'g' : 'n' },
-      meta: Number.isFinite(Date.parse(run.createdAt))
-        ? new Date(run.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
-        : '',
-    }));
+    .map((run) => {
+      const status = run.proofFinalStatus ?? 'pending';
+      return {
+        id: run.routeRunId,
+        title: run.intentSummary || run.routeRunId,
+        tag: {
+          label: ACTIVITY_PROOF_TAG_LABELS_V1[status] ?? status.replace(/_/g, ' '),
+          tone: status === 'completed' ? 'g' : 'n',
+        },
+        meta: Number.isFinite(Date.parse(run.createdAt))
+          ? new Date(run.createdAt).toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+          : '',
+      };
+    });
 }
 
 /** True while a run has not reached a wallet. Most of them, today. */

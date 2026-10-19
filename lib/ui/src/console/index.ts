@@ -10,6 +10,7 @@ export * from './ConnectedAppsCard';
 export * from './ConnectedAppsSettings';
 export * from './settingsStatusRows';
 export * from './consoleState';
+export * from './proofFigures';
 export * from './goalHandoff';
 export * from './resultAnchors';
 export * from './verificationHonesty';

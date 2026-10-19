@@ -31,6 +31,7 @@ import {
 import {
   ActivityProofCard,
   ActivityRunsCard,
+  activityProofCountV1,
   activityProofItemsV1,
   ActivitySpendCard,
   BaseMcpActionReceiptsCard,
@@ -129,7 +130,7 @@ export function RouteHistoryPage() {
         sessions: [],
         sessionCount: '0',
         proofs: activityProofItemsV1(runs),
-        proofCount: String(runs.filter((run) => run.proofId).length),
+        proofCount: String(activityProofCountV1(runs)),
         onOpenSettings: () => consoleNav.navigate('settings'),
       }}
       footer={{

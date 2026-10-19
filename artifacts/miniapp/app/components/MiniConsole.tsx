@@ -58,6 +58,9 @@ import {
   MiniScorePanel,
   PlanScreen,
   PlanVsActualCards,
+  proofFeeV1,
+  proofOutputDifferenceV1,
+  routeProofViewV1,
   ReviewScreen,
   swapPrepareNoticeV1,
   swapPrepareRequestFailedNoticeV1,
@@ -2017,19 +2020,32 @@ export function MiniConsole() {
       </>
     );
   } else if (screen === "proof") {
-    const proof = reconciliation.proof as
-      | { proofHash?: string; status?: string; actualOutput?: { amountDecimal?: string; asset?: { symbol?: string } }; actualGasUsed?: string; blockNumber?: string }
-      | null;
+    // The web console stopped casting this to fields the response does not
+    // have (`proofHash`, `actualOutput.amountDecimal`, `actualGasUsed`) long
+    // ago; here every one of them read undefined, so a completed trade in the
+    // Base App showed dashes. Same projection, same helpers as the web.
+    const proof = reconciliation.proof ?? null;
+    const proofView = proof ? routeProofViewV1(proof) : null;
+    const proofFee = proof
+      ? proofFeeV1({
+          estimatedUsd: proof.estimatedGas.estimatedCostUsd,
+          actualGasUnits: proof.actualGas?.gasUnits ?? null,
+          actualNative: proof.actualGas?.estimatedCostNative ?? null,
+          feePaidBy: proof.feePaidBy,
+          ethUsd: market.data?.outcome === "snapshot" ? market.data.price : null,
+        })
+      : null;
     content = (
       <>
         <ConsoleStepperCompact label={stepLabel} steps={steps} expanded={railOpen} onToggle={() => setRailOpen((open) => !open)} />
         <div className="herostrip">
           <div className="heroL">
-            <p className="eyebrow">{proof?.proofHash ? `Route proof · ${proof.proofHash.slice(0, 12)}…` : "Route proof · reconciling"}</p>
+            <p className="eyebrow">{proof ? `Route proof · ${proof.proofId.slice(-12)} · ${proofView!.statusLabel}` : "Route proof · reconciling"}</p>
             <div className="amtrow">
-              <span className="amount mono">{proof?.actualOutput?.amountDecimal ?? "—"}</span>
-              <span className="unit">{proof?.actualOutput?.asset?.symbol ?? ""}</span>
+              <span className="amount mono">{proofView?.actualOutputDecimal ?? "—"}</span>
+              <span className="unit">{proofView?.actualOutputDecimal ? proof!.expectedOutput.asset.symbol : ""}</span>
             </div>
+            {proofFee && <p className="eyebrow">Network fee {proofFee.value} · {proofFee.detail}</p>}
           </div>
         </div>
         <div className="panel">
@@ -2039,16 +2055,23 @@ export function MiniConsole() {
           <div className="pb tight">
             <PlanVsActualCards
               rows={
-                proof && recommended
+                proof && recommended && proofFee
                   ? [
                       {
                         label: "Output",
                         expected: `${recommended.expectedOutput.amountDecimal} ${recommended.expectedOutput.asset.symbol}`,
-                        actual: `${proof.actualOutput?.amountDecimal ?? "—"} ${proof.actualOutput?.asset?.symbol ?? ""}`,
-                        difference: "—",
-                        tone: "none" as const,
+                        actual: proofView!.actualOutputDecimal
+                          ? `${proofView!.actualOutputDecimal} ${proof.expectedOutput.asset.symbol}`
+                          : proofView!.actualOutputReason,
+                        ...proofOutputDifferenceV1({
+                          expectedAtomic: proof.expectedOutput.amountAtomic,
+                          actualAtomic: proof.actualOutput,
+                          decimals: proof.expectedOutput.asset.decimals,
+                          symbol: proof.expectedOutput.asset.symbol,
+                          minimumSatisfied: proof.minimumSatisfied,
+                        }),
                       },
-                      { label: "Gas", expected: recommended.estimatedGas.gasUnits === "0" ? "Not provided" : recommended.estimatedGas.gasUnits, actual: proof.actualGasUsed ?? "—", difference: "—", tone: "none" as const },
+                      { label: "Network fee", ...proofFee.row },
                     ]
                   : []
               }

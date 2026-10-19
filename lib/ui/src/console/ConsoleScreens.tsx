@@ -932,6 +932,8 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
 export interface TimelineEntryV1 {
   title: string;
   detail: string;
+  /** Where the detail can be checked, e.g. the transaction on Basescan. */
+  href?: string;
   done?: boolean;
 }
 
@@ -995,7 +997,15 @@ export function ProofScreen(model: ProofScreenModelV1) {
               {model.timeline.map((entry) => (
                 <li key={entry.title} className={entry.done ? 'g' : undefined}>
                   <div className="tt">{entry.title}</div>
-                  <div className="ts mono">{entry.detail}</div>
+                  <div className="ts mono">
+                    {entry.href ? (
+                      <a href={entry.href} target="_blank" rel="noopener noreferrer">
+                        {entry.detail}
+                      </a>
+                    ) : (
+                      entry.detail
+                    )}
+                  </div>
                 </li>
               ))}
             </ul>
@@ -1293,6 +1303,42 @@ export interface RightRailModelV1 {
   freshness: { label: string; value: string; tone?: 'ok' | 'off' }[];
 }
 
+
+type EvidenceFeedEntryV1 = RightRailModelV1['evidenceFeed'][number];
+
+/**
+ * Sources that answered stay in view; the ones that did not fold into one
+ * line. Mid-purchase on 2026-10-19 this panel read "Aerodrome RPC unavailable",
+ * "Balancer no route", "o1.exchange preflight failed", "MEV feed no source" —
+ * accurate, and alarming to someone about to sign. The fold says how many and
+ * keeps every line one click away.
+ */
+function EvidenceFeed({ entries }: { entries: readonly EvidenceFeedEntryV1[] }) {
+  const row = (entry: EvidenceFeedEntryV1) => (
+    <li key={entry.id} className={entry.available ? undefined : 'off'}>
+      <span className="tm mono">{entry.time}</span>
+      <span>
+        <span className="src">{entry.source}</span> {entry.text}
+      </span>
+    </li>
+  );
+  const answered = entries.filter((entry) => entry.available);
+  const silent = entries.filter((entry) => !entry.available);
+  return (
+    <>
+      {answered.length > 0 && <ul className="feed">{answered.map(row)}</ul>}
+      {silent.length > 0 && (
+        <details className="mcp-tech">
+          <summary>
+            {silent.length} {silent.length === 1 ? 'source' : 'sources'} did not answer for this goal
+          </summary>
+          <ul className="feed">{silent.map(row)}</ul>
+        </details>
+      )}
+    </>
+  );
+}
+
 export function ConsoleRightRail(model: RightRailModelV1) {
   // T70 §7 — before a goal runs, all five panels are empty. Stacked down a
   // 330px column that reads as five separate failures ("Pool depth
@@ -1360,16 +1406,7 @@ export function ConsoleRightRail(model: RightRailModelV1) {
           {model.evidenceFeed.length === 0 ? (
             <p className="empty">No evidence recorded yet for this goal.</p>
           ) : (
-            <ul className="feed">
-              {model.evidenceFeed.map((entry) => (
-                <li key={entry.id} className={entry.available ? undefined : 'off'}>
-                  <span className="tm mono">{entry.time}</span>
-                  <span>
-                    <span className="src">{entry.source}</span> {entry.text}
-                  </span>
-                </li>
-              ))}
-            </ul>
+            <EvidenceFeed entries={model.evidenceFeed} />
           )}
         </div>
       </div>

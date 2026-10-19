@@ -12,6 +12,7 @@ import {
   swapPrepareErrorMessage,
 } from './routePlanState';
 import { TransactionReviewOutcome, type TransactionPrepareOutcomeV1 } from './TransactionReview';
+import { feeUsdLabelV1 } from './console/proofFigures';
 
 void React;
 
@@ -108,7 +109,7 @@ export function RouteCandidateSummary({ route, label, muted = false }: { route: 
       </div>
       <div className="mt-5 grid grid-cols-2 gap-3 border-y border-line py-4 sm:grid-cols-4">
         <div><p className="text-[11px] text-ink-3">Minimum</p><p className="mt-1 font-mono text-xs text-ink">{amount(route.minimumOutput)}</p></div>
-        <div><p className="text-[11px] text-ink-3">Gas estimate</p><p className="mt-1 font-mono text-xs text-ink">{route.estimatedGas.estimatedCostUsd ? `$${route.estimatedGas.estimatedCostUsd}` : 'USD unavailable'}</p></div>
+        <div><p className="text-[11px] text-ink-3">Gas estimate</p><p className="mt-1 font-mono text-xs text-ink">{feeUsdLabelV1(route.estimatedGas.estimatedCostUsd) ?? 'USD unavailable'}</p></div>
         <div><p className="text-[11px] text-ink-3">Impact / slippage</p><p className="mt-1 font-mono text-xs text-ink">{route.priceImpact ? `${route.priceImpact.percent}%` : 'Not provided'} / {route.slippage.percent}%</p></div>
         <div><p className="text-[11px] text-ink-3">Calls / approvals</p><p className="mt-1 font-mono text-xs text-ink">{route.callCount} / {route.approvalCount}</p></div>
       </div>

@@ -3,6 +3,7 @@ import test, { describe } from 'node:test';
 
 import {
   activityDeviationLabelV1,
+  activityProofCountV1,
   activityProofItemsV1,
   activityRunPillToneV1,
   activityRunSentenceV1,
@@ -193,5 +194,22 @@ describe('a run with a proof is described by its proof', () => {
     // A date, not a bare time that reads as today.
     assert.match(items[0]!.meta, /^Sep 23, /);
     assert.deepEqual(activityProofItemsV1([run()]), []);
+  });
+
+  test('a proof that never reached the chain leaves the rail; its words are plain', () => {
+    // 2026-10-19: four `pending` proofs from early September headed the rail
+    // while that morning's completed swaps were nowhere in it.
+    const now = new Date('2026-10-19T06:30:00.000Z');
+    const runs = [
+      run({ routeRunId: 'fresh', createdAt: '2026-10-19T06:00:00.000Z', proofId: 'p1', proofFinalStatus: 'pending' }),
+      run({ routeRunId: 'done', createdAt: '2026-10-19T05:58:00.000Z', proofId: 'p2', proofFinalStatus: 'completed' }),
+      run({ routeRunId: 'review', createdAt: '2026-09-23T16:16:13.000Z', proofId: 'p3', proofFinalStatus: 'reconciliation_required' }),
+      run({ routeRunId: 'unsent', createdAt: '2026-09-08T14:46:45.000Z', proofId: 'p4', proofFinalStatus: 'pending' }),
+      run({ routeRunId: 'unsent-null', createdAt: '2026-09-07T15:13:00.000Z', proofId: 'p5', proofFinalStatus: null }),
+    ];
+    const items = activityProofItemsV1(runs, 5, now);
+    assert.deepEqual(items.map((item) => item.id), ['fresh', 'done', 'review']);
+    assert.deepEqual(items.map((item) => item.tag.label), ['pending', 'completed', 'needs review']);
+    assert.equal(activityProofCountV1(runs, now), 3);
   });
 });

@@ -89,8 +89,14 @@ import {
   AiReviewPanel,
   AiResultPanel,
   AiProofPanel,
+  activityProofCountV1,
   activityProofItemsV1,
+  activityBaseScanTxUrlV1,
+  activityShortHashV1,
+  feeUsdLabelV1,
   planWalletRowsV1,
+  proofFeeV1,
+  proofOutputDifferenceV1,
 } from '@mioagent/ui';
 import {
   useBoundedProofReconciliation,
@@ -1379,7 +1385,8 @@ export function RouteIntelligenceConsole() {
           { k: 'Minimum output', v: primaryRoute?.minimumOutput.amountDecimal ?? '—', d: `slippage ${primaryRoute?.slippage.percent ?? '—'}%` },
           {
             k: 'Network cost',
-            v: primaryRoute?.estimatedGas.estimatedCostUsd ? `$${primaryRoute.estimatedGas.estimatedCostUsd}` : '—',
+            // The provider's figure carries seventeen digits; a reader needs two.
+            v: feeUsdLabelV1(primaryRoute?.estimatedGas.estimatedCostUsd) ? `≈ ${feeUsdLabelV1(primaryRoute?.estimatedGas.estimatedCostUsd)}` : '—',
             d: primaryRoute && primaryRoute.estimatedGas.gasUnits !== '0'
               ? `est. ${primaryRoute.estimatedGas.gasUnits} gas`
               : 'provider supplied no gas estimate',
@@ -1696,6 +1703,16 @@ export function RouteIntelligenceConsole() {
     // reads the projection's real names.
     const proof = reconciliation.proof ?? null;
     const proofView = proof ? routeProofViewV1(proof) : null;
+    // The person's own fee and who paid it; priced with the rail's ETH reading.
+    const proofFee = proof
+      ? proofFeeV1({
+          estimatedUsd: proof.estimatedGas.estimatedCostUsd,
+          actualGasUnits: proof.actualGas?.gasUnits ?? null,
+          actualNative: proof.actualGas?.estimatedCostNative ?? null,
+          feePaidBy: proof.feePaidBy,
+          ethUsd: market.data?.outcome === 'snapshot' ? market.data.price : null,
+        })
+      : null;
     const giftLine = proof
       ? giftProofLineV1({
           gift: proof.gift,
@@ -1771,7 +1788,7 @@ export function RouteIntelligenceConsole() {
                     ? proof.expectedOutput.asset.symbol
                     : proofView!.actualOutputReason,
                 },
-                { k: 'Actual gas', v: proof.actualGas?.gasUnits ?? '—', d: 'from the receipt' },
+                { k: 'Network fee', v: proofFee!.value, d: proofFee!.detail },
               ]
             : []
         }
@@ -1779,8 +1796,14 @@ export function RouteIntelligenceConsole() {
           { title: 'Goal received', detail: goalLabel },
           { title: 'Routes compared', detail: `${projection?.availableRoutes.length ?? 0} quotable` },
           { title: simulation.passed ? 'Simulation passed' : 'Simulation not run', detail: simulation.subLabel },
-          { title: 'Approved in your wallet', detail: submission?.batchId ?? 'awaiting the wallet' },
-          ...(submission?.txHashes ?? []).map((hash) => ({ title: 'Transaction', detail: hash, done: true })),
+          // The batch id is the wallet's handle, not something a person reads.
+          { title: 'Approved in your wallet', detail: submission?.batchId ? 'Signed and sent from your wallet' : 'awaiting the wallet' },
+          ...(submission?.txHashes ?? []).map((hash) => ({
+            title: 'Transaction',
+            detail: activityShortHashV1(hash),
+            href: activityBaseScanTxUrlV1(hash),
+            done: true,
+          })),
           ...(proof ? [{ title: 'Reconciled onchain', detail: `block ${proofView!.blockNumber ?? '—'}`, done: true }] : []),
         ]}
         planVsActual={
@@ -1792,16 +1815,15 @@ export function RouteIntelligenceConsole() {
                   actual: proofView!.actualOutputDecimal
                     ? `${proofView!.actualOutputDecimal} ${proof.expectedOutput.asset.symbol}`
                     : 'not verifiable',
-                  difference: '—',
-                  tone: 'none' as const,
+                  ...proofOutputDifferenceV1({
+                    expectedAtomic: proof.expectedOutput.amountAtomic,
+                    actualAtomic: proof.actualOutput,
+                    decimals: proof.expectedOutput.asset.decimals,
+                    symbol: proof.expectedOutput.asset.symbol,
+                    minimumSatisfied: proof.minimumSatisfied,
+                  }),
                 },
-                {
-                  label: 'Gas',
-                  expected: recommended.estimatedGas.gasUnits === '0' ? 'Not provided' : recommended.estimatedGas.gasUnits,
-                  actual: proof.actualGas?.gasUnits ?? '—',
-                  difference: '—',
-                  tone: 'none' as const,
-                },
+                { label: 'Network fee', ...proofFee!.row },
               ]
             : []
         }
@@ -1858,7 +1880,7 @@ export function RouteIntelligenceConsole() {
         sessions,
         sessionCount: String(sessions.length),
         proofs,
-        proofCount: String(historyItems.filter((run) => run.proofId).length),
+        proofCount: String(activityProofCountV1(historyItems)),
         // T70 §2 — one line, not a panel. The usage bars, the limits row and
         // the adapter list moved to Settings; what a user needs while planning
         // a route is whether paid evidence is on, and a way through.
