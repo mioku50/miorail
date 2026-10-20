@@ -282,6 +282,8 @@ describe('§11 — the public MCP surface cannot reach execution', () => {
     const publicFiles = readdirSync(path.join(here, '..', 'mcp')).sort();
     assert.deepEqual(publicFiles, [
       'dividendTool.ts',
+      'evidencePackage.test.ts',
+      'evidencePackage.ts',
       'identityTools.ts',
       'index.ts',
       'marketRealityTools.ts',

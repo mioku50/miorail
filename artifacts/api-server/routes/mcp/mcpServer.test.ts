@@ -9,9 +9,11 @@ import {
   createMiorailMcpServerV1,
   MIORAIL_MCP_INSTRUCTIONS_V1,
   MIORAIL_MCP_VERSION_V1,
+  type EvidenceReadHooksV1,
 } from './server.js';
 import { b20RouteRuntime, readDiscoverFeedV1 } from '../b20Control.js';
 import { compareNothingToCompareReasonV1 } from './tools.js';
+import { EVIDENCE_TOOLS_V1, EvidencePackageV1Schema } from './evidencePackage.js';
 
 // ---------------------------------------------------------------------------
 // T72 §8 — driven through a REAL MCP client over a real transport.
@@ -172,9 +174,9 @@ after(() => {
 });
 
 /** A connected client, over the transport pair the SDK ships for exactly this. */
-async function connectedClient(): Promise<Client> {
+async function connectedClient(hooks: EvidenceReadHooksV1 = {}): Promise<Client> {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const server = createMiorailMcpServerV1();
+  const server = createMiorailMcpServerV1(hooks);
   const client = new Client({ name: 'miorail-test-client', version: '1.0.0' });
   await Promise.all([server.connect(serverTransport), client.connect(clientTransport)]);
   return client;
@@ -299,7 +301,7 @@ describe('§8 — tool discovery', () => {
     // test binds the two: change the published list above and this fails until
     // MIORAIL_MCP_VERSION_V1 is bumped in the same edit.
     const PUBLISHED_AT_V1 = {
-      '1.6.0': [
+      '1.7.0': [
         'check_address_identity',
         'compare_market_reality',
         'get_dividend_calendar',
@@ -629,6 +631,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
     // nothing to notice only because the total test count moved.
     assert.deepEqual(sources.map((entry) => entry.name).sort(), [
       'dividendTool.ts',
+      'evidencePackage.ts',
       'identityTools.ts',
       'index.ts',
       'marketRealityTools.ts',
@@ -731,6 +734,29 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
 });
 
 describe('Phase 12B.1 Market Reality tool boundaries', () => {
+  test('all ten free evidence reads advertise the package through a real MCP client', async () => {
+    const reads: string[] = [];
+    const client = await connectedClient({ onEvidenceRead: tool => { reads.push(tool); throw new Error('log unavailable'); } });
+    try {
+      const { tools } = await client.listTools();
+      for (const name of EVIDENCE_TOOLS_V1) {
+        const schema = tools.find(tool => tool.name === name)?.outputSchema;
+        assert.ok((schema?.properties as Record<string, unknown>)?.evidencePackage, name);
+        assert.ok(schema?.required?.includes('evidencePackage'), name);
+      }
+      const result = await client.callTool({ name: 'miorail_discover_status', arguments: {} });
+      assert.notEqual(result.isError, true);
+      const payload = payloadOf(result);
+      const evidence = EvidencePackageV1Schema.parse(payload.evidencePackage);
+      assert.equal(payload.state, 'worker_stale');
+      assert.equal(evidence.claims[0]?.block, null, 'a worker cursor cannot anchor every service-status fact');
+      assert.equal(evidence.claims[0]?.hash, null);
+      assert.equal(evidence.claims[0]?.observedAt, null);
+      await client.callTool({ name: 'get_market_changes', arguments: { address: 'NVDA' } });
+      assert.deepEqual(reads, ['miorail_discover_status'], 'discovery and refused reads must not count as successful evidence reads');
+    } finally { await client.close(); }
+  });
+
   test('the exact-address tool rejects a ticker before any evidence read', async () => {
     const client = await connectedClient();
     const result = await client.callTool({

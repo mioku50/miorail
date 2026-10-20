@@ -17,7 +17,7 @@ import {
   miorailReviewBorrowV1,
   privateFailureV1,
 } from './tools.js';
-import { registerMiorailReadOnlyToolsV1 } from '../mcp/server.js';
+import { registerMiorailReadOnlyToolsV1, type EvidenceReadHooksV1 } from '../mcp/server.js';
 import {
   MiorailCheckExitProfileOutputV1Schema,
   MiorailExecutionStatusOutputV1Schema,
@@ -62,7 +62,7 @@ import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/r
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.6.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.7.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -123,7 +123,7 @@ const SLIPPAGE_ARG_V1 = z
   .optional()
   .describe('Maximum acceptable exit slippage, in basis points. Defaults to 300 (3%).');
 
-export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1): McpServer {
+export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, hooks: EvidenceReadHooksV1 = {}): McpServer {
   const server = new McpServer(
     { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1 },
     { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1 },
@@ -136,7 +136,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1):
   // separately configured server to do it. The import runs one way: this file
   // reaches into the public registry, never the reverse, so the public surface
   // keeps its physical inability to execute.
-  registerMiorailReadOnlyToolsV1(server);
+  registerMiorailReadOnlyToolsV1(server, hooks);
 
   const reply = (payload: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],

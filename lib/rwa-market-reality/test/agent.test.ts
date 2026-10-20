@@ -207,6 +207,12 @@ describe('Phase 12B.1 agent contracts', () => {
     );
     assert.equal(result.representations[1]?.supply.state, 'zero_supply');
     assert.equal(result.representations[0]?.caip10, `eip155:8453:${COINBASE}`);
+    // Supply and identity are separate reads. Neither provenance may be
+    // discarded by the agent projection or replaced by assembly time.
+    assert.equal(result.representations[0]?.supply.blockNumber, '50600000');
+    assert.equal(result.representations[0]?.supply.blockHash, HASH);
+    assert.equal(result.representations[0]?.supply.observedAt, '2026-08-29T11:59:00.000Z');
+    assert.equal(result.representations[0]?.identityEvidence.observedAt, underlying.observedAt);
   });
 
   test('a pre-0059 binding stays visible, with its issuer recovered and its structure not guessed', async () => {
@@ -441,6 +447,10 @@ describe('list_reviewed_stocks', () => {
     assert.equal(result.stocks[0]?.underlyingKey, 'security:isin:US67066G1040');
     assert.equal(result.reviewedTotal, 2);
     assert.equal(result.query, 'nvidia');
+    assert.deepEqual(result.stocks[0]?.sourceEvidence, {
+      sourceKind: index[0]!.underlying.sourceKind, sourceRef: index[0]!.underlying.sourceRef,
+      sourceHash: null, observedAt: index[0]!.underlying.observedAt,
+    });
   });
 
   test('matches a ticker and an identifier as well as a name', async () => {

@@ -437,7 +437,7 @@ done
 
 mcp_initialize="$mcp_ready"
 printf '%s' "$mcp_initialize" | jq -e \
-  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.6.0" and .result.protocolVersion == "2025-03-26"' \
+  '.result.serverInfo.name == "miorail" and .result.serverInfo.version == "1.7.0" and .result.protocolVersion == "2025-03-26"' \
   >/dev/null || { echo 'FAILED: public MCP initialize response is not Miorail'; exit 1; }
 # Printed from the answer, like the tool count below it. This line said
 # 'Miorail 1.3.0' while the assertion above it demanded 1.4.0 and the server

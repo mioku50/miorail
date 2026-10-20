@@ -12,6 +12,7 @@ import {
 } from '@mioagent/rwa-market-reality/weekend-market';
 
 import { createMiorailMcpServerV1 } from '../mcp/server.js';
+import { EvidencePackageV1Schema } from '../mcp/evidencePackage.js';
 import { createPublicReadCacheV1 } from '../publicStocks.js';
 import { reopenGameCachesV1, reopenGameRuntime } from '../reopenGame.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
@@ -101,6 +102,7 @@ type AnswerV1 = {
   me?: { picks: Record<string, string> };
   closeDay: string | null;
   miorailSummary: string;
+  evidencePackage?: unknown;
 };
 type ToolResult = { isError?: boolean; structuredContent?: AnswerV1; content?: { text?: string }[] };
 const call = async (client: Client, name: string, args: Record<string, unknown> = {}) =>
@@ -120,7 +122,16 @@ describe('Call the reopen on the protocol', () => {
     assert.equal('me' in answer, false);
     assert.equal(answer.closeDay, 'Friday');
     assert.match(answer.miorailSummary, /^Round #1 is open/);
+    const evidence = EvidencePackageV1Schema.parse(answer.evidencePackage);
+    assert.equal(evidence.claims[1]!.scope.phase, 'close');
+    assert.equal(evidence.claims[1]!.observedAt, null, 'a frozen close has no retained observation clock here');
     await client.close();
+    const connected = await connectedV1();
+    const connectedRead = await call(connected, 'get_reopen_round');
+    assert.equal(connectedRead.isError, undefined);
+    assert.deepEqual(EvidencePackageV1Schema.parse(connectedRead.structuredContent!.evidencePackage).claims, evidence.claims);
+    assert.equal('me' in connectedRead.structuredContent!, false);
+    await connected.close();
   });
 
   test('a connected pick names stocks one by one; a stock not named keeps its pick', async (t) => {

@@ -4,6 +4,7 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { MCP_PRIVATE_AUTH_COPY_V1, resolvePrivateIdentityV1 } from './session.js';
 import { mcpOAuthResourceUrlV1 } from '../../lib/mcpOAuthProvider.js';
+import { evidenceReadUsageV1 } from '../../lib/mcpEvidenceUsage.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §1/§10 — the authenticated Streamable HTTP endpoint.
@@ -93,7 +94,9 @@ mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
     method: typeof req.body?.method === 'string' ? req.body.method : 'unknown',
   });
 
-  const server = createMiorailPrivateMcpServerV1(identity);
+  const server = createMiorailPrivateMcpServerV1(identity, { onEvidenceRead: evidenceReadUsageV1({
+    surface: 'connected', actorKey: identity.tenantId, userAgent: req.get('user-agent') ?? '',
+  }) });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
     void transport.close();

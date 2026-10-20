@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 import { createMiorailMcpServerV1 } from './server.js';
+import { evidenceReadUsageV1 } from '../../lib/mcpEvidenceUsage.js';
 
 // ---------------------------------------------------------------------------
 // T72 §1/§6 — the Streamable HTTP endpoint.
@@ -49,7 +50,10 @@ async function limited(req: Request, res: Response): Promise<boolean> {
 mcpServerRouter.post('/', async (req: Request, res: Response) => {
   if (await limited(req, res)) return;
 
-  const server = createMiorailMcpServerV1();
+  const server = createMiorailMcpServerV1({ onEvidenceRead: evidenceReadUsageV1({
+    surface: 'public', actorKey: req.ip || req.socket.remoteAddress || 'unknown',
+    userAgent: req.get('user-agent') ?? '',
+  }) });
   const transport = new StreamableHTTPServerTransport({
     // Stateless: no session id is issued and none is validated.
     sessionIdGenerator: undefined,

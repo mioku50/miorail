@@ -274,7 +274,7 @@ Requests to act are handed to Routes for fresh quotes and explicit approval.
 
 ## Public Miorail MCP
 
-Miorail MCP `1.6.0` exposes seventeen read-only tools at `https://miorail.xyz/mcp`
+Miorail MCP `1.7.0` exposes seventeen read-only tools at `https://miorail.xyz/mcp`
 — nine over tokenized stocks, eight over stored B20 evidence:
 
 ```text
@@ -302,6 +302,45 @@ miorail_b20_market_rails
 contracts for the same company, and that choice is not Miorail's to make. A
 company name reaches a security through a small ISIN-bound alias table, and
 every row says whether the issuer's own naming or a Miorail alias found it.
+
+The nine stock tools and `miorail_discover_status` include a free
+`evidencePackage` (`miorail-evidence-package/v1`). Each claim names JSON Pointers
+into the original answer, its exact address, size and time scope where
+applicable, and its source, block, observation time and existing evidence hash.
+Supply, quotes, reference feeds, venue catalogues and historical observations
+keep separate provenance. `generatedAt` is packaging time. A missing block,
+time or hash is explicitly `null` and listed in `missing`; it never means zero,
+safe, absent or freshly checked. Source-content, measurement and snapshot
+hashes retain their different meanings. A transaction hash is a lookup reference,
+not an evidence hash. Counts and estimates remain derived facts. No extra RPC
+read or new hash of the answer is performed to produce this package.
+
+The package indexes the evidence exposed by that tool. Service counts,
+identity-check projections, dividend effects and frozen game stages do not
+retain every primary block or hash; their missing metadata stays explicit.
+Recorded event time, company declaration date, feed publication time and a
+multiplier's effective date do not replace observation time. Existing summary,
+pagination, coverage and quote-expiry semantics still apply.
+
+For a weekly usage review, `scripts/mcpUsageReport.mjs` aggregates rotated nginx
+logs and successful evidence-read events from the API journal. Run on the host
+with permission to read both sources:
+
+```sh
+journalctl -u miorail-api --since '7 days ago' -o cat --no-pager |
+  node scripts/mcpUsageReport.mjs --journal-stdin \
+    --exclude-file /path/to/private-mcp-usage-exclusions.json
+```
+
+The private exclusion file has `public` (operator IPs) and `connected`
+(operator tenant identities) string arrays. Keep it outside the public repo.
+BrickBlueBot, Taifoon, B20 verifier, Miorail smokes and curl are excluded by
+their reported client family. The report outputs aggregates only; fingerprint
+counts are candidate client groups, never verified people. Nginx POSTs also
+include initialization and tool discovery, so they cannot establish tool usage.
+Successful-read instrumentation starts with this release and cannot reconstruct
+earlier free calls. Review `mcp_execution_audit` separately for authenticated
+actions; its counts cannot be added to free-read client counts.
 
 `get_use_access` exists because of a measured failure. Until it shipped, no MCP
 surface carried a single DeFi field, so an assistant asked whether a tokenized
@@ -444,7 +483,7 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.6.0` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.7.0` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
 argument. The shared inbox establishes a fixed 24-hour baseline at first use;
 opening it acknowledges no event. Unread entries persist past seven days and

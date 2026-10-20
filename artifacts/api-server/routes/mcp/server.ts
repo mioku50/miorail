@@ -5,6 +5,7 @@ import {
   miorailCheckAddressIdentityV1,
 } from './identityTools.js';
 import { z } from 'zod';
+import { EvidenceOutputExtensionV1, evidencePackageV1, type EvidenceToolV1 } from './evidencePackage.js';
 import {
   B20_EXIT_STANDING_KINDS_V1,
   B20_FUNDAMENTAL_PREDICATES_V1,
@@ -95,7 +96,7 @@ export const MIORAIL_MCP_NAME_V1 = 'miorail';
  * So this moves whenever the published tool list moves, and
  * `mcpServer.test.ts` refuses a registry change that leaves it behind.
  */
-export const MIORAIL_MCP_VERSION_V1 = '1.6.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.7.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
@@ -124,6 +125,8 @@ get_dividend_calendar answers "when does this stock pay next, about how much rea
 
 get_use_access reports what one exact representation can be used for and what gates it, including the POOLS that hold it — a question about LP or liquidity is answered from \`pools\`, never from the lending venues in \`defi\`. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. WHO SUPPORTS IT IS A LEDGER, NOT A VERDICT: \`ecosystem\` carries the apps Base’s own stocks page names — thirty of them — each with that page’s claim beside what the app itself answered for this exact address, in the SAME four states. Most of them are apps Miorail does not read at all, and those are \`unchecked\`: reporting them as refusals states our reach as a fact about somebody else’s product. \`ecosystem.summary\` is the deterministic sentence to repeat. A venue listing an address is still not permission to act: caps and pause flags are not read, and the borrower’s own position is not read at all. PER MARKET, NOT PER VENUE: where a venue publishes them, \`defi.venues[].markets\` carries every market for this address with its own curation flag, LLTV in basis points and what is available to borrow in it — one Morpho-curated market at 62.5% beside three anyone deployed is the normal shape, and a figure there says a market could be used, never that this user could use it. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.
 
+The ten stock and status reads carry evidencePackage: a per-claim provenance index with JSON Pointers into the original answer. Preserve its scope, source, block, observedAt and hash separately. Null means unavailable in the returned evidence; generatedAt is only packaging time. A source-content hash, a measurement hash and a snapshot hash mean different things; a transaction hash is only a lookup reference. Derived counts and estimates are not primary evidence. The package adds no new measurement and proves no freshness by itself.
+
 get_reopen_round reads Call the reopen, Miorail's weekend game: will five stocks reopen above or below the close? Where a token trades on Base over the weekend is not a forecast of the reopen, and Base's own call exists only from the Sunday 17:00 ET lock. Nothing is won but the record. This server makes no pick for anybody.`;
 
 /**
@@ -143,12 +146,20 @@ get_reopen_round reads Call the reopen, Miorail's weekend game: will five stocks
  * stays physically unable to execute even while it is also the connected one's
  * read half.
  */
-export function registerMiorailReadOnlyToolsV1(server: McpServer): void {
+export interface EvidenceReadHooksV1 { onEvidenceRead?: (tool: EvidenceToolV1) => void }
+export function registerMiorailReadOnlyToolsV1(server: McpServer, hooks: EvidenceReadHooksV1 = {}): void {
   /** One shape for every reply: MCP content plus the structured payload. */
   const reply = (payload: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
     structuredContent: payload,
   });
+
+  const evidenceReply = (tool: EvidenceToolV1, payload: Record<string, unknown>) => {
+    const answer = reply({ ...payload, evidencePackage: evidencePackageV1(tool, payload) });
+    // Telemetry must never turn a successful public read into a refusal.
+    try { hooks.onEvidenceRead?.(tool); } catch { /* best effort */ }
+    return answer;
+  };
 
   /** A refusal an assistant can act on, without a stack trace or an endpoint. */
   const refuse = (error: unknown) => {
@@ -169,12 +180,13 @@ export function registerMiorailReadOnlyToolsV1(server: McpServer): void {
       description:
         'Reports whether Miorail is currently reading Base for B20 launches, and how far behind it is. CALL THIS FIRST when an opportunity list comes back empty: an empty list has several causes and only one of them is "nothing is launching". The others are that ingestion was never configured, is still catching up, has nothing measured yet, or is degraded. This tool says which.',
       inputSchema: {},
+      outputSchema: z.object(EvidenceOutputExtensionV1).passthrough(),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 
     },
     async () => {
       try {
-        return reply(await miorailDiscoverStatusV1());
+        return evidenceReply('miorail_discover_status', await miorailDiscoverStatusV1());
       } catch (error) {
         return refuse(error);
       }
@@ -463,12 +475,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Lists the reviewed underlyings Miorail has bound to Base representations, so a caller can turn a company name or ticker into the namespaced underlying key every other Stocks tool requires. Pass `query` to match a ticker, a company name or an identifier value as a case-insensitive substring; omit it to list everything. Many reviewed rows are named by TICKER rather than by company name, so a short list of company-name aliases bound to an ISIN covers the common ones \u2014 `nvidia` reaches NVDA \u2014 and every row says in `matchedBy` whether it was the issuer\u2019s own naming or a Miorail alias that found it. A query that matches nothing says so in its own `note` rather than implying the instrument has no representation. Pass `assetClass` to narrow: this corpus is not all common stock, and `reviewedByAssetClass` reports the whole breakdown on every call, because Miorail\u2019s web Stocks screen shows the equity rows only. THIS TOOL NEVER SELECTS A REPRESENTATION: it returns no contract address and no issuer choice, because different issuers publish different contracts for the same company and choosing between them is not Miorail\u2019s decision. Read `liveRepresentationCount` before comparing anything \u2014 it is a measured count of representations with tokens outstanding, and zero means nothing is outstanding on any reviewed contract at any size. An empty list means Miorail holds no reviewed binding matching that query; it is never a claim about what exists on Base or anywhere else.',
       inputSchema: MarketRealityAgentStocksInputV1Schema,
-      outputSchema: MarketRealityAgentStocksOutputV1Schema,
+      outputSchema: MarketRealityAgentStocksOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailListReviewedStocksV1(args));
+        return evidenceReply('list_reviewed_stocks', await miorailListReviewedStocksV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -482,12 +494,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Returns every reviewed Base representation bound to one namespaced underlying key, separately and by exact contract address. The underlying and its display ticker are grouping metadata only: this tool never chooses Coinbase, Backed, Dinari, a wrapper, or any other representation for the caller. Each row retains CAIP-10, issuer, representation kind, current supply evidence, and the reviewed identity trust root. An empty list means Miorail has no reviewed binding for that exact underlying key; it does not mean the instrument has no tokenized representations elsewhere.',
       inputSchema: MarketRealityAgentRepresentationsInputV1Schema,
-      outputSchema: MarketRealityAgentRepresentationsOutputV1Schema,
+      outputSchema: MarketRealityAgentRepresentationsOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailGetRepresentationsV1(args));
+        return evidenceReply('get_representations', await miorailGetRepresentationsV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -501,12 +513,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Returns the same typed market-reality/v2 answer used by Miorail Stocks for one namespaced underlying, exact USD size, direction, destination and Base chain. Every reviewed representation stays separate by exact address. The canonical engine preserves supply-denominator, route-policy, normalization, provider outcome, reference/session/basis, current-versus-history, and ranking-withheld semantics. This is quote-only evidence: it never simulates execution, requests approval, returns calldata, signs, or submits a transaction. Provider/RPC failure remains Miorail uncertainty and one venue miss never becomes universal market absence. READ `miorailSummary` FIRST and prefer its wording to your own: it is Miorail\u2019s deterministic reading of the same counts, written by no model, and it exists because `establishedOutcomeCount: 0` describes MIORAIL\u2019S FRESHNESS at this exact size rather than the market. A missing current answer never means illiquid, untradeable, cheaper or better \u2014 `miorailSummary.notEstablished` says so in words you may repeat. When `currentComparisonAvailable` is false, offer `miorailSummary.nextSafeStep` instead of concluding anything.',
       inputSchema: MarketRealityAgentComparisonInputV1Schema,
-      outputSchema: MarketRealityAgentComparisonMcpOutputV1Schema,
+      outputSchema: MarketRealityAgentComparisonMcpOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailCompareMarketRealityV1(args));
+        return evidenceReply('compare_market_reality', await miorailCompareMarketRealityV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -520,12 +532,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Requires an exact Base contract address or CAIP-10 plus exact USD size, direction, destination and bounded window. Returns only stored public-ladder observations and transitions derived by the same Radar comparability logic. It never resolves a ticker, interpolates a missing point, reconstructs old evidence, crosses size/direction/destination/router-policy boundaries, or exposes tenant watches and users. Provider/RPC failures are explicit non-asset gaps and cannot replace the last comparable baseline. CALL IT WITH `detail: "summary"` FIRST: that returns the counts, the span and a per-kind tally of what changed with no rows at all, and a 7d window can otherwise be hundreds of observations. The rows themselves are paged newest-first by `limit` (10 by default, 500 at most \u2014 one observation is about 1.2 KB, so a large page is a large fraction of your context); pass the returned `nextCursor` as `before` to walk back. Changes are always derived over the whole window and only then paged, so a page never invents a gap \u2014 and `nextCursor: null` means this window is exhausted, never that nothing older exists.',
       inputSchema: MarketRealityAgentChangesInputV1Schema,
-      outputSchema: MarketRealityAgentChangesOutputV1Schema,
+      outputSchema: MarketRealityAgentChangesOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailGetMarketChangesV1(args));
+        return evidenceReply('get_market_changes', await miorailGetMarketChangesV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -542,12 +554,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       title: 'What one exact representation can be used for, and what gates it',
       description: 'Reports what one EXACT Base representation can be used for and what gates it, measured rather than announced. Requires an exact contract address or CAIP-10: this tool never resolves a ticker or a company name, because different issuers publish different contracts for the same company and choosing between them is not Miorail’s decision — call list_reviewed_stocks then get_representations to obtain one. Returns, for that exact address: whether transfers are paused on chain, the issuer transfer policy bound to each of the sender, receiver and executor scopes, whether the issuer has switched on Cobalt’s seize (`seizure`: `off` means the exemption policy is unset, so no wallet can be seized at that block; it is configuration, never a record that anybody was seized), whether an LayerZero OFT bridge is configured, and whether each reviewed lending venue names this address — with the three DeFi axes (lend, borrow, collateral) kept separate, because an asset accepted as collateral is not necessarily one anybody can borrow. READ `miorailSummary` FIRST and prefer its wording to your own: it is Miorail’s deterministic reading of the same rows, written by no model, and it names the two leaps this data invites — from "these venues did not list it" to "it cannot be used in DeFi", and from "it was announced" to "you can do it now". ANNOUNCED IS NOT LIVE. `announcements` carries dated public claims by named parties joined to what the venue itself answered, in four states: `listed`, `not_listed`, `unread`, and `unchecked`. `unchecked` is NOT `not_listed` — a venue nobody read must never be reported as a venue that refused. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave’s reserve list on Base does not name these addresses today. Both are true, and telling a user they can post this collateral now is wrong. WHO SUPPORTS IT IS A LEDGER, NOT A VERDICT: `ecosystem` carries the apps Base’s own stocks page names — thirty of them — each with that page’s claim beside what the app itself answered for this exact address, in the SAME four states. Most of them are apps Miorail does not read at all, and those are `unchecked`: reporting them as refusals states our reach as a fact about somebody else’s product. `ecosystem.summary` is the deterministic sentence to repeat. `blockTag` covers only the fields named in `blockTagCovers`. It does NOT cover `defi`: two venues answer from chain state read at head and two from their own catalogues, which publish no block at all, so each venue row carries its own `observed` provenance instead. A listing is not permission to act: caps and pause flags are not read, the borrower’s own position is not read at all, and `miorailSummary.notStated` lists every question this tool leaves open. "LISTED" IS THREE CLAIMS AND `markets` TELLS THEM APART: a market exists, it has money in it, and YOU could borrow. `defi.venues[].markets` is every market the venue published for this exact address — `curated` per MARKET, `lltvBps` as integer basis points (6250 is 62.5%), and `liquidityUsd` for what could be borrowed out of that one right now. Morpho is permissionless, so an uncurated row proves somebody deployed a contract and not that the venue accepted the asset; NVDAc sits in four of them and only one is curated. `markets: null` means the venue publishes no per-market detail and never that there are no markets. The third claim is unanswerable here: no liquidity figure, at any size, is evidence that the person asking could draw it. POOLS ARE WHERE THESE TOKENS ACTUALLY LIVE. `defi` answers a LENDING question and for tokenized stocks the honest answer is almost always no, while an Aerodrome concentrated-liquidity pool held 3,715 NVDAc against $1.6M of USDC. If a user asks about LP, liquidity, pools or AMMs, answer from `pools` — reporting no DeFi use from the lending venues alone is false, and it is our omission rather than the token’s property. `pools.rows` is ranked by MEASURED balance, deepest first, and `deepestSharePercent` must travel with `poolCount`: thirty-nine pools hold NVDAc and one holds about 88% of it while twenty-four of the rest are memecoin pairs, so a count on its own is true arithmetic about a market that does not exist. A pool balance is every position the contract holds, in range or out, plus uncollected fees — it is NOT depth and NOT a quote. `venueTier` decides how a pool may be named: `protocol` names the exchange, `engine` names only the AMM machinery (Algebra licenses its engine to many DEXes, so it is not an exchange name), and `shape` says only whether the pool is concentrated or a constant-product pair — for the last two, name the pool by its address. `pools.state = not_measured` means nobody checked and is never a statement that there are no pools. WHAT A POOL PAYS IS TWO ALTERNATIVES, NEVER A SUM: `poolYield` is the deepest Aerodrome pool’s pay per dollar in it — `staked` is AERO to a position staked in the pool’s gauge at this week’s emission rate and Chainlink’s AERO price, `notStaked` is the swap fees over the days measured, after the pool’s unstaked fee — and a staked position gives its fees to voters, so never add them. Both are averages over the pool’s money: a narrow range earns more while the price stays inside it, and a range the price has left earns nothing. READ `poolYield.summary` and prefer its wording; `poolYield: null` means not measured or not readable right now, never that the pool pays nothing. It is public and wallet-free — `walletBound` is always false — so it can never say whether a particular wallet may transfer or use the token, and it states nothing about KYC, jurisdiction or legal eligibility. A venue that answered `unread` said nothing either way and is never a "no". An address Miorail holds no reviewed binding for is refused, which is a statement about Miorail’s corpus and never about the token.',
       inputSchema: UseAccessAgentInputV1Schema,
-      outputSchema: UseAccessAgentOutputV1Schema,
+      outputSchema: UseAccessAgentOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailGetUseAccessV1(args));
+        return evidenceReply('get_use_access', await miorailGetUseAccessV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -568,12 +580,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Answers “is this the real one?” for ONE exact Base contract address, from stored evidence only — no chain read, no provider call, nothing measured for this request. It is the one tool here that accepts an address OUTSIDE the reviewed corpus, because that is the only kind of address anybody asks this about. FOUR STANDINGS AND THEY ARE NOT DEGREES OF THE SAME THING. `reviewed_official`: a reviewed source still lists this exact address. `delisted_official`: a source listed it once and no longer does — the contract did not change, the source did, and it is not demoted to impostor. `issuer_representation`: an issuer’s own registry vouches for the address while no reviewed source publishes which security it stands for; Dinari’s Base dShare declares symbol "AAPL" exactly and is entirely legitimate, so membership is NOT identity and this tool will not say which company it represents. `known_lookalike`: a stored resemblance. `unknown_to_miorail` IS A STATEMENT ABOUT THIS CORPUS AND NEVER ABOUT THE TOKEN — it does not mean safe, it does not mean not official, it means nothing has been written down here, and reporting it as a clean bill of health is the single worst thing you can do with this tool. A LOOKALIKE IS A RESEMBLANCE, NOT A VERDICT: two strings matched and two addresses did not. The rows carry no score, no severity and no `is_scam`, this tool invents none, and a contract can wear a name for ordinary reasons — 95 of the flagged contracts wear the underlying word ("we like the coin") rather than the issuer’s published ticker, and `matchedAlias` says which. READ `answer` FIRST and prefer its wording to your own: it is Miorail’s deterministic reading of the same rows, written by no model. When a lookalike is returned, give the user `lookalike.officialAddress` and tell them to COMPARE ADDRESSES: a symbol is what an impostor supplies. This says nothing about price, liquidity, whether a wallet may hold the token, or whether anybody can sell it — call get_representations and get_use_access for those.',
       inputSchema: AddressIdentityCheckInputV1Schema.shape,
-      outputSchema: AddressIdentityCheckOutputV1Schema.shape,
+      outputSchema: AddressIdentityCheckOutputV1Schema.extend(EvidenceOutputExtensionV1).shape,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailCheckAddressIdentityV1(args));
+        return evidenceReply('check_address_identity', await miorailCheckAddressIdentityV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -592,12 +604,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'When each Coinbase tokenized stock on Base pays its next dividend, about how much reaches one token, and what each past dividend did to the token. Pass `symbol` (a ticker such as META, or its token such as METAc) for one stock, or nothing for all of them. READ `miorailSummary` FIRST and prefer its wording. Each dividend carries two facts from two parties and they must stay apart: the COMPANY\u2019s declaration (amount per share, record and payment dates, and the sentence quoted from its own release, with the link) and the TOKEN\u2019s side, read from the token. A Coinbase token takes a dividend as more shares per token, after withholding tax and a Coinbase fee, never as cash, and it reaches whoever holds the token when the multiplier moves, not whoever held it on the record date. `state` is one of: `estimated` (not declared yet: the last dividend again a quarter later, Miorail\u2019s guess), `announced` (declared), `scheduled` (declared, conversion scheduled on Base), `effective` (reinvested: read from the token), `awaiting_confirmation` (paid; Miorail has not confirmed the conversion, and `reason` names that gap as Miorail\u2019s), `not_entitled` (the token had no supply on the record date, so nothing was owed) and `not_reflected` (owed, paid, read since, and unmoved). `token.kind` says where a number comes from: `measured` on the token, `scheduled` by the issuer, `estimate` from Miorail\u2019s arithmetic at the share of a dividend that reached a token before (`passThrough`). An estimate must be called one. `notice` is a dividend the issuer announced in the token itself and has not converted yet: its own words (\u201cCash Dividend\u201d), with no amount and no date. It covers every Coinbase stock, including those whose releases Miorail does not read. This tool takes no wallet: what one person received is not on this surface.',
       inputSchema: DividendCalendarAgentInputV1Schema,
-      outputSchema: DividendCalendarAgentOutputV1Schema,
+      outputSchema: DividendCalendarAgentOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailGetDividendCalendarV1(args));
+        return evidenceReply('get_dividend_calendar', await miorailGetDividendCalendarV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -611,12 +623,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Answers \u201cdid anything change?\u201d across the WHOLE reviewed tokenized-stock universe on Base, with no address, ticker or size supplied \u2014 it is the one Miorail read that needs no subject, and the one to call on a schedule. Every other Market Reality tool makes you name an exact contract first, which cannot express a daily check because it would mean guessing which of a hundred and thirty addresses to ask about. CALL IT WITH `detail: "summary"` FIRST: that returns the tally, the span and the counts with no rows at all, and a busy day records over a hundred transitions. READ `miorailSummary` FIRST and prefer its wording to your own. AN EMPTY FEED IS TWO DIFFERENT FACTS AND THEY MUST NOT SHARE A SENTENCE. `watching` says when each kind of change became observable and `notWatched` lists the kinds no emitter has ever opened \u2014 for those, an empty result means NOBODY LOOKED, never that the market was quiet, and reporting calm from them is a false statement about the asset. Only when a kind appears in `watching` does its absence from `changes` mean nothing changed, and only back to its `watchingSince`. `truncated: true` means the page filled and older changes inside the same window were not returned, so every count is a floor. Each row is a stored TRANSITION between two comparable measurements at the same size, direction and destination \u2014 never a quote, never a trade, and never interpolated across a gap. A cost change had to move more than the stored threshold, which travels in `facts` beside both costs. `notReported` names what this feed deliberately never carries: trades and price moves are absent by design and their absence must not be read as quiet. `subjectCount` must travel with `changeCount` \u2014 five changes on one asset is a quieter day than five on five. For the history of ONE representation at an exact size, call get_market_changes instead.',
       inputSchema: RwaRecordedChangesAgentInputV1Schema,
-      outputSchema: RwaRecordedChangesAgentOutputV1Schema,
+      outputSchema: RwaRecordedChangesAgentOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async (args) => {
       try {
-        return reply(await miorailGetRecordedChangesV1(args));
+        return evidenceReply('get_recorded_changes', await miorailGetRecordedChangesV1(args));
       } catch (error) {
         return refuse(error);
       }
@@ -632,12 +644,12 @@ Evidence older than a day is labelled stale and describes what was true when it 
       description:
         'Miorail\u2019s weekend game on tokenized stocks. Each weekend five stocks (NVDA, TSLA, AAPL, AMZN, MSTR, Coinbase\u2019s tokens on Base) and one question each: will it reopen above or below the close? Takes no argument and returns the round on show: `upcoming` rounds are in `next`; `round.state` is `open` (picks accepted until `locksAt`, Sunday 17:00 ET), `locked` (Base\u2019s calls fixed from its price on Base at the lock) or `settled` (each stock\u2019s first Chainlink print after the reopen, and the scores). READ `miorailSummary` FIRST and prefer its wording. `closeDay` names the close: Friday\u2019s, or Thursday\u2019s before a holiday Friday. `baseNow` is where the token trades on Base during the weekend, NOT a forecast of the reopen and NOT Base\u2019s call, which exists only from the lock on. How players split is hidden until the lock. The leaderboard names a wallet only by a Basename it set for itself, everybody else by player number. Nothing is won but the record: there are no prizes, and the tokens are not offered to US persons. This tool takes no player and makes no pick: a person picks on `playUrl`, or through an assistant connected to Miorail Connected with miorail_call_the_reopen, which picks for that grant\u2019s own wallet only.',
       inputSchema: ReopenRoundAgentInputV1Schema,
-      outputSchema: ReopenRoundAgentOutputV1Schema,
+      outputSchema: ReopenRoundAgentOutputV1Schema.extend(EvidenceOutputExtensionV1),
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     },
     async () => {
       try {
-        return reply(await miorailGetReopenRoundV1());
+        return evidenceReply('get_reopen_round', await miorailGetReopenRoundV1());
       } catch (error) {
         return refuse(error);
       }
@@ -645,11 +657,11 @@ Evidence older than a day is labelled stale and describes what was true when it 
   );
 }
 
-export function createMiorailMcpServerV1(): McpServer {
+export function createMiorailMcpServerV1(hooks: EvidenceReadHooksV1 = {}): McpServer {
   const server = new McpServer(
     { name: MIORAIL_MCP_NAME_V1, version: MIORAIL_MCP_VERSION_V1 },
     { instructions: MIORAIL_MCP_INSTRUCTIONS_V1 },
   );
-  registerMiorailReadOnlyToolsV1(server);
+  registerMiorailReadOnlyToolsV1(server, hooks);
   return server;
 }

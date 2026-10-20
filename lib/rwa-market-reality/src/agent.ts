@@ -157,6 +157,8 @@ const AgentSupplyV1Schema = z
     readOutcome: z.enum(['success', 'rpc_failure', 'decode_failure', 'not_observed']),
     fresh: z.boolean(),
     evidenceHash: HashV1.nullable(),
+    blockNumber: z.string().regex(/^(0|[1-9][0-9]*)$/).nullable().optional(),
+    blockHash: HashV1.nullable().optional(),
     observedAt: TimestampV1.nullable(),
     reason: z.string().min(1).max(240).nullable(),
   })
@@ -480,6 +482,12 @@ export const MarketRealityAgentStocksOutputV1Schema = z
              * alias, bound to this row's ISIN, did. Stated so a caller never
              * reads an alias hit as issuer-published naming. */
             matchedBy: z.enum(['stored_naming', 'miorail_alias', 'unfiltered']),
+            sourceEvidence: z.object({
+              sourceKind: z.enum(['dinari_stock_api', 'backed_assets_api', 'coinbase_b20_metadata', 'coinbase_stocks_api']),
+              sourceRef: z.string().min(1).max(300),
+              sourceHash: z.string().regex(/^[0-9a-f]{64}$/).nullable(),
+              observedAt: TimestampV1,
+            }).strict().optional(),
           })
           .strict(),
       )
@@ -566,6 +574,10 @@ export async function listReviewedStocksForAgentV1(
       representationCount: entry.representationCount,
       liveRepresentationCount: entry.liveRepresentationCount,
       matchedBy: query === null ? 'unfiltered' : (matchedBy.get(entry.underlying.underlyingKey) ?? 'stored_naming'),
+      sourceEvidence: {
+        sourceKind: entry.underlying.sourceKind, sourceRef: entry.underlying.sourceRef,
+        sourceHash: entry.underlying.sourceHash ?? null, observedAt: entry.underlying.observedAt,
+      },
     })),
     selection: 'never',
     // A query that matches nothing is the one answer an assistant is most
@@ -680,6 +692,8 @@ export async function getMarketRealityRepresentationsForAgentV1(
           readOutcome: supply.readOutcome,
           fresh: supply.fresh,
           evidenceHash: supply.evidenceHash,
+          blockNumber: supply.blockNumber,
+          blockHash: supply.blockHash,
           observedAt: supply.observedAt,
           reason: supply.reason,
         },
