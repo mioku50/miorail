@@ -2,7 +2,7 @@ import {
   OPPORTUNITY_QUOTE_ASSET_V1,
   profileIdentityV1,
 } from '@mioagent/opportunity-rail';
-import { createDatabaseStockActionExecutionRepositoryV1, entryPlanCallsHashV1,
+import { createDatabaseRouteStorageRepository, createDatabaseStockActionExecutionRepositoryV1, entryPlanCallsHashV1,
   type McpAuditOutcomeV1, type StockActionExecutionRepositoryV1 } from '@mioagent/route-storage';
 import { client } from '@mioagent/db';
 import {
@@ -35,6 +35,7 @@ import {
   verifyStockActionClearanceV1,
 } from '../../lib/stockActionClearance.js';
 import { stockActionIntentV1 } from '../../lib/stockActionIntent.js';
+import { readBaseWalletBatchHashesV1, refreshStockExecutionV1, withStockExecutionReadV1 } from '../../lib/stockExecutionStatus.js';
 import { measureMarketRealityV1, rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 import {
   MarketRealityAgentComparisonInputV1Schema,
@@ -715,11 +716,15 @@ export async function miorailGetExecutionStatusV1(
     // behaviour, and the original refusal is what survives when neither family
     // owns the reference — a wrong id must not start naming other stores.
     // -----------------------------------------------------------------------
-    const stock = await stockActionRuntime.readStockProof({
-      tenantId: identity.tenantId,
-      walletAddress: identity.walletAddress,
-      blueprintId: planId,
-    });
+    let stock;
+    try {
+      stock = await stockActionRuntime.readStockProof({
+        tenantId: identity.tenantId,
+        walletAddress: identity.walletAddress,
+        blueprintId: planId,
+        refresh: true,
+      });
+    } catch { throw stockActionRefusalV1('stock_action_status_unavailable'); }
     if (!stock) refuse(loaded);
     const lifecycle = String((stock as { lifecycle?: unknown }).lifecycle ?? '');
     const mapped = STOCK_LIFECYCLE_STATE_V1[lifecycle] ?? lifecycle;
@@ -960,13 +965,28 @@ export const stockActionRuntime = {
     tenantId: string;
     walletAddress: `0x${string}`;
     blueprintId: string;
+    refresh?: boolean;
   }) => {
     const { routeProofRouteRuntime } = await import('../routeIntelligence.js');
     const { routeProofIdV1 } = await import('@mioagent/transaction-composer');
-    return routeProofRouteRuntime.getProof({
-      tenantId: input.tenantId,
-      walletAddress: input.walletAddress,
-      proofId: routeProofIdV1(input.blueprintId),
+    const proofId = routeProofIdV1(input.blueprintId);
+    return withStockExecutionReadV1(JSON.stringify([input.tenantId, input.walletAddress, proofId, Boolean(input.refresh)]), async () => {
+      const reference = { tenantId: input.tenantId, walletAddress: input.walletAddress, proofId };
+      const projection = await routeProofRouteRuntime.getProof(reference);
+      if (!projection) return null;
+      const rows = await client`SELECT route_run_id FROM route_proofs
+        WHERE id=${proofId} AND user_id=${input.tenantId} LIMIT 1`;
+      if (!rows[0]) return null;
+      const routeRunId = String(rows[0].route_run_id);
+      const refreshed = await refreshStockExecutionV1({
+        repository: createDatabaseRouteStorageRepository(client),
+        readBatchHashes: readBaseWalletBatchHashesV1,
+        reconcile: routeProofRouteRuntime.reconcile,
+        now: () => new Date(),
+      }, { ...input, routeRunId, refresh: input.refresh === true });
+      if (!refreshed) return null;
+      const latest = input.refresh ? await routeProofRouteRuntime.getProof(reference) : projection;
+      return latest ? { ...latest, proof: { ...latest.proof, routeRunId, batchId: refreshed.batchId } } : null;
     });
   },
   recordStockSubmission: async (input: {

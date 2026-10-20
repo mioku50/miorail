@@ -360,7 +360,17 @@ export function createRouteProofReconciler(deps: RouteProofReconcilerDependencie
               minimumOutputAtomic: outputChange?.minimumAmountAtomic ?? null,
             });
             deviation = { outputBps, gasCostUsd: null, withinTolerance: minimumSatisfied };
-            if (allSuccess) {
+            const missingMovement = proof.expectedResult.assetChanges.some((expected) =>
+              BigInt(expected.amountAtomic) > 0n && !reconstruction.actualResult.assetChanges.some((actual) =>
+                actual.direction === expected.direction && actual.asset.assetId === expected.asset.assetId
+                && BigInt(actual.amountAtomic) > 0n));
+            if (allSuccess && missingMovement) {
+              // A successful approval (or another operation in the bundle)
+              // is not the reviewed trade. Keep the measured zero, but never
+              // finalize an entry without both of its wallet movements.
+              nextFinalStatus = 'reconciliation_required';
+              nextReconciliationState = 'manual_review';
+            } else if (allSuccess) {
               nextFinalStatus = 'completed';
               nextReconciliationState = minimumSatisfied === false ? 'deviated' : 'matched';
             } else {

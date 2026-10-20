@@ -338,15 +338,18 @@ describe('§11 — another wallet can neither read nor execute a plan', () => {
   // the two families". The trade had happened; the app could not say so.
   // -------------------------------------------------------------------------
   test('a stock action is read through its own family, not refused', async () => {
-    stockActionRuntime.readStockProof = async () => ({
-      lifecycle: 'completed',
-      proof: {
-        routeRunId: 'run-9',
-        approvedCallsHash: `0x${'ab'.repeat(32)}`,
-        batchId: '0x857297d3',
-        receipts: [{ transactionHash: `0x${'fa'.repeat(32)}` }],
-      },
-    }) as never;
+    stockActionRuntime.readStockProof = async (input) => {
+      assert.equal(input.refresh, true, 'status must reconcile a recorded batch, not only read a stale projection');
+      return {
+        lifecycle: 'completed',
+        proof: {
+          routeRunId: 'run-9',
+          approvedCallsHash: `0x${'ab'.repeat(32)}`,
+          batchId: '0x857297d3',
+          receipts: [{ transactionHash: `0x${'fa'.repeat(32)}` }],
+        },
+      } as never;
+    };
     const client = await connectedClient(IDENTITY);
     const result = await client.callTool({
       name: 'miorail_get_execution_status',
@@ -376,6 +379,17 @@ describe('§11 — another wallet can neither read nor execute a plan', () => {
     });
     const body = payloadOf(result);
     assert.equal(body.state, 'reconciling');
+    await client.close();
+  });
+
+  test('a failed stock reconciliation is unavailable and exposes no provider detail', async () => {
+    stockActionRuntime.readStockProof = async () => { throw new Error('postgres://private-user:secret@example.invalid'); };
+    const client = await connectedClient(IDENTITY);
+    const result = await client.callTool({ name: 'miorail_get_execution_status', arguments: { planId: 'bp-stock-1' } });
+    assert.equal((result as ToolResult).isError, true);
+    const text = errorTextOf(result);
+    assert.match(text, /stock_action_status_unavailable/);
+    assert.doesNotMatch(text, /private-user|postgres:|example\.invalid/);
     await client.close();
   });
 

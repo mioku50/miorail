@@ -400,6 +400,13 @@ owned draft without a released action returns `not_released`; an unknown or
 foreign draft gives the same not-found refusal. An unavailable store is an
 unavailable read, never an invented pending or successful outcome.
 
+For an already submitted stock batch, status resolves its stored batch ID
+through Base Account's public wallet RPC, then has the existing reconciler
+read the transaction receipts from Base. Wallet receipts provide lookup
+hashes only. A successful approval without the expected wallet movements
+requires reconciliation; it is not a completed purchase. This check still
+works after the review quote expires and never prepares or resends a trade.
+
 Status returns no calls, clearance or signature. `submitted` is not success,
 and `submitted_unknown` is not a reason to prepare or send again. The assistant
 reports `entry_succeeded` only when the existing onchain reconciler does.

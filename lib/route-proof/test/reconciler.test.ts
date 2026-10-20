@@ -27,6 +27,27 @@ import {
 const LATER = new Date(NOW.getTime() + 60_000);
 const EVEN_LATER = new Date(NOW.getTime() + 120_000);
 
+for (const missing of ['both', 'input', 'output'] as const) {
+  test(`reconcile: successful receipt missing ${missing} trade movements requires review`, async () => {
+    const seeded = await seedRouteProofFixture({ toAsset: ARBITRARY_TOKEN, transactionHashes: [TX_HASH_1] });
+    const logs = [
+      ...(missing === 'output' ? [transferLog(CANONICAL_BASE_USDC, WALLET, POOL, 100000000n)] : []),
+      ...(missing === 'input' ? [transferLog(ARBITRARY_TOKEN.address as `0x${string}`, POOL, WALLET, 38000000000000000n)] : []),
+    ];
+    const reader = mockReceiptReader({ [TX_HASH_1]: { transactionHash: TX_HASH_1, status: 'success',
+      blockNumber: 33123500n, gasUsed: 100000n, effectiveGasPriceWei: 1n, logs } });
+    const result = await createRouteProofReconciler({ repository: seeded.repository, receiptReader: reader }).reconcile({
+      tenantId: TENANT, walletAddress: WALLET, routeRunId: seeded.intent.id,
+      routeProofId: seeded.proof.id, now: LATER,
+    });
+    assert.equal(result.outcome, 'reconciliation_required');
+    assert.equal(result.lifecycle, 'reconciliation_required');
+    assert.equal(result.proof.reconciliationState, 'manual_review');
+    const events = await seeded.repository.listProofEvents(seeded.proof.id, TENANT);
+    assert.ok(!events.some(event => event.eventType === 'completed'));
+  });
+}
+
 function reconcilerFor(seeded: Awaited<ReturnType<typeof seedRouteProofFixture>>, reader: ReturnType<typeof mockReceiptReader>) {
   return createRouteProofReconciler({ repository: seeded.repository, receiptReader: reader });
 }
