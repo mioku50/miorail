@@ -34,11 +34,20 @@ describe('a release that did not happen', () => {
     );
   });
 
+  test('insufficient funds explains the balance without claiming the route failed', () => {
+    const copy = stockReleaseFailureCopyV1(new Error('stock_action_insufficient_funds'));
+    assert.match(copy, /wallet does not have enough funds/i);
+    assert.match(copy, /not asked to sign/i);
+    assert.match(copy, /nothing was submitted/i);
+    assert.doesNotMatch(copy, /Safety Kernel|route failed|add funds/i);
+  });
+
   test('no sentence carries an endpoint, a key or a stack', () => {
     for (const code of [
       'stock_action_executor_not_authorized',
       'stock_action_refresh_required',
       'stock_action_blocked',
+      'stock_action_insufficient_funds',
       'stock_action_route_unavailable',
       'stock_action_sell_requires_exact_size',
       'anything else at all',

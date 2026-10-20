@@ -221,6 +221,47 @@ test('one wallet attempt stays pending until the wallet resolves', async ({ page
   await expect(page.getByText('Submitted from your Base Account.', { exact: true })).toBeVisible();
 });
 
+test('a buy refused for insufficient funds explains why and never opens the wallet', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await stubApi(page);
+  const uiRoot = '/@fs' + new URL('../../../lib/ui/src/console/', import.meta.url).pathname;
+  await page.route('**/StockActionReviewPage.tsx*', route => route.fulfill({
+    contentType: 'application/javascript',
+    body: `import React from '/node_modules/.vite/deps/react.js';
+      import {useStockActionReviewConsoleV1} from '${uiRoot}stockActionReviewConsole.ts';
+      import {StockActionReviewScreen} from '${uiRoot}StockActionReviewScreen.tsx';
+      window.walletAttempts = 0;
+      export function StockActionReviewPage() {
+        const {model} = useStockActionReviewConsoleV1({draft:'test-buy',
+          sendCalls: async () => { window.walletAttempts++; throw new Error('must not open'); }});
+        return React.createElement(StockActionReviewScreen, {model});
+      }`,
+  }));
+  await page.route('**/api/route-intelligence/rwa/stock-action/test-buy', route => route.fulfill({ json: {
+    outcome: 'review', evidenceState: 'expired_quote',
+    representation: { tokenAddress: TOKEN, caip10: `eip155:8453:${TOKEN}` },
+    question: { direction: 'buy', requestedCashAtomic: '2000000', destination: 'USDC' },
+  } }));
+  await page.route('**/api/route-intelligence/rwa/stock-action/test-buy/confirm', route => route.fulfill({
+    json: { clearance: 'fixture-clearance', expiresAt: '2026-10-20T12:00:00Z' },
+  }));
+  let releases = 0;
+  await page.route('**/api/route-intelligence/rwa/stock-action/release', route => {
+    releases++;
+    return route.fulfill({ status: 409, json: {
+      error: 'stock_action_insufficient_funds', code: 'stock_action_insufficient_funds',
+      confirmed: true, executableActionAvailable: false,
+    } });
+  });
+  await page.goto('/action/test-buy');
+  await page.getByRole('button', { name: 'Confirm these terms', exact: true }).click();
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect(page.getByText('The wallet does not have enough funds to cover this trade and any fees it must pay. Your wallet was not asked to sign and nothing was submitted.', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => (window as unknown as { walletAttempts: number }).walletAttempts)).toBe(0);
+  expect(releases).toBe(1);
+  await expect(page.getByText('Submitted from your Base Account.', { exact: true })).toHaveCount(0);
+});
+
 for (const holding of [null, { state: 'unread' }, { state: 'read', decimals: 8, balanceAtomic: '0' }]) {
   test(`SELL refuses an unavailable amount: ${JSON.stringify(holding)}`, async ({ page }) => {
     const { confirmations } = await stubApi(page, holding);

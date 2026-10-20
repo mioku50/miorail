@@ -37,9 +37,9 @@ export const STOCK_REVIEW_EVIDENCE_COPY_V1: Readonly<Record<string, string>> = {
   fresh_quote:
     'A router quote for this exact question is open right now. It lives about twenty seconds.',
   expired_quote:
-    'The router quote this was prepared beside has expired. Nothing from the conversation was carried over — measure again for a current answer.',
+    'The earlier router quote has expired. Confirming authorises this exact action, not that old price. The server must obtain a fresh quote and pass its checks before your wallet is asked.',
   no_quote:
-    'No router quote is open for this exact question. Measure to establish one before going further.',
+    'No live router quote is available on this page. Confirming authorises this exact action; the server must quote it and pass its checks before your wallet is asked.',
 };
 
 export interface StockActionReviewModelV1 {

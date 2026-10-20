@@ -656,6 +656,46 @@ describe('a confirmed clearance is the only way to an executable request', () =>
     );
   });
 
+  test('a funds-only simulation block returns a safe balance refusal and releases nothing', async () => {
+    for (const errorCode of ['insufficient_funds', 'provider_insufficient_funds']) {
+      let approved = false;
+      executionStub({
+        planAndPrepare: async () => ({ outcome: 'blocked',
+          safety: { checks: [{ id: 'simulation_evidence', status: 'failed' }] },
+          simulation: { status: 'failed', errorCode },
+        }) as never,
+        approve: async () => { approved = true; throw new Error('must not approve'); },
+      });
+      await stockActionRuntime.records().recordDraft({ tenantId: IDENTITY.tenantId,
+        walletAddress: WALLET, actionDraftId: 'draft-1', at: NOW });
+      await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY,
+        { clearance: clearanceFor(), requestId: 'no-funds' }), error => {
+        assert.ok(refusedWith('stock_action_insufficient_funds')(error));
+        assert.match(String(error), /not have enough funds/);
+        assert.doesNotMatch(String(error), /simulation_evidence|provider_|https?:/);
+        return true;
+      });
+      assert.equal(approved, false);
+      assert.equal((await stockActionRuntime.records().latest({ tenantId: IDENTITY.tenantId,
+        walletAddress: WALLET, actionDraftId: 'draft-1' }))!.release, null);
+    }
+  });
+
+  test('other kernel blocks never become a balance explanation', async () => {
+    for (const [errorCode, checks] of [
+      ['reverted', [{ id: 'simulation_evidence', status: 'failed' }]],
+      ['provider_rate_limited', [{ id: 'simulation_evidence', status: 'failed' }]],
+      ['insufficient_funds', [{ id: 'simulation_evidence', status: 'failed' }, { id: 'slippage', status: 'failed' }]],
+      ['insufficient_funds', undefined],
+    ] as const) {
+      executionStub({ planAndPrepare: async () => ({ outcome: 'blocked',
+        safety: { checks }, simulation: { status: 'failed', errorCode },
+      }) as never });
+      await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY,
+        { clearance: clearanceFor(), requestId: 'other-block' }), refusedWith('stock_action_blocked'));
+    }
+  });
+
   test('an issued draft is queryable before confirmation, including through a real MCP client', async () => {
     stub(MIXED);
     executionStub();

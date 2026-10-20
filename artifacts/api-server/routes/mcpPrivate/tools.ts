@@ -1206,6 +1206,8 @@ export const STOCK_ACTION_EXECUTION_REFUSAL_COPY_V1: Record<string, string> = {
     'The market moved after this was confirmed. Miorail will not offer the old request — review the current terms again.',
   stock_action_blocked:
     'Miorail’s Safety Kernel refused this plan. Nothing executable was produced.',
+  stock_action_insufficient_funds:
+    'The wallet does not have enough funds to cover this trade and any fees it must pay. Nothing executable was produced and nothing was submitted.',
   stock_action_executor_not_authorized:
     'The issuer’s policy registry refuses the exact contract this batch would authorize to move the token. The approval would have been granted — `approve()` is not policy gated — and the transfer would then have reverted, after the wallet had signed twice and paid for both. Nothing executable was produced. This is the issuer’s rule for that contract, read on chain; Miorail does not set it and cannot lift it.',
 };
@@ -1278,8 +1280,8 @@ export async function miorailGetStockBaseMcpActionV1(
     throw stockActionExecutionRefusalV1('stock_action_route_unavailable');
   }
   if (prepared.outcome === 'blocked') {
-    // The kernel knows WHY and the client is not told, deliberately: a refusal
-    // on an execution surface must not narrate its own checks to a caller.
+    // Do not expose check details or provider text. Insufficient funds alone
+    // has a closed, reader-facing outcome below; other blocks stay generic.
     // The server had no record either, which is a different problem — the
     // acceptance smoke hit this refusal and the only way to learn the cause
     // was to read the wallet's balance on chain by hand.
@@ -1325,7 +1327,12 @@ export async function miorailGetStockBaseMcpActionV1(
       simulationStatus: prepared.simulation?.status ?? null,
       simulationErrorCode: prepared.simulation?.errorCode ?? null,
     });
-    throw stockActionExecutionRefusalV1('stock_action_blocked');
+    throw stockActionExecutionRefusalV1(
+      simulationOutcome === 'insufficient_funds'
+        && failedChecks?.length === 1 && failedChecks[0] === 'simulation_evidence'
+        ? 'stock_action_insufficient_funds'
+        : 'stock_action_blocked',
+    );
   }
 
   // -------------------------------------------------------------------------

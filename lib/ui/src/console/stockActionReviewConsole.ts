@@ -151,6 +151,9 @@ export function stockReleaseFailureCopyV1(error: unknown): string {
   if (message.includes('stock_action_refresh_required')) {
     return 'The market moved after you confirmed, so Miorail will not offer the request it planned a moment ago. Nothing was submitted — review the current terms again.';
   }
+  if (message.includes('stock_action_insufficient_funds')) {
+    return 'The wallet does not have enough funds to cover this trade and any fees it must pay. Your wallet was not asked to sign and nothing was submitted.';
+  }
   if (message.includes('stock_action_blocked')) {
     return 'Miorail’s Safety Kernel refused this plan, so nothing executable was produced and your wallet was never asked.';
   }
