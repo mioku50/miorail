@@ -93,7 +93,7 @@ BORROWING AGAINST A TOKENIZED SECURITY IS A SEPARATE, SHORTER PATH, and it is th
 a. miorail_read_borrow_capacity — every market for that exact collateral, each with its own row. Never merge them, and always say whether the wallet's collateral or the market's own liquidity set each figure.
 b. miorail_review_borrow — reads, has the VENUE write the calldata, executes it once against real state, and checks the loan asset actually arrives here in the reviewed amount. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
 
-The certified B20 entry path above is buy-only. For Stocks, miorail_prepare_stock_action can prepare a buy or a sell review link. A sell must bind an exact token amount chosen on that review page, and its cash output is refreshed there. These paths do not accept an arbitrary router or calldata of your own.`;
+The certified B20 entry path above is buy-only. For Stocks, miorail_prepare_stock_action can prepare a buy or a sell review link. A sell must bind an exact token amount chosen on that review page, and its cash output is refreshed there. After the user signs on the Miorail review page, read miorail_get_execution_status with that actionDraftId. Do not ask them to paste a clearance or prepare a second trade to find the first trade's outcome. These paths do not accept an arbitrary router or calldata of your own.`;
 
 const ADDRESS_ARG_V1 = z
   .string()
@@ -507,7 +507,7 @@ submittedCallsHash must be the callsHash you were given. A mismatch means what w
     'miorail_get_execution_status',
     {
       title: 'What the submitted batch actually did',
-      description: `Reads Miorail's reconciliation for one plan and returns a named outcome: awaiting_wallet_approval, submitted, reconciling, entry_succeeded, entry_reverted, submitted_unknown, reconciliation_required or user_rejected.
+      description: `Reads Miorail's reconciliation for one action. Supply exactly one of planId or actionDraftId. When the user signs on the Miorail review page, use the actionDraftId returned by miorail_prepare_stock_action; no clearance or wallet signature needs to be copied into the conversation. If the user has not released an action yet, returns not_released. Otherwise returns the same plan outcome: awaiting_wallet_approval, submitted, reconciling, entry_succeeded, entry_reverted, submitted_unknown, reconciliation_required or user_rejected. This is a read: it never returns calls or a clearance and never sends anything.
 
 Report the state you are given; do not upgrade it. In particular:
 
@@ -517,7 +517,9 @@ Report the state you are given; do not upgrade it. In particular:
 
 Only "entry_succeeded" means the wallet's own decoded movements show USDC spent and the token received.`,
       inputSchema: {
-        planId: z.string().min(1).max(200),
+        planId: z.string().min(1).max(200).optional().describe('An existing plan or stock blueprint id. Do not also supply actionDraftId.'),
+        actionDraftId: z.string().regex(/^[A-Za-z0-9:_.-]{1,200}$/).optional()
+          .describe('The actionDraftId from miorail_prepare_stock_action, including after the user signed on the review page. Do not also supply planId.'),
       },
       outputSchema: MiorailExecutionStatusOutputV1Schema,
       annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },

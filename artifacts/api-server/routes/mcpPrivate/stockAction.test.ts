@@ -1,9 +1,11 @@
 import assert from 'node:assert/strict';
-import test, { afterEach, describe } from 'node:test';
+import test, { afterEach, beforeEach, describe } from 'node:test';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import express from 'express';
+import request from 'supertest';
 
 import {
   issueStockActionDraftV1,
@@ -16,15 +18,18 @@ import {
 } from '../../lib/stocksBenchCorpus.js';
 import {
   miorailGetStockBaseMcpActionV1,
+  miorailGetExecutionStatusV1,
   miorailPrepareStockActionV1,
   stockActionRuntime,
 } from './tools.js';
 import { issueStockActionClearanceV1 } from '../../lib/stockActionClearance.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { mcpAuditRuntime } from './audit.js';
-import { MiorailGetStockBaseMcpActionOutputV1Schema } from './outputs.js';
-import { InMemoryMcpExecutionAuditRepositoryV1 } from '@mioagent/route-storage';
+import { MiorailGetStockBaseMcpActionOutputV1Schema, MiorailExecutionStatusOutputV1Schema } from './outputs.js';
+import { InMemoryMcpExecutionAuditRepositoryV1, InMemoryStockActionExecutionRepositoryV1 } from '@mioagent/route-storage';
 import type { McpPrivateIdentityV1 } from './session.js';
+import { b20RouteRuntime } from '../b20Control.js';
+import { rwaMarketRealityRouter, rwaMarketRealityRuntime } from '../rwaMarketReality.js';
 
 /** The refusal CODE, which is what an assistant branches on. The message is
  * copy and may be reworded; the code is the contract. */
@@ -95,6 +100,13 @@ const ARGS = argsFor(MIXED, COINBASE);
 
 const original = { ...stockActionRuntime };
 const originalAudit = { ...mcpAuditRuntime };
+const originalPlanAvailable = b20RouteRuntime.entryPlanAvailable;
+const originalMarketEnabled = rwaMarketRealityRuntime.enabled;
+
+beforeEach(() => {
+  const records = new InMemoryStockActionExecutionRepositoryV1();
+  stockActionRuntime.records = () => records;
+});
 
 function stub(reality: unknown, over: Partial<typeof stockActionRuntime> = {}) {
   stockActionRuntime.flags = () => ({ routeIntelligenceV1: true, mcpPrivateExecutionV1: false });
@@ -108,6 +120,8 @@ function stub(reality: unknown, over: Partial<typeof stockActionRuntime> = {}) {
 afterEach(() => {
   Object.assign(stockActionRuntime, original);
   Object.assign(mcpAuditRuntime, originalAudit);
+  b20RouteRuntime.entryPlanAvailable = originalPlanAvailable;
+  rwaMarketRealityRuntime.enabled = originalMarketEnabled;
 });
 
 describe('a ticker can never select a representation', () => {
@@ -640,6 +654,130 @@ describe('a confirmed clearance is the only way to an executable request', () =>
       () => miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: '', requestId: 'r1' }),
       refusedWith('stock_clearance_missing'),
     );
+  });
+
+  test('an issued draft is queryable before confirmation, including through a real MCP client', async () => {
+    stub(MIXED);
+    executionStub();
+    const prepared = await miorailPrepareStockActionV1(IDENTITY, ARGS);
+    const draftId = String(prepared.actionDraftId);
+    assert.match(String(prepared.nextStep), /miorail_get_execution_status.*actionDraftId/);
+    const client = new Client({ name: 'agent-to-proof-test', version: '1.0.0' });
+    const [a, b] = InMemoryTransport.createLinkedPair();
+    const server = createMiorailPrivateMcpServerV1(IDENTITY);
+    try {
+      await Promise.all([server.connect(b), client.connect(a)]);
+      const tool = (await client.listTools()).tools.find(row => row.name === 'miorail_get_execution_status')!;
+      assert.match(tool.description!, /exactly one of planId or actionDraftId/);
+      assert.ok(tool.inputSchema.properties?.actionDraftId);
+      const result = await client.callTool({ name: tool.name, arguments: { actionDraftId: draftId } });
+      assert.ok(!result.isError);
+      const status = MiorailExecutionStatusOutputV1Schema.parse(result.structuredContent);
+      assert.equal(status.state, 'not_released');
+      assert.deepEqual(status.transactionHashes, []);
+      assert.equal(status.createsTransaction, false);
+      for (const key of ['calls', 'action', 'clearance', 'signature', 'blueprint']) assert.ok(!(key in status));
+      for (const args of [{}, { planId: 'bp-1', actionDraftId: draftId }]) {
+        const refused = await client.callTool({ name: tool.name, arguments: args });
+        assert.equal(refused.isError, true);
+      }
+    } finally { await client.close(); await server.close(); }
+  });
+
+  test('the status tool accepts exactly one reference and performs no lookup for invalid arguments', async () => {
+    stockActionRuntime.records = () => { throw new Error('must not look up invalid arguments'); };
+    for (const args of [{}, { planId: 'bp', actionDraftId: 'draft' }, { planId: '' }, { actionDraftId: '   ' }]) {
+      await assert.rejects(miorailGetExecutionStatusV1(IDENTITY, args), refusedWith('execution_status_reference_required'));
+    }
+  });
+
+  for (const channel of ['browser', 'mcp'] as const) {
+    test(`${channel} release records the same draft-to-proof link and returns the same reconciled status`, async () => {
+      executionStub();
+      b20RouteRuntime.entryPlanAvailable = async () => false;
+      const seen: string[] = [];
+      stockActionRuntime.readStockProof = async input => {
+        assert.equal(input.tenantId, IDENTITY.tenantId);
+        assert.equal(input.walletAddress, WALLET);
+        seen.push(input.blueprintId);
+        return { lifecycle: 'completed', proof: { batchId: 'batch-1', approvedCallsHash: APPROVED_CALLS_HASH,
+          receipts: [{ transactionHash: `0x${'a'.repeat(64)}` }] } } as never;
+      };
+      if (channel === 'browser') {
+        rwaMarketRealityRuntime.enabled = () => true;
+        const app = express();
+        app.use(express.json());
+        app.use((req, _res, next) => {
+          Object.defineProperty(req, 'session', { value: { user: { id: IDENTITY.tenantId, address: WALLET, chainId: 8453 } } });
+          next();
+        });
+        app.use('/api/route-intelligence', rwaMarketRealityRouter);
+        const response = await request(app).post('/api/route-intelligence/rwa/stock-action/release')
+          .send({ clearance: clearanceFor(), requestId: 'browser-release' }).expect(200);
+        assert.equal(response.body.blueprintId, 'bp-1');
+      } else {
+        const response = await miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'mcp-release' });
+        assert.equal(response.blueprintId, 'bp-1');
+      }
+      const owner = { tenantId: IDENTITY.tenantId, walletAddress: WALLET, actionDraftId: 'draft-1' };
+      const row = await stockActionRuntime.records().latest(owner);
+      assert.equal(row!.release!.blueprintId, 'bp-1');
+      assert.equal(row!.release!.routeRunId, 'run-1');
+      const byDraft = await miorailGetExecutionStatusV1(IDENTITY, { actionDraftId: 'draft-1' });
+      const byPlan = await miorailGetExecutionStatusV1(IDENTITY, { planId: 'bp-1' });
+      assert.deepEqual(byDraft, byPlan);
+      assert.equal(byDraft.state, 'entry_succeeded');
+      assert.deepEqual(seen, ['bp-1', 'bp-1']);
+      for (const key of ['calls', 'action', 'clearance', 'approvedCallsHash', 'blueprint']) assert.ok(!(key in byDraft));
+      const foreign = { ...IDENTITY, tenantId: `eip155:8453:${OTHER_WALLET}`, walletAddress: OTHER_WALLET };
+      for (const [who, id] of [[foreign, 'draft-1'], [IDENTITY, 'missing-draft']] as const) {
+        await assert.rejects(miorailGetExecutionStatusV1(who, { actionDraftId: id }), refusedWith('b20_entry_plan_not_found'));
+      }
+      assert.equal(seen.length, 2, 'foreign or unknown references never reach a proof lookup');
+    });
+  }
+
+  test('a newer release of the same draft determines its status', async () => {
+    executionStub();
+    b20RouteRuntime.entryPlanAvailable = async () => false;
+    await miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'first' });
+    const plan = stockActionRuntime.planAndPrepare, approve = stockActionRuntime.approve;
+    stockActionRuntime.planAndPrepare = async input => {
+      const prepared = await plan(input);
+      if (prepared.outcome !== 'prepared') throw new Error('fixture must prepare');
+      return { ...prepared, blueprint: { ...prepared.blueprint, id: 'bp-2' } };
+    };
+    stockActionRuntime.approve = async input => {
+      const approved = await approve(input);
+      if (approved.outcome !== 'approved') throw new Error('fixture must approve');
+      return { ...approved, payload: { ...approved.payload, blueprintId: 'bp-2' } };
+    };
+    await miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'second' });
+    stockActionRuntime.readStockProof = async input => {
+      assert.equal(input.blueprintId, 'bp-2');
+      return { lifecycle: 'submitted_unknown', proof: { batchId: 'batch-2' } } as never;
+    };
+    const result = await miorailGetExecutionStatusV1(IDENTITY, { actionDraftId: 'draft-1' });
+    assert.equal(result.state, 'submitted_unknown');
+    assert.equal(result.batchId, 'batch-2');
+  });
+
+  test('a tracking failure releases no calls and an unread status cannot become not_released', async () => {
+    executionStub();
+    stockActionRuntime.records = () => { throw new Error('postgres://private-user:secret@example.invalid/database'); };
+    await assert.rejects(miorailGetStockBaseMcpActionV1(IDENTITY, { clearance: clearanceFor(), requestId: 'unavailable' }),
+      refusedWith('stock_action_tracking_unavailable'));
+    await assert.rejects(miorailGetExecutionStatusV1(IDENTITY, { actionDraftId: 'draft-1' }), error => {
+      assert.equal((error as { code: string }).code, 'stock_action_status_unavailable');
+      assert.doesNotMatch(String(error), /postgres:|private-user|secret@/);
+      return true;
+    });
+  });
+
+  test('draft preparation refuses when its ownership cannot be recorded', async () => {
+    stub(MIXED);
+    stockActionRuntime.records = () => { throw new Error('tracking unavailable'); };
+    await assert.rejects(miorailPrepareStockActionV1(IDENTITY, ARGS), refusedWith('stock_action_tracking_unavailable'));
   });
 
   test('another wallet’s confirmation is refused, not resolved', async () => {

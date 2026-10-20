@@ -263,6 +263,13 @@ export const MiorailRecordSubmissionOutputV1Schema = z
 /** §8 — the reconciled state, plus the sentence that stops it being upgraded. */
 export const MiorailExecutionStatusOutputV1Schema = z
   .object({
+    state: z.string().nullable().optional().describe('not_released for an owned draft with no released action; otherwise the existing reconciled plan lifecycle. Never interpret not_released as submission or success.'),
+    actionDraftId: z.string().min(1).max(200).optional(),
+    batchId: z.string().nullable().optional(),
+    transactionHashes: z.array(z.string()).optional(),
+    createsApproval: z.literal(false).optional(),
+    createsCalldata: z.literal(false).optional(),
+    createsTransaction: z.literal(false).optional(),
     stateMeaning: z.string().nullable(),
     caveats: CaveatsV1,
   })

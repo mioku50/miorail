@@ -131,3 +131,4 @@ export * from './dividendDeclarationsDatabase.js';
 export * from './stockInbox.js';
 export * from './stockInboxMemory.js';
 export * from './stockInboxDatabase.js';
+export * from './stockActionExecutions.js';

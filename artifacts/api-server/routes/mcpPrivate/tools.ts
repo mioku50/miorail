@@ -2,7 +2,9 @@ import {
   OPPORTUNITY_QUOTE_ASSET_V1,
   profileIdentityV1,
 } from '@mioagent/opportunity-rail';
-import { entryPlanCallsHashV1, type McpAuditOutcomeV1 } from '@mioagent/route-storage';
+import { createDatabaseStockActionExecutionRepositoryV1, entryPlanCallsHashV1,
+  type McpAuditOutcomeV1, type StockActionExecutionRepositoryV1 } from '@mioagent/route-storage';
+import { client } from '@mioagent/db';
 import {
   beginEntrySubmissionV1,
   loadEntryPlanV1,
@@ -663,9 +665,34 @@ const MCP_RESULT_TO_SUBMISSION_STATUS_V1: Readonly<Record<string, string>> = {
 
 export async function miorailGetExecutionStatusV1(
   identity: McpPrivateIdentityV1,
-  args: { planId: string },
+  args: { planId?: string; actionDraftId?: string },
 ): Promise<Record<string, unknown>> {
-  const planId = String(args.planId ?? '');
+  const hasPlan = args.planId !== undefined;
+  const hasDraft = args.actionDraftId !== undefined;
+  const reference = hasPlan ? args.planId : args.actionDraftId;
+  if (hasPlan === hasDraft || typeof reference !== 'string' || !reference.trim() || reference.length > 200) {
+    throw new McpPrivateError('execution_status_reference_required',
+      'Supply exactly one of planId or actionDraftId, as Miorail returned it.');
+  }
+  let planId = reference;
+  if (hasDraft) {
+    let recorded;
+    try {
+      recorded = await stockActionRuntime.records().latest({ tenantId: identity.tenantId,
+        walletAddress: identity.walletAddress, actionDraftId: reference });
+    } catch {
+      throw stockActionRefusalV1('stock_action_status_unavailable');
+    }
+    // A foreign draft and an unknown one are deliberately indistinguishable.
+    if (!recorded) throw new McpPrivateError('b20_entry_plan_not_found', PRIVATE_REFUSAL_COPY_V1.b20_entry_plan_not_found);
+    if (!recorded.release) {
+      await auditV1(identity, { toolName: 'miorail_get_execution_status', outcome: 'plan_read', planId: null });
+      return { state: 'not_released', actionDraftId: reference, batchId: null, transactionHashes: [],
+        stateMeaning: EXECUTION_STATE_COPY_V1.not_released, createsApproval: false,
+        createsCalldata: false, createsTransaction: false, caveats: MIORAIL_PRIVATE_CAVEATS_V1 };
+    }
+    planId = recorded.release.blueprintId;
+  }
   const loaded = await loadEntryPlanV1({
     tenantId: identity.tenantId,
     walletAddress: identity.walletAddress,
@@ -760,6 +787,8 @@ export const STATE_AUDIT_OUTCOME_V1: Record<string, McpAuditOutcomeV1> = {
 /** §8 — one sentence per named outcome, so an assistant reports the state it
  * was given rather than the state it expected. */
 export const EXECUTION_STATE_COPY_V1: Record<string, string> = {
+  not_released:
+    'Miorail issued this draft to your wallet but has no released action for it. The user may still need to review and confirm on the review page. No execution outcome is established; do not report a submitted or completed trade.',
   preparing: 'Miorail is still building this plan. Nothing has been offered to a wallet.',
   review: 'The plan is prepared and waiting. Nothing has been sent.',
   expired: 'The plan expired before it was submitted. Nothing was sent. A new check is needed.',
@@ -807,6 +836,7 @@ export const EXECUTION_STATE_COPY_V1: Record<string, string> = {
  * about which representations exist.
  */
 export const stockActionRuntime = {
+  records: (): StockActionExecutionRepositoryV1 => createDatabaseStockActionExecutionRepositoryV1(client),
   assembleMarketReality: async (question: {
     underlyingKey: string;
     direction: 'buy' | 'sell';
@@ -981,6 +1011,10 @@ export const STOCK_LIFECYCLE_STATE_V1: Readonly<Record<string, string>> = {
 };
 
 export const STOCK_ACTION_REFUSAL_COPY_V1: Record<string, string> = {
+  stock_action_tracking_unavailable:
+    'Miorail could not record the link between this draft and its action. Nothing was released. Try again after the service recovers; do not send any calls from this response.',
+  stock_action_status_unavailable:
+    'Miorail could not read this draft’s execution record. Its outcome is unknown. Do not prepare or send again to work around an unavailable status.',
   stock_action_disabled:
     'Route intelligence is switched off on this server, so no representation can be prepared. That is a statement about this deployment, not about the security.',
   stock_action_unknown_security:
@@ -1101,6 +1135,13 @@ export async function miorailPrepareStockActionV1(
     now: runtime.now(),
   });
 
+  try {
+    await runtime.records().recordDraft({ tenantId: identity.tenantId, walletAddress: identity.walletAddress,
+      actionDraftId: issued.actionDraftId, at: new Date(issued.issuedAt) });
+  } catch {
+    throw stockActionRefusalV1('stock_action_tracking_unavailable');
+  }
+
   return {
     schemaVersion: 'stock-action-draft/v1',
     actionDraftId: issued.actionDraftId,
@@ -1130,7 +1171,7 @@ export async function miorailPrepareStockActionV1(
     createsCalldata: false,
     createsTransaction: false,
     nextStep:
-      'Give the user the review link and stop. Do not state a price, a cash return, a premium or a comparison — this response deliberately contains none, and the review page is the only place the current terms are established. Nothing is executable until the user reviews and confirms there.',
+      'Give the user the review link and stop. Do not state a price, a cash return, a premium or a comparison — this response deliberately contains none, and the review page is the only place the current terms are established. Nothing is executable until the user reviews and confirms there. After the user signs on that page, call miorail_get_execution_status with this actionDraftId to learn the outcome. Do not ask them to copy a clearance into the chat or prepare a second trade to check the first.',
     caveats: MIORAIL_PRIVATE_CAVEATS_V1,
   };
 }
@@ -1380,6 +1421,14 @@ export async function miorailGetStockBaseMcpActionV1(
     planId: prepared.blueprint.id,
     callsHash: approved.payload.approvedCallsHash,
   });
+
+  try {
+    await runtime.records().recordRelease({ tenantId: identity.tenantId, walletAddress: identity.walletAddress,
+      actionDraftId: clearance.actionDraftId, clearanceId: clearance.clearanceId,
+      blueprintId: prepared.blueprint.id, routeRunId: prepared.routeRunId, at: runtime.now() });
+  } catch {
+    throw stockActionRefusalV1('stock_action_tracking_unavailable');
+  }
 
   return {
     schemaVersion: 'stock-action-execution/v1',

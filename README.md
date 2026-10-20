@@ -373,13 +373,9 @@ is refused, on every deploy.
 stops:
 
 ```text
-miorail_prepare_stock_action        → a review link. No price, no calldata,
-                                      no comparison — deliberately none, and a
-                                      literal on the payload says so
-   you, in your own session          read the terms this server re-established
-   Confirm these terms               a clearance: ONE exact action, minutes old
-miorail_get_stock_base_mcp_action   → the unsigned EIP-5792 batch
-   your Base Account                 the only thing that can sign it
+miorail_prepare_stock_action      → actionDraftId + review link; no executable calls
+   you, on the review page          read current terms, confirm and sign in your wallet
+miorail_get_execution_status      → ask with that actionDraftId; read the reconciled outcome
 ```
 
 Before the clearance is minted the token's own onchain transfer policy is asked
@@ -392,6 +388,23 @@ geo-gate.
 An assistant cannot confirm on your behalf, and it never holds a key. Since
 2026-09-05 you do not need Base MCP either: the review page signs from the
 browser, and the clearance is still offered for an assistant that prefers to.
+
+New stock drafts record ownership and release references separately from the
+hashed intent, blueprint and proof. Drafts issued before this tracking was
+deployed do not gain a historical link automatically.
+
+The status tool accepts **exactly one** of `actionDraftId` or the existing
+`planId`. The draft lookup is bound to the authenticated tenant and wallet,
+and follows its latest released blueprint to the existing Route Proof. An
+owned draft without a released action returns `not_released`; an unknown or
+foreign draft gives the same not-found refusal. An unavailable store is an
+unavailable read, never an invented pending or successful outcome.
+
+Status returns no calls, clearance or signature. `submitted` is not success,
+and `submitted_unknown` is not a reason to prepare or send again. The assistant
+reports `entry_succeeded` only when the existing onchain reconciler does.
+For the alternative Wallet MCP path, confirmation still precedes
+`miorail_get_stock_base_mcp_action`, and the user approves the returned batch.
 
 ## Base App
 
