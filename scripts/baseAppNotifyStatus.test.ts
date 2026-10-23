@@ -89,13 +89,13 @@ test('incomplete subscribers and provider failures stay distinct and leak no pro
   }
 });
 
-test('a key the provider stopped taking fails the unit; a retired API, an outage or a throttle does not', () => {
+test('a bot token Telegram stopped taking fails the unit; nothing from the retired Base App API does', () => {
   // A unit failed for good by a retired API hid every later failure of the
-  // same unit, Telegram's included (one alert episode open from 2026-10-13).
-  for (const stoppedBy of ['base_app_http_401', 'base_app_http_403', 'base_app_http_404']) {
-    assert.equal(notifyPassFailsUnitV1('base_app', stoppedBy), true, stoppedBy);
-  }
-  for (const stoppedBy of [null, 'base_app_notifications_retired', 'base_app_http_429', 'base_app_http_503',
+  // same unit, Telegram's included: one alert episode open from 2026-10-13,
+  // and another from 2026-10-21, when the retired endpoint started answering
+  // 401 instead of its retirement notice.
+  for (const stoppedBy of [null, 'base_app_http_401', 'base_app_http_403', 'base_app_http_404',
+    'base_app_notifications_retired', 'base_app_http_429', 'base_app_http_503',
     'base_app_unreachable:TimeoutError', 'base_app_unreadable_body', 'base_app_subscribers_incomplete']) {
     assert.equal(notifyPassFailsUnitV1('base_app', stoppedBy), false, String(stoppedBy));
   }

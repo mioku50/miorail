@@ -1331,20 +1331,25 @@ export function planAerodromeRewardNoticesV1(input: {
  * Whether a pass that stopped this way should fail its systemd unit.
  *
  * A failed unit is how the operator hears about something only they can fix:
- * a key that Base or BotFather stopped taking. Base down or throttling is a
- * later pass's problem. A retired API is neither: no key or retry brings it
- * back. And this unit carries Telegram too, so failing it every five minutes
- * for good hid the next failure anybody could act on: one alert episode stayed
- * open from 2026-10-13. The pass still logs `base_app_notifications_retired`,
- * and every deploy prints the provider state from `base_app_notify_status.ts`.
+ * a bot token BotFather stopped taking. Base down or throttling is a later
+ * pass's problem. A retired API is neither: no key or retry brings it back.
+ * And this unit carries Telegram too, so failing it every five minutes for
+ * good hid the next failure anybody could act on: one alert episode stayed
+ * open from 2026-10-13.
+ *
+ * Base App never fails it now. Base retired the notification API (404, code 5,
+ * from 2026-10-13), and from 2026-10-21 14:55 UTC the same endpoint refused
+ * the key with 401, which put the unit back in a permanent failure. A new key
+ * would only reach the retired endpoint again. The pass still logs its
+ * `stoppedBy`, and every deploy prints the provider state from
+ * `base_app_notify_status.ts`.
  */
 export function notifyPassFailsUnitV1(
   channel: 'base_app' | 'telegram',
   stoppedBy: string | null,
 ): boolean {
-  if (stoppedBy === null) return false;
-  if (channel === 'telegram') return /^telegram_unauthorized/.test(stoppedBy);
-  return /http_(401|403|404)$/.test(stoppedBy);
+  if (stoppedBy === null || channel === 'base_app') return false;
+  return /^telegram_unauthorized/.test(stoppedBy);
 }
 
 export interface BaseAppNotifyReportV1 {
