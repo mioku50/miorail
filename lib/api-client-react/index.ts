@@ -1952,18 +1952,61 @@ export function useRwaUseAccess(
   });
 }
 
-/** The signed-in wallet's own Mirror, read only when asked, isolated by the connected wallet key. */
-export function useStillMine(walletAddress: string | null) {
+/**
+ * The signed-in wallet's own Mirror, isolated by the connected wallet key. Read only when asked
+ * (`refetch`) unless `enabled`: Today's card asks, Still's Home reads on arrival.
+ */
+export function useStillMine(walletAddress: string | null, options?: { enabled?: boolean }) {
   const wallet = walletAddress?.toLowerCase() ?? null;
   return useQuery({
     queryKey: ['still-mine', wallet],
-    enabled: false, retry: false, staleTime: 20_000,
+    enabled: options?.enabled === true && wallet !== null, retry: false, staleTime: 20_000,
     queryFn: async () => {
       if (!wallet) throw new Error('authentication_required');
       const result = apiSpec.StillMineResponseV1Schema.parse(await fetchApi<unknown>('/api/still/mine'));
       if (result.report.subject.address.toLowerCase() !== wallet) throw new Error('still_mine_wallet_mismatch');
       return result.report;
     },
+  });
+}
+
+/** Still's terms with no wallet: the shares, the closed-market window and each stock's earnings window. */
+export function useStillTerms(options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['still-terms'],
+    queryFn: async () => apiSpec.StillTermsSchema.parse(await fetchApi<unknown>('/api/public/still/terms')),
+    retry: false,
+    // The windows move by the hour at most; a page re-reads them on the next visit.
+    staleTime: 15 * 60_000,
+    enabled: options?.enabled !== false,
+  });
+}
+
+/**
+ * Still's public check of any Base wallet, by address or name. Every status is an answer in one
+ * shape, so this never throws for a refusal or for our own failure: the page words each outcome.
+ */
+export function useStillCheck(subject: string | null) {
+  return useQuery({
+    queryKey: ['still-check', subject],
+    queryFn: async (): Promise<apiSpec.StillCheckResponseV1> => {
+      let body: unknown;
+      try {
+        const response = await fetch(`/api/public/still/mirror?subject=${encodeURIComponent(subject!)}`, {
+          credentials: 'same-origin',
+          headers: { accept: 'application/json' },
+        });
+        body = await response.json();
+      } catch {
+        return { outcome: 'internal_error' };
+      }
+      const parsed = apiSpec.StillCheckResponseV1Schema.safeParse(body);
+      return parsed.success ? parsed.data : { outcome: 'internal_error' };
+    },
+    enabled: subject !== null && subject.length > 0,
+    retry: false,
+    // The server holds a complete report twenty seconds.
+    staleTime: 20_000,
   });
 }
 

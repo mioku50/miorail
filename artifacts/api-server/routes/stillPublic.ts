@@ -1,7 +1,8 @@
 import { Router, type Request, type Response } from 'express';
+import { stillTerms } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
-import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1, stillTermsV1 } from '../lib/stillMirror.js';
+import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 
 // ---------------------------------------------------------------------------
 // Still's public door: any Base wallet, by address or name, and how much it
@@ -56,7 +57,7 @@ publicStillRouter.get('/terms', async (_req: Request, res: Response) => {
     // The calendar never rejects: an unread one comes back as `ok: false` and
     // every stock then counts at the earnings rate.
     const read = await publicStillRuntimeV1.service().earnings();
-    res.json(stillTermsV1(read, publicStillRuntimeV1.now()));
+    res.json(stillTerms(read, publicStillRuntimeV1.now()));
   } catch (error) {
     logger.warn('Still terms read failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });

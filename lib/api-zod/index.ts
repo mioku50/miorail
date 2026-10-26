@@ -1,12 +1,31 @@
 import { z } from 'zod';
 import { MirrorReportSchema } from '@mioagent/still-engine/report-schema';
-export { MirrorReportSchema };
+import { StillTermsSchema } from '@mioagent/still-engine/terms';
+export { MirrorReportSchema, StillTermsSchema };
 export type { MirrorReport } from '@mioagent/still-engine/report';
+export type { StillTerms } from '@mioagent/still-engine/terms';
 
 /** `GET /api/still/mine`: the signed-in wallet's own Mirror, read from Base at one block. */
 export const StillMineResponseV1Schema = z
   .object({ outcome: z.literal('report'), report: MirrorReportSchema, cached: z.boolean() })
   .strict();
+
+/**
+ * `GET /api/public/still/mirror?subject=`: any Base wallet, by address or name. Every status
+ * answers in this shape, a refusal and our own failure too, so a page words each one instead of
+ * printing a status code. `chain_unavailable`, `names_unavailable`, `rate_limited` and
+ * `internal_error` are ours, never a fact about the wallet or the name.
+ */
+export const StillCheckResponseV1Schema = z.discriminatedUnion('outcome', [
+  StillMineResponseV1Schema,
+  z.object({ outcome: z.literal('invalid_subject'), input: z.string(), reason: z.enum(['empty', 'bad_checksum', 'not_an_address_or_name']) }).strict(),
+  z.object({ outcome: z.literal('name_not_found'), input: z.string(), name: z.string() }).strict(),
+  z.object({ outcome: z.literal('names_unavailable'), input: z.string(), name: z.string() }).strict(),
+  z.object({ outcome: z.literal('chain_unavailable'), attempts: z.array(z.object({ provider: z.string(), kind: z.string() }).strict()) }).strict(),
+  z.object({ outcome: z.literal('rate_limited') }).strict(),
+  z.object({ outcome: z.literal('internal_error') }).strict(),
+]);
+export type StillCheckResponseV1 = z.infer<typeof StillCheckResponseV1Schema>;
 import {
   AddressV1Schema,
   CommerceInvoiceV1Schema,

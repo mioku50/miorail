@@ -18,3 +18,4 @@ export { createNames, displayName, parseSubject, resolveSubject, type Names, typ
 export { createMirrorService, type MirrorOutcome, type MirrorService, type MirrorServiceOptions } from './service.js';
 export { computeMirror } from './mirror.js';
 export { formatCents, formatTokenAmount, formatPercentBps } from './format.js';
+export { StillTermsSchema, stillTerms, type StillTerms } from './terms.js';

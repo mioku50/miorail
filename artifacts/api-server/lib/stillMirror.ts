@@ -1,16 +1,8 @@
 import {
-  ADDRESSES,
-  ASSETS,
-  STOCKS,
-  TERMS,
   createEarningsCalendar,
   createMirrorService,
   createNames,
   createProviders,
-  earningsWindow,
-  formatTokenAmount,
-  weekendWindow,
-  type CalendarRead,
   type MirrorOutcome,
   type MirrorService,
 } from '@mioagent/still-engine';
@@ -63,57 +55,3 @@ export const stillMirrorRuntimeV1 = {
     return service;
   },
 };
-
-/** Still's terms with no wallet: the shares, the windows open now and each stock's next report. */
-export function stillTermsV1(read: CalendarRead, now: Date) {
-  const weekend = weekendWindow(now);
-  return {
-    termsVersion: TERMS.version,
-    sharePercentOfProtocol: Number(TERMS.shareOfProtocolBps) / 100,
-    weekend: {
-      stockSharePercentOfProtocol: Number(TERMS.weekendStockShareOfProtocolBps) / 100,
-      window: 'while Wall Street is closed, weekends and market holidays alike: from 20:00 New York time after the last session to 20:00 before the next',
-      activeNow: weekend.active,
-      startsAt: weekend.startsAt.toISOString(),
-      endsAt: weekend.endsAt.toISOString(),
-    },
-    earnings: {
-      stockSharePercentOfProtocol: Number(TERMS.earningsStockShareOfProtocolBps) / 100,
-      window: 'around each company’s earnings report: from 00:00 New York time the day before the report date to 20:00 the day after',
-      calendar: 'Aave V4 API (api.v4.aave.com), the calendar Aave shows next to these reserves',
-      calendarReadAt: read.ok ? read.calendar.readAt.toISOString() : null,
-      stocks: STOCKS.map((stock) => {
-        const dates = read.ok ? read.calendar.dates.get(stock.id) : undefined;
-        // An unread calendar lowers the stock: the earnings rate is the safe side.
-        if (dates === undefined) {
-          return { id: stock.id, reportDate: null, windowStartsAt: null, windowEndsAt: null, countsAtEarningsRateNow: true, calendarRead: false };
-        }
-        const window = earningsWindow(now, dates);
-        return {
-          id: stock.id,
-          reportDate: window?.reportDate ?? null,
-          windowStartsAt: window?.startsAt.toISOString() ?? null,
-          windowEndsAt: window?.endsAt.toISOString() ?? null,
-          countsAtEarningsRateNow: window?.active ?? false,
-          calendarRead: true,
-        };
-      }),
-    },
-    safety: { watchBelowMarginPercent: Number(TERMS.watchBelowBps) / 100, actBelowMarginPercent: Number(TERMS.actBelowBps) / 100 },
-    gasReserveEth: formatTokenAmount(TERMS.ethGasReserveWei, 18, 4),
-    assets: ASSETS.map((asset) => ({
-      id: asset.id,
-      name: asset.name,
-      token: asset.token,
-      venue: asset.kind === 'stock' ? 'Aave V4 Coinbase Stocks' : `Morpho ${asset.symbol === 'ETH' ? 'WETH' : asset.symbol}/USDC`,
-      isin: asset.kind === 'stock' ? asset.isin : null,
-    })),
-    venues: [
-      { name: 'Aave V4 Coinbase Stocks spoke', address: ADDRESSES.aaveSpoke },
-      { name: 'Morpho Blue', address: ADDRESSES.morpho },
-    ],
-    notOfferedTo: 'US persons',
-  };
-}
-
-export type StillTermsV1 = ReturnType<typeof stillTermsV1>;
