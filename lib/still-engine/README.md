@@ -11,13 +11,15 @@ here from Still's `packages/engine` on 2026-10-26, when Still became Miorail's f
   division names its rounding direction.
 - `dividends.ts` and `dividend-calendar.ts`: Aave's dividend calendar, the multiplier snapshot,
   and receipts proven from the issuer's own announcements.
-- `found*.ts`: the bounded LP-reward check. It stays off in production until it has its own
-  RPC budget (see the 2026-10-25 Alchemy incident).
 - `subject.ts`: addresses, Basenames and ENS names, resolved forward and back.
 
-The code is unchanged except for two things. Relative imports now end in `.js`, as elsewhere in
-`lib/`. The tests run on `node:test` instead of vitest: 104 then, 104 now.
+Three things changed in the move. Relative imports now end in `.js`, as elsewhere in `lib/`. The
+tests run on `node:test` instead of vitest: 104 then, 104 after the move. Still's own Found (the
+LP-reward scan) is gone, so 81 remain. Miorail's Found reads Aerodrome and Uniswap rewards for
+both products.
 
-Still is not yet wired into the API, and nothing here is deduplicated yet. The next steps give each
+The API serves the Mirror at `GET /api/public/still/mirror` and the terms at
+`GET /api/public/still/terms`. It reads through Miorail's configured Base endpoint, with Base's
+public one as the second opinion. Nothing here is deduplicated yet. The next steps give each
 question one source: Morpho math beside `rwa-issuer`'s borrow modules, the Aave V4 read beside
 `aaveV4.ts`, and dividends beside the Stocks dividend calendar.

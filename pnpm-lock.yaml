@@ -152,6 +152,9 @@ importers:
       '@mioagent/security':
         specifier: workspace:*
         version: link:../../lib/security
+      '@mioagent/still-engine':
+        specifier: workspace:*
+        version: link:../../lib/still-engine
       '@mioagent/swap-adapters':
         specifier: workspace:*
         version: link:../../lib/swap-adapters

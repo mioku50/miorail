@@ -27,6 +27,7 @@ import { stocksDividendsRouter } from './stocksDividends';
 import { stocksTodayRouter } from './stocksToday';
 import { aavePositionRouter } from './aavePosition';
 import { reopenClaimRouter, reopenGameRouter } from './reopenGame';
+import { publicStillRouter } from './stillPublic';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -54,6 +55,9 @@ routes.use('/public/stocks', publicStocksRouter);
 // Call the reopen is played without a wallet, so it sits before the gate too;
 // moving a device's picks to a wallet is the one part that needs a session.
 routes.use('/public/reopen', reopenGameRouter);
+// Still's wallet check reads public chain state for any address or name, the
+// way stills.lat always has, so it opens without a session too.
+routes.use('/public/still', publicStillRouter);
 // Public agents have no Miorail session. The fixed x402 middleware is the
 // access boundary for these read-only paid resources.
 routes.use('/x402/intelligence/v1', x402IntelligenceRouterV1);

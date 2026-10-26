@@ -44,6 +44,7 @@
     "@mioagent/rwa-market-reality": "workspace:*",
     "@mioagent/runtime-skills": "workspace:*",
     "@mioagent/security": "workspace:*",
+    "@mioagent/still-engine": "workspace:*",
     "@mioagent/swap-adapters": "workspace:*",
     "@mioagent/telegram": "workspace:*",
     "@mioagent/tools": "workspace:*",
