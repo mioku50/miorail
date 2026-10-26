@@ -39,7 +39,7 @@ function heroLabelV1(sky: SkyStateV1, mobile: MobileInputV1 | null): string {
 export function StillHero({ sky, mobile }: { sky: SkyStateV1; mobile: MobileInputV1 | null }) {
   const hours = sessionLabelsV1(sky);
   return (
-    <div className="still-hero">
+    <div className="still-hero" data-phase={sky.phase}>
       <svg viewBox="0 0 390 310" role="img" aria-label={heroLabelV1(sky, mobile)}>
         <SkyLayer phase={sky.phase} sunShare={sky.sunShare} openLabel={hours.open} closeLabel={hours.close} clouds={sky.clouds.length} />
         {mobile ? <StillMobile input={mobile} /> : null}

@@ -192,6 +192,15 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-hero .still-brand { position: absolute; left: 18px; top: 16px; font-size: 28px; }
 /* On a desk the rail carries the name; the sky keeps it on a phone. */
 @media (min-width: 900px) { .still-hero .still-brand { display: none; } }
+/* Dusk keeps the day's page, but its sky is dark: the name, the wires and
+   the loan over it take the night's light inks, and words that may fall on
+   the orange horizon get a dark edge so they read on either band. */
+.still-hero[data-phase='dusk'] {
+  --sm-ink: #EEF1FF; --sm-wire: #EEF1FF; --sm-loan: #EEF1FF; --sm-loan-text: #0B0F2E;
+  --sm-stock: #4D86FF; --sm-stock-text: #0B0F2E; --sm-crypto-fill: #161B4D;
+}
+.still-hero[data-phase='dusk'] .sm-room-label,
+.still-hero[data-phase='dusk'] .sm-label-under { paint-order: stroke; stroke: #1B1F4A; stroke-width: 3px; stroke-linejoin: round; }
 
 .sky-day .sky-band-1 { fill: #7FB8FF; } .sky-day .sky-band-2 { fill: #A9D0FF; } .sky-day .sky-band-3 { fill: #CFE4FF; }
 .sky-dusk .sky-band-1 { fill: #27347A; } .sky-dusk .sky-band-2 { fill: #6B4F93; } .sky-dusk .sky-band-3 { fill: #E8916E; }

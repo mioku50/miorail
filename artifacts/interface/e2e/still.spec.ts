@@ -148,6 +148,16 @@ test('while Wall Street is closed the frame is night, and the sky says until whe
   expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
 });
 
+test('after hours the sky is dark, so the name and the mobile over it are drawn light', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await install(page, true, new Date('2026-10-26T21:48:00Z')); // 5:48 PM in New York
+  await page.goto('/');
+  await expect(page.getByText('After hours · full limits', { exact: true })).toBeVisible();
+  await expect(page.locator('.still-hero')).toHaveAttribute('data-phase', 'dusk');
+  expect(await page.locator('.still-hero .still-brand').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(238, 241, 255)');
+  expect(await page.locator('.still-hero .sm-wire').first().evaluate((e) => getComputedStyle(e).stroke)).toBe('rgb(238, 241, 255)');
+});
+
 test('a link that carried a question to "/" still lands on Stocks', async ({ page }) => {
   await install(page, false, MONDAY);
   await page.goto('/?key=security%3Aisin%3AUS67066G1040');
