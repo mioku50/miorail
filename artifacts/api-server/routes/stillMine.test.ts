@@ -19,7 +19,6 @@ function app(wallet: string | null, answer: (input: string) => Promise<MirrorOut
       return answer(input);
     },
     earnings: async () => ({ ok: false }),
-    dividends: async () => assert.fail('not asked'),
   };
   stillMineRuntimeV1.service = () => service;
   const server = express();

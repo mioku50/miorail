@@ -6,8 +6,6 @@
 
 import type { Address } from 'viem';
 import type { CalendarRead, CalendarSource } from './calendar.js';
-import { createDividendSource, type DividendSource } from './dividends.js';
-import type { DividendReport } from './dividend-report.js';
 import { computeMirror } from './mirror.js';
 import { loadUniverse, readWallet, type Universe } from './read.js';
 import type { MirrorReport } from './report.js';
@@ -28,7 +26,6 @@ export interface MirrorServiceOptions {
   names: Names | null;
   /** When each stock reports earnings. It keeps its own clock; a stock without a date counts at the earnings rate. */
   calendar: CalendarSource;
-  dividends?: DividendSource;
   universeTtlMs?: number;
   reportTtlMs?: number;
   nameTtlMs?: number;
@@ -39,13 +36,10 @@ export interface MirrorService {
   check(input: string): Promise<MirrorOutcome>;
   /** The earnings calendar the reports are computed with, for the terms tool. */
   earnings(): Promise<CalendarRead>;
-  /** Public per-share declarations and verified token adjustments, never a wallet payment. */
-  dividends(): Promise<DividendReport>;
 }
 
 export function createMirrorService(options: MirrorServiceOptions): MirrorService {
   const { providers, names, calendar } = options;
-  const dividends = options.dividends ?? createDividendSource({ providers, now: options.now });
   const universeTtlMs = options.universeTtlMs ?? 10 * 60_000;
   const reportTtlMs = options.reportTtlMs ?? 20_000;
   const nameTtlMs = options.nameTtlMs ?? 10 * 60_000;
@@ -120,7 +114,6 @@ export function createMirrorService(options: MirrorServiceOptions): MirrorServic
     outcome.outcome === 'report' ? { ...outcome, report: { ...outcome.report, subject } } : outcome;
 
   return {
-    dividends: () => dividends.current(),
     earnings: () => calendar.current(),
     async check(raw) {
       const parsed = parseSubject(raw);

@@ -28,9 +28,9 @@ import { baseRpcUrlV1 } from './earnPreflight.js';
 // refuses. A check is a few Multicall3 batches at one block. The universe is
 // held ten minutes and a complete report twenty seconds.
 //
-// Still's dividend reader is not exposed. Miorail's Stocks calendar answers
-// dividend questions, and the two readers merge into one before a second
-// source goes public.
+// Dividends are not read here. Miorail's Stocks calendar is their one source:
+// Still's own reader was removed on 2026-10-26, after the two agreed on every
+// event they shared (docs/STILL.md).
 // ---------------------------------------------------------------------------
 
 export function stillRpcUrlsV1(env: NodeJS.ProcessEnv = process.env): string[] {

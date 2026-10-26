@@ -21,7 +21,6 @@ function fakeService(answer: (input: string) => Promise<MirrorOutcome>, calendar
       return answer(input);
     },
     earnings: async () => calendar,
-    dividends: async () => assert.fail('the public door does not serve Still’s dividend reader'),
   };
   return { service, asked };
 }

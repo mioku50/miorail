@@ -6,7 +6,8 @@ Coinbase's tokenized stocks (the Aave V4 "Coinbase Stocks" spoke on Base) and ag
 2026-10-26 its code moved here, and Miorail became the engine under it.
 
 Code: [`lib/still-engine`](../lib/still-engine/README.md). API: `GET /api/public/still/mirror` and
-`GET /api/public/still/terms` (`artifacts/api-server/routes/stillPublic.ts`).
+`GET /api/public/still/terms` (`artifacts/api-server/routes/stillPublic.ts`), and for the signed-in
+wallet only, `GET /api/still/mine` (`routes/stillMine.ts`).
 
 ## Terms
 
@@ -48,8 +49,33 @@ Base endpoint first, with Base's public endpoint as the second opinion. Still's 
 removed on 2026-10-26, because Miorail's Found already reads Aerodrome and Uniswap rewards for a
 wallet.
 
-## Dividends
+## One source per question
 
-Miorail's Stocks calendar is the one public source for dividends. Still's own reader
-(`dividends.ts`) proves a per-share receipt from the issuer's `Announcement` and `EndAnnouncement`
-brackets around the multiplier change. It is not exposed while the two readers merge.
+Still arrived with its own answers to questions Miorail already answered. On 2026-10-26 each pair
+was run on the same data. Then one was kept and the other removed.
+
+| Question | The one source | Removed |
+| --- | --- | --- |
+| Morpho's arithmetic: interest, debt, health, liquidation price | `rwa-issuer/morphoBorrowMath`, the module the borrow review checks a borrow with | Still's `morpho.ts` |
+| A wallet's Aave V4 loan | The chain, read by the Mirror (`/api/still/mine`) | The Aave API's `userPosition` read |
+| Dividends | Miorail's Stocks calendar | Still's dividend reader |
+
+- **Morpho.** At block 53,075,866, over 40,000 positions, debts and liquidation prices agreed to
+  the unit. Still rounded the limit and the health factor once where the contract rounds twice:
+  its health factors differed in the last digits, and one limit in 20,000 was a cent higher. The
+  replay test now borrows what the Mirror offers through the review's own check.
+- **Aave V4.** At block 53,118,515, the chain and the Aave API agreed on every reserve: collateral
+  factor, pause, freeze, caps and supplied amounts. USDC totals differed by half a cent of interest
+  accrued between the two reads. The API's 3.55% is a compounded rate (APY), and the chain's 3.49%
+  is the same rate, uncompounded (APR). The console's Aave card now reads the person's position
+  from the chain, so it shows the same debt as Still. A stock's page still lists the market's terms
+  from the API, as it does for every other venue. The two were not compared on one person's
+  position: no public borrower could be found without a log scan, which Base's public endpoint
+  refuses.
+- **Dividends.** Aave's calendar (Still's source) and Miorail's (the companies' own releases)
+  agreed on every amount, record date and payment date they share. The three conversions Still had
+  proven (Alphabet on September 14, Meta on September 28, NVIDIA on October 1) match Miorail's to
+  the second and to the last digit of the multiplier. The reinvested value per token agreed within
+  $0.0001. Miorail's calendar also has what Aave's lacked: Microsoft's next dividend ($0.98, paid
+  December 10), the record-date check that found nothing owed to AAPLc and MSFTc, and 211 stocks
+  instead of seven. The earnings calendar has only one source, the Aave V4 API, and stays.

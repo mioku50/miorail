@@ -18,5 +18,3 @@ export { createNames, displayName, parseSubject, resolveSubject, type Names, typ
 export { createMirrorService, type MirrorOutcome, type MirrorService, type MirrorServiceOptions } from './service.js';
 export { computeMirror } from './mirror.js';
 export { formatCents, formatTokenAmount, formatPercentBps } from './format.js';
-export { createDividendSource, unreadDividendReport, type DividendSource } from './dividends.js';
-export type * from './dividend-report.js';
