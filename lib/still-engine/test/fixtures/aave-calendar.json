@@ -1,0 +1,166 @@
+{
+  "_source": "Aave V4 API tokenizedStocks, read 2026-10-25 around 18:08 UTC; earnings trimmed to the last four entries per stock",
+  "data": {
+    "tokenizedStocks": {
+      "items": [
+        {
+          "chainId": 8453,
+          "address": "0xb200000000000000000000C2e324d24d7eEcd1fb",
+          "tickerSymbol": "AAPL",
+          "offchain": {
+            "nextEarningsReport": "2026-11-02T05:00:00+00:00",
+            "earnings": [
+              {
+                "reportDate": "2026-01-29T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-04-30T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-07-30T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-11-02T05:00:00+00:00"
+              }
+            ]
+          }
+        },
+        {
+          "chainId": 8453,
+          "address": "0xb200000000000000000000d9192b6B456483C2E8",
+          "tickerSymbol": "AMZN",
+          "offchain": {
+            "nextEarningsReport": "2026-10-29T04:00:00+00:00",
+            "earnings": [
+              {
+                "reportDate": "2026-02-05T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-04-29T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-07-30T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-10-29T04:00:00+00:00"
+              }
+            ]
+          }
+        },
+        {
+          "chainId": 8453,
+          "address": "0xb2000000000000000000002D0BA3164cc74f58B7",
+          "tickerSymbol": "GOOGL",
+          "offchain": {
+            "nextEarningsReport": "2026-10-28T04:00:00+00:00",
+            "earnings": [
+              {
+                "reportDate": "2026-02-04T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-04-29T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-07-22T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-10-28T04:00:00+00:00"
+              }
+            ]
+          }
+        },
+        {
+          "chainId": 8453,
+          "address": "0xb2000000000000000000008bC8786B856E61707C",
+          "tickerSymbol": "META",
+          "offchain": {
+            "nextEarningsReport": null,
+            "earnings": [
+              {
+                "reportDate": "2026-01-28T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-04-29T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-07-29T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-10-21T04:00:00+00:00"
+              }
+            ]
+          }
+        },
+        {
+          "chainId": 8453,
+          "address": "0xB200000000000000000000Ab99cFa739E253872B",
+          "tickerSymbol": "MSFT",
+          "offchain": {
+            "nextEarningsReport": "2026-10-28T04:00:00+00:00",
+            "earnings": [
+              {
+                "reportDate": "2026-01-28T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-04-29T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-07-29T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-10-28T04:00:00+00:00"
+              }
+            ]
+          }
+        },
+        {
+          "chainId": 8453,
+          "address": "0xb20000000000000000000078ee7ce2fE4908108C",
+          "tickerSymbol": "NVDA",
+          "offchain": {
+            "nextEarningsReport": "2026-11-18T05:00:00+00:00",
+            "earnings": [
+              {
+                "reportDate": "2026-02-25T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-05-20T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-08-26T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-11-18T05:00:00+00:00"
+              }
+            ]
+          }
+        },
+        {
+          "chainId": 8453,
+          "address": "0xb2000000000000000000001e800a7f5189430cD0",
+          "tickerSymbol": "TSLA",
+          "offchain": {
+            "nextEarningsReport": null,
+            "earnings": [
+              {
+                "reportDate": "2026-01-28T05:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-04-22T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-07-22T04:00:00+00:00"
+              },
+              {
+                "reportDate": "2026-10-21T04:00:00+00:00"
+              }
+            ]
+          }
+        }
+      ],
+      "pageInfo": {
+        "next": null
+      }
+    }
+  }
+}
