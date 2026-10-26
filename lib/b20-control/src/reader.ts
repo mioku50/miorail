@@ -127,6 +127,28 @@ export interface B20BatchCallV1 {
  */
 export const RETRYABLE_REASONS_V1: readonly B20RpcReasonV1[] = ['rate_limited', 'rpc_timeout'];
 
+/**
+ * The reasons that mean the ENDPOINT did not answer, so another endpoint may.
+ *
+ * Wider than the retryable set: an endpoint out of its plan (Alchemy's HTTP 429
+ * "Monthly capacity limit exceeded", 2026-10-25) or out of its day (Infura's
+ * 402) refuses the same question however long it is waited for, while another
+ * endpoint answers it at once. `reverted` and `empty_result` stay out for the
+ * reason above: they are the chain's answer, and a second endpoint asked about
+ * the same pinned block can only repeat them.
+ */
+export const ENDPOINT_FAILURE_REASONS_V1: readonly B20RpcReasonV1[] = [
+  'rpc_unavailable',
+  'rpc_timeout',
+  'rpc_error',
+  'rate_limited',
+  'invalid_response',
+];
+
+export function isEndpointFailureV1(reason: B20RpcReasonV1): boolean {
+  return ENDPOINT_FAILURE_REASONS_V1.includes(reason);
+}
+
 export interface B20BlockAnchorV1 {
   blockNumber: string;
   blockHash: HashV1;
@@ -218,6 +240,74 @@ export async function callManyV1(
   const results: B20RpcResultV1<string>[] = [];
   for (const input of inputs) results.push(await reader.call(input));
   return results;
+}
+
+export type B20AnchoredReaderV1<R> =
+  | { ok: true; reader: R; anchor: B20BlockAnchorV1; position: number; refusals: B20RpcReasonV1[] }
+  | { ok: false; refusals: B20RpcReasonV1[] };
+
+/**
+ * The first reader, in the order given, whose endpoint answers a block anchor.
+ *
+ * A pass pins every read to ONE block, so it reads through ONE endpoint: the
+ * endpoint is chosen here, at the anchor, and never mixed afterwards. Only an
+ * endpoint failure moves on to the next reader. With a single endpoint, the
+ * pools worker stored nothing for more than eleven hours from 2026-10-25 21:33
+ * UTC while two other configured endpoints answered.
+ */
+export async function anchorThroughFirstAnsweringV1<R extends Pick<B20ReaderV1, 'readBlockAnchor'>>(
+  readers: readonly R[],
+): Promise<B20AnchoredReaderV1<R>> {
+  const refusals: B20RpcReasonV1[] = [];
+  for (const [position, reader] of readers.entries()) {
+    const anchor = await reader.readBlockAnchor();
+    if (anchor.ok) return { ok: true, reader, anchor: anchor.value, position, refusals };
+    refusals.push(anchor.reason);
+    if (!isEndpointFailureV1(anchor.reason)) break;
+  }
+  return { ok: false, refusals };
+}
+
+/**
+ * The same reader, with every pinned call its endpoint did not answer asked of
+ * the next endpoint, in order.
+ *
+ * Only `call` and `callMany` fail over. Both are pinned to the pass's block, so
+ * an answer from any endpoint describes the same state; the anchor and the
+ * header stay with the endpoint that gave them. Measured 2026-10-26: the pools
+ * pass through mainnet.base.org alone left 32 balances unread where Alchemy had
+ * left 2.
+ */
+export function withCallFailoverV1(primary: B20ReaderV1, others: readonly B20ReaderV1[]): B20ReaderV1 {
+  if (others.length === 0) return primary;
+  return {
+    ...primary,
+    async call(input) {
+      let answer = await primary.call(input);
+      for (const other of others) {
+        if (answer.ok || !isEndpointFailureV1(answer.reason)) break;
+        answer = await other.call(input);
+      }
+      return answer;
+    },
+    async callMany(inputs) {
+      const answers = [...(await callManyV1(primary, inputs))];
+      for (const other of others) {
+        const unanswered = answers.flatMap((answer, index) =>
+          !answer.ok && isEndpointFailureV1(answer.reason) ? [index] : [],
+        );
+        if (unanswered.length === 0) break;
+        const again = await callManyV1(
+          other,
+          unanswered.map((index) => inputs[index]!),
+        );
+        unanswered.forEach((index, at) => {
+          answers[index] = again[at]!;
+        });
+      }
+      return answers;
+    },
+  };
 }
 
 interface JsonRpcEnvelope {

@@ -2,10 +2,9 @@ import { logger } from '@mioagent/utils';
 import { stableHashV1, type NftPurchaseBlueprintV1, type SimulationStateV1 } from '@mioagent/route-domain';
 import {
   SimulationProviderResponseV1Schema,
-  createSimulationProviderFromConfigV1,
-  resolveSimulationProviderConfigV1,
   type SimulationProvider,
 } from '@mioagent/paid-intelligence';
+import { buildSimulationChainV1, createSimulationChainProviderV1 } from './swapSimulation.js';
 
 // ---------------------------------------------------------------------------
 // T65.1 §3 — the NFT Blueprint's simulation.
@@ -58,7 +57,10 @@ export async function simulateNftBlueprintV1(
 
   const provider =
     deps.provider === undefined
-      ? createSimulationProviderFromConfigV1(resolveSimulationProviderConfigV1(process.env))
+      ? createSimulationChainProviderV1({
+          chain: buildSimulationChainV1(process.env),
+          label: 'NFT simulation provider',
+        })
       : deps.provider;
   if (!provider) return unavailable(requestHash, nowIso, 'provider_not_configured');
 

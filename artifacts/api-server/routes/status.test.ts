@@ -5,6 +5,7 @@ import request from 'supertest';
 import { app } from '../app.js';
 import { clearTokenSecurityCacheForTests, getTokenSecurityProviderFromEnv, setTokenSecurityHealthStatus } from '@mioagent/data-providers';
 import { clearX402FacilitatorStatusForTests } from '@mioagent/x402-gateway';
+import { StatusResponseSchema } from '@mioagent/api-zod';
 import { clearBaseMcpStatusForTests, recordBaseMcpToolProbe } from '../lib/baseMcpStatus.js';
 import { statusRouteRuntime } from './status.js';
 import {
@@ -114,6 +115,27 @@ describe('Status API', () => {
       Object.prototype.hasOwnProperty.call(response.body.rpc, 'meteredBudget'),
       'rpc.meteredBudget must survive the response schema',
     );
+  });
+
+  test('the metered budget carries Alchemy\'s refusal through the response schema', () => {
+    // 2026-10-25: the shared Alchemy account ran out while this block read
+    // "within budget". The refusal is the figure that was missing, and the
+    // schema strips whatever it does not declare.
+    const refusal = { at: '2026-10-26T09:00:00.000Z', reason: 'rate_limited' };
+    const metered = StatusResponseSchema.shape.rpc.shape.meteredBudget.parse({
+      month: '2026-10',
+      spentCu: 6_947_814,
+      budgetCu: 300_000_000,
+      spendableCu: 270_000_000,
+      remainingCu: 263_052_186,
+      usedFraction: 0.023,
+      remainingEthCalls: 10_117_391,
+      exhausted: false,
+      alchemyConfigured: true,
+      fallbackCalls: 0,
+      alchemyRefusal: refusal,
+    });
+    assert.deepStrictEqual(metered?.alchemyRefusal, refusal);
   });
 
   test('GET /api/status exposes only safe migration booleans with compatibility defaults', async () => {

@@ -2707,6 +2707,9 @@ export const StatusResponseSchema = z.object({
         exhausted: z.boolean(),
         alchemyConfigured: z.boolean(),
         fallbackCalls: z.number(),
+        /** The last time Alchemy did not answer a budgeted read in this server
+         * process; null when it has not failed since the process started. */
+        alchemyRefusal: z.object({ at: z.string(), reason: z.string() }).nullable().optional(),
       })
       .nullable()
       .optional(),

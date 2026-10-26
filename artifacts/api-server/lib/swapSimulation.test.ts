@@ -5,6 +5,8 @@ import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domai
 import type { SimulationProvider } from '@mioagent/paid-intelligence';
 
 import {
+  createSimulationChainProviderV1,
+  orderSimulationChainV1,
   resetSimulationProviderHealthV1,
   simulateSwapCallsV1,
   probeSimulationProviderHealthV1,
@@ -546,5 +548,102 @@ describe('the boot probe reports through one channel', () => {
     } finally {
       restore();
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 2026-10-25: the shared Alchemy account ran out of capacity. The B20 entry
+// plan, the NFT purchase and the opportunity round trip each built the
+// configured primary alone and were refused, while the chain above answered
+// swaps through mainnet.base.org. They now take the chain as one provider.
+// ---------------------------------------------------------------------------
+
+describe('the chain as one provider, for the callers that parse their own answer', () => {
+  const simulationRequest = {
+    chainId: 8453 as const,
+    walletAddress: WALLET,
+    blueprintHash: 'blueprint:entry',
+    callsHash: hashApprovedCallsV1(CALLS),
+    calls: CALLS,
+  };
+
+  function recorded(
+    providerId: string,
+    asked: string[],
+    result: Awaited<ReturnType<SimulationProvider['simulate']>>,
+  ): SimulationProvider {
+    return {
+      providerId,
+      async simulate() {
+        asked.push(providerId);
+        return result;
+      },
+    };
+  }
+
+  test('an exhausted primary is asked, and the next batch provider answers', async () => {
+    resetSimulationProviderHealthV1();
+    const asked: string[] = [];
+    const provider = createSimulationChainProviderV1({
+      chain: orderSimulationChainV1(
+        recorded('alchemy-eth-simulate-v1', asked, {
+          ok: false,
+          errorCode: 'provider_rate_limited',
+          detail: 'HTTP 429',
+        }),
+        null,
+        recorded('base-public-eth-simulate-v1', asked, { ok: true, body: SUCCESS_BODY }),
+        null,
+      ),
+      label: 'Test simulation provider',
+    });
+    assert.ok(provider);
+    const result = await provider.simulate(simulationRequest);
+    assert.deepEqual(result, { ok: true, body: SUCCESS_BODY });
+    assert.deepEqual(asked, ['alchemy-eth-simulate-v1', 'base-public-eth-simulate-v1']);
+  });
+
+  test('a failure that is not worth asking elsewhere ends the chain with its own code', async () => {
+    resetSimulationProviderHealthV1();
+    const asked: string[] = [];
+    const provider = createSimulationChainProviderV1({
+      chain: orderSimulationChainV1(
+        recorded('alchemy-eth-simulate-v1', asked, {
+          ok: false,
+          errorCode: 'provider_insufficient_funds',
+          detail: 'the wallet cannot pay',
+        }),
+        null,
+        recorded('base-public-eth-simulate-v1', asked, { ok: true, body: SUCCESS_BODY }),
+        null,
+      ),
+      label: 'Test simulation provider',
+    });
+    const result = await provider!.simulate(simulationRequest);
+    assert.equal(result.ok, false);
+    assert.equal(result.ok ? null : result.errorCode, 'provider_insufficient_funds');
+    assert.deepEqual(asked, ['alchemy-eth-simulate-v1']);
+  });
+
+  test('an answer the chain cannot validate is a schema failure, never a body', async () => {
+    resetSimulationProviderHealthV1();
+    const provider = createSimulationChainProviderV1({
+      chain: orderSimulationChainV1(
+        recorded('base-public-eth-simulate-v1', [], { ok: true, body: { ...SUCCESS_BODY, blockNumber: 0 } }),
+        null,
+        null,
+        null,
+      ),
+      label: 'Test simulation provider',
+    });
+    const result = await provider!.simulate(simulationRequest);
+    assert.equal(result.ok ? null : result.errorCode, 'provider_invalid_schema');
+  });
+
+  test('an empty chain is no provider at all', () => {
+    assert.equal(
+      createSimulationChainProviderV1({ chain: orderSimulationChainV1(null, null, null, null), label: 'x' }),
+      null,
+    );
   });
 });

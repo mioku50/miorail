@@ -1,6 +1,4 @@
 import {
-  createSimulationProviderFromConfigV1,
-  resolveSimulationProviderConfigV1,
   SimulationProviderResponseV1Schema,
   type SimulationProvider,
 } from '@mioagent/paid-intelligence';
@@ -34,6 +32,7 @@ import {
   verifyEntrySimulationV1,
   type B20EntryBlueprintV1,
 } from './b20EntryPlan.js';
+import { buildSimulationChainV1, createSimulationChainProviderV1 } from './swapSimulation.js';
 
 // ---------------------------------------------------------------------------
 // T68E — the prepare-entry run.
@@ -229,7 +228,10 @@ export async function prepareB20EntryV1(
   // does a near-identical batch that passed minutes ago.
   const provider =
     deps.provider === undefined
-      ? createSimulationProviderFromConfigV1(resolveSimulationProviderConfigV1(process.env))
+      ? createSimulationChainProviderV1({
+          chain: buildSimulationChainV1(process.env),
+          label: 'B20 entry simulation provider',
+        })
       : deps.provider;
   if (!provider) {
     return refuse('entry_simulation_unavailable', ENTRY_PLAN_REFUSAL_COPY_V1.entry_simulation_unavailable);

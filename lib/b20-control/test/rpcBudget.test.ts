@@ -75,6 +75,21 @@ describe('which endpoint a batch goes to', () => {
     });
   });
 
+  test("Alchemy's refusal outranks the ledger", () => {
+    // 2026-10-25: another project spent the shared account's month while this
+    // ledger read 6.9M of 300M CU. The ledger cannot see that spend; the
+    // refusal can.
+    assert.deepEqual(
+      chooseRpcEndpointV1({ spentCu: 6_947_814, alchemyConfigured: true, alchemyRefusing: true }, ['eth_call']),
+      { provider: 'fallback', reason: 'alchemy_refusing' },
+    );
+    assert.equal(
+      chooseRpcEndpointV1({ spentCu: 6_947_814, alchemyConfigured: true, alchemyRefusing: false }, ['eth_call'])
+        .provider,
+      'alchemy',
+    );
+  });
+
   test('a caller may set its own budget, and zero means never', () => {
     const choice = chooseRpcEndpointV1(
       { spentCu: 0, alchemyConfigured: true, budgetCu: 0 },

@@ -25,10 +25,12 @@
  *   pnpm tsx scripts/rwa_measure_pools.ts --gap-ms 2000 --max-tokens 20
  */
 import {
+  anchorThroughFirstAnsweringV1,
   callManyV1,
   createB20ReaderV1,
   decodeUint8V1,
   encodeNoArgsV1,
+  withCallFailoverV1,
 } from '@mioagent/b20-control';
 import { client, closeDb } from '@mioagent/db';
 import { createMarketTailSourceV1 } from '@mioagent/market-tail';
@@ -83,14 +85,16 @@ async function main(): Promise<void> {
   // same pass answered 121 complete readings against one endpoint and 64 with a
   // third of the pairs unread against another, purely on rate limits. The
   // endpoint is a deployment decision, so it is an env var rather than a choice
-  // made here.
-  const rpcUrl = (
-    process.env.MIORAIL_POOLS_RPC_URL ||
-    process.env.BASE_MAINNET_RPC_URL ||
-    process.env.BASE_RPC_URL ||
-    ''
-  ).trim();
-  if (!rpcUrl) throw new Error('a Base RPC endpoint is required to read a pool balance');
+  // made here. The deployment's other two endpoints follow it, each asked only
+  // when the one before it did not answer the anchor.
+  const rpcUrls = [
+    ...new Set(
+      [process.env.MIORAIL_POOLS_RPC_URL, process.env.BASE_MAINNET_RPC_URL, process.env.BASE_RPC_URL]
+        .map((url) => (url ?? '').trim())
+        .filter((url) => url.length > 0),
+    ),
+  ];
+  if (rpcUrls.length === 0) throw new Error('a Base RPC endpoint is required to read a pool balance');
 
   const tail = createDatabaseMarketTailRepository(client);
   const underlyings = createDatabaseUnderlyingAssetRepository(client);
@@ -98,7 +102,7 @@ async function main(): Promise<void> {
   // Retries are the difference between "the other side was not read" and a
   // complete row: every failure this worker saw in production was a rate-limit
   // response, which the next attempt answers.
-  const reader = createB20ReaderV1({ rpcUrl, maxRetries: 5, timeoutMs: 15_000 });
+  const readers = rpcUrls.map((rpcUrl) => createB20ReaderV1({ rpcUrl, maxRetries: 5, timeoutMs: 15_000 }));
 
   // The corpus is the REVIEWED representations, never every token that ever
   // appeared in a pool. A pool holding a token nobody reviewed has nothing to
@@ -140,16 +144,33 @@ async function main(): Promise<void> {
   );
   if (poolsByToken.size === 0) return;
 
-  const anchorRead = await reader.readBlockAnchor();
-  if (!anchorRead.ok) {
+  const anchored = await anchorThroughFirstAnsweringV1(readers);
+  if (!anchored.ok) {
     // Every balance is pinned to one block, so a pool and its pair describe one
     // moment. Without an anchor there is nothing to pin them to, and a mixed
     // set is worse than none — the difference shows up exactly when the market
     // is moving, which is when somebody is reading.
-    console.log(`  no block anchor (${anchorRead.reason}) — nothing read, nothing stored`);
+    //
+    // And a pass that read nothing failed. This line used to exit 0, so on
+    // 2026-10-25 the ops alert announced the unit back to normal while no pool
+    // had been read for hours.
+    console.error(
+      `  no block anchor (${anchored.refusals.join(', ')}) from ${readers.length} endpoint(s) — ` +
+        'nothing read, nothing stored',
+    );
+    process.exitCode = 1;
     return;
   }
-  const anchor = anchorRead.value;
+  const { anchor } = anchored;
+  // A pinned call the anchoring endpoint does not answer is asked of the ones
+  // after it. Not the ones before: they have just refused the anchor.
+  const reader = withCallFailoverV1(anchored.reader, readers.slice(anchored.position + 1));
+  if (anchored.position > 0) {
+    console.log(
+      `  the pools endpoint did not answer (${anchored.refusals.join(', ')}); ` +
+        `reading through endpoint ${anchored.position + 1} of ${readers.length}`,
+    );
+  }
   // The anchor carries its block as a decimal STRING, and the reading stores a
   // number: converting here rather than at the store keeps the store strict.
   const blockNumber = Number.parseInt(anchor.blockNumber, 10);
@@ -267,6 +288,12 @@ async function main(): Promise<void> {
     `measured ${tokensMeasured} token(s), wrote ${rowsWritten} reading(s); ` +
       `${notPools} address(es) answered no factory, ${unread} balance(s) unread`,
   );
+  if (tokensMeasured === 0) {
+    // Anchored and then nothing: the endpoint stopped answering mid-pass. The
+    // unit fails for the same reason a missing anchor does.
+    console.error('measured no token — the pass failed');
+    process.exitCode = 1;
+  }
 
   await measurePoolYieldsV1({ reader, readings, tokens: [...poolsByToken.keys()], anchor, blockNumber });
 }

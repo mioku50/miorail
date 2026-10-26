@@ -78,13 +78,23 @@ export const RPC_RESERVE_FRACTION_V1 = 0.1;
 
 export type RpcEndpointChoiceV1 =
   | { provider: 'alchemy'; reason: 'within_budget' }
-  | { provider: 'fallback'; reason: 'no_alchemy_endpoint' | 'budget_exhausted' | 'batch_exceeds_remaining' };
+  | {
+      provider: 'fallback';
+      reason: 'no_alchemy_endpoint' | 'alchemy_refusing' | 'budget_exhausted' | 'batch_exceeds_remaining';
+    };
 
 export interface RpcBudgetStateV1 {
   /** Compute units already spent this calendar month, from durable storage. */
   spentCu: number;
   /** Null when nothing is configured; a URL is never logged from here. */
   alchemyConfigured: boolean;
+  /**
+   * Alchemy refused a read a moment ago. Its refusal outranks the ledger: the
+   * account is shared with other projects, whose spend no ledger here can see.
+   * On 2026-10-25 one of them spent the month while this ledger read 6.9M of
+   * 300M CU, and every read that trusted the ledger was refused for hours.
+   */
+  alchemyRefusing?: boolean;
   budgetCu?: number;
   reserveFraction?: number;
 }
@@ -102,6 +112,7 @@ export function chooseRpcEndpointV1(
   batchMethods: readonly string[],
 ): RpcEndpointChoiceV1 {
   if (!state.alchemyConfigured) return { provider: 'fallback', reason: 'no_alchemy_endpoint' };
+  if (state.alchemyRefusing) return { provider: 'fallback', reason: 'alchemy_refusing' };
   const budget = state.budgetCu ?? RPC_MONTHLY_CU_BUDGET_V1;
   const reserve = budget * (state.reserveFraction ?? RPC_RESERVE_FRACTION_V1);
   const spendable = budget - reserve;

@@ -6,6 +6,7 @@ import {
   createSimulationProviderFromConfigV1,
   resolveSimulationProviderConfigV1,
   type SimulationProvider,
+  type SimulationProviderErrorCodeV1,
   type SimulationProviderRequestV1,
   type SimulationProviderResponseV1,
   type SimulationProviderResultV1,
@@ -222,7 +223,7 @@ export function buildSimulationChainV1(env: NodeJS.ProcessEnv): SimulationChainV
  */
 export type SimulationChainAnswerV1 =
   | { ok: true; providerId: string; response: SimulationProviderResponseV1 }
-  | { ok: false; errorCode: string };
+  | { ok: false; errorCode: SimulationProviderErrorCodeV1 | 'invalid_response' };
 
 /**
  * Runs an ordered provider chain once and returns what it established.
@@ -305,6 +306,46 @@ export async function runSimulationChainV1(input: {
   // against. Without one there is a result and nothing to cite it to.
   if (!(parsed.data.blockNumber > 0)) return { ok: false, errorCode: 'invalid_response' };
   return { ok: true, providerId: answeredBy.providerId, response: parsed.data };
+}
+
+/**
+ * The chain as ONE provider, for the callers that read a provider's answer
+ * themselves: the B20 entry plan, the NFT purchase and the opportunity round
+ * trip.
+ *
+ * They used to build the configured primary alone. When the shared Alchemy
+ * account ran out of capacity on 2026-10-25, every one of them was refused
+ * while this chain answered swaps through mainnet.base.org. The order, the retry
+ * rule and the batch-health verdict are `runSimulationChainV1`'s, and the body
+ * handed back is the one it already validated.
+ */
+export function createSimulationChainProviderV1(input: {
+  chain: SimulationChainV1;
+  /** Prefix for the operator log lines, as in `runSimulationChainV1`. */
+  label: string;
+}): SimulationProvider | null {
+  const { chain, label } = input;
+  const primary = chain.providers[0];
+  if (!primary) return null;
+  return {
+    providerId: primary.providerId,
+    async simulate(request) {
+      const answer = await runSimulationChainV1({
+        chain,
+        request,
+        nowIso: new Date().toISOString(),
+        label,
+        logContext: { blueprintHash: request.blueprintHash, callsHash: request.callsHash },
+      });
+      if (answer.ok) return { ok: true, body: answer.response };
+      return {
+        ok: false,
+        errorCode: answer.errorCode === 'invalid_response' ? 'provider_invalid_schema' : answer.errorCode,
+        // Each provider's own failure is already in the log, under the label.
+        detail: 'the simulation chain established nothing; every provider it asked is logged',
+      };
+    },
+  };
 }
 
 

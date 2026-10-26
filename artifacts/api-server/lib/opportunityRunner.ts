@@ -2,8 +2,6 @@ import { logger } from '@mioagent/utils';
 import { stableHashV1 } from '@mioagent/route-domain';
 import {
   SimulationProviderResponseV1Schema,
-  createSimulationProviderFromConfigV1,
-  resolveSimulationProviderConfigV1,
   type SimulationProvider,
 } from '@mioagent/paid-intelligence';
 import {
@@ -21,6 +19,7 @@ import {
   type CertifiedOpportunityV1,
   type SimulationOutcomeLikeV1,
 } from './opportunityClearance.js';
+import { buildSimulationChainV1, createSimulationChainProviderV1 } from './swapSimulation.js';
 
 // ---------------------------------------------------------------------------
 // T68D — the two-pass run.
@@ -171,7 +170,10 @@ export async function runOpportunityV1(
 
   const provider =
     deps.provider === undefined
-      ? createSimulationProviderFromConfigV1(resolveSimulationProviderConfigV1(process.env))
+      ? createSimulationChainProviderV1({
+          chain: buildSimulationChainV1(process.env),
+          label: 'B20 opportunity simulation provider',
+        })
       : deps.provider;
   if (!provider) return unmeasured('simulation_unavailable');
 

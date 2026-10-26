@@ -2,6 +2,7 @@ import { Router } from 'express';
 import { StatusResponseSchema } from '@mioagent/api-zod';
 import { getTokenBalancesProviderFromEnv, getPriceProviderFromEnv, getTokenSecurityProviderFromEnv, getApprovalProviderFromEnv } from '@mioagent/data-providers';
 import { getProviderBudgetSnapshot, getProviderCacheDiagnostics } from '../lib/providerCache.js';
+import { lastAlchemyRefusalV1 } from '../lib/budgetedRpc.js';
 import { rpcBudgetReportV1 } from '@mioagent/b20-control';
 import { client } from '@mioagent/db';
 import { createDatabaseRpcCuLedgerRepository } from '@mioagent/route-storage';
@@ -318,6 +319,10 @@ statusRouter.get('/', async (req, res, next) => {
         // How much of the month ran on the fallback, which is the number that
         // says whether the budget is actually holding.
         fallbackCalls,
+        // The ledger only sees this deployment's spend. When the shared account
+        // ran out on 2026-10-25 this block said "within budget" while every
+        // Alchemy call was refused; the refusal is the figure that was missing.
+        alchemyRefusal: lastAlchemyRefusalV1(),
       };
     } catch {
       baseStatus.rpc.meteredBudget = null;
