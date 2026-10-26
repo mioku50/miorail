@@ -72,7 +72,7 @@ export function stillTermsV1(read: CalendarRead, now: Date) {
     sharePercentOfProtocol: Number(TERMS.shareOfProtocolBps) / 100,
     weekend: {
       stockSharePercentOfProtocol: Number(TERMS.weekendStockShareOfProtocolBps) / 100,
-      window: 'Friday 20:00 to Sunday 20:00, New York time',
+      window: 'while Wall Street is closed, weekends and market holidays alike: from 20:00 New York time after the last session to 20:00 before the next',
       activeNow: weekend.active,
       startsAt: weekend.startsAt.toISOString(),
       endsAt: weekend.endsAt.toISOString(),

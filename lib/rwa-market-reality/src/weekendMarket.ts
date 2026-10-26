@@ -129,16 +129,20 @@ export type WeekendMarketResponseV1 = z.infer<typeof WeekendMarketResponseV1Sche
 
 // --- Eastern time, without a timezone library --------------------------------
 
+// Made once: building a formatter costs far more than using one, and a window
+// reads the clock a dozen times.
+const ET_PARTS_FORMAT_V1 = new Intl.DateTimeFormat('en-CA', {
+  timeZone: 'America/New_York',
+  year: 'numeric',
+  month: '2-digit',
+  day: '2-digit',
+  hour: '2-digit',
+  minute: '2-digit',
+  hourCycle: 'h23',
+});
+
 function etPartsV1(instant: Date): { localDate: string; minuteOfDay: number } {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'America/New_York',
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hourCycle: 'h23',
-  }).formatToParts(instant);
+  const parts = ET_PARTS_FORMAT_V1.formatToParts(instant);
   const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value ?? '';
   return {
     localDate: `${value('year')}-${value('month')}-${value('day')}`,

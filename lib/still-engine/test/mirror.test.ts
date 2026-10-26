@@ -189,6 +189,18 @@ describe('limits from the venue and the issuer', () => {
   });
 });
 
+describe('a market holiday', () => {
+  it('counts stocks at 40% on Thanksgiving, a Thursday, and says what an open market would give', () => {
+    const r = run(snapshot(EXAMPLE, BigInt(Date.parse('2026-11-26T15:00:00Z') / 1000))); // Thu 10:00 New York
+    assert.equal(r.terms.weekend.active, true);
+    assert.equal(r.terms.weekend.endsAt, '2026-11-27T01:00:00.000Z'); // Thu 20:00 EST
+    assert.equal(line(r, 'NVDAc').stillFactorBps, 2800);
+    assert.equal(line(r, 'cbBTC').stillFactorBps, 4300); // bitcoin keeps its terms
+    assert.equal(r.headline.availableCents, '66253');
+    assert.equal(r.headline.weekdayAvailableCents, '78462');
+  });
+});
+
 describe('Morpho debt', () => {
   it('adds interest since the last update before stating a debt', () => {
     const position = { cbBTC: { collateral: 10_000_000n, borrowShares: 1_000_000_000_000_000n } };

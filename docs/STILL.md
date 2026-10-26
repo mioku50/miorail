@@ -17,13 +17,20 @@ made under.
 | Rule | Value |
 | --- | --- |
 | Share of the protocol's collateral factor | 50% |
-| Stocks from Friday 20:00 to Sunday 20:00, New York time | 40% |
+| Stocks while Wall Street is closed: weekends and market holidays, from 20:00 New York time after the last session to 20:00 before the next | 40% |
 | A stock from 00:00 the day before its report date to 20:00 the day after | 40% |
-| Weekend and earnings windows together | 40%, never stacked |
+| Closed market and earnings windows together | 40%, never stacked |
 | Earnings calendar unread | Every stock counts at 40%, and the report says so |
 | Safety bands, by the margin to liquidation | Calm from 37.5%, watch below it, act below 20% |
 | Native ETH kept for network fees | 0.0005 ETH, never collateral |
 | A stock Coinbase's registry marks paused | Closed for new loans |
+
+The closed-market window is Miorail's reviewed market calendar, the same one the Stocks weekend card
+reads. Until 2026-10-26 it was Friday 20:00 to Sunday 20:00 and knew no holidays. On a holiday the
+stock reference prices stand still just as on a weekend, so the window now covers holidays too
+(operator, 2026-10-26; terms version `2026-10-26`). Thanksgiving 2026 is Wednesday 20:00 to
+Thursday 20:00, and a holiday Monday ends the window at Monday 20:00. Past the reviewed calendar,
+which runs through 2027, the old Friday-to-Sunday window applies.
 
 Why 40%: Aave's daily closes since 2018 cover 247 reports by these seven companies. The worst move
 across a report window was −28.8% (Meta, October 2022). After such a move, a fresh full draw at 50%

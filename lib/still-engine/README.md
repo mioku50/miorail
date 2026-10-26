@@ -4,7 +4,8 @@ Still's read engine: what a wallet can spend without selling, under Still's own 
 here from Still's `packages/engine` on 2026-10-26, when Still became Miorail's front door.
 
 - `policy.ts`: Still's terms. It lends at half the protocol's collateral factor, and at 40% for
-  stocks on weekends (Friday 20:00 to Sunday 20:00, New York) and around an earnings report.
+  stocks while Wall Street is closed (weekends and market holidays, by Miorail's reviewed market
+  calendar) and around an earnings report.
 - `read.ts` and `mirror.ts`: one-block reads of the Aave V4 "Coinbase Stocks" spoke and the Morpho
   cbBTC and WETH markets. They compute the Mirror report: limits, debt, safety and the headline.
 - `math.ts`: bigint arithmetic for money. Every division names its rounding direction. Morpho

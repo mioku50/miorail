@@ -39,15 +39,59 @@ describe('the New York weekend window', () => {
     assert.equal(weekendWindow(at('2026-10-26T00:00:00Z')).startsAt.toISOString(), '2026-10-31T00:00:00.000Z');
   });
 
-  it('agrees with its own bounds at every minute of two weeks, across a clock change', { timeout: 60_000 }, () => {
+  // Every five minutes rather than every minute since the windows come from the market calendar,
+  // which reads the New York clock a dozen times per answer. Every boundary is on the hour.
+  it('agrees with its own bounds at every five minutes of two weeks, across a clock change', { timeout: 60_000 }, () => {
     const start = Date.parse('2026-10-19T00:00:00Z');
-    for (let t = start; t < start + 14 * 86_400_000; t += 60_000) {
+    for (let t = start; t < start + 14 * 86_400_000; t += 300_000) {
       const now = new Date(t);
       const w = weekendWindow(now);
       assert.ok((w.endsAt.getTime() - w.startsAt.getTime()) >= 48 * 3_600_000);
       assert.ok((w.endsAt.getTime() - w.startsAt.getTime()) <= 49 * 3_600_000);
       if (w.active) assert.equal(now >= w.startsAt && now < w.endsAt, true);
       else assert.equal(now < w.startsAt, true);
+    }
+  });
+});
+
+describe('market holidays close the market too (terms of 2026-10-26)', () => {
+  const window = (iso: string) => {
+    const w = weekendWindow(at(iso));
+    return { active: w.active, startsAt: w.startsAt.toISOString(), endsAt: w.endsAt.toISOString() };
+  };
+
+  it('Thanksgiving: Wednesday 20:00 to Thursday 20:00, then the weekend after the early close', () => {
+    const thanksgiving = { startsAt: '2026-11-26T01:00:00.000Z', endsAt: '2026-11-27T01:00:00.000Z' };
+    assert.deepEqual(window('2026-11-25T20:00:00Z'), { active: false, ...thanksgiving }); // Wed 15:00, a session
+    assert.deepEqual(window('2026-11-26T02:00:00Z'), { active: true, ...thanksgiving }); // Wed 21:00
+    assert.deepEqual(window('2026-11-27T00:59:59Z'), { active: true, ...thanksgiving }); // Thu 19:59:59
+    // Thursday 20:00 the overnight session for Friday opens; Friday closes at 13:00 and the weekend follows.
+    assert.deepEqual(window('2026-11-27T01:00:00Z'), { active: false, startsAt: '2026-11-28T01:00:00.000Z', endsAt: '2026-11-30T01:00:00.000Z' });
+  });
+
+  it('a holiday Monday ends the window at Monday 20:00 (Labor Day 2026)', () => {
+    const laborDay = { startsAt: '2026-09-05T00:00:00.000Z', endsAt: '2026-09-08T00:00:00.000Z' };
+    assert.deepEqual(window('2026-09-05T12:00:00Z'), { active: true, ...laborDay });
+    assert.deepEqual(window('2026-09-07T01:00:00Z'), { active: true, ...laborDay }); // Sun 21:00: the old terms said open
+  });
+
+  it('a holiday Friday starts it on Thursday (Christmas 2026, New Year 2027)', () => {
+    assert.deepEqual(window('2026-12-25T12:00:00Z'), { active: true, startsAt: '2026-12-25T01:00:00.000Z', endsAt: '2026-12-28T01:00:00.000Z' });
+    assert.deepEqual(window('2027-01-01T12:00:00Z'), { active: true, startsAt: '2027-01-01T01:00:00.000Z', endsAt: '2027-01-04T01:00:00.000Z' });
+  });
+
+  it('past the reviewed calendar, Friday 20:00 to Sunday 20:00, as before', () => {
+    assert.deepEqual(window('2028-03-04T12:00:00Z'), { active: true, startsAt: '2028-03-04T01:00:00.000Z', endsAt: '2028-03-06T01:00:00.000Z' });
+  });
+
+  it('agrees with its own bounds at every half hour from Thanksgiving to the new year', () => {
+    const start = Date.parse('2026-11-20T00:00:00Z');
+    for (let t = start; t < Date.parse('2027-01-10T00:00:00Z'); t += 1_800_000) {
+      const now = new Date(t);
+      const w = weekendWindow(now);
+      assert.ok(w.endsAt > w.startsAt);
+      if (w.active) assert.equal(now >= w.startsAt && now < w.endsAt, true, now.toISOString());
+      else assert.equal(now < w.startsAt, true, now.toISOString());
     }
   });
 });

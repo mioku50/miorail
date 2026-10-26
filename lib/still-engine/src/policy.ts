@@ -1,16 +1,23 @@
 // Still's own terms. They are stricter than any protocol's and versioned, so a decision keeps the
-// terms it was made under: the ones Still decided on 2026-10-25, before it moved into this repo.
+// terms it was made under. 2026-10-25: Still's first terms, before it moved into this repo.
+// 2026-10-26: the closed-market window follows the market calendar, holidays included.
 
+import { nextWeekendStartV1, weekendWindowV1 } from '@mioagent/rwa-market-reality/weekend-market';
 import { BPS, WAD, mulDiv } from './math.js';
 
 export const TERMS = {
-  version: '2026-10-25',
+  version: '2026-10-26',
   /** Still lends at half the protocol's collateral factor: a fresh draw starts 50% from liquidation. */
   shareOfProtocolBps: 5_000n,
-  /** Stocks from Friday 20:00 to Sunday 20:00 New York time: 40% of the protocol's factor. */
+  /**
+   * Stocks while Wall Street is closed: 40% of the protocol's factor. On weekends and market
+   * holidays alike, the stock reference prices stand still while the tokens keep trading on Base
+   * (operator, 2026-10-26). See `weekendWindow`.
+   */
   weekendStockShareOfProtocolBps: 4_000n,
-  /** The stock market's clock, which the weekend and earnings windows run on. */
+  /** The stock market's clock, which the closed-market and earnings windows run on. */
   marketZone: 'America/New_York',
+  /** Past the reviewed market calendar only: Friday 20:00 to Sunday 20:00. */
   weekendStartsFriday: { hour: 20, minute: 0 },
   weekendEndsSunday: { hour: 20, minute: 0 },
   /**
@@ -63,7 +70,7 @@ export function safetyFromHealthFactor(healthFactorWad: bigint): { marginBps: bi
 }
 
 export interface WeekendWindow {
-  /** True while Base is the only market for these stocks and their reference feeds hold. */
+  /** True while Wall Street is closed, Base is the only market for these stocks and their reference feeds hold. */
   active: boolean;
   /** The window that is open now, or the next one. */
   startsAt: Date;
@@ -132,8 +139,36 @@ export function zonedTime(year: number, month: number, day: number, hour: number
   return new Date(instant);
 }
 
-/** The New York weekend window around an instant: Friday 20:00 to Sunday 20:00 local time. */
+/**
+ * The closed-market window around an instant: the one open now, or the next one.
+ *
+ * It is Miorail's reviewed market calendar (rwa-market-reality's weekendMarket), the same one the
+ * Stocks weekend card reads: from 20:00 New York time after the last session before a day without
+ * one, to 20:00 on the evening before the next session. A weekend is one such window, Thanksgiving
+ * is another (Wednesday 20:00 to Thursday 20:00), and a holiday Monday ends one at Monday 20:00.
+ *
+ * Past the reviewed calendar (it runs through 2027), Friday 20:00 to Sunday 20:00: the rule before
+ * the calendar, which knows no holidays.
+ */
 export function weekendWindow(at: Date, zone: string = TERMS.marketZone): WeekendWindow {
+  return reviewedWindow(at) ?? fixedWeekendWindow(at, zone);
+}
+
+function reviewedWindow(at: Date): WeekendWindow | null {
+  const quiet = weekendWindowV1(at);
+  if (quiet) {
+    const startsAt = new Date(quiet.darkStartAt);
+    const endsAt = new Date(quiet.expectedReopenAt);
+    // The calendar answers with the window of the last close, which may already have ended.
+    if (at < endsAt) return { active: at >= startsAt, startsAt, endsAt };
+  }
+  const next = nextWeekendStartV1(at);
+  const upcoming = next === null ? null : weekendWindowV1(new Date(next));
+  return upcoming ? { active: false, startsAt: new Date(upcoming.darkStartAt), endsAt: new Date(upcoming.expectedReopenAt) } : null;
+}
+
+/** Friday 20:00 to Sunday 20:00 local time, for a date the market calendar has not reviewed. */
+function fixedWeekendWindow(at: Date, zone: string): WeekendWindow {
   const now = wallTime(at, zone);
   const { hour: startHour, minute: startMinute } = TERMS.weekendStartsFriday;
   const { hour: endHour, minute: endMinute } = TERMS.weekendEndsSunday;
