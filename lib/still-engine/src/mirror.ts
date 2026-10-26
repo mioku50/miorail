@@ -4,10 +4,21 @@
 // integer; capacity and availability round down, debts and liquidation prices round up. Lines are
 // rounded to cents first and the headline is their exact sum minus the debts, so a summary never
 // disagrees with the rows under it.
+//
+// Morpho's own arithmetic (accrual, debt, the health check, the liquidation price) comes from
+// rwa-issuer's morphoBorrowMath, the module Miorail's borrow review checks a borrow with, so an
+// offer here and the review of that borrow cannot disagree.
 
+import {
+  morphoAccruedTotalsV1,
+  morphoHealthV1,
+  morphoLiquidationPriceV1,
+  morphoMaxBorrowAssetsV1,
+  toAssetsUpV1,
+  type MorphoMarketStateV1,
+} from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { BPS, RAY, WAD, divide, max, min, mulDiv, usdcToCents } from './math.js';
 import type { CalendarRead } from './calendar.js';
-import { accrueMarket, borrowAssets } from './morpho.js';
 import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
 import { ADDRESSES, CRYPTO, STOCKS, type CryptoAsset, type StockAsset } from './registry.js';
@@ -403,7 +414,8 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
 
   let capacity: bigint | null = null;
   if (price !== undefined && countable !== undefined && collateral !== undefined) {
-    const usdcRaw = mulDiv((countable + collateral) * price, lltv * share, PRICE_SCALE_MORPHO * WAD * BPS, 'down');
+    // Still's share of what the contract itself would lend against all of it.
+    const usdcRaw = mulDiv(morphoMaxBorrowAssetsV1(countable + collateral, price, lltv), share, BPS, 'down');
     capacity = usdcToCents(usdcRaw, 'down');
     line.capacityCents = capacity.toString();
   }
@@ -411,10 +423,10 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
   // Interest since the market's last update is added before a debt is stated.
   const stored = ledger.need(market.market, `${label} market totals`, venueFailed);
   const rate = ledger.need(market.borrowRatePerSecond, `${label} borrow rate`, venueFailed);
-  const accrued = stored && rate !== undefined ? accrueMarket(stored, rate, snapshot.block.timestamp) : undefined;
+  const accrued = stored && rate !== undefined ? morphoAccruedTotalsV1(stored, rate, snapshot.block.timestamp) : undefined;
   let debt: bigint | undefined;
   if (borrowShares === 0n) debt = 0n;
-  else if (borrowShares !== undefined && accrued) debt = borrowAssets(borrowShares, accrued);
+  else if (borrowShares !== undefined && accrued) debt = toAssetsUpV1(borrowShares, accrued.totalBorrowAssets, accrued.totalBorrowShares);
   const debtCents = debt === undefined ? null : usdcToCents(debt, 'up');
   const liquidity = accrued ? max(0n, accrued.totalSupplyAssets - accrued.totalBorrowAssets) : undefined;
 
@@ -425,12 +437,25 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
 
   let safety: Safety | null = null;
   const liquidationPrices: LiquidationPrice[] = [];
-  if (debt !== undefined && debt > 0n && collateral !== undefined && price !== undefined) {
-    const healthFactor = collateral === 0n ? 0n : mulDiv(collateral * price, lltv, PRICE_SCALE_MORPHO * debt, 'down');
-    const { marginBps, state } = safetyFromHealthFactor(healthFactor);
-    safety = { marginBps: Number(marginBps), state, healthFactor: healthFactor.toString(), source: 'computed' };
-    if (collateral > 0n) {
-      liquidationPrices.push({ asset: asset.id, priceCents: mulDiv(debt, WAD * unit, collateral * lltv * 10n ** 4n, 'up').toString(), unreachable: false });
+  if (debt !== undefined && debt > 0n && collateral !== undefined && borrowShares !== undefined && price !== undefined && accrued) {
+    const state: MorphoMarketStateV1 = {
+      collateralPrice: price,
+      lltvWad: lltv,
+      totalSupplyAssets: accrued.totalSupplyAssets,
+      totalBorrowAssets: accrued.totalBorrowAssets,
+      totalBorrowShares: accrued.totalBorrowShares,
+      blockNumber: Number(snapshot.block.number),
+    };
+    const held = { collateral, borrowShares };
+    // morphoHealthV1 owes the same debt as above, so its health factor exists; were it missing,
+    // zero would read as the danger it would be.
+    const healthFactor = morphoHealthV1({ market: state, position: held }).healthFactorWad ?? 0n;
+    const { marginBps, state: safetyState } = safetyFromHealthFactor(healthFactor);
+    safety = { marginBps: Number(marginBps), state: safetyState, healthFactor: healthFactor.toString(), source: 'computed' };
+    const liquidation = morphoLiquidationPriceV1({ market: state, position: held });
+    if (liquidation !== null) {
+      // Morpho prices one raw unit in raw USDC × 1e36; cents per whole token, rounded up.
+      liquidationPrices.push({ asset: asset.id, priceCents: mulDiv(liquidation, unit, PRICE_SCALE_MORPHO * 10n ** 4n, 'up').toString(), unreachable: false });
     }
   }
 

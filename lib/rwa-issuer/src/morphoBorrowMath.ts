@@ -106,6 +106,77 @@ export function toAssetsDownV1(shares: bigint, totalAssets: bigint, totalShares:
   );
 }
 
+/** `SharesMathLib.toSharesDown`. */
+export function toSharesDownV1(assets: bigint, totalAssets: bigint, totalShares: bigint): bigint {
+  return mulDivDownV1(
+    assets,
+    totalShares + MORPHO_VIRTUAL_SHARES_V1,
+    totalAssets + MORPHO_VIRTUAL_ASSETS_V1,
+  );
+}
+
+/** `MathLib.wTaylorCompounded`: e^(x·n) − 1 to the third term, as the contract compounds a rate. */
+export function wTaylorCompoundedV1(x: bigint, n: bigint): bigint {
+  const firstTerm = x * n;
+  const secondTerm = mulDivDownV1(firstTerm, firstTerm, 2n * MORPHO_WAD_V1);
+  const thirdTerm = mulDivDownV1(secondTerm, firstTerm, 3n * MORPHO_WAD_V1);
+  return firstTerm + secondTerm + thirdTerm;
+}
+
+/* -------------------------------------------------------------------------
+ * Interest the contract has not written down yet.
+ * ---------------------------------------------------------------------- */
+
+/**
+ * `Morpho.market(id)` as stored: the totals as of `lastUpdate`, not as of now.
+ *
+ * `borrow()` accrues interest first and checks health after, so totals read
+ * straight from storage understate every debt by the interest since the last
+ * interaction with the market. Measured at block 53,075,866 (2026-10-25):
+ * $5.20 on cbBTC/USDC and $1.88 on WETH/USDC.
+ */
+export interface MorphoMarketTotalsV1 {
+  totalSupplyAssets: bigint;
+  totalSupplyShares: bigint;
+  totalBorrowAssets: bigint;
+  totalBorrowShares: bigint;
+  /** Seconds. */
+  lastUpdate: bigint;
+  /** WAD-scaled share of the interest the protocol keeps. */
+  fee: bigint;
+}
+
+/**
+ * The totals as the contract will see them at `timestamp`:
+ * `MorphoBalancesLib.expectedMarketBalances`, operation for operation.
+ *
+ * `borrowRatePerSecondWad` is the market IRM's `borrowRateView` at the stored
+ * totals. A market without an IRM accrues nothing, and its caller passes zero.
+ */
+export function morphoAccruedTotalsV1(
+  totals: MorphoMarketTotalsV1,
+  borrowRatePerSecondWad: bigint,
+  timestamp: bigint,
+): MorphoMarketTotalsV1 {
+  const elapsed = timestamp - totals.lastUpdate;
+  if (elapsed <= 0n || totals.totalBorrowAssets === 0n || borrowRatePerSecondWad === 0n) return totals;
+  const interest = wMulDownV1(totals.totalBorrowAssets, wTaylorCompoundedV1(borrowRatePerSecondWad, elapsed));
+  const totalSupplyAssets = totals.totalSupplyAssets + interest;
+  let totalSupplyShares = totals.totalSupplyShares;
+  if (totals.fee !== 0n) {
+    const feeAmount = wMulDownV1(interest, totals.fee);
+    // The fee comes out of a supply that already includes it, as the contract computes it.
+    totalSupplyShares += toSharesDownV1(feeAmount, totalSupplyAssets - feeAmount, totals.totalSupplyShares);
+  }
+  return {
+    ...totals,
+    totalSupplyAssets,
+    totalSupplyShares,
+    totalBorrowAssets: totals.totalBorrowAssets + interest,
+    lastUpdate: timestamp,
+  };
+}
+
 /* -------------------------------------------------------------------------
  * The market and the position, as measured.
  * ---------------------------------------------------------------------- */
@@ -160,6 +231,15 @@ export interface MorphoHealthV1 {
   healthFactorWad: bigint | null;
 }
 
+/**
+ * `_isHealthy`'s left side alone: what `collateral` supports at this price,
+ * rounded down twice, as the contract rounds it. It needs no market totals, so
+ * a limit can be stated before the market's debt has been read.
+ */
+export function morphoMaxBorrowAssetsV1(collateral: bigint, collateralPrice: bigint, lltvWad: bigint): bigint {
+  return wMulDownV1(mulDivDownV1(collateral, collateralPrice, MORPHO_ORACLE_PRICE_SCALE_V1), lltvWad);
+}
+
 export function morphoHealthV1(input: {
   market: MorphoMarketStateV1;
   position: MorphoPositionV1;
@@ -169,10 +249,7 @@ export function morphoHealthV1(input: {
     position.borrowShares === 0n
       ? 0n
       : toAssetsUpV1(position.borrowShares, market.totalBorrowAssets, market.totalBorrowShares);
-  const maxBorrowAssets = wMulDownV1(
-    mulDivDownV1(position.collateral, market.collateralPrice, MORPHO_ORACLE_PRICE_SCALE_V1),
-    market.lltvWad,
-  );
+  const maxBorrowAssets = morphoMaxBorrowAssetsV1(position.collateral, market.collateralPrice, market.lltvWad);
   return {
     maxBorrowAssets,
     borrowedAssets,

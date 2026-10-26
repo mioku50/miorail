@@ -2,7 +2,6 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { formatCents, formatPercentBps, formatTokenAmount } from '../src/format.js';
 import { mulDiv, usdcToCents } from '../src/math.js';
-import { accrueMarket, borrowAssets, toAssetsUp, wTaylorCompounded } from '../src/morpho.js';
 
 describe('rounding names its direction', () => {
   it('rounds down what may be borrowed and up what is owed', () => {
@@ -12,31 +11,6 @@ describe('rounding names its direction', () => {
     assert.equal(usdcToCents(1_234_599n, 'down'), 123n);
     assert.equal(usdcToCents(1_230_001n, 'up'), 124n);
     assert.throws(() => mulDiv(1n, 1n, 0n, 'down'));
-  });
-});
-
-describe('Morpho arithmetic', () => {
-  it('compounds like MathLib.wTaylorCompounded', () => {
-    // A 5.25% a year rate per second over one year compounds to about e^0.0525 − 1 = 5.39%.
-    const year = wTaylorCompounded(1_665_852_318n, 31_536_000n);
-    assert.ok(Math.abs(Number(year) / 1e18 - Math.expm1(0.052534)) < 0.5e-4);
-  });
-
-  it('accrues interest only when time passed and something is borrowed', () => {
-    const state = { totalSupplyAssets: 2_000n * 10n ** 6n, totalSupplyShares: 2_000n * 10n ** 12n, totalBorrowAssets: 1_000n * 10n ** 6n, totalBorrowShares: 1_000n * 10n ** 12n, lastUpdate: 100n, fee: 0n };
-    assert.equal(accrueMarket(state, 1_665_852_318n, 100n), state);
-    const accrued = accrueMarket(state, 1_665_852_318n, 100n + 86_400n);
-    assert.equal(accrued.totalBorrowAssets - state.totalBorrowAssets, accrued.totalSupplyAssets - state.totalSupplyAssets);
-    assert.equal(accrued.totalBorrowAssets, 1_000_143_939n); // $1,000 grows by 0.0143939% in a day
-    assert.equal(borrowAssets(0n, accrued), 0n);
-    assert.equal(toAssetsUp(1n, 1n, 1n), 1n);
-  });
-
-  it('a protocol fee mints supply shares, never borrow assets', () => {
-    const state = { totalSupplyAssets: 2_000n * 10n ** 6n, totalSupplyShares: 2_000n * 10n ** 12n, totalBorrowAssets: 1_000n * 10n ** 6n, totalBorrowShares: 1_000n * 10n ** 12n, lastUpdate: 0n, fee: 10n ** 17n };
-    const accrued = accrueMarket(state, 1_665_852_318n, 86_400n);
-    assert.ok(accrued.totalSupplyShares > state.totalSupplyShares);
-    assert.equal(accrued.totalBorrowShares, state.totalBorrowShares);
   });
 });
 

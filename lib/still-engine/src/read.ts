@@ -20,8 +20,8 @@ import {
   morphoOracleAbi,
   multicall3Abi,
 } from './abi.js';
+import type { MorphoMarketTotalsV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { ADDRESSES, CRYPTO, STOCKS, stockByToken, type CryptoAsset, type CryptoId, type StockAsset, type StockId } from './registry.js';
-import type { MarketState } from './morpho.js';
 import { Batch, type Outcome, type Provider, type Slot } from './rpc.js';
 
 const same = (a: string, b: string): boolean => a.toLowerCase() === b.toLowerCase();
@@ -154,7 +154,7 @@ export interface AaveSnapshot {
 export interface MorphoSnapshot {
   info: MorphoMarketInfo;
   /** Market totals as stored at the last update; accrue with borrowRatePerSecond to the block. */
-  market: Outcome<MarketState>;
+  market: Outcome<MorphoMarketTotalsV1>;
   position: Outcome<{ borrowShares: bigint; collateral: bigint }>;
   /** Collateral price in loan-token units, scaled by 1e36. */
   price: Outcome<bigint>;

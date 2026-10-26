@@ -7,8 +7,10 @@ here from Still's `packages/engine` on 2026-10-26, when Still became Miorail's f
   stocks on weekends (Friday 20:00 to Sunday 20:00, New York) and around an earnings report.
 - `read.ts` and `mirror.ts`: one-block reads of the Aave V4 "Coinbase Stocks" spoke and the Morpho
   cbBTC and WETH markets. They compute the Mirror report: limits, debt, safety and the headline.
-- `morpho.ts` and `math.ts`: Morpho Blue's share and interest arithmetic in bigint. Every
-  division names its rounding direction.
+- `math.ts`: bigint arithmetic for money. Every division names its rounding direction. Morpho
+  Blue's own arithmetic (accrual, debt, the health check, the liquidation price) is not here: it
+  comes from `@mioagent/rwa-issuer/morphoBorrowMath`, the module Miorail's borrow review checks a
+  borrow with.
 - `dividends.ts` and `dividend-calendar.ts`: Aave's dividend calendar, the multiplier snapshot,
   and receipts proven from the issuer's own announcements.
 - `subject.ts`: addresses, Basenames and ENS names, resolved forward and back.
@@ -20,6 +22,11 @@ both products.
 
 The API serves the Mirror at `GET /api/public/still/mirror` and the terms at
 `GET /api/public/still/terms`. It reads through Miorail's configured Base endpoint, with Base's
-public one as the second opinion. Nothing here is deduplicated yet. The next steps give each
-question one source: Morpho math beside `rwa-issuer`'s borrow modules, the Aave V4 read beside
-`aaveV4.ts`, and dividends beside the Stocks dividend calendar.
+public one as the second opinion.
+
+Each question gets one source. Morpho's arithmetic was the first: Still's copy went on
+2026-10-26, after both were run on the same block's totals over 40,000 positions. Debts and
+liquidation prices agreed to the unit. Still rounded the limit and the health factor once where
+the contract rounds twice, so its health factor differed in the last digits and one limit in
+20,000 was a cent higher. The replay test now borrows what the Mirror offers through
+`morphoAfterBorrowV1` and expects a health factor of 2.

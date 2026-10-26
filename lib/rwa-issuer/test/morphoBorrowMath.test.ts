@@ -8,14 +8,19 @@ import {
   MORPHO_VIRTUAL_ASSETS_V1,
   MORPHO_VIRTUAL_SHARES_V1,
   MORPHO_WAD_V1,
+  morphoAccruedTotalsV1,
   morphoAfterBorrowV1,
   morphoBorrowCapacityV1,
   morphoHealthV1,
   morphoLiquidationIncentiveWadV1,
   morphoLiquidationPriceV1,
+  morphoMaxBorrowAssetsV1,
   toAssetsDownV1,
   toAssetsUpV1,
+  toSharesDownV1,
+  wTaylorCompoundedV1,
   type MorphoMarketStateV1,
+  type MorphoMarketTotalsV1,
   type MorphoPositionV1,
 } from '../src/morphoBorrowMath.js';
 
@@ -338,6 +343,62 @@ describe('the position this would create', () => {
       assert.notEqual(after, null, `capacity ${capacity.assets} was refused`);
       assert.equal(after!.health.healthy, true);
     }
+  });
+});
+
+describe('interest the contract has not written down yet', () => {
+  // Moved here from Still's engine on 2026-10-26, so Still's Mirror and the
+  // borrow review accrue with one function.
+  const RATE_5_25_V1 = 1_665_852_318n; // 5.25% a year, per second, WAD
+  const totals = (over: Partial<MorphoMarketTotalsV1> = {}): MorphoMarketTotalsV1 => ({
+    totalSupplyAssets: USDC(2_000),
+    totalSupplyShares: USDC(2_000) * MORPHO_VIRTUAL_SHARES_V1,
+    totalBorrowAssets: USDC(1_000),
+    totalBorrowShares: USDC(1_000) * MORPHO_VIRTUAL_SHARES_V1,
+    lastUpdate: 100n,
+    fee: 0n,
+    ...over,
+  });
+
+  test('compounds like MathLib.wTaylorCompounded', () => {
+    // A year at 5.25% compounds to about e^0.0525 - 1 = 5.39%.
+    const year = wTaylorCompoundedV1(RATE_5_25_V1, 31_536_000n);
+    assert.ok(Math.abs(Number(year) / 1e18 - Math.expm1(0.052534)) < 0.5e-4);
+  });
+
+  test('accrues only when time passed and something is borrowed', () => {
+    const state = totals();
+    assert.equal(morphoAccruedTotalsV1(state, RATE_5_25_V1, 100n), state);
+    assert.equal(morphoAccruedTotalsV1(totals({ totalBorrowAssets: 0n }), RATE_5_25_V1, 100n + 86_400n).totalBorrowAssets, 0n);
+    assert.equal(morphoAccruedTotalsV1(state, 0n, 100n + 86_400n), state);
+    const accrued = morphoAccruedTotalsV1(state, RATE_5_25_V1, 100n + 86_400n);
+    // $1,000 grows by 0.0143939% in a day, and lenders are owed what borrowers owe.
+    assert.equal(accrued.totalBorrowAssets, 1_000_143_939n);
+    assert.equal(accrued.totalSupplyAssets - state.totalSupplyAssets, accrued.totalBorrowAssets - state.totalBorrowAssets);
+    assert.equal(accrued.totalBorrowShares, state.totalBorrowShares);
+    assert.equal(accrued.lastUpdate, 100n + 86_400n);
+  });
+
+  test('a protocol fee mints supply shares, never borrow shares', () => {
+    const state = totals({ lastUpdate: 0n, fee: 10n ** 17n });
+    const accrued = morphoAccruedTotalsV1(state, RATE_5_25_V1, 86_400n);
+    const interest = accrued.totalBorrowAssets - state.totalBorrowAssets;
+    const fee = (interest * 10n ** 17n) / MORPHO_WAD_V1;
+    assert.equal(
+      accrued.totalSupplyShares - state.totalSupplyShares,
+      toSharesDownV1(fee, accrued.totalSupplyAssets - fee, state.totalSupplyShares),
+    );
+    assert.equal(accrued.totalBorrowShares, state.totalBorrowShares);
+  });
+
+  test('the maximum needs no market totals, and it is the one _isHealthy compares', () => {
+    const m = market();
+    assert.equal(
+      morphoMaxBorrowAssetsV1(NVDAC(100), m.collateralPrice, m.lltvWad),
+      morphoHealthV1({ market: m, position: position() }).maxBorrowAssets,
+    );
+    // One atomic unit of NVDAc is worth less than one of USDC, and supports nothing.
+    assert.equal(morphoMaxBorrowAssetsV1(1n, m.collateralPrice, m.lltvWad), 0n);
   });
 });
 

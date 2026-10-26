@@ -2,9 +2,12 @@ import { readFileSync } from 'node:fs';
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import type { Address } from 'viem';
+import { morphoAccruedTotalsV1, morphoAfterBorrowV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { readCalendar } from '../src/calendar.js';
 import { computeMirror } from '../src/mirror.js';
+import { TERMS } from '../src/policy.js';
 import { loadUniverse, readWallet } from '../src/read.js';
+import { CRYPTO } from '../src/registry.js';
 import { replaying, type RecordedBatch } from './replay.js';
 import { assertMatches } from './matches.js';
 
@@ -74,5 +77,36 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
       ['Morpho · cbBTC/USDC', '0', '332'],
       ['Morpho · WETH/USDC', '0', '854568'],
     ]);
+  });
+
+  it('what Still offers on Morpho, the borrow review accepts at twice the contract’s minimum health', async () => {
+    // Miorail's borrow review checks a borrow with morphoAfterBorrowV1. Pledge what the Mirror
+    // counted, borrow exactly what it offers, on the same block's totals.
+    const { snapshot, report } = await replay();
+    for (const asset of CRYPTO) {
+      const market = snapshot.morpho.get(asset.id)!;
+      if (!market.market.ok || !market.price.ok || !market.borrowRatePerSecond.ok || !market.position.ok) throw new Error(asset.id);
+      const token = snapshot.balances.get(asset.token.toLowerCase());
+      if (!token?.ok || !snapshot.nativeEth.ok) throw new Error(asset.id);
+      const native = asset.includesNativeEth ? snapshot.nativeEth.value - TERMS.ethGasReserveWei : 0n;
+      const totals = morphoAccruedTotalsV1(market.market.value, market.borrowRatePerSecond.value, snapshot.block.timestamp);
+      const offered = BigInt(report.venues.find((v) => v.market === asset.morphoMarket)!.availableCents!) * 10_000n;
+      assert.ok(offered > 0n, asset.id);
+      const after = morphoAfterBorrowV1({
+        market: {
+          collateralPrice: market.price.value,
+          lltvWad: market.info.params.lltv,
+          totalSupplyAssets: totals.totalSupplyAssets,
+          totalBorrowAssets: totals.totalBorrowAssets,
+          totalBorrowShares: totals.totalBorrowShares,
+          blockNumber: Number(snapshot.block.number),
+        },
+        position: { collateral: market.position.value.collateral + token.value + native, borrowShares: market.position.value.borrowShares },
+        assets: offered,
+      });
+      assert.ok(after?.health.healthy, asset.id);
+      // Still lends half of what the contract allows: health factor 2, less a unit of rounding.
+      assert.ok(after!.health.healthFactorWad! >= 1_999_999n * 10n ** 12n, `${asset.id} ${after!.health.healthFactorWad}`);
+    }
   });
 });
