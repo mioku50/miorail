@@ -33,9 +33,9 @@ void React;
 // The engine's own example portfolio: 4.2 NVDAc (3.4 pledged on Aave), 1.5 AAPLc, 0.8 TSLAc,
 // 0.012 cbBTC and $240.17 owed. The shell shows exactly what the engine computed.
 const subject = { address: '0x00000000000000000000000000000000000b0b0b' as const, name: null, input: 'example' };
-function report(timestamp?: bigint): MirrorReport {
+function report(timestamp?: bigint, earningsCalendar = calendar()): MirrorReport {
   const s = timestamp === undefined ? snapshot(EXAMPLE) : snapshot(EXAMPLE, timestamp);
-  return JSON.parse(JSON.stringify(computeMirror({ universe: universe(), snapshot: s, calendar: calendar(), subject, assembledAt: new Date('2026-10-21T15:00:01Z') })));
+  return JSON.parse(JSON.stringify(computeMirror({ universe: universe(), snapshot: s, calendar: earningsCalendar, subject, assembledAt: new Date('2026-10-21T15:00:01Z') })));
 }
 const WEDNESDAY = new Date('2026-10-21T15:00:00Z'); // 11:00 in New York, the session open
 const SATURDAY_AT = new Date(Number(SATURDAY) * 1000);
@@ -138,7 +138,39 @@ describe('Home', () => {
     assert.match(html, /\$784<\/span><span class="c">\.62/);
     assert.match(html, /Owed \$240\.17/);
     assert.match(html, /role="img"/);
+    assert.match(html, /href="\/assistants"[^>]*>For assistants<\/a>/);
     assert.doesNotMatch(html, /You can borrow|guaranteed|\bSafe\b/i);
+  });
+
+  it('keeps the assistants link available when the wallet could not be read', () => {
+    const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky: skyStateV1({ now: WEDNESDAY }), view: null, reading: null, loading: false, failed: 'unavailable', onRetry: () => {} }} />);
+    assert.match(html, /href="\/assistants"[^>]*>For assistants<\/a>/);
+    assert.doesNotMatch(html, /\$\d/);
+  });
+
+  it('shows only future known earnings windows, using the page clock even for a cached report', () => {
+    const r = report(undefined, calendar({ NVDAc: ['2026-10-29'], AAPLc: ['2026-10-26'] }, ['TSLAc']));
+    const now = new Date('2026-10-26T18:05:00Z');
+    const sky = skyStateV1({ now });
+    const future = homeViewV1({ report: r, sky, dividends }).comingUp.filter((item) => item.icon === 'earnings');
+    assert.deepEqual(future, [{
+      when: 'WED 12 AM',
+      icon: 'earnings',
+      text: 'NVIDIA reports Oct 29: new loans against it will count at 40% of the protocol’s limit until Fri 8 PM.',
+    }]);
+    const atStart = skyStateV1({ now: new Date('2026-10-28T04:00:00Z') });
+    assert.equal(homeViewV1({ report: r, sky: atStart }).comingUp.some((item) => item.icon === 'earnings'), false);
+    const after = skyStateV1({ now: new Date('2026-10-31T15:00:00Z') });
+    assert.equal(homeViewV1({ report: r, sky: after }).comingUp.some((item) => item.icon === 'earnings'), false);
+    const unconfirmed = structuredClone(r);
+    const nvda = unconfirmed.assets.find((line) => line.asset === 'NVDAc')!;
+    nvda.wallet = { raw: '0', decimals: 18 };
+    nvda.pledged = null;
+    assert.equal(homeViewV1({ report: unconfirmed, sky }).comingUp.some((item) => item.icon === 'earnings'), false,
+      'a zero balance and unread collateral do not establish a stock holding');
+    // An unread calendar must not become a schedule even if stale window fields remain.
+    r.assets.find((line) => line.asset === 'NVDAc')!.earnings!.source = 'unread';
+    assert.equal(homeViewV1({ report: r, sky }).comingUp.some((item) => item.icon === 'earnings'), false);
   });
 
   it('signed out, it is the front door: a check for any wallet, the terms in one line, no example numbers', () => {

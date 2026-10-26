@@ -1,8 +1,9 @@
 # Still
 
-Still is the front door of this product: spend without selling. A person borrows USDC against
+Still is the front door of this product: spend without selling. Its Mirror reads borrowing room against
 Coinbase's tokenized stocks (the Aave V4 "Coinbase Stocks" spoke on Base) and against cbBTC and ETH
-(Morpho Blue). They keep the shares. Still started as its own repository on 2026-10-25. On
+(Morpho Blue), without selling them. The Still Get money and Repay actions are the next phase;
+the current Mirror only reads. Still started as its own repository on 2026-10-25. On
 2026-10-26 its code moved here, and Miorail became the engine under it.
 
 Code: [`lib/still-engine`](../lib/still-engine/README.md). API: `GET /api/public/still/mirror` and
@@ -69,6 +70,17 @@ carried a query to `/` still lands on Stocks, which reads it.
 Each sentence takes its shares from `TERMS`, its amounts from the engine's formatters and its
 windows from the engine's `stillTerms`, which `/terms` serves too.
 
+The shared app also understands the original `/w/:subject` wallet links. That is a public check
+of the address or name in the URL, even while a different wallet is signed in; it never replaces
+the linked subject with the session wallet. Failed checks remain failures. Its link preview is
+the general app preview, without the old wallet-specific amounts.
+
+The shared app is currently served on `miorail.xyz`; switching `stills.lat` is a separate
+operational step. Wallet sign-in uses each request's host while no wallet-auth origin override
+is configured. Cookies remain host-only. Wallet MCP callbacks on the fixed `stills.lat` and
+`www.stills.lat` hosts return to that same host, independently of the canonical API origin.
+Miorail's MCP, OAuth and Farcaster identities keep their existing addresses.
+
 ## The evidence bar
 
 - A failed read is not an empty read. "Not measured", "measured as zero" and "unknown" stay three
@@ -85,6 +97,27 @@ Still reads through Miorail's read path and follows Miorail's RPC rules. That me
 Base endpoint first, with Base's public endpoint as the second opinion. Still's own Found scan was
 removed on 2026-10-26, because Miorail's Found already reads Aerodrome and Uniswap rewards for a
 wallet.
+
+## Assistants
+
+Miorail MCP `1.8.0` adds two reads over the same services as the pages:
+
+- Public `get_still_terms` returns exactly `StillTermsSchema`, using the earnings service and
+  cache of `GET /api/public/still/terms`. It takes no arguments and reads no wallet. Its version,
+  active windows and per-stock `calendarRead` fields remain explicit; unread calendars keep the
+  conservative 40% stock limit. This answer is the terms themselves, without an EvidencePackage.
+- Connected `miorail_get_my_still` takes no arguments and reads only the OAuth connection owner's
+  wallet through the service and cache of `GET /api/still/mine`. It returns the same `report` /
+  `chain_unavailable` envelope, validated against the Mirror schema before leaving the server.
+  A partial known amount is **at least** that amount. Null is unknown; a chain failure is not an
+  empty wallet. The report keeps its reading block and time even when cached.
+
+The public registry has 18 tools; Connected carries that registry plus 16 wallet-bound tools.
+The Wallet MCP plugin at `/wallet-mcp/miorail.md` explains these reads and the existing Morpho
+capacity and review tools. It requires a person to approve in their wallet. A protocol maximum
+is not a Still allowance: server enforcement of Still's additional cap and the new borrow/repay
+actions remain pending. Stock borrowing through Aave V4 remains research. These reads and terms
+are not advice to borrow, and Still is not offered to US persons.
 
 ## One source per question
 

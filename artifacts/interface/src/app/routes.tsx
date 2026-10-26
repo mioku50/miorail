@@ -4,6 +4,7 @@ import {
   CONSOLE_SECTIONS_V1,
   type ConsoleSectionV1,
 } from '@mioagent/ui';
+import { STILL_ASSISTANTS_V1, STILL_TABS_V1 } from '@mioagent/ui/still';
 
 // Route + command tables.
 //
@@ -46,6 +47,18 @@ export const CONSOLE_COMMANDS: AppCommand[] = CONSOLE_SECTIONS_V1.map((section: 
   };
 });
 
+// The frame's own places lead; every existing console destination stays reachable.
+// Stocks already has its console command, including its existing deep links.
+const STILL_COMMANDS: AppCommand[] = [
+  ...STILL_TABS_V1.filter((tab) => tab.id !== 'stocks').map((tab) => ({
+    id: `still-${tab.id}`,
+    icon: '',
+    label: tab.label,
+    path: tab.path,
+  })),
+  { id: 'still-assistants', icon: '', label: STILL_ASSISTANTS_V1.label, path: STILL_ASSISTANTS_V1.path },
+];
+
 export function appCommands(): AppCommand[] {
-  return CONSOLE_COMMANDS;
+  return [...STILL_COMMANDS, ...CONSOLE_COMMANDS];
 }

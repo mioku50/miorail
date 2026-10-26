@@ -275,8 +275,8 @@ Requests to act are handed to Routes for fresh quotes and explicit approval.
 
 ## Public Miorail MCP
 
-Miorail MCP `1.7.0` exposes seventeen read-only tools at `https://miorail.xyz/mcp`
-— nine over tokenized stocks, eight over stored B20 evidence:
+Miorail MCP `1.8.0` exposes eighteen read-only tools at `https://miorail.xyz/mcp`
+— nine over tokenized stocks, eight over stored B20 evidence, and Still's terms:
 
 ```text
 list_reviewed_stocks        every reviewed security, by ticker, name or ISIN
@@ -288,6 +288,7 @@ check_address_identity      compare an exact address with the reviewed contract
 get_dividend_calendar       declarations, measured reinvestments and estimates
 get_recorded_changes        recorded changes across the reviewed market
 get_reopen_round            Call the reopen: the weekend round, Base's call, results
+get_still_terms             versioned limits and reviewed market/earnings windows
 
 miorail_discover_status
 miorail_list_b20_opportunities
@@ -303,6 +304,14 @@ miorail_b20_market_rails
 contracts for the same company, and that choice is not Miorail's to make. A
 company name reaches a security through a small ISIN-bound alias table, and
 every row says whether the issuer's own naming or a Miorail alias found it.
+
+`get_still_terms` reads the same earnings service and cache as
+`GET /api/public/still/terms`. Its answer is the terms themselves, without an
+`evidencePackage`: 50% of the protocol's collateral factor, reduced to 40% for
+stocks in Still's reviewed closed-market or earnings window, or while their
+earnings calendar is unread. Returned windows and `calendarRead` are part of
+the answer. These are terms, not a personal borrowing quote or advice to borrow.
+Still is not offered to US persons.
 
 The nine stock tools and `miorail_discover_status` include a free
 `evidencePackage` (`miorail-evidence-package/v1`). Each claim names JSON Pointers
@@ -378,17 +387,26 @@ curl -s -X POST https://miorail.xyz/mcp \
 
 ## Connected Miorail MCP
 
-`https://miorail.xyz/mcp/private` is the same seventeen read tools **plus fifteen bound to
+`https://miorail.xyz/mcp/private` is the same eighteen read tools **plus sixteen bound to
 one wallet** — the one that authorised the connection. It cannot read, prepare
 or execute for any other wallet, and no argument would let it try.
 
-Two of the fifteen play Call the reopen, the weekend game on the Stocks Weekend
+`miorail_get_my_still` reads only the connection owner's Still Mirror through
+the same service and cache as `GET /api/still/mine`. It takes no wallet argument.
+Preserve `reading.block`, `reading.blockTime`, `cached` and failed coverage. If
+`headline.complete` is false, a known available amount means **at least** that
+amount; null remains unknown. `chain_unavailable` is a failed read, never an
+empty wallet. This tool prepares no transaction. The existing Morpho borrow
+review remains a separate flow; server enforcement of Still's additional cap
+and the new Get money / Repay actions are pending.
+
+Two of the sixteen play Call the reopen, the weekend game on the Stocks Weekend
 tab: `miorail_get_my_reopen` reads the wallet's picks, score and record, and
 `miorail_call_the_reopen` makes or changes picks for the stocks the user named,
 until the Sunday 17:00 ET lock. A stock not named keeps its pick. The public
 `get_reopen_round` reads the same round with nobody's picks in it.
 
-One of the fifteen is the verb the read tools were missing.
+One of the sixteen is the verb the read tools were missing.
 `compare_market_reality` reads stored evidence, so it could truthfully report
 "no fresh answer at this size" and had no way to get one — only the web button
 could measure. `miorail_measure_market_reality` is that button, calling the same
@@ -484,7 +502,7 @@ is shown separately from the effective value; maturity is read from the getter
 because it emits no event. Reference values carry publication times, include the
 feed's multiplier once, and are never presented as sale proceeds or profit/loss.
 
-The web uses `GET /api/stocks/today`; Connected MCP `1.7.0` exposes the same
+The web uses `GET /api/stocks/today`; Connected MCP `1.8.0` exposes the same
 calculation through `miorail_get_my_stocks_today`. Neither accepts a wallet
 argument. The shared inbox establishes a fixed 24-hour baseline at first use;
 opening it acknowledges no event. Unread entries persist past seven days and
@@ -503,7 +521,7 @@ PostgreSQL and are shared by web, Base App and Connected MCP for the same wallet
 `miorail_mark_stock_updates_read` accepts that unchanged proof only after the
 user explicitly asks to mark the shown updates as read. Fetching, explaining
 or sending a notification never grants that authorization. Connected MCP has
-32 tools: 17 public reads plus 15 wallet-bound tools. The receipt tool changes
+34 tools: 18 public reads plus 16 wallet-bound tools. The receipt tool changes
 only inbox receipts, never holdings, notification subscriptions or actions.
 The personal inbox groups issuer logs by chain, exact contract and transaction.
 Compatibility multiplier logs and a corporate-action announcement from one

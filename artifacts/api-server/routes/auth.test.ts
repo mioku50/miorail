@@ -67,6 +67,35 @@ test('T43: altered challenge is rejected and cannot be replayed', async () => {
   }).expect(401);
 });
 
+test('Still and Miorail sign-in challenges use their request host and reject an altered domain', async () => {
+  const names = ['WALLET_AUTH_DOMAIN', 'WALLET_AUTH_URI'] as const;
+  const previous = names.map(name => process.env[name]);
+  names.forEach(name => delete process.env[name]);
+  try {
+    for (const host of ['stills.lat', 'www.stills.lat', 'miorail.xyz']) {
+      const agent = request.agent(app);
+      const challenge = await agent.post('/api/auth/challenge').set('Host', host)
+        .set('X-Forwarded-Proto', 'https').send({ address: WALLET_A }).expect(200);
+      assert.ok(challenge.body.message.startsWith(`${host} wants you to sign in`));
+      assert.ok(challenge.body.message.includes(`URI: https://${host}\n`));
+      const cookies = challenge.headers['set-cookie'] as unknown as string[];
+      assert.ok(cookies.length > 0);
+      assert.ok(cookies.every(cookie => !/;\s*Domain=/i.test(cookie)), 'session cookies stay host-only');
+      const altered = challenge.body.message.replace(`${host} wants`, 'other.example wants');
+      await agent.post('/api/auth/verify').set('Host', host)
+        .send({ message: altered, signature: '0x1234' }).expect(401);
+      // Failed verification consumes the original challenge as well.
+      await agent.post('/api/auth/verify').set('Host', host)
+        .send({ message: challenge.body.message, signature: '0x1234' }).expect(401);
+    }
+  } finally {
+    names.forEach((name, index) => {
+      if (previous[index] === undefined) delete process.env[name];
+      else process.env[name] = previous[index];
+    });
+  }
+});
+
 test('T43: wallet A cannot spoof wallet B or a client userId', async () => {
   const agent = await authenticatedAgent();
   const mismatch = await agent.get(`/api/portfolio?address=${WALLET_B}`).expect(403);

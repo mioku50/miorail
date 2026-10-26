@@ -250,6 +250,58 @@ for (const endpoint of [
   });
 }
 
+test('Wallet MCP returns to the Still session host while canonical API and untrusted hosts retain the configured origin', async () => {
+  const envNames = ['BASE_MCP_ENABLED', 'BASE_MCP_SERVER_URL', 'SESSION_SECRET', 'PUBLIC_API_BASE_URL'] as const;
+  const previous = envNames.map(name => process.env[name]);
+  const verify = mcpBaseRouteRuntime.verifyBaseMcpWalletMatchViaOAuth;
+  process.env.BASE_MCP_ENABLED = 'true';
+  process.env.BASE_MCP_SERVER_URL = 'https://wallet-mcp.coinbase.com';
+  process.env.SESSION_SECRET = 'test-session-secret';
+  process.env.PUBLIC_API_BASE_URL = 'https://miorail.xyz';
+  mcpBaseRouteRuntime.verifyBaseMcpWalletMatchViaOAuth = async () => ({ checked: false, match: true, mcpAddresses: [] });
+  try {
+    for (const [host, origin] of [
+      ['stills.lat', 'https://stills.lat'],
+      ['www.stills.lat', 'https://www.stills.lat'],
+      ['miorail.xyz', 'https://miorail.xyz'],
+      ['untrusted.example', 'https://miorail.xyz'],
+      ['stills.lat:4000', 'https://miorail.xyz'],
+    ]) {
+      const fake = createFakeDb();
+      baseMcpOAuthStoreRuntime.db = fake.db;
+      let state = '', exchanges = 0;
+      mcpBaseRouteRuntime.auth = async (provider: any, options: any) => {
+        assert.equal(String(provider.redirectUrl), `${origin}/api/mcp/base/callback`);
+        if (options.authorizationCode) {
+          exchanges++;
+          assert.equal(options.authorizationCode, 'fixture-code');
+          assert.equal(await provider.codeVerifier(), 'fixture-verifier');
+          return 'AUTHORIZED';
+        }
+        state = await provider.state();
+        await provider.saveCodeVerifier('fixture-verifier');
+        await provider.redirectToAuthorization(new URL(`https://wallet-mcp.coinbase.com/authorize?state=${state}`));
+        return 'REDIRECT';
+      };
+      // Even a spoofed forwarded host cannot replace a configured destination.
+      const start = await request(app).get('/api/mcp/base/connect?returnTo=/extensions')
+        .set('Host', host).set('X-Forwarded-Host', 'untrusted.example');
+      assert.equal(start.status, 302);
+      assert.equal(new URL(start.headers.location).origin, 'https://wallet-mcp.coinbase.com');
+      assert.ok(state);
+      const finish = await request(app).get(`/api/mcp/base/callback?code=fixture-code&state=${state}`)
+        .set('Host', host).set('X-Forwarded-Host', 'untrusted.example');
+      assert.equal(finish.status, 302);
+      assert.equal(finish.headers.location, '/extensions?mcp=connected');
+      assert.equal(exchanges, 1);
+      assert.equal(fake.states.size, 0);
+    }
+  } finally {
+    envNames.forEach((name, index) => restoreEnv(name, previous[index]));
+    mcpBaseRouteRuntime.verifyBaseMcpWalletMatchViaOAuth = verify;
+  }
+});
+
 test('GET /api/mcp/base/connect clears stale encrypted credentials before reconnecting', async () => {
   const fake = createFakeDb();
   baseMcpOAuthStoreRuntime.db = fake.db;

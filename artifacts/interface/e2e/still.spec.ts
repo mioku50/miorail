@@ -11,9 +11,9 @@ const WALLET = '0x1111111111111111111111111111111111111111';
 const MONDAY = new Date('2026-10-26T18:05:00Z'); // 2:05 PM in New York, the session open
 const SATURDAY = new Date('2026-10-31T15:00:00Z'); // 11:00 AM in New York, Wall Street closed
 
-function report(address: string, name: string | null = null) {
+function report(address: string, name: string | null = null, earningsCalendar = calendar()) {
   return JSON.parse(JSON.stringify(computeMirror({
-    universe: universe(), snapshot: snapshot(EXAMPLE), calendar: calendar(),
+    universe: universe(), snapshot: snapshot(EXAMPLE), calendar: earningsCalendar,
     subject: { address: address as `0x${string}`, name, input: name ?? address }, assembledAt: new Date('2026-10-21T15:00:01Z'),
   })));
 }
@@ -27,7 +27,7 @@ const DIVIDENDS = {
   }],
 };
 
-async function install(page: Page, signedIn: boolean, now: Date) {
+async function install(page: Page, signedIn: boolean, now: Date, earningsCalendar = calendar()) {
   const reads: string[] = [], writes: string[] = [];
   await page.clock.setFixedTime(now);
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript',
@@ -37,7 +37,7 @@ async function install(page: Page, signedIn: boolean, now: Date) {
     (request.method() === 'GET' ? reads : writes).push(path);
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/public/still/terms') return route.fulfill({ json: JSON.parse(JSON.stringify(stillTerms(calendar(), now))) });
-    if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(WALLET), cached: false } });
+    if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(WALLET, null, earningsCalendar), cached: false } });
     if (path === '/api/stocks/dividends/mine' && signedIn) return route.fulfill({ json: DIVIDENDS });
     if (path === '/api/public/still/mirror') {
       const subject = url.searchParams.get('subject') ?? '';
@@ -93,6 +93,7 @@ for (const width of [390, 1280]) {
     await expect(page.getByText('Owed $240.17', { exact: true })).toBeVisible();
     await expect(page.getByRole('img', { name: /NVDA.* on the left hold up a \$240\.17 loan on the right/ })).toBeVisible();
     await expect(page.getByText('≈ NOV 12 Apple dividend · ≈ $0.19 as more AAPLc, an estimate', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'For assistants', exact: true })).toHaveAttribute('href', '/assistants');
     await noSidewaysScroll(page);
     await page.screenshot({ path: testInfo.outputPath(`home-signed-in-${width}.png`), fullPage: true });
 
@@ -137,6 +138,33 @@ for (const width of [390, 1280]) {
     expect(writes).toEqual([]);
   });
 }
+
+test('Home and the command palette reach all Still pages without another wallet read', async ({ page }) => {
+  const { reads, writes } = await install(page, true, MONDAY);
+  await page.goto('/');
+  await page.getByRole('link', { name: 'For assistants', exact: true }).click();
+  await expect(page).toHaveURL(/\/assistants$/);
+  for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants']] as const) {
+    await page.keyboard.press('Control+k');
+    await page.getByRole('combobox', { name: 'Command Palette', exact: true }).fill(label);
+    await page.getByRole('option', { name: label, exact: true }).click();
+    await expect(page).toHaveURL(`http://127.0.0.1:5187${path}`);
+    await expect(page.getByRole('combobox', { name: 'Command Palette', exact: true })).toHaveCount(0);
+  }
+  expect(reads.filter(path => path === '/api/still/mine')).toHaveLength(1);
+  expect(writes).toEqual([]);
+});
+
+test('Coming up names only the next known earnings window, not active or unread ones', async ({ page }) => {
+  const { reads, writes } = await install(page, true, MONDAY, calendar({ NVDAc: ['2026-10-29'], AAPLc: ['2026-10-26'] }, ['TSLAc']));
+  await page.goto('/');
+  const events = page.locator('.still-coming');
+  await expect(events.getByText('WED 12 AM NVIDIA reports Oct 29: new loans against it will count at 40% of the protocol’s limit until Fri 8 PM.', { exact: true })).toBeVisible();
+  await expect(events.getByText(/Apple reports|Tesla reports/)).toHaveCount(0);
+  await expect(events.getByText('≈ NOV 12 Apple dividend · ≈ $0.19 as more AAPLc, an estimate', { exact: true })).toBeVisible();
+  expect(reads.filter(path => path === '/api/still/mine')).toHaveLength(1);
+  expect(writes).toEqual([]);
+});
 
 test('while Wall Street is closed the frame is night, and the sky says until when', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });

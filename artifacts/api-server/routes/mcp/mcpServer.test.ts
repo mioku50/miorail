@@ -201,6 +201,7 @@ const PUBLIC_TOOL_NAMES_V1 = [
   'get_recorded_changes',
   'get_reopen_round',
   'get_representations',
+  'get_still_terms',
   'get_use_access',
   'list_reviewed_stocks',
   'miorail_b20_market_rails',
@@ -225,6 +226,7 @@ describe('§8 — tool discovery', () => {
       'get_recorded_changes',
       'get_reopen_round',
       'get_representations',
+      'get_still_terms',
       'get_use_access',
       'list_reviewed_stocks',
       'miorail_b20_market_rails',
@@ -301,6 +303,26 @@ describe('§8 — tool discovery', () => {
     // test binds the two: change the published list above and this fails until
     // MIORAIL_MCP_VERSION_V1 is bumped in the same edit.
     const PUBLISHED_AT_V1 = {
+      '1.8.0': [
+        'check_address_identity',
+        'compare_market_reality',
+        'get_dividend_calendar',
+        'get_market_changes',
+        'get_recorded_changes',
+        'get_reopen_round',
+        'get_representations',
+        'get_still_terms',
+        'get_use_access',
+        'list_reviewed_stocks',
+        'miorail_b20_market_rails',
+        'miorail_compare_b20_tokens',
+        'miorail_discover_status',
+        'miorail_explain_b20_rejection',
+        'miorail_find_b20_projects',
+        'miorail_get_b20_opportunity',
+        'miorail_list_b20_opportunities',
+        'miorail_summarise_b20_universe',
+      ],
       '1.7.0': [
         'check_address_identity',
         'compare_market_reality',
@@ -638,6 +660,7 @@ describe('§5/§8 — what this surface cannot do, and cannot leak', () => {
       'recordedChangesTool.ts',
       'reopenTool.ts',
       'server.ts',
+      'stillTermsTool.ts',
       'tools.ts',
       'useAccessTools.ts',
     ]);

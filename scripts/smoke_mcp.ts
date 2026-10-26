@@ -37,6 +37,7 @@ const EXPECTED_TOOLS_V1 = [
   'get_recorded_changes',
   'get_reopen_round',
   'get_representations',
+  'get_still_terms',
   'get_use_access',
   'list_reviewed_stocks',
   'miorail_b20_market_rails',

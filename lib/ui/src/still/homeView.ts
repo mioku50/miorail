@@ -155,13 +155,18 @@ export function homeViewV1(input: {
     });
   }
   for (const line of report.assets) {
-    const window = line.earnings?.window;
-    if (!line.earnings?.reportDate || !window || line.earnings.lowered) continue;
-    if (line.wallet === null && line.pledged === null) continue;
+    const earnings = line.earnings;
+    const window = earnings?.window;
+    if (earnings?.source !== 'calendar' || !earnings.reportDate || !window || earnings.lowered) continue;
+    // lowered describes the report's block. The page's clock can be newer:
+    // an active or past window from a cached report is no longer "coming up".
+    const startsAt = Date.parse(window.startsAt);
+    if (!(startsAt > Date.parse(sky.at)) || !(Date.parse(window.endsAt) > startsAt)) continue;
+    if (![line.wallet, line.pledged].some(amount => amount !== null && BigInt(amount.raw) > BigInt(0))) continue;
     comingUp.push({
       when: newYorkMomentV1(window.startsAt).toUpperCase(),
       icon: 'earnings',
-      text: `${line.name} reports ${dayV1(line.earnings.reportDate)}: new loans against it count at ${STILL_SHARES_V1.earnings}% until ${newYorkMomentV1(window.endsAt)}.`,
+      text: `${line.name} reports ${dayV1(earnings.reportDate)}: new loans against it will count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until ${newYorkMomentV1(window.endsAt)}.`,
     });
   }
   for (const holding of input.dividends?.holdings ?? []) {

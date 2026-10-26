@@ -27,6 +27,8 @@ export const STILL_TABS_V1: ReadonlyArray<{ id: StillTabV1; label: string; path:
   { id: 'more', label: 'More', path: '/more' },
 ];
 
+export const STILL_ASSISTANTS_V1 = { label: 'For assistants', path: '/assistants' } as const;
+
 /** Which tab a path belongs to. Every path Miorail had before lives under More. */
 export function stillTabForPathV1(path: string): StillTabV1 {
   const clean = path.split(/[?#]/)[0] ?? '/';

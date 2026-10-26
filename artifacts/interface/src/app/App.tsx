@@ -22,6 +22,7 @@ import {
   StillConsoleFrame,
   StillHomeRoute,
   StillMorePage,
+  StillWalletPage,
 } from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
 
@@ -436,6 +437,12 @@ export function App() {
         </Route>
         <Route path="/assistants">
           <StillAssistantsPage />
+        </Route>
+
+        {/* Original stills.lat wallet permalinks stay public and read the
+            subject in the link, including while another wallet is signed in. */}
+        <Route path="/w/:subject?">
+          <StillWalletPage />
         </Route>
 
         {/* "/" is Still's Home: the market sky, and what a wallet could spend

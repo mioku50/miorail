@@ -1,4 +1,32 @@
 import { z } from 'zod';
+import { MirrorReportSchema } from '@mioagent/still-engine/report-schema';
+
+const StillProviderAttemptV1Schema = z.object({
+  provider: z.enum(['alchemy', 'infura', 'base-public', 'quicknode', 'drpc', 'rpc', 'invalid-url']),
+  kind: z.enum(['throttled', 'unavailable', 'rejected']),
+}).strict();
+
+const StillReportOutcomeV1Schema = z.object({
+  outcome: z.literal('report'), report: MirrorReportSchema, cached: z.boolean(),
+}).strict();
+const StillChainUnavailableV1Schema = z.object({
+  outcome: z.literal('chain_unavailable'), attempts: z.array(StillProviderAttemptV1Schema),
+}).strict();
+
+/** The strict domain parser enforces the two branches before an answer leaves.
+ * The Mirror is called with an authenticated address, so name-resolution and
+ * invalid-subject outcomes are unexpected service failures on this door. */
+export const MiorailGetMyStillResultV1Schema = z.discriminatedUnion('outcome', [
+  StillReportOutcomeV1Schema, StillChainUnavailableV1Schema,
+]);
+
+/** MCP SDK 1.29 advertises and validates only object roots. Keep the existing
+ * /still/mine envelope, with branch requirements enforced by the parser above. */
+export const MiorailGetMyStillOutputV1Schema = z.object({
+  outcome: z.enum(['report', 'chain_unavailable']),
+  report: MirrorReportSchema.optional(), cached: z.boolean().optional(),
+  attempts: z.array(StillProviderAttemptV1Schema).optional(),
+}).strict();
 
 // ---------------------------------------------------------------------------
 // The output half of the private tool contract.

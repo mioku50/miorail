@@ -1,5 +1,6 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+import { logger } from '@mioagent/utils';
 import { MarketRealityAgentComparisonInputV1Schema } from '@mioagent/rwa-market-reality';
 import {
   MCP_SUBMISSION_RESULTS_V1,
@@ -29,6 +30,8 @@ import {
   MiorailReadBorrowCapacityOutputV1Schema,
   MiorailRecordSubmissionOutputV1Schema,
   MiorailReviewBorrowOutputV1Schema,
+  MiorailGetMyStillOutputV1Schema,
+  MiorailGetMyStillResultV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
 import { StockBriefInputV1Schema, StockBriefV1Schema, StockInboxReadInputV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
@@ -38,6 +41,7 @@ import { StockPositionQuoteInputV1Schema, StockPositionQuoteV1Schema } from '@mi
 import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/stockPositionQuoteRead.js';
 import { ReopenCallAgentInputV1Schema, ReopenMineAgentOutputV1Schema } from '@mioagent/rwa-market-reality/reopen-agent';
 import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/reopenAgentRead.js';
+import { stillMineRuntimeV1 } from '../stillMine.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -62,13 +66,15 @@ import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/r
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.7.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.8.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own wallet through Coinbase Wallet MCP (wallet-mcp.coinbase.com, formerly Base MCP at mcp.base.org: the same tools, including send_calls).
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound fifteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound sixteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+
+Still is spend without selling: get_still_terms reads its public terms and miorail_get_my_still reads this connected wallet's Mirror through the same service as the page. Preserve the reading block and time. When headline.complete is false, availableCents is at least that amount, not a complete total; null stays unknown. A chain_unavailable outcome is our failure, never an empty wallet. This read prepares nothing. Still's terms are not advice to borrow.
 
 Call the reopen, the weekend game: get_reopen_round reads the round; miorail_get_my_reopen reads this wallet's picks, score and record; miorail_call_the_reopen makes or changes this wallet's picks before the Sunday 17:00 ET lock, for the stocks the USER named and with the side the USER said — never a pick of yours. Nothing is won but the record.
 
@@ -130,7 +136,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the fifteen below can be called at all. A client that connected
+  // before any of the sixteen below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -150,6 +156,27 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
       content: [{ type: 'text' as const, text: `${failure.code}: ${failure.message}` }],
     };
   };
+
+  server.registerTool('miorail_get_my_still', {
+    title: 'My Still — what is held, owed and available without selling',
+    description: `Read this grant owner's Still Mirror: eligible holdings, existing Aave V4 and Morpho loans, what Still's terms allow and what could not be read. It uses the same service and cache as GET /api/still/mine. Takes no arguments and can read only the OAuth identity's wallet. The report's amounts belong to reading.block and reading.blockTime and age from that reading; cached is explicit. If headline.complete is false, a non-null availableCents is "at least" that amount, never a complete total; null means unknown and never zero. Preserve coverage.failed and the separate venue rows. outcome chain_unavailable is our read failure, not a fact about the wallet and not an empty portfolio. This tool only reads: it creates no approval, plan, calldata or transaction. The terms are not advice to borrow.`,
+    inputSchema: z.object({}).strict(),
+    outputSchema: MiorailGetMyStillOutputV1Schema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, async () => {
+    try {
+      const wallet = identity.walletAddress.toLowerCase();
+      const outcome = MiorailGetMyStillResultV1Schema.parse(await stillMineRuntimeV1.service().check(wallet));
+      if (outcome.outcome === 'report' && outcome.report.subject.address.toLowerCase() !== wallet) {
+        throw new Error('still_mine_wallet_mismatch');
+      }
+      return reply(outcome);
+    } catch (error) {
+      logger.warn('Still connected mirror read failed', { errorName: error instanceof Error ? error.name : typeof error });
+      return { isError: true, content: [{ type: 'text' as const,
+        text: 'still_mirror_unavailable: Your Still overview could not be read. This is our failure and does not establish that your wallet or loans are empty.' }] };
+    }
+  });
 
   server.registerTool('miorail_get_my_stocks_today', {
     title: 'My stocks today — holdings, dividends and relevant changes',

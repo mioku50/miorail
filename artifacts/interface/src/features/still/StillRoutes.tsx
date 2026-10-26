@@ -68,6 +68,57 @@ export function StillHomeRoute() {
   return <Redirect to={`${gate.showPrivateSurfaces ? '/market' : '/stocks'}${search}`} replace />;
 }
 
+/** Decode the old wallet permalink once, from the browser's encoded path. */
+function legacyWalletSubjectV1(pathname: string): string | null {
+  const match = /^\/w\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return null;
+  try {
+    const subject = decodeURIComponent(match[1]!).trim();
+    const hasControl = Array.from(subject).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
+    return subject.length > 0 && subject.length <= 256 && !subject.includes('/') && !subject.includes('\\') && !hasControl
+      ? subject
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Still's original public wallet links. The URL names the wallet to read,
+ * even when another wallet has signed in: a session never replaces its subject.
+ */
+export function StillWalletPage() {
+  const [, navigate] = useLocation();
+  const sky = useStillSky();
+  // Wouter decodes parts of a path before matching. Read the encoded browser
+  // path so a literal percent, an escaped slash and malformed escapes cannot
+  // be decoded twice into a different subject.
+  const subject = legacyWalletSubjectV1(window.location.pathname);
+  const check = useStillCheck(subject);
+  const answer = check.data ?? null;
+  const result = useMemo(
+    () => (answer?.outcome === 'report' ? { view: homeViewV1({ report: answer.report, sky }), report: answer.report } : null),
+    [answer, sky],
+  );
+  return (
+    <StillFrame tab="home" sky={sky}>
+      <StillHomeSignedOut
+        model={{
+          sky,
+          result,
+          checking: check.isFetching,
+          message: subject === null
+            ? stillCheckMessageV1({ outcome: 'invalid_subject', reason: 'not_an_address_or_name' })
+            : answer ? stillCheckMessageV1(answer) : null,
+          onCheck: (next) => navigate(`/w/${encodeURIComponent(next.trim())}`),
+          // Signing in opens the reader's own Home, not the public subject.
+          signInHref: '/signin?next=%2F',
+        }}
+      />
+    </StillFrame>
+  );
+}
+
 function StillHomePage() {
   const sky = useStillSky();
   const signInHref = useSignInHref();

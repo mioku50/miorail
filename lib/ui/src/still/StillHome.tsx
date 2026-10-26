@@ -5,7 +5,7 @@ import { formatCents } from '@mioagent/still-engine/format';
 import { type ComingUpV1, type HomeViewV1, type MobileInputV1 } from './homeView';
 import { SkyLayer } from './Sky';
 import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
-import { StillGlyph, StillLink } from './StillFrame';
+import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
 import { StillMobile } from './StillMobile';
 
 void React;
@@ -149,11 +149,6 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           {view.failed.length > 0 ? (
             <p className="still-section still-warn">Not read this time: {view.failed.join(', ')}. The amount is what could be proven, a floor.</p>
           ) : null}
-          <div className="still-btns">
-            <StillLink href="/assets" className="still-btn sec">Your assets</StillLink>
-            <StillLink href="/agent" className="still-btn sec">Ask Still</StillLink>
-          </div>
-          <StillComingUp items={view.comingUp} />
         </>
       ) : (
         <h1 className="visually-hidden">Still</h1>
@@ -166,6 +161,14 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <button type="button" className="still-btn sec" onClick={model.onRetry}>Read again</button>
         </div>
       ) : null}
+      <div className="still-btns">
+        {view ? <>
+          <StillLink href="/assets" className="still-btn sec">Your assets</StillLink>
+          <StillLink href="/agent" className="still-btn sec">Ask Still</StillLink>
+        </> : null}
+        <StillLink href={STILL_ASSISTANTS_V1.path} className="still-btn sec">{STILL_ASSISTANTS_V1.label}</StillLink>
+      </div>
+      {view ? <StillComingUp items={view.comingUp} /> : null}
     </>
   );
 }
@@ -233,7 +236,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       ) : null}
       <div className="still-btns">
         <a href={model.signInHref} className="still-btn">Sign in</a>
-        <StillLink href="/assistants" className="still-btn sec">For assistants</StillLink>
+        <StillLink href={STILL_ASSISTANTS_V1.path} className="still-btn sec">{STILL_ASSISTANTS_V1.label}</StillLink>
       </div>
       <p className="still-section still-note">
         Still lends up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. It never signs for you.

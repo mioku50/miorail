@@ -336,7 +336,7 @@ test('the Wallet MCP plugin is served as markdown and follows the plugin spec', 
   }
   assert.match(front, /url: https:\/\/miorail\.xyz\/mcp\/private/);
   assert.match(front, /auth: oauth-on-install/);
-  assert.match(front, /risk: \[slippage\]/, 'a swap plugin is slippage only, as Uniswap and Aerodrome are');
+  assert.match(front, /risk: \[slippage, liquidation\]/, 'Still adds collateralized borrowing; both swap and liquidation risks remain declared');
 
   // The body's canonical order for an external-mcp plugin, and no Endpoints
   // or Commands: the agent reads the MCP's own tool catalogue.

@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 import { isRoutePlanExpired, routeDisplayLabel, routePlanOutcomeCopy, routePlanSurfaceState } from '@mioagent/ui';
-import { CONSOLE_PRIMARY_SECTIONS_V1, CONSOLE_SECTION_TABLE_V1 } from '@mioagent/ui';
+import { CONSOLE_PRIMARY_SECTIONS_V1, CONSOLE_SECTION_TABLE_V1, CONSOLE_SECTIONS_V1 } from '@mioagent/ui';
 import { appCommands, navTabs } from '../../app/routes.js';
 
 const here = path.dirname(url.fileURLToPath(import.meta.url));
@@ -74,13 +74,14 @@ test('no payment surface became a tab', () => {
 
 test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
-  // Nine: the three primary sections plus Market Reality, Radar, Investigate,
-  // Activity, Extensions and Settings, which the palette reaches and the
-  // header deliberately does not. None of the five belongs in the tab bar —
-  // each is entered with something you already have, an address or a company —
-  // and a wider bar would push every label into an ellipsis at 390px to make
-  // room for the surfaces used least often.
-  assert.equal(commands.length, 10, 'the console exposes exactly ten entries');
+  // Still's own places lead; all existing console destinations remain available.
+  for (const section of CONSOLE_SECTIONS_V1) {
+    assert.equal(commands.filter((command) => command.path === CONSOLE_SECTION_TABLE_V1[section].path).length, 1);
+  }
+  for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants']]) {
+    assert.equal(commands.filter((command) => command.path === path && command.label === label).length, 1);
+  }
+  assert.equal(new Set(commands.map((command) => command.id)).size, commands.length);
   assert.equal(commands.some((command) => command.path === '/today'), true);
   assert.equal(commands.some((command) => command.path === '/plan/history'), true);
   assert.equal(commands.some((command) => command.path === '/portfolio'), true);

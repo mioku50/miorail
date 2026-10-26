@@ -291,6 +291,8 @@ describe('§11 — the public MCP surface cannot reach execution', () => {
       'recordedChangesTool.ts',
       'reopenTool.ts',
       'server.ts',
+      'stillTerms.test.ts',
+      'stillTermsTool.ts',
       'tools.ts',
       'useAccess.test.ts',
       'useAccessTools.ts',
@@ -904,7 +906,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry plus fifteen', async () => {
+  test('the connected surface is exactly the public registry plus sixteen', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -922,7 +924,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 15);
+    assert.equal(connectedNames.size, publicNames.length + 16);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -980,6 +982,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'miorail_read_borrow_capacity',
       'miorail_get_my_stocks_today',
       'miorail_get_my_reopen',
+      'miorail_get_my_still',
     ]);
 
     for (const tool of tools) {

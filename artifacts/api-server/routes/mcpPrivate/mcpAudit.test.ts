@@ -640,6 +640,7 @@ describe('§9 — the public MCP surface cannot reach the audit or the execution
       'recordedChangesTool.ts',
       'reopenTool.ts',
       'server.ts',
+      'stillTermsTool.ts',
       'tools.ts',
       'useAccessTools.ts',
     ]);

@@ -6,6 +6,7 @@ import {
 } from './identityTools.js';
 import { z } from 'zod';
 import { EvidenceOutputExtensionV1, evidencePackageV1, type EvidenceToolV1 } from './evidencePackage.js';
+import { miorailGetStillTermsV1, StillTermsInputV1Schema, StillTermsSchema } from './stillTermsTool.js';
 import {
   B20_EXIT_STANDING_KINDS_V1,
   B20_FUNDAMENTAL_PREDICATES_V1,
@@ -96,7 +97,7 @@ export const MIORAIL_MCP_NAME_V1 = 'miorail';
  * So this moves whenever the published tool list moves, and
  * `mcpServer.test.ts` refuses a registry change that leaves it behind.
  */
-export const MIORAIL_MCP_VERSION_V1 = '1.7.0';
+export const MIORAIL_MCP_VERSION_V1 = '1.8.0';
 
 /** §7 — what the assistant is told about the whole server, once. */
 export const MIORAIL_MCP_INSTRUCTIONS_V1 = `Miorail is a Base L2 route-intelligence product. This server is READ-ONLY: it reports what Miorail's background workers measured about B20 token launches, and it can neither trade, sign, quote a wallet, nor prepare a transaction.
@@ -126,6 +127,8 @@ get_dividend_calendar answers "when does this stock pay next, about how much rea
 get_use_access reports what one exact representation can be used for and what gates it, including the POOLS that hold it — a question about LP or liquidity is answered from \`pools\`, never from the lending venues in \`defi\`. ANNOUNCED IS NOT LIVE: a dated public claim by a named party is carried beside what the venue itself answered, and the four states are not interchangeable — \`unchecked\` means nobody read that venue and is never \`not_listed\`. Base announced on 2026-08-24 that Coinbase tokenized stocks are collateral on Aave; Aave's reserve list on Base does not name those addresses today, and telling a user they can post that collateral now is wrong. WHO SUPPORTS IT IS A LEDGER, NOT A VERDICT: \`ecosystem\` carries the apps Base’s own stocks page names — thirty of them — each with that page’s claim beside what the app itself answered for this exact address, in the SAME four states. Most of them are apps Miorail does not read at all, and those are \`unchecked\`: reporting them as refusals states our reach as a fact about somebody else’s product. \`ecosystem.summary\` is the deterministic sentence to repeat. A venue listing an address is still not permission to act: caps and pause flags are not read, and the borrower’s own position is not read at all. PER MARKET, NOT PER VENUE: where a venue publishes them, \`defi.venues[].markets\` carries every market for this address with its own curation flag, LLTV in basis points and what is available to borrow in it — one Morpho-curated market at 62.5% beside three anyone deployed is the normal shape, and a figure there says a market could be used, never that this user could use it. The block in \`blockTag\` governs only the fields named in \`blockTagCovers\` and never the venue rows, which carry their own provenance. The tool is public and wallet-free, so it can never say whether a particular wallet may transfer or use a token, and it states nothing about KYC, jurisdiction or legal eligibility.
 
 The ten stock and status reads carry evidencePackage: a per-claim provenance index with JSON Pointers into the original answer. Preserve its scope, source, block, observedAt and hash separately. Null means unavailable in the returned evidence; generatedAt is only packaging time. A source-content hash, a measurement hash and a snapshot hash mean different things; a transaction hash is only a lookup reference. Derived counts and estimates are not primary evidence. The package adds no new measurement and proves no freshness by itself.
+
+Still is the product's front door: spend without selling. get_still_terms reads the same versioned terms and earnings calendar as the page. Still uses 50% of a protocol's collateral factor, reduced to 40% for stocks in Still's closed-market window (weekends and market holidays included), in an earnings window, or while that stock's earnings calendar is unread. Preserve the returned windows and calendarRead fields; never call an unread calendar empty. These are terms, not a recommendation to borrow. Still is not offered to US persons. This public server reads no personal balance or loan; the connected miorail_get_my_still reads only its grant's own wallet.
 
 get_reopen_round reads Call the reopen, Miorail's weekend game: will five stocks reopen above or below the close? Where a token trades on Base over the weekend is not a forecast of the reopen, and Base's own call exists only from the Sunday 17:00 ET lock. Nothing is won but the record. This server makes no pick for anybody.`;
 
@@ -172,6 +175,17 @@ export function registerMiorailReadOnlyToolsV1(server: McpServer, hooks: Evidenc
       content: [{ type: 'text' as const, text: `${failure.code}: ${failure.message}` }],
     };
   };
+
+  server.registerTool('get_still_terms', {
+    title: 'Still terms — spend without selling',
+    description: 'Reads Still’s versioned terms without a wallet, using the same earnings-calendar service and cache as the page. Still uses 50% of the protocol’s collateral factor. Stocks count at 40% in Still’s closed-market window (including weekends and market holidays), in their earnings window, or while their earnings calendar is unread. Read the returned active flags, window boundaries and per-stock calendarRead: a missing earnings read is not an empty schedule. The stock reduction does not apply to cbBTC or ETH. These are terms, not a personal borrowing quote or a recommendation to borrow. Still is not offered to US persons.',
+    inputSchema: StillTermsInputV1Schema,
+    outputSchema: StillTermsSchema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  }, async () => {
+    try { return reply(await miorailGetStillTermsV1()); }
+    catch (error) { return refuse(error); }
+  });
 
   server.registerTool(
     'miorail_discover_status',

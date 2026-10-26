@@ -479,6 +479,7 @@ describe('the existing execution boundary is unchanged', () => {
         'miorail_get_base_mcp_action',
         'miorail_get_execution_status',
         'miorail_get_my_reopen',
+        'miorail_get_my_still',
         'miorail_get_my_stocks_today',
         'miorail_get_stock_base_mcp_action',
         'miorail_mark_stock_updates_read',

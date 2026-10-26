@@ -105,6 +105,14 @@ function sessionSecret(): string {
 }
 
 function publicOrigin(req: Request): string {
+  // A session cookie belongs to one host. Still shares this API, but its
+  // Wallet MCP callback must come back to Still even when the API's canonical
+  // public URL is Miorail. Only these fixed first-party hosts override config;
+  // an arbitrary forwarded host cannot choose an OAuth redirect destination.
+  const requestHost = req.get('host')?.toLowerCase();
+  if (requestHost === 'stills.lat' || requestHost === 'www.stills.lat') {
+    return `https://${requestHost}`;
+  }
   const fromEnv = (process.env.PUBLIC_API_BASE_URL || process.env.API_PUBLIC_URL || '').trim();
   if (fromEnv) return fromEnv.replace(/\/+$/, '');
 

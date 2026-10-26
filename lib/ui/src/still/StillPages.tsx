@@ -4,7 +4,7 @@ import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
 import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_PUBLIC_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1 } from '../console/WalletMcpMiorailCard';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
-import { StillHeader, StillLink } from './StillFrame';
+import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
 
 void React;
 
@@ -129,7 +129,7 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
   {
     label: 'Assistants',
     rows: [
-      { title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: '/assistants' },
+      { title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: STILL_ASSISTANTS_V1.path },
       { title: 'Wallet MCP', blurb: 'Coinbase’s wallet in your assistant, with Miorail inside', href: '/extensions' },
     ],
   },
@@ -211,7 +211,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
   ];
   return (
     <>
-      <StillHeader title="For assistants" sky={model.sky} />
+      <StillHeader title={STILL_ASSISTANTS_V1.label} sky={model.sky} />
       <div className="still-section">
         <div className="still-word">Still in your assistant.</div>
         <div className="still-sub">

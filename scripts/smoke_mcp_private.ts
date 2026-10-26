@@ -39,6 +39,7 @@ const EXPECTED_TOOLS_V1 = [
   'miorail_get_base_mcp_action',
   'miorail_get_execution_status',
   'miorail_get_my_reopen',
+  'miorail_get_my_still',
   'miorail_get_my_stocks_today',
   'miorail_measure_my_stock_cash_out',
   'miorail_prepare_b20_entry',
