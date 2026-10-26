@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useState, type ReactNode } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { CONSOLE_COPY_V1 } from './consoleState';
 import type { ConsoleNavItemV1, ConsoleSectionV1, PaidEvidenceStripV1 } from './navigation';
 
@@ -9,6 +9,28 @@ void React;
 // each column scrolling independently. This is the app's ROOT layout, mounted
 // above the router — not another page inside the old chrome.
 // ---------------------------------------------------------------------------
+
+/**
+ * What a host app's frame receives in place of this shell's chrome.
+ *
+ * The web app draws Still's frame around every console page (2026-10-26):
+ * its own navigation, the market sky's palette, the page scrolling as a
+ * page. The miniapp provides no frame and keeps this shell. A context rather
+ * than an import, because Still's frame reads Still's engine, which counts in
+ * BigInt literals, and the miniapp builds this package below ES2020.
+ */
+export interface ConsoleFrameV1Props {
+  crumb: readonly string[];
+  /** Live-data panels, for a column beside the page on a wide screen. */
+  right: ReactNode;
+  /** The same panels folded under the page on a narrow one. */
+  railFold?: ReactNode;
+  /** Routes and Activity: the new-goal button, the active session and recent proofs. */
+  execution: ReactNode;
+  children: ReactNode;
+}
+
+export const ConsoleFrameContextV1 = createContext<ComponentType<ConsoleFrameV1Props> | null>(null);
 
 export type ConsoleThemeV1 = 'dark' | 'light';
 const THEME_STORAGE_KEY_V1 = 'miorail-theme';
@@ -32,8 +54,11 @@ function readStoredTheme(): ConsoleThemeV1 {
  */
 export function useConsoleTheme(): { theme: ConsoleThemeV1; setTheme: (next: ConsoleThemeV1) => void } {
   const [theme, setThemeState] = useState<ConsoleThemeV1>(readStoredTheme);
+  // A host frame owns the palette; writing the stored choice here would undo it.
+  const framed = useContext(ConsoleFrameContextV1) !== null;
 
   useEffect(() => {
+    if (framed) return;
     const root = document.documentElement;
     root.dataset.theme = theme;
     root.classList.toggle('light', theme === 'light');
@@ -43,7 +68,7 @@ export function useConsoleTheme(): { theme: ConsoleThemeV1; setTheme: (next: Con
     } catch {
       /* non-fatal */
     }
-  }, [theme]);
+  }, [theme, framed]);
 
   const setTheme = useCallback((next: ConsoleThemeV1) => setThemeState(next), []);
   return { theme, setTheme };
@@ -71,7 +96,7 @@ function useConsoleHostClass(): void {
  */
 const WALLET_BASENAME_CACHE_V1 = new Map<string, Promise<string | null>>();
 
-function useWalletBasenameV1(walletLabel: string | null): string | null {
+export function useWalletBasenameV1(walletLabel: string | null): string | null {
   const [name, setName] = useState<string | null>(null);
   useEffect(() => {
     setName(null);
@@ -243,11 +268,63 @@ function RailItem({ item, onSelect }: { item: ConsoleSessionItemV1; onSelect: (i
   );
 }
 
+/** Routes and Activity: start a goal, the session in progress, and recent proofs. */
+function ExecutionRail({ left, onNewGoal, onSelectSession, onSelectProof }: ConsoleShellProps) {
+  return (
+    <>
+      <button type="button" className="newgoal" onClick={onNewGoal}>
+        + New goal
+      </button>
+
+      <div className="sechead">
+        <span>Active session</span>
+        <span className="mono">{left.sessionCount}</span>
+      </div>
+      {left.sessions.length === 0 ? (
+        <p className="empty">No active session yet — start one above.</p>
+      ) : (
+        left.sessions.map((item) => <RailItem key={item.id} item={item} onSelect={onSelectSession} />)
+      )}
+
+      <div className="sechead">
+        <span>Recent proofs</span>
+        <span className="mono">{left.proofCount}</span>
+      </div>
+      {left.proofs.length === 0 ? (
+        <p className="empty">None among your recent runs. A proof opens when a route is handed to your wallet.</p>
+      ) : (
+        left.proofs.map((item) => <RailItem key={item.id} item={item} onSelect={onSelectProof} />)
+      )}
+    </>
+  );
+}
+
+function activeSectionOf(props: ConsoleShellProps): ConsoleSectionV1 | null {
+  const railNav = props.left.nav ?? props.header.nav ?? [];
+  return railNav.find((item) => item.active)?.id ?? null;
+}
+
 export function ConsoleShell(props: ConsoleShellProps) {
+  const Frame = useContext(ConsoleFrameContextV1);
+  if (!Frame) return <ClassicConsoleShell {...props} />;
+  const section = activeSectionOf(props);
+  return (
+    <Frame
+      crumb={props.header.crumb}
+      right={props.right}
+      railFold={props.railFold}
+      execution={section === 'routes' || section === 'activity' ? <ExecutionRail {...props} /> : null}
+    >
+      {props.children}
+    </Frame>
+  );
+}
+
+function ClassicConsoleShell(props: ConsoleShellProps) {
   const { header, left } = props;
   const [drawerOpen, setDrawerOpen] = useState(false);
   const railNav = left.nav ?? header.nav ?? [];
-  const activeSection = railNav.find((item) => item.active)?.id ?? null;
+  const activeSection = activeSectionOf(props);
   const basename = useWalletBasenameV1(header.walletLabel);
   const mainNav = railNav.filter((item) => item.group !== 'more');
   const moreNav = railNav.filter((item) => item.group === 'more');
@@ -377,33 +454,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
             </nav>
           )}
 
-          {showExecutionRail ? (
-            <>
-              <button type="button" className="newgoal" onClick={props.onNewGoal}>
-                + New goal
-              </button>
-
-              <div className="sechead">
-                <span>Active session</span>
-                <span className="mono">{left.sessionCount}</span>
-              </div>
-              {left.sessions.length === 0 ? (
-                <p className="empty">No active session yet — start one above.</p>
-              ) : (
-                left.sessions.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectSession} />)
-              )}
-
-              <div className="sechead">
-                <span>Recent proofs</span>
-                <span className="mono">{left.proofCount}</span>
-              </div>
-              {left.proofs.length === 0 ? (
-                <p className="empty">None among your recent runs. A proof opens when a route is handed to your wallet.</p>
-              ) : (
-                left.proofs.map((item) => <RailItem key={item.id} item={item} onSelect={props.onSelectProof} />)
-              )}
-            </>
-          ) : null}
+          {showExecutionRail ? <ExecutionRail {...props} /> : null}
 
           {/* T70 §2 — what is left of Budget & payments outside Settings: a
               status, what still works, and a way through. The panel itself, the

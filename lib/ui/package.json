@@ -9,7 +9,9 @@
   "exports": {
     ".": "./index.ts",
     "./tokens.css": "./src/tokens.css",
-    "./console.css": "./src/console/console.css"
+    "./console.css": "./src/console/console.css",
+    "./still": "./src/still/index.ts",
+    "./still.css": "./src/still/still.css"
   },
   "sideEffects": [
     "*.css"

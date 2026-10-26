@@ -14,9 +14,10 @@ import { fileURLToPath } from 'node:url';
 // 475 kB, and a single re-added static import silently undoes it: the build
 // still succeeds, the tests still pass, and the bundle is large again.
 //
-// `HomeRoute` is deliberately absent from this list. It is a redirect resolver
-// rather than a screen, and making it lazy would put a network round trip in
-// front of every visit to "/".
+// Still's pages are deliberately absent from this list. Home is the first
+// screen of every visit, and the frame every other screen is drawn in comes
+// from the same module, so a lazy Home would only put a network round trip in
+// front of "/".
 // ---------------------------------------------------------------------------
 
 const LAZY_SCREENS_V1 = [

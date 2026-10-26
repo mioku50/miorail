@@ -1,0 +1,196 @@
+import type { MirrorReport } from '@mioagent/still-engine/report';
+import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
+import { formatCents } from '@mioagent/still-engine/format';
+
+import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState';
+
+// ---------------------------------------------------------------------------
+// Home, in words and shapes, from one Mirror report.
+//
+// The report is the one source for "my loan" (the chain at one block); the
+// dividend lines are Miorail's calendar for this wallet. Nothing here reads
+// anything: the page passes what it read, and every sentence below is built
+// from those fields, so a number on Home is a number in the report.
+// ---------------------------------------------------------------------------
+
+export type HomeStateV1 = 'calm' | 'watch' | 'act' | 'liquidation' | 'empty';
+
+export interface MobileHoldingV1 {
+  id: string;
+  /** What the shape says: NVDA, BTC. */
+  label: string;
+  kind: 'stock' | 'crypto' | 'more';
+  /** Wallet and pledged together, in cents. */
+  valueCents: number;
+}
+
+export interface MobileInputV1 {
+  holdings: MobileHoldingV1[];
+  /** What is owed and what the limit is, in cents. Null when nothing could be borrowed or is owed. */
+  loan: { owedCents: number; limitCents: number; weekdayLimitCents: number | null } | null;
+  state: HomeStateV1;
+}
+
+export interface ComingUpV1 {
+  /** "FRI 8 PM", "NOV 13": when, in New York. */
+  when: string;
+  icon: 'moon' | 'sun' | 'dividend' | 'earnings';
+  text: string;
+}
+
+export interface HomeViewV1 {
+  state: HomeStateV1;
+  stateWord: string;
+  stateLine: string;
+  /** "$784" and ".65", printed at two sizes. Null when the report could not say. */
+  available: { dollars: string; cents: string; atLeast: boolean } | null;
+  owed: { amount: string; detail: string } | null;
+  mobile: MobileInputV1;
+  comingUp: ComingUpV1[];
+  /** Reads that failed this time, named. */
+  failed: string[];
+}
+
+const TICKERS_V1: Readonly<Record<string, string>> = { cbBTC: 'BTC', ETH: 'ETH' };
+/** "$1,234" and ".56": the engine's amount, split for two type sizes. */
+function splitCentsV1(cents: string): { dollars: string; cents: string } {
+  const text = formatCents(cents);
+  const dot = text.lastIndexOf('.');
+  return { dollars: text.slice(0, dot), cents: text.slice(dot) };
+}
+
+function labelOfV1(line: MirrorReport['assets'][number]): string {
+  return TICKERS_V1[line.asset] ?? line.asset.replace(/c$/, '');
+}
+
+/** The worst safety among the venues that hold a loan. */
+function worstV1(report: MirrorReport): { state: HomeStateV1; venue: MirrorReport['venues'][number] | null } {
+  const order: HomeStateV1[] = ['liquidation', 'act', 'watch', 'calm'];
+  let worst: MirrorReport['venues'][number] | null = null;
+  for (const venue of report.venues) {
+    if (!venue.safety || venue.debtCents === null || venue.debtCents === '0') continue;
+    if (!worst || order.indexOf(venue.safety.state) < order.indexOf(worst.safety!.state)) worst = venue;
+  }
+  return { state: worst ? worst.safety!.state : 'empty', venue: worst };
+}
+
+function stateWordV1(state: HomeStateV1): string {
+  if (state === 'watch') return 'Leaning.';
+  if (state === 'act') return 'Tipping.';
+  if (state === 'liquidation') return 'Over the edge.';
+  return 'In balance.';
+}
+
+function stateLineV1(report: MirrorReport, state: HomeStateV1, venue: MirrorReport['venues'][number] | null): string {
+  if (!venue || !venue.safety) {
+    const holding = report.assets.some((line) => line.valueCents !== null && line.valueCents !== '0');
+    return holding ? 'Nothing borrowed. Your assets hang free.' : 'Nothing here to hold up a loan yet.';
+  }
+  if (state === 'liquidation') return 'The loan outweighs its collateral: liquidation can start now.';
+  const pledged = report.assets.filter((line) => line.venue === venue.venue && line.pledged !== null && line.pledged.raw !== '0');
+  const names = pledged.map((line) => line.name);
+  const subject = names.length === 1 ? names[0]! : 'Your collateral';
+  const together = names.length === 1 ? '' : ' together';
+  return `${subject} can fall ${Math.floor(venue.safety.marginBps / 100)}%${together} before the weight wins.`;
+}
+
+function venueNameV1(venue: MirrorReport['venues'][number]): string {
+  return venue.venue === 'aave-v4' ? 'Aave' : 'Morpho';
+}
+
+export function homeViewV1(input: {
+  report: MirrorReport;
+  sky: SkyStateV1;
+  dividends?: DividendWalletResponseV1 | null;
+}): HomeViewV1 {
+  const { report, sky } = input;
+  const { state, venue } = worstV1(report);
+
+  const lines = report.assets.filter((line) => line.valueCents !== null && line.valueCents !== '0');
+  const sorted = [...lines].sort((a, b) => Number(BigInt(b.valueCents!) - BigInt(a.valueCents!)));
+  const shown = sorted.length > 4 ? sorted.slice(0, 3) : sorted;
+  const holdings: MobileHoldingV1[] = shown.map((line) => ({
+    id: line.asset,
+    label: labelOfV1(line),
+    kind: line.kind,
+    valueCents: Number(line.valueCents),
+  }));
+  if (sorted.length > 4) {
+    const rest = sorted.slice(3);
+    holdings.push({
+      id: 'more',
+      label: `+${rest.length}`,
+      kind: 'more',
+      valueCents: rest.reduce((sum, line) => sum + Number(line.valueCents), 0),
+    });
+  }
+
+  const debts = report.venues.filter((v) => v.debtCents !== null && v.debtCents !== '0');
+  const owedCents = debts.reduce((sum, v) => sum + BigInt(v.debtCents!), BigInt(0));
+  const availableCents = report.headline.availableCents;
+  const limit = availableCents === null ? null : owedCents + BigInt(availableCents);
+  const weekdayLimit = report.headline.weekdayAvailableCents === null ? null : owedCents + BigInt(report.headline.weekdayAvailableCents);
+  const loan = limit === null || limit === BigInt(0)
+    ? null
+    : { owedCents: Number(owedCents), limitCents: Number(limit), weekdayLimitCents: weekdayLimit === null ? null : Number(weekdayLimit) };
+
+  let owed: HomeViewV1['owed'] = null;
+  if (debts.length > 0) {
+    const rated = debts.filter((v) => v.borrowRateBps !== null);
+    const detail = debts.length === 1 && rated.length === 1
+      ? `${(rated[0]!.borrowRateBps! / 100).toFixed(2)}% a year on ${venueNameV1(rated[0]!)}`
+      : `on ${[...new Set(debts.map(venueNameV1))].join(' and ')}`;
+    owed = { amount: `Owed ${formatCents(owedCents)}`, detail };
+  }
+
+  const comingUp: ComingUpV1[] = [];
+  if (sky.closed.active) {
+    comingUp.push({ when: newYorkMomentV1(sky.closed.endsAt).toUpperCase(), icon: 'sun', text: 'Full limits come back with the market.' });
+  } else {
+    const weekend = newYorkMomentV1(sky.closed.startsAt).startsWith('Fri') && newYorkMomentV1(sky.closed.endsAt).startsWith('Sun');
+    comingUp.push({
+      when: newYorkMomentV1(sky.closed.startsAt).toUpperCase(),
+      icon: 'moon',
+      text: weekend ? 'Weekend limits begin.' : 'Holiday limits begin: Wall Street closes.',
+    });
+  }
+  for (const line of report.assets) {
+    const window = line.earnings?.window;
+    if (!line.earnings?.reportDate || !window || line.earnings.lowered) continue;
+    if (line.wallet === null && line.pledged === null) continue;
+    comingUp.push({
+      when: newYorkMomentV1(window.startsAt).toUpperCase(),
+      icon: 'earnings',
+      text: `${line.name} reports ${dayV1(line.earnings.reportDate)}: new loans against it count at ${STILL_SHARES_V1.earnings}% until ${newYorkMomentV1(window.endsAt)}.`,
+    });
+  }
+  for (const holding of input.dividends?.holdings ?? []) {
+    const next = holding.upcoming[0];
+    if (!next || next.usd === null) continue;
+    const estimate = next.kind === 'estimate';
+    comingUp.push({
+      when: `${next.payDateApproximate ? '≈ ' : ''}${dayV1(next.payDate)}`.toUpperCase(),
+      icon: 'dividend',
+      text: `${holding.company} dividend · ${estimate ? '≈ ' : ''}$${Number(next.usd).toFixed(2)} as more ${holding.tokenSymbol}${estimate ? ', an estimate' : ''}`,
+    });
+  }
+
+  const failed = [...new Set([...report.coverage.failed.map((f) => f.what)])];
+  return {
+    state,
+    stateWord: stateWordV1(state),
+    stateLine: stateLineV1(report, state, venue),
+    available: availableCents === null ? null : { ...splitCentsV1(availableCents), atLeast: !report.headline.complete },
+    owed,
+    mobile: { holdings, loan, state },
+    comingUp,
+    failed,
+  };
+}
+
+const DAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
+
+/** "Nov 13" from a New York date. */
+function dayV1(date: string): string {
+  return DAY_V1.format(new Date(`${date}T12:00:00Z`));
+}

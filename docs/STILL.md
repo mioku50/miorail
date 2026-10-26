@@ -7,7 +7,8 @@ Coinbase's tokenized stocks (the Aave V4 "Coinbase Stocks" spoke on Base) and ag
 
 Code: [`lib/still-engine`](../lib/still-engine/README.md). API: `GET /api/public/still/mirror` and
 `GET /api/public/still/terms` (`artifacts/api-server/routes/stillPublic.ts`), and for the signed-in
-wallet only, `GET /api/still/mine` (`routes/stillMine.ts`).
+wallet only, `GET /api/still/mine` (`routes/stillMine.ts`). Screens: `lib/ui/src/still`, wired into
+the web app in `artifacts/interface/src/features/still`.
 
 ## Terms
 
@@ -38,6 +39,35 @@ falls to a 30% margin ("watch"), while one at 40% keeps 44% ("calm").
 
 Borrowed USDC is never re-pledged, so there is no leverage. There is no investment advice and no
 ranking. Still is not offered to US persons, because the issuer's terms exclude them.
+
+## The shell
+
+Since 2026-10-26 the web app opens on Still. Five places lead: Home, Assets, Agent, Stocks and More
+(operator, 2026-10-26). Every other Miorail page sits under More, at the path it always had, and is
+drawn in the same frame: a bar at the bottom on a phone, a rail on the left on a desk. A link that
+carried a query to `/` still lands on Stocks, which reads it.
+
+- **The sky** is computed, never drawn by mood. Day is the regular session on a day the reviewed
+  calendar has one. Night is Still's closed-market window. Dusk is the rest of a trading day. A
+  cloud is a stock inside its earnings window, from `/terms`. The caption names the limits only once
+  the terms were read, and an unread earnings calendar is said, not shown as full limits. The
+  palette follows the sky: the console's light palette by day, its dark one at night. There is no
+  theme switch.
+- **Home**, signed in, is the wallet's own Mirror: the mobile, where every shape's area is its
+  value, what can be spent, what is owed, and what is coming up. Signed out, it is the public check
+  of any Base wallet by address or name, and each refusal or failure of that check has its own
+  sentence.
+- **The Agent**, first version, answers from the numbers already read: the Mirror, the terms and
+  the dividend calendar. No model writes its sentences. A question in Russian gets its answer in
+  Russian, and a question it does not know gets the list of what it can answer.
+- **For assistants** copies the plugin line and the MCP addresses from the Wallet MCP card's
+  constants, the ones the plugin file names.
+- **Console pages** draw themselves through `ConsoleShell`, and the web app hands it Still's frame
+  through `ConsoleFrameContextV1`. The miniapp passes no frame and keeps the console's own chrome.
+  It builds the shared package below ES2020, and Still's engine counts money in BigInt literals.
+
+Each sentence takes its shares from `TERMS`, its amounts from the engine's formatters and its
+windows from the engine's `stillTerms`, which `/terms` serves too.
 
 ## The evidence bar
 

@@ -8,13 +8,13 @@ async function publicGuest(page: Page) {
   });
 }
 
-test('a stalled external font stylesheet does not block Stocks', async ({ page }) => {
+test('a stalled external font stylesheet does not block Home', async ({ page }) => {
   await publicGuest(page);
   let requested = false;
   await page.route('https://fonts.googleapis.com/**', () => { requested = true; });
   await page.goto('/', { waitUntil: 'domcontentloaded' });
-  await expect(page.getByRole('heading', { name: 'Reading without signing in', exact: true })).toBeVisible();
-  await expect(page).toHaveURL(/\/stocks$/);
+  await expect(page.getByRole('heading', { name: 'Spend without selling.', exact: true })).toBeVisible();
+  await expect(page).toHaveURL(/\/$/);
   expect(requested).toBe(true);
 });
 
@@ -46,6 +46,6 @@ test('a delayed entry module keeps the HTML recovery frame visible', async ({ pa
   await expect(page.getByText('If this takes longer, reload this page.', { exact: true })).toBeVisible();
   release();
   // Loading the released entry also loads its dependencies on a cold dev server.
-  await expect(page).toHaveURL(/\/stocks$/, { timeout: 30_000 });
-  await expect(page.getByRole('heading', { name: 'Reading without signing in', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Spend without selling.', exact: true })).toBeVisible({ timeout: 30_000 });
+  await expect(page).toHaveURL(/\/$/);
 });

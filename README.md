@@ -26,6 +26,7 @@ The governing rule is simple:
 
 | If you want to | Read |
 | --- | --- |
+| spend without selling: what the web app opens on | [STILL.md](docs/STILL.md) |
 | run it locally | [Running it yourself](#running-it-yourself) |
 | understand the subject | [Tokenized stocks on Base](#tokenized-stocks-on-base) |
 | connect an AI to the evidence | [Public Miorail MCP](#public-miorail-mcp) |

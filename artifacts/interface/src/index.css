@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "@mioagent/ui/tokens.css";
 @import "@mioagent/ui/console.css";
+@import "@mioagent/ui/still.css";
 
 body {
   background-color: var(--color-bg);

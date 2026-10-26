@@ -55,8 +55,7 @@ for (const width of [1280, 390]) {
     test.setTimeout(60_000);
     await page.setViewportSize({ width, height: 844 });
     const { reads, writes } = await install(page, true);
-    await page.goto('/');
-    await expect(page).toHaveURL(/\/today$/);
+    await page.goto('/today');
     const finding = page.getByText('Not the official AAPLc', { exact: true });
     await expect(finding).toBeVisible();
     // The holding leads by its face: Coinbase's icon, ticker and company, and the price on Base.

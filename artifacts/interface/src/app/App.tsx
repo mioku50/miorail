@@ -1,6 +1,8 @@
 import { lazy, Suspense, useEffect, useMemo } from 'react';
-import { Route, Switch, Redirect } from 'wouter';
+import { Route, Switch, Redirect, useLocation } from 'wouter';
 import { useStatus } from '@mioagent/api-client-react';
+import { ConsoleFrameContextV1 } from '@mioagent/ui';
+import { StillNavigateContext } from '@mioagent/ui/still';
 import { useUiStore } from '../lib/state';
 import { CHAIN_ENV } from '../lib/chain';
 import { CommandPalette } from '../shell/CommandPalette';
@@ -13,7 +15,14 @@ import {
 } from './baseMcpPopupHandoff';
 import { RequireSession } from './RequireSession';
 import { SignInPage } from './SignInPage';
-import { HomeRoute } from '../features/console/HomeRoute';
+import {
+  StillAgentPage,
+  StillAssetsPage,
+  StillAssistantsPage,
+  StillConsoleFrame,
+  StillHomeRoute,
+  StillMorePage,
+} from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
 
 
@@ -26,9 +35,9 @@ import { AppLoading } from './AppLoading';
 // good connection that is invisible; on a bad one it is the whole experience,
 // and the people most likely to be on a bad one are the ones we have never met.
 //
-// `HomeRoute` stays eager on purpose: it is a redirect resolver, not a screen,
-// and making it lazy would put a network round trip in front of every visit to
-// "/" before we even know where the visitor is going.
+// Still's pages stay eager on purpose: Home is the first screen of every
+// visit, and the frame every other screen is drawn in comes from the same
+// module, so a lazy Home would only add a round trip in front of "/".
 // ---------------------------------------------------------------------------
 
 const ActionsPage = lazy(() =>
@@ -159,6 +168,7 @@ function BaseMcpOAuthPopup({ message }: { message: BaseMcpOAuthMessageV1 }) {
 }
 
 export function App() {
+  const [, navigate] = useLocation();
   const togglePalette = useUiStore((s) => s.togglePalette);
   const setPaletteOpen = useUiStore((s) => s.setPaletteOpen);
   // Read once, before the router: a popup is not a session.
@@ -178,8 +188,11 @@ export function App() {
 
   if (popupMessage) return <BaseMcpOAuthPopup message={popupMessage} />;
 
+  // Still's frame (2026-10-26): every console page is drawn inside it, and
+  // its links move through the router instead of loading the page again.
   return (
-    <>
+    <StillNavigateContext.Provider value={navigate}>
+    <ConsoleFrameContextV1.Provider value={StillConsoleFrame}>
       <ChainEnvMismatchBanner />
       <Suspense fallback={<AppLoading />}>
       <Switch>
@@ -409,17 +422,29 @@ export function App() {
         <Route path="/base-mcp">{() => <Redirect to="/settings" replace />}</Route>
         <Route path="/plan">{() => <Redirect to="/routes" replace />}</Route>
 
-        {/* "/" resolves to a section rather than BEING one. Everything else
-            falls through to the flow, which is the safe surface: it needs no
-            wallet, no Discover and no stored evidence to be useful.
+        {/* Still's own places (2026-10-26): Home · Assets · Agent · Stocks ·
+            More. No session gate on any of them: each says what a reader
+            without one can do, and reads a wallet only for its own session. */}
+        <Route path="/assets">
+          <StillAssetsPage />
+        </Route>
+        <Route path="/agent">
+          <StillAgentPage />
+        </Route>
+        <Route path="/more">
+          <StillMorePage />
+        </Route>
+        <Route path="/assistants">
+          <StillAssistantsPage />
+        </Route>
 
-            Not behind the session gate since 2026-09-22. The gate here meant a
-            visitor's whole first view of miorail.xyz was "Continue with your
-            wallet"; HomeRoute now sends a reader with no session to the public
-            Stocks board, and every section it sends a session to carries its
-            own gate. */}
+        {/* "/" is Still's Home: the market sky, and what a wallet could spend
+            without selling — its own when signed in, any Base wallet's by
+            address or name when not. Everything else falls through to the
+            flow, which is the safe surface: it needs no wallet, no Discover
+            and no stored evidence to be useful. */}
         <Route path="/">
-          <HomeRoute />
+          <StillHomeRoute />
         </Route>
         <Route>
           <RequireSession>
@@ -431,7 +456,8 @@ export function App() {
       <CommandPalette />
       <Toaster />
       <BaseMcpOAuthBridge />
-    </>
+    </ConsoleFrameContextV1.Provider>
+    </StillNavigateContext.Provider>
   );
 }
 
