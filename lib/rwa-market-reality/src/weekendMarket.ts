@@ -279,6 +279,24 @@ export function nextWeekendStartV1(
   return null;
 }
 
+/**
+ * The regular session of the New York day `now` falls on: 9:30 ET to the
+ * close, 13:00 ET on an early close. Null on a weekend, on a market holiday
+ * and past the reviewed calendar.
+ */
+export function regularSessionV1(
+  now: Date,
+  calendar: ReviewedReferenceCalendarV1 = REVIEWED_US_EQUITIES_CALENDAR_V1,
+): { openAt: string; closeAt: string } | null {
+  const today = etPartsV1(now).localDate;
+  const session = sessionOnV1(today, calendar);
+  if (!session) return null;
+  return {
+    openAt: etInstantV1(today, calendar.regularOpenMinute).toISOString(),
+    closeAt: etInstantV1(today, session.close).toISOString(),
+  };
+}
+
 function medianV1(values: readonly number[]): number {
   const sorted = [...values].sort((a, b) => a - b);
   const middle = Math.floor(sorted.length / 2);

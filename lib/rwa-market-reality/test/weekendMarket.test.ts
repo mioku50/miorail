@@ -5,6 +5,7 @@ import {
   WeekendMarketResponseV1Schema,
   etInstantV1,
   nextWeekendStartV1,
+  regularSessionV1,
   weekendMarketV1,
   weekendWindowV1,
   weekendSlotStartV1,
@@ -260,5 +261,32 @@ describe('the next quiet period, for a weekday page', () => {
 
   test('past the reviewed calendar it is not guessed', () => {
     assert.equal(nextWeekendStartV1(new Date('2030-01-02T15:00:00.000Z')), null);
+  });
+});
+
+describe('the regular session of the day', () => {
+  test('on a weekday it runs 9:30 to 16:00 ET, before the open and after the close too', () => {
+    const session = { openAt: et('2026-10-26', '09:30').toISOString(), closeAt: et('2026-10-26', '16:00').toISOString() };
+    assert.deepEqual(regularSessionV1(et('2026-10-26', '07:00')), session);
+    assert.deepEqual(regularSessionV1(et('2026-10-26', '14:05')), session);
+    assert.deepEqual(regularSessionV1(et('2026-10-26', '23:59')), session);
+  });
+
+  test('the day after Thanksgiving closes at 13:00 ET', () => {
+    assert.deepEqual(regularSessionV1(et('2026-11-27', '10:00')), {
+      openAt: et('2026-11-27', '09:30').toISOString(),
+      closeAt: et('2026-11-27', '13:00').toISOString(),
+    });
+  });
+
+  test('a weekend, a holiday and a day past the calendar have none', () => {
+    assert.equal(regularSessionV1(et('2026-10-31', '12:00')), null);
+    assert.equal(regularSessionV1(et('2026-11-26', '12:00')), null);
+    assert.equal(regularSessionV1(new Date('2030-01-02T15:00:00.000Z')), null);
+  });
+
+  test('the New York date decides, not the UTC one', () => {
+    // 01:00 UTC on Tuesday is still Monday evening in New York.
+    assert.equal(regularSessionV1(new Date('2026-10-27T01:00:00.000Z'))?.openAt, et('2026-10-26', '09:30').toISOString());
   });
 });
