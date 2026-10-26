@@ -9,7 +9,8 @@ import { replaying, type RecordedBatch } from './replay.js';
 import { assertMatches } from './matches.js';
 
 // Real Base answers for the burn address (not a person's wallet), captured on Sunday
-// 2026-10-25 at block 53,075,866 with scripts/capture.ts. Recapture after changing what is read.
+// 2026-10-25 at block 53,075,866 by Still's capture script, before the move. Recapture after
+// changing what is read.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/burn-address.json', import.meta.url), 'utf8')) as {
   address: Address;
   block: string;

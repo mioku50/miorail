@@ -11,8 +11,7 @@
     "./policy": "./src/policy.ts",
     "./registry": "./src/registry.ts",
     "./report": "./src/report.ts",
-    "./dividend-report": "./src/dividend-report.ts",
-    "./found-report": "./src/found-report.ts"
+    "./dividend-report": "./src/dividend-report.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",
