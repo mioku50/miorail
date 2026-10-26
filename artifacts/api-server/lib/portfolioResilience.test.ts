@@ -113,10 +113,21 @@ describe('Portfolio Resilience and Stale Cache Tests', () => {
     const oldProvider = process.env.TOKEN_BALANCES_PROVIDER;
     const oldPrice = process.env.PRICE_PROVIDER;
     const oldKey = process.env.MORALIS_API_KEY;
+    // The refresh must fail, and fail the same way on every run. An invalid key
+    // sent to the live service was not that: one full run in October got an
+    // answer and read 'connected'. Moralis refuses here; everything else passes.
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+      if (url.startsWith('https://deep-index.moralis.io/')) {
+        return new Response(JSON.stringify({ message: 'Invalid key' }), { status: 401, headers: { 'content-type': 'application/json' } });
+      }
+      return realFetch(input, init);
+    }) as typeof fetch;
     try {
       process.env.TOKEN_BALANCES_PROVIDER = 'moralis';
       process.env.PRICE_PROVIDER = 'none';
-      process.env.MORALIS_API_KEY = 'invalid_key_for_test'; // Force live fetch failure
+      process.env.MORALIS_API_KEY = 'invalid_key_for_test';
 
       const portfolio = await fetchInternalPortfolio(testAddress, 'mainnet');
       assert.strictEqual(portfolio.providers?.tokenBalances, 'stale');
@@ -128,6 +139,7 @@ describe('Portfolio Resilience and Stale Cache Tests', () => {
       assert.ok(aero);
       assert.strictEqual(aero?.dataFreshness, 'cached');
     } finally {
+      globalThis.fetch = realFetch;
       if (oldProvider === undefined) {
         delete process.env.TOKEN_BALANCES_PROVIDER;
       } else {
