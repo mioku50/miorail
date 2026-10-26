@@ -308,15 +308,20 @@ export function setTokenBalancesCacheForTests(chainId: number, address: string, 
   const orch = getProviderCacheOrchestratorFromEnv();
   const key = `provider:${provider}:balances:${chainId}:${address.toLowerCase()}`;
   const now = Date.now();
+  // Expired an hour ago, not a second ago: the wall clock can step backwards
+  // between seeding and reading (WSL logged 28 such jumps during one full
+  // test run on 2026-10-26), and an entry one second past its expiry then
+  // reads as fresh, so the provider is never asked and the test sees
+  // 'connected' instead of 'stale'.
   return orch.store.set({
     key,
     provider,
     chainId,
     payload: tokens,
     status: 'stale',
-    createdAt: now - 60_000,
-    updatedAt: now - 60_000,
-    expiresAt: now - 1000,
+    createdAt: now - 2 * 3_600_000,
+    updatedAt: now - 2 * 3_600_000,
+    expiresAt: now - 3_600_000,
   });
 }
 
