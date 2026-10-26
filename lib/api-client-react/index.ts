@@ -1952,17 +1952,17 @@ export function useRwaUseAccess(
   });
 }
 
-/** Explicitly requested Aave position, isolated by the connected wallet key. */
-export function useAaveV4Position(walletAddress: string | null) {
+/** The signed-in wallet's own Mirror, read only when asked, isolated by the connected wallet key. */
+export function useStillMine(walletAddress: string | null) {
   const wallet = walletAddress?.toLowerCase() ?? null;
   return useQuery({
-    queryKey: ['aave-v4-position', wallet],
-    enabled: false, retry: false, staleTime: 60_000,
+    queryKey: ['still-mine', wallet],
+    enabled: false, retry: false, staleTime: 20_000,
     queryFn: async () => {
       if (!wallet) throw new Error('authentication_required');
-      const result = apiSpec.AaveV4PositionV1Schema.parse(await fetchApi<unknown>('/api/aave/position'));
-      if (result.walletAddress !== wallet) throw new Error('aave_v4_position_wallet_mismatch');
-      return result;
+      const result = apiSpec.StillMineResponseV1Schema.parse(await fetchApi<unknown>('/api/still/mine'));
+      if (result.report.subject.address.toLowerCase() !== wallet) throw new Error('still_mine_wallet_mismatch');
+      return result.report;
     },
   });
 }

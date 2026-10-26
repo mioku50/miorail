@@ -533,6 +533,9 @@ importers:
       '@mioagent/rwa-market-reality':
         specifier: workspace:*
         version: link:../rwa-market-reality
+      '@mioagent/still-engine':
+        specifier: workspace:*
+        version: link:../still-engine
       zod:
         specifier: ^3.25.76
         version: 3.25.76
@@ -1222,6 +1225,9 @@ importers:
       viem:
         specifier: ^2.53.1
         version: 2.53.1(bufferutil@4.1.0)(typescript@5.9.3)(utf-8-validate@6.0.6)(zod@4.4.3)
+      zod:
+        specifier: ^3.25.76
+        version: 3.25.76
     devDependencies:
       tsx:
         specifier: ^4.22.4
@@ -1355,6 +1361,9 @@ importers:
       '@mioagent/rwa-market-reality':
         specifier: workspace:*
         version: link:../rwa-market-reality
+      '@mioagent/still-engine':
+        specifier: workspace:*
+        version: link:../still-engine
       '@tanstack/react-query':
         specifier: ^5.0.0
         version: 5.101.1(react@19.2.7)

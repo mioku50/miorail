@@ -16,11 +16,3 @@ export function reservesFixtureV1() {
     summary: { supplied: amount('100', index === 0 ? '22000' : '100'), borrowed: amount(index === 0 ? '0' : '25'), suppliable: amount('900'), borrowable: amount(index === 0 ? '0' : '75'), supplyApy: figure(index === 0 ? '0' : '0.0123'), borrowApy: figure(index === 0 ? '0' : '0.023456') },
   }));
 }
-export function positionFixtureV1() {
-  return {
-    user: USER, spoke: { id: SPOKE_ID, address: AAVE_V4_BASE_SPOKE_V1, chain: { chainId: 8453 } },
-    totalCollateral: { current: figure('2000') }, totalDebt: { current: figure('500') },
-    netAccruedInterest: figure('-0.125'), netBorrowApy: { current: figure('0.0333') },
-    healthFactor: { current: '2.8' }, remainingBorrowingPower: figure('900'),
-  };
-}

@@ -1,5 +1,12 @@
 import { z } from 'zod';
-export { AaveV4PositionV1Schema, type AaveV4PositionV1 } from '@mioagent/rwa-issuer/aaveV4';
+import { MirrorReportSchema } from '@mioagent/still-engine/report-schema';
+export { MirrorReportSchema };
+export type { MirrorReport } from '@mioagent/still-engine/report';
+
+/** `GET /api/still/mine`: the signed-in wallet's own Mirror, read from Base at one block. */
+export const StillMineResponseV1Schema = z
+  .object({ outcome: z.literal('report'), report: MirrorReportSchema, cached: z.boolean() })
+  .strict();
 import {
   AddressV1Schema,
   CommerceInvoiceV1Schema,

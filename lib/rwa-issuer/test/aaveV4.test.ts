@@ -1,19 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  aaveV4DefiSourceV1, aaveV4ListingV1, readAaveV4PositionV1, readAaveV4ReservesV1,
-  AaveV4PositionV1Schema, AAVE_V4_BASE_USDC_V1,
+  aaveV4DefiSourceV1, aaveV4ListingV1, readAaveV4ReservesV1, AAVE_V4_BASE_USDC_V1,
 } from '../src/aaveV4.js';
-import { reservesFixtureV1, positionFixtureV1, STOCK, USER, SPOKE_ID } from './fixtures/aaveV4.js';
+import { reservesFixtureV1, STOCK, USER } from './fixtures/aaveV4.js';
 
-function transport(reserves = reservesFixtureV1(), position: unknown = positionFixtureV1()) {
+function transport(reserves = reservesFixtureV1()) {
   const calls: { query: string; variables: Record<string, unknown> }[] = [];
   const fetchImpl: typeof fetch = async (url, init) => {
     assert.equal(url, 'https://api.v4.aave.com/graphql');
     assert.equal(init?.redirect, 'error');
     assert.equal(init?.method, 'POST');
     const request = JSON.parse(String(init?.body)); calls.push(request);
-    return Response.json({ data: request.query.includes('userPosition(') ? { userPosition: position } : { reserves } });
+    return Response.json({ data: { reserves } });
   };
   return { calls, fetchImpl };
 }
@@ -68,26 +67,4 @@ test('HTTP errors, partial GraphQL errors and oversized bodies do not mean not l
     const row = await aaveV4DefiSourceV1({ fetchImpl: async () => response }).lookup(STOCK);
     assert.equal(row.state, 'unread'); assert.doesNotMatch(JSON.stringify(row), /private URL/);
   }
-});
-
-test('position reads use the returned opaque spoke id and the exact requested wallet; amounts and net interest retain precision', async () => {
-  const t = transport();
-  const row = await readAaveV4PositionV1(USER, { ...t, clock: () => new Date('2026-10-14T12:00:00Z') });
-  assert.equal(t.calls.length, 2); assert.deepEqual(t.calls[1]!.variables, { user: USER, spoke: SPOKE_ID });
-  assert.equal(row.walletAddress, USER); assert.equal(row.debtUsd, '500');
-  assert.equal(row.netAccruedInterestUsd, '-0.125'); assert.equal(row.healthFactor, '2.8');
-  assert.equal(row.netBorrowApyBps, 333); assert.equal(row.source, 'aave_api');
-  assert.equal(AaveV4PositionV1Schema.safeParse(row).success, true);
-  assert.equal(AaveV4PositionV1Schema.safeParse({ ...row, state: 'empty' }).success, false);
-  const negative = positionFixtureV1(); negative.netBorrowApy.current.value = '-0.001';
-  assert.equal((await readAaveV4PositionV1(USER, transport(undefined, negative))).netBorrowApyBps, -10);
-});
-
-test('empty position is scoped to MAG7, failures and missing health with debt are not an empty position', async () => {
-  const empty = await readAaveV4PositionV1(USER, transport(undefined, null));
-  assert.equal(empty.state, 'empty'); assert.equal(empty.debtUsd, null);
-  const other = { ...positionFixtureV1(), user: STOCK };
-  await assert.rejects(() => readAaveV4PositionV1(USER, transport(undefined, other)), /identity_invalid/);
-  await assert.rejects(() => readAaveV4PositionV1(USER, transport(undefined, { ...positionFixtureV1(), healthFactor: { current: null } })), /health_unread/);
-  await assert.rejects(() => readAaveV4PositionV1(USER, transport(undefined, {})));
 });

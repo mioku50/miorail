@@ -13,6 +13,7 @@
     "@mioagent/rwa-dossier": "workspace:*",
     "@mioagent/rwa-issuer": "workspace:*",
     "@mioagent/rwa-market-reality": "workspace:*",
+    "@mioagent/still-engine": "workspace:*",
     "zod": "^3.25.76"
   }
 }

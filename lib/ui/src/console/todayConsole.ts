@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react';
 import {
-  useAaveV4Position,
   useB20Watchlist,
   useMarketRealityRadar,
   useMeasureMyStockCashOut,
   useMyStocksToday,
   usePortfolio,
   useRwaUnderlyings,
+  useStillMine,
   useStockQuotes,
 } from '@mioagent/api-client-react';
 import { underlyingChoicesV1 } from './marketRealityView';
@@ -60,7 +60,7 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
   const watchlist = useB20Watchlist({ enabled: signedIn && input.b20On });
   const todayRead = useMyStocksToday({ enabled: signedIn && input.stocksOn });
   const cashOut = useMeasureMyStockCashOut();
-  const aave = useAaveV4Position(signedIn ? input.address : null);
+  const aave = useStillMine(signedIn ? input.address : null);
   // The board's icons and Base prices, the same read Stocks makes, keyed here
   // by token address because that is what a wallet holds.
   const quotesRead = useStockQuotes({ enabled: signedIn && input.stocksOn });
@@ -128,7 +128,7 @@ export function useTodayConsoleV1(input: TodayConsoleInputV1): TodayScreenModelV
     stocksToday: signedIn && input.stocksOn ? myStocksTodayModelV1(todayRead, cashOut) : null,
     stockQuotes: signedIn && input.stocksOn ? stockQuotes : null,
     aavePosition: signedIn && input.address ? {
-      data: aave.data?.walletAddress === input.address.toLowerCase() ? aave.data : null,
+      data: aave.data?.subject.address.toLowerCase() === input.address.toLowerCase() ? aave.data : null,
       loading: aave.isFetching,
       failed: Boolean(aave.error),
       onRead: () => { void aave.refetch(); },

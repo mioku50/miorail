@@ -1,8 +1,7 @@
 import { Router, type Request, type Response } from 'express';
-import type { MirrorOutcome } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
-import { stillMirrorRuntimeV1, stillTermsV1 } from '../lib/stillMirror.js';
+import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1, stillTermsV1 } from '../lib/stillMirror.js';
 
 // ---------------------------------------------------------------------------
 // Still's public door: any Base wallet, by address or name, and how much it
@@ -21,15 +20,6 @@ export const publicStillRuntimeV1 = {
   limiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
   service: () => stillMirrorRuntimeV1.service(),
   now: () => new Date(),
-};
-
-const STATUS_V1: Record<MirrorOutcome['outcome'], 200 | 400 | 404 | 503> = {
-  report: 200,
-  invalid_subject: 400,
-  name_not_found: 404,
-  // Both are our failure, never a fact about the wallet or the name.
-  names_unavailable: 503,
-  chain_unavailable: 503,
 };
 
 publicStillRouter.use(async (req: Request, res: Response, next) => {
@@ -54,7 +44,7 @@ publicStillRouter.get('/mirror', async (req: Request, res: Response) => {
   }
   try {
     const outcome = await publicStillRuntimeV1.service().check(subject);
-    res.status(STATUS_V1[outcome.outcome]).json(outcome);
+    res.status(STILL_OUTCOME_STATUS_V1[outcome.outcome]).json(outcome);
   } catch (error) {
     logger.warn('Still mirror read failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });

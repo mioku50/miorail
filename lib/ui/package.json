@@ -23,7 +23,8 @@
     "@mioagent/route-card": "workspace:*",
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/rwa-issuer": "workspace:*",
-    "@mioagent/rwa-market-reality": "workspace:*"
+    "@mioagent/rwa-market-reality": "workspace:*",
+    "@mioagent/still-engine": "workspace:*"
   },
   "peerDependencies": {
     "@tanstack/react-query": "^5.0.0",

@@ -15,8 +15,6 @@ const VENUE_NAME = 'Aave v4 Equities';
 const ADDRESS = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform(s => s.toLowerCase());
 const DECIMAL = z.string().max(80).regex(/^\d+(?:\.\d+)?$/)
   .refine(s => Number.isFinite(Number(s)) && Number(s) <= 1e15);
-const SIGNED_DECIMAL = z.string().max(80).regex(/^-?\d+(?:\.\d+)?$/)
-  .refine(s => Number.isFinite(Number(s)) && Math.abs(Number(s)) <= 1e15);
 const FIGURE = z.object({ value: DECIMAL });
 const AMOUNT = z.object({ amount: FIGURE, exchange: FIGURE });
 const CHAIN = z.object({ chainId: z.literal(8453) });
@@ -182,55 +180,4 @@ export function aaveV4DefiSourceV1(options: AaveV4ReadOptionsV1 = {}): DefiListi
       catch { return { venueId: VENUE_ID, venueName: VENUE_NAME, state: 'unread', uses: { lend: null, borrow: null, collateral: null }, curated: null, marketRef: null, reason: 'aave_v4_read_unavailable' }; }
     },
   };
-}
-
-export const AaveV4PositionV1Schema = z.object({
-  schemaVersion: z.literal('aave-v4-position/v1'), chainId: z.literal(8453), walletAddress: ADDRESS,
-  spokeAddress: z.literal(AAVE_V4_BASE_SPOKE_V1), observedAt: z.string().datetime(),
-  source: z.literal('aave_api'), state: z.enum(['empty', 'read']),
-  collateralUsd: DECIMAL.nullable(), debtUsd: DECIMAL.nullable(),
-  netAccruedInterestUsd: SIGNED_DECIMAL.nullable(), netBorrowApyBps: z.number().int().min(-10_000_000).max(10_000_000).nullable(),
-  healthFactor: DECIMAL.nullable(), remainingBorrowingPowerUsd: DECIMAL.nullable(),
-}).strict().superRefine((value, context) => {
-  const figures = [value.collateralUsd, value.debtUsd, value.netAccruedInterestUsd,
-    value.netBorrowApyBps, value.healthFactor, value.remainingBorrowingPowerUsd];
-  if (value.state === 'empty' && figures.some(figure => figure !== null)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Empty position carries values' });
-  }
-  if (value.state === 'read' && (value.collateralUsd === null || value.debtUsd === null
-    || (Number(value.debtUsd) > 0 && value.healthFactor === null))) {
-    context.addIssue({ code: z.ZodIssueCode.custom, message: 'Position is incomplete' });
-  }
-});
-export type AaveV4PositionV1 = z.infer<typeof AaveV4PositionV1Schema>;
-
-const POSITION_QUERY = `query MiorailEquitiesPosition($spoke: SpokeId!, $user: EvmAddress!) {
-  userPosition(request: {userSpoke: {spoke: $spoke, user: $user}}) {
-    user spoke {id address chain {chainId}}
-    totalCollateral {current {value}} totalDebt {current {value}} netAccruedInterest {value}
-    netBorrowApy {current {value}} healthFactor {current} remainingBorrowingPower {value}
-  }
-}`;
-export async function readAaveV4PositionV1(walletAddress: string, options: AaveV4ReadOptionsV1 = {}): Promise<AaveV4PositionV1> {
-  const wallet = ADDRESS.parse(walletAddress);
-  const reserves = await readAaveV4ReservesV1(options);
-  const spokeId = reserves[0]!.spoke.id; // Opaque id from this session, never manufactured.
-  const raw = await queryV1(POSITION_QUERY, { spoke: spokeId, user: wallet }, options);
-  const data = z.object({ userPosition: z.object({
-    user: ADDRESS, spoke: SPOKE,
-    totalCollateral: z.object({ current: FIGURE }), totalDebt: z.object({ current: FIGURE }),
-    netAccruedInterest: z.object({ value: SIGNED_DECIMAL }), netBorrowApy: z.object({ current: z.object({ value: SIGNED_DECIMAL }) }),
-    healthFactor: z.object({ current: DECIMAL.nullable() }), remainingBorrowingPower: FIGURE,
-  }).nullable() }).parse(raw).userPosition;
-  if (data && (data.user !== wallet || data.spoke.id !== spokeId || data.spoke.address !== AAVE_V4_BASE_SPOKE_V1)) throw new Error('aave_v4_position_identity_invalid');
-  if (data && numberV1(data.totalDebt.current.value) > 0 && data.healthFactor.current === null) throw new Error('aave_v4_health_unread');
-  const netBorrowApyBps = data ? Math.round(Number(data.netBorrowApy.current.value) * 10_000) : null;
-  return AaveV4PositionV1Schema.parse({
-    schemaVersion: 'aave-v4-position/v1', chainId: 8453, walletAddress: wallet, spokeAddress: AAVE_V4_BASE_SPOKE_V1,
-    observedAt: (options.clock ?? (() => new Date()))().toISOString(), source: 'aave_api', state: data ? 'read' : 'empty',
-    collateralUsd: data?.totalCollateral.current.value ?? null, debtUsd: data?.totalDebt.current.value ?? null,
-    netAccruedInterestUsd: data?.netAccruedInterest.value ?? null,
-    netBorrowApyBps,
-    healthFactor: data?.healthFactor.current ?? null, remainingBorrowingPowerUsd: data?.remainingBorrowingPower.value ?? null,
-  });
 }

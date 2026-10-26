@@ -11,6 +11,7 @@
     "./policy": "./src/policy.ts",
     "./registry": "./src/registry.ts",
     "./report": "./src/report.ts",
+    "./report-schema": "./src/report-schema.ts",
     "./dividend-report": "./src/dividend-report.ts"
   },
   "scripts": {
@@ -19,7 +20,8 @@
   },
   "dependencies": {
     "@mioagent/rwa-issuer": "workspace:*",
-    "viem": "^2.53.1"
+    "viem": "^2.53.1",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "tsx": "^4.22.4",

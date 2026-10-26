@@ -11,6 +11,7 @@ import {
   formatTokenAmount,
   weekendWindow,
   type CalendarRead,
+  type MirrorOutcome,
   type MirrorService,
 } from '@mioagent/still-engine';
 
@@ -42,6 +43,16 @@ export function createStillMirrorServiceV1(env: NodeJS.ProcessEnv = process.env)
   const names = createNames(ethereumMainnetRpcUrlV1(env) ?? undefined, providers, 'miorail-still/1');
   return createMirrorService({ providers, names, calendar: createEarningsCalendar() });
 }
+
+/** One status per outcome, for every door that serves the Mirror. */
+export const STILL_OUTCOME_STATUS_V1: Record<MirrorOutcome['outcome'], 200 | 400 | 404 | 503> = {
+  report: 200,
+  invalid_subject: 400,
+  name_not_found: 404,
+  // Both are our failure, never a fact about the wallet or the name.
+  names_unavailable: 503,
+  chain_unavailable: 503,
+};
 
 let service: MirrorService | null = null;
 

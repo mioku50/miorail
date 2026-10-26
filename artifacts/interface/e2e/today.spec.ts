@@ -168,18 +168,39 @@ for (const width of [1280, 390]) {
     await page.setViewportSize({ width, height: 844 });
     const { writes } = await install(page, true);
     let calls = 0;
-    const position = {
-      schemaVersion: 'aave-v4-position/v1', chainId: 8453, walletAddress: WALLET,
-      spokeAddress: '0x17905db0e4a3514467539956c084180616ae7b8d', observedAt: '2026-10-14T12:00:00Z',
-      source: 'aave_api', state: 'read', collateralUsd: '2000', debtUsd: '500',
-      netAccruedInterestUsd: '-0.125', netBorrowApyBps: 333, healthFactor: '0.99', remainingBorrowingPowerUsd: '0',
-    };
-    await page.route('**/api/aave/position', route => {
+    // The signed-in wallet's Mirror, the one source for its loan: 3.4 NVDAc pledged, $240.17 owed.
+    const report = (address: string, debtCents = '24017') => ({
+      kind: 'still.mirror', version: 1,
+      subject: { address, name: null, input: address },
+      reading: { block: '53118515', blockTime: '2026-10-26T14:52:57.000Z', assembledAt: '2026-10-26T14:52:58.000Z', provider: 'infura' },
+      terms: {
+        version: '2026-10-25', stockShareBps: 5000, cryptoShareBps: 5000,
+        weekend: { active: false, startsAt: '2026-10-31T00:00:00.000Z', endsAt: '2026-11-02T01:00:00.000Z', stockShareBps: 4000 },
+        earnings: { stockShareBps: 4000, calendarReadAt: '2026-10-26T14:00:00.000Z' },
+      },
+      headline: { state: 'funded', availableCents: '37028', complete: true, reason: null, weekdayAvailableCents: null },
+      assets: [{
+        asset: 'NVDAc', kind: 'stock', name: 'NVIDIA', symbol: 'NVDAc', token: '0xb2000000000000000000001ba3d2eb3a2f32f1b6',
+        isin: 'US67066G1040', venue: 'aave-v4', wallet: { raw: '80000000', decimals: 8 }, pledged: { raw: '340000000', decimals: 8 },
+        shares: null, priceCents: '21190', priceUpdatedAt: '2026-10-21T14:00:00.000Z', valueCents: '89000', protocolFactorBps: 7000,
+        stillFactorBps: 3500, capacityCents: '31150', earnings: null, limits: [], failed: [],
+      }],
+      venues: [{
+        venue: 'aave-v4', market: '0x17905db0e4a3514467539956c084180616ae7b8d', label: 'Aave V4 · Coinbase Stocks',
+        debtCents, capacityCents: '61045', availableCents: '37028', borrowRateBps: 366, liquidityCents: '109645815',
+        deductions: { loansCents: '24017', venueLimitCents: '0' },
+        safety: { marginBps: 5237, state: 'calm', healthFactor: '2099920000000000000', source: 'computed' },
+        liquidationPrices: [{ asset: 'NVDAc', priceCents: '10092', unreachable: false }], failed: [],
+      }],
+      coverage: { measured: [], notCounted: [], failed: [] }, evidence: [],
+    });
+    await page.route('**/api/still/mine', route => {
       calls++;
       expect(route.request().method()).toBe('GET');
       expect(new URL(route.request().url()).search).toBe('');
-      if (calls === 2) return route.fulfill({ status: 503, json: { code: 'aave_v4_position_unread' } });
-      return route.fulfill({ json: calls === 3 ? { ...position, walletAddress: LOOKALIKE, debtUsd: '9999' } : position });
+      if (calls === 2) return route.fulfill({ status: 503, json: { outcome: 'chain_unavailable', attempts: [] } });
+      const answer = calls === 3 ? report(LOOKALIKE, '999900') : report(WALLET);
+      return route.fulfill({ json: { outcome: 'report', report: answer, cached: false } });
     });
     await page.goto('/today');
     const section = page.locator('.today-details').filter({ has: page.locator('summary', { hasText: 'Your Aave v4 stock position' }) });
@@ -187,13 +208,13 @@ for (const width of [1280, 390]) {
     await expect(section.getByRole('button', { name: 'Read my Aave position', exact: true })).toBeVisible();
     expect(calls).toBe(0);
     await section.getByRole('button', { name: 'Read my Aave position', exact: true }).click();
-    await expect(section.getByText('$500.00', { exact: true })).toBeVisible();
-    await expect(section.getByText(/Liquidation threshold: health factor 1/)).toBeVisible();
-    await expect(section.getByText('3.33%', { exact: true })).toBeVisible();
+    await expect(section.getByText('$240.17', { exact: true })).toBeVisible();
+    await expect(section.getByText(/health factor falls to 1/)).toBeVisible();
+    await expect(section.getByText('3.66% a year, variable', { exact: true })).toBeVisible();
     expect(calls).toBe(1);
     await section.getByRole('button', { name: 'Read again', exact: true }).click();
     await expect(section.getByRole('status')).toContainText('does not mean you have no position');
-    await expect(section.getByText('$500.00', { exact: true })).toBeVisible();
+    await expect(section.getByText('$240.17', { exact: true })).toBeVisible();
     expect(calls).toBe(2);
     await section.getByRole('button', { name: 'Read again', exact: true }).click();
     await expect.poll(() => calls).toBe(3);
