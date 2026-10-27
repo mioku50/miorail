@@ -22,7 +22,7 @@ function report(subject: string) {
   })));
 }
 
-async function install(page: Page, signedIn = false) {
+async function install(page: Page, signedIn = false, recoverSubject: string | null = null) {
   const reads: string[] = [], writes: string[] = [], subjects: string[] = [];
   await page.clock.setFixedTime(MONDAY);
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({
@@ -37,6 +37,9 @@ async function install(page: Page, signedIn = false) {
     if (path === '/api/public/still/mirror') {
       const subject = url.searchParams.get('subject') ?? '';
       subjects.push(subject);
+      if (subject === recoverSubject && subjects.filter(value => value === subject).length === 1) {
+        return route.fulfill({ status: 503, json: { outcome: 'chain_unavailable', attempts: [] } });
+      }
       if (subject === 'unavailable.base.eth') return route.fulfill({ status: 503, json: { outcome: 'chain_unavailable', attempts: [] } });
       if (subject === 'network.base.eth') return route.abort('failed');
       if (subject === 'nobody.base.eth') return route.fulfill({ status: 404, json: { outcome: 'name_not_found', input: subject, name: subject } });
@@ -47,6 +50,30 @@ async function install(page: Page, signedIn = false) {
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });
   return { reads, writes, subjects };
+}
+
+for (const path of ['/', `/w/${LINKED}`]) {
+  test(`Check retries the same subject after a failed read on ${path}`, async ({ page }) => {
+    const { reads, writes, subjects } = await install(page, path !== '/', LINKED);
+    await page.goto(path);
+    const field = page.getByLabel('Wallet address or name');
+    if (path === '/') {
+      await field.fill(LINKED);
+      await page.getByRole('button', { name: 'Check', exact: true }).click();
+    }
+    await expect(page.getByRole('status')).toHaveText('Base could not be read just now. This is our failure, not a fact about the wallet. Try again in a minute.');
+    await expect(page.locator('.still-big')).toHaveCount(0);
+    await field.fill(`  ${LINKED}  `);
+    await page.getByRole('button', { name: 'Check', exact: true }).click();
+    await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
+    await expect(page.getByRole('status')).toHaveCount(0);
+    await expect(page).toHaveURL(`http://127.0.0.1:5187${path}`);
+    expect(subjects).toEqual([LINKED, LINKED]);
+    expect(reads.filter(read => read === '/api/public/still/mirror')).toHaveLength(2);
+    expect(reads).not.toContain('/api/still/mine');
+    expect(reads).not.toContain('/api/stocks/dividends/mine');
+    expect(writes).toEqual([]);
+  });
 }
 
 for (const width of [390, 1280]) {

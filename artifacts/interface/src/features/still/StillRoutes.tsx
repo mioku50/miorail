@@ -110,7 +110,11 @@ export function StillWalletPage() {
           message: subject === null
             ? stillCheckMessageV1({ outcome: 'invalid_subject', reason: 'not_an_address_or_name' })
             : answer ? stillCheckMessageV1(answer) : null,
-          onCheck: (next) => navigate(`/w/${encodeURIComponent(next.trim())}`),
+          onCheck: (next) => {
+            const normalized = next.trim();
+            if (normalized === subject) void check.refetch();
+            else navigate(`/w/${encodeURIComponent(normalized)}`);
+          },
           // Signing in opens the reader's own Home, not the public subject.
           signInHref: '/signin?next=%2F',
         }}
@@ -150,7 +154,11 @@ function StillHomePage() {
             result,
             checking: check.isFetching,
             message: answer ? stillCheckMessageV1(answer) : null,
-            onCheck: setSubject,
+            onCheck: (next) => {
+              const normalized = next.trim();
+              if (normalized === subject) void check.refetch();
+              else setSubject(normalized);
+            },
             signInHref,
           }}
         />
