@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
@@ -27,6 +27,12 @@ interface TurnV1 {
 export function StillAgent({ model }: { model: StillAgentModelV1 }) {
   const [draft, setDraft] = useState('');
   const [turns, setTurns] = useState<TurnV1[]>([]);
+  const chat = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    // On a desktop the conversation scrolls inside its workspace. A reply
+    // to the person's new question must not remain below older answers.
+    if (chat.current) chat.current.scrollTo({ top: chat.current.scrollHeight });
+  }, [turns.length]);
   const ask = (question: string) => {
     const text = question.trim();
     if (!text) return;
@@ -40,7 +46,7 @@ export function StillAgent({ model }: { model: StillAgentModelV1 }) {
         {model.russian ? 'Читает ваш кошелёк и числа Still. Никогда не подписывает.' : 'Reads your wallet and Still’s numbers. Never signs.'}
       </p>
       <div className="still-agent-workspace">
-      <div className={`still-agent-chat${turns.length === 0 ? ' is-empty' : ''}`} aria-live="polite">
+      <div ref={chat} className={`still-agent-chat${turns.length === 0 ? ' is-empty' : ''}`} aria-live="polite">
         {turns.length === 0 ? (
           <p className="still-note">{model.russian ? 'Спросите о своих деньгах.' : 'Ask about your money.'}</p>
         ) : null}

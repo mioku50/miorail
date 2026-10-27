@@ -207,6 +207,8 @@ test('after hours the sky is dark, so the name and the mobile over it are drawn 
   await page.goto('/');
   await expect(page.getByText('After hours · full limits', { exact: true })).toBeVisible();
   await expect(page.locator('.still-hero')).toHaveAttribute('data-phase', 'dusk');
+  await expect(page.locator('.still-wallet-brand')).toBeVisible();
+  expect(await page.locator('.still-wallet-brand').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(238, 241, 255)');
   expect(await page.locator('.still-hero .still-brand').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(238, 241, 255)');
   expect(await page.locator('.still-hero .sm-wire').first().evaluate((e) => getComputedStyle(e).stroke)).toBe('rgb(238, 241, 255)');
 });
@@ -215,6 +217,19 @@ test('a link that carried a question to "/" still lands on Stocks', async ({ pag
   await install(page, false, MONDAY);
   await page.goto('/?key=security%3Aisin%3AUS67066G1040');
   await expect(page).toHaveURL(/\/stocks\?key=security%3Aisin%3AUS67066G1040$/);
+});
+
+test('a desktop conversation brings each new answer into view', async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 768 });
+  const { writes } = await install(page, true, MONDAY);
+  await page.goto('/agent');
+  const question = page.getByRole('button', { name: 'How safe is my loan?', exact: true });
+  for (let i = 0; i < 5; i++) await question.click();
+  await expect(page.locator('.still-agent-chat .still-bubble')).toHaveCount(5);
+  const chat = page.locator('.still-agent-chat');
+  expect(await chat.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect.poll(() => chat.evaluate(element => Math.abs(element.scrollHeight - element.scrollTop - element.clientHeight))).toBeLessThan(2);
+  expect(writes).toEqual([]);
 });
 
 for (const width of [390, 1366, 1920]) {
@@ -226,11 +241,16 @@ for (const width of [390, 1366, 1920]) {
     const money = page.getByLabel('$784.62 available', { exact: true });
     await expect(money).toBeVisible();
     const moneyBox = await money.boundingBox();
-    expect(moneyBox!.y + moneyBox!.height).toBeLessThan(height - (width < 900 ? 68 : 0));
+    expect(moneyBox!.y + moneyBox!.height).toBeLessThan(height - (width < 900 ? 76 : 0));
     await expect(page.locator('.still-wallet-trigger').first()).toBeVisible();
     const hero = await page.locator('.still-hero > svg').boundingBox();
     expect(hero!.width).toBeLessThanOrEqual(481);
     expect(hero!.height).toBeLessThanOrEqual(383);
+    if (width === 390) {
+      expect(hero!.y).toBe(0);
+      expect(hero!.height).toBeCloseTo(310, 0);
+      expect((await page.getByRole('navigation', { name: 'Main' }).boundingBox())!.height).toBe(76);
+    }
     if (width >= 1100) {
       const main = await page.locator('main.still-main').boundingBox();
       expect(main!.width).toBeGreaterThan((width - 220) * 0.7);
@@ -258,9 +278,54 @@ for (const width of [390, 1366, 1920]) {
       expect(input!.y + input!.height).toBeLessThan(height);
       const workspace = await page.locator('.still-agent-workspace').boundingBox();
       expect(workspace!.height).toBeLessThanOrEqual(480);
+    } else {
+      expect(await page.locator('.still-agent-workspace').evaluate(element => getComputedStyle(element).backgroundColor)).toBe('rgba(0, 0, 0, 0)');
+      expect((await page.locator('.still-agent-composer input').boundingBox())!.height).toBe(48);
     }
     await noSidewaysScroll(page);
     await page.screenshot({ path: testInfo.outputPath(`agent-layout-${width}.png`), fullPage: true });
+    expect(writes).toEqual([]);
+  });
+}
+
+for (const [label, now, card] of [
+  ['day', MONDAY, 'rgb(255, 255, 255)'],
+  ['night', SATURDAY, 'rgb(22, 27, 77)'],
+] as const) {
+  test(`console surfaces use the Sky palette without changing the unframed console (${label})`, async ({ page }) => {
+    const { writes } = await install(page, false, now);
+    await page.goto('/extensions');
+    await expect(page.getByRole('heading', { name: 'Wallet MCP', exact: true })).toBeVisible();
+    const frame = page.locator('.still-console');
+    await expect(frame.locator('.rp').first()).toBeVisible();
+    const themed = await frame.evaluate(element => {
+      const style = getComputedStyle(element);
+      const panel = getComputedStyle(element.querySelector('.rp')!);
+      const button = getComputedStyle(element.querySelector('.btn')!);
+      return {
+        radius: style.getPropertyValue('--r').trim(), card: panel.backgroundColor,
+        buttonFill: button.backgroundColor, buttonImage: button.backgroundImage,
+        semantic: ['--green', '--red', '--amber'].map(token => style.getPropertyValue(token).trim()),
+      };
+    });
+    expect(themed.radius).toBe('18px');
+    expect(themed.card).toBe(card);
+    expect(themed.buttonFill).toBe('rgb(0, 82, 255)');
+    expect(themed.buttonImage).toBe('none');
+    await noSidewaysScroll(page);
+
+    // Keep the same document/theme while leaving Still's frame. The classic
+    // console and miniapp stylesheet must retain their own design tokens.
+    await page.evaluate(() => { history.pushState(null, '', '/is-it-real'); dispatchEvent(new PopStateEvent('popstate')); });
+    await expect(page.getByRole('heading', { name: 'Is this the real one?', exact: true })).toBeVisible();
+    const classic = await page.locator('.pi-page').evaluate(element => {
+      const style = getComputedStyle(element);
+      return { radius: style.getPropertyValue('--r').trim(), gradient: style.getPropertyValue('--grad'),
+        semantic: ['--green', '--red', '--amber'].map(token => style.getPropertyValue(token).trim()) };
+    });
+    expect(classic.radius).toBe('10px');
+    expect(classic.gradient).toContain('linear-gradient');
+    expect(classic.semantic).toEqual(themed.semantic);
     expect(writes).toEqual([]);
   });
 }

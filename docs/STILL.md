@@ -80,6 +80,12 @@ puts the holdings beside a compact dividend link. The Agent's interface defaults
 regardless of the browser locale; each answer still follows the language of its question.
 Positive dividend values below one cent retain that meaning instead of becoming `$0.00`.
 
+The Sky mobile reference also governs console pages inside Still: cool grounds, white or
+night-blue cards, flat Base-blue actions and 18px card corners. The adapter is scoped to
+`.still .still-console`; the classic console and miniapp retain their palette and evidence
+status colours. On a phone, the wallet entry shares Home's sky and the Agent keeps its
+conversation directly on the page, with separate answer cards.
+
 The shared app also understands the original `/w/:subject` wallet links. That is a public check
 of the address or name in the URL, even while a different wallet is signed in; it never replaces
 the linked subject with the session wallet. Failed checks remain failures. Its link preview is

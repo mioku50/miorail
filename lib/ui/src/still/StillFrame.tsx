@@ -163,7 +163,7 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
     };
   }, [sky.phase]);
   return (
-    <div className={`still still-frame${walletControls ? ' has-wallet-controls' : ''}`} data-sky={sky.phase === 'night' ? 'night' : 'day'}>
+    <div className={`still still-frame${tab === 'home' ? ' is-home' : ''}${walletControls ? ' has-wallet-controls' : ''}`} data-sky={sky.phase === 'night' ? 'night' : 'day'} data-market-phase={sky.phase}>
       <nav className="still-nav" aria-label="Main">
         <StillLink href="/" className="still-brand" aria-label="Still home">
           <StillGlyph />

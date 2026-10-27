@@ -50,6 +50,33 @@ async function install(page: Page, signedIn: boolean, failPortfolio = false) {
   return { reads, writes };
 }
 
+test('the share action keeps readable text in the Sky night palette', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.clock.setFixedTime(new Date('2026-10-31T15:00:00Z'));
+  const { writes } = await install(page, true);
+  await page.goto('/today');
+  await expect(page.locator('.still-frame')).toHaveAttribute('data-sky', 'night');
+  const stock = page.getByRole('article', { name: 'Your NVDAc' });
+  await stock.locator('summary.today-stock-id').click();
+  await stock.locator('summary', { hasText: 'Share' }).click();
+  const share = stock.getByRole('link', { name: 'Cast on Farcaster', exact: true });
+  await expect(share).toBeVisible();
+  const colour = await share.evaluate(element => {
+    const style = getComputedStyle(element);
+    return { background: style.backgroundColor, ink: style.color };
+  });
+  const luminance = (value: string) => {
+    const channels = value.match(/[\d.]+/g)!.slice(0, 3).map(channel => {
+      const s = Number(channel) / 255;
+      return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+    });
+    return channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722;
+  };
+  const ink = luminance(colour.ink), background = luminance(colour.background);
+  expect((Math.max(ink, background) + 0.05) / (Math.min(ink, background) + 0.05)).toBeGreaterThanOrEqual(4.5);
+  expect(writes).toEqual([]);
+});
+
 for (const width of [1280, 390]) {
   test(`Today leads with findings and hands questions over without executing (${width}px)`, async ({ page }, testInfo) => {
     test.setTimeout(60_000);
