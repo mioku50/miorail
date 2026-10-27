@@ -66,7 +66,7 @@ import { stillMineRuntimeV1 } from '../stillMine.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.8.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.8.1';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -96,7 +96,7 @@ ${MIORAIL_PRIVATE_CAVEATS_V1.entryOnly}
 
 BORROWING AGAINST A TOKENIZED SECURITY IS A SEPARATE, SHORTER PATH, and it is the only place in Miorail that answers "could YOU borrow here":
 
-a. miorail_read_borrow_capacity — every market for that exact collateral, each with its own row. Never merge them, and always say whether the wallet's collateral or the market's own liquidity set each figure.
+a. miorail_read_borrow_capacity — keep every returned market in its own row. For cbBTC/WETH, marketScope still_registered_market means the one code-owned Still market, not every Morpho market. availableToBorrowAtomic is the protocol maximum; still.availableAtomic is Still's stricter allowance against collateral already deposited. Null is unread, not zero. Never silently add wallet-held tokens or native ETH as collateral.
 b. miorail_review_borrow — reads, has the VENUE write the calldata, executes it once against real state, and checks the loan asset actually arrives here in the reviewed amount. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
 
 The certified B20 entry path above is buy-only. For Stocks, miorail_prepare_stock_action can prepare a buy or a sell review link. A sell must bind an exact token amount chosen on that review page, and its cash output is refreshed there. After the user signs on the Miorail review page, read miorail_get_execution_status with that actionDraftId. Do not ask them to paste a clearance or prepare a second trade to find the first trade's outcome. These paths do not accept an arbitrary router or calldata of your own.`;
@@ -570,8 +570,8 @@ Only "entry_succeeded" means the wallet's own decoded movements show USDC spent 
   server.registerTool(
     'miorail_read_borrow_capacity',
     {
-      title: 'What THIS wallet could borrow against one tokenized security',
-      description: `Reads every lending market where an exact Base token is the collateral, and computes what this wallet could actually draw from each — by mirroring the lending contract's own arithmetic, not by repeating the venue's headline.
+      title: 'This wallet’s protocol capacity and Still allowance',
+      description: `Reads lending markets where an exact Base token is collateral and mirrors the contract's own arithmetic. For the registered cbBTC/USDC and WETH/USDC collateral, marketScope is still_registered_market: this is Still's one exact registered market, not a complete Morpho market inventory. The rows' availableToBorrowAtomic is the protocol maximum. A separate still.availableAtomic is Still's stricter allowance against collateral ALREADY deposited, under still.termsVersion. It is half the total protocol limit minus accrued debt, with projected debt rounding checked. Wallet-held collateral and native ETH are not automatically supplied. Null still means unread, not a zero allowance.
 
 GIVE EVERY MARKET ITS OWN ROW. Two markets on the same collateral have different terms, and a maximum taken across them describes none of them. Never merge them into one figure.
 

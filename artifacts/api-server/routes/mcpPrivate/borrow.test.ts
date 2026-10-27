@@ -12,6 +12,9 @@ import {
   MiorailReviewBorrowOutputV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
+import { ADDRESSES } from '@mioagent/still-engine/registry';
+import { snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
+import { readBorrowStandingV1 } from '../../lib/stillBorrowStanding.js';
 
 // ---------------------------------------------------------------------------
 // What the two borrow tools may and may not hand an assistant.
@@ -91,6 +94,20 @@ beforeEach(() => {
 });
 
 describe('the calculation tool reads and does nothing else', () => {
+  test('Still allowance is separate from protocol capacity and counts only deposited collateral', async () => {
+    borrowRuntimeV1.read = async (input) => readBorrowStandingV1({ ...input, deps: { snapshot: async () => ({
+      universe: universe(), snapshot: snapshot({ wallet: { cbBTC: 100_000_000n }, morpho: { cbBTC: { collateral: 1_000_000n, borrowShares: 0n } } }),
+    }) } });
+    const result = MiorailReadBorrowCapacityOutputV1Schema.parse(await miorailReadBorrowCapacityV1(identity, { collateralTokenAddress: ADDRESSES.cbbtc }));
+    assert.equal(result.marketScope, 'still_registered_market');
+    assert.equal(result.markets.length, 1);
+    const row = result.markets[0]!;
+    assert.equal(row.still!.scope, 'existing_collateral');
+    assert.equal(row.still!.shareBps, 5000);
+    assert(BigInt(row.still!.availableAtomic) < BigInt(row.availableToBorrowAtomic!));
+    assert.equal(result.createsCalldata, false);
+    assert.match(result.nextStep, /not automatically deposited/);
+  });
   test('every market keeps its own row, and every row says what bounded it', async () => {
     borrowRuntimeV1.read = async () =>
       ({

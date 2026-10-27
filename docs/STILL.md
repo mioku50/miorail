@@ -131,11 +131,35 @@ Miorail MCP `1.8.0` adds two reads over the same services as the pages:
 The public registry has 18 tools; Connected carries that registry plus 16 wallet-bound tools.
 The Wallet MCP plugin at `/wallet-mcp/miorail.md` explains these reads and the existing Morpho
 capacity and review tools. It requires a person to approve in their wallet. A protocol maximum
-is not a Still allowance: server enforcement of Still's additional cap and the new borrow/repay
-actions remain pending. Stock borrowing through Aave V4 remains research. These reads and terms
+is not a Still allowance. For the registered cbBTC/USDC and WETH/USDC markets, the capacity read
+returns a separate `still` allowance against collateral **already deposited**. The server enforces
+half the total protocol debt limit minus accrued debt and checks share-rounded projected debt.
+Wallet-held collateral supply, native ETH wrapping, Get money and Repay remain pending.
+Stock borrowing through Aave V4 remains research. These reads and terms
 are not advice to borrow, and Still is not offered to US persons.
 
 ## One source per question
+
+### Existing-collateral Morpho review
+
+Still's registered crypto markets reuse the Mirror's same-block chain reader and accrued debt,
+not the first page of a GraphQL market directory. `still-engine/capacity` owns the conservative
+cent offer and the exact projected-debt check for both Mirror and execution. A positive draw
+that rounds debt above Still's ceiling is refused, even if protocol health alone would pass.
+
+Morpho writes the unsigned calldata through its official Actions API. The adapter verifies the
+ES256 `Morpho-Action-Proof` against Morpho's fixed JWKS and the exact request/response bytes,
+headers, status and path before accepting its data. A signature-required action, failed venue
+simulation, intent mismatch, expired proof or action has no executable result. This supplements
+Miorail's independent ordered batch simulation; it never substitutes for it.
+
+The browser re-runs the review before opening the wallet. If terms or calls changed, it displays
+the fresh review and requires another explicit click within the server's thirty-second window,
+bounded by the action/proof expiry. That second click accepts the displayed batch without
+re-preparing forever as interest accrues. Changing wallet/draft or expiry clears that window.
+
+Prepared calls are not a successful loan. First real borrowing remains an operator-performed
+transaction followed by chain reconciliation; no real transaction was made to test this release.
 
 Still arrived with its own answers to questions Miorail already answered. On 2026-10-26 each pair
 was run on the same data. Then one was kept and the other removed.

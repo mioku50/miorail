@@ -1,8 +1,7 @@
 import { Router, type Request } from 'express';
 
-import { readMorphoBorrowStandingV1 } from '@mioagent/rwa-issuer';
-
 import { verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
+import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../lib/stillBorrowStanding.js';
 import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
 
 // ---------------------------------------------------------------------------
@@ -31,7 +30,7 @@ export const rwaBorrowRouter = Router();
 /** Everything these endpoints reach outside themselves, in one place, so a test
  * substitutes the venue and the simulator without touching process state. */
 export const rwaBorrowRuntimeV1 = {
-  read: readMorphoBorrowStandingV1,
+  read: readBorrowStandingV1,
   run: runMorphoBorrowV1,
   secret: (): string => (process.env.SESSION_SECRET ?? '').trim(),
   now: () => new Date(),
@@ -89,6 +88,9 @@ function runBodyV1(run: MorphoBorrowRunV1): Record<string, unknown> {
     targets: run.plan.targets,
     calls: run.calls.map((call) => ({ to: call.to, value: call.valueWei, data: call.data })),
     callsHash: run.callsHash,
+    signingTermsHash: run.signingTermsHash,
+    expiresAt: run.expiresAt,
+    ...(run.stillPolicy ? { stillPolicy: run.stillPolicy } : {}),
     measured: {
       blockNumber: run.measured.blockNumber,
       arrivedAtomic: run.measured.arrivedAssets,
@@ -128,6 +130,7 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
 
   res.json({
     state: 'read',
+    ...(stillBorrowAssetV1(token) ? { marketScope: 'still_registered_market' } : {}),
     readAt: reading.readAt,
     markets: reading.markets.map((entry) => ({
       marketId: entry.market.marketId,
@@ -138,6 +141,7 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
       collateralDecimals: entry.market.collateral.decimals,
       loanDecimals: entry.market.loan.decimals,
       blockNumber: entry.market.state.blockNumber,
+      ...(stillBorrowAssetV1(token) ? { still: stillBorrowCapacityWireV1(token, entry) } : {}),
       availableToBorrowAtomic: entry.capacity?.assets.toString() ?? null,
       bound: entry.capacity?.bound ?? null,
       collateralHeadroomAtomic: entry.capacity?.collateralHeadroomAssets.toString() ?? null,

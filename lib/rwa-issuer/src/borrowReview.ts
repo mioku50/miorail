@@ -40,6 +40,7 @@ export interface BorrowReviewMarketWireV1 {
   loanDecimals: number | null;
   /** WAD-scaled borrow rate, or null when the venue published none. */
   borrowApyWad: bigint | null;
+  borrowAprWad?: bigint | null;
   blockNumber: number | null;
 }
 
@@ -92,6 +93,10 @@ export interface BorrowReviewV1 {
 
 /** Why a borrow cannot be put in front of a reader at all. */
 export const BORROW_REVIEW_REFUSALS_V1 = {
+  still_inputs_unread:
+    'Still could not establish the current debt limit from these market readings. This is a reading failure here, not a finding that the wallet has no collateral.',
+  over_still_limit:
+    'This amount exceeds Still’s limit for this position. Still uses half the protocol’s total debt limit, subtracts the debt already owed, and checks the resulting debt again before preparing anything.',
   position_unread:
     'Miorail did not read this wallet’s position in this market, so it cannot say what this borrow would do to it. Nothing is being offered for approval.',
   would_not_be_healthy:
@@ -104,6 +109,16 @@ export const BORROW_REVIEW_REFUSALS_V1 = {
     'There is nothing to borrow here right now — either the collateral supports none or the market holds none. The rows above say which.',
   venue_would_not_prepare:
     'The venue did not prepare this borrow, so there is nothing to review. That is a fact about the venue’s answer, not about this wallet or this market.',
+  venue_response_unverified:
+    'Miorail could not authenticate or read Morpho’s response for this exact request. Nothing is offered for approval. This is a verification gap here, not a finding about this wallet or the market.',
+  venue_response_unavailable:
+    'Miorail could not obtain a current response from Morpho. Nothing is offered for approval; this does not establish that the market has no liquidity.',
+  venue_requires_signature:
+    'Morpho requested a separate typed-data signature. This review does not support that signing flow and will not hand anything to your wallet.',
+  venue_terms_differ:
+    'Morpho’s authenticated response did not match the requested account, market, amount or funding terms. Miorail refused it before anything reached a wallet.',
+  venue_preparation_expired:
+    'Morpho’s preparation or its proof expired before this review finished. Measure again to establish current terms; nothing was sent.',
   prepared_calls_refused:
     'Miorail refused the calls the venue prepared, before any of them reached a wallet. What was wrong with them is recorded beside this review.',
   venue_and_miorail_disagree:
@@ -287,7 +302,9 @@ export function borrowReviewV1(input: {
           ? `${market.lltvBps % 100 === 0 ? market.lltvBps / 100 : (market.lltvBps / 100).toFixed(1)}%`
           : '—',
       rate:
-        market.borrowApyWad === null
+        market.borrowAprWad !== null && market.borrowAprWad !== undefined
+          ? `${percentUpV1(market.borrowAprWad)} variable APR`
+          : market.borrowApyWad === null
           ? 'The venue did not publish a rate'
           : `${percentUpV1(market.borrowApyWad)} variable`,
     },

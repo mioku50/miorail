@@ -46,6 +46,8 @@ const READY_RUN = {
     { index: 0, callType: 'other', to: '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', valueWei: '0', data: '0xeecea000', asset: null, amountAtomic: null, recipient: null, spender: null },
   ],
   callsHash: `0x${'1'.repeat(64)}`,
+  signingTermsHash: `0x${'2'.repeat(64)}`,
+  expiresAt: '2026-09-19T16:00:30.000Z',
   plan: {
     calls: [],
     steps: [

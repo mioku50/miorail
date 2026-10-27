@@ -17,9 +17,9 @@ agent_tasks.md
 Base Agent — *.md
 Miorail — Release Roadmap от read-only до mainnet.md
 
-# Local working directories. These are git-ignored (see .gitignore) — a
-# contributor's own scratch notes must not fail the repository's lint.
+# Local scratch notes and media work are outside the Markdown source gate.
 scratchpad
+work
 videos
 screen
 # Playwright writes an error-context.md beside every failed run.

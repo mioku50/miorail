@@ -5,6 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { BorrowReviewScreen, type BorrowReviewScreenModelV1 } from '../src/console/BorrowReviewScreen';
 import { BORROW_REVIEW_REFUSALS_V1, borrowReviewV1 } from '../src/console/borrowReviewView';
+import { borrowWalletFailureCopyV1 } from '../src/console/borrowReviewConsole';
 
 void React;
 
@@ -88,6 +89,18 @@ function render(over: Partial<BorrowReviewScreenModelV1> = {}): string {
 }
 
 describe('what a reader is shown before approving a borrow', () => {
+  test('a wallet timeout does not claim nothing was sent', () => {
+    const copy = borrowWalletFailureCopyV1(new Error('transport timeout'));
+    assert.match(copy, /cannot confirm whether anything was sent/);
+    assert.doesNotMatch(copy, /Nothing was sent/);
+    assert.match(borrowWalletFailureCopyV1({ code: 4001 }), /You declined/);
+  });
+  test('a chain rate annualized without compounding is explicitly APR, never APY', () => {
+    const review = borrowReviewV1({ ...REVIEW_INPUT, market: { ...MARKET, borrowApyWad: null, borrowAprWad: 61_200_000_000_000_000n } });
+    const html = render({ review });
+    assert.match(html, /6\.2% variable APR/);
+    assert.doesNotMatch(html, /The venue did not publish a rate|APY/);
+  });
   test('both positions are on the screen, and the after is labelled as the one this creates', () => {
     const html = render();
     assert.match(html, /64\.41 NVDAc/);

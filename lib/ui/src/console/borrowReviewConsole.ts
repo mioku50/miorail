@@ -1,9 +1,10 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useBorrowReview } from '@mioagent/api-client-react';
 
 import type { BorrowReviewScreenModelV1, BorrowReviewStepV1 } from './BorrowReviewScreen';
 import type { BorrowReviewV1 } from './borrowReviewView';
+import { handOffFreshBorrowV1, hasBorrowSigningTermsV1, type FreshBorrowReviewV1 } from './borrowReviewFreshness';
 
 // ---------------------------------------------------------------------------
 // The borrow review's read and its refusals, shared by both consoles.
@@ -18,7 +19,7 @@ import type { BorrowReviewV1 } from './borrowReviewView';
 // no handle to follow it up with.
 // ---------------------------------------------------------------------------
 
-export interface BorrowReviewWireV1 {
+export interface BorrowReviewWireV1 extends FreshBorrowReviewV1 {
   state?: 'ready' | 'refused';
   stage?: string | null;
   refusal?: string | null;
@@ -58,14 +59,18 @@ export function borrowReviewFailureCopyV1(error: unknown): string {
  * market. A decline is the ordinary case and reads as one. */
 export function borrowWalletFailureCopyV1(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
-  if (/user rejected|denied|rejected the request/i.test(message)) {
+  if ((error && typeof error === 'object' && 'code' in error && error.code === 4001) || /user rejected|user denied|rejected the request/i.test(message)) {
     return 'You declined in your wallet. Nothing was sent.';
   }
-  return 'Your wallet did not accept the batch. Nothing was sent, and nothing about the market changed.';
+  if (/connector not connected|no connector|wallet.*not connected/i.test(message)) {
+    return 'Your wallet is not connected. Connect it before opening this review in your wallet.';
+  }
+  return 'Your wallet did not return a submission result. Check its activity before trying again; Miorail cannot confirm whether anything was sent.';
 }
 
 export function useBorrowReviewConsoleV1(input: {
   draft: string | null;
+  walletAddress?: string | null;
   /** The host's wallet. Returns the batch id, or null when the wallet accepted
    * and named nothing. Throwing is how a decline arrives. */
   sendCalls: (batch: { calls: { to: string; value: string; data: string }[] }) => Promise<string | null>;
@@ -75,39 +80,69 @@ export function useBorrowReviewConsoleV1(input: {
   const [batchId, setBatchId] = useState<string | null>(null);
   const [walletBusy, setWalletBusy] = useState(false);
   const opening = useRef(false);
+  const confirmedTermsHash = useRef<string | null>(null);
+  const identity = `${input.draft ?? ''}:${input.walletAddress?.toLowerCase() ?? ''}`;
+  const currentIdentity = useRef(identity);
+  currentIdentity.current = identity;
+  useEffect(() => {
+    confirmedTermsHash.current = null;
+    setWalletError(null);
+    setBatchId(null);
+  }, [identity]);
 
   const body = (review.data ?? null) as BorrowReviewWireV1 | null;
-  const calls = body?.state === 'ready' ? body.calls ?? [] : [];
+  const signable = hasBorrowSigningTermsV1(body);
 
   const onOpen = useCallback(async () => {
-    if (calls.length === 0 || opening.current) return;
+    if (!signable || opening.current || batchId) return;
     opening.current = true;
     setWalletBusy(true);
     setWalletError(null);
+    let handedToWallet = false;
     try {
-      const id = await input.sendCalls({ calls });
-      if (id) setBatchId(id);
-      else setWalletError('Your wallet accepted the batch and did not name it, so there is nothing to follow it up with.');
+      const result = await handOffFreshBorrowV1({
+        seen: body,
+        confirmedTermsHash: confirmedTermsHash.current,
+        refresh: async () => {
+          const answer = await review.refetch({ throwOnError: true });
+          if (answer.error) throw answer.error;
+          return (answer.data ?? {}) as BorrowReviewWireV1;
+        },
+        send: (calls) => { handedToWallet = true; return input.sendCalls({ calls }); },
+        current: () => currentIdentity.current === identity,
+      });
+      if (result.state === 'review_changed') {
+        confirmedTermsHash.current = result.termsHash;
+        setWalletError(result.message);
+      } else {
+        confirmedTermsHash.current = null;
+        if (result.state === 'refused') setWalletError(result.message);
+        else if (result.batchId) setBatchId(result.batchId);
+        else setWalletError('Your wallet accepted the batch and did not name it, so there is nothing to follow it up with.');
+      }
     } catch (error) {
-      setWalletError(borrowWalletFailureCopyV1(error));
+      confirmedTermsHash.current = null;
+      setWalletError(handedToWallet ? borrowWalletFailureCopyV1(error) : borrowReviewFailureCopyV1(error));
     } finally {
       opening.current = false;
       setWalletBusy(false);
     }
-  }, [calls, input]);
+  }, [batchId, body, identity, input, review, signable]);
 
   return {
     body,
     model: {
       loading: review.isPending && typeof input.draft === 'string' && input.draft.length > 0,
-      readError: review.error ? borrowReviewFailureCopyV1(review.error) : null,
+      readError: review.error ? borrowReviewFailureCopyV1(review.error)
+        : body?.state === 'ready' && !signable ? 'This review did not establish fresh signing terms. Measure again before opening your wallet.'
+          : body?.state === 'refused' && !body.review ? body.detail || 'The server refused this review. Nothing was prepared.' : null,
       review: body?.review ?? null,
       steps: body?.steps ?? [],
       measured: body?.state === 'ready' ? body.measured ?? null : null,
       wallet: {
         // No calls means no button: a refusal with a disabled button beside it
         // still reads as "nearly".
-        onOpen: calls.length > 0 ? onOpen : null,
+        onOpen: signable ? onOpen : null,
         pending: walletBusy,
         error: walletError,
         batchId,

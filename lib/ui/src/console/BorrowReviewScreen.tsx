@@ -2,7 +2,7 @@ import React, { type ReactNode } from 'react';
 
 void React;
 
-import type { BorrowReviewLineV1, BorrowReviewV1 } from './borrowReviewView';
+import type { BorrowReviewV1 } from './borrowReviewView';
 
 // ---------------------------------------------------------------------------
 // The borrow review, written once and mounted by both consoles.
@@ -66,18 +66,6 @@ export interface BorrowReviewScreenModelV1 {
   };
 }
 
-function line(label: string, value: BorrowReviewLineV1): ReactNode {
-  return (
-    <div className="cr-facts" key={label}>
-      <p className="cr-name">{label}</p>
-      <p className="cr-v mono">{value.collateral}</p>
-      <p className="cr-v mono">{value.debt}</p>
-      <p className="cr-v mono">{value.health}</p>
-      <p className="cr-v mono">{value.liquidationPrice}</p>
-    </div>
-  );
-}
-
 export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1 }): ReactNode {
   if (model.loading) return <p className="lnote">Measuring this market and this wallet’s position in it…</p>;
   if (model.readError) return <p className="cr-verdict bad">{model.readError}</p>;
@@ -87,7 +75,7 @@ export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1
   const refused = review.verdict === 'refused';
 
   return (
-    <div className="mr">
+    <div className="mr mr-borrow">
       <p className="cr-top">{review.title}</p>
       <p className="cr-name">{review.market.pair}</p>
       <p className="lnote mono">{review.market.id}</p>
@@ -103,19 +91,17 @@ export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1
 
       <p className="cr-verdict">{review.ask}</p>
 
-      <div className="mr-board">
-        <div className="cr-facts">
-          <p className="cr-name">&nbsp;</p>
-          <p className="k">Collateral</p>
-          <p className="k">Debt</p>
-          <p className="k">Health</p>
-          <p className="k">Liquidates at</p>
-        </div>
-        {line('Now', review.before)}
-        {/* Absent on a refusal. A projected position printed beside a refusal
-            is an invitation to look past it. */}
-        {review.after ? line('After this borrow', review.after) : null}
-      </div>
+      <table className="mr-borrow-table" aria-label="Position before and after this borrow">
+        <thead><tr><th scope="col">Position</th><th scope="col">Now</th>{review.after ? <th scope="col">After this borrow</th> : null}</tr></thead>
+        <tbody>
+          {([['collateral', 'Collateral'], ['debt', 'Debt'], ['health', 'Health'], ['liquidationPrice', 'Liquidates at']] as const).map(([key, label]) => (
+            <tr key={key}><th scope="row">{label}</th><td className="mono">{review.before[key]}</td>
+              {/* A refused review has no projected position to look past it. */}
+              {review.after ? <td className="mono">{review.after[key]}</td> : null}
+            </tr>
+          ))}
+        </tbody>
+      </table>
 
       {refused ? (
         <p className="cr-verdict bad">{review.refusal}</p>

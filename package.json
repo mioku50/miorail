@@ -11,7 +11,7 @@
     "test:db": "node --import tsx scripts/run-tests.ts db",
     "test": "pnpm test:unit && pnpm test:db",
     "validate:tasks": "node scripts/validate_tasks.js",
-    "lint": "eslint . && markdownlint '**/*.md'",
+    "lint": "eslint . && node scripts/lint-markdown.mjs",
     "format": "prettier --write .",
     "smoke:llm": "tsx scripts/smoke_runtime.ts",
     "smoke:api": "tsx scripts/smoke_api.ts",

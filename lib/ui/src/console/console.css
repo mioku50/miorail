@@ -1499,6 +1499,12 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .cr-v.off { color: var(--muted); }
 
 .mio-console .mr { display: grid; gap: 12px; }
+.mio-console .mr-borrow, .mio-console .mr-borrow > * { min-width: 0; }
+.mio-console .mr-borrow .mono { min-width: 0; white-space: normal; overflow-wrap: anywhere; }
+.mio-console .mr-borrow-table { width: 100%; table-layout: fixed; border-collapse: collapse; font-size: var(--fs-body); }
+.mio-console .mr-borrow-table th, .mio-console .mr-borrow-table td { padding: 10px 8px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); overflow-wrap: anywhere; }
+.mio-console .mr-borrow-table th { font-weight: 600; }
+.mio-console .mr-borrow-table th[scope='row'] { color: var(--muted); font-weight: 400; }
 
 /* Search and filters replace the old horizontal stock rail. The corpus is
    already too large for sideways scrolling to remain discoverable. */

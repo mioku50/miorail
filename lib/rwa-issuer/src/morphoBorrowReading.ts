@@ -71,6 +71,8 @@ export interface MorphoBorrowMarketV1 {
   loan: { address: string | null; symbol: string | null; decimals: number | null };
   /** The borrow rate the venue published, WAD-scaled, or null when it did not. */
   borrowApyWad: bigint | null;
+  /** Current chain rate annualized without compounding; never labelled APY. */
+  borrowAprWad?: bigint | null;
   state: MorphoMarketStateV1;
 }
 

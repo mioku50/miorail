@@ -1,319 +1,123 @@
-// ---------------------------------------------------------------------------
-// Asking the venue to write the transaction.
-//
-// Miorail does not author lending calldata. Morpho publishes an MCP server that
-// prepares it, and the division of labour is the point: the venue knows its own
-// bundler, and we do the part it does not do — compute, measure, and refuse.
-//
-// This client is deliberately NOT the LLM-facing Morpho tool provider. That one
-// exposes four read tools and nothing that prepares a transaction, so no model
-// can talk a preparation into existence. Here the arguments are written by the
-// server from measured inputs, and `morpho_prepare_borrow` is the only tool
-// this module can call.
-//
-// WHAT COMES BACK, MEASURED 2026-09-19
-//
-//   transactions[] { to, data, value, chainId, description }
-//   requirements[]                         — what the venue says is still owed
-//   outcome.market { healthFactor, isHealthy, maxBorrowable, … }
-//   simulation.transfers[] { token{address,symbol}, from, to, amount }
-//   simulation.postState.market { borrowBefore, borrowAfter, … }
-//   warnings[] { level, message, code? }
-//
-// Everything here is the venue's CLAIM. The transactions are carried because
-// they are what a wallet would sign; every number beside them is carried as
-// something the venue said, never as something Miorail established.
-//
-// `maxBorrowable` is the clearest case. On the curated NVDAc market it read
-// 1,778.99 USDC while the market held 823 — it is the health headroom alone,
-// published under a name that invites reading it as what can be drawn. It
-// travels only so a review can show the two side by side.
-//
-// THE VENUE RETURNS SIGNABLE TRANSACTIONS EVEN WHEN ITS OWN SIMULATION FAILED
-//
-// Measured the same day: asked for 1,200 USDC on that market, Morpho answered
-// `SIMULATION_REVERTED — insufficient liquidity` AND returned two transactions.
-// A client that reads `transactions` and not `warnings` hands a user a
-// transaction that reverts. So an error-level warning is carried out as the
-// venue refusing, and disagreement with our own measurement stops the flow
-// rather than picking a winner.
-// ---------------------------------------------------------------------------
-
+// The venue writes the unsigned lending calls. The Actions API is the same
+// preparer behind Morpho MCP; its raw HTTP exchange is necessary to verify
+// Morpho-Action-Proof. Never reconstruct those bytes from an MCP data object.
+import { getAddress } from 'viem';
 import { partnerFetch } from '@mioagent/security/httpAllowlist';
-
+import { MORPHO_ACTION_ORIGIN_V1, verifyMorphoActionProofV1 } from './morphoActionProof.js';
 import type { PreparedTransactionV1 } from './morphoBorrowPlan.js';
 
+/** Discovery metadata; executable preparation uses the raw Actions transport. */
 export const MORPHO_MCP_ENDPOINT_V1 = 'https://mcp.morpho.org/';
 export const MORPHO_PREPARE_BORROW_TOOL_V1 = 'morpho_prepare_borrow';
-/** Base mainnet. This module speaks to one chain and takes no argument for it. */
 export const MORPHO_VENUE_CHAIN_V1 = 'base';
-
 export const MORPHO_VENUE_REFUSALS_V1 = [
-  /** The venue could not be reached, or did not answer in time. */
-  'venue_unreachable',
-  /** The venue answered and declined to prepare anything. */
-  'venue_refused',
-  /** The venue answered in a shape this build cannot read. */
-  'venue_answer_unreadable',
-  /** The venue answered, and prepared no transaction at all. */
-  'venue_prepared_nothing',
-  /** The venue prepared calls for a chain this surface does not execute on. */
-  'venue_prepared_another_chain',
+  'venue_unreachable', 'venue_refused', 'venue_answer_unreadable',
+  'venue_prepared_nothing', 'venue_prepared_another_chain',
+  'venue_proof_invalid', 'venue_signature_required', 'venue_expired', 'venue_intent_mismatch',
 ] as const;
 export type MorphoVenueRefusalV1 = (typeof MORPHO_VENUE_REFUSALS_V1)[number];
-
-/** One movement the venue says its batch performs. A claim, never evidence. */
 export interface MorphoVenueClaimedTransferV1 {
-  tokenAddress: string | null;
-  tokenSymbol: string | null;
-  to: string | null;
-  /** Human-readable, exactly as the venue printed it. */
-  amount: string | null;
+  tokenAddress: string | null; tokenSymbol: string | null; to: string | null; amount: string | null;
 }
-
 export interface MorphoPreparedBorrowV1 {
-  /** Exactly what the venue handed over, in its order. */
   transactions: readonly PreparedTransactionV1[];
-  /**
-   * The venue's own verdict, when it published one.
-   *
-   * `null` means the venue published NO simulation — never that it passed.
-   */
   venueSimulation: { reverted: boolean; reason: string | null } | null;
-  /** What the venue says will move. Compared against our measurement, never
-   * substituted for it. */
   claimedTransfers: readonly MorphoVenueClaimedTransferV1[];
-  /** Whatever the venue still says is owed. Carried verbatim for the review. */
   requirements: readonly string[];
-  /**
-   * The venue's published headroom, in loan-asset atomic units.
-   *
-   * This is the collateral constraint alone and ignores whether the market
-   * holds the assets. Never shown as what a reader can borrow.
-   */
   maxBorrowableAssets: bigint | null;
-  /** The venue's own sentence for the whole operation. A label. */
   summary: string | null;
+  expiresAt: string;
 }
-
 export type MorphoPrepareBorrowResultV1 =
   | { ok: true; prepared: MorphoPreparedBorrowV1 }
   | { ok: false; refusal: MorphoVenueRefusalV1; detail: string | null };
+export interface MorphoVenueDepsV1 {
+  fetchImpl?: typeof fetch;
+  /** Only the fixed official production origin is accepted. */
+  endpoint?: string;
+  timeoutMs?: number;
+  requestId?: string;
+  now?: () => Date;
+}
 
-const BASE_CHAIN_ID_V1 = 8453;
-
-/**
- * An atomic amount as the exact decimal string the venue's schema asks for.
- *
- * `borrowAmount` is documented as human-readable decimals, so the conversion
- * happens here rather than anywhere near a float. The round trip is not
- * trusted either: what actually arrives is measured, and a venue that read
- * this string as some other number fails the arrival check.
- */
+/** For display only. Actions requests always use an exact integer string. */
 export function atomicToDecimalStringV1(amount: bigint, decimals: number): string {
-  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) {
-    throw new RangeError('decimals must be an integer between 0 and 36');
-  }
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36) throw new RangeError('decimals must be an integer between 0 and 36');
   const negative = amount < 0n;
   const digits = (negative ? -amount : amount).toString().padStart(decimals + 1, '0');
   const whole = digits.slice(0, digits.length - decimals);
   const fraction = decimals === 0 ? '' : digits.slice(digits.length - decimals).replace(/0+$/, '');
   return `${negative ? '-' : ''}${whole}${fraction ? `.${fraction}` : ''}`;
 }
+const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === 'object' && !Array.isArray(value);
+const address = (value: unknown): string | null => typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value) ? value.toLowerCase() : null;
+const amount = (value: unknown): string | null => typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) ? value : null;
 
-function textOrNullV1(value: unknown): string | null {
-  return typeof value === 'string' && value.trim().length > 0 ? value.trim() : null;
-}
-
-/** An unsigned integer in the venue's JSON, which may arrive as a number or a
- * string. Anything else is absent rather than guessed at. */
-function atomicOrNullV1(value: unknown): bigint | null {
-  if (typeof value === 'bigint') return value >= 0n ? value : null;
-  if (typeof value === 'number') {
-    return Number.isSafeInteger(value) && value >= 0 ? BigInt(value) : null;
-  }
-  if (typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value.trim())) return BigInt(value.trim());
-  return null;
-}
-
-/** The venue streams its answer as SSE, and the last `data:` line is the
- * envelope. A plain JSON body is accepted too, so a transport change does not
- * read as the venue being unreachable. */
-function parseEnvelopeV1(body: string): unknown {
-  const dataLines = body
-    .split(/\r?\n/)
-    .filter((line) => line.startsWith('data:'))
-    .map((line) => line.slice(5).trim())
-    .filter((line) => line.length > 0);
-  return JSON.parse(dataLines.at(-1) ?? body.trim());
-}
-
-export interface MorphoVenueDepsV1 {
-  fetchImpl?: typeof fetch;
-  endpoint?: string;
-  timeoutMs?: number;
-  /** Injected so a test is not at the mercy of a random id. */
-  requestId?: string;
-}
-
-/**
- * Asks the venue to prepare a borrow, and reads its answer for what it is.
- *
- * Nothing here is signed, nothing is broadcast, and no key is held. The result
- * is calldata plus a set of claims, and every one of those claims is checked
- * against a measurement before a reader is ever shown a transaction.
- */
 export async function prepareMorphoBorrowV1(input: {
-  marketId: string;
-  walletAddress: string;
-  /** Exact atomic units of the loan asset. */
-  borrowAssets: bigint;
-  loanDecimals: number;
+  marketId: string; walletAddress: string; borrowAssets: bigint; loanDecimals: number;
+  loanTokenAddress?: string; collateralTokenAddress?: string;
   deps?: MorphoVenueDepsV1;
 }): Promise<MorphoPrepareBorrowResultV1> {
   const deps = input.deps ?? {};
+  const fail = (refusal: MorphoVenueRefusalV1, detail: string | null = null): MorphoPrepareBorrowResultV1 => ({ ok: false, refusal, detail });
   const marketId = input.marketId.trim().toLowerCase();
-  const wallet = input.walletAddress.trim();
-  if (!/^0x[0-9a-f]{64}$/.test(marketId)) {
-    return { ok: false, refusal: 'venue_answer_unreadable', detail: 'not an exact market id' };
-  }
-  if (!/^0x[0-9a-fA-F]{40}$/.test(wallet)) {
-    return { ok: false, refusal: 'venue_answer_unreadable', detail: 'not an exact wallet address' };
-  }
-  if (input.borrowAssets <= 0n) {
-    return { ok: false, refusal: 'venue_answer_unreadable', detail: 'nothing was asked for' };
-  }
-
-  let body: string;
-  try {
-    const response = await partnerFetch(
-      deps.endpoint ?? MORPHO_MCP_ENDPOINT_V1,
-      {
-        method: 'POST',
-        headers: { 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
-        body: JSON.stringify({
-          jsonrpc: '2.0',
-          id: deps.requestId ?? `miorail-borrow-${marketId.slice(2, 14)}`,
-          method: 'tools/call',
-          params: {
-            name: MORPHO_PREPARE_BORROW_TOOL_V1,
-            arguments: {
-              chain: MORPHO_VENUE_CHAIN_V1,
-              marketId,
-              userAddress: wallet,
-              borrowAmount: atomicToDecimalStringV1(input.borrowAssets, input.loanDecimals),
-            },
-          },
-        }),
-      },
-      { timeoutMs: deps.timeoutMs ?? 12_000, fetchImpl: deps.fetchImpl },
-    );
-    if (!response.ok) {
-      // The status only: an upstream body can echo an endpoint.
-      return { ok: false, refusal: 'venue_unreachable', detail: `the venue returned HTTP ${response.status}` };
-    }
-    body = await response.text();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error ?? '');
-    return {
-      ok: false,
-      refusal: 'venue_unreachable',
-      detail: /abort|timeout/i.test(message) ? 'the venue did not answer in time' : 'the venue could not be reached',
-    };
-  }
-
-  let envelope: Record<string, any>;
-  try {
-    envelope = parseEnvelopeV1(body) as Record<string, any>;
-  } catch {
-    return { ok: false, refusal: 'venue_answer_unreadable', detail: 'the answer was not JSON' };
-  }
-  if (envelope?.error) {
-    return { ok: false, refusal: 'venue_refused', detail: textOrNullV1(envelope.error?.message) };
-  }
-  const result = envelope?.result as Record<string, any> | undefined;
-  if (result?.isError === true) {
-    return { ok: false, refusal: 'venue_refused', detail: null };
-  }
-
-  const text = Array.isArray(result?.content)
-    ? result.content.find((item: any) => item?.type === 'text' && typeof item.text === 'string')?.text
-    : null;
-  let payload: Record<string, any>;
-  try {
-    payload = (typeof text === 'string' ? JSON.parse(text) : result) as Record<string, any>;
-  } catch {
-    return { ok: false, refusal: 'venue_answer_unreadable', detail: 'the payload was not JSON' };
-  }
-  if (!payload || typeof payload !== 'object') {
-    return { ok: false, refusal: 'venue_answer_unreadable', detail: 'the payload was not an object' };
-  }
-
-  const rawTransactions = Array.isArray(payload.transactions) ? payload.transactions : [];
-  if (rawTransactions.length === 0) {
-    return { ok: false, refusal: 'venue_prepared_nothing', detail: null };
-  }
-  const transactions: PreparedTransactionV1[] = [];
-  for (const entry of rawTransactions) {
-    const row = entry as Record<string, any>;
-    // A call for another chain is not a call this surface may hand anybody,
-    // whatever else is right about it.
-    if (row.chainId !== undefined && row.chainId !== null && Number(row.chainId) !== BASE_CHAIN_ID_V1) {
-      return {
-        ok: false,
-        refusal: 'venue_prepared_another_chain',
-        detail: `the venue prepared a call for chain ${String(row.chainId)}`,
-      };
-    }
-    transactions.push({
-      to: String(row.to ?? ''),
-      data: String(row.data ?? ''),
-      value: row.value ?? null,
-      description: textOrNullV1(row.description),
-    });
-  }
-
-  // The venue simulated when it published a simulation. An absent block is not
-  // a pass, and an empty warnings array on a run that DID happen is.
-  const simulated = payload.simulation && typeof payload.simulation === 'object';
-  const warnings = Array.isArray(payload.warnings) ? payload.warnings : [];
-  const errorWarning = warnings.find(
-    (entry: any) => typeof entry?.level === 'string' && entry.level.toLowerCase() === 'error',
-  );
-  const venueSimulation = simulated
-    ? {
-        // Any error-level warning is read as the venue refusing this
-        // preparation. Classifying its errors further would be us deciding
-        // which of the venue's objections matter.
-        reverted: errorWarning !== undefined,
-        reason: errorWarning
-          ? textOrNullV1(errorWarning.message) ?? textOrNullV1(errorWarning.code)
-          : null,
-      }
-    : null;
-
-  const claimedTransfers: MorphoVenueClaimedTransferV1[] = (
-    Array.isArray(payload.simulation?.transfers) ? payload.simulation.transfers : []
-  ).map((entry: any) => ({
-    tokenAddress: textOrNullV1(entry?.token?.address)?.toLowerCase() ?? null,
-    tokenSymbol: textOrNullV1(entry?.token?.symbol),
-    to: textOrNullV1(entry?.to)?.toLowerCase() ?? null,
-    amount: textOrNullV1(entry?.amount?.value) ?? (typeof entry?.amount?.value === 'number' ? String(entry.amount.value) : null),
+  const wallet = address(input.walletAddress.trim());
+  if (!/^0x[0-9a-f]{64}$/.test(marketId) || !wallet || /^0x0{40}$/.test(wallet) || input.borrowAssets <= 0n || input.borrowAssets >= 1n << 256n ||
+      !Number.isInteger(input.loanDecimals) || input.loanDecimals < 0 || input.loanDecimals > 36) return fail('venue_answer_unreadable', 'the intent was not exact');
+  if (deps.endpoint !== undefined && deps.endpoint !== MORPHO_ACTION_ORIGIN_V1) return fail('venue_refused', 'only the official Actions origin is supported');
+  const path = `/v0/actions/blue/markets/8453:${marketId}/borrow`;
+  const requestBytes = new TextEncoder().encode(JSON.stringify({
+    account: getAddress(wallet), amount: { unit: 'assets', value: input.borrowAssets.toString() }, signature_mode: 'none',
   }));
-
-  const requirements = (Array.isArray(payload.requirements) ? payload.requirements : [])
-    .map((entry: any) => textOrNullV1(typeof entry === 'string' ? entry : entry?.description ?? entry?.message))
-    .filter((entry: string | null): entry is string => entry !== null);
-
-  return {
-    ok: true,
-    prepared: {
-      transactions,
-      venueSimulation,
-      claimedTransfers,
-      requirements,
-      maxBorrowableAssets: atomicOrNullV1(payload.outcome?.market?.maxBorrowable),
-      summary: textOrNullV1(payload.summary),
-    },
-  };
+  let response: Response, bytes: Uint8Array;
+  try {
+    response = await partnerFetch(`${MORPHO_ACTION_ORIGIN_V1}${path}`, {
+      method: 'POST', redirect: 'error', headers: { 'content-type': 'application/json', accept: 'application/json' }, body: requestBytes,
+    }, { fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs ?? 15_000 });
+    if (!response.ok) return fail(response.status >= 400 && response.status < 500 && response.status !== 429 ? 'venue_refused' : 'venue_unreachable', `the venue returned HTTP ${response.status}`);
+    bytes = new Uint8Array(await response.arrayBuffer());
+    if (bytes.length > 2_000_000) return fail('venue_answer_unreadable', 'the answer was too large');
+  } catch {
+    return fail('venue_unreachable', 'the venue could not be reached');
+  }
+  let payload: unknown;
+  try { payload = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)); }
+  catch { return fail('venue_answer_unreadable', 'the answer was not JSON'); }
+  if (!object(payload) || !object(payload.data)) return fail('venue_answer_unreadable', 'the Actions envelope was not readable');
+  const data = payload.data;
+  const now = deps.now?.() ?? new Date();
+  const proof = await verifyMorphoActionProofV1({ response, responseBytes: bytes, requestBytes, path, data, now, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs });
+  if (!proof.ok) return fail('venue_proof_invalid', 'the exact Actions response could not be authenticated');
+  if (data.chain_id !== 8453) return fail('venue_prepared_another_chain');
+  if (address(data.account) !== wallet || data.action !== 'blue.borrow') return fail('venue_intent_mismatch');
+  if (!Number.isSafeInteger(data.expires_at) || data.expires_at * 1000 <= now.getTime() || proof.expiresAtMs <= now.getTime()) return fail('venue_expired');
+  if (data.status === 'signature_required') return fail('venue_signature_required', 'this path does not request typed-data signatures');
+  if (data.status === 'simulation_failed') return fail('venue_refused', 'the venue simulation failed');
+  if (data.status !== 'prepared' || !object(data.simulation) || data.simulation.status !== 'success') return fail('venue_answer_unreadable', 'the venue did not establish a successful preparation');
+  if (!object(data.market) || typeof data.market.id !== 'string' || data.market.id.toLowerCase() !== marketId ||
+      !object(data.amount) || data.amount.unit !== 'assets' || amount(data.amount.value) !== input.borrowAssets.toString() ||
+      !object(data.resolved_amount) || data.resolved_amount.unit !== 'assets' || amount(data.resolved_amount.value) !== input.borrowAssets.toString() ||
+      !address(data.market.loan_asset?.address) || !address(data.market.collateral_asset?.address) ||
+      (input.loanTokenAddress !== undefined && address(data.market.loan_asset?.address) !== address(input.loanTokenAddress)) ||
+      (input.collateralTokenAddress !== undefined && address(data.market.collateral_asset?.address) !== address(input.collateralTokenAddress)) ||
+      data.collateral_amount !== undefined || data.resolved_funding !== undefined || data.referral_fee !== undefined) return fail('venue_intent_mismatch');
+  const effects = data.simulation.effects;
+  if (!object(effects) || amount(effects.gross_assets) !== input.borrowAssets.toString() ||
+      amount(effects.net_assets) !== input.borrowAssets.toString() || amount(effects.referral_fee_assets) !== '0') return fail('venue_intent_mismatch', 'the venue effects do not match the requested net arrival');
+  if (!Array.isArray(data.calls) || data.calls.length === 0) return fail('venue_prepared_nothing');
+  if (data.calls.length > 4) return fail('venue_answer_unreadable', 'too many calls');
+  const transactions: PreparedTransactionV1[] = [];
+  const ids = new Set<string>();
+  for (const call of data.calls) {
+    if (!object(call) || typeof call.id !== 'string' || !/^call_[0-9]+$/.test(call.id) || ids.has(call.id) || !['approval', 'authorization', 'blue_borrow'].includes(call.kind) ||
+        !address(call.to) || typeof call.data !== 'string' || !/^0x(?:[0-9a-fA-F]{2}){4,}$/.test(call.data) || amount(call.value) !== '0' ||
+        (call.chainId !== undefined && call.chainId !== 8453)) return fail('venue_answer_unreadable', 'a prepared call did not match this borrow');
+    ids.add(call.id);
+    transactions.push({ to: call.to, data: call.data, value: call.value, description: call.kind });
+  }
+  return { ok: true, prepared: {
+    transactions, venueSimulation: { reverted: false, reason: null }, claimedTransfers: [], requirements: [],
+    maxBorrowableAssets: null, summary: null,
+    expiresAt: new Date(Math.min(data.expires_at * 1000, proof.expiresAtMs)).toISOString(),
+  } };
 }

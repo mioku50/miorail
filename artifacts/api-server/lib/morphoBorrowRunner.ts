@@ -7,7 +7,6 @@ import {
   morphoBorrowVerdictV1,
   morphoLiquidationIncentiveWadV1,
   prepareMorphoBorrowV1,
-  readMorphoBorrowStandingV1,
   type MorphoBorrowPlanV1,
   type MorphoBorrowReaderDepsV1,
   type MorphoBorrowStandingV1,
@@ -16,6 +15,11 @@ import {
   type BorrowReviewRefusalV1,
   type BorrowReviewV1,
 } from '@mioagent/rwa-issuer';
+import { morphoStillDrawV1 } from '@mioagent/still-engine/capacity';
+import { TERMS } from '@mioagent/still-engine/policy';
+import { ADDRESSES } from '@mioagent/still-engine/registry';
+import { formatCents } from '@mioagent/still-engine/format';
+import { readBorrowStandingV1, stillBorrowAssetV1 } from './stillBorrowStanding.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 
 // ---------------------------------------------------------------------------
@@ -80,6 +84,11 @@ export type MorphoBorrowRunV1 =
       callsHash: string;
       plan: MorphoBorrowPlanV1;
       measured: MorphoBorrowMeasuredV1;
+      /** The exact economic terms a person saw, independent of the reading's clock. */
+      signingTermsHash: string;
+      /** Fresh review window, additionally bounded by the venue's own expiry. */
+      expiresAt: string;
+      stillPolicy?: { termsVersion: string; shareBps: number; limitAtomic: string; debtBeforeAtomic: string; availableAtomic: string };
     }
   | {
       state: 'refused';
@@ -99,6 +108,7 @@ export interface MorphoBorrowRunDepsV1 {
   chain?: SimulationChainV1;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
+  read?: typeof readBorrowStandingV1;
 }
 
 /** Simulation transport codes that mean nothing was executed, as opposed to
@@ -140,10 +150,10 @@ export async function runMorphoBorrowV1(
   }
 
   // --- 1. The market, and this wallet's standing in it ----------------------
-  const reading = await readMorphoBorrowStandingV1({
+  const reading = await (deps.read ?? readBorrowStandingV1)({
     tokenAddress: request.collateralTokenAddress,
     walletAddress: wallet,
-    deps: deps.reader,
+    deps: { generic: deps.reader, now: deps.now },
   });
   if (reading.state === 'refused') {
     return refusedV1('reading', reading.refusal, reading.detail, null, null);
@@ -174,6 +184,14 @@ export async function runMorphoBorrowV1(
   const marketId = market.marketId;
   const loanAddress = market.loan.address;
   const loanDecimals = market.loan.decimals;
+  const stillAsset = stillBorrowAssetV1(request.collateralTokenAddress);
+  if (stillAsset && (
+    marketId.toLowerCase() !== stillAsset.morphoMarket.toLowerCase() ||
+    market.collateral.address?.toLowerCase() !== stillAsset.token.toLowerCase() ||
+    loanAddress?.toLowerCase() !== ADDRESSES.usdc.toLowerCase() || loanDecimals !== 6
+  )) {
+    return refusedV1('market', 'still_market_mismatch', 'Still could not establish its exact registered market', marketId, null);
+  }
 
   const marketWire = {
     marketId,
@@ -184,6 +202,7 @@ export async function runMorphoBorrowV1(
     collateralDecimals: market.collateral.decimals,
     loanDecimals: market.loan.decimals,
     borrowApyWad: market.borrowApyWad,
+    borrowAprWad: market.borrowAprWad,
     blockNumber: market.state.blockNumber,
   };
   const liquidityAssets =
@@ -241,6 +260,28 @@ export async function runMorphoBorrowV1(
   }
 
   // --- 2. Does the ask fit, and which side is short ------------------------
+  // Still's ceiling is half the TOTAL protocol limit minus accrued debt,
+  // never half the remaining headroom. The same helper computes the Mirror.
+  let stillPolicy: Extract<MorphoBorrowRunV1, { state: 'ready' }>['stillPolicy'];
+  if (stillAsset) {
+    let draw: ReturnType<typeof morphoStillDrawV1>;
+    try {
+      draw = morphoStillDrawV1({ market: market.state, position: standing.position, borrowAssets: ask });
+    } catch {
+      return refusedV1('reading', 'still_inputs_unread', 'Still could not establish the measured debt limit', marketId, render(standing.position, null, 'still_inputs_unread'));
+    }
+    if (!draw.ok) {
+      return refusedV1('capacity', draw.refusal,
+        `${draw.capacity.availableAssets} atomic USDC is available under Still's terms`, marketId,
+        render(standing.position, null, draw.refusal === 'over_market_liquidity' ? 'over_market_liquidity' : 'over_still_limit'));
+    }
+    stillPolicy = {
+      termsVersion: TERMS.version, shareBps: Number(TERMS.shareOfProtocolBps),
+      limitAtomic: draw.capacity.limitAssets.toString(),
+      debtBeforeAtomic: draw.capacity.debtAssets.toString(),
+      availableAtomic: draw.capacity.availableAssets.toString(),
+    };
+  }
   const capacity = standing.capacity;
   if (capacity.assets <= 0n) {
     return refusedV1('capacity', 'nothing_to_borrow', capacity.bound, marketId, render(standing.position, null, 'nothing_to_borrow'));
@@ -274,10 +315,19 @@ export async function runMorphoBorrowV1(
     walletAddress: wallet,
     borrowAssets: ask,
     loanDecimals,
-    deps: deps.venue,
+    loanTokenAddress: loanAddress,
+    collateralTokenAddress: request.collateralTokenAddress,
+    deps: { ...deps.venue, now: deps.venue?.now ?? deps.now },
   });
   if (!prepared.ok) {
-    return refusedV1('venue', prepared.refusal, prepared.detail, marketId, render(standing.position, null, 'venue_would_not_prepare'));
+    const reviewRefusal: BorrowReviewRefusalV1 =
+      prepared.refusal === 'venue_proof_invalid' || prepared.refusal === 'venue_answer_unreadable' ? 'venue_response_unverified'
+        : prepared.refusal === 'venue_unreachable' ? 'venue_response_unavailable'
+          : prepared.refusal === 'venue_signature_required' ? 'venue_requires_signature'
+            : prepared.refusal === 'venue_expired' ? 'venue_preparation_expired'
+              : prepared.refusal === 'venue_intent_mismatch' || prepared.refusal === 'venue_prepared_another_chain' ? 'venue_terms_differ'
+                : 'venue_would_not_prepare';
+    return refusedV1('venue', prepared.refusal, prepared.detail, marketId, render(standing.position, null, reviewRefusal));
   }
 
   // --- 4. What can be proven from the bytes, before anything is executed ---
@@ -356,10 +406,34 @@ export async function runMorphoBorrowV1(
     return refusedV1('simulation', 'arrival_unread', null, marketId, render(standing.position, null, 'simulation_effect_unread'));
   }
 
+  const review = render(standing.position, after, null);
+  if (stillPolicy) review.warnings = [
+    `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
+    ...review.warnings,
+  ];
+  // The clock changes on every fresh read. Every economic field, every call,
+  // and the raw projected debt remain bound, including sub-display rounding.
+  const { measuredAt: _measuredAt, ...reviewTerms } = review;
+  const signingTermsHash = stableHashV1('morpho-borrow-signing-terms/v1', {
+    wallet, marketId, ask: ask.toString(), callsHash, review: reviewTerms,
+    collateral: standing.position.collateral.toString(),
+    debtBefore: standing.health?.borrowedAssets.toString() ?? null,
+    debtAfter: after.health.borrowedAssets.toString(),
+    price: market.state.collateralPrice.toString(),
+    policy: stillPolicy ?? null,
+  });
+  const now = deps.now?.() ?? new Date();
+  const venueExpiry = Date.parse(prepared.prepared.expiresAt);
+  if (!Number.isFinite(venueExpiry) || venueExpiry <= now.getTime()) {
+    return refusedV1('venue', 'venue_expired', 'the venue preparation expired during measurement', marketId, render(standing.position, null, 'venue_preparation_expired'));
+  }
   return {
     state: 'ready',
     marketId,
-    review: render(standing.position, after, null),
+    review,
+    signingTermsHash,
+    expiresAt: new Date(Math.min(now.getTime() + 30_000, venueExpiry)).toISOString(),
+    ...(stillPolicy ? { stillPolicy } : {}),
     calls: plan.plan.calls,
     callsHash,
     plan: plan.plan,

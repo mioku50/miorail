@@ -1,6 +1,6 @@
 "use client";
 import { useParams } from "next/navigation";
-import { useSendCalls } from "wagmi";
+import { useAccount, useSendCalls } from "wagmi";
 import { BorrowReviewScreen, useBorrowReviewConsoleV1 } from "@mioagent/ui";
 import { builderCodeFromEnvV1 } from "@mioagent/route-domain/builder-code";
 import { builderCodeToDataSuffix } from "@mioagent/wallet-actions";
@@ -28,12 +28,14 @@ export default function BaseAppBorrowReviewPage() {
   const params = useParams<{ draft?: string }>();
   const draft = typeof params?.draft === "string" ? decodeURIComponent(params.draft) : null;
   const sendCalls = useSendCalls();
+  const { address } = useAccount();
 
   const reviewConsole = useBorrowReviewConsoleV1({
     draft,
+    walletAddress: address ?? null,
     sendCalls: async ({ calls }) => {
       const result = await sendCalls.mutateAsync({
-        calls: calls as never,
+        calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
         chainId: 8453,
         // A batch with no dataSuffix loses Builder Code attribution silently.
         capabilities: BUILDER_SUFFIX_V1

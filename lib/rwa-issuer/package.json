@@ -35,6 +35,7 @@
     "@mioagent/route-domain": "workspace:*",
     "@mioagent/route-storage": "workspace:*",
     "@mioagent/security": "workspace:*",
+    "viem": "^2.53.1",
     "zod": "^3.25.76"
   },
   "devDependencies": {

@@ -374,6 +374,12 @@ const BorrowMarketRowV1 = z
     loanSymbol: z.string().nullable(),
     /** What could actually be drawn, bounded by BOTH constraints. */
     availableToBorrowAtomic: z.string().regex(/^[0-9]+$/).nullable(),
+    still: z.object({
+      termsVersion: z.string().min(1), scope: z.literal('existing_collateral'),
+      shareBps: z.number().int().min(0).max(10000),
+      limitAtomic: z.string().regex(/^[0-9]+$/), debtAtomic: z.string().regex(/^[0-9]+$/),
+      availableAtomic: z.string().regex(/^[0-9]+$/), roundingMarginCents: z.string().regex(/^[0-9]+$/),
+    }).strict().nullable().optional(),
     /** Which fact set that figure. Never merged into one number. */
     bound: z.string().nullable(),
     collateralHeadroomAtomic: z.string().regex(/^[0-9]+$/).nullable(),
@@ -386,6 +392,7 @@ const BorrowMarketRowV1 = z
 export const MiorailReadBorrowCapacityOutputV1Schema = z
   .object({
     schemaVersion: z.literal('borrow-capacity/v1'),
+    marketScope: z.literal('still_registered_market').optional(),
     collateralTokenAddress: AddressV1,
     readAt: z.string().min(1),
     markets: z.array(BorrowMarketRowV1).max(20),

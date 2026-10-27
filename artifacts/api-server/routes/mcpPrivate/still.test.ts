@@ -54,7 +54,7 @@ test('the protocol advertises the wallet-free read, the source block and partial
   const client = await connected(t);
   const tool = (await client.listTools()).tools.find(entry => entry.name === NAME)!;
   assert.ok(tool);
-  assert.equal(client.getServerVersion()?.version, '1.8.0');
+  assert.equal(client.getServerVersion()?.version, '1.8.1');
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), []);
   assert.equal(tool.inputSchema.additionalProperties, false);
   assert.equal(tool.annotations?.readOnlyHint, true);

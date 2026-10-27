@@ -66,22 +66,41 @@ export interface Universe {
   morpho: MorphoUniverse[];
 }
 
+/** The same immutable-market decoder serves Mirror and the execution review. */
+function morphoUniversePlan(batch: Batch, assets: readonly CryptoAsset[]): () => MorphoUniverse[] {
+  const params = assets.map((asset) => ({ asset, slot: batch.add(ADDRESSES.morpho, morphoAbi, 'idToMarketParams', [asset.morphoMarket]) }));
+  return () => params.map(({ asset, slot }) => {
+    if (!slot.outcome.ok) return { ok: false, asset, problem: 'unreadable' };
+    const [loanToken, collateralToken, oracleAddress, irm, lltv] = slot.outcome.value;
+    const matches = same(loanToken, ADDRESSES.usdc) && same(collateralToken, asset.token) && lltv > 0n && lltv <= 10n ** 18n && !same(oracleAddress, ZERO_ADDRESS);
+    if (!matches) return { ok: false, asset, problem: 'market_mismatch' };
+    return { ok: true, market: { asset, id: asset.morphoMarket, params: { loanToken, collateralToken, oracle: oracleAddress, irm, lltv } } };
+  });
+
+}
+
+/** Bounded code-owned markets; does not query Aave or a paginated API directory. */
+export async function loadMorphoUniverse(providers: readonly Provider[], assetIds: readonly CryptoId[] = CRYPTO.map((asset) => asset.id)): Promise<{ provider: string; morpho: MorphoUniverse[] }> {
+  const assets = [...new Set(assetIds)].map((id) => {
+    const asset = CRYPTO.find((entry) => entry.id === id);
+    if (!asset) throw new Error('unknown Still collateral');
+    return asset;
+  });
+  const batch = new Batch();
+  const read = morphoUniversePlan(batch, assets);
+  const { provider } = await batch.run(providers);
+  return { provider, morpho: read() };
+}
+
 export async function loadUniverse(providers: readonly Provider[]): Promise<Universe> {
   const first = new Batch();
   const oracle = first.add(ADDRESSES.aaveSpoke, aaveSpokeAbi, 'ORACLE', []);
   const count = first.add(ADDRESSES.aaveSpoke, aaveSpokeAbi, 'getReserveCount', []);
   const oracleDecimals = first.add(ADDRESSES.aaveOracle, aaveOracleAbi, 'decimals', []);
   const noCap = first.add(ADDRESSES.aaveHub, aaveHubAbi, 'MAX_ALLOWED_SPOKE_CAP', []);
-  const params = CRYPTO.map((asset) => ({ asset, slot: first.add(ADDRESSES.morpho, morphoAbi, 'idToMarketParams', [asset.morphoMarket]) }));
+  const readMorpho = morphoUniversePlan(first, CRYPTO);
   const { provider } = await first.run(providers);
-
-  const morpho: MorphoUniverse[] = params.map(({ asset, slot }) => {
-    if (!slot.outcome.ok) return { ok: false, asset, problem: 'unreadable' };
-    const [loanToken, collateralToken, oracleAddress, irm, lltv] = slot.outcome.value;
-    const matches = same(loanToken, ADDRESSES.usdc) && same(collateralToken, asset.token) && lltv > 0n && !same(oracleAddress, ZERO_ADDRESS);
-    if (!matches) return { ok: false, asset, problem: 'market_mismatch' };
-    return { ok: true, market: { asset, id: asset.morphoMarket, params: { loanToken, collateralToken, oracle: oracleAddress, irm, lltv } } };
-  });
+  const morpho = readMorpho();
 
   const base = { loadedAt: new Date(), provider, morpho };
   if (!oracle.outcome.ok || !count.outcome.ok || !oracleDecimals.outcome.ok || !noCap.outcome.ok) {

@@ -9,6 +9,8 @@
     ".": "./src/index.ts",
     "./format": "./src/format.ts",
     "./policy": "./src/policy.ts",
+    "./capacity": "./src/capacity.ts",
+    "./read": "./src/read.ts",
     "./registry": "./src/registry.ts",
     "./report": "./src/report.ts",
     "./report-schema": "./src/report-schema.ts",

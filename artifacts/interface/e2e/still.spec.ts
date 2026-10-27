@@ -318,7 +318,9 @@ for (const [label, now, card] of [
 ] as const) {
   test(`console surfaces use the Sky palette without changing the unframed console (${label})`, async ({ page }) => {
     const { writes } = await install(page, false, now);
-    await page.goto('/extensions');
+    // The UI can be ready while an optional external font is still loading.
+    // Its real heading and panel are the readiness condition for this check.
+    await page.goto('/extensions', { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Wallet MCP', exact: true })).toBeVisible();
     const frame = page.locator('.still-console');
     await expect(frame.locator('.rp').first()).toBeVisible();

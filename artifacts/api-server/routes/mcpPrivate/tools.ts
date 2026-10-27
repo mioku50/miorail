@@ -29,7 +29,7 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { issueStockActionDraftV1 } from '../../lib/stockActionDraft.js';
 import { issueBorrowDraftV1 } from '../../lib/borrowDraft.js';
 import { runMorphoBorrowV1 } from '../../lib/morphoBorrowRunner.js';
-import { readMorphoBorrowStandingV1 } from '@mioagent/rwa-issuer';
+import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../../lib/stillBorrowStanding.js';
 import {
   STOCK_ACTION_CLEARANCE_REFUSAL_COPY_V1,
   verifyStockActionClearanceV1,
@@ -1681,7 +1681,7 @@ function borrowRefusalV1(code: string): McpPrivateError {
 /** Everything the borrow tools reach outside themselves, in one place, so a
  * test replaces the venue and the simulator without touching process state. */
 export const borrowRuntimeV1 = {
-  read: readMorphoBorrowStandingV1,
+  read: readBorrowStandingV1,
   run: runMorphoBorrowV1,
   issue: issueBorrowDraftV1,
   now: () => new Date(),
@@ -1730,6 +1730,7 @@ export async function miorailReadBorrowCapacityV1(
 
   const base = {
     schemaVersion: 'borrow-capacity/v1' as const,
+    ...(stillBorrowAssetV1(token) ? { marketScope: 'still_registered_market' as const } : {}),
     collateralTokenAddress: token,
     personalCaveat: BORROW_PERSONAL_CAVEAT_V1,
     createsApproval: false as const,
@@ -1760,6 +1761,7 @@ export async function miorailReadBorrowCapacityV1(
       collateralSymbol: entry.market.collateral.symbol,
       loanSymbol: entry.market.loan.symbol,
       availableToBorrowAtomic: entry.capacity?.assets.toString() ?? null,
+      ...(stillBorrowAssetV1(token) ? { still: stillBorrowCapacityWireV1(token, entry) } : {}),
       bound: entry.capacity?.bound ?? null,
       collateralHeadroomAtomic: entry.capacity?.collateralHeadroomAssets.toString() ?? null,
       marketLiquidityAtomic: entry.capacity?.marketLiquidityAssets.toString() ?? null,
@@ -1767,7 +1769,7 @@ export async function miorailReadBorrowCapacityV1(
       blockNumber: entry.market.state.blockNumber,
     })),
     nextStep:
-      'Give every market its own row and never summarise them into one figure: two markets on the same collateral have different terms, and a maximum taken across them describes none of them. `bound` says whether the collateral or the market’s liquidity set each number. Nothing here is executable; miorail_review_borrow is what produces something a user can look at.',
+      'Give every market its own row and never summarise them into one figure. For cbBTC and WETH this is Still’s registered market, not an inventory of every Morpho market. availableToBorrowAtomic is the protocol maximum, never Still’s allowance. When present, still.availableAtomic is the stricter Still allowance against collateral ALREADY deposited in that exact registered market; null is unread, not zero. Wallet balances and native ETH are not automatically deposited. Nothing is executable; only an explicitly requested miorail_review_borrow can produce a browser review.',
   };
 }
 

@@ -58,9 +58,10 @@ export function BorrowReviewPage() {
 
   const reviewConsole = useBorrowReviewConsoleV1({
     draft: params?.draft ?? null,
+    walletAddress: address ?? null,
     sendCalls: async ({ calls }) => {
       const result = await sendCalls.mutateAsync({
-        calls: calls as never,
+        calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
         chainId: 8453,
         // Optional, so a wallet that does not understand the capability still
         // sends the batch rather than refusing it.

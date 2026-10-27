@@ -18,6 +18,7 @@ import {
   type MorphoMarketStateV1,
 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { BPS, RAY, WAD, divide, max, min, mulDiv, usdcToCents } from './math.js';
+import { morphoStillCapacityV1, stillBorrowLimitV1 } from './capacity.js';
 import type { CalendarRead } from './calendar.js';
 import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
@@ -415,8 +416,7 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
   let capacity: bigint | null = null;
   if (price !== undefined && countable !== undefined && collateral !== undefined) {
     // Still's share of what the contract itself would lend against all of it.
-    const usdcRaw = mulDiv(morphoMaxBorrowAssetsV1(countable + collateral, price, lltv), share, BPS, 'down');
-    capacity = usdcToCents(usdcRaw, 'down');
+    capacity = stillBorrowLimitV1({ protocolLimitAssets: morphoMaxBorrowAssetsV1(countable + collateral, price, lltv), shareBps: share }).limitCents;
     line.capacityCents = capacity.toString();
   }
 
@@ -431,8 +431,20 @@ function computeMorpho(asset: CryptoAsset, market: MorphoSnapshot | null, snapsh
   const liquidity = accrued ? max(0n, accrued.totalSupplyAssets - accrued.totalBorrowAssets) : undefined;
 
   let available: bigint | null = null;
-  if (capacity !== null && debtCents !== null && liquidity !== undefined) {
-    available = min(max(0n, capacity - debtCents), usdcToCents(liquidity, 'down'));
+  if (price !== undefined && countable !== undefined && collateral !== undefined && borrowShares !== undefined && accrued) {
+    available = morphoStillCapacityV1({
+      market: {
+        collateralPrice: price,
+        lltvWad: lltv,
+        totalSupplyAssets: accrued.totalSupplyAssets,
+        totalBorrowAssets: accrued.totalBorrowAssets,
+        totalBorrowShares: accrued.totalBorrowShares,
+        blockNumber: Number(snapshot.block.number),
+      },
+      position: { collateral, borrowShares },
+      additionalCollateralAssets: countable,
+      shareBps: share,
+    }).availableCents;
   }
 
   let safety: Safety | null = null;
