@@ -494,6 +494,27 @@ printf '  mcp tools/list %-28s %s read-only tools\n' "$MCP_PUBLIC_URL" \
 # request must be REFUSED as a bad OAuth request, never answered with a page.
 oauth_origin=${MCP_PUBLIC_URL%/mcp}
 
+# /assets is both a Still document and the bundle directory. A filesystem
+# redirect used to turn a direct visit into the static directory's 404, while
+# client-side navigation and Vite's dev server hid it. Prove both documents
+# through nginx, and keep a missing bundle a real 404 rather than SPA HTML.
+for assets_path in /assets /assets/; do
+  assets_response=$(curl -sS --connect-timeout 10 --max-time 20 --write-out '\n%{http_code}' "$oauth_origin$assets_path" 2>/dev/null) \
+    || { echo "FAILED: $assets_path did not serve the Still Assets document"; exit 1; }
+  assets_document_status=${assets_response##*$'\n'}
+  assets_document=${assets_response%$'\n'*}
+  [ "$assets_document_status" = 200 ] \
+    || { echo "FAILED: $assets_path did not answer HTTP 200"; exit 1; }
+  assets_entry=$(printf '%s' "$assets_document" | grep -o 'assets/[A-Za-z0-9_-]*\.js' | head -1) || assets_entry=''
+  [ "$assets_entry" = "$built_entry" ] \
+    || { echo "FAILED: $assets_path did not serve this deployment's SPA entry"; exit 1; }
+done
+assets_missing_status=$(curl -sS --connect-timeout 10 --max-time 20 --output /dev/null \
+  --write-out '%{http_code}' "$oauth_origin/assets/__miorail_deploy_missing_bundle__.js" 2>/dev/null) || assets_missing_status=''
+[ "$assets_missing_status" = 404 ] \
+  || { echo 'FAILED: a missing static bundle did not remain HTTP 404'; exit 1; }
+printf '  assets         documents /assets and /assets/ match the built entry; missing bundle HTTP 404\n'
+
 oauth_resource=$(curl -fsS --max-time 15 "$oauth_origin/.well-known/oauth-protected-resource/mcp/private" 2>/dev/null) \
   || { echo 'FAILED: MCP protected-resource metadata is not reachable through Nginx'; exit 1; }
 printf '%s' "$oauth_resource" | jq -e --arg want "$oauth_origin/mcp/private" '.resource == $want' >/dev/null \

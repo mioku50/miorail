@@ -213,6 +213,54 @@ test('Stocks is sessionless on web, at an address worth sharing', () => {
   assert.doesNotMatch(root.slice(0, root.indexOf('</Route>')), /RequireSession/);
 });
 
+test('both Assets document URLs reach the app without a filesystem redirect or immutable bundle headers', () => {
+  const nginx = source('ops/nginx/miorail-app.conf');
+  for (const documentPath of ['/assets', '/assets/']) {
+    const location = `location = ${documentPath} {`;
+    const at = nginx.indexOf(location);
+    assert.ok(at >= 0, `Nginx needs an exact document location for ${documentPath}`);
+    const block = nginx.slice(at, nginx.indexOf('\n}', at));
+    // Restart location selection at the app document. An external redirect
+    // loses the route; testing the directory first triggers nginx's slash redirect.
+    assert.match(block, /rewrite\s+\^\s+\/index\.html\s+last;/);
+    assert.doesNotMatch(block, /\b(?:return|try_files|proxy_pass)\b/);
+    assert.doesNotMatch(block, /immutable|\/index\.html\?/);
+  }
+  const rootLocation = nginx.indexOf('location / {');
+  const document = nginx.slice(rootLocation, nginx.indexOf('\n}', rootLocation));
+  assert.match(document, /Cache-Control "no-cache, no-store, must-revalidate"/);
+  assert.match(document, /X-Content-Type-Options "nosniff" always/);
+  const app = source('artifacts/interface/src/app/App.tsx');
+  assert.match(app, /<Route path="\/assets">\s*<StillAssetsPage\s*\/>/);
+});
+
+test('the Assets page does not turn a missing static bundle into HTML', () => {
+  const nginx = source('ops/nginx/miorail-app.conf');
+  const at = nginx.indexOf('location /assets/ {');
+  assert.ok(at >= 0, 'the static bundle prefix stays separate from the exact document URLs');
+  const block = nginx.slice(at, nginx.indexOf('\n}', at));
+  assert.match(block, /try_files\s+\$uri\s+=404;/);
+  assert.match(block, /Cache-Control "public, max-age=31536000, immutable"/);
+  assert.doesNotMatch(block, /index\.html|\brewrite\b|\berror_page\b/);
+});
+
+test('the deploy checks both Assets documents against the built entry and preserves missing-bundle 404', () => {
+  const deploy = source('ops/deploy.sh');
+  const at = deploy.indexOf('for assets_path in /assets /assets/; do');
+  assert.ok(at >= 0, 'both document spellings must be checked through the public edge');
+  const check = deploy.slice(at, deploy.indexOf('\noauth_resource=', at));
+  assert.match(check, /curl[^\n]*\$oauth_origin\$assets_path/);
+  assert.match(check, /assets_response=\$\(curl[^\n]*--write-out '\\n%\{http_code\}'/);
+  assert.match(check, /assets_document_status=\$\{assets_response##\*\$'\\n'\}/);
+  assert.match(check, /\[ "\$assets_document_status" = 200 \]/);
+  assert.match(check, /assets_entry=[^\n]*\$assets_document/);
+  assert.match(check, /\[ "\$assets_entry" = "\$built_entry" \]/);
+  assert.match(check, /assets_missing_status=\$\(curl/);
+  assert.match(check, /--write-out '%\{http_code\}'[^\n]*\$oauth_origin\/assets\/__miorail_deploy_missing_bundle__\.js/);
+  assert.match(check, /\[ "\$assets_missing_status" = 404 \]/);
+  assert.doesNotMatch(check, /--location|\bcurl\s+-L\b/);
+});
+
 test('the edge sends stock and gift pages to the API for their head, and falls back to the file', () => {
   const nginx = source('ops/nginx/miorail-app.conf');
   for (const location of ['location = /stocks {', 'location ^~ /stocks/ {', 'location ^~ /gift/ {', 'location ^~ /found/ {']) {
