@@ -149,6 +149,9 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 @media (max-width: 380px) {
   .still-wallet-caption { display: none; }
 }
+@media (max-width: 899px) {
+  .still-wallet-menu { max-height: calc(100dvh - 156px - env(safe-area-inset-bottom)); }
+}
 
 /* ---- type and blocks ---- */
 

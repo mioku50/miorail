@@ -136,3 +136,22 @@ test('a different connected wallet shows both identities and can disconnect afte
   await expect(bar.getByRole('link', { name: 'Connect wallet', exact: true })).toHaveAttribute('href', '/signin?next=%2Fmore%3Ffrom%3Dwallet');
   await noSigning(page, writes);
 });
+
+test('the wallet menu keeps its last action above phone navigation in landscape', async ({ page }) => {
+  await page.setViewportSize({ width: 844, height: 390 });
+  await injectedWallet(page, A);
+  const { writes } = await install(page, A);
+  await page.goto('/signin?next=%2Fmore');
+  await page.getByRole('button', { name: 'Browser wallet', exact: false }).click();
+  await expect(page).toHaveURL(/\/more$/);
+  const bar = page.getByRole('banner', { name: 'Wallet and account' });
+  await bar.locator('summary').click();
+  const menu = bar.locator('.still-wallet-menu');
+  const last = bar.getByRole('button', { name: 'Sign out', exact: true });
+  await last.scrollIntoViewIfNeeded();
+  const navigation = await page.getByRole('navigation', { name: 'Main' }).boundingBox();
+  expect((await menu.boundingBox())!.y + (await menu.boundingBox())!.height).toBeLessThan(navigation!.y);
+  expect((await last.boundingBox())!.y + (await last.boundingBox())!.height).toBeLessThan(navigation!.y);
+  expect(await menu.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await noSigning(page, writes);
+});
