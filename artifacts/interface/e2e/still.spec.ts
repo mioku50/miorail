@@ -288,6 +288,30 @@ for (const width of [390, 1366, 1920]) {
   });
 }
 
+for (const width of [320, 390]) {
+  test(`Home keeps the wallet accessible without covering the sun or moon (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    for (const now of [MONDAY, SATURDAY]) {
+      const { writes } = await install(page, true, now);
+      await page.goto('/');
+      const account = page.getByRole('banner', { name: 'Wallet and account' }).locator('summary');
+      await expect(account).toBeVisible();
+      await expect(account).toHaveAccessibleName('Wallet account 0x1111…1111');
+      await expect(account.locator('.still-wallet-icon')).toBeVisible();
+      const button = (await account.boundingBox())!;
+      expect(button.width).toBe(40);
+      const orb = (await page.locator('.sky-sun-halo, .sky-moon-face').first().boundingBox())!;
+      const overlapX = Math.max(0, Math.min(button.x + button.width, orb.x + orb.width) - Math.max(button.x, orb.x));
+      const overlapY = Math.max(0, Math.min(button.y + button.height, orb.y + orb.height) - Math.max(button.y, orb.y));
+      expect(overlapX * overlapY).toBe(0);
+      await account.click();
+      await expect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible();
+      await noSidewaysScroll(page);
+      expect(writes).toEqual([]);
+    }
+  });
+}
+
 for (const [label, now, card] of [
   ['day', MONDAY, 'rgb(255, 255, 255)'],
   ['night', SATURDAY, 'rgb(22, 27, 77)'],

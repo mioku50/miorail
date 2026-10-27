@@ -132,7 +132,8 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-wallet-trigger::-webkit-details-marker { display: none; }
 .still-wallet-trigger::marker { content: ''; }
 .still-wallet-trigger svg { width: 18px; height: 18px; flex: none; }
-.still-wallet-trigger > span:first-child { white-space: nowrap; }
+.still-wallet-trigger svg.still-wallet-icon { display: none; }
+.still-wallet-trigger > span:first-of-type { white-space: nowrap; }
 .still-wallet-controls > a.still-wallet-trigger { background: var(--sm-blue); border-color: var(--sm-blue); color: var(--sm-on-blue); }
 .still-wallet-trigger:disabled, .still-wallet-action:disabled { opacity: 0.55; cursor: wait; }
 .still-wallet-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 50; width: min(320px, calc(100vw - 32px)); max-height: calc(100dvh - 100px); overflow: auto; padding: 8px; border: 1px solid var(--sm-line); border-radius: 16px; background: var(--sm-card); box-shadow: 0 14px 40px #0D1B3D24; }
@@ -239,6 +240,10 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
   .still-frame.is-home.has-wallet-controls .still-walletbar { position: absolute; inset: 0 0 auto; background: transparent; border-bottom: 0; }
   .still-frame.is-home .still-wallet-brand { font-size: 28px; }
   .still-frame.is-home .still-wallet-caption { display: none; }
+  .still-frame.is-home .still-walletbar { padding-left: 18px; padding-right: 12px; }
+  .still-frame.is-home .still-wallet-trigger { width: 40px; min-height: 40px; padding: 0; }
+  .still-frame.is-home .still-wallet-trigger > span, .still-frame.is-home .still-wallet-trigger > svg:not(.still-wallet-icon) { display: none; }
+  .still-frame.is-home .still-wallet-trigger svg.still-wallet-icon { display: block; width: 20px; height: 20px; }
   .still-frame.is-home[data-market-phase='dusk'] .still-wallet-brand { color: #EEF1FF; --sm-wire: #EEF1FF; --sm-loan: #EEF1FF; --sm-stock: #4D86FF; }
   .still-home-scene .still-hero { width: 100%; max-width: 390px; }
 }

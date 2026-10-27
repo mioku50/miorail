@@ -8,6 +8,12 @@ import { useAuthGate } from '../../app/AuthProvider';
 import { clearTenantClientState } from '../../lib/tenantState';
 import { runStillWalletActionV1, walletControlViewV1, type StillWalletActionV1 } from './walletControls';
 
+function WalletIcon() {
+  return <svg className="still-wallet-icon" width="20" height="20" viewBox="0 0 24 24" aria-hidden="true">
+    <path d="M20 8V6a2 2 0 0 0-2-2H6a3 3 0 0 0 0 6h14v10H6a3 3 0 0 1-3-3V7m17 6h-5v4h5m-3-2h.01" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
+  </svg>;
+}
+
 /** One wallet control for every Still frame; the connection and SIWE providers
  * are the app's existing ones, and signing always requires an explicit click. */
 export function StillWalletControlsProvider({ children }: { children: ReactNode }) {
@@ -76,15 +82,16 @@ export function StillWalletControls() {
   };
 
   if (view.kind === 'checking') {
-    return <div className="still-wallet-controls"><span className="still-wallet-trigger" role="status">{view.label}</span></div>;
+    return <div className="still-wallet-controls"><span className="still-wallet-trigger" role="status" aria-label={view.label} aria-busy="true"><WalletIcon /><span>{view.label}</span></span></div>;
   }
   if (view.kind === 'connect') {
-    return <div className="still-wallet-controls"><StillLink href={signInHref} className="still-wallet-trigger">Connect wallet</StillLink></div>;
+    return <div className="still-wallet-controls"><StillLink href={signInHref} className="still-wallet-trigger" aria-label="Connect wallet" title="Connect wallet"><WalletIcon /><span>Connect wallet</span></StillLink></div>;
   }
   return (
     <div className="still-wallet-controls">
       <details ref={menu}>
         <summary className="still-wallet-trigger" aria-label={`Wallet account ${view.label}`}>
+          <WalletIcon />
           <span>{view.label}</span>
           <span className="still-wallet-caption">{view.status}</span>
           <svg width="14" height="14" viewBox="0 0 24 24" aria-hidden="true"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" /></svg>

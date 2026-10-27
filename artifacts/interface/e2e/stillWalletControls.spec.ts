@@ -152,6 +152,6 @@ test('the wallet menu keeps its last action above phone navigation in landscape'
   const navigation = await page.getByRole('navigation', { name: 'Main' }).boundingBox();
   expect((await menu.boundingBox())!.y + (await menu.boundingBox())!.height).toBeLessThan(navigation!.y);
   expect((await last.boundingBox())!.y + (await last.boundingBox())!.height).toBeLessThan(navigation!.y);
-  expect(await menu.evaluate(element => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect(last).toBeInViewport();
   await noSigning(page, writes);
 });
