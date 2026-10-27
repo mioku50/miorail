@@ -118,7 +118,7 @@ for (const width of [390, 1280]) {
 
     await nav.getByRole('link', { name: 'More', exact: true }).click();
     await expect(page).toHaveURL(/\/more$/);
-    await expect(page.getByText('0x1111…1111', { exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByText('0x1111…1111', { exact: true })).toBeVisible();
     await page.getByRole('link', { name: /Still for assistants/ }).click();
     await expect(page).toHaveURL(/\/assistants$/);
     await expect(page.getByText('Use the Miorail plugin for Wallet MCP: https://miorail.xyz/wallet-mcp/miorail.md', { exact: true })).toBeVisible();
@@ -166,6 +166,31 @@ test('Coming up names only the next known earnings window, not active or unread 
   expect(writes).toEqual([]);
 });
 
+test.describe('Agent language', () => {
+  test.use({ locale: 'ru-RU' });
+
+  test('keeps the UI English in a Russian browser and answers a Russian question in Russian', async ({ page }) => {
+    const { reads, writes } = await install(page, true, MONDAY);
+    await page.goto('/agent');
+    expect(await page.evaluate(() => navigator.language)).toBe('ru-RU');
+    await expect(page.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
+    await expect(page.getByText('Reads your wallet and Still’s numbers. Never signs.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Ask about your money.', { exact: true })).toBeVisible();
+    for (const prompt of ['How much can I spend without selling?', 'How safe is my loan?', 'When do weekend limits start?', 'When is my next dividend?']) {
+      await expect(page.getByRole('button', { name: prompt, exact: true })).toBeEnabled();
+    }
+    const question = page.getByRole('textbox', { name: 'A question about your money', exact: true });
+    await expect(question).toHaveAttribute('placeholder', 'Ask about your money');
+    await question.fill('Сколько я могу взять?');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(page.getByText('Сейчас $784.62 без продажи. Ваш долг $240.17 уже учтён.', { exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'How much can I spend without selling?', exact: true })).toBeVisible();
+    await expect(question).toHaveAttribute('placeholder', 'Ask about your money');
+    expect(reads.filter(path => path === '/api/still/mine')).toHaveLength(1);
+    expect(writes).toEqual([]);
+  });
+});
+
 test('while Wall Street is closed the frame is night, and the sky says until when', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await install(page, false, SATURDAY);
@@ -191,3 +216,51 @@ test('a link that carried a question to "/" still lands on Stocks', async ({ pag
   await page.goto('/?key=security%3Aisin%3AUS67066G1040');
   await expect(page).toHaveURL(/\/stocks\?key=security%3Aisin%3AUS67066G1040$/);
 });
+
+for (const width of [390, 1366, 1920]) {
+  test(`the signed-in overview and asset actions use the viewport without oversized artwork (${width}px)`, async ({ page }, testInfo) => {
+    const height = width === 1366 ? 768 : width === 390 ? 844 : 1080;
+    await page.setViewportSize({ width, height });
+    const { writes } = await install(page, true, MONDAY);
+    await page.goto('/');
+    const money = page.getByLabel('$784.62 available', { exact: true });
+    await expect(money).toBeVisible();
+    const moneyBox = await money.boundingBox();
+    expect(moneyBox!.y + moneyBox!.height).toBeLessThan(height - (width < 900 ? 68 : 0));
+    await expect(page.locator('.still-wallet-trigger').first()).toBeVisible();
+    const hero = await page.locator('.still-hero > svg').boundingBox();
+    expect(hero!.width).toBeLessThanOrEqual(481);
+    expect(hero!.height).toBeLessThanOrEqual(383);
+    if (width >= 1100) {
+      const main = await page.locator('main.still-main').boundingBox();
+      expect(main!.width).toBeGreaterThan((width - 220) * 0.7);
+      const actions = await page.getByRole('link', { name: 'Your assets', exact: true }).boundingBox();
+      expect(actions!.y + actions!.height).toBeLessThan(height);
+    }
+    await noSidewaysScroll(page);
+    await page.screenshot({ path: testInfo.outputPath(`home-layout-${width}.png`), fullPage: true });
+
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Assets', exact: true }).click();
+    await expect(page.getByText('4.2 NVDAc', { exact: true })).toBeVisible();
+    const dividends = page.getByRole('link', { name: /Your dividends/ });
+    const card = await dividends.boundingBox();
+    expect(card!.height).toBeLessThanOrEqual(140);
+    const arrow = await dividends.locator('svg').boundingBox();
+    expect(arrow!.width).toBeLessThanOrEqual(20);
+    expect(arrow!.height).toBeLessThanOrEqual(20);
+    await noSidewaysScroll(page);
+    await page.screenshot({ path: testInfo.outputPath(`assets-layout-${width}.png`), fullPage: true });
+
+    await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Agent', exact: true }).click();
+    await expect(page.getByRole('textbox', { name: 'A question about your money', exact: true })).toBeVisible();
+    if (width >= 1100) {
+      const input = await page.locator('.still-agent-composer').boundingBox();
+      expect(input!.y + input!.height).toBeLessThan(height);
+      const workspace = await page.locator('.still-agent-workspace').boundingBox();
+      expect(workspace!.height).toBeLessThanOrEqual(480);
+    }
+    await noSidewaysScroll(page);
+    await page.screenshot({ path: testInfo.outputPath(`agent-layout-${width}.png`), fullPage: true });
+    expect(writes).toEqual([]);
+  });
+}

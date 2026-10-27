@@ -24,6 +24,7 @@ import {
   StillHomeSignedIn,
   StillHomeSignedOut,
   StillMore,
+  StillMobile,
   StillAssistants,
   type MobileHoldingV1,
 } from '../src/still';
@@ -182,6 +183,15 @@ describe('Home', () => {
 });
 
 describe('the mobile', () => {
+  it('keeps the cents in a small borrowing room instead of labelling it zero', () => {
+    const html = renderToStaticMarkup(<svg><StillMobile input={{
+      holdings: [{ id: 'NVDAc', label: 'NVDA', kind: 'stock', valueCents: 19 }],
+      loan: { owedCents: 0, limitCents: 6, weekdayLimitCents: 6 }, state: 'empty',
+    }} /></svg>);
+    assert.match(html, /room \$0\.06/);
+    assert.doesNotMatch(html, /room \$0</);
+  });
+
   it('is area-true: circles against the largest holding, squares against the limit', () => {
     const view = homeViewV1({ report: report(), sky: skyStateV1({ now: WEDNESDAY }) });
     const layout = mobileLayoutV1(view.mobile);

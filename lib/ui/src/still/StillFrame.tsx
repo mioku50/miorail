@@ -42,6 +42,10 @@ export function stillTabForPathV1(path: string): StillTabV1 {
 /** Single-page navigation, provided by the app. Without it a link loads the page. */
 export const StillNavigateContext = createContext<((path: string) => void) | null>(null);
 
+/** The web app supplies its existing wallet/session controls. Other hosts
+ * keep their own wallet connection rather than importing a second stack. */
+export const StillWalletControlsContext = createContext<ReactNode>(null);
+
 export function StillLink({ href, className, children, ...rest }: { href: string; className?: string; children: ReactNode } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
   const navigate = useContext(StillNavigateContext);
   return (
@@ -144,6 +148,7 @@ export function useStillSkyV1(input?: { earnings?: readonly SkyEarningsV1[]; unr
 }
 
 export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky: SkyStateV1; children: ReactNode; wide?: boolean }) {
+  const walletControls = useContext(StillWalletControlsContext);
   useEffect(() => {
     // The console's pages read the same palette through data-theme; still.css
     // sets the color scheme from it.
@@ -158,7 +163,7 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
     };
   }, [sky.phase]);
   return (
-    <div className="still still-frame" data-sky={sky.phase === 'night' ? 'night' : 'day'}>
+    <div className={`still still-frame${walletControls ? ' has-wallet-controls' : ''}`} data-sky={sky.phase === 'night' ? 'night' : 'day'}>
       <nav className="still-nav" aria-label="Main">
         <StillLink href="/" className="still-brand" aria-label="Still home">
           <StillGlyph />
@@ -176,6 +181,13 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
           <a href={MIORAIL_SOURCE_URL_V1} target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
         </div>
       </nav>
+      <header className="still-walletbar" aria-label="Wallet and account">
+        <StillLink href="/" className="still-brand still-wallet-brand" aria-label="Still home">
+          <StillGlyph />
+          <span>Still</span>
+        </StillLink>
+        {walletControls}
+      </header>
       <main className={`still-main${wide ? ' wide' : ''}`}>{children}</main>
     </div>
   );

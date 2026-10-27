@@ -63,6 +63,22 @@ jobs:
       - name: Unit tests (database disabled)
         run: pnpm test:unit
 
+      - name: Install Chromium for frontend checks
+        working-directory: artifacts/interface
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Browser checks (fixture wallets, no signatures)
+        working-directory: artifacts/interface
+        run: pnpm exec playwright test
+
+      - name: Save frontend failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: frontend-browser-failure
+          path: artifacts/interface/test-results/
+          retention-days: 7
+
       - name: Database integration tests (isolated URL only)
         env:
           TEST_DATABASE_URL: ${{ secrets.TEST_DATABASE_URL || 'postgres://postgres:postgres@localhost:5432/mioagent_test' }}

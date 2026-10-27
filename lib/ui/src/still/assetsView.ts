@@ -51,6 +51,12 @@ function venueNameV1(venue: string): string {
   return venue === 'aave-v4' ? 'Aave' : 'Morpho';
 }
 
+/** The dividend source keeps four decimal places; a positive fraction of a cent is not zero. */
+function dividendMoneyV1(value: string | number): string {
+  const usd = Number(value);
+  return usd > 0 && usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`;
+}
+
 export function assetsViewV1(input: { report: MirrorReport; dividends?: DividendWalletResponseV1 | null }): AssetsViewV1 {
   const { report } = input;
   const debtOn = new Map(report.venues.map((v) => [v.venue === 'aave-v4' ? 'aave-v4' : v.market.toLowerCase(), v]));
@@ -80,11 +86,12 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     const dividend = input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase());
     if (dividend) {
       const received = dividend.received.reduce((sum, event) => sum + Number(event.usd ?? 0), 0);
-      if (received > 0) lines.push({ text: 'Dividends reinvested so far: ', strong: `$${received.toFixed(2)}` });
+      if (received > 0) lines.push({ text: `Dividends reinvested so far: ${dividendMoneyV1(received)}` });
       const next = dividend.upcoming[0];
       if (next && next.usd !== null) {
         const estimate = next.kind === 'estimate';
-        lines.push({ text: `Dividend ahead: ${estimate ? '≈ ' : ''}$${Number(next.usd).toFixed(2)}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
+        const amount = dividendMoneyV1(next.usd);
+        lines.push({ text: `Dividend ahead: ${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
       }
     }
     rows.push({
@@ -119,7 +126,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     count: rows.length,
     rows,
     loans,
-    receivedDividends: input.dividends && Number(input.dividends.receivedUsd) > 0 ? `$${Number(input.dividends.receivedUsd).toFixed(2)}` : null,
+    receivedDividends: input.dividends && Number(input.dividends.receivedUsd) > 0 ? dividendMoneyV1(input.dividends.receivedUsd) : null,
   };
 }
 

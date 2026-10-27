@@ -12,7 +12,7 @@ void React;
 // Assets, More, and Still for assistants.
 // ---------------------------------------------------------------------------
 
-const CHEVRON_V1 = <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
+const CHEVRON_V1 = <svg className="still-chevron" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>;
 
 export interface StillAssetsModelV1 {
   sky: SkyStateV1;
@@ -28,7 +28,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
   const [tab, setTab] = useState<'holdings' | 'loans'>('holdings');
   const view = model.view;
   return (
-    <>
+    <div className="still-assets">
       <StillHeader title="Assets" sky={model.sky} />
       {!model.signedIn ? (
         <div className="still-section">
@@ -50,33 +50,35 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
             <button type="button" role="tab" aria-selected={tab === 'loans'} onClick={() => setTab('loans')}>Loans · {view.loans.length}</button>
           </div>
           {tab === 'holdings' ? (
-            <>
-              {view.rows.length === 0 ? <p className="still-section still-note">Nothing here Still can lend against: no Coinbase stocks on Aave V4, no cbBTC and no ETH.</p> : null}
-              <ul className="still-rows" role="tabpanel" aria-label="Holdings">
-                {view.rows.map((row) => (
-                  <li key={row.id} className="still-row">
-                    <span className={`still-dot ${row.kind}`} aria-hidden="true">{row.name[0]}</span>
-                    <div style={{ minWidth: 0 }}>
-                      <div className="name">{row.name}</div>
-                      <div className="mono amt">{row.amount}</div>
-                      {row.lines.map((line, index) => (
-                        <div key={index} className="line">{line.strong ? <strong>{line.strong}</strong> : null}{line.text}</div>
-                      ))}
-                    </div>
-                    <div className="mono val">{row.value ?? 'Not read'}</div>
-                  </li>
-                ))}
-              </ul>
-              <div className="still-section">
-                <StillLink href="/stocks/dividends" className="still-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', textDecoration: 'none', color: 'inherit' }}>
+            <div className="still-assets-layout">
+              <div className="still-assets-primary">
+                {view.rows.length === 0 ? <p className="still-section still-note">Nothing here Still can lend against: no Coinbase stocks on Aave V4, no cbBTC and no ETH.</p> : null}
+                <ul className="still-rows" role="tabpanel" aria-label="Holdings">
+                  {view.rows.map((row) => (
+                    <li key={row.id} className="still-row">
+                      <span className={`still-dot ${row.kind}`} aria-hidden="true">{row.name[0]}</span>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="name">{row.name}</div>
+                        <div className="mono amt">{row.amount}</div>
+                        {row.lines.map((line, index) => (
+                          <div key={index} className="line">{line.strong ? <strong>{line.strong}</strong> : null}{line.text}</div>
+                        ))}
+                      </div>
+                      <div className="mono val">{row.value ?? 'Not read'}</div>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+              <aside className="still-assets-aside still-section">
+                <StillLink href="/stocks/dividends" className="still-card still-feature-link">
                   <span>
                     <span style={{ display: 'block', fontSize: 15, fontWeight: 600 }}>Your dividends{view.receivedDividends ? ` · ${view.receivedDividends} reinvested` : ''}</span>
                     <span className="still-note">Calendar and every conversion, in Stocks</span>
                   </span>
                   {CHEVRON_V1}
                 </StillLink>
-              </div>
-            </>
+              </aside>
+            </div>
           ) : (
             <ul className="still-rows" role="tabpanel" aria-label="Loans">
               {view.loans.length === 0 ? <li className="still-note" style={{ paddingTop: 12 }}>No loans. Nothing hangs on the right.</li> : null}
@@ -103,7 +105,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
           <button type="button" className="still-btn sec" onClick={model.onRetry}>Read again</button>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }
 
@@ -137,7 +139,7 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
 
 export function StillMore({ model }: { model: StillMoreModelV1 }) {
   return (
-    <>
+    <div className="still-more-page">
       <StillHeader title="More" sky={model.sky} />
       <div className="still-section still-card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
         <span className="still-dot crypto" aria-hidden="true">{(model.account ?? '?')[0]?.toUpperCase()}</span>
@@ -151,6 +153,7 @@ export function StillMore({ model }: { model: StillMoreModelV1 }) {
         <StillLink href="/plan/history" className="still-btn sec" style={{ height: 44, fontSize: 15 }}>Activity</StillLink>
         <StillLink href="/settings" className="still-btn sec" style={{ height: 44, fontSize: 15 }}>Settings</StillLink>
       </div>
+      <div className="still-more-groups">
       {MORE_GROUPS_V1.map((group) => (
         <div key={group.label}>
           <div className="still-section still-eyebrow">{group.label}</div>
@@ -166,10 +169,11 @@ export function StillMore({ model }: { model: StillMoreModelV1 }) {
           </ul>
         </div>
       ))}
+      </div>
       <p className="still-section still-note">
         <a href="/metrics">Public metrics</a> · <a href={MIORAIL_SOURCE_URL_V1} target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
       </p>
-    </>
+    </div>
   );
 }
 

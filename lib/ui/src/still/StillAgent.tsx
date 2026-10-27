@@ -15,7 +15,7 @@ export interface StillAgentModelV1 {
   /** True while the wallet is being read; questions wait for it. */
   reading: boolean;
   signedIn: boolean;
-  /** The reader's language, for the prompts: Russian when the browser asks for it. */
+  /** Explicit presentation language. The web uses English; each answer follows its question. */
   russian: boolean;
 }
 
@@ -34,12 +34,13 @@ export function StillAgent({ model }: { model: StillAgentModelV1 }) {
     setDraft('');
   };
   return (
-    <>
+    <div className="still-agent-page">
       <StillHeader title="Agent" sky={model.sky} />
       <p className="still-section still-note" style={{ marginTop: 4 }}>
         {model.russian ? 'Читает ваш кошелёк и числа Still. Никогда не подписывает.' : 'Reads your wallet and Still’s numbers. Never signs.'}
       </p>
-      <div className="still-section" aria-live="polite">
+      <div className="still-agent-workspace">
+      <div className={`still-agent-chat${turns.length === 0 ? ' is-empty' : ''}`} aria-live="polite">
         {turns.length === 0 ? (
           <p className="still-note">{model.russian ? 'Спросите о своих деньгах.' : 'Ask about your money.'}</p>
         ) : null}
@@ -75,7 +76,8 @@ export function StillAgent({ model }: { model: StillAgentModelV1 }) {
           </div>
         ) : null}
       </div>
-      <div className="still-section" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div className="still-agent-suggestions">
+        <div className="still-eyebrow">{model.russian ? 'Вопросы для начала' : 'Start with a question'}</div>
         {AGENT_PROMPTS_V1.map((prompt) => {
           const text = model.russian ? prompt.ru : prompt.en;
           return (
@@ -86,7 +88,7 @@ export function StillAgent({ model }: { model: StillAgentModelV1 }) {
         })}
       </div>
       <form
-        className="still-section still-field"
+        className="still-agent-composer still-field"
         onSubmit={(event) => {
           event.preventDefault();
           ask(draft);
@@ -104,6 +106,7 @@ export function StillAgent({ model }: { model: StillAgentModelV1 }) {
           <svg width="20" height="20" viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h13M13 6l6 6-6 6" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </button>
       </form>
-    </>
+      </div>
+    </div>
   );
 }

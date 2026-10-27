@@ -98,7 +98,9 @@ test('a signed-in reader sees the linked wallet, can check another, and go back'
   const { reads, writes, subjects } = await install(page, true);
   await page.goto(`/w/${LINKED}`);
   await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
-  await expect(page.getByText(/0x1111/)).toHaveCount(0);
+  // The shared wallet header names the signed-in reader; the report must only
+  // describe the wallet in the public link.
+  await expect(page.getByRole('main').getByText(/0x1111/)).toHaveCount(0);
   const field = page.getByLabel('Wallet address or name');
   await field.fill(NEXT);
   await page.getByRole('button', { name: 'Check', exact: true }).click();

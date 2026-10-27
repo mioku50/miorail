@@ -78,8 +78,8 @@ html.still-host, body.still-host { background: var(--sm-ground-host, #F6F9FF); }
 html.still-host { color-scheme: light !important; }
 html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-frame { min-height: 100vh; min-height: 100dvh; }
-.still-main { max-width: 760px; margin: 0 auto; padding-bottom: calc(96px + env(safe-area-inset-bottom)); min-width: 0; }
-.still-main.wide { max-width: 1180px; }
+.still-main { width: 100%; max-width: 1440px; margin: 0 auto; padding-bottom: calc(96px + env(safe-area-inset-bottom)); min-width: 0; }
+.still-main.wide { max-width: 1600px; }
 .still-nav {
   position: fixed; left: 0; right: 0; bottom: 0; z-index: 30;
   display: grid; grid-template-columns: repeat(5, minmax(0, 1fr));
@@ -96,17 +96,17 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-brand { display: inline-flex; align-items: center; gap: 8px; font-weight: 600; font-size: 22px; color: var(--sm-ink); text-decoration: none; }
 
 @media (min-width: 900px) {
-  .still-frame { display: grid; grid-template-columns: 220px minmax(0, 1fr); }
+  .still-frame { display: grid; grid-template-columns: 220px minmax(0, 1fr); grid-template-rows: auto 1fr; }
   .still-nav {
     position: sticky; top: 0; height: 100vh; display: flex; flex-direction: column; gap: 4px;
-    padding: 20px 12px; border-top: none; border-right: 1px solid var(--sm-nav-line);
+    padding: 20px 12px; border-top: none; border-right: 1px solid var(--sm-nav-line); grid-column: 1; grid-row: 1 / 3;
   }
   .still-nav .still-brand { margin: 0 8px 18px; }
   .still-nav a { flex-direction: row; justify-content: flex-start; gap: 12px; padding: 10px 12px; border-radius: 12px; font-size: 16px; }
   .still-nav a[aria-current='page'] { background: var(--sm-chip); }
   .still-rail-foot { display: flex; flex-direction: column; gap: 6px; margin-top: auto; padding: 0 12px; font-size: 13px; }
   .still-rail-foot a { padding: 0; font-size: 13px; color: var(--sm-ink2); }
-  .still-main { padding-bottom: 40px; }
+  .still-main { grid-column: 2; grid-row: 2; align-self: start; padding: 8px clamp(16px, 2.5vw, 40px) 40px; }
 }
 @media (max-width: 899px) { .still-nav .still-brand, .still-nav .still-rail-foot { display: none; } }
 
@@ -122,6 +122,29 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-head-tools { display: flex; align-items: center; gap: 8px; }
 .still-trail { margin-top: 2px; font-size: 14px; color: var(--sm-ink2); overflow-wrap: anywhere; }
 .still-glyph-stock { fill: var(--sm-stock); }
+
+/* One visible wallet entry on every page, using the app's existing wallet flow. */
+.still-walletbar { position: sticky; top: 0; z-index: 25; display: flex; align-items: center; justify-content: space-between; gap: 12px; min-height: 64px; padding: 10px 20px; border-bottom: 1px solid var(--sm-line); background: var(--sm-ground); }
+.still-wallet-brand { flex: none; font-size: 21px; }
+.still-wallet-controls { position: relative; min-width: 0; display: flex; align-items: center; justify-content: flex-end; gap: 8px; flex-wrap: wrap; }
+.still-wallet-controls details { position: relative; min-width: 0; max-width: 100%; }
+.still-wallet-trigger { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 40px; max-width: 100%; padding: 8px 14px; border: 1px solid var(--sm-line); border-radius: 12px; background: var(--sm-card); color: var(--sm-ink); font: inherit; font-size: 14px; font-weight: 500; text-decoration: none; cursor: pointer; list-style: none; }
+.still-wallet-trigger::-webkit-details-marker { display: none; }
+.still-wallet-trigger::marker { content: ''; }
+.still-wallet-trigger svg { width: 18px; height: 18px; flex: none; }
+.still-wallet-controls > a.still-wallet-trigger { background: var(--sm-blue); border-color: var(--sm-blue); color: var(--sm-on-blue); }
+.still-wallet-trigger:disabled, .still-wallet-action:disabled { opacity: 0.55; cursor: wait; }
+.still-wallet-menu { position: absolute; right: 0; top: calc(100% + 8px); z-index: 50; width: min(320px, calc(100vw - 32px)); max-height: calc(100dvh - 100px); overflow: auto; padding: 8px; border: 1px solid var(--sm-line); border-radius: 16px; background: var(--sm-card); box-shadow: 0 14px 40px #0D1B3D24; }
+.still-wallet-action { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 40px; padding: 9px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--sm-ink); font: inherit; font-size: 14px; line-height: 1.35; text-align: left; text-decoration: none; cursor: pointer; }
+.still-wallet-action:hover { background: var(--sm-chip); }
+.still-wallet-caption, .still-wallet-status { display: block; font-size: 12px; line-height: 1.4; color: var(--sm-ink2); }
+.still-wallet-address { display: block; font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; overflow-wrap: anywhere; }
+.still-wallet-warning { margin: 6px 8px; max-width: 38ch; font-size: 12px; line-height: 1.4; color: var(--sm-alarm); }
+.still-frame.has-wallet-controls .still-hero .still-brand { display: none; }
+@media (min-width: 900px) {
+  .still-walletbar { grid-column: 2; grid-row: 1; justify-content: flex-end; padding-inline: clamp(24px, 3vw, 48px); }
+  .still-wallet-brand { display: none; }
+}
 
 /* ---- type and blocks ---- */
 
@@ -188,10 +211,37 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 /* ---- the hero: the sky, the mobile, the wordmark ---- */
 
 .still-hero { position: relative; }
-.still-hero svg { display: block; width: 100%; height: auto; }
+.still-hero > svg.still-sky-scene { display: block; width: 100%; height: auto; }
 .still-hero .still-brand { position: absolute; left: 18px; top: 16px; font-size: 28px; }
 /* On a desk the rail carries the name; the sky keeps it on a phone. */
 @media (min-width: 900px) { .still-hero .still-brand { display: none; } }
+
+/* The mobile is a diagram beside the decision on a desk, not a scaled phone. */
+.still-home-scene .still-hero { max-width: 360px; margin-inline: auto; }
+.still-home-scene .still-section { margin-top: 12px; }
+.still-home-content { min-width: 0; }
+.still-home-content .still-sub { max-width: 65ch; }
+.still-chevron { width: 16px; height: 16px; flex: 0 0 16px; }
+.still-feature-link { display: flex; justify-content: space-between; align-items: center; gap: 20px; color: var(--sm-ink); text-decoration: none; }
+.still-feature-link > span { min-width: 0; }
+.still-assets-aside { align-self: start; }
+@media (min-width: 1100px) {
+  .still-more-groups { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .still-more-page > .still-btns { max-width: 620px; }
+}
+@media (min-width: 1100px) {
+  .still-home-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(340px, 480px); gap: clamp(24px, 3vw, 48px); align-items: start; padding: 24px 20px; }
+  .still-home-scene { grid-column: 2; grid-row: 1; }
+  .still-home-scene .still-hero { max-width: 480px; border-radius: 20px; overflow: hidden; }
+  .still-home-scene .still-section { margin: 12px 0 0; }
+  .still-home-content { grid-column: 1; grid-row: 1; padding-top: 8px; }
+  .still-home-content > .still-section, .still-home-content > .still-btns { margin-left: 0; margin-right: 0; }
+  .still-home-content > .still-section:first-child { margin-top: 0; }
+  .still-home-content .still-btns { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 580px; }
+  .still-assets-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 330px); gap: 28px; margin: 12px 20px 0; }
+  .still-assets-primary .still-rows, .still-assets-primary > .still-section { margin-left: 0; margin-right: 0; }
+  .still-assets-aside.still-section { margin: 8px 0 0; }
+}
 /* Dusk keeps the day's page, but its sky is dark: the name, the wires and
    the loan over it take the night's light inks, and words that may fall on
    the orange horizon get a dark edge so they read on either band. */
@@ -246,6 +296,21 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 
 /* ---- the Agent ---- */
 
+.still-agent-workspace { margin: 18px 20px 0; min-width: 0; padding: 20px; background: var(--sm-card); border: 1px solid var(--sm-line); border-radius: 20px; }
+.still-agent-chat { min-width: 0; min-height: 180px; }
+.still-agent-chat.is-empty { display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; }
+.still-agent-chat.is-empty > p { font-size: 21px; color: var(--sm-ink2); }
+.still-agent-suggestions { display: flex; flex-wrap: wrap; align-content: start; gap: 8px; padding-top: 18px; }
+.still-agent-suggestions .still-eyebrow { width: 100%; margin-bottom: 4px; }
+.still-agent-suggestions .still-chip { height: auto; min-height: 36px; text-align: left; padding: 9px 14px; }
+.still-agent-composer { margin-top: 24px; }
+@media (min-width: 1100px) {
+  .still-agent-workspace { display: grid; grid-template-columns: minmax(0, 1fr) 300px; column-gap: 28px; min-height: min(400px, calc(100dvh - 220px)); }
+  .still-agent-chat { grid-column: 1; grid-row: 1; min-height: 230px; max-height: calc(100dvh - 350px); overflow-y: auto; padding-right: 8px; }
+  .still-agent-suggestions { grid-column: 2; grid-row: 1 / 3; display: flex; flex-direction: column; flex-wrap: nowrap; padding: 6px 0 0 24px; border-left: 1px solid var(--sm-line); }
+  .still-agent-suggestions .still-chip { width: 100%; }
+  .still-agent-composer { grid-column: 1; grid-row: 2; align-self: end; }
+}
 .still-bubble-me { max-width: 320px; background: var(--sm-blue); color: var(--sm-on-blue); border-radius: 18px 18px 4px 18px; padding: 10px 14px; font-size: 15px; line-height: 1.4; }
 .still-bubble { border-radius: 18px 18px 18px 4px; }
 .still-chip { height: 34px; padding: 0 14px; border-radius: 999px; border: none; background: var(--sm-chip); color: var(--sm-ink); font-size: 14px; cursor: pointer; }

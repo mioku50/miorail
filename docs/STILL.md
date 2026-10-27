@@ -70,6 +70,16 @@ carried a query to `/` still lands on Stocks, which reads it.
 Each sentence takes its shares from `TERMS`, its amounts from the engine's formatters and its
 windows from the engine's `stillTerms`, which `/terms` serves too.
 
+The frame keeps a visible wallet entry on every screen. It reuses the existing WalletPicker,
+wallet connection and SIWE flow. A browser connection and a signed-in server account remain
+separate facts; a mismatch names both. Signing out invalidates prepared actions before a wallet
+is disconnected or changed. Nothing signs automatically.
+
+On a desktop, Home puts its amounts and actions beside a bounded, undistorted mobile. Assets
+puts the holdings beside a compact dividend link. The Agent's interface defaults to English
+regardless of the browser locale; each answer still follows the language of its question.
+Positive dividend values below one cent retain that meaning instead of becoming `$0.00`.
+
 The shared app also understands the original `/w/:subject` wallet links. That is a public check
 of the address or name in the URL, even while a different wallet is signed in; it never replaces
 the linked subject with the session wallet. Failed checks remain failures. Its link preview is

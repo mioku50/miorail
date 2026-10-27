@@ -1,4 +1,5 @@
 import React from 'react';
+import { formatCents } from '@mioagent/still-engine/format';
 
 import type { MobileInputV1 } from './homeView';
 import { mobileLayoutV1 } from './mobileLayout';
@@ -12,8 +13,7 @@ void React;
 // ---------------------------------------------------------------------------
 
 function moneyLabelV1(cents: number): string {
-  const dollars = Math.floor(cents / 100);
-  return `$${dollars.toLocaleString('en-US')}`;
+  return formatCents(BigInt(cents));
 }
 
 export function StillMobile({ input }: { input: MobileInputV1 }) {

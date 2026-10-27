@@ -25,6 +25,7 @@ import {
   StillWalletPage,
 } from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
+import { StillWalletControlsProvider } from '../features/still/StillWalletControls';
 
 
 // ---------------------------------------------------------------------------
@@ -193,6 +194,7 @@ export function App() {
   // its links move through the router instead of loading the page again.
   return (
     <StillNavigateContext.Provider value={navigate}>
+    <StillWalletControlsProvider>
     <ConsoleFrameContextV1.Provider value={StillConsoleFrame}>
       <ChainEnvMismatchBanner />
       <Suspense fallback={<AppLoading />}>
@@ -464,6 +466,7 @@ export function App() {
       <Toaster />
       <BaseMcpOAuthBridge />
     </ConsoleFrameContextV1.Provider>
+    </StillWalletControlsProvider>
     </StillNavigateContext.Provider>
   );
 }

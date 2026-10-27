@@ -183,10 +183,9 @@ export function StillAssetsPage() {
 export function StillAgentPage() {
   const sky = useStillSky();
   const still = useMyStill();
-  const russian = typeof navigator !== 'undefined' && /^ru\b/i.test(navigator.language);
   return (
     <StillFrame tab="agent" sky={sky}>
-      <StillAgent model={{ sky, report: still.report, dividends: still.dividends, reading: still.loading, signedIn: still.signedIn, russian }} />
+      <StillAgent model={{ sky, report: still.report, dividends: still.dividends, reading: still.loading, signedIn: still.signedIn, russian: false }} />
     </StillFrame>
   );
 }
