@@ -94,7 +94,7 @@ function stateLineV1(report: MirrorReport, state: HomeStateV1, venue: MirrorRepo
       return `${knownDebt > BigInt(0) ? `Known debt: ${formatCents(knownDebt)}. ` : ''}${uncertainty}`;
     }
     const holding = report.assets.some((line) => line.valueCents !== null && line.valueCents !== '0');
-    return holding ? 'Nothing borrowed. Your assets hang free.' : 'Nothing here to hold up a loan yet.';
+    return holding ? 'No debt was recorded in the reviewed markets at this block.' : 'Nothing here to hold up a loan yet.';
   }
   if (state === 'liquidation') return `The loan outweighs its collateral: liquidation can start now.${uncertainty ? ` ${uncertainty}` : ''}`;
   const pledged = report.assets.filter((line) => line.venue === venue.venue && line.pledged !== null && line.pledged.raw !== '0');

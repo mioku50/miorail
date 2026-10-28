@@ -35,6 +35,7 @@ describe('Agent debt and safety readings have separate unknown states', () => {
   it('states zero debt only within the reviewed venues that actually answered zero', () => {
     const r = report(); r.venues.forEach(v => { v.debtCents = '0'; v.safety = null; });
     assert.equal(answer(r), 'No debt was recorded in the reviewed venues at this block.');
+    assert.equal(homeViewV1({ report: r, sky }).stateLine, 'No debt was recorded in the reviewed markets at this block.');
   });
   it('keeps a measured loan safety answer while naming another unread debt', () => {
     const r = report(); const other = r.venues.find(v => v.venue === 'morpho')!; other.debtCents = null;
