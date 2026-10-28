@@ -22,7 +22,7 @@ import { baseRpcUrlV1 } from './earnPreflight.js';
 //
 // Dividends are not read here. Miorail's Stocks calendar is their one source:
 // Still's own reader was removed on 2026-10-26, after the two agreed on every
-// event they shared (docs/STILL.md).
+// event they shared.
 // ---------------------------------------------------------------------------
 
 export function stillRpcUrlsV1(env: NodeJS.ProcessEnv = process.env): string[] {

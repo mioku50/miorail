@@ -24,7 +24,7 @@ The API serves the Mirror at `GET /api/public/still/mirror` and the terms at
 `GET /api/public/still/terms`. It reads through Miorail's configured Base endpoint, with Base's
 public one as the second opinion.
 
-Each question gets one source ([docs/STILL.md](../../docs/STILL.md#one-source-per-question)).
+Each question uses one shared source.
 On 2026-10-26 Still's Morpho arithmetic gave way to `rwa-issuer`'s, the Aave API's read of a
 person's position gave way to this engine's chain read, and Still's dividend reader gave way to
 Miorail's Stocks calendar. Each pair was run on the same data first. The replay test borrows what
