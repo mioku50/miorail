@@ -445,3 +445,45 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still .still-console-body :has(> table) { overflow-x: auto; }
 .still .still-execution { margin: 0 0 14px; padding: 2px 14px 12px; border-radius: 14px; background: var(--sm-card); }
 .still .still-execution > summary { padding: 10px 0; font-size: 15px; font-weight: 600; cursor: pointer; }
+
+/* ---- borrowing: choose collateral, then a measured loan amount ---- */
+
+.still-borrow { min-width: 0; }
+.still-borrow .still-borrow-intro { max-width: 70ch; }
+.still-borrow .still-borrow-intro p, .still-borrow .still-borrow-foot p { margin: 0 0 8px; }
+.still-borrow .still-borrow-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; margin: 20px 20px 0; }
+.still-borrow .still-borrow-step { min-width: 0; padding: 20px; border: 1px solid var(--sm-line); }
+.still-borrow .still-borrow-step h2, .still-borrow .still-borrow-signin h2 { margin: 6px 0 16px; font-size: 23px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; }
+.still-borrow .still-borrow-assets { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.still-borrow .still-borrow-choice { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 72px; padding: 10px; border: 1px solid var(--sm-line); border-radius: 14px; color: var(--sm-ink); background: var(--sm-ground); text-align: left; cursor: pointer; }
+.still-borrow .still-borrow-choice[aria-pressed='true'] { border: 2px solid var(--sm-focus); padding: 9px; background: var(--sm-chip); }
+.still-borrow .still-borrow-choice strong, .still-borrow .still-borrow-choice .still-note { display: block; }
+.still-borrow .still-borrow-choice strong { font-size: 16px; font-weight: 600; }
+.still-borrow .still-borrow-choice .still-note { font-size: 11px; }
+.still-borrow .still-borrow-symbol { display: flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1.5px solid var(--sm-wire); border-radius: 50%; color: var(--sm-ink); background: var(--sm-crypto-fill); font-size: 20px; }
+.still-borrow .still-borrow-label { display: block; margin: 18px 0 7px; font-size: 14px; font-weight: 500; }
+.still-borrow .still-borrow-amount { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1.5px solid var(--sm-line); border-radius: 14px; background: var(--sm-ground); padding-right: 14px; }
+.still-borrow .still-borrow-amount input { width: 100%; min-width: 0; height: 52px; border: 0; border-radius: 14px; background: transparent; padding: 0 14px; color: var(--sm-ink); font: inherit; font-size: 20px; }
+.still-borrow .still-borrow-amount > span { font-size: 12px; color: var(--sm-ink2); }
+.still-borrow .still-borrow-step form > .still-note { margin: 8px 0 16px; }
+.still-borrow .still-borrow-step .still-btn { width: 100%; height: 50px; font-size: 16px; }
+.still-borrow .still-borrow-choice:disabled { opacity: 0.55; cursor: not-allowed; }
+.still-borrow .still-borrow-amount input:disabled { opacity: 0.6; cursor: not-allowed; }
+.still-borrow .still-borrow-limit { margin-top: 8px; padding: 14px; border-radius: 14px; background: var(--sm-ground); }
+.still-borrow .still-borrow-maximum { margin-top: 4px; font-size: clamp(24px, 3vw, 34px); font-weight: 400; line-height: 1.3; overflow-wrap: anywhere; }
+.still-borrow .still-borrow-maximum > span { font-size: 14px; color: var(--sm-ink2); }
+.still-borrow .still-borrow-facts { margin: 14px 0 0; }
+.still-borrow .still-borrow-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 12px; }
+.still-borrow .still-borrow-facts dt { color: var(--sm-ink2); }
+.still-borrow .still-borrow-facts dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
+.still-borrow .still-borrow-block { margin: 12px 0 0; }
+.still-borrow .still-borrow-foot { margin-top: 18px; font-size: 14px; }
+.still-borrow .still-borrow-signin .still-btn { margin-top: 10px; }
+.still-borrow .still-warn { overflow-wrap: anywhere; }
+.still .still-borrow-entry { display: flex; flex-wrap: wrap; align-items: center; gap: 12px; }
+.still .still-borrow-entry .still-btn { height: 44px; font-size: 16px; }
+.still .still-borrow-entry .still-note { margin: 0; }
+@media (min-width: 1050px) {
+  .still-borrow .still-borrow-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+  .still-borrow .still-borrow-step { padding: 24px; }
+}

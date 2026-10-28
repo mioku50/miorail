@@ -164,8 +164,10 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <button type="button" className="still-btn sec" onClick={model.onRetry}>Read again</button>
         </div>
       ) : null}
+      {view ? <p className="still-section still-note">Get money currently supports cbBTC and WETH through Morpho.</p> : null}
       <div className="still-btns">
         {view ? <>
+          <StillLink href="/borrow" className="still-btn">Get money</StillLink>
           <StillLink href="/assets" className="still-btn sec">Your assets</StillLink>
           <StillLink href="/agent" className="still-btn sec">Ask Still</StillLink>
         </> : null}

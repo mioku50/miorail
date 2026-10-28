@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { CRYPTO } from '@mioagent/still-engine/registry';
 
 import {
   BORROW_DRAFT_PREFIX_V1,
@@ -28,6 +29,26 @@ function issue(over: Record<string, unknown> = {}) {
 }
 
 describe('a draft carries the question and none of the answer', () => {
+  test('a chosen new crypto pledge is bound to the same wallet, market and amount', () => {
+    const asset = CRYPTO[0]!;
+    const issued = issue({ collateralTokenAddress: asset.token, marketId: asset.morphoMarket, collateralSupplyAssets: 12_345n });
+    const verified = verifyBorrowDraftV1({ draft: issued.draft, secret: SECRET, now: NOW, walletAddress: WALLET });
+    assert(verified.ok);
+    assert.equal(verified.claims.collateralSupplyAssets, '12345');
+    const [prefix, body, signature] = issued.draft.split('.');
+    const claims = JSON.parse(Buffer.from(body!, 'base64url').toString());
+    claims.collateralSupplyAssets = '12346';
+    const changed = `${prefix}.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.${signature}`;
+    assert.equal(verifyBorrowDraftV1({ draft: changed, secret: SECRET, now: NOW }).ok, false);
+  });
+  test('legacy drafts never acquire a new pledge, while unsupported or unbounded pledges cannot be minted', () => {
+    const original = verifyBorrowDraftV1({ draft: issue().draft, secret: SECRET, now: NOW });
+    assert(original.ok);
+    assert.equal(original.claims.collateralSupplyAssets, undefined);
+    for (const collateralSupplyAssets of [1n, -1n, 1n << 128n]) {
+      assert.throws(() => issue({ collateralSupplyAssets }), /borrow_collateral_supply_invalid/);
+    }
+  });
   test('the claims name the wallet, the market and the amount — and nothing financial', () => {
     const issued = issue();
     const verified = verifyBorrowDraftV1({ draft: issued.draft, secret: SECRET, now: NOW });

@@ -10,7 +10,7 @@ import { ACTIONS_NOW, preparedActionV1, signedActionsFixtureV1 } from '../../../
 import type { SimulationChainV1 } from './swapSimulation.js';
 import { morphoAfterBorrowV1, morphoBorrowCapacityV1, morphoHealthV1, morphoLiquidationPriceV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { CRYPTO } from '@mioagent/still-engine/registry';
-import { morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
+import { erc20Abi, morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
 
 // ---------------------------------------------------------------------------
 // The whole gate, end to end, on the shapes the live venue actually returns.
@@ -120,27 +120,29 @@ function cryptoStanding(borrowShares = 300_000_000_000_000n) {
     loan: { address: USDC, symbol: 'USDC', decimals: 6 }, lltvBps: 8600, borrowApyWad: null,
     oracleAddress: '0x663becd10dae6c4a3dcd89f1d76c1174199639b9' as const, state }, position,
     health: morphoHealthV1({ market: state, position }), capacity: morphoBorrowCapacityV1({ market: state, position }),
-    liquidationPrice: morphoLiquidationPriceV1({ market: state, position }), liquidationIncentiveWad: 1_000_000_000_000_000_000n, venuePublishedDebtAssets: null };
+    liquidationPrice: morphoLiquidationPriceV1({ market: state, position }), liquidationIncentiveWad: 1_000_000_000_000_000_000n,
+    venuePublishedDebtAssets: null, walletCollateralAssets: 5_000_000_000n as bigint | null };
 }
 
-function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false): SimulationChainV1 {
+function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false, supply = 0n, borrowedAssets = ASK.borrowAssets): SimulationChainV1 {
   const standing = cryptoStanding();
   const pre = standing.market.state;
   const interest = 12_000n;
   const accrued = { ...pre, collateralPrice: price, totalSupplyAssets: pre.totalSupplyAssets + interest, totalBorrowAssets: pre.totalBorrowAssets + interest };
-  const projected = morphoAfterBorrowV1({ market: accrued, position: standing.position, assets: ASK.borrowAssets });
+  const projected = morphoAfterBorrowV1({ market: accrued, position: { ...standing.position, collateral: standing.position.collateral + supply }, assets: borrowedAssets });
   assert(projected);
   const provider: SimulationProvider = { providerId: 'fixture-observed-batch', async simulate(request) {
-    assert.equal(request.calls.length, 1, 'read probes never become wallet calls');
+    assert(request.calls.length <= 4, 'read probes never become wallet calls');
     assert(request.observations);
     const params = [USDC, CRYPTO[0]!.token, standing.market.oracleAddress, '0x46415998764C29aB2a25CbeA6254146D50D22687', 860_000_000_000_000_000n] as const;
     const results = (['before', 'after'] as const).flatMap(phase => request.observations![phase].map(probe => {
       const isAfter = phase === 'after';
       const returnData = probe.id === 'market_params' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'idToMarketParams', result: params })
         : probe.id === 'oracle_price' ? encodeFunctionResult({ abi: morphoOracleAbi, functionName: 'price', result: price })
-          : probe.id === 'position' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'position', result: [0n, isAfter ? projected.position.borrowShares : standing.position.borrowShares, standing.position.collateral] })
+          : probe.id === 'position' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'position', result: [0n, isAfter ? projected.position.borrowShares : standing.position.borrowShares, standing.position.collateral + (isAfter ? supply : 0n)] })
+            : probe.id === 'collateral_wallet_balance' ? encodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', result: 5_000_000_000n - (isAfter ? supply : 0n) })
             : encodeFunctionResult({ abi: morphoAbi, functionName: 'market', result: isAfter
-              ? [accrued.totalSupplyAssets, 1_000_000_000_000_000_000n, accrued.totalBorrowAssets + ASK.borrowAssets, pre.totalBorrowShares + projected.position.borrowShares - standing.position.borrowShares, 1001n, 0n]
+              ? [accrued.totalSupplyAssets, 1_000_000_000_000_000_000n, accrued.totalBorrowAssets + borrowedAssets, pre.totalBorrowShares + projected.position.borrowShares - standing.position.borrowShares, 1001n, 0n]
               : [pre.totalSupplyAssets, 1_000_000_000_000_000_000n, pre.totalBorrowAssets, pre.totalBorrowShares, 1000n, 0n] });
       return { ...probe, phase, status: 'success' as const, returnData };
     }));
@@ -148,14 +150,77 @@ function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false): 
       requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: request.walletAddress.toLowerCase(), callsHash: request.callsHash,
         before: request.observations.before, after: request.observations.after }), results,
     } });
-    if (spendsAnotherAsset) body.assetChanges = { status: 'available', unavailableReason: null, changes: [
-      { kind: 'erc20_transfer', token: USDC, direction: 'in', amountAtomic: '10000000', counterparty: MORPHO_BLUE, callIndex: 0 },
-      { kind: 'erc20_transfer', token: NVDAC, direction: 'out', amountAtomic: '1', counterparty: BUNDLER, callIndex: 0 },
+    body.assetChanges = { status: 'available', unavailableReason: null, changes: [
+      { kind: 'erc20_transfer', token: USDC, direction: 'in', amountAtomic: borrowedAssets.toString(), counterparty: MORPHO_BLUE, callIndex: 0 },
+      ...(supply > 0n ? [{ kind: 'erc20_transfer', token: CRYPTO[0]!.token, direction: 'out', amountAtomic: supply.toString(), counterparty: MORPHO_BLUE, callIndex: 0 }] : []),
+      ...(spendsAnotherAsset ? [{ kind: 'erc20_transfer', token: NVDAC, direction: 'out', amountAtomic: '1', counterparty: BUNDLER, callIndex: 0 }] : []),
     ] };
     return { ok: true, body };
   } };
   return { providers: [provider], batchCapableIds: new Set([provider.providerId]) };
 }
+
+function cryptoVenue(supply: bigint, ask: bigint, calls?: Record<string, unknown>[]) {
+  const asset = CRYPTO[0]!;
+  return signedActionsFixtureV1(preparedActionV1({ account: WALLET,
+    market: { id: asset.morphoMarket, loan_asset: { address: USDC }, collateral_asset: { address: asset.token } },
+    amount: { unit: 'assets', value: ask.toString() }, resolved_amount: { unit: 'assets', value: ask.toString() },
+    ...(supply > 0n ? {
+      collateral_amount: { unit: 'assets', value: supply.toString() },
+      resolved_funding: { wrapped_asset: asset.token, max_native_assets: '0', native_assets: '0', erc20_assets: supply.toString() },
+    } : {}),
+    simulation: { status: 'success', effects: { gross_assets: ask.toString(), net_assets: ask.toString(), referral_fee_assets: '0',
+      ...(supply > 0n ? { supplied_collateral_assets: supply.toString() } : {}) } },
+    calls: calls ?? [{ id: 'call_0', kind: supply > 0n ? 'blue_supply_collateral_borrow' : 'blue_borrow', to: BUNDLER, data: BUNDLE_DATA, value: '0' }],
+  }));
+}
+
+describe('selected collateral is an explicit part of the measured borrow', () => {
+  test('only the selected pledge supports a larger draw, and the review binds it', async () => {
+    const asset = CRYPTO[0]!, supply = 1_000_000_000n, ask = 200_000_000n;
+    const venue = cryptoVenue(supply, ask);
+    const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, borrowAssets: ask, collateralSupplyAssets: supply }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: { fetchImpl: venue.fetchImpl }, chain: cryptoSimulationChain(10n ** 36n, false, supply, ask),
+    }));
+    assert.equal(run.state, 'ready');
+    if (run.state !== 'ready') return;
+    assert.equal(run.stillPolicy!.limitAtomic, '860000000');
+    assert.equal(run.funding!.amountAtomic, supply.toString());
+    assert.equal(run.atomicRequired, true);
+    assert.equal(run.review.before.collateral, '10.00 cbBTC');
+    assert.equal(run.review.after!.collateral, '20.00 cbBTC');
+    assert.match(run.review.warnings[0]!, /You chose to add 10 cbBTC/);
+  });
+  for (const balance of [null, 0n, 99n] as const) {
+    test(`an unread or insufficient wallet balance (${balance}) prepares no calls`, async () => {
+      const asset = CRYPTO[0]!;
+      let asked = false;
+      const standing = cryptoStanding(); standing.walletCollateralAssets = balance;
+      const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, collateralSupplyAssets: 100n }, depsV1({
+        read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [standing] }),
+        venue: { fetchImpl: (async () => { asked = true; throw new Error('must not prepare'); }) as typeof fetch },
+      }));
+      assert.equal(run.state, 'refused');
+      if (run.state === 'refused') assert.equal(run.refusal, balance === null ? 'wallet_collateral_unread' : 'wallet_collateral_insufficient');
+      assert.equal(asked, false);
+      assert.equal('calls' in run, false);
+    });
+  }
+  test('a top-level approval cannot exceed the chosen collateral', async () => {
+    const asset = CRYPTO[0]!, supply = 1_000_000_000n;
+    const venue = cryptoVenue(supply, ASK.borrowAssets, [
+      { id: 'call_0', kind: 'approval', to: asset.token, data: `0x095ea7b3${ADAPTER.slice(2).padStart(64, '0')}${(supply + 1n).toString(16).padStart(64, '0')}`, value: '0' },
+      { id: 'call_1', kind: 'blue_supply_collateral_borrow', to: BUNDLER, data: BUNDLE_DATA, value: '0' },
+    ]);
+    const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, collateralSupplyAssets: supply }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: { fetchImpl: venue.fetchImpl },
+    }));
+    assert.equal(run.state, 'refused');
+    if (run.state === 'refused') assert.equal(run.refusal, 'unrequested_token_approval');
+  });
+});
 
 describe('Still is enforced inside the existing borrow runner', () => {
   for (const errorCode of ['provider_observation_failed', 'provider_observation_unread'] as const) {

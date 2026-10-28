@@ -82,6 +82,9 @@ export interface MorphoBorrowStandingV1 {
   market: MorphoBorrowMarketV1;
   /** Null means NOBODY READ this wallet here — never "the wallet has nothing". */
   position: MorphoPositionV1 | null;
+  /** Same-block wallet token balance, when the bounded chain reader read it.
+   * This excludes native ETH: new funding must be chosen explicitly. */
+  walletCollateralAssets?: bigint | null;
   health: MorphoHealthV1 | null;
   capacity: MorphoBorrowCapacityV1 | null;
   /** The collateral price at which the position stops being healthy. */

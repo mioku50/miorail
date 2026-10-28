@@ -37,6 +37,10 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
         </div>
       ) : view ? (
         <>
+          <div className="still-section still-borrow-entry">
+            <StillLink href="/borrow" className="still-btn">Get money</StillLink>
+            <p className="still-note">cbBTC and WETH through Morpho.</p>
+          </div>
           <div className="still-section">
             {view.total ? (
               <div className="still-big"><span className="d" style={{ fontSize: 48 }}>{view.total.split('.')[0]}</span><span className="c" style={{ fontSize: 24 }}>.{view.total.split('.')[1]}</span></div>

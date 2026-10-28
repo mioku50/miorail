@@ -52,22 +52,32 @@ export function atomicToDecimalStringV1(amount: bigint, decimals: number): strin
 const object = (value: unknown): value is Record<string, any> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const address = (value: unknown): string | null => typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value) ? value.toLowerCase() : null;
 const amount = (value: unknown): string | null => typeof value === 'string' && /^(0|[1-9][0-9]*)$/.test(value) ? value : null;
+const exactKeys = (value: Record<string, unknown>, keys: readonly string[]): boolean =>
+  Object.keys(value).length === keys.length && keys.every(key => Object.prototype.hasOwnProperty.call(value, key));
 
 export async function prepareMorphoBorrowV1(input: {
   marketId: string; walletAddress: string; borrowAssets: bigint; loanDecimals: number;
   loanTokenAddress?: string; collateralTokenAddress?: string;
+  /** Exact ERC-20 collateral selected by the person. Omitted means no new supply. */
+  collateralSupplyAssets?: bigint;
   deps?: MorphoVenueDepsV1;
 }): Promise<MorphoPrepareBorrowResultV1> {
   const deps = input.deps ?? {};
   const fail = (refusal: MorphoVenueRefusalV1, detail: string | null = null): MorphoPrepareBorrowResultV1 => ({ ok: false, refusal, detail });
   const marketId = input.marketId.trim().toLowerCase();
   const wallet = address(input.walletAddress.trim());
+  const supply = input.collateralSupplyAssets;
+  const selectedCollateral = address(input.collateralTokenAddress);
   if (!/^0x[0-9a-f]{64}$/.test(marketId) || !wallet || /^0x0{40}$/.test(wallet) || input.borrowAssets <= 0n || input.borrowAssets >= 1n << 256n ||
       !Number.isInteger(input.loanDecimals) || input.loanDecimals < 0 || input.loanDecimals > 36) return fail('venue_answer_unreadable', 'the intent was not exact');
+  if (supply !== undefined && (typeof supply !== 'bigint' || supply <= 0n || supply >= 1n << 256n || !selectedCollateral || /^0x0{40}$/.test(selectedCollateral))) {
+    return fail('venue_answer_unreadable', 'the selected collateral supply was not exact');
+  }
   if (deps.endpoint !== undefined && deps.endpoint !== MORPHO_ACTION_ORIGIN_V1) return fail('venue_refused', 'only the official Actions origin is supported');
   const path = `/v0/actions/blue/markets/8453:${marketId}/borrow`;
   const requestBytes = new TextEncoder().encode(JSON.stringify({
     account: getAddress(wallet), amount: { unit: 'assets', value: input.borrowAssets.toString() }, signature_mode: 'none',
+    ...(supply === undefined ? {} : { collateral_amount: { unit: 'assets', value: supply.toString() }, funding: { type: 'erc20' } }),
   }));
   let response: Response, bytes: Uint8Array;
   try {
@@ -100,16 +110,35 @@ export async function prepareMorphoBorrowV1(input: {
       !address(data.market.loan_asset?.address) || !address(data.market.collateral_asset?.address) ||
       (input.loanTokenAddress !== undefined && address(data.market.loan_asset?.address) !== address(input.loanTokenAddress)) ||
       (input.collateralTokenAddress !== undefined && address(data.market.collateral_asset?.address) !== address(input.collateralTokenAddress)) ||
-      data.collateral_amount !== undefined || data.resolved_funding !== undefined || data.referral_fee !== undefined) return fail('venue_intent_mismatch');
+      data.funding !== undefined || data.referral_fee !== undefined) return fail('venue_intent_mismatch');
   const effects = data.simulation.effects;
   if (!object(effects) || amount(effects.gross_assets) !== input.borrowAssets.toString() ||
       amount(effects.net_assets) !== input.borrowAssets.toString() || amount(effects.referral_fee_assets) !== '0') return fail('venue_intent_mismatch', 'the venue effects do not match the requested net arrival');
+  if (supply === undefined) {
+    if (data.collateral_amount !== undefined || data.resolved_funding !== undefined || effects.supplied_collateral_assets !== undefined) {
+      return fail('venue_intent_mismatch', 'this borrow requested no new collateral or funding');
+    }
+  } else {
+    const collateralAmount = data.collateral_amount, funding = data.resolved_funding;
+    if (!object(collateralAmount) || !exactKeys(collateralAmount, ['unit', 'value']) ||
+        collateralAmount.unit !== 'assets' || amount(collateralAmount.value) !== supply.toString() ||
+        !object(funding) || !exactKeys(funding, ['wrapped_asset', 'max_native_assets', 'erc20_assets', 'native_assets']) ||
+        address(funding.wrapped_asset) !== selectedCollateral || amount(funding.erc20_assets) !== supply.toString() ||
+        amount(funding.max_native_assets) !== '0' || amount(funding.native_assets) !== '0' ||
+        amount(effects.supplied_collateral_assets) !== supply.toString()) {
+      return fail('venue_intent_mismatch', 'the venue funding or supplied collateral differs from the exact selection');
+    }
+  }
   if (!Array.isArray(data.calls) || data.calls.length === 0) return fail('venue_prepared_nothing');
   if (data.calls.length > 4) return fail('venue_answer_unreadable', 'too many calls');
   const transactions: PreparedTransactionV1[] = [];
   const ids = new Set<string>();
-  for (const call of data.calls) {
-    if (!object(call) || typeof call.id !== 'string' || !/^call_[0-9]+$/.test(call.id) || ids.has(call.id) || !['approval', 'authorization', 'blue_borrow'].includes(call.kind) ||
+  const finalKind = supply === undefined ? 'blue_borrow' : 'blue_supply_collateral_borrow';
+  for (const [index, call] of data.calls.entries()) {
+    // Prerequisites precede exactly one final action. Preserve the array order,
+    // but never accept a different action merely because the proof is valid.
+    const expectedKind = index === data.calls.length - 1 ? call?.kind === finalKind : ['approval', 'authorization'].includes(call?.kind);
+    if (!object(call) || !expectedKind || typeof call.id !== 'string' || !/^call_[0-9]+$/.test(call.id) || ids.has(call.id) ||
         !address(call.to) || typeof call.data !== 'string' || !/^0x(?:[0-9a-fA-F]{2}){4,}$/.test(call.data) || amount(call.value) !== '0' ||
         (call.chainId !== undefined && call.chainId !== 8453)) return fail('venue_answer_unreadable', 'a prepared call did not match this borrow');
     ids.add(call.id);

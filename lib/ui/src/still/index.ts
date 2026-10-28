@@ -15,3 +15,5 @@ export * from './StillHome';
 export * from './StillPages';
 export * from './StillAgent';
 export * from './StillConsole';
+export * from './StillBorrow';
+export * from './borrowIntent';

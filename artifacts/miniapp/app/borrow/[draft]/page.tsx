@@ -37,6 +37,7 @@ export default function BaseAppBorrowReviewPage() {
       const result = await sendCalls.mutateAsync({
         calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
         chainId: 8453,
+        forceAtomic: true,
         // A batch with no dataSuffix loses Builder Code attribution silently.
         capabilities: BUILDER_SUFFIX_V1
           ? { dataSuffix: { value: BUILDER_SUFFIX_V1, optional: true } }

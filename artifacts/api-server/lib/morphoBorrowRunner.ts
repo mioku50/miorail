@@ -2,6 +2,7 @@ import { logger } from '@mioagent/utils';
 import { hashApprovedCallsV1, stableHashV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import {
   morphoAfterBorrowV1,
+  atomicToDecimalStringV1,
   morphoBorrowPlanV1,
   morphoBorrowSimulationFromBatchV1,
   morphoBorrowVerdictV1,
@@ -62,6 +63,8 @@ export interface MorphoBorrowRunRequestV1 {
   walletAddress: string;
   /** Exact atomic units of the loan asset. */
   borrowAssets: bigint;
+  /** Explicit ERC-20 collateral from this wallet. Native ETH is a separate future intent. */
+  collateralSupplyAssets?: bigint;
   /** Which market. Optional only when the collateral has exactly one. */
   marketId?: string | null;
 }
@@ -90,6 +93,8 @@ export type MorphoBorrowRunV1 =
       signingTermsHash: string;
       /** Fresh review window, additionally bounded by the venue's own expiry. */
       expiresAt: string;
+      atomicRequired: true;
+      funding?: { type: 'erc20'; token: string; amountAtomic: string };
       stillPolicy?: { termsVersion: string; shareBps: number; limitAtomic: string; debtBeforeAtomic: string; availableAtomic: string };
     }
   | {
@@ -148,6 +153,10 @@ export async function runMorphoBorrowV1(
   const readAt = (deps.now?.() ?? new Date()).toISOString();
   const wallet = request.walletAddress.trim().toLowerCase();
   const ask = request.borrowAssets;
+  const supply = request.collateralSupplyAssets ?? 0n;
+  if (supply < 0n || supply >= 1n << 128n) {
+    return refusedV1('capacity', 'collateral_supply_invalid', 'The chosen collateral amount was not an exact supported integer.', null, null);
+  }
   if (ask <= 0n) {
     return refusedV1('capacity', 'nothing_asked_for', 'the amount to borrow was not positive', null, null);
   }
@@ -190,6 +199,9 @@ export async function runMorphoBorrowV1(
   const loanAddress = market.loan.address;
   const loanDecimals = market.loan.decimals;
   const stillAsset = stillBorrowAssetV1(request.collateralTokenAddress);
+  if (supply > 0n && !stillAsset) {
+    return refusedV1('market', 'collateral_supply_not_supported', 'New collateral supply is available only for the registered cbBTC and WETH markets.', marketId, null);
+  }
   if (stillAsset && (
     marketId.toLowerCase() !== stillAsset.morphoMarket.toLowerCase() ||
     market.collateral.address?.toLowerCase() !== stillAsset.token.toLowerCase() ||
@@ -209,6 +221,7 @@ export async function runMorphoBorrowV1(
     borrowApyWad: market.borrowApyWad,
     borrowAprWad: market.borrowAprWad,
     blockNumber: market.state.blockNumber,
+    rateFromPriorRead: false,
   };
   let liquidityAssets =
     market.state.totalSupplyAssets > market.state.totalBorrowAssets
@@ -263,6 +276,12 @@ export async function runMorphoBorrowV1(
       render(standing.position, null, 'simulation_effect_unread'),
     );
   }
+  if (supply > 0n && (standing.walletCollateralAssets === null || standing.walletCollateralAssets === undefined)) {
+    return refusedV1('reading', 'wallet_collateral_unread', null, marketId, render(standing.position, null, 'wallet_collateral_unread'));
+  }
+  if (supply > 0n && supply > standing.walletCollateralAssets!) {
+    return refusedV1('capacity', 'wallet_collateral_insufficient', null, marketId, render(standing.position, null, 'wallet_collateral_insufficient'));
+  }
 
   // --- 2. Does the ask fit, and which side is short ------------------------
   // Still's ceiling is half the TOTAL protocol limit minus accrued debt,
@@ -271,7 +290,7 @@ export async function runMorphoBorrowV1(
   if (stillAsset) {
     let draw: ReturnType<typeof morphoStillDrawV1>;
     try {
-      draw = morphoStillDrawV1({ market: market.state, position: standing.position, borrowAssets: ask });
+      draw = morphoStillDrawV1({ market: market.state, position: standing.position, borrowAssets: ask, additionalCollateralAssets: supply });
     } catch {
       return refusedV1('reading', 'still_inputs_unread', 'Still could not establish the measured debt limit', marketId, render(standing.position, null, 'still_inputs_unread'));
     }
@@ -288,10 +307,10 @@ export async function runMorphoBorrowV1(
     };
   }
   const capacity = standing.capacity;
-  if (capacity.assets <= 0n) {
+  if (!stillAsset && capacity.assets <= 0n) {
     return refusedV1('capacity', 'nothing_to_borrow', capacity.bound, marketId, render(standing.position, null, 'nothing_to_borrow'));
   }
-  if (ask > capacity.assets) {
+  if (!stillAsset && ask > capacity.assets) {
     const overCollateral = ask > capacity.collateralHeadroomAssets;
     const overLiquidity = ask > capacity.marketLiquidityAssets;
     const reviewRefusal: BorrowReviewRefusalV1 =
@@ -309,7 +328,7 @@ export async function runMorphoBorrowV1(
     );
   }
 
-  let after = morphoAfterBorrowV1({ market: market.state, position: standing.position, assets: ask });
+  let after = morphoAfterBorrowV1({ market: market.state, position: { ...standing.position, collateral: standing.position.collateral + supply }, assets: ask });
   if (after === null) {
     return refusedV1('capacity', 'would_not_be_healthy', null, marketId, render(standing.position, null, 'would_not_be_healthy'));
   }
@@ -322,6 +341,7 @@ export async function runMorphoBorrowV1(
     loanDecimals,
     loanTokenAddress: loanAddress,
     collateralTokenAddress: request.collateralTokenAddress,
+    ...(supply > 0n ? { collateralSupplyAssets: supply } : {}),
     deps: { ...deps.venue, now: deps.venue?.now ?? deps.now },
   });
   if (!prepared.ok) {
@@ -344,6 +364,12 @@ export async function runMorphoBorrowV1(
   if (!plan.ok) {
     return refusedV1('plan', plan.refusal, plan.detail, marketId, render(standing.position, null, 'prepared_calls_refused'));
   }
+  if (stillAsset && plan.plan.calls.some(call => call.callType === 'approval' && (
+    supply === 0n || call.to.toLowerCase() !== stillAsset.token.toLowerCase() ||
+    call.amountAtomic === null || BigInt(call.amountAtomic) > supply
+  ))) {
+    return refusedV1('plan', 'unrequested_token_approval', null, marketId, render(standing.position, null, 'unrequested_token_approval'));
+  }
 
   // --- 5. One execution against real state ---------------------------------
   const callsHash = hashApprovedCallsV1(plan.plan.calls);
@@ -351,6 +377,7 @@ export async function runMorphoBorrowV1(
     marketId, walletAddress: wallet, loanTokenAddress: loanAddress,
     collateralTokenAddress: request.collateralTokenAddress,
     oracleAddress: market.oracleAddress ?? '',
+    collateralSupplyAssets: supply,
   } : null;
   const probes = poststateIdentity ? buildMorphoBorrowPoststateProbesV1(poststateIdentity) : null;
   if (probes && !probes.ok) {
@@ -424,9 +451,16 @@ export async function runMorphoBorrowV1(
   // Still's crypto path proves the position in the SAME evolving state as
   // the USDC arrival. A transfer alone cannot establish which market owes it.
   if (poststateIdentity) {
-    // This intent pledges nothing new and pays no fee. A correct net USDC
-    // arrival cannot authorise spending another asset already in the wallet.
-    if (answer.response.assetChanges?.changes.some(change => change.direction === 'out' && BigInt(change.amountAtomic) > 0n)) {
+    // Only the chosen collateral may leave this wallet. The getter below
+    // independently proves the exact debit and matching pledge.
+    let collateralOut = 0n;
+    const wrongOutflow = answer.response.assetChanges?.changes.some(change => {
+      if (change.direction !== 'out' || BigInt(change.amountAtomic) === 0n) return false;
+      if (change.token.toLowerCase() !== request.collateralTokenAddress.toLowerCase()) return true;
+      collateralOut += BigInt(change.amountAtomic);
+      return collateralOut > supply;
+    });
+    if (wrongOutflow || collateralOut !== supply) {
       return refusedV1('simulation', 'unrequested_wallet_outflow', null, marketId,
         render(standing.position, null, 'simulation_unrequested_spend'));
     }
@@ -440,7 +474,7 @@ export async function runMorphoBorrowV1(
     }
     let draw: ReturnType<typeof morphoStillDrawV1>;
     try {
-      draw = morphoStillDrawV1({ market: measured.before.market, position: measured.before.position, borrowAssets: ask });
+      draw = morphoStillDrawV1({ market: measured.before.market, position: measured.before.position, borrowAssets: ask, additionalCollateralAssets: supply });
     } catch {
       return refusedV1('simulation', 'still_inputs_unread', null, marketId, render(standing.position, null, 'still_inputs_unread'));
     }
@@ -455,13 +489,16 @@ export async function runMorphoBorrowV1(
     standing = { ...standing, market: { ...market, state: measured.before.market },
       position: measured.before.position, health: measured.before.health, liquidationPrice: measured.before.liquidationPrice };
     marketWire.blockNumber = answer.response.blockNumber;
+    marketWire.rateFromPriorRead = true;
     liquidityAssets = measured.before.market.totalSupplyAssets - measured.before.market.totalBorrowAssets;
     after = measured.after;
   }
 
   const review = render(standing.position, after, null);
   if (stillPolicy) review.warnings = [
-    `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
+    supply > 0n
+      ? `You chose to add ${atomicToDecimalStringV1(supply, stillAsset!.decimals)} ${stillAsset!.id === 'ETH' ? 'WETH' : 'cbBTC'} from your wallet to this market. Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} with that collateral.`
+      : `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
     ...review.warnings,
   ];
   // The clock changes on every fresh read. Every economic field, every call,
@@ -469,7 +506,7 @@ export async function runMorphoBorrowV1(
   const { measuredAt: _measuredAt, ...reviewTerms } = review;
   const signingTermsHash = stableHashV1('morpho-borrow-signing-terms/v1', {
     wallet, marketId, ask: ask.toString(), callsHash, review: reviewTerms,
-    collateral: after.position.collateral.toString(),
+    collateral: standing.position!.collateral.toString(), collateralSupply: supply.toString(),
     debtBefore: standing.health?.borrowedAssets.toString() ?? null,
     debtAfter: after.health.borrowedAssets.toString(),
     price: standing.market.state.collateralPrice.toString(),
@@ -486,6 +523,8 @@ export async function runMorphoBorrowV1(
     review,
     signingTermsHash,
     expiresAt: new Date(Math.min(now.getTime() + 30_000, venueExpiry)).toISOString(),
+    atomicRequired: true,
+    ...(supply > 0n ? { funding: { type: 'erc20' as const, token: request.collateralTokenAddress.toLowerCase(), amountAtomic: supply.toString() } } : {}),
     ...(stillPolicy ? { stillPolicy } : {}),
     calls: plan.plan.calls,
     callsHash,

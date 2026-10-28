@@ -33,9 +33,9 @@ export const STILL_ASSISTANTS_V1 = { label: 'For assistants', path: '/assistants
 export function stillTabForPathV1(path: string): StillTabV1 {
   const clean = path.split(/[?#]/)[0] ?? '/';
   if (clean === '/' || clean === '') return 'home';
-  if (clean === '/assets' || clean.startsWith('/assets/')) return 'assets';
+  if (clean === '/assets' || clean.startsWith('/assets/') || clean === '/borrow' || clean.startsWith('/borrow/')) return 'assets';
   if (clean === '/agent' || clean.startsWith('/agent/')) return 'agent';
-  if (['/stocks', '/market', '/action', '/borrow'].some((p) => clean === p || clean.startsWith(`${p}/`))) return 'stocks';
+  if (['/stocks', '/market', '/action'].some((p) => clean === p || clean.startsWith(`${p}/`))) return 'stocks';
   return 'more';
 }
 

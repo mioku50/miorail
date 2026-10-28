@@ -41,6 +41,8 @@ export interface BorrowReviewMarketWireV1 {
   /** WAD-scaled borrow rate, or null when the venue published none. */
   borrowApyWad: bigint | null;
   borrowAprWad?: bigint | null;
+  /** The displayed rate precedes the separately simulated position state. */
+  rateFromPriorRead?: boolean;
   blockNumber: number | null;
 }
 
@@ -93,6 +95,12 @@ export interface BorrowReviewV1 {
 
 /** Why a borrow cannot be put in front of a reader at all. */
 export const BORROW_REVIEW_REFUSALS_V1 = {
+  wallet_collateral_unread:
+    'The selected collateral balance could not be read. Refresh this review before choosing how much to deposit.',
+  wallet_collateral_insufficient:
+    'The selected collateral amount exceeds this wallet’s measured token balance. No calls are offered for approval.',
+  unrequested_token_approval:
+    'The venue requested a token approval beyond the collateral you chose. Nothing is offered for approval.',
   still_inputs_unread:
     'Still could not establish the current debt limit from these market readings. This is a reading failure here, not a finding that the wallet has no collateral.',
   over_still_limit:
@@ -137,7 +145,7 @@ export const BORROW_REVIEW_REFUSALS_V1 = {
   simulation_position_mismatch:
     'The simulated market or position did not match this exact borrow. Nothing is offered for approval; this does not establish that the wallet has no collateral.',
   simulation_unrequested_spend:
-    'This existing-collateral borrow also takes assets from the wallet. No such spending was requested, so nothing is offered for approval.',
+    'The simulated wallet spending does not match the collateral you chose. Nothing is offered for approval.',
   simulation_delivered_something_else:
     'The calls execute, what reaches this wallet was read, and it is not what this review describes. Nothing is being offered for approval on that basis.',
 } as const;
@@ -318,7 +326,9 @@ export function borrowReviewV1(input: {
     before: line(input.before) ?? { collateral: '—', debt: '—', health: 'not read', liquidationPrice: '—' },
     after,
     warnings,
-    notStated: BORROW_REVIEW_NOT_STATED_V1,
+    notStated: market.rateFromPriorRead
+      ? ['The rate is variable. It was read before the position simulation, not at its block, and is not fixed while the debt is open.', ...BORROW_REVIEW_NOT_STATED_V1.slice(1)]
+      : BORROW_REVIEW_NOT_STATED_V1,
     measuredAt:
       market.blockNumber === null
         ? `Read at ${input.readAt}. The venue did not say which block.`

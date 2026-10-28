@@ -25,6 +25,7 @@ describe('Still execution reads the registered market, on chain', () => {
     const accrued = morphoAccruedTotalsV1(source.market.value, source.borrowRatePerSecond.value, read.snapshot.block.timestamp);
     assert.equal(standing.market.marketId, CRYPTO[0]!.morphoMarket);
     assert.equal(standing.position!.collateral, 1_000_000n);
+    assert.equal(standing.walletCollateralAssets, 10_000_000n);
     assert.equal(standing.market.curated, null);
     assert.equal(standing.market.borrowApyWad, null);
     assert.equal(standing.market.borrowAprWad, source.borrowRatePerSecond.value * 31_536_000n);
@@ -36,6 +37,10 @@ describe('Still execution reads the registered market, on chain', () => {
     assert.equal(still.shareBps, 5000);
     assert(BigInt(still.availableAtomic) < standing.capacity!.assets);
     assert.equal(stillBorrowCapacityWireV1(ADDRESSES.weth, standing), null);
+    const withPledge = stillBorrowCapacityWireV1(ADDRESSES.cbbtc, standing, 2_000_000n)!;
+    assert.equal(withPledge.scope, 'selected_collateral');
+    assert.equal(withPledge.collateralSupplyAtomic, '2000000');
+    assert(BigInt(withPledge.availableAtomic) > BigInt(still.availableAtomic));
   });
   for (const field of ['position', 'price', 'market', 'borrowRatePerSecond'] as const) {
     it(`refuses an unread ${field} without replacing it by zero`, async () => {

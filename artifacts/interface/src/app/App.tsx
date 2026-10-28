@@ -93,6 +93,9 @@ const StockActionReviewPage = lazy(() =>
 const BorrowReviewPage = lazy(() =>
   import('../features/rwa/BorrowReviewPage').then((m) => ({ default: m.BorrowReviewPage })),
 );
+const StillBorrowPage = lazy(() =>
+  import('../features/still/StillBorrowPage').then((m) => ({ default: m.StillBorrowPage })),
+);
 const MarketRealityRadarPage = lazy(() =>
   import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
 );
@@ -298,6 +301,12 @@ export function App() {
           <RequireSession>
             <StockActionReviewPage />
           </RequireSession>
+        </Route>
+
+        {/* Choosing a pledge is public until the wallet signs in. The page
+            only mints a review question, never an executable batch. */}
+        <Route path="/borrow">
+          <StillBorrowPage />
         </Route>
 
         {/* The borrow review an assistant's link points at. Behind the session

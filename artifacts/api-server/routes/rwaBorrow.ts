@@ -1,6 +1,8 @@
 import { Router, type Request } from 'express';
+import { BORROW_REVIEW_REFUSALS_V1 } from '@mioagent/rwa-issuer/borrowReview';
+import { morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 
-import { verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
+import { issueBorrowDraftV1, verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../lib/stillBorrowStanding.js';
 import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
 
@@ -59,6 +61,17 @@ function unauthenticated(res: Parameters<Parameters<typeof rwaBorrowRouter.get>[
   res.status(401).json({ error: 'authentication_required', code: 'authentication_required' });
 }
 
+/** Wire amounts are canonical base-unit strings. Bound length before BigInt
+ * so an oversized body/query cannot turn a capacity read into unbounded work. */
+function atomicV1(value: unknown, allowZero: boolean): bigint | null {
+  if (typeof value !== 'string' || !/^(0|[1-9][0-9]{0,38})$/.test(value)) return null;
+  const amount = BigInt(value);
+  return amount < 1n << 128n && (allowZero || amount > 0n) ? amount : null;
+}
+
+const objectV1 = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === 'object' && !Array.isArray(value);
+
 /** The run, as JSON. Calls ride the ready branch and no other — the shape is
  * the gate, so a client cannot read them out of a refusal. */
 function runBodyV1(run: MorphoBorrowRunV1): Record<string, unknown> {
@@ -90,6 +103,8 @@ function runBodyV1(run: MorphoBorrowRunV1): Record<string, unknown> {
     callsHash: run.callsHash,
     signingTermsHash: run.signingTermsHash,
     expiresAt: run.expiresAt,
+    atomicRequired: run.atomicRequired,
+    ...(run.funding ? { funding: run.funding } : {}),
     ...(run.stillPolicy ? { stillPolicy: run.stillPolicy } : {}),
     measured: {
       blockNumber: run.measured.blockNumber,
@@ -115,6 +130,16 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
     res.status(400).json({ error: 'token_not_exact', code: 'token_not_exact' });
     return;
   }
+  const supply = req.query.collateralSupplyAtomic === undefined ? 0n : atomicV1(req.query.collateralSupplyAtomic, true);
+  if (supply === null) {
+    res.status(400).json({ error: 'borrow_request_not_exact', code: 'borrow_request_not_exact' });
+    return;
+  }
+  const asset = stillBorrowAssetV1(token);
+  if (supply > 0n && !asset) {
+    res.status(400).json({ error: 'borrow_collateral_not_supported', code: 'borrow_collateral_not_supported' });
+    return;
+  }
 
   const reading = await rwaBorrowRuntimeV1.read({ tokenAddress: token, walletAddress: user.address });
   if (reading.state === 'refused') {
@@ -127,30 +152,89 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
     });
     return;
   }
+  if (supply > 0n) {
+    const unread = reading.markets.some(entry => entry.walletCollateralAssets === null || entry.walletCollateralAssets === undefined);
+    const insufficient = reading.markets.some(entry => entry.walletCollateralAssets !== null && entry.walletCollateralAssets !== undefined && entry.walletCollateralAssets < supply);
+    if (unread || insufficient) {
+      const refusal = unread ? 'wallet_collateral_unread' : 'wallet_collateral_insufficient';
+      res.json({ state: 'refused', readAt: reading.readAt, refusal, detail: BORROW_REVIEW_REFUSALS_V1[refusal], markets: [] });
+      return;
+    }
+  }
 
   res.json({
     state: 'read',
-    ...(stillBorrowAssetV1(token) ? { marketScope: 'still_registered_market' } : {}),
+    ...(asset ? { marketScope: 'still_registered_market' } : {}),
     readAt: reading.readAt,
-    markets: reading.markets.map((entry) => ({
-      marketId: entry.market.marketId,
-      curated: entry.market.curated,
-      lltvBps: entry.market.lltvBps,
-      collateralSymbol: entry.market.collateral.symbol,
-      loanSymbol: entry.market.loan.symbol,
-      collateralDecimals: entry.market.collateral.decimals,
-      loanDecimals: entry.market.loan.decimals,
-      blockNumber: entry.market.state.blockNumber,
-      ...(stillBorrowAssetV1(token) ? { still: stillBorrowCapacityWireV1(token, entry) } : {}),
-      availableToBorrowAtomic: entry.capacity?.assets.toString() ?? null,
-      bound: entry.capacity?.bound ?? null,
-      collateralHeadroomAtomic: entry.capacity?.collateralHeadroomAssets.toString() ?? null,
-      marketLiquidityAtomic: entry.capacity?.marketLiquidityAssets.toString() ?? null,
-      borrowedAtomic: entry.health?.borrowedAssets.toString() ?? null,
-      collateralAtomic: entry.position?.collateral.toString() ?? null,
-      healthFactorWad: entry.health?.healthFactorWad?.toString() ?? null,
-    })),
+    markets: reading.markets.map((entry) => {
+      // Both maxima answer the same conditional question. The selected deposit
+      // changes capacity, not the separately reported already-pledged balance.
+      const capacity = supply > 0n
+        ? entry.position === null ? null : morphoBorrowCapacityV1({ market: entry.market.state,
+          position: { ...entry.position, collateral: entry.position.collateral + supply } })
+        : entry.capacity;
+      return {
+        marketId: entry.market.marketId,
+        curated: entry.market.curated,
+        lltvBps: entry.market.lltvBps,
+        collateralSymbol: entry.market.collateral.symbol,
+        loanSymbol: entry.market.loan.symbol,
+        collateralDecimals: entry.market.collateral.decimals,
+        loanDecimals: entry.market.loan.decimals,
+        blockNumber: entry.market.state.blockNumber,
+        ...(asset ? {
+          walletCollateralAtomic: entry.walletCollateralAssets?.toString() ?? null,
+          collateralSupplyAtomic: supply.toString(),
+          still: stillBorrowCapacityWireV1(token, entry, supply),
+        } : {}),
+        availableToBorrowAtomic: capacity?.assets.toString() ?? null,
+        bound: capacity?.bound ?? null,
+        collateralHeadroomAtomic: capacity?.collateralHeadroomAssets.toString() ?? null,
+        marketLiquidityAtomic: capacity?.marketLiquidityAssets.toString() ?? null,
+        borrowedAtomic: entry.health?.borrowedAssets.toString() ?? null,
+        collateralAtomic: entry.position?.collateral.toString() ?? null,
+        healthFactorWad: entry.health?.healthFactorWad?.toString() ?? null,
+      };
+    }),
   });
+});
+
+/** A person selects the question, not calldata or a cached market answer.
+ * This mints a wallet-bound link only. Opening it runs the existing fresh gate. */
+rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
+  const user = sessionUserV1(req);
+  if (!user) return unauthenticated(res);
+
+  const body: unknown = req.body;
+  const keys = ['collateralTokenAddress', 'borrowAmountAtomic', 'collateralSupplyAtomic'];
+  if (!objectV1(body) || Object.keys(body).length !== keys.length || !keys.every(key => Object.prototype.hasOwnProperty.call(body, key)) ||
+      typeof body.collateralTokenAddress !== 'string') {
+    res.status(400).json({ error: 'borrow_request_not_exact', code: 'borrow_request_not_exact' });
+    return;
+  }
+  const token = body.collateralTokenAddress.toLowerCase();
+  const borrow = atomicV1(body.borrowAmountAtomic, false), supply = atomicV1(body.collateralSupplyAtomic, true);
+  if (!/^0x[0-9a-f]{40}$/.test(token) || borrow === null || supply === null) {
+    res.status(400).json({ error: 'borrow_request_not_exact', code: 'borrow_request_not_exact' });
+    return;
+  }
+  const asset = stillBorrowAssetV1(token);
+  if (!asset) {
+    res.status(400).json({ error: 'borrow_collateral_not_supported', code: 'borrow_collateral_not_supported' });
+    return;
+  }
+  const secret = rwaBorrowRuntimeV1.secret();
+  if (!secret) {
+    res.status(503).json({ error: 'borrow_secret_unavailable', code: 'borrow_secret_unavailable' });
+    return;
+  }
+  const issued = issueBorrowDraftV1({
+    tenantId: user.id, walletAddress: user.address, collateralTokenAddress: asset.token,
+    marketId: asset.morphoMarket, borrowAssets: borrow, collateralSupplyAssets: supply,
+    secret, now: rwaBorrowRuntimeV1.now(),
+  });
+  res.json({ borrowDraftId: issued.borrowDraftId, draft: issued.draft,
+    reviewUrl: `/borrow/${encodeURIComponent(issued.draft)}`, expiresAt: issued.expiresAt });
 });
 
 /** The gate, run for an amount the person typed on this screen. */
@@ -160,18 +244,24 @@ rwaBorrowRouter.post('/rwa/borrow/review', async (req, res) => {
 
   const body = (req.body ?? {}) as Record<string, unknown>;
   const token = String(body.collateralTokenAddress ?? '').trim().toLowerCase();
-  const amount = String(body.borrowAmountAtomic ?? '').trim();
+  const amount = atomicV1(body.borrowAmountAtomic, false);
+  const supply = body.collateralSupplyAtomic === undefined ? 0n : atomicV1(body.collateralSupplyAtomic, true);
   const marketId = body.marketId === undefined || body.marketId === null ? null : String(body.marketId).trim().toLowerCase();
-  if (!/^0x[0-9a-f]{40}$/.test(token) || !/^[1-9][0-9]*$/.test(amount)) {
+  if (!/^0x[0-9a-f]{40}$/.test(token) || amount === null || supply === null || (marketId !== null && !/^0x[0-9a-f]{64}$/.test(marketId))) {
     res.status(400).json({ error: 'borrow_request_not_exact', code: 'borrow_request_not_exact' });
+    return;
+  }
+  if (supply > 0n && !stillBorrowAssetV1(token)) {
+    res.status(400).json({ error: 'borrow_collateral_not_supported', code: 'borrow_collateral_not_supported' });
     return;
   }
 
   const run = await rwaBorrowRuntimeV1.run({
     collateralTokenAddress: token,
     walletAddress: user.address,
-    borrowAssets: BigInt(amount),
+    borrowAssets: amount,
     marketId,
+    ...(supply > 0n ? { collateralSupplyAssets: supply } : {}),
   });
   res.json(runBodyV1(run));
 });
@@ -212,6 +302,7 @@ rwaBorrowRouter.get('/rwa/borrow/review/:draft', async (req, res) => {
     walletAddress: verified.claims.walletAddress,
     borrowAssets: BigInt(verified.claims.borrowAssets),
     marketId: verified.claims.marketId,
+    ...(verified.claims.collateralSupplyAssets !== undefined ? { collateralSupplyAssets: BigInt(verified.claims.collateralSupplyAssets) } : {}),
   });
   res.json({ ...runBodyV1(run), borrowDraftId: verified.claims.borrowDraftId });
 });

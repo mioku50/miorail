@@ -63,6 +63,7 @@ export function BorrowReviewPage() {
       const result = await sendCalls.mutateAsync({
         calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),
         chainId: 8453,
+        forceAtomic: true,
         // Optional, so a wallet that does not understand the capability still
         // sends the batch rather than refusing it.
         capabilities: BORROW_BUILDER_SUFFIX_V1

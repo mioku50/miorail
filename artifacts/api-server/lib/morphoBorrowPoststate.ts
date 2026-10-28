@@ -5,7 +5,7 @@ import {
   morphoAfterBorrowV1, morphoHealthV1, morphoLiquidationPriceV1, toSharesDownV1, wMulDownV1,
   type MorphoHealthV1, type MorphoMarketStateV1, type MorphoMarketTotalsV1, type MorphoPositionV1,
 } from '@mioagent/rwa-issuer/morphoBorrowMath';
-import { morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
+import { erc20Abi, morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 
 export interface MorphoBorrowPoststateIdentityV1 {
@@ -14,12 +14,15 @@ export interface MorphoBorrowPoststateIdentityV1 {
   loanTokenAddress: string;
   collateralTokenAddress: string;
   oracleAddress: string;
+  /** Exact ERC-20 collateral the owner chose to pledge; zero means an
+   * existing-collateral-only draw. Native ETH is never inferred here. */
+  collateralSupplyAssets?: bigint;
 }
 
 export const MORPHO_BORROW_POSTSTATE_REFUSALS_V1 = [
   'poststate_inputs_invalid', 'poststate_observations_unread', 'poststate_binding_mismatch',
   'poststate_market_mismatch', 'poststate_position_mismatch', 'poststate_oracle_changed',
-  'poststate_totals_mismatch', 'poststate_borrow_mismatch',
+  'poststate_totals_mismatch', 'poststate_borrow_mismatch', 'poststate_funding_mismatch',
 ] as const;
 export type MorphoBorrowPoststateRefusalV1 = typeof MORPHO_BORROW_POSTSTATE_REFUSALS_V1[number];
 type RefusedV1 = { ok: false; refusal: MorphoBorrowPoststateRefusalV1; detail: string };
@@ -29,7 +32,7 @@ const UINT256_MAX = (1n << 256n) - 1n;
 const WAD = 10n ** 18n;
 const address = (value: string): value is Address => /^0x[0-9a-f]{40}$/.test(value) && !/^0x0{40}$/.test(value);
 
-/** Four fixed getters around the approved calls. These are observations in
+/** Five fixed getters around the approved calls. These are observations in
  * the same evolving simulated state, never additional wallet transactions. */
 export function buildMorphoBorrowPoststateProbesV1(input: MorphoBorrowPoststateIdentityV1):
   | { ok: true; observations: NonNullable<SimulationProviderRequestV1['observations']> }
@@ -37,15 +40,19 @@ export function buildMorphoBorrowPoststateProbesV1(input: MorphoBorrowPoststateI
   const marketId = input.marketId.toLowerCase(), wallet = input.walletAddress.toLowerCase();
   const loan = input.loanTokenAddress.toLowerCase(), collateral = input.collateralTokenAddress.toLowerCase();
   const oracle = input.oracleAddress.toLowerCase();
+  const supply = input.collateralSupplyAssets ?? 0n;
   const asset = CRYPTO.find((entry) => entry.token.toLowerCase() === collateral && entry.morphoMarket.toLowerCase() === marketId);
   if (!asset || !/^0x[0-9a-f]{64}$/.test(marketId) || !address(wallet) || !address(loan) || !address(collateral) ||
-      !address(oracle) || loan !== ADDRESSES.usdc.toLowerCase()) return refused('poststate_inputs_invalid', 'The exact registered market and getter identities were not established.');
+      !address(oracle) || loan !== ADDRESSES.usdc.toLowerCase() || typeof supply !== 'bigint' || supply < 0n || supply > UINT128_MAX) {
+    return refused('poststate_inputs_invalid', 'The exact registered market, selected ERC-20 pledge and getter identities were not established.');
+  }
   const id = marketId as Hex;
   const probes = [
     { id: 'market_params', to: ADDRESSES.morpho.toLowerCase(), data: encodeFunctionData({ abi: morphoAbi, functionName: 'idToMarketParams', args: [id] }) },
     { id: 'position', to: ADDRESSES.morpho.toLowerCase(), data: encodeFunctionData({ abi: morphoAbi, functionName: 'position', args: [id, wallet] }) },
     { id: 'market', to: ADDRESSES.morpho.toLowerCase(), data: encodeFunctionData({ abi: morphoAbi, functionName: 'market', args: [id] }) },
     { id: 'oracle_price', to: oracle, data: encodeFunctionData({ abi: morphoOracleAbi, functionName: 'price' }) },
+    { id: 'collateral_wallet_balance', to: collateral, data: encodeFunctionData({ abi: erc20Abi, functionName: 'balanceOf', args: [wallet] }) },
   ];
   return { ok: true, observations: { before: probes, after: probes.map((probe) => ({ ...probe })) } };
 }
@@ -62,7 +69,7 @@ export type MorphoBorrowPoststateV1 =
 
 type ParamsV1 = readonly [Address, Address, Address, Address, bigint];
 type PositionV1 = readonly [bigint, bigint, bigint];
-interface PhaseV1 { params: ParamsV1; position: PositionV1; totals: MorphoMarketTotalsV1; price: bigint }
+interface PhaseV1 { params: ParamsV1; position: PositionV1; totals: MorphoMarketTotalsV1; price: bigint; collateralWalletBalance: bigint }
 const unsigned = (value: bigint, max: bigint): boolean => value >= 0n && value <= max;
 
 function decodePhase(rows: ReadonlyMap<string, Hex>): PhaseV1 | null {
@@ -80,10 +87,11 @@ function decodePhase(rows: ReadonlyMap<string, Hex>): PhaseV1 | null {
     const position = decodeFunctionResult({ abi: morphoAbi, functionName: 'position', data: exact('position', 3) });
     const values = decodeFunctionResult({ abi: morphoAbi, functionName: 'market', data: exact('market', 6) });
     const price = decodeFunctionResult({ abi: morphoOracleAbi, functionName: 'price', data: exact('oracle_price', 1) });
+    const collateralWalletBalance = decodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', data: exact('collateral_wallet_balance', 1) });
     if (!values.every((value) => unsigned(value, UINT128_MAX)) || !unsigned(position[0], UINT256_MAX) ||
         !unsigned(position[1], UINT128_MAX) || !unsigned(position[2], UINT128_MAX) ||
-        !unsigned(params[4], UINT256_MAX) || !unsigned(price, UINT256_MAX)) return null;
-    return { params, position, price, totals: {
+        !unsigned(params[4], UINT256_MAX) || !unsigned(price, UINT256_MAX) || !unsigned(collateralWalletBalance, UINT256_MAX)) return null;
+    return { params, position, price, collateralWalletBalance, totals: {
       totalSupplyAssets: values[0], totalSupplyShares: values[1], totalBorrowAssets: values[2],
       totalBorrowShares: values[3], lastUpdate: values[4], fee: values[5],
     } };
@@ -103,11 +111,13 @@ export function verifyMorphoBorrowPoststateV1(input: {
   };
 }): MorphoBorrowPoststateV1 {
   const { expected, request, response } = input;
+  const supply = expected.collateralSupplyAssets ?? 0n;
   const built = buildMorphoBorrowPoststateProbesV1({ ...expected, walletAddress: request.walletAddress });
   if (!built.ok) return built;
   if (request.chainId !== 8453 || !/^0x[0-9a-f]{64}$/i.test(request.callsHash) ||
       expected.borrowAssets <= 0n || expected.borrowAssets > UINT128_MAX ||
       !unsigned(expected.position.collateral, UINT128_MAX) || !unsigned(expected.position.borrowShares, UINT128_MAX) ||
+      expected.position.collateral + supply > UINT128_MAX ||
       !Number.isSafeInteger(expected.blockNumber) || expected.blockNumber === null || expected.blockNumber <= 0 ||
       !Number.isSafeInteger(response.blockNumber) || response.blockNumber < expected.blockNumber) {
     return refused('poststate_inputs_invalid', 'The measured block, position or exact borrow amount was not established.');
@@ -150,8 +160,11 @@ export function verifyMorphoBorrowPoststateV1(input: {
   }
   if (before.price <= 0n || before.price !== after.price) return refused('poststate_oracle_changed', 'The market oracle changed within the simulated action or did not answer positively.');
   if (before.position[2] !== expected.position.collateral || before.position[1] !== expected.position.borrowShares ||
-      after.position[2] !== before.position[2] || after.position[0] !== before.position[0]) {
-    return refused('poststate_position_mismatch', 'The simulated position did not preserve this wallet’s measured collateral and supply shares.');
+      after.position[2] !== before.position[2] + supply || after.position[0] !== before.position[0]) {
+    return refused('poststate_position_mismatch', 'The simulated position did not establish only the selected collateral pledge and preserve this wallet’s measured supply shares.');
+  }
+  if (before.collateralWalletBalance < supply || after.collateralWalletBalance !== before.collateralWalletBalance - supply) {
+    return refused('poststate_funding_mismatch', 'The simulated ERC-20 collateral debit did not equal the exact pledge chosen from this wallet’s balance.');
   }
   const pre = before.totals, post = after.totals;
   const interest = post.totalBorrowAssets - pre.totalBorrowAssets - expected.borrowAssets;
@@ -177,7 +190,9 @@ export function verifyMorphoBorrowPoststateV1(input: {
     blockNumber: response.blockNumber,
   };
   const beforePosition: MorphoPositionV1 = { collateral: before.position[2], borrowShares: before.position[1] };
-  const projected = morphoAfterBorrowV1({ market: beforeMarket, position: beforePosition, assets: expected.borrowAssets });
+  const projected = morphoAfterBorrowV1({
+    market: beforeMarket, position: { ...beforePosition, collateral: beforePosition.collateral + supply }, assets: expected.borrowAssets,
+  });
   if (!projected || projected.position.borrowShares !== after.position[1]) {
     return refused('poststate_borrow_mismatch', 'The observed debt shares did not equal the protocol-rounded shares for the exact draw.');
   }

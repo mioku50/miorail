@@ -268,7 +268,8 @@ describe('the frame', () => {
     assert.equal(stillTabForPathV1('/assets'), 'assets');
     assert.equal(stillTabForPathV1('/stocks/dividends'), 'stocks');
     assert.equal(stillTabForPathV1('/market?key=x'), 'stocks');
-    assert.equal(stillTabForPathV1('/borrow/abc'), 'stocks');
+    assert.equal(stillTabForPathV1('/borrow'), 'assets');
+    assert.equal(stillTabForPathV1('/borrow/abc'), 'assets');
     for (const path of ['/routes', '/opportunities', '/investigate', '/radar', '/portfolio', '/extensions', '/settings', '/today', '/more', '/assistants']) {
       assert.equal(stillTabForPathV1(path), 'more', path);
     }

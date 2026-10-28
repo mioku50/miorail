@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import { CRYPTO } from '@mioagent/still-engine/registry';
 
 // ---------------------------------------------------------------------------
 // The borrow draft — what an assistant may carry away from a borrow review.
@@ -41,6 +42,8 @@ export interface BorrowDraftClaimsV1 {
   marketId: string;
   /** The amount asked for, in loan-asset atomic units. The question, not a term. */
   borrowAssets: string;
+  /** A chosen new ERC-20 pledge; absence preserves the existing-collateral intent. */
+  collateralSupplyAssets?: string;
   issuedAt: string;
   expiresAt: string;
 }
@@ -83,6 +86,7 @@ export function issueBorrowDraftV1(input: {
   collateralTokenAddress: string;
   marketId: string;
   borrowAssets: bigint;
+  collateralSupplyAssets?: bigint;
   secret: string;
   now: Date;
   ttlMs?: number;
@@ -96,6 +100,11 @@ export function issueBorrowDraftV1(input: {
   if (!/^0x[0-9a-f]{40}$/.test(token)) throw new Error('borrow_collateral_invalid');
   if (!/^0x[0-9a-f]{64}$/.test(marketId)) throw new Error('borrow_market_invalid');
   if (input.borrowAssets <= 0n) throw new Error('borrow_amount_invalid');
+  const supplied = input.collateralSupplyAssets ?? 0n;
+  if (supplied < 0n || supplied >= 1n << 128n || (supplied > 0n &&
+      !CRYPTO.some(asset => asset.token.toLowerCase() === token && asset.morphoMarket.toLowerCase() === marketId))) {
+    throw new Error('borrow_collateral_supply_invalid');
+  }
 
   const ttl = input.ttlMs ?? borrowDraftTtlMsV1();
   const issuedAt = input.now.toISOString();
@@ -108,6 +117,7 @@ export function issueBorrowDraftV1(input: {
     collateralTokenAddress: token as `0x${string}`,
     marketId,
     borrowAssets: input.borrowAssets.toString(),
+    ...(supplied > 0n ? { collateralSupplyAssets: supplied.toString() } : {}),
     issuedAt,
     expiresAt,
   };
@@ -174,6 +184,12 @@ export function verifyBorrowDraftV1(input: {
   ) {
     return { ok: false, reason: 'borrow_draft_malformed' };
   }
+
+  if (claims.collateralSupplyAssets !== undefined && (
+    typeof claims.collateralSupplyAssets !== 'string' || typeof claims.collateralTokenAddress !== 'string' ||
+    !/^[1-9][0-9]{0,38}$/.test(claims.collateralSupplyAssets) || BigInt(claims.collateralSupplyAssets) >= 1n << 128n ||
+    !CRYPTO.some(asset => asset.token.toLowerCase() === claims.collateralTokenAddress.toLowerCase() && asset.morphoMarket.toLowerCase() === claims.marketId.toLowerCase())
+  )) return { ok: false, reason: 'borrow_draft_malformed' };
 
   const expiresAt = Date.parse(claims.expiresAt);
   if (!Number.isFinite(expiresAt) || expiresAt <= input.now.getTime()) {

@@ -29,16 +29,17 @@ export function stillBorrowAssetV1(tokenAddress: string): CryptoAsset | undefine
 }
 
 /** A protocol maximum and Still's stricter allowance remain separate facts. */
-export function stillBorrowCapacityWireV1(token: string, standing: MorphoBorrowStandingV1) {
+export function stillBorrowCapacityWireV1(token: string, standing: MorphoBorrowStandingV1, collateralSupplyAssets = 0n) {
   const asset = stillBorrowAssetV1(token);
   if (!asset || !standing.position || standing.market.marketId.toLowerCase() !== asset.morphoMarket.toLowerCase()) return null;
   try {
-    const capacity = morphoStillCapacityV1({ market: standing.market.state, position: standing.position });
+    const capacity = morphoStillCapacityV1({ market: standing.market.state, position: standing.position, additionalCollateralAssets: collateralSupplyAssets });
     return {
-      termsVersion: TERMS.version, scope: 'existing_collateral' as const,
+      termsVersion: TERMS.version, scope: collateralSupplyAssets > 0n ? 'selected_collateral' as const : 'existing_collateral' as const,
       shareBps: Number(TERMS.shareOfProtocolBps), limitAtomic: capacity.limitAssets.toString(),
       debtAtomic: capacity.debtAssets.toString(), availableAtomic: capacity.availableAssets.toString(),
       roundingMarginCents: capacity.roundingMarginCents.toString(),
+      ...(collateralSupplyAssets > 0n ? { collateralSupplyAtomic: collateralSupplyAssets.toString() } : {}),
     };
   } catch { return null; }
 }
@@ -117,6 +118,7 @@ export async function readBorrowStandingV1(input: {
     blockNumber: Number(read.snapshot.block.number),
   };
   const position = source.position.value;
+  const collateralBalance = read.snapshot.balances.get(asset.token.toLowerCase());
   const health = morphoHealthV1({ market: state, position });
   return {
     state: 'read', readAt,
@@ -135,6 +137,7 @@ export async function readBorrowStandingV1(input: {
         state,
       },
       position,
+      walletCollateralAssets: collateralBalance?.ok ? collateralBalance.value : null,
       health,
       capacity: morphoBorrowCapacityV1({ market: state, position }),
       liquidationPrice: morphoLiquidationPriceV1({ market: state, position }),
