@@ -11,7 +11,7 @@ import { StillMobile } from './StillMobile';
 void React;
 
 // ---------------------------------------------------------------------------
-// Home: the sky over New York, your mobile under it, and what you can spend.
+// Home: Berlin's visual sky, the US market clock and modelled borrowing room.
 //
 // Signed in, it reads the wallet's own Mirror. Signed out, it is Still's front
 // door: what any Base wallet could borrow without selling, by address or name,
@@ -19,25 +19,17 @@ void React;
 // numbers as if they were someone's.
 // ---------------------------------------------------------------------------
 
-const TIME_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour: 'numeric', minute: '2-digit' });
-
-function sessionLabelsV1(sky: SkyStateV1): { open: string; close: string } {
-  if (!sky.session) return { open: '9:30', close: '4:00' };
-  const label = (iso: string) => TIME_V1.format(new Date(iso)).replace(/ [AP]M$/, '');
-  return { open: label(sky.session.openAt), close: label(sky.session.closeAt) };
-}
-
 function heroLabelV1(sky: SkyStateV1, mobile: MobileInputV1 | null): string {
-  const time = sky.phase === 'day' ? `New York at ${sky.clock}: the market is open` : sky.phase === 'night' ? `New York at ${sky.clock}: Wall Street is closed` : `New York at ${sky.clock}: after hours`;
-  if (!mobile || mobile.holdings.length === 0) return `${time}. Nothing hangs from the mobile yet.`;
+  const time = `Berlin at ${sky.clock}. New York at ${sky.marketClock}: ${sky.marketPhase === 'open' ? 'the market is open' : sky.marketPhase === 'closed' ? 'Wall Street is closed' : sky.marketPhase === 'before_open' ? 'before the open' : 'after hours'}`;
+  if (!mobile || mobile.holdings.length === 0) return `${time}. No reviewed holdings are shown in the diagram yet.`;
   const names = mobile.holdings.map((h) => h.label).join(', ');
-  const loan = mobile.loan && mobile.loan.owedCents > 0 ? `hold up a ${formatCents(BigInt(mobile.loan.owedCents))} loan on the right` : 'hang with nothing borrowed';
-  const room = mobile.loan ? `; the dashed square is ${formatCents(BigInt(Math.max(0, mobile.loan.limitCents - mobile.loan.owedCents)))} of room` : '';
+  const loan = mobile.loan && mobile.loan.owedCents > 0 ? `hold up a ${formatCents(BigInt(mobile.loan.owedCents))} loan on the right` : 'are shown as reviewed holdings';
+  const room = mobile.loan ? `; the dashed square is ${formatCents(BigInt(Math.max(0, mobile.loan.limitCents - mobile.loan.owedCents)))} of modelled room` : '';
   return `${time}. ${names} on the left ${loan}${room}.`;
 }
 
 export function StillHero({ sky, mobile }: { sky: SkyStateV1; mobile: MobileInputV1 | null }) {
-  const hours = sessionLabelsV1(sky);
+  const hours = sky.daylightLabels;
   return (
     <div className="still-hero" data-phase={sky.phase}>
       <svg className="still-sky-scene" viewBox="0 0 390 310" role="img" aria-label={heroLabelV1(sky, mobile)}>
@@ -56,7 +48,8 @@ export function StillSkyCaption({ sky }: { sky: SkyStateV1 }) {
   const caption = skyCaptionV1(sky);
   return (
     <div className="still-section">
-      <div className="mono still-clock">NEW YORK · {sky.clock}</div>
+      <div className="mono still-clock">BERLIN · {sky.clock}</div>
+      <div className="still-note">US market · New York</div>
       <div style={{ fontWeight: 500, fontSize: 18, marginTop: 2 }}>{caption.headline}</div>
       {caption.detail ? <div className="still-note" style={{ marginTop: 2 }}>{caption.detail}</div> : null}
     </div>
@@ -127,30 +120,18 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
             <div className="still-sub">{view.stateLine}</div>
           </div>
           <div className="still-section">
-            <div className="still-eyebrow">Available to spend</div>
-            {view.available ? (
-              <div className="still-big" aria-label={`${view.available.atLeast ? 'At least ' : ''}${view.available.dollars}${view.available.cents} available`}>
-                {view.available.atLeast ? <span className="still-sub" style={{ marginTop: 14, marginRight: 8 }}>at least</span> : null}
-                <span className="d">{view.available.dollars}</span>
-                <span className="c">{view.available.cents}</span>
-              </div>
-            ) : (
-              <div className="still-sub">Not read this time.</div>
-            )}
+            <div className="still-eyebrow">Live borrowing limit</div>
+            <div className="still-live-limit">Not checked</div>
+            <p className="still-note">Get money checks your chosen cbBTC or WETH collateral through Morpho. Stock-backed borrowing is not available here yet.</p>
             {view.owed ? (
               <div className="still-owed">
                 <span className="sw" aria-hidden="true" />
                 <span><strong>{view.owed.amount}</strong> <span className="still-note">· {view.owed.detail}</span></span>
               </div>
             ) : null}
-            {model.reading ? (
-              <div className="mono still-clock" style={{ marginTop: 8 }}>
-                READ FROM BASE · BLOCK {Number(model.reading.block).toLocaleString('en-US')}
-              </div>
-            ) : null}
           </div>
           {view.failed.length > 0 ? (
-            <p className="still-section still-warn">Not read this time: {view.failed.join(', ')}. The amount is what could be proven, a floor.</p>
+            <p className="still-section still-warn">Not read this time: {view.failed.join(', ')}. The modelled amount is a floor from the reads that succeeded.</p>
           ) : null}
         </>
       ) : (
@@ -164,7 +145,6 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <button type="button" className="still-btn sec" onClick={model.onRetry}>Read again</button>
         </div>
       ) : null}
-      {view ? <p className="still-section still-note">Get money currently supports cbBTC and WETH through Morpho.</p> : null}
       <div className="still-btns">
         {view ? <>
           <StillLink href="/borrow" className="still-btn">Get money</StillLink>
@@ -173,6 +153,15 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
         </> : null}
         <StillLink href={STILL_ASSISTANTS_V1.path} className="still-btn sec">{STILL_ASSISTANTS_V1.label}</StillLink>
       </div>
+      {view ? (
+        <details className="still-section still-modelled-room">
+          <summary aria-label={view.available ? `${view.available.atLeast ? 'At least ' : ''}${view.available.dollars}${view.available.cents} modelled borrowing room` : 'Modelled borrowing room not read'}>
+            Modelled borrowing room{view.available ? <> · {view.available.atLeast ? 'at least ' : ''}{view.available.dollars}{view.available.cents}</> : ' · Not read'}
+          </summary>
+          <p className="still-note">Calculated from your reviewed assets, including stock collateral. This is a modelled figure, not a current loan quote. Get money establishes a separate limit for the exact collateral you choose.</p>
+          {model.reading ? <div className="mono still-clock">READ FROM BASE · BLOCK {Number(model.reading.block).toLocaleString('en-US')}</div> : null}
+        </details>
+      ) : null}
       {view ? <StillComingUp items={view.comingUp} /> : null}
       </div>
     </div>
@@ -202,7 +191,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       <div className="still-home-content">
       <div className="still-section">
         <h1 className="still-word">Spend without selling.</h1>
-        <div className="still-sub">See what the stocks and crypto in a Base wallet could lend you, without selling a share. Read from Base itself.</div>
+        <div className="still-sub">Explore modelled borrowing room for the reviewed stocks and crypto in a Base wallet. Read from Base itself.</div>
       </div>
       <form
         className="still-section still-field"
@@ -227,7 +216,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       {model.message ? <p className="still-section still-note" role="status">{model.message}</p> : null}
       {result ? (
         <div className="still-section">
-          <div className="still-eyebrow">{result.report.subject.name ?? `${result.report.subject.address.slice(0, 6)}…${result.report.subject.address.slice(-4)}`} could spend</div>
+          <div className="still-eyebrow">{result.report.subject.name ?? `${result.report.subject.address.slice(0, 6)}…${result.report.subject.address.slice(-4)}`} · modelled borrowing room</div>
           {result.view.available ? (
             <div className="still-big">
               {result.view.available.atLeast ? <span className="still-sub" style={{ marginTop: 14, marginRight: 8 }}>at least</span> : null}
@@ -238,6 +227,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
             <div className="still-sub">Not read this time.</div>
           )}
           <div className="still-sub">{result.view.stateWord} {result.view.stateLine}</div>
+          <p className="still-note">This model includes stock collateral. Get money currently checks cbBTC/WETH through Morpho; stock-backed borrowing is not available here yet.</p>
           <div className="mono still-clock" style={{ marginTop: 8 }}>
             READ FROM BASE · BLOCK {Number(result.report.reading.block).toLocaleString('en-US')}
           </div>
@@ -248,7 +238,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
         <StillLink href={STILL_ASSISTANTS_V1.path} className="still-btn sec">{STILL_ASSISTANTS_V1.label}</StillLink>
       </div>
       <p className="still-section still-note">
-        Still lends up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. It never signs for you.
+        Still models up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. A live loan needs a fresh review and your wallet approval.
         Not offered to US persons.
       </p>
       </div>

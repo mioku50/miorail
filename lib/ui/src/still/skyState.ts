@@ -3,22 +3,18 @@ import type { StillTerms } from '@mioagent/still-engine/terms';
 import { regularSessionV1 } from '@mioagent/rwa-market-reality/weekend-market';
 
 // ---------------------------------------------------------------------------
-// The market sky: New York's time, and which of Still's rules hold under it.
-//
-// The sky is a claim, so it is computed, never drawn by mood. Day is the
-// regular session on a day the reviewed market calendar has one. Night is
-// Still's closed-market window: weekends and market holidays, when stocks
-// count at 40% of the protocol's limit. Dusk is everything else on a trading
-// day: before the open and after the close, when the overnight session keeps
-// the reference prices moving and the full limits hold. Clouds are earnings
-// windows, one per stock reporting now. A stock whose report date could not
-// be read counts at the earnings rate too, and the caption says so instead of
-// promising full limits.
+// The visual sky follows Berlin's clock, including its daylight-saving rules.
+// It is a fixed local schedule, not a claim about astronomical sunrise.
+// US market state and every Still financial window remain New York based.
+// A Berlin night can therefore coexist with an open US session, and a sunny
+// weekend still has the closed-market borrowing limits. Earnings clouds keep
+// their actual reviewed windows regardless of either display clock.
 //
 // Pure: the page passes the clock and the windows it read from Still's terms.
 // ---------------------------------------------------------------------------
 
 export type SkyPhaseV1 = 'day' | 'dusk' | 'night';
+export type SkyMarketPhaseV1 = 'open' | 'before_open' | 'after_hours' | 'closed';
 
 /** Still's shares of each protocol's limit, in percent, as its terms set them. */
 export const STILL_SHARES_V1 = {
@@ -39,11 +35,18 @@ export interface SkyEarningsV1 {
 export interface SkyStateV1 {
   /** The instant the sky was computed for. */
   at: string;
+  /** Visual phase on a fixed Europe/Berlin local-clock schedule. */
   phase: SkyPhaseV1;
-  /** Share of the regular session behind us, 0 at the open and 1 at the close, while the sun is up. */
+  /** Share of Berlin's visual day, from 07:00 to 19:00. */
   sunShare: number | null;
-  /** New York's wall clock, "MON 2:05 PM". */
+  /** Berlin's 24-hour wall clock, "MON 19:05". */
   clock: string;
+  clockZone: 'Europe/Berlin';
+  daylightLabels: { open: string; close: string };
+  /** US market state is independent of the Berlin visual phase. */
+  marketPhase: SkyMarketPhaseV1;
+  /** New York's wall clock, "MON 2:05 PM", for financial labels. */
+  marketClock: string;
   /** Still's closed-market window: the one open now, or the next. */
   closed: { active: boolean; startsAt: string; endsAt: string };
   /** Today's regular session, when today has one. */
@@ -77,9 +80,26 @@ const CLOCK_V1 = new Intl.DateTimeFormat('en-US', {
   minute: '2-digit',
 });
 
-/** "MON 2:05 PM": the New York wall clock, as the sky's caption prints it. */
+/** "MON 2:05 PM": the New York wall clock for financial labels. */
 export function newYorkClockV1(at: Date): string {
   return CLOCK_V1.format(at).replace(',', '').toUpperCase();
+}
+
+const BERLIN_CLOCK_V1 = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'Europe/Berlin', weekday: 'short', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
+});
+
+function berlinVisualTimeV1(now: Date): Pick<SkyStateV1, 'phase' | 'sunShare' | 'clock'> {
+  const parts = BERLIN_CLOCK_V1.formatToParts(now);
+  const part = (type: Intl.DateTimeFormatPartTypes) => parts.find(row => row.type === type)?.value ?? '';
+  const minute = Number(part('hour')) * 60 + Number(part('minute')) + Number(part('second')) / 60;
+  const day = minute >= 7 * 60 && minute < 19 * 60;
+  const dusk = minute >= 6 * 60 && minute < 20 * 60;
+  return {
+    phase: day ? 'day' : dusk ? 'dusk' : 'night',
+    sunShare: day ? (minute - 7 * 60) / (12 * 60) : null,
+    clock: `${part('weekday').toUpperCase()} ${part('hour')}:${part('minute')}`,
+  };
 }
 
 const MOMENT_V1 = new Intl.DateTimeFormat('en-US', {
@@ -102,15 +122,15 @@ export function skyStateV1(input: { now: Date; earnings?: readonly SkyEarningsV1
   const session = regularSessionV1(now);
   const t = now.getTime();
   const clouds = (input.earnings ?? []).filter((e) => Date.parse(e.startsAt) <= t && t < Date.parse(e.endsAt));
-  let phase: SkyPhaseV1 = 'dusk';
-  let sunShare: number | null = null;
-  if (closed.active) phase = 'night';
-  else if (session && Date.parse(session.openAt) <= t && t < Date.parse(session.closeAt)) {
-    phase = 'day';
-    sunShare = (t - Date.parse(session.openAt)) / (Date.parse(session.closeAt) - Date.parse(session.openAt));
-  }
+  const marketPhase: SkyMarketPhaseV1 = closed.active ? 'closed'
+    : session && Date.parse(session.openAt) <= t && t < Date.parse(session.closeAt) ? 'open'
+      : session && t < Date.parse(session.openAt) ? 'before_open' : 'after_hours';
+  const visual = berlinVisualTimeV1(now);
   const limitsRead = input.earnings !== undefined && input.earnings !== null;
-  return { at: now.toISOString(), phase, sunShare, clock: newYorkClockV1(now), closed, session, clouds, unread: [...(input.unread ?? [])], limitsRead };
+  return {
+    at: now.toISOString(), ...visual, clockZone: 'Europe/Berlin', daylightLabels: { open: '07:00', close: '19:00' },
+    marketPhase, marketClock: newYorkClockV1(now), closed, session, clouds, unread: [...(input.unread ?? [])], limitsRead,
+  };
 }
 
 export interface SkyCaptionV1 {
@@ -126,25 +146,24 @@ export function skyCaptionV1(sky: SkyStateV1): SkyCaptionV1 {
   const details = [
     sky.clouds.length === 0
       ? null
-      : `${listV1(reporting)} ${reporting.length === 1 ? 'reports' : 'report'} now: new loans against ${reporting.length === 1 ? 'it' : 'them'} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until ${newYorkMomentV1(maxIsoV1(sky.clouds.map((c) => c.endsAt)))}.`,
+      : `${listV1(reporting)} ${reporting.length === 1 ? 'reports' : 'report'} now: new loans against ${reporting.length === 1 ? 'it' : 'them'} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until ${newYorkMomentV1(maxIsoV1(sky.clouds.map((c) => c.endsAt)))} New York.`,
     sky.unread.length === 0
       ? null
       : `The earnings calendar could not be read just now: new loans against ${sky.unread.length > 3 ? 'stocks' : listV1(sky.unread)} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until it is.`,
   ].filter((line): line is string => line !== null);
   const earningsDetail = details.length ? details.join(' ') : null;
   const limits = !sky.limitsRead ? null : sky.clouds.length > 0 || sky.unread.length > 0 ? 'earnings limits' : 'full limits';
-  if (sky.phase === 'night') {
+  if (sky.marketPhase === 'closed') {
     return {
       headline: 'Wall Street is closed. Base is open.',
-      detail: `Until ${newYorkMomentV1(sky.closed.endsAt)} new loans against stocks count at ${STILL_SHARES_V1.closed}% of the protocol’s limit, not ${STILL_SHARES_V1.full}%. Loans you have are not touched.`,
+      detail: `Until ${newYorkMomentV1(sky.closed.endsAt)} New York, new loans against stocks count at ${STILL_SHARES_V1.closed}% of the protocol’s limit, not ${STILL_SHARES_V1.full}%. Loans you have are not touched.`,
     };
   }
-  if (sky.phase === 'day') {
+  if (sky.marketPhase === 'open') {
     return { headline: limits ? `Market open · ${limits}` : 'Market open', detail: earningsDetail };
   }
-  const beforeOpen = sky.session !== null && Date.parse(sky.at) < Date.parse(sky.session.openAt);
   return {
-    headline: `${beforeOpen ? 'Before the open' : 'After hours'}${limits ? ` · ${limits}` : ''}`,
+    headline: `${sky.marketPhase === 'before_open' ? 'Before the open' : 'After hours'}${limits ? ` · ${limits}` : ''}`,
     detail: earningsDetail,
   };
 }

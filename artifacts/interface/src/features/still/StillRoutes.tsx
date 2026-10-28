@@ -41,8 +41,10 @@ function useMyStill() {
   return {
     signedIn,
     booting,
+    wallet,
     report: mine.data ?? null,
     dividends: dividends.data ?? null,
+    dividendsReadState: dividends.error ? 'unavailable' as const : dividends.isPending ? 'loading' as const : dividends.data ? 'read' as const : 'not_loaded' as const,
     loading: signedIn && !mine.data && !mine.error,
     failed: mine.error ? mine.error.message : null,
     retry: () => void mine.refetch(),
@@ -185,7 +187,7 @@ export function StillAgentPage() {
   const still = useMyStill();
   return (
     <StillFrame tab="agent" sky={sky}>
-      <StillAgent model={{ sky, report: still.report, dividends: still.dividends, reading: still.loading, signedIn: still.signedIn, russian: false }} />
+      <StillAgent model={{ sky, report: still.report, dividends: still.dividends, dividendsReadState: still.dividendsReadState, reading: still.loading, signedIn: still.signedIn, walletIdentity: still.wallet, russian: false }} />
     </StillFrame>
   );
 }

@@ -40,7 +40,7 @@ export function StillMobile({ input }: { input: MobileInputV1 }) {
         ) : null}
         {layout.limit ? (
           <text className="sm-room-label" x={layout.limit.x + layout.limit.side / 2} y={layout.limit.y + layout.limit.side + 16}>
-            {layout.loan && layout.loan.side < 30 ? `owed ${moneyLabelV1(owed)} · ` : ''}room {moneyLabelV1(room)}
+            {layout.loan && layout.loan.side < 30 ? `owed ${moneyLabelV1(owed)} · ` : ''}model {moneyLabelV1(room)}
           </text>
         ) : null}
         {layout.shapes.map((shape) => (

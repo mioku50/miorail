@@ -3,6 +3,7 @@ import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/divi
 import { formatCents } from '@mioagent/still-engine/format';
 
 import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState';
+import { dividendMoneyV1 } from './dividendMoney';
 
 // ---------------------------------------------------------------------------
 // Home, in words and shapes, from one Mirror report.
@@ -82,16 +83,25 @@ function stateWordV1(state: HomeStateV1): string {
 }
 
 function stateLineV1(report: MirrorReport, state: HomeStateV1, venue: MirrorReport['venues'][number] | null): string {
+  const debts = report.venues.filter(v => v.debtCents !== null && v.debtCents !== '0');
+  const unreadDebt = report.venues.length === 0 || report.venues.some(v => v.debtCents === null);
+  const unreadSafety = debts.some(v => v.safety === null);
+  const uncertainty = [unreadDebt ? 'Debt could not be read in every reviewed market.' : '',
+    unreadSafety ? 'Some recorded loans have unread liquidation safety.' : ''].filter(Boolean).join(' ');
   if (!venue || !venue.safety) {
+    if (uncertainty) {
+      const knownDebt = debts.reduce((sum, v) => sum + BigInt(v.debtCents!), BigInt(0));
+      return `${knownDebt > BigInt(0) ? `Known debt: ${formatCents(knownDebt)}. ` : ''}${uncertainty}`;
+    }
     const holding = report.assets.some((line) => line.valueCents !== null && line.valueCents !== '0');
     return holding ? 'Nothing borrowed. Your assets hang free.' : 'Nothing here to hold up a loan yet.';
   }
-  if (state === 'liquidation') return 'The loan outweighs its collateral: liquidation can start now.';
+  if (state === 'liquidation') return `The loan outweighs its collateral: liquidation can start now.${uncertainty ? ` ${uncertainty}` : ''}`;
   const pledged = report.assets.filter((line) => line.venue === venue.venue && line.pledged !== null && line.pledged.raw !== '0');
   const names = pledged.map((line) => line.name);
   const subject = names.length === 1 ? names[0]! : 'Your collateral';
   const together = names.length === 1 ? '' : ' together';
-  return `${subject} can fall ${Math.floor(venue.safety.marginBps / 100)}%${together} before the weight wins.`;
+  return `${subject} can fall ${Math.floor(venue.safety.marginBps / 100)}%${together} before the weight wins.${uncertainty ? ` ${uncertainty}` : ''}`;
 }
 
 function venueNameV1(venue: MirrorReport['venues'][number]): string {
@@ -105,6 +115,8 @@ export function homeViewV1(input: {
 }): HomeViewV1 {
   const { report, sky } = input;
   const { state, venue } = worstV1(report);
+  const debtUnread = report.venues.length === 0 || report.venues.some(v => v.debtCents === null);
+  const safetyUnread = report.venues.some(v => v.debtCents !== null && v.debtCents !== '0' && v.safety === null);
 
   const lines = report.assets.filter((line) => line.valueCents !== null && line.valueCents !== '0');
   const sorted = [...lines].sort((a, b) => Number(BigInt(b.valueCents!) - BigInt(a.valueCents!)));
@@ -140,7 +152,7 @@ export function homeViewV1(input: {
     const detail = debts.length === 1 && rated.length === 1
       ? `${(rated[0]!.borrowRateBps! / 100).toFixed(2)}% a year on ${venueNameV1(rated[0]!)}`
       : `on ${[...new Set(debts.map(venueNameV1))].join(' and ')}`;
-    owed = { amount: `Owed ${formatCents(owedCents)}`, detail };
+    owed = { amount: `${debtUnread ? 'Known debt' : 'Owed'} ${formatCents(owedCents)}`, detail };
   }
 
   const comingUp: ComingUpV1[] = [];
@@ -171,19 +183,20 @@ export function homeViewV1(input: {
   }
   for (const holding of input.dividends?.holdings ?? []) {
     const next = holding.upcoming[0];
-    if (!next || next.usd === null) continue;
+    if (!next) continue;
     const estimate = next.kind === 'estimate';
+    const amount = dividendMoneyV1(next.usd);
     comingUp.push({
       when: `${next.payDateApproximate ? '≈ ' : ''}${dayV1(next.payDate)}`.toUpperCase(),
       icon: 'dividend',
-      text: `${holding.company} dividend · ${estimate ? '≈ ' : ''}$${Number(next.usd).toFixed(2)} as more ${holding.tokenSymbol}${estimate ? ', an estimate' : ''}`,
+      text: `${holding.company} dividend · ${amount ? `${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount} as more ${holding.tokenSymbol}` : 'amount not read'}${estimate ? ', an estimate' : ''}`,
     });
   }
 
   const failed = [...new Set([...report.coverage.failed.map((f) => f.what)])];
   return {
     state,
-    stateWord: stateWordV1(state),
+    stateWord: (debtUnread || safetyUnread) && (state === 'empty' || state === 'calm') ? 'Not fully read.' : stateWordV1(state),
     stateLine: stateLineV1(report, state, venue),
     available: availableCents === null ? null : { ...splitCentsV1(availableCents), atLeast: !report.headline.complete },
     owed,

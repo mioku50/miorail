@@ -3,6 +3,7 @@ import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/divi
 import { formatCents } from '@mioagent/still-engine/format';
 
 import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState';
+import { dividendMoneyV1 } from './dividendMoney';
 
 // ---------------------------------------------------------------------------
 // The Agent, first version: questions about your own money, answered from the
@@ -16,6 +17,7 @@ import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState';
 // ---------------------------------------------------------------------------
 
 export type AgentTopicV1 = 'borrow' | 'safety' | 'closed' | 'dividends' | 'holdings';
+export type DividendReadStateV1 = 'not_loaded' | 'loading' | 'unavailable' | 'read';
 
 export interface AgentAnswerV1 {
   topic: AgentTopicV1 | null;
@@ -53,6 +55,8 @@ export function agentAnswerV1(input: {
   report: MirrorReport | null;
   sky: SkyStateV1;
   dividends?: DividendWalletResponseV1 | null;
+  dividendsReadState?: DividendReadStateV1;
+  signedIn?: boolean;
 }): AgentAnswerV1 {
   const ru = isRussianV1(input.question);
   const topic = agentTopicV1(input.question);
@@ -89,7 +93,9 @@ export function agentAnswerV1(input: {
   if (!report) {
     return {
       topic,
-      text: ru ? 'Для этого нужен ваш кошелёк: войдите, и я прочитаю его на Base.' : 'That needs your wallet: sign in and I will read it on Base.',
+      text: input.signedIn
+        ? ru ? 'Данные вашего кошелька ещё не прочитаны. Пока нельзя сделать вывод о балансе или займах.' : 'Your wallet report has not been read yet. No balance or loan conclusion is available.'
+        : ru ? 'Для этого нужен ваш кошелёк: войдите, и я прочитаю его на Base.' : 'That needs your wallet: sign in and I will read it on Base.',
       sources: [],
     };
   }
@@ -99,66 +105,91 @@ export function agentAnswerV1(input: {
     const debts = report.venues.filter((v) => v.debtCents !== null && v.debtCents !== '0');
     const owed = debts.reduce((sum, v) => sum + BigInt(v.debtCents!), BigInt(0));
     if (available === null) {
-      return { topic, text: ru ? 'Сейчас не удалось прочитать, сколько можно взять. Это наш сбой, а не факт о вашем кошельке.' : 'What you can spend could not be read just now. That is our failure, not a fact about your wallet.', sources: read };
+      return { topic, text: ru ? 'Сейчас не удалось прочитать расчётный запас для займа. Это наш сбой, а не факт о вашем кошельке.' : 'Your modelled borrowing room could not be read just now. That is our failure, not a fact about your wallet.', sources: read };
     }
     const floor = report.headline.complete ? '' : ru ? 'не меньше ' : 'at least ';
     const weekday = report.headline.weekdayAvailableCents;
     const parts = [
-      ru ? `Сейчас ${floor}${formatCents(available)} без продажи.` : `Now ${floor}${formatCents(available)} without selling.`,
+      ru ? `Расчётный запас для займа — ${floor}${formatCents(available)}.` : `Modelled borrowing room: ${floor}${formatCents(available)}.`,
       sky.closed.active && weekday !== null
         ? ru ? `На открытом рынке было бы ${formatCents(weekday)}: до ${newYorkMomentV1(sky.closed.endsAt)} акции считаются по ${STILL_SHARES_V1.closed}%.` : `On an open market it would be ${formatCents(weekday)}: until ${newYorkMomentV1(sky.closed.endsAt)} stocks count at ${STILL_SHARES_V1.closed}%.`
         : '',
       owed > BigInt(0) ? (ru ? `Ваш долг ${formatCents(owed)} уже учтён.` : `Your ${formatCents(owed)} owed is already counted.`) : '',
+      ru
+        ? 'Это расчёт, а не доступный к подписанию займ. Get money сейчас поддерживает cbBTC и WETH через Morpho: точный текущий лимит нужно проверить там. Займы под акции здесь пока не доступны.'
+        : 'This is a modelled amount, not a loan ready to sign. Get money currently supports cbBTC and WETH through Morpho; check the live limit for your exact amount there. Stock-backed borrowing is not available here yet.',
     ];
     return { topic, text: parts.filter(Boolean).join(' '), sources: [...terms, ...read] };
   }
 
   if (topic === 'safety') {
-    const loans = report.venues.filter((v) => v.debtCents !== null && v.debtCents !== '0' && v.safety);
-    if (loans.length === 0) {
-      return { topic, text: ru ? 'Займов нет: ничего не висит справа, ликвидировать нечего.' : 'No loans: nothing hangs on the right, so there is nothing to liquidate.', sources: read };
+    const loans = report.venues.filter((v) => v.debtCents !== null && v.debtCents !== '0');
+    const unreadDebt = report.venues.filter((v) => v.debtCents === null);
+    if (loans.length === 0 && unreadDebt.length === 0 && report.venues.length > 0) {
+      return { topic, text: ru ? 'На этом блоке в проверенных рынках долг не зафиксирован.' : 'No debt was recorded in the reviewed venues at this block.', sources: read };
     }
     const sentences = loans.map((v) => {
+      const venue = v.venue === 'aave-v4' ? 'Aave' : 'Morpho';
+      if (!v.safety) return ru
+        ? `Займ ${formatCents(v.debtCents!)} на ${venue} зафиксирован, но его запас до ликвидации прочитать не удалось. Вывода о безопасности пока нет.`
+        : `Your ${formatCents(v.debtCents!)} loan on ${venue} is recorded, but its liquidation safety could not be read. No safety conclusion is available.`;
       const margin = Math.floor(v.safety!.marginBps / 100);
       const prices = v.liquidationPrices
         .filter((p) => !p.unreachable && p.priceCents !== null)
         .map((p) => `${report.assets.find((l) => l.asset === p.asset)?.name ?? p.asset} ${ru ? 'ниже' : 'below'} ${formatCents(p.priceCents!)}`);
-      const venue = v.venue === 'aave-v4' ? 'Aave' : 'Morpho';
+      if (v.safety.state === 'liquidation') return ru
+        ? `Протокол показывает, что займ ${formatCents(v.debtCents!)} на ${venue} уже может быть ликвидирован.`
+        : `The protocol reading marks your ${formatCents(v.debtCents!)} loan on ${venue} as liquidatable now.`;
       return ru
         ? `Займ ${formatCents(v.debtCents!)} на ${venue}: цены могут вместе упасть на ${margin}%, прежде чем начнётся ликвидация${prices.length ? `. Отдельно: ${prices.join(', ')}` : ''}.`
         : `Your ${formatCents(v.debtCents!)} loan on ${venue}: prices can fall ${margin}% together before liquidation can start${prices.length ? `. On its own: ${prices.join(', ')}` : ''}.`;
     });
+    if (unreadDebt.length > 0 || report.venues.length === 0) sentences.push(ru
+      ? `Долг ${unreadDebt.length ? `на ${unreadDebt.map(v => v.label).join(', ')}` : 'на проверяемых рынках'} прочитать не удалось. Это не означает, что займов нет.`
+      : `Debt ${unreadDebt.length ? `at ${unreadDebt.map(v => v.label).join(', ')}` : 'in the reviewed venues'} could not be read. This does not establish that no loan exists.`);
     return { topic, text: sentences.join(' '), sources: read };
   }
 
   if (topic === 'dividends') {
-    const next = (input.dividends?.holdings ?? [])
+    const state = input.dividendsReadState ?? (input.dividends ? 'read' : 'not_loaded');
+    if (state !== 'read' || !input.dividends) {
+      return {
+        topic,
+        text: state === 'loading'
+          ? ru ? 'Календарь дивидендов ещё загружается. Пока неизвестно, есть ли предстоящая выплата.' : 'Your dividend calendar is still loading. Whether a payment is ahead is not known yet.'
+          : state === 'unavailable'
+            ? ru ? 'Данные о дивидендах сейчас не удалось прочитать. Это не означает, что выплат нет.' : 'Your dividend data could not be read just now. That does not mean there are no payments.'
+            : ru ? 'Данные о дивидендах ещё не загружены. Пока неизвестно, есть ли предстоящая выплата.' : 'Your dividend data has not been loaded yet. Whether a payment is ahead is not known.',
+        sources: [],
+      };
+    }
+    const next = input.dividends.holdings
       .flatMap((h) => h.upcoming.slice(0, 1).map((event) => ({ h, event })))
       .sort((a, b) => a.event.payDate.localeCompare(b.event.payDate))[0];
     if (!next) {
       return {
         topic,
-        text: ru ? 'Впереди дивидендов по вашим акциям в календаре нет.' : 'No dividend ahead for the stocks you hold, in the calendar.',
+        text: ru ? 'В загруженном календаре нет предстоящей выплаты по акциям, которые он охватывает в вашем кошельке.' : 'The loaded calendar lists no upcoming dividend for the stocks it covers in your wallet.',
         sources: [ru ? 'КАЛЕНДАРЬ · дивиденды Miorail' : 'CALENDAR · Miorail dividends'],
       };
     }
     const estimate = next.event.kind === 'estimate';
-    const amount = next.event.usd === null ? null : `$${Number(next.event.usd).toFixed(2)}`;
+    const amount = dividendMoneyV1(next.event.usd);
     return {
       topic,
       text: ru
-        ? `${next.h.company}: выплата ${next.event.payDateApproximate ? 'примерно ' : ''}${next.event.payDate}${amount ? `, ${estimate ? 'около ' : ''}${amount} в виде новых ${next.h.tokenSymbol}` : ''}. Дивиденд получает тот, кто держит токен в момент конвертации${estimate ? '; сумма — оценка' : ''}.`
-        : `${next.h.company}: paid ${next.event.payDateApproximate ? 'around ' : ''}${next.event.payDate}${amount ? `, ${estimate ? 'about ' : ''}${amount} as more ${next.h.tokenSymbol}` : ''}. A dividend reaches whoever holds the token when it converts${estimate ? '; the amount is an estimate' : ''}.`,
+        ? `${next.h.company}: выплата ${next.event.payDateApproximate ? 'примерно ' : ''}${next.event.payDate}${amount ? `, ${estimate && !amount.startsWith('<') ? 'около ' : ''}${amount} в виде новых ${next.h.tokenSymbol}` : ', сумма не прочитана'}. Дивиденд получает тот, кто держит токен в момент конвертации${estimate ? '; сумма — оценка' : ''}.`
+        : `${next.h.company}: paid ${next.event.payDateApproximate ? 'around ' : ''}${next.event.payDate}${amount ? `, ${estimate && !amount.startsWith('<') ? 'about ' : ''}${amount} as more ${next.h.tokenSymbol}` : ', amount not read'}. A dividend reaches whoever holds the token when it converts${estimate ? '; the amount is an estimate' : ''}.`,
       sources: [ru ? 'КАЛЕНДАРЬ · дивиденды Miorail, из заявлений компаний' : 'CALENDAR · Miorail dividends, from the companies’ own releases'],
     };
   }
 
-  const held = report.assets.filter((l) => l.valueCents !== null && l.valueCents !== '0');
+  const held = report.assets.filter((line) => [line.wallet, line.pledged].some(amount => amount !== null && BigInt(amount.raw) > BigInt(0)));
   return {
     topic,
     text: held.length === 0
-      ? ru ? 'Здесь нет того, под что Still даёт займ: акций Coinbase на Aave V4, cbBTC или ETH.' : 'Nothing here Still lends against: no Coinbase stocks on Aave V4, no cbBTC and no ETH.'
-      : `${ru ? 'Под займ считаются' : 'Still counts'}: ${held.map((l) => `${l.name} ${formatCents(l.valueCents!)}`).join(', ')}.`,
+      ? ru ? 'В проверенном наборе Still не установлены активы этого кошелька: акции Coinbase, cbBTC или ETH.' : 'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC or ETH.'
+      : `${ru ? 'Прочитанные активы' : 'Reviewed holdings'}: ${held.map((l) => `${l.name} ${l.valueCents === null ? ru ? '(стоимость не прочитана)' : '(value not read)' : formatCents(l.valueCents)}`).join(', ')}.`,
     sources: read,
   };
 }

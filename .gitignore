@@ -32,3 +32,6 @@ agent_tasks.md
 verify_ui.py
 dummy-plan.txt
 frontend-screenshot.png
+
+# Design notes are retained locally and in the private deployment repository.
+/docs/STILL.md

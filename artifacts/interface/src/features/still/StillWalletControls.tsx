@@ -90,7 +90,7 @@ export function StillWalletControls() {
   return (
     <div className="still-wallet-controls">
       <details ref={menu}>
-        <summary className="still-wallet-trigger" aria-label={`Wallet account ${view.label}`}>
+        <summary className="still-wallet-trigger" aria-label={`Wallet account ${view.label}: ${view.status}`}>
           <WalletIcon />
           <span>{view.label}</span>
           <span className="still-wallet-caption">{view.status}</span>

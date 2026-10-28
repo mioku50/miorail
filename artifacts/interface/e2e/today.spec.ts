@@ -52,7 +52,7 @@ async function install(page: Page, signedIn: boolean, failPortfolio = false) {
 
 test('the share action keeps readable text in the Sky night palette', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.clock.setFixedTime(new Date('2026-10-31T15:00:00Z'));
+  await page.clock.setFixedTime(new Date('2026-10-31T20:00:00Z')); // Berlin21:00 visual night
   const { writes } = await install(page, true);
   await page.goto('/today');
   await expect(page.locator('.still-frame')).toHaveAttribute('data-sky', 'night');

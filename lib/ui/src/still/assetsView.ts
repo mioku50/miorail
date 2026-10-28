@@ -1,10 +1,11 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
+import { dividendMoneyV1, positiveDividendMoneyV1, sumDividendMoneyV1 } from './dividendMoney';
 
 
 // ---------------------------------------------------------------------------
-// Assets: what the wallet holds that Still can lend against, and its loans.
+// Assets: the wallet's reviewed holdings, modelled capacity and recorded loans.
 //
 // From the Mirror report (the chain at one block) and Miorail's dividend
 // calendar for this wallet. A dividend reaches whoever holds the token when it
@@ -39,6 +40,8 @@ export interface AssetsViewV1 {
   count: number;
   rows: AssetRowV1[];
   loans: LoanRowV1[];
+  /** Missing venue debt reads cannot establish a count of zero loans. */
+  loansReadComplete: boolean;
   receivedDividends: string | null;
 }
 
@@ -49,12 +52,6 @@ export function tokenTextV1(raw: bigint, decimals: number): string {
 
 function venueNameV1(venue: string): string {
   return venue === 'aave-v4' ? 'Aave' : 'Morpho';
-}
-
-/** The dividend source keeps four decimal places; a positive fraction of a cent is not zero. */
-function dividendMoneyV1(value: string | number): string {
-  const usd = Number(value);
-  return usd > 0 && usd < 0.01 ? '<$0.01' : `$${usd.toFixed(2)}`;
 }
 
 export function assetsViewV1(input: { report: MirrorReport; dividends?: DividendWalletResponseV1 | null }): AssetsViewV1 {
@@ -79,19 +76,19 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
         text: wallet > BigInt(0) ? ` · ${tokenTextV1(wallet, decimals)} free` : '',
       });
     } else if (line.capacityCents !== null && line.capacityCents !== '0') {
-      lines.push({ text: `Free · could carry up to ${formatCents(line.capacityCents)} on ${venueNameV1(line.venue)}` });
+      lines.push({ text: `Modelled room · up to ${formatCents(line.capacityCents)} on ${venueNameV1(line.venue)}` });
     } else if (line.limits.length > 0) {
       lines.push({ text: 'Not counted now: the venue limits it' });
     }
     const dividend = input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase());
     if (dividend) {
-      const received = dividend.received.reduce((sum, event) => sum + Number(event.usd ?? 0), 0);
-      if (received > 0) lines.push({ text: `Dividends reinvested so far: ${dividendMoneyV1(received)}` });
+      const received = sumDividendMoneyV1(dividend.received.map(event => event.usd));
+      if (received && received !== '$0.00') lines.push({ text: `Dividends reinvested so far: ${received}` });
       const next = dividend.upcoming[0];
       if (next && next.usd !== null) {
         const estimate = next.kind === 'estimate';
         const amount = dividendMoneyV1(next.usd);
-        lines.push({ text: `Dividend ahead: ${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
+        if (amount) lines.push({ text: `Dividend ahead: ${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
       }
     }
     rows.push({
@@ -118,7 +115,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
         const name = report.assets.find((l) => l.asset === p.asset)?.name ?? p.asset;
         return p.unreachable ? `${name}: no price of it alone liquidates this loan` : `${name} below ${formatCents(p.priceCents!)}, if only it moved`;
       }),
-      more: v.availableCents === null ? null : `Still could lend ${formatCents(v.availableCents)} more here.`,
+      more: v.availableCents === null ? null : `Modelled additional room: ${formatCents(v.availableCents)}. A live loan limit has not been checked.`,
     }));
 
   return {
@@ -126,7 +123,8 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     count: rows.length,
     rows,
     loans,
-    receivedDividends: input.dividends && Number(input.dividends.receivedUsd) > 0 ? dividendMoneyV1(input.dividends.receivedUsd) : null,
+    loansReadComplete: report.venues.length > 0 && report.venues.every(venue => venue.debtCents !== null),
+    receivedDividends: positiveDividendMoneyV1(input.dividends?.receivedUsd),
   };
 }
 

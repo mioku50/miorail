@@ -47,16 +47,16 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
             ) : (
               <div className="still-sub">Total not read this time.</div>
             )}
-            <div className="still-note" style={{ marginTop: 6 }}>{view.count} {view.count === 1 ? 'holding' : 'holdings'} Still can lend against · prices are each venue’s own</div>
+            <div className="still-note" style={{ marginTop: 6 }}>{view.count} reviewed {view.count === 1 ? 'holding' : 'holdings'} · prices are each venue’s own</div>
           </div>
           <div className="still-tabs" role="tablist" aria-label="Assets">
             <button type="button" role="tab" aria-selected={tab === 'holdings'} onClick={() => setTab('holdings')}>Holdings</button>
-            <button type="button" role="tab" aria-selected={tab === 'loans'} onClick={() => setTab('loans')}>Loans · {view.loans.length}</button>
+            <button type="button" role="tab" aria-selected={tab === 'loans'} onClick={() => setTab('loans')}>Loans · {view.loansReadComplete ? view.loans.length : view.loans.length > 0 ? `${view.loans.length}+` : 'Not read'}</button>
           </div>
           {tab === 'holdings' ? (
             <div className="still-assets-layout">
               <div className="still-assets-primary">
-                {view.rows.length === 0 ? <p className="still-section still-note">Nothing here Still can lend against: no Coinbase stocks on Aave V4, no cbBTC and no ETH.</p> : null}
+                {view.rows.length === 0 ? <p className="still-section still-note">No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC or ETH.</p> : null}
                 <ul className="still-rows" role="tabpanel" aria-label="Holdings">
                   {view.rows.map((row) => (
                     <li key={row.id} className="still-row">
@@ -85,7 +85,8 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
             </div>
           ) : (
             <ul className="still-rows" role="tabpanel" aria-label="Loans">
-              {view.loans.length === 0 ? <li className="still-note" style={{ paddingTop: 12 }}>No loans. Nothing hangs on the right.</li> : null}
+              {!view.loansReadComplete ? <li className="still-note" style={{ paddingTop: 12 }}>Some venue debts could not be read. This does not establish that no loan exists.</li>
+                : view.loans.length === 0 ? <li className="still-note" style={{ paddingTop: 12 }}>No debt was recorded in the reviewed venues at this block.</li> : null}
               {view.loans.map((loan) => (
                 <li key={loan.id} className="still-row" style={{ gridTemplateColumns: 'minmax(0, 1fr) auto' }}>
                   <div style={{ minWidth: 0 }}>

@@ -83,7 +83,7 @@ test('a session without a browser wallet is labelled correctly and can sign out'
   await page.goto('/more');
   const bar = page.getByRole('banner', { name: 'Wallet and account' });
   await bar.locator('summary').click();
-  await expect(bar.getByText('Wallet disconnected', { exact: true }).last()).toBeVisible();
+  await expect(bar.getByText('Signed in · Wallet disconnected', { exact: true }).last()).toBeVisible();
   await expect(bar.getByText('Your account is still signed in, but no wallet is connected in this browser.', { exact: true })).toBeVisible();
   await expect(bar.getByRole('link', { name: 'Connect wallet', exact: true })).toHaveAttribute('href', '/signin?next=%2Fmore');
   await bar.getByRole('button', { name: 'Sign out', exact: true }).click();
@@ -102,10 +102,10 @@ test('sign out keeps the browser connection, then Switch wallet opens the existi
   await expect(page).toHaveURL(/\/signin\?next=%2Fmore$/);
   await page.getByRole('button', { name: 'Browser wallet', exact: false }).click();
   await expect(page).toHaveURL(/\/more$/);
-  await expect(bar.getByText('Signed in on Base', { exact: true }).first()).toBeVisible();
+  await expect(bar.getByText('Connected · Signed in', { exact: true }).first()).toBeVisible();
   await bar.locator('summary').click();
   await bar.getByRole('button', { name: 'Sign out', exact: true }).click();
-  await expect(bar.getByText('Sign in required', { exact: true }).first()).toBeVisible();
+  await expect(bar.getByText('Connected · Not signed in', { exact: true }).first()).toBeVisible();
   await bar.locator('summary').click();
   await expect(bar.getByRole('button', { name: 'Sign in with this wallet', exact: true })).toBeVisible();
   await expect(bar.getByText(A, { exact: true })).toBeVisible();

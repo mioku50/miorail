@@ -12,9 +12,9 @@ void React;
 // else Miorail does is under More: still a page with its own path, one tap
 // away. A bar at the bottom on a phone, a rail on the left on a desk.
 //
-// The palette is the market's: night while Still's closed-market limits hold,
-// day otherwise. The clock re-reads itself every half minute, so the frame
-// turns to night at 20:00 New York without a reload.
+// The palette follows Europe/Berlin's local day and night, including DST.
+// The market badge and borrowing windows retain New York's calendar. The
+// clock re-reads every half minute without a reload.
 // ---------------------------------------------------------------------------
 
 export type StillTabV1 = 'home' | 'assets' | 'agent' | 'stocks' | 'more';
@@ -113,26 +113,26 @@ export function StillGlyph({ size = 1 }: { size?: number }) {
 
 /** The market clock, small: what the sky says, for pages without the full sky. */
 export function StillClockPill({ sky }: { sky: SkyStateV1 }) {
-  if (sky.phase === 'night') {
+  if (sky.marketPhase === 'closed') {
     return (
-      <span className="still-pill">
+      <span className="still-pill" title="US market status · New York time">
         <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 14.5A8 8 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5z" fill="#F6F1D3" /></svg>
         Market closed
       </span>
     );
   }
-  if (sky.phase === 'day') {
+  if (sky.marketPhase === 'open') {
     return (
-      <span className="still-pill">
+      <span className="still-pill" title="US market status · New York time">
         <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8" fill="#FFD36B" /><circle cx="12" cy="12" r="5.5" fill="#FFB703" /></svg>
         Market open
       </span>
     );
   }
   return (
-    <span className="still-pill">
+    <span className="still-pill" title="US market status · New York time">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15h18M6 19h12" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" /><path d="M8 15a4 4 0 0 1 8 0" fill="none" stroke="#FFB703" strokeWidth="1.8" /></svg>
-      After hours
+      {sky.marketPhase === 'before_open' ? 'Before the open' : 'After hours'}
     </span>
   );
 }
@@ -163,7 +163,7 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
     };
   }, [sky.phase]);
   return (
-    <div className={`still still-frame${tab === 'home' ? ' is-home' : ''}${walletControls ? ' has-wallet-controls' : ''}`} data-sky={sky.phase === 'night' ? 'night' : 'day'} data-market-phase={sky.phase}>
+    <div className={`still still-frame${tab === 'home' ? ' is-home' : ''}${walletControls ? ' has-wallet-controls' : ''}`} data-sky={sky.phase === 'night' ? 'night' : 'day'} data-visual-phase={sky.phase} data-market-phase={sky.marketPhase}>
       <nav className="still-nav" aria-label="Main">
         <StillLink href="/" className="still-brand" aria-label="Still home">
           <StillGlyph />

@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { computeMirror } from '../../../lib/still-engine/src/mirror.js';
+import type { MirrorReport } from '../../../lib/still-engine/src/report.js';
 import { stillTerms } from '../../../lib/still-engine/src/terms.js';
 import { EXAMPLE, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
 
@@ -8,8 +9,8 @@ import { EXAMPLE, calendar, snapshot, universe } from '../../../lib/still-engine
 // is intercepted; nothing signs and nothing is sent anywhere.
 
 const WALLET = '0x1111111111111111111111111111111111111111';
-const MONDAY = new Date('2026-10-26T18:05:00Z'); // 2:05 PM in New York, the session open
-const SATURDAY = new Date('2026-10-31T15:00:00Z'); // 11:00 AM in New York, Wall Street closed
+const MONDAY = new Date('2026-10-26T15:05:00Z'); // Berlin16:05 day; New York11:05, US session open
+const SATURDAY = new Date('2026-10-31T20:00:00Z'); // Berlin21:00 night; US weekend window active
 
 function report(address: string, name: string | null = null, earningsCalendar = calendar()) {
   return JSON.parse(JSON.stringify(computeMirror({
@@ -74,7 +75,7 @@ for (const width of [390, 1280]) {
     await expect(page.getByText('nobody.base.eth does not point to a wallet.', { exact: true })).toBeVisible();
     await field.fill('0x2222222222222222222222222222222222222222');
     await page.getByRole('button', { name: 'Check', exact: true }).click();
-    await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
+    await expect(page.getByText('0x2222…2222 · modelled borrowing room', { exact: true })).toBeVisible();
     await expect(page.locator('.still-big .d').first()).toHaveText('$784');
     await expect(page.getByText('Not offered to US persons.', { exact: false })).toBeVisible();
     await noSidewaysScroll(page);
@@ -89,7 +90,7 @@ for (const width of [390, 1280]) {
     await page.goto('/');
     await expect(page.getByRole('heading', { name: 'In balance.', exact: true })).toBeVisible();
     await expect(page.getByText('NVIDIA can fall 52% before the weight wins.', { exact: true })).toBeVisible();
-    await expect(page.getByLabel('$784.62 available', { exact: true })).toBeVisible();
+    await expect(page.getByLabel('$784.62 modelled borrowing room', { exact: true })).toBeVisible();
     await expect(page.getByText('Owed $240.17', { exact: true })).toBeVisible();
     await expect(page.getByRole('img', { name: /NVDA.* on the left hold up a \$240\.17 loan on the right/ })).toBeVisible();
     await expect(page.getByText('≈ NOV 12 Apple dividend · ≈ $0.19 as more AAPLc, an estimate', { exact: true })).toBeVisible();
@@ -111,7 +112,8 @@ for (const width of [390, 1280]) {
     await nav.getByRole('link', { name: 'Agent', exact: true }).click();
     await expect(page).toHaveURL(/\/agent$/);
     await page.getByRole('button', { name: 'How much can I spend without selling?', exact: true }).click();
-    await expect(page.getByText('Now $784.62 without selling. Your $240.17 owed is already counted.', { exact: true })).toBeVisible();
+    await expect(page.getByText(/Modelled borrowing room: \$784\.62\./)).toBeVisible();
+    await expect(page.getByText(/Stock-backed borrowing is not available here yet\./)).toBeVisible();
     await page.getByLabel('A question about your money').fill('Когда выходные лимиты?');
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
     await expect(page.getByText(/^С Fri 8 PM до Sun 8 PM по Нью-Йорку/)).toBeVisible();
@@ -183,7 +185,8 @@ test.describe('Agent language', () => {
     await expect(question).toHaveAttribute('placeholder', 'Ask about your money');
     await question.fill('Сколько я могу взять?');
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
-    await expect(page.getByText('Сейчас $784.62 без продажи. Ваш долг $240.17 уже учтён.', { exact: true })).toBeVisible();
+    await expect(page.locator('.still-bubble').last()).toContainText('Расчётный запас для займа — $784.62.');
+    await expect(page.locator('.still-bubble').last()).toContainText('Займы под акции здесь пока не доступны.');
     await expect(page.getByRole('button', { name: 'How much can I spend without selling?', exact: true })).toBeVisible();
     await expect(question).toHaveAttribute('placeholder', 'Ask about your money');
     expect(reads.filter(path => path === '/api/still/mine')).toHaveLength(1);
@@ -191,26 +194,49 @@ test.describe('Agent language', () => {
   });
 });
 
-test('while Wall Street is closed the frame is night, and the sky says until when', async ({ page }) => {
+test('Berlin night keeps the US closed-market caption and its financial deadline', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await install(page, false, SATURDAY);
   await page.goto('/');
   await expect(page.getByText('Wall Street is closed. Base is open.', { exact: true })).toBeVisible();
-  await expect(page.getByText(/^Until Sun 8 PM new loans against stocks count at 40% of the protocol’s limit, not 50%\./)).toBeVisible();
+  await expect(page.getByText(/^Until Sun 8 PM New York, new loans against stocks count at 40% of the protocol’s limit, not 50%\./)).toBeVisible();
   await expect(page.locator('.still-frame')).toHaveAttribute('data-sky', 'night');
   expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
 });
 
 test('after hours the sky is dark, so the name and the mobile over it are drawn light', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await install(page, true, new Date('2026-10-26T21:48:00Z')); // 5:48 PM in New York
+  await install(page, true, new Date('2026-10-26T21:48:00Z')); // Berlin22:48 night; New York17:48 after hours
   await page.goto('/');
   await expect(page.getByText('After hours · full limits', { exact: true })).toBeVisible();
-  await expect(page.locator('.still-hero')).toHaveAttribute('data-phase', 'dusk');
+  await expect(page.locator('.still-hero')).toHaveAttribute('data-phase', 'night');
   await expect(page.locator('.still-wallet-brand')).toBeVisible();
   expect(await page.locator('.still-wallet-brand').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(238, 241, 255)');
   expect(await page.locator('.still-hero .still-brand').evaluate((e) => getComputedStyle(e).color)).toBe('rgb(238, 241, 255)');
   expect(await page.locator('.still-hero .sm-wire').first().evaluate((e) => getComputedStyle(e).stroke)).toBe('rgb(238, 241, 255)');
+});
+
+test('a Berlin weekend afternoon stays light while the US market and stock window are closed', async ({ page }) => {
+  const { writes } = await install(page, false, new Date('2026-10-31T15:00:00Z'));
+  await page.goto('/');
+  await expect(page.locator('.still-frame')).toHaveAttribute('data-sky', 'day');
+  await expect(page.locator('.still-frame')).toHaveAttribute('data-market-phase', 'closed');
+  await expect(page.locator('.still-hero')).toHaveAttribute('data-phase', 'day');
+  await expect(page.getByText('BERLIN · SAT 16:00', { exact: true })).toBeVisible();
+  await expect(page.getByText('Wall Street is closed. Base is open.', { exact: true })).toBeVisible();
+  expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('light');
+  expect(writes).toEqual([]);
+});
+
+test('Berlin night does not turn an open US session into a closed-market badge', async ({ page }) => {
+  const { writes } = await install(page, true, new Date('2026-10-28T19:30:00Z'));
+  await page.goto('/assets');
+  await expect(page.locator('.still-frame')).toHaveAttribute('data-sky', 'night');
+  await expect(page.locator('.still-frame')).toHaveAttribute('data-market-phase', 'open');
+  await expect(page.getByText('Market open', { exact: true })).toBeVisible();
+  await expect(page.getByText('Market closed', { exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => document.documentElement.dataset.theme)).toBe('dark');
+  expect(writes).toEqual([]);
 });
 
 test('a link that carried a question to "/" still lands on Stocks', async ({ page }) => {
@@ -238,17 +264,19 @@ for (const width of [390, 1366, 1920]) {
     await page.setViewportSize({ width, height });
     const { writes } = await install(page, true, MONDAY);
     await page.goto('/');
-    const money = page.getByLabel('$784.62 available', { exact: true });
+    const money = page.getByLabel('$784.62 modelled borrowing room', { exact: true });
     await expect(money).toBeVisible();
-    const moneyBox = await money.boundingBox();
-    expect(moneyBox!.y + moneyBox!.height).toBeLessThan(height - (width < 900 ? 76 : 0));
+    await expect(page.getByText('Not checked', { exact: true })).toBeVisible();
+    await expect(page.getByText('Available to spend', { exact: true })).toHaveCount(0);
+    const actionBox = await page.getByRole('link', { name: 'Get money', exact: true }).boundingBox();
+    expect(actionBox!.y + actionBox!.height).toBeLessThan(height - (width < 900 ? 76 : 0));
     await expect(page.locator('.still-wallet-trigger').first()).toBeVisible();
     const hero = await page.locator('.still-hero > svg').boundingBox();
     expect(hero!.width).toBeLessThanOrEqual(481);
     expect(hero!.height).toBeLessThanOrEqual(383);
     if (width === 390) {
       expect(hero!.y).toBe(0);
-      expect(hero!.height).toBeCloseTo(310, 0);
+      expect(hero!.height).toBeLessThanOrEqual(255);
       expect((await page.getByRole('navigation', { name: 'Main' }).boundingBox())!.height).toBe(76);
     }
     if (width >= 1100) {
@@ -296,7 +324,7 @@ for (const width of [320, 390]) {
       await page.goto('/');
       const account = page.getByRole('banner', { name: 'Wallet and account' }).locator('summary');
       await expect(account).toBeVisible();
-      await expect(account).toHaveAccessibleName('Wallet account 0x1111…1111');
+      await expect(account).toHaveAccessibleName(/^Wallet account 0x1111…1111: /);
       await expect(account.locator('.still-wallet-icon')).toBeVisible();
       const button = (await account.boundingBox())!;
       expect(button.width).toBe(40);
@@ -355,3 +383,19 @@ for (const [label, now, card] of [
     expect(writes).toEqual([]);
   });
 }
+
+test('unread debts never become a zero-loan count in Home or Assets', async ({ page }) => {
+  const { writes } = await install(page, true, MONDAY);
+  const unread: MirrorReport = report(WALLET);
+  unread.headline.availableCents = null;
+  unread.venues = unread.venues.map(venue => ({ ...venue, debtCents: null, safety: null, availableCents: null }));
+  await page.route('**/api/still/mine', route => route.fulfill({ json: { outcome: 'report', report: unread, cached: false } }));
+  await page.goto('/');
+  await expect(page.getByRole('heading', { name: 'Not fully read.', exact: true })).toBeVisible();
+  await expect(page.getByRole('img', { name: /nothing borrowed|No loans/ })).toHaveCount(0);
+  await page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Assets', exact: true }).click();
+  await page.getByRole('tab', { name: 'Loans · Not read', exact: true }).click();
+  await expect(page.getByText('Some venue debts could not be read. This does not establish that no loan exists.', { exact: true })).toBeVisible();
+  await expect(page.getByText('No loans. Nothing hangs on the right.', { exact: true })).toHaveCount(0);
+  expect(writes).toEqual([]);
+});

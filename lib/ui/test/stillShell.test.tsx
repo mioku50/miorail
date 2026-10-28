@@ -56,32 +56,36 @@ const dividends: DividendWalletResponseV1 = {
   ],
 };
 
-describe('the market sky', () => {
-  it('puts the sun on its path during the session and names the full limits', () => {
+describe('the visual sky and separate US market state', () => {
+  it('uses Berlin dusk while the US market is still open and names the full limits', () => {
     const sky = skyStateV1({ now: new Date('2026-10-26T18:05:00Z'), earnings: [] }); // Mon 2:05 PM
-    assert.equal(sky.phase, 'day');
-    assert.equal(sky.clock, 'MON 2:05 PM');
-    assert.ok(Math.abs(sky.sunShare! - 275 / 390) < 1e-9);
+    assert.equal(sky.phase, 'dusk');
+    assert.equal(sky.clock, 'MON 19:05');
+    assert.equal(sky.marketClock, 'MON 2:05 PM');
+    assert.equal(sky.marketPhase, 'open');
+    assert.equal(sky.sunShare, null);
     assert.deepEqual(skyCaptionV1(sky), { headline: 'Market open · full limits', detail: null });
   });
 
-  it('is night while Wall Street is closed, a weekend or Thanksgiving, and says until when', () => {
+  it('can be visually day while Wall Street is closed, and says until when', () => {
     const saturday = skyStateV1({ now: new Date('2026-10-31T15:00:00Z') });
-    assert.equal(saturday.phase, 'night');
+    assert.equal(saturday.phase, 'day');
+    assert.equal(saturday.marketPhase, 'closed');
     assert.equal(skyCaptionV1(saturday).headline, 'Wall Street is closed. Base is open.');
-    assert.match(skyCaptionV1(saturday).detail!, /Until Sun 8 PM new loans against stocks count at 40%/);
-    assert.equal(skyStateV1({ now: new Date('2026-11-26T15:00:00Z') }).phase, 'night'); // Thanksgiving, a Thursday
+    assert.match(skyCaptionV1(saturday).detail!, /Until Sun 8 PM New York, new loans against stocks count at 40%/);
+    assert.equal(skyStateV1({ now: new Date('2026-11-26T15:00:00Z') }).marketPhase, 'closed'); // Thanksgiving, a Thursday
   });
 
-  it('is dusk around the session, before the open and after hours, with the full limits', () => {
+  it('keeps before-open and after-hours financial captions independent of the visual phase', () => {
     assert.equal(skyCaptionV1(skyStateV1({ now: new Date('2026-10-27T12:00:00Z'), earnings: [] })).headline, 'Before the open · full limits');
     assert.equal(skyCaptionV1(skyStateV1({ now: new Date('2026-10-28T02:00:00Z'), earnings: [] })).headline, 'After hours · full limits');
   });
 
-  it('measures the sun against the early close, and draws a cloud for a stock reporting now', () => {
+  it('keeps the early US close separate from the Berlin sun and draws reviewed earnings clouds', () => {
     const friday = skyStateV1({ now: new Date('2026-11-27T16:15:00Z') }); // 11:15, the day after Thanksgiving closes at 13:00
     assert.equal(friday.phase, 'day');
-    assert.ok(Math.abs(friday.sunShare! - 105 / 210) < 1e-9);
+    assert.ok(Math.abs(friday.sunShare! - 615 / 720) < 1e-9);
+    assert.equal(friday.session?.closeAt, '2026-11-27T18:00:00.000Z');
     const reporting = skyStateV1({
       now: new Date('2026-10-28T15:00:00Z'),
       earnings: [{ asset: 'GOOGLc', name: 'Alphabet', startsAt: '2026-10-27T04:00:00.000Z', endsAt: '2026-10-30T00:00:00.000Z' }],
@@ -89,7 +93,7 @@ describe('the market sky', () => {
     assert.equal(reporting.clouds.length, 1);
     assert.deepEqual(skyCaptionV1(reporting), {
       headline: 'Market open · earnings limits',
-      detail: 'Alphabet reports now: new loans against it count at 40% of the protocol’s limit until Thu 8 PM.',
+      detail: 'Alphabet reports now: new loans against it count at 40% of the protocol’s limit until Thu 8 PM New York.',
     });
   });
 });
@@ -136,7 +140,10 @@ describe('Home', () => {
     const r = report();
     const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {} }} />);
     assert.match(html, /In balance\./);
-    assert.match(html, /\$784<\/span><span class="c">\.62/);
+    assert.match(html, /aria-label="\$784\.62 modelled borrowing room"/);
+    assert.match(html, /Live borrowing limit/);
+    assert.match(html, /Not checked/);
+    assert.doesNotMatch(html, /Available to spend/);
     assert.match(html, /Owed \$240\.17/);
     assert.match(html, /role="img"/);
     assert.match(html, /href="\/assistants"[^>]*>For assistants<\/a>/);
@@ -188,8 +195,8 @@ describe('the mobile', () => {
       holdings: [{ id: 'NVDAc', label: 'NVDA', kind: 'stock', valueCents: 19 }],
       loan: { owedCents: 0, limitCents: 6, weekdayLimitCents: 6 }, state: 'empty',
     }} /></svg>);
-    assert.match(html, /room \$0\.06/);
-    assert.doesNotMatch(html, /room \$0</);
+    assert.match(html, /model \$0\.06/);
+    assert.doesNotMatch(html, /model \$0</);
   });
 
   it('is area-true: circles against the largest holding, squares against the limit', () => {
@@ -222,7 +229,7 @@ describe('Assets', () => {
     assert.equal(nvda.amount, '4.2 NVDAc');
     assert.deepEqual(nvda.lines[0], { strong: '3.4 hold up your Aave loan', text: ' · 0.8 free' });
     const btc = view.rows.find((r) => r.id === 'cbBTC')!;
-    assert.equal(btc.lines[0]!.text, 'Free · could carry up to $414.34 on Morpho');
+    assert.equal(btc.lines[0]!.text, 'Modelled room · up to $414.34 on Morpho');
     const apple = view.rows.find((r) => r.id === 'AAPLc')!;
     assert.match(apple.lines.at(-1)!.text, /≈ \$0\.19, if you hold AAPLc when it converts \(an estimate\)/);
     assert.deepEqual(view.loans.map((l) => [l.label, l.owed]), [['Aave V4 · Coinbase Stocks', '$240.17']]);
@@ -245,7 +252,9 @@ describe('the Agent', () => {
   it('answers from the numbers on screen, in the language of the question', () => {
     const r = report();
     const sky = skyStateV1({ now: WEDNESDAY });
-    assert.equal(agentAnswerV1({ question: 'Сколько я могу взять?', report: r, sky }).text, 'Сейчас $784.62 без продажи. Ваш долг $240.17 уже учтён.');
+    const borrowing = agentAnswerV1({ question: 'Сколько я могу взять?', report: r, sky }).text;
+    assert.match(borrowing, /^Расчётный запас для займа — \$784\.62\. Ваш долг \$240\.17 уже учтён\./);
+    assert.match(borrowing, /Get money сейчас поддерживает cbBTC и WETH через Morpho/);
     assert.match(agentAnswerV1({ question: 'How safe is my loan?', report: r, sky }).text, /prices can fall 52% together .* NVIDIA below \$100\.92/);
     const weekend = agentAnswerV1({ question: 'How much can I spend?', report: report(SATURDAY), sky: skyStateV1({ now: SATURDAY_AT }) });
     assert.match(weekend.text, /On an open market it would be \$784\.62: until Sun 8 PM stocks count at 40%\./);

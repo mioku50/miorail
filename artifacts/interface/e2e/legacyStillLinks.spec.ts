@@ -65,7 +65,7 @@ for (const path of ['/', `/w/${LINKED}`]) {
     await expect(page.locator('.still-big')).toHaveCount(0);
     await field.fill(`  ${LINKED}  `);
     await page.getByRole('button', { name: 'Check', exact: true }).click();
-    await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
+    await expect(page.getByText('0x2222…2222 · modelled borrowing room', { exact: true })).toBeVisible();
     await expect(page.getByRole('main').getByRole('status')).toHaveCount(0);
     await expect(page).toHaveURL(`http://127.0.0.1:5187${path}`);
     expect(subjects).toEqual([LINKED, LINKED]);
@@ -81,13 +81,13 @@ for (const width of [390, 1280]) {
     await page.setViewportSize({ width, height: 844 });
     const { reads, writes, subjects } = await install(page);
     await page.goto('/w/alex%2Ebase%2Eeth');
-    await expect(page.getByText('alex.base.eth could spend', { exact: true })).toBeVisible();
+    await expect(page.getByText('alex.base.eth · modelled borrowing room', { exact: true })).toBeVisible();
     await expect(page.locator('.still-big .d').first()).toHaveText('$784');
     await expect(page.getByRole('link', { name: 'Sign in', exact: true })).toHaveAttribute('href', '/signin?next=%2F');
     await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Home', exact: true })).toHaveAttribute('aria-current', 'page');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.reload();
-    await expect(page.getByText('alex.base.eth could spend', { exact: true })).toBeVisible();
+    await expect(page.getByText('alex.base.eth · modelled borrowing room', { exact: true })).toBeVisible();
     expect(subjects).toEqual(['alex.base.eth', 'alex.base.eth']);
     expect(reads).not.toContain('/api/still/mine');
     expect(writes).toEqual([]);
@@ -97,7 +97,7 @@ for (const width of [390, 1280]) {
 test('a signed-in reader sees the linked wallet, can check another, and go back', async ({ page }) => {
   const { reads, writes, subjects } = await install(page, true);
   await page.goto(`/w/${LINKED}`);
-  await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
+  await expect(page.getByText('0x2222…2222 · modelled borrowing room', { exact: true })).toBeVisible();
   // The shared wallet header names the signed-in reader; the report must only
   // describe the wallet in the public link.
   await expect(page.getByRole('main').getByText(/0x1111/)).toHaveCount(0);
@@ -105,10 +105,10 @@ test('a signed-in reader sees the linked wallet, can check another, and go back'
   await field.fill(NEXT);
   await page.getByRole('button', { name: 'Check', exact: true }).click();
   await expect(page).toHaveURL(`http://127.0.0.1:5187/w/${NEXT}`);
-  await expect(page.getByText('0x3333…3333 could spend', { exact: true })).toBeVisible();
-  await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toHaveCount(0);
+  await expect(page.getByText('0x3333…3333 · modelled borrowing room', { exact: true })).toBeVisible();
+  await expect(page.getByText('0x2222…2222 · modelled borrowing room', { exact: true })).toHaveCount(0);
   await page.goBack();
-  await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
+  await expect(page.getByText('0x2222…2222 · modelled borrowing room', { exact: true })).toBeVisible();
   expect(subjects).toEqual([LINKED, NEXT]);
   expect(reads).not.toContain('/api/still/mine');
   expect(reads).not.toContain('/api/stocks/dividends/mine');
@@ -154,7 +154,7 @@ for (const [subject, message] of [
     await expect(page.locator('.still-big')).toHaveCount(0);
     await page.getByLabel('Wallet address or name').fill(LINKED);
     await page.getByRole('button', { name: 'Check', exact: true }).click();
-    await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
+    await expect(page.getByText('0x2222…2222 · modelled borrowing room', { exact: true })).toBeVisible();
     await expect(page.getByRole('main').getByRole('status')).toHaveCount(0);
     expect(subjects).toEqual([subject, LINKED]);
     expect(reads).not.toContain('/api/still/mine');

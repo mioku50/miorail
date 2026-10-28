@@ -107,7 +107,7 @@ for (const width of [1440, 390]) {
 }
 
 for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844 }]) {
-  test(`selected stock survives navigation, reload and the market's day and night (${viewport.width}px)`, async ({ page }) => {
+  test(`selected stock survives navigation, reload and Berlin's day and night (${viewport.width}px)`, async ({ page }) => {
     await page.setViewportSize(viewport);
     await stubApi(page);
     await page.goto(`/market?key=${encodeURIComponent(NVDA)}`);
@@ -127,9 +127,9 @@ for (const viewport of [{ width: 1440, height: 1000 }, { width: 390, height: 844
     await expect(coinShare.getByRole('link', { name: 'Cast on Farcaster' })).toBeVisible();
     await expect(page).toHaveURL(new RegExp(encodeURIComponent(COIN)));
     await expect.poll(() => coin.evaluate(e => getComputedStyle(e).boxShadow)).toContain('2px inset');
-    // Still's frame takes its palette from New York's clock: day while Wall
-    // Street trades, night while it is closed. The selection holds in both.
-    for (const [at, theme] of [['2026-10-26T18:05:00Z', 'light'], ['2026-10-31T15:00:00Z', 'dark']] as const) {
+    // Berlin's visual palette is independent of the US market clock. The
+    // selected stock survives both local daylight and local night.
+    for (const [at, theme] of [['2026-10-26T15:05:00Z', 'light'], ['2026-10-31T20:00:00Z', 'dark']] as const) {
       await page.clock.setFixedTime(new Date(at));
       await page.reload();
       await expect(coin).toHaveAttribute('aria-selected', 'true', { timeout: 15_000 });

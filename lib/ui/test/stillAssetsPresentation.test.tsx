@@ -107,7 +107,7 @@ describe('Still Assets presentation', () => {
     assert.match(html, /^<div class="still-assets">/);
     assert.match(html, /<a href="\/stocks\/dividends" class="still-card still-feature-link">/);
     assert.match(html, /<svg class="still-chevron" width="16" height="16" viewBox="0 0 24 24" aria-hidden="true">/);
-    const summary = html.indexOf('holdings Still can lend against');
+    const summary = html.indexOf('reviewed holdings');
     const tabs = html.indexOf('role="tablist"');
     const holdings = html.indexOf('class="still-assets-primary"');
     const dividends = html.indexOf('<aside class="still-assets-aside still-section">');

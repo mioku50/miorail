@@ -5,11 +5,9 @@ import type { SkyPhaseV1 } from './skyState';
 void React;
 
 // ---------------------------------------------------------------------------
-// The market sky over New York, drawn in the 390 x 310 frame the mobile hangs
-// in. The phase is computed (skyState.ts), never chosen for mood: the sun is
-// up only during the regular session, on its path from the open to the close;
-// the moon is up only while Still's closed-market limits hold; clouds are
-// earnings windows.
+// The visual sky, drawn in the 390 x 310 frame the mobile hangs in. Its sun
+// follows a fixed Europe/Berlin local-clock schedule, independently of US
+// trading hours. Clouds still represent the reviewed earnings windows.
 // ---------------------------------------------------------------------------
 
 const SKYLINE_V1 =
@@ -19,7 +17,7 @@ const WINDOWS_V1: ReadonlyArray<readonly [number, number]> = [
   [51, 280], [56, 287], [143, 268], [147, 275], [98, 288], [213, 282], [257, 281], [266, 276], [338, 283], [342, 290],
 ];
 
-/** The sun on its arc: the open at the left end, the close at the right. */
+/** The sun on its arc: the start of the visual day at left, its end at right. */
 export function sunPointV1(share: number): { x: number; y: number } {
   const s = Math.min(1, Math.max(0, share));
   const u = 1 - s;

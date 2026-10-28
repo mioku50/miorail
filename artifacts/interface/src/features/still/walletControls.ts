@@ -42,17 +42,19 @@ export function walletControlViewV1(input: WalletControlInputV1): WalletControlV
     kind: address ? 'account' : checking ? 'checking' : 'connect',
     label: address ? shortAddress(address) : checking ? 'Checking wallet…' : 'Connect wallet',
     status: checking ? 'Checking session…'
-      : !walletAddress ? (sessionAddress ? 'Wallet disconnected' : 'Not connected')
-        : switchChain ? 'Switch to Base'
-          : authenticated ? 'Signed in on Base'
-            : 'Sign in required',
+      : !walletAddress ? (sessionAddress ? 'Signed in · Wallet disconnected' : 'Not connected')
+        : switchChain ? 'Connected · Switch to Base'
+          : authenticated ? 'Connected · Signed in'
+            : mismatch ? 'Connected · Different account' : 'Connected · Not signed in',
     walletAddress,
     sessionAddress,
     warning: mismatch
       ? 'The connected wallet differs from your signed-in account. Sign in with this wallet before using private actions.'
       : sessionAddress && !walletAddress
         ? 'Your account is still signed in, but no wallet is connected in this browser.'
-        : null,
+        : walletAddress && !sessionAddress && !checking
+          ? 'Your wallet is connected. Sign in to Still to read this account; connecting alone does not sign you in.'
+          : null,
     signIn: Boolean(walletAddress && !authenticated && !switchChain && !checking),
     switchChain,
     disconnect: Boolean(walletAddress),

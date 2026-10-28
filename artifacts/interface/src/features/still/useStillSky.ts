@@ -3,7 +3,7 @@ import { useSession, useStillTerms } from '@mioagent/api-client-react';
 import { skyEarningsFromTermsV1, useStillSkyV1, type SkyStateV1 } from '@mioagent/ui/still';
 import { useAuthGate } from '../../app/AuthProvider';
 
-/** The market sky with the earnings clouds Still's terms name. Until they are read it names no limits. */
+/** Berlin's visual sky with separate New York market state and reviewed earnings clouds. */
 export function useStillSky(): SkyStateV1 {
   const terms = useStillTerms();
   const read = useMemo(() => (terms.data ? skyEarningsFromTermsV1(terms.data) : undefined), [terms.data]);

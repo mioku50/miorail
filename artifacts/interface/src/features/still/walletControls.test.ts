@@ -21,7 +21,7 @@ test('a persisted session is identified as an account, not a browser wallet conn
   const view = walletControlViewV1({ ...GUEST, session: { address: A, chainId: 8453 } });
   assert.equal(view.kind, 'account');
   assert.equal(view.label, '0x1111…1111');
-  assert.equal(view.status, 'Wallet disconnected');
+  assert.equal(view.status, 'Signed in · Wallet disconnected');
   assert.equal(view.walletAddress, null);
   assert.equal(view.sessionAddress, A);
   assert.equal(view.signOut, true);
@@ -32,11 +32,11 @@ test('a persisted session is identified as an account, not a browser wallet conn
 test('a connection alone requires a separate signature; only matching identity on Base is signed in', () => {
   const input = { ...GUEST, connected: true, address: A, chainId: 8453, phase: 'needs-signin' as const };
   const connected = walletControlViewV1(input);
-  assert.equal(connected.status, 'Sign in required');
+  assert.equal(connected.status, 'Connected · Not signed in');
   assert.equal(connected.signIn, true);
   assert.equal(connected.signOut, false);
   const matched = walletControlViewV1({ ...input, phase: 'authenticated', session: { address: A.toUpperCase(), chainId: 8453 } });
-  assert.equal(matched.status, 'Signed in on Base');
+  assert.equal(matched.status, 'Connected · Signed in');
   assert.equal(matched.signIn, false);
   assert.equal(matched.signOut, true);
   assert.equal(matched.warning, null);
@@ -51,7 +51,7 @@ test('a different browser wallet never borrows the session identity or its signe
   assert.equal(view.walletAddress, B);
   assert.equal(view.sessionAddress, A);
   assert.equal(view.signIn, true);
-  assert.equal(view.status, 'Sign in required');
+  assert.equal(view.status, 'Connected · Different account');
   assert.match(view.warning ?? '', /differs from your signed-in account/);
 });
 
@@ -60,7 +60,7 @@ test('a wallet on another chain offers a network switch, never a sign-in on that
     ...GUEST, connected: true, address: A, chainId: 84532,
     session: { address: A, chainId: 8453 }, phase: 'wrong-chain',
   });
-  assert.equal(view.status, 'Switch to Base');
+  assert.equal(view.status, 'Connected · Switch to Base');
   assert.equal(view.switchChain, true);
   assert.equal(view.signIn, false);
   assert.equal(view.disconnect, true);

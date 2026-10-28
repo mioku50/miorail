@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
-import { AGENT_PROMPTS_V1, agentAnswerV1, isRussianV1, type AgentAnswerV1 } from './agentAnswers';
+import { AGENT_PROMPTS_V1, agentAnswerV1, isRussianV1, type AgentAnswerV1, type DividendReadStateV1 } from './agentAnswers';
 import type { SkyStateV1 } from './skyState';
 import { StillGlyph, StillHeader, StillLink } from './StillFrame';
 
@@ -12,9 +12,13 @@ export interface StillAgentModelV1 {
   sky: SkyStateV1;
   report: MirrorReport | null;
   dividends: DividendWalletResponseV1 | null;
+  dividendsReadState?: DividendReadStateV1;
   /** True while the wallet is being read; questions wait for it. */
   reading: boolean;
   signedIn: boolean;
+  /** Authoritative signed-in session wallet, not the browser connector or a
+   * report that may still be arriving from the previous session. */
+  walletIdentity?: string | null;
   /** Explicit presentation language. The web uses English; each answer follows its question. */
   russian: boolean;
 }
@@ -25,6 +29,18 @@ interface TurnV1 {
 }
 
 export function StillAgent({ model }: { model: StillAgentModelV1 }) {
+  // A key changes the state owner during render, before a new wallet could
+  // paint an old answer or draft. A normal report refresh keeps the same key.
+  const wallet = model.walletIdentity === undefined ? model.report?.subject.address ?? null : model.walletIdentity;
+  const owner = model.signedIn ? wallet?.toLowerCase() ?? null : null;
+  const ownsReport = owner !== null && model.report?.subject.address.toLowerCase() === owner;
+  const safeModel = { ...model, report: ownsReport ? model.report : null,
+    dividends: ownsReport ? model.dividends : null,
+    dividendsReadState: ownsReport ? model.dividendsReadState : 'not_loaded' as const };
+  return <StillAgentSession key={owner ?? 'signed-out'} model={safeModel} />;
+}
+
+function StillAgentSession({ model }: { model: StillAgentModelV1 }) {
   const [draft, setDraft] = useState('');
   const [turns, setTurns] = useState<TurnV1[]>([]);
   const chat = useRef<HTMLDivElement>(null);
@@ -36,7 +52,7 @@ export function StillAgent({ model }: { model: StillAgentModelV1 }) {
   const ask = (question: string) => {
     const text = question.trim();
     if (!text) return;
-    setTurns((previous) => [...previous, { question: text, answer: agentAnswerV1({ question: text, report: model.report, sky: model.sky, dividends: model.dividends }) }]);
+    setTurns((previous) => [...previous, { question: text, answer: agentAnswerV1({ question: text, report: model.report, sky: model.sky, dividends: model.dividends, dividendsReadState: model.dividendsReadState, signedIn: model.signedIn }) }]);
     setDraft('');
   };
   return (

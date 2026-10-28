@@ -1,9 +1,9 @@
 /*
  * Still · "Sky mobile" — the shell and its own pages.
  *
- * Two palettes, chosen by the market, not by a toggle: day (the regular
- * session, and the hours around it) and night (Still's closed-market window,
- * weekends and holidays). `data-sky` on `.still` picks one. Colour is a claim:
+ * Two palettes follow Europe/Berlin's visual day/night schedule, including
+ * daylight saving. Market hours and borrowing rules use their separate US
+ * calendar. `data-sky` on `.still` picks the visual palette. Colour is a claim:
  * Base blue is a stock, ink is a loan, yellow is the sun and the market being
  * open, red is a loan that tips. Nothing else wears them.
  *
@@ -218,7 +218,9 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 
 /* ---- the hero: the sky, the mobile, the wordmark ---- */
 
-.still-hero { position: relative; }
+.still-hero { position: relative; --sm-sky-1: #7FB8FF; --sm-sky-2: #A9D0FF; --sm-sky-3: #CFE4FF; }
+.still-hero[data-phase='dusk'] { --sm-sky-1: #27347A; --sm-sky-2: #6B4F93; --sm-sky-3: #E8916E; }
+.still-hero[data-phase='night'] { --sm-sky-1: #0E1236; --sm-sky-2: #1A2160; --sm-sky-3: #2B3A8C; }
 .still-hero > svg.still-sky-scene { display: block; width: 100%; height: auto; }
 .still-hero .still-brand { position: absolute; left: 18px; top: 16px; font-size: 28px; }
 /* On a desk the rail carries the name; the sky keeps it on a phone. */
@@ -229,12 +231,17 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-home-scene .still-section { margin-top: 12px; }
 .still-home-content { min-width: 0; }
 .still-home-content .still-sub { max-width: 65ch; }
+.still-live-limit { margin-top: 4px; font-size: 26px; font-weight: 500; }
+.still-home-content .still-section > .still-note { margin: 6px 0 0; }
+.still-modelled-room { padding: 12px 14px; background: var(--sm-card); border: 1px solid var(--sm-line); border-radius: 14px; }
+.still-modelled-room > summary { font-size: 15px; cursor: pointer; font-weight: 500; }
+.still-modelled-room .still-clock { margin-top: 8px; }
 .still-chevron { width: 16px; height: 16px; flex: 0 0 16px; }
 .still-feature-link { display: flex; justify-content: space-between; align-items: center; gap: 20px; color: var(--sm-ink); text-decoration: none; }
 .still-feature-link > span { min-width: 0; }
 .still-assets-aside { align-self: start; }
-/* Keep the phone's sky at the reference's original proportion. The visible
-   wallet entry shares its top edge instead of adding another screen strip. */
+/* A smaller complete mobile diagram brings the borrowing action into view.
+   The full-width bands still sit behind the visible wallet entry. */
 @media (max-width: 599px) {
   .still-frame.is-home.has-wallet-controls { position: relative; }
   .still-frame.is-home.has-wallet-controls .still-walletbar { position: absolute; inset: 0 0 auto; background: transparent; border-bottom: 0; }
@@ -244,8 +251,9 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
   .still-frame.is-home .still-wallet-trigger { width: 40px; min-height: 40px; padding: 0; }
   .still-frame.is-home .still-wallet-trigger > span, .still-frame.is-home .still-wallet-trigger > svg:not(.still-wallet-icon) { display: none; }
   .still-frame.is-home .still-wallet-trigger svg.still-wallet-icon { display: block; width: 20px; height: 20px; }
-  .still-frame.is-home[data-market-phase='dusk'] .still-wallet-brand { color: #EEF1FF; --sm-wire: #EEF1FF; --sm-loan: #EEF1FF; --sm-stock: #4D86FF; }
-  .still-home-scene .still-hero { width: 100%; max-width: 390px; }
+  .still-frame.is-home[data-visual-phase='dusk'] .still-wallet-brand { color: #EEF1FF; --sm-wire: #EEF1FF; --sm-loan: #EEF1FF; --sm-stock: #4D86FF; }
+  .still-home-scene .still-hero { width: 100%; max-width: none; background: linear-gradient(to bottom, var(--sm-sky-1) 0 48.387%, var(--sm-sky-2) 48.387% 74.839%, var(--sm-sky-3) 74.839% 100%); }
+  .still-home-scene .still-hero > svg.still-sky-scene { width: min(100%, 320px); margin-inline: auto; }
 }
 .still-more-page > .still-btns .still-btn.sec { background: var(--sm-card); border: 0; }
 @media (min-width: 1100px) {
