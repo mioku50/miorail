@@ -63,6 +63,8 @@ export interface BorrowReviewScreenModelV1 {
     error: string | null;
     /** What the wallet returned. Miorail did not sign it. */
     batchId: string | null;
+    /** A prior wallet request with no safe retry, preserved across reloads. */
+    submissionLock?: string | null;
   };
 }
 
@@ -157,7 +159,7 @@ export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1
         measured here; only your own wallet can send them.
       </p>
 
-      {refused || !model.wallet.onOpen ? null : model.wallet.batchId ? (
+      {refused ? null : model.wallet.batchId ? (
         <div className="mr-clearance">
           <p className="cr-verdict good">Submitted from your wallet.</p>
           <code className="mr-clearance-token mono">{model.wallet.batchId}</code>
@@ -165,7 +167,9 @@ export function BorrowReviewScreen({ model }: { model: BorrowReviewScreenModelV1
             That is the batch your wallet returned. Miorail did not sign it and did not broadcast it — your wallet did.
           </p>
         </div>
-      ) : (
+      ) : model.wallet.submissionLock ? (
+        <p className="cr-verdict" role="status">{model.wallet.submissionLock}</p>
+      ) : !model.wallet.onOpen ? null : (
         <div className="card-actions">
           <button
             type="button"

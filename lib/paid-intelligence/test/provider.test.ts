@@ -147,6 +147,22 @@ describe('createHttpSimulationProvider', () => {
     },
   ];
 
+  it('refuses ordered observations rather than dropping their request fields', async () => {
+    let fetched = false;
+    const provider = createHttpSimulationProvider({
+      url: 'https://sim.example.test/simulate', providerId: 'test-provider',
+      fetchImpl: (async () => { fetched = true; throw new Error('must not send a partial request'); }) as typeof fetch,
+    });
+    const result = await provider.simulate({
+      chainId: 8453, walletAddress: WALLET_ADDRESS, blueprintHash: `0x${'1'.repeat(64)}`,
+      callsHash: `0x${'2'.repeat(64)}`, calls: ONE_CALL,
+      observations: { before: [{ id: 'position', to: WALLET_ADDRESS, data: '0x12345678' }], after: [] },
+    });
+    assert.equal(result.ok, false);
+    if (!result.ok) assert.equal(result.errorCode, 'provider_method_unsupported');
+    assert.equal(fetched, false);
+  });
+
   it('reports a network/http failure as ok:false without throwing', async () => {
     const provider = createHttpSimulationProvider({
       url: 'https://sim.example.test/simulate',

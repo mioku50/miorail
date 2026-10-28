@@ -1,12 +1,16 @@
 import { z } from 'zod';
-import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
+import { hashApprovedCallsV1, stableHashV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import {
   SimulationProviderResponseV1Schema,
+  SimulationObservationRequestV1Schema,
   type SimulationAssetChangeV1,
   type SimulationAssetChangesV1,
   type SimulationCallResultV1,
   type SimulationProviderResponseV1,
   type SimulationProviderStateChangeV1,
+  type SimulationObservationCallV1,
+  type SimulationObservationResultV1,
+  type SimulationObservationsV1,
 } from '../schemas.js';
 import type {
   SimulationProvider,
@@ -65,7 +69,9 @@ export type AlchemySimulationFailureCodeV1 =
   | 'provider_invalid_schema'
   | 'provider_call_count_mismatch'
   | 'provider_chain_mismatch'
-  | 'provider_blueprint_mismatch';
+  | 'provider_blueprint_mismatch'
+  | 'provider_observation_failed'
+  | 'provider_observation_unread';
 
 /** Result code carried INSIDE a valid response, kept next to the failures so
  * the whole T63B vocabulary is readable in one place. */
@@ -412,6 +418,33 @@ export function createEthSimulateV1ProviderV1(
         return failureV1('provider_blueprint_mismatch', 'Blueprint call values are not unsigned integers');
       }
 
+      // Probes are code-owned view calls. Keep them separate from the approved
+      // calldata/hash and from every wallet-facing call/result index. A getter
+      // failure is not a successful observation with an invented zero value.
+      type ProbeV1 = SimulationObservationCallV1 & { phase: 'before' | 'after' };
+      let observations: { before: ProbeV1[]; after: ProbeV1[] } | undefined;
+      let observationRequestHash: string | undefined;
+      if (request.observations !== undefined) {
+        const parsed = SimulationObservationRequestV1Schema.safeParse(request.observations);
+        if (!parsed.success || request.calls.length + (parsed.success ? parsed.data.before.length + parsed.data.after.length : 0) > 100) {
+          return failureV1('provider_blueprint_mismatch', 'Simulation observations did not match the bounded getter contract');
+        }
+        const normalize = (phase: 'before' | 'after'): ProbeV1[] => parsed.data[phase].map((entry) => ({
+          phase, id: entry.id, to: entry.to.toLowerCase(), data: entry.data.toLowerCase(),
+        }));
+        observations = { before: normalize('before'), after: normalize('after') };
+        const requestRows = (phase: 'before' | 'after') => observations![phase].map(({ id, to, data }) => ({ id, to, data }));
+        observationRequestHash = stableHashV1('simulation-observations/v1', {
+          chainId: request.chainId, walletAddress: request.walletAddress.toLowerCase(), callsHash: request.callsHash,
+          before: requestRows('before'), after: requestRows('after'),
+        });
+      }
+
+      const probeCalls = (rows: ProbeV1[]) => rows.map(({ to, data }) => ({ to, data, value: '0x0' }));
+      const orderedCalls = observations
+        ? [...probeCalls(observations.before), ...safeRequest.calls, ...probeCalls(observations.after)]
+        : safeRequest.calls;
+
       const rpcId = `miorail-sim-${request.callsHash.slice(2, 18)}`;
       const rpcBody = {
         jsonrpc: '2.0' as const,
@@ -423,7 +456,7 @@ export function createEthSimulateV1ProviderV1(
             // exactly the persisted order and nothing is re-grouped.
             blockStateCalls: [
               {
-                calls: safeRequest.calls.map((call) => ({
+                calls: orderedCalls.map((call) => ({
                   from: safeRequest.from,
                   to: call.to,
                   value: call.value,
@@ -493,6 +526,9 @@ export function createEthSimulateV1ProviderV1(
       }
 
       const blocks = envelope.result;
+      if (observations && blocks.length !== 1) {
+        return failureV1('provider_invalid_schema', 'Observed simulation did not return exactly one evolving block');
+      }
       const blockNumberHex = blocks[0].number;
       let blockNumber: number;
       try {
@@ -506,13 +542,32 @@ export function createEthSimulateV1ProviderV1(
 
       // Calls are read in block order, then call order — the persisted
       // Blueprint order — and the total must match exactly.
-      const simulatedCalls = blocks.flatMap((block) => block.calls);
-      if (simulatedCalls.length !== request.calls.length) {
+      const allSimulatedCalls = blocks.flatMap((block) => block.calls);
+      if (allSimulatedCalls.length !== orderedCalls.length) {
         return failureV1(
           'provider_call_count_mismatch',
-          `${label} simulated ${simulatedCalls.length} of ${request.calls.length} Blueprint calls`,
+          `${label} simulated ${allSimulatedCalls.length} of ${orderedCalls.length} ${observations ? 'requested' : 'Blueprint'} calls`,
         );
       }
+
+      let observed: SimulationObservationsV1 | undefined;
+      if (observations && observationRequestHash) {
+        const results: SimulationObservationResultV1[] = [];
+        for (const phase of ['before', 'after'] as const) {
+          const offset = phase === 'before' ? 0 : observations.before.length + request.calls.length;
+          for (const [index, expected] of observations[phase].entries()) {
+            const actual = allSimulatedCalls[offset + index]!;
+            if (actual.status !== '0x1' && actual.status !== '0x0') return failureV1('provider_invalid_schema', 'A simulation observation reported an unknown status');
+            if (actual.status === '0x0' || (actual.logs?.length ?? 0) > 0) return failureV1('provider_observation_failed', 'A simulation getter reverted or emitted state-change logs');
+            if (actual.returnData === undefined) return failureV1('provider_observation_unread', 'A simulation getter returned no readable EVM bytes');
+            results.push({ ...expected, status: 'success', returnData: actual.returnData });
+          }
+        }
+        observed = { requestHash: observationRequestHash, results };
+      }
+      const simulatedCalls = observations
+        ? allSimulatedCalls.slice(observations.before.length, observations.before.length + request.calls.length)
+        : allSimulatedCalls;
 
       const wallet = request.walletAddress.toLowerCase();
       const callResults: SimulationCallResultV1[] = [];
@@ -555,6 +610,7 @@ export function createEthSimulateV1ProviderV1(
           gasUsed: gasUsed.toString(),
           revertReason: revertReason && revertReason.length > 0 ? revertReason.slice(0, 1_000) : null,
           logCount: logs.length,
+          ...(call.returnData === undefined ? {} : { returnData: call.returnData }),
         });
       }
 
@@ -600,6 +656,8 @@ export function createEthSimulateV1ProviderV1(
         callResults,
         failedCallIndex,
         assetChanges: assetChangeBlock,
+        // Reverted wallet calls establish no usable post-state for the batch.
+        ...(status === 'success' && observed ? { observations: observed } : {}),
       };
 
       // Self-check: the adapter never emits a body its own consumers would

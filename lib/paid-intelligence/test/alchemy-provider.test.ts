@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it, test } from 'node:test';
-import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
+import { hashApprovedCallsV1, stableHashV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import * as alchemy from '../src/providers/alchemy.js';
 import {
   ALCHEMY_BASE_MAINNET_HOST_V1,
@@ -185,6 +185,45 @@ describe('createAlchemySimulationProviderV1 — request mapping', () => {
 });
 
 describe('createAlchemySimulationProviderV1 — response validation', () => {
+  it('preserves exact per-call return bytes in order, including measured empty bytes', async () => {
+    const word = amountWord(42n);
+    const parsed = body(await provider(rpcFetch(okResponse([
+      callResult({ returnData: word }), callResult({ returnData: '0x' }),
+    ]))).simulate(requestFor()));
+    assert.deepEqual(parsed.callResults?.map((entry) => entry.returnData), [word, '0x']);
+  });
+
+  it('does not turn a missing return value into measured empty bytes', async () => {
+    const withoutReturn = callResult();
+    delete (withoutReturn as { returnData?: string }).returnData;
+    const parsed = body(await provider(rpcFetch(okResponse([withoutReturn]))).simulate(requestFor(SINGLE_CALL)));
+    assert.equal(parsed.callResults?.[0].returnData, undefined);
+    assert.equal(Object.hasOwn(parsed.callResults?.[0] ?? {}, 'returnData'), false);
+  });
+
+  it('preserves revert bytes without changing the reverted verdict or claiming state effects', async () => {
+    const revertBytes = '0x08c379a0';
+    const parsed = body(await provider(rpcFetch(okResponse([
+      callResult({ status: '0x0', returnData: revertBytes }),
+    ]))).simulate(requestFor(SINGLE_CALL)));
+    assert.equal(parsed.callResults?.[0].returnData, revertBytes);
+    assert.equal(parsed.callResults?.[0].status, 'reverted');
+    assert.equal(parsed.status, 'reverted');
+    assert.equal(parsed.assetChanges?.status, 'unavailable');
+  });
+
+  it('rejects malformed and oversized EVM return bytes at both transport and common contract', async () => {
+    for (const returnData of ['0x0', '0xzz', '42', `0x${'00'.repeat(100_000)}`]) {
+      const result = await provider(rpcFetch(okResponse([callResult({ returnData })]))).simulate(requestFor(SINGLE_CALL));
+      assert.equal(failure(result).code, 'provider_invalid_schema');
+      const common = {
+        status: 'success', blockNumber: 1, gasUsed: '0', stateChanges: [], revertReason: null,
+        callResults: [{ index: 0, status: 'success', gasUsed: '0', revertReason: null, logCount: 0, returnData }],
+      };
+      assert.equal(SimulationProviderResponseV1Schema.safeParse(common).success, false);
+    }
+  });
+
   it('normalizes an all-success run into a passed simulation', async () => {
     const parsed = body(
       await provider(rpcFetch(okResponse([callResult(), callResult({ gasUsed: '0x5208' })]))).simulate(requestFor()),
@@ -413,6 +452,136 @@ describe('createAlchemySimulationProviderV1 — asset changes', () => {
     );
     assert.equal(parsed.status, 'reverted');
     assert.deepEqual(parsed.assetChanges?.changes, []);
+  });
+});
+
+describe('createAlchemySimulationProviderV1 — same-state observations', () => {
+  const probe = { id: 'position', to: `0x${'A'.repeat(40)}`, data: '0xABCDEF01' };
+  function observedRequest(calls: readonly ExecutionCallV1[] = BLUEPRINT_CALLS): SimulationProviderRequestV1 {
+    return { ...requestFor(calls), observations: { before: [probe], after: [probe] } };
+  }
+  const transfer = {
+    address: USDC,
+    topics: [TRANSFER_TOPIC, topicAddress(COUNTERPARTY), topicAddress(WALLET_ADDRESS)],
+    data: amountWord(5n),
+  };
+
+  it('wraps the exact approved calls with getters in one evolving block, retaining wallet indexes and gas', async () => {
+    const records: FetchRecord[] = [];
+    const request = observedRequest();
+    const callsHash = request.callsHash;
+    const parsed = body(await provider(rpcFetch(okResponse([
+      callResult({ gasUsed: '0x100', returnData: amountWord(40n) }),
+      callResult({ gasUsed: '0x10' }),
+      callResult({ gasUsed: '0x20', logs: [transfer] }),
+      callResult({ gasUsed: '0x200', returnData: amountWord(45n) }),
+    ]), { records })).simulate(request));
+    const sent = JSON.parse(String(records[0].init?.body));
+    assert.equal(sent.params[0].blockStateCalls.length, 1);
+    const calls = sent.params[0].blockStateCalls[0].calls;
+    assert.equal(calls.length, 4);
+    assert.deepEqual(calls.slice(1, 3).map(({ to, data, value }: { to: string; data: string; value: string }) => ({ to, data, value })),
+      buildAlchemySafeRequestV1(WALLET_ADDRESS, BLUEPRINT_CALLS)!.calls);
+    assert.deepEqual([calls[0].value, calls[3].value], ['0x0', '0x0']);
+    assert.deepEqual([calls[0].to, calls[3].to], [probe.to.toLowerCase(), probe.to.toLowerCase()]);
+    assert.deepEqual([calls[0].data, calls[3].data], [probe.data.toLowerCase(), probe.data.toLowerCase()]);
+    assert.equal(request.callsHash, callsHash);
+    assert.equal(request.calls.length, 2, 'probe calls never enter the approved wallet list');
+    assert.deepEqual(parsed.callResults?.map(({ index }) => index), [0, 1]);
+    assert.deepEqual(parsed.assetChanges?.changes.map(({ callIndex }) => callIndex), [1]);
+    assert.equal(parsed.gasUsed, '48', 'getter overhead is not wallet batch gas');
+    assert.deepEqual(parsed.observations?.results, [
+      { ...probe, to: probe.to.toLowerCase(), data: probe.data.toLowerCase(), phase: 'before', status: 'success', returnData: amountWord(40n) },
+      { ...probe, to: probe.to.toLowerCase(), data: probe.data.toLowerCase(), phase: 'after', status: 'success', returnData: amountWord(45n) },
+    ]);
+    assert.equal(parsed.observations?.requestHash, stableHashV1('simulation-observations/v1', {
+      chainId: 8453, walletAddress: WALLET_ADDRESS.toLowerCase(), callsHash,
+      before: [{ ...probe, to: probe.to.toLowerCase(), data: probe.data.toLowerCase() }],
+      after: [{ ...probe, to: probe.to.toLowerCase(), data: probe.data.toLowerCase() }],
+    }));
+  });
+
+  it('permits at most eight probes in each phase and preserves every result', async () => {
+    const eight = Array.from({ length: 8 }, (_, index) => ({ ...probe, id: `probe_${index}` }));
+    const request = { ...requestFor(SINGLE_CALL), observations: { before: eight, after: eight } };
+    const parsed = body(await provider(rpcFetch(okResponse(Array.from({ length: 17 }, () => callResult())))).simulate(request));
+    assert.equal(parsed.observations?.results.length, 16);
+    assert.equal(parsed.callResults?.length, 1);
+  });
+
+  it('refuses malformed, unbounded, duplicate or value-bearing getter input before opening a socket', async () => {
+    const tooMany = Array.from({ length: 9 }, (_, index) => ({ ...probe, id: `probe_${index}` }));
+    const invalids: unknown[] = [
+      { before: [], after: [] }, { before: tooMany, after: [] }, { before: [], after: tooMany },
+      { before: [probe, probe], after: [] },
+      { before: [{ ...probe, value: '1' }], after: [] },
+      { before: [{ ...probe, from: WALLET_ADDRESS }], after: [] },
+      { before: [{ ...probe, to: '0x1234' }], after: [] },
+      { before: [{ ...probe, data: '0xabc' }], after: [] },
+      { before: [{ ...probe, data: '0x' }], after: [] },
+      { before: [{ ...probe, data: `0x${'aa'.repeat(4_097)}` }], after: [] },
+      { before: [{ ...probe, id: 'unbounded id' }], after: [] },
+    ];
+    let fetched = false;
+    const neverFetch = (async () => { fetched = true; throw new Error('not allowed'); }) as typeof fetch;
+    for (const observations of invalids) {
+      const request = { ...requestFor(SINGLE_CALL), observations: observations as SimulationProviderRequestV1['observations'] };
+      assert.equal(failure(await provider(neverFetch).simulate(request)).code, 'provider_blueprint_mismatch');
+    }
+    const hundredCalls = Array.from({ length: 100 }, (_, index) => ({ ...BLUEPRINT_CALLS[0], index }));
+    assert.equal(failure(await provider(neverFetch).simulate(observedRequest(hundredCalls))).code, 'provider_blueprint_mismatch');
+    assert.equal(fetched, false);
+  });
+
+  it('refuses a getter revert, state-change logs, missing return bytes or unknown status without a usable result', async () => {
+    for (const [overrides, expectedCode] of [
+      [{ status: '0x0' }, 'provider_observation_failed'],
+      [{ logs: [transfer] }, 'provider_observation_failed'],
+      [{ returnData: undefined }, 'provider_observation_unread'],
+      [{ status: '0x2' }, 'provider_invalid_schema'],
+    ] as const) {
+      for (const phase of ['before', 'after']) {
+        const outputs = [callResult(), callResult(), callResult()];
+        outputs[phase === 'before' ? 0 : 2] = callResult(overrides);
+        const result = await provider(rpcFetch(okResponse(outputs))).simulate(observedRequest(SINGLE_CALL));
+        assert.equal(failure(result).code, expectedCode);
+        assert.equal('body' in result, false);
+      }
+    }
+  });
+
+  it('rejects a missing getter result or a response split over separate block states', async () => {
+    assert.equal(failure(await provider(rpcFetch(okResponse([callResult(), callResult()]))).simulate(observedRequest(SINGLE_CALL))).code, 'provider_call_count_mismatch');
+    const split = rpcFetch((id) => ({ jsonrpc: '2.0', id, result: [
+      { number: '0x1', calls: [callResult()] }, { number: '0x1', calls: [callResult(), callResult()] },
+    ] }));
+    assert.equal(failure(await provider(split).simulate(observedRequest(SINGLE_CALL))).code, 'provider_invalid_schema');
+  });
+
+  it('retains approved-call revert indexing and publishes no usable observations for that failed batch', async () => {
+    const parsed = body(await provider(rpcFetch(okResponse([
+      callResult(), callResult(), callResult({ status: '0x0' }), callResult(),
+    ]))).simulate(observedRequest()));
+    assert.equal(parsed.status, 'reverted');
+    assert.equal(parsed.failedCallIndex, 1);
+    assert.equal(parsed.observations, undefined);
+  });
+
+  it('the common response contract rejects unread, reordered and duplicate observation results', () => {
+    const valid = {
+      status: 'success', blockNumber: 1, gasUsed: '0', stateChanges: [], revertReason: null,
+      observations: { requestHash: `0x${'1'.repeat(64)}`, results: [
+        { ...probe, phase: 'before', status: 'success', returnData: '0x' },
+        { ...probe, phase: 'after', status: 'success', returnData: '0x' },
+      ] },
+    };
+    assert.equal(SimulationProviderResponseV1Schema.safeParse(valid).success, true);
+    for (const results of [
+      [{ ...valid.observations.results[0], returnData: undefined }],
+      [...valid.observations.results].reverse(),
+      [valid.observations.results[0], valid.observations.results[0]],
+      [{ ...valid.observations.results[0], status: 'reverted' }],
+    ]) assert.equal(SimulationProviderResponseV1Schema.safeParse({ ...valid, observations: { ...valid.observations, results } }).success, false);
   });
 });
 

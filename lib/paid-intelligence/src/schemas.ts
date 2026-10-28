@@ -31,9 +31,67 @@ export const SimulationCallResultV1Schema = z
      * decoded from, so an empty change list next to a non-zero count is
      * visibly "not decodable", not "nothing happened". */
     logCount: z.number().int().nonnegative().max(10_000),
+    /** Exact EVM bytes, when the provider returned them. A missing value is
+     * unread, while `0x` is a measured empty return. Call status remains
+     * authoritative: revert data is not a successfully read state value. */
+    returnData: z.string().regex(/^0x(?:[0-9a-fA-F]{2})*$/).max(200_000).optional(),
   })
   .strict();
 export type SimulationCallResultV1 = z.infer<typeof SimulationCallResultV1Schema>;
+
+/** Code-owned view probes around a batch. They are simulated, never included
+ * in the approved wallet calls. No sender, value, overrides or client policy
+ * can enter through this shape. The caller owns the getter ABI/identity. */
+export const SimulationObservationCallV1Schema = z.object({
+  id: z.string().regex(/^[A-Za-z0-9_-]{1,64}$/),
+  to: z.string().regex(/^0x[0-9a-fA-F]{40}$/),
+  data: z.string().regex(/^0x(?:[0-9a-fA-F]{2}){4,}$/).max(8_194),
+}).strict();
+export type SimulationObservationCallV1 = z.infer<typeof SimulationObservationCallV1Schema>;
+
+export const SimulationObservationRequestV1Schema = z.object({
+  before: z.array(SimulationObservationCallV1Schema).max(8),
+  after: z.array(SimulationObservationCallV1Schema).max(8),
+}).strict().superRefine((value, ctx) => {
+  if (value.before.length + value.after.length === 0) ctx.addIssue({
+    code: z.ZodIssueCode.custom, message: 'An observation request needs at least one probe',
+  });
+  for (const phase of ['before', 'after'] as const) {
+    if (new Set(value[phase].map((entry) => entry.id)).size !== value[phase].length) ctx.addIssue({
+      code: z.ZodIssueCode.custom, path: [phase], message: 'Observation ids must be unique within each phase',
+    });
+  }
+});
+
+export const SimulationObservationResultV1Schema = SimulationObservationCallV1Schema.extend({
+  phase: z.enum(['before', 'after']),
+  status: z.literal('success'),
+  returnData: z.string().regex(/^0x(?:[0-9a-fA-F]{2})*$/).max(200_000),
+}).strict();
+export type SimulationObservationResultV1 = z.infer<typeof SimulationObservationResultV1Schema>;
+
+export const SimulationObservationsV1Schema = z.object({
+  /** Binds phase/id/target/calldata, the wallet, chain and approved callsHash. */
+  requestHash: z.string().regex(/^0x[0-9a-fA-F]{64}$/),
+  results: z.array(SimulationObservationResultV1Schema).min(1).max(16),
+}).strict().superRefine((value, ctx) => {
+  const ids = new Set<string>();
+  let sawAfter = false;
+  for (const [index, entry] of value.results.entries()) {
+    const key = `${entry.phase}:${entry.id}`;
+    if (ids.has(key) || (entry.phase === 'before' && sawAfter)) ctx.addIssue({
+      code: z.ZodIssueCode.custom, path: ['results', index], message: 'Observation results must retain their unique phase order',
+    });
+    ids.add(key);
+    if (entry.phase === 'after') sawAfter = true;
+  }
+  for (const phase of ['before', 'after'] as const) {
+    if (value.results.filter((entry) => entry.phase === phase).length > 8) ctx.addIssue({
+      code: z.ZodIssueCode.custom, path: ['results'], message: 'An observation phase has too many probes',
+    });
+  }
+});
+export type SimulationObservationsV1 = z.infer<typeof SimulationObservationsV1Schema>;
 
 /** A single asset movement PROVEN by a decoded event log. Deliberately carries
  * no symbol/decimals: those are not in the log, and inventing them would be a
@@ -112,6 +170,7 @@ export const SimulationProviderResponseV1Schema = z
     /** Index of the FIRST reverted call, or null when every call succeeded. */
     failedCallIndex: z.number().int().nonnegative().max(999).nullable().optional(),
     assetChanges: SimulationAssetChangesV1Schema.optional(),
+    observations: SimulationObservationsV1Schema.optional(),
   })
   .strict();
 export type SimulationProviderResponseV1 = z.infer<typeof SimulationProviderResponseV1Schema>;

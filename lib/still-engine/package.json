@@ -11,6 +11,7 @@
     "./policy": "./src/policy.ts",
     "./capacity": "./src/capacity.ts",
     "./read": "./src/read.ts",
+    "./abi": "./src/abi.ts",
     "./registry": "./src/registry.ts",
     "./report": "./src/report.ts",
     "./report-schema": "./src/report-schema.ts",

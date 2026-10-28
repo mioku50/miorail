@@ -5,6 +5,11 @@ import { useBorrowReview } from '@mioagent/api-client-react';
 import type { BorrowReviewScreenModelV1, BorrowReviewStepV1 } from './BorrowReviewScreen';
 import type { BorrowReviewV1 } from './borrowReviewView';
 import { handOffFreshBorrowV1, hasBorrowSigningTermsV1, type FreshBorrowReviewV1 } from './borrowReviewFreshness';
+import {
+  borrowSubmissionKeyV1, borrowSubmissionLockCopyV1, borrowSubmissionMarkerV1, borrowUserRejectedV1,
+  BorrowSubmissionLockedErrorV1, BorrowSubmissionStorageErrorV1, submitBorrowOnceV1,
+  type BorrowSubmissionMarkerV1,
+} from './borrowSubmissionGuard';
 
 // ---------------------------------------------------------------------------
 // The borrow review's read and its refusals, shared by both consoles.
@@ -14,9 +19,8 @@ import { handOffFreshBorrowV1, hasBorrowSigningTermsV1, type FreshBorrowReviewV1
 // dependency, and which wallet is reachable is a fact about the host.
 //
 // The host supplies ONE function: given the calls the server measured, get them
-// signed. It returns the batch id the wallet named, or null when the wallet
-// accepted and named nothing — which is not a success, because there would be
-// no handle to follow it up with.
+// signed. It returns the batch id the wallet named, or null when no submission
+// handle was established. Neither a missing id nor a timeout proves a failure.
 // ---------------------------------------------------------------------------
 
 export interface BorrowReviewWireV1 extends FreshBorrowReviewV1 {
@@ -59,7 +63,7 @@ export function borrowReviewFailureCopyV1(error: unknown): string {
  * market. A decline is the ordinary case and reads as one. */
 export function borrowWalletFailureCopyV1(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
-  if ((error && typeof error === 'object' && 'code' in error && error.code === 4001) || /user rejected|user denied|rejected the request/i.test(message)) {
+  if (borrowUserRejectedV1(error)) {
     return 'You declined in your wallet. Nothing was sent.';
   }
   if (/connector not connected|no connector|wallet.*not connected/i.test(message)) {
@@ -71,30 +75,40 @@ export function borrowWalletFailureCopyV1(error: unknown): string {
 export function useBorrowReviewConsoleV1(input: {
   draft: string | null;
   walletAddress?: string | null;
-  /** The host's wallet. Returns the batch id, or null when the wallet accepted
-   * and named nothing. Throwing is how a decline arrives. */
+  /** The host's wallet. Returns the batch id, or null without a submission
+   * handle. Throwing may mean a decline or an uncertain transport outcome. */
   sendCalls: (batch: { calls: { to: string; value: string; data: string }[] }) => Promise<string | null>;
 }): { model: BorrowReviewScreenModelV1; body: BorrowReviewWireV1 | null } {
   const review = useBorrowReview(input.draft);
   const [walletError, setWalletError] = useState<string | null>(null);
   const [batchId, setBatchId] = useState<string | null>(null);
   const [walletBusy, setWalletBusy] = useState(false);
+  const [submission, setSubmission] = useState<{ identity: string; marker: BorrowSubmissionMarkerV1 | null }>({ identity: '', marker: null });
   const opening = useRef(false);
   const confirmedTermsHash = useRef<string | null>(null);
   const identity = `${input.draft ?? ''}:${input.walletAddress?.toLowerCase() ?? ''}`;
   const currentIdentity = useRef(identity);
   currentIdentity.current = identity;
   useEffect(() => {
+    let active = true;
     confirmedTermsHash.current = null;
     setWalletError(null);
     setBatchId(null);
-  }, [identity]);
+    void borrowSubmissionKeyV1(input.draft ?? '', input.walletAddress).then(key => {
+      if (active) setSubmission({ identity, marker: key ? borrowSubmissionMarkerV1(window.sessionStorage, key) : null });
+    }).catch(() => {
+      // Storage is checked again before entering the wallet boundary. A failed
+      // read here never substitutes a successful acquisition there.
+      if (active) setSubmission({ identity, marker: null });
+    });
+    return () => { active = false; };
+  }, [identity, input.draft, input.walletAddress]);
 
   const body = (review.data ?? null) as BorrowReviewWireV1 | null;
   const signable = hasBorrowSigningTermsV1(body);
 
   const onOpen = useCallback(async () => {
-    if (!signable || opening.current || batchId) return;
+    if (!signable || opening.current || batchId || (submission.identity === identity && submission.marker)) return;
     opening.current = true;
     setWalletBusy(true);
     setWalletError(null);
@@ -108,9 +122,29 @@ export function useBorrowReviewConsoleV1(input: {
           if (answer.error) throw answer.error;
           return (answer.data ?? {}) as BorrowReviewWireV1;
         },
-        send: (calls) => { handedToWallet = true; return input.sendCalls({ calls }); },
+        send: async (calls) => {
+          let key: string | null;
+          try { key = await borrowSubmissionKeyV1(input.draft ?? '', input.walletAddress); }
+          catch { throw new BorrowSubmissionStorageErrorV1(); }
+          if (!key) throw new Error('Your wallet is not connected');
+          if (currentIdentity.current !== identity) throw new Error('The wallet or review changed');
+          let storage: Storage;
+          try { storage = window.sessionStorage; } catch { throw new BorrowSubmissionStorageErrorV1(); }
+          try {
+            return await submitBorrowOnceV1({ key, storage, send: () => {
+              handedToWallet = true;
+              return input.sendCalls({ calls });
+            } });
+          } finally {
+            if (currentIdentity.current === identity) {
+              try { setSubmission({ identity, marker: borrowSubmissionMarkerV1(storage, key) }); }
+              catch { setSubmission({ identity, marker: 'unknown' }); }
+            }
+          }
+        },
         current: () => currentIdentity.current === identity,
       });
+      if (currentIdentity.current !== identity) return;
       if (result.state === 'review_changed') {
         confirmedTermsHash.current = result.termsHash;
         setWalletError(result.message);
@@ -118,16 +152,19 @@ export function useBorrowReviewConsoleV1(input: {
         confirmedTermsHash.current = null;
         if (result.state === 'refused') setWalletError(result.message);
         else if (result.batchId) setBatchId(result.batchId);
-        else setWalletError('Your wallet accepted the batch and did not name it, so there is nothing to follow it up with.');
+        else setWalletError('Your wallet did not return a batch ID. The submission result is unknown. Check its activity; Miorail will not send this review again.');
       }
     } catch (error) {
+      if (currentIdentity.current !== identity) return;
       confirmedTermsHash.current = null;
-      setWalletError(handedToWallet ? borrowWalletFailureCopyV1(error) : borrowReviewFailureCopyV1(error));
+      setWalletError(error instanceof BorrowSubmissionLockedErrorV1 || error instanceof BorrowSubmissionStorageErrorV1 ? error.message
+        : handedToWallet || /wallet is not connected/i.test(error instanceof Error ? error.message : '')
+          ? borrowWalletFailureCopyV1(error) : borrowReviewFailureCopyV1(error));
     } finally {
       opening.current = false;
       setWalletBusy(false);
     }
-  }, [batchId, body, identity, input, review, signable]);
+  }, [batchId, body, identity, input, review, signable, submission]);
 
   return {
     body,
@@ -142,10 +179,11 @@ export function useBorrowReviewConsoleV1(input: {
       wallet: {
         // No calls means no button: a refusal with a disabled button beside it
         // still reads as "nearly".
-        onOpen: signable ? onOpen : null,
+        onOpen: signable && !(submission.identity === identity && submission.marker) ? onOpen : null,
         pending: walletBusy,
         error: walletError,
         batchId,
+        submissionLock: submission.identity === identity && submission.marker ? borrowSubmissionLockCopyV1(submission.marker) : null,
       },
     },
   };

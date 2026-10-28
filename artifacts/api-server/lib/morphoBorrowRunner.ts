@@ -19,7 +19,9 @@ import { morphoStillDrawV1 } from '@mioagent/still-engine/capacity';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { formatCents } from '@mioagent/still-engine/format';
+import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { readBorrowStandingV1, stillBorrowAssetV1 } from './stillBorrowStanding.js';
+import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 
 // ---------------------------------------------------------------------------
@@ -111,10 +113,11 @@ export interface MorphoBorrowRunDepsV1 {
   read?: typeof readBorrowStandingV1;
 }
 
-/** Simulation transport codes that mean nothing was executed, as opposed to
- * something being executed and failing. Both refuse; they refuse differently. */
-function reviewRefusalForTransportV1(): BorrowReviewRefusalV1 {
-  return 'simulation_not_run';
+/** A transport that never ran and a getter that could not establish state are
+ * different gaps. Neither can support an executable review. */
+function reviewRefusalForTransportV1(code: string): BorrowReviewRefusalV1 {
+  return code === 'provider_observation_failed' || code === 'provider_observation_unread'
+    ? 'simulation_position_unread' : 'simulation_not_run';
 }
 
 function refusedV1(
@@ -160,14 +163,14 @@ export async function runMorphoBorrowV1(
   }
 
   const wanted = request.marketId?.trim().toLowerCase() ?? null;
-  let standing: MorphoBorrowStandingV1 | undefined;
+  let selectedStanding: MorphoBorrowStandingV1 | undefined;
   if (wanted !== null) {
-    standing = reading.markets.find((entry) => entry.market.marketId.toLowerCase() === wanted);
-    if (!standing) {
+    selectedStanding = reading.markets.find((entry) => entry.market.marketId.toLowerCase() === wanted);
+    if (!selectedStanding) {
       return refusedV1('market', 'no_such_market_here', 'the venue holds no such market for this collateral', null, null);
     }
   } else if (reading.markets.length === 1) {
-    standing = reading.markets[0];
+    selectedStanding = reading.markets[0];
   } else {
     // Picking one is choosing a reader's terms for them. The ids are returned
     // so the choice can be made rather than guessed at.
@@ -180,6 +183,8 @@ export async function runMorphoBorrowV1(
     );
   }
 
+  if (!selectedStanding) return refusedV1('market', 'no_such_market_here', null, null, null);
+  let standing: MorphoBorrowStandingV1 = selectedStanding;
   const market = standing.market;
   const marketId = market.marketId;
   const loanAddress = market.loan.address;
@@ -205,7 +210,7 @@ export async function runMorphoBorrowV1(
     borrowAprWad: market.borrowAprWad,
     blockNumber: market.state.blockNumber,
   };
-  const liquidityAssets =
+  let liquidityAssets =
     market.state.totalSupplyAssets > market.state.totalBorrowAssets
       ? market.state.totalSupplyAssets - market.state.totalBorrowAssets
       : 0n;
@@ -236,7 +241,7 @@ export async function runMorphoBorrowV1(
               liquidationPrice: after.liquidationPrice,
             },
       askAssets: ask,
-      collateralPrice: market.state.collateralPrice,
+      collateralPrice: standing.market.state.collateralPrice,
       liquidationIncentiveWad: morphoLiquidationIncentiveWadV1(market.state.lltvWad),
       marketLiquidityAssets: liquidityAssets,
       readAt: reading.readAt,
@@ -304,7 +309,7 @@ export async function runMorphoBorrowV1(
     );
   }
 
-  const after = morphoAfterBorrowV1({ market: market.state, position: standing.position, assets: ask });
+  let after = morphoAfterBorrowV1({ market: market.state, position: standing.position, assets: ask });
   if (after === null) {
     return refusedV1('capacity', 'would_not_be_healthy', null, marketId, render(standing.position, null, 'would_not_be_healthy'));
   }
@@ -342,29 +347,39 @@ export async function runMorphoBorrowV1(
 
   // --- 5. One execution against real state ---------------------------------
   const callsHash = hashApprovedCallsV1(plan.plan.calls);
+  const poststateIdentity = stillAsset ? {
+    marketId, walletAddress: wallet, loanTokenAddress: loanAddress,
+    collateralTokenAddress: request.collateralTokenAddress,
+    oracleAddress: market.oracleAddress ?? '',
+  } : null;
+  const probes = poststateIdentity ? buildMorphoBorrowPoststateProbesV1(poststateIdentity) : null;
+  if (probes && !probes.ok) {
+    return refusedV1('reading', probes.refusal, probes.detail, marketId, render(standing.position, null, 'simulation_position_unread'));
+  }
+  const simulationRequest: SimulationProviderRequestV1 = {
+    chainId: 8453, walletAddress: wallet,
+    blueprintHash: stableHashV1('morpho-borrow-request/v1', { marketId, wallet, ask: ask.toString() }),
+    callsHash, calls: plan.plan.calls,
+    ...(probes?.ok ? { observations: probes.observations } : {}),
+  };
   const chain = deps.chain ?? buildSimulationChainV1(deps.env ?? process.env);
   const answer = await runSimulationChainV1({
     chain,
-    request: {
-      chainId: 8453,
-      walletAddress: wallet,
-      blueprintHash: stableHashV1('morpho-borrow-request/v1', { marketId, wallet, ask: ask.toString() }),
-      callsHash,
-      calls: plan.plan.calls,
-    },
+    request: simulationRequest,
     nowIso: readAt,
     label: 'Borrow simulation',
     logContext: { marketId, callsHash },
   });
   if (!answer.ok) {
-    // Nobody executed it. That is our gap, and it is never a pass.
+    // No usable measurement. A getter failure may follow an executed batch;
+    // preserve that distinction instead of claiming no execution took place.
     logger.warn('Borrow simulation produced no measurement', { marketId, errorCode: answer.errorCode });
     return refusedV1(
       'simulation',
       answer.errorCode,
       null,
       marketId,
-      render(standing.position, null, reviewRefusalForTransportV1()),
+      render(standing.position, null, reviewRefusalForTransportV1(answer.errorCode)),
     );
   }
 
@@ -406,6 +421,44 @@ export async function runMorphoBorrowV1(
     return refusedV1('simulation', 'arrival_unread', null, marketId, render(standing.position, null, 'simulation_effect_unread'));
   }
 
+  // Still's crypto path proves the position in the SAME evolving state as
+  // the USDC arrival. A transfer alone cannot establish which market owes it.
+  if (poststateIdentity) {
+    // This intent pledges nothing new and pays no fee. A correct net USDC
+    // arrival cannot authorise spending another asset already in the wallet.
+    if (answer.response.assetChanges?.changes.some(change => change.direction === 'out' && BigInt(change.amountAtomic) > 0n)) {
+      return refusedV1('simulation', 'unrequested_wallet_outflow', null, marketId,
+        render(standing.position, null, 'simulation_unrequested_spend'));
+    }
+    const measured = verifyMorphoBorrowPoststateV1({
+      request: simulationRequest, response: answer.response,
+      expected: { ...poststateIdentity, borrowAssets: ask, position: standing.position, blockNumber: market.state.blockNumber },
+    });
+    if (!measured.ok) {
+      return refusedV1('simulation', measured.refusal, measured.detail, marketId,
+        render(standing.position, null, measured.refusal === 'poststate_observations_unread' ? 'simulation_position_unread' : 'simulation_position_mismatch'));
+    }
+    let draw: ReturnType<typeof morphoStillDrawV1>;
+    try {
+      draw = morphoStillDrawV1({ market: measured.before.market, position: measured.before.position, borrowAssets: ask });
+    } catch {
+      return refusedV1('simulation', 'still_inputs_unread', null, marketId, render(standing.position, null, 'still_inputs_unread'));
+    }
+    if (!draw.ok) {
+      return refusedV1('capacity', draw.refusal, null, marketId, render(standing.position, null, 'over_still_limit'));
+    }
+    stillPolicy = {
+      termsVersion: TERMS.version, shareBps: Number(TERMS.shareOfProtocolBps),
+      limitAtomic: draw.capacity.limitAssets.toString(), debtBeforeAtomic: draw.capacity.debtAssets.toString(),
+      availableAtomic: draw.capacity.availableAssets.toString(),
+    };
+    standing = { ...standing, market: { ...market, state: measured.before.market },
+      position: measured.before.position, health: measured.before.health, liquidationPrice: measured.before.liquidationPrice };
+    marketWire.blockNumber = answer.response.blockNumber;
+    liquidityAssets = measured.before.market.totalSupplyAssets - measured.before.market.totalBorrowAssets;
+    after = measured.after;
+  }
+
   const review = render(standing.position, after, null);
   if (stillPolicy) review.warnings = [
     `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
@@ -416,10 +469,10 @@ export async function runMorphoBorrowV1(
   const { measuredAt: _measuredAt, ...reviewTerms } = review;
   const signingTermsHash = stableHashV1('morpho-borrow-signing-terms/v1', {
     wallet, marketId, ask: ask.toString(), callsHash, review: reviewTerms,
-    collateral: standing.position.collateral.toString(),
+    collateral: after.position.collateral.toString(),
     debtBefore: standing.health?.borrowedAssets.toString() ?? null,
     debtAfter: after.health.borrowedAssets.toString(),
-    price: market.state.collateralPrice.toString(),
+    price: standing.market.state.collateralPrice.toString(),
     policy: stillPolicy ?? null,
   });
   const now = deps.now?.() ?? new Date();

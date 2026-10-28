@@ -89,6 +89,12 @@ function render(over: Partial<BorrowReviewScreenModelV1> = {}): string {
 }
 
 describe('what a reader is shown before approving a borrow', () => {
+  test('an unresolved wallet attempt has no retry action or completed claim', () => {
+    const html = render({ wallet: { onOpen: null, pending: false, batchId: null, error: null,
+      submissionLock: 'A wallet submission was attempted. Check your wallet activity; Miorail will not send it again.' } });
+    assert.match(html, /will not send it again/);
+    assert.doesNotMatch(html, /<button|Submitted from your wallet|completed/i);
+  });
   test('a wallet timeout does not claim nothing was sent', () => {
     const copy = borrowWalletFailureCopyV1(new Error('transport timeout'));
     assert.match(copy, /cannot confirm whether anything was sent/);

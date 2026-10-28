@@ -73,6 +73,8 @@ export interface MorphoBorrowMarketV1 {
   borrowApyWad: bigint | null;
   /** Current chain rate annualized without compounding; never labelled APY. */
   borrowAprWad?: bigint | null;
+  /** Exact oracle from immutable onchain market parameters, when chain-read. */
+  oracleAddress?: string;
   state: MorphoMarketStateV1;
 }
 

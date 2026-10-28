@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import test, { describe } from 'node:test';
+import { encodeFunctionResult } from 'viem';
+import { stableHashV1 } from '@mioagent/route-domain';
 
 import type { SimulationProvider } from '@mioagent/paid-intelligence';
 
 import { runMorphoBorrowV1 } from './morphoBorrowRunner.js';
 import { ACTIONS_NOW, preparedActionV1, signedActionsFixtureV1 } from '../../../lib/rwa-issuer/test/fixtures/morphoActions.js';
 import type { SimulationChainV1 } from './swapSimulation.js';
-import { morphoBorrowCapacityV1, morphoHealthV1, morphoLiquidationPriceV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
+import { morphoAfterBorrowV1, morphoBorrowCapacityV1, morphoHealthV1, morphoLiquidationPriceV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { CRYPTO } from '@mioagent/still-engine/registry';
+import { morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
 
 // ---------------------------------------------------------------------------
 // The whole gate, end to end, on the shapes the live venue actually returns.
@@ -114,12 +117,62 @@ function cryptoStanding(borrowShares = 300_000_000_000_000n) {
     totalSupplyAssets: 1_000_000_000_000n, totalBorrowAssets: 1_000_000_000n, totalBorrowShares: 1_000_000_000_000_000n, blockNumber: 53_000_000 };
   const position = { collateral: 1_000_000_000n, borrowShares };
   return { market: { marketId: asset.morphoMarket, curated: null, collateral: { address: asset.token, symbol: 'cbBTC', decimals: 8 },
-    loan: { address: USDC, symbol: 'USDC', decimals: 6 }, lltvBps: 8600, borrowApyWad: null, state }, position,
+    loan: { address: USDC, symbol: 'USDC', decimals: 6 }, lltvBps: 8600, borrowApyWad: null,
+    oracleAddress: '0x663becd10dae6c4a3dcd89f1d76c1174199639b9' as const, state }, position,
     health: morphoHealthV1({ market: state, position }), capacity: morphoBorrowCapacityV1({ market: state, position }),
     liquidationPrice: morphoLiquidationPriceV1({ market: state, position }), liquidationIncentiveWad: 1_000_000_000_000_000_000n, venuePublishedDebtAssets: null };
 }
 
+function cryptoSimulationChain(price = 10n ** 36n, spendsAnotherAsset = false): SimulationChainV1 {
+  const standing = cryptoStanding();
+  const pre = standing.market.state;
+  const interest = 12_000n;
+  const accrued = { ...pre, collateralPrice: price, totalSupplyAssets: pre.totalSupplyAssets + interest, totalBorrowAssets: pre.totalBorrowAssets + interest };
+  const projected = morphoAfterBorrowV1({ market: accrued, position: standing.position, assets: ASK.borrowAssets });
+  assert(projected);
+  const provider: SimulationProvider = { providerId: 'fixture-observed-batch', async simulate(request) {
+    assert.equal(request.calls.length, 1, 'read probes never become wallet calls');
+    assert(request.observations);
+    const params = [USDC, CRYPTO[0]!.token, standing.market.oracleAddress, '0x46415998764C29aB2a25CbeA6254146D50D22687', 860_000_000_000_000_000n] as const;
+    const results = (['before', 'after'] as const).flatMap(phase => request.observations![phase].map(probe => {
+      const isAfter = phase === 'after';
+      const returnData = probe.id === 'market_params' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'idToMarketParams', result: params })
+        : probe.id === 'oracle_price' ? encodeFunctionResult({ abi: morphoOracleAbi, functionName: 'price', result: price })
+          : probe.id === 'position' ? encodeFunctionResult({ abi: morphoAbi, functionName: 'position', result: [0n, isAfter ? projected.position.borrowShares : standing.position.borrowShares, standing.position.collateral] })
+            : encodeFunctionResult({ abi: morphoAbi, functionName: 'market', result: isAfter
+              ? [accrued.totalSupplyAssets, 1_000_000_000_000_000_000n, accrued.totalBorrowAssets + ASK.borrowAssets, pre.totalBorrowShares + projected.position.borrowShares - standing.position.borrowShares, 1001n, 0n]
+              : [pre.totalSupplyAssets, 1_000_000_000_000_000_000n, pre.totalBorrowAssets, pre.totalBorrowShares, 1000n, 0n] });
+      return { ...probe, phase, status: 'success' as const, returnData };
+    }));
+    const body = executedV1({ blockNumber: 53_000_001, observations: {
+      requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: request.walletAddress.toLowerCase(), callsHash: request.callsHash,
+        before: request.observations.before, after: request.observations.after }), results,
+    } });
+    if (spendsAnotherAsset) body.assetChanges = { status: 'available', unavailableReason: null, changes: [
+      { kind: 'erc20_transfer', token: USDC, direction: 'in', amountAtomic: '10000000', counterparty: MORPHO_BLUE, callIndex: 0 },
+      { kind: 'erc20_transfer', token: NVDAC, direction: 'out', amountAtomic: '1', counterparty: BUNDLER, callIndex: 0 },
+    ] };
+    return { ok: true, body };
+  } };
+  return { providers: [provider], batchCapableIds: new Set([provider.providerId]) };
+}
+
 describe('Still is enforced inside the existing borrow runner', () => {
+  for (const errorCode of ['provider_observation_failed', 'provider_observation_unread'] as const) {
+    test(`${errorCode} is a position-reading gap rather than a claim that no simulation ran`, async () => {
+      const failed: SimulationProvider = { providerId: 'fixture-observer', async simulate() {
+        return { ok: false, errorCode, detail: 'getter could not be read' };
+      } };
+      const run = await runMorphoBorrowV1(ASK, depsV1({ chain: { providers: [failed], batchCapableIds: new Set([failed.providerId]) } }));
+      assert.equal(run.state, 'refused');
+      if (run.state === 'refused') {
+        assert.equal(run.refusal, errorCode);
+        assert.match(run.review!.refusal!, /could not read the position before and after/);
+        assert.doesNotMatch(run.review!.refusal!, /No provider executed/);
+      }
+      assert.equal('calls' in run, false);
+    });
+  }
   test('subtracts debt from half the total limit, not half the remaining headroom', async () => {
     const asset = CRYPTO[0]!;
     let venueAsked = false;
@@ -141,6 +194,7 @@ describe('Still is enforced inside the existing borrow runner', () => {
     const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket }, depsV1({
       read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
       venue: { fetchImpl: fixture.fetchImpl },
+      chain: cryptoSimulationChain(),
     }));
     assert.equal(run.state, 'ready');
     if (run.state !== 'ready') return;
@@ -149,6 +203,49 @@ describe('Still is enforced inside the existing borrow runner', () => {
     assert.match(run.review.warnings[0]!, /already deposited/);
     assert.match(run.signingTermsHash!, /^0x[0-9a-f]{64}$/);
     assert.equal(run.expiresAt, new Date(ACTIONS_NOW.getTime() + 30_000).toISOString());
+    assert.equal(run.review.before.debt, '300.00 USDC');
+    assert.equal(run.measured.blockNumber, 53_000_001);
+  });
+  test('an exact USDC arrival alone cannot release a Still crypto loan', async () => {
+    const asset = CRYPTO[0]!;
+    const fixture = signedActionsFixtureV1(preparedActionV1({ account: WALLET,
+      market: { id: asset.morphoMarket, loan_asset: { address: USDC }, collateral_asset: { address: asset.token } },
+    }));
+    const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: { fetchImpl: fixture.fetchImpl }, chain: chainV1(executedV1({ blockNumber: 53_000_001 })),
+    }));
+    assert.equal(run.state, 'refused');
+    if (run.state === 'refused') assert.equal(run.refusal, 'poststate_observations_unread');
+    assert.equal('calls' in run, false);
+  });
+  test('an exact arrival and debt increase cannot authorise an unrequested wallet outflow', async () => {
+    const asset = CRYPTO[0]!;
+    const fixture = signedActionsFixtureV1(preparedActionV1({ account: WALLET,
+      market: { id: asset.morphoMarket, loan_asset: { address: USDC }, collateral_asset: { address: asset.token } },
+      calls: [{ id: 'call_0', kind: 'blue_borrow', to: BUNDLER, data: BUNDLE_DATA, value: '0' }],
+    }));
+    const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: { fetchImpl: fixture.fetchImpl }, chain: cryptoSimulationChain(10n ** 36n, true),
+    }));
+    assert.equal(run.state, 'refused');
+    if (run.state === 'refused') assert.equal(run.refusal, 'unrequested_wallet_outflow');
+    assert.equal('calls' in run, false);
+  });
+  test('the independently observed price and accrued debt must still fit Still', async () => {
+    const asset = CRYPTO[0]!;
+    const fixture = signedActionsFixtureV1(preparedActionV1({ account: WALLET,
+      market: { id: asset.morphoMarket, loan_asset: { address: USDC }, collateral_asset: { address: asset.token } },
+      calls: [{ id: 'call_0', kind: 'blue_borrow', to: BUNDLER, data: BUNDLE_DATA, value: '0' }],
+    }));
+    const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: { fetchImpl: fixture.fetchImpl }, chain: cryptoSimulationChain(7n * 10n ** 35n),
+    }));
+    assert.equal(run.state, 'refused');
+    if (run.state === 'refused') assert.equal(run.refusal, 'over_still_limit');
+    assert.equal('calls' in run, false);
   });
   test('a position already over the Still ceiling cannot borrow more while protocol health still passes', async () => {
     const asset = CRYPTO[0]!;

@@ -112,6 +112,9 @@ export function createBaseRpcSwapSimulationProviderV1(
       if (request.chainId !== BASE_CHAIN_ID_V1) {
         return fixedFailureV1('provider_chain_mismatch', 'Fallback RPC simulation is pinned to Base mainnet');
       }
+      if (request.observations !== undefined) {
+        return fixedFailureV1('provider_method_unsupported', 'Fallback eth_call cannot read an evolving simulated before/after state');
+      }
       if (request.calls.length !== 1) {
         return fixedFailureV1('provider_method_unsupported', 'Fallback RPC proves only a single call, not an ordered batch');
       }

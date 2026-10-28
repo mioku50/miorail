@@ -97,6 +97,21 @@ test('a reverted eth_call is evidence of failure, never a transport pass', async
   }
 });
 
+test('the single-call fallback refuses same-state observations before any HTTP', async () => {
+  let called = false;
+  const provider = createBaseRpcSwapSimulationProviderV1({
+    rpcUrl: 'https://mainnet.base.org',
+    fetchImpl: (async () => { called = true; throw new Error('must not be called'); }) as typeof fetch,
+  });
+  assert.ok(provider);
+  const result = await provider.simulate({ ...REQUEST, observations: { before: [], after: [
+    { id: 'position', to: REQUEST.calls[0]!.to, data: '0x12345678' },
+  ] } });
+  assert.equal(result.ok, false);
+  if (!result.ok) assert.equal(result.errorCode, 'provider_method_unsupported');
+  assert.equal(called, false);
+});
+
 // ---------------------------------------------------------------------------
 // The batch tier.
 //

@@ -1,5 +1,5 @@
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
-import { SimulationProviderRequestBodyV1Schema } from './schemas.js';
+import { SimulationProviderRequestBodyV1Schema, type SimulationObservationCallV1 } from './schemas.js';
 
 // T59 decision 2 — the provider interface is deliberately narrow: chainId is
 // pinned to the literal 8453 (Base mainnet only), and the only fields ever
@@ -12,6 +12,12 @@ export interface SimulationProviderRequestV1 {
   blueprintHash: string;
   callsHash: string;
   calls: readonly ExecutionCallV1[];
+  /** Server-owned getter calls, in the same evolving simulation as `calls`.
+   * These are not approved calls and must never reach a wallet submission. */
+  observations?: {
+    before: readonly SimulationObservationCallV1[];
+    after: readonly SimulationObservationCallV1[];
+  };
 }
 
 // Transport-level result only — NOT yet validated against
@@ -39,7 +45,9 @@ export type SimulationProviderErrorCodeV1 =
   | 'provider_invalid_schema'
   | 'provider_call_count_mismatch'
   | 'provider_chain_mismatch'
-  | 'provider_blueprint_mismatch';
+  | 'provider_blueprint_mismatch'
+  | 'provider_observation_failed'
+  | 'provider_observation_unread';
 
 export type SimulationProviderResultV1 =
   | { ok: true; body: unknown }
@@ -88,6 +96,10 @@ export function createHttpSimulationProvider(
   return {
     providerId: options.providerId,
     async simulate(request): Promise<SimulationProviderResultV1> {
+      if (request.observations !== undefined) return {
+        ok: false, errorCode: 'provider_method_unsupported',
+        detail: 'Generic HTTP simulation does not prove ordered before/after observations',
+      };
       const body = SimulationProviderRequestBodyV1Schema.parse({
         chainId: request.chainId,
         from: request.walletAddress,

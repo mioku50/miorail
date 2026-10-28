@@ -131,6 +131,7 @@ export async function readBorrowStandingV1(input: {
         // The reader measures an instantaneous rate, not a compounded APY.
         borrowApyWad: null,
         borrowAprWad: source.borrowRatePerSecond.value * 31_536_000n,
+        oracleAddress: params.oracle,
         state,
       },
       position,

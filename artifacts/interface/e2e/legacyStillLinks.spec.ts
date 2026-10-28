@@ -61,12 +61,12 @@ for (const path of ['/', `/w/${LINKED}`]) {
       await field.fill(LINKED);
       await page.getByRole('button', { name: 'Check', exact: true }).click();
     }
-    await expect(page.getByRole('status')).toHaveText('Base could not be read just now. This is our failure, not a fact about the wallet. Try again in a minute.');
+    await expect(page.getByRole('main').getByRole('status')).toHaveText('Base could not be read just now. This is our failure, not a fact about the wallet. Try again in a minute.');
     await expect(page.locator('.still-big')).toHaveCount(0);
     await field.fill(`  ${LINKED}  `);
     await page.getByRole('button', { name: 'Check', exact: true }).click();
     await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
-    await expect(page.getByRole('status')).toHaveCount(0);
+    await expect(page.getByRole('main').getByRole('status')).toHaveCount(0);
     await expect(page).toHaveURL(`http://127.0.0.1:5187${path}`);
     expect(subjects).toEqual([LINKED, LINKED]);
     expect(reads.filter(read => read === '/api/public/still/mirror')).toHaveLength(2);
@@ -125,7 +125,7 @@ test('malformed wallet paths show a refusal and never fetch a different subject'
       history.pushState(null, '', next);
       dispatchEvent(new PopStateEvent('popstate'));
     }, path);
-    await expect(page.getByRole('status')).toHaveText('That is not a Base address (0x…) or a name like name.base.eth.');
+    await expect(page.getByRole('main').getByRole('status')).toHaveText('That is not a Base address (0x…) or a name like name.base.eth.');
     await expect(page.locator('.still-big')).toHaveCount(0);
   }
   expect(subjects).toEqual([]);
@@ -135,7 +135,7 @@ test('malformed wallet paths show a refusal and never fetch a different subject'
 test('a literal escaped percent is decoded once before the existing public check', async ({ page }) => {
   const { subjects, writes } = await install(page);
   await page.goto('/w/alex%252Fbase.eth');
-  await expect(page.getByRole('status')).toHaveText('That is not a Base address (0x…) or a name like name.base.eth.');
+  await expect(page.getByRole('main').getByRole('status')).toHaveText('That is not a Base address (0x…) or a name like name.base.eth.');
   expect(subjects).toEqual(['alex%2Fbase.eth']);
   expect(writes).toEqual([]);
 });
@@ -148,12 +148,14 @@ for (const [subject, message] of [
   test(`a legacy link states ${subject} failure and allows another check`, async ({ page }) => {
     const { reads, writes, subjects } = await install(page, true);
     await page.goto(`/w/${subject}`);
-    await expect(page.getByRole('status')).toHaveText(message);
+    // Wallet reconnection has its own live status in the header. This check
+    // asserts the public lookup's result, independent of that concurrent read.
+    await expect(page.getByRole('main').getByRole('status')).toHaveText(message);
     await expect(page.locator('.still-big')).toHaveCount(0);
     await page.getByLabel('Wallet address or name').fill(LINKED);
     await page.getByRole('button', { name: 'Check', exact: true }).click();
     await expect(page.getByText('0x2222…2222 could spend', { exact: true })).toBeVisible();
-    await expect(page.getByRole('status')).toHaveCount(0);
+    await expect(page.getByRole('main').getByRole('status')).toHaveCount(0);
     expect(subjects).toEqual([subject, LINKED]);
     expect(reads).not.toContain('/api/still/mine');
     expect(writes).toEqual([]);

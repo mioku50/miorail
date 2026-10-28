@@ -153,10 +153,24 @@ headers, status and path before accepting its data. A signature-required action,
 simulation, intent mismatch, expired proof or action has no executable result. This supplements
 Miorail's independent ordered batch simulation; it never substitutes for it.
 
+For those two crypto markets, the same simulation also reads the exact market parameters,
+position, market totals and oracle before and after the approved calls. Getter calls stay out
+of the wallet batch and its calls hash. The position must preserve collateral and supply shares,
+and its new debt shares must match the shared protocol projection, including accrued interest
+and fee-share accounting. The server checks Still's ceiling again on those measured values.
+Missing return bytes are a reading gap; a transfer into the wallet alone cannot pass this gate.
+
 The browser re-runs the review before opening the wallet. If terms or calls changed, it displays
 the fresh review and requires another explicit click within the server's thirty-second window,
 bounded by the action/proof expiry. That second click accepts the displayed batch without
 re-preparing forever as interest accrues. Changing wallet/draft or expiry clears that window.
+
+A wallet request with an uncertain result cannot be retried from the same review in that browser
+session. A marker is written before calling the wallet and survives reloads and returning to a
+previous wallet; it stores only a hash of the draft/wallet identity and an attempt state. A
+definitive user rejection permits retry. A batch id remains Submitted, never Completed. This
+browser-session guard does not replace server reconciliation or prevent duplicate submissions
+across independent tabs or browsers.
 
 Prepared calls are not a successful loan. First real borrowing remains an operator-performed
 transaction followed by chain reconciliation; no real transaction was made to test this release.

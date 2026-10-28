@@ -172,6 +172,9 @@ const SIMULATION_RETRYABLE_CODES_V1: ReadonlySet<string> = new Set([
   'timeout',
   'http_error',
   'provider_method_unsupported',
+  // Missing observation bytes are a provider coverage gap. Another reviewed
+  // batch endpoint may return them; an actually reverted getter is not retried.
+  'provider_observation_unread',
 ]);
 
 export interface SimulationChainV1 {

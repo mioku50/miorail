@@ -7,6 +7,7 @@ import type { SimulationProvider } from '@mioagent/paid-intelligence';
 import {
   createSimulationChainProviderV1,
   orderSimulationChainV1,
+  runSimulationChainV1,
   resetSimulationProviderHealthV1,
   simulateSwapCallsV1,
   probeSimulationProviderHealthV1,
@@ -326,6 +327,28 @@ describe('a revert from an empty wallet is about the wallet, not the route', () 
 });
 
 describe('swap simulation batch chain', () => {
+  for (const [code, shouldRetry] of [['provider_observation_unread', true], ['provider_observation_failed', false]] as const) {
+    test(`a ${code} ${shouldRetry ? 'asks the next batch provider' : 'is not retried as a coverage gap'}`, async () => {
+      let fallbackCalls = 0;
+      const observations = { before: [], after: [{ id: 'position', to: ROUTER, data: '0x12345678' }] };
+      const primary: SimulationProvider = { providerId: 'first-batch', async simulate() {
+        return { ok: false, errorCode: code, detail: 'fixture observation failure' };
+      } };
+      const fallback: SimulationProvider = { providerId: 'next-batch', async simulate(input) {
+        fallbackCalls++;
+        assert.deepEqual(input.observations, observations);
+        return { ok: true, body: SUCCESS_BODY };
+      } };
+      const result = await runSimulationChainV1({
+        chain: orderSimulationChainV1(primary, fallback, null, null),
+        request: { ...request(), blueprintHash: 'fixture-request', observations },
+        nowIso: NOW.toISOString(), label: 'Observation fixture', logContext: {},
+      });
+      assert.equal(result.ok, shouldRetry);
+      assert.equal(fallbackCalls, shouldRetry ? 1 : 0);
+      if (result.ok) assert.equal(result.providerId, fallback.providerId);
+    });
+  }
   test('an exhausted primary does not condemn the batch claim when the Base RPC answers', async () => {
     resetSimulationProviderHealthV1();
     const batch = { ...provider(PASSING_BODY), providerId: 'base-rpc-eth-simulate-v1' };

@@ -132,6 +132,12 @@ export const BORROW_REVIEW_REFUSALS_V1 = {
     'These calls revert when executed against current state. Signing them would spend gas to achieve nothing.',
   simulation_effect_unread:
     'The calls execute, and Miorail could not establish what reaches this wallet. That is a gap in Miorail’s reading rather than a finding about the transaction — and it is not a pass.',
+  simulation_position_unread:
+    'Miorail could not read the position before and after this simulated borrow. An incoming transfer alone does not prove the debt this wallet would owe. Nothing is offered for approval.',
+  simulation_position_mismatch:
+    'The simulated market or position did not match this exact borrow. Nothing is offered for approval; this does not establish that the wallet has no collateral.',
+  simulation_unrequested_spend:
+    'This existing-collateral borrow also takes assets from the wallet. No such spending was requested, so nothing is offered for approval.',
   simulation_delivered_something_else:
     'The calls execute, what reaches this wallet was read, and it is not what this review describes. Nothing is being offered for approval on that basis.',
 } as const;
