@@ -77,7 +77,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
   const id = useId(), busy = model.reading || model.preparing;
   const asset = REPAY_COLLATERALS_V1.find(row => row.id === model.asset);
   return <div className="still-borrow">
-    <div className="still-section"><h1>Repay</h1><p className="still-sub">Reduce debt with USDC. Keep your collateral deposited.</p></div>
+    <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC. Keep your collateral deposited.</p></div>
     {!model.signedIn ? <section className="still-section still-card"><p className="still-sub">Sign in to read your repayment position.</p><a className="still-btn" href={model.signInHref}>Sign in</a></section> : <>
       {model.error ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
       <div className="still-borrow-grid">
