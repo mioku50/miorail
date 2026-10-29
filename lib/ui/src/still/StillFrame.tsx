@@ -147,6 +147,15 @@ export function useStillSkyV1(input?: { earnings?: readonly SkyEarningsV1[]; unr
   return skyStateV1({ now, earnings: input?.earnings, unread: input?.unread });
 }
 
+/** A static/SSR host must hydrate the same palette it emitted. React does not
+ * repair a mismatching data attribute when server and browser clocks differ;
+ * commit the browser's Berlin palette only after hydration. */
+export function useStillClientPaletteV1(sky: SkyStateV1): 'day' | 'night' {
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => { setHydrated(true); }, []);
+  return hydrated && sky.phase === 'night' ? 'night' : 'day';
+}
+
 export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky: SkyStateV1; children: ReactNode; wide?: boolean }) {
   const walletControls = useContext(StillWalletControlsContext);
   useEffect(() => {

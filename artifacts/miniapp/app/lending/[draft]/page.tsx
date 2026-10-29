@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import { useAccount, useSendCalls } from 'wagmi';
 import { useSession } from '@mioagent/api-client-react';
 import { LendingReviewScreen, useLendingReviewConsoleV1 } from '@mioagent/ui';
-import { useStillSkyV1 } from '@mioagent/ui/still';
+import { useStillSkyV1, useStillClientPaletteV1 } from '@mioagent/ui/still';
 import { builderCodeFromEnvV1 } from '@mioagent/route-domain/builder-code';
 import { builderCodeToDataSuffix } from '@mioagent/wallet-actions';
 import { WalletConnect } from '../../components/WalletConnect';
@@ -19,6 +19,7 @@ export default function BaseAppLendingReviewPage() {
   const params = useParams<{ draft?: string }>();
   const draft = typeof params?.draft === 'string' ? params.draft : null;
   const session = useSession({ retry: false, staleTime: 0 }), sky = useStillSkyV1();
+  const palette = useStillClientPaletteV1(sky);
   const { address } = useAccount(), sendCalls = useSendCalls();
   const review = useLendingReviewConsoleV1({ draft, walletAddress: address ?? null,
     sessionWalletAddress: session.data?.user?.address ?? null,
@@ -30,7 +31,7 @@ export default function BaseAppLendingReviewPage() {
       return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
     },
   });
-  return <main className="still" data-sky={sky.phase} style={{ minHeight: '100dvh', padding: '16px 0 32px' }}>
+  return <main className="still" data-sky={palette} style={{ minHeight: '100dvh', padding: '16px 0 32px' }}>
     <div style={{ maxWidth: 1100, margin: '0 auto' }}>
       <header className="still-section" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
         <Link href="/">Back to Miorail</Link><WalletConnect />
