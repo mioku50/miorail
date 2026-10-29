@@ -66,6 +66,12 @@ async function fetchApi<T>(url: string, options?: RequestInit): Promise<T> {
   return response.json();
 }
 
+/** Same session and Base App surface transport as the existing console. */
+export function lendingRequestV1<T = unknown>(path: string, options?: RequestInit): Promise<T> {
+  if (!/^\/api\/route-intelligence\/rwa\/(?:lending|repay)\//.test(path)) throw new Error('lending_path_invalid');
+  return fetchApi<T>(path, options);
+}
+
 export interface EvaluateSwapRouteInput {
   message: string;
   walletAddress: `0x${string}`;
@@ -1630,7 +1636,7 @@ export function useCreateBorrowIntentV1() {
       if (!result || typeof result !== 'object') throw new Error('The review link could not be read.');
       const row = result as Record<string, unknown>;
       if (typeof row.borrowDraftId !== 'string' || typeof row.reviewUrl !== 'string' || typeof row.expiresAt !== 'string' ||
-          !/^\/borrow\/miorail-borrow-v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(row.reviewUrl) || !Number.isFinite(Date.parse(row.expiresAt))) {
+          !/^(?:\/borrow\/miorail-borrow-v1|\/lending\/miorail-lending-v1)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(row.reviewUrl) || !Number.isFinite(Date.parse(row.expiresAt))) {
         throw new Error('The review link could not be read.');
       }
       return { borrowDraftId: row.borrowDraftId, reviewUrl: row.reviewUrl, expiresAt: row.expiresAt };

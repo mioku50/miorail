@@ -638,6 +638,13 @@
       "when": 1792504800000,
       "tag": "0090_stock_action_executions",
       "breakpoints": true
+    },
+    {
+      "idx": 91,
+      "version": "7",
+      "when": 1793224800000,
+      "tag": "0091_lending_executions",
+      "breakpoints": true
     }
   ]
 }

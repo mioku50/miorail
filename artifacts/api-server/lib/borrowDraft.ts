@@ -153,6 +153,7 @@ export function verifyBorrowDraftV1(input: {
   secret: string;
   now: Date;
   walletAddress?: string | null;
+  allowExpiredForStatus?: boolean;
 }): BorrowDraftVerificationV1 {
   const parts = String(input.draft ?? '').split('.');
   if (parts.length !== 3 || parts[0] !== BORROW_DRAFT_PREFIX_V1) {
@@ -192,7 +193,7 @@ export function verifyBorrowDraftV1(input: {
   )) return { ok: false, reason: 'borrow_draft_malformed' };
 
   const expiresAt = Date.parse(claims.expiresAt);
-  if (!Number.isFinite(expiresAt) || expiresAt <= input.now.getTime()) {
+  if (!Number.isFinite(expiresAt) || (expiresAt <= input.now.getTime() && !input.allowExpiredForStatus)) {
     return { ok: false, reason: 'borrow_draft_expired' };
   }
   const asking = input.walletAddress?.trim().toLowerCase();

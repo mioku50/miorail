@@ -39,7 +39,8 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
         <>
           <div className="still-section still-borrow-entry">
             <StillLink href="/borrow" className="still-btn">Get money</StillLink>
-            <p className="still-note">cbBTC and WETH through Morpho.</p>
+            <StillLink href="/repay" className="still-btn sec">Repay</StillLink>
+            <p className="still-note">Reviewed stocks through Aave V4; cbBTC and WETH through Morpho.</p>
           </div>
           <div className="still-section">
             {view.total ? (
@@ -96,7 +97,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
                     {loan.liquidation.map((text) => <div key={text} className="line">{text}</div>)}
                     {loan.more ? <div className="line still-note">{loan.more}</div> : null}
                   </div>
-                  <div className="mono val">{loan.owed}</div>
+                  <div className="val"><div className="mono">{loan.owed}</div>{loan.repayHref ? <StillLink href={loan.repayHref} className="still-btn sec" style={{ marginTop: 10 }}>Repay</StillLink> : null}</div>
                 </li>
               ))}
             </ul>

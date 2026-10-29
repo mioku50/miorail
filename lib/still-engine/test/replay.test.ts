@@ -7,13 +7,15 @@ import { readCalendar } from '../src/calendar.js';
 import { computeMirror } from '../src/mirror.js';
 import { TERMS } from '../src/policy.js';
 import { loadUniverse, readWallet } from '../src/read.js';
-import { CRYPTO } from '../src/registry.js';
+import { ADDRESSES, CRYPTO } from '../src/registry.js';
 import { replaying, type RecordedBatch } from './replay.js';
 import { assertMatches } from './matches.js';
 
 // Real Base answers for the burn address (not a person's wallet), captured on Sunday
 // 2026-10-25 at block 53,075,866 by Still's capture script, before the move. Recapture after
 // changing what is read.
+// USDC balanceOf for that same public burn address was added from its original
+// pinned block on 2026-10-28; the prior raw results are retained byte for byte.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/burn-address.json', import.meta.url), 'utf8')) as {
   address: Address;
   block: string;
@@ -53,6 +55,16 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
     const { snapshot } = await replay();
     assert.equal(snapshot.block.number.toString(), fixture.block);
     assert.equal(fixture.batches.filter((b) => b.blockNumber !== null).every((b) => b.blockNumber === fixture.block), true);
+    assert.equal(snapshot.balances.get(ADDRESSES.usdc.toLowerCase())?.ok, true);
+    assert.equal(snapshot.balances.size, 10);
+  });
+
+  it('can pin the initial wallet batch and refuses a provider answering another block', async () => {
+    const provider = replaying(fixture.batches);
+    const universe = await loadUniverse([provider]);
+    const pinned = await readWallet([provider], universe, fixture.address, BigInt(fixture.block));
+    assert.equal(pinned.block.number, BigInt(fixture.block));
+    await assert.rejects(readWallet([provider], universe, fixture.address, BigInt(fixture.block) + 1n), /requested block/);
   });
 
   it('gives the same report it gave that Sunday', async () => {

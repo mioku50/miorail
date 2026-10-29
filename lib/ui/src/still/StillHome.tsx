@@ -122,7 +122,7 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <div className="still-section">
             <div className="still-eyebrow">Live borrowing limit</div>
             <div className="still-live-limit">Not checked</div>
-            <p className="still-note">Get money checks your chosen cbBTC or WETH collateral through Morpho. Stock-backed borrowing is not available here yet.</p>
+            <p className="still-note">Get money checks your selected stock collateral through Aave V4, or cbBTC and WETH through Morpho. Read the live limit for your exact choice.</p>
             {view.owed ? (
               <div className="still-owed">
                 <span className="sw" aria-hidden="true" />
@@ -227,7 +227,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
             <div className="still-sub">Not read this time.</div>
           )}
           <div className="still-sub">{result.view.stateWord} {result.view.stateLine}</div>
-          <p className="still-note">This model includes stock collateral. Get money currently checks cbBTC/WETH through Morpho; stock-backed borrowing is not available here yet.</p>
+          <p className="still-note">This model includes stock collateral. Get money checks reviewed stocks through Aave V4 and cbBTC/WETH through Morpho; the live allowance must be read for your exact collateral choice.</p>
           <div className="mono still-clock" style={{ marginTop: 8 }}>
             READ FROM BASE · BLOCK {Number(result.report.reading.block).toLocaleString('en-US')}
           </div>

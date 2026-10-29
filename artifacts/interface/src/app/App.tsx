@@ -90,12 +90,11 @@ const StockActionReviewPage = lazy(() =>
     default: m.StockActionReviewPage,
   })),
 );
-const BorrowReviewPage = lazy(() =>
-  import('../features/rwa/BorrowReviewPage').then((m) => ({ default: m.BorrowReviewPage })),
-);
 const StillBorrowPage = lazy(() =>
   import('../features/still/StillBorrowPage').then((m) => ({ default: m.StillBorrowPage })),
 );
+const StillRepayPage = lazy(() => import('../features/still/StillRepayPage').then(m => ({ default: m.StillRepayPage })));
+const LendingReviewPage = lazy(() => import('../features/rwa/LendingReviewPage').then(m => ({ default: m.LendingReviewPage })));
 const MarketRealityRadarPage = lazy(() =>
   import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
 );
@@ -308,6 +307,8 @@ export function App() {
         <Route path="/borrow">
           <StillBorrowPage />
         </Route>
+        <Route path="/repay"><StillRepayPage /></Route>
+        <Route path="/lending/:draft"><RequireSession><LendingReviewPage /></RequireSession></Route>
 
         {/* The borrow review an assistant's link points at. Behind the session
             gate for the same reason as the action review: the link names one
@@ -315,7 +316,7 @@ export function App() {
             measures again — the link carries no number to go stale. */}
         <Route path="/borrow/:draft">
           <RequireSession>
-            <BorrowReviewPage />
+            <LendingReviewPage />
           </RequireSession>
         </Route>
 

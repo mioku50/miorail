@@ -202,13 +202,16 @@ function decodeRegistry(data: Hex): { multiplier: bigint; paused: boolean } {
   return { multiplier, paused };
 }
 
-export async function readWallet(providers: readonly Provider[], universe: Universe, user: Address): Promise<WalletSnapshot> {
+export async function readWallet(providers: readonly Provider[], universe: Universe, user: Address, atBlock?: bigint): Promise<WalletSnapshot> {
+  if (atBlock !== undefined && atBlock < 0n) throw new Error('wallet reading block must be nonnegative');
   const batch = new Batch();
   const blockNumber = batch.add(ADDRESSES.multicall3, multicall3Abi, 'getBlockNumber', []);
   const blockTime = batch.add(ADDRESSES.multicall3, multicall3Abi, 'getCurrentBlockTimestamp', []);
   const nativeEth = batch.add(ADDRESSES.multicall3, multicall3Abi, 'getEthBalance', [user]);
 
-  const tokens = [...STOCKS.map((s) => s.token), ...CRYPTO.map((c) => c.token)];
+  // Repayment uses this same block and batch, rather than a second independent
+  // wallet read. USDC remains a balance reading, not collateral or capacity.
+  const tokens = [...STOCKS.map((s) => s.token), ...CRYPTO.map((c) => c.token), ADDRESSES.usdc];
   const balanceSlots = tokens.map((token) => [token.toLowerCase(), batch.add(token, erc20Abi, 'balanceOf', [user])] as const);
   const registrySlots = STOCKS.map((s) => {
     const callData = `${COINBASE_REGISTRY_SELECTOR}${s.token.slice(2).toLowerCase().padStart(64, '0')}` as Hex;
@@ -273,9 +276,10 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
     };
   });
 
-  const { provider } = await batch.run(providers);
+  const { provider } = await batch.run(providers, atBlock);
   if (!blockNumber.outcome.ok || !blockTime.outcome.ok) throw new Error('multicall answered without its own block number');
   const block = { number: blockNumber.outcome.value, timestamp: blockTime.outcome.value };
+  if (atBlock !== undefined && block.number !== atBlock) throw new Error('wallet snapshot did not answer at its requested block');
   // The follow-up runs on the provider that answered first when it can, at the same block.
   const ordered = [...providers].sort((a, b) => Number(b.label === provider) - Number(a.label === provider));
 

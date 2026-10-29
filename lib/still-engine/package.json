@@ -15,7 +15,8 @@
     "./registry": "./src/registry.ts",
     "./report": "./src/report.ts",
     "./report-schema": "./src/report-schema.ts",
-    "./terms": "./src/terms.ts"
+    "./terms": "./src/terms.ts",
+    "./rpc": "./src/rpc.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

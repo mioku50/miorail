@@ -113,7 +113,7 @@ for (const width of [390, 1280]) {
     await expect(page).toHaveURL(/\/agent$/);
     await page.getByRole('button', { name: 'How much can I spend without selling?', exact: true }).click();
     await expect(page.getByText(/Modelled borrowing room: \$784\.62\./)).toBeVisible();
-    await expect(page.getByText(/Stock-backed borrowing is not available here yet\./)).toBeVisible();
+    await expect(page.getByText(/supports reviewed stocks through Aave V4/)).toBeVisible();
     await page.getByLabel('A question about your money').fill('Когда выходные лимиты?');
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
     await expect(page.getByText(/^С Fri 8 PM до Sun 8 PM по Нью-Йорку/)).toBeVisible();
@@ -186,7 +186,7 @@ test.describe('Agent language', () => {
     await question.fill('Сколько я могу взять?');
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
     await expect(page.locator('.still-bubble').last()).toContainText('Расчётный запас для займа — $784.62.');
-    await expect(page.locator('.still-bubble').last()).toContainText('Займы под акции здесь пока не доступны.');
+    await expect(page.locator('.still-bubble').last()).toContainText('Get money поддерживает проверенные акции через Aave V4');
     await expect(page.getByRole('button', { name: 'How much can I spend without selling?', exact: true })).toBeVisible();
     await expect(question).toHaveAttribute('placeholder', 'Ask about your money');
     expect(reads.filter(path => path === '/api/still/mine')).toHaveLength(1);

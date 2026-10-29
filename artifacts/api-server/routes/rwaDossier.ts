@@ -27,6 +27,7 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 import type { TenantUser } from '../middleware/tenantAuth.js';
 import { rwaMarketRealityRouter } from './rwaMarketReality.js';
 import { rwaBorrowRouter } from './rwaBorrow.js';
+import { rwaLendingRouter } from './rwaLending.js';
 
 export const rwaDossierRouter = Router();
 
@@ -349,3 +350,4 @@ rwaDossierRouter.post('/rwa/official/:tokenAddress/dossier/measure', async (req,
 // projection code.
 rwaDossierRouter.use(rwaMarketRealityRouter);
 rwaDossierRouter.use(rwaBorrowRouter);
+rwaDossierRouter.use(rwaLendingRouter);

@@ -114,7 +114,7 @@ describe('the Agent distinguishes a model from an executable loan', () => {
     assert.match(answer.text, /^Modelled borrowing room:/);
     assert.match(answer.text, /not a loan ready to sign/);
     assert.match(answer.text, /cbBTC and WETH through Morpho/);
-    assert.match(answer.text, /Stock-backed borrowing is not available here yet/);
+    assert.match(answer.text, /reviewed stocks through Aave V4/);
     assert.doesNotMatch(answer.text, /^Now \$/);
   });
   it('reports held tokens with unread valuations without claiming the wallet has none', () => {

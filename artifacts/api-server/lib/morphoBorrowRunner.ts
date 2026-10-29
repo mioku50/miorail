@@ -24,6 +24,7 @@ import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { readBorrowStandingV1, stillBorrowAssetV1 } from './stillBorrowStanding.js';
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
+import type { LendingFactsV1 } from './lendingReview.js';
 
 // ---------------------------------------------------------------------------
 // The whole borrow, from a measured market to a reviewed batch — or to the one
@@ -96,6 +97,8 @@ export type MorphoBorrowRunV1 =
       atomicRequired: true;
       funding?: { type: 'erc20'; token: string; amountAtomic: string };
       stillPolicy?: { termsVersion: string; shareBps: number; limitAtomic: string; debtBeforeAtomic: string; availableAtomic: string };
+      /** Exact measured position for the owned lending execution record. */
+      lendingFacts?: LendingFactsV1;
     }
   | {
       state: 'refused';
@@ -524,6 +527,18 @@ export async function runMorphoBorrowV1(
     signingTermsHash,
     expiresAt: new Date(Math.min(now.getTime() + 30_000, venueExpiry)).toISOString(),
     atomicRequired: true,
+    ...(stillAsset && standing.position ? { lendingFacts: {
+      operation: 'borrow' as const, venue: 'morpho' as const, collateralTokenAddress: stillAsset.token.toLowerCase(),
+      collateralSymbol: stillAsset.id === 'ETH' ? 'WETH' : stillAsset.id, collateralDecimals: stillAsset.decimals,
+      marketId, amountMode: 'assets' as const, requestedAssets: ask.toString(), maximumDebitAssets: '0',
+      collateralSupplyAssets: supply.toString(), debtBeforeAssets: standing.health!.borrowedAssets.toString(),
+      debtAfterAssets: after.health.borrowedAssets.toString(), collateralBeforeAssets: standing.position.collateral.toString(),
+      collateralAfterAssets: after.position.collateral.toString(), debtBeforeShares: standing.position.borrowShares.toString(),
+      debtAfterShares: after.position.borrowShares.toString(), blockNumber: simulation.blockNumber,
+      healthBeforeWad: standing.health!.healthFactorWad?.toString() ?? null, healthAfterWad: after.health.healthFactorWad?.toString() ?? null,
+      ...(stillPolicy ? { policyLimitAssets: stillPolicy.limitAtomic, termsVersion: stillPolicy.termsVersion } : {}),
+      warnings: [...review.warnings],
+    } } : {}),
     ...(supply > 0n ? { funding: { type: 'erc20' as const, token: request.collateralTokenAddress.toLowerCase(), amountAtomic: supply.toString() } } : {}),
     ...(stillPolicy ? { stillPolicy } : {}),
     calls: plan.plan.calls,

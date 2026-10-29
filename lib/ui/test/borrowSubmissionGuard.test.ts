@@ -64,6 +64,15 @@ describe('one borrow draft crosses the wallet boundary at most once', () => {
     assert.equal(data.getItem(key), null);
     assert.equal(await submitBorrowOnceV1({ key, storage: data, send: async () => 'new-attempt' }), 'new-attempt');
   });
+  it('distinguishes a proven failure before SDK entry from an unknown wallet response', async () => {
+    const data = storage(), key = (await borrowSubmissionKeyV1('server-arm', WALLET))!;
+    await assert.rejects(submitBorrowOnceV1({ key, storage: data, enteredWallet: () => false,
+      send: async () => { throw new Error('server arm refused before SDK entry'); } }));
+    assert.equal(data.getItem(key), null);
+    await assert.rejects(submitBorrowOnceV1({ key, storage: data, enteredWallet: () => true,
+      send: async () => { throw new Error('SDK response lost'); } }));
+    assert.equal(data.getItem(key), 'unknown');
+  });
   it('does not treat a disconnected provider or a rejection-like error message as proof of no submission', async () => {
     for (const error of [Object.assign(new Error('disconnected'), { code: 4900 }), new Error('the upstream rejected the request')]) {
       const data = storage(), key = (await borrowSubmissionKeyV1('draft', WALLET))!;

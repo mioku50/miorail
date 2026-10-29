@@ -2,10 +2,11 @@ import React, { useId } from 'react';
 
 import type { SkyStateV1 } from './skyState';
 import { StillHeader, StillLink } from './StillFrame';
+import { STOCKS, type StockId } from '@mioagent/still-engine/registry';
 
 void React;
 
-export type StillBorrowAssetV1 = 'cbBTC' | 'WETH';
+export type StillBorrowAssetV1 = 'cbBTC' | 'WETH' | StockId;
 export interface StillBorrowModelV1 {
   sky: SkyStateV1;
   signedIn: boolean;
@@ -46,7 +47,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
       <StillHeader title="Get money" sky={model.sky} />
       <div className="still-section still-borrow-intro">
         <p className="still-sub">Choose collateral, read your limit, then choose how much USDC to borrow.</p>
-        <p className="still-note">cbBTC or WETH on Base, through Morpho. ETH in your wallet is not added here.</p>
+        <p className="still-note">Tokenized stocks through Aave V4; cbBTC or WETH through Morpho. Native ETH is not added here.</p>
       </div>
       {!model.signedIn ? (
         <div className="still-section still-card still-borrow-signin">
@@ -73,6 +74,13 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     </button>
                   ))}
                 </div>
+                <label className="still-borrow-label" htmlFor={`${id}-stock`}>Stock collateral · Aave V4</label>
+                <select id={`${id}-stock`} className="still-borrow-stock-select" disabled={busy}
+                  value={STOCKS.some(stock => stock.id === model.asset) ? model.asset! : ''}
+                  onChange={event => { const stock = STOCKS.find(row => row.id === event.target.value); if (stock) model.onAsset(stock.id); }}>
+                  <option value="">Choose a stock</option>
+                  {STOCKS.map(stock => <option value={stock.id} key={stock.id}>{stock.id} · {stock.name}</option>)}
+                </select>
                 <label className="still-borrow-label" htmlFor={`${id}-collateral`}>Amount to add</label>
                 <div className="still-borrow-amount">
                   <input id={`${id}-collateral`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.collateralAmount} placeholder="0" disabled={busy || model.asset === null} aria-describedby={`${id}-collateral-unit ${id}-collateral-help`} onChange={(event) => model.onCollateralAmount(event.target.value)} />

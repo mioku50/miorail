@@ -55,12 +55,16 @@ export class BorrowSubmissionStorageErrorV1 extends Error {
 }
 
 /** The marker is acquired BEFORE entering the wallet boundary. No id, no
- * response or an unknown error all retain it. Only a definitive user rejection
- * permits another attempt. A failed storage write never calls the wallet. */
+ * response or an unknown error after SDK entry all retain it. A definitive
+ * rejection or a host-proven failure before SDK entry can clear the local
+ * marker; an already armed server attempt remains independently locked. */
 export async function submitBorrowOnceV1(input: {
   key: string;
   storage: BorrowSubmissionStorageV1;
   send: () => Promise<string | null>;
+  /** A host with a separate server-arm step can prove that SDK entry never
+   * happened. A server-side attempt, if recorded, still blocks the next read. */
+  enteredWallet?: () => boolean;
 }): Promise<string | null> {
   try {
     const marker = borrowSubmissionMarkerV1(input.storage, input.key);
@@ -77,7 +81,7 @@ export async function submitBorrowOnceV1(input: {
     return id;
   } catch (error) {
     try {
-      if (borrowUserRejectedV1(error)) input.storage.removeItem(input.key);
+      if (borrowUserRejectedV1(error) || input.enteredWallet?.() === false) input.storage.removeItem(input.key);
       else input.storage.setItem(input.key, 'unknown');
     } catch { /* a retained pending marker remains conservative */ }
     throw error;

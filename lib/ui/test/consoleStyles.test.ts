@@ -22,6 +22,12 @@ const css = readFileSync(path.join(consoleDir, 'console.css'), 'utf8');
 
 /** Classes with a rule in console.css. */
 const defined = new Set(css.match(/\.[A-Za-z][A-Za-z0-9_-]*/g)?.map((selector) => selector.slice(1)) ?? []);
+// These two shared controllers/screens are mounted by Still hosts on both
+// web and Base App. Check their real stylesheet too, without exempting an
+// arbitrary class or letting unrelated console panels borrow Still styles.
+const stillCss = readFileSync(path.join(here, '..', 'src', 'still', 'still.css'), 'utf8');
+const stillDefined = new Set(stillCss.match(/\.[A-Za-z][A-Za-z0-9_-]*/g)?.map(selector => selector.slice(1)) ?? []);
+const STILL_CONSUMERS = new Set(['LendingReviewScreen.tsx', 'RepayEntryScreen.tsx']);
 
 /**
  * Classes that legitimately come from somewhere else.
@@ -99,6 +105,7 @@ describe('every console class has a stylesheet rule', () => {
     for (const { file, source } of consoleSources()) {
       for (const token of new Set(classTokens(source))) {
         if (defined.has(token) || EXTERNAL_V1.has(token) || prefixIsStyledV1(token)) continue;
+        if (STILL_CONSUMERS.has(file) && stillDefined.has(token)) continue;
         orphans.push(`${file}: .${token}`);
       }
     }

@@ -36,13 +36,15 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     assert.doesNotMatch(html, /<input|125\.34|0\.01234567|Review loan/);
   });
 
-  it('offers cbBTC and WETH without native-ETH or automatic-Max choices', () => {
+  it('offers the registered stocks, cbBTC and WETH without native-ETH or automatic-Max choices', () => {
     const html = render({ asset: null, collateralAmount: '' });
     assert.match(html, /aria-label="Collateral token"/);
     assert.match(html, /<strong>cbBTC<\/strong>/);
     assert.match(html, /<strong>WETH<\/strong>/);
     assert.match(html, /Wrapped ETH/);
-    assert.match(html, /ETH in your wallet is not added here/);
+    assert.match(html, /Native ETH is not added here/);
+    assert.match(html, /Stock collateral · Aave V4/);
+    assert.match(html, /<option value="NVDAc">NVDAc · NVIDIA<\/option>/);
     assert.match(button(html, 'Read borrowing limit'), /disabled=""/);
     assert.doesNotMatch(html, /<button[^>]*>Max|Review loan/);
     assert.match(html, /Choose your collateral and read the borrowing limit first/);

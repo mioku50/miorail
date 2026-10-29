@@ -1,11 +1,11 @@
 import { expect, test, type Page } from '@playwright/test';
-import { CRYPTO } from '../../../lib/still-engine/src/registry.js';
+import { CRYPTO, STOCKS, ADDRESSES } from '../../../lib/still-engine/src/registry.js';
 import { stillTerms } from '../../../lib/still-engine/src/terms.js';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 
 const NOW = new Date('2026-10-28T15:00:00Z');
 const WALLET = '0x1111111111111111111111111111111111111111';
-const REVIEW_URL = '/borrow/miorail-borrow-v1.fixturepayload.fixturesignature';
+const REVIEW_URL = '/lending/miorail-lending-v1.fixturepayload.fixturesignature';
 
 async function install(page: Page, signedIn = true) {
   await page.clock.setFixedTime(NOW);
@@ -49,18 +49,19 @@ async function install(page: Page, signedIn = true) {
       if (state.mode === 'unavailable') return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
       if (state.mode === 'refused') return route.fulfill({ json: { state: 'refused', detail: 'The selected pledge exceeds this wallet’s measured balance.' } });
       const asset = CRYPTO.find(row => row.token.toLowerCase() === url.searchParams.get('token')?.toLowerCase());
-      if (!asset) return route.fulfill({ status: 400, json: { error: 'fixture_wrong_asset' } });
+      const stock = STOCKS.find(row => row.token.toLowerCase() === url.searchParams.get('token')?.toLowerCase());
+      if (!asset && !stock) return route.fulfill({ status: 400, json: { error: 'fixture_wrong_asset' } });
       const supply = url.searchParams.get('collateralSupplyAtomic');
       return route.fulfill({ json: {
-        state: 'read', marketScope: 'still_registered_market', markets: [{
-          marketId: asset.morphoMarket, collateralDecimals: asset.decimals, loanDecimals: 6,
-          collateralSupplyAtomic: supply, walletCollateralAtomic: state.mode === 'unknown-balance' ? null : asset.id === 'cbBTC' ? '25000000' : '500000000000000000',
-          collateralAtomic: asset.id === 'cbBTC' ? '1000000' : '100000000000000000', blockNumber: 53_177_777,
+        state: 'read', marketScope: stock ? 'still_aave_spoke' : 'still_registered_market', markets: [{
+          marketId: stock ? ADDRESSES.aaveSpoke.toLowerCase() : asset!.morphoMarket, collateralTokenAddress: stock?.token.toLowerCase(), collateralDecimals: stock?.decimals ?? asset!.decimals, loanDecimals: 6,
+          collateralSupplyAtomic: supply, walletCollateralAtomic: state.mode === 'unknown-balance' ? null : stock ? '100000000' : asset!.id === 'cbBTC' ? '25000000' : '500000000000000000',
+          collateralAtomic: stock ? '0' : asset!.id === 'cbBTC' ? '1000000' : '100000000000000000', blockNumber: 53_177_777,
           still: { availableAtomic: '5000000', scope: supply === '0' ? 'existing_collateral' : 'selected_collateral' },
         }],
       } });
     }
-    if (path.startsWith('/api/route-intelligence/rwa/borrow/review/')) {
+    if (path.startsWith('/api/route-intelligence/rwa/lending/review/')) {
       return route.fulfill({ json: { state: 'refused', detail: 'Fixture review stops before any wallet action.' } });
     }
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
@@ -74,6 +75,24 @@ async function noWalletAction(page: Page) {
 }
 
 for (const width of [390, 1366]) {
+  test(`stock collateral uses its own exact decimals and Aave review (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 }); const state = await install(page);
+    await page.goto('/borrow');
+    await page.getByLabel('Stock collateral · Aave V4', { exact: true }).selectOption('NVDAc');
+    await page.getByLabel('Amount to add', { exact: true }).fill('0.05000001');
+    expect(state.limitReads).toHaveLength(0);
+    await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
+    await expect(page.locator('.still-borrow-maximum')).toContainText('5 USDC');
+    expect(state.limitReads[0]!.searchParams.get('collateralSupplyAtomic')).toBe('5000001');
+    expect(state.limitReads[0]!.searchParams.get('token')).toBe(STOCKS.find(row => row.id === 'NVDAc')!.token);
+    await page.getByLabel('USDC to borrow', { exact: true }).fill('3');
+    await page.getByRole('button', { name: 'Review loan', exact: true }).click();
+    await expect(page).toHaveURL(new RegExp(`${REVIEW_URL.replaceAll('.', '\\.')}$`));
+    expect(state.intents).toEqual([{ collateralTokenAddress: STOCKS.find(row => row.id === 'NVDAc')!.token, collateralSupplyAtomic: '5000001', borrowAmountAtomic: '3000000' }]);
+    expect(state.writes).toEqual(['/api/route-intelligence/rwa/borrow/intent']);
+    await noWalletAction(page);
+  });
+
   test(`a selected pledge is read on demand and becomes only a review question (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page);
@@ -108,7 +127,7 @@ for (const width of [390, 1366]) {
     await page.screenshot({ path: testInfo.outputPath(`selected-collateral-${width}.png`), fullPage: true });
     await page.getByRole('button', { name: 'Review loan', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`${REVIEW_URL.replaceAll('.', '\\.')}$`));
-    await expect(page.getByText('Fixture review stops before any wallet action.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Sign in and connect the same wallet to read this private review.', { exact: true })).toBeVisible();
     expect(state.intents).toEqual([{ collateralTokenAddress: CRYPTO[0]!.token, collateralSupplyAtomic: '2000000', borrowAmountAtomic: '3000001' }]);
     expect(state.writes).toEqual(['/api/route-intelligence/rwa/borrow/intent']);
     await noWalletAction(page);

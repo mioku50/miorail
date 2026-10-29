@@ -20,11 +20,14 @@
     "./openFigi": "./src/openFigi.ts",
     "./ecosystemClaims": "./src/ecosystemClaims.ts",
     "./morphoBorrowMath": "./src/morphoBorrowMath.ts",
+    "./morphoRepayMath": "./src/morphoRepayMath.ts",
     "./morphoBorrowReading": "./src/morphoBorrowReading.ts",
     "./morphoBorrowPlan": "./src/morphoBorrowPlan.ts",
     "./morphoBorrowSimulation": "./src/morphoBorrowSimulation.ts",
     "./morphoBorrowVenue": "./src/morphoBorrowVenue.ts",
-    "./borrowReview": "./src/borrowReview.ts"
+    "./borrowReview": "./src/borrowReview.ts",
+    "./morphoRepayPlan": "./src/morphoRepayPlan.ts",
+    "./morphoRepayVenue": "./src/morphoRepayVenue.ts"
   },
   "scripts": {
     "test": "NODE_ENV=test node --import tsx --test test/*.test.ts",

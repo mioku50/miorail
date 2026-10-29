@@ -1,6 +1,7 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
+import { CRYPTO } from '@mioagent/still-engine/registry';
 import { dividendMoneyV1, positiveDividendMoneyV1, sumDividendMoneyV1 } from './dividendMoney';
 
 
@@ -33,6 +34,7 @@ export interface LoanRowV1 {
   state: 'calm' | 'watch' | 'act' | 'liquidation' | null;
   liquidation: string[];
   more: string | null;
+  repayHref?: string | null;
 }
 
 export interface AssetsViewV1 {
@@ -106,6 +108,9 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     .filter((v) => v.debtCents !== null && v.debtCents !== '0')
     .map((v) => ({
       id: v.market,
+      // Aave's USDC debt belongs to the whole Spoke, not to a guessed stock.
+      repayHref: v.venue === 'aave-v4' ? '/repay' :
+        CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase()) ? `/repay?asset=${CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase())!.id === 'ETH' ? 'WETH' : 'cbBTC'}` : null,
       label: v.label,
       owed: formatCents(v.debtCents!),
       rate: v.borrowRateBps === null ? null : `${(v.borrowRateBps / 100).toFixed(2)}% a year, variable`,

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useLocation } from 'wouter';
 import { useBorrowCapacity, useCreateBorrowIntentV1 } from '@mioagent/api-client-react';
 import {
-  StillBorrow, StillFrame, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowCapacityViewV1,
+  StillBorrow, StillFrame, borrowAssetFromQueryV1, borrowCollateralTokenV1, borrowCollateralDecimalsV1, parseBorrowDecimalV1, stillBorrowCapacityViewV1,
   type StillBorrowAssetV1,
 } from '@mioagent/ui/still';
 import { useStillSky, useStillWallet } from './useStillSky';
@@ -12,7 +12,7 @@ interface AskedLimitV1 { asset: StillBorrowAssetV1; supplyAtomic: string; wallet
 /** Query text may select one supported token, never an address or amount. */
 function initialAssetV1(): StillBorrowAssetV1 | null {
   const asset = new URLSearchParams(window.location.search).get('asset');
-  return asset === 'cbBTC' || asset === 'WETH' ? asset : null;
+  return borrowAssetFromQueryV1(asset);
 }
 
 export function StillBorrowPage() {
@@ -36,7 +36,7 @@ export function StillBorrowPage() {
 
   const owner = signedIn ? wallet?.toLowerCase() ?? null : null;
   const activeAsked = asked && asked.wallet === owner ? asked : null;
-  const parsedSupply = asset ? parseBorrowDecimalV1(collateralAmount, asset === 'cbBTC' ? 8 : 18, true) : { atomic: null, error: null };
+  const parsedSupply = asset ? parseBorrowDecimalV1(collateralAmount, borrowCollateralDecimalsV1(asset), true) : { atomic: null, error: null };
   const needsRead = activeAsked === null || activeAsked.asset !== asset || parsedSupply.atomic !== activeAsked.supplyAtomic;
   // This key changes only when the person presses Read borrowing limit.
   // Editing either amount must never start an independent wallet/RPC read.
@@ -50,8 +50,8 @@ export function StillBorrowPage() {
 
   const onReadLimit = () => {
     if (!signedIn || !owner || preparing.current || limit.isFetching) return;
-    if (!asset) { setError('Choose cbBTC or WETH first.'); return; }
-    const parsed = parseBorrowDecimalV1(collateralAmount, asset === 'cbBTC' ? 8 : 18, true);
+    if (!asset) { setError('Choose a stock, cbBTC or WETH first.'); return; }
+    const parsed = parseBorrowDecimalV1(collateralAmount, borrowCollateralDecimalsV1(asset), true);
     if (parsed.atomic === null) { setError(parsed.error); return; }
     setError(null);
     if (activeAsked?.asset === asset && activeAsked.supplyAtomic === parsed.atomic) {
@@ -63,7 +63,7 @@ export function StillBorrowPage() {
 
   const onReview = async () => {
     if (preparing.current || !signedIn || !owner || !asset || needsRead || reading || !view.capacity) return;
-    const supply = parseBorrowDecimalV1(collateralAmount, asset === 'cbBTC' ? 8 : 18, true);
+    const supply = parseBorrowDecimalV1(collateralAmount, borrowCollateralDecimalsV1(asset), true);
     const borrow = parseBorrowDecimalV1(borrowAmount, 6);
     if (supply.atomic === null || borrow.atomic === null) { setError(supply.error ?? borrow.error); return; }
     const openedFor = identity;
@@ -78,7 +78,7 @@ export function StillBorrowPage() {
         setError('This review link expired before it could open. Read the limit again.');
         return;
       }
-      // The API hook accepts only a local /borrow/<signed-draft> link. This
+      // The API hook accepts only a local signed lending/legacy borrow link. This
       // page asks no wallet to open, sign, approve or submit anything.
       navigate(result.reviewUrl);
     } catch {

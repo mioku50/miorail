@@ -4,7 +4,8 @@ import express from 'express';
 import request from 'supertest';
 
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
-import { issueBorrowDraftV1, verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
+import { issueBorrowDraftV1 } from '../lib/borrowDraft.js';
+import { verifyLendingDraftV1 } from '../lib/lendingDraft.js';
 import { morphoBorrowCapacityV1, morphoHealthV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import type { MorphoBorrowStandingV1 } from '@mioagent/rwa-issuer/morphoBorrowReading';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
@@ -135,7 +136,7 @@ describe('the capacity read', () => {
       ],
     })) as never;
 
-    const response = await request(app()).get(`/api/route-intelligence/rwa/borrow/capacity?token=${NVDAC}`).expect(200);
+    const response = await request(app()).get(`/api/route-intelligence/rwa/borrow/capacity?token=${OTHER}`).expect(200);
     assert.equal(response.body.state, 'read');
     const row = response.body.markets[0];
     assert.equal(row.availableToBorrowAtomic, '824605615');
@@ -221,7 +222,7 @@ describe('the capacity read', () => {
     await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
       .query({ token: CRYPTO[0]!.token, collateralSupplyAtomic: ['1', '2'] }).expect(400);
     const unsupported = await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
-      .query({ token: NVDAC, collateralSupplyAtomic: '1' }).expect(400);
+      .query({ token: OTHER, collateralSupplyAtomic: '1' }).expect(400);
     assert.equal(unsupported.body.code, 'borrow_collateral_not_supported');
     assert.equal(called, false);
   });
@@ -236,35 +237,41 @@ describe('a selected borrow intent is only a wallet-bound question', () => {
     rwaBorrowRuntimeV1.run = async () => { run = true; throw new Error('must not prepare'); };
     const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send(selected).expect(200);
     assert.deepEqual(Object.keys(response.body).sort(), ['borrowDraftId', 'draft', 'expiresAt', 'reviewUrl']);
-    assert.equal(response.body.reviewUrl, `/borrow/${encodeURIComponent(response.body.draft)}`);
+    assert.equal(response.body.reviewUrl, `/lending/${encodeURIComponent(response.body.draft)}`);
     assert.equal(response.body.expiresAt, new Date(NOW.getTime() + 5 * 60_000).toISOString());
-    const verified = verifyBorrowDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET });
+    const verified = verifyLendingDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET, tenantId: USER.id });
     assert(verified.ok);
+    assert.equal(verified.claims.question.operation, 'borrow');
+    if (verified.claims.question.operation !== 'borrow') throw new Error('unexpected question');
     assert.equal(verified.claims.tenantId, USER.id);
     assert.equal(verified.claims.walletAddress, WALLET);
     assert.equal(verified.claims.marketId, CRYPTO[0]!.morphoMarket);
-    assert.equal(verified.claims.collateralTokenAddress, CRYPTO[0]!.token.toLowerCase());
-    assert.equal(verified.claims.borrowAssets, '10000000');
-    assert.equal(verified.claims.collateralSupplyAssets, '1000000');
+    assert.equal(verified.claims.question.collateralTokenAddress, CRYPTO[0]!.token.toLowerCase());
+    assert.equal(verified.claims.question.borrowAssets, '10000000');
+    assert.equal(verified.claims.question.collateralSupplyAssets, '1000000');
     assert.equal(read, false);
     assert.equal(run, false);
   });
 
   test('zero selected supply is a valid existing-collateral question, not an implicit wallet max', async () => {
     const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ ...selected, collateralSupplyAtomic: '0' }).expect(200);
-    const verified = verifyBorrowDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET });
+    const verified = verifyLendingDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET, tenantId: USER.id });
     assert(verified.ok);
-    assert.equal(verified.claims.collateralSupplyAssets, undefined);
+    assert.equal(verified.claims.question.operation, 'borrow');
+    if (verified.claims.question.operation !== 'borrow') throw new Error('unexpected question');
+    assert.equal(verified.claims.question.collateralSupplyAssets, '0');
   });
 
   test('accepts the uint128 maximum as a bounded question, without claiming the wallet can fund it', async () => {
     const maximum = ((1n << 128n) - 1n).toString();
     const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
       .send({ ...selected, borrowAmountAtomic: maximum, collateralSupplyAtomic: maximum }).expect(200);
-    const verified = verifyBorrowDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET });
+    const verified = verifyLendingDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET, tenantId: USER.id });
     assert(verified.ok);
-    assert.equal(verified.claims.borrowAssets, maximum);
-    assert.equal(verified.claims.collateralSupplyAssets, maximum);
+    assert.equal(verified.claims.question.operation, 'borrow');
+    if (verified.claims.question.operation !== 'borrow') throw new Error('unexpected question');
+    assert.equal(verified.claims.question.borrowAssets, maximum);
+    assert.equal(verified.claims.question.collateralSupplyAssets, maximum);
     assert.equal('calls' in response.body, false);
   });
 
@@ -294,7 +301,7 @@ describe('a selected borrow intent is only a wallet-bound question', () => {
     for (const collateralSupplyAtomic of ['', '-1', '01', '1.0', ' 1', 1, (1n << 128n).toString()]) {
       await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ ...selected, collateralSupplyAtomic }).expect(400);
     }
-    const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ ...selected, collateralTokenAddress: NVDAC }).expect(400);
+    const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ ...selected, collateralTokenAddress: OTHER }).expect(400);
     assert.equal(response.body.code, 'borrow_collateral_not_supported');
   });
 });

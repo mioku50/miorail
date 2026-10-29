@@ -254,7 +254,7 @@ describe('the Agent', () => {
     const sky = skyStateV1({ now: WEDNESDAY });
     const borrowing = agentAnswerV1({ question: 'Сколько я могу взять?', report: r, sky }).text;
     assert.match(borrowing, /^Расчётный запас для займа — \$784\.62\. Ваш долг \$240\.17 уже учтён\./);
-    assert.match(borrowing, /Get money сейчас поддерживает cbBTC и WETH через Morpho/);
+    assert.match(borrowing, /Get money поддерживает проверенные акции через Aave V4/);
     assert.match(agentAnswerV1({ question: 'How safe is my loan?', report: r, sky }).text, /prices can fall 52% together .* NVIDIA below \$100\.92/);
     const weekend = agentAnswerV1({ question: 'How much can I spend?', report: report(SATURDAY), sky: skyStateV1({ now: SATURDAY_AT }) });
     assert.match(weekend.text, /On an open market it would be \$784\.62: until Sun 8 PM stocks count at 40%\./);

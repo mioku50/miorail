@@ -116,8 +116,8 @@ export function agentAnswerV1(input: {
         : '',
       owed > BigInt(0) ? (ru ? `Ваш долг ${formatCents(owed)} уже учтён.` : `Your ${formatCents(owed)} owed is already counted.`) : '',
       ru
-        ? 'Это расчёт, а не доступный к подписанию займ. Get money сейчас поддерживает cbBTC и WETH через Morpho: точный текущий лимит нужно проверить там. Займы под акции здесь пока не доступны.'
-        : 'This is a modelled amount, not a loan ready to sign. Get money currently supports cbBTC and WETH through Morpho; check the live limit for your exact amount there. Stock-backed borrowing is not available here yet.',
+        ? 'Это расчёт, а не доступный к подписанию займ. Get money поддерживает проверенные акции через Aave V4 и cbBTC и WETH через Morpho: точный текущий лимит нужно проверить для выбранного залога.'
+        : 'This is a modelled amount, not a loan ready to sign. Get money supports reviewed stocks through Aave V4 and cbBTC and WETH through Morpho; check the live limit for your exact collateral choice there.',
     ];
     return { topic, text: parts.filter(Boolean).join(' '), sources: [...terms, ...read] };
   }
