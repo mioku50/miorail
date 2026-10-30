@@ -50,8 +50,8 @@ export function ThinkingOrbs({
 }
 
 function modeBadgeLabelV2(mode: AgentModeV2 | undefined, ru: boolean): string | null {
-  if (mode === 'fast') return ru ? 'Быстрый ответ · Mirror' : 'Fast · Mirror';
-  if (mode === 'analysis') return ru ? 'Риск-движок · Проверенный расчёт' : 'Risk Engine · Verified analysis';
+  if (mode === 'fast') return ru ? 'Прямое чтение' : 'Direct read';
+  if (mode === 'analysis') return ru ? 'Расчёт · по этому чтению' : 'Calculated · from this reading';
   if (mode === 'action_prep') return ru ? 'Подготовка · Подпись в кошельке' : 'Action prep · Wallet confirmation';
   if (mode === 'refused') return ru ? 'Отказ · Недостаточно данных' : 'Refused · Missing evidence';
   return null;
@@ -137,12 +137,7 @@ function StillAgentSession({ model }: { model: StillAgentModelV1 }) {
           method: 'POST',
           credentials: 'include',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            question: text,
-            report: model.report,
-            dividends: model.dividends,
-            dividendsReadState: model.dividendsReadState,
-          }),
+          body: JSON.stringify({ question: text }),
         })
         .then(async (res) => {
           if (!res.ok) return null;

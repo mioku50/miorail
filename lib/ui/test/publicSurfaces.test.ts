@@ -399,9 +399,13 @@ test('the Wallet MCP plugin is served as markdown and follows the plugin spec', 
   assert.doesNotMatch(plugin, /^## (Endpoints|Commands)/m);
 
   // A public file: no real address, and the one link that leaves the file
-  // resolves from miorail.xyz rather than from inside base/skills.
+  // resolves from miorail.xyz rather than from inside the skill's repository.
   assert.doesNotMatch(plugin, /0x[0-9a-fA-F]{40}/);
   assert.doesNotMatch(plugin, /\]\(\.\.\/references\//);
-  assert.match(plugin, /action\.from` equals the Base MCP wallet address/, 'calls prepared for one wallet are never sent from another');
+  assert.match(plugin, /action\.from` equals the Wallet MCP wallet address/, 'calls prepared for one wallet are never sent from another');
+  // base/skills removed the Wallet MCP skill on 2026-10-27 (PR #171); its
+  // references live in coinbase/agents now, and an old link answers 404.
+  assert.doesNotMatch(plugin, /github\.com\/base\/skills/);
+  assert.match(plugin, /https:\/\/github\.com\/coinbase\/agents\/blob\/main\/skills\/wallet-mcp\/references\/approval-mode\.md/);
 });
 

@@ -137,6 +137,17 @@ export function tokenAmountV1(atomic: bigint, decimals: number): string {
   return fraction.length > 0 ? `${whole}.${fraction}` : whole;
 }
 
+/**
+ * Four places, unless that would round a positive amount into zero: a small
+ * holding's estimate read "$0.00", a claim of nothing, where "<$0.01" is true.
+ */
+function usdTextV1(usd: number): string {
+  const fixed = usd.toFixed(4);
+  if (usd <= 0 || /[1-9]/.test(fixed)) return fixed;
+  const fine = usd.toFixed(12).replace(/0+$/, '');
+  return /[1-9]/.test(fine) ? fine : fixed;
+}
+
 function walletEventV1(event: DividendEventV1, atomic: bigint, decimals: number): DividendWalletEventV1 {
   const tokens = Number(atomic) / 10 ** decimals;
   const effect = event.token;
@@ -162,7 +173,7 @@ function walletEventV1(event: DividendEventV1, atomic: bigint, decimals: number)
     kind: effect.kind,
     tokens: tokenAmountV1(atomic, decimals),
     shares: shares === null || !Number.isFinite(shares) ? null : shares.toFixed(8),
-    usd: usd === null || !Number.isFinite(usd) ? null : usd.toFixed(4),
+    usd: usd === null || !Number.isFinite(usd) ? null : usdTextV1(usd),
     at: effect.at,
   };
 }

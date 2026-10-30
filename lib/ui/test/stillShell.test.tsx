@@ -177,6 +177,12 @@ describe('Home', () => {
     nvda.pledged = null;
     assert.equal(homeViewV1({ report: unconfirmed, sky }).comingUp.some((item) => item.icon === 'earnings'), false,
       'a zero balance and unread collateral do not establish a stock holding');
+    // A window two weeks out names its date: "MON 12 AM" read as the coming Monday.
+    const far = homeViewV1({ report: r, sky: skyStateV1({ now: new Date('2026-10-14T15:00:00Z') }) }).comingUp.filter((item) => item.icon === 'earnings');
+    assert.deepEqual(far.map((item) => [item.when, item.text.split(':')[0]]), [
+      ['SUN OCT 25 12 AM', 'Apple reports Oct 26'],
+      ['WED OCT 28 12 AM', 'NVIDIA reports Oct 29'],
+    ]);
     // An unread calendar must not become a schedule even if stale window fields remain.
     r.assets.find((line) => line.asset === 'NVDAc')!.earnings!.source = 'unread';
     assert.equal(homeViewV1({ report: r, sky }).comingUp.some((item) => item.icon === 'earnings'), false);
@@ -245,6 +251,10 @@ describe('Assets', () => {
     aaveVenue.debtAtomic = '2';
     assert.equal(assetsViewV1({ report: microReport }).loans[0]!.owed, '0.000002 USDC');
     assert.equal(homeViewV1({ report: microReport, sky: skyStateV1({ now: WEDNESDAY }) }).owed?.amount, 'Owed 0.000002 USDC');
+    // The picture says the same: the engine's round-up to a cent is not a $0.01 debt.
+    const microView = homeViewV1({ report: microReport, sky: skyStateV1({ now: WEDNESDAY }) });
+    assert.equal(microView.mobile.loan?.owedLabel, '<$0.01');
+    assert.equal(homeViewV1({ report: report(), sky: skyStateV1({ now: WEDNESDAY }) }).mobile.loan?.owedLabel, undefined);
   });
 });
 
@@ -259,6 +269,8 @@ describe('the Agent', () => {
     assert.equal(agentTopicV1('Что будет с моим займом, если NVIDIA упадёт на 25%?'), 'stress_test');
     assert.equal(agentTopicV1('Почему моя сумма займа уменьшилась?'), 'limit_change');
     assert.equal(agentTopicV1('Как безопаснее уменьшить долг на $100?'), 'repay_options');
+    assert.equal(agentTopicV1('What if I repay $100 of my loan?'), 'repay_options');
+    assert.equal(agentTopicV1('Что будет, если погасить $100 долга?'), 'repay_options');
     assert.equal(agentTopicV1('Займи $500 и отправь другу'), 'action_prep');
     assert.equal(agentTopicV1('Tell me a joke'), null);
   });
@@ -273,10 +285,15 @@ describe('the Agent', () => {
     assert.match(agentAnswerV1({ question: 'How safe is my loan?', report: r, sky }).text, /prices can fall 52% together .* NVIDIA below \$100\.92/);
     const weekend = agentAnswerV1({ question: 'How much can I spend?', report: report(SATURDAY), sky: skyStateV1({ now: SATURDAY_AT }) });
     assert.match(weekend.text, /On an open market it would be \$784\.62: until Sun 8 PM stocks count at 40%\./);
-    assert.match(agentAnswerV1({ question: 'dividend?', report: r, sky, dividends }).text, /Apple: paid around 2026-11-12, about \$0\.19 as more AAPLc\. .* the amount is an estimate\./);
+    assert.match(agentAnswerV1({ question: 'dividend?', report: r, sky, dividends }).text, /Apple: pays around 2026-11-12, about \$0\.19 as more AAPLc\. .* the amount is an estimate\./);
     const unknown = agentAnswerV1({ question: 'Tell me a joke', report: r, sky });
     assert.equal(unknown.topic, null);
     assert.doesNotMatch(unknown.text, /\$\d/);
+    // A question it does not recognise is answered with the list: no badge, no model, no figures.
+    assert.equal(unknown.mode, undefined);
+    assert.equal(unknown.needsLlm, false);
+    assert.equal(unknown.engineFacts, undefined);
+    assert.equal(agentAnswerV1({ question: 'привет', report: r, sky }).needsLlm, false);
     assert.match(agentAnswerV1({ question: 'How much can I borrow?', report: null, sky }).text, /sign in/);
   });
 
@@ -304,6 +321,10 @@ describe('the Agent', () => {
     assert.match(limitWeekend.text, /рынок США закрыт.*40% вместо 50%/);
     assert.match(limitWeekend.text, /вычтен текущий долг \$240\.17/);
     assert.ok((limitWeekend.steps ?? []).length >= 3);
+    // The gas reserve is the terms' own, wherever a step names it.
+    for (const step of limitWeekend.steps ?? []) {
+      if (/газа/.test(step)) assert.match(step, /0\.0005 ETH/);
+    }
 
     // 3. Safe debt reduction by $100
     const repay100 = agentAnswerV1({ question: 'Как безопаснее уменьшить долг на $100?', report: r, sky });
@@ -312,6 +333,20 @@ describe('the Agent', () => {
     assert.match(repay100.text, /снизится с \$240\.17 до \$140\.17/);
     assert.match(repay100.text, /Health Factor вырастет с 2\.09 до 3\.58/);
     assert.equal(repay100.actionLink?.href, '/repay');
+    // What a repayment changes, never which one to choose, and no claim about dividends.
+    for (const line of [repay100.text, ...(repay100.steps ?? [])]) {
+      assert.doesNotMatch(line, /Рекоменд|безопасн|дивиденд/i);
+    }
+    const repayEn = agentAnswerV1({ question: 'What if I repay $100 of my loan?', report: r, sky });
+    for (const line of [repayEn.text, ...(repayEn.steps ?? [])]) {
+      assert.doesNotMatch(line, /recommend|safest|dividend/i);
+    }
+    assert.match(repayEn.text, /debt drops from \$240\.17 to \$140\.17/);
+    // No amount named: no amount is chosen for the reader.
+    const repayAny = agentAnswerV1({ question: 'Как уменьшить долг?', report: r, sky });
+    assert.equal(repayAny.topic, 'repay_options');
+    assert.doesNotMatch(repayAny.text, /\$100/);
+    assert.match(repayAny.text, /Назовите сумму/);
 
     // 4. Action preparation & refusal of third-party transfer
     const actionPrep = agentAnswerV1({ question: 'Займи $500 и отправь другу', report: r, sky });

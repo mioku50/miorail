@@ -1,13 +1,22 @@
 import { createLlmProvider, type LlmProvider } from '@mioagent/llm';
 import type { MirrorReport } from '@mioagent/still-engine/report';
-import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import {
   agentAnswerV1,
   isRussianV1,
   type AgentAnswerV1,
-  type DividendReadStateV1,
 } from '../../../lib/ui/src/still/agentAnswers.js';
 import { skyStateV1 } from '../../../lib/ui/src/still/skyState.js';
+import { formatCents } from '@mioagent/still-engine/format';
+import { numbersInV1, stripNarrationFormattingV1 } from './b20AnswerVerify.js';
+
+// ---------------------------------------------------------------------------
+// The Agent's wording, walled in the way the B20 narrator is: the calculation
+// is deterministic, and a model may only re-say it. A narration is shown only
+// if every figure in it is one the reader can already see in the calculation
+// (its sentence and its steps), and it neither advises nor claims to have
+// acted. Anything else falls back to the deterministic answer, which is what
+// the page shows without a model at all.
+// ---------------------------------------------------------------------------
 
 export const stillAgentLlmRuntimeV1: {
   provider: () => LlmProvider | null;
@@ -21,17 +30,43 @@ export const stillAgentLlmRuntimeV1: {
   },
 };
 
-function verifyStillAgentNarrationV2(narration: string, base: AgentAnswerV1): string | null {
-  const cleaned = narration.trim().replace(/^["«]|["»]$/g, '').trim();
+/** Advice is not ours to give, in either language the Agent answers in. */
+const ADVICE_V2 =
+  /\b(?:recommend\w*|you should|i suggest|safest|best (?:option|way|path))\b|рекоменд|совету|советую|следует|стоит (?:взять|занять|погасить|продать|купить)|лучше всего|самый безопасн|безопаснее всего/i;
+
+/** "Every number must be in the evidence" is only as strong as the evidence is small. */
+export const STILL_NARRATION_MAX_FIGURES_V2 = 40;
+
+/** The allowed figures: what the reader already sees in the calculation. */
+function evidenceFiguresV2(base: AgentAnswerV1): Set<string> {
+  return new Set([base.text, ...(base.steps ?? [])].flatMap(numbersInV1));
+}
+
+/**
+ * Figures a restatement may not drop, and the one claim it may not flip. A
+ * fluent sentence with no numbers passes a number check while saying the
+ * opposite, so the outcome itself is checked mechanically too.
+ */
+function decisiveFiguresV2(base: AgentAnswerV1): string[] {
+  const facts = base.engineFacts ?? {};
+  const cents = (value: unknown) => (typeof value === 'string' && /^\d+$/.test(value) ? numbersInV1(formatCents(value)) : []);
+  if (facts.mode === 'stress_test') return typeof facts.hfAfter === 'string' ? numbersInV1(facts.hfAfter) : cents(facts.valueAfterCents);
+  if (facts.mode === 'repay_options' && facts.fullPayoff !== true) return cents(facts.debtAfterCents);
+  if (facts.mode === 'limit_change') return cents(facts.availableCents);
+  return [];
+}
+// `\w` is ASCII-only in JS: Russian endings are spelled as a Cyrillic class.
+const ENTERS_LIQUIDATION_V2 = /enter\w* (?:the )?liquidation|liquidation zone|be liquidated|зон[а-яё]* ликвидации|будет ликвидирован|ликвидируют/i;
+const STAYS_SAFE_V2 = /remain\w* safe|stays? safe|останется безопасн|остаётся безопасн/i;
+
+const ACTED_V2 =
+  /(?:я\s+(?:уже\s+)?(?:подписал|отправил|перев[её]л|исполнил)|i\s+have\s+(?:signed|sent|transferred|executed)\s+the\s+transaction)/i;
+
+export function verifyStillAgentNarrationV2(narration: string, base: AgentAnswerV1): string | null {
+  const cleaned = stripNarrationFormattingV1(narration.trim().replace(/^["«]|["»]$/g, '').trim());
   if (cleaned.length < 24 || cleaned.length > 950) return null;
   // Never allow a narration that claims autonomous execution or third-party transfer completion
-  if (
-    /(?:я\s+(?:уже\s+)?(?:подписал|отправил|перев[её]л|исполнил)|i\s+have\s+(?:signed|sent|transferred|executed)\s+the\s+transaction)/i.test(
-      cleaned,
-    )
-  ) {
-    return null;
-  }
+  if (ACTED_V2.test(cleaned) || ADVICE_V2.test(cleaned)) return null;
   // If action_prep refused third-party transfer, the narration must still state the refusal
   if (
     base.mode === 'action_prep' &&
@@ -41,14 +76,21 @@ function verifyStillAgentNarrationV2(narration: string, base: AgentAnswerV1): st
   ) {
     return null;
   }
+  // Every figure must already be on the reader's screen, and the decisive ones stay.
+  const figures = numbersInV1(cleaned);
+  const evidence = evidenceFiguresV2(base);
+  if (figures.some((figure) => !evidence.has(figure))) return null;
+  if (decisiveFiguresV2(base).some((figure) => !figures.includes(figure))) return null;
+  // A stress test's outcome is a boolean: the wording may not flip it.
+  if (base.engineFacts?.mode === 'stress_test' && typeof base.engineFacts.liquidatedAfter === 'boolean') {
+    if (base.engineFacts.liquidatedAfter ? STAYS_SAFE_V2.test(cleaned) : ENTERS_LIQUIDATION_V2.test(cleaned)) return null;
+  }
   return cleaned;
 }
 
 export async function answerStillAgentHybridV2(input: {
   question: string;
   report: MirrorReport | null;
-  dividends?: DividendWalletResponseV1 | null;
-  dividendsReadState?: DividendReadStateV1;
   signedIn: boolean;
   now?: Date;
 }): Promise<AgentAnswerV1> {
@@ -59,12 +101,10 @@ export async function answerStillAgentHybridV2(input: {
     question: input.question,
     report: input.report,
     sky,
-    dividends: input.dividends ?? null,
-    dividendsReadState: input.dividendsReadState,
     signedIn: input.signedIn,
   });
 
-  if (!base.needsLlm || !input.report) {
+  if (!base.needsLlm || !input.report || evidenceFiguresV2(base).size > STILL_NARRATION_MAX_FIGURES_V2) {
     return { ...base, needsLlm: false };
   }
 
@@ -76,22 +116,24 @@ export async function answerStillAgentHybridV2(input: {
   const ru = isRussianV1(input.question);
   const systemPrompt = ru
     ? [
-        'Ты — Still Agent v2, проверяемый финансовый аналитик портфеля на Base.',
-        'Все финансовые расчёты уже выполнены детерминированным риск-движком Miorail.',
-        'Твоя задача — ясно и лаконично (2–4 предложения, без markdown-заголовков и списков) объяснить пользователю результат расчёта.',
+        'Ты пересказываешь готовый расчёт Still о кошельке пользователя на Base.',
+        'Все финансовые расчёты уже выполнены детерминированным кодом Miorail.',
+        'Твоя задача — ясно и лаконично (2–4 предложения, без markdown-заголовков и списков) пересказать результат расчёта.',
         'ЖЕСТКИЕ ПРАВИЛА:',
-        '1. Используй ТОЛЬКО числа и факты из переданного расчёта риск-движка (BASELINE_ANSWER, STEPS, ENGINE_FACTS). Никогда не выдумывай свои числа и не пересчитывай их.',
-        '2. Для режима action_prep прямо укажи, что агент не подписывает транзакции автоматически и не переводит средства третьим лицам, а только готовит проверенную транзакцию для подтверждения в кошельке.',
-        '3. Отвечай строго на русском языке.',
+        '1. Используй ТОЛЬКО числа из BASELINE_ANSWER и STEPS, в том же виде. Никогда не выдумывай свои числа и не пересчитывай их.',
+        '2. Не давай советов и рекомендаций: не говори, что выбрать, что безопаснее или что стоит сделать.',
+        '3. Для режима action_prep прямо укажи, что агент не подписывает транзакции автоматически и не переводит средства третьим лицам, а только готовит проверку для подтверждения в кошельке.',
+        '4. Не представляйся и не называй версий. Отвечай строго на русском языке.',
       ].join('\n')
     : [
-        'You are Still Agent v2, a verified portfolio financial analyst on Base.',
-        'All financial math has already been computed by the deterministic Miorail Risk Engine.',
-        'Your job is to explain the verified result clearly and concisely (2–4 sentences, plain text without markdown headings or bullet lists).',
+        "You restate Still's finished calculation about the reader's wallet on Base.",
+        'All financial math has already been computed by deterministic Miorail code.',
+        'Your job is to restate the result clearly and concisely (2–4 sentences, plain text without markdown headings or bullet lists).',
         'STRICT RULES:',
-        '1. Use ONLY the exact numbers and facts from BASELINE_ANSWER, STEPS, and ENGINE_FACTS. Never invent or alter any figure.',
-        '2. For action_prep mode, explicitly state that the agent never signs transactions autonomously or transfers funds to third parties, and only prepares a verified review for wallet confirmation.',
-        '3. Respond strictly in English.',
+        '1. Use ONLY the figures in BASELINE_ANSWER and STEPS, written the same way. Never invent or alter any figure.',
+        '2. Give no advice or recommendation: never say what to choose, what is safest or what the reader should do.',
+        '3. For action_prep mode, explicitly state that the agent never signs transactions autonomously or transfers funds to third parties, and only prepares a review for wallet confirmation.',
+        '4. Do not introduce yourself or name versions. Respond strictly in English.',
       ].join('\n');
 
   const userPayload = JSON.stringify(
@@ -120,9 +162,11 @@ export async function answerStillAgentHybridV2(input: {
     if (!verifiedText) {
       return { ...base, needsLlm: false };
     }
+    // The chain can fall over to a spare provider, so the line names the
+    // check, not a vendor.
     const llmSource = ru
-      ? 'ИИ · синтез OpenRouter (связан с числами риск-движка)'
-      : 'AI · OpenRouter synthesis (bound to Risk Engine figures)';
+      ? 'ИИ · пересказ; каждое число сверено с расчётом'
+      : 'AI · wording only; every figure checked against the calculation';
     return {
       ...base,
       text: verifiedText,

@@ -35,7 +35,7 @@ export function StillMobile({ input }: { input: MobileInputV1 }) {
         ) : null}
         {layout.loan && layout.loan.side >= 30 ? (
           <text className="sm-loan-label" x={layout.loan.x + layout.loan.side / 2} y={layout.loan.y + layout.loan.side / 2 + 4}>
-            {moneyLabelV1(owed)}
+            {input.loan?.owedLabel ?? moneyLabelV1(owed)}
           </text>
         ) : null}
         {layout.limit ? (

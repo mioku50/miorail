@@ -1,7 +1,6 @@
 import express, { Router, type Request, type Response } from 'express';
 import { logger } from '@mioagent/utils';
 import type { MirrorReport } from '@mioagent/still-engine/report';
-import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { answerStillAgentHybridV2 } from '../lib/stillAgentServer.js';
@@ -42,17 +41,16 @@ stillMineRouter.get('/mine', async (req: Request, res: Response) => {
   }
 });
 
-stillMineRouter.post('/agent/ask', express.json({ limit: '256kb' }), async (req: Request, res: Response) => {
+// The Agent's questions about this wallet. The browser sends only the question:
+// the figures come from this server's own reading of the session wallet (the
+// same cached service as /mine), never from a report the page posts back, so
+// an answer marked as calculated cannot rest on numbers the browser supplied.
+stillMineRouter.post('/agent/ask', express.json({ limit: '8kb' }), async (req: Request, res: Response) => {
   res.set('Cache-Control', 'private, no-store');
   const wallet = sessionWalletV1(req, res);
   if (!wallet) return;
 
-  const body = (req.body ?? {}) as {
-    question?: unknown;
-    report?: MirrorReport | null;
-    dividends?: DividendWalletResponseV1 | null;
-    dividendsReadState?: 'not_loaded' | 'loading' | 'unavailable' | 'read';
-  };
+  const body = (req.body ?? {}) as { question?: unknown };
   const question = typeof body.question === 'string' ? body.question.trim() : '';
   if (!question || question.length > 500) {
     res.status(400).json({ ok: false, outcome: 'invalid_input' });
@@ -61,34 +59,17 @@ stillMineRouter.post('/agent/ask', express.json({ limit: '256kb' }), async (req:
 
   try {
     let report: MirrorReport | null = null;
-    if (
-      body.report &&
-      typeof body.report === 'object' &&
-      body.report.kind === 'still.mirror' &&
-      typeof body.report.subject?.address === 'string'
-    ) {
-      if (body.report.subject.address.toLowerCase() !== wallet) {
-        res.status(403).json({ ok: false, outcome: 'wallet_mismatch' });
-        return;
+    const outcome = await stillMineRuntimeV1.service().check(wallet);
+    if (outcome.outcome === 'report') {
+      if (outcome.report.subject.address.toLowerCase() !== wallet) {
+        throw new Error('still_mine_wallet_mismatch');
       }
-      report = body.report;
-    } else {
-      const outcome = await stillMineRuntimeV1.service().check(wallet);
-      if (outcome.outcome === 'report') {
-        if (outcome.report.subject.address.toLowerCase() !== wallet) {
-          throw new Error('still_mine_wallet_mismatch');
-        }
-        report = outcome.report;
-      }
+      report = outcome.report;
     }
 
-    const answer = await answerStillAgentHybridV2({
-      question,
-      report,
-      dividends: body.dividends ?? null,
-      dividendsReadState: body.dividendsReadState,
-      signedIn: true,
-    });
+    // The questions that reach a model never read dividends: those answers are
+    // the page's own, so none are passed here rather than unchecked ones.
+    const answer = await answerStillAgentHybridV2({ question, report, signedIn: true });
     res.status(200).json({ ok: true, answer });
   } catch (error) {
     logger.warn('Still agent hybrid ask failed', {

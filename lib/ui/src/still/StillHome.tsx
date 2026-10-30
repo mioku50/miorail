@@ -23,7 +23,7 @@ function heroLabelV1(sky: SkyStateV1, mobile: MobileInputV1 | null): string {
   const time = `Berlin at ${sky.clock}. New York at ${sky.marketClock}: ${sky.marketPhase === 'open' ? 'the market is open' : sky.marketPhase === 'closed' ? 'Wall Street is closed' : sky.marketPhase === 'before_open' ? 'before the open' : 'after hours'}`;
   if (!mobile || mobile.holdings.length === 0) return `${time}. No reviewed holdings are shown in the diagram yet.`;
   const names = mobile.holdings.map((h) => h.label).join(', ');
-  const loan = mobile.loan && mobile.loan.owedCents > 0 ? `hold up a ${formatCents(BigInt(mobile.loan.owedCents))} loan on the right` : 'are shown as reviewed holdings';
+  const loan = mobile.loan && mobile.loan.owedCents > 0 ? `hold up a ${mobile.loan.owedLabel ?? formatCents(BigInt(mobile.loan.owedCents))} loan on the right` : 'are shown as reviewed holdings';
   const room = mobile.loan ? `; the dashed square is ${formatCents(BigInt(Math.max(0, mobile.loan.limitCents - mobile.loan.owedCents)))} of modelled room` : '';
   return `${time}. ${names} on the left ${loan}${room}.`;
 }
@@ -77,7 +77,7 @@ export function StillComingUp({ items }: { items: ComingUpV1[] }) {
   if (items.length === 0) return null;
   return (
     <div className="still-section">
-      <div className="still-eyebrow">Coming up</div>
+      <div className="still-eyebrow">Coming up · New York time</div>
       <ul className="still-coming">
         {items.map((item, index) => (
           <li key={`${item.icon}-${index}`}>

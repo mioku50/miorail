@@ -127,6 +127,17 @@ describe('one wallet’s dividends', () => {
     assert.equal(response.passThroughPercent, '59.5');
   });
 
+  test('a small holding’s estimate stays positive instead of rounding into a claim of zero', () => {
+    const { response } = wallet({ now: NOW, tokens: [GOOGL], held: { GOOGL: 0.0003 } });
+    const next = response.holdings[0]!.upcoming[0]!;
+    assert.equal(next.kind, 'estimate');
+    assert.match(next.usd!, /[1-9]/);
+    assert.ok(Number(next.usd) > 0 && Number(next.usd) < 0.0001);
+    // Amounts four places can carry keep their four places.
+    const { response: four } = wallet({ now: NOW, tokens: [GOOGL], held: { GOOGL: 4 } });
+    assert.equal(four.holdings[0]!.upcoming[0]!.usd, '0.5236');
+  });
+
   test('bought after the conversion: nothing received, the next one ahead', () => {
     const { response } = wallet({ now: NOW, tokens: [GOOGL], held: { GOOGL: 1 }, before: { GOOGL: 0 } });
     const alphabet = response.holdings[0]!;

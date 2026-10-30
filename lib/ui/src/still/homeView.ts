@@ -28,7 +28,7 @@ export interface MobileHoldingV1 {
 export interface MobileInputV1 {
   holdings: MobileHoldingV1[];
   /** What is owed and what the limit is, in cents. Null when nothing could be borrowed or is owed. */
-  loan: { owedCents: number; limitCents: number; weekdayLimitCents: number | null } | null;
+  loan: { owedCents: number; limitCents: number; weekdayLimitCents: number | null; owedLabel?: string } | null;
   state: HomeStateV1;
 }
 
@@ -139,12 +139,17 @@ export function homeViewV1(input: {
 
   const debts = report.venues.filter((v) => v.debtCents !== null && v.debtCents !== '0');
   const owedCents = debts.reduce((sum, v) => sum + BigInt(v.debtCents!), BigInt(0));
+  const allHaveAtomic = debts.every((v) => v.debtAtomic != null);
+  const owedAtomic = allHaveAtomic ? debts.reduce((sum, v) => sum + BigInt(v.debtAtomic!), BigInt(0)) : null;
+  // The engine rounds a debt up to a whole cent. A sub-cent debt is said the
+  // same way in the picture as in the sentence beside it, not as $0.01.
+  const subCentOwed = owedAtomic !== null && owedAtomic > BigInt(0) && owedAtomic < BigInt(10_000);
   const availableCents = report.headline.availableCents;
   const limit = availableCents === null ? null : owedCents + BigInt(availableCents);
   const weekdayLimit = report.headline.weekdayAvailableCents === null ? null : owedCents + BigInt(report.headline.weekdayAvailableCents);
   const loan = limit === null || limit === BigInt(0)
     ? null
-    : { owedCents: Number(owedCents), limitCents: Number(limit), weekdayLimitCents: weekdayLimit === null ? null : Number(weekdayLimit) };
+    : { owedCents: Number(owedCents), limitCents: Number(limit), weekdayLimitCents: weekdayLimit === null ? null : Number(weekdayLimit), ...(subCentOwed ? { owedLabel: '<$0.01' } : {}) };
 
   let owed: HomeViewV1['owed'] = null;
   if (debts.length > 0) {
@@ -152,22 +157,20 @@ export function homeViewV1(input: {
     const detail = debts.length === 1 && rated.length === 1
       ? `${(rated[0]!.borrowRateBps! / 100).toFixed(2)}% a year on ${venueNameV1(rated[0]!)}`
       : `on ${[...new Set(debts.map(venueNameV1))].join(' and ')}`;
-    const allHaveAtomic = debts.every((v) => v.debtAtomic != null);
-    const owedAtomic = allHaveAtomic ? debts.reduce((sum, v) => sum + BigInt(v.debtAtomic!), BigInt(0)) : null;
     const owedDisplay =
-      owedAtomic !== null && owedAtomic > BigInt(0) && owedAtomic < BigInt(10_000)
-        ? `${formatTokenAmount(owedAtomic, 6, 6).replace(/\.?0+$/, '')} USDC`
+      subCentOwed
+        ? `${formatTokenAmount(owedAtomic!, 6, 6).replace(/\.?0+$/, '')} USDC`
         : formatCents(owedCents);
     owed = { amount: `${debtUnread ? 'Known debt' : 'Owed'} ${owedDisplay}`, detail };
   }
 
   const comingUp: ComingUpV1[] = [];
   if (sky.closed.active) {
-    comingUp.push({ when: newYorkMomentV1(sky.closed.endsAt).toUpperCase(), icon: 'sun', text: 'Full limits come back with the market.' });
+    comingUp.push({ when: comingWhenV1(sky.closed.endsAt, sky.at), icon: 'sun', text: 'Full limits come back with the market.' });
   } else {
     const weekend = newYorkMomentV1(sky.closed.startsAt).startsWith('Fri') && newYorkMomentV1(sky.closed.endsAt).startsWith('Sun');
     comingUp.push({
-      when: newYorkMomentV1(sky.closed.startsAt).toUpperCase(),
+      when: comingWhenV1(sky.closed.startsAt, sky.at),
       icon: 'moon',
       text: weekend ? 'Weekend limits begin.' : 'Holiday limits begin: Wall Street closes.',
     });
@@ -182,7 +185,7 @@ export function homeViewV1(input: {
     if (!(startsAt > Date.parse(sky.at)) || !(Date.parse(window.endsAt) > startsAt)) continue;
     if (![line.wallet, line.pledged].some(amount => amount !== null && BigInt(amount.raw) > BigInt(0))) continue;
     comingUp.push({
-      when: newYorkMomentV1(window.startsAt).toUpperCase(),
+      when: comingWhenV1(window.startsAt, sky.at),
       icon: 'earnings',
       text: `${line.name} reports ${dayV1(earnings.reportDate)}: new loans against it will count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until ${newYorkMomentV1(window.endsAt)}.`,
     });
@@ -213,6 +216,20 @@ export function homeViewV1(input: {
 }
 
 const DAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
+const NEW_YORK_DAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', month: 'short', day: 'numeric' });
+
+/**
+ * "FRI 8 PM" names a day of this week only. An earnings window two weeks out
+ * read "MON 12 AM" and looked like the coming Monday, so a moment six days or
+ * more away carries its date: "MON NOV 16 12 AM". New York time, as the
+ * section heading says.
+ */
+function comingWhenV1(iso: string, nowIso: string): string {
+  const moment = newYorkMomentV1(iso);
+  if (Date.parse(iso) - Date.parse(nowIso) < 6 * 86_400_000) return moment.toUpperCase();
+  const [weekday, ...time] = moment.split(' ');
+  return `${weekday} ${NEW_YORK_DAY_V1.format(new Date(iso))} ${time.join(' ')}`.toUpperCase();
+}
 
 /** "Nov 13" from a New York date. */
 function dayV1(date: string): string {

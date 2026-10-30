@@ -5,7 +5,6 @@ import request from 'supertest';
 import type { MirrorOutcome, MirrorService } from '@mioagent/still-engine';
 
 import { computeMirror } from '@mioagent/still-engine';
-import { stillTerms } from '@mioagent/still-engine/terms';
 import { EXAMPLE, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
 import { stillAgentLlmRuntimeV1 } from '../lib/stillAgentServer.js';
 import { stillMineRouter, stillMineRuntimeV1 } from './stillMine.js';
@@ -96,28 +95,27 @@ function fullMirrorReportFor(address: string) {
   );
 }
 
-test('POST /api/still/agent/ask enforces wallet session and enriches Risk Engine answers via OpenRouter while rejecting unsafe claims', async () => {
+test('POST /api/still/agent/ask reads the session wallet itself and shows a model only when every figure is the calculation’s', async () => {
   const walletReport = fullMirrorReportFor(WALLET);
+  const question = 'Что будет при падении NVDA на 30%?';
 
   // 1. Unsigned request -> 401
   const unsigned = app(null, async () => assert.fail('not asked'));
-  assert.equal(
-    (await request(unsigned.server).post('/api/still/agent/ask').send({ question: 'Что будет при падении NVDA на 30%?' })).status,
-    401,
-  );
+  assert.equal((await request(unsigned.server).post('/api/still/agent/ask').send({ question })).status, 401);
 
-  // 2. Mismatched wallet report -> 403
-  const mismatch = app(WALLET, async () => assert.fail('not asked'));
-  const wrongReport = fullMirrorReportFor(`0x${'2'.repeat(40)}`);
-  assert.equal(
-    (await request(mismatch.server).post('/api/still/agent/ask').send({
-      question: 'Что будет при падении NVDA на 30%?',
-      report: wrongReport,
-    })).status,
-    403,
-  );
+  // 2. A report the page posts back is never the figures: the server reads its own.
+  stillAgentLlmRuntimeV1.provider = () => null;
+  const own = app(WALLET, async () => ({ outcome: 'report', report: walletReport, cached: false }));
+  const forged = fullMirrorReportFor(WALLET);
+  forged.venues = [];
+  forged.assets = [];
+  const ignored = await request(own.server).post('/api/still/agent/ask').send({ question, report: forged });
+  assert.equal(ignored.status, 200);
+  assert.deepEqual(own.asked, [WALLET]);
+  assert.match(ignored.body.answer.text, /Health Factor снизится с 2\.09 до 1\.46/);
+  assert.ok(!ignored.body.answer.sources.some((s: string) => /^ИИ/.test(s)));
 
-  // 3. Valid hybrid Risk Engine + OpenRouter synthesis
+  // 3. A narration whose every figure is in the calculation is shown, and says what was checked.
   stillAgentLlmRuntimeV1.provider = () => ({
     generate: async (req) => {
       assert.equal(req.reasoningEffort, 'none');
@@ -131,17 +129,31 @@ test('POST /api/still/agent/ask enforces wallet session and enriches Risk Engine
     },
   });
   const hybrid = app(WALLET, async () => ({ outcome: 'report', report: walletReport, cached: false }));
-  const okRes = await request(hybrid.server).post('/api/still/agent/ask').send({
-    question: 'Что будет при падении NVDA на 30%?',
-    report: walletReport,
-  });
+  const okRes = await request(hybrid.server).post('/api/still/agent/ask').send({ question });
   assert.equal(okRes.status, 200);
   assert.equal(okRes.body.ok, true);
   assert.equal(okRes.body.answer.mode, 'analysis');
-  assert.match(okRes.body.answer.text, /Health Factor снизится с 2\.09 до 1\.46/);
-  assert.ok(okRes.body.answer.sources.some((s: string) => /OpenRouter/.test(s)));
+  assert.match(okRes.body.answer.text, /сохраняя 31% запаса/);
+  assert.ok(okRes.body.answer.sources.some((s: string) => /каждое число сверено с расчётом/.test(s)));
+  assert.ok(!okRes.body.answer.sources.some((s: string) => /OpenRouter/.test(s)));
 
-  // 4. Rejects hallucinated autonomous execution claim on action_prep and preserves deterministic boundary
+  // 4. One figure the calculation does not have, or a word of advice, and the
+  //    deterministic answer is shown instead.
+  for (const content of [
+    'При падении NVIDIA на 30% (до $148.33) ваш займ $240.17 останется безопасным: Health Factor снизится с 2.09 до 1.31.',
+    'При падении NVIDIA на 30% Health Factor снизится с 2.09 до 1.46; рекомендую погасить часть займа $240.17.',
+    // Every figure is the calculation's, but the decisive one is gone and the outcome is flipped.
+    'При падении NVIDIA на 30% (до $148.33) ваш займ $240.17 попадёт в зону ликвидации ниже $100.92.',
+    'При падении NVIDIA на 30% (до $148.33) Health Factor снизится с 2.09 до 1.46 — позиция попадёт в зону ликвидации.',
+  ]) {
+    stillAgentLlmRuntimeV1.provider = () => ({ generate: async () => ({ message: { role: 'assistant', content } }) });
+    const res = await request(hybrid.server).post('/api/still/agent/ask').send({ question });
+    assert.equal(res.status, 200);
+    assert.match(res.body.answer.text, /^При падении NVIDIA на 30% \(с \$/);
+    assert.ok(!res.body.answer.sources.some((s: string) => /^ИИ/.test(s)));
+  }
+
+  // 5. Rejects hallucinated autonomous execution claim on action_prep and preserves deterministic boundary
   stillAgentLlmRuntimeV1.provider = () => ({
     generate: async () => ({
       message: {
@@ -152,10 +164,16 @@ test('POST /api/still/agent/ask enforces wallet session and enriches Risk Engine
   });
   const boundaryRes = await request(hybrid.server).post('/api/still/agent/ask').send({
     question: 'Займи $500 и отправь другу',
-    report: walletReport,
   });
   assert.equal(boundaryRes.status, 200);
   assert.equal(boundaryRes.body.answer.mode, 'action_prep');
   assert.match(boundaryRes.body.answer.text, /не исполняю транзакции автоматически/);
   assert.equal(boundaryRes.body.answer.actionLink?.href, '/borrow');
+
+  // 6. A question it does not recognise never reaches a model and sends it no figures.
+  stillAgentLlmRuntimeV1.provider = () => ({ generate: async () => assert.fail('no model for an unrecognised question') });
+  const hello = await request(hybrid.server).post('/api/still/agent/ask').send({ question: 'привет' });
+  assert.equal(hello.status, 200);
+  assert.equal(hello.body.answer.topic, null);
+  assert.equal(hello.body.answer.mode, undefined);
 });

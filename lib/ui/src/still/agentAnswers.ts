@@ -1,9 +1,12 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
-import { formatCents } from '@mioagent/still-engine/format';
+import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
+import { TERMS } from '@mioagent/still-engine/policy';
 
-import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState';
-import { dividendMoneyV1 } from './dividendMoney';
+// The API server type-checks this file too (under node16), so relative imports
+// name their `.js`; the bundlers resolve it to the `.ts` beside it.
+import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState.js';
+import { dividendMoneyV1 } from './dividendMoney.js';
 
 // ---------------------------------------------------------------------------
 // Still Agent v2: hybrid financial analyst.
@@ -12,19 +15,20 @@ import { dividendMoneyV1 } from './dividendMoney';
 //   1. `fast`        — instant deterministic answers for direct status reads
 //                      (borrowing room, current loan safety, market hours,
 //                      dividends, holdings) directly from Mirror & calendars.
-//   2. `analysis`    — verified Risk Engine calculations for price-shock
-//                      scenarios ("What if NVDA drops 30%?"), borrowing-limit
-//                      change attribution ("Why did my limit decrease?"), and
-//                      safe debt-reduction options ("How to safely reduce debt
-//                      by $100?"), optionally narrated by OpenRouter LLM while
-//                      remaining 100% bound to deterministic figures.
+//   2. `analysis`    — deterministic calculations for price-shock scenarios
+//                      ("What if NVDA drops 30%?"), what sets the borrowing
+//                      limit ("Why did my limit decrease?") and what a
+//                      repayment changes ("What if I repay $100 of my loan?").
+//                      The server may have a model re-say one, and shows it only
+//                      if every figure is the calculation's and it gives no advice.
 //   3. `action_prep` — transaction preparation boundary ("Borrow $500 and send
 //                      to a friend"): refuses autonomous signing or chained
 //                      third-party transfers and prepares only verified self-
 //                      custodial review links (/borrow or /repay).
 //
 // Fail-closed: when the financial engine lacks required onchain or oracle data,
-// it refuses the calculation and names the missing evidence.
+// it refuses the calculation and names the missing evidence. A question it does
+// not recognise gets the list of what it can answer, not a guess, and no model.
 // ---------------------------------------------------------------------------
 
 export type AgentTopicV1 =
@@ -100,7 +104,7 @@ export const AGENT_PROMPTS_V1: ReadonlyArray<{ en: string; ru: string; mode?: Ag
   { en: 'How safe is my loan?', ru: 'Насколько безопасен мой займ?', mode: 'fast' },
   { en: 'What happens if NVDA drops 30%?', ru: 'Что будет при падении NVDA на 30%?', mode: 'analysis' },
   { en: 'Why did my borrowing limit decrease?', ru: 'Почему моя сумма займа уменьшилась?', mode: 'analysis' },
-  { en: 'How to safely reduce debt by $100?', ru: 'Как безопаснее уменьшить долг на $100?', mode: 'analysis' },
+  { en: 'What if I repay $100 of my loan?', ru: 'Что будет, если погасить $100 долга?', mode: 'analysis' },
   { en: 'When do weekend limits start?', ru: 'Когда начинаются выходные лимиты?', mode: 'fast' },
   { en: 'When is my next dividend?', ru: 'Когда мой следующий дивиденд?', mode: 'fast' },
 ];
@@ -152,7 +156,7 @@ export function agentAnswerV1(input: {
   const ru = isRussianV1(input.question);
   const topic = agentTopicV1(input.question);
   const { report, sky } = input;
-  const read = report ? [ru ? `ЧЕЙН · блок ${Number(report.reading.block).toLocaleString('en-US')}` : `READ · Base block ${Number(report.reading.block).toLocaleString('en-US')}`] : [];
+  const read = report ? [ru ? `ЧТЕНИЕ · блок Base ${Number(report.reading.block).toLocaleString('en-US')}` : `READ · Base block ${Number(report.reading.block).toLocaleString('en-US')}`] : [];
   const terms = report ? [ru ? `УСЛОВИЯ · Still ${report.terms.version}` : `TERMS · Still ${report.terms.version}`] : [];
   const riskSource = ru ? 'РИСК-ДВИЖОК · детерминированный расчёт Miorail' : 'RISK ENGINE · Miorail deterministic math';
   const boundarySource = ru ? 'БЕЗОПАСНОСТЬ · только подготовка, подпись в кошельке' : 'BOUNDARY · preparation only, wallet signs';
@@ -240,36 +244,11 @@ export function agentAnswerV1(input: {
   if (topic === null) {
     return {
       topic,
-      mode: report ? 'analysis' : 'refused',
       text: ru
-        ? 'Я отвечаю только по проверенным данным вашего кошелька и риск-движка: сколько можно занять без продажи, что будет при падении цены актива (например, NVDA на 30%), почему изменился лимит, как безопасно уменьшить долг, когда действуют выходные лимиты и когда дивиденды.'
-        : 'I answer strictly from your verified wallet evidence and Risk Engine: how much you can borrow without selling, what happens under a price shock (e.g. NVDA down 30%), why your limit changed, how to safely reduce debt, weekend limits, and dividends.',
-      sources: [...terms, ...read],
-      engineFacts: report
-        ? {
-            mode: 'open_question',
-            block: report.reading.block,
-            availableCents: report.headline.availableCents,
-            weekdayAvailableCents: report.headline.weekdayAvailableCents,
-            assets: report.assets.map((a) => ({
-              asset: a.asset,
-              name: a.name,
-              priceCents: a.priceCents,
-              valueCents: a.valueCents,
-              capacityCents: a.capacityCents,
-              protocolFactorBps: a.protocolFactorBps,
-              stillFactorBps: a.stillFactorBps,
-            })),
-            venues: report.venues.map((v) => ({
-              venue: v.venue,
-              debtCents: v.debtCents,
-              availableCents: v.availableCents,
-              healthFactor: v.safety?.healthFactor ?? null,
-              marginBps: v.safety?.marginBps ?? null,
-            })),
-          }
-        : null,
-      needsLlm: Boolean(report),
+        ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при падении цены актива (например, NVDA на 30%), почему изменился лимит, что изменит погашение, когда действуют выходные лимиты и когда дивиденды.'
+        : 'I answer about your own money: how much you can borrow without selling, what a price drop would do (e.g. NVDA down 30%), why your limit changed, what a repayment would change, when weekend limits start, and your dividends.',
+      sources: [],
+      needsLlm: false,
     };
   }
 
@@ -586,8 +565,8 @@ export function agentAnswerV1(input: {
     if (gasReserveAssets.length > 0) {
       steps.push(
         ru
-          ? 'Резерв газа Base: 0.002 ETH оставлены в кошельке на комиссии сети и не включаются в залог.'
-          : 'Base gas reserve: 0.002 ETH is kept unpledged for network fees.',
+          ? `Резерв газа Base: ${formatTokenAmount(TERMS.ethGasReserveWei, 18)} ETH остаются в кошельке на комиссии сети и не включаются в залог.`
+          : `Base gas reserve: ${formatTokenAmount(TERMS.ethGasReserveWei, 18)} ETH is kept unpledged for network fees.`,
       );
     }
 
@@ -661,8 +640,9 @@ export function agentAnswerV1(input: {
     const loan = activeLoans[0]!;
     const venueLabel = loan.venue === 'aave-v4' ? 'Aave V4' : 'Morpho';
     const debtCents = BigInt(loan.debtCents!);
-    const requestedReduceCents = parseDollarCentsV2(input.question) ?? BigInt(10000);
-    const actualReduceCents = requestedReduceCents < debtCents ? requestedReduceCents : debtCents;
+    // No amount named: the full repayment is described, never an amount we chose.
+    const requestedReduceCents = parseDollarCentsV2(input.question);
+    const actualReduceCents = requestedReduceCents !== null && requestedReduceCents < debtCents ? requestedReduceCents : debtCents;
     const remainingDebtCents = debtCents - actualReduceCents;
 
     const steps: string[] = [
@@ -674,20 +654,20 @@ export function agentAnswerV1(input: {
     if (remainingDebtCents === BigInt(0)) {
       steps.push(
         ru
-          ? `Вариант 1 — Полное погашение (${formatCents(debtCents)}) через «Repay all debt»: закрывает долг до 0 USDC с небольшим запасом USDC на набежавшие доли и микродолг, сохраняя 100% залога без продажи акций.`
-          : `Option 1 — Full payoff (${formatCents(debtCents)}) via "Repay all debt": clears debt to 0 USDC using a small USDC buffer for accrued shares and micro-debt, keeping 100% of collateral without selling stocks.`,
+          ? `«Repay all debt» (${formatCents(debtCents)}): закрывает долг до 0 USDC с небольшим запасом USDC на набежавшие доли и микродолг; залог остаётся внесённым.`
+          : `"Repay all debt" (${formatCents(debtCents)}): clears the debt to 0 USDC with a small USDC buffer for accrued shares and micro-debt; the collateral stays deposited.`,
       );
       steps.push(
         ru
-          ? 'Результат: Health Factor переходит в состояние No debt / N/A (риск ликвидации полностью снят).'
-          : 'Result: Health Factor becomes No debt / N/A (liquidation risk completely eliminated).',
+          ? 'После: долга нет, ликвидировать нечего.'
+          : 'After: no debt, so nothing can be liquidated.',
       );
       return {
         topic,
         mode: 'analysis',
         text: ru
-          ? `Ваш текущий долг на ${venueLabel} составляет ${formatCents(debtCents)} (меньше или равен ${formatCents(requestedReduceCents)}). Самый безопасный способ — выбрать «Repay all debt» на экране погашения: это полностью закроет долг до 0 USDC без продажи залога и снимет риск ликвидации.`
-          : `Your current debt on ${venueLabel} is ${formatCents(debtCents)} (at or below ${formatCents(requestedReduceCents)}). The safest path is selecting "Repay all debt" on the repayment screen: this clears the entire balance to 0 USDC without selling collateral and removes liquidation risk.`,
+          ? `Ваш текущий долг на ${venueLabel} — ${formatCents(debtCents)}${requestedReduceCents !== null ? ` (не больше ${formatCents(requestedReduceCents)})` : ''}. «Repay all debt» на экране погашения закрывает его до 0 USDC; залог остаётся внесённым, акции не продаются.${requestedReduceCents === null ? ' Назовите сумму, чтобы увидеть частичное погашение.' : ''}`
+          : `Your current debt on ${venueLabel} is ${formatCents(debtCents)}${requestedReduceCents !== null ? ` (at or below ${formatCents(requestedReduceCents)})` : ''}. "Repay all debt" on the repayment screen clears it to 0 USDC; the collateral stays deposited and no stock is sold.${requestedReduceCents === null ? ' Name an amount to see a partial repayment.' : ''}`,
         steps,
         sources: [riskSource, ...terms, ...read],
         actionLink: { href: '/repay', label: ru ? 'Перейти к погашению →' : 'Open repayment screen →' },
@@ -719,14 +699,14 @@ export function agentAnswerV1(input: {
 
     steps.push(
       ru
-        ? `Вариант 1 (Рекомендуемый) — Частичное погашение Exact USDC на ${formatCents(actualReduceCents)}: долг снижается с ${formatCents(debtCents)} до ${formatCents(remainingDebtCents)}, 100% залога остаётся в позиции (дивиденды и акции сохраняются).`
-        : `Option 1 (Recommended) — Exact USDC partial repayment of ${formatCents(actualReduceCents)}: debt drops from ${formatCents(debtCents)} to ${formatCents(remainingDebtCents)} while 100% of collateral stays deposited (preserving stocks and dividends).`,
+        ? `Частичное погашение Exact USDC на ${formatCents(actualReduceCents)}: долг снижается с ${formatCents(debtCents)} до ${formatCents(remainingDebtCents)}, залог остаётся внесённым.`
+        : `Exact USDC partial repayment of ${formatCents(actualReduceCents)}: debt drops from ${formatCents(debtCents)} to ${formatCents(remainingDebtCents)}; the collateral stays deposited.`,
     );
     if (hfBeforeHundredths !== null && hfAfterHundredths !== null) {
       steps.push(
         ru
-          ? `Улучшение безопасности: Health Factor вырастет с ${formatRatioHundredthsV2(hfBeforeHundredths)} до ${formatRatioHundredthsV2(hfAfterHundredths)}${marginBeforePct !== null && marginAfterPct !== null ? `, запас падения цен увеличится с ${marginBeforePct}% до ${marginAfterPct}%` : ''}.`
-          : `Safety improvement: Health Factor rises from ${formatRatioHundredthsV2(hfBeforeHundredths)} to ${formatRatioHundredthsV2(hfAfterHundredths)}${marginBeforePct !== null && marginAfterPct !== null ? `, price-drop buffer widens from ${marginBeforePct}% to ${marginAfterPct}%` : ''}.`,
+          ? `Health Factor вырастет с ${formatRatioHundredthsV2(hfBeforeHundredths)} до ${formatRatioHundredthsV2(hfAfterHundredths)}${marginBeforePct !== null && marginAfterPct !== null ? `, запас падения цен увеличится с ${marginBeforePct}% до ${marginAfterPct}%` : ''}.`
+          : `Health Factor rises from ${formatRatioHundredthsV2(hfBeforeHundredths)} to ${formatRatioHundredthsV2(hfAfterHundredths)}${marginBeforePct !== null && marginAfterPct !== null ? `, price-drop buffer widens from ${marginBeforePct}% to ${marginAfterPct}%` : ''}.`,
       );
     }
     if (firstLiq && liqBeforeCents !== null && liqAfterCents !== null) {
@@ -738,16 +718,16 @@ export function agentAnswerV1(input: {
     }
     steps.push(
       ru
-        ? `Вариант 2 — Полное закрытие через «Repay all debt» (${formatCents(debtCents)}): полностью убирает долг и остаточные микродоли в одной транзакции.`
-        : `Option 2 — Full payoff via "Repay all debt" (${formatCents(debtCents)}): eliminates all debt and residual shares in a single transaction.`,
+        ? `«Repay all debt» (${formatCents(debtCents)}): убирает весь долг и остаточные микродоли в одной транзакции.`
+        : `"Repay all debt" (${formatCents(debtCents)}): clears all debt and residual shares in one transaction.`,
     );
 
     return {
       topic,
       mode: 'analysis',
       text: ru
-        ? `Самый безопасный способ уменьшить долг на ${formatCents(actualReduceCents)} — внести частичное погашение в USDC через экран «Погасить» без вывода залога. Ваш долг на ${venueLabel} снизится с ${formatCents(debtCents)} до ${formatCents(remainingDebtCents)}${hfBeforeHundredths !== null && hfAfterHundredths !== null ? `, Health Factor вырастет с ${formatRatioHundredthsV2(hfBeforeHundredths)} до ${formatRatioHundredthsV2(hfAfterHundredths)}` : ''}${marginBeforePct !== null && marginAfterPct !== null ? `, а запас до ликвидации увеличится с ${marginBeforePct}% до ${marginAfterPct}%` : ''}. Вы не продаёте акции и сохраняете право на дивиденды.`
-        : `The safest way to reduce debt by ${formatCents(actualReduceCents)} is an Exact USDC partial repayment on the Repay screen while keeping all collateral deposited. Your ${venueLabel} debt drops from ${formatCents(debtCents)} to ${formatCents(remainingDebtCents)}${hfBeforeHundredths !== null && hfAfterHundredths !== null ? `, raising Health Factor from ${formatRatioHundredthsV2(hfBeforeHundredths)} to ${formatRatioHundredthsV2(hfAfterHundredths)}` : ''}${marginBeforePct !== null && marginAfterPct !== null ? ` and widening your liquidation buffer from ${marginBeforePct}% to ${marginAfterPct}%` : ''}. You avoid selling shares and keep full dividend entitlement.`,
+        ? `Погашение ${formatCents(actualReduceCents)} через Exact USDC на экране «Погасить»: долг на ${venueLabel} снизится с ${formatCents(debtCents)} до ${formatCents(remainingDebtCents)}${hfBeforeHundredths !== null && hfAfterHundredths !== null ? `, Health Factor вырастет с ${formatRatioHundredthsV2(hfBeforeHundredths)} до ${formatRatioHundredthsV2(hfAfterHundredths)}` : ''}${marginBeforePct !== null && marginAfterPct !== null ? `, а запас до ликвидации увеличится с ${marginBeforePct}% до ${marginAfterPct}%` : ''}. Залог остаётся внесённым; «Repay all debt» закрывает весь долг ${formatCents(debtCents)}.`
+        : `Repaying ${formatCents(actualReduceCents)} with Exact USDC on the Repay screen: your ${venueLabel} debt drops from ${formatCents(debtCents)} to ${formatCents(remainingDebtCents)}${hfBeforeHundredths !== null && hfAfterHundredths !== null ? `, raising Health Factor from ${formatRatioHundredthsV2(hfBeforeHundredths)} to ${formatRatioHundredthsV2(hfAfterHundredths)}` : ''}${marginBeforePct !== null && marginAfterPct !== null ? ` and widening your liquidation buffer from ${marginBeforePct}% to ${marginAfterPct}%` : ''}. The collateral stays deposited; "Repay all debt" clears the whole ${formatCents(debtCents)}.`,
       steps,
       sources: [riskSource, ...terms, ...read],
       actionLink: { href: '/repay', label: ru ? 'Подготовить погашение →' : 'Prepare repayment →' },
@@ -853,7 +833,7 @@ export function agentAnswerV1(input: {
       mode: 'fast',
       text: ru
         ? `${next.h.company}: выплата ${next.event.payDateApproximate ? 'примерно ' : ''}${next.event.payDate}${amount ? `, ${estimate && !amount.startsWith('<') ? 'около ' : ''}${amount} в виде новых ${next.h.tokenSymbol}` : ', сумма не прочитана'}. Дивиденд получает тот, кто держит токен в момент конвертации${estimate ? '; сумма — оценка' : ''}.`
-        : `${next.h.company}: paid ${next.event.payDateApproximate ? 'around ' : ''}${next.event.payDate}${amount ? `, ${estimate && !amount.startsWith('<') ? 'about ' : ''}${amount} as more ${next.h.tokenSymbol}` : ', amount not read'}. A dividend reaches whoever holds the token when it converts${estimate ? '; the amount is an estimate' : ''}.`,
+        : `${next.h.company}: pays ${next.event.payDateApproximate ? 'around' : 'on'} ${next.event.payDate}${amount ? `, ${estimate && !amount.startsWith('<') ? 'about ' : ''}${amount} as more ${next.h.tokenSymbol}` : ', amount not read'}. A dividend reaches whoever holds the token when it converts${estimate ? '; the amount is an estimate' : ''}.`,
       sources: [ru ? 'КАЛЕНДАРЬ · дивиденды Miorail, из заявлений компаний' : 'CALENDAR · Miorail dividends, from the companies’ own releases'],
       needsLlm: false,
     };
