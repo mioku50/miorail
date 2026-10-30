@@ -23,6 +23,14 @@ describe('owned lending execution locks', () => {
       else changed.facts[field] = field === 'collateralTokenAddress' ? OWNER.walletAddress : '999';
       await assert.rejects(store.putReady({ owner: OWNER, draftId: first.draftId, run: changed, now: NOW }), /question_changed/);
     }
+    const store = new MemoryLoanExecutionStoreV1(); const first = await ready(store); const native = loanReadyFixture();
+    native.facts.nativeFunding = {
+      wrapperContract: OWNER.walletAddress, wrappedTokenAddress: OWNER.walletAddress,
+      maximumNativeAssets: '10', reserveNativeAssets: '500000000000000',
+      walletNativeBeforeAssets: '20', walletNativeAfterAssets: '10',
+      authorizedBefore: false, feeQuoteState: 'wallet_quote_required',
+    };
+    await assert.rejects(store.putReady({ owner: OWNER, draftId: first.draftId, run: native, now: NOW }), /question_changed/);
   });
   it('arms one exact version once across simultaneous clicks', async () => {
     const store = new MemoryLoanExecutionStoreV1(); const record = await ready(store);

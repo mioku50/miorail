@@ -19,6 +19,14 @@ export default defineConfig(({ mode }) => {
         '@tanstack/react-query'
       ],
     },
+    optimizeDeps: {
+      include: [
+        'react',
+        'react-dom',
+        'react-dom/client',
+        'react-dom/server',
+      ],
+    },
     server: {
       // Required for the Base Account popup (sign-in / connect / sendCalls).
       // `same-origin` would block the popup window; `same-origin-allow-popups`
