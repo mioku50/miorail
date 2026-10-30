@@ -91,3 +91,12 @@ test('Base App preserves a sole quoted route and requires an explicit provider c
   assert.ok(source.includes('primaryRoute.approvalCount'));
   assert.ok(source.includes('primaryRoute.callCount'));
 });
+
+test('Base App borrow and repay entries hand review links to router.push without double-prefixing /app', () => {
+  const borrowSource = readFileSync(path.join(here, 'borrow', 'page.tsx'), 'utf8');
+  const repaySource = readFileSync(path.join(here, 'repay', 'page.tsx'), 'utf8');
+  assert.ok(borrowSource.includes('useStillBorrowEntryV1'));
+  assert.ok(borrowSource.includes('router.push(href)'));
+  assert.equal(/router\.push\(\s*`\/app/.test(borrowSource), false);
+  assert.ok(repaySource.includes('router.push(href)'));
+});

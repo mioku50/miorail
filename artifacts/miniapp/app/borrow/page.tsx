@@ -11,7 +11,7 @@ function BaseBorrowEntry() {
   const router=useRouter(), params=useSearchParams(), session=useSession({retry:false,staleTime:0});
   const sky=useStillSkyV1(), palette=useStillClientPaletteV1(sky);
   const entry=useStillBorrowEntryV1({sky,signedIn:Boolean(session.data?.user),wallet:session.data?.user?.address,
-    initialAsset:borrowAssetFromQueryV1(params.get('asset')),onReviewLink:href=>router.push(`/app${href}`)});
+    initialAsset:borrowAssetFromQueryV1(params.get('asset')),onReviewLink:href=>router.push(href)});
   const signInHref=`/signin?next=${encodeURIComponent('/app/borrow'+(params.toString()?'?'+params.toString():''))}`;
   return <main className="still" data-sky={palette} style={{minHeight:'100dvh',padding:'16px 0 32px'}}>
     <div style={{maxWidth:1100,margin:'0 auto'}}>
