@@ -1,8 +1,8 @@
 import { hashApprovedCallsV1, stableHashV1 } from '@mioagent/route-domain';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
-import { aaveV4BorrowPlanV1, aaveV4RepayPlanV1, matchesAaveV4DeploymentV1 } from './aaveV4BorrowPlan.js';
-import { readAaveStandingV1, readAaveV4DeploymentAtV1 } from './stillAaveStanding.js';
+import { aaveV4BorrowPlanV1, aaveV4RepayPlanV1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentStatusV1 } from './aaveV4BorrowPlan.js';
+import { inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1 } from './stillAaveStanding.js';
 import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4BorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
@@ -11,11 +11,28 @@ import type { LendingRunV1, LendingFactsV1 } from './lendingReview.js';
 export interface AaveLendingDepsV1 {
   read?: typeof readAaveStandingV1;
   deploymentAt?: typeof readAaveV4DeploymentAtV1;
+  inspectDeploymentAt?: typeof inspectAaveV4DeploymentAtV1;
   chain?: SimulationChainV1;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
 }
 const fail = (refusal: string, detail: string): LendingRunV1 => ({ state: 'refused', refusal, detail });
+const NO_DEBT_HEALTH_SENTINEL = 1n << 128n;
+
+function deploymentFailureV1(status: Exclude<AaveV4DeploymentStatusV1, 'matched'>): LendingRunV1 {
+  switch (status) {
+    case 'implementation_mismatch':
+      return fail('aave_deployment_changed', 'The Aave Spoke EIP-1967 implementation address at the simulation block does not match the reviewed implementation.');
+    case 'code_hash_mismatch':
+      return fail('aave_deployment_code_mismatch', 'The Aave Spoke proxy or implementation bytecode hash at the simulation block does not match the reviewed deployment.');
+    case 'slot_unreadable':
+      return fail('aave_deployment_slot_unreadable', 'The Aave Spoke EIP-1967 implementation slot could not be read at the simulation block.');
+    case 'block_unavailable':
+      return fail('aave_deployment_block_unavailable', 'The simulation block is not yet available on the bytecode verification RPC. Try the review again.');
+    case 'rpc_unavailable':
+      return fail('aave_deployment_rpc_unavailable', 'Still could not reach a Base RPC to verify the Aave Spoke bytecode at the simulation block.');
+  }
+}
 
 /** The direct V4 Spoke acts for msg.sender. No position-manager grant, V3
  * method, unregistered stock, recipient from a model or native ETH is used.
@@ -61,8 +78,17 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
     nowIso: now().toISOString(), label: 'Aave V4 lending simulation', logContext: { callsHash } });
   if (!answer.ok) return fail(answer.errorCode, 'The exact Aave action and position could not be simulated. No executable review is available.');
   if (answer.response.status !== 'success') return fail('aave_simulation_reverted', 'The Aave action reverted in simulation. No executable review is available.');
-  const deployment = await (deps.deploymentAt ?? readAaveV4DeploymentAtV1)(answer.response.blockNumber);
-  if (!deployment || !matchesAaveV4DeploymentV1(deployment) || deployment.blockNumber !== answer.response.blockNumber) return fail('aave_deployment_changed', 'The reviewed implementation was not established at the simulation block.');
+  const inspection = deps.inspectDeploymentAt
+    ? await deps.inspectDeploymentAt(answer.response.blockNumber)
+    : deps.deploymentAt
+      ? await deps.deploymentAt(answer.response.blockNumber).then(deployment => ({
+          status: classifyAaveV4DeploymentReadV1(answer.response.blockNumber, deployment),
+          deployment,
+        }))
+      : await inspectAaveV4DeploymentAtV1(answer.response.blockNumber);
+  if (inspection.status !== 'matched' || !inspection.deployment || !matchesAaveV4DeploymentV1(inspection.deployment) || inspection.deployment.blockNumber !== answer.response.blockNumber) {
+    return deploymentFailureV1(inspection.status === 'matched' ? 'block_unavailable' : inspection.status);
+  }
   const changes = answer.response.assetChanges;
   if (!changes || changes.status !== 'available') return fail('aave_effects_unread', 'The simulation did not establish all wallet asset movements.');
   let usdcNet = 0n, stockOut = 0n, grossUsdcOut = 0n;
@@ -83,6 +109,8 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   if (!beforeLoan || !afterLoan || !beforeStock || !afterStock || measured.usdcMovedAssets !== (usdcNet > 0n ? usdcNet : -usdcNet)) return fail('aave_position_unread', 'The USDC movement and resulting Aave position do not agree.');
   if (q.operation === 'borrow' && (!measured.capacity || afterLoan.debt > measured.capacity.limitAssets)) return fail('aave_over_still_limit', 'The simulated total debt exceeds Still’s allowance at the measured prices and financial window.');
   if (q.operation === 'repay' && q.amountMode === 'assets' && -usdcNet !== ask) return fail('repay_amount_changed', 'The simulated repayment differs from the exact USDC amount requested.');
+  const healthBeforeWad = beforeLoan.debt > 0n && measured.before.healthFactorWad !== null && measured.before.healthFactorWad < NO_DEBT_HEALTH_SENTINEL ? measured.before.healthFactorWad.toString() : null;
+  const healthAfterWad = afterLoan.debt > 0n && measured.after.healthFactorWad !== null && measured.after.healthFactorWad < NO_DEBT_HEALTH_SENTINEL ? measured.after.healthFactorWad.toString() : null;
   const facts: LendingFactsV1 = { operation: q.operation, venue: 'aave-v4', collateralTokenAddress: s.selectedStock.token.toLowerCase(),
     collateralSymbol: s.selectedStock.id, collateralDecimals: s.selectedStock.decimals, marketId: ADDRESSES.aaveSpoke.toLowerCase(),
     amountMode: q.operation === 'borrow' ? 'assets' : q.amountMode, requestedAssets: q.operation === 'borrow' || q.amountMode === 'assets' ? ask.toString() : null,
@@ -90,7 +118,7 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
     debtBeforeAssets: beforeLoan.debt.toString(), debtAfterAssets: afterLoan.debt.toString(),
     collateralBeforeAssets: beforeStock.supplied.toString(), collateralAfterAssets: afterStock.supplied.toString(),
     collateralBeforeShares: beforeStock.position.suppliedShares.toString(), collateralAfterShares: afterStock.position.suppliedShares.toString(),
-    healthBeforeWad: measured.before.healthFactorWad?.toString() ?? null, healthAfterWad: measured.after.healthFactorWad?.toString() ?? null,
+    healthBeforeWad, healthAfterWad,
     ...(measured.capacity ? { policyLimitAssets: measured.capacity.limitAssets.toString(), protocolLimitAssets: measured.capacity.protocolLimitAssets.toString(), termsVersion: s.termsVersion } : {}),
     debtBeforeShares: beforeLoan.position.drawnShares.toString(), debtAfterShares: afterLoan.position.drawnShares.toString(),
     blockNumber: answer.response.blockNumber, warnings: q.operation === 'borrow' ? [

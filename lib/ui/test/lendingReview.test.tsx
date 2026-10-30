@@ -137,6 +137,46 @@ describe('lending review presentation does not call a submission a repayment', (
   it('a wallet batch id remains a submission handle', () => {
     const html = render({ batchId: 'batch_1' }); assert.match(html, /not a confirmed blockchain result/); assert.doesNotMatch(html, /Open in your wallet|Confirmed onchain:/);
   });
+  it('shows No debt (N/A) instead of uint256.max when debt is zero, explains 0.05 -> 0.050001 USDC share rounding, and consolidates warnings into one risk block', () => {
+    const body = ready();
+    body.measured = { provider: 'base_same_state', blockNumber: 53_298_711, loanDeltaAssets: '50000' };
+    body.facts = {
+      ...body.facts,
+      operation: 'borrow',
+      venue: 'aave-v4',
+      collateralSymbol: 'NVDAc',
+      collateralDecimals: 8,
+      requestedAssets: '50000',
+      maximumDebitAssets: '0',
+      collateralSupplyAssets: '80000',
+      debtBeforeAssets: '0',
+      debtAfterAssets: '50001',
+      collateralBeforeAssets: '0',
+      collateralAfterAssets: '80000',
+      collateralBeforeShares: '0',
+      collateralAfterShares: '80000',
+      debtBeforeShares: '0',
+      debtAfterShares: '49505',
+      healthBeforeWad: '115792089237316195423570985008687907853269984665640564039457584007913129639935',
+      healthAfterWad: '2264514777517564444',
+      warnings: [
+        'This also enables your selected stock deposit as collateral in this Spoke.',
+        'This creates USDC debt in the reviewed Aave V4 equities Spoke. Its existing collateral and USDC debt are measured together.',
+        'Still’s 2026-10-26 allowance was checked at the simulation block. Prices, rates and financial windows can change before your wallet submits.',
+        'Aave enforces its own health rules onchain. Your collateral can be liquidated. A server review is not an onchain price or Still-limit guarantee.',
+      ],
+    };
+    assert.equal(parseLendingReviewWireV1(body)?.state, 'ready');
+    const html = render({ body });
+    assert.match(html, /— No debt \(N\/A\)/);
+    assert.doesNotMatch(html, /115792089237316195423570985008687907853269984665640564039457/);
+    assert.match(html, /2\.264514777517564444/);
+    assert.match(html, /Health ratio is calculated at the simulation block\. It does not guarantee protection against liquidation after prices change\./);
+    assert.match(html, /Your wallet receives 0\.05 USDC \(50000 atomic USDC\)\. Onchain debt-share rounding records 0\.050001 USDC \(50001 atomic USDC\) of new debt\./);
+    assert.match(html, /borrow request: 50000, wallet USDC delta: 50000, collateral supply: 80000; debt: 0 → 50001 \(shares: 0 → 49505\); collateral: 0 → 80000 \(shares: 0 → 80000\)/);
+    assert.equal((html.match(/class="still-warn"/g) ?? []).length, 1);
+    for (const warning of body.facts.warnings) assert.equal(html.includes(warning), true);
+  });
 });
 
 describe('repayment entry is exact and does not choose a wallet maximum', () => {

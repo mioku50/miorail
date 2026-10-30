@@ -6,7 +6,7 @@ import { aaveSpokeAbi, aaveHubAbi, aaveOracleAbi } from '@mioagent/still-engine/
 import { Batch } from '@mioagent/still-engine/rpc';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { stillRpcUrlsV1 } from './stillMirror.js';
-import { AAVE_V4_DEPLOYMENT_PIN_V1, matchesAaveV4DeploymentV1, type AaveV4DeploymentReadV1, type AaveV4ReserveBindingV1 } from './aaveV4BorrowPlan.js';
+import { AAVE_V4_DEPLOYMENT_PIN_V1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentReadV1, type AaveV4DeploymentStatusV1, type AaveV4ReserveBindingV1 } from './aaveV4BorrowPlan.js';
 
 const ZERO = BigInt(0), BPS = BigInt(10_000), USDC = BigInt(1_000_000), CENT = BigInt(10_000);
 const UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
@@ -143,26 +143,125 @@ export function validAaveReserveBindingsV1(read: StillAaveSnapshotV1): boolean {
   });
 }
 
-/** Rechecks deployed proxy/runtime at the exact simulation or receipt block. */
-export async function readAaveV4DeploymentAtV1(blockNumber: number): Promise<AaveV4DeploymentReadV1 | null> {
-  if (!Number.isSafeInteger(blockNumber) || blockNumber <= 0) return null;
-  providers ??= createProviders(stillRpcUrlsV1(), 'miorail-still-aave/1');
-  for (const provider of providers) {
-    try {
-      const at = BigInt(blockNumber);
-      const [chainId, slot, proxyCode] = await Promise.all([
-        provider.client.getChainId(),
-        provider.client.getStorageAt({ address: ADDRESSES.aaveSpoke, slot: AAVE_V4_DEPLOYMENT_PIN_V1.implementationSlot, blockNumber: at }),
-        provider.client.getBytecode({ address: ADDRESSES.aaveSpoke, blockNumber: at }),
-      ]);
-      if (!slot || !/^0x0{24}[a-fA-F0-9]{40}$/.test(slot) || !proxyCode || proxyCode === '0x') continue;
-      const implementationAddress = `0x${slot.slice(-40)}` as Address;
-      const implementationCode = await provider.client.getBytecode({ address: implementationAddress, blockNumber: at });
-      if (!implementationCode || implementationCode === '0x') continue;
-      return { chainId, blockNumber, implementationAddress, implementationCodeHash: keccak256(implementationCode), proxyCodeHash: keccak256(proxyCode) };
-    } catch { /* Only a pinned successful read is an answer. */ }
+export interface AaveV4DeploymentProviderClientV1 {
+  getChainId(): Promise<number>;
+  getBlockNumber(): Promise<bigint>;
+  getStorageAt(args: { address: Address; slot: `0x${string}`; blockNumber: bigint }): Promise<`0x${string}` | undefined>;
+  getBytecode(args: { address: Address; blockNumber: bigint }): Promise<`0x${string}` | undefined>;
+}
+export interface AaveV4DeploymentInspectionV1 {
+  status: AaveV4DeploymentStatusV1;
+  deployment: AaveV4DeploymentReadV1 | null;
+}
+export interface AaveV4DeploymentInspectOptionsV1 {
+  providers?: ReadonlyArray<{ client: AaveV4DeploymentProviderClientV1 }>;
+  maxAttempts?: number;
+  retryDelayMs?: number;
+  hashBytecode?: (bytecode: `0x${string}`) => string;
+}
+
+const BLOCK_UNAVAILABLE_RE = /resource not found|header not found|block not found|unknown block|cannot query unfinalized|after last|beyond head|future block|block number.*out of range|not yet available/i;
+function isBlockUnavailableErrorV1(error: unknown): boolean {
+  if (!error) return false;
+  const e = error as { message?: string; shortMessage?: string; details?: string; cause?: { message?: string; details?: string } };
+  const text = [e.message, e.shortMessage, e.details, e.cause?.message, e.cause?.details, String(error)].filter(Boolean).join(' ');
+  return BLOCK_UNAVAILABLE_RE.test(text);
+}
+
+async function inspectOneDeploymentProviderV1(
+  client: AaveV4DeploymentProviderClientV1,
+  blockNumber: number,
+  at: bigint,
+  hash: (bytecode: `0x${string}`) => string,
+): Promise<AaveV4DeploymentInspectionV1> {
+  let chainId: number;
+  let slot: `0x${string}` | undefined;
+  let proxyCode: `0x${string}` | undefined;
+  try {
+    [chainId, slot, proxyCode] = await Promise.all([
+      client.getChainId(),
+      client.getStorageAt({ address: ADDRESSES.aaveSpoke, slot: AAVE_V4_DEPLOYMENT_PIN_V1.implementationSlot, blockNumber: at }),
+      client.getBytecode({ address: ADDRESSES.aaveSpoke, blockNumber: at }),
+    ]);
+  } catch (error) {
+    if (isBlockUnavailableErrorV1(error)) return { status: 'block_unavailable', deployment: null };
+    const head = await client.getBlockNumber().catch(() => null);
+    return { status: head !== null && head < at ? 'block_unavailable' : 'rpc_unavailable', deployment: null };
   }
-  return null;
+  if (chainId !== 8453) return { status: 'rpc_unavailable', deployment: null };
+  const validSlot = Boolean(slot && /^0x0{24}[a-fA-F0-9]{40}$/.test(slot) && !/^0x0{64}$/.test(slot));
+  const validProxyCode = Boolean(proxyCode && proxyCode !== '0x');
+  if (!validSlot || !validProxyCode) {
+    const head = await client.getBlockNumber().catch(() => null);
+    if (head !== null && head < at) return { status: 'block_unavailable', deployment: null };
+    return { status: !validSlot ? 'slot_unreadable' : 'code_hash_mismatch', deployment: null };
+  }
+  const implementationAddress = `0x${slot!.slice(-40)}` as Address;
+  let implementationCode: `0x${string}` | undefined;
+  try {
+    implementationCode = await client.getBytecode({ address: implementationAddress, blockNumber: at });
+  } catch (error) {
+    if (isBlockUnavailableErrorV1(error)) return { status: 'block_unavailable', deployment: null };
+    const head = await client.getBlockNumber().catch(() => null);
+    return { status: head !== null && head < at ? 'block_unavailable' : 'rpc_unavailable', deployment: null };
+  }
+  if (!implementationCode || implementationCode === '0x') {
+    const head = await client.getBlockNumber().catch(() => null);
+    if (head !== null && head < at) return { status: 'block_unavailable', deployment: null };
+    const partial: AaveV4DeploymentReadV1 = { chainId, blockNumber, implementationAddress, implementationCodeHash: '0x', proxyCodeHash: hash(proxyCode!) };
+    return { status: implementationAddress.toLowerCase() !== AAVE_V4_DEPLOYMENT_PIN_V1.implementation ? 'implementation_mismatch' : 'code_hash_mismatch', deployment: partial };
+  }
+  const deployment: AaveV4DeploymentReadV1 = {
+    chainId,
+    blockNumber,
+    implementationAddress,
+    implementationCodeHash: hash(implementationCode),
+    proxyCodeHash: hash(proxyCode!),
+  };
+  return { status: classifyAaveV4DeploymentReadV1(blockNumber, deployment), deployment };
+}
+
+/** Rechecks deployed proxy/runtime at the exact simulation or receipt block
+ * with separated failure diagnostics and bounded same-block wait for +1 lag. */
+export async function inspectAaveV4DeploymentAtV1(
+  blockNumber: number,
+  options: AaveV4DeploymentInspectOptionsV1 = {},
+): Promise<AaveV4DeploymentInspectionV1> {
+  if (!Number.isSafeInteger(blockNumber) || blockNumber <= 0) return { status: 'block_unavailable', deployment: null };
+  const list = options.providers ?? (providers ??= createProviders(stillRpcUrlsV1(), 'miorail-still-aave/1'));
+  if (list.length === 0) return { status: 'rpc_unavailable', deployment: null };
+  const maxAttempts = Math.min(Math.max(options.maxAttempts ?? 4, 1), 6);
+  const retryDelayMs = Math.min(Math.max(options.retryDelayMs ?? 650, 0), 2_000);
+  const hash = options.hashBytecode ?? keccak256;
+  const at = BigInt(blockNumber);
+  let last: AaveV4DeploymentInspectionV1 = { status: 'rpc_unavailable', deployment: null };
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    let sawBlockUnavailable = false;
+    for (const provider of list) {
+      const res = await inspectOneDeploymentProviderV1(provider.client, blockNumber, at, hash);
+      if (res.status === 'matched' || res.status === 'implementation_mismatch' || res.status === 'code_hash_mismatch' || res.status === 'slot_unreadable') {
+        return res;
+      }
+      if (res.status === 'block_unavailable') {
+        sawBlockUnavailable = true;
+        last = res;
+      } else if (last.status !== 'block_unavailable') {
+        last = res;
+      }
+    }
+    if (!sawBlockUnavailable || attempt + 1 >= maxAttempts) break;
+    if (retryDelayMs > 0) await new Promise(resolve => setTimeout(resolve, retryDelayMs));
+  }
+  return last;
+}
+
+/** Rechecks deployed proxy/runtime at the exact simulation or receipt block. */
+export async function readAaveV4DeploymentAtV1(
+  blockNumber: number,
+  options?: AaveV4DeploymentInspectOptionsV1,
+): Promise<AaveV4DeploymentReadV1 | null> {
+  const res = await inspectAaveV4DeploymentAtV1(blockNumber, options);
+  return res.deployment;
 }
 
 export async function readAaveStandingV1(input: {

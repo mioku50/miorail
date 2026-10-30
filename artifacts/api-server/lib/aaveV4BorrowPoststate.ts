@@ -175,9 +175,13 @@ function decodePhase(groups: readonly Getter[][], rows: readonly Hex[], standing
         price: values.get(`${p}_price`) as bigint | undefined, registry: values.get(`${p}_registry`) as Reserve['registry'] });
     }
     const account = values.has('account') ? take<AaveV4MeasuredPhaseV1['account']>('account') : null;
+    const debtAssets = reserves.get(standing.loanReserve.reserveId)!.debt;
+    const healthFactorWad = account && debtAssets > ZERO && account.totalDebtValueRay > ZERO && account.healthFactor < (BigInt(1) << BigInt(128))
+      ? account.healthFactor
+      : null;
     return { blockNumber: take('block'), blockTimestamp: take('timestamp'), reserveCount: take('count'), oracle: take('oracle'), walletUsdcAssets: take('usdc_wallet'),
-      debtAssets: reserves.get(standing.loanReserve.reserveId)!.debt, selectedSuppliedAssets: standing.collateralReserve ? reserves.get(standing.collateralReserve.reserveId)!.supplied : ZERO,
-      walletCollateralAssets: standing.selectedStock ? take<bigint>(`wallet_${standing.selectedStock.id}`) : ZERO, healthFactorWad: account?.healthFactor ?? null,
+      debtAssets, selectedSuppliedAssets: standing.collateralReserve ? reserves.get(standing.collateralReserve.reserveId)!.supplied : ZERO,
+      walletCollateralAssets: standing.selectedStock ? take<bigint>(`wallet_${standing.selectedStock.id}`) : ZERO, healthFactorWad,
       usdcLiquidityAssets: values.has('loan_liquidity') ? take('loan_liquidity') : ZERO, usdcSpokeOwedAssets: values.has('loan_owed') ? take('loan_owed') : ZERO,
       walletStocks: new Map(STOCKS.map(s => [s.id, take<bigint>(`wallet_${s.id}`)])), reserves,
       drawnIndex: take('drawn_index'), riskPremium: take('risk_premium'), allowance: take('allowance'),

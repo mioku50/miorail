@@ -6,6 +6,7 @@ export interface LendingFactsWireV1 {
   collateralTokenAddress: string; collateralSymbol: string; collateralDecimals: number; marketId: string;
   amountMode: 'assets' | 'all'; requestedAssets: string | null; maximumDebitAssets: string; collateralSupplyAssets: string;
   debtBeforeAssets: string; debtAfterAssets: string; collateralBeforeAssets: string; collateralAfterAssets: string;
+  collateralBeforeShares?: string | null; collateralAfterShares?: string | null;
   debtBeforeShares: string | null; debtAfterShares: string | null; blockNumber: number; warnings: string[];
   nativeFunding?: {maximumNativeAssets:string;reserveAssets:string;balanceBeforeAssets:string;balanceAfterAssets:string;authorizedBefore:boolean;feeQuoteState:'wallet_quote_required'};
   healthBeforeWad?: string | null; healthAfterWad?: string | null;
@@ -48,7 +49,7 @@ export function isLendingFactsWireV1(value: unknown): value is LendingFactsWireV
     (value.amountMode === 'assets' || value.amountMode === 'all') && (value.requestedAssets === null || atomic(value.requestedAssets)) &&
     ['maximumDebitAssets', 'collateralSupplyAssets', 'debtBeforeAssets', 'debtAfterAssets', 'collateralBeforeAssets', 'collateralAfterAssets'].every(k => atomic(value[k])) &&
     ['debtBeforeShares', 'debtAfterShares'].every(k => value[k] === null || atomic(value[k])) && integer(value.blockNumber) &&
-    ['healthBeforeWad', 'healthAfterWad', 'policyLimitAssets', 'protocolLimitAssets'].every(k => value[k] === undefined || value[k] === null || atomic(value[k])) &&
+    ['collateralBeforeShares', 'collateralAfterShares', 'healthBeforeWad', 'healthAfterWad', 'policyLimitAssets', 'protocolLimitAssets'].every(k => value[k] === undefined || value[k] === null || atomic(value[k])) &&
     (value.termsVersion === undefined || value.termsVersion === null || text(value.termsVersion)) &&
     Array.isArray(value.warnings) && value.warnings.every(text);
 }

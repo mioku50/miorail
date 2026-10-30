@@ -5,6 +5,19 @@ import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
 
 void React;
 
+const NO_DEBT_HEALTH_SENTINEL = BigInt(1) << BigInt(128);
+
+export function formatLendingHealthRatioV1(value: string | null | undefined, debtAssets: string): string {
+  if (debtAssets === '0') return '— No debt (N/A)';
+  if (value == null) return 'Not read';
+  try {
+    if (BigInt(value) >= NO_DEBT_HEALTH_SENTINEL) return '— No debt (N/A)';
+  } catch {
+    return 'Not read';
+  }
+  return tokenDecimalV1(value, 18);
+}
+
 /** One review for both web and Base App. Values and verdicts belong to the
  * server; the screen formats exact decimals and never recalculates risk. */
 export function LendingReviewScreen({ model }: { model: LendingReviewConsoleModelV1 }) {
@@ -16,7 +29,9 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   const title = facts ? repay ? 'Review repayment' : 'Review loan' : 'Lending review';
   const asset = (value: string) => facts ? `${tokenDecimalV1(value, facts.collateralDecimals)} ${facts.collateralSymbol}` : value;
   const usdc = (value: string) => `${tokenDecimalV1(value, 6)} USDC`;
-  const health = (value: string | null | undefined) => value == null ? 'Not read' : tokenDecimalV1(value, 18);
+  const health = (value: string | null | undefined, debtAssets: string) => formatLendingHealthRatioV1(value, debtAssets);
+  const debtIncrease = facts && !repay ? BigInt(facts.debtAfterAssets) - BigInt(facts.debtBeforeAssets) : BigInt(0);
+  const shareRoundingExtra = facts && !repay && facts.requestedAssets !== null && debtIncrease > BigInt(facts.requestedAssets);
   const knownState = model.execution?.state ?? (body.state === 'refused' ? body.executionState : null);
   const blocked = Boolean(model.submissionLock || model.batchId || (knownState && knownState !== 'ready'));
   return (
@@ -38,9 +53,10 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           <tbody>
             <tr><th scope="row">Debt</th><td className="mono">{usdc(facts.debtBeforeAssets)}</td>{body.state === 'ready' ? <td className="mono">{usdc(facts.debtAfterAssets)}</td> : null}</tr>
             <tr><th scope="row">Collateral</th><td className="mono">{asset(facts.collateralBeforeAssets)}</td>{body.state === 'ready' ? <td className="mono">{asset(facts.collateralAfterAssets)}</td> : null}</tr>
-            <tr><th scope="row">Health ratio</th><td className="mono">{health(facts.healthBeforeWad)}</td>{body.state === 'ready' ? <td className="mono">{health(facts.healthAfterWad)}</td> : null}</tr>
+            <tr><th scope="row">Health ratio</th><td className="mono">{health(facts.healthBeforeWad, facts.debtBeforeAssets)}</td>{body.state === 'ready' ? <td className="mono">{health(facts.healthAfterWad, facts.debtAfterAssets)}</td> : null}</tr>
           </tbody>
         </table>
+        <p className="still-note">Health ratio is calculated at the simulation block. It does not guarantee protection against liquidation after prices change.</p>
         {body.state === 'ready' ? <>
           {repay ? <>
             <p className="still-sub">{facts.amountMode === 'all' ? 'Repay the entire debt position at execution.' : <>Repay exactly {usdc(facts.requestedAssets!)}.</>}</p>
@@ -49,14 +65,27 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           </> : <>
             <p className="still-sub">Borrow {facts.requestedAssets === null ? 'the measured amount' : usdc(facts.requestedAssets)} to this wallet.</p>
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>
-            <p className="still-note">Still total debt limit: {facts.policyLimitAssets == null ? 'Not read' : usdc(facts.policyLimitAssets)}.</p>
-            <p className="still-note">Protocol total debt limit: {facts.protocolLimitAssets == null ? 'Not read' : usdc(facts.protocolLimitAssets)}.</p>
-            <p className="still-note">Terms version: {facts.termsVersion ?? 'Not read'}.</p>
+            {shareRoundingExtra ? <p className="still-note">Your wallet receives {usdc(facts.requestedAssets!)} ({facts.requestedAssets} atomic USDC). Onchain debt-share rounding records {usdc(debtIncrease.toString())} ({debtIncrease.toString()} atomic USDC) of new debt.</p> : null}
           </>}
-          {facts.warnings.map((warning, index) => <p className="still-warn" key={`${index}:${warning}`}>{warning}</p>)}
+          {facts.warnings.length > 0 ? <div className="still-warn" role="note">
+            <p style={{ margin: 0, fontWeight: 600 }}>Key risks &amp; execution terms</p>
+            <ul style={{ margin: '0.35rem 0 0', paddingLeft: '1.15rem' }}>
+              {facts.warnings.map((warning, index) => <li key={`${index}:${warning}`}>{warning}</li>)}
+            </ul>
+          </div> : null}
           <p className="still-note">Simulated at Base block {body.measured.blockNumber.toLocaleString('en-US')}. The position and exact calls are checked again before your wallet opens.</p>
           <details className="still-disclosure">
-            <summary>Calls checked for this review</summary>
+            <summary>Calls checked &amp; technical details</summary>
+            {!repay ? <>
+              <p className="still-note">Still total debt limit: {facts.policyLimitAssets == null ? 'Not read' : usdc(facts.policyLimitAssets)}.</p>
+              <p className="still-note">Protocol total debt limit: {facts.protocolLimitAssets == null ? 'Not read' : usdc(facts.protocolLimitAssets)}.</p>
+              <p className="still-note">Terms version: {facts.termsVersion ?? 'Not read'}.</p>
+            </> : null}
+            <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>
+              Atomic units — {repay
+                ? `repay request: ${facts.requestedAssets ?? 'all'}, max USDC debit: ${facts.maximumDebitAssets}, wallet USDC delta: ${body.measured.loanDeltaAssets}`
+                : `borrow request: ${facts.requestedAssets ?? '0'}, wallet USDC delta: ${body.measured.loanDeltaAssets}, collateral supply: ${facts.collateralSupplyAssets}`}; debt: {facts.debtBeforeAssets} → {facts.debtAfterAssets}{facts.debtBeforeShares !== null && facts.debtAfterShares !== null ? ` (shares: ${facts.debtBeforeShares} → ${facts.debtAfterShares})` : ''}; collateral: {facts.collateralBeforeAssets} → {facts.collateralAfterAssets}{facts.collateralBeforeShares != null && facts.collateralAfterShares != null ? ` (shares: ${facts.collateralBeforeShares} → ${facts.collateralAfterShares})` : ''}.
+            </p>
             {body.steps.map(step => <div key={step.index}>
               <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>{step.to}</p><p className="still-note">{step.reading}</p>
             </div>)}

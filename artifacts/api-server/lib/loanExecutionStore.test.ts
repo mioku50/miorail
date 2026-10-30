@@ -25,9 +25,8 @@ describe('owned lending execution locks', () => {
     }
     const store = new MemoryLoanExecutionStoreV1(); const first = await ready(store); const native = loanReadyFixture();
     native.facts.nativeFunding = {
-      wrapperContract: OWNER.walletAddress, wrappedTokenAddress: OWNER.walletAddress,
-      maximumNativeAssets: '10', reserveNativeAssets: '500000000000000',
-      walletNativeBeforeAssets: '20', walletNativeAfterAssets: '10',
+      maximumNativeAssets: '10', reserveAssets: '500000000000000',
+      balanceBeforeAssets: '20', balanceAfterAssets: '10',
       authorizedBefore: false, feeQuoteState: 'wallet_quote_required',
     };
     await assert.rejects(store.putReady({ owner: OWNER, draftId: first.draftId, run: native, now: NOW }), /question_changed/);

@@ -37,11 +37,25 @@ export interface AaveV4DeploymentReadV1 {
   proxyCodeHash: string;
 }
 
+export type AaveV4DeploymentStatusV1 =
+  | 'matched'
+  | 'rpc_unavailable'
+  | 'block_unavailable'
+  | 'slot_unreadable'
+  | 'implementation_mismatch'
+  | 'code_hash_mismatch';
+
+export function classifyAaveV4DeploymentReadV1(expectedBlockNumber: number, value: AaveV4DeploymentReadV1 | null): AaveV4DeploymentStatusV1 {
+  if (!value || value.chainId !== 8453 || !Number.isSafeInteger(value.blockNumber) || value.blockNumber <= 0) return 'rpc_unavailable';
+  if (!Number.isSafeInteger(expectedBlockNumber) || expectedBlockNumber <= 0 || value.blockNumber !== expectedBlockNumber) return 'block_unavailable';
+  if (value.implementationAddress.toLowerCase() !== AAVE_V4_DEPLOYMENT_PIN_V1.implementation) return 'implementation_mismatch';
+  if (value.implementationCodeHash.toLowerCase() !== AAVE_V4_DEPLOYMENT_PIN_V1.implementationCodeHash ||
+      value.proxyCodeHash.toLowerCase() !== AAVE_V4_DEPLOYMENT_PIN_V1.proxyCodeHash) return 'code_hash_mismatch';
+  return 'matched';
+}
+
 export function matchesAaveV4DeploymentV1(value: AaveV4DeploymentReadV1): boolean {
-  return value.chainId === 8453 && Number.isSafeInteger(value.blockNumber) && value.blockNumber > 0 &&
-    value.implementationAddress.toLowerCase() === AAVE_V4_DEPLOYMENT_PIN_V1.implementation &&
-    value.implementationCodeHash.toLowerCase() === AAVE_V4_DEPLOYMENT_PIN_V1.implementationCodeHash &&
-    value.proxyCodeHash.toLowerCase() === AAVE_V4_DEPLOYMENT_PIN_V1.proxyCodeHash;
+  return classifyAaveV4DeploymentReadV1(value.blockNumber, value) === 'matched';
 }
 
 /** Identity comes from the registered Spoke's getReserve at the same read block. */
