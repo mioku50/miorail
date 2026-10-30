@@ -6,7 +6,7 @@ import { inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAt
 import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4BorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
-import type { LendingRunV1, LendingFactsV1 } from './lendingReview.js';
+import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
 
 export interface AaveLendingDepsV1 {
   read?: typeof readAaveStandingV1;
@@ -128,8 +128,11 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
       'Aave enforces its own health rules onchain. Your collateral can be liquidated. A server review is not an onchain price or Still-limit guarantee.',
     ] : ['This repays the USDC debt of the Aave V4 equities Spoke. Collateral remains deposited.',
       'The Spoke takes at most your explicit USDC maximum, clears the temporary allowance in the same atomic batch and requests no position-manager grant.'] };
-  const { blockNumber: _blockNumber, ...economicFacts } = facts;
-  const signingTermsHash = stableHashV1('aave-v4-lending-signing-terms/v1', { wallet: s.walletAddress, callsHash, facts: economicFacts });
+  const signingTermsHash = stableHashV1('aave-v4-lending-signing-terms/v1', {
+    wallet: s.walletAddress,
+    callsHash,
+    facts: lendingSigningTermsFactsV1(facts),
+  });
   return { state: 'ready', facts, calls: plan.calls, callsHash, signingTermsHash, expiresAt: new Date(now().getTime() + 30_000).toISOString(),
     atomicRequired: true, steps: plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })),
     measured: { provider: 'base_same_state', blockNumber: answer.response.blockNumber, loanDeltaAssets: usdcNet.toString() } };

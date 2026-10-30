@@ -25,6 +25,7 @@ export interface StillBorrowModelV1 {
   /** Display units already prepared by the server, never a client estimate. */
   capacity: null | {
     nativeReserve?: string;
+    existingDebt?: string;
     walletBalance: string | null;
     pledged: string | null;
     maximumUsdc: string | null;
@@ -105,6 +106,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     <dl className="still-borrow-facts">
                       <div><dt>In your wallet</dt><dd className="mono">{tokenAmount(capacity.walletBalance)}</dd></div>
                       <div><dt>Already deposited</dt><dd className="mono">{capacity.pledged === null ? 'Not read' : model.asset === 'ETH' ? capacity.pledged + ' WETH' : tokenAmount(capacity.pledged)}</dd></div>
+                      {capacity.existingDebt ? <div><dt>Current debt</dt><dd className="mono">{capacity.existingDebt} USDC</dd></div> : null}
                     </dl>
                     <p className="still-note still-borrow-block">{capacity.blockNumber === null ? 'Reading block not available.' : <>Read at Base block <span className="mono">{capacity.blockNumber.toLocaleString('en-US')}</span>.</>}</p>
                   </div>

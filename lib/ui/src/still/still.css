@@ -330,9 +330,41 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 @keyframes sm-sway { 0%, 100% { transform: rotate(-1.2deg); } 50% { transform: rotate(1.2deg); } }
 @keyframes sm-sway-hard { 0%, 100% { transform: rotate(-2.4deg); } 50% { transform: rotate(2.4deg); } }
 @keyframes sm-turn { to { transform: rotate(360deg); } }
+@keyframes sm-orb-pulse {
+  0%, 100% { transform: translateY(0) scale(0.88); opacity: 0.55; }
+  50% { transform: translateY(-4px) scale(1.14); opacity: 1; }
+}
 .still-thinking { display: inline-flex; animation: sm-turn 3.2s linear infinite; }
+.still-thinking-orbs {
+  display: inline-flex; align-items: center; gap: 10px;
+  padding: 6px 12px; border-radius: 999px;
+  background: var(--sm-chip); border: 1px solid var(--sm-line);
+  font-size: 13px; color: var(--sm-ink2);
+}
+.still-orbs-cluster { display: inline-flex; align-items: center; gap: 5px; }
+.still-orb {
+  width: 8px; height: 8px; border-radius: 50%;
+  animation: sm-orb-pulse 1.5s ease-in-out infinite;
+}
+.still-orb.orb-evidence { background: var(--sm-stock); animation-delay: 0s; }
+.still-orb.orb-risk { background: var(--sm-blue); animation-delay: 0.22s; }
+.still-orb.orb-llm { background: var(--sm-wire); animation-delay: 0.44s; }
+.still-agent-mode-badge {
+  font-size: 11px; padding: 2px 8px; border-radius: 999px;
+  background: var(--sm-chip); border: 1px solid var(--sm-line); color: var(--sm-ink2);
+}
+.still-agent-mode-badge[data-mode='analysis'] { border-color: var(--sm-blue); color: var(--sm-link); }
+.still-agent-mode-badge[data-mode='action_prep'] { border-color: var(--sm-wire); color: var(--sm-ink); }
+.still-agent-mode-badge[data-mode='refused'] { border-color: var(--sm-alarm); color: var(--sm-alarm); }
+.still-agent-steps {
+  margin: 10px 0 0; padding: 10px 14px 10px 28px;
+  border-radius: 12px; background: var(--sm-ground); border: 1px solid var(--sm-line);
+  font-size: 13px; line-height: 1.45; color: var(--sm-ink);
+}
+.still-agent-steps li + li { margin-top: 5px; }
+.still-agent-action .still-btn { display: inline-flex; align-items: center; height: 38px; padding: 0 14px; font-size: 14px; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
-  .sm-swing, .still-thinking { animation: none !important; }
+  .sm-swing, .still-thinking, .still-orb { animation: none !important; }
 }
 
 /* ---- the Agent ---- */

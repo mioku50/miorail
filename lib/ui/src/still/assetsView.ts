@@ -112,7 +112,10 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       repayHref: v.venue === 'aave-v4' ? '/repay' :
         CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase()) ? `/repay?asset=${CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase())!.id === 'ETH' ? 'WETH' : 'cbBTC'}` : null,
       label: v.label,
-      owed: formatCents(v.debtCents!),
+      owed:
+        v.debtAtomic != null && BigInt(v.debtAtomic) > BigInt(0) && BigInt(v.debtAtomic) < BigInt(10_000)
+          ? `${ formatTokenAmount(BigInt(v.debtAtomic), 6, 6).replace(/\.?0+$/, '') } USDC`
+          : formatCents(v.debtCents!),
       rate: v.borrowRateBps === null ? null : `${(v.borrowRateBps / 100).toFixed(2)}% a year, variable`,
       safety: v.safety ? `Prices can fall ${Math.floor(v.safety.marginBps / 100)}% together before liquidation.` : null,
       state: v.safety?.state ?? null,

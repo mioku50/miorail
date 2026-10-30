@@ -26,6 +26,7 @@ import {
   StillMore,
   StillMobile,
   StillAssistants,
+  ThinkingOrbs,
   type MobileHoldingV1,
 } from '../src/still';
 
@@ -237,24 +238,38 @@ describe('Assets', () => {
     assert.deepEqual(view.loans[0]!.liquidation, ['NVIDIA below $100.92, if only it moved']);
     const html = renderToStaticMarkup(<StillAssets model={{ sky: skyStateV1({ now: WEDNESDAY }), view, loading: false, failed: null, onRetry: () => {}, signedIn: true, signInHref: '/signin' }} />);
     assert.match(html, /Loans · 1/);
+
+    const microReport = report();
+    const aaveVenue = microReport.venues.find((v) => v.venue === 'aave-v4')!;
+    aaveVenue.debtCents = '1';
+    aaveVenue.debtAtomic = '2';
+    assert.equal(assetsViewV1({ report: microReport }).loans[0]!.owed, '0.000002 USDC');
+    assert.equal(homeViewV1({ report: microReport, sky: skyStateV1({ now: WEDNESDAY }) }).owed?.amount, 'Owed 0.000002 USDC');
   });
 });
 
 describe('the Agent', () => {
   it('knows the topics in English and in Russian, and admits what it does not answer', () => {
     assert.equal(agentTopicV1('How much can I spend?'), 'borrow');
+    assert.equal(agentTopicV1('Сколько я могу занять?'), 'borrow');
     assert.equal(agentTopicV1('Насколько безопасен мой займ?'), 'safety');
     assert.equal(agentTopicV1('Когда выходные лимиты?'), 'closed');
     assert.equal(agentTopicV1('А когда следующий дивиденд?'), 'dividends');
+    assert.equal(agentTopicV1('Что будет при падении NVDA на 30%?'), 'stress_test');
+    assert.equal(agentTopicV1('Что будет с моим займом, если NVIDIA упадёт на 25%?'), 'stress_test');
+    assert.equal(agentTopicV1('Почему моя сумма займа уменьшилась?'), 'limit_change');
+    assert.equal(agentTopicV1('Как безопаснее уменьшить долг на $100?'), 'repay_options');
+    assert.equal(agentTopicV1('Займи $500 и отправь другу'), 'action_prep');
     assert.equal(agentTopicV1('Tell me a joke'), null);
   });
 
   it('answers from the numbers on screen, in the language of the question', () => {
     const r = report();
     const sky = skyStateV1({ now: WEDNESDAY });
-    const borrowing = agentAnswerV1({ question: 'Сколько я могу взять?', report: r, sky }).text;
-    assert.match(borrowing, /^Расчётный запас для займа — \$784\.62\. Ваш долг \$240\.17 уже учтён\./);
-    assert.match(borrowing, /Get money поддерживает проверенные акции через Aave V4/);
+    const borrowing = agentAnswerV1({ question: 'Сколько я могу взять?', report: r, sky });
+    assert.equal(borrowing.mode, 'fast');
+    assert.match(borrowing.text, /^Расчётный запас для займа — \$784\.62\. Ваш долг \$240\.17 уже учтён\./);
+    assert.match(borrowing.text, /Get money поддерживает проверенные акции через Aave V4/);
     assert.match(agentAnswerV1({ question: 'How safe is my loan?', report: r, sky }).text, /prices can fall 52% together .* NVIDIA below \$100\.92/);
     const weekend = agentAnswerV1({ question: 'How much can I spend?', report: report(SATURDAY), sky: skyStateV1({ now: SATURDAY_AT }) });
     assert.match(weekend.text, /On an open market it would be \$784\.62: until Sun 8 PM stocks count at 40%\./);
@@ -265,9 +280,66 @@ describe('the Agent', () => {
     assert.match(agentAnswerV1({ question: 'How much can I borrow?', report: null, sky }).text, /sign in/);
   });
 
-  it('renders the prompts in the reader’s language', () => {
-    const html = renderToStaticMarkup(<StillAgent model={{ sky: skyStateV1({ now: WEDNESDAY }), report: null, dividends: null, reading: false, signedIn: false, russian: true }} />);
+  it('handles Still Agent v2 analysis, stress tests, repayment options, action boundaries, and missing-evidence refusals', () => {
+    const r = report();
+    const sky = skyStateV1({ now: WEDNESDAY });
+
+    // 1. Stress test: NVDA drops 30%
+    const stress30 = agentAnswerV1({ question: 'Что будет при падении NVDA на 30%?', report: r, sky });
+    assert.equal(stress30.topic, 'stress_test');
+    assert.equal(stress30.mode, 'analysis');
+    assert.match(stress30.text, /При падении NVIDIA на 30%/);
+    assert.match(stress30.text, /Health Factor снизится с 2\.09 до 1\.46/);
+    assert.ok((stress30.steps ?? []).some((s) => /Health Factor: 2\.09 → 1\.46/.test(s)));
+    assert.ok(stress30.sources.some((s) => /РИСК-ДВИЖОК/.test(s)));
+
+    // 2. Limit change attribution on weekend
+    const limitWeekend = agentAnswerV1({
+      question: 'Почему моя сумма займа уменьшилась?',
+      report: report(SATURDAY),
+      sky: skyStateV1({ now: SATURDAY_AT }),
+    });
+    assert.equal(limitWeekend.topic, 'limit_change');
+    assert.equal(limitWeekend.mode, 'analysis');
+    assert.match(limitWeekend.text, /рынок США закрыт.*40% вместо 50%/);
+    assert.match(limitWeekend.text, /вычтен текущий долг \$240\.17/);
+    assert.ok((limitWeekend.steps ?? []).length >= 3);
+
+    // 3. Safe debt reduction by $100
+    const repay100 = agentAnswerV1({ question: 'Как безопаснее уменьшить долг на $100?', report: r, sky });
+    assert.equal(repay100.topic, 'repay_options');
+    assert.equal(repay100.mode, 'analysis');
+    assert.match(repay100.text, /снизится с \$240\.17 до \$140\.17/);
+    assert.match(repay100.text, /Health Factor вырастет с 2\.09 до 3\.58/);
+    assert.equal(repay100.actionLink?.href, '/repay');
+
+    // 4. Action preparation & refusal of third-party transfer
+    const actionPrep = agentAnswerV1({ question: 'Займи $500 и отправь другу', report: r, sky });
+    assert.equal(actionPrep.topic, 'action_prep');
+    assert.equal(actionPrep.mode, 'action_prep');
+    assert.match(actionPrep.text, /не исполняю транзакции автоматически и не отправляю средства на сторонние адреса/);
+    assert.match(actionPrep.text, /\$500\.00 укладываются в расчётный запас Still \(\$784\.62\)/);
+    assert.equal(actionPrep.actionLink?.href, '/borrow');
+
+    // 5. Fail-closed refusal when oracle price is unread
+    const brokenReport = report();
+    const nvdaLine = brokenReport.assets.find((a) => a.asset === 'NVDAc')!;
+    nvdaLine.priceCents = null;
+    const refusedStress = agentAnswerV1({ question: 'Что будет при падении NVDA на 30%?', report: brokenReport, sky });
+    assert.equal(refusedStress.mode, 'refused');
+    assert.match(refusedStress.text, /Расчёт отклонён: цена оракула или залоговый фактор для NVIDIA \(NVDAc\) не прочитаны/);
+  });
+
+  it('renders the prompts in the reader’s language and renders ThinkingOrbs when reading', () => {
+    const html = renderToStaticMarkup(<StillAgent model={{ sky: skyStateV1({ now: WEDNESDAY }), report: null, dividends: null, reading: true, signedIn: true, russian: true }} />);
     assert.match(html, /Сколько я могу взять без продажи\?/);
+    assert.match(html, /Что будет при падении NVDA на 30%\?/);
+    assert.match(html, /still-thinking-orbs/);
+    assert.match(html, /orb-evidence/);
+    assert.match(html, /orb-risk/);
+    assert.match(html, /orb-llm/);
+    const orbsHtml = renderToStaticMarkup(<ThinkingOrbs stage="risk_engine" russian={false} />);
+    assert.match(orbsHtml, /Risk Engine computing scenario and liquidation thresholds/);
   });
 });
 

@@ -73,6 +73,14 @@ describe('a review shows the position the transaction would create', () => {
     assert.equal(view.after!.liquidationPrice, '$190.35');
     // The collateral did not move, and the review does not imply it did.
     assert.equal(view.after!.collateral, view.before.collateral);
+
+    const microDebt = borrowReviewV1({
+      ...base,
+      before: { ...BEFORE_V1, borrowedAssets: 2n },
+      after: { ...AFTER_V1, borrowedAssets: 50_002n },
+      askAssets: 50_000n,
+    });
+    assert.equal(microDebt.before.debt, '0.000002 USDC');
   });
 
   test('the exact market is named, with what the venue says about it', () => {

@@ -159,10 +159,13 @@ function amountV1(atomic: bigint | null, decimals: number | null, symbol: string
   const unit = 10n ** BigInt(decimals);
   const whole = atomic / unit;
   const fraction = atomic % unit;
-  // Two places is what a reader reads; the atomic figure travels elsewhere for
-  // anyone who needs all of it.
+  // Two places is what a reader reads; sub-cent positive amounts keep their exact
+  // non-zero decimals so micro-debt (e.g. 0.000002 USDC) is never rounded to 0.00.
   const cents = (fraction * 100n) / unit;
-  const rendered = `${whole.toLocaleString('en-US')}.${cents.toString().padStart(2, '0')}`;
+  const rendered =
+    atomic > 0n && whole === 0n && cents === 0n && decimals > 0
+      ? `0.${fraction.toString().padStart(decimals, '0').replace(/0+$/, '')}`
+      : `${whole.toLocaleString('en-US')}.${cents.toString().padStart(2, '0')}`;
   return symbol ? `${rendered} ${symbol}` : rendered;
 }
 

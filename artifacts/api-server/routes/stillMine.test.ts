@@ -4,10 +4,18 @@ import express from 'express';
 import request from 'supertest';
 import type { MirrorOutcome, MirrorService } from '@mioagent/still-engine';
 
+import { computeMirror } from '@mioagent/still-engine';
+import { stillTerms } from '@mioagent/still-engine/terms';
+import { EXAMPLE, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
+import { stillAgentLlmRuntimeV1 } from '../lib/stillAgentServer.js';
 import { stillMineRouter, stillMineRuntimeV1 } from './stillMine.js';
 
 const original = { ...stillMineRuntimeV1 };
-afterEach(() => Object.assign(stillMineRuntimeV1, original));
+const originalLlm = { ...stillAgentLlmRuntimeV1 };
+afterEach(() => {
+  Object.assign(stillMineRuntimeV1, original);
+  Object.assign(stillAgentLlmRuntimeV1, originalLlm);
+});
 
 const WALLET = `0x${'1'.repeat(40)}`;
 
@@ -72,4 +80,82 @@ test('an unreadable chain is 503 and names no provider address', async () => {
   const failed = await request(failing.server).get('/api/still/mine');
   assert.equal(failed.status, 500);
   assert.doesNotMatch(failed.text, /SECRET|https?:/);
+});
+
+function fullMirrorReportFor(address: string) {
+  return JSON.parse(
+    JSON.stringify(
+      computeMirror({
+        subject: { address: address as `0x${string}`, name: null, input: address },
+        universe: universe(),
+        snapshot: snapshot(EXAMPLE),
+        calendar: calendar(),
+        assembledAt: new Date('2026-10-21T15:00:01Z'),
+      }),
+    ),
+  );
+}
+
+test('POST /api/still/agent/ask enforces wallet session and enriches Risk Engine answers via OpenRouter while rejecting unsafe claims', async () => {
+  const walletReport = fullMirrorReportFor(WALLET);
+
+  // 1. Unsigned request -> 401
+  const unsigned = app(null, async () => assert.fail('not asked'));
+  assert.equal(
+    (await request(unsigned.server).post('/api/still/agent/ask').send({ question: 'Что будет при падении NVDA на 30%?' })).status,
+    401,
+  );
+
+  // 2. Mismatched wallet report -> 403
+  const mismatch = app(WALLET, async () => assert.fail('not asked'));
+  const wrongReport = fullMirrorReportFor(`0x${'2'.repeat(40)}`);
+  assert.equal(
+    (await request(mismatch.server).post('/api/still/agent/ask').send({
+      question: 'Что будет при падении NVDA на 30%?',
+      report: wrongReport,
+    })).status,
+    403,
+  );
+
+  // 3. Valid hybrid Risk Engine + OpenRouter synthesis
+  stillAgentLlmRuntimeV1.provider = () => ({
+    generate: async (req) => {
+      assert.equal(req.reasoningEffort, 'none');
+      return {
+        message: {
+          role: 'assistant',
+          content:
+            'При падении NVIDIA на 30% (до $148.33) ваш займ $240.17 останется безопасным: Health Factor снизится с 2.09 до 1.46, сохраняя 31% запаса до порога ликвидации $100.92.',
+        },
+      };
+    },
+  });
+  const hybrid = app(WALLET, async () => ({ outcome: 'report', report: walletReport, cached: false }));
+  const okRes = await request(hybrid.server).post('/api/still/agent/ask').send({
+    question: 'Что будет при падении NVDA на 30%?',
+    report: walletReport,
+  });
+  assert.equal(okRes.status, 200);
+  assert.equal(okRes.body.ok, true);
+  assert.equal(okRes.body.answer.mode, 'analysis');
+  assert.match(okRes.body.answer.text, /Health Factor снизится с 2\.09 до 1\.46/);
+  assert.ok(okRes.body.answer.sources.some((s: string) => /OpenRouter/.test(s)));
+
+  // 4. Rejects hallucinated autonomous execution claim on action_prep and preserves deterministic boundary
+  stillAgentLlmRuntimeV1.provider = () => ({
+    generate: async () => ({
+      message: {
+        role: 'assistant',
+        content: 'Я уже подписал и отправил $500 вашему другу.',
+      },
+    }),
+  });
+  const boundaryRes = await request(hybrid.server).post('/api/still/agent/ask').send({
+    question: 'Займи $500 и отправь другу',
+    report: walletReport,
+  });
+  assert.equal(boundaryRes.status, 200);
+  assert.equal(boundaryRes.body.answer.mode, 'action_prep');
+  assert.match(boundaryRes.body.answer.text, /не исполняю транзакции автоматически/);
+  assert.equal(boundaryRes.body.answer.actionLink?.href, '/borrow');
 });

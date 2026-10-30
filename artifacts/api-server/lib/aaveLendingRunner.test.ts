@@ -136,6 +136,86 @@ describe('Aave runner keeps the observed action bound to the owned question', ()
       assert.equal(r.facts.healthAfterWad, '2264514777517564444');
     }
   });
+  it('keeps signingTermsHash stable across 9th-decimal health fluctuations and block ticks while changing on material health or debt shifts', async () => {
+    const runWithHealth = async (healthAfterWad: bigint, blockOffset = 0, drawnIndex = BigInt(10) ** BigInt(27)) => {
+      const raw = aaveReadFixture();
+      raw.snapshot.aave!.usdcDebt = { ok: true, value: ZERO };
+      raw.positions.find(p => p.reserveId === 7)!.drawnShares = ZERO;
+      const s = await aaveStandingFixture('borrow', raw, BigInt(80_000));
+      s.blockNumber += blockOffset;
+      s.snapshot.block.number += BigInt(blockOffset);
+      s.deployment = { ...s.deployment, blockNumber: s.blockNumber };
+      const ask = BigInt(50_000);
+      const q: LendingQuestionV1 = {
+        operation: 'borrow',
+        collateralTokenAddress: s.selectedStock!.token.toLowerCase(),
+        borrowAssets: ask.toString(),
+        collateralSupplyAssets: s.collateralSupplyAssets.toString(),
+      };
+      const uint256Max = (BigInt(1) << BigInt(256)) - BigInt(1);
+      const provider: SimulationProvider = {
+        providerId: 'aave-fixture',
+        async simulate(request) {
+          const f = aavePoststateFixture(s, 'borrow', ask, (phase, after) => {
+            phase.drawnIndex = drawnIndex;
+            if (!after) phase.healthFactor = uint256Max;
+            else phase.healthFactor = healthAfterWad;
+          });
+          const observations = {
+            ...f.response.observations,
+            requestHash: stableHashV1('simulation-observations/v1', {
+              chainId: 8453,
+              walletAddress: request.walletAddress.toLowerCase(),
+              callsHash: request.callsHash,
+              before: request.observations!.before,
+              after: request.observations!.after,
+            }),
+          };
+          return {
+            ok: true,
+            body: {
+              status: 'success',
+              blockNumber: s.blockNumber,
+              gasUsed: '200000',
+              stateChanges: [],
+              revertReason: null,
+              observations,
+              assetChanges: {
+                status: 'available',
+                unavailableReason: null,
+                changes: [
+                  { kind: 'erc20_transfer', token: ADDRESSES.usdc, direction: 'in', amountAtomic: ask.toString(), counterparty: ADDRESSES.aaveHub, callIndex: 3 },
+                  { kind: 'erc20_transfer', token: s.selectedStock!.token, direction: 'out', amountAtomic: s.collateralSupplyAssets.toString(), counterparty: ADDRESSES.aaveHub, callIndex: 2 },
+                ],
+              },
+            },
+          };
+        },
+      };
+      return runAaveLendingV1(
+        { walletAddress: AAVE_TEST_WALLET, question: q },
+        {
+          read: async () => ({ state: 'read', standing: s }),
+          inspectDeploymentAt: async () => ({ status: 'matched', deployment: s.deployment }),
+          chain: { providers: [provider], batchCapableIds: new Set(['aave-fixture']) },
+          now: () => NOW,
+        },
+      );
+    };
+    const first = await runWithHealth(BigInt('2494032095615730712'), 0);
+    const second = await runWithHealth(BigInt('2494032094713526717'), 3);
+    const materialHealthShift = await runWithHealth(BigInt('2484032094713526717'), 3);
+    const atomicDebtShift = await runWithHealth(BigInt('2494032094713526717'), 3, BigInt('1010000000000000000000000000'));
+    assert.equal(first.state, 'ready');
+    assert.equal(second.state, 'ready');
+    assert.equal(materialHealthShift.state, 'ready');
+    assert.equal(atomicDebtShift.state, 'ready');
+    if (first.state === 'ready' && second.state === 'ready' && materialHealthShift.state === 'ready' && atomicDebtShift.state === 'ready') {
+      assert.equal(first.signingTermsHash, second.signingTermsHash);
+      assert.notEqual(first.signingTermsHash, materialHealthShift.signingTermsHash);
+      assert.notEqual(first.signingTermsHash, atomicDebtShift.signingTermsHash);
+    }
+  });
   it('never treats status success without observations and asset effects as ready', async () => {
     for (const missing of ['observations', 'assetChanges'] as const) {
       const h = await harness('borrow', body => { delete body[missing]; });

@@ -52,6 +52,7 @@ const VENUE_LINE = z
     market: z.string(),
     label: z.string(),
     debtCents: INTEGER.nullable(),
+    debtAtomic: INTEGER.nullable().optional(),
     capacityCents: INTEGER.nullable(),
     availableCents: INTEGER.nullable(),
     borrowRateBps: z.number().int().nullable(),

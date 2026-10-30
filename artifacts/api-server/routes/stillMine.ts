@@ -1,7 +1,10 @@
-import { Router, type Request, type Response } from 'express';
+import express, { Router, type Request, type Response } from 'express';
 import { logger } from '@mioagent/utils';
+import type { MirrorReport } from '@mioagent/still-engine/report';
+import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
+import { answerStillAgentHybridV2 } from '../lib/stillAgentServer.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 
 // ---------------------------------------------------------------------------
@@ -36,5 +39,61 @@ stillMineRouter.get('/mine', async (req: Request, res: Response) => {
   } catch (error) {
     logger.warn('Still mirror read failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });
+  }
+});
+
+stillMineRouter.post('/agent/ask', express.json({ limit: '256kb' }), async (req: Request, res: Response) => {
+  res.set('Cache-Control', 'private, no-store');
+  const wallet = sessionWalletV1(req, res);
+  if (!wallet) return;
+
+  const body = (req.body ?? {}) as {
+    question?: unknown;
+    report?: MirrorReport | null;
+    dividends?: DividendWalletResponseV1 | null;
+    dividendsReadState?: 'not_loaded' | 'loading' | 'unavailable' | 'read';
+  };
+  const question = typeof body.question === 'string' ? body.question.trim() : '';
+  if (!question || question.length > 500) {
+    res.status(400).json({ ok: false, outcome: 'invalid_input' });
+    return;
+  }
+
+  try {
+    let report: MirrorReport | null = null;
+    if (
+      body.report &&
+      typeof body.report === 'object' &&
+      body.report.kind === 'still.mirror' &&
+      typeof body.report.subject?.address === 'string'
+    ) {
+      if (body.report.subject.address.toLowerCase() !== wallet) {
+        res.status(403).json({ ok: false, outcome: 'wallet_mismatch' });
+        return;
+      }
+      report = body.report;
+    } else {
+      const outcome = await stillMineRuntimeV1.service().check(wallet);
+      if (outcome.outcome === 'report') {
+        if (outcome.report.subject.address.toLowerCase() !== wallet) {
+          throw new Error('still_mine_wallet_mismatch');
+        }
+        report = outcome.report;
+      }
+    }
+
+    const answer = await answerStillAgentHybridV2({
+      question,
+      report,
+      dividends: body.dividends ?? null,
+      dividendsReadState: body.dividendsReadState,
+      signedIn: true,
+    });
+    res.status(200).json({ ok: true, answer });
+  } catch (error) {
+    logger.warn('Still agent hybrid ask failed', {
+      errorName: error instanceof Error ? error.name : typeof error,
+    });
+    res.status(500).json({ ok: false, outcome: 'internal_error' });
   }
 });

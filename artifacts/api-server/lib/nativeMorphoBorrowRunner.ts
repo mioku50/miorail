@@ -7,7 +7,7 @@ import { readBorrowStandingV1 } from './stillBorrowStanding.js';
 import { buildNativeMorphoBorrowPlanV1, nativeMorphoFundingBudgetV1 } from './nativeMorphoBorrowPlan.js';
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
-import type { LendingRunV1, LendingFactsV1 } from './lendingReview.js';
+import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
 
 export interface NativeMorphoBorrowRequestV1 { walletAddress: string; supplyAssets: bigint; borrowAssets: bigint }
 export interface NativeMorphoBorrowDepsV1 {
@@ -82,7 +82,7 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
       'Calls are built from the verified protocol ABI and independently simulated; they are not an Actions API attestation.']};
   const expiry=Math.min(now().getTime()+30_000,Number(plan.deadline)*1000);
   if(expiry<=now().getTime()) return fail('native_borrow_expired','The native-funded loan review expired during measurement.');
-  return {state:'ready',facts,calls:plan.calls,callsHash,signingTermsHash:stableHashV1('native-morpho-terms/v1',{wallet:identity.walletAddress,callsHash,facts}),
+  return {state:'ready',facts,calls:plan.calls,callsHash,signingTermsHash:stableHashV1('native-morpho-terms/v1',{wallet:identity.walletAddress,callsHash,facts:lendingSigningTermsFactsV1(facts)}),
     expiresAt:new Date(expiry).toISOString(),atomicRequired:true,steps:plan.steps,
     measured:{provider:answer.providerId,blockNumber:answer.response.blockNumber,loanDeltaAssets:usdcIn.toString()}};
 }

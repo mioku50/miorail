@@ -1,6 +1,6 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
-import { formatCents } from '@mioagent/still-engine/format';
+import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
 
 import { STILL_SHARES_V1, newYorkMomentV1, type SkyStateV1 } from './skyState';
 import { dividendMoneyV1 } from './dividendMoney';
@@ -152,7 +152,13 @@ export function homeViewV1(input: {
     const detail = debts.length === 1 && rated.length === 1
       ? `${(rated[0]!.borrowRateBps! / 100).toFixed(2)}% a year on ${venueNameV1(rated[0]!)}`
       : `on ${[...new Set(debts.map(venueNameV1))].join(' and ')}`;
-    owed = { amount: `${debtUnread ? 'Known debt' : 'Owed'} ${formatCents(owedCents)}`, detail };
+    const allHaveAtomic = debts.every((v) => v.debtAtomic != null);
+    const owedAtomic = allHaveAtomic ? debts.reduce((sum, v) => sum + BigInt(v.debtAtomic!), BigInt(0)) : null;
+    const owedDisplay =
+      owedAtomic !== null && owedAtomic > BigInt(0) && owedAtomic < BigInt(10_000)
+        ? `${formatTokenAmount(owedAtomic, 6, 6).replace(/\.?0+$/, '')} USDC`
+        : formatCents(owedCents);
+    owed = { amount: `${debtUnread ? 'Known debt' : 'Owed'} ${owedDisplay}`, detail };
   }
 
   const comingUp: ComingUpV1[] = [];

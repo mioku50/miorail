@@ -99,17 +99,33 @@ export function lendingExecutionCopyV1(state: LendingExecutionStateV1): string {
 }
 
 const NO_DEBT_HEALTH_SENTINEL = BigInt(1) << BigInt(128);
+const HEALTH_HUNDREDTH_WAD = BigInt(10) ** BigInt(16);
 const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const MORPHO_BLUE = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
 const MORPHO_BUNDLER = '0x4d28d900e381ece4b351302f1abe588496793a2b';
 
-export function formatLendingHealthRatioV1(value: string | null | undefined, debtAssets: string): string {
+export function materialLendingHealthBucketV1(value: string | null | undefined, debtAssets: string): string | null {
+  if (debtAssets === '0' || value == null) return null;
+  try {
+    const parsed = BigInt(value);
+    if (parsed < BigInt(0) || parsed >= NO_DEBT_HEALTH_SENTINEL) return null;
+    return (parsed / HEALTH_HUNDREDTH_WAD).toString();
+  } catch {
+    return null;
+  }
+}
+
+export function formatLendingHealthRatioV1(
+  value: string | null | undefined,
+  debtAssets: string,
+  operation: 'borrow' | 'repay' = 'borrow',
+): string {
   if (debtAssets === '0') return '— No debt (N/A)';
-  if (value == null) return 'Not read';
+  if (value == null) return operation === 'repay' ? '— Not applicable (repayment only reduces debt)' : 'Not read';
   try {
     if (BigInt(value) >= NO_DEBT_HEALTH_SENTINEL) return '— No debt (N/A)';
   } catch {
-    return 'Not read';
+    return operation === 'repay' ? '— Not applicable (repayment only reduces debt)' : 'Not read';
   }
   return tokenDecimalV1(value, 18);
 }
@@ -141,14 +157,14 @@ export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next
   if (p.collateralAfterAssets !== n.collateralAfterAssets) {
     changes.push(`simulated collateral after (${asset(p.collateralAfterAssets)} → ${asset(n.collateralAfterAssets)})`);
   }
-  const hBeforePrev = formatLendingHealthRatioV1(p.healthBeforeWad, p.debtBeforeAssets);
-  const hBeforeNext = formatLendingHealthRatioV1(n.healthBeforeWad, n.debtBeforeAssets);
-  if (hBeforePrev !== hBeforeNext) {
+  const hBeforePrev = formatLendingHealthRatioV1(p.healthBeforeWad, p.debtBeforeAssets, p.operation);
+  const hBeforeNext = formatLendingHealthRatioV1(n.healthBeforeWad, n.debtBeforeAssets, n.operation);
+  if (materialLendingHealthBucketV1(p.healthBeforeWad, p.debtBeforeAssets) !== materialLendingHealthBucketV1(n.healthBeforeWad, n.debtBeforeAssets)) {
     changes.push(`health ratio before (${hBeforePrev} → ${hBeforeNext})`);
   }
-  const hAfterPrev = formatLendingHealthRatioV1(p.healthAfterWad, p.debtAfterAssets);
-  const hAfterNext = formatLendingHealthRatioV1(n.healthAfterWad, n.debtAfterAssets);
-  if (hAfterPrev !== hAfterNext) {
+  const hAfterPrev = formatLendingHealthRatioV1(p.healthAfterWad, p.debtAfterAssets, p.operation);
+  const hAfterNext = formatLendingHealthRatioV1(n.healthAfterWad, n.debtAfterAssets, n.operation);
+  if (materialLendingHealthBucketV1(p.healthAfterWad, p.debtAfterAssets) !== materialLendingHealthBucketV1(n.healthAfterWad, n.debtAfterAssets)) {
     changes.push(`health ratio after (${hAfterPrev} → ${hAfterNext})`);
   }
   if ((p.policyLimitAssets ?? null) !== (n.policyLimitAssets ?? null) && p.policyLimitAssets && n.policyLimitAssets) {
@@ -156,9 +172,6 @@ export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next
   }
   if ((p.protocolLimitAssets ?? null) !== (n.protocolLimitAssets ?? null) && p.protocolLimitAssets && n.protocolLimitAssets) {
     changes.push(`protocol debt limit (${usdc(p.protocolLimitAssets)} → ${usdc(n.protocolLimitAssets)})`);
-  }
-  if (p.debtAfterAssets === n.debtAfterAssets && p.debtAfterShares !== n.debtAfterShares && p.debtAfterShares && n.debtAfterShares) {
-    changes.push(`debt shares (${p.debtAfterShares} → ${n.debtAfterShares})`);
   }
   if (previous.callsHash !== next.callsHash) {
     changes.push('approved calldata');

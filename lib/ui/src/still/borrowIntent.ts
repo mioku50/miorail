@@ -50,6 +50,7 @@ export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAs
   const row = rows[0] as Record<string, unknown>;
   if (row.collateralSupplyAtomic !== collateralSupplyAtomic || row.collateralDecimals !== expected.decimals || row.loanDecimals !== 6 ||
       !object(row.still) || !atomic(row.still.availableAtomic) ||
+      (row.still.debtAtomic !== undefined && !atomic(row.still.debtAtomic)) ||
       row.still.scope !== (collateralSupplyAtomic === '0' ? 'existing_collateral' : 'selected_collateral') ||
       (row.walletCollateralAtomic !== null && !atomic(row.walletCollateralAtomic)) ||
       (row.collateralAtomic !== null && !atomic(row.collateralAtomic)) ||
@@ -59,6 +60,9 @@ export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAs
   return {
     capacity: {
       ...(asset === 'ETH' ? { nativeReserve: tokenDecimalV1(row.nativeReserveAtomic as string, 18) } : {}),
+      ...(atomic(row.still.debtAtomic) && row.still.debtAtomic !== '0'
+        ? { existingDebt: tokenDecimalV1(row.still.debtAtomic, 6) }
+        : {}),
       walletBalance: row.walletCollateralAtomic === null ? null : tokenDecimalV1(row.walletCollateralAtomic as string, expected.decimals),
       pledged: row.collateralAtomic === null ? null : tokenDecimalV1(row.collateralAtomic as string, expected.decimals),
       maximumUsdc: tokenDecimalV1(row.still.availableAtomic, 6), blockNumber: row.blockNumber as number,

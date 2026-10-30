@@ -17,7 +17,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   const title = facts ? repay ? 'Review repayment' : 'Review loan' : 'Lending review';
   const asset = (value: string) => facts ? `${tokenDecimalV1(value, facts.collateralDecimals)} ${facts.collateralSymbol}` : value;
   const usdc = (value: string) => `${tokenDecimalV1(value, 6)} USDC`;
-  const health = (value: string | null | undefined, debtAssets: string) => formatLendingHealthRatioV1(value, debtAssets);
+  const health = (value: string | null | undefined, debtAssets: string) => formatLendingHealthRatioV1(value, debtAssets, facts?.operation ?? 'borrow');
   const debtIncrease = facts && !repay ? BigInt(facts.debtAfterAssets) - BigInt(facts.debtBeforeAssets) : BigInt(0);
   const shareRoundingExtra = facts && !repay && facts.requestedAssets !== null && debtIncrease > BigInt(facts.requestedAssets);
   const knownState = model.execution?.state ?? (body.state === 'refused' ? body.executionState : null);
@@ -44,13 +44,17 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
             <tr><th scope="row">Health ratio</th><td className="mono">{health(facts.healthBeforeWad, facts.debtBeforeAssets)}</td>{body.state === 'ready' ? <td className="mono">{health(facts.healthAfterWad, facts.debtAfterAssets)}</td> : null}</tr>
           </tbody>
         </table>
-        <p className="still-note">Health ratio is calculated at the simulation block. It does not guarantee protection against liquidation after prices change.</p>
+        <p className="still-note">
+          {repay && facts.healthBeforeWad == null && facts.healthAfterWad == null
+            ? 'Health ratio is not checked during repayment: repaying USDC only reduces your debt and keeps collateral deposited, so execution does not depend on live oracle prices.'
+            : 'Health ratio is calculated at the simulation block. It does not guarantee protection against liquidation after prices change.'}
+        </p>
         {body.state === 'ready' ? <>
           {repay ? <>
             <p className="still-sub">{facts.amountMode === 'all' ? 'Repay the entire debt position at execution.' : <>Repay exactly {usdc(facts.requestedAssets!)}.</>}</p>
             <p className="still-sub">Maximum USDC funding: <strong>{usdc(facts.maximumDebitAssets)}</strong>.</p>
             <p className="still-note">Your wallet must hold that maximum. Unused funding is returned or remains in your wallet. Your collateral stays deposited.</p>
-            {facts.amountMode === 'assets' && BigInt(facts.debtAfterAssets) > BigInt(0) && BigInt(facts.debtAfterAssets) <= BigInt(10) ? <p className="still-note">Remaining dust debt ({usdc(facts.debtAfterAssets)}) comes from onchain share rounding when repaying exact {usdc(facts.requestedAssets!)}. To close the entire debt to 0 USDC, use Repay all debt with a small USDC buffer.</p> : null}
+            {facts.amountMode === 'assets' && BigInt(facts.debtAfterAssets) > BigInt(0) && BigInt(facts.debtAfterAssets) < BigInt(10_000) ? <p className="still-note">Remaining micro-debt ({usdc(facts.debtAfterAssets)}) comes from onchain share rounding and accrued interest when repaying exact {usdc(facts.requestedAssets!)}. To close the entire debt to 0 USDC, use Repay all debt with a small USDC buffer.</p> : null}
           </> : <>
             <p className="still-sub">Borrow {facts.requestedAssets === null ? 'the measured amount' : usdc(facts.requestedAssets)} to this wallet.</p>
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>

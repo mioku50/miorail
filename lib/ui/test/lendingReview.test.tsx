@@ -108,8 +108,14 @@ describe('lending review presentation does not call a submission a repayment', (
     const body = ready(); body.facts.amountMode = 'all'; body.facts.requestedAssets = null; body.facts.maximumDebitAssets = '4000000';
     const html = render({ body }); assert.match(html, /entire debt position at execution/); assert.match(html, /4 USDC/); assert.doesNotMatch(html, /Repay exactly/);
   });
-  it('formats server health ratios exactly without rounding a ratio below one up to one', () => {
-    const body = ready(); body.facts.healthBeforeWad = '999999999999999999'; body.facts.healthAfterWad = null;
+  it('formats server health ratios exactly without rounding a ratio below one up to one, and explains repayment health ratio N/A', () => {
+    const repayBody = ready(); repayBody.facts.healthBeforeWad = null; repayBody.facts.healthAfterWad = null;
+    const repayHtml = render({ body: repayBody });
+    assert.match(repayHtml, /— Not applicable \(repayment only reduces debt\)/);
+    assert.match(repayHtml, /Health ratio is not checked during repayment: repaying USDC only reduces your debt and keeps collateral deposited, so execution does not depend on live oracle prices\./);
+    assert.doesNotMatch(repayHtml, /Health ratio<\/th><td class="mono">Not read/);
+
+    const body = ready(); body.facts.operation = 'borrow'; body.facts.healthBeforeWad = '999999999999999999'; body.facts.healthAfterWad = null;
     const html = render({ body }); assert.match(html, /0\.999999999999999999/); assert.match(html, /Not read/);
     assert.doesNotMatch(html, /1\.00|safe|healthy/);
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, healthAfterWad: -1 } }), null);
@@ -179,6 +185,13 @@ describe('lending review presentation does not call a submission a repayment', (
     assert.match(html, /Transaction preview unavailable/);
     assert.match(html, /Step 1 of 1 · NVDAc token/);
 
+    const subtick = structuredClone(body);
+    subtick.facts.healthAfterWad = '2264514776615360449';
+    assert.equal(
+      describeLendingTermsChangesV1(body, subtick),
+      'The terms changed. Read the updated review, then open your wallet again to accept these exact terms.',
+    );
+
     const next = structuredClone(body);
     next.signingTermsHash = `0x${'9'.repeat(64)}`;
     next.facts.healthAfterWad = '2494032094713526717';
@@ -190,6 +203,11 @@ describe('lending review presentation does not call a submission a repayment', (
 });
 
 describe('repayment entry is exact and does not choose a wallet maximum', () => {
+  it('shows sub-cent micro-debt as 0.000002 USDC without rounding to zero', () => {
+    const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ read: { ...capacity, debtAtomic: '2' } })} />);
+    assert.match(html, /0\.000002 USDC/);
+    assert.match(html, /Exact micro-debt of 0\.000002 USDC \(2 atomic USDC\) is shown without rounding to zero/);
+  });
   it('accepts query selections only from the code-owned collateral set', () => {
     assert.equal(repayInitialAssetV1('?asset=NVDAc'), 'NVDAc'); assert.equal(repayInitialAssetV1('?asset=ETH'), 'WETH');
     assert.equal(repayInitialAssetV1('?token='+REPAY_COLLATERALS_V1[0]!.token), 'cbBTC');

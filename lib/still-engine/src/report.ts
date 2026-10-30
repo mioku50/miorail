@@ -90,6 +90,8 @@ export interface VenueLine {
   market: string;
   label: string;
   debtCents: string | null;
+  /** Exact atomic USDC debt (6 decimals) when read, so sub-cent micro-debt is never lost. */
+  debtAtomic?: string | null;
   /** Still's limit from this venue's collateral, before debts. */
   capacityCents: string | null;
   availableCents: string | null;

@@ -3,6 +3,7 @@
 import React from 'react';
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import { AAVE_V4_BASE_PAGE_V1 } from '@mioagent/rwa-issuer/aaveV4';
+import { tokenDecimalV1 } from './stockSellAmount';
 
 void React;
 
@@ -58,7 +59,7 @@ export function TodayAavePosition({ model }: { model: TodayAavePositionModelV1 }
           <dl className="today-aave-facts">
             <div className="qrow"><dt>Pledged</dt><dd>{pledged.length === 0 ? 'Nothing' : pledged.map((line) => line.symbol).join(', ')}</dd></div>
             <div className="qrow"><dt>Collateral value</dt><dd>{money(collateral)}</dd></div>
-            <div className="qrow"><dt>Debt</dt><dd>{money(venue!.debtCents)}</dd></div>
+            <div className="qrow"><dt>Debt</dt><dd>{venue!.debtAtomic != null && BigInt(venue!.debtAtomic) > BigInt(0) && BigInt(venue!.debtAtomic) < BigInt(10_000) ? `${tokenDecimalV1(venue!.debtAtomic, 6)} USDC` : money(venue!.debtCents)}</dd></div>
             <div className="qrow"><dt>Borrow rate</dt><dd>{venue!.borrowRateBps === null ? 'Not read' : `${venue!.borrowRateBps / 100}% a year, variable`}</dd></div>
             <div className="qrow"><dt>Health factor</dt><dd>{venue!.debtCents === '0' ? 'No debt' : health === null ? 'Not read' : health.toLocaleString('en-US', { maximumFractionDigits: 4 })}</dd></div>
             {venue!.safety ? <div className="qrow"><dt>Prices can fall</dt><dd>{`${Math.floor(venue!.safety.marginBps / 100)}% together before liquidation`}</dd></div> : null}

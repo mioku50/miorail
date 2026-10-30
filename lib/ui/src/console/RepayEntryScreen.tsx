@@ -92,11 +92,14 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
             </select>
             <button type="submit" className="still-btn" disabled={busy || !asset}>{model.reading ? 'Reading position…' : 'Read repayment position'}</button>
           </form>
-          {model.read ? <dl className="still-borrow-facts">
-            <div><dt>Debt read</dt><dd className="mono">{tokenDecimalV1(model.read.debtAtomic, 6)} USDC</dd></div>
-            <div><dt>USDC in your wallet</dt><dd className="mono">{tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC</dd></div>
-            <div><dt>Base block</dt><dd className="mono">{model.read.blockNumber.toLocaleString('en-US')}</dd></div>
-          </dl> : <p className="still-note">Choose a market and explicitly read its debt and wallet USDC. No token is moved by this read.</p>}
+          {model.read ? <>
+            <dl className="still-borrow-facts">
+              <div><dt>Debt read</dt><dd className="mono">{tokenDecimalV1(model.read.debtAtomic, 6)} USDC</dd></div>
+              <div><dt>USDC in your wallet</dt><dd className="mono">{tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC</dd></div>
+              <div><dt>Base block</dt><dd className="mono">{model.read.blockNumber.toLocaleString('en-US')}</dd></div>
+            </dl>
+            {BigInt(model.read.debtAtomic) > BigInt(0) && BigInt(model.read.debtAtomic) < BigInt(10_000) ? <p className="still-note">Exact micro-debt of {tokenDecimalV1(model.read.debtAtomic, 6)} USDC ({model.read.debtAtomic} atomic USDC) is shown without rounding to zero. Use Repay all debt to clear residual shares completely.</p> : null}
+          </> : <p className="still-note">Choose a market and explicitly read its debt and wallet USDC. No token is moved by this read.</p>}
         </section>
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-repay-title`}>
           <h2 id={`${id}-repay-title`}>Choose the repayment.</h2>

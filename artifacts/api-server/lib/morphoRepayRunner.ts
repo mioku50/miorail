@@ -6,7 +6,7 @@ import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { readRepayStandingV1, STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepayStanding.js';
 import { buildMorphoRepayProbesV1, verifyMorphoRepayPoststateV1 } from './morphoRepayPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
-import type { LendingRunV1, LendingFactsV1 } from './lendingReview.js';
+import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
 
 export interface MorphoRepayRequestV1 {
   collateralTokenAddress: string;
@@ -93,7 +93,11 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
     warnings: ['Collateral stays deposited. This repayment does not withdraw it.',
       'The maximum USDC amount is funded before the unused remainder is refunded in the same atomic batch.',
       'Calls are prepared from the verified protocol ABI and independently simulated. No standing authorization is requested.'] };
-  const signingTermsHash = stableHashV1('still-repay-signing-terms/v1', { wallet: s.walletAddress, callsHash, facts });
+  const signingTermsHash = stableHashV1('still-repay-signing-terms/v1', {
+    wallet: s.walletAddress,
+    callsHash,
+    facts: lendingSigningTermsFactsV1(facts),
+  });
   const expiry = Math.min(now().getTime() + 30_000, Number(plan.deadline) * 1000);
   if (expiry <= now().getTime()) return fail('repay_expired', 'The prepared repayment expired during measurement. Read it again.');
   return { state: 'ready', facts, calls: plan.calls, callsHash, signingTermsHash, expiresAt: new Date(expiry).toISOString(),
