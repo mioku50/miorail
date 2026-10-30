@@ -406,6 +406,7 @@ test('the Wallet MCP plugin is served as markdown and follows the plugin spec', 
   // base/skills removed the Wallet MCP skill on 2026-10-27 (PR #171); its
   // references live in coinbase/agents now, and an old link answers 404.
   assert.doesNotMatch(plugin, /github\.com\/base\/skills/);
+  assert.match(plugin, /Wallet MCP, formerly Base MCP, is Coinbase's MCP server/);
   assert.match(plugin, /https:\/\/github\.com\/coinbase\/agents\/blob\/main\/skills\/wallet-mcp\/references\/approval-mode\.md/);
 });
 
