@@ -86,6 +86,8 @@ export interface CreateBaseRpcSwapSimulationOptionsV1 {
   /** Overrides the provider id, so two endpoints of the same shape stay
    * distinguishable in health records and logs. */
   providerId?: string;
+  maxRateLimitRetries?: number;
+  retryDelayMs?: number;
 }
 
 export function createBaseRpcSwapSimulationProviderV1(
@@ -234,7 +236,7 @@ export function createBaseRpcBatchSimulationProviderV1(
     return null;
   }
   if (parsed.protocol !== 'https:' || parsed.username || parsed.password) return null;
-  return createEthSimulateV1ProviderV1({
+  const inner = createEthSimulateV1ProviderV1({
     providerId: options.providerId ?? BASE_RPC_BATCH_SIMULATION_PROVIDER_ID_V1,
     label: 'Base RPC',
     url: rawUrl,
@@ -242,6 +244,20 @@ export function createBaseRpcBatchSimulationProviderV1(
     timeoutMs: options.timeoutMs,
     fetchImpl: options.fetchImpl,
   });
+  const maxRetries = Math.min(Math.max(options.maxRateLimitRetries ?? (options.fetchImpl ? 0 : 2), 0), 3);
+  const retryDelayMs = Math.min(Math.max(options.retryDelayMs ?? 700, 0), 2_000);
+  if (maxRetries === 0) return inner;
+  return {
+    providerId: inner.providerId,
+    async simulate(request: SimulationProviderRequestV1): Promise<SimulationProviderResultV1> {
+      let last = await inner.simulate(request);
+      for (let retry = 0; retry < maxRetries && !last.ok && last.errorCode === 'provider_rate_limited'; retry++) {
+        if (retryDelayMs > 0) await new Promise(resolve => setTimeout(resolve, retryDelayMs * (retry + 1)));
+        last = await inner.simulate(request);
+      }
+      return last;
+    },
+  };
 }
 
 export function createBaseRpcBatchSimulationProviderFromEnvV1(

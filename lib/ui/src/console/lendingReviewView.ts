@@ -1,5 +1,6 @@
 import type { FreshBorrowReviewV1 } from './borrowReviewFreshness';
 import { hasBorrowSigningTermsV1 } from './borrowReviewFreshness';
+import { tokenDecimalV1 } from './stockSellAmount';
 
 export interface LendingFactsWireV1 {
   operation: 'borrow' | 'repay'; venue: 'morpho' | 'aave-v4';
@@ -95,4 +96,73 @@ export function lendingExecutionCopyV1(state: LendingExecutionStateV1): string {
     case 'confirmed': return 'Confirmed onchain: the approved calls and the resulting position were verified.';
     case 'failed': return 'The transaction or this wallet’s operation reverted onchain. Read the result before taking another action.';
   }
+}
+
+const NO_DEBT_HEALTH_SENTINEL = BigInt(1) << BigInt(128);
+const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+const MORPHO_BLUE = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
+const MORPHO_BUNDLER = '0x4d28d900e381ece4b351302f1abe588496793a2b';
+
+export function formatLendingHealthRatioV1(value: string | null | undefined, debtAssets: string): string {
+  if (debtAssets === '0') return '— No debt (N/A)';
+  if (value == null) return 'Not read';
+  try {
+    if (BigInt(value) >= NO_DEBT_HEALTH_SENTINEL) return '— No debt (N/A)';
+  } catch {
+    return 'Not read';
+  }
+  return tokenDecimalV1(value, 18);
+}
+
+export function labelLendingTargetV1(to: string, facts: LendingFactsWireV1): string {
+  const lower = to.toLowerCase();
+  if (lower === facts.collateralTokenAddress.toLowerCase()) return `${facts.collateralSymbol} token`;
+  if (lower === USDC_BASE) return 'USDC token';
+  if (facts.venue === 'aave-v4' && lower === facts.marketId.toLowerCase()) return 'Aave V4 Spoke';
+  if (lower === MORPHO_BLUE) return 'Morpho Blue';
+  if (lower === MORPHO_BUNDLER) return 'Morpho BlueBundlesV1';
+  return 'Verified contract';
+}
+
+export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next: LendingReadyWireV1): string {
+  const p = previous.facts, n = next.facts;
+  const usdc = (v: string) => `${tokenDecimalV1(v, 6)} USDC`;
+  const asset = (v: string) => `${tokenDecimalV1(v, n.collateralDecimals)} ${n.collateralSymbol}`;
+  const changes: string[] = [];
+  if (p.debtBeforeAssets !== n.debtBeforeAssets) {
+    changes.push(`debt before (${usdc(p.debtBeforeAssets)} → ${usdc(n.debtBeforeAssets)})`);
+  }
+  if (p.debtAfterAssets !== n.debtAfterAssets) {
+    changes.push(`simulated debt after (${usdc(p.debtAfterAssets)} → ${usdc(n.debtAfterAssets)})`);
+  }
+  if (p.collateralBeforeAssets !== n.collateralBeforeAssets) {
+    changes.push(`collateral before (${asset(p.collateralBeforeAssets)} → ${asset(n.collateralBeforeAssets)})`);
+  }
+  if (p.collateralAfterAssets !== n.collateralAfterAssets) {
+    changes.push(`simulated collateral after (${asset(p.collateralAfterAssets)} → ${asset(n.collateralAfterAssets)})`);
+  }
+  const hBeforePrev = formatLendingHealthRatioV1(p.healthBeforeWad, p.debtBeforeAssets);
+  const hBeforeNext = formatLendingHealthRatioV1(n.healthBeforeWad, n.debtBeforeAssets);
+  if (hBeforePrev !== hBeforeNext) {
+    changes.push(`health ratio before (${hBeforePrev} → ${hBeforeNext})`);
+  }
+  const hAfterPrev = formatLendingHealthRatioV1(p.healthAfterWad, p.debtAfterAssets);
+  const hAfterNext = formatLendingHealthRatioV1(n.healthAfterWad, n.debtAfterAssets);
+  if (hAfterPrev !== hAfterNext) {
+    changes.push(`health ratio after (${hAfterPrev} → ${hAfterNext})`);
+  }
+  if ((p.policyLimitAssets ?? null) !== (n.policyLimitAssets ?? null) && p.policyLimitAssets && n.policyLimitAssets) {
+    changes.push(`Still debt limit (${usdc(p.policyLimitAssets)} → ${usdc(n.policyLimitAssets)})`);
+  }
+  if ((p.protocolLimitAssets ?? null) !== (n.protocolLimitAssets ?? null) && p.protocolLimitAssets && n.protocolLimitAssets) {
+    changes.push(`protocol debt limit (${usdc(p.protocolLimitAssets)} → ${usdc(n.protocolLimitAssets)})`);
+  }
+  if (p.debtAfterAssets === n.debtAfterAssets && p.debtAfterShares !== n.debtAfterShares && p.debtAfterShares && n.debtAfterShares) {
+    changes.push(`debt shares (${p.debtAfterShares} → ${n.debtAfterShares})`);
+  }
+  if (previous.callsHash !== next.callsHash) {
+    changes.push('approved calldata');
+  }
+  const detail = changes.length > 0 ? ` (${changes.join('; ')})` : '';
+  return `The terms changed${detail}. Read the updated review, then open your wallet again to accept these exact terms.`;
 }

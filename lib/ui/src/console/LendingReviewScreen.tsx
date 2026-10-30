@@ -1,22 +1,10 @@
 import React from 'react';
 import { tokenDecimalV1 } from './stockSellAmount';
-import { lendingExecutionCopyV1 } from './lendingReviewView';
+import { formatLendingHealthRatioV1, labelLendingTargetV1, lendingExecutionCopyV1 } from './lendingReviewView';
 import type { LendingReviewConsoleModelV1 } from './useLendingReviewConsole';
 
 void React;
-
-const NO_DEBT_HEALTH_SENTINEL = BigInt(1) << BigInt(128);
-
-export function formatLendingHealthRatioV1(value: string | null | undefined, debtAssets: string): string {
-  if (debtAssets === '0') return '— No debt (N/A)';
-  if (value == null) return 'Not read';
-  try {
-    if (BigInt(value) >= NO_DEBT_HEALTH_SENTINEL) return '— No debt (N/A)';
-  } catch {
-    return 'Not read';
-  }
-  return tokenDecimalV1(value, 18);
-}
+export { formatLendingHealthRatioV1 };
 
 /** One review for both web and Base App. Values and verdicts belong to the
  * server; the screen formats exact decimals and never recalculates risk. */
@@ -62,6 +50,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
             <p className="still-sub">{facts.amountMode === 'all' ? 'Repay the entire debt position at execution.' : <>Repay exactly {usdc(facts.requestedAssets!)}.</>}</p>
             <p className="still-sub">Maximum USDC funding: <strong>{usdc(facts.maximumDebitAssets)}</strong>.</p>
             <p className="still-note">Your wallet must hold that maximum. Unused funding is returned or remains in your wallet. Your collateral stays deposited.</p>
+            {facts.amountMode === 'assets' && BigInt(facts.debtAfterAssets) > BigInt(0) && BigInt(facts.debtAfterAssets) <= BigInt(10) ? <p className="still-note">Remaining dust debt ({usdc(facts.debtAfterAssets)}) comes from onchain share rounding when repaying exact {usdc(facts.requestedAssets!)}. To close the entire debt to 0 USDC, use Repay all debt with a small USDC buffer.</p> : null}
           </> : <>
             <p className="still-sub">Borrow {facts.requestedAssets === null ? 'the measured amount' : usdc(facts.requestedAssets)} to this wallet.</p>
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>
@@ -74,8 +63,9 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
             </ul>
           </div> : null}
           <p className="still-note">Simulated at Base block {body.measured.blockNumber.toLocaleString('en-US')}. The position and exact calls are checked again before your wallet opens.</p>
-          <details className="still-disclosure">
-            <summary>Calls checked &amp; technical details</summary>
+          <details className="still-disclosure" open>
+            <summary>Verified atomic batch ({body.steps.length} {body.steps.length === 1 ? 'call' : 'calls'}) &amp; technical details</summary>
+            <p className="still-note">Some wallets (including Coinbase Wallet) may display &ldquo;Transaction preview unavailable&rdquo; for multi-call atomic batches. Still has already simulated all {body.steps.length} {body.steps.length === 1 ? 'call' : 'calls'} below at Base block {body.measured.blockNumber.toLocaleString('en-US')} and verified every asset movement.</p>
             {!repay ? <>
               <p className="still-note">Still total debt limit: {facts.policyLimitAssets == null ? 'Not read' : usdc(facts.policyLimitAssets)}.</p>
               <p className="still-note">Protocol total debt limit: {facts.protocolLimitAssets == null ? 'Not read' : usdc(facts.protocolLimitAssets)}.</p>
@@ -86,8 +76,12 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
                 ? `repay request: ${facts.requestedAssets ?? 'all'}, max USDC debit: ${facts.maximumDebitAssets}, wallet USDC delta: ${body.measured.loanDeltaAssets}`
                 : `borrow request: ${facts.requestedAssets ?? '0'}, wallet USDC delta: ${body.measured.loanDeltaAssets}, collateral supply: ${facts.collateralSupplyAssets}`}; debt: {facts.debtBeforeAssets} → {facts.debtAfterAssets}{facts.debtBeforeShares !== null && facts.debtAfterShares !== null ? ` (shares: ${facts.debtBeforeShares} → ${facts.debtAfterShares})` : ''}; collateral: {facts.collateralBeforeAssets} → {facts.collateralAfterAssets}{facts.collateralBeforeShares != null && facts.collateralAfterShares != null ? ` (shares: ${facts.collateralBeforeShares} → ${facts.collateralAfterShares})` : ''}.
             </p>
-            {body.steps.map(step => <div key={step.index}>
-              <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>{step.to}</p><p className="still-note">{step.reading}</p>
+            {body.steps.map(step => <div key={step.index} style={{ padding: '0.45rem 0', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+              <p className="still-note" style={{ margin: 0 }}>
+                <strong>Step {step.index + 1} of {body.steps.length} · {labelLendingTargetV1(step.to, facts)}</strong>{' '}
+                <span className="mono" style={{ overflowWrap: 'anywhere' }}>{step.to}</span>
+              </p>
+              <p className="still-note" style={{ margin: '0.2rem 0 0' }}>{step.reading}</p>
             </div>)}
           </details>
         </> : <p className="still-note">No executable calls are available for this refusal.</p>}

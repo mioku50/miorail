@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
-import { parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
+import { describeLendingTermsChangesV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import type { LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
 import { REPAY_COLLATERALS_V1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1 } from '../src/console/repayEntry';
@@ -176,6 +176,16 @@ describe('lending review presentation does not call a submission a repayment', (
     assert.match(html, /borrow request: 50000, wallet USDC delta: 50000, collateral supply: 80000; debt: 0 → 50001 \(shares: 0 → 49505\); collateral: 0 → 80000 \(shares: 0 → 80000\)/);
     assert.equal((html.match(/class="still-warn"/g) ?? []).length, 1);
     for (const warning of body.facts.warnings) assert.equal(html.includes(warning), true);
+    assert.match(html, /Transaction preview unavailable/);
+    assert.match(html, /Step 1 of 1 · NVDAc token/);
+
+    const next = structuredClone(body);
+    next.signingTermsHash = `0x${'9'.repeat(64)}`;
+    next.facts.healthAfterWad = '2494032094713526717';
+    assert.equal(
+      describeLendingTermsChangesV1(body, next),
+      'The terms changed (health ratio after (2.264514777517564444 → 2.494032094713526717)). Read the updated review, then open your wallet again to accept these exact terms.',
+    );
   });
 });
 

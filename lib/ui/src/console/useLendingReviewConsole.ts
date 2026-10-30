@@ -3,7 +3,7 @@ import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
-import { parseLendingExecutionWireV1, parseLendingReviewWireV1,
+import { describeLendingTermsChangesV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
   type LendingExecutionWireV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
 const ROOT = '/api/route-intelligence/rwa/lending';
@@ -119,6 +119,7 @@ export function useLendingReviewConsoleV1(input: {
     if (!eligible || active.body?.state !== 'ready' || opening.current || active.marker || active.batchId ||
         (active.execution && active.execution.state !== 'ready')) return;
     opening.current = true; update({ walletBusy: true, walletError: null });
+    const previous = active.body;
     let approved = active.body;
     let handedToWallet = false;
     try {
@@ -161,7 +162,10 @@ export function useLendingReviewConsoleV1(input: {
         },
       });
       if (current.current !== identity) return;
-      if (result.state === 'review_changed') { confirmed.current = { identity, hash: result.termsHash }; update({ walletError: result.message }); }
+      if (result.state === 'review_changed') {
+        confirmed.current = { identity, hash: result.termsHash };
+        update({ walletError: previous !== approved ? describeLendingTermsChangesV1(previous, approved) : result.message });
+      }
       else {
         confirmed.current = null;
         if (result.state === 'refused') update({ walletError: result.message });
