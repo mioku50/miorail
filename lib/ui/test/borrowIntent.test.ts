@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { CRYPTO } from '@mioagent/still-engine/registry';
-import { borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
+import { borrowAssetFromQueryV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
 
 describe('a chosen collateral amount is interpreted exactly', () => {
   for (const [text, decimals, atomic] of [['.00000001', 8, '1'], ['0001.20', 6, '1200000'], ['.000000000000000001', 18, '1'], ['0', 18, '0']] as const) {
@@ -49,5 +49,23 @@ describe('Get money shows a server allowance for one selected pledge', () => {
     assert.equal(stillBorrowCapacityViewV1({}, 'cbBTC', '0').capacity, null);
     assert.equal(stillBorrowCapacityViewV1({ state: 'refused', detail: 'The selected balance could not be read.' }, 'cbBTC', '0').error,
       'The selected balance could not be read.');
+  });
+  it('binds explicit ETH capacity to positive native funding and the 0.0005 ETH fee reserve', () => {
+    assert.equal(borrowAssetFromQueryV1('ETH'), 'ETH');
+    assert.equal(borrowCollateralTokenV1('ETH'), CRYPTO[1]!.token);
+    const wethRow = {
+      marketId: CRYPTO[1]!.morphoMarket, collateralDecimals: 18, loanDecimals: 6,
+      collateralSupplyAtomic: '10000000000000000', walletCollateralAtomic: '25000000000000000',
+      collateralAtomic: '3000000000000000', blockNumber: 53100000,
+      funding: 'native', nativeReserveAtomic: '500000000000000', feeQuoteState: 'wallet_quote_required',
+      still: { scope: 'selected_collateral', availableAtomic: '12340000' },
+    };
+    const read = { state: 'read', marketScope: 'still_registered_market', markets: [wethRow] };
+    assert.deepEqual(stillBorrowCapacityViewV1(read, 'ETH', '10000000000000000'), {
+      error: null,
+      capacity: { nativeReserve: '0.0005', walletBalance: '0.025', pledged: '0.003', maximumUsdc: '12.34', blockNumber: 53100000 },
+    });
+    assert.equal(stillBorrowCapacityViewV1(read, 'WETH', '10000000000000000').capacity, null);
+    assert.equal(stillBorrowCapacityViewV1({ ...read, markets: [{ ...wethRow, funding: undefined }] }, 'ETH', '10000000000000000').capacity, null);
   });
 });

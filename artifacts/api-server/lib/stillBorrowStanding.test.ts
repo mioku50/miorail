@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { morphoAccruedTotalsV1, toAssetsUpV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
+import { MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { snapshot, universe, reverted } from '../../../lib/still-engine/test/fixtures.js';
+import { NATIVE_MULTICALL_RUNTIME_HASH_V1, NATIVE_WETH_RUNTIME_HASH_V1 } from './nativeMorphoBorrowPlan.js';
 import { readBorrowStandingV1, stillBorrowCapacityWireV1 } from './stillBorrowStanding.js';
 
 const WALLET = `0x${'1'.repeat(40)}`;
@@ -64,5 +66,16 @@ describe('Still execution reads the registered market, on chain', () => {
       deps: { snapshot: async () => { throw new Error('private RPC unavailable'); } } });
     assert.equal(result.state, 'refused');
     if (result.state === 'refused') { assert.equal(result.refusal, 'venue_unread'); assert.doesNotMatch(result.detail!, /private RPC/); }
+  });
+  it('binds native ETH funding to the WETH market, native balance and pinned wrapping runtimes', async () => {
+    const nativeDeployment = { chainId: 8453, blueBundlesRuntimeHash: MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1,
+      wethRuntimeHash: NATIVE_WETH_RUNTIME_HASH_V1, multicallRuntimeHash: NATIVE_MULTICALL_RUNTIME_HASH_V1, authorized: false };
+    const read = { ...readFixture(), nativeDeployment };
+    const ok = await readBorrowStandingV1({ tokenAddress: ADDRESSES.weth, walletAddress: WALLET, nativeFunding: true, deps: { snapshot: async () => read } });
+    assert.equal(ok.state, 'read');
+    if (ok.state === 'read') assert.equal(ok.nativeFunding?.balance, read.snapshot.nativeEth.ok ? read.snapshot.nativeEth.value : -1n);
+    assert.equal((await readBorrowStandingV1({ tokenAddress: ADDRESSES.cbbtc, walletAddress: WALLET, nativeFunding: true, deps: { snapshot: async () => read } })).state, 'refused');
+    assert.equal((await readBorrowStandingV1({ tokenAddress: ADDRESSES.weth, walletAddress: WALLET, nativeFunding: true,
+      deps: { snapshot: async () => ({ ...read, nativeDeployment: { ...nativeDeployment, wethRuntimeHash: `0x${'0'.repeat(64)}` } }) } })).state, 'refused');
   });
 });

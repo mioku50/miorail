@@ -226,6 +226,37 @@ describe('the capacity read', () => {
     assert.equal(unsupported.body.code, 'borrow_collateral_not_supported');
     assert.equal(called, false);
   });
+
+  test('projects explicit native ETH funding on the WETH market and refuses when the fee reserve is breached', async () => {
+    const weth = CRYPTO[1]!;
+    rwaBorrowRuntimeV1.read = (async (input: { nativeFunding?: boolean }) => {
+      assert.equal(input.nativeFunding, true);
+      const base = cryptoReading(0n);
+      base.markets[0]!.market.marketId = weth.morphoMarket;
+      base.markets[0]!.market.collateral = { address: weth.token, symbol: 'WETH', decimals: 18 };
+      return {
+        ...base,
+        nativeFunding: { balance: 10_500_000_000_000_000n, params: {} as never, deployment: {} as never },
+      };
+    }) as never;
+    const ok = await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
+      .query({ token: weth.token, collateralSupplyAtomic: '10000000000000000', funding: 'native' }).expect(200);
+    assert.equal(ok.body.state, 'read');
+    assert.equal(ok.body.markets[0].funding, 'native');
+    assert.equal(ok.body.markets[0].nativeReserveAtomic, '500000000000000');
+    assert.equal(ok.body.markets[0].feeQuoteState, 'wallet_quote_required');
+    assert.equal(ok.body.markets[0].walletCollateralAtomic, '10500000000000000');
+
+    const breached = await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
+      .query({ token: weth.token, collateralSupplyAtomic: '10000000000000001', funding: 'native' }).expect(200);
+    assert.equal(breached.body.state, 'refused');
+    assert.equal(breached.body.refusal, 'native_fee_reserve_insufficient');
+
+    await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
+      .query({ token: weth.token, collateralSupplyAtomic: '0', funding: 'native' }).expect(400);
+    await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
+      .query({ token: CRYPTO[0]!.token, collateralSupplyAtomic: '1', funding: 'native' }).expect(400);
+  });
 });
 
 describe('a selected borrow intent is only a wallet-bound question', () => {
@@ -303,6 +334,23 @@ describe('a selected borrow intent is only a wallet-bound question', () => {
     }
     const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send({ ...selected, collateralTokenAddress: OTHER }).expect(400);
     assert.equal(response.body.code, 'borrow_collateral_not_supported');
+  });
+
+  test('mints a v2 signed question for explicit native ETH funding and rejects mismatched or non-WETH native funding', async () => {
+    const weth = CRYPTO[1]!.token;
+    const response = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+      .send({ collateralTokenAddress: weth, borrowAmountAtomic: '3000000', collateralSupplyAtomic: '10000000000000000', nativeFundingAtomic: '10000000000000000' }).expect(200);
+    assert.match(response.body.draft, /^miorail-lending-v2\./);
+    const verified = verifyLendingDraftV1({ draft: response.body.draft, secret: SECRET, now: NOW, walletAddress: WALLET, tenantId: USER.id });
+    assert(verified.ok && verified.claims.question.operation === 'borrow');
+    assert.equal(verified.claims.question.nativeFundingAssets, '10000000000000000');
+    for (const bad of [
+      { collateralTokenAddress: CRYPTO[0]!.token, borrowAmountAtomic: '3000000', collateralSupplyAtomic: '10', nativeFundingAtomic: '10' },
+      { collateralTokenAddress: weth, borrowAmountAtomic: '3000000', collateralSupplyAtomic: '10', nativeFundingAtomic: '9' },
+      { collateralTokenAddress: weth, borrowAmountAtomic: '3000000', collateralSupplyAtomic: '0', nativeFundingAtomic: '0' },
+    ]) {
+      await request(app()).post('/api/route-intelligence/rwa/borrow/intent').send(bad).expect(400);
+    }
   });
 });
 

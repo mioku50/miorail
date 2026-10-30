@@ -6,7 +6,7 @@ import { STOCKS, type StockId } from '@mioagent/still-engine/registry';
 
 void React;
 
-export type StillBorrowAssetV1 = 'cbBTC' | 'WETH' | StockId;
+export type StillBorrowAssetV1 = 'cbBTC' | 'WETH' | 'ETH' | StockId;
 export interface StillBorrowModelV1 {
   sky: SkyStateV1;
   signedIn: boolean;
@@ -24,6 +24,7 @@ export interface StillBorrowModelV1 {
   onReview: () => void;
   /** Display units already prepared by the server, never a client estimate. */
   capacity: null | {
+    nativeReserve?: string;
     walletBalance: string | null;
     pledged: string | null;
     maximumUsdc: string | null;
@@ -47,7 +48,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
       <StillHeader title="Get money" sky={model.sky} />
       <div className="still-section still-borrow-intro">
         <p className="still-sub">Choose collateral, read your limit, then choose how much USDC to borrow.</p>
-        <p className="still-note">Tokenized stocks through Aave V4; cbBTC or WETH through Morpho. Native ETH is not added here.</p>
+        <p className="still-note">Tokenized stocks through Aave V4; cbBTC, WETH or explicitly selected ETH through Morpho.</p>
       </div>
       {!model.signedIn ? (
         <div className="still-section still-card still-borrow-signin">
@@ -67,6 +68,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                   {([
                     ['cbBTC', 'Bitcoin on Base', '₿'],
                     ['WETH', 'Wrapped ETH', 'Ξ'],
+                    ['ETH', 'Wrap native ETH', 'Ξ'],
                   ] as const).map(([asset, description, symbol]) => (
                     <button key={asset} className="still-borrow-choice" type="button" aria-pressed={model.asset === asset} disabled={busy} onClick={() => model.onAsset(asset)}>
                       <span className="still-borrow-symbol" aria-hidden="true">{symbol}</span>
@@ -86,7 +88,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                   <input id={`${id}-collateral`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.collateralAmount} placeholder="0" disabled={busy || model.asset === null} aria-describedby={`${id}-collateral-unit ${id}-collateral-help`} onChange={(event) => model.onCollateralAmount(event.target.value)} />
                   <span id={`${id}-collateral-unit`} className="mono">{model.asset ?? 'Token'}</span>
                 </div>
-                <p id={`${id}-collateral-help`} className="still-note">Enter 0 to use only collateral already deposited. Choosing an amount does not move it.</p>
+                <p id={`${id}-collateral-help`} className="still-note">{model.asset === 'ETH' ? 'Enter the exact ETH to wrap and pledge. Wallet-held WETH is not spent. Keep ETH for wallet/network fees.' : 'Enter 0 to use only collateral already deposited. Choosing an amount does not move it.'}</p>
                 <button type="submit" className="still-btn" disabled={!canRead}>{model.reading ? 'Reading limit…' : 'Read borrowing limit'}</button>
               </form>
             </section>
@@ -102,11 +104,12 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     <div className="still-borrow-maximum mono">{capacity.maximumUsdc === null ? 'Not read' : <>{capacity.maximumUsdc}<span> USDC</span></>}</div>
                     <dl className="still-borrow-facts">
                       <div><dt>In your wallet</dt><dd className="mono">{tokenAmount(capacity.walletBalance)}</dd></div>
-                      <div><dt>Already deposited</dt><dd className="mono">{tokenAmount(capacity.pledged)}</dd></div>
+                      <div><dt>Already deposited</dt><dd className="mono">{capacity.pledged === null ? 'Not read' : model.asset === 'ETH' ? capacity.pledged + ' WETH' : tokenAmount(capacity.pledged)}</dd></div>
                     </dl>
                     <p className="still-note still-borrow-block">{capacity.blockNumber === null ? 'Reading block not available.' : <>Read at Base block <span className="mono">{capacity.blockNumber.toLocaleString('en-US')}</span>.</>}</p>
                   </div>
                   {capacity.maximumUsdc === null ? <p className="still-note">The limit could not be read. Read it again before continuing.</p> : null}
+                  {capacity.nativeReserve ? <p className="still-note">At least {capacity.nativeReserve} ETH is kept out of the collateral for wallet/network fees. Fees are not quoted here; your wallet calculates them before approval.</p> : null}
                   <form onSubmit={(event) => { event.preventDefault(); if (canReview) model.onReview(); }}>
                     <label className="still-borrow-label" htmlFor={`${id}-loan`}>USDC to borrow</label>
                     <div className="still-borrow-amount">

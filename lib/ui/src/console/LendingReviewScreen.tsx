@@ -27,6 +27,11 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       {body.state === 'refused' ? <p className="still-warn" role="alert">{body.detail}</p> : null}
       {facts ? <>
         <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>{facts.marketId}</p>
+        {facts.nativeFunding ? <div className="still-card">
+          <p className="still-sub">Wrap and pledge exactly {tokenDecimalV1(facts.nativeFunding.maximumNativeAssets,18)} ETH.</p>
+          <p className="still-note">Wallet-held WETH is not spent. The measured ETH remaining is {tokenDecimalV1(facts.nativeFunding.balanceAfterAssets,18)} ETH before wallet/network fees.</p>
+          <p className="still-note">At least {tokenDecimalV1(facts.nativeFunding.reserveAssets,18)} ETH is kept out of the collateral for fees. The final fee is not quoted here; your wallet calculates it before approval.</p>
+        </div> : null}
         <p className="still-note">Position read at Base block {facts.blockNumber.toLocaleString('en-US')}.</p>
         <table className="mr-borrow-table" aria-label={`Position before and after ${repay ? 'repayment' : 'borrowing'}`}>
           <thead><tr><th scope="col">Position</th><th scope="col">Before</th>{body.state === 'ready' ? <th scope="col">Simulated after</th> : null}</tr></thead>

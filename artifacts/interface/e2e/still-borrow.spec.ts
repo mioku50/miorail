@@ -52,11 +52,13 @@ async function install(page: Page, signedIn = true) {
       const stock = STOCKS.find(row => row.token.toLowerCase() === url.searchParams.get('token')?.toLowerCase());
       if (!asset && !stock) return route.fulfill({ status: 400, json: { error: 'fixture_wrong_asset' } });
       const supply = url.searchParams.get('collateralSupplyAtomic');
+      const native = url.searchParams.get('funding') === 'native';
       return route.fulfill({ json: {
         state: 'read', marketScope: stock ? 'still_aave_spoke' : 'still_registered_market', markets: [{
           marketId: stock ? ADDRESSES.aaveSpoke.toLowerCase() : asset!.morphoMarket, collateralTokenAddress: stock?.token.toLowerCase(), collateralDecimals: stock?.decimals ?? asset!.decimals, loanDecimals: 6,
           collateralSupplyAtomic: supply, walletCollateralAtomic: state.mode === 'unknown-balance' ? null : stock ? '100000000' : asset!.id === 'cbBTC' ? '25000000' : '500000000000000000',
           collateralAtomic: stock ? '0' : asset!.id === 'cbBTC' ? '1000000' : '100000000000000000', blockNumber: 53_177_777,
+          ...(native ? { funding: 'native', nativeReserveAtomic: '500000000000000', feeQuoteState: 'wallet_quote_required' } : {}),
           still: { availableAtomic: '5000000', scope: supply === '0' ? 'existing_collateral' : 'selected_collateral' },
         }],
       } });
@@ -166,14 +168,31 @@ test('a visitor sees a sign-in link and never starts a private balance read', as
   expect(state.writes).toEqual([]);
 });
 
-test('a native-ETH query cannot choose an unsupported collateral token', async ({ page }) => {
+test('an explicit native-ETH query requires a positive amount, keeps the fee reserve and submits nativeFundingAtomic', async ({ page }) => {
   const state = await install(page);
   await page.goto('/borrow?asset=ETH', { waitUntil: 'domcontentloaded' });
   await expect(page.getByRole('button', { name: /cbBTC/ })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByRole('button', { name: /WETH/ })).toHaveAttribute('aria-pressed', 'false');
-  await expect(page.getByRole('button', { name: 'Read borrowing limit', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: /ETH\s*Wrap native ETH/ })).toHaveAttribute('aria-pressed', 'true');
+  await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('Enter an amount greater than zero.');
   expect(state.limitReads).toEqual([]);
-  expect(state.writes).toEqual([]);
+  await page.getByLabel('Amount to add', { exact: true }).fill('0.01');
+  await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
+  await expect(page.locator('.still-borrow-maximum')).toContainText('5 USDC');
+  await expect(page.getByText(/At least 0\.0005 ETH is kept out of the collateral/)).toBeVisible();
+  await expect(page.locator('.still-borrow-facts')).toContainText('0.1 WETH');
+  expect(state.limitReads[0]!.searchParams.get('funding')).toBe('native');
+  expect(state.limitReads[0]!.searchParams.get('collateralSupplyAtomic')).toBe('10000000000000000');
+  await page.getByLabel('USDC to borrow', { exact: true }).fill('3');
+  await page.getByRole('button', { name: 'Review loan', exact: true }).click();
+  expect(state.intents).toEqual([{
+    collateralTokenAddress: CRYPTO[1]!.token,
+    collateralSupplyAtomic: '10000000000000000',
+    borrowAmountAtomic: '3000000',
+    nativeFundingAtomic: '10000000000000000',
+  }]);
+  await noWalletAction(page);
 });
 
 test('a late prepared link cannot pull the person back after leaving the form', async ({ page }) => {

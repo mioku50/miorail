@@ -27,6 +27,10 @@ export interface LendingFactsV1 {
   debtBeforeShares: string | null;
   debtAfterShares: string | null;
   blockNumber: number;
+  nativeFunding?: {
+    maximumNativeAssets: string; reserveAssets: string; balanceBeforeAssets: string; balanceAfterAssets: string;
+    authorizedBefore: boolean; feeQuoteState: 'wallet_quote_required';
+  };
   warnings: string[];
 }
 

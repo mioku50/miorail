@@ -5,8 +5,11 @@ import {
   morphoAfterBorrowV1, morphoHealthV1, morphoLiquidationPriceV1, toSharesDownV1, wMulDownV1,
   type MorphoHealthV1, type MorphoMarketStateV1, type MorphoMarketTotalsV1, type MorphoPositionV1,
 } from '@mioagent/rwa-issuer/morphoBorrowMath';
-import { erc20Abi, morphoAbi, morphoOracleAbi } from '@mioagent/still-engine/abi';
+import { erc20Abi, morphoAbi, morphoOracleAbi, multicall3Abi } from '@mioagent/still-engine/abi';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
+import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { nativeMorphoAuthorizationAbiV1, nativeMorphoFundingBudgetV1 } from './nativeMorphoBorrowPlan.js';
+import { TERMS } from '@mioagent/still-engine/policy';
 
 export interface MorphoBorrowPoststateIdentityV1 {
   marketId: string;
@@ -17,6 +20,7 @@ export interface MorphoBorrowPoststateIdentityV1 {
   /** Exact ERC-20 collateral the owner chose to pledge; zero means an
    * existing-collateral-only draw. Native ETH is never inferred here. */
   collateralSupplyAssets?: bigint;
+  nativeFunding?: { balance: bigint; authorizedBefore: boolean };
 }
 
 export const MORPHO_BORROW_POSTSTATE_REFUSALS_V1 = [
@@ -43,7 +47,8 @@ export function buildMorphoBorrowPoststateProbesV1(input: MorphoBorrowPoststateI
   const supply = input.collateralSupplyAssets ?? 0n;
   const asset = CRYPTO.find((entry) => entry.token.toLowerCase() === collateral && entry.morphoMarket.toLowerCase() === marketId);
   if (!asset || !/^0x[0-9a-f]{64}$/.test(marketId) || !address(wallet) || !address(loan) || !address(collateral) ||
-      !address(oracle) || loan !== ADDRESSES.usdc.toLowerCase() || typeof supply !== 'bigint' || supply < 0n || supply > UINT128_MAX) {
+      !address(oracle) || (input.nativeFunding && (collateral !== ADDRESSES.weth.toLowerCase() ||
+        !nativeMorphoFundingBudgetV1(input.nativeFunding.balance, supply) || typeof input.nativeFunding.authorizedBefore !== 'boolean')) || loan !== ADDRESSES.usdc.toLowerCase() || typeof supply !== 'bigint' || supply < 0n || supply > UINT128_MAX) {
     return refused('poststate_inputs_invalid', 'The exact registered market, selected ERC-20 pledge and getter identities were not established.');
   }
   const id = marketId as Hex;
@@ -54,6 +59,11 @@ export function buildMorphoBorrowPoststateProbesV1(input: MorphoBorrowPoststateI
     { id: 'oracle_price', to: oracle, data: encodeFunctionData({ abi: morphoOracleAbi, functionName: 'price' }) },
     { id: 'collateral_wallet_balance', to: collateral, data: encodeFunctionData({ abi: erc20Abi, functionName: 'balanceOf', args: [wallet] }) },
   ];
+  if (input.nativeFunding) probes.push(
+    { id: 'native_wallet_balance', to: ADDRESSES.multicall3.toLowerCase(), data: encodeFunctionData({ abi: multicall3Abi, functionName: 'getEthBalance', args: [wallet] }) },
+    { id: 'bundle_authorization', to: ADDRESSES.morpho.toLowerCase(), data: encodeFunctionData({ abi: nativeMorphoAuthorizationAbiV1, functionName: 'isAuthorized', args: [wallet, MORPHO_BLUE_BUNDLES_BASE_V1] }) },
+    { id: 'bundle_weth_balance', to: collateral, data: encodeFunctionData({ abi: erc20Abi, functionName: 'balanceOf', args: [MORPHO_BLUE_BUNDLES_BASE_V1] }) },
+  );
   return { ok: true, observations: { before: probes, after: probes.map((probe) => ({ ...probe })) } };
 }
 
@@ -69,10 +79,10 @@ export type MorphoBorrowPoststateV1 =
 
 type ParamsV1 = readonly [Address, Address, Address, Address, bigint];
 type PositionV1 = readonly [bigint, bigint, bigint];
-interface PhaseV1 { params: ParamsV1; position: PositionV1; totals: MorphoMarketTotalsV1; price: bigint; collateralWalletBalance: bigint }
+interface PhaseV1 { nativeBalance?: bigint; authorized?: boolean; bundleWethBalance?: bigint; params: ParamsV1; position: PositionV1; totals: MorphoMarketTotalsV1; price: bigint; collateralWalletBalance: bigint }
 const unsigned = (value: bigint, max: bigint): boolean => value >= 0n && value <= max;
 
-function decodePhase(rows: ReadonlyMap<string, Hex>): PhaseV1 | null {
+function decodePhase(rows: ReadonlyMap<string, Hex>, native: boolean): PhaseV1 | null {
   try {
     // Every getter has a static ABI. Accepting trailing bytes would claim a
     // decoded answer without having established the entire return value.
@@ -91,7 +101,14 @@ function decodePhase(rows: ReadonlyMap<string, Hex>): PhaseV1 | null {
     if (!values.every((value) => unsigned(value, UINT128_MAX)) || !unsigned(position[0], UINT256_MAX) ||
         !unsigned(position[1], UINT128_MAX) || !unsigned(position[2], UINT128_MAX) ||
         !unsigned(params[4], UINT256_MAX) || !unsigned(price, UINT256_MAX) || !unsigned(collateralWalletBalance, UINT256_MAX)) return null;
-    return { params, position, price, collateralWalletBalance, totals: {
+    const nativeValues = native ? {
+      nativeBalance: decodeFunctionResult({ abi: multicall3Abi, functionName: 'getEthBalance', data: exact('native_wallet_balance', 1) }),
+      authorized: decodeFunctionResult({ abi: nativeMorphoAuthorizationAbiV1, functionName: 'isAuthorized', data: exact('bundle_authorization', 1) }),
+      bundleWethBalance: decodeFunctionResult({ abi: erc20Abi, functionName: 'balanceOf', data: exact('bundle_weth_balance', 1) }),
+    } : {};
+    if (native && (!/^0x0{63}[01]$/.test(exact('bundle_authorization', 1)) ||
+        !unsigned(nativeValues.nativeBalance!, UINT256_MAX) || !unsigned(nativeValues.bundleWethBalance!, UINT256_MAX))) return null;
+    return { ...nativeValues, params, position, price, collateralWalletBalance, totals: {
       totalSupplyAssets: values[0], totalSupplyShares: values[1], totalBorrowAssets: values[2],
       totalBorrowShares: values[3], lastUpdate: values[4], fee: values[5],
     } };
@@ -147,7 +164,7 @@ export function verifyMorphoBorrowPoststateV1(input: {
     }
     phases[row.phase].set(row.id, row.returnData as Hex);
   }
-  const before = decodePhase(phases.before), after = decodePhase(phases.after);
+  const before = decodePhase(phases.before, !!expected.nativeFunding), after = decodePhase(phases.after, !!expected.nativeFunding);
   if (!before || !after) return refused('poststate_observations_unread', 'A simulated getter was not a complete ABI answer.');
   const params = before.params;
   const marketId = keccak256(encodeAbiParameters(
@@ -163,7 +180,14 @@ export function verifyMorphoBorrowPoststateV1(input: {
       after.position[2] !== before.position[2] + supply || after.position[0] !== before.position[0]) {
     return refused('poststate_position_mismatch', 'The simulated position did not establish only the selected collateral pledge and preserve this wallet’s measured supply shares.');
   }
-  if (before.collateralWalletBalance < supply || after.collateralWalletBalance !== before.collateralWalletBalance - supply) {
+  if (expected.nativeFunding) {
+    if (before.nativeBalance !== expected.nativeFunding.balance || after.nativeBalance !== before.nativeBalance - supply ||
+        after.nativeBalance < TERMS.ethGasReserveWei || before.authorized !== expected.nativeFunding.authorizedBefore ||
+        after.authorized !== before.authorized || after.bundleWethBalance !== before.bundleWethBalance ||
+        after.collateralWalletBalance !== before.collateralWalletBalance) {
+      return refused('poststate_funding_mismatch', 'Native ETH spend, retained fee reserve, unchanged wallet WETH and restored authorization were not established in the same state.');
+    }
+  } else if (before.collateralWalletBalance < supply || after.collateralWalletBalance !== before.collateralWalletBalance - supply) {
     return refused('poststate_funding_mismatch', 'The simulated ERC-20 collateral debit did not equal the exact pledge chosen from this wallet’s balance.');
   }
   const pre = before.totals, post = after.totals;

@@ -16,7 +16,9 @@ for (const client of [
       // This isolated HTML fixture never needs Vite's HMR connection.
       // Chromium may block that dev-only socket under local-network rules.
       const text = message.text();
-      const devSocket = text.startsWith("WebSocket connection to 'ws://127.0.0.1:5187/") || text.startsWith('[vite] failed to connect to websocket.');
+      const devSocket = text.startsWith("WebSocket connection to 'ws://127.0.0.1:5187/") ||
+        text.startsWith('[vite] failed to connect to websocket.') ||
+        text.startsWith('Failed to send error to Vite server:');
       if (message.type() === 'error' && !devSocket) errors.push(text);
     });
     await page.route('**/__palette-hydration', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><html><head></head><body><div id="palette-fixture"></div></body></html>' }));

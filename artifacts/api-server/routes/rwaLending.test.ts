@@ -90,6 +90,21 @@ describe('session-owned lending HTTP boundary', () => {
     assert.equal(r.status, 200); assert.match(r.body.reviewUrl, /^\/lending\/miorail-lending-v1\./); assert.equal(simulations, 0);
     assert.equal((await request(app()).get(`${base}/lending/review/${r.body.reviewUrl.split('/').at(-1)}`)).body.facts.operation, 'borrow');
   });
+  it('native ETH borrowing entry creates a v2 draft and routes its review to the native Morpho runner', async () => {
+    const weth = ADDRESSES.weth.toLowerCase();
+    let nativeAsked: unknown = null;
+    rwaLendingRuntimeV1.runNativeBorrow = async input => {
+      nativeAsked = input;
+      return ready({ operation: 'borrow', collateralTokenAddress: weth, borrowAssets: input.borrowAssets.toString(),
+        collateralSupplyAssets: input.supplyAssets.toString(), nativeFundingAssets: input.supplyAssets.toString() });
+    };
+    const r = await request(app()).post(`${base}/borrow/intent`)
+      .send({ collateralTokenAddress: weth, borrowAmountAtomic: '3000000', collateralSupplyAtomic: '10000000000000000', nativeFundingAtomic: '10000000000000000' });
+    assert.equal(r.status, 200); assert.match(r.body.reviewUrl, /^\/lending\/miorail-lending-v2\./);
+    const rev = await request(app()).get(`${base}/lending/review/${r.body.reviewUrl.split('/').at(-1)}`);
+    assert.equal(rev.status, 200); assert.equal(rev.body.state, 'ready');
+    assert.deepEqual(nativeAsked, { walletAddress: wallet, supplyAssets: 10_000_000_000_000_000n, borrowAssets: 3_000_000n });
+  });
   it('an expired question permits only an owned existing submission read, never another preparation', async () => {
     const signed = draft(repayQuestion), read = await request(app()).get(`${base}/lending/review/${signed}`);
     await request(app()).post(`${base}/lending/executions/${read.body.executionId}/arm`).send({ callsHash: read.body.callsHash, signingTermsHash: read.body.signingTermsHash }).expect(200);

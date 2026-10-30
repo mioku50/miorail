@@ -5,6 +5,7 @@ import { issueLendingDraftV1, lendingMarketV1, verifyLendingDraftV1, type Lendin
 import { verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { lendingWireV1, type LendingRunV1 } from '../lib/lendingReview.js';
 import { runMorphoRepayV1 } from '../lib/morphoRepayRunner.js';
+import { runNativeMorphoBorrowV1 } from '../lib/nativeMorphoBorrowRunner.js';
 import { runMorphoBorrowV1 } from '../lib/morphoBorrowRunner.js';
 import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
@@ -17,7 +18,7 @@ import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
-  readRepay: readRepayStandingV1, readAave: readAaveStandingV1, runRepay: runMorphoRepayV1, runAave: runAaveLendingV1, runBorrow: runMorphoBorrowV1,
+  readRepay: readRepayStandingV1, readAave: readAaveStandingV1, runRepay: runMorphoRepayV1, runAave: runAaveLendingV1, runBorrow: runMorphoBorrowV1, runNativeBorrow: runNativeMorphoBorrowV1,
   store: loanExecutionRuntimeV1.store, reader: createViemBaseReceiptReader,
   readBatchHashes: readBaseWalletBatchHashesV1, verifyEffectPosition: verifyLendingEffectsAtReceiptV1,
   secret: () => (process.env.SESSION_SECRET ?? '').trim(), now: () => new Date(),
@@ -120,6 +121,8 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   if (claims.venue === 'morpho' && q.operation === 'repay') {
     run = await rwaLendingRuntimeV1.runRepay({ collateralTokenAddress: q.collateralTokenAddress, marketId: claims.marketId,
       walletAddress: owner.walletAddress, amount: q.amountMode === 'all' ? { mode: 'all' } : { mode: 'assets', assets: BigInt(q.repayAssets!) }, maximumAssets: BigInt(q.maximumAssets) });
+  } else if (claims.venue === 'morpho' && q.operation === 'borrow' && q.nativeFundingAssets !== undefined) {
+    run = await rwaLendingRuntimeV1.runNativeBorrow({walletAddress:owner.walletAddress,supplyAssets:BigInt(q.nativeFundingAssets),borrowAssets:BigInt(q.borrowAssets)});
   } else if (claims.venue === 'morpho' && q.operation === 'borrow') {
     const answer = await rwaLendingRuntimeV1.runBorrow({ collateralTokenAddress: q.collateralTokenAddress,
       walletAddress: owner.walletAddress, marketId: claims.marketId, borrowAssets: BigInt(q.borrowAssets), collateralSupplyAssets: BigInt(q.collateralSupplyAssets) });

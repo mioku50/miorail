@@ -12,6 +12,8 @@ import { loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_WALLET_FIXTURE as W
 
 const transferAbi = parseAbi(['event Transfer(address indexed from,address indexed to,uint256 value)']);
 const morphoEvents = parseAbi([
+  'event Deposit(address indexed dst,uint256 wad)',
+  'event SetAuthorization(address indexed caller,address indexed authorizer,address indexed authorized,bool newIsAuthorized)',
   'event Borrow(bytes32 indexed id,address caller,address indexed onBehalf,address indexed receiver,uint256 assets,uint256 shares)',
   'event Repay(bytes32 indexed id,address indexed caller,address indexed onBehalf,uint256 assets,uint256 shares)',
   'event SupplyCollateral(bytes32 indexed id,address indexed caller,address indexed onBehalf,uint256 assets)',
@@ -148,4 +150,51 @@ describe('protocol lending receipt effects and pinned positions', () => {
     assert.notEqual((await check(execution(), [outMorpho(), transfer(STOCKS[0]!.token, WALLET, OTHER, 1n), morphoEvent('repay')])).result.state, 'matched');
     assert.notEqual((await check(execution(), [outMorpho(), morphoEvent('repay')], { debtAssets: 1_000_000n, debtShares: 100n, collateralAssets: 99n })).result.state, 'matched');
   });
+  for (const authorizedBefore of [false, true]) {
+    it(`native ETH Morpho borrow verifies WETH wrap, bundle supply, USDC sweep and ${authorizedBefore ? 'preserved' : 'temporary'} authorization`, async () => {
+      const wethMarket = CRYPTO[1]!.morphoMarket;
+      const record = execution('morpho', 'borrow');
+      Object.assign(record.run.facts, {
+        collateralTokenAddress: ADDRESSES.weth.toLowerCase(),
+        collateralSymbol: 'WETH',
+        marketId: wethMarket,
+        collateralSupplyAssets: '10',
+        nativeFunding: {
+          wrapperContract: MORPHO_BLUE_BUNDLES_BASE_V1,
+          wrappedTokenAddress: ADDRESSES.weth.toLowerCase(),
+          maximumNativeAssets: '10',
+          reserveNativeAssets: '500000000000000',
+          walletNativeBeforeAssets: '100000000000000000',
+          walletNativeAfterAssets: '99999999999999990',
+          authorizedBefore,
+          feeQuoteState: 'wallet_quote_required' as const,
+        },
+      });
+      const deposit: VerifiedReceiptLogV1 = { address: ADDRESSES.weth,
+        topics: encodeEventTopics({ abi: morphoEvents, eventName: 'Deposit', args: { dst: MORPHO_BLUE_BUNDLES_BASE_V1 } }) as Hex[],
+        data: encodeAbiParameters([{ type: 'uint256' }], [10n]) };
+      const auth = (flag: boolean): VerifiedReceiptLogV1 => ({ address: ADDRESSES.morpho,
+        topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SetAuthorization', args: {
+          caller: WALLET as Address, authorizer: WALLET as Address, authorized: MORPHO_BLUE_BUNDLES_BASE_V1 } }) as Hex[],
+        data: encodeAbiParameters([{ type: 'bool' }], [flag]) });
+      const supplied: VerifiedReceiptLogV1 = { address: ADDRESSES.morpho,
+        topics: encodeEventTopics({ abi: morphoEvents, eventName: 'SupplyCollateral', args: {
+          id: wethMarket, caller: MORPHO_BLUE_BUNDLES_BASE_V1, onBehalf: WALLET as Address } }) as Hex[],
+        data: encodeAbiParameters([{ type: 'uint256' }], [10n]) };
+      const logs = [
+        ...(authorizedBefore ? [] : [auth(true)]),
+        deposit,
+        transfer(ADDRESSES.weth, MORPHO_BLUE_BUNDLES_BASE_V1, ADDRESSES.morpho, 10n),
+        supplied,
+        morphoEvent('borrow', { market: wethMarket, caller: MORPHO_BLUE_BUNDLES_BASE_V1, receiver: MORPHO_BLUE_BUNDLES_BASE_V1 }),
+        transfer(ADDRESSES.usdc, MORPHO_BLUE_BUNDLES_BASE_V1, WALLET, 2_000_000n),
+        ...(authorizedBefore ? [] : [auth(false)]),
+      ];
+      const pos = { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 110n, nativeAuthorized: authorizedBefore };
+      assert.equal((await check(record, logs, pos)).result.state, 'matched');
+      assert.notEqual((await check(record, logs.filter(log => log !== deposit), pos)).result.state, 'matched');
+      assert.notEqual((await check(record, [...logs, transfer(ADDRESSES.weth, WALLET, MORPHO_BLUE_BUNDLES_BASE_V1, 10n)], pos)).result.state, 'matched');
+      assert.notEqual((await check(record, logs, { ...pos, nativeAuthorized: !authorizedBefore })).result.state, 'matched');
+    });
+  }
 });

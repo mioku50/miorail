@@ -51,7 +51,8 @@ const sameQuestion = (row: LoanExecutionV1, run: ReadyRunV1) => {
   const a = row.run.facts, b = run.facts;
   return a.venue === b.venue && a.operation === b.operation && a.marketId === b.marketId &&
     a.collateralTokenAddress.toLowerCase() === b.collateralTokenAddress.toLowerCase() && a.amountMode === b.amountMode &&
-    a.requestedAssets === b.requestedAssets && a.maximumDebitAssets === b.maximumDebitAssets && a.collateralSupplyAssets === b.collateralSupplyAssets;
+    a.requestedAssets === b.requestedAssets && a.maximumDebitAssets === b.maximumDebitAssets && a.collateralSupplyAssets === b.collateralSupplyAssets &&
+    (a.nativeFunding?.maximumNativeAssets ?? null) === (b.nativeFunding?.maximumNativeAssets ?? null);
 };
 const sameScope = (a: LoanExecutionV1, b: LoanExecutionV1) => a.tenantId === b.tenantId && a.walletAddress === b.walletAddress &&
   a.run.facts.venue === b.run.facts.venue && (a.run.facts.venue === 'aave-v4' || a.run.facts.marketId === b.run.facts.marketId);
@@ -156,6 +157,7 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
             AND lending_executions.run_json->'facts'->'requestedAssets' = EXCLUDED.run_json->'facts'->'requestedAssets'
             AND lending_executions.run_json->'facts'->>'maximumDebitAssets' = EXCLUDED.run_json->'facts'->>'maximumDebitAssets'
             AND lending_executions.run_json->'facts'->>'collateralSupplyAssets' = EXCLUDED.run_json->'facts'->>'collateralSupplyAssets'
+            AND COALESCE(lending_executions.run_json->'facts'->'nativeFunding'->>'maximumNativeAssets', '') = COALESCE(EXCLUDED.run_json->'facts'->'nativeFunding'->>'maximumNativeAssets', '')
         RETURNING *`;
       if (rows[0]) return rowFromDb(rows[0]);
       const prior = await sql`SELECT * FROM lending_executions WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress} AND draft_id = ${input.draftId}`;

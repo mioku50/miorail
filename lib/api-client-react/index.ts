@@ -1610,13 +1610,13 @@ export function useBorrowReview(draft: string | null | undefined) {
 }
 
 /** What this wallet could borrow against one exact token, market by market. */
-export function useBorrowCapacity(tokenAddress: string | null | undefined, collateralSupplyAtomic?: string | null) {
+export function useBorrowCapacity(tokenAddress: string | null | undefined, collateralSupplyAtomic?: string | null, funding?: 'native') {
   return useQuery({
-    queryKey: collateralSupplyAtomic === undefined ? ['borrow-capacity', tokenAddress ?? 'none']
+    queryKey: funding === 'native' ? ['borrow-capacity', tokenAddress ?? 'none', collateralSupplyAtomic ?? 'unasked', 'native'] : collateralSupplyAtomic === undefined ? ['borrow-capacity', tokenAddress ?? 'none']
       : ['borrow-capacity', tokenAddress ?? 'none', collateralSupplyAtomic ?? 'unasked'],
     queryFn: async () =>
       fetchApi<unknown>(
-        `/api/route-intelligence/rwa/borrow/capacity?token=${encodeURIComponent(tokenAddress ?? '')}${collateralSupplyAtomic == null ? '' : `&collateralSupplyAtomic=${encodeURIComponent(collateralSupplyAtomic)}`}`,
+        `/api/route-intelligence/rwa/borrow/capacity?token=${encodeURIComponent(tokenAddress ?? '')}${collateralSupplyAtomic == null ? '' : `&collateralSupplyAtomic=${encodeURIComponent(collateralSupplyAtomic)}`}${funding === 'native' ? '&funding=native' : ''}`,
       ),
     enabled: typeof tokenAddress === 'string' && /^0x[0-9a-fA-F]{40}$/.test(tokenAddress) && collateralSupplyAtomic !== null,
     retry: false,
@@ -1631,12 +1631,12 @@ export function useBorrowCapacity(tokenAddress: string | null | undefined, colla
 /** A wallet-bound question link. This request never prepares or submits calls. */
 export function useCreateBorrowIntentV1() {
   return useMutation({
-    mutationFn: async (input: { collateralTokenAddress: string; collateralSupplyAtomic: string; borrowAmountAtomic: string }) => {
+    mutationFn: async (input: { collateralTokenAddress: string; collateralSupplyAtomic: string; borrowAmountAtomic: string; nativeFundingAtomic?: string }) => {
       const result = await fetchApi<unknown>('/api/route-intelligence/rwa/borrow/intent', { method: 'POST', body: JSON.stringify(input) });
       if (!result || typeof result !== 'object') throw new Error('The review link could not be read.');
       const row = result as Record<string, unknown>;
       if (typeof row.borrowDraftId !== 'string' || typeof row.reviewUrl !== 'string' || typeof row.expiresAt !== 'string' ||
-          !/^(?:\/borrow\/miorail-borrow-v1|\/lending\/miorail-lending-v1)\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(row.reviewUrl) || !Number.isFinite(Date.parse(row.expiresAt))) {
+          !/^(?:\/borrow\/miorail-borrow-v1|\/lending\/miorail-lending-v[12])\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(row.reviewUrl) || !Number.isFinite(Date.parse(row.expiresAt))) {
         throw new Error('The review link could not be read.');
       }
       return { borrowDraftId: row.borrowDraftId, reviewUrl: row.reviewUrl, expiresAt: row.expiresAt };

@@ -36,18 +36,29 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     assert.doesNotMatch(html, /<input|125\.34|0\.01234567|Review loan/);
   });
 
-  it('offers the registered stocks, cbBTC and WETH without native-ETH or automatic-Max choices', () => {
+  it('offers the registered stocks, cbBTC, WETH and explicit native ETH without automatic-Max choices', () => {
     const html = render({ asset: null, collateralAmount: '' });
     assert.match(html, /aria-label="Collateral token"/);
     assert.match(html, /<strong>cbBTC<\/strong>/);
     assert.match(html, /<strong>WETH<\/strong>/);
+    assert.match(html, /<strong>ETH<\/strong>/);
     assert.match(html, /Wrapped ETH/);
-    assert.match(html, /Native ETH is not added here/);
+    assert.match(html, /Wrap native ETH/);
+    assert.match(html, /cbBTC, WETH or explicitly selected ETH through Morpho/);
     assert.match(html, /Stock collateral · Aave V4/);
     assert.match(html, /<option value="NVDAc">NVDAc · NVIDIA<\/option>/);
     assert.match(button(html, 'Read borrowing limit'), /disabled=""/);
     assert.doesNotMatch(html, /<button[^>]*>Max|Review loan/);
     assert.match(html, /Choose your collateral and read the borrowing limit first/);
+  });
+
+  it('distinguishes native ETH in the wallet from already-pledged WETH and states the fee reserve', () => {
+    const html = render({ asset: 'ETH', collateralAmount: '0.01', needsRead: false,
+      capacity: { ...capacity, walletBalance: '0.025', pledged: '0.003', nativeReserve: '0.0005' } });
+    assert.match(html, /Enter the exact ETH to wrap and pledge\. Wallet-held WETH is not spent\./);
+    assert.match(html, /0\.025 ETH/);
+    assert.match(html, /0\.003 WETH/);
+    assert.match(html, /At least 0\.0005 ETH is kept out of the collateral for wallet\/network fees\./);
   });
 
   it('allows the explicit zero-addition choice and does not create a loan amount', () => {

@@ -61,6 +61,39 @@ describe('lending ready/refused wire boundaries', () => {
     assert.equal(parseLendingExecutionWireV1({ ...row, state: 'complete' }, 'execution_1'), null);
     assert.equal(parseLendingExecutionWireV1({ ...row, transactionHash: 'batch_1' }, 'execution_1'), null);
   });
+  it('accepts only the pinned Morpho BlueBundlesV1 value-bearing call for native ETH borrowing', () => {
+    const bundle = '0x4d28d900e381ece4b351302f1abe588496793a2b';
+    const morpho = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
+    const weth = '0x4200000000000000000000000000000000000006';
+    for (const authorizedBefore of [false, true]) {
+      const base = ready();
+      base.facts = {
+        ...base.facts, operation: 'borrow', venue: 'morpho', collateralTokenAddress: weth,
+        collateralSymbol: 'WETH', collateralDecimals: 18, collateralSupplyAssets: '10000000000000000', maximumDebitAssets: '0',
+        nativeFunding: {
+          maximumNativeAssets: '10000000000000000', reserveAssets: '500000000000000',
+          balanceBeforeAssets: '25000000000000000', balanceAfterAssets: '15000000000000000',
+          authorizedBefore, feeQuoteState: 'wallet_quote_required',
+        },
+      };
+      base.calls = authorizedBefore
+        ? [{ to: bundle, value: '10000000000000000', data: '0x04a06d67' }]
+        : [
+            { to: morpho, value: '0', data: '0xeecea000' },
+            { to: bundle, value: '10000000000000000', data: '0x04a06d67' },
+            { to: morpho, value: '0', data: '0xeecea000' },
+          ];
+      base.steps = base.calls.map((c, index) => ({ index, to: c.to, reading: 'Checked native step.' }));
+      assert.equal(parseLendingReviewWireV1(base)?.state, 'ready');
+      const html = render({ body: base });
+      assert.match(html, /Wrap and pledge exactly 0\.01 ETH\./);
+      assert.match(html, /0\.015 ETH/);
+      assert.match(html, /0\.0005 ETH/);
+      assert.match(html, /Wallet-held WETH is not spent/);
+      assert.equal(parseLendingReviewWireV1({ ...base, calls: base.calls.map(c => c.to === bundle ? { ...c, to: ADDRESS } : c),
+        steps: base.steps.map(s => s.to === bundle ? { ...s, to: ADDRESS } : s) }), null);
+    }
+  });
 });
 
 describe('lending review presentation does not call a submission a repayment', () => {

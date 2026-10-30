@@ -1,4 +1,6 @@
-import type { Address } from 'viem';
+import { keccak256, type Address } from 'viem';
+import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { nativeMorphoAuthorizationAbiV1, nativeMorphoDeploymentMatchesV1, type NativeMorphoDeploymentV1 } from './nativeMorphoBorrowPlan.js';
 import {
   morphoAccruedTotalsV1,
   morphoBorrowCapacityV1,
@@ -47,6 +49,7 @@ export function stillBorrowCapacityWireV1(token: string, standing: MorphoBorrowS
 export interface StillBorrowSnapshotV1 {
   universe: Universe;
   snapshot: WalletSnapshot;
+  nativeDeployment?: NativeMorphoDeploymentV1;
 }
 
 export interface StillBorrowReaderDepsV1 {
@@ -55,26 +58,47 @@ export interface StillBorrowReaderDepsV1 {
   generic?: MorphoBorrowReaderDepsV1;
 }
 
-let readFreshSnapshot: ((wallet: Address, asset: CryptoAsset) => Promise<StillBorrowSnapshotV1>) | null = null;
-function freshSnapshotV1(wallet: Address, asset: CryptoAsset): Promise<StillBorrowSnapshotV1> {
+let readFreshSnapshot: ((wallet: Address, asset: CryptoAsset, native: boolean) => Promise<StillBorrowSnapshotV1>) | null = null;
+function freshSnapshotV1(wallet: Address, asset: CryptoAsset, native: boolean): Promise<StillBorrowSnapshotV1> {
   if (!readFreshSnapshot) {
     const providers = createProviders(stillRpcUrlsV1(), 'miorail-still-borrow/1');
-    readFreshSnapshot = async (address, selected) => {
+    readFreshSnapshot = async (address, selected, native) => {
       const markets = await loadMorphoUniverse(providers, [selected.id]);
       const universe: Universe = { ...markets, loadedAt: new Date(), aave: { ok: false, problem: 'unreadable' } };
       const snapshot = await readWallet(providers, universe, address);
-      return { universe, snapshot };
+      if (!native) return { universe, snapshot };
+      for (const { client } of providers) {
+        try {
+          const [chainId, bundle, weth, multicall, authorized] = await Promise.all([
+            client.getChainId(),
+            client.getCode({ address: MORPHO_BLUE_BUNDLES_BASE_V1, blockNumber: snapshot.block.number }),
+            client.getCode({ address: ADDRESSES.weth, blockNumber: snapshot.block.number }),
+            client.getCode({ address: ADDRESSES.multicall3, blockNumber: snapshot.block.number }),
+            client.readContract({ address: ADDRESSES.morpho, abi: nativeMorphoAuthorizationAbiV1, functionName: 'isAuthorized',
+              args: [address, MORPHO_BLUE_BUNDLES_BASE_V1], blockNumber: snapshot.block.number }),
+          ]);
+          if (!bundle || !weth || !multicall) continue;
+          return { universe, snapshot, nativeDeployment: { chainId, blueBundlesRuntimeHash: keccak256(bundle),
+            wethRuntimeHash: keccak256(weth), multicallRuntimeHash: keccak256(multicall), authorized } };
+        } catch { /* Existing configured providers only, no credential output. */ }
+      }
+      throw new Error('native_deployment_unread');
     };
   }
-  return readFreshSnapshot(wallet, asset);
+  return readFreshSnapshot(wallet, asset, native);
 }
 
+export type StillBorrowReadingV1 = MorphoBorrowReadingV1 & {
+  nativeFunding?: { balance: bigint; params: import('@mioagent/still-engine/read').MorphoParams; deployment: NativeMorphoDeploymentV1 };
+};
 export async function readBorrowStandingV1(input: {
   tokenAddress: string;
   walletAddress: string | null;
+  nativeFunding?: boolean;
   deps?: StillBorrowReaderDepsV1;
-}): Promise<MorphoBorrowReadingV1> {
+}): Promise<StillBorrowReadingV1> {
   const asset = stillBorrowAssetV1(input.tokenAddress);
+  if (input.nativeFunding && asset?.id !== 'ETH') return { state: 'refused', readAt: (input.deps?.now?.() ?? new Date()).toISOString(), refusal: 'venue_unread', detail: 'Native funding is available only for the registered WETH market.' };
   if (!asset) return readMorphoBorrowStandingV1({ ...input, deps: input.deps?.generic });
 
   const readAt = (input.deps?.now?.() ?? new Date()).toISOString();
@@ -85,13 +109,17 @@ export async function readBorrowStandingV1(input: {
 
   let read: StillBorrowSnapshotV1;
   try {
-    read = input.deps?.snapshot ? await input.deps.snapshot(wallet as Address) : await freshSnapshotV1(wallet as Address, asset);
+    read = input.deps?.snapshot ? await input.deps.snapshot(wallet as Address) : await freshSnapshotV1(wallet as Address, asset, input.nativeFunding === true);
   } catch {
     return refused('venue_unread', 'Still could not read the current market from Base');
   }
   const known = read.universe.morpho.find((entry) => entry.ok
     ? entry.market.asset.id === asset.id
     : entry.asset.id === asset.id);
+  if (input.nativeFunding && (!read.nativeDeployment || !nativeMorphoDeploymentMatchesV1(read.nativeDeployment) ||
+      !read.snapshot.nativeEth.ok || read.snapshot.nativeEth.value < 0n)) {
+    return refused('venue_unread', 'The native balance or pinned wrapping deployment could not be read at this block.');
+  }
   const source = read.snapshot.morpho.get(asset.id);
   if (!known?.ok || !source) return refused('venue_unread', 'the registered market could not be established');
   const params = source.info.params;
@@ -122,6 +150,9 @@ export async function readBorrowStandingV1(input: {
   const health = morphoHealthV1({ market: state, position });
   return {
     state: 'read', readAt,
+    ...(input.nativeFunding && read.nativeDeployment && read.snapshot.nativeEth.ok ? {
+      nativeFunding: { balance: read.snapshot.nativeEth.value, params, deployment: read.nativeDeployment },
+    } : {}),
     markets: [{
       market: {
         marketId: asset.morphoMarket,

@@ -4,7 +4,7 @@ import type { StillBorrowAssetV1, StillBorrowModelV1 } from './StillBorrow';
 
 /** The host accepts a label from a query, never an arbitrary token address. */
 export function borrowAssetFromQueryV1(value: string | null): StillBorrowAssetV1 | null {
-  return value === 'cbBTC' || value === 'WETH' ? value : STOCKS.find(stock => stock.id === value)?.id ?? null;
+  return value === 'cbBTC' || value === 'WETH' || value === 'ETH' ? value : STOCKS.find(stock => stock.id === value)?.id ?? null;
 }
 
 export function borrowCollateralTokenV1(asset: StillBorrowAssetV1): `0x${string}` {
@@ -12,7 +12,7 @@ export function borrowCollateralTokenV1(asset: StillBorrowAssetV1): `0x${string}
 }
 
 export function borrowCollateralDecimalsV1(asset: StillBorrowAssetV1): number {
-  return asset === 'WETH' ? 18 : 8;
+  return asset === 'WETH' || asset === 'ETH' ? 18 : 8;
 }
 
 /** Interpret text exactly; no risk calculation, balance assumption or rounding. */
@@ -43,7 +43,7 @@ export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAs
   if (payload.state === 'refused') return { capacity: null, error: typeof payload.detail === 'string' ? payload.detail : 'The server could not establish a borrowing limit for this collateral.' };
   const stock = STOCKS.find(row => row.id === asset);
   if (payload.state !== 'read' || payload.marketScope !== (stock ? 'still_aave_spoke' : 'still_registered_market') || !Array.isArray(payload.markets)) return failed;
-  const expected = stock ?? CRYPTO.find(row => row.id === (asset === 'WETH' ? 'ETH' : 'cbBTC'))!;
+  const expected = stock ?? CRYPTO.find(row => row.id === (asset === 'WETH' || asset === 'ETH' ? 'ETH' : 'cbBTC'))!;
   const marketId = stock ? ADDRESSES.aaveSpoke.toLowerCase() : CRYPTO.find(row => row.token === expected.token)!.morphoMarket;
   const rows = payload.markets.filter(row => object(row) && row.marketId === marketId && (!stock || row.collateralTokenAddress === stock.token.toLowerCase()));
   if (rows.length !== 1) return failed;
@@ -54,8 +54,11 @@ export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAs
       (row.walletCollateralAtomic !== null && !atomic(row.walletCollateralAtomic)) ||
       (row.collateralAtomic !== null && !atomic(row.collateralAtomic)) ||
       !Number.isSafeInteger(row.blockNumber) || (row.blockNumber as number) <= 0) return failed;
+  if (asset === 'ETH' && (collateralSupplyAtomic === '0' || row.funding !== 'native' || !atomic(row.nativeReserveAtomic) || row.nativeReserveAtomic === '0' || row.feeQuoteState !== 'wallet_quote_required')) return failed;
+  if (asset !== 'ETH' && row.funding !== undefined) return failed;
   return {
     capacity: {
+      ...(asset === 'ETH' ? { nativeReserve: tokenDecimalV1(row.nativeReserveAtomic as string, 18) } : {}),
       walletBalance: row.walletCollateralAtomic === null ? null : tokenDecimalV1(row.walletCollateralAtomic as string, expected.decimals),
       pledged: row.collateralAtomic === null ? null : tokenDecimalV1(row.collateralAtomic as string, expected.decimals),
       maximumUsdc: tokenDecimalV1(row.still.availableAtomic, 6), blockNumber: row.blockNumber as number,

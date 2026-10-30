@@ -5,7 +5,9 @@ import { morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { issueBorrowDraftV1, verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../lib/stillBorrowStanding.js';
 import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
-import { STOCKS, CRYPTO } from '@mioagent/still-engine/registry';
+import { nativeMorphoFundingBudgetV1 } from '../lib/nativeMorphoBorrowPlan.js';
+import { TERMS } from '@mioagent/still-engine/policy';
+import { STOCKS, CRYPTO, ADDRESSES } from '@mioagent/still-engine/registry';
 import { issueLendingDraftV1 } from '../lib/lendingDraft.js';
 import { readAaveBorrowCapacityWireV1 } from './rwaLending.js';
 
@@ -133,8 +135,11 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
     res.status(400).json({ error: 'token_not_exact', code: 'token_not_exact' });
     return;
   }
+  const native = req.query.funding === 'native';
+  if (req.query.funding !== undefined && !native) { res.status(400).json({error:'borrow_funding_invalid'}); return; }
+  if (native && token !== ADDRESSES.weth.toLowerCase()) { res.status(400).json({error:'borrow_funding_invalid'}); return; }
   const supply = req.query.collateralSupplyAtomic === undefined ? 0n : atomicV1(req.query.collateralSupplyAtomic, true);
-  if (supply === null) {
+  if (supply === null || native && supply === 0n) {
     res.status(400).json({ error: 'borrow_request_not_exact', code: 'borrow_request_not_exact' });
     return;
   }
@@ -148,7 +153,7 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
     return;
   }
 
-  const reading = await rwaBorrowRuntimeV1.read({ tokenAddress: token, walletAddress: user.address });
+  const reading = await rwaBorrowRuntimeV1.read({ tokenAddress: token, walletAddress: user.address, ...(native ? {nativeFunding:true} : {}) });
   if (reading.state === 'refused') {
     res.json({
       state: 'refused',
@@ -159,7 +164,10 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
     });
     return;
   }
-  if (supply > 0n) {
+  if (native && !nativeMorphoFundingBudgetV1(reading.nativeFunding?.balance ?? null, supply)) {
+    res.json({state:'refused',refusal:'native_fee_reserve_insufficient',detail:'The native balance is unread or the selected ETH would spend Still’s reserve for wallet/network fees.',markets:[]}); return;
+  }
+  if (supply > 0n && !native) {
     const unread = reading.markets.some(entry => entry.walletCollateralAssets === null || entry.walletCollateralAssets === undefined);
     const insufficient = reading.markets.some(entry => entry.walletCollateralAssets !== null && entry.walletCollateralAssets !== undefined && entry.walletCollateralAssets < supply);
     if (unread || insufficient) {
@@ -190,7 +198,8 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
         loanDecimals: entry.market.loan.decimals,
         blockNumber: entry.market.state.blockNumber,
         ...(asset ? {
-          walletCollateralAtomic: entry.walletCollateralAssets?.toString() ?? null,
+          walletCollateralAtomic: native ? reading.nativeFunding?.balance.toString() ?? null : entry.walletCollateralAssets?.toString() ?? null,
+          ...(native ? { funding:'native', nativeReserveAtomic:TERMS.ethGasReserveWei.toString(), feeQuoteState:'wallet_quote_required' } : {}),
           collateralSupplyAtomic: supply.toString(),
           still: stillBorrowCapacityWireV1(token, entry, supply),
         } : {}),
@@ -215,15 +224,17 @@ rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
   const body: unknown = req.body;
   const chosenToken = objectV1(body) && typeof body.collateralTokenAddress === 'string' ? body.collateralTokenAddress.toLowerCase() : null;
   if (objectV1(body) && chosenToken && [...STOCKS, ...CRYPTO].some(stock => stock.token.toLowerCase() === chosenToken)) {
-    const keys = ['collateralTokenAddress','borrowAmountAtomic','collateralSupplyAtomic'];
+    const native = 'nativeFundingAtomic' in body;
+    const keys = ['collateralTokenAddress','borrowAmountAtomic','collateralSupplyAtomic', ...(native ? ['nativeFundingAtomic'] : [])];
     const borrow = atomicV1(body.borrowAmountAtomic, false), supply = atomicV1(body.collateralSupplyAtomic, true);
-    if (Object.keys(body).length !== keys.length || !keys.every(key => key in body) || borrow === null || supply === null) {
+    if (Object.keys(body).length !== keys.length || !keys.every(key => key in body) || borrow === null || supply === null ||
+        native && (chosenToken !== ADDRESSES.weth.toLowerCase() || supply === 0n || atomicV1(body.nativeFundingAtomic,false) !== supply)) {
       res.status(400).json({ error: 'borrow_request_not_exact' }); return;
     }
     const secret = rwaBorrowRuntimeV1.secret();
     if (secret.length < 16) { res.status(503).json({ error: 'borrow_secret_unavailable', code: 'borrow_secret_unavailable' }); return; }
     const issued = issueLendingDraftV1({ tenantId: user.id, walletAddress: user.address,
-      question: { operation: 'borrow', collateralTokenAddress: chosenToken, borrowAssets: borrow.toString(), collateralSupplyAssets: supply.toString() }, secret, now: rwaBorrowRuntimeV1.now() });
+      question: { operation: 'borrow', collateralTokenAddress: chosenToken, borrowAssets: borrow.toString(), collateralSupplyAssets: supply.toString(), ...(native ? {nativeFundingAssets:supply.toString()} : {}) }, secret, now: rwaBorrowRuntimeV1.now() });
     res.json({ borrowDraftId: issued.draftId, draft: issued.draft, reviewUrl: `/lending/${issued.draft}`, expiresAt: issued.expiresAt }); return;
   }
   const keys = ['collateralTokenAddress', 'borrowAmountAtomic', 'collateralSupplyAtomic'];

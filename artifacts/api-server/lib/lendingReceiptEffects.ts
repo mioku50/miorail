@@ -1,4 +1,4 @@
-import { decodeEventLog, decodeFunctionData, parseAbi, type Address, type Hex } from 'viem';
+import { decodeEventLog, decodeFunctionData, keccak256, parseAbi, type Address, type Hex } from 'viem';
 import { createProviders, type Provider } from '@mioagent/still-engine/rpc';
 import { ADDRESSES, STOCKS, CRYPTO } from '@mioagent/still-engine/registry';
 import { aaveSpokeAbi, morphoAbi } from '@mioagent/still-engine/abi';
@@ -9,9 +9,13 @@ import { matchesAaveV4DeploymentV1, aaveV4WriteAbiV1 } from './aaveV4BorrowPlan.
 import type { LoanEffectPositionCheckV1 } from './loanExecutionStatus.js';
 import type { LendingFactsV1 } from './lendingReview.js';
 import type { VerifiedReceiptLogV1 } from '@mioagent/route-proof';
+import { nativeMorphoAuthorizationAbiV1, NATIVE_WETH_RUNTIME_HASH_V1 } from './nativeMorphoBorrowPlan.js';
+import { MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepayStanding.js';
 
 const events = parseAbi([
+  'event Deposit(address indexed dst,uint256 wad)',
+  'event SetAuthorization(address indexed caller,address indexed authorizer,address indexed authorized,bool newIsAuthorized)',
   'event Transfer(address indexed from,address indexed to,uint256 value)',
   'event Borrow(bytes32 indexed id,address caller,address indexed onBehalf,address indexed receiver,uint256 assets,uint256 shares)',
   'event Repay(bytes32 indexed id,address indexed caller,address indexed onBehalf,uint256 assets,uint256 shares)',
@@ -30,7 +34,7 @@ function decoded(log: VerifiedReceiptLogV1): EventV1 | null {
     return { name: e.eventName, args: e.args as unknown as Record<string, unknown>, address: log.address.toLowerCase() };
   } catch { return null; }
 }
-export interface LendingReceiptPositionV1 { debtAssets: bigint; collateralAssets: bigint; debtShares: bigint; collateralShares?: bigint; premiumDebtRay?: bigint }
+export interface LendingReceiptPositionV1 { nativeAuthorized?: boolean; debtAssets: bigint; collateralAssets: bigint; debtShares: bigint; collateralShares?: bigint; premiumDebtRay?: bigint }
 export interface LendingReceiptDepsV1 {
   position?: (facts: LendingFactsV1, wallet: Address, block: bigint) => Promise<LendingReceiptPositionV1 | null>;
 }
@@ -51,6 +55,15 @@ async function positionAt(f: LendingFactsV1, wallet: Address, at: bigint): Promi
           client.readContract({ address: ADDRESSES.morpho, abi: morphoAbi, functionName: 'position', args: [asset.morphoMarket, wallet], blockNumber: at }),
           client.readContract({ address: ADDRESSES.morpho, abi: morphoAbi, functionName: 'market', args: [asset.morphoMarket], blockNumber: at }),
         ]);
+        if (f.nativeFunding) {
+          const [bundle, weth, authorized] = await Promise.all([
+            client.getCode({address:STILL_REPAY_BLUE_BUNDLES_V1,blockNumber:at}),
+            client.getCode({address:ADDRESSES.weth,blockNumber:at}),
+            client.readContract({address:ADDRESSES.morpho,abi:nativeMorphoAuthorizationAbiV1,functionName:'isAuthorized',args:[wallet,STILL_REPAY_BLUE_BUNDLES_V1],blockNumber:at}),
+          ]);
+          if(!bundle || !weth || keccak256(bundle)!==MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1 || keccak256(weth)!==NATIVE_WETH_RUNTIME_HASH_V1) return null;
+          return {debtShares:p[1],collateralAssets:p[2],debtAssets:toAssetsUpV1(p[1],m[2],m[3]),nativeAuthorized:authorized};
+        }
         return { debtShares: p[1], collateralAssets: p[2], debtAssets: toAssetsUpV1(p[1], m[2], m[3]) };
       }
       const count = await client.readContract({ address: ADDRESSES.aaveSpoke, abi: aaveSpokeAbi, functionName: 'getReserveCount', blockNumber: at });
@@ -82,6 +95,9 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     const f = execution.run.facts, wallet = execution.walletAddress.toLowerCase();
     const unknown = (errorCode: string) => ({ state: 'unavailable' as const, errorCode });
     const mismatch = (errorCode: string) => ({ state: 'mismatched' as const, errorCode });
+    const native=f.nativeFunding;
+    if(native && (f.operation!=='borrow' || f.venue!=='morpho' || !same(f.collateralTokenAddress,ADDRESSES.weth) ||
+      native.maximumNativeAssets!==f.collateralSupplyAssets || BigInt(native.maximumNativeAssets)<=0n)) return mismatch('loan_native_question_mismatch');
     if (receipt.blockNumber < BigInt(f.blockNumber)) return mismatch('loan_receipt_predates_review');
     const rows = logs.map(decoded).filter((e): e is EventV1 => e !== null);
     let usdcNet = 0n, collateralOut = 0n, grossUsdcOut = 0n;
@@ -102,9 +118,9 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     let assets: bigint, shares: bigint;
     if (f.venue === 'morpho') {
       if (!same(e.args.id, f.marketId) || typeof e.args.assets !== 'bigint' || typeof e.args.shares !== 'bigint' || e.args.assets <= 0n || e.args.shares <= 0n
-        || (f.operation === 'borrow' && !same(e.args.receiver, wallet))) return mismatch('loan_protocol_event_mismatch');
+        || (f.operation === 'borrow' && !same(e.args.receiver, native ? STILL_REPAY_BLUE_BUNDLES_V1 : wallet))) return mismatch('loan_protocol_event_mismatch');
       assets = e.args.assets; shares = e.args.shares;
-      if (f.operation === 'repay' && !same(e.args.caller, STILL_REPAY_BLUE_BUNDLES_V1)) return mismatch('loan_protocol_caller_mismatch');
+      if ((f.operation === 'repay' || native) && !same(e.args.caller, STILL_REPAY_BLUE_BUNDLES_V1)) return mismatch('loan_protocol_caller_mismatch');
       if (f.operation === 'borrow' && !execution.run.calls.some(call => same(call.to, String(e.args.caller)))) return unknown('loan_protocol_caller_unread');
     } else {
       // Reserve identity is decoded from the actual canonical method below,
@@ -120,15 +136,27 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     }
     const requested = f.requestedAssets === null ? null : BigInt(f.requestedAssets), maximum = BigInt(f.maximumDebitAssets);
     if (f.operation === 'borrow') {
-      if (requested === null || assets !== requested || usdcNet !== assets || collateralOut !== BigInt(f.collateralSupplyAssets) || grossUsdcOut !== 0n) return mismatch('loan_borrow_receipt_mismatch');
+      if (requested === null || assets !== requested || usdcNet !== assets || collateralOut !== (native ? 0n : BigInt(f.collateralSupplyAssets)) || grossUsdcOut !== 0n) return mismatch('loan_borrow_receipt_mismatch');
       if (f.venue === 'morpho') {
         const supplied = protocol.filter(e => e.name === 'SupplyCollateral');
         if (BigInt(f.collateralSupplyAssets) > 0n ? supplied.length !== 1 || !same(supplied[0]?.args.id, f.marketId) || supplied[0]?.args.assets !== BigInt(f.collateralSupplyAssets) : supplied.length !== 0) return mismatch('loan_collateral_event_mismatch');
       }
     } else if (assets > maximum || usdcNet !== -assets || collateralOut !== 0n || grossUsdcOut > maximum ||
         (f.venue === 'morpho' && grossUsdcOut !== maximum) || (f.amountMode === 'assets' && assets !== requested)) return mismatch('loan_repay_receipt_mismatch');
+    if(native) {
+      const wrapped=rows.filter(row=>row.address===ADDRESSES.weth.toLowerCase() && row.name==='Deposit');
+      const supplied=rows.filter(row=>row.address===ADDRESSES.weth.toLowerCase() && row.name==='Transfer' && same(row.args.from,STILL_REPAY_BLUE_BUNDLES_V1) && same(row.args.to,ADDRESSES.morpho));
+      if(wrapped.length!==1 || !same(wrapped[0]!.args.dst,STILL_REPAY_BLUE_BUNDLES_V1) || wrapped[0]!.args.wad!==BigInt(native.maximumNativeAssets) ||
+        supplied.length!==1 || supplied[0]!.args.value!==BigInt(native.maximumNativeAssets)) return mismatch('loan_native_wrapping_event_mismatch');
+      const grants=rows.filter(row=>row.address===ADDRESSES.morpho.toLowerCase() && row.name==='SetAuthorization' && same(row.args.authorizer,wallet));
+      if(native.authorizedBefore ? grants.length!==0 : grants.length!==2 || grants.some(row=>!same(row.args.caller,wallet) || !same(row.args.authorized,STILL_REPAY_BLUE_BUNDLES_V1)) ||
+        grants[0]?.args.newIsAuthorized!==true || grants[1]?.args.newIsAuthorized!==false) return mismatch('loan_native_authorization_mismatch');
+      if(protocol.filter(row=>row.name==='SupplyCollateral').some(row=>!same(row.args.caller,STILL_REPAY_BLUE_BUNDLES_V1)) ||
+        rows.filter(row=>row.name==='Transfer' && row.address===ADDRESSES.usdc.toLowerCase() && same(row.args.to,wallet)).some(row=>!same(row.args.from,STILL_REPAY_BLUE_BUNDLES_V1))) return mismatch('loan_native_protocol_source_mismatch');
+    }
     const p = await (deps.position ?? positionAt)(f, wallet as Address, receipt.blockNumber);
     if (!p) return unknown('loan_position_at_receipt_unread');
+    if(native && p.nativeAuthorized!==native.authorizedBefore) return unknown('loan_native_authorization_at_receipt_unread');
     if (f.venue === 'morpho') {
       if (f.debtBeforeShares === null) return unknown('loan_initial_shares_unread');
       const before = BigInt(f.debtBeforeShares), expected = f.operation === 'borrow' ? before + shares : f.amountMode === 'all' ? 0n : before - shares;

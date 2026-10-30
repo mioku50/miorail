@@ -7,6 +7,7 @@ export interface LendingFactsWireV1 {
   amountMode: 'assets' | 'all'; requestedAssets: string | null; maximumDebitAssets: string; collateralSupplyAssets: string;
   debtBeforeAssets: string; debtAfterAssets: string; collateralBeforeAssets: string; collateralAfterAssets: string;
   debtBeforeShares: string | null; debtAfterShares: string | null; blockNumber: number; warnings: string[];
+  nativeFunding?: {maximumNativeAssets:string;reserveAssets:string;balanceBeforeAssets:string;balanceAfterAssets:string;authorizedBefore:boolean;feeQuoteState:'wallet_quote_required'};
   healthBeforeWad?: string | null; healthAfterWad?: string | null;
   policyLimitAssets?: string | null; protocolLimitAssets?: string | null; termsVersion?: string | null;
 }
@@ -33,6 +34,14 @@ const id = (value: unknown): value is string => typeof value === 'string' && /^[
 
 export function isLendingFactsWireV1(value: unknown): value is LendingFactsWireV1 {
   if (!object(value)) return false;
+  if (value.nativeFunding !== undefined) {
+    const n=value.nativeFunding;
+    if (!object(n) || value.operation!=='borrow' || value.venue!=='morpho' || value.collateralTokenAddress!=='0x4200000000000000000000000000000000000006' ||
+      value.collateralDecimals!==18 || !['maximumNativeAssets','reserveAssets','balanceBeforeAssets','balanceAfterAssets'].every(k=>atomic(n[k])) ||
+      n.maximumNativeAssets!==value.collateralSupplyAssets || BigInt(n.maximumNativeAssets as string)<=BigInt(0) || BigInt(n.reserveAssets as string)<=BigInt(0) ||
+      BigInt(n.balanceBeforeAssets as string)-BigInt(n.maximumNativeAssets as string)!==BigInt(n.balanceAfterAssets as string) ||
+      BigInt(n.balanceAfterAssets as string)<BigInt(n.reserveAssets as string) || typeof n.authorizedBefore!=='boolean' || n.feeQuoteState!=='wallet_quote_required') return false;
+  }
   return (value.operation === 'borrow' || value.operation === 'repay') && (value.venue === 'morpho' || value.venue === 'aave-v4') &&
     address(value.collateralTokenAddress) && text(value.collateralSymbol) && text(value.marketId) &&
     Number.isInteger(value.collateralDecimals) && (value.collateralDecimals as number) >= 0 && (value.collateralDecimals as number) <= 36 &&
@@ -51,11 +60,22 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
     ...(isLendingFactsWireV1(value.facts) ? { facts: value.facts } : {}), ...(id(value.executionId) ? { executionId: value.executionId } : {}),
     ...(['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed'].includes(String(value.executionState)) ? { executionState: value.executionState as LendingExecutionStateV1 } : {}) };
   if (value.state !== 'ready' || !hasBorrowSigningTermsV1(value as FreshBorrowReviewV1, 8) || !isLendingFactsWireV1(value.facts) ||
-      !id(value.executionId) || value.atomicRequired !== true || !Array.isArray(value.calls) || !value.calls.every(c => object(c) && c.value === '0') ||
+      !id(value.executionId) || value.atomicRequired !== true || !Array.isArray(value.calls) || !value.calls.every(c => object(c) && atomic(c.value)) ||
       !Array.isArray(value.steps) || value.steps.length !== value.calls.length || !value.steps.every((s, index) => object(s) && s.index === index && address(s.to) &&
         (value.calls as { to: string }[])[index]?.to.toLowerCase() === s.to.toLowerCase() && text(s.reading)) ||
       !object(value.measured) || !text(value.measured.provider) || !integer(value.measured.blockNumber) ||
       typeof value.measured.loanDeltaAssets !== 'string' || !/^-?(0|[1-9][0-9]{0,77})$/.test(value.measured.loanDeltaAssets)) return null;
+  const native = value.facts.nativeFunding;
+  const calls=value.calls as {to:string;value:string;data:string}[];
+  if (!native) {
+    if(calls.some(c=>c.value!=='0')) return null;
+  } else {
+    const funded=calls.filter(c=>c.value!=='0');
+    if(funded.length!==1 || funded[0]!.to.toLowerCase()!=='0x4d28d900e381ece4b351302f1abe588496793a2b' ||
+      funded[0]!.value!==native.maximumNativeAssets || calls.length!==(native.authorizedBefore?1:3) ||
+      calls.indexOf(funded[0]!)!==(native.authorizedBefore?0:1) ||
+      calls.some(c=>c!==funded[0] && (c.to.toLowerCase()!=='0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb' || c.value!=='0'))) return null;
+  }
   return value as unknown as LendingReadyWireV1;
 }
 export function parseLendingExecutionWireV1(value: unknown, executionId: string): LendingExecutionWireV1 | null {
