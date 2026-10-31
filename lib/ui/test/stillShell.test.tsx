@@ -277,6 +277,9 @@ describe('the Agent', () => {
       'What if I borrow $200 more?',
       'How much interest do I pay a month?',
       'What if BTC goes to $60,000?',
+      'Сколько стоит мой займ в месяц?',
+      'Что будет с займом, если все акции подешевеют на треть?',
+      'How much would I owe after paying back $50?',
     ]) {
       assert.equal(route(q).route, 'analysis', q);
     }

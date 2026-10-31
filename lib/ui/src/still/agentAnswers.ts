@@ -97,14 +97,14 @@ const ACTION_V2 = new RegExp(
 
 const ANALYSIS_V2: readonly RegExp[] = [
   // A price move by a share or to a price.
-  /\d+(?:[.,]\d+)?\s*(?:%|percent|per cent|процент)|вдвое|в два раза|половин|halve|by half/iu,
+  /\d+(?:[.,]\d+)?\s*(?:%|percent|per cent|процент)|вдвое|в два раза|половин|halve|by half|четверть|quarter|трет|a third|one third/iu,
   new RegExp(`(?:${AGENT_ASSET_WORDS_V2.map(([, p]) => p.source).join('|')}).*(?:\\s(?:to|до)\\s*\\$\\s?\\d)`, 'iu'),
   // Why the room changed, and what sets it.
   /почему.*(?:уменьш|сниз|упал|измен|меньше|сократ)|why.*(?:decreas|drop|lower|less|chang|reduc|shrank|smaller)|(?:уменьш|сниз)\S*\s.*(?:лимит|сумм\S*\s+займ)|what (?:sets|decides|determines) my (?:limit|room)|из чего (?:складывается|состоит)/iu,
   // Paying down a loan.
-  /(?:уменьш|сниз|погас|закрыт|вернут|выплат|repay|reduce|pay\s*down|pay\s*off|clear).*(?:долг|займ|кредит|debt|loan)|(?:долг|займ|debt|loan).*(?:уменьш|сниз|погас|repay|reduce)|погас|repay|pay\s*(?:back|off|down)/iu,
+  /(?:уменьш|сниз|погас|закрыт|вернут|выплат|repay|reduce|pay\s*down|pay\s*off|clear).*(?:долг|займ|кредит|debt|loan)|(?:долг|займ|debt|loan).*(?:уменьш|сниз|погас|repay|reduce)|погас|repay|pa(?:y|ying|id)\s*(?:back|off|down)/iu,
   // What a loan costs.
-  /interest|процент\S*\s+(?:по|за|на)|сколько.*(?:плач|стоит\s+займ)|cost of (?:my |the )?loan|ставк/iu,
+  /interest|процент\S*\s+(?:по|за|на)|сколько.*(?:плач|стоит.*(?:займ|кредит|долг))|cost of (?:my |the )?loan|ставк/iu,
   // Pledging more.
   /(?:добав|внес|довнес|залож|deposit|pledge|add)\S*\s.*\d/iu,
 ];

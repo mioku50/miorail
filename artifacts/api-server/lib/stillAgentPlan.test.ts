@@ -39,6 +39,11 @@ test('the rules read price moves in both languages, with their direction from th
     task: 'scenario',
     edits: ['AAPLc', 'NVDAc', 'TSLAc'].map((asset) => ({ kind: 'price', asset, changeBps: -2000 })),
   });
+  // A third, said in words, is the person's number too.
+  assert.deepEqual(plan('Что будет с займом, если все акции подешевеют на треть?'), {
+    task: 'scenario',
+    edits: ['AAPLc', 'NVDAc', 'TSLAc'].map((asset) => ({ kind: 'price', asset, changeBps: -3333 })),
+  });
   // A move with no size is asked for one, never given one.
   assert.deepEqual(plan('what happens if nvidia crashes?'), { task: 'needs', what: 'percent' });
 });
@@ -65,6 +70,8 @@ test('the rules read borrowing, repaying, pledging and interest, and resolve the
   });
   assert.deepEqual(plan('How much interest will I pay per year?'), { task: 'interest', days: 365 });
   assert.deepEqual(plan('Сколько процентов по займу за 3 месяца?'), { task: 'interest', days: 90 });
+  assert.deepEqual(plan('Сколько стоит мой займ в месяц?'), { task: 'interest', days: 30 });
+  assert.deepEqual(plan('How much would I owe after paying back $50?'), { task: 'repay_options', usdcAtomic: 50_000_000n, venue: null });
   assert.deepEqual(plan('Почему моя сумма займа уменьшилась?'), { task: 'limit' });
 });
 

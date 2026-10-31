@@ -64,6 +64,7 @@ const RISE_V1 = new RegExp(`${EDGE}(?:rise|rose|up|gain|jump|grow|increas|rall|c
 const WORD_PERCENT_V1: ReadonlyArray<readonly [RegExp, number]> = [
   [/половин|вдвое|в два раза|halve|by half|(?:^|[^\p{L}])half/iu, 50],
   [/четверть|quarter/iu, 25],
+  [/трет|a third|one third/iu, 33.33],
 ];
 const STOCK_GROUP_V1 = /акци|stocks|stock market|фондов/iu;
 const CRYPTO_GROUP_V1 = /crypto|крипт/iu;
@@ -74,9 +75,9 @@ const MORPHO_V1 = /morpho|морфо/iu;
 
 const LIMIT_V1 =
   /почему.*(?:уменьш|сниз|упал|измен|меньше|сократ)|why.*(?:decreas|drop|lower|less|chang|reduc|shrank|smaller)|(?:уменьш|сниз)\S*\s.*(?:лимит|сумм\S*\s+займ)|what (?:sets|decides|determines) my (?:limit|room)|из чего (?:складывается|состоит)/iu;
-const INTEREST_V1 = /interest|процент\S*\s+(?:по|за|на)|сколько.*(?:плач|стоит\s+займ)|cost of (?:my |the )?loan|ставк/iu;
+const INTEREST_V1 = /interest|процент\S*\s+(?:по|за|на)|сколько.*(?:плач|стоит.*(?:займ|кредит|долг))|cost of (?:my |the )?loan|ставк/iu;
 const REPAY_V1 =
-  /(?:уменьш|сниз|погас|закрыт|вернут|выплат|repay|reduce|pay\s*down|pay\s*off|clear).*(?:долг|займ|кредит|debt|loan)|(?:долг|займ|debt|loan).*(?:уменьш|сниз|погас|repay|reduce)|(?:погас|repay|pay\s*(?:back|off|down))/iu;
+  /(?:уменьш|сниз|погас|закрыт|вернут|выплат|repay|reduce|pay\s*down|pay\s*off|clear).*(?:долг|займ|кредит|debt|loan)|(?:долг|займ|debt|loan).*(?:уменьш|сниз|погас|repay|reduce)|(?:погас|repay|pa(?:y|ying|id)\s*(?:back|off|down))/iu;
 const DEPOSIT_V1 = /добав|внес|довнес|залож|deposit|pledge|(?:^|[^\p{L}])add/iu;
 const BORROW_V1 = /займу|возьму|занять|borrow|take (?:out|another|more)/iu;
 
@@ -158,7 +159,7 @@ function dollarsV1(text: string): number | null {
   const expanded = expandThousandsV1(text).replace(/\d+(?:[.,]\d+)?\s*%/g, ' ');
   const match =
     /\$\s*(\d[\d,]*(?:\.\d{1,2})?)|(\d[\d\s,]*(?:[.,]\d{1,2})?)\s*(?:\$|usd|usdc|доллар|бакс)/iu.exec(expanded) ??
-    /(?:на|by|of|займу|возьму|borrow|repay|погасить|погашу|верну)\s+(\d[\d,]*(?:\.\d{1,2})?)/iu.exec(expanded);
+    /(?:на|by|of|займу|возьму|borrow|repay|back|погасить|погашу|верну)\s+(\d[\d,]*(?:\.\d{1,2})?)/iu.exec(expanded);
   const raw = match?.[1] ?? match?.[2];
   if (!raw) return null;
   const value = Number(numbersInV1(raw)[0]);
