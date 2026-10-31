@@ -2,7 +2,9 @@ import express, { Router, type Request, type Response } from 'express';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
+import { AGENT_BASE_USDC_V2 } from '../../../lib/ui/src/still/agentAnswers.js';
 import { answerStillAgentV3 } from '../lib/stillAgentServer.js';
+import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 import { rememberStillReadingV1 } from '../lib/stillReadings.js';
 
@@ -20,6 +22,11 @@ import { rememberStillReadingV1 } from '../lib/stillReadings.js';
 
 export const stillMineRuntimeV1 = {
   service: () => stillMirrorRuntimeV1.service(),
+  /** The wallet's USDC, for "swap all my USDC": the Still report reads only collateral. */
+  readUsdc: async (wallet: string): Promise<{ raw: string; decimals: number; block: string } | null> => {
+    const held = await readStockHoldingV1(AGENT_BASE_USDC_V2, wallet);
+    return held.ok ? { raw: held.balanceAtomic, decimals: held.decimals, block: held.blockNumber } : null;
+  },
   // A question can cost two model calls and a chain read: a person asks a few
   // a minute, a script asks hundreds.
   askLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }),
@@ -90,6 +97,7 @@ stillMineRouter.post('/agent/ask', express.json({ limit: '8kb' }), async (req: R
       question,
       wallet,
       read: () => service.reading(wallet as `0x${string}`),
+      readUsdc: () => stillMineRuntimeV1.readUsdc(wallet),
       onStage: (stage) => send({ type: 'stage', ...stage }),
     });
     if (stream) {

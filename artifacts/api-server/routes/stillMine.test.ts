@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import test, { afterEach } from 'node:test';
+import test, { after, afterEach } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import { InMemoryRateLimiter } from '@mioagent/utils';
@@ -242,6 +242,33 @@ test('a request to act is the page’s boundary: no model, nothing signed, a rev
   assert.equal(res.body.answer.mode, 'action_prep');
   assert.match(res.body.answer.text, /не исполняю транзакции автоматически/);
   assert.equal(res.body.answer.actionLink.href, '/borrow');
+});
+
+test('a swap is written out for Swap AI: no model, nothing signed, the goal in the link', async () => {
+  // 2026-10-31: "Мне нужен свап моих всех usdc на eth" went to the model, which
+  // did not answer in time, and the person read "I could not read that question".
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('a swap is not planned by a model');
+  stillAgentLlmRuntimeV1.narrator = never('a swap is not re-worded by a model');
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  const readUsdc = stillMineRuntimeV1.readUsdc;
+  let usdc: { raw: string; decimals: number; block: string } | null = null;
+  stillMineRuntimeV1.readUsdc = async () => usdc;
+  after(() => {
+    stillMineRuntimeV1.readUsdc = readUsdc;
+  });
+  const exact = await ask(server, 'swap 10 USDC to ETH');
+  assert.equal(exact.body.answer.mode, 'action_prep');
+  assert.equal(exact.body.answer.actionLink.href, `/routes?goal=${encodeURIComponent('Swap 10 USDC to ETH')}`);
+  // A USDC read that did not answer is said as ours, with the goal left for
+  // the person to complete.
+  const unread = await ask(server, 'Мне нужен свап моих всех usdc на eth');
+  assert.equal(unread.body.answer.mode, 'action_prep');
+  assert.match(unread.body.answer.text, /Баланс USDC сейчас не удалось прочитать: это наш сбой/);
+  assert.equal(unread.body.answer.actionLink.href, `/routes?goal=${encodeURIComponent('Swap USDC to ETH')}`);
+  usdc = { raw: '6898728', decimals: 6, block: '53337500' };
+  const all = await ask(server, 'Мне нужен свап моих всех usdc на eth');
+  assert.equal(all.body.answer.actionLink.href, `/routes?goal=${encodeURIComponent('Swap 6.898728 USDC to ETH')}`);
 });
 
 test('a repayment is described option by option, without advice', async () => {

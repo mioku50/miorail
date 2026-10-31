@@ -5,6 +5,8 @@ import {
   agentAnswerV1,
   agentCapabilitiesV2,
   agentRouteV2,
+  agentSwapAnswerV2,
+  agentSwapRequestV2,
   isRussianV1,
   type AgentAnswerV1,
 } from '../../../lib/ui/src/still/agentAnswers.js';
@@ -176,6 +178,8 @@ export interface StillAgentAskV3 {
   wallet: string;
   /** The wallet's report and its chain reading: the same cached service as /mine. */
   read: () => Promise<MirrorReadingV1>;
+  /** The wallet's USDC, for "swap all my USDC": the report reads only collateral. */
+  readUsdc?: () => Promise<{ raw: string; decimals: number; block: string } | null>;
   onStage?: (stage: StillAgentStageV1) => void;
   now?: Date;
 }
@@ -202,6 +206,15 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
   void rememberStillReadingV1(wallet, report);
   const sky = skyStateV1({ now: input.now ?? new Date() });
 
+  // A swap is written out for Swap AI; only "all"/"half" of USDC needs a read.
+  if (route === 'swap') {
+    const request = agentSwapRequestV2(question);
+    const usdcBalance =
+      request?.from === 'USDC' && request.amount?.kind === 'share' && input.readUsdc
+        ? ((await input.readUsdc().catch(() => null)) ?? 'unread')
+        : null;
+    return agentSwapAnswerV2({ question, report, usdcBalance });
+  }
   // A direct read and a request to act are the page's own answers: no model.
   if (route === 'fast' || route === 'action_prep') return agentAnswerV1({ question, report, sky, signedIn: true });
 

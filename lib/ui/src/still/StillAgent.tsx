@@ -201,9 +201,9 @@ function StillAgentSession({ model }: { model: StillAgentModelV1 }) {
     });
     const id = nextTurnId.current++;
     setDraft('');
-    // A calculation, and any question the page's rules do not know, are the
-    // server's: it reads the wallet itself and computes with the Mirror engine.
-    const remote = (route === 'analysis' || route === 'unknown') && model.signedIn && model.report !== null && typeof window !== 'undefined' && typeof window.fetch === 'function';
+    // A calculation, a swap of a balance, and any question the page's rules do
+    // not know, are the server's: it reads the wallet itself.
+    const remote = (route === 'analysis' || route === 'unknown' || route === 'swap') && model.signedIn && model.report !== null && typeof window !== 'undefined' && typeof window.fetch === 'function';
     if (!remote) {
       setTurns((previous) => [...previous, { id, question: text, answer: local(), stage: null, trace: [], receivedAt: Date.now() }]);
       return;

@@ -20,6 +20,10 @@ import { dividendMoneyV1 } from './dividendMoney.js';
 //   `action_prep` — a request to act ("borrow $500 and send it to a friend"):
 //                   the agent never signs or sends, and points to the screen
 //                   where the person reviews and signs it themselves.
+//   `swap`        — a request to swap one token for another: written out as a
+//                   goal for Swap AI, where routes are compared and simulated
+//                   and the person signs. The agent reads an amount ("all my
+//                   USDC") and never picks a route.
 //
 // A question none of these recognise goes to the server's planner when the
 // person is signed in, and gets the list of what the agent answers otherwise.
@@ -27,7 +31,7 @@ import { dividendMoneyV1 } from './dividendMoney.js';
 
 export type AgentTopicV1 = 'borrow' | 'safety' | 'closed' | 'dividends' | 'holdings' | 'analysis' | 'action_prep';
 export type AgentModeV2 = 'fast' | 'analysis' | 'action_prep' | 'refused';
-export type AgentRouteV2 = 'fast' | 'analysis' | 'action_prep' | 'unknown';
+export type AgentRouteV2 = 'fast' | 'analysis' | 'action_prep' | 'swap' | 'unknown';
 export type DividendReadStateV1 = 'not_loaded' | 'loading' | 'unavailable' | 'read';
 
 export interface AgentActionLinkV2 {
@@ -120,6 +124,7 @@ const FAST_V2: ReadonlyArray<[AgentTopicV1, RegExp]> = [
 /** Where a question goes. One rule for the page and the server, so they cannot disagree. */
 export function agentRouteV2(question: string): { route: AgentRouteV2; topic: AgentTopicV1 | null } {
   const whatIf = WHAT_IF_V2.test(question);
+  if (!whatIf && agentSwapRequestV2(question)) return { route: 'swap', topic: 'action_prep' };
   if (!whatIf && ACTION_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
   if (ANALYSIS_V2.some((pattern) => pattern.test(question))) return { route: 'analysis', topic: 'analysis' };
   if (whatIf && /(?:займу|возьму|borrow|take)\S*\s.*\d/iu.test(question)) return { route: 'analysis', topic: 'analysis' };
@@ -158,6 +163,197 @@ function parseDollarCentsV2(question: string): bigint | null {
   return BigInt(Math.round(num * 100));
 }
 
+// ---------------------------------------------------------------------------
+// A swap. Still lends; Swap AI swaps. On 2026-10-31 the operator asked for "a
+// swap of all my USDC to ETH" and was told the question could not be read as
+// a calculation. A swap is now written out as a goal for Swap AI: the agent
+// reads the amount from the wallet, never chooses a route, and never signs.
+// ---------------------------------------------------------------------------
+
+/** USDC on Base, from the code-owned registry, never from a model. */
+export const AGENT_BASE_USDC_V2 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+
+const SWAP_WORDS_V2 = new RegExp(`${EDGE}(?:свап|своп|обмен|обменя|поменя|сконверт|конверт|swap|exchange|convert)`, 'iu');
+const BUY_WORDS_V2 = new RegExp(`${EDGE}(?:купи|buy)`, 'iu');
+const SELL_WORDS_V2 = new RegExp(`${EDGE}(?:продай|продать|sell)`, 'iu');
+const LOAN_WORDS_V2 = /займ|кредит|долг|залог|погас|borrow|loan|debt|repay|collateral|lend/iu;
+const INTO_WORDS_V2 = new RegExp(`${EDGE}(?:на|в|to|into|for)\\s`, 'giu');
+const ALL_WORDS_V2 = new RegExp(`${EDGE}(?:all|everything|max|все|всё|весь|всех|вся|целиком|полностью)(?:$|[^\\p{L}])`, 'iu');
+const HALF_WORDS_V2 = /half|половин/iu;
+
+/** The tokens a swap can name: USDC and the assets Still reads. */
+const SWAP_TOKEN_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
+  ['USDC', /usdc|usd coin|юсдс|юсдц/iu],
+  ...AGENT_ASSET_WORDS_V2,
+];
+
+export interface AgentSwapRequestV2 {
+  from: string | null;
+  to: string | null;
+  /** An exact amount of `from` as typed, or a share of the wallet's `from`. */
+  amount: { kind: 'exact'; value: string } | { kind: 'share'; share: 'all' | 'half' } | null;
+}
+
+/** A request to swap, read by fixed rules; null when the question is not one. */
+export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null {
+  if (LOAN_WORDS_V2.test(question)) return null;
+  const named = SWAP_TOKEN_WORDS_V2.flatMap(([asset, pattern]) => {
+    const match = pattern.exec(question);
+    return match ? [{ asset, at: match.index }] : [];
+  }).sort((a, b) => a.at - b.at);
+  const buy = BUY_WORDS_V2.test(question);
+  const sell = SELL_WORDS_V2.test(question);
+  if (!SWAP_WORDS_V2.test(question) && !((buy || sell) && named.length > 0)) return null;
+
+  const dollars = /\$|доллар|\busd\b/iu.test(question);
+  let from: string | null = null;
+  let to: string | null = null;
+  if (buy && !sell) {
+    to = named.find((n) => n.asset !== 'USDC')?.asset ?? null;
+    from = named.find((n) => n.asset !== to)?.asset ?? 'USDC';
+  } else if (sell && !buy) {
+    from = named.find((n) => n.asset !== 'USDC')?.asset ?? named[0]?.asset ?? null;
+    to = named.find((n) => n.asset !== from)?.asset ?? 'USDC';
+  } else {
+    // "...на ETH", "...to ETH": the token after the word is the one received.
+    const into = [...question.matchAll(INTO_WORDS_V2)].map((m) => m.index ?? 0);
+    const received = named.find((n) => into.some((at) => at < n.at && n.at - at <= 6));
+    to = received?.asset ?? named[1]?.asset ?? null;
+    from = named.find((n) => n.asset !== to)?.asset ?? (dollars ? 'USDC' : null);
+  }
+  if (from !== null && from === to) to = null;
+
+  let amount: AgentSwapRequestV2['amount'] = null;
+  if (ALL_WORDS_V2.test(question)) amount = { kind: 'share', share: 'all' };
+  else if (HALF_WORDS_V2.test(question)) amount = { kind: 'share', share: 'half' };
+  else {
+    // To buy, the amount is what is spent: "for 10 USDC", "$10". A number of
+    // the token bought is an output, which Swap AI does not take.
+    const spent = buy && !sell
+      ? /(?:\$\s*(\d+(?:[.,]\d+)?))|(?:(\d+(?:[.,]\d+)?)\s*(?:usdc|\$|доллар|usd))/iu.exec(question)
+      : /(\d+(?:[.,]\d+)?)/.exec(question);
+    const raw = spent?.[1] ?? spent?.[2] ?? null;
+    if (raw && Number(raw.replace(',', '.')) > 0) amount = { kind: 'exact', value: raw.replace(',', '.') };
+  }
+  return { from, to, amount };
+}
+
+function atomicToDecimalV2(raw: bigint, decimals: number): string {
+  const unit = 10n ** BigInt(decimals);
+  const whole = raw / unit;
+  const fraction = (raw % unit).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return fraction ? `${whole}.${fraction}` : whole.toString();
+}
+
+export function agentSwapAnswerV2(input: {
+  question: string;
+  report: MirrorReport | null;
+  /** The wallet's USDC, read by the server when a share of it is asked for. */
+  usdcBalance?: { raw: string; decimals: number; block: string } | 'unread' | null;
+}): AgentAnswerV1 {
+  const ru = isRussianV1(input.question);
+  const request = agentSwapRequestV2(input.question);
+  const boundary = ru ? 'БЕЗОПАСНОСТЬ · только подготовка, подпись в кошельке' : 'BOUNDARY · preparation only, wallet signs';
+  const say = (text: string, goal: string | null): AgentAnswerV1 => ({
+    topic: 'action_prep',
+    mode: 'action_prep',
+    text,
+    sources: [boundary],
+    actionLink: {
+      href: goal ? `/routes?goal=${encodeURIComponent(goal)}` : '/routes',
+      label: ru ? 'Открыть в Swap AI →' : 'Open in Swap AI →',
+    },
+    engineFacts: { mode: 'action_prep', swapGoal: goal, autonomousSigningRefused: true },
+  });
+  if (!request?.from || !request.to) {
+    return say(
+      ru
+        ? 'Назовите, что на что обменять и сколько, например «обменяй 10 USDC на ETH». Обмены делает Swap AI: он сравнивает маршруты и проверяет обмен симуляцией, а подписываете вы в своём кошельке.'
+        : 'Name what to swap for what, and how much, for example “swap 10 USDC to ETH”. Swaps are made in Swap AI: it compares routes and simulates the swap, and you sign in your own wallet.',
+      null,
+    );
+  }
+  const { from, to } = request;
+  // A stock or cbBTC is named by its address, read from the chain; USDC and
+  // ETH by the symbols Swap AI resolves from its own registry.
+  const line = input.report?.assets.find((asset) => asset.symbol === from) ?? null;
+  const refOf = (symbol: string) =>
+    symbol === 'USDC' || symbol === 'ETH'
+      ? symbol
+      : input.report?.assets.find((asset) => asset.symbol === symbol)?.token ?? symbol;
+  const goalFor = (amount: string | null) => `Swap ${amount ? `${amount} ` : ''}${refOf(from)} to ${refOf(to)}`;
+  const signs = ru
+    ? 'Swap AI сравнит маршруты и проверит обмен симуляцией; подписываете вы, в своём кошельке.'
+    : 'Swap AI compares routes and simulates the swap; you sign it in your own wallet.';
+
+  if (request.amount?.kind === 'exact') {
+    return say(
+      ru
+        ? `Подготовил обмен: ${request.amount.value} ${from} на ${to}. ${signs}`
+        : `Prepared: swap ${request.amount.value} ${from} to ${to}. ${signs}`,
+      goalFor(request.amount.value),
+    );
+  }
+  if (request.amount === null) {
+    return say(
+      ru
+        ? `Подготовил обмен ${from} на ${to}: укажите сумму в Swap AI. ${signs}`
+        : `Prepared a swap of ${from} to ${to}: name the amount in Swap AI. ${signs}`,
+      goalFor(null),
+    );
+  }
+  if (from === 'ETH') {
+    return say(
+      ru
+        ? `Назовите сумму ETH: часть ETH должна остаться на комиссии сети, поэтому «весь ETH» я не считаю. ${signs}`
+        : `Name an amount of ETH: some ETH has to stay for network fees, so I do not work out “all of it”. ${signs}`,
+      goalFor(null),
+    );
+  }
+  // Null: nobody is signed in to read. 'unread': a read that did not answer.
+  const held =
+    from === 'USDC'
+      ? (input.usdcBalance ?? null)
+      : !input.report
+        ? null
+        : line?.wallet
+          ? { raw: line.wallet.raw, decimals: line.wallet.decimals, block: input.report.reading.block }
+          : 'unread';
+  if (held === null || held === 'unread') {
+    return say(
+      held === null
+        ? ru
+          ? `Войдите, и я прочитаю ваш ${from}, или укажите сумму в Swap AI. ${signs}`
+          : `Sign in and I will read your ${from}, or name the amount in Swap AI. ${signs}`
+        : ru
+          ? `Баланс ${from} сейчас не удалось прочитать: это наш сбой, а не факт о кошельке. Укажите сумму в Swap AI. ${signs}`
+          : `Your ${from} balance could not be read just now: that is our failure, not a fact about your wallet. Name the amount in Swap AI. ${signs}`,
+      goalFor(null),
+    );
+  }
+  const whole = BigInt(held.raw);
+  const share = request.amount.share === 'all' ? whole : whole / 2n;
+  const block = Number(held.block).toLocaleString('en-US');
+  if (share === 0n) {
+    return say(
+      ru
+        ? `В вашем кошельке сейчас 0 ${from} (блок Base ${block}), обменивать нечего.`
+        : `Your wallet holds 0 ${from} right now (Base block ${block}), so there is nothing to swap.`,
+      null,
+    );
+  }
+  const amount = atomicToDecimalV2(share, held.decimals);
+  const which = request.amount.share === 'all'
+    ? ru ? `весь ваш ${from} на блоке Base ${block}` : `all your ${from} at Base block ${block}`
+    : ru ? `половина вашего ${from} на блоке Base ${block}` : `half your ${from} at Base block ${block}`;
+  return say(
+    ru
+      ? `Подготовил обмен: ${amount} ${from} (${which}) на ${to}. ${signs}`
+      : `Prepared: swap ${amount} ${from} (${which}) to ${to}. ${signs}`,
+    goalFor(amount),
+  );
+}
+
 export function agentAnswerV1(input: {
   question: string;
   report: MirrorReport | null;
@@ -167,7 +363,8 @@ export function agentAnswerV1(input: {
   signedIn?: boolean;
 }): AgentAnswerV1 {
   const ru = isRussianV1(input.question);
-  const { topic } = agentRouteV2(input.question);
+  const { route, topic } = agentRouteV2(input.question);
+  if (route === 'swap') return agentSwapAnswerV2({ question: input.question, report: input.report, usdcBalance: null });
   const { report, sky } = input;
   const read = report ? [ru ? `ЧТЕНИЕ · блок Base ${Number(report.reading.block).toLocaleString('en-US')}` : `READ · Base block ${Number(report.reading.block).toLocaleString('en-US')}`] : [];
   const terms = report ? [ru ? `УСЛОВИЯ · Still ${report.terms.version}` : `TERMS · Still ${report.terms.version}`] : [];
