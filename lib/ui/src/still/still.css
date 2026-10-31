@@ -191,6 +191,28 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-btns { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin: 16px 20px 0; }
 
 .still-coming { list-style: none; margin: 6px 0 0; padding: 0; }
+/* The quiet doors at the foot of Home: one line and one action each. */
+.still-btns > :only-child, .still-btns > :first-child:nth-last-child(3) { grid-column: 1 / -1; }
+/* One column at every width: Home's text column is narrow, and a row reads as a list. */
+.still-extras { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; margin-top: 22px; max-width: 560px; }
+.still-extra {
+  display: flex; align-items: center; gap: 12px; min-width: 0; padding: 12px 14px;
+  border: 1px solid var(--sm-line); border-radius: 16px; background: transparent;
+  color: var(--sm-ink); text-decoration: none;
+}
+a.still-extra:hover { border-color: var(--sm-link); }
+.still-extra-icon { display: inline-grid; place-items: center; flex: none; width: 36px; height: 36px; border-radius: 12px; background: var(--sm-chip); color: var(--sm-ink); }
+.still-extra-icon svg { width: 20px; height: 20px; }
+.still-extra-body { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.still-extra-title { font-size: 14px; font-weight: 600; }
+.still-extra-note { font-size: 13px; line-height: 1.35; color: var(--sm-ink2); }
+.still-extra-go { flex: none; font-size: 20px; color: var(--sm-ink2); }
+.still-extra-action {
+  flex: none; height: 32px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--sm-line);
+  background: var(--sm-chip); color: var(--sm-ink); font: inherit; font-size: 13px; font-weight: 500;
+  display: inline-flex; align-items: center; text-decoration: none; cursor: pointer; white-space: nowrap;
+}
+.still-extra-action[disabled] { opacity: 0.6; cursor: progress; }
 .still-coming li { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; font-size: 14px; line-height: 1.4; }
 .still-coming svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
 .still-coming .when { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 500; margin-right: 2px; }

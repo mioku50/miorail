@@ -7,6 +7,7 @@ import { SkyLayer } from './Sky';
 import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
 import { StillMobile } from './StillMobile';
+import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
 
 void React;
 
@@ -102,6 +103,70 @@ export interface StillHomeModelV1 {
   /** Why the wallet could not be read. Never a claim about the wallet. */
   failed: string | null;
   onRetry: () => void;
+  /** Alerts in Telegram, where a bot exists. */
+  telegram?: TelegramAlertsModelV1 | null;
+}
+
+/** An assistant asking: a speech bubble with a spark. */
+function AssistantIconV1() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M4 5.5A2.5 2.5 0 0 1 6.5 3h11A2.5 2.5 0 0 1 20 5.5v8a2.5 2.5 0 0 1-2.5 2.5H10l-4.2 3.5V16H6.5A2.5 2.5 0 0 1 4 13.5z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M12 6.6l.9 2.1 2.1.9-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9z" fill="currentColor" />
+    </svg>
+  );
+}
+
+/** Telegram's paper plane, drawn plainly. */
+function TelegramIconV1() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M20.5 4.2L3.6 10.8c-.8.3-.8 1.4 0 1.7l4.2 1.4 1.6 5c.2.7 1.1.9 1.6.4l2.4-2.2 4.3 3.1c.6.4 1.4.1 1.6-.6l2.8-13.4c.2-.9-.7-1.6-1.6-1.1z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+      <path d="M7.8 13.9l9.6-6.3-7.2 7.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/**
+ * Two quiet doors at the foot of Home: Still in an assistant, and alerts in
+ * Telegram. Neither is the page's subject, so each is one line and one action.
+ */
+export function StillExtras({ telegram }: { telegram?: TelegramAlertsModelV1 | null }) {
+  const view = telegram?.view ?? null;
+  return (
+    <div className="still-section still-extras">
+      <StillLink href={STILL_ASSISTANTS_V1.path} className="still-extra">
+        <span className="still-extra-icon"><AssistantIconV1 /></span>
+        <span className="still-extra-body">
+          <span className="still-extra-title">Still in your assistant</span>
+          <span className="still-extra-note">Claude, ChatGPT, Cursor or Codex read the same numbers. Your wallet signs every step.</span>
+        </span>
+        <span className="still-extra-go" aria-hidden="true">›</span>
+      </StillLink>
+      {telegram && view ? (
+        <div className="still-extra" aria-label="Telegram alerts">
+          <span className="still-extra-icon"><TelegramIconV1 /></span>
+          <span className="still-extra-body">
+            <span className="still-extra-title">{view.state === 'linked' ? 'Telegram alerts are on' : 'Alerts in Telegram'}</span>
+            <span className="still-extra-note">{view.note}</span>
+            {view.error ? <span className="still-extra-note" role="status">{view.error}</span> : null}
+          </span>
+          {view.link ? (
+            <a className="still-extra-action" href={view.link.href} target="_blank" rel="noreferrer">{view.link.label}</a>
+          ) : view.action ? (
+            <button
+              type="button"
+              className="still-extra-action"
+              disabled={view.action.busy}
+              onClick={view.action.kind === 'disconnect' ? telegram.onDisconnect : telegram.onConnect}
+            >
+              {view.action.busy ? `${view.action.label}…` : view.action.kind === 'connect' ? 'Connect' : view.action.label}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
@@ -151,7 +216,6 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <StillLink href="/assets" className="still-btn sec">Your assets</StillLink>
           <StillLink href="/agent" className="still-btn sec">Ask Still</StillLink>
         </> : null}
-        <StillLink href={STILL_ASSISTANTS_V1.path} className="still-btn sec">{STILL_ASSISTANTS_V1.label}</StillLink>
       </div>
       {view ? (
         <details className="still-section still-modelled-room">
@@ -163,6 +227,8 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
         </details>
       ) : null}
       {view ? <StillComingUp items={view.comingUp} /> : null}
+      {/* The doors stay when the wallet could not be read: they do not need it. */}
+      {view || model.loading || model.failed ? <StillExtras telegram={model.telegram} /> : null}
       </div>
     </div>
   );
@@ -235,12 +301,12 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       ) : null}
       <div className="still-btns">
         <a href={model.signInHref} className="still-btn">Sign in</a>
-        <StillLink href={STILL_ASSISTANTS_V1.path} className="still-btn sec">{STILL_ASSISTANTS_V1.label}</StillLink>
       </div>
       <p className="still-section still-note">
         Still models up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. A live loan needs a fresh review and your wallet approval.
         Not offered to US persons.
       </p>
+      <StillExtras />
       </div>
     </div>
   );

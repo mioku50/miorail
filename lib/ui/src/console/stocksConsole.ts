@@ -12,9 +12,6 @@ import {
   useRwaUseAccess,
   useAerodromePoolSpot,
   type StocksReadAccessV1,
-  useConnectTelegram,
-  useDisconnectTelegram,
-  useTelegramLink,
   useDividendCalendar,
   useMyStocksToday,
   useMeasureMyStockCashOut,
@@ -46,7 +43,7 @@ import { stockQuoteViewsByKeyV1 } from './stockQuotesView';
 import { stockUsesViewV1 } from './stockUsesView';
 import { stockChartViewV1 } from './stockChartView';
 import { dividendCalendarViewV1 } from './dividendCalendarView';
-import { telegramAlertsViewV1 } from './telegramAlertsView';
+import { useTelegramAlertsV1 } from './useTelegramAlerts';
 import { swapProviderDisplayNameV1 } from './providerDiagnostics';
 import {
   MARKET_REALITY_SIZES_V1,
@@ -974,46 +971,8 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
     [dividendRead.data],
   );
 
-  // Alerts in Telegram: signed in only, and only where a bot exists. A link
-  // that was issued is polled for until the reader presses Start or it lapses.
-  const [telegramPending, setTelegramPending] = useState<{ url: string; expiresAt: string } | null>(null);
-  const [telegramFailed, setTelegramFailed] = useState<'connect' | 'disconnect' | null>(null);
-  const telegramLink = useTelegramLink({ enabled: enabled && session, poll: telegramPending !== null });
-  const connectTelegram = useConnectTelegram();
-  const disconnectTelegram = useDisconnectTelegram();
-  useEffect(() => {
-    if (!telegramPending) return;
-    if (telegramLink.data?.linked) {
-      setTelegramPending(null);
-      return;
-    }
-    const left = Date.parse(telegramPending.expiresAt) - Date.now();
-    const timer = setTimeout(() => setTelegramPending(null), Math.max(0, left));
-    return () => clearTimeout(timer);
-  }, [telegramPending, telegramLink.data?.linked]);
-  const telegramView = telegramAlertsViewV1({
-    status: session ? telegramLink.data : null,
-    pending: telegramPending,
-    busy: connectTelegram.isPending ? 'connect' : disconnectTelegram.isPending ? 'disconnect' : null,
-    failed: telegramFailed,
-    now: new Date(),
-  });
-  const telegram = telegramView
-    ? {
-        view: telegramView,
-        onConnect: () => {
-          setTelegramFailed(null);
-          connectTelegram.mutate(undefined, {
-            onSuccess: (issued) => setTelegramPending(issued),
-            onError: () => setTelegramFailed('connect'),
-          });
-        },
-        onDisconnect: () => {
-          setTelegramFailed(null);
-          disconnectTelegram.mutate(undefined, { onError: () => setTelegramFailed('disconnect') });
-        },
-      }
-    : null;
+  // Alerts in Telegram, the same hook Still's Home uses.
+  const telegram = useTelegramAlertsV1({ enabled: enabled && session });
 
   // Call the reopen. Read for everybody; a pick needs no wallet. Each tap sends
   // the whole set, one request at a time: a tap made while one is in flight

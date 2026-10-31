@@ -8,6 +8,7 @@ import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
 import { EXAMPLE, SATURDAY, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
+import { telegramAlertsViewV1 } from '../src/console/telegramAlertsView';
 import {
   agentAnswerV1,
   agentRouteV2,
@@ -148,13 +149,32 @@ describe('Home', () => {
     assert.doesNotMatch(html, /Available to spend/);
     assert.match(html, /Owed \$240\.17/);
     assert.match(html, /role="img"/);
-    assert.match(html, /href="\/assistants"[^>]*>For assistants<\/a>/);
+    assert.match(html, /<a[^>]*href="\/assistants"[^>]*>.*Still in your assistant/);
     assert.doesNotMatch(html, /You can borrow|guaranteed|\bSafe\b/i);
+  });
+
+  it('offers alerts in Telegram in one line, in the state the one view gives', () => {
+    const sky = skyStateV1({ now: WEDNESDAY });
+    const r = report();
+    const telegram = (linked: boolean) => ({
+      view: telegramAlertsViewV1({ status: { available: true, linked }, pending: null, busy: null, failed: null, now: WEDNESDAY })!,
+      onConnect: () => {},
+      onDisconnect: () => {},
+    });
+    const off = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, telegram: telegram(false) }} />);
+    assert.match(off, /Alerts in Telegram/);
+    assert.match(off, /Dividends, issuer changes and your watches, in a Telegram chat\./);
+    assert.match(off, />Connect<\/button>/);
+    const on = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, telegram: telegram(true) }} />);
+    assert.match(on, /Telegram alerts are on/);
+    assert.match(on, />Disconnect<\/button>/);
+    // No bot, no card; and a visitor is never offered it.
+    assert.doesNotMatch(renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, telegram: null }} />), /Telegram/);
   });
 
   it('keeps the assistants link available when the wallet could not be read', () => {
     const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky: skyStateV1({ now: WEDNESDAY }), view: null, reading: null, loading: false, failed: 'unavailable', onRetry: () => {} }} />);
-    assert.match(html, /href="\/assistants"[^>]*>For assistants<\/a>/);
+    assert.match(html, /<a[^>]*href="\/assistants"[^>]*>.*Still in your assistant/);
     assert.doesNotMatch(html, /\$\d/);
   });
 
@@ -355,7 +375,7 @@ describe('the frame', () => {
     assert.equal(stillTabForPathV1('/market?key=x'), 'stocks');
     assert.equal(stillTabForPathV1('/borrow'), 'assets');
     assert.equal(stillTabForPathV1('/borrow/abc'), 'assets');
-    for (const path of ['/routes', '/opportunities', '/investigate', '/radar', '/portfolio', '/extensions', '/settings', '/today', '/more', '/assistants']) {
+    for (const path of ['/routes', '/opportunities', '/investigate', '/radar', '/portfolio', '/watch', '/extensions', '/settings', '/today', '/more', '/assistants']) {
       assert.equal(stillTabForPathV1(path), 'more', path);
     }
   });
@@ -367,7 +387,10 @@ describe('the frame', () => {
     assert.match(html, /Source \(AGPL-3\.0\)/);
     assert.match(html, /data-sky="day"/);
     const more = renderToStaticMarkup(<StillMore model={{ sky: skyStateV1({ now: WEDNESDAY }), account: null, signInHref: '/signin' }} />);
-    for (const label of ['Swap AI', 'Discover', 'Investigate', 'Radar', 'B20 controls', 'Wallet MCP', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
+    for (const label of ['Swap AI', 'Discover', 'Watch', 'Wallet MCP', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
+    // Investigate, B20 controls and Radar are one page now, and More has one door to it.
+    assert.match(more, /href="\/watch"/);
+    assert.doesNotMatch(more, /href="\/(?:investigate|radar|portfolio)"/);
     const assistants = renderToStaticMarkup(<StillAssistants model={{ sky: skyStateV1({ now: WEDNESDAY }) }} />);
     assert.match(assistants, /claude mcp add --transport http miorail https:\/\/miorail\.xyz\/mcp\/private/);
     assert.match(assistants, /Use the Miorail plugin for Wallet MCP: https:\/\/miorail\.xyz\/wallet-mcp\/miorail\.md/);

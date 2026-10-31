@@ -2425,3 +2425,21 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 /* The stock's name on its own card may take two lines on a phone rather than
    lose its end: "NVIDIA Corpora…" beside the price. */
 .mio-console .mr-stock-id h3 { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow-wrap: anywhere; }
+
+/* ---- Watch: Investigate, B20 controls and Radar on one page ---- */
+.watch-page { display: flex; flex-direction: column; gap: 28px; min-width: 0; }
+.watch-intro { display: flex; flex-direction: column; gap: 10px; }
+.watch-intro .lnote { margin: 0; max-width: 72ch; }
+.watch-jump { display: flex; flex-wrap: wrap; gap: 8px; }
+.watch-jump a {
+  display: inline-flex; align-items: center; height: 32px; padding: 0 14px; border-radius: 999px;
+  border: 1px solid var(--line); background: var(--panel2); color: var(--ink); font-size: 13px; text-decoration: none;
+}
+.watch-jump a:hover { border-color: var(--accent, var(--ink)); }
+.watch-section { min-width: 0; scroll-margin-top: 80px; }
+.watch-section + .watch-section { padding-top: 24px; border-top: 1px solid var(--line); }
+.watch-title { margin: 0 0 12px; font-size: 20px; font-weight: 600; color: var(--title-ink, var(--ink)); }
+.watch-rail-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: 12px; margin-bottom: 12px; }
+.watch-rail-cards:empty { display: none; }
+/* Radar's own hero is a page title; inside Watch it is the section's card. */
+.watch-section .radar-hero h2 { font-size: 22px; }

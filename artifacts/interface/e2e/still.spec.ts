@@ -94,7 +94,7 @@ for (const width of [390, 1280]) {
     await expect(page.getByText('Owed $240.17', { exact: true })).toBeVisible();
     await expect(page.getByRole('img', { name: /NVDA.* on the left hold up a \$240\.17 loan on the right/ })).toBeVisible();
     await expect(page.getByText('≈ NOV 12 Apple dividend · ≈ $0.19 as more AAPLc, an estimate', { exact: true })).toBeVisible();
-    await expect(page.getByRole('link', { name: 'For assistants', exact: true })).toHaveAttribute('href', '/assistants');
+    await expect(page.getByRole('link', { name: /^Still in your assistant/ })).toHaveAttribute('href', '/assistants');
     await noSidewaysScroll(page);
     await page.screenshot({ path: testInfo.outputPath(`home-signed-in-${width}.png`), fullPage: true });
 
@@ -144,7 +144,7 @@ for (const width of [390, 1280]) {
 test('Home and the command palette reach all Still pages without another wallet read', async ({ page }) => {
   const { reads, writes } = await install(page, true, MONDAY);
   await page.goto('/');
-  await page.getByRole('link', { name: 'For assistants', exact: true }).click();
+  await page.getByRole('link', { name: /^Still in your assistant/ }).click();
   await expect(page).toHaveURL(/\/assistants$/);
   for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants']] as const) {
     await page.keyboard.press('Control+k');

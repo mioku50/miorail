@@ -20,6 +20,8 @@ export interface TelegramAlertsViewV1 {
   state: 'connect' | 'open' | 'linked';
   title: string;
   body: string;
+  /** The same state in one line, for a place where Telegram is not the subject. */
+  note: string;
   /** Null while a link is waiting to be opened. */
   action: { kind: 'connect' | 'disconnect'; label: string; busy: boolean } | null;
   link: { href: string; label: string } | null;
@@ -51,6 +53,7 @@ export function telegramAlertsViewV1(input: {
     return {
       state: 'linked',
       title: 'Telegram alerts are on',
+      note: 'On for this wallet. /stop in the chat, or Disconnect here, turns it off.',
       body: `This wallet is connected to a Telegram chat. It hears ${WHAT_ARRIVES_V1}. /stop in the chat, or Disconnect here, turns it off.`,
       action: { kind: 'disconnect', label: 'Disconnect', busy: input.busy === 'disconnect' },
       link: null,
@@ -65,6 +68,7 @@ export function telegramAlertsViewV1(input: {
       state: 'open',
       title: 'Alerts in Telegram',
       body: 'Open the bot and press Start. The link works once, for ten minutes, and connects this wallet only.',
+      note: 'Open the bot and press Start. The link works once, for ten minutes.',
       action: null,
       link: { href: input.pending!.url, label: `Open @${bot} in Telegram` },
       error,
@@ -75,6 +79,7 @@ export function telegramAlertsViewV1(input: {
     state: 'connect',
     title: 'Alerts in Telegram',
     body: `Get what Miorail knows about your stocks in Telegram: ${WHAT_ARRIVES_V1}. The bot never asks you to sign anything.`,
+    note: 'Dividends, issuer changes and your watches, in a Telegram chat. The bot never asks you to sign.',
     action: { kind: 'connect', label: 'Connect Telegram', busy: input.busy === 'connect' },
     link: null,
     error,

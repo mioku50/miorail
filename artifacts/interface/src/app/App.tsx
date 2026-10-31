@@ -70,17 +70,14 @@ const PublicFoundPage = lazy(() =>
   import('../features/proof/PublicFoundPage').then((m) => ({ default: m.PublicFoundPage })),
 );
 
-const B20WatchPage = lazy(() =>
-  import('../features/b20/B20WatchPage').then((m) => ({ default: m.B20WatchPage })),
+const WatchPage = lazy(() =>
+  import('../features/watch/WatchPage').then((m) => ({ default: m.WatchPage })),
 );
 const OpportunitiesPage = lazy(() =>
   import('../features/opportunities/OpportunitiesPage').then((m) => ({ default: m.OpportunitiesPage })),
 );
 const RwaDiscoverPage = lazy(() =>
   import('../features/rwa/RwaDiscoverPage').then((m) => ({ default: m.RwaDiscoverPage })),
-);
-const InvestigatePage = lazy(() =>
-  import('../features/rwa/InvestigatePage').then((m) => ({ default: m.InvestigatePage })),
 );
 const MarketRealityPage = lazy(() =>
   import('../features/rwa/MarketRealityPage').then((m) => ({ default: m.MarketRealityPage })),
@@ -95,9 +92,6 @@ const StillBorrowPage = lazy(() =>
 );
 const StillRepayPage = lazy(() => import('../features/still/StillRepayPage').then(m => ({ default: m.StillRepayPage })));
 const LendingReviewPage = lazy(() => import('../features/rwa/LendingReviewPage').then(m => ({ default: m.LendingReviewPage })));
-const MarketRealityRadarPage = lazy(() =>
-  import('../features/rwa/MarketRealityRadarPage').then((m) => ({ default: m.MarketRealityRadarPage })),
-);
 const TodayPage = lazy(() =>
   import('../features/today/TodayPage').then((m) => ({ default: m.TodayPage })),
 );
@@ -327,30 +321,18 @@ export function App() {
           <TodayPage />
         </Route>
 
-        {/* Phase 12.2 — tenant-scoped changes to exact watched market
-            questions. A failed read is a gap and never appears as an event. */}
-        <Route path="/radar">
+        {/* Watch — Investigate, B20 controls and Radar on one page, each
+            half empty alone. The three old addresses keep working: each
+            redirects here with its query and the hash of its section, so a
+            Discover link's `?token=` reaches the section it was meant for. */}
+        <Route path="/watch">
           <RequireSession>
-            <MarketRealityRadarPage />
+            <WatchPage />
           </RequireSession>
         </Route>
-
-        {/* Phase 7 — one address, read as deeply as the evidence allows. The
-            address lives in `?token=`, so a refresh, a Back press and a link
-            from Discover all land on the same read. */}
-        <Route path="/investigate">
-          <RequireSession>
-            <InvestigatePage />
-          </RequireSession>
-        </Route>
-
-        {/* Portfolio — the B20 tokens you hold and what their controls have
-            done since. No longer buried inside a technical tab called B20. */}
-        <Route path="/portfolio">
-          <RequireSession>
-            <B20WatchPage />
-          </RequireSession>
-        </Route>
+        <Route path="/investigate">{() => <Redirect to={`/watch${window.location.search}#investigate`} replace />}</Route>
+        <Route path="/portfolio">{() => <Redirect to={`/watch${window.location.search}#tokens`} replace />}</Route>
+        <Route path="/radar">{() => <Redirect to={`/watch${window.location.search}#radar`} replace />}</Route>
 
         {/* Wallet MCP (formerly Base MCP): plugins, the console and Miorail's
             own plugin. Public since 2026-10-04, like /stocks: a visitor sees
@@ -379,7 +361,7 @@ export function App() {
         </Route>
 
         {/* The old B20 path. Bookmarked by anyone who used the tab. */}
-        <Route path="/b20">{() => <Redirect to="/portfolio" replace />}</Route>
+        <Route path="/b20">{() => <Redirect to="/watch#tokens" replace />}</Route>
 
         {/* Activity — route runs, paid intelligence, and proofs once a route
             is signed. No longer wrapped in DeepLink: it renders its own

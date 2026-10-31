@@ -6,7 +6,6 @@ import {
   WalletBalancesCard,
   B20ExitCoverageCard,
   B20WatchScreen,
-  ConsoleShell,
   B20_EXIT_ANCHOR_V1,
   B20_PORTFOLIO_ANCHOR_V1,
   EXIT_PROFILE_DEFAULTS_V1,
@@ -22,12 +21,6 @@ import {
   usdcToAtomicV1,
   type ExitProfileV1,
   type B20ConsoleScopeViewV1,
-  chainBlockNumberV1,
-  chainGasLabelV1,
-  chainUnavailableReasonV1,
-  chainLabelV1,
-  consoleSectionLabelV1,
-  useConsoleTheme,
 } from '@mioagent/ui';
 import {
   useAddB20Watch,
@@ -59,7 +52,6 @@ import {
   transactionHashesFromReceipts,
 } from '@mioagent/wallet-actions';
 import { useB20ExitProofPayment } from '@mioagent/x402-actions';
-import { useConsoleNav } from '../console/useConsoleNav';
 import type { MarketObservationV1 } from '@mioagent/opportunity-rail/marketRails';
 
 // ---------------------------------------------------------------------------
@@ -123,9 +115,6 @@ function formatBalanceV1(atomic: string | null, decimals: number | null): string
   return fraction ? `${whole}.${fraction}` : whole.toString();
 }
 
-function shortAddress(address: string | undefined): string | null {
-  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
-}
 
 /**
  * The exit check, in the shape the shared coverage projection reads.
@@ -194,7 +183,11 @@ export function positiveAtomicBalanceV1(value: string | null | undefined): boole
   }
 }
 
-export function B20WatchPage() {
+/**
+ * B20 controls, as the "Your tokens" section of Watch. The page around it owns
+ * the console shell; this section renders its own rail cards inline.
+ */
+export function B20WatchSection() {
   const [, navigate] = useLocation();
   // Discover hands a token over in the URL. This page has carried a `?token=`
   // link pointed at it since the feed had actions at all, and never read it —
@@ -203,10 +196,6 @@ export function B20WatchPage() {
   // parameter is text a stranger can choose.
   const search = useSearch();
   const { address } = useAccount();
-  const { theme, setTheme } = useConsoleTheme();
-  // T70 §8 — the shared section table. Portfolio is a primary surface now, not
-  // a technical tab called "B20" hidden beside Routes.
-  const consoleNav = useConsoleNav('portfolio');
   const status = useStatus();
   // T73-UI — the rails come from the server already ranked. Nothing below
   // re-sorts or re-derives them.
@@ -714,7 +703,12 @@ export function B20WatchPage() {
   // it — and does NOT run the check: a URL is not a press, and one exit check
   // is a dozen-odd metered router calls. The user presses the button that is
   // now pointed at the right token.
-  const handedOverToken = useMemo(() => parseDiscoverFocusV1(search).tokenAddress, [search]);
+  // On Watch the same `?token=` may be meant for Investigate: a handover is
+  // this section's only when the link points here.
+  const handedOverToken = useMemo(
+    () => (window.location.hash === '#tokens' ? parseDiscoverFocusV1(search).tokenAddress : null),
+    [search],
+  );
   const consumedToken = useRef<string | null>(null);
   useEffect(() => {
     if (handedOverToken === null || consumedToken.current === handedOverToken) return;
@@ -753,50 +747,8 @@ export function B20WatchPage() {
   );
 
   return (
-    <ConsoleShell
-      header={{
-        // The section's OWN label, and nothing after it. The rail said "B20",
-        // the breadcrumb said "Portfolio" and the page title said "Control
-        // watch" — three names for one place, on one screen. Naming the
-        // section correctly and then appending a fourth word for the same page
-        // fixed two thirds of that and left the reader one name too many: a
-        // second crumb element has to be a place you can still go back FROM.
-        crumb: [consoleSectionLabelV1('portfolio')],
-        nav: consoleNav.header,
-        onNavigate: consoleNav.navigate,
-        blockNumber: chainBlockNumberV1(status.data ?? null),
-        gasLabel: chainGasLabelV1(status.data ?? null),
-        chainUnavailableReason: chainUnavailableReasonV1(status.data ?? null),
-        networkLabel: chainLabelV1(status.data?.chainId),
-        connected: Boolean(address) && status.data?.rpc?.status === 'connected',
-        walletLabel: shortAddress(address),
-      }}
-      left={{
-        nav: consoleNav.rail,
-        sessions: [],
-        sessionCount: '0',
-        proofs: [],
-        proofCount: '0',
-        // T70 §2 — Budget & payments is on Settings now, for every surface.
-        onOpenSettings: () => consoleNav.navigate('settings'),
-      }}
-      footer={{
-        adaptersLabel: '—',
-        sourcesLabel: String(sweep.data?.tokens.length ?? 0),
-        spendLabel: '$0',
-        blockNumber: chainBlockNumberV1(status.data ?? null),
-      }}
-      right={marketRail}
-      railFold={marketRail}
-      theme={theme}
-      onThemeChange={setTheme}
-      // The B20 tab has no sessions and no proof list of its own: starting a
-      // goal or opening a proof belongs to the surfaces that own them, so those
-      // handlers navigate there rather than doing nothing here.
-      onNewGoal={() => consoleNav.navigate('routes')}
-      onSelectSession={() => consoleNav.navigate('routes')}
-      onSelectProof={() => consoleNav.navigate('activity')}
-    >
+    <>
+      <div className="watch-rail-cards">{marketRail}</div>
       {entryReview && entryState && (
         <B20EntryReviewCard
           review={entryReview}
@@ -937,6 +889,6 @@ export function B20WatchPage() {
           sweep.mutate({ tokens: sweepTokens });
         }}
       />
-    </ConsoleShell>
+    </>
   );
 }

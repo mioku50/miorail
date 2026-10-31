@@ -66,6 +66,8 @@ export * from './InvestigateScreen';
 export * from './watchSlaView';
 export * from './StocksAskPanel';
 export * from './stocksConsole';
+export * from './useTelegramAlerts';
+export type { TelegramAlertsModelV1 } from './TelegramAlertsStrip';
 export * from './stocksSections';
 export * from './stockChartView';
 export * from './todayView';

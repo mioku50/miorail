@@ -1,17 +1,9 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useLocation, useSearch } from 'wouter';
-import { useAccount } from 'wagmi';
 import {
   B20PublicContextCard,
-  ConsoleShell,
   InvestigateScreen,
-  chainBlockNumberV1,
-  chainGasLabelV1,
-  chainUnavailableReasonV1,
-  chainLabelV1,
-  consoleSectionPathV1,
   investigateViewV1,
-  useConsoleTheme,
 } from '@mioagent/ui';
 import {
   useAddB20Watch,
@@ -19,7 +11,6 @@ import {
   useRwaAddressDossier,
   useStatus,
 } from '@mioagent/api-client-react';
-import { useConsoleNav } from '../console/useConsoleNav';
 import { useUiStore } from '../../lib/state';
 
 // ---------------------------------------------------------------------------
@@ -36,9 +27,6 @@ import { useUiStore } from '../../lib/state';
 
 const ADDRESS_V1 = /^0x[0-9a-fA-F]{40}$/;
 
-function shortAddressV1(address: string | undefined): string | null {
-  return address ? `${address.slice(0, 6)}…${address.slice(-4)}` : null;
-}
 
 function failureCopyV1(error: unknown): string {
   const message = error instanceof Error ? error.message : String(error ?? '');
@@ -57,17 +45,17 @@ function failureCopyV1(error: unknown): string {
   return 'This address could not be read on this server. Nothing here is a statement about it.';
 }
 
-export function InvestigatePage() {
+/** Investigate, as the first section of Watch: any Base address, read in full. */
+export function InvestigateSection() {
   const [, navigate] = useLocation();
   const search = useSearch();
-  const { address } = useAccount();
-  const { theme, setTheme } = useConsoleTheme();
   const status = useStatus();
-  const nav = useConsoleNav('investigate');
   const showToast = useUiStore((state) => state.showToast);
 
   // The URL is the source of truth; the input box is a draft of it.
   const urlToken = useMemo(() => {
+    // A `?token=` handed to "Your tokens" (#tokens) is not an address to read here.
+    if (window.location.hash === '#tokens') return null;
     const value = new URLSearchParams(search).get('token') ?? '';
     return ADDRESS_V1.test(value) ? value.toLowerCase() : null;
   }, [search]);
@@ -105,45 +93,10 @@ export function InvestigatePage() {
       return;
     }
     setRefused(null);
-    navigate(`/investigate?token=${value.toLowerCase()}`);
+    navigate(`/watch?token=${value.toLowerCase()}#investigate`);
   };
 
   return (
-    <ConsoleShell
-      header={{
-        crumb: ['Investigate'],
-        nav: nav.header,
-        onNavigate: nav.navigate,
-        blockNumber: chainBlockNumberV1(status.data ?? null),
-        gasLabel: chainGasLabelV1(status.data ?? null),
-        chainUnavailableReason: chainUnavailableReasonV1(status.data ?? null),
-        networkLabel: chainLabelV1(status.data?.chainId),
-        connected: Boolean(address) && status.data?.rpc?.status === 'connected',
-        walletLabel: shortAddressV1(address),
-      }}
-      left={{
-        nav: nav.rail,
-        sessions: [],
-        sessionCount: '0',
-        proofs: [],
-        proofCount: '0',
-        onOpenSettings: () => nav.navigate('settings'),
-      }}
-      footer={{
-        adaptersLabel: '—',
-        // Before an address is entered nothing has been read, and `0` reads as
-        // "we looked and found none". An em dash is the absence of a reading.
-        sourcesLabel: view ? '1' : '—',
-        spendLabel: '$0',
-        blockNumber: chainBlockNumberV1(status.data ?? null),
-      }}
-      right={null}
-      theme={theme}
-      onThemeChange={setTheme}
-      onNewGoal={() => navigate(consoleSectionPathV1('routes'))}
-      onSelectSession={() => navigate(consoleSectionPathV1('routes'))}
-      onSelectProof={() => navigate(consoleSectionPathV1('activity'))}
-    >
       <InvestigateScreen
         model={{
           query,
@@ -182,6 +135,5 @@ export function InvestigatePage() {
             : null,
         }}
       />
-    </ConsoleShell>
   );
 }

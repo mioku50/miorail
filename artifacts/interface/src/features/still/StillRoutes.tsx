@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react';
 import { Redirect, useLocation } from 'wouter';
 import { useMyDividends, useStillCheck, useStillMine } from '@mioagent/api-client-react';
-import { useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
+import { useTelegramAlertsV1, useWalletBasenameV1, type ConsoleFrameV1Props } from '@mioagent/ui';
 import {
   StillAgent,
   StillAssets,
@@ -129,6 +129,7 @@ function StillHomePage() {
   const sky = useStillSky();
   const signInHref = useSignInHref();
   const still = useMyStill();
+  const telegram = useTelegramAlertsV1({ enabled: still.signedIn });
   const [subject, setSubject] = useState<string | null>(null);
   const check = useStillCheck(still.signedIn ? null : subject);
   const view = useMemo(
@@ -147,7 +148,7 @@ function StillHomePage() {
         <StillHomeSignedIn model={{ sky, view: null, reading: null, loading: false, failed: null, onRetry: still.retry }} />
       ) : still.signedIn ? (
         <StillHomeSignedIn
-          model={{ sky, view, reading: still.report?.reading ?? null, loading: still.loading, failed: still.failed, onRetry: still.retry }}
+          model={{ sky, view, reading: still.report?.reading ?? null, loading: still.loading, failed: still.failed, onRetry: still.retry, telegram }}
         />
       ) : (
         <StillHomeSignedOut

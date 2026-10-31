@@ -128,9 +128,7 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
     label: 'Research',
     rows: [
       { title: 'Discover', blurb: 'Officially issued assets, and what getting back out costs', href: '/opportunities' },
-      { title: 'Investigate', blurb: 'One address, read in full', href: '/investigate' },
-      { title: 'Radar', blurb: 'Watches on exact markets, and what changed', href: '/radar' },
-      { title: 'B20 controls', blurb: 'What an issuer can do to a token you hold', href: '/portfolio' },
+      { title: 'Watch', blurb: 'Any address read in full, what issuers can do to your tokens, the markets you watch', href: '/watch' },
       { title: 'Today', blurb: 'The classic first screen: balances, cash-out and your Aave card', href: '/today' },
     ],
   },
