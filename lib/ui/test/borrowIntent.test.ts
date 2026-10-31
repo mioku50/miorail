@@ -68,4 +68,25 @@ describe('Get money shows a server allowance for one selected pledge', () => {
     assert.equal(stillBorrowCapacityViewV1(read, 'WETH', '10000000000000000').capacity, null);
     assert.equal(stillBorrowCapacityViewV1({ ...read, markets: [{ ...wethRow, funding: undefined }] }, 'ETH', '10000000000000000').capacity, null);
   });
+  it('offers the ETH the server says can be added, and nothing it did not say', () => {
+    // 2026-10-31: 0.0033 ETH asked of a wallet holding 0.0033, with 0.0005 kept for fees.
+    const refused = {
+      state: 'refused', refusal: 'native_fee_reserve_insufficient', markets: [],
+      detail: 'This wallet holds 0.0033 ETH. Still leaves 0.0005 ETH in it for network fees, so you can add up to 0.0028 ETH.',
+      walletNativeAtomic: '3300000000000000', maximumNativeAtomic: '2800000000000000',
+    };
+    assert.deepEqual(stillBorrowCapacityViewV1(refused, 'ETH', '3300000000000000'),
+      { capacity: null, error: refused.detail, suggestedAmount: '0.0028' });
+    // Nothing to add, a balance nobody read, another asset, or an amount that is
+    // not below the ask: the sentence alone.
+    for (const [payload, asset] of [
+      [{ ...refused, maximumNativeAtomic: '0' }, 'ETH'],
+      [{ state: 'refused', refusal: 'native_balance_unread', detail: 'unread', markets: [] }, 'ETH'],
+      [refused, 'WETH'],
+      [{ ...refused, maximumNativeAtomic: '3300000000000000' }, 'ETH'],
+      [{ ...refused, maximumNativeAtomic: '28e14' }, 'ETH'],
+    ] as const) {
+      assert.equal('suggestedAmount' in stillBorrowCapacityViewV1(payload, asset, '3300000000000000'), false);
+    }
+  });
 });

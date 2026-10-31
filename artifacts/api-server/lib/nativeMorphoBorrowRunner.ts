@@ -4,7 +4,7 @@ import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { TERMS } from '@mioagent/still-engine/policy';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { readBorrowStandingV1 } from './stillBorrowStanding.js';
-import { buildNativeMorphoBorrowPlanV1, nativeMorphoFundingBudgetV1 } from './nativeMorphoBorrowPlan.js';
+import { buildNativeMorphoBorrowPlanV1, nativeMorphoFundingRefusalV1 } from './nativeMorphoBorrowPlan.js';
 import { buildMorphoBorrowPoststateProbesV1, verifyMorphoBorrowPoststateV1 } from './morphoBorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
@@ -29,7 +29,8 @@ export async function runNativeMorphoBorrowV1(q: NativeMorphoBorrowRequestV1, de
       s.market.collateral.address?.toLowerCase()!==asset.token.toLowerCase() ||
       s.market.loan.address?.toLowerCase()!==ADDRESSES.usdc.toLowerCase() ||
       s.market.collateral.decimals!==18 || s.market.loan.decimals!==6) return fail('native_borrow_standing_unread','The exact registered WETH market, native balance and position were not established.');
-  if (!nativeMorphoFundingBudgetV1(funding.balance,q.supplyAssets)) return fail('native_fee_reserve_insufficient','The selected ETH would leave less than Still’s native reserve for wallet/network fees.');
+  const budget = nativeMorphoFundingRefusalV1(funding.balance,q.supplyAssets);
+  if (budget) return fail(budget.refusal,budget.detail);
   const draw = morphoStillDrawV1({market:s.market.state,position:s.position,borrowAssets:q.borrowAssets,additionalCollateralAssets:q.supplyAssets});
   if (!draw.ok) return fail(draw.refusal,'The selected loan exceeds the measured Still allowance or available market liquidity.');
   const plan = buildNativeMorphoBorrowPlanV1({walletAddress:q.walletAddress,params:funding.params,

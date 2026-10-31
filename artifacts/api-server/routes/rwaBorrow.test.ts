@@ -251,6 +251,23 @@ describe('the capacity read', () => {
       .query({ token: weth.token, collateralSupplyAtomic: '10000000000000001', funding: 'native' }).expect(200);
     assert.equal(breached.body.state, 'refused');
     assert.equal(breached.body.refusal, 'native_fee_reserve_insufficient');
+    // The numbers that say what can be done, not "unread or would spend".
+    assert.equal(breached.body.detail,
+      'This wallet holds 0.0105 ETH. Still leaves 0.0005 ETH in it for network fees, so you can add up to 0.01 ETH.');
+    assert.equal(breached.body.walletNativeAtomic, '10500000000000000');
+    assert.equal(breached.body.maximumNativeAtomic, '10000000000000000');
+
+    // A balance nobody read is its own answer, with no figure in it.
+    rwaBorrowRuntimeV1.read = (async () => {
+      const base = cryptoReading(0n);
+      base.markets[0]!.market.marketId = weth.morphoMarket;
+      return { ...base, nativeFunding: { balance: null, params: {} as never, deployment: {} as never } };
+    }) as never;
+    const unread = await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
+      .query({ token: weth.token, collateralSupplyAtomic: '1000', funding: 'native' }).expect(200);
+    assert.equal(unread.body.refusal, 'native_balance_unread');
+    assert.doesNotMatch(unread.body.detail, /\d/);
+    assert.equal(unread.body.maximumNativeAtomic, undefined);
 
     await request(app()).get('/api/route-intelligence/rwa/borrow/capacity')
       .query({ token: weth.token, collateralSupplyAtomic: '0', funding: 'native' }).expect(400);

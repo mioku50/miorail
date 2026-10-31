@@ -5,7 +5,7 @@ import { morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { issueBorrowDraftV1, verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
 import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../lib/stillBorrowStanding.js';
 import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
-import { nativeMorphoFundingBudgetV1 } from '../lib/nativeMorphoBorrowPlan.js';
+import { nativeMorphoFundingRefusalV1 } from '../lib/nativeMorphoBorrowPlan.js';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { STOCKS, CRYPTO, ADDRESSES } from '@mioagent/still-engine/registry';
 import { issueLendingDraftV1 } from '../lib/lendingDraft.js';
@@ -164,8 +164,9 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
     });
     return;
   }
-  if (native && !nativeMorphoFundingBudgetV1(reading.nativeFunding?.balance ?? null, supply)) {
-    res.json({state:'refused',refusal:'native_fee_reserve_insufficient',detail:'The native balance is unread or the selected ETH would spend Still’s reserve for wallet/network fees.',markets:[]}); return;
+  const nativeRefusal = native ? nativeMorphoFundingRefusalV1(reading.nativeFunding?.balance ?? null, supply) : null;
+  if (nativeRefusal) {
+    res.json({ state: 'refused', readAt: reading.readAt, ...nativeRefusal, markets: [] }); return;
   }
   if (supply > 0n && !native) {
     const unread = reading.markets.some(entry => entry.walletCollateralAssets === null || entry.walletCollateralAssets === undefined);

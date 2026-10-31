@@ -2,6 +2,7 @@ import { encodeAbiParameters, encodeFunctionData, keccak256, parseAbi, type Addr
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
 import { ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { TERMS } from '@mioagent/still-engine/policy';
+import { formatTokenAmount } from '@mioagent/still-engine/format';
 import { MORPHO_BLUE_BUNDLES_BASE_V1, MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1, type MorphoRepayMarketParamsV1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { nativeMorphoBorrowAbiV1 } from './nativeMorphoAbi.js';
 
@@ -29,6 +30,43 @@ const address = (v: string): v is Address => /^0x[0-9a-f]{40}$/.test(v) && !/^0x
 export function nativeMorphoFundingBudgetV1(balance: bigint | null, amount: bigint): boolean {
   return balance !== null && typeof balance === 'bigint' && balance >= 0n && balance < 1n << 256n &&
     valid(amount) && balance >= amount + TERMS.ethGasReserveWei;
+}
+
+/** ETH as a person reads it: floored, so a "you can add up to" figure is
+ * never more than the wallet can add. */
+const ethV1 = (wei: bigint) => `${formatTokenAmount(wei, 18, 6).replace(/\.?0+$/, '')} ETH`;
+
+/**
+ * Why the selected ETH cannot be pledged, with the numbers that say what can.
+ *
+ * One sentence used to cover both cases, "the native balance is unread or the
+ * selected ETH would spend Still's reserve", so on 2026-10-31 a wallet holding
+ * 0.0033 ETH that asked to pledge 0.0033 was told neither which it was nor
+ * that 0.0028 would have worked.
+ */
+export function nativeMorphoFundingRefusalV1(balance: bigint | null, amount: bigint): null | {
+  refusal: 'native_balance_unread' | 'native_fee_reserve_insufficient';
+  detail: string;
+  walletNativeAtomic?: string;
+  maximumNativeAtomic?: string;
+} {
+  if (nativeMorphoFundingBudgetV1(balance, amount)) return null;
+  if (balance === null || typeof balance !== 'bigint' || balance < 0n || balance >= 1n << 256n) {
+    return { refusal: 'native_balance_unread', detail: 'Still could not read this wallet’s ETH balance just now, so no limit was read. Read it again in a moment.' };
+  }
+  const reserve = TERMS.ethGasReserveWei;
+  // Floored to what the sentence shows, so pressing "use it" asks for exactly
+  // the figure the person read.
+  const step = 10n ** 12n;
+  const maximum = balance > reserve ? ((balance - reserve) / step) * step : 0n;
+  return {
+    refusal: 'native_fee_reserve_insufficient',
+    detail: maximum > 0n
+      ? `This wallet holds ${ethV1(balance)}. Still leaves ${ethV1(reserve)} in it for network fees, so you can add up to ${ethV1(maximum)}.`
+      : `This wallet holds ${ethV1(balance)}, and Still leaves ${ethV1(reserve)} in it for network fees, so there is no ETH to add. Add ETH to this wallet, or choose WETH or cbBTC.`,
+    walletNativeAtomic: balance.toString(),
+    maximumNativeAtomic: maximum.toString(),
+  };
 }
 export function buildNativeMorphoBorrowPlanV1(input: {
   walletAddress: string; params: MorphoRepayMarketParamsV1; supplyAssets: bigint; borrowAssets: bigint;

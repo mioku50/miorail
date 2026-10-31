@@ -37,10 +37,20 @@ const atomic = (value: unknown): value is string => typeof value === 'string' &&
  * remains unread; a different market/amount cannot become this form's quote. */
 export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAssetV1, collateralSupplyAtomic: string): {
   capacity: StillBorrowModelV1['capacity']; error: string | null;
+  /** The ETH the server says this wallet can pledge, when it refused more. */
+  suggestedAmount?: string;
 } {
   const failed = { capacity: null, error: 'The borrowing limit could not be read. Read it again before continuing.' };
   if (!object(payload)) return failed;
-  if (payload.state === 'refused') return { capacity: null, error: typeof payload.detail === 'string' ? payload.detail : 'The server could not establish a borrowing limit for this collateral.' };
+  if (payload.state === 'refused') {
+    const error = typeof payload.detail === 'string' ? payload.detail : 'The server could not establish a borrowing limit for this collateral.';
+    // The server's own figure, below what was asked; never one this page works out.
+    const maximum = payload.maximumNativeAtomic;
+    return asset === 'ETH' && payload.refusal === 'native_fee_reserve_insufficient' && atomic(maximum) && maximum !== '0' &&
+      BigInt(maximum) < BigInt(collateralSupplyAtomic)
+      ? { capacity: null, error, suggestedAmount: tokenDecimalV1(maximum, 18) }
+      : { capacity: null, error };
+  }
   const stock = STOCKS.find(row => row.id === asset);
   if (payload.state !== 'read' || payload.marketScope !== (stock ? 'still_aave_spoke' : 'still_registered_market') || !Array.isArray(payload.markets)) return failed;
   const expected = stock ?? CRYPTO.find(row => row.id === (asset === 'WETH' || asset === 'ETH' ? 'ETH' : 'cbBTC'))!;

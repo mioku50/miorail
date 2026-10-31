@@ -8,7 +8,7 @@ import {multicall3Abi,erc20Abi,morphoAbi} from '@mioagent/still-engine/abi';
 import type {SimulationProviderResponseV1} from '@mioagent/paid-intelligence';
 import {issueLendingDraftV1,verifyLendingDraftV1} from './lendingDraft.js';
 import {nativeMorphoHarness,NATIVE_PARAMS,NATIVE_NOW,NATIVE_WALLET} from './nativeMorphoFixtures.testhelper.js';
-import {buildNativeMorphoBorrowPlanV1,nativeMorphoFundingBudgetV1,nativeMorphoAuthorizationAbiV1} from './nativeMorphoBorrowPlan.js';
+import {buildNativeMorphoBorrowPlanV1,nativeMorphoFundingBudgetV1,nativeMorphoFundingRefusalV1,nativeMorphoAuthorizationAbiV1} from './nativeMorphoBorrowPlan.js';
 import {nativeMorphoBorrowAbiV1} from './nativeMorphoAbi.js';
 import {runNativeMorphoBorrowV1} from './nativeMorphoBorrowRunner.js';
 
@@ -20,6 +20,23 @@ describe('explicit native ETH collateral',()=>{
     assert(!nativeMorphoFundingBudgetV1(null,1n));
     assert(!nativeMorphoFundingBudgetV1(reserve,0n));
     assert(!nativeMorphoFundingBudgetV1(-1n,1n));
+  });
+  it('names the balance, the reserve and what can be added, floored to what it shows',()=>{
+    const reserve=TERMS.ethGasReserveWei;
+    assert.equal(nativeMorphoFundingRefusalV1(reserve+1n,1n),null);
+    // 2026-10-31: a wallet holding 0.0033 ETH that asked to pledge all of it.
+    assert.deepEqual(nativeMorphoFundingRefusalV1(3_300_000_000_000_000n,3_300_000_000_000_000n),{
+      refusal:'native_fee_reserve_insufficient',
+      detail:'This wallet holds 0.0033 ETH. Still leaves 0.0005 ETH in it for network fees, so you can add up to 0.0028 ETH.',
+      walletNativeAtomic:'3300000000000000',maximumNativeAtomic:'2800000000000000'});
+    // Never more than the wallet can add: a balance below the shown precision floors.
+    const odd=nativeMorphoFundingRefusalV1(3_300_000_999_999_999n,4_000_000_000_000_000n)!;
+    assert.equal(odd.maximumNativeAtomic,'2800000000000000');
+    assert(nativeMorphoFundingBudgetV1(3_300_000_999_999_999n,BigInt(odd.maximumNativeAtomic!)));
+    const empty=nativeMorphoFundingRefusalV1(reserve,1n)!;
+    assert.equal(empty.maximumNativeAtomic,'0');
+    assert.match(empty.detail,/there is no ETH to add/);
+    assert.equal(nativeMorphoFundingRefusalV1(null,1n)!.refusal,'native_balance_unread');
   });
   for(const authorized of [false,true]) it('builds exact native funding and restores '+(authorized?'existing':'temporary')+' authority',()=>{
     const h=nativeMorphoHarness(authorized);
