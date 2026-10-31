@@ -20,7 +20,7 @@ const ALLOWANCE_DATA = encodeFunctionData({ abi: erc20Abi, functionName: 'approv
 const SWAP_DATA = '0x12345678';
 const TX = [`0x${'b1'.repeat(32)}`, `0x${'b2'.repeat(32)}`, `0x${'b3'.repeat(32)}`];
 
-type WalletKind = 'no-methods' | 'silent-capabilities';
+type WalletKind = 'no-methods' | 'silent-capabilities' | 'slow-capabilities';
 
 const receiptOf = (hash: string) => ({
   transactionHash: hash, status: '0x1', blockNumber: '0x10', blockHash: `0x${'c'.repeat(64)}`, gasUsed: '0x5208',
@@ -43,6 +43,7 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
     localStorage.setItem('wagmi.injected.connected', 'true');
     const sends: Array<{ data: string; at: number }> = [];
     let declined = false;
+    let slowAsked = false;
     Object.assign(window, { __walletSends: sends, __walletMethods: [] as string[], ethereum: {
       on() {}, removeListener() {},
       request: async ({ method, params }: { method: string; params?: Array<Record<string, string>> }) => {
@@ -50,6 +51,11 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
         if (method === 'eth_chainId') return '0x2105';
         if (method === 'eth_accounts' || method === 'eth_requestAccounts') return [wallet];
         if (method === 'wallet_getCapabilities' && kind === 'silent-capabilities') return {};
+        // The page's own read is slow to come back; the press asks again.
+        if (method === 'wallet_getCapabilities' && kind === 'slow-capabilities' && !slowAsked) {
+          slowAsked = true;
+          await new Promise((resolve) => setTimeout(resolve, 6_000));
+        }
         if (method.startsWith('wallet_')) {
           throw Object.assign(new Error(`method [${method}] doesn't has corresponding handler`), { code: -32601 });
         }
@@ -191,17 +197,31 @@ test('a declined swap step leaves the allowance, and the next press sends only t
   expect(state.records.at(-1)).toMatchObject({ status: 'confirmed', transactionHashes: [TX[1]] });
 });
 
-test('a wallet whose batch fails as unsupported is offered the steps on the next press, and the sponsor is not blamed', async ({ page }) => {
+test('a wallet whose batch fails as unsupported swaps in steps on the same press, and the sponsor is not blamed', async ({ page }) => {
+  // Coinbase Wallet with an imported key said nothing up front and refused the
+  // batch; the operator's first step swap then read "Failed — retry" before a
+  // second press went through (2026-10-31).
   const state = await install(page, 'silent-capabilities');
   await page.goto('/lending/fixture-draft');
   await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
-  await expect(page.getByRole('alert').filter({ hasText: /^This wallet could not send these calls together\. Nothing was sent\. Press again/ })).toBeVisible();
-  await expect(page.getByText(/fee sponsored/)).toHaveCount(0);
-  expect(state.approvals).toEqual([expect.not.objectContaining({ delivery: 'sequential' })]);
-  expect(await walletSends(page)).toEqual([]);
-
-  await page.getByRole('button', { name: 'Failed — retry', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Confirmed onchain', exact: true })).toBeVisible();
-  expect(state.approvals.at(-1)).toMatchObject({ delivery: 'sequential' });
+  await expect(page.getByText(/fee sponsored|Press again|Failed/)).toHaveCount(0);
+  // One batch asked for and refused, then steps, all on one press.
+  expect(state.approvals).toEqual([
+    expect.not.objectContaining({ delivery: 'sequential' }),
+    expect.objectContaining({ delivery: 'sequential' }),
+  ]);
+  expect((await walletSends(page)).map((send) => send.data)).toEqual([ALLOWANCE_DATA, SWAP_DATA]);
+  expect(state.records.map((record) => record.status)).toEqual(['submitted', 'confirmed']);
+});
+
+test('a press before the wallet has answered asks it first, and a wallet with no batches is never asked for one', async ({ page }) => {
+  const state = await install(page, 'slow-capabilities');
+  await page.goto('/lending/fixture-draft');
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirmed onchain', exact: true })).toBeVisible();
+  expect(state.approvals).toEqual([expect.objectContaining({ delivery: 'sequential' })]);
+  const methods = await page.evaluate(() => (window as unknown as { __walletMethods: string[] }).__walletMethods);
+  expect(methods).not.toContain('wallet_sendCalls');
   expect((await walletSends(page)).map((send) => send.data)).toEqual([ALLOWANCE_DATA, SWAP_DATA]);
 });

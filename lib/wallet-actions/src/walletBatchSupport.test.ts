@@ -8,9 +8,13 @@ import {
   WALLET_HAS_NO_BATCHES_V1,
   WALLET_UPGRADE_DECLINED_V1,
   atomicBatchSupportV1,
+  rememberWalletCannotBatchV1,
   walletBatchBlockerV1,
+  walletBatchKeyV1,
   walletCannotSendSentenceV1,
   walletDidNotSendV1,
+  walletKnownNotToBatchV1,
+  walletRefusedBatchesV1,
   walletSubmissionFailureMessageV1,
 } from './walletBatchSupport';
 
@@ -49,7 +53,8 @@ test('a refusal about what the wallet can do is said in words; anything else kee
 test('the submit hook refuses a wallet that cannot batch BEFORE the server approves anything', () => {
   // Structural: the hook drives wagmi, which these tests do not mount.
   const source = readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
-  assert.match(source, /blocker: walletBlocker, walletName \} = useWalletBatchSupportV1\(\);/);
+  assert.match(source, /knownNotToBatch, blocker: walletBlocker, walletName \} = batchSupport;/);
+  assert.match(source, /const batchSupport = useWalletBatchSupportV1\(\);/);
   const submit = source.slice(source.indexOf('const submit = async () => {'));
   const refusal = submit.indexOf('if (blocker) {');
   const approve = submit.indexOf('await approveMutateAsync(');
@@ -99,4 +104,48 @@ test('only an answer that proves nothing was sent lets a review be offered again
   assert.equal(walletDidNotSendV1(new Error('wallet response lost')), false);
   assert.equal(walletDidNotSendV1(Object.assign(new Error('nonce too low'), { code: -32000 })), false);
   assert.equal(walletCannotSendSentenceV1(rabby('wallet_sendCalls'), 'Rabby Wallet')?.startsWith('Rabby Wallet cannot send'), true);
+});
+
+// Coinbase Wallet with an imported key, 2026-10-31, as viem wraps it: the
+// only signal is the wallet's own words.
+const coinbase = () =>
+  Object.assign(new Error('An internal error was received.'), {
+    code: -32603,
+    details: 'atomic batch is not supported',
+  });
+
+test('a wallet that refuses a batch in words sent nothing, and the loan page says so instead of locking', () => {
+  assert.equal(walletCannotSendSentenceV1(coinbase(), 'Coinbase Wallet'), WALLET_CANNOT_BATCH_V1.replace(/^This wallet/, 'Coinbase Wallet'));
+  assert.equal(walletDidNotSendV1(coinbase()), true);
+  // Words alone are not enough under any other code, and a required
+  // capability (5700) is its own answer.
+  assert.equal(walletDidNotSendV1(Object.assign(new Error('chain not supported'), { code: 4902 })), false);
+  assert.equal(walletDidNotSendV1(Object.assign(new Error('This Wallet does not support a capability'), { code: 5700 })), false);
+  assert.equal(walletDidNotSendV1(Object.assign(new Error('Internal error'), { code: -32603 })), false);
+});
+
+test('a wallet that refused a batch is not asked for one again in this tab; a declined switch is', () => {
+  assert.equal(walletRefusedBatchesV1(rabby('wallet_sendCalls')), true);
+  assert.equal(walletRefusedBatchesV1(coinbase()), true);
+  assert.equal(walletRefusedBatchesV1({ cause: { code: 5760 } }), true);
+  assert.equal(walletRefusedBatchesV1({ cause: { code: 5750 } }), false);
+  assert.equal(walletRefusedBatchesV1(Object.assign(new Error('declined'), { code: 4001 })), false);
+  assert.equal(walletBatchKeyV1('io.rabby', null), null);
+  const key = walletBatchKeyV1('com.coinbase.wallet', `0x${'1'.repeat(40)}`.toUpperCase().replace('0X', '0x'));
+  assert.equal(key, `com.coinbase.wallet:0x${'1'.repeat(40)}`);
+  assert.equal(walletKnownNotToBatchV1(key), false);
+  rememberWalletCannotBatchV1(key);
+  assert.equal(walletKnownNotToBatchV1(key), true);
+  // The capabilities said nothing, and the refusal did: the button says so first.
+  assert.equal(
+    walletBatchBlockerV1({ capabilities: { 8453: {} }, capabilitiesError: null, walletName: 'Coinbase Wallet', knownNotToBatch: true }),
+    WALLET_CANNOT_BATCH_V1.replace(/^This wallet/, 'Coinbase Wallet'),
+  );
+});
+
+test('the wallet is not asked again on focus: a refetch blanks an answer that is only an error', () => {
+  const source = readFileSync(path.join(here, 'walletBatchSupport.ts'), 'utf8');
+  for (const option of ['refetchOnWindowFocus: false', 'refetchOnReconnect: false', 'retryOnMount: false']) {
+    assert.ok(source.includes(option), option);
+  }
 });

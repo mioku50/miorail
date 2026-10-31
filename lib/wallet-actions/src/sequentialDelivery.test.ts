@@ -8,6 +8,7 @@ import { getCallsStatus } from 'viem/actions';
 import {
   SEQUENTIAL_BATCH_MAGIC_V1,
   batchFailureInvitesStepsV1,
+  batchRefusalContinuesInStepsV1,
   exactAllowanceOfV1,
   sequentialBatchIdV1,
   sequentialNoticeV1,
@@ -36,6 +37,31 @@ test('a swap goes in steps only for a wallet that cannot send a batch', () => {
   assert.equal(plan({ 8453: { atomic: { status: 'unsupported' } } }), 'sequential');
   assert.equal(plan(undefined, missing('wallet_getCapabilities')), 'sequential');
   assert.equal(plan({ 8453: { atomic: { status: 'supported' } } }, null, true), 'sequential');
+  // A wallet that refused a batch earlier in this tab says nothing up front.
+  assert.equal(swapDeliveryPlanV1({ capabilities: { 8453: {} }, capabilitiesError: null, afterBatchFailure: false, knownNotToBatch: true }), 'sequential');
+});
+
+test('the same press goes on in steps when the wallet refused the batch itself', () => {
+  assert.equal(batchRefusalContinuesInStepsV1(missing('wallet_sendCalls')), true);
+  assert.equal(batchRefusalContinuesInStepsV1({ cause: { code: 5760 } }), true);
+  assert.equal(
+    batchRefusalContinuesInStepsV1(Object.assign(new Error('An internal error was received.'), { code: -32603, details: 'atomic batch is not supported' })),
+    true,
+  );
+  // The person's own answers wait for the person: a declined smart-account
+  // switch is asked again on the next press, a refusal is a refusal.
+  assert.equal(batchRefusalContinuesInStepsV1({ cause: { code: 5750 } }), false);
+  assert.equal(batchFailureInvitesStepsV1({ cause: { code: 5750 } }), true);
+  assert.equal(batchRefusalContinuesInStepsV1(Object.assign(new Error('User rejected the request.'), { code: 4001 })), false);
+  assert.equal(batchRefusalContinuesInStepsV1(new Error('wallet response lost')), false);
+  // Structural: the hook asks for steps in the same press, and asks a wallet
+  // that has not answered yet before choosing.
+  const source = readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
+  const submit = source.slice(source.indexOf('const submit = async () => {'));
+  assert.ok(submit.indexOf('await batchSupport.readNow()') < submit.indexOf('await approveMutateAsync(approvalInput)'));
+  const refused = submit.slice(submit.indexOf("goal === 'swap' && batchRefusalContinuesInStepsV1(cause)"));
+  assert.ok(refused.indexOf('await approveAndSendInSteps(approvalInput)') > 0);
+  assert.ok(refused.indexOf('await approveAndSendInSteps(approvalInput)') < refused.indexOf("setStatus('failed')"));
 });
 
 test('a batch failure invites steps only when it says the wallet cannot send one', () => {

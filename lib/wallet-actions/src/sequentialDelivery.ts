@@ -14,7 +14,12 @@
 // ---------------------------------------------------------------------------
 
 import { concat, decodeFunctionData, erc20Abi, numberToHex, type Hex } from 'viem';
-import { atomicBatchSupportV1, walletCannotSendSentenceV1, walletLacksCapabilitiesMethodV1 } from './walletBatchSupport';
+import {
+  atomicBatchSupportV1,
+  walletCannotSendSentenceV1,
+  walletLacksCapabilitiesMethodV1,
+  walletRefusedBatchesV1,
+} from './walletBatchSupport';
 
 /**
  * viem's EIP-5792 fallback marker. A batch id ending in it is a list of
@@ -49,35 +54,37 @@ export type SwapDeliveryPlanV1 = 'atomic' | 'sequential';
  *
  * One batch for any wallet that can send one, or might: the batch is the
  * stronger promise. Steps for a wallet that said it cannot, that has no batch
- * methods at all, or whose batch has just failed in a way that says so.
+ * methods at all, that refused a batch earlier in this tab, or whose batch has
+ * just failed in a way that says so.
  */
 export function swapDeliveryPlanV1(input: {
   capabilities: unknown;
   capabilitiesError: unknown;
   afterBatchFailure: boolean;
+  knownNotToBatch?: boolean;
   chainId?: number;
 }): SwapDeliveryPlanV1 {
-  if (input.afterBatchFailure) return 'sequential';
+  if (input.afterBatchFailure || input.knownNotToBatch) return 'sequential';
   if (atomicBatchSupportV1(input.capabilities, input.chainId ?? 8453) === 'unsupported') return 'sequential';
   if (!input.capabilities && walletLacksCapabilitiesMethodV1(input.capabilitiesError)) return 'sequential';
   return 'atomic';
 }
 
-/** Whether a failed batch says the wallet cannot send one, so the next press
- * may go in steps. A refusal by the person is not this. */
+/** Whether a failed batch says the wallet cannot send one, so the swap may go
+ * in steps. A refusal by the person is not this. Coinbase Wallet with an
+ * imported key said so only in words (walletCannotSendSentenceV1). */
 export function batchFailureInvitesStepsV1(cause: unknown): boolean {
-  if (walletCannotSendSentenceV1(cause) !== null) return true;
-  // Coinbase Wallet with an imported key, 2026-10-31: -32603 "...is not
-  // supported". The wallet's own words are the only signal it gave.
-  let current: unknown = cause;
-  for (let depth = 0; depth < 6 && current && typeof current === 'object'; depth += 1) {
-    const record = current as { details?: unknown; message?: unknown; cause?: unknown };
-    for (const text of [record.details, record.message]) {
-      if (typeof text === 'string' && /\b(?:not supported|unsupported|does not support)\b/i.test(text)) return true;
-    }
-    current = record.cause;
-  }
-  return false;
+  return walletCannotSendSentenceV1(cause) !== null;
+}
+
+/**
+ * Whether the same press goes on in steps. The wallet refused the batch
+ * itself, so nothing was sent and nothing needs the person's word twice: the
+ * wallet asks for each step. A declined smart-account switch is the person's
+ * answer, so that one waits for them to press again.
+ */
+export function batchRefusalContinuesInStepsV1(cause: unknown): boolean {
+  return walletRefusedBatchesV1(cause);
 }
 
 /** "This wallet" becomes the wallet's own name, as in walletBatchSupport. */

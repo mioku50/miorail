@@ -177,8 +177,9 @@ export function BlueprintSubmitButton({
         <p className="mt-2 text-xs note warn sign-reason" role="status">{walletBlocker}</p>
       ) : failureNote && (status === 'failed' || status === 'cancelled' || status === 'expired' || status === 'submitted_unknown') && error && error !== 'Cancelled in wallet' ? (
         <p className="mt-2 text-xs note warn sign-reason" role="alert">{error}</p>
-      ) : deliveryNotice && address && status === 'idle' && !disabledReason ? (
-        // Before the first press: this wallet will be asked once per step.
+      ) : deliveryNotice && address && ((status === 'idle' && !disabledReason) || step) ? (
+        // Before the first press, and while the steps run: this wallet is
+        // asked once per step.
         <p className="mt-2 text-xs note sign-reason" role="status">{deliveryNotice}</p>
       ) : null}
       {/* T67X-B5: stated only once a batch exists, and only when it is not the
