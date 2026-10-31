@@ -256,6 +256,9 @@ test('a repayment is described option by option, without advice', async () => {
   assert.match(answer.steps[1], /Вариант 2 · Погасить весь долг \(\$240\.17\) на Aave V4/);
   for (const line of [answer.text, ...answer.steps]) assert.doesNotMatch(line, /рекоменд|лучше|безопаснее всего/i);
   assert.equal(answer.actionLink.href, '/repay');
+  // In English the asset's name opens the clause and keeps its capitals.
+  const english = (await ask(server, 'How can I reduce my debt by $100?')).body.answer;
+  assert.match(english.steps[0], /Option 1 · Repay \$100\.00 on Aave V4: debt \$240\.17 → \$140\.17, health factor 2\.09 → 3\.59, NVIDIA liquidation price: \$100\.92 → \$58\.90\./);
 });
 
 test('why the room changed: compared with the reading the person was shown before', async () => {

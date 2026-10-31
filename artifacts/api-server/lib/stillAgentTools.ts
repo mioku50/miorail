@@ -282,7 +282,8 @@ function repayOptionsAnswerV1(plan: Extract<StillAgentPlanV1, { task: 'repay_opt
       const parts = [t(w, `долг ${formatCents(loan.debtCents!)} → ${formatCents(after.debtCents ?? '0')}`, `debt ${formatCents(loan.debtCents!)} → ${formatCents(after.debtCents ?? '0')}`)];
       if (owes(after) && after.safety && loan.safety) {
         parts.push(`health factor ${healthFactorTextV1(loan.safety.healthFactor)} → ${healthFactorTextV1(after.safety.healthFactor)}`);
-        for (const line of liquidationLinesV1(w, outcome.after, loan, after)) parts.push(line.replace(/\.$/, '').replace(/^./, (c) => c.toLowerCase()));
+        // "Цена ликвидации" joins the sentence in lower case; "NVIDIA liquidation price" keeps its name.
+        for (const line of liquidationLinesV1(w, outcome.after, loan, after)) parts.push(line.replace(/\.$/, '').replace(/^(\p{Lu})(?=\p{Ll})/u, (c) => c.toLowerCase()));
       } else {
         parts.push(t(w, 'ликвидировать нечего', 'nothing left to liquidate'));
       }
