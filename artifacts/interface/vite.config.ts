@@ -25,6 +25,9 @@ export default defineConfig(({ mode }) => {
         'react-dom',
         'react-dom/client',
         'react-dom/server',
+        // Reached only through the swap button's step-by-step path; found
+        // lazily, it re-optimized and reloaded the dev page mid-test.
+        'wagmi/actions',
       ],
     },
     server: {

@@ -30,6 +30,8 @@ export type { AtomicBatchSupportV1 } from '@mioagent/ui';
  */
 export function useWalletBatchSupportV1(): {
   capabilities: unknown;
+  /** Why the capabilities could not be read; a missing method is an answer. */
+  capabilitiesError: unknown;
   blocker: string | null;
   walletName: string | null;
 } {
@@ -41,6 +43,7 @@ export function useWalletBatchSupportV1(): {
   const walletName = connector?.name ?? null;
   return {
     capabilities: data,
+    capabilitiesError: error,
     blocker: address ? walletBatchBlockerV1({ capabilities: data, capabilitiesError: error, walletName }) : null,
     walletName,
   };

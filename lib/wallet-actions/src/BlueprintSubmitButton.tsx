@@ -12,6 +12,7 @@ import { Button } from '@mioagent/ui';
 import {
   useSubmitApprovedBlueprint,
   type BlueprintSubmitStatus,
+  type SequentialStepV1,
 } from './useSubmitApprovedBlueprint';
 import { BUILDER_ATTRIBUTION_LABELS_V1, type BuilderAttributionOutcomeV1 } from './attribution';
 import { SPONSORED_GAS_LABELS_V1, type SponsoredGasStateV1 } from './sponsoredGas';
@@ -52,8 +53,18 @@ export interface BlueprintSubmitButtonProps
 
 const BUSY_STATUSES: BlueprintSubmitStatus[] = ['approving', 'submitting', 'submitted'];
 
-export function blueprintSubmitLabel(status: BlueprintSubmitStatus, disabledReason: string | null): string {
+export function blueprintSubmitLabel(
+  status: BlueprintSubmitStatus,
+  disabledReason: string | null,
+  step: SequentialStepV1 | null = null,
+): string {
   if (disabledReason) return disabledReason;
+  // A swap sent one transaction at a time says which one the wallet is on.
+  if (step && step.total > 1) {
+    return step.phase === 'wallet'
+      ? `Step ${step.index} of ${step.total}: confirm in your wallet`
+      : `Step ${step.index} of ${step.total}: confirming onchain…`;
+  }
   switch (status) {
     case 'approving':
       return 'Approving on server…';
@@ -108,13 +119,14 @@ export function BlueprintSubmitButton({
   ...rest
 }: BlueprintSubmitButtonProps) {
   const { address, chainId } = useAccount();
-  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, sponsoredGas, walletBlocker, poller } =
+  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, sponsoredGas, walletBlocker, deliveryNotice, step, poller } =
     useSubmitApprovedBlueprint({
       routeRunId,
       blueprintId,
       blueprintHash,
       builderCode,
       goal,
+      quoteExpiry,
     });
 
   const lastReported = useRef<string>('');
@@ -151,7 +163,7 @@ export function BlueprintSubmitButton({
         }
         {...rest}
       >
-        {blueprintSubmitLabel(status, disabledReason)}
+        {blueprintSubmitLabel(status, disabledReason, step)}
       </Button>
       {status === 'idle' && !disabledReason && (
         <p className="mt-2 text-xs text-ink-3">
@@ -163,8 +175,11 @@ export function BlueprintSubmitButton({
           can be done. */}
       {walletBlocker && address && (status === 'idle' || status === 'cancelled' || status === 'failed') ? (
         <p className="mt-2 text-xs note warn sign-reason" role="status">{walletBlocker}</p>
-      ) : failureNote && status === 'failed' && error ? (
+      ) : failureNote && (status === 'failed' || status === 'cancelled' || status === 'expired' || status === 'submitted_unknown') && error && error !== 'Cancelled in wallet' ? (
         <p className="mt-2 text-xs note warn sign-reason" role="alert">{error}</p>
+      ) : deliveryNotice && address && status === 'idle' && !disabledReason ? (
+        // Before the first press: this wallet will be asked once per step.
+        <p className="mt-2 text-xs note sign-reason" role="status">{deliveryNotice}</p>
       ) : null}
       {/* T67X-B5: stated only once a batch exists, and only when it is not the
           plain success. An "included" line on every confirmation would be

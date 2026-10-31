@@ -79,12 +79,13 @@ test('the submit hook sends the sponsor beside the Builder Code and drops it aft
   // Declined only on a failure that was not the person saying no, and not the
   // wallet saying it cannot send a batch at all: Rabby's -32601 read as "the
   // sponsor failed, press again" on 2026-10-31.
-  const marker = 'const message = walletSubmissionFailureMessageV1(cause, walletName);';
+  // A swap whose batch failed that way goes in steps on the next press.
+  const marker = 'const stepsNext = goal === \'swap\' && batchFailureInvitesStepsV1(cause);';
   const failure = source.slice(source.indexOf(marker));
   assert.ok(source.includes(marker));
   assert.match(
-    failure.slice(0, 700),
-    /if \(walletCannotSendSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
+    failure.slice(0, 900),
+    /if \(stepsNext \|\| walletCannotSendSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
   );
   const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf(marker));
   assert.doesNotMatch(rejection, /sponsorDeclinedRef/, 'saying no in the wallet is not the sponsor failing');

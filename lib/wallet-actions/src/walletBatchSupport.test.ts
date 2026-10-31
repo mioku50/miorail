@@ -51,11 +51,13 @@ test('the submit hook refuses a wallet that cannot batch BEFORE the server appro
   const source = readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
   assert.match(source, /blocker: walletBlocker, walletName \} = useWalletBatchSupportV1\(\);/);
   const submit = source.slice(source.indexOf('const submit = async () => {'));
-  const refusal = submit.indexOf('if (walletBlocker) {');
+  const refusal = submit.indexOf('if (blocker) {');
   const approve = submit.indexOf('await approveMutateAsync(');
   assert.ok(refusal > 0, 'the hook reads the wallet’s batch support');
   assert.ok(approve > refusal, 'and does so before approving');
-  assert.match(submit.slice(refusal, refusal + 120), /setError\(walletBlocker\);\s*return;/);
+  assert.match(submit.slice(refusal, refusal + 120), /setError\(blocker\);\s*return;/);
+  // A swap is not refused: it goes in steps (sequentialDelivery.ts).
+  assert.match(source, /const blocker = deliveryPlan === 'sequential' \? null : walletBlocker;/);
 });
 
 // What Rabby answers, read from its source on 2026-10-31: eth-rpc-errors'

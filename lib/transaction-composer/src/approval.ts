@@ -17,6 +17,7 @@ import {
   type SafetyKernelResultV1,
 } from '@mioagent/route-domain';
 import type { RouteStorageRepository } from '@mioagent/route-storage';
+import { decodeFunctionData, erc20Abi, maxUint256 } from 'viem';
 import {
   aerodromeKernelInputV1,
   storedGiftKernelInputV1,
@@ -66,6 +67,12 @@ export interface ApprovedBlueprintPayloadV1 {
   atomicRequired: true;
 }
 
+/** The same approved calls, granted one-transaction-at-a-time delivery. */
+export type SequentialApprovedPayloadV1 = Omit<ApprovedBlueprintPayloadV1, 'atomicRequired'> & {
+  atomicRequired: false;
+  delivery: 'sequential';
+};
+
 export type SwapBlueprintApproveResultV1 =
   | { outcome: 'approved'; payload: ApprovedBlueprintPayloadV1; lifecycle: LifecycleStateV1 }
   | { outcome: 'expired'; reason: string }
@@ -111,6 +118,37 @@ export function buildApprovedPayload(
     })),
     atomicRequired: true,
   };
+}
+
+/**
+ * The same approved calls, delivered one transaction at a time, or null.
+ *
+ * Granted only where order alone keeps the promise the batch kept: the swap
+ * alone, or one ERC-20 approval of an exact amount to the very contract the
+ * swap calls, then the swap. The wallet waits for the approval to land before
+ * it is asked for the swap. A stopped second step leaves that exact allowance
+ * in place; the operator accepted that on 2026-10-31 for wallets that cannot
+ * send a batch (Rabby, an imported key in Coinbase Wallet), and the next quote
+ * finds the allowance and asks for no new approval. Loans never come here.
+ */
+export function sequentialSwapDeliveryV1(payload: ApprovedBlueprintPayloadV1): SequentialApprovedPayloadV1 | null {
+  const calls = payload.calls;
+  if (calls.length === 2) {
+    const [allowance, swap] = calls as [(typeof calls)[number], (typeof calls)[number]];
+    if (BigInt(allowance.value) !== 0n) return null;
+    let decoded: ReturnType<typeof decodeFunctionData<typeof erc20Abi>>;
+    try {
+      decoded = decodeFunctionData({ abi: erc20Abi, data: allowance.data });
+    } catch {
+      return null;
+    }
+    if (decoded.functionName !== 'approve') return null;
+    const [spender, amount] = decoded.args as readonly [`0x${string}`, bigint];
+    if (spender.toLowerCase() !== swap.to.toLowerCase() || amount <= 0n || amount >= maxUint256) return null;
+  } else if (calls.length !== 1) {
+    return null;
+  }
+  return { ...payload, atomicRequired: false, delivery: 'sequential' };
 }
 
 function buildPendingRouteProofV1(input: {

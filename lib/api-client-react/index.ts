@@ -493,6 +493,9 @@ export interface ApproveSwapBlueprintInput {
   routeRunId: string;
   blueprintId: string;
   blueprintHash: string;
+  /** Ask for one transaction at a time, for a wallet that cannot send a
+   * batch. The server decides; the answer's `delivery` says what it granted. */
+  delivery?: 'atomic' | 'sequential';
 }
 
 export function useApproveSwapBlueprint(
@@ -509,6 +512,7 @@ export function useApproveSwapBlueprint(
         routeRunId: input.routeRunId,
         blueprintHash: input.blueprintHash,
         walletAddress: input.walletAddress,
+        ...(input.delivery ? { delivery: input.delivery } : {}),
       });
       const response = await fetchApi<unknown>(
         `/api/route-intelligence/swap/blueprints/${encodeURIComponent(input.blueprintId)}/approve`,

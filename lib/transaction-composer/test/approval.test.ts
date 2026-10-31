@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { hashApprovedCallsV1 } from '@mioagent/route-domain';
 import { TransactionComposerBindingError } from '../src/coordinator.js';
-import { approveExecutionBlueprintV1, routeProofIdV1 } from '../src/approval.js';
+import { encodeFunctionData, erc20Abi, maxUint256 } from 'viem';
+import { approveExecutionBlueprintV1, routeProofIdV1, sequentialSwapDeliveryV1, type ApprovedBlueprintPayloadV1 } from '../src/approval.js';
 import { NOW, TENANT, WALLET, failingContractSecurity, passingContractSecurity } from './fixtures.js';
 import { approveInput, seededBlueprint } from './t57-fixtures.js';
 
@@ -141,4 +142,36 @@ test('approve: the persisted approved blueprint remains schema-valid on read-bac
   const [stored] = await seeded.repository.listBlueprints(seeded.scenario.intent.id, TENANT);
   assert.equal(stored!.blueprint.status, 'approved');
   assert.equal(stored!.blueprint.updatedAt, NOW.toISOString());
+});
+
+// ---------------------------------------------------------------------------
+// One transaction at a time, for a wallet that cannot send a batch (operator,
+// 2026-10-31). Granted only where order alone keeps the batch's promise.
+// ---------------------------------------------------------------------------
+
+test('steps are granted for the swap alone, or one exact allowance to the swap’s own contract and then the swap', () => {
+  const router = `0x${'6'.repeat(40)}` as const;
+  const usdc = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913' as const;
+  const approve = (spender: `0x${string}`, amount: bigint, value: `0x${string}` = '0x0') => ({
+    to: usdc, value, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [spender, amount] }),
+  });
+  const swap = { to: router, value: '0x0' as const, data: '0x12345678' as const };
+  const payload = (calls: ApprovedBlueprintPayloadV1['calls']): ApprovedBlueprintPayloadV1 => ({
+    blueprintId: 'bp', blueprintHash: `0x${'1'.repeat(64)}`, approvedCallsHash: `0x${'2'.repeat(64)}`,
+    chainId: '0x2105', from: WALLET as `0x${string}`, calls, atomicRequired: true,
+  });
+  const granted = sequentialSwapDeliveryV1(payload([approve(router, 7_000_000n), swap]));
+  assert.deepEqual(granted, { ...payload([approve(router, 7_000_000n), swap]), atomicRequired: false, delivery: 'sequential' });
+  assert.equal(sequentialSwapDeliveryV1(payload([{ ...swap, value: '0x2386f26fc10000' }]))?.delivery, 'sequential');
+  for (const calls of [
+    [approve(router, maxUint256), swap],
+    [approve(`0x${'7'.repeat(40)}`, 7_000_000n), swap],
+    [approve(router, 0n), swap],
+    [approve(router, 7_000_000n, '0x1'), swap],
+    [{ ...swap, to: usdc, data: '0x095ea7b3' as const }, swap],
+    [approve(router, 7_000_000n), approve(router, 7_000_000n), swap],
+    [swap, approve(router, 7_000_000n)],
+  ]) {
+    assert.equal(sequentialSwapDeliveryV1(payload(calls as ApprovedBlueprintPayloadV1['calls'])), null);
+  }
 });

@@ -935,11 +935,24 @@ export const BlueprintLifecycleStateV1Schema = z.enum([
   'reconciliation_required',
 ]);
 
+/**
+ * How the approved calls reach the chain.
+ *
+ * `atomic` (the default): one EIP-5792 batch, so an approval never goes out
+ * without the trade it is for. `sequential`: one transaction at a time, each
+ * waiting for the one before, for a wallet that cannot send a batch (Rabby,
+ * an imported key in Coinbase Wallet). The client asks; the server grants it
+ * only for a swap whose calls are one exact allowance and the swap, or the
+ * swap alone (operator, 2026-10-31). A loan is never sequential.
+ */
+export const SwapDeliveryV1Schema = z.enum(['atomic', 'sequential']);
+
 export const SwapBlueprintApproveRequestV1Schema = z
   .object({
     routeRunId: z.string().min(1).max(200),
     blueprintHash: HashV1Schema,
     walletAddress: AddressV1Schema,
+    delivery: SwapDeliveryV1Schema.optional(),
   })
   .strict();
 
@@ -982,9 +995,15 @@ export const SwapBlueprintApproveResponseV1Schema = z.discriminatedUnion('outcom
             )
             .min(1)
             .max(100),
-          atomicRequired: z.literal(true),
+          // True unless the server granted `sequential` delivery; the two
+          // fields never disagree.
+          atomicRequired: z.boolean(),
+          delivery: SwapDeliveryV1Schema.optional(),
         })
-        .strict(),
+        .strict()
+        .refine((payload) => payload.atomicRequired === (payload.delivery !== 'sequential'), {
+          message: 'atomicRequired is false exactly when delivery is sequential',
+        }),
       lifecycle: BlueprintLifecycleStateV1Schema,
       // Growth plan step 2: gas paid by Miorail for these exact calls, when the
       // server offers it. Absent or null means the wallet pays, as before. No

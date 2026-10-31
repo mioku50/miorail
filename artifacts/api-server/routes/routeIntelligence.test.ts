@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test, { afterEach, beforeEach, describe } from 'node:test';
 import express from 'express';
 import request from 'supertest';
+import { encodeFunctionData, erc20Abi, maxUint256 } from 'viem';
 import type { RoutePlanResponseV1, SwapPrepareResponseV1 } from '@mioagent/api-spec';
 import { buildRouteCardV1, buildRoutePlanProjectionV1 } from '@mioagent/route-card';
 import type { SwapRouteEvaluationV1 } from '@mioagent/route-engine';
@@ -616,6 +617,45 @@ describe('POST /api/route-intelligence/swap/blueprints/:blueprintId/approve', ()
     assert.deepEqual(response.body.payload, APPROVED_PAYLOAD);
     const serialized = JSON.stringify(response.body);
     assert.equal(/send_calls|x402/i.test(serialized), false);
+  });
+
+  test('a wallet that cannot batch gets the same calls one at a time, only when their order keeps the promise', async () => {
+    const router = APPROVED_PAYLOAD.calls[1]!.to;
+    const allowanceTo = (spender: `0x${string}`, amount: bigint) => ({
+      ...APPROVED_PAYLOAD.calls[0]!,
+      data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [spender, amount] }),
+    });
+    const exact = { ...APPROVED_PAYLOAD, calls: [allowanceTo(router, 7_000_000n), APPROVED_PAYLOAD.calls[1]!] };
+    let offered = 0;
+    swapBlueprintRouteRuntime.sponsorship = async () => {
+      offered += 1;
+      return { paymasterUrl: 'https://miorail.xyz/api/paymaster', context: { sponsorship: 'signed-token' } };
+    };
+    swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'approved', payload: exact, lifecycle: 'approved' });
+    const steps = await request(routeApp()).post(url).send({ ...APPROVE_BODY, delivery: 'sequential' });
+    assert.equal(steps.status, 200);
+    assert.deepEqual(steps.body.payload, { ...exact, atomicRequired: false, delivery: 'sequential' });
+    // A plain transaction cannot carry a fee sponsor, so none is worked out.
+    assert.equal(steps.body.sponsorship, null);
+    assert.equal(offered, 0);
+    // Not asked: the same calls stay one batch, with the offer.
+    const batch = await request(routeApp()).post(url).send(APPROVE_BODY);
+    assert.equal(batch.body.payload.atomicRequired, true);
+    assert.equal('delivery' in batch.body.payload, false);
+    assert.equal(offered, 1);
+    // Asked, but an unlimited allowance, another spender or an undecodable
+    // approve keeps the batch, which this wallet cannot send.
+    for (const calls of [
+      [allowanceTo(router, maxUint256), APPROVED_PAYLOAD.calls[1]!],
+      [allowanceTo(`0x${'7'.repeat(40)}`, 7_000_000n), APPROVED_PAYLOAD.calls[1]!],
+      APPROVED_PAYLOAD.calls,
+    ]) {
+      swapBlueprintRouteRuntime.approve = async () => ({ outcome: 'approved', payload: { ...exact, calls }, lifecycle: 'approved' });
+      const kept = await request(routeApp()).post(url).send({ ...APPROVE_BODY, delivery: 'sequential' });
+      assert.equal(kept.status, 200);
+      assert.equal(kept.body.payload.atomicRequired, true);
+    }
+    assert.equal((await request(routeApp()).post(url).send({ ...APPROVE_BODY, delivery: 'parallel' })).status, 400);
   });
 
   test('an approval of a reviewed stock carries the gas offer for exactly those calls', async () => {

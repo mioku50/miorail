@@ -170,7 +170,7 @@ test('the button prints the wallet’s answer where the eye is, not only in its 
   // The blocker before anything is approved, then the failure on surfaces that
   // print nothing else: the swap review said only "Failed — retry" on 2026-10-31.
   assert.match(source, /\{walletBlocker && address && \(status === 'idle' \|\| status === 'cancelled' \|\| status === 'failed'\) \? \(\s*<p className="[^"]*sign-reason[^"]*" role="status">\{walletBlocker\}<\/p>/);
-  assert.match(source, /failureNote && status === 'failed' && error \? \(\s*<p className="[^"]*sign-reason[^"]*" role="alert">\{error\}<\/p>/);
+  assert.match(source, /failureNote && \(status === 'failed' \|\| status === 'cancelled' \|\| status === 'expired' \|\| status === 'submitted_unknown'\) && error && error !== 'Cancelled in wallet' \? \(\s*<p className="[^"]*sign-reason[^"]*" role="alert">\{error\}<\/p>/);
   const consoleSource = readFileSync(path.join(here, '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'), 'utf8');
   assert.equal(consoleSource.match(/<BlueprintSubmitButton[\s\S]*?\/>/g)?.filter((block) => /\bfailureNote\b/.test(block)).length, 2);
 });
@@ -236,8 +236,14 @@ test('T62.1: wallet rejection is a single shared code path for both goals', () =
   // The catch around sendCalls handles rejection once (isWalletRejectionError),
   // not per-goal — the earn path reuses the exact same cancelled-record logic.
   assert.ok(/isWalletRejectionError\(cause\)/.test(source), 'a single rejection detector guards the one sendCalls call');
+  // Once per delivery, never per goal: the one batch, and the swap sent in
+  // steps (2026-10-31) for a wallet that cannot send a batch.
   const rejectionBranches = source.match(/isWalletRejectionError\(/g) ?? [];
-  assert.equal(rejectionBranches.length, 1, 'rejection handling must not be duplicated per goal');
+  assert.equal(rejectionBranches.length, 2, 'rejection handling must not be duplicated per goal');
+  // The function text is the transpiled one: \`const sendOneAtATime=__name(async payload=>…\`.
+  const steps = source.slice(source.search(/sendOneAtATime\s*=/), source.search(/const submit\s*=/));
+  assert.ok(steps.length > 0);
+  assert.equal((steps.match(/isWalletRejectionError\(/g) ?? []).length, 1, 'the second detector belongs to the steps');
   assert.ok(/status:\s*['"]cancelled['"]/.test(source), 'a rejected batch records a cancelled submission');
 });
 

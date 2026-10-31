@@ -125,6 +125,7 @@ import {
   prepareGiftSendV1,
   recordBlueprintSubmissionV1,
   reviewStoredBlueprintV1,
+  sequentialSwapDeliveryV1,
   type ApproveEarnBlueprintInputV1,
   type ApproveExecutionBlueprintInput,
   type GiftSendPrepareInputV1,
@@ -1450,6 +1451,17 @@ routeIntelligenceRouter.post('/swap/blueprints/:blueprintId/approve', async (req
     if (result.outcome !== 'approved') {
       res.json(SwapBlueprintApproveResponseV1Schema.parse(result));
       return;
+    }
+    // One transaction at a time, for a wallet that cannot send a batch, and
+    // only for calls whose order alone keeps the batch's promise. Otherwise
+    // the answer stays one batch and the page says this wallet cannot send it.
+    // A plain transaction cannot carry a fee sponsor, so none is offered.
+    if (parsed.data.delivery === 'sequential') {
+      const sequential = sequentialSwapDeliveryV1(result.payload);
+      if (sequential) {
+        res.json(SwapBlueprintApproveResponseV1Schema.parse({ ...result, payload: sequential, sponsorship: null }));
+        return;
+      }
     }
     // A sponsorship that cannot be worked out is no sponsorship. It must never
     // turn an approval the Safety Kernel granted into a failure: the person

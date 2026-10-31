@@ -8,8 +8,10 @@
 //   → poll wallet status via CallsStatusPoller → record 'confirmed'/'failed'.
 
 import { useRef, useState, useCallback, createElement, type ReactNode } from 'react';
-import { useAccount, useSendCalls } from 'wagmi';
+import { useAccount, useConfig, useSendCalls } from 'wagmi';
+import { readContract, sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { base } from 'wagmi/chains';
+import { concat, erc20Abi, type Hex } from 'viem';
 import {
   useApproveEarnBlueprint,
   useApproveSwapBlueprint,
@@ -33,6 +35,20 @@ import {
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
 import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import {
+  SEQUENTIAL_ALLOWANCE_FAILED_V1,
+  SEQUENTIAL_ALLOWANCE_UNREAD_V1,
+  SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1,
+  SEQUENTIAL_SWAP_DECLINED_V1,
+  SWAP_NEEDS_ONE_BATCH_V1,
+  batchFailureInvitesStepsV1,
+  exactAllowanceOfV1,
+  sequentialAfterBatchFailureV1,
+  sequentialBatchIdV1,
+  sequentialNoticeV1,
+  swapDeliveryPlanV1,
+  type SwapDeliveryPlanV1,
+} from './sequentialDelivery';
 import {
   browserMarkerStorageV1,
   clearRecoveryMarkerV1,
@@ -79,9 +95,11 @@ export function isWalletRejectionError(error: unknown): boolean {
 }
 
 export interface BlueprintPreflightInput {
-  payload: Pick<ApprovedWalletPayload, 'from' | 'chainId' | 'atomicRequired'>;
+  payload: Pick<ApprovedWalletPayload, 'from' | 'chainId' | 'atomicRequired'> & { delivery?: 'atomic' | 'sequential' };
   connectedAddress: string | undefined;
   connectedChainId: number | undefined;
+  /** This submission asked for one-transaction-at-a-time delivery. */
+  sequentialAsked?: boolean;
 }
 
 /** Fail-closed checks that must ALL pass before the wallet is ever opened.
@@ -98,7 +116,10 @@ export function blueprintSubmitPreflight(input: BlueprintPreflightInput): { ok: 
   if (payload.chainId !== '0x2105') {
     return { ok: false, reason: 'Approved payload is not pinned to Base mainnet' };
   }
-  if (payload.atomicRequired !== true) {
+  // One batch, unless the server granted steps to a submission that asked
+  // for them; a payload that is neither is refused.
+  const steps = payload.atomicRequired === false && payload.delivery === 'sequential' && input.sequentialAsked === true;
+  if (payload.atomicRequired !== true && !steps) {
     return { ok: false, reason: 'Approved payload does not require an atomic batch' };
   }
   return { ok: true };
@@ -185,6 +206,17 @@ export interface UseSubmitApprovedBlueprintArgs {
   recovery?: boolean;
   /** Injected in tests; production reads localStorage. */
   markerStorage?: MarkerStorageV1 | null;
+  /** The reviewed quote's expiry: a swap sent in steps does not start its
+   * last step on a quote that has run out. */
+  quoteExpiry?: string;
+}
+
+/** Where a swap sent one transaction at a time stands. */
+export interface SequentialStepV1 {
+  /** 1-based, among the approved calls. */
+  index: number;
+  total: number;
+  phase: 'wallet' | 'confirming';
 }
 
 export interface UseSubmitApprovedBlueprintResult {
@@ -216,8 +248,14 @@ export interface UseSubmitApprovedBlueprintResult {
    * has been read — before that nothing is known about the fee. */
   sponsoredGas: SponsoredGasStateV1 | null;
   /** Why the connected wallet cannot send this at all, in words, read before
-   * anything is approved. Null while the wallet may be asked. */
+   * anything is approved. Null while the wallet may be asked. A swap from a
+   * wallet that cannot batch is not blocked: it goes in steps. */
   walletBlocker: string | null;
+  /** How the next press sends a swap, and what the page says about it first. */
+  deliveryPlan: SwapDeliveryPlanV1;
+  deliveryNotice: string | null;
+  /** The step a swap sent one transaction at a time is on, or null. */
+  step: SequentialStepV1 | null;
   /** Mount this to poll wallet batch status once a batchId exists. */
   poller: ReactNode;
 }
@@ -230,6 +268,7 @@ export function useSubmitApprovedBlueprint({
   goal = 'swap',
   recovery = false,
   markerStorage,
+  quoteExpiry,
 }: UseSubmitApprovedBlueprintArgs): UseSubmitApprovedBlueprintResult {
   // Every goal's hooks are instantiated unconditionally (rules of hooks); the
   // goal selects which pair actually drives the flow. The swap, earn and NFT
@@ -253,7 +292,18 @@ export function useSubmitApprovedBlueprint({
   // costs no extra round trip at submit time. A wallet that does not implement
   // wallet_getCapabilities leaves the capabilities undefined, which stays "not
   // established" for attribution; for batching it is the wallet's answer.
-  const { capabilities: walletCapabilities, blocker: walletBlocker, walletName } = useWalletBatchSupportV1();
+  const { capabilities: walletCapabilities, capabilitiesError, blocker: walletBlocker, walletName } = useWalletBatchSupportV1();
+  const config = useConfig();
+  // Set when a swap's batch failed in a way that says this wallet cannot send
+  // one: the next press goes in steps, and the page says so before it.
+  const [stepsAfterFailure, setStepsAfterFailure] = useState(false);
+  const deliveryPlan: SwapDeliveryPlanV1 =
+    goal === 'swap'
+      ? swapDeliveryPlanV1({ capabilities: walletCapabilities, capabilitiesError, afterBatchFailure: stepsAfterFailure, chainId: base.id })
+      : 'atomic';
+  // Earn and NFT still go as one batch or not at all.
+  const blocker = deliveryPlan === 'sequential' ? null : walletBlocker;
+  const [step, setStep] = useState<SequentialStepV1 | null>(null);
 
   const [status, setStatus] = useState<BlueprintSubmitStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -348,6 +398,114 @@ export function useSubmitApprovedBlueprint({
       ? createElement(CallsStatusPoller, { batchId, onStatusChange: handleStatusChange })
       : null;
 
+  /**
+   * The approved calls, one transaction at a time, each step waiting for the
+   * one before to land, for a swap the server granted `sequential` delivery.
+   *
+   * The wallet estimates the swap's gas only once the allowance is onchain:
+   * sent together, as viem's own fallback sends them, the swap would be priced
+   * against a chain without the allowance. The batch id is viem's fallback
+   * format, so the poller below reads both receipts without asking the wallet
+   * for a batch it never had, and the server records it like any other.
+   */
+  const sendOneAtATime = async (payload: ApprovedWalletPayload) => {
+    const suffix = builderCodeToDataSuffix(builderCode);
+    const calls = payload.calls;
+    const sent: Hex[] = [];
+    const record = (input: { status: 'submitted' | 'failed' | 'cancelled' | 'submitted_unknown'; error?: string; receipts?: unknown[] }) =>
+      recordSafely({
+        walletAddress: payload.from,
+        routeRunId,
+        blueprintId,
+        approvedCallsHash: payload.approvedCallsHash,
+        status: input.status,
+        ...(sent.length > 0 ? { batchId: sequentialBatchIdV1(sent, base.id), transactionHashes: [...sent] } : {}),
+        ...(input.receipts ? { receipts: input.receipts } : {}),
+        ...(input.error ? { error: input.error } : {}),
+      });
+    const stop = async (status: 'failed' | 'cancelled' | 'submitted_unknown' | 'expired', message: string, receipts?: unknown[]) => {
+      setStep(null);
+      setTxHashes([...sent]);
+      await record({ status: status === 'expired' ? 'cancelled' : status, error: message, ...(receipts ? { receipts } : {}) });
+      setStatus(status);
+      setError(message);
+    };
+    setStatus('submitting');
+    for (let index = 0; index < calls.length; index += 1) {
+      const call = calls[index]!;
+      const last = index === calls.length - 1;
+      const allowance = last ? null : exactAllowanceOfV1(call);
+      if (allowance) {
+        // An allowance already in place is not asked for twice: a press after
+        // a stopped swap step goes straight to the swap.
+        const current = await readContract(config, {
+          address: allowance.token,
+          abi: erc20Abi,
+          functionName: 'allowance',
+          args: [payload.from, allowance.spender],
+          chainId: base.id,
+        }).catch(() => null);
+        if (typeof current === 'bigint' && current >= allowance.amount) continue;
+      }
+      if (last && sent.length > 0 && quoteExpiry && Date.parse(quoteExpiry) - Date.now() < 5_000) {
+        await stop('expired', SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1);
+        return;
+      }
+      setStep({ index: index + 1, total: calls.length, phase: 'wallet' });
+      let hash: Hex;
+      try {
+        hash = await sendTransaction(config, {
+          account: payload.from,
+          chainId: base.id,
+          to: call.to,
+          value: BigInt(call.value),
+          // ERC-8021 rides each transaction's own calldata here: there is no
+          // batch for a dataSuffix capability to travel with.
+          data: suffix ? concat([call.data, suffix as Hex]) : call.data,
+        });
+      } catch (cause) {
+        const declined = isWalletRejectionError(cause);
+        if (sent.length === 0) {
+          await stop(declined ? 'cancelled' : 'failed', declined ? 'Cancelled in wallet' : walletSubmissionFailureMessageV1(cause, walletName));
+        } else {
+          await stop(declined ? 'cancelled' : 'failed', declined ? SEQUENTIAL_SWAP_DECLINED_V1 : walletSubmissionFailureMessageV1(cause, walletName));
+        }
+        return;
+      }
+      sent.push(hash);
+      if (!last) {
+        setStep({ index: index + 1, total: calls.length, phase: 'confirming' });
+        const receipt = await waitForTransactionReceipt(config, { hash, chainId: base.id, timeout: 180_000 }).catch(() => null);
+        if (!receipt) {
+          await stop('submitted_unknown', SEQUENTIAL_ALLOWANCE_UNREAD_V1);
+          return;
+        }
+        if (receipt.status !== 'success') {
+          await stop('failed', SEQUENTIAL_ALLOWANCE_FAILED_V1, normalizeWalletReceipts([receipt as unknown as Record<string, unknown>]));
+          return;
+        }
+      }
+    }
+    // Every step is out. The swap's receipt is read like a batch's.
+    setStep(null);
+    setBuilderAttribution({
+      status: suffix ? 'included' : 'unavailable',
+      builderCodePresent: Boolean(suffix),
+      dataSuffixRequested: Boolean(suffix),
+      dataSuffixSupported: null,
+    });
+    const id = sequentialBatchIdV1(sent, base.id);
+    setBatchId(id);
+    setTxHashes([...sent]);
+    const recorded = await record({ status: 'submitted' });
+    if (recorded) {
+      setStatus('submitted');
+    } else {
+      setStatus('submitted_unknown');
+      await record({ status: 'submitted_unknown', error: 'submitted record could not be persisted' });
+    }
+  };
+
   const submit = async () => {
     // Single-flight: a second click while a submission is active is a no-op —
     // there are NO automatic re-sends of a wallet batch.
@@ -358,13 +516,15 @@ export function useSubmitApprovedBlueprint({
       return;
     }
     // A wallet that SAYS it cannot send one transaction, or has no batch
-    // methods at all, hears so before the server approves anything. One that
-    // says nothing is asked, and its answer is translated below.
-    if (walletBlocker) {
+    // methods at all, hears so before the server approves anything, unless
+    // this is a swap, which then goes in steps. One that says nothing is
+    // asked, and its answer is translated below.
+    if (blocker) {
       setStatus('failed');
-      setError(walletBlocker);
+      setError(blocker);
       return;
     }
+    const plan = deliveryPlan;
     inFlightRef.current = true;
     finalizedRef.current = false;
     setError(null);
@@ -374,16 +534,23 @@ export function useSubmitApprovedBlueprint({
     setRecordedFinalStatus(null);
     setAttemptId(null);
     setBuilderAttribution(null);
+    setStep(null);
     attemptRef.current = null;
     setStatus('approving');
 
     try {
-      const approval = await approveMutateAsync({
+      const approvalInput = {
         walletAddress: address.toLowerCase() as `0x${string}`,
         routeRunId,
         blueprintId,
         blueprintHash,
-      });
+      };
+      // The server decides whether these calls may go one at a time; asking
+      // is all this side does.
+      const approval =
+        plan === 'sequential'
+          ? await approveSwap.mutateAsync({ ...approvalInput, delivery: 'sequential' })
+          : await approveMutateAsync(approvalInput);
       if (approval.outcome === 'expired') {
         setStatus('expired');
         setError(approval.reason);
@@ -400,6 +567,7 @@ export function useSubmitApprovedBlueprint({
         payload,
         connectedAddress: address,
         connectedChainId: chainId,
+        sequentialAsked: plan === 'sequential',
       });
       if (!preflight.ok) {
         setStatus('failed');
@@ -407,6 +575,19 @@ export function useSubmitApprovedBlueprint({
         return;
       }
       approvedRef.current = payload;
+      if (plan === 'sequential') {
+        // Steps were asked for because this wallet cannot send a batch. The
+        // server keeps a batch for calls whose order alone would not keep its
+        // promise, and those this wallet cannot send.
+        if (!('delivery' in payload) || payload.delivery !== 'sequential') {
+          setStatus('failed');
+          setError(SWAP_NEEDS_ONE_BATCH_V1);
+          return;
+        }
+        setSponsoredGas(null);
+        await sendOneAtATime(payload);
+        return;
+      }
 
       // --- T67C.2: open a recovery attempt BEFORE the wallet -----------------
       // If this fails the submission still goes ahead. Recovery is a safety
@@ -499,8 +680,10 @@ export function useSubmitApprovedBlueprint({
             error: 'User rejected the request in the wallet',
           });
         } else {
-          const message = walletSubmissionFailureMessageV1(cause, walletName);
-          if (walletCannotSendSentenceV1(cause) !== null) {
+          const stepsNext = goal === 'swap' && batchFailureInvitesStepsV1(cause);
+          const message = stepsNext ? sequentialAfterBatchFailureV1(walletName) : walletSubmissionFailureMessageV1(cause, walletName);
+          if (stepsNext) setStepsAfterFailure(true);
+          if (stepsNext || walletCannotSendSentenceV1(cause) !== null) {
             // The wallet cannot send a batch at all, sponsored or not. Saying
             // the sponsor failed sent people to press again for the same no.
             setSponsoredGas(null);
@@ -603,7 +786,10 @@ export function useSubmitApprovedBlueprint({
     attemptId,
     builderAttribution,
     sponsoredGas,
-    walletBlocker,
+    walletBlocker: blocker,
+    deliveryPlan,
+    deliveryNotice: deliveryPlan === 'sequential' ? sequentialNoticeV1(walletName) : null,
+    step,
     poller,
   };
 }
