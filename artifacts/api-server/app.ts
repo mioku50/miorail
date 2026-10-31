@@ -123,6 +123,7 @@ import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
 import { stockPagesRouter } from './routes/stockPages.js';
 import { giftPagesRouter } from './routes/giftPages.js';
 import { foundPagesRouter } from './routes/foundPages.js';
+import { stillPagesRouter } from './routes/stillPages.js';
 import { farcasterManifestRouter } from './routes/farcasterManifest.js';
 import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 
@@ -157,6 +158,8 @@ app.use(stockPagesRouter);
 app.use(giftPagesRouter);
 // `/found/<code>`: a Found card, headed with what it shows, and its picture.
 app.use(foundPagesRouter);
+// Still's wallet links, /w/<address or name>, with a head written for the wallet.
+app.use(stillPagesRouter);
 // `/.well-known/farcaster.json`: Miorail as a Farcaster mini app.
 app.use(farcasterManifestRouter);
 

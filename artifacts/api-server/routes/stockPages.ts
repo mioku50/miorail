@@ -214,6 +214,8 @@ export type StockPageMetaV1 = {
   /** How a Farcaster cast shows the page: a 3:2 picture, and a button that
    * opens the page inside Farcaster as a mini app. */
   miniApp: MiniAppEmbedV1;
+  /** The name a preview shows beside the title. Still's pages are Still's. */
+  siteName?: string;
 };
 
 /**
@@ -229,7 +231,7 @@ export function renderStockPageHtmlV1(template: string, meta: StockPageMetaV1): 
     meta.noindex ? '<meta name="robots" content="noindex" />' : null,
     meta.canonicalUrl ? `<link rel="canonical" href="${escapeHtmlV1(meta.canonicalUrl)}" />` : null,
     '<meta property="og:type" content="website" />',
-    '<meta property="og:site_name" content="Miorail" />',
+    `<meta property="og:site_name" content="${escapeHtmlV1(meta.siteName ?? 'Miorail')}" />`,
     `<meta property="og:title" content="${escapeHtmlV1(meta.title)}" />`,
     `<meta property="og:description" content="${escapeHtmlV1(meta.description)}" />`,
     meta.canonicalUrl ? `<meta property="og:url" content="${escapeHtmlV1(meta.canonicalUrl)}" />` : null,
@@ -248,8 +250,12 @@ export function renderStockPageHtmlV1(template: string, meta: StockPageMetaV1): 
   return template
     .replace(/<title>[\s\S]*?<\/title>/i, `<title>${escapeHtmlV1(meta.title)}</title>`)
     .replace(/<meta\s+name=["']description["'][^>]*>\s*/gi, '')
-    // The static document carries a generic embed; this page's replaces it.
+    // The static document carries a generic embed and a generic preview;
+    // this page's replace them rather than sit beside them.
     .replace(/<meta\s+name=["']fc:(?:miniapp|frame)["'][^>]*>\s*/gi, '')
+    .replace(/<meta\s+(?:property|name)=["'](?:og|twitter):[^"']*["'][^>]*>\s*/gi, '')
+    .replace(/<meta\s+name=["']robots["'][^>]*>\s*/gi, '')
+    .replace(/<link\s+rel=["']canonical["'][^>]*>\s*/gi, '')
     .replace(/<\/head>/i, `    ${tags.join('\n    ')}\n  </head>`);
 }
 

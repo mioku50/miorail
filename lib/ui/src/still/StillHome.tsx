@@ -8,6 +8,8 @@ import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
 import { StillMobile } from './StillMobile';
 import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
+import { composerLinksV1 } from '../console/composerLinks';
+import { ShareLinkV1 } from '../console/shareHost';
 
 void React;
 
@@ -105,6 +107,26 @@ export interface StillHomeModelV1 {
   onRetry: () => void;
   /** Alerts in Telegram, where a bot exists. */
   telegram?: TelegramAlertsModelV1 | null;
+  /** The wallet's name, or its address: what a shared card names. */
+  subject?: string | null;
+}
+
+/**
+ * A wallet's card, for X or Farcaster. The link is stills.lat/w/<wallet>: its
+ * head carries the card, which names the wallet, so the row says so.
+ */
+export function StillShareRowV1({ subject, label }: { subject: string; label: string }) {
+  const links = composerLinksV1({
+    url: `https://stills.lat/w/${encodeURIComponent(subject)}`,
+    text: 'Spend without selling: modelled borrowing room on Still, read from Base.',
+  });
+  return (
+    <div className="still-share">
+      <span className="still-note">{label}</span>
+      <ShareLinkV1 href={links.x} className="still-share-link">Post on X</ShareLinkV1>
+      <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
+    </div>
+  );
 }
 
 /** An assistant asking: a speech bubble with a spark. */
@@ -224,6 +246,7 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           </summary>
           <p className="still-note">Calculated from your reviewed assets, including stock collateral. This is a modelled figure, not a current loan quote. Get money establishes a separate limit for the exact collateral you choose.</p>
           {model.reading ? <div className="mono still-clock">READ FROM BASE · BLOCK {Number(model.reading.block).toLocaleString('en-US')}</div> : null}
+          {model.subject ? <StillShareRowV1 subject={model.subject} label="Share this wallet’s card:" /> : null}
         </details>
       ) : null}
       {view ? <StillComingUp items={view.comingUp} /> : null}
@@ -297,6 +320,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
           <div className="mono still-clock" style={{ marginTop: 8 }}>
             READ FROM BASE · BLOCK {Number(result.report.reading.block).toLocaleString('en-US')}
           </div>
+          <StillShareRowV1 subject={result.report.subject.name ?? result.report.subject.address} label="Share this check:" />
         </div>
       ) : null}
       <div className="still-btns">

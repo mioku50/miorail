@@ -32,6 +32,12 @@ export type MiniAppEmbedV1 = {
   /** Absolute, on this site, and 3:2. */
   imageUrl: string;
   buttonTitle: string;
+  /**
+   * Where the button opens, when it is not the page itself. A stills.lat page
+   * opens its miorail.xyz twin: the mini app is registered for that domain,
+   * and Farcaster checks the domain it launches against its manifest.
+   */
+  url?: string;
 };
 
 /**
@@ -60,6 +66,7 @@ export function miniAppEmbedJsonV1(embed: MiniAppEmbedV1, type: 'launch_miniapp'
       action: {
         type,
         name: MINI_APP_NAME_V1,
+        ...(embed.url ? { url: embed.url } : {}),
         ...(origin
           ? { splashImageUrl: miniAppSplashUrlV1(origin), splashBackgroundColor: MINI_APP_SPLASH_BACKGROUND_V1 }
           : {}),

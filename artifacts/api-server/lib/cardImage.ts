@@ -9,9 +9,10 @@ import { Resvg, initWasm } from '@resvg/resvg-wasm';
 // native is installed and nothing it is handed can reach the process. It is
 // handed only SVG this server wrote.
 //
-// It draws with the four font files in assets/fonts (Inter and JetBrains Mono,
-// the board's own faces, under the SIL Open Font License) and never with the
-// machine's fonts. The picture is the same on the server as in a test.
+// It draws with the font files in assets/fonts (Inter and JetBrains Mono, the
+// board's own faces, and Jost for Still's cards, all under the SIL Open Font
+// License) and never with the machine's fonts. The picture is the same on the
+// server as in a test. Jost's files name their family "Jost*".
 // ---------------------------------------------------------------------------
 
 const FONT_FILES_V1 = [
@@ -19,6 +20,10 @@ const FONT_FILES_V1 = [
   'Inter-SemiBold.ttf',
   'JetBrainsMono-Regular.ttf',
   'JetBrainsMono-SemiBold.ttf',
+  'Jost-Light.ttf',
+  'Jost-Book.ttf',
+  'Jost-Medium.ttf',
+  'Jost-Semi.ttf',
 ] as const;
 
 const FONT_DIRECTORY_V1 = path.resolve(__dirname, '../assets/fonts');

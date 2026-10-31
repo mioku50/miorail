@@ -27,7 +27,7 @@ test('a delayed screen chunk shows a recovery frame and then opens Stocks', asyn
     await route.continue();
   });
   await page.goto('/stocks', { waitUntil: 'domcontentloaded' });
-  await expect(page.getByRole('heading', { name: 'Loading Miorail…', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Loading Still…', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Reload page', exact: true })).toBeVisible();
   release();
   await expect(page.getByRole('heading', { name: 'Reading without signing in', exact: true })).toBeVisible();
@@ -42,7 +42,7 @@ test('a delayed entry module keeps the HTML recovery frame visible', async ({ pa
     await route.continue();
   });
   await page.goto('/', { waitUntil: 'commit' });
-  await expect(page.getByRole('heading', { name: 'Loading Miorail…', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Loading Still…', exact: true })).toBeVisible();
   await expect(page.getByText('If this takes longer, reload this page.', { exact: true })).toBeVisible();
   release();
   // Loading the released entry also loads its dependencies on a cold dev server.

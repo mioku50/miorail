@@ -213,6 +213,10 @@ a.still-extra:hover { border-color: var(--sm-link); }
   display: inline-flex; align-items: center; text-decoration: none; cursor: pointer; white-space: nowrap;
 }
 .still-extra-action[disabled] { opacity: 0.6; cursor: progress; }
+.still-share { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 10px; }
+.still-share .still-note { margin: 0; }
+.still-share-link { font-size: 14px; font-weight: 500; color: var(--sm-link); text-decoration: none; }
+.still-share-link:hover { text-decoration: underline; }
 .still-coming li { display: flex; gap: 10px; align-items: flex-start; margin-top: 8px; font-size: 14px; line-height: 1.4; }
 .still-coming svg { width: 18px; height: 18px; flex: none; margin-top: 1px; }
 .still-coming .when { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12px; font-weight: 500; margin-right: 2px; }

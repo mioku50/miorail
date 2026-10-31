@@ -148,7 +148,8 @@ function StillHomePage() {
         <StillHomeSignedIn model={{ sky, view: null, reading: null, loading: false, failed: null, onRetry: still.retry }} />
       ) : still.signedIn ? (
         <StillHomeSignedIn
-          model={{ sky, view, reading: still.report?.reading ?? null, loading: still.loading, failed: still.failed, onRetry: still.retry, telegram }}
+          model={{ sky, view, reading: still.report?.reading ?? null, loading: still.loading, failed: still.failed, onRetry: still.retry, telegram,
+            subject: still.report ? still.report.subject.name ?? still.report.subject.address : null }}
         />
       ) : (
         <StillHomeSignedOut

@@ -263,7 +263,7 @@ test('the deploy checks both Assets documents against the built entry and preser
 
 test('the edge sends stock and gift pages to the API for their head, and falls back to the file', () => {
   const nginx = source('ops/nginx/miorail-app.conf');
-  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {', 'location ^~ /gift/ {', 'location ^~ /found/ {']) {
+  for (const location of ['location = /stocks {', 'location ^~ /stocks/ {', 'location ^~ /gift/ {', 'location ^~ /found/ {', 'location ^~ /w/ {']) {
     const at = nginx.indexOf(location);
     assert.ok(at >= 0, `Nginx has no ${location}`);
     const block = nginx.slice(at, nginx.indexOf('\n}', at));
@@ -275,6 +275,9 @@ test('the edge sends stock and gift pages to the API for their head, and falls b
   }
   const sitemap = nginx.slice(nginx.indexOf('location = /sitemap.xml {'));
   assert.match(sitemap.slice(0, 400), /proxy_pass http:\/\/127\.0\.0\.1:8080;/);
+  // A Still wallet link carries an address in its path: the edge keeps no log of it.
+  const wallet = nginx.slice(nginx.indexOf('location ^~ /w/ {'));
+  assert.match(wallet.slice(0, wallet.indexOf('\n}')), /access_log off;/);
 });
 
 test('the deploy proves a stock page left with its own head', () => {
@@ -361,7 +364,7 @@ test('the edge serves the Farcaster manifest from the API, and the preview pictu
   assert.match(pictureBlock, /add_header Cache-Control "public, max-age=86400";/);
   assert.match(pictureBlock, /try_files \$uri =404;/);
   const pattern = new RegExp('^/(?:og-[a-z0-9-]+|miniapp-(?:icon|splash))\\.png$');
-  for (const file of ['/og-stocks.png', '/og-stocks-3x2.png', '/og-gift-3x2.png', '/miniapp-icon.png', '/miniapp-splash.png']) {
+  for (const file of ['/og-stocks.png', '/og-stocks-3x2.png', '/og-gift-3x2.png', '/og-still.png', '/og-still-3x2.png', '/miniapp-icon.png', '/miniapp-splash.png']) {
     assert.ok(pattern.test(file), file);
   }
   // index.html and the app's routes stay out of it.

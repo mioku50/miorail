@@ -153,6 +153,17 @@ describe('Home', () => {
     assert.doesNotMatch(html, /You can borrow|guaranteed|\bSafe\b/i);
   });
 
+  it('shares a wallet’s card by its stills.lat link, saying the card names the wallet', () => {
+    const sky = skyStateV1({ now: WEDNESDAY });
+    const r = report();
+    const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, subject: 'example.base.eth' }} />);
+    assert.match(html, /Share this wallet’s card:/);
+    assert.match(html, /href="https:\/\/x\.com\/intent\/tweet\?text=[^"]*&amp;url=https%3A%2F%2Fstills\.lat%2Fw%2Fexample\.base\.eth"/);
+    assert.match(html, /href="https:\/\/farcaster\.xyz\/~\/compose\?text=[^"]*&amp;embeds\[\]=https%3A%2F%2Fstills\.lat%2Fw%2Fexample\.base\.eth"/);
+    // The words carry no figure: the card does, at the block it was read.
+    assert.doesNotMatch(decodeURIComponent(/intent\/tweet\?text=([^&"]*)/.exec(html)![1]!), /\$\d/);
+  });
+
   it('offers alerts in Telegram in one line, in the state the one view gives', () => {
     const sky = skyStateV1({ now: WEDNESDAY });
     const r = report();

@@ -1,4 +1,6 @@
-import type { MobileInputV1 } from './homeView';
+// The API draws Still's share cards with this layout and type-checks it under
+// node16, so relative imports name their `.js`.
+import type { MobileInputV1 } from './homeView.js';
 
 // ---------------------------------------------------------------------------
 // The Calder mobile's geometry, in the 390 x 310 frame it shares with the sky.

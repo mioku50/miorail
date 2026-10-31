@@ -15,6 +15,7 @@
 
 import { stockTradeAmountV1 } from '@mioagent/rwa-market-reality/execution-handoff';
 import type { VerificationHonestyViewV1, VerifiedFactV1 } from './verificationHonesty';
+import { composerLinksV1 } from './composerLinks';
 
 /** A gift from what the wallet already holds: which stock, and how much of
  * it. Nothing is bought, so there is no route to compare. */
@@ -309,16 +310,9 @@ export function giftShareTextV1(input: {
   return `I gave ${input.recipientLabel} ${input.amount} ${input.symbol}: ${what}, delivered on Base in one transaction.`;
 }
 
-/** Composer links: X takes the link as `url`, Farcaster as an embed, so the
- * text never carries it twice. */
+/** A gift's composer links: the one builder every share uses. */
 export function giftShareLinksV1(input: { url: string; text: string }): { x: string; farcaster: string } {
-  const text = encodeURIComponent(input.text);
-  const url = encodeURIComponent(input.url);
-  return {
-    x: `https://x.com/intent/tweet?text=${text}&url=${url}`,
-    // warpcast.com/~/compose now answers 301 to exactly this path, query intact.
-    farcaster: `https://farcaster.xyz/~/compose?text=${text}&embeds[]=${url}`,
-  };
+  return composerLinksV1(input);
 }
 
 /** The absolute gift link for a public proof id. */
