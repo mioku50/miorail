@@ -1350,6 +1350,21 @@ function CompactRepresentation({
  * the summary cannot drift from the evidence. It states a measurement and its
  * age — never a ranking, and never a claim that a trade would succeed.
  */
+/**
+ * Sell on the stock card. Always there, so it does not appear and then vanish
+ * as the holdings read lands, which read as a bug (2026-10-31); a wallet known
+ * to hold none sees it disabled, with the reason.
+ */
+export function stockSellButtonV1(
+  held: boolean | null,
+  tokenSymbol: string | null,
+): { className: string; disabled: boolean; note: string | null } {
+  if (held === false) {
+    return { className: 'btn alt', disabled: true, note: `This wallet holds no ${tokenSymbol ?? 'tokens of this stock'} to sell.` };
+  }
+  return { className: held === true ? 'btn' : 'btn alt', disabled: false, note: null };
+}
+
 function HeadlineAnswer({
   headline,
   ticker,
@@ -1400,11 +1415,10 @@ function HeadlineAnswer({
     setSide(open === direction || !tradable ? null : { tokenAddress: tradable.tokenAddress, direction });
   // The loud button is what the reader can do NOW (2026-10-03). Anyone with
   // USDC can buy, so Buy leads; Sell matches it once the wallet holds the
-  // token, and is not offered to a wallet known to hold none. The rule this
-  // board keeps is that it never picks a token or an issuer for anybody —
-  // and it does not: Coinbase's contract is the only one on this card.
-  const showSell = held !== false;
-  const sellClass = held === true ? 'btn' : 'btn alt';
+  // token. The rule this board keeps is that it never picks a token or an
+  // issuer for anybody — and it does not: Coinbase's contract is the only one
+  // on this card.
+  const sell = stockSellButtonV1(held, quote?.tokenSymbol ?? null);
   const priceNote = stockPriceNoteV1(quote?.priceAt ?? null, new Date());
   const name = quote?.companyName ?? company ?? headline.title;
   const symbols = [ticker, quote?.tokenSymbol].filter((part): part is string => Boolean(part) && part !== name);
@@ -1461,18 +1475,27 @@ function HeadlineAnswer({
             <button type="button" className="btn" aria-expanded={open === 'buy'} onClick={() => toggle('buy')}>
               Buy
             </button>
-            {showSell ? (
-              sellDecimals !== null ? (
-                <button type="button" className={sellClass} aria-expanded={open === 'sell'} onClick={() => toggle('sell')}>
-                  Sell
-                </button>
-              ) : onPrepare ? (
-                // Nobody read this contract's scale, so no token amount can be
-                // typed exactly; the prepare step asks for one instead.
-                <button type="button" className={sellClass} onClick={() => onPrepare(tradable.tokenAddress, 'sell')}>
-                  Sell
-                </button>
-              ) : null
+            {sellDecimals !== null ? (
+              <button
+                type="button"
+                className={sell.className}
+                disabled={sell.disabled}
+                aria-expanded={open === 'sell'}
+                onClick={() => toggle('sell')}
+              >
+                Sell
+              </button>
+            ) : onPrepare ? (
+              // Nobody read this contract's scale, so no token amount can be
+              // typed exactly; the prepare step asks for one instead.
+              <button
+                type="button"
+                className={sell.className}
+                disabled={sell.disabled}
+                onClick={() => onPrepare(tradable.tokenAddress, 'sell')}
+              >
+                Sell
+              </button>
             ) : null}
             {/* Growth plan step 4. Outlined: a gift is a third thing the reader
                 may do, not the one the card leads with. */}
@@ -1493,6 +1516,7 @@ function HeadlineAnswer({
           </>
         ) : null}
       </div>
+      {tradable && sell.note ? <p className="lnote">{sell.note}</p> : null}
       {tradable && open === 'gift' && giftable ? (
         <GiftForm
           key={`gift:${tradable.tokenAddress}`}

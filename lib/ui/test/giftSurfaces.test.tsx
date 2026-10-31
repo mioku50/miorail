@@ -17,7 +17,7 @@ import {
 } from '../src/console/giftView';
 import { GiftProofPanel, PublicGiftCard, type ProofGiftModelV1 } from '../src/console/GiftPanels';
 import { ProofScreen, ReviewScreen } from '../src/console/ConsoleScreens';
-import { GiftForm } from '../src/console/MarketRealityScreen';
+import { GiftForm, stockSellButtonV1 } from '../src/console/MarketRealityScreen';
 import { swapPrepareNoticeV1 } from '../src/console/consoleFlow';
 
 // ---------------------------------------------------------------------------
@@ -350,5 +350,20 @@ describe('a refused prepare is never "all clear"', () => {
   test('a prepared route whose checks and simulation passed is still all clear', () => {
     const html = renderToStaticMarkup(<ReviewScreen {...base} checks={[{ label: 'Kernel', passed: true }]} />);
     assert.match(html, /all clear/);
+  });
+});
+
+describe('Sell on the stock card', () => {
+  // 2026-10-31: Sell was on the card while the holdings were unread, then gone
+  // once they read "none", which looked like a bug. It now stays, and says why.
+  test('is always offered, and disabled with a reason for a wallet known to hold none', () => {
+    assert.deepEqual(stockSellButtonV1(null, 'AAPLc'), { className: 'btn alt', disabled: false, note: null });
+    assert.deepEqual(stockSellButtonV1(true, 'AAPLc'), { className: 'btn', disabled: false, note: null });
+    assert.deepEqual(stockSellButtonV1(false, 'AAPLc'), {
+      className: 'btn alt',
+      disabled: true,
+      note: 'This wallet holds no AAPLc to sell.',
+    });
+    assert.equal(stockSellButtonV1(false, null).note, 'This wallet holds no tokens of this stock to sell.');
   });
 });
