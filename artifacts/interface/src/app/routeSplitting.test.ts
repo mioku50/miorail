@@ -28,12 +28,11 @@ const LAZY_SCREENS_V1 = [
   'RouteHistoryPage',
   'RouteIntelligenceConsole',
   'PublicProofPage',
-  'B20WatchPage',
+  // Investigate, B20 controls and Radar, one page since 2026-10-31.
+  'WatchPage',
   'OpportunitiesPage',
   'RwaDiscoverPage',
-  'InvestigatePage',
   'MarketRealityPage',
-  'MarketRealityRadarPage',
   'SettingsPage',
   'PublicMetricsPage',
 ] as const;

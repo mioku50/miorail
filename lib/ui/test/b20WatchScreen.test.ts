@@ -443,7 +443,8 @@ describe('the four sections', () => {
     // and quietly stop highlighting the right tab.
     for (const [surface, file] of [
       ['routes console', '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'],
-      ['portfolio page', '../../../artifacts/interface/src/features/b20/B20WatchPage.tsx'],
+      // B20 controls is a section of Watch since 2026-10-31: the page navigates.
+      ['watch page', '../../../artifacts/interface/src/features/watch/WatchPage.tsx'],
       ['opportunities page', '../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx'],
       ['settings page', '../../../artifacts/interface/src/features/settings/SettingsPage.tsx'],
     ] as const) {

@@ -1454,9 +1454,7 @@ describe('Phase 15.1 — a signed-out reader is told about the session, not the 
 describe('every surface carries one name', () => {
   const PAGE_SECTION_V1: readonly [string, ConsoleSectionV1][] = [
     ['../../../artifacts/interface/src/features/rwa/MarketRealityPage.tsx', 'market'],
-    ['../../../artifacts/interface/src/features/rwa/MarketRealityRadarPage.tsx', 'radar'],
     ['../../../artifacts/interface/src/features/rwa/RwaDiscoverPage.tsx', 'opportunities'],
-    ['../../../artifacts/interface/src/features/rwa/InvestigatePage.tsx', 'investigate'],
     ['../../../artifacts/interface/src/features/extensions/ExtensionsPage.tsx', 'extensions'],
     ['../../../artifacts/interface/src/features/plan/RouteHistoryPage.tsx', 'activity'],
     ['../../../artifacts/interface/src/features/settings/SettingsPage.tsx', 'settings'],
@@ -1472,12 +1470,15 @@ describe('every surface carries one name', () => {
   });
 
   test('the pages that build a crumb from the table are not exempt from it', () => {
-    // These two take the label from `consoleSectionLabelV1` rather than typing
-    // it, so the assertion above cannot read them. What it CAN check is that
-    // neither appends a second name for the same page.
-    const watch = read('../../../artifacts/interface/src/features/b20/B20WatchPage.tsx');
-    assert.match(watch, /crumb: \[consoleSectionLabelV1\('portfolio'\)\]/);
+    // Watch is the page of three sections (Investigate, B20 controls and
+    // Radar, joined 2026-10-31), so its crumb is its own one name; the
+    // sections inside it render no crumb of their own.
+    const watch = read('../../../artifacts/interface/src/features/watch/WatchPage.tsx');
+    assert.match(watch, /crumb: \['Watch'\]/);
     assert.doesNotMatch(watch, /'Control watch'/);
+    for (const section of ['b20/B20WatchPage.tsx', 'rwa/InvestigatePage.tsx', 'rwa/MarketRealityRadarPage.tsx']) {
+      assert.doesNotMatch(read(`../../../artifacts/interface/src/features/${section}`), /crumb:/, section);
+    }
 
     const launches = read('../../../artifacts/interface/src/features/opportunities/OpportunitiesPage.tsx');
     assert.match(launches, /crumb: \[consoleSectionLabelV1\('opportunities'\), 'B20 launches'\]/);
