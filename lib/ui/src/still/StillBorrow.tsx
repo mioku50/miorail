@@ -32,6 +32,12 @@ export interface StillBorrowModelV1 {
     blockNumber: number | null;
   };
   error: string | null;
+  /** An amount the server said this wallet can add, after refusing more. */
+  suggestedAmount?: string | null;
+  /** The connected wallet cannot send a loan at all (one batch only). The
+   * limit can still be read; the loan cannot be sent from this wallet. */
+  walletNote?: string | null;
+  onSuggestedAmount?: (amount: string) => void;
 }
 
 /** Choose a precise pledge, read the server's limit, then choose a loan.
@@ -59,7 +65,15 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
         </div>
       ) : (
         <>
+          {model.walletNote ? <p className="still-section still-warn" role="status">{model.walletNote}</p> : null}
           {model.error ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
+          {model.suggestedAmount && model.onSuggestedAmount && model.asset ? (
+            <p className="still-section">
+              <button type="button" className="still-btn sec" disabled={busy} onClick={() => model.onSuggestedAmount!(model.suggestedAmount!)}>
+                Use {model.suggestedAmount} {model.asset}
+              </button>
+            </p>
+          ) : null}
           <div className="still-borrow-grid">
             <section className="still-card still-borrow-step" aria-labelledby={`${id}-collateral-title`}>
               <div className="still-eyebrow">1 · Collateral</div>

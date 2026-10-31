@@ -37,6 +37,10 @@ export {
   WALLET_HAS_NO_BATCHES_V1,
   WALLET_UPGRADE_DECLINED_V1,
   atomicBatchSupportV1,
+  useWalletBatchSupportV1,
+  walletBatchBlockerV1,
+  walletCannotSendSentenceV1,
+  walletDidNotSendV1,
   walletSubmissionFailureMessageV1,
 } from './src/walletBatchSupport';
 export type { AtomicBatchSupportV1 } from './src/walletBatchSupport';

@@ -7,6 +7,8 @@ interface AskedLimitV1 { asset: StillBorrowAssetV1; supplyAtomic: string; wallet
 export function useStillBorrowEntryV1(input: {
   sky: SkyStateV1; signedIn: boolean; wallet: string | null | undefined; initialAsset: StillBorrowAssetV1 | null;
   onReviewLink: (href: string) => void;
+  /** What the connected wallet said about sending one batch, from the host. */
+  walletBlocker?: string | null;
 }): { model: StillBorrowModelV1 } {
   const {sky,signedIn,wallet}=input;
   const [asset, setAsset] = useState<StillBorrowAssetV1 | null>(input.initialAsset);
@@ -32,7 +34,7 @@ export function useStillBorrowEntryV1(input: {
   // Editing either amount must never start an independent wallet/RPC read.
   const limit = useBorrowCapacity(activeAsked ? borrowCollateralTokenV1(activeAsked.asset) : null, activeAsked?.supplyAtomic ?? null, activeAsked?.asset === 'ETH' ? 'native' : undefined);
   const intent = useCreateBorrowIntentV1();
-  const view = activeAsked && limit.data !== undefined && !limit.error
+  const view: ReturnType<typeof stillBorrowCapacityViewV1> = activeAsked && limit.data !== undefined && !limit.error
     ? stillBorrowCapacityViewV1(limit.data, activeAsked.asset, activeAsked.supplyAtomic)
     : { capacity: null, error: null };
   const reading = activeAsked !== null && limit.isFetching;
@@ -87,5 +89,9 @@ export function useStillBorrowEntryV1(input: {
           reading, preparing: intent.isPending, needsRead, onReadLimit, onReview: () => void onReview(),
           capacity: view.capacity,
           error: error ?? (!needsRead && !reading ? limit.error ? 'Your borrowing limit could not be read. Read it again before continuing.' : view.error : null),
+          walletNote: signedIn ? input.walletBlocker ?? null : null,
+          // Fills the field; the person still presses Read borrowing limit.
+          suggestedAmount: !error && !needsRead && !reading && view.suggestedAmount ? view.suggestedAmount : null,
+          onSuggestedAmount: (amount: string) => { setCollateralAmount(amount); setError(null); },
   }};
 }

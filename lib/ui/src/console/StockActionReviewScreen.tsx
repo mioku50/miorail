@@ -100,6 +100,8 @@ export interface StockActionReviewModelV1 {
     error: string | null;
     /** Set only once a wallet returned a batch id. */
     batchId: string | null;
+    /** The wallet said it cannot send one batch; `error` says so. */
+    blocked?: boolean;
     onOpen: () => void;
   };
 }
@@ -215,7 +217,7 @@ export function StockActionReviewScreen({
                   <button
                     type="button"
                     className="btn lg"
-                    disabled={model.wallet.pending}
+                    disabled={model.wallet.pending || model.wallet.blocked}
                     title="Asks the server for the exact calls, then hands them to your wallet untouched. Your Base Account decides."
                     onClick={model.wallet.onOpen}
                   >

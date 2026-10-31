@@ -3,6 +3,7 @@ import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
+import { walletCannotSendSentenceV1, walletDidNotSendV1 } from './walletBatchSupport';
 import { describeLendingTermsChangesV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
   type LendingExecutionWireV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
@@ -43,6 +44,11 @@ export function useLendingReviewConsoleV1(input: {
   sessionWalletAddress: string | null;
   walletAddress: string | null;
   sendCalls: (batch: { calls: CallsV1 }) => Promise<string | null>;
+  /** Why the connected wallet cannot send one batch, read from the wallet by
+   * the host before anything is opened. The wallet button is not offered. */
+  walletBlocker?: string | null;
+  /** The connected wallet's own name, for its refusals. */
+  walletName?: string | null;
 }): { model: LendingReviewConsoleModelV1; body: LendingReviewWireV1 | null } {
   const session = input.sessionWalletAddress?.toLowerCase() ?? null;
   const connected = input.walletAddress?.toLowerCase() ?? null;
@@ -152,7 +158,9 @@ export function useLendingReviewConsoleV1(input: {
                 });
                 return batchId;
               } catch (error) {
-                await report(borrowUserRejectedV1(error) ? 'rejected' : 'unknown').catch(() => undefined);
+                // A refusal, or a wallet that cannot send a batch at all, sent
+                // nothing; anything else may have been sent.
+                await report(walletDidNotSendV1(error) ? 'rejected' : 'unknown').catch(() => undefined);
                 throw error;
               }
             } });
@@ -174,19 +182,21 @@ export function useLendingReviewConsoleV1(input: {
     } catch (error) {
       confirmed.current = null;
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
-        : error instanceof BorrowSubmissionStorageErrorV1 ? error.message
+        : walletCannotSendSentenceV1(error, input.walletName) ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'
-            : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.' });
+            : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.') });
     } finally { opening.current = false; update({ walletBusy: false }); }
   }, [active, eligible, identity, input, read, session, update]);
 
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
   return { body: eligible ? active.body : null, model: {
     loading: eligible && active.loading, error: !eligible ? 'Sign in and connect the same wallet to read this private review.' : active.error,
-    body: eligible ? active.body : null, walletBusy: eligible && active.walletBusy, walletError: eligible ? active.walletError : null,
+    body: eligible ? active.body : null, walletBusy: eligible && active.walletBusy,
+    // The wallet's own answer about itself is said before the button would be.
+    walletError: eligible ? active.walletError ?? (active.body?.state === 'ready' && !locked ? input.walletBlocker ?? null : null) : null,
     batchId: eligible ? active.batchId : null, execution: eligible ? active.execution : null, checking: eligible && active.checking,
     submissionLock: eligible && active.marker ? borrowSubmissionLockCopyV1(active.marker) : null,
-    onOpen: eligible && active.body?.state === 'ready' && !locked ? () => void onOpen() : null,
+    onOpen: eligible && active.body?.state === 'ready' && !locked && !input.walletBlocker ? () => void onOpen() : null,
     onCheck: eligible && executionId ? () => void onCheck() : null,
     transactionHint: eligible ? active.transactionHint : '',
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,

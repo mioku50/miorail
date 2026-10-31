@@ -1490,6 +1490,7 @@ export function RouteIntelligenceConsole() {
                 blueprintHash={nftPrepared.response.blueprint.blueprintHash}
                 quoteExpiry={nftPrepared.response.blueprint.expiresAt}
                 builderCode={BUILDER_CODE}
+                failureNote
                 onStateChange={onNftSubmission}
               />
             ) : null
@@ -1614,6 +1615,8 @@ export function RouteIntelligenceConsole() {
                 blueprintHash={prepared.blueprint.blueprintHash}
                 quoteExpiry={prepared.blueprint.quoteExpiry}
                 builderCode={BUILDER_CODE}
+                // Nothing else on this screen prints the wallet's answer.
+                failureNote
                 onStateChange={(next) => {
                   setSubmission(next);
                   if (next.status !== 'idle') mark('signed', 'start');

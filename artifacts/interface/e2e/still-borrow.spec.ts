@@ -7,25 +7,34 @@ const NOW = new Date('2026-10-28T15:00:00Z');
 const WALLET = '0x1111111111111111111111111111111111111111';
 const REVIEW_URL = '/lending/miorail-lending-v1.fixturepayload.fixturesignature';
 
-async function install(page: Page, signedIn = true) {
+async function install(page: Page, signedIn = true, wallet: 'none' | 'no-batches' = 'none') {
   await page.clock.setFixedTime(NOW);
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
     `export function AuthProvider({children}) { return children; } export function useAuthGate() { return {showPrivateSurfaces:${signedIn},phase:'${signedIn ? 'authenticated' : 'disconnected'}',sessionAuthenticated:${signedIn}}; }` }));
-  await page.addInitScript(() => {
+  await page.addInitScript(({ wallet, address }) => {
     const methods: string[] = [];
+    // 'no-batches' answers as Rabby does (its source, 2026-10-31): connected,
+    // and -32601 for wallet_getCapabilities. wagmi reconnects it from storage.
+    if (wallet === 'no-batches') {
+      localStorage.setItem('wagmi.recentConnectorId', '"injected"');
+      localStorage.setItem('wagmi.injected.connected', 'true');
+    }
     Object.assign(window, { __stillBorrowWalletMethods: methods, ethereum: {
       on() {}, removeListener() {},
       request: async ({ method }: { method: string }) => {
         methods.push(method);
         if (/sign|send|transaction/i.test(method)) throw new Error('Fixture forbids wallet actions');
         if (method === 'eth_chainId') return '0x2105';
-        if (method === 'eth_accounts') return [];
+        if (method === 'eth_accounts') return wallet === 'no-batches' ? [address] : [];
+        if (method.startsWith('wallet_') && wallet === 'no-batches') {
+          throw Object.assign(new Error(`method [${method}] doesn't has corresponding handler`), { code: -32601 });
+        }
         return null;
       },
     } });
-  });
+  }, { wallet, address: WALLET });
   const state = {
-    mode: 'read' as 'read' | 'unavailable' | 'refused' | 'unknown-balance',
+    mode: 'read' as 'read' | 'unavailable' | 'refused' | 'unknown-balance' | 'native-short',
     limitReads: [] as URL[], writes: [] as string[], intents: [] as unknown[],
     intentGate: null as Promise<void> | null,
   };
@@ -48,6 +57,12 @@ async function install(page: Page, signedIn = true) {
       state.limitReads.push(url);
       if (state.mode === 'unavailable') return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
       if (state.mode === 'refused') return route.fulfill({ json: { state: 'refused', detail: 'The selected pledge exceeds this wallet’s measured balance.' } });
+      // The server's refusal for 0.0033 ETH asked of a wallet holding 0.0033.
+      if (state.mode === 'native-short' && BigInt(url.searchParams.get('collateralSupplyAtomic') ?? '0') > 2_800_000_000_000_000n) {
+        return route.fulfill({ json: { state: 'refused', refusal: 'native_fee_reserve_insufficient', markets: [],
+          detail: 'This wallet holds 0.0033 ETH. Still leaves 0.0005 ETH in it for network fees, so you can add up to 0.0028 ETH.',
+          walletNativeAtomic: '3300000000000000', maximumNativeAtomic: '2800000000000000' } });
+      }
       const asset = CRYPTO.find(row => row.token.toLowerCase() === url.searchParams.get('token')?.toLowerCase());
       const stock = STOCKS.find(row => row.token.toLowerCase() === url.searchParams.get('token')?.toLowerCase());
       if (!asset && !stock) return route.fulfill({ status: 400, json: { error: 'fixture_wrong_asset' } });
@@ -194,6 +209,46 @@ test('an explicit native-ETH query requires a positive amount, keeps the fee res
   }]);
   await noWalletAction(page);
 });
+
+test('ETH that would spend the fee reserve is refused with the amount that works, filled in one press', async ({ page }) => {
+  const state = await install(page);
+  state.mode = 'native-short';
+  await page.goto('/borrow?asset=ETH', { waitUntil: 'domcontentloaded' });
+  await page.getByLabel('Amount to add', { exact: true }).fill('0.0033');
+  await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText(
+    'This wallet holds 0.0033 ETH. Still leaves 0.0005 ETH in it for network fees, so you can add up to 0.0028 ETH.');
+  await page.getByRole('button', { name: 'Use 0.0028 ETH', exact: true }).click();
+  await expect(page.getByLabel('Amount to add', { exact: true })).toHaveValue('0.0028');
+  // Filling is not reading: the person asks again.
+  expect(state.limitReads).toHaveLength(1);
+  await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
+  await expect(page.locator('.still-borrow-maximum')).toContainText('5 USDC');
+  expect(state.limitReads[1]!.searchParams.get('collateralSupplyAtomic')).toBe('2800000000000000');
+  await expect(page.getByRole('button', { name: /^Use / })).toHaveCount(0);
+  expect(state.writes).toEqual([]);
+  await noWalletAction(page);
+});
+
+for (const width of [390, 1366]) {
+  test(`a wallet with no batch methods hears so before it reads or reviews anything (${width}px)`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 });
+    const state = await install(page, true, 'no-batches');
+    await page.goto('/borrow?asset=ETH', { waitUntil: 'domcontentloaded' });
+    // The catch-all injected connector names no wallet, so the sentence does not either.
+    await expect(page.getByRole('status').filter({ hasText: /^This wallet cannot send several calls in one request/ })).toBeVisible();
+    await expect(page.getByText(/Use Base Account, Coinbase Wallet \(Base App\) or MetaMask\./)).toBeVisible();
+    const methods = await page.evaluate(() => (window as unknown as { __stillBorrowWalletMethods: string[] }).__stillBorrowWalletMethods);
+    expect(methods).toContain('wallet_getCapabilities');
+    // Asked once: a missing method is an answer, not a blip to retry.
+    expect(methods.filter(method => method === 'wallet_getCapabilities')).toHaveLength(1);
+    expect(state.limitReads).toEqual([]);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+    await page.evaluate(() => window.scrollTo(0, 0));
+    await page.screenshot({ path: testInfo.outputPath(`no-batches-${width}.png`), fullPage: true });
+    await noWalletAction(page);
+  });
+}
 
 test('a late prepared link cannot pull the person back after leaving the form', async ({ page }) => {
   const state = await install(page);

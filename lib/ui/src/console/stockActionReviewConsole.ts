@@ -8,6 +8,7 @@ import {
 } from '@mioagent/api-client-react';
 
 import type { StockActionReviewModelV1 } from './StockActionReviewScreen';
+import { walletCannotSendSentenceV1 } from './walletBatchSupport';
 import {
   stockSellAmountV1,
   stockSellConfirmAllowedV1,
@@ -144,6 +145,10 @@ export function stockConfirmFailureCopyV1(error: unknown): string {
 
 /** Why the batch was not offered to the wallet. */
 export function stockReleaseFailureCopyV1(error: unknown): string {
+  // The wallet’s answer about itself first: Rabby’s "method not found" fell
+  // through to "could not be prepared on this server", blaming the server.
+  const walletCannot = walletCannotSendSentenceV1(error);
+  if (walletCannot) return walletCannot;
   const message = error instanceof Error ? error.message : String(error ?? '');
   if (/reject|denied|user cancel/i.test(message)) {
     return 'You declined the batch in your wallet. Nothing was submitted, and nothing changed.';
@@ -191,6 +196,9 @@ export function useStockActionReviewConsoleV1(input: {
     approvedCallsHash: string;
     batchId: string;
   }) => Promise<unknown>;
+  /** Why the connected wallet cannot send one batch, read by the host from
+   * the wallet. The wallet is then not offered the calls. */
+  walletBlocker?: string | null;
 }): { model: StockActionReviewModelV1; body: StockActionReviewWireV1 | null } {
   const review = useStockActionReview(input.draft);
   const confirm = useStockActionConfirm();
@@ -363,7 +371,8 @@ export function useStockActionReviewConsoleV1(input: {
       },
       wallet: {
         pending: release.isPending || walletBusy,
-        error: walletError,
+        error: walletError ?? (batchId ? null : input.walletBlocker ?? null),
+        blocked: Boolean(input.walletBlocker) && !batchId,
         batchId,
         onOpen: () => void onOpen(),
       },

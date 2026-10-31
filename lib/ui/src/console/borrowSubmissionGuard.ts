@@ -1,3 +1,5 @@
+import { walletDidNotSendV1 } from './walletBatchSupport';
+
 // A wallet timeout is not evidence that the request was never submitted. Keep
 // the attempt across reloads in this browser session; never put a signed draft,
 // account address, calldata, clearance or cookie in browser storage.
@@ -81,7 +83,9 @@ export async function submitBorrowOnceV1(input: {
     return id;
   } catch (error) {
     try {
-      if (borrowUserRejectedV1(error) || input.enteredWallet?.() === false) input.storage.removeItem(input.key);
+      // A refusal, or a wallet that has no way to send a batch, proves nothing
+      // was sent; a lost response does not.
+      if (walletDidNotSendV1(error) || input.enteredWallet?.() === false) input.storage.removeItem(input.key);
       else input.storage.setItem(input.key, 'unknown');
     } catch { /* a retained pending marker remains conservative */ }
     throw error;

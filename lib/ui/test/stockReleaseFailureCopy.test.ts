@@ -59,4 +59,13 @@ describe('a release that did not happen', () => {
       assert.doesNotMatch(copy, /stock_action_/);
     }
   });
+
+  test('a wallet that cannot send a batch says so, instead of blaming this server', () => {
+    const copy = stockReleaseFailureCopyV1(
+      Object.assign(new Error('The method "wallet_sendCalls" does not exist / is not available.'), { code: -32601 }),
+    );
+    assert.match(copy, /^This wallet cannot send several calls in one request/);
+    assert.match(copy, /Nothing was approved or sent/);
+    assert.doesNotMatch(copy, /server/i);
+  });
 });

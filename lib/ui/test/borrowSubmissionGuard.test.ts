@@ -117,6 +117,17 @@ describe('one borrow draft crosses the wallet boundary at most once', () => {
     await assert.rejects(handOffFreshBorrowV1({ seen, confirmedTermsHash: null, refresh: async () => { throw new Error('read failed'); }, send, current: () => true }));
     assert.equal(data.entries.size, 0);
   });
+  it('frees the review when the wallet has no way to send a batch, and only then', async () => {
+    // Rabby, 2026-10-31: wallet_sendCalls answers -32601. Nothing can have been
+    // sent, so the review must not lock as "result unknown".
+    const data = storage(), key = (await borrowSubmissionKeyV1('draft', WALLET))!;
+    const noBatches = Object.assign(new Error('The method "wallet_sendCalls" does not exist / is not available.'), { code: -32601 });
+    await assert.rejects(submitBorrowOnceV1({ key, storage: data, send: async () => { throw noBatches; } }));
+    assert.equal(borrowSubmissionMarkerV1(data, key), null);
+    // A lost response may have been sent: kept.
+    await assert.rejects(submitBorrowOnceV1({ key, storage: data, send: async () => { throw new Error('wallet response lost'); } }));
+    assert.equal(borrowSubmissionMarkerV1(data, key), 'unknown');
+  });
   it('treats an unknown stored state conservatively', () => {
     const data = storage();
     data.setItem(BORROW_SUBMISSION_PREFIX_V1 + 'fixture', 'corrupted');

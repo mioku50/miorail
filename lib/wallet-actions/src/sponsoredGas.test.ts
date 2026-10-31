@@ -60,10 +60,14 @@ test('a wallet that cannot take a sponsor is told it pays, and is not sent one',
   assert.deepEqual(plan, { capability: null, state: 'unsupported_by_wallet' });
 });
 
-test('after a failed send with the sponsor, the retry goes without it', () => {
+test('after a failed send with the sponsor, the retry goes without it and says who pays', () => {
   const plan = sponsoredGasPlanV1({ offer: OFFER, capabilities: SUPPORTED, declinedBefore: true });
-  assert.deepEqual(plan, { capability: null, state: 'declined' });
+  assert.deepEqual(plan, { capability: null, state: 'paid_after_decline' });
   assert.match(SPONSORED_GAS_LABELS_V1.declined!, /Press again/);
+  // The wallet opens on the retry itself: "Press again" there names the press
+  // that was just made.
+  assert.doesNotMatch(SPONSORED_GAS_LABELS_V1.paid_after_decline!, /Press again/);
+  assert.match(SPONSORED_GAS_LABELS_V1.paid_after_decline!, /^You pay the network fee/);
 });
 
 test('the submit hook sends the sponsor beside the Builder Code and drops it after a failure', () => {
@@ -72,9 +76,16 @@ test('the submit hook sends the sponsor beside the Builder Code and drops it aft
   // Both capabilities in one object — the sponsor must never replace the
   // attribution, which is lost silently when missing.
   assert.match(source, /\.\.\.\(suffix \? \{ dataSuffix: \{ value: suffix, optional: true \} \} : \{\}\),\s*\.\.\.\(gas\.capability \?\? \{\}\),/);
-  // Declined only on a failure that was not the person saying no.
-  const failure = source.slice(source.indexOf('const message = walletSubmissionFailureMessageV1(cause);'));
-  assert.match(failure.slice(0, 400), /if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/);
-  const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf('const message = walletSubmissionFailureMessageV1(cause);'));
+  // Declined only on a failure that was not the person saying no, and not the
+  // wallet saying it cannot send a batch at all: Rabby's -32601 read as "the
+  // sponsor failed, press again" on 2026-10-31.
+  const marker = 'const message = walletSubmissionFailureMessageV1(cause, walletName);';
+  const failure = source.slice(source.indexOf(marker));
+  assert.ok(source.includes(marker));
+  assert.match(
+    failure.slice(0, 700),
+    /if \(walletCannotSendSentenceV1\(cause\) !== null\) \{(?:\s*\/\/[^\n]*\n)*\s*setSponsoredGas\(null\);\s*\} else if \(gas\.capability\) \{\s*\/\/[^\n]*\n\s*sponsorDeclinedRef\.current = true;/,
+  );
+  const rejection = source.slice(source.indexOf('if (isWalletRejectionError(cause)) {'), source.indexOf(marker));
   assert.doesNotMatch(rejection, /sponsorDeclinedRef/, 'saying no in the wallet is not the sponsor failing');
 });

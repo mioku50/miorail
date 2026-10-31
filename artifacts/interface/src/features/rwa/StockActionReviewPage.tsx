@@ -22,7 +22,7 @@ import {
   useRecordBlueprintSubmission,
   useStatus,
 } from '@mioagent/api-client-react';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useConsoleNav } from '../console/useConsoleNav';
 
 /**
@@ -87,8 +87,10 @@ export function StockActionReviewPage() {
   // -------------------------------------------------------------------------
   const sendCalls = useSendCalls();
   const recordSubmission = useRecordBlueprintSubmission();
+  const batches = useWalletBatchSupportV1();
   const reviewConsole = useStockActionReviewConsoleV1({
     draft: params?.draft ?? null,
+    walletBlocker: batches.blocker,
     sendCalls: async ({ calls, atomicRequired }) => {
       const result = await sendCalls.mutateAsync({
         calls: calls as never,

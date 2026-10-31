@@ -156,6 +156,23 @@ test('button disabled reasons: wallet, chain, and review expiry are honest', () 
   assert.ok(blueprintSubmitDisabledReason({ address: PAYLOAD.from, chainId: 1, quoteExpiry: fresh, now }));
   assert.ok(blueprintSubmitDisabledReason({ address: PAYLOAD.from, chainId: 8453, quoteExpiry: stale, now }));
   assert.equal(blueprintSubmitDisabledReason({ address: PAYLOAD.from, chainId: 8453, quoteExpiry: fresh, now }), null);
+  // A wallet that said it cannot send one batch: the button says so in its
+  // label and the sentence sits under it, not in a hover title.
+  assert.equal(
+    blueprintSubmitDisabledReason({ address: PAYLOAD.from, chainId: 8453, quoteExpiry: fresh, now, walletBlocker: 'This wallet cannot…' }),
+    'This wallet cannot send it',
+  );
+  assert.equal(blueprintSubmitDisabledReason({ address: PAYLOAD.from, chainId: 8453, quoteExpiry: fresh, now, walletBlocker: null }), null);
+});
+
+test('the button prints the wallet’s answer where the eye is, not only in its title', () => {
+  const source = readFileSync(path.join(here, 'BlueprintSubmitButton.tsx'), 'utf8');
+  // The blocker before anything is approved, then the failure on surfaces that
+  // print nothing else: the swap review said only "Failed — retry" on 2026-10-31.
+  assert.match(source, /\{walletBlocker && address && \(status === 'idle' \|\| status === 'cancelled' \|\| status === 'failed'\) \? \(\s*<p className="[^"]*sign-reason[^"]*" role="status">\{walletBlocker\}<\/p>/);
+  assert.match(source, /failureNote && status === 'failed' && error \? \(\s*<p className="[^"]*sign-reason[^"]*" role="alert">\{error\}<\/p>/);
+  const consoleSource = readFileSync(path.join(here, '../../../artifacts/interface/src/features/console/RouteIntelligenceConsole.tsx'), 'utf8');
+  assert.equal(consoleSource.match(/<BlueprintSubmitButton[\s\S]*?\/>/g)?.filter((block) => /\bfailureNote\b/.test(block)).length, 2);
 });
 
 test('button label says the wallet will open and never claims server execution', () => {

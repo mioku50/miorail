@@ -481,6 +481,10 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
 .mio-console .btn[disabled]:hover { filter: none; }
 .mio-console .ctarow { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 .mio-console .ctarow .nt { font-size: var(--fs-sm); color: var(--dim); }
+/* Why the wallet button cannot work, on its own line under it. Until
+   2026-10-31 the reason sat in the button's hover title and the row said only
+   "Failed — retry". */
+.mio-console .ctarow > .sign-reason { flex-basis: 100%; margin: 0; order: 1; }
 /* The swap screens' action, docked to the bottom of the scrolling column so it
    stays on screen while the evidence above it scrolls. On 2026-10-19 Review
    and Confirm sat under screens of evidence, and the person had to guess they

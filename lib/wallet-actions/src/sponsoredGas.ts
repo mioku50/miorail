@@ -23,9 +23,18 @@ export interface SponsoredGasOfferV1 {
  * - `unsupported_by_wallet`: offered, and the wallet cannot take a sponsor.
  * - `declined`: the wallet failed to send WITH the sponsor, so the next
  *   attempt goes without it.
+ * - `paid_after_decline`: that next attempt, which the person pays for. It
+ *   used to keep the `declined` sentence, so the wallet opened under "Press
+ *   again" for the press that had just been made.
  * - `not_offered`: no offer came with the approval.
  */
-export type SponsoredGasStateV1 = 'sponsored' | 'offered' | 'unsupported_by_wallet' | 'declined' | 'not_offered';
+export type SponsoredGasStateV1 =
+  | 'sponsored'
+  | 'offered'
+  | 'unsupported_by_wallet'
+  | 'declined'
+  | 'paid_after_decline'
+  | 'not_offered';
 
 export const SPONSORED_GAS_LABELS_V1: Readonly<Record<SponsoredGasStateV1, string | null>> = {
   // "Supports a sponsor" is not "will use it": on 2026-10-19 Base Account
@@ -36,6 +45,7 @@ export const SPONSORED_GAS_LABELS_V1: Readonly<Record<SponsoredGasStateV1, strin
   unsupported_by_wallet: 'You pay the network fee: this wallet cannot take a fee sponsor.',
   declined:
     'The wallet could not send this with the fee sponsored. Press again to send it with you paying the network fee.',
+  paid_after_decline: 'You pay the network fee this time: the wallet could not send this with the fee sponsored.',
   not_offered: null,
 };
 
@@ -69,7 +79,7 @@ export function sponsoredGasPlanV1(input: {
   state: SponsoredGasStateV1;
 } {
   if (!input.offer) return { capability: null, state: 'not_offered' };
-  if (input.declinedBefore) return { capability: null, state: 'declined' };
+  if (input.declinedBefore) return { capability: null, state: 'paid_after_decline' };
   const support = paymasterServiceSupportV1(input.capabilities, input.chainId ?? 8453);
   if (support === false) return { capability: null, state: 'unsupported_by_wallet' };
   return {

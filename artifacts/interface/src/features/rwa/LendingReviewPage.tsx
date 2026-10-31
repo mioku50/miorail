@@ -2,7 +2,7 @@ import { useRoute } from 'wouter';
 import { useAccount, useSendCalls } from 'wagmi';
 import { LendingReviewScreen, useLendingReviewConsoleV1 } from '@mioagent/ui';
 import { StillFrame } from '@mioagent/ui/still';
-import { builderCodeForSurfaceV1, builderCodeToDataSuffix } from '@mioagent/wallet-actions';
+import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
 const LENDING_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeForSurfaceV1({
@@ -17,8 +17,12 @@ export function LendingReviewPage() {
   const [, legacyParams] = useRoute('/borrow/:draft');
   const sky = useStillSky(), session = useStillWallet();
   const { address } = useAccount(), sendCalls = useSendCalls();
+  // Rabby has no wallet_sendCalls: the loan, which goes only as one batch,
+  // is not offered to it, and the page says so before anything is asked.
+  const batches = useWalletBatchSupportV1();
   const review = useLendingReviewConsoleV1({ draft: params?.draft ?? legacyParams?.draft ?? null,
     sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null,
+    walletBlocker: batches.blocker, walletName: batches.walletName,
     sendCalls: async ({ calls }) => {
       const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
         calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),

@@ -28,6 +28,9 @@ export interface BlueprintSubmitButtonProps
   /** 'swap' (default), 'earn' or 'nft' — selects the server approve/record
    * routes. The wallet submission path is identical for all three. */
   goal?: 'swap' | 'earn' | 'nft';
+  /** Say why the last attempt failed under the button, not only in its hover
+   * title. Off where the surface already prints `error` from onStateChange. */
+  failureNote?: boolean;
   now?: () => Date;
   onStateChange?: (state: {
     status: BlueprintSubmitStatus;
@@ -80,8 +83,11 @@ export function blueprintSubmitDisabledReason(input: {
   chainId: number | undefined;
   quoteExpiry: string;
   now: Date;
+  /** The wallet already said it cannot send one batch. */
+  walletBlocker?: string | null;
 }): string | null {
   if (!input.address) return 'Connect a wallet to confirm';
+  if (input.walletBlocker) return 'This wallet cannot send it';
   if (input.chainId !== 8453) return 'Switch to Base Mainnet (8453)';
   if (Date.parse(input.quoteExpiry) <= input.now.getTime()) return 'Review expired — refresh the plan';
   return null;
@@ -94,6 +100,7 @@ export function BlueprintSubmitButton({
   quoteExpiry,
   builderCode,
   goal = 'swap',
+  failureNote = false,
   now = () => new Date(),
   onStateChange,
   className,
@@ -101,7 +108,7 @@ export function BlueprintSubmitButton({
   ...rest
 }: BlueprintSubmitButtonProps) {
   const { address, chainId } = useAccount();
-  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, sponsoredGas, poller } =
+  const { submit, status, error, batchId, txHashes, proofId, recordedFinalStatus, builderAttribution, sponsoredGas, walletBlocker, poller } =
     useSubmitApprovedBlueprint({
       routeRunId,
       blueprintId,
@@ -121,7 +128,7 @@ export function BlueprintSubmitButton({
 
   const disabledReason =
     status === 'idle' || status === 'cancelled' || status === 'failed'
-      ? blueprintSubmitDisabledReason({ address, chainId, quoteExpiry, now: now() })
+      ? blueprintSubmitDisabledReason({ address, chainId, quoteExpiry, now: now(), walletBlocker })
       : null;
   const busy = BUSY_STATUSES.includes(status);
   const terminalLock = status === 'confirmed' || status === 'submitted_unknown' || status === 'blocked' || status === 'expired';
@@ -151,6 +158,14 @@ export function BlueprintSubmitButton({
           This opens your wallet with the exact reviewed calls. Nothing is sent until you sign there.
         </p>
       )}
+      {/* What the wallet said about itself, before anything was approved. A
+          disabled button with no reason is a screen that does not say what
+          can be done. */}
+      {walletBlocker && address && (status === 'idle' || status === 'cancelled' || status === 'failed') ? (
+        <p className="mt-2 text-xs note warn sign-reason" role="status">{walletBlocker}</p>
+      ) : failureNote && status === 'failed' && error ? (
+        <p className="mt-2 text-xs note warn sign-reason" role="alert">{error}</p>
+      ) : null}
       {/* T67X-B5: stated only once a batch exists, and only when it is not the
           plain success. An "included" line on every confirmation would be
           noise; the two other outcomes are the ones nobody would otherwise

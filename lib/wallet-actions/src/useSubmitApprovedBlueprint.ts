@@ -8,7 +8,7 @@
 //   → poll wallet status via CallsStatusPoller → record 'confirmed'/'failed'.
 
 import { useRef, useState, useCallback, createElement, type ReactNode } from 'react';
-import { useAccount, useCapabilities, useSendCalls } from 'wagmi';
+import { useAccount, useSendCalls } from 'wagmi';
 import { base } from 'wagmi/chains';
 import {
   useApproveEarnBlueprint,
@@ -32,7 +32,7 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
-import { WALLET_CANNOT_BATCH_V1, atomicBatchSupportV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
 import {
   browserMarkerStorageV1,
   clearRecoveryMarkerV1,
@@ -215,6 +215,9 @@ export interface UseSubmitApprovedBlueprintResult {
   /** Who pays the network fee on the latest attempt. Null until an approval
    * has been read — before that nothing is known about the fee. */
   sponsoredGas: SponsoredGasStateV1 | null;
+  /** Why the connected wallet cannot send this at all, in words, read before
+   * anything is approved. Null while the wallet may be asked. */
+  walletBlocker: string | null;
   /** Mount this to poll wallet batch status once a batchId exists. */
   poller: ReactNode;
 }
@@ -248,9 +251,9 @@ export function useSubmitApprovedBlueprint({
   const { address, chainId } = useAccount();
   // T67X-B5: read once, alongside the account, so classifying the attribution
   // costs no extra round trip at submit time. A wallet that does not implement
-  // wallet_getCapabilities leaves this undefined, which stays "not established"
-  // rather than becoming either claim.
-  const { data: walletCapabilities } = useCapabilities({ account: address });
+  // wallet_getCapabilities leaves the capabilities undefined, which stays "not
+  // established" for attribution; for batching it is the wallet's answer.
+  const { capabilities: walletCapabilities, blocker: walletBlocker, walletName } = useWalletBatchSupportV1();
 
   const [status, setStatus] = useState<BlueprintSubmitStatus>('idle');
   const [error, setError] = useState<string | null>(null);
@@ -354,12 +357,12 @@ export function useSubmitApprovedBlueprint({
       setError('Connect your wallet first');
       return;
     }
-    // A wallet that SAYS it cannot send one transaction hears so before the
-    // server approves anything. One that says nothing is asked, and its answer
-    // is translated below.
-    if (atomicBatchSupportV1(walletCapabilities, base.id) === 'unsupported') {
+    // A wallet that SAYS it cannot send one transaction, or has no batch
+    // methods at all, hears so before the server approves anything. One that
+    // says nothing is asked, and its answer is translated below.
+    if (walletBlocker) {
       setStatus('failed');
-      setError(WALLET_CANNOT_BATCH_V1);
+      setError(walletBlocker);
       return;
     }
     inFlightRef.current = true;
@@ -496,9 +499,13 @@ export function useSubmitApprovedBlueprint({
             error: 'User rejected the request in the wallet',
           });
         } else {
-          const message = walletSubmissionFailureMessageV1(cause);
-          if (gas.capability) {
-            // Whatever failed, the retry must not depend on the sponsor.
+          const message = walletSubmissionFailureMessageV1(cause, walletName);
+          if (walletCannotSendSentenceV1(cause) !== null) {
+            // The wallet cannot send a batch at all, sponsored or not. Saying
+            // the sponsor failed sent people to press again for the same no.
+            setSponsoredGas(null);
+          } else if (gas.capability) {
+            // Whatever else failed, the retry must not depend on the sponsor.
             sponsorDeclinedRef.current = true;
             setSponsoredGas('declined');
           }
@@ -596,6 +603,7 @@ export function useSubmitApprovedBlueprint({
     attemptId,
     builderAttribution,
     sponsoredGas,
+    walletBlocker,
     poller,
   };
 }
