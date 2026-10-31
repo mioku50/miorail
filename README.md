@@ -34,7 +34,6 @@ The governing rule is simple:
 | let an assistant prepare an action you sign | [Connected Miorail MCP](#connected-miorail-mcp) |
 | ship on the Base App surface | [Base App](#base-app) |
 | know what may never be signed | [Execution boundary](#execution-boundary) |
-| know what is NOT built | [Known gaps](#known-gaps) |
 | read the Discover evidence layers | [B20_INTELLIGENCE.md](docs/B20_INTELLIGENCE.md) |
 
 ## Running it yourself
@@ -753,26 +752,6 @@ miorail-miniapp
 miorail-b20-discover
 miorail-b20-measure
 ```
-
-## Known gaps
-
-Miorail is functional but not broadly production-hardened. Important open work includes:
-
-- supply and official-source coverage change over time; the current API identifies zero-supply contracts and contracts outside the latest source list separately;
-- reference-price adapters for Backed and Dinari are not implemented; no reference value is inferred for them;
-- the Investigate dossier is only partly polymorphic: a non-B20 contract is told so plainly, but Backed's rebasing model and Dinari's factory predicate do not yet have evidence modules of their own;
-- `compare_market_reality` reads stored evidence; authenticated assistants use `miorail_measure_market_reality` for a fresh measurement;
-- assistant Stocks SELL binds an explicit token amount on the review page and refreshes its output terms; broader owner-verified execution acceptance is still needed;
-- the Aerodrome corroborator reads one pool for the primary representation only, and there is still no verifiable CL quoter to price against — the marginal price is a cross-check, never a route;
-- the confirmed clearance is carried back to the assistant by the person, because no tool exists for an assistant to poll for one;
-- expand Fundamental Intelligence beyond the operator-registered claim corpus and design a safe self-serve project-claim flow;
-- add more verified project/onchain/utility evidence without introducing an overall investment score;
-- capture more provider-specific small-value Route Proofs and failure-path acceptance;
-- complete owner-verified B20 entry/exit journeys and broader Earn acceptance;
-- continue hardening x402 settlement/delivery reconciliation and RPC degradation paths;
-- validate ERC-8021 attribution on real app-originated user executions rather than treating seller-side x402 settlement as app attribution;
-- replace the default in-process session store before horizontal scaling;
-- complete independent security, backup/restore, rollback, and failure-matrix review.
 
 ## Safety notice
 
