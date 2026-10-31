@@ -22,7 +22,7 @@ export function LendingReviewPage() {
   const batches = useWalletBatchSupportV1();
   const review = useLendingReviewConsoleV1({ draft: params?.draft ?? legacyParams?.draft ?? null,
     sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null,
-    walletBlocker: batches.blocker, walletName: batches.walletName,
+    walletBlocker: batches.blocker, walletName: batches.walletName, onWalletRefusal: batches.remember,
     sendCalls: async ({ calls }) => {
       const result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
         calls: calls.map(call => ({ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) })),

@@ -199,6 +199,15 @@ describe('lending review presentation does not call a submission a repayment', (
       describeLendingTermsChangesV1(body, next),
       'The terms changed (health ratio after (2.264514777517564444 → 2.494032094713526717)). Read the updated review, then open your wallet again to accept these exact terms.',
     );
+
+    // Only the calls are new (a loan's deadline moves on every fresh read):
+    // that is said as what it is, and the second press is still the person's.
+    const recalled = structuredClone(body);
+    recalled.callsHash = `0x${'8'.repeat(64)}`;
+    assert.equal(
+      describeLendingTermsChangesV1(body, recalled),
+      'The calls were prepared again for this moment. The amounts, collateral, health ratio and limits above did not change. Open your wallet again to send these exact calls.',
+    );
   });
 });
 

@@ -18,7 +18,8 @@ test('changed lending terms require another explicit click; arm precedes wallet 
   const state = await install(page); await page.goto('/lending/fixture-lending');
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
   state.response = { ...ready(), callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}` };
-  await open.click(); await expect(page.getByText(/The terms changed/)).toBeVisible(); expect(await attempts(page)).toBe(0);
+  // Only the calls are new, as a loan's deadline makes them on every read: said as that.
+  await open.click(); await expect(page.getByText(/The calls were prepared again for this moment/)).toBeVisible(); expect(await attempts(page)).toBe(0);
   const reads = state.reviewReads; await open.click();
   await expect.poll(() => attempts(page)).toBe(1); await expect(open).toHaveCount(0);
   expect(state.reviewReads).toBe(reads); expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
@@ -48,6 +49,17 @@ test('only an explicit wallet rejection permits a repeat lending attempt', async
   await expect(page.getByText('You declined in your wallet. Nothing was sent.', { exact: true })).toBeVisible();
   await expect(open).toBeEnabled(); await open.click(); await expect.poll(() => attempts(page)).toBe(2);
   expect(state.order.filter(row => row === 'submission:rejected')).toHaveLength(2);
+  expect(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('miorail:borrow-attempt:v1:')))).toEqual([]);
+});
+test('a wallet that answers it does not support the batch sent nothing: the review is freed, not locked', async ({ page }) => {
+  // Coinbase Wallet with an imported key, 2026-10-31: -32603 with "...is not
+  // supported" in its details. The page locked that review as "maybe sent".
+  const state = await install(page, 'unsupported'); await page.goto('/lending/fixture-lending');
+  const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await open.click();
+  await expect(page.getByText(/^This wallet cannot send these calls as one transaction\./)).toBeVisible();
+  await expect(page.locator('body')).not.toContainText('result is unknown');
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
+  expect(await page.evaluate(() => (window as unknown as { lendingWalletRefusals?: number }).lendingWalletRefusals)).toBe(1);
   expect(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('miorail:borrow-attempt:v1:')))).toEqual([]);
 });
 test('owner/connector mismatch masks private review before paint and does not read another wallet', async ({ page }) => {

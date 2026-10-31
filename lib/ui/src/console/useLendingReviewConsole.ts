@@ -49,6 +49,9 @@ export function useLendingReviewConsoleV1(input: {
   walletBlocker?: string | null;
   /** The connected wallet's own name, for its refusals. */
   walletName?: string | null;
+  /** Told when the wallet refused because of what it is, so the host stops
+   * offering it a batch before the next press. */
+  onWalletRefusal?: (error: unknown) => void;
 }): { model: LendingReviewConsoleModelV1; body: LendingReviewWireV1 | null } {
   const session = input.sessionWalletAddress?.toLowerCase() ?? null;
   const connected = input.walletAddress?.toLowerCase() ?? null;
@@ -181,6 +184,7 @@ export function useLendingReviewConsoleV1(input: {
       }
     } catch (error) {
       confirmed.current = null;
+      if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
         : walletCannotSendSentenceV1(error, input.walletName) ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'

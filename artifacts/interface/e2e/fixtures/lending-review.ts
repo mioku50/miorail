@@ -15,7 +15,7 @@ export type FixtureWindow = Window & {
   setLendingFixtureIdentity: (next: { session: string; connected: string }) => void;
   finishLendingWallet: (batch: string) => void;
 };
-export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' = 'submitted') {
+export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' = 'submitted') {
   await page.clock.setFixedTime(NOW);
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
@@ -69,8 +69,9 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       window.setLendingFixtureIdentity=setIdentity;
       const {model}=useLendingReviewConsoleV1({draft:decodeURIComponent(location.pathname.split('/').pop()),sessionWalletAddress:identity.session,walletAddress:identity.connected,
         sendCalls:async()=>{ window.lendingWalletAttempts++;
-          ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : "return 'fixture-batch';"}
-        }});
+          ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : "return 'fixture-batch';"}
+        },
+        onWalletRefusal:()=>{ window.lendingWalletRefusals=(window.lendingWalletRefusals??0)+1; }});
       return React.createElement('main',{className:'still'},React.createElement(LendingReviewScreen,{model}));
     }
   ` }));

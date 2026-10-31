@@ -173,6 +173,11 @@ export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next
   if ((p.protocolLimitAssets ?? null) !== (n.protocolLimitAssets ?? null) && p.protocolLimitAssets && n.protocolLimitAssets) {
     changes.push(`protocol debt limit (${usdc(p.protocolLimitAssets)} → ${usdc(n.protocolLimitAssets)})`);
   }
+  if (changes.length === 0 && previous.callsHash !== next.callsHash) {
+    // A loan's calls carry a deadline, so they are new on every fresh read;
+    // "the terms changed (approved calldata)" read as if the loan had.
+    return 'The calls were prepared again for this moment. The amounts, collateral, health ratio and limits above did not change. Open your wallet again to send these exact calls.';
+  }
   if (previous.callsHash !== next.callsHash) {
     changes.push('approved calldata');
   }
