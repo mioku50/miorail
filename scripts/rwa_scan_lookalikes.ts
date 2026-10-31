@@ -24,6 +24,7 @@ import {
 import { lookalikeSignalsV1 } from '@mioagent/rwa-dossier';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
+import { listedOfficialAssetsV1 } from './rwaCashExitCorpus.js';
 
 const CHAIN_ID_V1 = 8453 as const;
 
@@ -43,7 +44,7 @@ async function main(): Promise<void> {
   const signals = createDatabaseRwaSignalRepository(client);
   const issuers = createDatabaseIssuerRepresentationRepository(client);
 
-  const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 200 });
+  const assets = await listedOfficialAssetsV1(official);
   if (assets.length === 0) {
     throw new Error('no official asset is currently listed — run pnpm rwa:ingest-official first');
   }

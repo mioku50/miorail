@@ -4,7 +4,9 @@ import test, { describe } from 'node:test';
 import type { OfficialAssetIdentityV1 } from '@mioagent/route-storage';
 
 import {
+  CORPUS_PAGE_LIMIT_V1,
   corpusV1,
+  listedOfficialAssetsV1,
   mergeTargetsV1,
   registryTargetsV1,
   reviewedRepresentationTargetsV1,
@@ -179,6 +181,39 @@ describe('which representations the cash-exit pass measures', () => {
     assert.deepEqual(
       merged.map((target) => target.tokenAddress),
       [NVDAC, NVDA_DSHARE],
+    );
+  });
+});
+
+describe('the official registry a pass reads', () => {
+  function registryOfV1(size: number) {
+    const asked: number[] = [];
+    return {
+      asked,
+      reader: {
+        async officialAssets(input: { limit: number }) {
+          asked.push(input.limit);
+          return Array.from(
+            { length: Math.min(size, input.limit) },
+            (_, index) => ({ tokenAddress: `0x${index.toString(16).padStart(40, '0')}` }) as unknown as OfficialAssetIdentityV1,
+          );
+        },
+      },
+    };
+  }
+
+  test('the whole registry is read in one page while it fits', async () => {
+    // 288 listed on 2026-10-31, after Coinbase added 49 stocks in a day.
+    const registry = registryOfV1(288);
+    const assets = await listedOfficialAssetsV1(registry.reader);
+    assert.equal(assets.length, 288);
+    assert.deepEqual(registry.asked, [CORPUS_PAGE_LIMIT_V1]);
+  });
+
+  test('a full page is refused, since nothing says it was the whole registry', async () => {
+    await assert.rejects(
+      listedOfficialAssetsV1(registryOfV1(CORPUS_PAGE_LIMIT_V1 + 1).reader),
+      /page through it rather than measuring a silent subset/,
     );
   });
 });

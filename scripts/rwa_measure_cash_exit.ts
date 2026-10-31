@@ -67,6 +67,7 @@ import {
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
 import {
+  CORPUS_PAGE_LIMIT_V1,
   corpusV1,
   mergeTargetsV1,
   registryTargetsV1,
@@ -152,7 +153,7 @@ async function main(): Promise<void> {
   // The issuer API alone has more than the old 64-row registry cap. Read the
   // repository's full bounded page before selecting named tickers.
   const limit = numericArgV1('--limit', 500);
-  const underlyingLimit = numericArgV1('--underlying-limit', 300);
+  const underlyingLimit = numericArgV1('--underlying-limit', CORPUS_PAGE_LIMIT_V1);
   const gapMs = numericArgV1('--gap-ms', DEFAULT_GAP_MS_V1);
   reportLoadedEnvFileV1(loadRootEnvFileV1());
 

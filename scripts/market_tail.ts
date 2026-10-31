@@ -68,7 +68,11 @@ import {
 } from '@mioagent/route-storage';
 
 import { loadRootEnvFileV1, reportLoadedEnvFileV1 } from './loadEnvFile.js';
-import { reviewedRepresentationTargetsV1 } from './rwaCashExitCorpus.js';
+import {
+  CORPUS_PAGE_LIMIT_V1,
+  listedOfficialAssetsV1,
+  reviewedRepresentationTargetsV1,
+} from './rwaCashExitCorpus.js';
 
 const CHAIN_ID_V1 = 8453 as const;
 
@@ -329,11 +333,11 @@ async function main(): Promise<void> {
   //
   // Widening the address list does not widen the block span, so this costs the
   // same one log read per pass it always did.
-  const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: 200 });
+  const assets = await listedOfficialAssetsV1(official);
   const reviewed = await reviewedRepresentationTargetsV1({
     underlyings: createDatabaseUnderlyingAssetRepository(client),
     supplies: createDatabaseRepresentationSupplyRepository(client),
-    limit: 300,
+    limit: CORPUS_PAGE_LIMIT_V1,
   });
   const registryTokens = assets.map((asset) => asset.tokenAddress.toLowerCase());
   const claimed = new Set(registryTokens);

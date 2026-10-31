@@ -8,11 +8,36 @@
  */
 import type {
   OfficialAssetIdentityV1,
+  OfficialAssetRepositoryV1,
   RepresentationSupplyRepositoryV1,
   UnderlyingAssetRepositoryV1,
 } from '@mioagent/route-storage';
 
 const CHAIN_ID_V1 = 8453 as const;
+
+/**
+ * The most rows one repository page returns: the official registry and the
+ * underlying list both clamp there, so a pass asking for more gets this many.
+ */
+export const CORPUS_PAGE_LIMIT_V1 = 500;
+
+export type OfficialCorpusReaderV1 = Pick<OfficialAssetRepositoryV1, 'officialAssets'>;
+
+/**
+ * Every currently listed official asset, or a refusal. The registry read comes
+ * with no count to check it against, so a full page is treated as a cut one.
+ * Coinbase listed 49 stocks on 2026-10-30; passes that asked for 200 and 300
+ * were left measuring whatever fit.
+ */
+export async function listedOfficialAssetsV1(official: OfficialCorpusReaderV1): Promise<OfficialAssetIdentityV1[]> {
+  const assets = await official.officialAssets({ chainId: CHAIN_ID_V1, limit: CORPUS_PAGE_LIMIT_V1 });
+  if (assets.length >= CORPUS_PAGE_LIMIT_V1) {
+    throw new Error(
+      `the official registry filled a ${CORPUS_PAGE_LIMIT_V1}-asset page — page through it rather than measuring a silent subset`,
+    );
+  }
+  return assets;
+}
 
 /**
  * Only what the selection reads.
