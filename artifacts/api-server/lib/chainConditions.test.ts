@@ -70,6 +70,30 @@ describe('reading the chain', () => {
     assert.equal(later.reason, 'rpc_unreachable');
   });
 
+  test('an endpoint that does not answer is read again from the fallback, and both failing keeps the first reason', async () => {
+    // 2026-10-31: Infura answered unreadably, no route could be priced, and a
+    // swap with two live quotes had no Route Card.
+    const asked: string[] = [];
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      const url = String(input);
+      asked.push(url);
+      if (url === RPC) return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32603, message: 'internal' } }), { status: 200 });
+      return batchResponder('0x64', '0x3b9aca0')(input);
+    }) as typeof globalThis.fetch;
+    const answered = await readChainConditionsV1(RPC, 5_000, 'https://fallback.example');
+    assert.equal(answered.reason, 'ok');
+    assert.equal(answered.blockNumber, '100');
+    assert.deepEqual(asked, [RPC, 'https://fallback.example']);
+
+    resetChainConditionsForTests();
+    globalThis.fetch = (async () => {
+      throw new Error('gone');
+    }) as typeof globalThis.fetch;
+    const neither = await readChainConditionsV1(RPC, 9_000, 'https://fallback.example');
+    assert.equal(neither.reason, 'rpc_unreachable');
+    assert.equal(neither.blockNumber, null);
+  });
+
   test('a malformed payload is refused rather than coerced', async () => {
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: '0x1' }), {

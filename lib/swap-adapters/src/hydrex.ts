@@ -45,6 +45,8 @@ export interface HydrexSwapRouteAdapterOptions extends HydrexClientV1Options {
   client?: HydrexClientV1;
   pinReader?: HydrexRouterPinReaderV1 | null;
   rpcUrl?: string;
+  /** Asked when `rpcUrl` does not answer a pin read. */
+  fallbackRpcUrl?: string;
   freshnessTtlMs?: number;
   /** Measures the swap's gas, which Hydrex's quote does not state. Without
    * it the candidate carries the missing-gas sentinel and is not scored. */
@@ -62,7 +64,13 @@ export class HydrexSwapRouteAdapter implements SwapRouteAdapter {
     this.gasMeter = options.gasMeter ?? null;
     this.client = options.client ?? new HydrexClientV1(options);
     this.pinReader = options.pinReader ??
-      (options.rpcUrl?.trim() ? createHydrexRouterPinReaderV1({ rpcUrl: options.rpcUrl, cacheTtlMs: QUOTE_PIN_REUSE_MS_V1 }) : null);
+      (options.rpcUrl?.trim()
+        ? createHydrexRouterPinReaderV1({
+            rpcUrl: options.rpcUrl,
+            fallbackRpcUrl: options.fallbackRpcUrl,
+            cacheTtlMs: QUOTE_PIN_REUSE_MS_V1,
+          })
+        : null);
     this.freshnessTtlMs = options.freshnessTtlMs ?? 30_000;
   }
 

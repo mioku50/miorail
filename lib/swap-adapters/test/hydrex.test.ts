@@ -191,3 +191,25 @@ describe('Hydrex quote adapter', () => {
     assert.equal('errorCode' in result ? result.errorCode : null, 'provider_router_mismatch');
   });
 });
+
+describe('the Hydrex router pin read', () => {
+  test('asks the second endpoint when the first does not answer', async () => {
+    const { createHydrexRouterPinReaderV1 } = await import('../src/hydrex-pinned.js');
+    // 2026-10-31: one throttled read made a Hydrex review say it "could not
+    // prepare a fresh transaction". Neither endpoint answers here, so the
+    // verdict stays "unavailable"; what matters is that the second was asked.
+    const asked = new Set<string>();
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (input: string | URL | Request) => {
+      asked.add(new URL(String(input instanceof Request ? input.url : input)).host);
+      return new Response('busy', { status: 503 });
+    }) as typeof globalThis.fetch;
+    try {
+      const reader = createHydrexRouterPinReaderV1({ rpcUrl: 'https://primary.example', fallbackRpcUrl: 'https://fallback.example' });
+      assert.deepEqual(await reader.verify(), { ok: false, reason: 'unavailable' });
+      assert.deepEqual([...asked].sort(), ['fallback.example', 'primary.example']);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});

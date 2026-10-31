@@ -33,6 +33,8 @@ export interface HydrexSwapBuildAdapterOptions extends HydrexClientV1Options {
   client?: HydrexClientV1;
   pinReader?: HydrexRouterPinReaderV1 | null;
   rpcUrl?: string;
+  /** Asked when `rpcUrl` does not answer a pin read. */
+  fallbackRpcUrl?: string;
 }
 
 function sourceFromCandidate(input: SwapBuildInput['selectedCandidate']): HydrexSourceV1 | null {
@@ -58,7 +60,9 @@ export class HydrexSwapBuildAdapter implements SwapBuildAdapter {
   constructor(options: HydrexSwapBuildAdapterOptions = {}) {
     this.client = options.client ?? new HydrexClientV1(options);
     this.pinReader = options.pinReader ??
-      (options.rpcUrl?.trim() ? createHydrexRouterPinReaderV1({ rpcUrl: options.rpcUrl }) : null);
+      (options.rpcUrl?.trim()
+        ? createHydrexRouterPinReaderV1({ rpcUrl: options.rpcUrl, fallbackRpcUrl: options.fallbackRpcUrl })
+        : null);
   }
 
   async build(input: SwapBuildInput): Promise<SwapBuildResultV1> {

@@ -1,4 +1,4 @@
-import { createPublicClient, getAddress, http, keccak256, type Hex } from 'viem';
+import { createPublicClient, fallback, getAddress, http, keccak256, type Hex } from 'viem';
 import { base } from 'viem/chains';
 import { reusePassingCheckV1 } from './normalization.js';
 
@@ -133,10 +133,18 @@ export function createHydrexRouterPinReaderV1(input: {
    */
   cacheTtlMs?: number;
   now?: () => number;
+  /**
+   * A second endpoint, asked when the first does not answer. A read that
+   * failed is `unavailable`, and on 2026-10-31 one throttled read made a
+   * Hydrex review say "could not prepare a fresh transaction".
+   */
+  fallbackRpcUrl?: string;
 }): HydrexRouterPinReaderV1 {
   const rpcUrl = input.rpcUrl.trim();
+  const fallbackRpcUrl = input.fallbackRpcUrl?.trim() ?? '';
   const ttlMs = input.cacheTtlMs ?? 0;
   const now = input.now ?? Date.now;
+  const transport = () => (fallbackRpcUrl && fallbackRpcUrl !== rpcUrl ? fallback([http(rpcUrl), http(fallbackRpcUrl)]) : http(rpcUrl));
 
   const reused = (key: string, read: () => Promise<HydrexPinResultV1>): Promise<HydrexPinResultV1> =>
     reusePassingCheckV1(HYDREX_PIN_CACHE_V1, `${rpcUrl}|${key}`, { ttlMs, now }, read);
@@ -146,7 +154,7 @@ export function createHydrexRouterPinReaderV1(input: {
   async function readOuter(): Promise<HydrexPinResultV1> {
     if (!rpcUrl) return { ok: false, reason: 'not_configured' };
     try {
-      const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+      const client = createPublicClient({ chain: base, transport: transport() });
       const [proxyCode, implementationSlot, adminSlot, feeBps, blockNumber] = await Promise.all([
         client.getBytecode({ address: HYDREX_BASE_ROUTER_PROXY_V1 }),
         client.getStorageAt({ address: HYDREX_BASE_ROUTER_PROXY_V1, slot: EIP1967_IMPLEMENTATION_SLOT_HYDREX_V1 }),
@@ -182,7 +190,7 @@ export function createHydrexRouterPinReaderV1(input: {
     const hash = expectedUpstreamHash(router);
     if (!hash) return { ok: false, reason: 'mismatch' };
     try {
-      const client = createPublicClient({ chain: base, transport: http(rpcUrl) });
+      const client = createPublicClient({ chain: base, transport: transport() });
       const normalized = getAddress(router) as `0x${string}`;
       const [code, whitelisted, blockNumber] = await Promise.all([
         client.getBytecode({ address: normalized }),

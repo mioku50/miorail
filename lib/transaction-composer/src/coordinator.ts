@@ -673,11 +673,7 @@ export class DeterministicTransactionComposer implements TransactionComposer {
         buildResult.errorCode === 'balancer_route_changed'
           ? 'route_changed'
           : 'quote_expired';
-      return refreshRequiredResultV1(
-        input.routeRunId,
-        reason,
-        `${providerId} could not prepare a fresh transaction (${buildResult.errorCode})`,
-      );
+      return refreshRequiredResultV1(input.routeRunId, reason, freshBuildFailureDetailV1(providerId, buildResult.errorCode));
     }
     if (Date.parse(buildResult.quoteExpiry) <= now.getTime()) {
       return refreshRequiredResultV1(input.routeRunId, 'quote_expired', 'Freshly built transaction quote is already expired');
@@ -852,4 +848,27 @@ export class DeterministicTransactionComposer implements TransactionComposer {
 
 export function createTransactionComposer(deps: TransactionComposerDependencies): TransactionComposer {
   return new DeterministicTransactionComposer(deps);
+}
+
+const PROVIDER_NAMES_V1: Readonly<Record<string, string>> = {
+  hydrex: 'Hydrex',
+  kyberswap: 'KyberSwap',
+  uniswap: 'Uniswap',
+  aerodrome: 'Aerodrome',
+  'o1-exchange': 'o1.exchange',
+  balancer: 'Balancer',
+};
+
+/**
+ * What the review says when a route's fresh transaction could not be built.
+ * "hydrex could not prepare a fresh transaction (hydrex_contract_pin_unavailable)"
+ * was what the operator read on 2026-10-31 for a router read that timed out.
+ */
+export function freshBuildFailureDetailV1(providerId: string, errorCode: string): string {
+  const name = PROVIDER_NAMES_V1[providerId] ?? providerId;
+  if (/_pin_unavailable$/.test(errorCode)) {
+    // The code stays last: the prepare log reads it from there.
+    return `${name} could not prepare a fresh transaction: its router contract could not be read onchain just now. Compare again, or use another route (${errorCode})`;
+  }
+  return `${name} could not prepare a fresh transaction (${errorCode})`;
 }

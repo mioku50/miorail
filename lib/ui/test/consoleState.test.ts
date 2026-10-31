@@ -257,6 +257,10 @@ describe('nothing is signed on a guess', () => {
     assert.equal(view.headline, 'Simulation not available');
     assert.match(view.detail, /Route comparison and the calls above are unchanged/);
     assert.equal(view.disabledReason, CONSOLE_COPY_V1.simulationUnavailable);
+    // A reason with no stop of its own is ended before the next sentence:
+    // "Quote expired Route comparison…" on 2026-10-31.
+    const expired = deriveSimulationViewV1({ status: 'unavailable', reason: 'quote_expired' } as never);
+    assert.equal(expired.detail, 'Quote expired. Route comparison and the calls above are unchanged.');
   });
 
   test('a reverted simulation blocks signing EVEN when the server allowed the route', () => {

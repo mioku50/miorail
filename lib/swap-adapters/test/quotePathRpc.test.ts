@@ -173,7 +173,11 @@ describe('a router pin that passed is reused by comparison only', () => {
   test('the comparison adapters reuse; review, approval and the composer read the chain', () => {
     const source = (path: string) => readFileSync(new URL(path, import.meta.url), 'utf8');
     assert.match(source('../src/o1.ts'), /createO1RouterPinReaderV1\(\{ rpcUrl: options\.rpcUrl, cacheTtlMs: QUOTE_PIN_REUSE_MS_V1 \}\)/);
-    assert.match(source('../src/hydrex.ts'), /createHydrexRouterPinReaderV1\(\{ rpcUrl: options\.rpcUrl, cacheTtlMs: QUOTE_PIN_REUSE_MS_V1 \}\)/);
+    // Both endpoints are the same reuse window: the second only answers when the first did not.
+    assert.match(
+      source('../src/hydrex.ts'),
+      /createHydrexRouterPinReaderV1\(\{\s*rpcUrl: options\.rpcUrl,\s*fallbackRpcUrl: options\.fallbackRpcUrl,\s*cacheTtlMs: QUOTE_PIN_REUSE_MS_V1,?\s*\}\)/,
+    );
     for (const path of [
       '../../transaction-composer/src/adapters/o1.ts',
       '../../transaction-composer/src/adapters/hydrex.ts',

@@ -131,3 +131,16 @@ describe('Hydrex build adapter', () => {
     assert.equal(result.errorCode, 'hydrex_route_changed');
   });
 });
+
+describe('a fresh build that could not read the router', () => {
+  test('says which route and why, in words, and offers what to do', async () => {
+    const { freshBuildFailureDetailV1 } = await import('../src/coordinator.js');
+    // 2026-10-31: "hydrex could not prepare a fresh transaction (hydrex_contract_pin_unavailable)".
+    assert.equal(
+      freshBuildFailureDetailV1('hydrex', 'hydrex_contract_pin_unavailable'),
+      'Hydrex could not prepare a fresh transaction: its router contract could not be read onchain just now. Compare again, or use another route (hydrex_contract_pin_unavailable)',
+    );
+    assert.equal(freshBuildFailureDetailV1('kyberswap', 'kyberswap_unavailable'), 'KyberSwap could not prepare a fresh transaction (kyberswap_unavailable)');
+    assert.equal(freshBuildFailureDetailV1('somebody', 'x'), 'somebody could not prepare a fresh transaction (x)');
+  });
+});

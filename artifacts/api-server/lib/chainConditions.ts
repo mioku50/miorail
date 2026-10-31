@@ -184,9 +184,29 @@ function emptyV1(reason: ChainConditionsV1['reason']): ChainConditionsV1 {
   };
 }
 
+/**
+ * The configured endpoint, then the second one when the first did not answer.
+ * On 2026-10-31 Infura answered this batch unreadably eighteen times in six
+ * hours; with no gas price no route could be priced, so a swap with two live
+ * quotes was refused a Route Card and its Review button sat disabled.
+ */
+async function readWithFallbackV1(
+  rpcUrl: string,
+  fallbackRpcUrl: string | undefined,
+  now: number,
+): Promise<{ ok: true; sample: SampleV1 } | { ok: false; reason: ReadFailureV1 }> {
+  const first = await rpcBatchV1(rpcUrl, now);
+  if (first.ok || !fallbackRpcUrl || fallbackRpcUrl === rpcUrl) return first;
+  const second = await rpcBatchV1(fallbackRpcUrl, now);
+  if (!second.ok) return first;
+  logger.info('Chain conditions read from the fallback endpoint', { primaryReason: first.reason });
+  return second;
+}
+
 export async function readChainConditionsV1(
   rpcUrl: string | undefined,
   now: number = Date.now(),
+  fallbackRpcUrl?: string,
 ): Promise<ChainConditionsV1> {
   if (!rpcUrl) return emptyV1('not_configured');
 
@@ -195,7 +215,7 @@ export async function readChainConditionsV1(
   }
   // Single-flight: a burst of status requests must not become a burst of RPC
   // calls against a metered endpoint.
-  inflight ||= rpcBatchV1(rpcUrl, now).finally(() => {
+  inflight ||= readWithFallbackV1(rpcUrl, fallbackRpcUrl?.trim() || undefined, now).finally(() => {
     inflight = null;
   });
 

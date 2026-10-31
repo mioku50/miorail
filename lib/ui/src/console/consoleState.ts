@@ -112,6 +112,12 @@ export const CONSOLE_COPY_V1 = {
 
 /** Turns a raw backend/adapter reason into a sentence that keeps the honest
  * "what still works" shape. Unknown reasons are humanized, never hidden. */
+/** A reason that ends without a stop, ended, so the next sentence does not
+ * run into it ("Quote expired Route comparison…", 2026-10-31). */
+function sentenceV1(text: string): string {
+  return /[.!?…)]$/.test(text.trim()) ? text : `${text.trim()}.`;
+}
+
 export function consoleFailureCopyV1(reason: string | null | undefined): string {
   if (!reason) return 'No reason reported.';
   const known: Record<string, string> = {
@@ -536,7 +542,7 @@ export function deriveSimulationViewV1(
       headline: copy.headline,
       detail: passed
         ? ''
-        : `${copy.detail}${simulation.outcome === 'simulation_provider_unavailable' ? '' : ' Route comparison and the calls above are unchanged.'}`,
+        : `${sentenceV1(copy.detail)}${simulation.outcome === 'simulation_provider_unavailable' ? '' : ' Route comparison and the calls above are unchanged.'}`,
       // A run the server made names no provider; its block is what it has.
       subLabel: passed && simulation.provider
         ? `${simulation.provider} · ${ageLabelV1(simulation.ageSeconds)} ago`
@@ -558,7 +564,7 @@ export function deriveSimulationViewV1(
       passed: false,
       headline: 'Simulation not available',
       detail: reason
-        ? `${consoleFailureCopyV1(reason)} Route comparison and the calls above are unchanged.`
+        ? `${sentenceV1(consoleFailureCopyV1(reason))} Route comparison and the calls above are unchanged.`
         : 'No simulation provider answered. Route comparison and the calls above are unchanged.',
       subLabel: 'not available',
       canSign: serverAllowsSigning,

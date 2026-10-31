@@ -445,7 +445,7 @@ export const routePlanRouteRuntime = {
         // ~$219 (2026-08-31).
         aerodromeAdapterV1(),
         new O1SwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1(), gasMeter: swapGasMeterV1() }),
-        new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1(), gasMeter: swapGasMeterV1() }),
+        new HydrexSwapRouteAdapter({ rpcUrl: baseMainnetRpcUrlV1(), fallbackRpcUrl: BASE_PUBLIC_RPC_URL_V1, gasMeter: swapGasMeterV1() }),
         new BalancerSwapRouteAdapter(),
         new GmgnQuoteRouteAdapter(),
       ],
@@ -506,7 +506,7 @@ async function swapGasPriceNowV1(): Promise<SwapGasPriceV1 | null> {
   // CoinGecko has no ETH price, so it measures no dollar figure.
   if ((process.env.PRICE_PROVIDER ?? 'coingecko').trim().toLowerCase() !== 'coingecko') return null;
   const [chain, market] = await Promise.all([
-    readChainConditionsV1(baseMainnetRpcUrlV1() || undefined),
+    readChainConditionsV1(baseMainnetRpcUrlV1() || undefined, Date.now(), BASE_PUBLIC_RPC_URL_V1),
     readMarketSnapshotV1(
       { fetch: (...args) => globalThis.fetch(...args), now: () => new Date() },
       { apiKey: (process.env.COINGECKO_API_KEY ?? '').trim() || null },
@@ -532,7 +532,7 @@ async function providerContractPinVerifiedV1(provider: string): Promise<boolean>
     return Boolean(rpcUrl) && (await createO1RouterPinReaderV1({ rpcUrl }).verify()).ok;
   }
   if (provider === 'hydrex') {
-    return Boolean(rpcUrl) && (await createHydrexRouterPinReaderV1({ rpcUrl }).verifyAll()).ok;
+    return Boolean(rpcUrl) && (await createHydrexRouterPinReaderV1({ rpcUrl, fallbackRpcUrl: BASE_PUBLIC_RPC_URL_V1 }).verifyAll()).ok;
   }
   return true;
 }
@@ -980,7 +980,7 @@ export const swapPrepareRouteRuntime = {
         new KyberSwapBuildAdapter(),
         new AerodromeSwapBuildAdapter({ rpcUrl }),
         new O1SwapBuildAdapter({ rpcUrl }),
-        new HydrexSwapBuildAdapter({ rpcUrl }),
+        new HydrexSwapBuildAdapter({ rpcUrl, fallbackRpcUrl: BASE_PUBLIC_RPC_URL_V1 }),
         new BalancerSwapBuildAdapter({ rpcUrl }),
       ],
       quoteAdapters: [
@@ -988,7 +988,7 @@ export const swapPrepareRouteRuntime = {
         new KyberSwapRouteAdapter(),
         aerodromeAdapterV1(),
         new O1SwapRouteAdapter({ rpcUrl }),
-        new HydrexSwapRouteAdapter({ rpcUrl }),
+        new HydrexSwapRouteAdapter({ rpcUrl, fallbackRpcUrl: BASE_PUBLIC_RPC_URL_V1 }),
         new BalancerSwapRouteAdapter(),
       ],
       supportedProviders: [
