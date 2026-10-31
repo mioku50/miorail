@@ -673,6 +673,7 @@ export function MiniConsole() {
     routeRunId: prepared?.routeRunId ?? null,
     walletAddress: address ? (address.toLowerCase() as `0x${string}`) : null,
     enabled: Boolean(submission && submission.proofId && RECONCILABLE.includes(submission.status)),
+    attemptKey: submission?.batchId ?? null,
   });
 
   useEffect(() => {

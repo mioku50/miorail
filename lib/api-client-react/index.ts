@@ -3402,6 +3402,13 @@ export interface UseBoundedProofReconciliationArgs {
   routeRunId: string | null;
   walletAddress: `0x${string}` | null | undefined;
   enabled: boolean;
+  /**
+   * Which submission of this proof is being watched, such as its batch id. A
+   * second press records into the same proof, and on 2026-10-31 the reconcile
+   * spent on the first press's refusal left both of the operator's step
+   * swaps `pending` after they had landed.
+   */
+  attemptKey?: string | null;
 }
 
 export interface UseBoundedProofReconciliationResult {
@@ -3426,18 +3433,29 @@ export function useBoundedProofReconciliation({
   routeRunId,
   walletAddress,
   enabled,
+  attemptKey = null,
 }: UseBoundedProofReconciliationArgs): UseBoundedProofReconciliationResult {
   const reconcile = useReconcileRouteProof();
+  const queryClient = useQueryClient();
   const startedForRef = useRef<string | null>(null);
   const active = Boolean(enabled && proofId && routeRunId && walletAddress);
 
   const reconcileMutate = reconcile.mutate;
+  const reconcileReset = reconcile.reset;
   useEffect(() => {
     if (!active || !proofId || !routeRunId || !walletAddress) return;
-    if (startedForRef.current === proofId) return;
-    startedForRef.current = proofId;
+    const started = `${proofId}|${attemptKey ?? ''}`;
+    if (startedForRef.current === started) return;
+    const again = startedForRef.current?.startsWith(`${proofId}|`) ?? false;
+    startedForRef.current = started;
+    if (again) {
+      // The same proof, a new submission: the earlier answer is not about it,
+      // and its poll budget starts over.
+      reconcileReset();
+      void queryClient.resetQueries({ queryKey: ['route-proof', proofId] });
+    }
     reconcileMutate({ proofId, routeRunId, walletAddress });
-  }, [active, proofId, routeRunId, walletAddress, reconcileMutate]);
+  }, [active, proofId, routeRunId, walletAddress, attemptKey, reconcileMutate, reconcileReset, queryClient]);
 
   const query = useRouteProof(active ? proofId : null, {
     enabled: active,
@@ -3450,7 +3468,6 @@ export function useBoundedProofReconciliation({
 
   // Keyed on the answer, so it runs once per poll and not once per render; the
   // ref only keeps one answer from being acted on twice.
-  const queryClient = useQueryClient();
   const answeredAt = Math.max(query.dataUpdatedAt, query.errorUpdatedAt);
   const polledStatus = query.data?.proof.finalStatus ?? null;
   const retriedAtRef = useRef<string | null>(null);

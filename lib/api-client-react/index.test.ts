@@ -232,6 +232,13 @@ describe('api-client-react', () => {
     assert.equal(apiClient.reconcileAnswerForV1(answer, null), undefined);
     assert.match(source, /reconcileAnswerForV1\(reconcile\.data,\s*proofId\)/, 'every reading of the answer goes through the id check');
     assert.doesNotMatch(source, /reconcile\.data\?\.(proof|lifecycle|outcome)/, 'nothing reads the answer unchecked');
+
+    // 2026-10-31: a press refused by the wallet, then a press that landed,
+    // both recorded into one proof. The first spent the reconcile and both of
+    // the operator's step swaps stayed `pending`. A new submission of the same
+    // proof reconciles again, with its own poll budget.
+    assert.match(source, /`\$\{proofId\}\|\$\{attemptKey\s*\?\?\s*(?:''|"")\}`/);
+    assert.match(source, /reconcileReset\(\);\s*void queryClient\.resetQueries\(\{\s*queryKey:\s*\[['"]route-proof['"],\s*proofId\]\s*\}\)/);
   });
 
   it('T60 Intelligence Budget hooks are all exported', () => {

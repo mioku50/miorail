@@ -215,6 +215,7 @@ export function RoutePlanHome() {
     enabled: Boolean(
       submission && submission.proofId && RECONCILABLE_SUBMISSION_STATUSES.includes(submission.status),
     ),
+    attemptKey: submission?.batchId ?? null,
   });
 
   // T57: submission block for a prepared review — the same hook/components as

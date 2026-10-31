@@ -30,6 +30,7 @@
     "smoke:b20-control": "tsx scripts/smoke_b20_control.ts",
     "proof:verify": "tsx lib/proof-verifier/src/cli.ts",
     "proofs:reconcile-native": "tsx scripts/reconcile_native_route_proofs.ts",
+    "proofs:reconcile-pending": "tsx scripts/reconcile_pending_route_proofs.ts",
     "proofs:publish-share": "tsx scripts/publish_route_proof_share.ts",
     "b20:probe-exit-size": "tsx scripts/probe_b20_exit_size.ts",
     "b20:probe-pool-window": "tsx scripts/probe_b20_pool_window.ts",
