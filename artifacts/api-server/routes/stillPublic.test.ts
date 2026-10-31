@@ -20,6 +20,7 @@ function fakeService(answer: (input: string) => Promise<MirrorOutcome>, calendar
       asked.push(input);
       return answer(input);
     },
+    reading: async () => assert.fail('the public door reads by subject, never a reading'),
     earnings: async () => calendar,
   };
   return { service, asked };

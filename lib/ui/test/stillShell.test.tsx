@@ -10,7 +10,8 @@ import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/divi
 import { EXAMPLE, SATURDAY, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
 import {
   agentAnswerV1,
-  agentTopicV1,
+  agentRouteV2,
+  assetsNamedInV2,
   assetsViewV1,
   homeViewV1,
   mobileLayoutV1,
@@ -259,23 +260,39 @@ describe('Assets', () => {
 });
 
 describe('the Agent', () => {
-  it('knows the topics in English and in Russian, and admits what it does not answer', () => {
-    assert.equal(agentTopicV1('How much can I spend?'), 'borrow');
-    assert.equal(agentTopicV1('Сколько я могу занять?'), 'borrow');
-    assert.equal(agentTopicV1('Насколько безопасен мой займ?'), 'safety');
-    assert.equal(agentTopicV1('Когда выходные лимиты?'), 'closed');
-    assert.equal(agentTopicV1('А когда следующий дивиденд?'), 'dividends');
-    assert.equal(agentTopicV1('Что будет при падении NVDA на 30%?'), 'stress_test');
-    assert.equal(agentTopicV1('Что будет с моим займом, если NVIDIA упадёт на 25%?'), 'stress_test');
-    assert.equal(agentTopicV1('Почему моя сумма займа уменьшилась?'), 'limit_change');
-    assert.equal(agentTopicV1('Как безопаснее уменьшить долг на $100?'), 'repay_options');
-    assert.equal(agentTopicV1('What if I repay $100 of my loan?'), 'repay_options');
-    assert.equal(agentTopicV1('Что будет, если погасить $100 долга?'), 'repay_options');
-    assert.equal(agentTopicV1('Займи $500 и отправь другу'), 'action_prep');
-    assert.equal(agentTopicV1('Tell me a joke'), null);
+  it('routes a question one way for the page and the server, in English and in Russian', () => {
+    const route = (q: string) => agentRouteV2(q);
+    assert.deepEqual(route('How much can I spend?'), { route: 'fast', topic: 'borrow' });
+    assert.deepEqual(route('Сколько я могу занять?'), { route: 'fast', topic: 'borrow' });
+    assert.deepEqual(route('Насколько безопасен мой займ?'), { route: 'fast', topic: 'safety' });
+    assert.deepEqual(route('Когда выходные лимиты?'), { route: 'fast', topic: 'closed' });
+    assert.deepEqual(route('А когда следующий дивиденд?'), { route: 'fast', topic: 'dividends' });
+    for (const q of [
+      'Что будет при падении NVDA на 30%?',
+      'Что будет с моим займом, если NVIDIA упадёт на 25%?',
+      'Почему моя сумма займа уменьшилась?',
+      'Как безопаснее уменьшить долг на $100?',
+      'What if I repay $100 of my loan?',
+      'Что будет, если погасить $100 долга?',
+      'What if I borrow $200 more?',
+      'How much interest do I pay a month?',
+      'What if BTC goes to $60,000?',
+    ]) {
+      assert.equal(route(q).route, 'analysis', q);
+    }
+    // A command is an action; the same words asked as a what-if are a calculation.
+    assert.equal(route('Займи $500 и отправь другу').route, 'action_prep');
+    assert.equal(route('Borrow $500 and send it to my friend').route, 'action_prep');
+    assert.equal(route('Погаси $100').route, 'action_prep');
+    assert.equal(route('Что будет, если погасить $100?').route, 'analysis');
+    assert.equal(route('Tell me a joke').route, 'unknown');
+    assert.equal(route('привет').route, 'unknown');
+    assert.deepEqual(assetsNamedInV2('если nvidia и биткоин упадут'), ['NVDAc', 'cbBTC']);
+    // "Ether" is a word, not the inside of "together".
+    assert.deepEqual(assetsNamedInV2('prices fall together'), []);
   });
 
-  it('answers from the numbers on screen, in the language of the question', () => {
+  it('answers the direct reads from the numbers on screen, in the language of the question', () => {
     const r = report();
     const sky = skyStateV1({ now: WEDNESDAY });
     const borrowing = agentAnswerV1({ question: 'Сколько я могу взять?', report: r, sky });
@@ -289,92 +306,41 @@ describe('the Agent', () => {
     const unknown = agentAnswerV1({ question: 'Tell me a joke', report: r, sky });
     assert.equal(unknown.topic, null);
     assert.doesNotMatch(unknown.text, /\$\d/);
-    // A question it does not recognise is answered with the list: no badge, no model, no figures.
+    // A question it does not recognise is answered with the list: no badge, no figures.
     assert.equal(unknown.mode, undefined);
-    assert.equal(unknown.needsLlm, false);
     assert.equal(unknown.engineFacts, undefined);
-    assert.equal(agentAnswerV1({ question: 'привет', report: r, sky }).needsLlm, false);
     assert.match(agentAnswerV1({ question: 'How much can I borrow?', report: null, sky }).text, /sign in/);
   });
 
-  it('handles Still Agent v2 analysis, stress tests, repayment options, action boundaries, and missing-evidence refusals', () => {
+  it('leaves calculations to the server and keeps the action boundary on the page', () => {
     const r = report();
     const sky = skyStateV1({ now: WEDNESDAY });
+    // The page has no arithmetic of its own for a what-if: if the server is unreachable it says so.
+    const stress = agentAnswerV1({ question: 'Что будет при падении NVDA на 30%?', report: r, sky, signedIn: true });
+    assert.equal(stress.mode, 'refused');
+    assert.match(stress.text, /сервер.*наш сбой/);
+    assert.doesNotMatch(stress.text, /\$\d/);
+    assert.match(agentAnswerV1({ question: 'What if NVDA drops 30%?', report: null, sky, signedIn: false }).text, /sign in/);
 
-    // 1. Stress test: NVDA drops 30%
-    const stress30 = agentAnswerV1({ question: 'Что будет при падении NVDA на 30%?', report: r, sky });
-    assert.equal(stress30.topic, 'stress_test');
-    assert.equal(stress30.mode, 'analysis');
-    assert.match(stress30.text, /При падении NVIDIA на 30%/);
-    assert.match(stress30.text, /Health Factor снизится с 2\.09 до 1\.46/);
-    assert.ok((stress30.steps ?? []).some((s) => /Health Factor: 2\.09 → 1\.46/.test(s)));
-    assert.ok(stress30.sources.some((s) => /РИСК-ДВИЖОК/.test(s)));
-
-    // 2. Limit change attribution on weekend
-    const limitWeekend = agentAnswerV1({
-      question: 'Почему моя сумма займа уменьшилась?',
-      report: report(SATURDAY),
-      sky: skyStateV1({ now: SATURDAY_AT }),
-    });
-    assert.equal(limitWeekend.topic, 'limit_change');
-    assert.equal(limitWeekend.mode, 'analysis');
-    assert.match(limitWeekend.text, /рынок США закрыт.*40% вместо 50%/);
-    assert.match(limitWeekend.text, /вычтен текущий долг \$240\.17/);
-    assert.ok((limitWeekend.steps ?? []).length >= 3);
-    // The gas reserve is the terms' own, wherever a step names it.
-    for (const step of limitWeekend.steps ?? []) {
-      if (/газа/.test(step)) assert.match(step, /0\.0005 ETH/);
-    }
-
-    // 3. Safe debt reduction by $100
-    const repay100 = agentAnswerV1({ question: 'Как безопаснее уменьшить долг на $100?', report: r, sky });
-    assert.equal(repay100.topic, 'repay_options');
-    assert.equal(repay100.mode, 'analysis');
-    assert.match(repay100.text, /снизится с \$240\.17 до \$140\.17/);
-    assert.match(repay100.text, /Health Factor вырастет с 2\.09 до 3\.58/);
-    assert.equal(repay100.actionLink?.href, '/repay');
-    // What a repayment changes, never which one to choose, and no claim about dividends.
-    for (const line of [repay100.text, ...(repay100.steps ?? [])]) {
-      assert.doesNotMatch(line, /Рекоменд|безопасн|дивиденд/i);
-    }
-    const repayEn = agentAnswerV1({ question: 'What if I repay $100 of my loan?', report: r, sky });
-    for (const line of [repayEn.text, ...(repayEn.steps ?? [])]) {
-      assert.doesNotMatch(line, /recommend|safest|dividend/i);
-    }
-    assert.match(repayEn.text, /debt drops from \$240\.17 to \$140\.17/);
-    // No amount named: no amount is chosen for the reader.
-    const repayAny = agentAnswerV1({ question: 'Как уменьшить долг?', report: r, sky });
-    assert.equal(repayAny.topic, 'repay_options');
-    assert.doesNotMatch(repayAny.text, /\$100/);
-    assert.match(repayAny.text, /Назовите сумму/);
-
-    // 4. Action preparation & refusal of third-party transfer
     const actionPrep = agentAnswerV1({ question: 'Займи $500 и отправь другу', report: r, sky });
     assert.equal(actionPrep.topic, 'action_prep');
     assert.equal(actionPrep.mode, 'action_prep');
     assert.match(actionPrep.text, /не исполняю транзакции автоматически и не отправляю средства на сторонние адреса/);
     assert.match(actionPrep.text, /\$500\.00 укладываются в расчётный запас Still \(\$784\.62\)/);
     assert.equal(actionPrep.actionLink?.href, '/borrow');
-
-    // 5. Fail-closed refusal when oracle price is unread
-    const brokenReport = report();
-    const nvdaLine = brokenReport.assets.find((a) => a.asset === 'NVDAc')!;
-    nvdaLine.priceCents = null;
-    const refusedStress = agentAnswerV1({ question: 'Что будет при падении NVDA на 30%?', report: brokenReport, sky });
-    assert.equal(refusedStress.mode, 'refused');
-    assert.match(refusedStress.text, /Расчёт отклонён: цена оракула или залоговый фактор для NVIDIA \(NVDAc\) не прочитаны/);
   });
 
-  it('renders the prompts in the reader’s language and renders ThinkingOrbs when reading', () => {
+  it('renders the prompts in the reader’s language and orbs that name the stage under way', () => {
     const html = renderToStaticMarkup(<StillAgent model={{ sky: skyStateV1({ now: WEDNESDAY }), report: null, dividends: null, reading: true, signedIn: true, russian: true }} />);
     assert.match(html, /Сколько я могу взять без продажи\?/);
     assert.match(html, /Что будет при падении NVDA на 30%\?/);
-    assert.match(html, /still-thinking-orbs/);
-    assert.match(html, /orb-evidence/);
-    assert.match(html, /orb-risk/);
-    assert.match(html, /orb-llm/);
-    const orbsHtml = renderToStaticMarkup(<ThinkingOrbs stage="risk_engine" russian={false} />);
-    assert.match(orbsHtml, /Risk Engine computing scenario and liquidation thresholds/);
+    assert.match(html, /data-phase="evidence"/);
+    assert.match(html, /Читаю ваш кошелёк на Base/);
+    const computing = renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'computing', summary: 'NVIDIA −30%' }} russian={false} />);
+    assert.match(computing, /data-phase="risk"/);
+    assert.match(computing, /Still engine computing: NVIDIA −30%/);
+    assert.match(renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'read', block: '53000000' }} />), /Read at block 53,000,000/);
+    assert.match(renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'checked', verified: false }} />), /data-phase="llm".*failed the check/);
   });
 });
 

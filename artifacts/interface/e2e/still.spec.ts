@@ -176,7 +176,7 @@ test.describe('Agent language', () => {
     await page.goto('/agent');
     expect(await page.evaluate(() => navigator.language)).toBe('ru-RU');
     await expect(page.getByRole('heading', { name: 'Agent', exact: true })).toBeVisible();
-    await expect(page.getByText('Reads your wallet and Still’s numbers. Never signs.', { exact: true })).toBeVisible();
+    await expect(page.getByText('Reads your wallet and computes with Still’s engine. Never signs.', { exact: true })).toBeVisible();
     await expect(page.getByText('Ask about your money.', { exact: true })).toBeVisible();
     for (const prompt of ['How much can I spend without selling?', 'How safe is my loan?', 'When do weekend limits start?', 'When is my next dividend?']) {
       await expect(page.getByRole('button', { name: prompt, exact: true })).toBeEnabled();
@@ -192,6 +192,46 @@ test.describe('Agent language', () => {
     expect(reads.filter(path => path === '/api/still/mine')).toHaveLength(1);
     expect(writes).toEqual([]);
   });
+});
+
+test('a calculation streams its stages from the server and says what it holds fixed', async ({ page }) => {
+  await install(page, true, MONDAY);
+  let body = '';
+  await page.route('**/api/still/agent/ask', (route) => {
+    body = route.request().postData() ?? '';
+    const lines = [
+      { type: 'stage', stage: 'reading' },
+      { type: 'stage', stage: 'read', block: '53000000', blockTime: '2026-10-26T15:04:58Z' },
+      { type: 'stage', stage: 'understood', summary: 'NVIDIA −30%', by: 'rules' },
+      { type: 'stage', stage: 'computing', summary: 'NVIDIA −30%' },
+      { type: 'stage', stage: 'computed', figures: 9 },
+      {
+        type: 'answer',
+        answer: {
+          topic: 'analysis',
+          mode: 'analysis',
+          text: 'If NVIDIA falls 30% (to $148.33), the $240.17 loan on Aave V4 stays out of liquidation: health factor 2.09 → 1.46.',
+          steps: ['NVIDIA price: $211.90 → $148.33 (−30%).'],
+          bounds: ['Every other price is as read at block 53,000,000.'],
+          sources: ['RISK ENGINE · the Still report recomputed with the change', 'READ · Base block 53,000,000'],
+          calculatedAt: { block: '53000000', blockTime: '2026-10-26T15:04:58Z' },
+          understoodBy: 'rules',
+        },
+      },
+    ];
+    return route.fulfill({ contentType: 'application/x-ndjson', body: `${lines.map((line) => JSON.stringify(line)).join('\n')}\n` });
+  });
+  await page.goto('/agent');
+  await page.getByRole('button', { name: 'What happens if NVDA drops 30%?', exact: true }).click();
+  const answer = page.locator('.still-bubble').last();
+  await expect(answer).toContainText('health factor 2.09 → 1.46');
+  await expect(answer.locator('.still-agent-mode-badge')).toHaveText('Calculated · Still engine');
+  await expect(answer).toContainText('What this holds fixed');
+  await expect(answer).toContainText('Every other price is as read at block 53,000,000.');
+  await expect(answer).toContainText('Base block 53,000,000, read 2 s before this answer');
+  await expect(answer).toContainText('question read by fixed rules · computed by the Still engine');
+  // The page sends the question and nothing else: the server reads the wallet itself.
+  expect(JSON.parse(body)).toEqual({ question: 'What happens if NVDA drops 30%?' });
 });
 
 test('Berlin night keeps the US closed-market caption and its financial deadline', async ({ page }) => {

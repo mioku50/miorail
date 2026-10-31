@@ -1,27 +1,49 @@
-import { createLlmProvider, type LlmProvider } from '@mioagent/llm';
-import type { MirrorReport } from '@mioagent/still-engine/report';
+import { createLlmProvider, createStructuredLlmProvider, type LlmProvider } from '@mioagent/llm';
+import type { MirrorReadingV1 } from '@mioagent/still-engine';
+import { formatCents } from '@mioagent/still-engine/format';
 import {
   agentAnswerV1,
+  agentCapabilitiesV2,
+  agentRouteV2,
   isRussianV1,
   type AgentAnswerV1,
 } from '../../../lib/ui/src/still/agentAnswers.js';
 import { skyStateV1 } from '../../../lib/ui/src/still/skyState.js';
-import { formatCents } from '@mioagent/still-engine/format';
 import { numbersInV1, stripNarrationFormattingV1 } from './b20AnswerVerify.js';
+import { groundProposalV1, modelProposalV1, planSummaryV1, rulesProposalV1 } from './stillAgentPlan.js';
+import { stillAgentToolAnswerV1 } from './stillAgentTools.js';
+import { earlierStillReadingV1, rememberStillReadingV1, stillReadingChangeV1 } from './stillReadings.js';
 
 // ---------------------------------------------------------------------------
-// The Agent's wording, walled in the way the B20 narrator is: the calculation
-// is deterministic, and a model may only re-say it. A narration is shown only
-// if every figure in it is one the reader can already see in the calculation
-// (its sentence and its steps), and it neither advises nor claims to have
-// acted. Anything else falls back to the deterministic answer, which is what
-// the page shows without a model at all.
+// The Still Agent, end to end, on the server.
+//
+//   read     the session wallet's own report and the chain reading under it
+//   route    the page's one rule: a direct read, a request to act, or a
+//            calculation (lib/ui/src/still/agentAnswers.ts)
+//   plan     fixed rules first; a model reads only what they do not, and
+//            every number, asset and loan it proposes must be in the words
+//   compute  the Mirror engine, on the same reading with the change applied
+//   word     a model may re-say the answer; it is shown only if every figure
+//            is the calculation's, the decisive one stays, the outcome is not
+//            flipped and nothing advises or claims to have acted
+//
+// Each stage is reported as it happens, so the page shows the work being done
+// rather than an animation. Any failure lands on the deterministic answer.
 // ---------------------------------------------------------------------------
 
 export const stillAgentLlmRuntimeV1: {
-  provider: () => LlmProvider | null;
+  planner: () => LlmProvider | null;
+  narrator: () => LlmProvider | null;
 } = {
-  provider: () => {
+  // Reading a question into a closed JSON contract is the structured lane's job.
+  planner: () => {
+    try {
+      return createStructuredLlmProvider();
+    } catch {
+      return null;
+    }
+  },
+  narrator: () => {
     try {
       return createLlmProvider();
     } catch {
@@ -30,9 +52,19 @@ export const stillAgentLlmRuntimeV1: {
   },
 };
 
+export type StillAgentStageV1 =
+  | { stage: 'reading' }
+  | { stage: 'read'; block: string; blockTime: string }
+  | { stage: 'understanding' }
+  | { stage: 'understood'; summary: string; by: 'rules' | 'model' }
+  | { stage: 'computing'; summary: string }
+  | { stage: 'computed'; figures: number }
+  | { stage: 'wording' }
+  | { stage: 'checked'; verified: boolean; figures: number };
+
 /** Advice is not ours to give, in either language the Agent answers in. */
 const ADVICE_V2 =
-  /\b(?:recommend\w*|you should|i suggest|safest|best (?:option|way|path))\b|рекоменд|совету|советую|следует|стоит (?:взять|занять|погасить|продать|купить)|лучше всего|самый безопасн|безопаснее всего/i;
+  /\b(?:recommend\w*|you should|i suggest|safest|best (?:option|way|path)|consider)\b|рекоменд|совету|советую|следует|стоит (?:взять|занять|погасить|продать|купить)|лучше всего|самый безопасн|безопаснее всего/i;
 
 /** "Every number must be in the evidence" is only as strong as the evidence is small. */
 export const STILL_NARRATION_MAX_FIGURES_V2 = 40;
@@ -50,130 +82,166 @@ function evidenceFiguresV2(base: AgentAnswerV1): Set<string> {
 function decisiveFiguresV2(base: AgentAnswerV1): string[] {
   const facts = base.engineFacts ?? {};
   const cents = (value: unknown) => (typeof value === 'string' && /^\d+$/.test(value) ? numbersInV1(formatCents(value)) : []);
-  if (facts.mode === 'stress_test') return typeof facts.hfAfter === 'string' ? numbersInV1(facts.hfAfter) : cents(facts.valueAfterCents);
-  if (facts.mode === 'repay_options' && facts.fullPayoff !== true) return cents(facts.debtAfterCents);
-  if (facts.mode === 'limit_change') return cents(facts.availableCents);
+  if (facts.mode === 'scenario') return typeof facts.hfAfter === 'string' ? numbersInV1(facts.hfAfter) : cents(facts.roomAfterCents);
+  if (facts.mode === 'repay_options') return cents(facts.debtAfterCents);
+  if (facts.mode === 'interest') return cents(facts.totalCents);
+  if (facts.mode === 'limit') return cents(facts.availableCents);
   return [];
 }
 // `\w` is ASCII-only in JS: Russian endings are spelled as a Cyrillic class.
-const ENTERS_LIQUIDATION_V2 = /enter\w* (?:the )?liquidation|liquidation zone|be liquidated|зон[а-яё]* ликвидации|будет ликвидирован|ликвидируют/i;
-const STAYS_SAFE_V2 = /remain\w* safe|stays? safe|останется безопасн|остаётся безопасн/i;
+const ENTERS_LIQUIDATION_V2 = /enter\w* (?:the )?liquidation|liquidation zone|be liquidated|can be liquidated|зон[а-яё]* ликвидации|будет ликвидирован|может быть ликвидирован|ликвидируют/i;
+const STAYS_SAFE_V2 = /remain\w* safe|stays? safe|stays? out of liquidation|не доходит до ликвидации|останется безопасн|остаётся безопасн/i;
 
 const ACTED_V2 =
-  /(?:я\s+(?:уже\s+)?(?:подписал|отправил|перев[её]л|исполнил)|i\s+have\s+(?:signed|sent|transferred|executed)\s+the\s+transaction)/i;
+  /(?:я\s+(?:уже\s+)?(?:подписал|отправил|перев[её]л|исполнил|погасил|занял)|i\s+(?:have\s+)?(?:signed|sent|transferred|executed|repaid|borrowed)\b)/i;
 
 export function verifyStillAgentNarrationV2(narration: string, base: AgentAnswerV1): string | null {
   const cleaned = stripNarrationFormattingV1(narration.trim().replace(/^["«]|["»]$/g, '').trim());
   if (cleaned.length < 24 || cleaned.length > 950) return null;
-  // Never allow a narration that claims autonomous execution or third-party transfer completion
   if (ACTED_V2.test(cleaned) || ADVICE_V2.test(cleaned)) return null;
-  // If action_prep refused third-party transfer, the narration must still state the refusal
-  if (
-    base.mode === 'action_prep' &&
-    !/(?:не\s+(?:подписыва|исполня|отправля|перевож)|never\s+sign|do\s+not\s+(?:sign|execute|transfer|send)|только\s+подготов|only\s+prepare)/i.test(
-      cleaned,
-    )
-  ) {
-    return null;
-  }
   // Every figure must already be on the reader's screen, and the decisive ones stay.
   const figures = numbersInV1(cleaned);
   const evidence = evidenceFiguresV2(base);
   if (figures.some((figure) => !evidence.has(figure))) return null;
   if (decisiveFiguresV2(base).some((figure) => !figures.includes(figure))) return null;
-  // A stress test's outcome is a boolean: the wording may not flip it.
-  if (base.engineFacts?.mode === 'stress_test' && typeof base.engineFacts.liquidatedAfter === 'boolean') {
+  // A scenario's outcome is a boolean: the wording may not flip it.
+  if (base.engineFacts?.mode === 'scenario' && typeof base.engineFacts.liquidatedAfter === 'boolean') {
     if (base.engineFacts.liquidatedAfter ? STAYS_SAFE_V2.test(cleaned) : ENTERS_LIQUIDATION_V2.test(cleaned)) return null;
   }
   return cleaned;
 }
 
-export async function answerStillAgentHybridV2(input: {
-  question: string;
-  report: MirrorReport | null;
-  signedIn: boolean;
-  now?: Date;
-}): Promise<AgentAnswerV1> {
-  const sky = skyStateV1({
-    now: input.now ?? new Date(),
-  });
-  const base = agentAnswerV1({
-    question: input.question,
-    report: input.report,
-    sky,
-    signedIn: input.signedIn,
-  });
-
-  if (!base.needsLlm || !input.report || evidenceFiguresV2(base).size > STILL_NARRATION_MAX_FIGURES_V2) {
-    return { ...base, needsLlm: false };
-  }
-
-  const provider = stillAgentLlmRuntimeV1.provider();
-  if (!provider) {
-    return { ...base, needsLlm: false };
-  }
-
-  const ru = isRussianV1(input.question);
-  const systemPrompt = ru
+function narratorPromptV2(ru: boolean): string {
+  return ru
     ? [
         'Ты пересказываешь готовый расчёт Still о кошельке пользователя на Base.',
-        'Все финансовые расчёты уже выполнены детерминированным кодом Miorail.',
-        'Твоя задача — ясно и лаконично (2–4 предложения, без markdown-заголовков и списков) пересказать результат расчёта.',
-        'ЖЕСТКИЕ ПРАВИЛА:',
-        '1. Используй ТОЛЬКО числа из BASELINE_ANSWER и STEPS, в том же виде. Никогда не выдумывай свои числа и не пересчитывай их.',
-        '2. Не давай советов и рекомендаций: не говори, что выбрать, что безопаснее или что стоит сделать.',
-        '3. Для режима action_prep прямо укажи, что агент не подписывает транзакции автоматически и не переводит средства третьим лицам, а только готовит проверку для подтверждения в кошельке.',
-        '4. Не представляйся и не называй версий. Отвечай строго на русском языке.',
+        'Все финансовые расчёты уже выполнены детерминированным кодом.',
+        'Перескажи результат ясно и коротко: 2–4 предложения, обычный текст без заголовков и списков.',
+        'ЖЁСТКИЕ ПРАВИЛА:',
+        '1. Используй ТОЛЬКО числа из BASELINE и STEPS, в том же виде. Не выдумывай и не пересчитывай числа.',
+        '2. Сохрани главный итог: health factor после изменения, остаток долга, сумму процентов или запас.',
+        '3. Не давай советов: не говори, что выбрать, что безопаснее или что стоит сделать.',
+        '4. Не утверждай, что что-то подписано или отправлено.',
+        '5. Не представляйся. Отвечай по-русски.',
       ].join('\n')
     : [
         "You restate Still's finished calculation about the reader's wallet on Base.",
-        'All financial math has already been computed by deterministic Miorail code.',
-        'Your job is to restate the result clearly and concisely (2–4 sentences, plain text without markdown headings or bullet lists).',
+        'All financial math has already been computed by deterministic code.',
+        'Restate the result clearly and briefly: 2–4 sentences, plain text without headings or lists.',
         'STRICT RULES:',
-        '1. Use ONLY the figures in BASELINE_ANSWER and STEPS, written the same way. Never invent or alter any figure.',
-        '2. Give no advice or recommendation: never say what to choose, what is safest or what the reader should do.',
-        '3. For action_prep mode, explicitly state that the agent never signs transactions autonomously or transfers funds to third parties, and only prepares a review for wallet confirmation.',
-        '4. Do not introduce yourself or name versions. Respond strictly in English.',
+        '1. Use ONLY the figures in BASELINE and STEPS, written the same way. Never invent or recompute a figure.',
+        '2. Keep the main result: the health factor after the change, the debt left, the interest total or the room.',
+        '3. Give no advice: never say what to choose, what is safest or what the reader should do.',
+        '4. Never claim anything was signed or sent.',
+        '5. Do not introduce yourself. Answer in English.',
       ].join('\n');
+}
 
-  const userPayload = JSON.stringify(
-    {
-      question: input.question,
-      mode: base.mode,
-      baselineAnswer: base.text,
-      steps: base.steps ?? [],
-      engineFacts: base.engineFacts ?? {},
-    },
-    null,
-    2,
-  );
-
+async function narrateV2(base: AgentAnswerV1, question: string, ru: boolean, stage: (s: StillAgentStageV1) => void): Promise<AgentAnswerV1> {
+  const figures = evidenceFiguresV2(base).size;
+  if (figures > STILL_NARRATION_MAX_FIGURES_V2) return base;
+  const narrator = stillAgentLlmRuntimeV1.narrator();
+  if (!narrator) return base;
+  stage({ stage: 'wording' });
   try {
-    const response = await provider.generate({
+    const response = await narrator.generate({
       messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: userPayload },
+        { role: 'system', content: narratorPromptV2(ru) },
+        { role: 'user', content: JSON.stringify({ question, baseline: base.text, steps: base.steps ?? [] }, null, 2) },
       ],
       temperature: 0.1,
       reasoningEffort: 'none',
       timeoutMs: 12_000,
     });
-    const verifiedText = verifyStillAgentNarrationV2(response.message.content ?? '', base);
-    if (!verifiedText) {
-      return { ...base, needsLlm: false };
-    }
-    // The chain can fall over to a spare provider, so the line names the
-    // check, not a vendor.
-    const llmSource = ru
-      ? 'ИИ · пересказ; каждое число сверено с расчётом'
-      : 'AI · wording only; every figure checked against the calculation';
-    return {
-      ...base,
-      text: verifiedText,
-      sources: [...base.sources, llmSource],
-      needsLlm: false,
-    };
+    const verified = verifyStillAgentNarrationV2(response.message.content ?? '', base);
+    stage({ stage: 'checked', verified: verified !== null, figures });
+    if (!verified) return base;
+    // The chain can fall over to a spare provider, so the line names the check, not a vendor.
+    const source = ru ? 'ИИ · пересказ; каждое число сверено с расчётом' : 'AI · wording only; every figure checked against the calculation';
+    return { ...base, text: verified, sources: [...base.sources, source] };
   } catch {
-    return { ...base, needsLlm: false };
+    stage({ stage: 'checked', verified: false, figures });
+    return base;
   }
+}
+
+function capabilitiesAnswerV2(ru: boolean, unread = false): AgentAnswerV1 {
+  const lead = unread ? (ru ? 'Я не смог прочитать этот вопрос как расчёт. ' : 'I could not read that question as a calculation. ') : '';
+  return { topic: null, text: lead + agentCapabilitiesV2(ru), sources: [] };
+}
+
+export interface StillAgentAskV3 {
+  question: string;
+  /** The session's wallet, lower case. */
+  wallet: string;
+  /** The wallet's report and its chain reading: the same cached service as /mine. */
+  read: () => Promise<MirrorReadingV1>;
+  onStage?: (stage: StillAgentStageV1) => void;
+  now?: Date;
+}
+
+export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentAnswerV1> {
+  const { question, wallet } = input;
+  const ru = isRussianV1(question);
+  const stage = input.onStage ?? (() => undefined);
+  const { route } = agentRouteV2(question);
+
+  stage({ stage: 'reading' });
+  const reading = await input.read();
+  if (reading.outcome !== 'report') {
+    return {
+      topic: null,
+      mode: 'refused',
+      text: ru ? 'Base сейчас не удалось прочитать. Это наш сбой, а не факт о вашем кошельке.' : 'Base could not be read just now. That is our failure, not a fact about your wallet.',
+      sources: [],
+    };
+  }
+  const { report } = reading;
+  if (report.subject.address.toLowerCase() !== wallet) throw new Error('still_agent_wallet_mismatch');
+  stage({ stage: 'read', block: report.reading.block, blockTime: report.reading.blockTime });
+  void rememberStillReadingV1(wallet, report);
+  const sky = skyStateV1({ now: input.now ?? new Date() });
+
+  // A direct read and a request to act are the page's own answers: no model.
+  if (route === 'fast' || route === 'action_prep') return agentAnswerV1({ question, report, sky, signedIn: true });
+
+  let by: 'rules' | 'model' = 'rules';
+  let proposal = rulesProposalV1(question, report);
+  if (!proposal) {
+    const planner = stillAgentLlmRuntimeV1.planner();
+    if (!planner) return capabilitiesAnswerV2(ru, route === 'analysis');
+    stage({ stage: 'understanding' });
+    by = 'model';
+    proposal = await modelProposalV1(planner, question, report).catch(() => null);
+    if (!proposal) return capabilitiesAnswerV2(ru, true);
+  }
+  const plan = groundProposalV1(proposal, question, report);
+  if (plan.task === 'chat') return capabilitiesAnswerV2(ru);
+  if (plan.task === 'status') {
+    // A plain question about the loan, asked in other words: the page's own answers.
+    const owes = report.venues.some((v) => v.debtCents !== null && BigInt(v.debtCents) > 0n);
+    const room = agentAnswerV1({ question: ru ? 'Сколько я могу занять?' : 'How much can I borrow?', report, sky, signedIn: true });
+    if (!owes) return { ...room, understoodBy: by };
+    const safety = agentAnswerV1({ question: ru ? 'Насколько безопасен мой займ?' : 'How safe is my loan?', report, sky, signedIn: true });
+    return { ...room, text: `${room.text} ${safety.text}`, understoodBy: by };
+  }
+
+  const summary = planSummaryV1(plan, ru);
+  if (summary) stage({ stage: 'understood', summary, by });
+  const previous = plan.task === 'limit' ? await earlierStillReadingV1(wallet, report) : null;
+  if (summary) stage({ stage: 'computing', summary });
+  const base: AgentAnswerV1 = {
+    ...stillAgentToolAnswerV1({
+      plan,
+      reading: { report, input: reading.input },
+      ru,
+      question,
+      change: previous ? stillReadingChangeV1(previous, report) : null,
+    }),
+    understoodBy: by,
+  };
+  stage({ stage: 'computed', figures: evidenceFiguresV2(base).size });
+  // A refusal or a request for what is missing is ours, said plainly.
+  if (base.mode !== 'analysis') return base;
+  return narrateV2(base, question, ru, stage);
 }

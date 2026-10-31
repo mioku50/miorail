@@ -26,6 +26,7 @@ function fixture(t: test.TestContext, answer: (input: string) => Promise<MirrorO
   const original = { ...stillMineRuntimeV1 }, asked: string[] = [];
   const service: MirrorService = {
     check: async input => { asked.push(input); return answer(input); },
+    reading: async () => assert.fail('the MCP tool reads by check, never a reading'),
     earnings: async () => ({ ok: false }),
   };
   stillMineRuntimeV1.service = () => service;

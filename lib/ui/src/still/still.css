@@ -349,6 +349,18 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-orb.orb-evidence { background: var(--sm-stock); animation-delay: 0s; }
 .still-orb.orb-risk { background: var(--sm-blue); animation-delay: 0.22s; }
 .still-orb.orb-llm { background: var(--sm-wire); animation-delay: 0.44s; }
+/* One orb per phase of the server's work: the wallet, the engine, the words.
+   The phase under way pulses, the ones done stay lit, the ones ahead are dim. */
+.still-thinking-orbs[data-phase] .still-orb { animation: none; opacity: 0.25; transform: scale(0.88); }
+.still-thinking-orbs[data-phase='evidence'] .orb-evidence,
+.still-thinking-orbs[data-phase='risk'] .orb-risk,
+.still-thinking-orbs[data-phase='llm'] .orb-llm { animation: sm-orb-pulse 1.5s ease-in-out infinite; }
+.still-thinking-orbs[data-phase='risk'] .orb-evidence,
+.still-thinking-orbs[data-phase='llm'] .orb-evidence,
+.still-thinking-orbs[data-phase='llm'] .orb-risk { opacity: 1; transform: none; }
+.still-agent-bounds { margin-top: 10px; font-size: 12.5px; line-height: 1.45; color: var(--sm-ink2); }
+.still-agent-bounds ul { margin: 4px 0 0; padding-left: 18px; }
+.still-agent-bounds li + li { margin-top: 3px; }
 .still-agent-mode-badge {
   font-size: 11px; padding: 2px 8px; border-radius: 999px;
   background: var(--sm-chip); border: 1px solid var(--sm-line); color: var(--sm-ink2);

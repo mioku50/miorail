@@ -15,7 +15,11 @@ afterEach(() => Object.assign(publicStillRuntimeV1, saved));
 const NOW = new Date('2026-11-26T16:00:00.000Z'); // Thanksgiving, 11:00 New York
 
 function wire(earnings: MirrorService['earnings']) {
-  const service: MirrorService = { check: async () => assert.fail('terms must not read a wallet'), earnings };
+  const service: MirrorService = {
+    check: async () => assert.fail('terms must not read a wallet'),
+    reading: async () => assert.fail('terms must not read a wallet'),
+    earnings,
+  };
   publicStillRuntimeV1.service = () => service;
   publicStillRuntimeV1.now = () => NOW;
   publicStillRuntimeV1.limiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 30 });

@@ -6,7 +6,7 @@
 
 import type { Address } from 'viem';
 import type { CalendarRead, CalendarSource } from './calendar.js';
-import { computeMirror } from './mirror.js';
+import { computeMirror, type MirrorInput } from './mirror.js';
 import { loadUniverse, readWallet, type Universe } from './read.js';
 import type { MirrorReport } from './report.js';
 import { ChainUnavailable, type Provider, type ProviderAttempt } from './rpc.js';
@@ -21,6 +21,16 @@ export type MirrorOutcome =
 
 type ReadOutcome = Extract<MirrorOutcome, { outcome: 'report' | 'chain_unavailable' }>;
 
+/** A report with the chain reading it was computed from, so a scenario can use the same block. */
+export type MirrorReadingV1 =
+  | { outcome: 'report'; report: MirrorReport; input: MirrorInput; cached: boolean }
+  | { outcome: 'chain_unavailable'; attempts: readonly ProviderAttempt[] };
+
+interface Reading {
+  report: MirrorReport;
+  input: MirrorInput;
+}
+
 export interface MirrorServiceOptions {
   providers: readonly Provider[];
   names: Names | null;
@@ -34,6 +44,8 @@ export interface MirrorServiceOptions {
 
 export interface MirrorService {
   check(input: string): Promise<MirrorOutcome>;
+  /** One address's report and its reading, for what-if questions about that same block. */
+  reading(address: Address): Promise<MirrorReadingV1>;
   /** The earnings calendar the reports are computed with, for the terms tool. */
   earnings(): Promise<CalendarRead>;
 }
@@ -48,8 +60,8 @@ export function createMirrorService(options: MirrorServiceOptions): MirrorServic
 
   let universe: { value: Universe; at: number } | null = null;
   let loading: Promise<Universe> | null = null;
-  const reports = new Map<Address, { report: MirrorReport; at: number }>();
-  const inflight = new Map<Address, Promise<MirrorReport>>();
+  const reports = new Map<Address, Reading & { at: number }>();
+  const inflight = new Map<Address, Promise<Reading>>();
   const primaryNames = new Map<Address, { name: string | null; at: number }>();
 
   function remember<K, V>(cache: Map<K, V>, key: K, value: V) {
@@ -75,30 +87,36 @@ export function createMirrorService(options: MirrorServiceOptions): MirrorServic
     return loading;
   }
 
-  async function read(address: Address): Promise<MirrorReport> {
+  async function read(address: Address): Promise<Reading> {
     // The calendar never rejects: a failed read comes back as "unread".
     const dates = calendar.current();
     const u = await currentUniverse();
     const snapshot = await readWallet(providers, u, address);
-    return computeMirror({ universe: u, snapshot, calendar: await dates, subject: { address, name: null, input: address }, assembledAt: now() });
+    const input: MirrorInput = { universe: u, snapshot, calendar: await dates, subject: { address, name: null, input: address }, assembledAt: now() };
+    return { report: computeMirror(input), input };
   }
 
-  async function reportFor(address: Address): Promise<ReadOutcome> {
+  async function readingFor(address: Address): Promise<MirrorReadingV1> {
     const hit = reports.get(address);
-    if (hit && age(hit.at) < reportTtlMs) return { outcome: 'report', report: hit.report, cached: true };
+    if (hit && age(hit.at) < reportTtlMs) return { outcome: 'report', report: hit.report, input: hit.input, cached: true };
     let pending = inflight.get(address);
     if (!pending) {
       pending = read(address).finally(() => inflight.delete(address));
       inflight.set(address, pending);
     }
     try {
-      const report = await pending;
-      if (report.headline.complete) remember(reports, address, { report, at: now().getTime() });
-      return { outcome: 'report', report, cached: false };
+      const reading = await pending;
+      if (reading.report.headline.complete) remember(reports, address, { ...reading, at: now().getTime() });
+      return { outcome: 'report', ...reading, cached: false };
     } catch (error) {
       if (error instanceof ChainUnavailable) return { outcome: 'chain_unavailable', attempts: error.attempts };
       throw error;
     }
+  }
+
+  async function reportFor(address: Address): Promise<ReadOutcome> {
+    const reading = await readingFor(address);
+    return reading.outcome === 'report' ? { outcome: 'report', report: reading.report, cached: reading.cached } : reading;
   }
 
   async function primaryName(address: Address): Promise<string | null> {
@@ -115,6 +133,7 @@ export function createMirrorService(options: MirrorServiceOptions): MirrorServic
 
   return {
     earnings: () => calendar.current(),
+    reading: readingFor,
     async check(raw) {
       const parsed = parseSubject(raw);
       if (parsed.kind === 'invalid') return { outcome: 'invalid_subject', input: parsed.input, reason: parsed.reason };

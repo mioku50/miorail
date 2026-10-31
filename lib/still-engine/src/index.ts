@@ -15,7 +15,7 @@ export { ADDRESSES, ASSETS, BASE_CHAIN_ID, CRYPTO, STOCKS, assetById, type Asset
 export type * from './report.js';
 export { ChainUnavailable, createProviders, providerLabel, type Provider, type ProviderAttempt } from './rpc.js';
 export { createNames, displayName, parseSubject, resolveSubject, type Names, type ParsedSubject } from './subject.js';
-export { createMirrorService, type MirrorOutcome, type MirrorService, type MirrorServiceOptions } from './service.js';
-export { computeMirror } from './mirror.js';
+export { createMirrorService, type MirrorOutcome, type MirrorReadingV1, type MirrorService, type MirrorServiceOptions } from './service.js';
+export { computeMirror, type MirrorInput } from './mirror.js';
 export { formatCents, formatTokenAmount, formatPercentBps } from './format.js';
 export { StillTermsSchema, stillTerms, type StillTerms } from './terms.js';

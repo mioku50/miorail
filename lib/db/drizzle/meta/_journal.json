@@ -645,6 +645,13 @@
       "when": 1793224800000,
       "tag": "0091_lending_executions",
       "breakpoints": true
+    },
+    {
+      "idx": 92,
+      "version": "7",
+      "when": 1793448000000,
+      "tag": "0092_still_wallet_readings",
+      "breakpoints": true
     }
   ]
 }

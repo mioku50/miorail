@@ -15,6 +15,7 @@
     "./registry": "./src/registry.ts",
     "./report": "./src/report.ts",
     "./report-schema": "./src/report-schema.ts",
+    "./scenario": "./src/scenario.ts",
     "./terms": "./src/terms.ts",
     "./rpc": "./src/rpc.ts"
   },
