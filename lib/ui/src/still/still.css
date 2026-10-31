@@ -539,6 +539,12 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-borrow { min-width: 0; }
 .still-borrow .still-borrow-intro { max-width: 70ch; }
 .still-borrow .still-borrow-intro p, .still-borrow .still-borrow-foot p { margin: 0 0 8px; }
+.still-borrow .still-borrow-venues { margin-top: 12px; padding: 14px; border: 1px solid var(--sm-line); border-radius: 14px; }
+.still-borrow .still-borrow-venues h2 { margin: 0 0 6px; }
+.still-borrow .still-borrow-venue-list { margin: 8px 0 0; }
+.still-borrow .still-borrow-venue-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 6px; font-size: 13px; }
+.still-borrow .still-borrow-venue-list dt { color: var(--sm-ink2); }
+.still-borrow .still-borrow-venue-list dd { min-width: 0; margin: 0; text-align: right; font-size: 14px; font-weight: 600; }
 .still-borrow .still-borrow-grid { display: grid; grid-template-columns: minmax(0, 1fr); align-items: start; gap: 16px; margin: 20px 20px 0; }
 .still-borrow .still-borrow-step { min-width: 0; padding: 20px; border: 1px solid var(--sm-line); }
 .still-borrow .still-borrow-step h2, .still-borrow .still-borrow-signin h2 { margin: 6px 0 16px; font-size: 23px; font-weight: 500; letter-spacing: -0.01em; line-height: 1.15; }

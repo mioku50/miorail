@@ -55,7 +55,19 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
       <StillHeader title="Get money" sky={model.sky} />
       <div className="still-section still-borrow-intro">
         <p className="still-sub">Choose collateral, read your limit, then choose how much USDC to borrow.</p>
-        <p className="still-note">Tokenized stocks through Aave V4; cbBTC, WETH or explicitly selected ETH through Morpho.</p>
+        {/* Said where the decision is made, not in a footnote: the operator
+            asked on 2026-10-31 that the product name the protocols. */}
+        <section className="still-borrow-venues" aria-labelledby={`${id}-venues`}>
+          <h2 id={`${id}-venues`} className="still-eyebrow">Where your loan lives</h2>
+          <p className="still-note">
+            Still is not a lender and never holds your collateral or your USDC. Your wallet borrows directly from a
+            lending protocol, and the position is recorded there, under your wallet.
+          </p>
+          <dl className="still-borrow-venue-list">
+            <div><dt>Tokenized stocks</dt><dd>Aave V4</dd></div>
+            <div><dt>cbBTC, WETH or explicitly selected ETH</dt><dd>Morpho</dd></div>
+          </dl>
+        </section>
       </div>
       {!model.signedIn ? (
         <div className="still-section still-card still-borrow-signin">

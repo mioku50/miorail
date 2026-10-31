@@ -36,6 +36,16 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     assert.doesNotMatch(html, /<input|125\.34|0\.01234567|Review loan/);
   });
 
+  it('names the protocol each loan is made on, before anything is chosen, signed in or not', () => {
+    // 2026-10-31, the operator: the product must say which protocols the loans use.
+    for (const html of [render({ asset: null, collateralAmount: '' }), render({ signedIn: false })]) {
+      assert.match(html, />Where your loan lives<\/h2>/);
+      assert.match(html, /Still is not a lender and never holds your collateral or your USDC\./);
+      assert.match(html, /<dt>Tokenized stocks<\/dt><dd>Aave V4<\/dd>/);
+      assert.match(html, /<dt>cbBTC, WETH or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
+    }
+  });
+
   it('offers the registered stocks, cbBTC, WETH and explicit native ETH without automatic-Max choices', () => {
     const html = render({ asset: null, collateralAmount: '' });
     assert.match(html, /aria-label="Collateral token"/);
@@ -44,7 +54,7 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     assert.match(html, /<strong>ETH<\/strong>/);
     assert.match(html, /Wrapped ETH/);
     assert.match(html, /Wrap native ETH/);
-    assert.match(html, /cbBTC, WETH or explicitly selected ETH through Morpho/);
+    assert.match(html, /<dt>cbBTC, WETH or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
     assert.match(html, /Stock collateral · Aave V4/);
     assert.match(html, /<option value="NVDAc">NVDAc · NVIDIA<\/option>/);
     assert.match(button(html, 'Read borrowing limit'), /disabled=""/);
