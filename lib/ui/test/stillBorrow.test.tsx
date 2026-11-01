@@ -185,4 +185,18 @@ describe('Max beside the amount', () => {
     assert.match(render({ asset: 'NVDAc', onMax: noop, maxReading: true }), />Reading…<\/button>/);
     assert.doesNotMatch(render({ asset: 'NVDAc' }), /still-borrow-max/);
   });
+
+  it('paying an invoice, the loan is its price, native ETH is not offered and the review says loan and payment', () => {
+    const spend = { state: 'ready' as const, productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', priceUsdc: '13.25', expiresAt: '2026-11-01T12:15:00.000Z' };
+    const html = render({ spend, needsRead: false, capacity, borrowAmount: '13.25' });
+    assert.match(html, /Paying Bitrefill · Bitrefill eSIM Germany · 10GB, 30 Days: 13\.25 USDC\./);
+    assert.match(html, /USDC to borrow · the invoice’s price/);
+    assert.match(html, /<input[^>]*value="13\.25"[^>]*readOnly=""|<input[^>]*readOnly=""[^>]*value="13\.25"/);
+    assert.match(button(html, 'Review loan and payment'), /<button/);
+    assert.doesNotMatch(html, /Wrap native ETH/);
+    assert.match(render({ spend: { state: 'gone' } }), /Still no longer holds this Bitrefill invoice/);
+    assert.doesNotMatch(render({ spend: { state: 'gone' }, signedIn: false }), /no longer holds/);
+    // An invoice still being read cannot be reviewed yet.
+    assert.match(render({ spend: { state: 'reading' }, needsRead: false, capacity, borrowAmount: '' }), /<button type="submit" class="still-btn" disabled="">Review loan and payment<\/button>/);
+  });
 });

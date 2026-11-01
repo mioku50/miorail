@@ -8,7 +8,8 @@ import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRu
 import { nativeMorphoFundingRefusalV1 } from '../lib/nativeMorphoBorrowPlan.js';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { STOCKS, CRYPTO, ADDRESSES } from '@mioagent/still-engine/registry';
-import { issueLendingDraftV1 } from '../lib/lendingDraft.js';
+import { issueLendingDraftV1, type LendingPaymentV1 } from '../lib/lendingDraft.js';
+import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { readAaveBorrowCapacityWireV1 } from './rwaLending.js';
 
 // ---------------------------------------------------------------------------
@@ -41,6 +42,8 @@ export const rwaBorrowRuntimeV1 = {
   run: runMorphoBorrowV1,
   secret: (): string => (process.env.SESSION_SECRET ?? '').trim(),
   now: () => new Date(),
+  spendOrders: spendOrderStoreV1,
+  spendEnabled: () => stillSpendPayEnabledV1(),
 };
 
 interface BorrowSessionUserV1 {
@@ -226,17 +229,31 @@ rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
   const body: unknown = req.body;
   const chosenToken = objectV1(body) && typeof body.collateralTokenAddress === 'string' ? body.collateralTokenAddress.toLowerCase() : null;
   if (objectV1(body) && chosenToken && [...STOCKS, ...CRYPTO].some(stock => stock.token.toLowerCase() === chosenToken)) {
-    const native = 'nativeFundingAtomic' in body;
-    const keys = ['collateralTokenAddress','borrowAmountAtomic','collateralSupplyAtomic', ...(native ? ['nativeFundingAtomic'] : [])];
+    const native = 'nativeFundingAtomic' in body, paying = 'spendOrderId' in body;
+    const keys = ['collateralTokenAddress','borrowAmountAtomic','collateralSupplyAtomic', ...(native ? ['nativeFundingAtomic'] : []), ...(paying ? ['spendOrderId'] : [])];
     const borrow = atomicV1(body.borrowAmountAtomic, false), supply = atomicV1(body.collateralSupplyAtomic, true);
-    if (Object.keys(body).length !== keys.length || !keys.every(key => key in body) || borrow === null || supply === null ||
+    if (Object.keys(body).length !== keys.length || !keys.every(key => key in body) || borrow === null || supply === null || native && paying ||
         native && (chosenToken !== ADDRESSES.weth.toLowerCase() || supply === 0n || atomicV1(body.nativeFundingAtomic,false) !== supply)) {
       res.status(400).json({ error: 'borrow_request_not_exact' }); return;
     }
     const secret = rwaBorrowRuntimeV1.secret();
     if (secret.length < 16) { res.status(503).json({ error: 'borrow_secret_unavailable', code: 'borrow_secret_unavailable' }); return; }
+    // Still Spend: the loan is exactly the price of an invoice this wallet
+    // opened, and the draft carries that invoice as the server read it.
+    let payment: LendingPaymentV1 | null = null;
+    if (paying) {
+      if (!rwaBorrowRuntimeV1.spendEnabled()) { res.status(503).json({ error: 'spend_pay_off' }); return; }
+      const order = typeof body.spendOrderId === 'string' && /^[0-9a-f-]{36}$/.test(body.spendOrderId)
+        ? rwaBorrowRuntimeV1.spendOrders.get({ tenantId: user.id, walletAddress: user.address }, body.spendOrderId) : null;
+      if (!order) { res.status(409).json({ error: 'spend_order_not_found' }); return; }
+      if (Date.parse(order.expiresAt) - rwaBorrowRuntimeV1.now().getTime() < STILL_SPEND_REVIEW_MARGIN_MS_V1 + 60_000) { res.status(409).json({ error: 'spend_order_expiring' }); return; }
+      if (borrow !== BigInt(order.priceAtomic)) { res.status(400).json({ error: 'borrow_request_not_exact' }); return; }
+      payment = { merchant: 'bitrefill', orderId: order.orderId, payTo: order.payTo, assets: order.priceAtomic, productName: order.productName,
+        packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt };
+    }
     const issued = issueLendingDraftV1({ tenantId: user.id, walletAddress: user.address,
-      question: { operation: 'borrow', collateralTokenAddress: chosenToken, borrowAssets: borrow.toString(), collateralSupplyAssets: supply.toString(), ...(native ? {nativeFundingAssets:supply.toString()} : {}) }, secret, now: rwaBorrowRuntimeV1.now() });
+      question: { operation: 'borrow', collateralTokenAddress: chosenToken, borrowAssets: borrow.toString(), collateralSupplyAssets: supply.toString(),
+        ...(native ? {nativeFundingAssets:supply.toString()} : {}), ...(payment ? { payment } : {}) }, secret, now: rwaBorrowRuntimeV1.now() });
     res.json({ borrowDraftId: issued.draftId, draft: issued.draft, reviewUrl: `/lending/${issued.draft}`, expiresAt: issued.expiresAt }); return;
   }
   const keys = ['collateralTokenAddress', 'borrowAmountAtomic', 'collateralSupplyAtomic'];

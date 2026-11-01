@@ -43,4 +43,24 @@ describe('owned lending questions bind consent, not calldata or a prior answer',
       assert.equal(verifyLendingDraftV1({ ...owner, draft, secret, now }).ok, false);
     }
   });
+  it('a loan that pays a Bitrefill invoice binds the invoice, for exactly the loan, and never with native ETH', () => {
+    const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: '0x3333333333333333333333333333333333333333',
+      assets: '13250000', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' };
+    const question: LendingQuestionV1 = { operation: 'borrow', collateralTokenAddress: STOCKS[0]!.token.toLowerCase(), borrowAssets: '13250000', collateralSupplyAssets: '0', payment };
+    const issued = issueLendingDraftV1({ ...owner, question, secret, now });
+    assert.match(issued.draft, /^miorail-lending-v3\./);
+    const verified = verifyLendingDraftV1({ ...owner, draft: issued.draft, secret, now });
+    assert.deepEqual(verified.ok && verified.claims.question, question);
+    // The address and the amount are the server's; a changed one breaks the signature.
+    const parts = issued.draft.split('.'), changed = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString());
+    changed.question.payment.payTo = '0x4444444444444444444444444444444444444444'; parts[1] = Buffer.from(JSON.stringify(changed)).toString('base64url');
+    assert.equal(verifyLendingDraftV1({ ...owner, draft: parts.join('.'), secret, now }).ok, false);
+    for (const bad of [
+      { ...question, payment: { ...payment, assets: '13250001' } },
+      { ...question, payment: { ...payment, payTo: '0x0000000000000000000000000000000000000000' } },
+      { ...question, payment: { ...payment, merchant: 'somewhere' } },
+      { ...question, payment: { ...payment, extra: true } },
+      { ...question, collateralTokenAddress: CRYPTO.find(asset => asset.id === 'ETH')!.token.toLowerCase(), collateralSupplyAssets: '1', nativeFundingAssets: '1' },
+    ]) assert.throws(() => issueLendingDraftV1({ ...owner, question: bad as LendingQuestionV1, secret, now }), /lending_question_invalid/);
+  });
 });

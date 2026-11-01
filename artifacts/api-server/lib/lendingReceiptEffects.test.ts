@@ -146,6 +146,28 @@ describe('protocol lending receipt effects and pinned positions', () => {
     }
     assert.notEqual((await check(record, logs, { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 100n })).result.state, 'matched');
   });
+  it('a loan that pays a Bitrefill invoice is matched only with one exact transfer to the invoice address', async () => {
+    const record = execution('aave-v4', 'borrow'), PAY_TO = '0x3333333333333333333333333333333333333333';
+    const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: PAY_TO, assets: '2000000',
+      productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' };
+    record.run.facts.payment = payment;
+    const paid = transfer(ADDRESSES.usdc, WALLET, PAY_TO, 2_000_000n);
+    const logs = [transfer(ADDRESSES.usdc, ADDRESSES.aaveHub, WALLET, 2_000_000n), aaveEvent('borrow'), paid];
+    const position = { debtAssets: 5_000_000n, debtShares: 500n, collateralAssets: 100n };
+    const matched = await check(record, logs, position);
+    assert.equal(matched.result.state, 'matched');
+    assert.deepEqual(matched.result.state === 'matched' && matched.result.proof.payment, { merchant: 'bitrefill', orderId: payment.orderId, payTo: PAY_TO, assets: '2000000' });
+    for (const bad of [
+      logs.filter(log => log !== paid),
+      logs.map(log => log === paid ? transfer(ADDRESSES.usdc, WALLET, OTHER, 2_000_000n) : log),
+      logs.map(log => log === paid ? transfer(ADDRESSES.usdc, WALLET, PAY_TO, 1_999_999n) : log),
+      [...logs, transfer(ADDRESSES.usdc, WALLET, PAY_TO, 1n)],
+      [...logs, transfer(ADDRESSES.usdc, WALLET, OTHER, 1n)],
+    ]) assert.equal((await check(record, bad, position)).result.state, 'mismatched');
+    // Without a payment in its facts, a loan still may not send USDC anywhere.
+    delete record.run.facts.payment;
+    assert.equal((await check(record, logs, position)).result.state, 'mismatched');
+  });
   it('rejects an unrequested token movement or collateral change during repayment', async () => {
     assert.notEqual((await check(execution(), [outMorpho(), transfer(STOCKS[0]!.token, WALLET, OTHER, 1n), morphoEvent('repay')])).result.state, 'matched');
     assert.notEqual((await check(execution(), [outMorpho(), morphoEvent('repay')], { debtAssets: 1_000_000n, debtShares: 100n, collateralAssets: 99n })).result.state, 'matched');

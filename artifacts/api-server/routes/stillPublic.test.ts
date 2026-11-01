@@ -184,4 +184,11 @@ test('a product is its USDC packages, and one Bitrefill does not have is a 404, 
   const found = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
   assert.equal(found.status, 200);
   assert.deepEqual(found.body.product.packages, [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }]);
+  // Paying from Still is the operator's switch, read on every request and never cached with the catalogue.
+  assert.deepEqual(found.body.checkout, { enabled: false, available: false, capAtomic: '100000000' });
+  const before = process.env.STILL_SPEND_PAY_V1;
+  process.env.STILL_SPEND_PAY_V1 = 'on';
+  t.after(() => { if (before === undefined) delete process.env.STILL_SPEND_PAY_V1; else process.env.STILL_SPEND_PAY_V1 = before; });
+  const open = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
+  assert.deepEqual(open.body.checkout, { enabled: true, available: true, capAtomic: '100000000' });
 });

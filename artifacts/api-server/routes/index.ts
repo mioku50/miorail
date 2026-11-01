@@ -28,6 +28,7 @@ import { stocksTodayRouter } from './stocksToday';
 import { reopenClaimRouter, reopenGameRouter } from './reopenGame';
 import { publicStillRouter } from './stillPublic';
 import { stillMineRouter } from './stillMine';
+import { stillSpendRouter } from './stillSpend';
 import { enforceTenantBinding, requireTenant } from '../middleware/tenantAuth';
 
 export const routes = Router();
@@ -91,6 +92,8 @@ routes.use('/telegram', telegramLinkRouter);
 // One wallet's dividends: the session's wallet, never one the client names.
 routes.use('/stocks/dividends', stocksDividendsRouter);
 routes.use('/stocks', stocksTodayRouter);
+// Still Spend: a Bitrefill invoice for the session's wallet, paid by its own loan.
+routes.use('/still/spend', stillSpendRouter);
 // The session's own loans and what Still could lend it, never an address the client names.
 routes.use('/still', stillMineRouter);
 routes.use('/reopen', reopenClaimRouter);

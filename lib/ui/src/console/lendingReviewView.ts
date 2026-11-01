@@ -12,6 +12,8 @@ export interface LendingFactsWireV1 {
   nativeFunding?: {maximumNativeAssets:string;reserveAssets:string;balanceBeforeAssets:string;balanceAfterAssets:string;authorizedBefore:boolean;feeQuoteState:'wallet_quote_required'};
   healthBeforeWad?: string | null; healthAfterWad?: string | null;
   policyLimitAssets?: string | null; protocolLimitAssets?: string | null; termsVersion?: string | null;
+  /** Still Spend: the loan's USDC pays this Bitrefill invoice in the same batch. */
+  payment?: { merchant: 'bitrefill'; orderId: string; payTo: string; assets: string; productName: string; packageValue: string; faceCurrency: string | null; expiresAt: string };
 }
 export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
   state: 'ready'; facts: LendingFactsWireV1; executionId: string;
@@ -36,6 +38,13 @@ const id = (value: unknown): value is string => typeof value === 'string' && /^[
 
 export function isLendingFactsWireV1(value: unknown): value is LendingFactsWireV1 {
   if (!object(value)) return false;
+  if (value.payment !== undefined) {
+    const p = value.payment;
+    if (!object(p) || value.operation !== 'borrow' || value.nativeFunding !== undefined || p.merchant !== 'bitrefill' || !address(p.payTo) ||
+      !atomic(p.assets) || p.assets !== value.requestedAssets || !text(p.productName) || !text(p.packageValue) ||
+      typeof p.orderId !== 'string' || !/^[0-9a-f-]{36}$/.test(p.orderId) || typeof p.expiresAt !== 'string' || !Number.isFinite(Date.parse(p.expiresAt)) ||
+      !(p.faceCurrency === null || typeof p.faceCurrency === 'string' && /^[A-Z]{3}$/.test(p.faceCurrency))) return false;
+  }
   if (value.nativeFunding !== undefined) {
     const n=value.nativeFunding;
     if (!object(n) || value.operation!=='borrow' || value.venue!=='morpho' || value.collateralTokenAddress!=='0x4200000000000000000000000000000000000006' ||

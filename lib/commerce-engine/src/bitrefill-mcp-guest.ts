@@ -14,8 +14,10 @@ import { ToonParseError, decodeToonV1 } from './toon.js';
 // bitrefill-mcp.json), so the client_id is that URL and there is no secret.
 // The token lives six hours and is held in memory only.
 //
-// This module READS: search-products and get-product-details. It never calls
-// buy-products or get-invoice-by-id, and nothing here can pay.
+// The catalogue READS: search-products and get-product-details. The transport
+// refuses any tool its caller did not list; the checkout beside it
+// (bitrefill-guest-checkout.ts) is the only caller that lists buy-products and
+// get-invoice-by-id. Nothing here can pay: the person's own wallet does.
 // ---------------------------------------------------------------------------
 
 export const BITREFILL_MCP_URL_V1 = `${BITREFILL_ORIGIN_V1}/mcp`;
@@ -60,7 +62,9 @@ export type SpendFailureV1 =
   | 'bitrefill_refused'
   | 'bitrefill_rate_limited'
   | 'bitrefill_invalid_response'
-  | 'bitrefill_product_not_found';
+  | 'bitrefill_product_not_found'
+  /** The invoice asks a different amount than the price quoted a moment before. */
+  | 'bitrefill_invoice_price_changed';
 
 export type SpendResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1 };
 
@@ -106,14 +110,22 @@ export interface BitrefillGuestCatalogV1 {
   product(id: string): Promise<SpendResultV1<SpendProductV1>>;
 }
 
-export function createBitrefillGuestCatalogV1(options: {
+export interface BitrefillGuestOptionsV1 {
   clientId?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   now?: () => number;
   /** Calls a minute, under Bitrefill's thirty per token. */
   perMinute?: number;
-} = {}): BitrefillGuestCatalogV1 {
+}
+
+/** A guest's token and its own rate window, for the tools one caller may use.
+ * A tool outside that list is refused here, before anything is sent. */
+export interface BitrefillGuestTransportV1 {
+  callTool(name: string, args: Record<string, unknown>): Promise<SpendResultV1<string>>;
+}
+
+export function createBitrefillGuestTransportV1(tools: readonly string[], options: BitrefillGuestOptionsV1 = {}): BitrefillGuestTransportV1 {
   const clientId = options.clientId ?? STILL_BITREFILL_CLIENT_ID_V1;
   const timeoutMs = options.timeoutMs ?? 10_000;
   const now = options.now ?? (() => Date.now());
@@ -153,7 +165,8 @@ export function createBitrefillGuestCatalogV1(options: {
     return { ok: true, value: token.value };
   }
 
-  async function callTool(name: (typeof BITREFILL_GUEST_READ_TOOLS_V1)[number], args: Record<string, unknown>, retried = false): Promise<SpendResultV1<string>> {
+  async function callTool(name: string, args: Record<string, unknown>, retried = false): Promise<SpendResultV1<string>> {
+    if (!tools.includes(name)) return { ok: false, reason: 'bitrefill_refused' };
     const bearer = await guestToken();
     if (!bearer.ok) return bearer;
     if (!spend()) return { ok: false, reason: 'bitrefill_rate_limited' };
@@ -184,6 +197,13 @@ export function createBitrefillGuestCatalogV1(options: {
     if (rpc.data.result.isError) return { ok: false, reason: /not[_ ]found/i.test(text) ? 'bitrefill_product_not_found' : 'bitrefill_refused' };
     return { ok: true, value: text };
   }
+
+  return { callTool: (name, args) => callTool(name, args) };
+}
+
+export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 = {}): BitrefillGuestCatalogV1 {
+  const transport = createBitrefillGuestTransportV1(BITREFILL_GUEST_READ_TOOLS_V1, options);
+  const callTool = (name: (typeof BITREFILL_GUEST_READ_TOOLS_V1)[number], args: Record<string, unknown>) => transport.callTool(name, args);
 
   function decode<S extends z.ZodTypeAny>(text: string, schema: S): SpendResultV1<z.output<S>> {
     let value: unknown;

@@ -249,4 +249,18 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     assert.match(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: { ...capacity, debtAtomic: '0' } })} />), /No debt was recorded in this market/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry()} />), /No debt was recorded/);
   });
+
+  it('a loan that pays Bitrefill names the payment, its address and its price before the wallet control', () => {
+    const body = ready();
+    const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: '0x3333333333333333333333333333333333333333', assets: '13250000',
+      productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' };
+    Object.assign(body.facts, { operation: 'borrow', requestedAssets: '13250000', maximumDebitAssets: '0', payment });
+    assert.ok(parseLendingReviewWireV1(body));
+    const html = render({ body });
+    assert.match(html, /Then pay Bitrefill 13\.25 USDC for Bitrefill eSIM Germany · 10GB, 30 Days, in the same transaction\./);
+    assert.match(html, /0x3333333333333333333333333333333333333333/);
+    // A payment of another amount than the loan, or on a repayment, is not a review.
+    assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, payment: { ...payment, assets: '13250001' } } }), null);
+    assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, operation: 'repay', payment } }), null);
+  });
 });

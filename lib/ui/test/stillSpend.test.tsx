@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { StillSpend, type StillSpendModelV1 } from '../src/still/StillSpend';
 import { skyStateV1 } from '../src/still/skyState';
-import { spendCountryDefaultV1, spendProductViewV1, spendSearchViewV1 } from '../src/still/spendView';
+import { spendCountryDefaultV1, spendOrderErrorV1, spendOrderViewV1, spendPayOpenV1, spendProductViewV1, spendSearchViewV1 } from '../src/still/spendView';
 
 void React;
 
@@ -58,7 +58,7 @@ describe('what a loan could pay for, as the page says it', () => {
   it('a gift card shows its face value with its currency; a top-up says it needs the number', () => {
     const card = spendProductViewV1({ outcome: 'product', product: { id: 'amazon_de-germany', name: 'Amazon.de', recipientType: null,
       packages: [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }] } }, null).product!;
-    assert.deepEqual(card.packages[0], { label: '50 EUR', price: '58.80 USDC', room: null, share: null });
+    assert.deepEqual(card.packages[0], { value: '50', label: '50 EUR', price: '58.80 USDC', room: null, share: null, payable: false });
     assert.equal(card.needs, null);
     const topUp = spendProductViewV1({ outcome: 'product', product: { id: 'ortel-germany', name: 'Ortel', recipientType: 'phone_number', packages: [] } }, null).product!;
     assert.equal(topUp.needs, 'Buying it needs the phone number to top up.');
@@ -69,6 +69,43 @@ describe('what a loan could pay for, as the page says it', () => {
     assert.equal(spendCountryDefaultV1('fr-FR'), 'FR');
     assert.equal(spendCountryDefaultV1('en'), 'DE');
     assert.equal(spendCountryDefaultV1('xx-ZZ'), 'DE');
+  });
+});
+
+describe('paying from Still, as the page says it', () => {
+  const OPEN = { ...GERMANY, checkout: { enabled: true, available: true, capAtomic: '100000000' } };
+
+  it('offers payment only where the server pays this product, and only under its cap', () => {
+    const view = spendProductViewV1({ ...OPEN, product: { ...OPEN.product, packages: [...OPEN.product.packages, { value: 'Unlimited, 90 Days', faceCurrency: 'USD', priceUsdc: '100.000001' }] } }, null).product!;
+    assert.deepEqual(view.packages.map((row) => [row.value, row.payable]), [['1GB, 7 Days', true], ['10GB, 30 Days', true], ['Unlimited, 15 Days', true], ['Unlimited, 90 Days', false]]);
+    assert.equal(view.cap, '100 USDC');
+    assert.deepEqual(spendProductViewV1(GERMANY, null).product!.packages.map((row) => row.payable), [false, false, false]);
+    assert.equal(spendProductViewV1({ ...OPEN, checkout: { enabled: true, available: false, capAtomic: '100000000' } }, null).product!.cap, null);
+    assert.equal(spendPayOpenV1({ checkout: { enabled: true } }), true);
+    assert.equal(spendPayOpenV1({ checkout: { enabled: 'yes' } }), false);
+    assert.equal(spendPayOpenV1(undefined), false);
+  });
+
+  it('reads an opened invoice for its owner, with Bitrefill’s state in words and only its own links', () => {
+    const order = (priceAtomic: string, status: unknown = { status: 'payment_confirmed', accessLink: 'https://www.bitrefill.com/order/1', esimInstallLink: null }) => spendOrderViewV1({
+      order: { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', priceAtomic,
+        expiresAt: '2026-11-01T12:15:00.000Z', paymentLink: 'https://www.bitrefill.com/invoice/x?token=t' }, status });
+    assert.deepEqual(order('13250000'), { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days',
+      priceUsdc: '13.25', priceAtomic: '13250000', expiresAt: '2026-11-01T12:15:00.000Z', orderLink: 'https://www.bitrefill.com/order/1',
+      status: 'Payment confirmed', delivered: false, esimInstallLink: null });
+    assert.equal(order('13000000')!.priceUsdc, '13.00');
+    assert.equal(order('13250001')!.priceUsdc, '13.250001');
+    // No status read: the invoice page stands in, and no state is claimed.
+    assert.deepEqual([order('13250000', null)!.status, order('13250000', null)!.orderLink], [null, 'https://www.bitrefill.com/invoice/x?token=t']);
+    assert.equal(order('13250000', { status: 'complete', accessLink: 'https://evil.example/order' })!.orderLink, 'https://www.bitrefill.com/invoice/x?token=t');
+    assert.equal(order('13250000', { status: 'complete' })!.delivered, true);
+    assert.equal(spendOrderViewV1({ order: { orderId: 'x' } }), null);
+  });
+
+  it('says each refusal in the reader’s words, and anything unknown as nothing paid', () => {
+    assert.match(spendOrderErrorV1('spend_over_cap'), /at most 100 USDC/);
+    assert.match(spendOrderErrorV1('bitrefill_invoice_price_changed'), /different price/);
+    assert.match(spendOrderErrorV1('API error: 500 Internal Server Error'), /Nothing was paid/);
   });
 });
 
@@ -86,8 +123,8 @@ describe('the Spend page', () => {
   it('says it cannot buy, shows each USDC price against the room, and names who sells', () => {
     const html = renderToStaticMarkup(<StillSpend model={model()} />);
     assert.match(html, /Nothing can be bought here yet\. Paying from Still, with the loan and the payment in one transaction, is the next step\./);
-    assert.match(html, /<li class="still-spend-price" data-fit="within"><span class="still-spend-price-top"><span class="still-spend-price-label">10GB, 30 Days<\/span><span class="mono still-spend-price-amount">13\.25 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-fit">Within your room<\/span><\/li>/);
-    assert.match(html, /<li class="still-spend-price" data-fit="over"><span class="still-spend-price-top"><span class="still-spend-price-label">Unlimited, 15 Days<\/span><span class="mono still-spend-price-amount">40\.00 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-fit">More than your room<\/span><\/li>/);
+    assert.match(html, /<li class="still-spend-price" data-fit="within"><span class="still-spend-price-top"><span class="still-spend-price-label">10GB, 30 Days<\/span><span class="mono still-spend-price-amount">13\.25 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fit">Within your room<\/span><\/span><\/li>/);
+    assert.match(html, /<li class="still-spend-price" data-fit="over"><span class="still-spend-price-top"><span class="still-spend-price-label">Unlimited, 15 Days<\/span><span class="mono still-spend-price-amount">40\.00 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fit">More than your room<\/span><\/span><\/li>/);
     assert.match(html, /<span class="still-spend-price-label">1GB, 7 Days<\/span>.*?<span style="width:19%"><\/span>/);
     assert.match(html, /<span class="still-spend-room-label">Your Still room now<\/span><span class="still-spend-room-amount">\$13\.25<\/span>/);
     assert.match(html, /Bitrefill sells these under its own terms/);
@@ -102,5 +139,23 @@ describe('the Spend page', () => {
     const cards = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />);
     assert.match(cards, /<label class="still-borrow-label" for="[^"]+-brand">Brand<\/label>/);
     assert.match(cards, /Nothing in stock here for Germany\./);
+  });
+
+  it('with paying open, a price under the cap offers Pay with Still, and a chosen one asks for the receipt email', () => {
+    const pay = { chosen: null, onChoose: noop, email: '', onEmail: noop, creating: false, error: null, onCreate: noop };
+    const open = { ...GERMANY, checkout: { enabled: true, available: true, capAtomic: '100000000' } };
+    const html = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1(open, { cents: '1325', complete: true }).product, pay })} />);
+    assert.match(html, /Pay with Still: a loan for the exact price pays Bitrefill in the same transaction/);
+    assert.equal((html.match(/>Pay with Still<\/button>/g) ?? []).length, 3);
+    assert.doesNotMatch(html, /Email for Bitrefill/);
+    const chosen = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', product: spendProductViewV1(open, null).product, pay: { ...pay, chosen: '10GB, 30 Days', email: 'buyer@example.com' } })} />);
+    assert.match(chosen, /13\.25 USDC for Bitrefill eSIM Germany · 10GB, 30 Days/);
+    assert.match(chosen, /Email for Bitrefill’s receipt/);
+    assert.match(chosen, /Never buy a gift card because someone asked you to pay them with one/);
+    assert.match(chosen, />Open invoice and choose collateral<\/button>/);
+    // Without the switch there is no button and the page still says nothing can be bought.
+    const closed = renderToStaticMarkup(<StillSpend model={model({ pay: null })} />);
+    assert.doesNotMatch(closed, /Pay with Still<\/button>/);
+    assert.match(closed, /Nothing can be bought here yet/);
   });
 });

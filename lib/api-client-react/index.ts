@@ -1644,12 +1644,12 @@ export function readBorrowCapacityOnceV1(tokenAddress: string, collateralSupplyA
 /** A wallet-bound question link. This request never prepares or submits calls. */
 export function useCreateBorrowIntentV1() {
   return useMutation({
-    mutationFn: async (input: { collateralTokenAddress: string; collateralSupplyAtomic: string; borrowAmountAtomic: string; nativeFundingAtomic?: string }) => {
+    mutationFn: async (input: { collateralTokenAddress: string; collateralSupplyAtomic: string; borrowAmountAtomic: string; nativeFundingAtomic?: string; spendOrderId?: string }) => {
       const result = await fetchApi<unknown>('/api/route-intelligence/rwa/borrow/intent', { method: 'POST', body: JSON.stringify(input) });
       if (!result || typeof result !== 'object') throw new Error('The review link could not be read.');
       const row = result as Record<string, unknown>;
       if (typeof row.borrowDraftId !== 'string' || typeof row.reviewUrl !== 'string' || typeof row.expiresAt !== 'string' ||
-          !/^(?:\/borrow\/miorail-borrow-v1|\/lending\/miorail-lending-v[12])\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(row.reviewUrl) || !Number.isFinite(Date.parse(row.expiresAt))) {
+          !/^(?:\/borrow\/miorail-borrow-v1|\/lending\/miorail-lending-v[123])\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(row.reviewUrl) || !Number.isFinite(Date.parse(row.expiresAt))) {
         throw new Error('The review link could not be read.');
       }
       return { borrowDraftId: row.borrowDraftId, reviewUrl: row.reviewUrl, expiresAt: row.expiresAt };
@@ -2028,6 +2028,28 @@ export function useStillSpendProductV1(id: string | null) {
     retry: false,
     staleTime: 5 * 60_000,
     queryFn: async () => fetchApi<unknown>(`/api/public/still/spend/product?id=${encodeURIComponent(id!)}`),
+  });
+}
+
+/** Still Spend: open one Bitrefill invoice for the signed-in wallet. Nothing is
+ * paid here; the loan's own reviewed batch pays it. */
+export function useCreateStillSpendOrderV1() {
+  return useMutation({
+    mutationFn: async (input: { productId: string; packageValue: string; email: string }) =>
+      fetchApi<unknown>('/api/still/spend/orders', { method: 'POST', body: JSON.stringify(input) }),
+    retry: false,
+  });
+}
+
+/** Still Spend: an invoice this wallet opened, with Bitrefill's reading of it. */
+export function useStillSpendOrderV1(orderId: string | null, options?: { refetchInterval?: number | false }) {
+  return useQuery({
+    queryKey: ['still-spend-order', orderId],
+    enabled: orderId !== null,
+    retry: false,
+    staleTime: 0,
+    refetchInterval: options?.refetchInterval ?? false,
+    queryFn: async () => fetchApi<unknown>(`/api/still/spend/orders/${encodeURIComponent(orderId!)}`),
   });
 }
 

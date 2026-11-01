@@ -100,6 +100,15 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
       native.maximumNativeAssets!==f.collateralSupplyAssets || BigInt(native.maximumNativeAssets)<=0n)) return mismatch('loan_native_question_mismatch');
     if (receipt.blockNumber < BigInt(f.blockNumber)) return mismatch('loan_receipt_predates_review');
     const rows = logs.map(decoded).filter((e): e is EventV1 => e !== null);
+    // Still Spend: the borrowed USDC paid one Bitrefill invoice in the same
+    // batch. Exactly one transfer of exactly the invoice amount, to exactly its
+    // address, and no other USDC left the wallet.
+    const payment = f.payment ?? null;
+    const paidAssets = payment ? BigInt(payment.assets) : 0n;
+    if (payment) {
+      const paid = rows.filter(e => e.name === 'Transfer' && e.address === ADDRESSES.usdc.toLowerCase() && same(e.args.from, wallet) && same(e.args.to, payment.payTo));
+      if (f.operation !== 'borrow' || native || paid.length !== 1 || paid[0]!.args.value !== paidAssets) return mismatch('loan_payment_receipt_mismatch');
+    }
     let usdcNet = 0n, collateralOut = 0n, grossUsdcOut = 0n;
     for (const e of rows.filter(e => e.name === 'Transfer')) {
       const amount = e.args.value; if (typeof amount !== 'bigint' || amount === 0n) continue;
@@ -136,7 +145,7 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     }
     const requested = f.requestedAssets === null ? null : BigInt(f.requestedAssets), maximum = BigInt(f.maximumDebitAssets);
     if (f.operation === 'borrow') {
-      if (requested === null || assets !== requested || usdcNet !== assets || collateralOut !== (native ? 0n : BigInt(f.collateralSupplyAssets)) || grossUsdcOut !== 0n) return mismatch('loan_borrow_receipt_mismatch');
+      if (requested === null || assets !== requested || usdcNet !== assets - paidAssets || collateralOut !== (native ? 0n : BigInt(f.collateralSupplyAssets)) || grossUsdcOut !== paidAssets) return mismatch('loan_borrow_receipt_mismatch');
       if (f.venue === 'morpho') {
         const supplied = protocol.filter(e => e.name === 'SupplyCollateral');
         if (BigInt(f.collateralSupplyAssets) > 0n ? supplied.length !== 1 || !same(supplied[0]?.args.id, f.marketId) || supplied[0]?.args.assets !== BigInt(f.collateralSupplyAssets) : supplied.length !== 0) return mismatch('loan_collateral_event_mismatch');
@@ -188,7 +197,8 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     }
     if (f.operation === 'repay' && f.amountMode === 'all' && (p.debtAssets !== 0n || p.debtShares !== 0n)) return unknown('loan_full_repayment_not_closed');
     return { state: 'matched', proof: { operation: f.operation, venue: f.venue, appliedAssets: assets.toString(), appliedShares: shares.toString(),
-      remainingDebtAssets: p.debtAssets.toString(), remainingDebtShares: p.debtShares.toString(), collateralAssets: p.collateralAssets.toString(), blockNumber: receipt.blockNumber.toString() } };
+      remainingDebtAssets: p.debtAssets.toString(), remainingDebtShares: p.debtShares.toString(), collateralAssets: p.collateralAssets.toString(), blockNumber: receipt.blockNumber.toString(),
+      ...(payment ? { payment: { merchant: payment.merchant, orderId: payment.orderId, payTo: payment.payTo, assets: payment.assets } } : {}) } };
   };
 }
 export const verifyLendingEffectsAtReceiptV1: LoanEffectPositionCheckV1 = lendingReceiptVerifierV1();

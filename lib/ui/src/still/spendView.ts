@@ -46,6 +46,11 @@ export interface SpendProductRowV1 {
   coverage: string | null;
 }
 
+/** Whether this server pays Bitrefill from a loan now (STILL_SPEND_PAY_V1). Unread is not on. */
+export function spendPayOpenV1(payload: unknown): boolean {
+  return object(payload) && object(payload.checkout) && payload.checkout.enabled === true;
+}
+
 /** The server's search answer, or null and why it cannot be shown. */
 export function spendSearchViewV1(payload: unknown): { products: SpendProductRowV1[] | null; error: string | null } {
   const failed = { products: null, error: 'Bitrefill’s catalogue could not be read just now. Try again in a minute.' };
@@ -60,6 +65,8 @@ export function spendSearchViewV1(payload: unknown): { products: SpendProductRow
 }
 
 export interface SpendPackageRowV1 {
+  /** Bitrefill's own package_value, what an invoice is opened for. */
+  value: string;
   /** "10GB, 30 Days", or "50 EUR" for a face value. */
   label: string;
   /** "13.25 USDC" */
@@ -68,6 +75,8 @@ export interface SpendPackageRowV1 {
   room: 'within' | 'over' | null;
   /** How much of a fully read room the price takes, 0 to 1; null when the room is partial or unknown. */
   share: number | null;
+  /** It can be paid from Still now: the server pays this product, and the price is under its cap. */
+  payable: boolean;
 }
 
 export interface SpendProductViewV1 {
@@ -76,6 +85,8 @@ export interface SpendProductViewV1 {
   packages: SpendPackageRowV1[];
   /** Said when buying would need something more, such as the number to top up. */
   needs: string | null;
+  /** The most one purchase may cost when paid from Still, "100 USDC"; null when it cannot be paid here. */
+  cap: string | null;
 }
 
 /** USDC cents a price takes, rounded up: a price is never said to fit when it might not. */
@@ -93,6 +104,8 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
   const product = payload.product;
   if (!text(product.id, 100) || !SLUG.test(product.id) || !text(product.name, 120) || !Array.isArray(product.packages)) return failed;
   const roomCents = room && /^\d{1,15}$/.test(room.cents) ? BigInt(room.cents) : null;
+  const checkout = object(payload.checkout) ? payload.checkout : null;
+  const capAtomic = checkout?.available === true && typeof checkout.capAtomic === 'string' && /^[1-9]\d{0,15}$/.test(checkout.capAtomic) ? BigInt(checkout.capAtomic) : null;
   const packages: SpendPackageRowV1[] = [];
   for (const row of product.packages) {
     if (!object(row) || !text(row.value, 80) || typeof row.priceUsdc !== 'string') continue;
@@ -102,11 +115,75 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
     const fits = roomCents === null ? null : cents <= roomCents ? 'within' as const : room!.complete ? 'over' as const : null;
     // A share of a partial room would overstate it, so the bar is drawn only against a whole one.
     const share = roomCents === null || !room!.complete || roomCents === 0n ? null : cents >= roomCents ? 1 : Number(cents) / Number(roomCents);
-    packages.push({ label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share });
+    const payable = capAtomic !== null && cents * 10_000n <= capAtomic;
+    packages.push({ value: row.value, label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share, payable });
   }
   const recipient = typeof product.recipientType === 'string' ? product.recipientType : '';
   const needs = /phone/i.test(recipient) ? 'Buying it needs the phone number to top up.'
     : /mixed|account|email|user/i.test(recipient) && !/esim/i.test(product.id) ? 'Buying it may need an account, an email or a number for the recipient.'
       : null;
-  return { product: { id: product.id, name: product.name, packages, needs }, error: null };
+  const cap = capAtomic === null ? null : `${(capAtomic / 1_000_000n).toString()} USDC`;
+  return { product: { id: product.id, name: product.name, packages, needs, cap }, error: null };
+}
+
+/** An invoice the reader opened, as their page shows it. */
+export interface SpendOrderViewV1 {
+  orderId: string;
+  productName: string;
+  packageValue: string;
+  /** "13.25", decimal USDC */
+  priceUsdc: string;
+  priceAtomic: string;
+  expiresAt: string;
+  /** Bitrefill's page for the order; it carries the buyer's access, so only its owner sees it. */
+  orderLink: string | null;
+  /** Bitrefill's state, in words; null when it was not read. */
+  status: string | null;
+  delivered: boolean;
+  esimInstallLink: string | null;
+}
+
+const STATUS_WORDS_V1: Record<string, string> = {
+  unpaid: 'Waiting for payment', payment_detected: 'Payment seen, waiting for confirmation', payment_confirmed: 'Payment confirmed',
+  pending: 'Bitrefill is preparing it', complete: 'Delivered', blocked: 'Blocked by Bitrefill', denied: 'Payment denied by Bitrefill',
+  payment_error: 'Bitrefill reports a payment error',
+};
+const link = (value: unknown): string | null => {
+  if (typeof value !== 'string') return null;
+  try {
+    const url = new URL(value);
+    return url.protocol === 'https:' && (url.hostname === 'bitrefill.com' || url.hostname.endsWith('.bitrefill.com')) ? url.toString() : null;
+  } catch {
+    return null;
+  }
+};
+
+export function spendOrderViewV1(payload: unknown): SpendOrderViewV1 | null {
+  if (!object(payload) || !object(payload.order)) return null;
+  const order = payload.order, status = object(payload.status) ? payload.status : null;
+  if (typeof order.orderId !== 'string' || !/^[0-9a-f-]{36}$/.test(order.orderId) || !text(order.productName, 120) || !text(order.packageValue, 80) ||
+      typeof order.priceAtomic !== 'string' || !/^[1-9]\d{0,15}$/.test(order.priceAtomic) || typeof order.expiresAt !== 'string' || !Number.isFinite(Date.parse(order.expiresAt))) return null;
+  const atomic = BigInt(order.priceAtomic), micro = (atomic % 1_000_000n).toString().padStart(6, '0'), trimmed = micro.replace(/0+$/, '');
+  const state = typeof status?.status === 'string' && STATUS_WORDS_V1[status.status] ? status.status : null;
+  return {
+    orderId: order.orderId, productName: order.productName, packageValue: order.packageValue,
+    priceUsdc: `${(atomic / 1_000_000n).toString()}.${trimmed.length <= 2 ? micro.slice(0, 2) : trimmed}`, priceAtomic: order.priceAtomic, expiresAt: order.expiresAt,
+    orderLink: link(status?.accessLink) ?? link(order.paymentLink),
+    status: state ? STATUS_WORDS_V1[state]! : null, delivered: state === 'complete', esimInstallLink: link(status?.esimInstallLink),
+  };
+}
+
+/** What a refused invoice means to the reader, by the server's own code. */
+export function spendOrderErrorV1(message: string): string {
+  const code = message.split(':')[0]!.trim();
+  switch (code) {
+    case 'spend_pay_off': return 'Paying from Still is not switched on yet.';
+    case 'spend_over_cap': return 'One purchase paid from Still can cost at most 100 USDC.';
+    case 'spend_product_not_buyable': return 'This product needs details Still does not send, such as a phone number.';
+    case 'spend_package_not_offered': return 'Bitrefill no longer offers this package at this price. Read the product again.';
+    case 'bitrefill_invoice_price_changed': return 'Bitrefill’s invoice asked a different price than it quoted a moment before. Nothing was opened to pay; read the product again.';
+    case 'spend_rate_limited': return 'You opened several invoices this hour. Try again later.';
+    case 'spend_request_invalid': return 'Check the email address: Bitrefill sends the receipt there.';
+    default: return 'Bitrefill’s invoice could not be opened just now. Nothing was paid. Try again in a minute.';
+  }
 }

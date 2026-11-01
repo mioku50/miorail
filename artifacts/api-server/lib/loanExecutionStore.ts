@@ -23,6 +23,8 @@ export interface LoanExecutionStoreV1 {
   putReady(input: { owner: LoanOwnerV1; draftId: string; run: ReadyRunV1; now: Date }): Promise<LoanExecutionV1>;
   get(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1 | null>;
   getByDraft(input: { owner: LoanOwnerV1; draftId: string }): Promise<LoanExecutionV1 | null>;
+  /** Every loan of this owner that pays one Bitrefill invoice (Still Spend). */
+  listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]>;
   arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): Promise<
     { ok: true; execution: LoanExecutionV1; attemptId: string } | { ok: false; refusal: 'execution_not_ready' | 'execution_active' }>;
   recordSubmission(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; outcome: 'submitted' | 'unknown' | 'rejected'; batchId?: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
@@ -52,7 +54,9 @@ const sameQuestion = (row: LoanExecutionV1, run: ReadyRunV1) => {
   return a.venue === b.venue && a.operation === b.operation && a.marketId === b.marketId &&
     a.collateralTokenAddress.toLowerCase() === b.collateralTokenAddress.toLowerCase() && a.amountMode === b.amountMode &&
     a.requestedAssets === b.requestedAssets && a.maximumDebitAssets === b.maximumDebitAssets && a.collateralSupplyAssets === b.collateralSupplyAssets &&
-    (a.nativeFunding?.maximumNativeAssets ?? null) === (b.nativeFunding?.maximumNativeAssets ?? null);
+    (a.nativeFunding?.maximumNativeAssets ?? null) === (b.nativeFunding?.maximumNativeAssets ?? null) &&
+    (a.payment?.orderId ?? null) === (b.payment?.orderId ?? null) && (a.payment?.payTo ?? null) === (b.payment?.payTo ?? null) &&
+    (a.payment?.assets ?? null) === (b.payment?.assets ?? null);
 };
 const sameScope = (a: LoanExecutionV1, b: LoanExecutionV1) => a.tenantId === b.tenantId && a.walletAddress === b.walletAddress &&
   a.run.facts.venue === b.run.facts.venue && (a.run.facts.venue === 'aave-v4' || a.run.facts.marketId === b.run.facts.marketId);
@@ -83,6 +87,10 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     assertOwner(input.owner);
     const row = [...this.rows.values()].find(row => sameOwner(row, input.owner) && row.draftId === input.draftId);
     return row ? copy(row) : null;
+  }
+  async listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]> {
+    assertOwner(input.owner);
+    return [...this.rows.values()].filter(row => sameOwner(row, input.owner) && row.run.facts.payment?.orderId === input.orderId).map(copy);
   }
   async arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): ReturnType<LoanExecutionStoreV1['arm']> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
@@ -158,6 +166,9 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
             AND lending_executions.run_json->'facts'->>'maximumDebitAssets' = EXCLUDED.run_json->'facts'->>'maximumDebitAssets'
             AND lending_executions.run_json->'facts'->>'collateralSupplyAssets' = EXCLUDED.run_json->'facts'->>'collateralSupplyAssets'
             AND COALESCE(lending_executions.run_json->'facts'->'nativeFunding'->>'maximumNativeAssets', '') = COALESCE(EXCLUDED.run_json->'facts'->'nativeFunding'->>'maximumNativeAssets', '')
+            AND COALESCE(lending_executions.run_json->'facts'->'payment'->>'orderId', '') = COALESCE(EXCLUDED.run_json->'facts'->'payment'->>'orderId', '')
+            AND COALESCE(lending_executions.run_json->'facts'->'payment'->>'payTo', '') = COALESCE(EXCLUDED.run_json->'facts'->'payment'->>'payTo', '')
+            AND COALESCE(lending_executions.run_json->'facts'->'payment'->>'assets', '') = COALESCE(EXCLUDED.run_json->'facts'->'payment'->>'assets', '')
         RETURNING *`;
       if (rows[0]) return rowFromDb(rows[0]);
       const prior = await sql`SELECT * FROM lending_executions WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress} AND draft_id = ${input.draftId}`;
@@ -171,6 +182,12 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
     async getByDraft({ owner, draftId }) {
       assertOwner(owner); const rows = await sql`SELECT * FROM lending_executions WHERE draft_id = ${draftId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}`;
       return rows[0] ? rowFromDb(rows[0]) : null;
+    },
+    async listByPaymentOrder({ owner, orderId }) {
+      assertOwner(owner);
+      const rows = await sql`SELECT * FROM lending_executions WHERE tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
+        AND run_json->'facts'->'payment'->>'orderId' = ${orderId}`;
+      return rows.map(rowFromDb);
     },
     async arm({ owner, executionId, callsHash, signingTermsHash, now }) {
       assertOwner(owner); const attemptId = crypto.randomUUID();

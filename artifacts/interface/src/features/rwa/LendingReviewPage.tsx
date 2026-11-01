@@ -1,7 +1,9 @@
+import { useEffect, useState } from 'react';
 import { useRoute } from 'wouter';
 import { useAccount, useSendCalls } from 'wagmi';
 import { LendingReviewScreen, useLendingReviewConsoleV1, useTelegramAlertsV1 } from '@mioagent/ui';
-import { StillFrame, StillLoanAlertsOffer } from '@mioagent/ui/still';
+import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
+import { StillFrame, StillLoanAlertsOffer, StillSpendPaid, spendOrderViewV1 } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
@@ -34,10 +36,17 @@ export function LendingReviewPage() {
   // Offered once the loan is confirmed onchain: a repayment needs no alert.
   const telegram = useTelegramAlertsV1({ enabled: session.signedIn });
   const confirmedLoan = review.model.execution?.state === 'confirmed' && review.model.body?.facts?.operation === 'borrow';
+  // Still Spend: the loan paid a Bitrefill invoice; Bitrefill says where the order stands.
+  const paidOrder = confirmedLoan ? review.model.body?.facts?.payment?.orderId ?? null : null;
+  const [delivered, setDelivered] = useState(false);
+  const order = useStillSpendOrderV1(paidOrder, { refetchInterval: delivered ? false : 15_000 });
+  const orderView = order.data !== undefined ? spendOrderViewV1(order.data) : null;
+  useEffect(() => { if (orderView?.delivered) setDelivered(true); }, [orderView?.delivered]);
   return <StillFrame tab="assets" sky={sky}>{session.booting
     ? <p className="still-section still-note" role="status">Checking your sign-in…</p>
     : <>
       <LendingReviewScreen model={review.model} />
+      {paidOrder ? <StillSpendPaid order={orderView} reading={order.isFetching} /> : null}
       {confirmedLoan ? <StillLoanAlertsOffer telegram={telegram} /> : null}
     </>}</StillFrame>;
 }

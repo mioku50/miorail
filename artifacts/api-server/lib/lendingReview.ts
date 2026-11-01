@@ -1,4 +1,5 @@
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
+import type { LendingPaymentV1 } from './lendingDraft.js';
 
 /** Shared wire for risk-increasing borrowing and risk-reducing repayment.
  * Only a ready result owns calls. A batch handle is never a completion. */
@@ -31,6 +32,8 @@ export interface LendingFactsV1 {
     maximumNativeAssets: string; reserveAssets: string; balanceBeforeAssets: string; balanceAfterAssets: string;
     authorizedBefore: boolean; feeQuoteState: 'wallet_quote_required';
   };
+  /** Still Spend: the borrowed USDC pays this Bitrefill invoice in the same batch. */
+  payment?: LendingPaymentV1;
   warnings: string[];
 }
 
@@ -101,6 +104,7 @@ export function lendingSigningTermsFactsV1(facts: LendingFactsV1): Record<string
           },
         }
       : {}),
+    ...(facts.payment ? { payment: facts.payment } : {}),
     warnings: facts.warnings,
   };
 }

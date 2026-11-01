@@ -12,6 +12,7 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { renderCardPngV1 } from '../lib/cardImage.js';
 import { stillBrandCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
+import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
 
 // ---------------------------------------------------------------------------
@@ -167,7 +168,7 @@ publicStillRouter.get('/spend/search', async (req: Request, res: Response) => {
       if (!found.ok) throw new SpendReadFailedV1(found.reason);
       return { outcome: 'products' as const, type, country, query, products: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
     });
-    res.json(body);
+    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1() } });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
     if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend search failed', { errorName: error instanceof Error ? error.name : typeof error });
@@ -187,7 +188,9 @@ publicStillRouter.get('/spend/product', async (req: Request, res: Response) => {
       if (!found.ok) throw new SpendReadFailedV1(found.reason);
       return { outcome: 'product' as const, product: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
     });
-    res.json(body);
+    // Whether it can be paid from Still now is read per request, never cached with the catalogue.
+    const available = stillSpendPayEnabledV1() && body.product.inStock && spendBuyableV1(body.product);
+    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1(), available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString() } });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
     if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend product failed', { errorName: error instanceof Error ? error.name : typeof error });

@@ -57,6 +57,11 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
             {facts.amountMode === 'assets' && BigInt(facts.debtAfterAssets) > BigInt(0) && BigInt(facts.debtAfterAssets) < BigInt(10_000) ? <p className="still-note">Remaining micro-debt ({usdc(facts.debtAfterAssets)}) comes from onchain share rounding and accrued interest when repaying exact {usdc(facts.requestedAssets!)}. To close the entire debt to 0 USDC, use Repay all debt with a small USDC buffer.</p> : null}
           </> : <>
             <p className="still-sub">Borrow {facts.requestedAssets === null ? 'the measured amount' : usdc(facts.requestedAssets)} to this wallet.</p>
+            {facts.payment ? <div className="still-notice" role="note"><span>
+              <strong>Then pay Bitrefill {usdc(facts.payment.assets)} for {facts.payment.productName} · {facts.payment.packageValue}, in the same transaction.</strong>{' '}
+              It goes to Bitrefill’s invoice address <span className="mono" style={{ overflowWrap: 'anywhere' }}>{facts.payment.payTo}</span>, which Still read from Bitrefill.
+              Bitrefill holds this price until {new Date(facts.payment.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}. The loan stays yours to repay.
+            </span></div> : null}
             <p className="still-note">New collateral selected: {asset(facts.collateralSupplyAssets)}. Borrowing creates debt; collateral can be liquidated.</p>
             {shareRoundingExtra ? <p className="still-note">Your wallet receives {usdc(facts.requestedAssets!)} ({facts.requestedAssets} atomic USDC). Onchain debt-share rounding records {usdc(debtIncrease.toString())} ({debtIncrease.toString()} atomic USDC) of new debt.</p> : null}
           </>}

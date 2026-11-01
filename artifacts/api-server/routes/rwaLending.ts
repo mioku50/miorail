@@ -16,6 +16,8 @@ import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
 import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js';
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
+import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
+import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -23,6 +25,9 @@ export const rwaLendingRuntimeV1 = {
   store: loanExecutionRuntimeV1.store, reader: createViemBaseReceiptReader,
   readBatchHashes: readBaseWalletBatchHashesV1, verifyEffectPosition: verifyLendingEffectsAtReceiptV1,
   secret: () => (process.env.SESSION_SECRET ?? '').trim(), now: () => new Date(),
+  // Still Spend: the open invoices, Bitrefill's own reading of one, and the payment call.
+  spendOrders: spendOrderStoreV1, spendEnabled: () => stillSpendPayEnabledV1(),
+  spendCheckout: stillSpendCheckoutV1, attachPayment: attachSpendPaymentV1,
 };
 interface OwnerV1 { tenantId: string; walletAddress: string }
 function ownerV1(req: Request): OwnerV1 | null {
@@ -121,6 +126,30 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   if (Date.parse(claims.expiresAt) <= now.getTime()) {
     res.status(400).json({ error: 'lending_draft_expired' }); return;
   }
+  // Still Spend: before any loan is measured, the invoice must still be this
+  // wallet's, priced as the draft says, waiting for payment at Bitrefill, and
+  // not already sent by another review of it.
+  const payment = q.operation === 'borrow' ? q.payment ?? null : null;
+  if (payment) {
+    const refuse = (refusal: string, detail: string) => { res.json({ state: 'refused', refusal, detail }); };
+    if (!rwaLendingRuntimeV1.spendEnabled()) { refuse('spend_pay_off', 'Paying from Still is turned off on this server. Nothing can be signed.'); return; }
+    const order = rwaLendingRuntimeV1.spendOrders.get(owner, payment.orderId);
+    if (!order || order.payTo !== payment.payTo || order.priceAtomic !== payment.assets || order.expiresAt !== payment.expiresAt) {
+      refuse('spend_order_unread', 'Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Open a new one from Spend. Nothing was sent.'); return;
+    }
+    if (Date.parse(payment.expiresAt) - now.getTime() < STILL_SPEND_REVIEW_MARGIN_MS_V1) {
+      refuse('spend_invoice_expiring', 'Bitrefill holds this price for less than two more minutes. Open a new invoice from Spend.'); return;
+    }
+    const attempts = await store.listByPaymentOrder({ owner, orderId: payment.orderId });
+    if (attempts.some(row => row.draftId !== claims.draftId && row.state !== 'ready')) {
+      refuse('spend_invoice_has_attempt', 'Another review already sent, or tried to send, this invoice’s payment. Check it in Activity before paying again.'); return;
+    }
+    const status = await rwaLendingRuntimeV1.spendCheckout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+    if (!status.ok) { refuse('spend_invoice_unread', 'Bitrefill’s invoice could not be read just now, so nothing can be paid. Try again in a minute.'); return; }
+    if (status.value.status !== 'unpaid') {
+      refuse('spend_invoice_not_unpaid', `Bitrefill reports this invoice as ${status.value.status.replace(/_/g, ' ')}, not waiting for payment. Nothing can be paid to it.`); return;
+    }
+  }
   let run: LendingRunV1;
   if (claims.venue === 'morpho' && q.operation === 'repay') {
     run = await rwaLendingRuntimeV1.runRepay({ collateralTokenAddress: q.collateralTokenAddress, marketId: claims.marketId,
@@ -138,6 +167,7 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   } else {
     run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question: q });
   }
+  if (payment) run = await rwaLendingRuntimeV1.attachPayment({ walletAddress: owner.walletAddress, run, payment, now });
   if (run.state === 'refused') { res.json(lendingWireV1(run)); return; }
   const record = await store.putReady({ owner, draftId: claims.draftId, run, now: rwaLendingRuntimeV1.now() });
   if (record.state !== 'ready') { res.json({ state: 'refused', refusal: 'lending_submission_pending', detail: 'This review has an existing wallet attempt. Check its recorded result before preparing another.', executionId: record.executionId, executionState: record.state, facts: record.run.facts }); return; }
@@ -148,7 +178,13 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   const body = z.object({ callsHash: z.string().regex(/^0x[0-9a-f]{64}$/i), signingTermsHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }).strict().safeParse(req.body);
   if (!id.safeParse(req.params.id).success || !body.success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  const result = await (await rwaLendingRuntimeV1.store()).arm({ owner, executionId: String(req.params.id), ...body.data, now: rwaLendingRuntimeV1.now() });
+  const store = await rwaLendingRuntimeV1.store(), executionId = String(req.params.id);
+  // One invoice is paid once: a second review of it cannot be armed after the first was.
+  const execution = await store.get({ owner, executionId }), paying = execution?.run.facts.payment;
+  if (paying && (await store.listByPaymentOrder({ owner, orderId: paying.orderId })).some(row => row.executionId !== executionId && row.state !== 'ready')) {
+    res.status(409).json({ error: 'spend_invoice_has_attempt' }); return;
+  }
+  const result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
   if (!result.ok) { res.status(409).json({ error: result.refusal }); return; }
   res.json({ attemptId: result.attemptId });
 });

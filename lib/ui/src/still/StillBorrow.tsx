@@ -54,6 +54,18 @@ export interface StillBorrowModelV1 {
   /** Fills the amount with what the wallet holds of the chosen collateral. */
   onMax?: () => void;
   maxReading?: boolean;
+  /** Still Spend: the Bitrefill invoice this loan pays in the same batch. Its
+   * price is the loan; native ETH cannot carry a payment. */
+  spend?: StillBorrowSpendV1 | null;
+}
+export type StillBorrowSpendV1 =
+  | { state: 'reading' }
+  | { state: 'gone' }
+  | { state: 'ready'; productName: string; packageValue: string; priceUsdc: string; expiresAt: string };
+
+function heldUntilV1(iso: string): string {
+  const at = new Date(iso);
+  return Number.isFinite(at.getTime()) ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'soon';
 }
 
 /** Choose a precise pledge, read the server's limit, then choose a loan.
@@ -63,7 +75,9 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
   const busy = model.reading || model.preparing;
   const capacity = model.needsRead ? null : model.capacity;
   const canRead = model.asset !== null && model.collateralAmount.trim().length > 0 && !busy;
-  const canReview = capacity !== null && capacity.maximumUsdc !== null && model.asset !== null && model.borrowAmount.trim().length > 0 && !busy;
+  const paying = model.spend?.state === 'ready' ? model.spend : null;
+  const canReview = capacity !== null && capacity.maximumUsdc !== null && model.asset !== null && model.borrowAmount.trim().length > 0 && !busy &&
+    (model.spend == null || paying !== null);
   const tokenAmount = (amount: string | null) => amount === null ? 'Not read' : `${amount} ${model.asset ?? ''}`.trim();
 
   return (
@@ -85,6 +99,19 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
           </dl>
         </section>
       </div>
+      {!model.signedIn ? null : model.spend?.state === 'reading' ? <p className="still-section still-note" role="status">Reading your Bitrefill invoice…</p>
+        : model.spend?.state === 'gone' ? (
+          <p className="still-section still-warn" role="alert">
+            Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Nothing was paid. <StillLink href="/spend">Open a new one from Spend</StillLink>.
+          </p>
+        ) : paying ? (
+          <div className="still-section still-notice" role="note">
+            <span>
+              <strong>Paying Bitrefill · {paying.productName} · {paying.packageValue}: {paying.priceUsdc} USDC.</strong>{' '}
+              Bitrefill holds this price until {heldUntilV1(paying.expiresAt)}. The loan is exactly this amount, and the same transaction pays the invoice.
+            </span>
+          </div>
+        ) : null}
       {!model.signedIn ? (
         <div className="still-section still-card still-borrow-signin">
           <h2>Your wallet, your choice.</h2>
@@ -112,7 +139,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     ['cbBTC', 'Bitcoin on Base', '₿'],
                     ['WETH', 'Wrapped ETH', 'Ξ'],
                     ['ETH', 'Wrap native ETH', 'Ξ'],
-                  ] as const).map(([asset, description, symbol]) => (
+                  ] as const).filter(([asset]) => !(model.spend && asset === 'ETH')).map(([asset, description, symbol]) => (
                     <button key={asset} className="still-borrow-choice" type="button" aria-pressed={model.asset === asset} disabled={busy} onClick={() => model.onAsset(asset)}>
                       <span className="still-borrow-symbol" aria-hidden="true">{symbol}</span>
                       <span><strong>{asset}</strong><span className="still-note">{description}</span></span>
@@ -173,13 +200,15 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                   {capacity.maximumUsdc === null ? <p className="still-note">The limit could not be read. Read it again before continuing.</p> : null}
                   {capacity.nativeReserve ? <p className="still-note">At least {capacity.nativeReserve} ETH is kept out of the collateral for wallet/network fees. Fees are not quoted here; your wallet calculates them before approval.</p> : null}
                   <form onSubmit={(event) => { event.preventDefault(); if (canReview) model.onReview(); }}>
-                    <label className="still-borrow-label" htmlFor={`${id}-loan`}>USDC to borrow</label>
+                    <label className="still-borrow-label" htmlFor={`${id}-loan`}>{model.spend ? 'USDC to borrow · the invoice’s price' : 'USDC to borrow'}</label>
                     <div className="still-borrow-amount">
-                      <input id={`${id}-loan`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.borrowAmount} disabled={busy || capacity.maximumUsdc === null} aria-describedby={`${id}-loan-help`} onChange={(event) => model.onBorrowAmount(event.target.value)} />
+                      <input id={`${id}-loan`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.borrowAmount} readOnly={model.spend != null} disabled={busy || capacity.maximumUsdc === null} aria-describedby={`${id}-loan-help`} onChange={(event) => model.onBorrowAmount(event.target.value)} />
                       <span className="mono" aria-hidden="true">USDC</span>
                     </div>
-                    <p id={`${id}-loan-help`} className="still-note">The next page checks this exact amount and shows the terms before you approve anything in your wallet.</p>
-                    <button type="submit" className="still-btn" disabled={!canReview}>{model.preparing ? 'Preparing review…' : 'Review loan'}</button>
+                    <p id={`${id}-loan-help`} className="still-note">{model.spend
+                      ? 'The next page checks the loan and the payment together, as one transaction, before you approve anything in your wallet.'
+                      : 'The next page checks this exact amount and shows the terms before you approve anything in your wallet.'}</p>
+                    <button type="submit" className="still-btn" disabled={!canReview}>{model.preparing ? 'Preparing review…' : model.spend ? 'Review loan and payment' : 'Review loan'}</button>
                   </form>
                 </>
               ) : !model.reading ? (

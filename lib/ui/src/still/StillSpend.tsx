@@ -9,6 +9,7 @@ import {
   SPEND_TYPES_V1,
   spendCountryNameV1,
   type SpendProductRowV1,
+  type SpendOrderViewV1,
   type SpendProductViewV1,
   type SpendTypeV1,
 } from './spendView';
@@ -37,10 +38,22 @@ export interface StillSpendModelV1 {
   productError: string | null;
   /** The reader's Still room from the Mirror; null signed out or unread. */
   room: { cents: string; complete: boolean } | null;
+  /** Paying from Still: null when this server does not pay Bitrefill from a loan. */
+  pay?: null | {
+    /** The package value chosen to pay, or none yet. */
+    chosen: string | null;
+    onChoose: (value: string | null) => void;
+    email: string;
+    onEmail: (email: string) => void;
+    creating: boolean;
+    error: string | null;
+    onCreate: () => void;
+  };
 }
 
-/** Stage 1 of Still Spend: what a loan could pay for, with Bitrefill's USDC
- * prices. It shows and compares; it cannot buy, and says so. */
+/** Still Spend: what a loan could pay for, with Bitrefill's USDC prices.
+ * Where the server pays Bitrefill from a loan, a price opens an invoice and the
+ * Get money page; nothing is paid on this page, and nothing is signed here. */
 export function StillSpend({ model }: { model: StillSpendModelV1 }) {
   const id = useId();
   const product = model.product;
@@ -53,7 +66,11 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
       />
       <p className="still-section still-notice">
         <StillIconV1 name="info" />
-        <span>Nothing can be bought here yet. Paying from Still, with the loan and the payment in one transaction, is the next step.</span>
+        {model.pay ? (
+          <span>Pay with Still: a loan for the exact price pays Bitrefill in the same transaction, which you approve in your own wallet. Up to 100 USDC a purchase.</span>
+        ) : (
+          <span>Nothing can be bought here yet. Paying from Still, with the loan and the payment in one transaction, is the next step.</span>
+        )}
       </p>
       <div className="still-borrow-grid">
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-what`}>
@@ -123,10 +140,48 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                         {row.share !== null ? (
                           <span className="still-spend-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, Math.round(row.share * 100))}%` }} /></span>
                         ) : null}
-                        {row.room ? <span className="still-spend-fit">{row.room === 'within' ? 'Within your room' : 'More than your room'}</span> : null}
+                        {row.room || (model.pay && row.payable) ? (
+                          <span className="still-spend-price-foot">
+                            {row.room ? <span className="still-spend-fit">{row.room === 'within' ? 'Within your room' : 'More than your room'}</span> : <span />}
+                            {model.pay && row.payable ? (
+                              <button type="button" className="still-spend-pay" aria-pressed={model.pay.chosen === row.value} onClick={() => model.pay!.onChoose(model.pay!.chosen === row.value ? null : row.value)}>
+                                Pay with Still
+                              </button>
+                            ) : null}
+                          </span>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
+                  {model.pay && model.pay.chosen !== null ? (() => {
+                    const chosen = product.packages.find((row) => row.value === model.pay!.chosen);
+                    if (!chosen) return null;
+                    return (
+                      <form className="still-spend-checkout" aria-labelledby={`${id}-pay`} onSubmit={(event) => { event.preventDefault(); model.pay!.onCreate(); }}>
+                        <div className="still-step"><span className="n" aria-hidden="true">3</span>Pay</div>
+                        <h3 id={`${id}-pay`}>{chosen.price} for {product.name} · {chosen.label}</h3>
+                        <p className="still-note">
+                          Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice in
+                          the same transaction, and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
+                        </p>
+                        <label className="still-borrow-label" htmlFor={`${id}-email`}>Email for Bitrefill’s receipt</label>
+                        <div className="still-borrow-amount">
+                          <input id={`${id}-email`} type="email" autoComplete="email" spellCheck={false} maxLength={254} value={model.pay.email}
+                            onChange={(event) => model.pay!.onEmail(event.target.value)} placeholder="you@example.com" />
+                          <span aria-hidden="true" />
+                        </div>
+                        <p className="still-note">Bitrefill sends the receipt and the order there. Still passes it to Bitrefill and keeps no copy.</p>
+                        {model.type === 'giftcard' ? <p className="still-warn">Never buy a gift card because someone asked you to pay them with one. Nobody legitimate asks for that.</p> : null}
+                        {model.pay.error ? <p className="still-warn" role="alert">{model.pay.error}</p> : null}
+                        <div className="still-spend-checkout-actions">
+                          <button type="submit" className="still-btn" disabled={model.pay.creating || model.pay.email.trim() === ''}>
+                            {model.pay.creating ? 'Opening the invoice…' : 'Open invoice and choose collateral'}
+                          </button>
+                          <button type="button" className="still-btn sec" disabled={model.pay.creating} onClick={() => model.pay!.onChoose(null)}>Cancel</button>
+                        </div>
+                      </form>
+                    );
+                  })() : null}
                   {product.packages.length === 0 ? <p className="still-note">Bitrefill quoted no price in USDC for it.</p> : null}
                   {product.needs ? <p className="still-note">{product.needs}</p> : null}
                 </>
@@ -136,6 +191,28 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
       <div className="still-section still-borrow-foot">
         <p className="still-note">Bitrefill sells these under its own terms. Still shows them with the USDC price Bitrefill quoted, which can change by checkout. A loan creates debt, and your collateral can be liquidated. Not offered to US persons.</p>
         <StillLink href="/borrow">Get money</StillLink>
+      </div>
+    </div>
+  );
+}
+
+/** After the loan that paid it is confirmed: where the Bitrefill order stands,
+ * as Bitrefill says, and its own page. Still proves the payment, not the delivery. */
+export function StillSpendPaid({ order, reading }: { order: SpendOrderViewV1 | null; reading: boolean }) {
+  return (
+    <div className="still-section still-extras" aria-label="Your Bitrefill order">
+      <div className="still-extra">
+        <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
+        <span className="still-extra-body">
+          <span className="still-extra-title">{order?.delivered ? 'Bitrefill delivered your order' : 'Paid to Bitrefill in the same transaction'}</span>
+          <span className="still-extra-note">
+            {order ? <>{order.productName} · {order.packageValue}. {order.status ? `Bitrefill: ${order.status}.` : 'Bitrefill’s status could not be read just now.'} </>
+              : reading ? 'Reading the order from Bitrefill… ' : ''}
+            Bitrefill emails the receipt and the order to the address you gave.
+          </span>
+          {order?.esimInstallLink ? <a className="still-share-link" href={order.esimInstallLink} target="_blank" rel="noreferrer">Install the eSIM</a> : null}
+        </span>
+        {order?.orderLink ? <a className="still-extra-action" href={order.orderLink} target="_blank" rel="noreferrer">Open order</a> : null}
       </div>
     </div>
   );

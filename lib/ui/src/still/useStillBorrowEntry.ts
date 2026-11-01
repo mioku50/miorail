@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { readBorrowCapacityOnceV1, useBorrowCapacity, useCreateBorrowIntentV1 } from '@mioagent/api-client-react';
 import { tokenDecimalV1 } from '../console/stockSellAmount';
 import { borrowCollateralTokenV1, borrowCollateralDecimalsV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from './borrowIntent';
-import type { StillBorrowAssetV1, StillBorrowModelV1 } from './StillBorrow';
+import type { StillBorrowAssetV1, StillBorrowModelV1, StillBorrowSpendV1 } from './StillBorrow';
 import type { SkyStateV1 } from './skyState';
 interface AskedLimitV1 { asset: StillBorrowAssetV1; supplyAtomic: string; wallet: string }
 export function useStillBorrowEntryV1(input: {
@@ -10,8 +10,12 @@ export function useStillBorrowEntryV1(input: {
   onReviewLink: (href: string) => void;
   /** What the connected wallet said about sending one batch, from the host. */
   walletBlocker?: string | null;
+  /** Still Spend: the Bitrefill invoice the loan pays, as its owner's page read it. */
+  spend?: { orderId: string; view: StillBorrowSpendV1 } | null;
 }): { model: StillBorrowModelV1 } {
   const {sky,signedIn,wallet}=input;
+  const spendView = input.spend?.view ?? null;
+  const fixedAmount = spendView?.state === 'ready' ? spendView.priceUsdc : input.spend ? '' : null;
   const [asset, setAsset] = useState<StillBorrowAssetV1 | null>(input.initialAsset);
   const [collateralAmount, setCollateralAmount] = useState('0');
   const [borrowAmount, setBorrowAmount] = useState('');
@@ -20,7 +24,7 @@ export function useStillBorrowEntryV1(input: {
   const [maxReading, setMaxReading] = useState(false);
   const preparing = useRef(false);
   const mounted = useRef(true);
-  const identity = JSON.stringify([signedIn, wallet?.toLowerCase() ?? null, asset, collateralAmount, borrowAmount]);
+  const identity = JSON.stringify([signedIn, wallet?.toLowerCase() ?? null, asset, collateralAmount, fixedAmount ?? borrowAmount, input.spend?.orderId ?? null]);
   const assetRef = useRef(asset);
   assetRef.current = asset;
   const currentIdentity = useRef(identity);
@@ -42,7 +46,7 @@ export function useStillBorrowEntryV1(input: {
     ? stillBorrowCapacityViewV1(limit.data, activeAsked.asset, activeAsked.supplyAtomic)
     : { capacity: null, error: null };
   const reading = activeAsked !== null && limit.isFetching;
-  const signInHref = `/signin?next=${encodeURIComponent(asset ? `/borrow?asset=${asset}` : '/borrow')}`;
+  const signInHref = `/signin?next=${encodeURIComponent(input.spend ? `/borrow?spend=${input.spend.orderId}` : asset ? `/borrow?asset=${asset}` : '/borrow')}`;
 
   const onReadLimit = () => {
     if (!signedIn || !owner || preparing.current || limit.isFetching) return;
@@ -81,8 +85,10 @@ export function useStillBorrowEntryV1(input: {
 
   const onReview = async () => {
     if (preparing.current || !signedIn || !owner || !asset || needsRead || reading || !view.capacity) return;
+    if (input.spend && (fixedAmount === null || fixedAmount === '')) return;
+    if (input.spend && asset === 'ETH') { setError('A payment cannot ride on native ETH. Choose WETH, cbBTC or a stock.'); return; }
     const supply = parseBorrowDecimalV1(collateralAmount, borrowCollateralDecimalsV1(asset), asset !== 'ETH');
-    const borrow = parseBorrowDecimalV1(borrowAmount, 6);
+    const borrow = parseBorrowDecimalV1(fixedAmount ?? borrowAmount, 6);
     if (supply.atomic === null || borrow.atomic === null) { setError(supply.error ?? borrow.error); return; }
     const openedFor = identity;
     preparing.current = true;
@@ -91,6 +97,7 @@ export function useStillBorrowEntryV1(input: {
       const result = await intent.mutateAsync({
         collateralTokenAddress: borrowCollateralTokenV1(asset), collateralSupplyAtomic: supply.atomic, borrowAmountAtomic: borrow.atomic,
         ...(asset === 'ETH' ? {nativeFundingAtomic:supply.atomic} : {}),
+        ...(input.spend ? { spendOrderId: input.spend.orderId } : {}),
       });
       if (!mounted.current || currentIdentity.current !== openedFor) return;
       if (Date.parse(result.expiresAt) <= Date.now()) {
@@ -100,9 +107,13 @@ export function useStillBorrowEntryV1(input: {
       // The API hook accepts only a local signed lending/legacy borrow link. This
       // page asks no wallet to open, sign, approve or submit anything.
       input.onReviewLink(result.reviewUrl);
-    } catch {
+    } catch (failure) {
       if (mounted.current && currentIdentity.current === openedFor) {
-        setError('The loan review could not be prepared. Read your limit again before trying to review it.');
+        const code = failure instanceof Error ? failure.message.split(':')[0]!.trim() : '';
+        setError(code === 'spend_order_not_found' ? 'Still no longer holds this Bitrefill invoice. Open a new one from Spend; nothing was paid.'
+          : code === 'spend_order_expiring' ? 'Bitrefill’s price for this invoice ends within a few minutes. Open a new one from Spend; nothing was paid.'
+            : code === 'spend_pay_off' ? 'Paying from Still is switched off on this server. Nothing was paid.'
+              : 'The loan review could not be prepared. Read your limit again before trying to review it.');
       }
     } finally { preparing.current = false; }
   };
@@ -111,7 +122,7 @@ export function useStillBorrowEntryV1(input: {
           sky, signedIn, signInHref, asset,
           onAsset: (next) => { setAsset(next); setError(null); },
           collateralAmount, onCollateralAmount: (next) => { setCollateralAmount(next); setError(null); },
-          borrowAmount, onBorrowAmount: (next) => { setBorrowAmount(next); setError(null); },
+          borrowAmount: fixedAmount ?? borrowAmount, onBorrowAmount: (next) => { if (fixedAmount === null) { setBorrowAmount(next); setError(null); } },
           reading, preparing: intent.isPending, needsRead, onReadLimit, onReview: () => void onReview(),
           maxReading, onMax: () => void onMax(),
           capacity: view.capacity,
@@ -120,5 +131,6 @@ export function useStillBorrowEntryV1(input: {
           // Fills the field; the person still presses Read borrowing limit.
           suggestedAmount: !error && !needsRead && !reading && view.suggestedAmount ? view.suggestedAmount : null,
           onSuggestedAmount: (amount: string) => { setCollateralAmount(amount); setError(null); },
+          spend: spendView,
   }};
 }
