@@ -10,6 +10,16 @@ import type { StillShareLoweredV1 } from './stillLimitComparison.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentReadV1, type AaveV4DeploymentStatusV1, type AaveV4ReserveBindingV1 } from './aaveV4BorrowPlan.js';
 
 const ZERO = BigInt(0), BPS = BigInt(10_000), USDC = BigInt(1_000_000), CENT = BigInt(10_000);
+
+/**
+ * How many reserves the Coinbase Stocks spoke may list before a read is refused.
+ * It listed seven stocks and USDC until Aave added a ninth reserve (seen
+ * 2026-11-01), and a bound of eight refused every Aave account, so every stock
+ * loan and repayment, for everyone. Still reads every reserve and counts only
+ * the ones it models; a reserve it does not model adds nothing to its limit,
+ * and debt in it is refused below.
+ */
+export const STILL_AAVE_MAX_RESERVES_V1 = 32;
 const UINT256 = (BigInt(1) << BigInt(256)) - BigInt(1);
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const unsigned = (a: bigint) => typeof a === 'bigint' && a >= ZERO && a <= UINT256;
@@ -97,7 +107,7 @@ async function freshSnapshot(wallet: Address): Promise<StillAaveSnapshotV1> {
       const noCap = first.add(ADDRESSES.aaveHub, aaveHubAbi, 'MAX_ALLOWED_SPOKE_CAP', []);
       await first.run([provider], at);
       const n = need(count.outcome);
-      if (n < BigInt(2) || n > BigInt(8) || !same(need(oracle.outcome), ADDRESSES.aaveOracle)) throw new Error('aave_universe_unread');
+      if (n < BigInt(2) || n > BigInt(STILL_AAVE_MAX_RESERVES_V1) || !same(need(oracle.outcome), ADDRESSES.aaveOracle)) throw new Error('aave_universe_unread');
       const second = new Batch();
       const slots = Array.from({ length: Number(n) }, (_, reserveId) => ({ reserveId,
         reserve: second.add(ADDRESSES.aaveSpoke, aaveSpokeAbi, 'getReserve', [BigInt(reserveId)]),
@@ -129,7 +139,7 @@ async function freshSnapshot(wallet: Address): Promise<StillAaveSnapshotV1> {
 
 /** Whole reviewed Spoke only; another reserve/loan cannot be quietly omitted. */
 export function validAaveReserveBindingsV1(read: StillAaveSnapshotV1): boolean {
-  if (!read.universe.aave.ok || !read.snapshot.aave || read.reserves.length < 2 || read.reserves.length > 8 || read.reserves.length !== read.universe.aave.reserves.length || read.reserves.length !== read.snapshot.aave.reserves.length || read.positions.length !== read.reserves.length) return false;
+  if (!read.universe.aave.ok || !read.snapshot.aave || read.reserves.length < 2 || read.reserves.length > STILL_AAVE_MAX_RESERVES_V1 || read.reserves.length !== read.universe.aave.reserves.length || read.reserves.length !== read.snapshot.aave.reserves.length || read.positions.length !== read.reserves.length) return false;
   if (new Set(read.reserves.map(r => r.reserveId)).size !== read.reserves.length || new Set(read.reserves.map(r => r.underlying.toLowerCase())).size !== read.reserves.length || new Set(read.reserves.map(r => r.hubAssetId)).size !== read.reserves.length) return false;
   return read.reserves.every((r, index) => {
     const info = read.universe.aave.ok ? read.universe.aave.reserves.find(v => v.reserveId === r.reserveId) : undefined;
@@ -142,7 +152,10 @@ export function validAaveReserveBindingsV1(read: StillAaveSnapshotV1): boolean {
       Number.isSafeInteger(position.dynamicConfigKey) && position.dynamicConfigKey >= 0 && position.dynamicConfigKey <= 4294967295 &&
       Number.isInteger(r.dynamicConfigKey) && r.dynamicConfigKey >= 0 && r.dynamicConfigKey <= 4294967295 &&
       same(r.hub, ADDRESSES.aaveHub) && same(r.underlying, info.underlying) && same(r.underlying, snap.info.underlying) && r.hubAssetId === info.hubAssetId &&
-      (stock ? r.decimals === stock.decimals && info.role.kind === 'stock' && info.role.asset.id === stock.id : same(r.underlying, ADDRESSES.usdc) && r.decimals === 6 && info.role.kind === 'usdc');
+      (stock ? r.decimals === stock.decimals && info.role.kind === 'stock' && info.role.asset.id === stock.id
+        : same(r.underlying, ADDRESSES.usdc) ? r.decimals === 6 && info.role.kind === 'usdc'
+          // A reserve Still does not model: read, bound to its own identity, never counted.
+          : info.role.kind === 'other' && snap.info.role.kind === 'other');
   });
 }
 

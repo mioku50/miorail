@@ -22,6 +22,25 @@ export function aaveReadFixture(): StillAaveSnapshotV1 {
   return { universe: u, snapshot: s, reserves, positions, deployment: { chainId: 8453, blockNumber: Number(s.block.number),
     implementationAddress: AAVE_V4_DEPLOYMENT_PIN_V1.implementation, implementationCodeHash: AAVE_V4_DEPLOYMENT_PIN_V1.implementationCodeHash, proxyCodeHash: AAVE_V4_DEPLOYMENT_PIN_V1.proxyCodeHash } };
 }
+/** Appends reserves Still does not model, as Aave listed a ninth one on 2026-11-01. */
+export function withUnmodeledReserves(read: StillAaveSnapshotV1, count = 1, supplied = BigInt(0), borrowing = false): StillAaveSnapshotV1 {
+  if (!read.universe.aave.ok || !read.snapshot.aave) throw Error('fixture');
+  for (let i = 0; i < count; i += 1) {
+    const reserveId = read.reserves.length;
+    const underlying = `0xb2000000000000000000000000000000000000${reserveId.toString(16).padStart(2, '0')}` as `0x${string}`;
+    const info = { reserveId, underlying, hubAssetId: reserveId, decimals: 8, dynamicConfigKey: 0, priceSource: null, role: { kind: 'other' as const } };
+    read.universe.aave.reserves.push(info);
+    read.snapshot.aave.reserves.push({ info, config: { ok: true, value: { paused: false, frozen: false, borrowable: false } },
+      factorBps: { ok: true, value: BigInt(5_000) }, userFactorBps: { ok: true, value: BigInt(5_000) }, price: { ok: true, value: BigInt(10_000_000_000) },
+      priceUpdatedAt: { ok: false, reason: 'reverted' }, supplied: { ok: true, value: supplied },
+      status: { ok: true, value: { usingAsCollateral: supplied > BigInt(0), borrowing } },
+      spokeConfig: { ok: true, value: { addCap: BigInt(1_000), drawCap: BigInt(0), active: true, halted: false } }, spokeAdded: { ok: true, value: BigInt(0) } });
+    read.reserves.push({ reserveId, underlying, hub: ADDRESSES.aaveHub, hubAssetId: reserveId, decimals: 8, dynamicConfigKey: 0 });
+    read.positions.push({ reserveId, drawnShares: borrowing ? BigInt(1) : BigInt(0), suppliedShares: supplied, premiumShares: BigInt(0), premiumOffsetRay: BigInt(0), dynamicConfigKey: 0 });
+  }
+  return read;
+}
+
 export async function aaveStandingFixture(operation: 'borrow' | 'repay' = 'borrow', read = aaveReadFixture(), supply = BigInt(100_000_000)): Promise<StillAaveStandingV1> {
   const r = await readStillAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, operation, stockId: 'NVDAc', collateralSupplyAssets: operation === 'borrow' ? supply : ZERO,
     deps: { now: () => new Date('2026-10-21T15:00:00Z'), snapshot: async () => read, calendar: async () => calendar() } });

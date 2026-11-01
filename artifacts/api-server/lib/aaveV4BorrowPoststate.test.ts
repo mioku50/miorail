@@ -2,12 +2,20 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4BorrowPoststate.js';
-import { aaveReadFixture, aaveStandingFixture, aavePoststateFixture } from './aaveV4BorrowFixtures.testhelper.js';
+import { aaveReadFixture, aaveStandingFixture, aavePoststateFixture, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 
 describe('Aave independent whole-Spoke same-state proof', () => {
   it('keeps the cross-collateral account bounded within eight aggregate probes', async () => {
     const s = await aaveStandingFixture(), p = buildAaveV4PoststateProbesV1(s, 'borrow'); assert(p.ok); if (!p.ok) return;
     assert(p.observations.before.length <= 8); assert(p.observations.before.every(row => row.data.length <= 8194 && row.to === ADDRESSES.multicall3.toLowerCase()));
+  });
+  it('a ninth reserve Still does not model rides the same bounded proof, and the borrow still proves', async () => {
+    const s = await aaveStandingFixture('borrow', withUnmodeledReserves(aaveReadFixture())), p = buildAaveV4PoststateProbesV1(s, 'borrow');
+    assert(p.ok); if (!p.ok) return;
+    assert.equal(s.reserves.length, 9); assert(p.observations.before.length <= 8);
+    const amount = BigInt(10_000_000), fixture = aavePoststateFixture(s, 'borrow', amount);
+    const r = verifyAaveV4PoststateV1({ ...fixture, expected: { standing: s, operation: 'borrow', borrowAssets: amount } });
+    assert.equal(r.ok, true, !r.ok ? r.detail : '');
   });
   it('proves exact selected supply, USDC arrival, debt shares and Still allowance', async () => {
     const s = await aaveStandingFixture(), amount = BigInt(10_000_000), fixture = aavePoststateFixture(s, 'borrow', amount);

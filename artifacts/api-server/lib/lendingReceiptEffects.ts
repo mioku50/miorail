@@ -4,7 +4,7 @@ import { ADDRESSES, STOCKS, CRYPTO } from '@mioagent/still-engine/registry';
 import { aaveSpokeAbi, morphoAbi } from '@mioagent/still-engine/abi';
 import { toAssetsUpV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { stillRpcUrlsV1 } from './stillMirror.js';
-import { readAaveV4DeploymentAtV1 } from './stillAaveStanding.js';
+import { STILL_AAVE_MAX_RESERVES_V1, readAaveV4DeploymentAtV1 } from './stillAaveStanding.js';
 import { matchesAaveV4DeploymentV1, aaveV4WriteAbiV1 } from './aaveV4BorrowPlan.js';
 import type { LoanEffectPositionCheckV1 } from './loanExecutionStatus.js';
 import type { LendingFactsV1 } from './lendingReview.js';
@@ -67,7 +67,7 @@ async function positionAt(f: LendingFactsV1, wallet: Address, at: bigint): Promi
         return { debtShares: p[1], collateralAssets: p[2], debtAssets: toAssetsUpV1(p[1], m[2], m[3]) };
       }
       const count = await client.readContract({ address: ADDRESSES.aaveSpoke, abi: aaveSpokeAbi, functionName: 'getReserveCount', blockNumber: at });
-      if (count < 2n || count > 8n) return null;
+      if (count < 2n || count > BigInt(STILL_AAVE_MAX_RESERVES_V1)) return null;
       const list = await Promise.all(Array.from({ length: Number(count) }, async (_, reserveId) => ({ reserveId,
         r: await client.readContract({ address: ADDRESSES.aaveSpoke, abi: aaveSpokeAbi, functionName: 'getReserve', args: [BigInt(reserveId)], blockNumber: at }) })));
       const usdc = list.filter(row => same(row.r.underlying, ADDRESSES.usdc) && same(row.r.hub, ADDRESSES.aaveHub) && row.r.decimals === 6);

@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
-import { aaveReadFixture, AAVE_TEST_WALLET } from './aaveV4BorrowFixtures.testhelper.js';
+import { aaveReadFixture, AAVE_TEST_WALLET, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1 } from './aaveV4BorrowPlan.js';
-import { inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
+import { STILL_AAVE_MAX_RESERVES_V1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
 
 const input = (r = aaveReadFixture()) => ({ walletAddress: AAVE_TEST_WALLET, operation: 'borrow' as const, stockId: 'NVDAc' as const, collateralSupplyAssets: BigInt(0),
   deps: { now: () => new Date('2026-10-21T15:00:00Z'), snapshot: async () => r, calendar: async () => calendar() } });
@@ -54,6 +54,34 @@ describe('Still Aave bounded same-block standing', () => {
     assert.equal((await readAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, tokenAddress: stock.underlying, operation: 'borrow', deps: base.deps })).state, 'read');
     assert.equal((await readAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, tokenAddress: ADDRESSES.usdc, operation: 'repay', deps: base.deps })).state, 'read');
     assert.equal((await readAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, tokenAddress: ADDRESSES.cbbtc, operation: 'borrow', deps: base.deps })).state, 'refused');
+  });
+});
+
+describe('a reserve Aave lists that Still does not model', () => {
+  it('is read and never counted: the account reads as before, at the same limit', async () => {
+    const before = await readStillAaveStandingV1(input());
+    const after = await readStillAaveStandingV1(input(withUnmodeledReserves(aaveReadFixture())));
+    assert.equal(before.state, 'read'); assert.equal(after.state, 'read');
+    if (before.state !== 'read' || after.state !== 'read') return;
+    assert.equal(after.standing.reserves.length, 9);
+    assert.equal(after.standing.capacity!.limitAssets, before.standing.capacity!.limitAssets);
+    assert.equal(after.standing.capacity!.protocolLimitAssets, before.standing.capacity!.protocolLimitAssets);
+  });
+  it('adds nothing to the limit when it is pledged, and debt in it is refused', async () => {
+    const pledged = await readStillAaveStandingV1(input(withUnmodeledReserves(aaveReadFixture(), 1, BigInt(100_000_000))));
+    const plain = await readStillAaveStandingV1(input());
+    assert.equal(pledged.state, 'read'); assert.equal(plain.state, 'read');
+    if (pledged.state === 'read' && plain.state === 'read') assert.equal(pledged.standing.capacity!.limitAssets, plain.standing.capacity!.limitAssets);
+    const owed = await readStillAaveStandingV1(input(withUnmodeledReserves(aaveReadFixture(), 1, BigInt(0), true)));
+    assert.deepEqual(owed.state === 'refused' && owed.refusal, 'aave_position_unread');
+  });
+  it('still has to be one bound identity, and the spoke cannot grow past its bound', () => {
+    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture())), true);
+    const relabelled = withUnmodeledReserves(aaveReadFixture());
+    relabelled.reserves[8]!.underlying = ADDRESSES.usdc;
+    assert.equal(validAaveReserveBindingsV1(relabelled), false);
+    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture(), STILL_AAVE_MAX_RESERVES_V1 - 8)), true);
+    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture(), STILL_AAVE_MAX_RESERVES_V1 - 7)), false);
   });
 });
 
