@@ -27,7 +27,8 @@ export const TELEGRAM_REPLIES_V1 = {
     `Connected: ${wallets.map(shortWalletV1).join(', ')}.\n\n` +
     'You will get here what Miorail knows about your stocks: a dividend paid in shares on a stock you hold, ' +
     'an issuer changing or scheduling a multiplier, a move in the cost of exiting a stock you watch, your Radar ' +
-    'alerts, and the week on Base every Friday evening.\n\n' +
+    'alerts, and the week on Base every Friday evening. If you borrow through Still, you will also hear here ' +
+    'each time the loan gets closer to liquidation.\n\n' +
     `${NEVER_SIGN_V1} /stop disconnects.`,
   alreadyConnected: (wallet: string) => `${shortWalletV1(wallet)} is already connected here. /status shows everything connected.`,
   expired:

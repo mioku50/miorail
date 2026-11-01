@@ -1,7 +1,7 @@
 import { useRoute } from 'wouter';
 import { useAccount, useSendCalls } from 'wagmi';
-import { LendingReviewScreen, useLendingReviewConsoleV1 } from '@mioagent/ui';
-import { StillFrame } from '@mioagent/ui/still';
+import { LendingReviewScreen, useLendingReviewConsoleV1, useTelegramAlertsV1 } from '@mioagent/ui';
+import { StillFrame, StillLoanAlertsOffer } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
@@ -31,7 +31,13 @@ export function LendingReviewPage() {
       return typeof result === 'string' ? result : ((result as { id?: string })?.id ?? null);
     },
   });
+  // Offered once the loan is confirmed onchain: a repayment needs no alert.
+  const telegram = useTelegramAlertsV1({ enabled: session.signedIn });
+  const confirmedLoan = review.model.execution?.state === 'confirmed' && review.model.body?.facts?.operation === 'borrow';
   return <StillFrame tab="assets" sky={sky}>{session.booting
     ? <p className="still-section still-note" role="status">Checking your sign-in…</p>
-    : <LendingReviewScreen model={review.model} />}</StillFrame>;
+    : <>
+      <LendingReviewScreen model={review.model} />
+      {confirmedLoan ? <StillLoanAlertsOffer telegram={telegram} /> : null}
+    </>}</StillFrame>;
 }

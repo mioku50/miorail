@@ -26,6 +26,7 @@ import {
   StillAssets,
   StillFrame,
   StillHomeSignedIn,
+  StillLoanAlertsOffer,
   StillHomeSignedOut,
   StillMore,
   StillMobile,
@@ -176,7 +177,7 @@ describe('Home', () => {
     });
     const off = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, telegram: telegram(false) }} />);
     assert.match(off, /Alerts in Telegram/);
-    assert.match(off, /Dividends, issuer changes and your watches, in a Telegram chat\./);
+    assert.match(off, /Dividends, issuer changes, your watches and your Still loans, in a Telegram chat\./);
     assert.match(off, />Connect<\/button>/);
     const on = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, telegram: telegram(true) }} />);
     assert.match(on, /Telegram alerts are on/);
@@ -450,3 +451,29 @@ describe('the frame', () => {
     assert.match(assistants, /not offered to US persons/);
   });
 });
+
+describe('after a loan, the offer to hear about it', () => {
+  const WEDNESDAY_V1 = new Date('2026-10-21T15:00:00.000Z');
+  const telegram = (linked: boolean, pending: { url: string; expiresAt: string } | null = null) => ({
+    view: telegramAlertsViewV1({ status: { available: true, linked }, pending, busy: null, failed: null, now: WEDNESDAY_V1 })!,
+    onConnect: () => {},
+    onDisconnect: () => {},
+  });
+
+  it('names the bands it tells and offers the link; a connected chat is told it already hears', () => {
+    const off = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(false)} />);
+    assert.match(off, /Hear about this loan in Telegram/);
+    assert.match(off, /when your collateral can fall less than 37\.5% before liquidation, again below 20%, and if the loan can be liquidated\. The bot never asks you to sign\./);
+    assert.match(off, />Connect<\/button>/);
+    const on = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(true)} />);
+    assert.match(on, /Telegram will tell you about this loan/);
+    assert.match(on, /Your Telegram chat hears about this loan when your collateral can fall less than 37\.5%/);
+    // Disconnecting is not this page's business.
+    assert.doesNotMatch(on, /<button/);
+    const open = renderToStaticMarkup(<StillLoanAlertsOffer telegram={telegram(false, { url: `https://t.me/miorailbot?start=${'a'.repeat(32)}`, expiresAt: '2026-10-21T15:10:00.000Z' })} />);
+    assert.match(open, /<a class="still-extra-action" href="https:\/\/t\.me\/miorailbot\?start=a{32}" target="_blank" rel="noreferrer">Open @miorailbot in Telegram<\/a>/);
+    // No bot on this server, or no sign-in: nothing is offered.
+    assert.equal(renderToStaticMarkup(<StillLoanAlertsOffer telegram={null} />), '');
+  });
+});
+

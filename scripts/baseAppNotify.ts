@@ -1324,6 +1324,51 @@ export function planAerodromeRewardNoticesV1(input: {
 }
 
 // ---------------------------------------------------------------------------
+// Still loans
+// ---------------------------------------------------------------------------
+
+/** A Still loan whose band got worse, ready to be told. */
+export interface StillLoanDueV1 {
+  walletAddress: string;
+  /** The loan: the Aave spoke's address or a Morpho market id. */
+  market: string;
+  /** What "once" counts in: the episode this notice tells. */
+  episode: number;
+  title: string;
+  message: string;
+  targetPath: string;
+}
+
+/**
+ * One push per loan, to the wallet that holds it. The daily cap does not
+ * apply: a margin running out is not one more update, and it is told at most
+ * once per worse band, so it cannot flood a chat.
+ */
+export function planStillLoanNoticesV1(input: {
+  due: readonly StillLoanDueV1[];
+  enabled: ReadonlySet<string>;
+}): { groups: (BaseAppPushGroupV1 & { market: string; episode: number })[]; notEnabled: number } {
+  const groups: (BaseAppPushGroupV1 & { market: string; episode: number })[] = [];
+  let notEnabled = 0;
+  const order = [...input.due].sort((a, b) => a.walletAddress.localeCompare(b.walletAddress) || a.market.localeCompare(b.market));
+  for (const due of order) {
+    if (!input.enabled.has(due.walletAddress)) {
+      notEnabled += 1;
+      continue;
+    }
+    groups.push({
+      title: clipV1(due.title, BASE_APP_TITLE_MAX_V1),
+      message: clipV1(due.message, BASE_APP_MESSAGE_MAX_V1),
+      targetPath: due.targetPath,
+      wallets: [due.walletAddress],
+      market: due.market,
+      episode: due.episode,
+    });
+  }
+  return { groups, notEnabled };
+}
+
+// ---------------------------------------------------------------------------
 // One pass
 // ---------------------------------------------------------------------------
 
@@ -1373,11 +1418,14 @@ export interface BaseAppNotifyReportV1 {
   reopen: { roundId: string; kind: ReopenNoticeKindV1; due: number; sent: number; capped: number } | null;
   /** Found's Aerodrome reward alerts: null when none had reached its amount. */
   aerodromeRewards: { due: number; sent: number; capped: number; notEnabled: number } | null;
+  /** Still loans whose band got worse: null when none was due. */
+  stillLoans: { due: number; sent: number; notEnabled: number } | null;
 }
 
 /** Pushes the clock-driven phases sent this pass. */
 function phasesSentV1(report: BaseAppNotifyReportV1): number {
-  return (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) + (report.aerodromeRewards?.sent ?? 0);
+  return (report.weekly?.sent ?? 0) + (report.reopen?.sent ?? 0) + (report.aerodromeRewards?.sent ?? 0)
+    + (report.stillLoans?.sent ?? 0);
 }
 
 function utcDayV1(at: Date): string {
@@ -1410,6 +1458,12 @@ export async function runBaseAppNotifyV1(deps: {
     due: () => Promise<readonly AerodromeRewardDueV1[]>;
     told: (input: { walletAddress: string; episode: number }) => Promise<void>;
   };
+  /** Still: this channel's untold loan bands, and how one is marked told. A
+   * failure to read them skips them for this pass. */
+  stillLoans?: {
+    due: () => Promise<readonly StillLoanDueV1[]>;
+    told: (input: { walletAddress: string; market: string; episode: number }) => Promise<void>;
+  };
 }): Promise<BaseAppNotifyReportV1> {
   const limits = { ...BASE_APP_NOTIFY_LIMITS_V1, ...deps.limits };
   const report: BaseAppNotifyReportV1 = {
@@ -1429,9 +1483,50 @@ export async function runBaseAppNotifyV1(deps: {
     weekly: null,
     reopen: null,
     aerodromeRewards: null,
+    stillLoans: null,
   };
   if (!deps.client) return { ...report, outcome: 'off' };
   const now = deps.now();
+
+  // Still loans come first, so nothing earlier in the pass can stop one being
+  // told; each is told once per episode and channel, and marked only for a
+  // wallet this channel actually reached.
+  if (deps.stillLoans) {
+    let due: readonly StillLoanDueV1[];
+    try {
+      due = await deps.stillLoans.due();
+    } catch {
+      due = [];
+    }
+    if (due.length > 0) {
+      let enabledNow: Set<string>;
+      try {
+        enabledNow = await deps.client.enabledWallets();
+      } catch (cause) {
+        return { ...report, outcome: 'stopped', stoppedBy: cause instanceof BaseAppNotifyErrorV1 ? cause.message : 'base_app_error' };
+      }
+      const plan = planStillLoanNoticesV1({ due, enabled: enabledNow });
+      report.stillLoans = { due: plan.groups.length, sent: 0, notEnabled: plan.notEnabled };
+      if (!deps.dry) {
+        const day = utcDayV1(now);
+        for (const { market, episode, ...group } of plan.groups) {
+          try {
+            const result = await deps.client.send(group);
+            report.failed += result.failed.notSaved + result.failed.disabled + result.failed.other;
+            if (result.sent.length > 0) {
+              report.stillLoans.sent += result.sent.length;
+              await deps.repository.recordSent({ day, wallets: result.sent });
+              for (const walletAddress of result.sent) await deps.stillLoans.told({ walletAddress, market, episode });
+            }
+          } catch (cause) {
+            const error = cause instanceof BaseAppNotifyErrorV1 ? cause : null;
+            if (error && error.status === 400) continue;
+            return { ...report, outcome: 'stopped', stoppedBy: error ? error.message : 'base_app_error' };
+          }
+        }
+      }
+    }
+  }
 
   // The weekly summary rides no cursor: it is due by the clock, once per week
   // per wallet, and a pass that fails it leaves it due for the next pass.

@@ -13,7 +13,9 @@ import {
   BASE_APP_MESSAGE_MAX_V1,
   BASE_APP_NOTIFY_ENDPOINT_V1,
   planAerodromeRewardNoticesV1,
+  planStillLoanNoticesV1,
   type AerodromeRewardDueV1,
+  type StillLoanDueV1,
   BASE_APP_TITLE_MAX_V1,
   BaseAppNotifyErrorV1,
   baseAppNotifyConfigV1,
@@ -1378,6 +1380,73 @@ describe('Found: one notice per episode, to the wallets this channel reaches', (
       },
     });
     assert.equal(broken.aerodromeRewards, null);
+    assert.notEqual(broken.outcome, 'stopped');
+  });
+});
+
+describe('Still loans: told once per worse band, ahead of everything else', () => {
+  const A = '0x1111111111111111111111111111111111111111';
+  const B = '0x2222222222222222222222222222222222222222';
+  const SPOKE = '0x17905db0e4a3514467539956c084180616ae7b8d';
+  const at = (iso: string) => new Date(iso);
+  const due = (walletAddress: string, episode = 1): StillLoanDueV1 => ({
+    walletAddress,
+    market: SPOKE,
+    episode,
+    title: 'Still loan: margin 31%',
+    message: 'Aave V4 · Coinbase Stocks: your collateral can now fall 31% before liquidation.',
+    targetPath: '/repay',
+  });
+
+  test('one push per loan, only to wallets this channel reaches, and never held back by the cap', () => {
+    const plan = planStillLoanNoticesV1({ due: [due(B), due(A, 2), due('0x3333333333333333333333333333333333333333')], enabled: new Set([A, B]) });
+    assert.deepEqual(plan.groups.map((group) => [group.wallets, group.market, group.episode]), [[[A], SPOKE, 2], [[B], SPOKE, 1]]);
+    assert.equal(plan.notEnabled, 1);
+    const long = planStillLoanNoticesV1({ due: [{ ...due(A), title: 'x'.repeat(40), message: 'y'.repeat(250) }], enabled: new Set([A]) });
+    assert.ok(long.groups[0]!.title.length <= BASE_APP_TITLE_MAX_V1 && long.groups[0]!.message.length <= BASE_APP_MESSAGE_MAX_V1);
+  });
+
+  test('a pass sends it even at the daily cap, counts it and marks it told; a dry pass or a failed read changes nothing', async () => {
+    const repository = new InMemoryBaseAppNotificationRepositoryV1();
+    const { client, sends } = fakeClient({ enabledWallets: async () => new Set([A]) });
+    // Four pushes today already: the cap for every other notice.
+    for (let i = 0; i < 4; i += 1) await repository.recordSent({ day: '2026-11-02', wallets: [A] });
+    const told: string[] = [];
+    let pending = [due(A, 3), due(B, 1)];
+    const stillLoans = {
+      due: async () => pending,
+      told: async (input: { walletAddress: string; market: string; episode: number }) => {
+        told.push(`${input.walletAddress}:${input.market}:${input.episode}`);
+        pending = pending.filter((row) => row.walletAddress !== input.walletAddress);
+      },
+    };
+    const now = () => at('2026-11-02T15:00:00.000Z');
+    const dry = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, stillLoans, dry: true });
+    assert.deepEqual(dry.stillLoans, { due: 1, sent: 0, notEnabled: 1 });
+    assert.deepEqual([sends.length, told], [0, []]);
+
+    const report = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, stillLoans });
+    assert.deepEqual(report.stillLoans, { due: 1, sent: 1, notEnabled: 1 });
+    assert.deepEqual(sends.map((send) => [send.title, [...send.wallets], send.targetPath]), [['Still loan: margin 31%', [A], '/repay']]);
+    assert.deepEqual(told, [`${A}:${SPOKE}:3`]);
+    assert.equal((await repository.sentOn({ day: '2026-11-02', wallets: [A] })).get(A), 5, 'it counts, though the cap did not hold it back');
+    const again = await runBaseAppNotifyV1({ repository, client, names: async () => names, now, stillLoans });
+    assert.deepEqual(again.stillLoans, { due: 0, sent: 0, notEnabled: 1 });
+    assert.equal(sends.length, 1, 'told once');
+
+    const broken = await runBaseAppNotifyV1({
+      repository,
+      client,
+      names: async () => names,
+      now,
+      stillLoans: {
+        due: async () => {
+          throw new Error('database unavailable');
+        },
+        told: async () => {},
+      },
+    });
+    assert.equal(broken.stillLoans, null);
     assert.notEqual(broken.outcome, 'stopped');
   });
 });

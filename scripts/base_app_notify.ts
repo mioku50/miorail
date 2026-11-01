@@ -23,6 +23,7 @@ import {
   createDatabaseReopenGameRepositoryV1,
   createDatabaseTelegramLinkRepositoryV1,
   createDatabaseRepresentationRatioRepository,
+  createDatabaseStillLoanAlertRepositoryV1,
   createDatabaseUnderlyingAssetRepository,
   readPublicLadderMidsV1,
   type NotificationChannelV1,
@@ -47,6 +48,12 @@ import {
   foundRewardNoticeV1,
   refreshFoundAlertsV1,
 } from '../artifacts/api-server/lib/found.js';
+import {
+  STILL_LOAN_FRESH_FOR_MS_V1,
+  refreshStillLoanAlertsV1,
+  stillLoanNoticeV1,
+} from '../artifacts/api-server/lib/stillLoanAlerts.js';
+import { createStillMirrorServiceV1 } from '../artifacts/api-server/lib/stillMirror.js';
 import { createTelegramNotifyClientV1 } from './telegramNotify.js';
 
 async function main(): Promise<void> {
@@ -114,6 +121,32 @@ async function main(): Promise<void> {
           ...foundRewardNoticeV1({ usdCents: alert.readUsdCents! }),
         })),
     told: (input: { walletAddress: string; episode: number }) => rewardAlerts.markTold({ ...input, channel }),
+  });
+
+  // Still: the loans of wallets a chat can reach are read once, for both
+  // channels, with the Mirror engine. Only wallets that borrowed through Still
+  // are read; a wallet nobody can tell is not read at all.
+  const loanAlerts = createDatabaseStillLoanAlertRepositoryV1(client);
+  try {
+    const reachable = telegram ? await createDatabaseTelegramLinkRepositoryV1(client).linkedWallets() : new Set<string>();
+    const mirror = createStillMirrorServiceV1();
+    const refreshed = await refreshStillLoanAlertsV1({
+      alerts: loanAlerts,
+      reachable,
+      read: (wallet) => mirror.reading(wallet as `0x${string}`),
+      now: new Date(),
+      dry,
+    });
+    if (refreshed.due > 0) console.log(JSON.stringify({ event: 'still_loans_read', dry, ...refreshed }));
+  } catch (cause) {
+    console.log(JSON.stringify({ event: 'still_loans_read', outcome: 'failed',
+      error: cause instanceof Error ? cause.message.slice(0, 80) : 'unknown' }));
+  }
+  const stillLoansFor = (channel: NotificationChannelV1) => ({
+    due: async () =>
+      (await loanAlerts.due({ channel, freshSince: new Date(Date.now() - STILL_LOAN_FRESH_FOR_MS_V1) }))
+        .map((loan) => ({ walletAddress: loan.walletAddress, market: loan.market, episode: loan.episode, ...stillLoanNoticeV1(loan) })),
+    told: (input: { walletAddress: string; market: string; episode: number }) => loanAlerts.markTold({ ...input, channel }),
   });
 
   const shared: Omit<Parameters<typeof runBaseAppNotifyV1>[0], 'repository' | 'client'> = {
@@ -225,6 +258,7 @@ async function main(): Promise<void> {
       repository: createDatabaseBaseAppNotificationRepositoryV1(client),
       client: createBaseAppNotifyClientV1({ config }),
       aerodromeRewards: aerodromeRewardsFor('base_app'),
+      stillLoans: stillLoansFor('base_app'),
     });
     console.log(JSON.stringify({ event: 'base_app_notify', dry, ...report }));
     if (notifyPassFailsUnitV1('base_app', report.stoppedBy)) process.exitCode = 1;
@@ -240,6 +274,7 @@ async function main(): Promise<void> {
         origin: telegram.origin,
       }),
       aerodromeRewards: aerodromeRewardsFor('telegram'),
+      stillLoans: stillLoansFor('telegram'),
     });
     console.log(JSON.stringify({ event: 'telegram_notify', dry, ...report }));
     if (notifyPassFailsUnitV1('telegram', report.stoppedBy)) process.exitCode = 1;

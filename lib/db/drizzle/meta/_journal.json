@@ -652,6 +652,13 @@
       "when": 1793448000000,
       "tag": "0092_still_wallet_readings",
       "breakpoints": true
+    },
+    {
+      "idx": 93,
+      "version": "7",
+      "when": 1793480400000,
+      "tag": "0093_still_loan_alerts",
+      "breakpoints": true
     }
   ]
 }

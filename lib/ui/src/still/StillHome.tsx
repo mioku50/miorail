@@ -1,6 +1,7 @@
 import React, { useState, type ReactNode } from 'react';
 import type { MirrorReport } from '@mioagent/still-engine/report';
-import { formatCents } from '@mioagent/still-engine/format';
+import { formatCents, formatPercentBps } from '@mioagent/still-engine/format';
+import { TERMS } from '@mioagent/still-engine/policy';
 
 import { type ComingUpV1, type HomeViewV1, type MobileInputV1 } from './homeView';
 import { SkyLayer } from './Sky';
@@ -187,6 +188,40 @@ export function StillExtras({ telegram }: { telegram?: TelegramAlertsModelV1 | n
           ) : null}
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/**
+ * After a loan is confirmed: the moment a person most wants to hear about it
+ * later. A connected chat already hears about every Still loan of its wallet;
+ * this says so, or offers the link.
+ */
+export function StillLoanAlertsOffer({ telegram }: { telegram?: TelegramAlertsModelV1 | null }) {
+  const view = telegram?.view ?? null;
+  if (!telegram || !view) return null;
+  const linked = view.state === 'linked';
+  const bands = `when your collateral can fall less than ${formatPercentBps(Number(TERMS.watchBelowBps), 1)} before liquidation, again below ${formatPercentBps(Number(TERMS.actBelowBps))}, and if the loan can be liquidated`;
+  const note = view.state === 'open' ? view.note
+    : linked ? `Your Telegram chat hears about this loan ${bands}.`
+      : `Still messages you ${bands}. The bot never asks you to sign.`;
+  return (
+    <div className="still-section still-extras" aria-label="Alerts for this loan">
+      <div className="still-extra">
+        <span className="still-extra-icon"><TelegramIconV1 /></span>
+        <span className="still-extra-body">
+          <span className="still-extra-title">{linked ? 'Telegram will tell you about this loan' : 'Hear about this loan in Telegram'}</span>
+          <span className="still-extra-note">{note}</span>
+          {view.error ? <span className="still-extra-note" role="status">{view.error}</span> : null}
+        </span>
+        {view.link ? (
+          <a className="still-extra-action" href={view.link.href} target="_blank" rel="noreferrer">{view.link.label}</a>
+        ) : !linked && view.action ? (
+          <button type="button" className="still-extra-action" disabled={view.action.busy} onClick={telegram.onConnect}>
+            {view.action.busy ? 'Connect…' : 'Connect'}
+          </button>
+        ) : null}
+      </div>
     </div>
   );
 }
