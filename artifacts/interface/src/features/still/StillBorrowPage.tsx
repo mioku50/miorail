@@ -17,7 +17,7 @@ export function StillBorrowPage() {
   const spend = useMemo<{ orderId: string; view: StillBorrowSpendV1 } | null>(() => {
     if (!spendId) return null;
     const view = order.data !== undefined ? spendOrderViewV1(order.data) : null;
-    return { orderId: spendId, view: view ? { state: 'ready', productName: view.productName, packageValue: view.packageValue, priceUsdc: view.priceUsdc, expiresAt: view.expiresAt }
+    return { orderId: spendId, view: view ? { state: 'ready', productName: view.productName, packageValue: view.packageLabel, priceUsdc: view.priceUsdc, expiresAt: view.expiresAt, refillTo: view.refillTo }
       : order.isPending && signedIn ? { state: 'reading' } : { state: 'gone' } };
   }, [spendId, order.data, order.isPending, signedIn]);
   const entry=useStillBorrowEntryV1({sky,signedIn,wallet,initialAsset:borrowAssetFromQueryV1(params.get('asset')),onReviewLink:navigate,walletBlocker:batches.blocker,spend});

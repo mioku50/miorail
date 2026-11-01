@@ -18,10 +18,13 @@ function report() {
 
 const ORDER_ID = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
 const ORDER = { orderId: ORDER_ID, productId: 'bitrefill-esim-germany', productName: 'Bitrefill eSIM Germany', packageValue: '1GB, 7 Days', faceCurrency: 'USD',
-  priceAtomic: '2530000', payTo: '0x3333333333333333333333333333333333333333', createdAt: NOW.toISOString(), expiresAt: '2026-10-28T15:15:00.000Z', paymentLink: null };
+  priceAtomic: '2530000', payTo: '0x3333333333333333333333333333333333333333', refillTo: null, createdAt: NOW.toISOString(), expiresAt: '2026-10-28T15:15:00.000Z', paymentLink: null };
+// A top-up's order, as the server holds it for its owner: the number it goes to included. The number is made up.
+const TOP_UP_ORDER = { ...ORDER, productId: 'beeline-kazakhstan', productName: 'Beeline Kazakhstan', packageValue: '100', faceCurrency: 'KZT', priceAtomic: '260000', refillTo: '+77771234567' };
 
 async function install(page: Page, signedIn: boolean, options: { pay?: boolean } = {}) {
   const reads: string[] = [], writes: string[] = [], walletMethods: string[] = [], bodies: Record<string, unknown> = {};
+  let opened: typeof ORDER = ORDER;
   const checkout = options.pay ? { checkout: { enabled: true, available: true, capAtomic: '100000000' } } : {};
   await page.clock.setFixedTime(NOW);
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript',
@@ -39,8 +42,11 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean }
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     (request.method() === 'GET' ? reads : writes).push(`${path}${url.search}`);
     if (request.method() === 'POST' && options.pay) bodies[path] = request.postDataJSON();
-    if (options.pay && request.method() === 'POST' && path === '/api/still/spend/orders') return route.fulfill({ json: { order: ORDER } });
-    if (options.pay && path === `/api/still/spend/orders/${ORDER_ID}`) return route.fulfill({ json: { order: ORDER, status: { status: 'unpaid', accessLink: null, esimInstallLink: null }, statusError: null } });
+    if (options.pay && request.method() === 'POST' && path === '/api/still/spend/orders') {
+      opened = (request.postDataJSON() as { productId: string }).productId === 'beeline-kazakhstan' ? TOP_UP_ORDER : ORDER;
+      return route.fulfill({ json: { order: opened } });
+    }
+    if (options.pay && path === `/api/still/spend/orders/${ORDER_ID}`) return route.fulfill({ json: { order: opened, status: { status: 'unpaid', accessLink: null, esimInstallLink: null }, statusError: null } });
     if (options.pay && path === '/api/route-intelligence/rwa/borrow/capacity') {
       const asset = CRYPTO.find(row => row.token.toLowerCase() === url.searchParams.get('token')?.toLowerCase())!;
       return route.fulfill({ json: { state: 'read', marketScope: 'still_registered_market', markets: [{ marketId: asset.morphoMarket, collateralDecimals: asset.decimals, loanDecimals: 6,
@@ -54,6 +60,10 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean }
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(), cached: false } });
     if (path === '/api/public/still/spend/search') {
+      if (url.searchParams.get('type') === 'refill') {
+        return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'refill', country: url.searchParams.get('country'), query: '', readAt: NOW.toISOString(),
+          products: url.searchParams.get('country') === 'KZ' ? [{ id: 'beeline-kazakhstan', name: 'Beeline Kazakhstan', countries: ['KZ'], inStock: true }] : [] } });
+      }
       if (url.searchParams.get('type') === 'giftcard') {
         return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'giftcard', country: 'DE', query: url.searchParams.get('q') ?? '', readAt: NOW.toISOString(),
           products: url.searchParams.get('q') === 'Amazon' ? [{ id: 'amazon_de-germany', name: 'Amazon.de', countries: ['DE'], inStock: true }] : [] } });
@@ -65,6 +75,11 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean }
     }
     if (path === '/api/public/still/spend/product') {
       const id = url.searchParams.get('id');
+      if (id === 'beeline-kazakhstan') {
+        return route.fulfill({ json: { checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '7' } }, outcome: 'product', readAt: NOW.toISOString(),
+          product: { id, name: 'Beeline Kazakhstan', country: 'KZ', inStock: true, recipientType: 'phone_number', url: null,
+            packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }, { value: '500', faceCurrency: 'KZT', priceUsdc: '1.28' }] } } });
+      }
       if (id === 'amazon_de-germany') {
         return route.fulfill({ json: { ...checkout, outcome: 'product', readAt: NOW.toISOString(), product: { id, name: 'Amazon.de', country: 'DE', inStock: true, recipientType: null, url: null,
           packages: [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }, { value: '100000', faceCurrency: 'EUR', priceUsdc: '114230.00' }] } } });
@@ -145,3 +160,27 @@ for (const width of [390, 1366]) {
   });
 }
 
+test('a phone top-up asks for the number with its calling code, and Get money names it beside the price (390px)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  const state = await install(page, true, { pay: true });
+  await page.goto('/spend');
+  await page.getByRole('button', { name: /^Phone top-up/ }).click();
+  await page.getByLabel('Country', { exact: true }).selectOption('KZ');
+  await page.getByRole('button', { name: /^Beeline Kazakhstan/ }).click();
+  const row = page.locator('.still-spend-price', { hasText: '100 KZT' });
+  await expect(row).toContainText('0.26 USDC');
+  await row.getByRole('button', { name: 'Pay with Still', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '0.26 USDC for Beeline Kazakhstan · 100 KZT' })).toBeVisible();
+  await page.getByLabel('Email for Bitrefill’s receipt', { exact: true }).fill('buyer@example.com');
+  const open = page.getByRole('button', { name: 'Open invoice and choose collateral', exact: true });
+  await expect(page.getByText('Write it with the country code, +7.', { exact: false })).toBeVisible();
+  await expect(open).toBeDisabled();
+  await page.getByLabel('Phone number to top up', { exact: true }).fill('+7 777 123 45 67');
+  await expect(page.locator('.still-spend-checkout')).toContainText('Bitrefill tops up +77771234567.');
+  await open.click();
+  await expect(page).toHaveURL(new RegExp(`/borrow\\?spend=${ORDER_ID}$`));
+  await expect(page.getByText(/^Paying Bitrefill · Beeline Kazakhstan · 100 KZT for \+77771234567: 0\.26 USDC\./)).toBeVisible();
+  expect(state.bodies['/api/still/spend/orders']).toEqual({ productId: 'beeline-kazakhstan', packageValue: '100', email: 'buyer@example.com', phone: '+7 777 123 45 67' });
+  expect(state.walletMethods.filter(method => /sign|send|transaction/i.test(method))).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

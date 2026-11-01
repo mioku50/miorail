@@ -116,14 +116,54 @@ describe('opening a Bitrefill invoice from Still', () => {
     assert.equal((await request(app(OTHER)).get(`/api/still/spend/orders/${INVOICE}`)).status, 404);
   });
 
-  it('refuses a package not on offer, one over the cap, a product needing a number, and stray fields', async () => {
+  it('refuses a package not on offer, one over the cap, a product needing an account, and stray fields', async () => {
     for (const body of [{ ...ORDER, packageValue: '99GB' }, { ...ORDER, packageValue: 'Unlimited' }, { ...ORDER, email: 'nobody' }, { ...ORDER, payTo: OTHER }]) {
       const r = await request(app()).post('/api/still/spend/orders').send(body);
       assert.ok(r.status === 400 || r.status === 409, JSON.stringify(body));
     }
     Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }),
-      product: async () => ({ ok: true, value: { ...ESIM, id: 'vodafone-germany', recipientType: 'phone_number' } }) }) });
-    assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...ORDER, productId: 'vodafone-germany' })).status, 409);
+      product: async () => ({ ok: true, value: { ...ESIM, id: 'free-fire-diamonds', recipientType: 'account' } }) }) });
+    assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...ORDER, productId: 'free-fire-diamonds' })).status, 409);
+    assert.equal(opened.length, 0);
+  });
+});
+
+describe('a phone top-up', () => {
+  const AIRTEL: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
+    packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
+  const TOP_UP = { productId: 'airtel-india', packageValue: '10', email: 'buyer@example.com' };
+  const sell = (product: SpendProductV1) => Object.assign(stillSpendRuntimeV1, { catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: product }) }) });
+
+  it('sends Bitrefill the number in its digits, and shows it to the owner with the order', async () => {
+    sell(AIRTEL);
+    const r = await request(app()).post('/api/still/spend/orders').send({ ...TOP_UP, phone: '+91 98765 43210' });
+    assert.equal(r.status, 200);
+    assert.deepEqual(opened, [{ productId: 'airtel-india', packageValue: '10', email: 'buyer@example.com', refillInput: '919876543210', quotedAtomic: 110_000n, now: NOW }]);
+    assert.deepEqual([r.body.order.refillTo, r.body.order.priceAtomic, r.body.order.faceCurrency], ['+919876543210', '110000', 'INR']);
+    const read = await request(app()).get(`/api/still/spend/orders/${INVOICE}`);
+    assert.equal(read.body.order.refillTo, '+919876543210');
+    assert.equal((await request(app(OTHER)).get(`/api/still/spend/orders/${INVOICE}`)).status, 404);
+  });
+
+  it('opens nothing without a number, with a local one, or with one of another country', async () => {
+    sell(AIRTEL);
+    for (const [phone, error] of [[undefined, 'spend_phone_needed'], ['98765 43210', 'spend_phone_invalid'], ['+7 777 123 4567', 'spend_phone_invalid'], ['', 'spend_request_invalid']] as const) {
+      const r = await request(app()).post('/api/still/spend/orders').send({ ...TOP_UP, ...(phone === undefined ? {} : { phone }) });
+      assert.deepEqual([r.status, r.body.error], [400, error], String(phone));
+    }
+    // Kazakhstan shares +7 with Russia: a Russian number is not a Kazakh top-up.
+    sell({ ...AIRTEL, id: 'beeline-kazakhstan', name: 'Beeline Kazakhstan', country: 'KZ', packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }] });
+    const kz = { productId: 'beeline-kazakhstan', packageValue: '100', email: 'buyer@example.com' };
+    assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...kz, phone: '+7 912 345 6789' })).body.error, 'spend_phone_invalid');
+    assert.equal(opened.length, 0);
+    assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...kz, phone: '+7 777 123 4567' })).status, 200);
+    assert.equal((opened[0] as { refillInput?: string }).refillInput, '77771234567');
+  });
+
+  it('sends no number with anything else, and buys no top-up where the calling code is unknown', async () => {
+    assert.deepEqual((await request(app()).post('/api/still/spend/orders').send({ ...ORDER, phone: '+49 151 2345 6789' })).body, { error: 'spend_request_invalid' });
+    sell({ ...AIRTEL, country: null });
+    assert.equal((await request(app()).post('/api/still/spend/orders').send({ ...TOP_UP, phone: '+91 98765 43210' })).body.error, 'spend_product_not_buyable');
     assert.equal(opened.length, 0);
   });
 });

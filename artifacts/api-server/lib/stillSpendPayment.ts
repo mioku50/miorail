@@ -97,12 +97,14 @@ export async function attachSpendPaymentV1(
 
   const usdcText = `${atomicToDecimalStringV1(assets, 6)} USDC`;
   const short = `${payTo.slice(0, 6)}…${payTo.slice(-4)}`;
+  // A face value says its currency: a top-up of "10" is 10 INR.
+  const packageText = payment.faceCurrency && /^\d+(?:\.\d+)?$/.test(payment.packageValue) ? `${payment.packageValue} ${payment.faceCurrency}` : payment.packageValue;
   const paying: LendingFactsV1 = {
     ...facts,
     payment,
     warnings: [
       ...facts.warnings,
-      `The same transaction then pays ${usdcText} to Bitrefill’s invoice address ${short} for ${payment.productName} · ${payment.packageValue}. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund.`,
+      `The same transaction then pays ${usdcText} to Bitrefill’s invoice address ${short} for ${payment.productName} · ${packageText}. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund.`,
     ],
   };
   const signingTermsHash = stableHashV1('still-spend-signing-terms/v1', { wallet, callsHash, loanSigningTermsHash: run.signingTermsHash, payment });

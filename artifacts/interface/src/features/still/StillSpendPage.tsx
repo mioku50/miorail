@@ -28,6 +28,7 @@ export function StillSpendPage() {
   const [selected, setSelected] = useState<string | null>(null);
   const [chosen, setChosen] = useState<string | null>(null);
   const [email, setEmail] = useState('');
+  const [phone, setPhone] = useState('');
   const [payError, setPayError] = useState<string | null>(null);
   // Gift cards are searched by brand when the person asks; data and top-ups list at once.
   const search = useStillSpendSearchV1({ type, country, query: type === 'giftcard' ? asked : '' });
@@ -47,7 +48,8 @@ export function StillSpendPage() {
     if (!view || chosen === null || order.isPending) return;
     setPayError(null);
     try {
-      const opened = spendOrderViewV1(await order.mutateAsync({ productId: view.id, packageValue: chosen, email: email.trim() }));
+      // A number goes only with a top-up, never with anything else the person picked after typing it.
+      const opened = spendOrderViewV1(await order.mutateAsync({ productId: view.id, packageValue: chosen, email: email.trim(), ...(view.phone ? { phone: phone.trim() } : {}) }));
       if (!opened) { setPayError(spendOrderErrorV1('unreadable')); return; }
       navigate(`/borrow?spend=${opened.orderId}`);
     } catch (error) {
@@ -68,7 +70,11 @@ export function StillSpendPage() {
         selected, onSelect: (id) => { setSelected(id); pick(null); },
         product: detail?.product ?? null, productLoading: product.isFetching, productError,
         room,
-        pay: payOpen ? { chosen, onChoose: pick, email, onEmail: (next) => { setEmail(next); setPayError(null); }, creating: order.isPending, error: payError, onCreate: () => void onCreate() } : null,
+        pay: payOpen ? {
+          chosen, onChoose: pick, email, onEmail: (next) => { setEmail(next); setPayError(null); },
+          phone, onPhone: (next) => { setPhone(next); setPayError(null); },
+          creating: order.isPending, error: payError, onCreate: () => void onCreate(),
+        } : null,
       }} />
     </StillFrame>
   );

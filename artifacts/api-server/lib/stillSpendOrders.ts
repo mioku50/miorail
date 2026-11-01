@@ -1,4 +1,4 @@
-import { createBitrefillGuestCheckoutV1, type BitrefillGuestCheckoutV1, type SpendProductV1 } from '@mioagent/commerce-engine';
+import { createBitrefillGuestCheckoutV1, spendCallingCodeV1, type BitrefillGuestCheckoutV1, type SpendProductV1 } from '@mioagent/commerce-engine';
 
 // ---------------------------------------------------------------------------
 // Still Spend, stage 3: the Bitrefill invoices people opened, held in memory.
@@ -26,14 +26,20 @@ export function stillSpendPayEnabledV1(env: NodeJS.ProcessEnv = process.env): bo
   return (env.STILL_SPEND_PAY_V1 ?? '').trim().toLowerCase() === 'on';
 }
 
+/** A phone top-up: Bitrefill needs the number it goes to. */
+export function spendNeedsPhoneV1(product: Pick<SpendProductV1, 'recipientType'>): boolean {
+  return /^phone/.test((product.recipientType ?? '').toLowerCase());
+}
+
 /** What Bitrefill needs besides an email: a phone number, an account, a
- * username. Still sends none of these, so such a product is not bought here.
- * An eSIM reports "mixed" and needs nothing more. */
-export function spendBuyableV1(product: Pick<SpendProductV1, 'id' | 'recipientType'>): boolean {
+ * username. Still sends a phone number, checked against the calling code of
+ * the operator's country, and nothing else, so a product needing an account
+ * or a username is not bought here. An eSIM reports "mixed" and needs nothing more. */
+export function spendBuyableV1(product: Pick<SpendProductV1, 'id' | 'recipientType' | 'country'>): boolean {
   const recipient = (product.recipientType ?? '').toLowerCase();
   if (recipient === '' || recipient === 'none') return true;
-  if (/phone/.test(recipient)) return false;
-  return !/mixed|account|email|user/.test(recipient) || /esim/i.test(product.id);
+  if (spendNeedsPhoneV1(product)) return spendCallingCodeV1(product.country) !== null;
+  return !/mixed|account|email|user|phone/.test(recipient) || /esim/i.test(product.id);
 }
 
 /** USDC base units of a decimal price, exactly, or null. */
@@ -53,6 +59,9 @@ export interface SpendOrderV1 {
   faceCurrency: string | null;
   priceAtomic: string;
   payTo: string;
+  /** The number a phone top-up goes to, in Bitrefill's digits; null for anything else.
+   * Its owner sees it until the order is forgotten; no log, database or loan carries it. */
+  refillTo: string | null;
   createdAt: string;
   expiresAt: string;
   accessToken: string;

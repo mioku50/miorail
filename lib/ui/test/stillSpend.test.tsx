@@ -5,9 +5,25 @@ import { renderToStaticMarkup } from 'react-dom/server';
 
 import { StillSpend, type StillSpendModelV1 } from '../src/still/StillSpend';
 import { skyStateV1 } from '../src/still/skyState';
-import { spendCountryDefaultV1, spendOrderErrorV1, spendOrderViewV1, spendPayOpenV1, spendProductViewV1, spendSearchViewV1 } from '../src/still/spendView';
+import {
+  SPEND_COUNTRIES_V1,
+  spendCountryDefaultV1,
+  spendCountryOptionsV1,
+  spendOrderErrorV1,
+  spendOrderViewV1,
+  spendPayOpenV1,
+  spendPhoneDraftV1,
+  spendProductViewV1,
+  spendSearchViewV1,
+} from '../src/still/spendView';
 
 void React;
+
+// Bitrefill's own reading of a top-up, made up in its shape: the number it goes to is the buyer's to give.
+const AIRTEL = { outcome: 'product', readAt: '2026-11-01T10:00:00.000Z', product: {
+  id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
+  packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }, { value: '120', faceCurrency: 'INR', priceUsdc: '1.31' }],
+} };
 
 const GERMANY = { outcome: 'product', readAt: '2026-11-01T10:00:00.000Z', product: {
   id: 'bitrefill-esim-germany', name: 'Bitrefill eSIM Germany', country: 'DE', inStock: true, recipientType: 'mixed', url: null,
@@ -62,13 +78,27 @@ describe('what a loan could pay for, as the page says it', () => {
     assert.equal(card.needs, null);
     const topUp = spendProductViewV1({ outcome: 'product', product: { id: 'ortel-germany', name: 'Ortel', recipientType: 'phone_number', packages: [] } }, null).product!;
     assert.equal(topUp.needs, 'Buying it needs the phone number to top up.');
+    assert.equal(topUp.phone, null);
     assert.equal(spendProductViewV1({ outcome: 'unavailable' }, null).product, null);
   });
 
   it('starts in the reader’s own country when the page offers it', () => {
     assert.equal(spendCountryDefaultV1('fr-FR'), 'FR');
+    assert.equal(spendCountryDefaultV1('ru-RU'), 'RU');
+    assert.equal(spendCountryDefaultV1('kk-KZ'), 'KZ');
     assert.equal(spendCountryDefaultV1('en'), 'DE');
     assert.equal(spendCountryDefaultV1('xx-ZZ'), 'DE');
+  });
+
+  it('offers every inhabited country but the embargoed ones, listed by name', () => {
+    const codes = new Set<string>(SPEND_COUNTRIES_V1);
+    assert.equal(codes.size, SPEND_COUNTRIES_V1.length);
+    for (const code of ['KZ', 'RU', 'IN', 'ID', 'PH', 'NG', 'UZ', 'KG', 'GE', 'AM', 'US', 'DE']) assert.equal(codes.has(code), true, code);
+    for (const code of ['CU', 'IR', 'KP', 'SY', 'AQ']) assert.equal(codes.has(code), false, code);
+    const names = spendCountryOptionsV1().map((country) => country.name);
+    assert.equal(names.length, SPEND_COUNTRIES_V1.length);
+    assert.deepEqual(names, [...names].sort((a, b) => a.localeCompare(b, 'en')));
+    assert.equal(spendCountryOptionsV1().find((country) => country.code === 'KZ')?.name, 'Kazakhstan');
   });
 });
 
@@ -91,8 +121,8 @@ describe('paying from Still, as the page says it', () => {
       order: { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', priceAtomic,
         expiresAt: '2026-11-01T12:15:00.000Z', paymentLink: 'https://www.bitrefill.com/invoice/x?token=t' }, status });
     assert.deepEqual(order('13250000'), { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days',
-      priceUsdc: '13.25', priceAtomic: '13250000', expiresAt: '2026-11-01T12:15:00.000Z', orderLink: 'https://www.bitrefill.com/order/1',
-      status: 'Payment confirmed', delivered: false, esimInstallLink: null });
+      packageLabel: '10GB, 30 Days', priceUsdc: '13.25', priceAtomic: '13250000', expiresAt: '2026-11-01T12:15:00.000Z', orderLink: 'https://www.bitrefill.com/order/1',
+      status: 'Payment confirmed', delivered: false, esimInstallLink: null, refillTo: null });
     assert.equal(order('13000000')!.priceUsdc, '13.00');
     assert.equal(order('13250001')!.priceUsdc, '13.250001');
     // No status read: the invoice page stands in, and no state is claimed.
@@ -100,11 +130,40 @@ describe('paying from Still, as the page says it', () => {
     assert.equal(order('13250000', { status: 'complete', accessLink: 'https://evil.example/order' })!.orderLink, 'https://www.bitrefill.com/invoice/x?token=t');
     assert.equal(order('13250000', { status: 'complete' })!.delivered, true);
     assert.equal(spendOrderViewV1({ order: { orderId: 'x' } }), null);
+    // A top-up's order says its face value and the number it goes to, as the server holds it.
+    const topUp = spendOrderViewV1({ order: { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Airtel India', packageValue: '10', faceCurrency: 'INR',
+      priceAtomic: '110000', expiresAt: '2026-11-01T12:15:00.000Z', paymentLink: null, refillTo: '+919876543210' }, status: null })!;
+    assert.deepEqual([topUp.packageLabel, topUp.priceUsdc, topUp.refillTo], ['10 INR', '0.11', '+919876543210']);
+    assert.equal(spendOrderViewV1({ order: { orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', productName: 'Airtel India', packageValue: '10', priceAtomic: '110000',
+      expiresAt: '2026-11-01T12:15:00.000Z', refillTo: '919876543210<script>' }, status: null })!.refillTo, null);
+  });
+
+  it('a top-up is paid only with its number, written with the operator’s calling code', () => {
+    const open = { ...AIRTEL, checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '91' } } };
+    const view = spendProductViewV1(open, { cents: '171', complete: true }).product!;
+    assert.deepEqual(view.phone, { callingCode: '91' });
+    assert.equal(view.needs, null);
+    assert.deepEqual(view.packages.map((row) => [row.label, row.price, row.payable, row.room]), [['10 INR', '0.11 USDC', true, 'within'], ['120 INR', '1.31 USDC', true, 'within']]);
+    // Without the calling code from the server there is no number to ask for, so nothing to pay.
+    const unsaid = spendProductViewV1({ ...open, checkout: { enabled: true, available: true, capAtomic: '100000000', phone: null } }, null).product!;
+    assert.deepEqual([unsaid.phone, unsaid.packages.map((row) => row.payable), unsaid.needs], [null, [false, false], 'Buying it needs the phone number to top up.']);
+    assert.equal(spendProductViewV1({ ...open, checkout: { ...open.checkout, phone: { callingCode: '+91' } } }, null).product!.phone, null);
+    // An eSIM never asks for a number, whatever the answer says.
+    assert.equal(spendProductViewV1({ ...GERMANY, checkout: open.checkout }, null).product!.phone, null);
+  });
+
+  it('reads a number as Still will send it, and only with the calling code', () => {
+    for (const written of ['+91 98765 43210', '0091 98765-43210', '(+91) 98765.43210', '919876543210']) assert.equal(spendPhoneDraftV1(written, '91'), '+919876543210', written);
+    for (const written of ['98765 43210', '+1 202 555 0100', '+91 12', 'call me', '+91 98765 43210 98765', '']) assert.equal(spendPhoneDraftV1(written, '91'), null, written);
+    assert.equal(spendPhoneDraftV1('+7 777 123 4567', '7'), '+77771234567');
   });
 
   it('says each refusal in the reader’s words, and anything unknown as nothing paid', () => {
     assert.match(spendOrderErrorV1('spend_over_cap'), /at most 100 USDC/);
     assert.match(spendOrderErrorV1('bitrefill_invoice_price_changed'), /different price/);
+    assert.match(spendOrderErrorV1('spend_phone_needed'), /phone number to top up/);
+    assert.match(spendOrderErrorV1('spend_phone_invalid'), /country code/);
+    assert.match(spendOrderErrorV1('spend_product_not_buyable'), /account or a username/);
     assert.match(spendOrderErrorV1('API error: 500 Internal Server Error'), /Nothing was paid/);
   });
 });
@@ -142,7 +201,7 @@ describe('the Spend page', () => {
   });
 
   it('with paying open, a price under the cap offers Pay with Still, and a chosen one asks for the receipt email', () => {
-    const pay = { chosen: null, onChoose: noop, email: '', onEmail: noop, creating: false, error: null, onCreate: noop };
+    const pay = { chosen: null, onChoose: noop, email: '', onEmail: noop, phone: '', onPhone: noop, creating: false, error: null, onCreate: noop };
     const open = { ...GERMANY, checkout: { enabled: true, available: true, capAtomic: '100000000' } };
     const html = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1(open, { cents: '1325', complete: true }).product, pay })} />);
     assert.match(html, /Pay with Still: a loan for the exact price pays Bitrefill in the same transaction/);
@@ -157,5 +216,24 @@ describe('the Spend page', () => {
     const closed = renderToStaticMarkup(<StillSpend model={model({ pay: null })} />);
     assert.doesNotMatch(closed, /Pay with Still<\/button>/);
     assert.match(closed, /Nothing can be bought here yet/);
+  });
+
+  it('a top-up asks for the number with its calling code, says what Bitrefill tops up, and waits for a whole number', () => {
+    const pay = { chosen: '10', onChoose: noop, email: 'buyer@example.com', onEmail: noop, phone: '', onPhone: noop, creating: false, error: null, onCreate: noop };
+    const open = { ...AIRTEL, checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '91' } } };
+    const product = spendProductViewV1(open, null).product;
+    const empty = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', product, pay })} />);
+    assert.match(empty, /0\.11 USDC for Airtel India · 10 INR/);
+    assert.match(empty, /<label class="still-borrow-label" for="[^"]+-phone">Phone number to top up<\/label>/);
+    assert.match(empty, /type="tel"[^>]*placeholder="\+91 …"/);
+    assert.match(empty, /Write it with the country code, \+91\. A top-up sent to a wrong number cannot be taken back\./);
+    assert.match(empty, /<button type="submit" class="still-btn" disabled="">Open invoice and choose collateral<\/button>/);
+    assert.doesNotMatch(empty, /Never buy a gift card/);
+    const typed = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', product, pay: { ...pay, phone: '+91 98765 43210' } })} />);
+    assert.match(typed, /Bitrefill tops up <strong class="mono">\+919876543210<\/strong>\./);
+    assert.match(typed, /<button type="submit" class="still-btn">Open invoice and choose collateral<\/button>/);
+    // A gift card or an eSIM never shows the field.
+    const esim = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1({ ...GERMANY, checkout: open.checkout }, null).product, pay: { ...pay, chosen: '10GB, 30 Days' } })} />);
+    assert.doesNotMatch(esim, /Phone number to top up/);
   });
 });

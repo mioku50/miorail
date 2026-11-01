@@ -59,7 +59,8 @@ export interface SpendInvoiceStatusV1 {
 export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string };
 
 export interface BitrefillGuestCheckoutV1 {
-  createInvoice(input: { productId: string; packageValue: string; email: string; quotedAtomic: bigint; now: Date }): Promise<SpendCheckoutResultV1<SpendInvoiceV1>>;
+  /** `refillInput` is the number a phone top-up goes to, from `spendPhoneV1`; nothing else needs one. */
+  createInvoice(input: { productId: string; packageValue: string; email: string; refillInput?: string; quotedAtomic: bigint; now: Date }): Promise<SpendCheckoutResultV1<SpendInvoiceV1>>;
   readInvoice(input: { invoiceId: string; accessToken: string }): Promise<SpendCheckoutResultV1<SpendInvoiceStatusV1>>;
 }
 
@@ -164,8 +165,9 @@ export function createBitrefillGuestCheckoutV1(options: BitrefillGuestOptionsV1 
   return {
     async createInvoice(input) {
       if (!SPEND_EMAIL_V1.test(input.email) || input.email.length > 254 || input.quotedAtomic <= 0n) return { ok: false, reason: 'bitrefill_refused' };
+      if (input.refillInput !== undefined && !/^\d{7,15}$/.test(input.refillInput)) return { ok: false, reason: 'bitrefill_refused' };
       const answer = await transport.callTool('buy-products', {
-        cart_items: [{ product_id: input.productId, package_value: input.packageValue }],
+        cart_items: [{ product_id: input.productId, package_value: input.packageValue, ...(input.refillInput !== undefined ? { refill_input: input.refillInput } : {}) }],
         payment_method: 'usdc_base',
         return_payment_link: false,
         email: input.email,

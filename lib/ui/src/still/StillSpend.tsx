@@ -5,9 +5,10 @@ import type { SkyStateV1 } from './skyState';
 import { StillHeader, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
 import {
-  SPEND_COUNTRIES_V1,
   SPEND_TYPES_V1,
   spendCountryNameV1,
+  spendCountryOptionsV1,
+  spendPhoneDraftV1,
   type SpendProductRowV1,
   type SpendOrderViewV1,
   type SpendProductViewV1,
@@ -45,6 +46,9 @@ export interface StillSpendModelV1 {
     onChoose: (value: string | null) => void;
     email: string;
     onEmail: (email: string) => void;
+    /** The number a top-up goes to, as the person writes it. */
+    phone: string;
+    onPhone: (phone: string) => void;
     creating: boolean;
     error: string | null;
     onCreate: () => void;
@@ -86,7 +90,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
           </div>
           <label className="still-borrow-label" htmlFor={`${id}-country`}>Country</label>
           <select id={`${id}-country`} className="still-borrow-stock-select" value={model.country} onChange={(event) => model.onCountry(event.target.value)}>
-            {SPEND_COUNTRIES_V1.map((code) => <option key={code} value={code}>{spendCountryNameV1(code)}</option>)}
+            {spendCountryOptionsV1().map((country) => <option key={country.code} value={country.code}>{country.name}</option>)}
           </select>
           {model.type === 'giftcard' ? (
             <form onSubmit={(event) => { event.preventDefault(); model.onSearch(); }}>
@@ -156,6 +160,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                   {model.pay && model.pay.chosen !== null ? (() => {
                     const chosen = product.packages.find((row) => row.value === model.pay!.chosen);
                     if (!chosen) return null;
+                    const number = product.phone ? spendPhoneDraftV1(model.pay!.phone, product.phone.callingCode) : null;
                     return (
                       <form className="still-spend-checkout" aria-labelledby={`${id}-pay`} onSubmit={(event) => { event.preventDefault(); model.pay!.onCreate(); }}>
                         <div className="still-step"><span className="n" aria-hidden="true">3</span>Pay</div>
@@ -171,10 +176,24 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                           <span aria-hidden="true" />
                         </div>
                         <p className="still-note">Bitrefill sends the receipt and the order there. Still passes it to Bitrefill and keeps no copy.</p>
+                        {product.phone ? (
+                          <>
+                            <label className="still-borrow-label" htmlFor={`${id}-phone`}>Phone number to top up</label>
+                            <div className="still-borrow-amount">
+                              <input id={`${id}-phone`} type="tel" inputMode="tel" autoComplete="tel" spellCheck={false} maxLength={32} value={model.pay.phone}
+                                onChange={(event) => model.pay!.onPhone(event.target.value)} placeholder={`+${product.phone.callingCode} …`} aria-describedby={`${id}-phone-help`} />
+                              <span aria-hidden="true" />
+                            </div>
+                            <p id={`${id}-phone-help`} className="still-note">
+                              {number ? <>Bitrefill tops up <strong className="mono">{number}</strong>. </> : <>Write it with the country code, +{product.phone.callingCode}. </>}
+                              A top-up sent to a wrong number cannot be taken back. Still passes the number to Bitrefill and holds it only while the invoice is open.
+                            </p>
+                          </>
+                        ) : null}
                         {model.type === 'giftcard' ? <p className="still-warn">Never buy a gift card because someone asked you to pay them with one. Nobody legitimate asks for that.</p> : null}
                         {model.pay.error ? <p className="still-warn" role="alert">{model.pay.error}</p> : null}
                         <div className="still-spend-checkout-actions">
-                          <button type="submit" className="still-btn" disabled={model.pay.creating || model.pay.email.trim() === ''}>
+                          <button type="submit" className="still-btn" disabled={model.pay.creating || model.pay.email.trim() === '' || (product.phone !== null && number === null)}>
                             {model.pay.creating ? 'Opening the invoice…' : 'Open invoice and choose collateral'}
                           </button>
                           <button type="button" className="still-btn sec" disabled={model.pay.creating} onClick={() => model.pay!.onChoose(null)}>Cancel</button>
@@ -206,7 +225,7 @@ export function StillSpendPaid({ order, reading }: { order: SpendOrderViewV1 | n
         <span className="still-extra-body">
           <span className="still-extra-title">{order?.delivered ? 'Bitrefill delivered your order' : 'Paid to Bitrefill in the same transaction'}</span>
           <span className="still-extra-note">
-            {order ? <>{order.productName} · {order.packageValue}. {order.status ? `Bitrefill: ${order.status}.` : 'Bitrefill’s status could not be read just now.'} </>
+            {order ? <>{order.productName} · {order.packageLabel}{order.refillTo ? ` for ${order.refillTo}` : ''}. {order.status ? `Bitrefill: ${order.status}.` : 'Bitrefill’s status could not be read just now.'} </>
               : reading ? 'Reading the order from Bitrefill… ' : ''}
             Bitrefill emails the receipt and the order to the address you gave.
           </span>

@@ -2035,7 +2035,7 @@ export function useStillSpendProductV1(id: string | null) {
  * paid here; the loan's own reviewed batch pays it. */
 export function useCreateStillSpendOrderV1() {
   return useMutation({
-    mutationFn: async (input: { productId: string; packageValue: string; email: string }) =>
+    mutationFn: async (input: { productId: string; packageValue: string; email: string; phone?: string }) =>
       fetchApi<unknown>('/api/still/spend/orders', { method: 'POST', body: JSON.stringify(input) }),
     retry: false,
   });

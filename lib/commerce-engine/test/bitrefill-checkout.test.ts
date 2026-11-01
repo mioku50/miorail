@@ -125,6 +125,16 @@ describe('Still’s guest checkout talks to Bitrefill only as it says', () => {
     assert.deepEqual(JSON.parse(calls[2]!.body).params, { name: 'get-invoice-by-id', arguments: { invoice_id: INVOICE_ID, invoice_access_token: 'access-token-0123456789' } });
   });
 
+  it('sends a top-up’s number as refill_input in its cart item, and only in Bitrefill’s digits', async () => {
+    const { fetchImpl, calls } = bitrefill([token, () => rpc(JSON.stringify(answer({ amount: '0.11' })))]);
+    const checkout = createBitrefillGuestCheckoutV1({ fetchImpl });
+    assert.equal((await checkout.createInvoice({ productId: 'airtel-india', packageValue: '10', email: 'buyer@example.com', refillInput: '+919876543210', quotedAtomic: 110_000n, now: NOW })).ok, false);
+    assert.equal(calls.length, 0);
+    const opened = await checkout.createInvoice({ productId: 'airtel-india', packageValue: '10', email: 'buyer@example.com', refillInput: '919876543210', quotedAtomic: 110_000n, now: NOW });
+    assert.equal(opened.ok, true);
+    assert.deepEqual(JSON.parse(calls[1]!.body).params.arguments.cart_items, [{ product_id: 'airtel-india', package_value: '10', refill_input: '919876543210' }]);
+  });
+
   it('sends nothing for an email Bitrefill would refuse, and a tool error is a refusal', async () => {
     const { fetchImpl, calls } = bitrefill([token, () => rpc('{"error":"INVALID_INPUT"}', true)]);
     const checkout = createBitrefillGuestCheckoutV1({ fetchImpl });

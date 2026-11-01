@@ -61,7 +61,7 @@ export interface StillBorrowModelV1 {
 export type StillBorrowSpendV1 =
   | { state: 'reading' }
   | { state: 'gone' }
-  | { state: 'ready'; productName: string; packageValue: string; priceUsdc: string; expiresAt: string };
+  | { state: 'ready'; productName: string; packageValue: string; priceUsdc: string; expiresAt: string; refillTo?: string | null };
 
 function heldUntilV1(iso: string): string {
   const at = new Date(iso);
@@ -107,7 +107,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
         ) : paying ? (
           <div className="still-section still-notice" role="note">
             <span>
-              <strong>Paying Bitrefill · {paying.productName} · {paying.packageValue}: {paying.priceUsdc} USDC.</strong>{' '}
+              <strong>Paying Bitrefill · {paying.productName} · {paying.packageValue}{paying.refillTo ? ` for ${paying.refillTo}` : ''}: {paying.priceUsdc} USDC.</strong>{' '}
               Bitrefill holds this price until {heldUntilV1(paying.expiresAt)}. The loan is exactly this amount, and the same transaction pays the invoice.
             </span>
           </div>

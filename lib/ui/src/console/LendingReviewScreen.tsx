@@ -58,7 +58,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           </> : <>
             <p className="still-sub">Borrow {facts.requestedAssets === null ? 'the measured amount' : usdc(facts.requestedAssets)} to this wallet.</p>
             {facts.payment ? <div className="still-notice" role="note"><span>
-              <strong>Then pay Bitrefill {usdc(facts.payment.assets)} for {facts.payment.productName} · {facts.payment.packageValue}, in the same transaction.</strong>{' '}
+              <strong>Then pay Bitrefill {usdc(facts.payment.assets)} for {facts.payment.productName} · {facts.payment.packageValue}{facts.payment.faceCurrency && /^\d+(?:\.\d+)?$/.test(facts.payment.packageValue) ? ` ${facts.payment.faceCurrency}` : ''}, in the same transaction.</strong>{' '}
               It goes to Bitrefill’s invoice address <span className="mono" style={{ overflowWrap: 'anywhere' }}>{facts.payment.payTo}</span>, which Still read from Bitrefill.
               Bitrefill holds this price until {new Date(facts.payment.expiresAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })}. The loan stays yours to repay.
             </span></div> : null}

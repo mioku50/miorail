@@ -13,11 +13,21 @@ export const SPEND_TYPES_V1: ReadonlyArray<{ type: SpendTypeV1; label: string; b
   { type: 'giftcard', label: 'Gift cards', blurb: 'Shops, travel, food and games' },
 ];
 
-/** Countries the page offers; Bitrefill serves more, and search narrows by brand. */
+/** Where the product is used: every inhabited country, and Bitrefill says what
+ * it has for each, nothing included. Cuba, Iran, North Korea and Syria are left
+ * out, as embargoed. */
 export const SPEND_COUNTRIES_V1 = [
-  'AE', 'AR', 'AT', 'AU', 'BE', 'BR', 'CA', 'CH', 'CL', 'CO', 'CZ', 'DE', 'DK', 'ES', 'FI', 'FR', 'GB', 'GR', 'HK', 'HU', 'ID', 'IE',
-  'IL', 'IN', 'IT', 'JP', 'KR', 'MX', 'MY', 'NG', 'NL', 'NO', 'NZ', 'PH', 'PL', 'PT', 'RO', 'SA', 'SE', 'SG', 'TH', 'TR', 'UA', 'US',
-  'VN', 'ZA',
+  'AD', 'AE', 'AF', 'AG', 'AI', 'AL', 'AM', 'AO', 'AR', 'AS', 'AT', 'AU', 'AW', 'AX', 'AZ', 'BA', 'BB', 'BD', 'BE', 'BF', 'BG', 'BH',
+  'BI', 'BJ', 'BL', 'BM', 'BN', 'BO', 'BQ', 'BR', 'BS', 'BT', 'BW', 'BY', 'BZ', 'CA', 'CC', 'CD', 'CF', 'CG', 'CH', 'CI', 'CK', 'CL',
+  'CM', 'CN', 'CO', 'CR', 'CV', 'CW', 'CX', 'CY', 'CZ', 'DE', 'DJ', 'DK', 'DM', 'DO', 'DZ', 'EC', 'EE', 'EG', 'EH', 'ER', 'ES', 'ET',
+  'FI', 'FJ', 'FK', 'FM', 'FO', 'FR', 'GA', 'GB', 'GD', 'GE', 'GF', 'GG', 'GH', 'GI', 'GL', 'GM', 'GN', 'GP', 'GQ', 'GR', 'GT', 'GU',
+  'GW', 'GY', 'HK', 'HN', 'HR', 'HT', 'HU', 'ID', 'IE', 'IL', 'IM', 'IN', 'IQ', 'IS', 'IT', 'JE', 'JM', 'JO', 'JP', 'KE', 'KG', 'KH',
+  'KI', 'KM', 'KN', 'KR', 'KW', 'KY', 'KZ', 'LA', 'LB', 'LC', 'LI', 'LK', 'LR', 'LS', 'LT', 'LU', 'LV', 'LY', 'MA', 'MC', 'MD', 'ME',
+  'MF', 'MG', 'MH', 'MK', 'ML', 'MM', 'MN', 'MO', 'MP', 'MQ', 'MR', 'MS', 'MT', 'MU', 'MV', 'MW', 'MX', 'MY', 'MZ', 'NA', 'NC', 'NE',
+  'NF', 'NG', 'NI', 'NL', 'NO', 'NP', 'NR', 'NU', 'NZ', 'OM', 'PA', 'PE', 'PF', 'PG', 'PH', 'PK', 'PL', 'PM', 'PN', 'PR', 'PS', 'PT',
+  'PW', 'PY', 'QA', 'RE', 'RO', 'RS', 'RU', 'RW', 'SA', 'SB', 'SC', 'SD', 'SE', 'SG', 'SH', 'SI', 'SJ', 'SK', 'SL', 'SM', 'SN', 'SO',
+  'SR', 'SS', 'ST', 'SV', 'SX', 'SZ', 'TC', 'TD', 'TG', 'TH', 'TJ', 'TK', 'TL', 'TM', 'TN', 'TO', 'TR', 'TT', 'TV', 'TW', 'TZ', 'UA',
+  'UG', 'US', 'UY', 'UZ', 'VA', 'VC', 'VE', 'VG', 'VI', 'VN', 'VU', 'WF', 'WS', 'YE', 'YT', 'ZA', 'ZM', 'ZW',
 ] as const;
 
 /** The reader's own country when the browser says it and the page offers it, else Germany. */
@@ -32,6 +42,22 @@ export function spendCountryNameV1(code: string): string {
   } catch {
     return code;
   }
+}
+
+let countryOptionsV1: ReadonlyArray<{ code: string; name: string }> | null = null;
+/** The page's countries by their English names, A to Z: a list this long is read by name, not by code. */
+export function spendCountryOptionsV1(): ReadonlyArray<{ code: string; name: string }> {
+  return countryOptionsV1 ??= SPEND_COUNTRIES_V1.map((code) => ({ code, name: spendCountryNameV1(code) })).sort((a, b) => a.name.localeCompare(b.name, 'en'));
+}
+
+/** The number as Still sends it, "+919876543210", when it is written with this
+ * calling code; else null. The server checks it again against the operator's
+ * own country before Bitrefill sees it. */
+export function spendPhoneDraftV1(raw: string, callingCode: string): string | null {
+  let digits = raw.trim().replace(/[\s().-]/g, '');
+  if (digits.startsWith('+')) digits = digits.slice(1);
+  else if (digits.startsWith('00')) digits = digits.slice(2);
+  return /^\d{7,15}$/.test(digits) && digits.startsWith(callingCode) && digits.length - callingCode.length >= 4 ? `+${digits}` : null;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -83,8 +109,10 @@ export interface SpendProductViewV1 {
   id: string;
   name: string;
   packages: SpendPackageRowV1[];
-  /** Said when buying would need something more, such as the number to top up. */
+  /** Said when buying would need something Still does not ask for, such as an account. */
   needs: string | null;
+  /** A top-up paid from Still asks for the number, written with this calling code; null for anything else. */
+  phone: { callingCode: string } | null;
   /** The most one purchase may cost when paid from Still, "100 USDC"; null when it cannot be paid here. */
   cap: string | null;
 }
@@ -106,6 +134,10 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
   const roomCents = room && /^\d{1,15}$/.test(room.cents) ? BigInt(room.cents) : null;
   const checkout = object(payload.checkout) ? payload.checkout : null;
   const capAtomic = checkout?.available === true && typeof checkout.capAtomic === 'string' && /^[1-9]\d{0,15}$/.test(checkout.capAtomic) ? BigInt(checkout.capAtomic) : null;
+  const recipient = typeof product.recipientType === 'string' ? product.recipientType : '';
+  const topUp = /phone/i.test(recipient);
+  const offered = topUp && capAtomic !== null && checkout && object(checkout.phone) ? checkout.phone : null;
+  const phone = offered && typeof offered.callingCode === 'string' && /^[1-9]\d{0,3}$/.test(offered.callingCode) ? { callingCode: offered.callingCode } : null;
   const packages: SpendPackageRowV1[] = [];
   for (const row of product.packages) {
     if (!object(row) || !text(row.value, 80) || typeof row.priceUsdc !== 'string') continue;
@@ -115,15 +147,15 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
     const fits = roomCents === null ? null : cents <= roomCents ? 'within' as const : room!.complete ? 'over' as const : null;
     // A share of a partial room would overstate it, so the bar is drawn only against a whole one.
     const share = roomCents === null || !room!.complete || roomCents === 0n ? null : cents >= roomCents ? 1 : Number(cents) / Number(roomCents);
-    const payable = capAtomic !== null && cents * 10_000n <= capAtomic;
+    // A top-up is paid only with the number it goes to.
+    const payable = capAtomic !== null && cents * 10_000n <= capAtomic && (!topUp || phone !== null);
     packages.push({ value: row.value, label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share, payable });
   }
-  const recipient = typeof product.recipientType === 'string' ? product.recipientType : '';
-  const needs = /phone/i.test(recipient) ? 'Buying it needs the phone number to top up.'
+  const needs = topUp ? phone ? null : 'Buying it needs the phone number to top up.'
     : /mixed|account|email|user/i.test(recipient) && !/esim/i.test(product.id) ? 'Buying it may need an account, an email or a number for the recipient.'
       : null;
   const cap = capAtomic === null ? null : `${(capAtomic / 1_000_000n).toString()} USDC`;
-  return { product: { id: product.id, name: product.name, packages, needs, cap }, error: null };
+  return { product: { id: product.id, name: product.name, packages, needs, phone, cap }, error: null };
 }
 
 /** An invoice the reader opened, as their page shows it. */
@@ -131,6 +163,8 @@ export interface SpendOrderViewV1 {
   orderId: string;
   productName: string;
   packageValue: string;
+  /** "10GB, 30 Days", or "10 INR" for a face value. */
+  packageLabel: string;
   /** "13.25", decimal USDC */
   priceUsdc: string;
   priceAtomic: string;
@@ -141,6 +175,8 @@ export interface SpendOrderViewV1 {
   status: string | null;
   delivered: boolean;
   esimInstallLink: string | null;
+  /** The number a top-up goes to, "+919876543210"; null for anything else. */
+  refillTo: string | null;
 }
 
 const STATUS_WORDS_V1: Record<string, string> = {
@@ -165,11 +201,13 @@ export function spendOrderViewV1(payload: unknown): SpendOrderViewV1 | null {
       typeof order.priceAtomic !== 'string' || !/^[1-9]\d{0,15}$/.test(order.priceAtomic) || typeof order.expiresAt !== 'string' || !Number.isFinite(Date.parse(order.expiresAt))) return null;
   const atomic = BigInt(order.priceAtomic), micro = (atomic % 1_000_000n).toString().padStart(6, '0'), trimmed = micro.replace(/0+$/, '');
   const state = typeof status?.status === 'string' && STATUS_WORDS_V1[status.status] ? status.status : null;
+  const face = typeof order.faceCurrency === 'string' && /^[A-Z]{3}$/.test(order.faceCurrency) && /^\d+(?:\.\d+)?$/.test(order.packageValue) ? ` ${order.faceCurrency}` : '';
   return {
-    orderId: order.orderId, productName: order.productName, packageValue: order.packageValue,
+    orderId: order.orderId, productName: order.productName, packageValue: order.packageValue, packageLabel: `${order.packageValue}${face}`,
     priceUsdc: `${(atomic / 1_000_000n).toString()}.${trimmed.length <= 2 ? micro.slice(0, 2) : trimmed}`, priceAtomic: order.priceAtomic, expiresAt: order.expiresAt,
     orderLink: link(status?.accessLink) ?? link(order.paymentLink),
     status: state ? STATUS_WORDS_V1[state]! : null, delivered: state === 'complete', esimInstallLink: link(status?.esimInstallLink),
+    refillTo: typeof order.refillTo === 'string' && /^\+\d{7,15}$/.test(order.refillTo) ? order.refillTo : null,
   };
 }
 
@@ -179,7 +217,9 @@ export function spendOrderErrorV1(message: string): string {
   switch (code) {
     case 'spend_pay_off': return 'Paying from Still is not switched on yet.';
     case 'spend_over_cap': return 'One purchase paid from Still can cost at most 100 USDC.';
-    case 'spend_product_not_buyable': return 'This product needs details Still does not send, such as a phone number.';
+    case 'spend_product_not_buyable': return 'This product needs details Still does not send, such as an account or a username.';
+    case 'spend_phone_needed': return 'Write the phone number to top up.';
+    case 'spend_phone_invalid': return 'Check the phone number: write it with the country code of the operator’s country, as the field shows.';
     case 'spend_package_not_offered': return 'Bitrefill no longer offers this package at this price. Read the product again.';
     case 'bitrefill_invoice_price_changed': return 'Bitrefill’s invoice asked a different price than it quoted a moment before. Nothing was opened to pay; read the product again.';
     case 'spend_rate_limited': return 'You opened several invoices this hour. Try again later.';

@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import {
   SPEND_PRODUCT_TYPES_V1,
   createBitrefillGuestCatalogV1,
+  spendCallingCodeV1,
   type BitrefillGuestCatalogV1,
   type SpendFailureV1,
   type SpendProductTypeV1,
@@ -12,7 +13,7 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { renderCardPngV1 } from '../lib/cardImage.js';
 import { stillBrandCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
-import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
+import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
 
 // ---------------------------------------------------------------------------
@@ -190,7 +191,9 @@ publicStillRouter.get('/spend/product', async (req: Request, res: Response) => {
     });
     // Whether it can be paid from Still now is read per request, never cached with the catalogue.
     const available = stillSpendPayEnabledV1() && body.product.inStock && spendBuyableV1(body.product);
-    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1(), available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString() } });
+    // A top-up asks for the number it goes to, written with this calling code.
+    const callingCode = available && spendNeedsPhoneV1(body.product) ? spendCallingCodeV1(body.product.country) : null;
+    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1(), available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString(), phone: callingCode ? { callingCode } : null } });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
     if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend product failed', { errorName: error instanceof Error ? error.name : typeof error });
