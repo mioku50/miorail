@@ -30,6 +30,8 @@ export type LendingExecutionStateV1 = 'ready' | 'awaiting_wallet' | 'submitted' 
 export interface LendingExecutionWireV1 {
   executionId: string; state: LendingExecutionStateV1;
   transactionHash: string | null; errorCode: string | null;
+  /** Still Spend: a confirmed loan that paid an invoice offers its owner a card to share. */
+  share?: { path: string } | null;
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2000;

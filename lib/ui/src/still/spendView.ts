@@ -241,3 +241,34 @@ export function spendOrderErrorV1(message: string): string {
     default: return 'Bitrefill’s invoice could not be opened just now. Nothing was paid. Try again in a minute.';
   }
 }
+
+/** A purchase card's link as the server issued it, /spend/p/<token>, or null. */
+export function spendSharePathV1(value: unknown): string | null {
+  return typeof value === 'string' && /^\/spend\/p\/ss1\.[A-Za-z0-9_-]{1,1100}\.[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
+}
+
+export interface SpendShareViewV1 {
+  productName: string;
+  packageLabel: string;
+  priceUsdc: string;
+  collateralLabel: string;
+  collateralName: string;
+  venueName: 'Aave' | 'Morpho';
+}
+
+/** A shared purchase as the server verified its link; null when it did not. */
+export function spendShareViewV1(payload: unknown): SpendShareViewV1 | null {
+  if (!object(payload) || payload.outcome !== 'share' || !object(payload.share)) return null;
+  const s = payload.share;
+  if (!text(s.productName, 120) || !text(s.packageLabel, 84) || typeof s.priceUsdc !== 'string' || !/^\d{1,7}\.\d{2,6}$/.test(s.priceUsdc) ||
+      !text(s.collateralLabel, 12) || !text(s.collateralName, 40) || (s.venueName !== 'Aave' && s.venueName !== 'Morpho')) return null;
+  return { productName: s.productName, packageLabel: s.packageLabel, priceUsdc: s.priceUsdc, collateralLabel: s.collateralLabel,
+    collateralName: s.collateralName, venueName: s.venueName };
+}
+
+/** What a post says beside its card; the card says the rest. A stock token
+ * (NVDAc) is named by its ticker, as the card names it. */
+export function spendShareTextV1(input: { productName: string; collateralSymbol: string }): string {
+  const collateral = /^[A-Z]{1,6}c$/.test(input.collateralSymbol) ? input.collateralSymbol.slice(0, -1) : input.collateralSymbol;
+  return `Paid for ${input.productName} with a USDC loan against my ${collateral}, without selling it. One transaction on Base, through Still.`;
+}

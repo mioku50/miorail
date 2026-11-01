@@ -4,6 +4,7 @@ import { formatCents } from '@mioagent/still-engine/format';
 import { homeViewV1, type MobileInputV1 } from '../../../lib/ui/src/still/homeView.js';
 import { mobileLayoutV1 } from '../../../lib/ui/src/still/mobileLayout.js';
 import { skyStateV1 } from '../../../lib/ui/src/still/skyState.js';
+import { stillSpendShareWordsV1, type StillSpendShareV1 } from './stillSpendShare.js';
 
 // ---------------------------------------------------------------------------
 // Still's pictures for a shared link: X and link previews take 1200 x 630,
@@ -210,5 +211,48 @@ export function stillWalletCardSvgV1(shape: StillCardShapeV1, report: MirrorRepo
       return parts.join('');
     },
     amount ? `${who}: ${amount.atLeast ? 'at least ' : ''}${amount.dollars}${amount.cents} modelled borrowing room on Still, read from Base at block ${block}.` : `${who} on Still: not read this time.`,
+  );
+}
+
+/** Base's own mark, The Square, as its brand kit draws it: Base Blue, never recoloured or altered. */
+const BASE_SQUARE_PATH_V1 =
+  'M0,101.12c0-34.64,0-51.95,6.53-65.28,6.25-12.76,16.56-23.07,29.32-29.32C49.17,0,66.48,0,101.12,0h1077.76c34.63,0,51.96,0,65.28,6.53,12.75,6.25,23.06,16.56,29.32,29.32,6.52,13.32,6.52,30.64,6.52,65.28v1077.76c0,34.63,0,51.96-6.52,65.28-6.26,12.75-16.57,23.06-29.32,29.32-13.32,6.52-30.65,6.52-65.28,6.52H101.12c-34.64,0-51.95,0-65.28-6.52-12.76-6.26-23.07-16.57-29.32-29.32-6.53-13.32-6.53-30.65-6.53-65.28V101.12Z';
+
+function baseSquareV1(x: number, y: number, side: number): string {
+  return `<path transform="translate(${x} ${y}) scale(${(side / 1280).toFixed(5)})" fill="#0000FF" d="${BASE_SQUARE_PATH_V1}"/>`;
+}
+
+/** A Still Spend purchase, as its owner shared it: what a loan paid for and
+ * against what. It names no wallet and no transaction (stillSpendShare.ts). */
+export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendShareV1): string {
+  const words = stillSpendShareWordsV1(share);
+  const mobile: MobileInputV1 = {
+    holdings: [{ id: 'collateral', kind: words.collateralKind, label: words.collateralLabel, valueCents: 90_000 }],
+    // The square is the loan and carries what it paid; its size claims nothing.
+    loan: { owedCents: 40_000, limitCents: 60_000, weekdayLimitCents: null, owedLabel: words.priceUsdc.replace(/\.00$/, '') },
+    state: 'calm',
+  };
+  return frameV1(
+    shape,
+    mobile,
+    ({ x, top, bottom, width }) => {
+      const product = wrapV1(share.productName, 54, width, 2);
+      const productTop = top + 196;
+      const last = productTop + (product.length - 1) * 62;
+      return [
+        brandV1(x, top + 18),
+        `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">PAID WITH A LOAN · NOTHING SOLD</text>`,
+        textLinesV1(product, x, productTop, 54, 62, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
+        `<text x="${x}" y="${last + 58}" font-family="${SANS}" font-size="34" fill="${INK}">${escapeXmlV1(share.packageLabel)}<tspan fill="${INK2}">\u00a0·\u00a0</tspan><tspan font-weight="600">${escapeXmlV1(words.priceUsdc)} USDC</tspan></text>`,
+        textLinesV1(
+          wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}, and paid Bitrefill in the same transaction.`, 24, width, 3),
+          x, last + 112, 24, 34, `font-family="${SANS}" fill="${INK2}"`,
+        ),
+        baseSquareV1(x, bottom - 26, 24),
+        `<text x="${x + 38}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">CHECKED ONCHAIN ON BASE</text>`,
+        `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">STILLS.LAT</text>`,
+      ].join('');
+    },
+    `Paid for ${share.productName} (${share.packageLabel}, ${words.priceUsdc} USDC) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
   );
 }

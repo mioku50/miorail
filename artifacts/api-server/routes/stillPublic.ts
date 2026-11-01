@@ -12,9 +12,10 @@ import { stillTerms } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { renderCardPngV1 } from '../lib/cardImage.js';
-import { stillBrandCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
+import { stillBrandCardSvgV1, stillSpendCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
+import { stillSpendShareWordsV1, verifyStillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
 
 // ---------------------------------------------------------------------------
@@ -39,11 +40,15 @@ export const publicStillRuntimeV1 = {
   spend: (): BitrefillGuestCatalogV1 => (spendCatalogV1 ??= createBitrefillGuestCatalogV1()),
   now: () => new Date(),
   renderPng: (svg: string): Promise<Uint8Array> => renderCardPngV1(svg),
+  /** What signs a shared Still Spend purchase (stillSpendShare.ts). */
+  secret: () => (process.env.SESSION_SECRET ?? '').trim(),
 };
 
 /** A wallet's card for ten minutes: a shared link is fetched by every client that shows it. */
 const walletCardCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 256 });
 const brandCardCacheV1 = createPublicReadCacheV1({ ttlMs: 24 * 60 * 60_000, max: 2 });
+/** A purchase card says only what its signed link says, so a day is as good as forever. */
+const spendCardCacheV1 = createPublicReadCacheV1({ ttlMs: 24 * 60 * 60_000, max: 256 });
 
 /** Bitrefill's catalogue moves in hours (they advise refreshing hourly), so a
  * search is kept half an hour and a product's prices a quarter of one. */
@@ -54,6 +59,7 @@ const spendProductCacheV1 = createPublicReadCacheV1({ ttlMs: 15 * 60_000, max: 4
 export function resetStillCardCachesV1(): void {
   walletCardCacheV1.clear();
   brandCardCacheV1.clear();
+  spendCardCacheV1.clear();
   spendSearchCacheV1.clear();
   spendProductCacheV1.clear();
 }
@@ -105,6 +111,13 @@ publicStillRouter.get('/terms', async (_req: Request, res: Response) => {
   }
 });
 
+function sendCardPngV1(res: Response, png: Uint8Array, maxAge: number): void {
+  res.setHeader('Cache-Control', `public, max-age=${maxAge}`);
+  res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
+  res.status(200).type('png').send(Buffer.from(png));
+}
+const brandCardPngV1 = (shape: StillCardShapeV1) => brandCardCacheV1.read(shape, () => publicStillRuntimeV1.renderPng(stillBrandCardSvgV1(shape)));
+
 /**
  * The picture a shared /w/ link previews as: 1200 x 630 for X and link
  * previews, `shape=tall` (3:2) for a Farcaster cast. It is the public check
@@ -119,12 +132,8 @@ publicStillRouter.get('/card.png', async (req: Request, res: Response) => {
     res.status(400).json({ outcome: 'invalid_subject', input: '', reason: 'not_an_address_or_name' });
     return;
   }
-  const send = (png: Uint8Array, maxAge: number) => {
-    res.setHeader('Cache-Control', `public, max-age=${maxAge}`);
-    res.setHeader('Cross-Origin-Resource-Policy', 'cross-origin');
-    res.status(200).type('png').send(Buffer.from(png));
-  };
-  const brand = () => brandCardCacheV1.read(shape, () => publicStillRuntimeV1.renderPng(stillBrandCardSvgV1(shape)));
+  const send = (png: Uint8Array, maxAge: number) => sendCardPngV1(res, png, maxAge);
+  const brand = () => brandCardPngV1(shape);
   try {
     if (!subject) {
       send(await brand(), 86_400);
@@ -143,6 +152,40 @@ publicStillRouter.get('/card.png', async (req: Request, res: Response) => {
     logger.warn('Still card render failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });
   }
+});
+
+/**
+ * A shared Still Spend purchase (stillSpendShare.ts): the claim is in the link,
+ * signed, so the picture reads nothing and is the same every time. A link this
+ * server did not sign gets Still's own picture, which says nothing about it.
+ */
+publicStillRouter.get('/spend-card.png', async (req: Request, res: Response) => {
+  const shape: StillCardShapeV1 = req.query.shape === 'tall' ? 'tall' : 'wide';
+  const token = typeof req.query.t === 'string' ? req.query.t : '';
+  const share = verifyStillSpendShareV1(token, publicStillRuntimeV1.secret());
+  try {
+    if (!share) {
+      sendCardPngV1(res, await brandCardPngV1(shape), 60);
+      return;
+    }
+    sendCardPngV1(res, await spendCardCacheV1.read(`${token}|${shape}`, () => publicStillRuntimeV1.renderPng(stillSpendCardSvgV1(shape, share))), 86_400);
+  } catch (error) {
+    logger.warn('Still Spend card render failed', { errorName: error instanceof Error ? error.name : typeof error });
+    res.status(500).json({ outcome: 'internal_error' });
+  }
+});
+
+/** The same claim in words, for the page a shared purchase link opens. */
+publicStillRouter.get('/spend-share', (req: Request, res: Response) => {
+  const share = verifyStillSpendShareV1(typeof req.query.t === 'string' ? req.query.t : '', publicStillRuntimeV1.secret());
+  if (!share) {
+    res.status(404).json({ outcome: 'share_invalid' });
+    return;
+  }
+  const words = stillSpendShareWordsV1(share);
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json({ outcome: 'share', share: { productName: share.productName, packageLabel: share.packageLabel, priceUsdc: words.priceUsdc,
+    collateralLabel: words.collateralLabel, collateralName: words.collateralName, venueName: words.venueName } });
 });
 
 // ---------------------------------------------------------------------------

@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { StillSpend, type StillSpendModelV1 } from '../src/still/StillSpend';
+import { StillSpend, StillSpendPaid, StillSpendShared, type StillSpendModelV1 } from '../src/still/StillSpend';
 import { skyStateV1 } from '../src/still/skyState';
 import {
   SPEND_COUNTRIES_V1,
@@ -16,6 +16,9 @@ import {
   spendPhonePrefixesTextV1,
   spendProductViewV1,
   spendSearchViewV1,
+  spendSharePathV1,
+  spendShareTextV1,
+  spendShareViewV1,
 } from '../src/still/spendView';
 
 void React;
@@ -256,5 +259,47 @@ describe('the Spend page', () => {
     // A gift card or an eSIM never shows the field.
     const esim = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1({ ...GERMANY, checkout: open.checkout }, null).product, pay: { ...pay, chosen: '10GB, 30 Days' } })} />);
     assert.doesNotMatch(esim, /Phone number to top up/);
+  });
+});
+
+describe('a purchase, shared', () => {
+  const TOKEN = `ss1.${'e'.repeat(120)}.${'s'.repeat(43)}`;
+  const SHARE = { outcome: 'share', share: { productName: 'PUBG Mobile UC International', packageLabel: '10 UC', priceUsdc: '0.18',
+    collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } };
+
+  it('takes only a link the server issued, and only the words it verified', () => {
+    assert.equal(spendSharePathV1(`/spend/p/${TOKEN}`), `/spend/p/${TOKEN}`);
+    for (const bad of [`https://evil.example/spend/p/${TOKEN}`, `/spend/p/${TOKEN}/x`, '/spend/p/ss1.a.b', `/w/${TOKEN}`, null, 7]) assert.equal(spendSharePathV1(bad), null);
+    assert.deepEqual(spendShareViewV1(SHARE), SHARE.share);
+    assert.equal(spendShareViewV1({ outcome: 'share_invalid' }), null);
+    assert.equal(spendShareViewV1({ ...SHARE, share: { ...SHARE.share, venueName: 'Elsewhere' } }), null);
+    assert.equal(spendShareViewV1({ ...SHARE, share: { ...SHARE.share, priceUsdc: '0.18 USDC' } }), null);
+    // A stock token is named by its ticker, as the card names it; crypto keeps its symbol.
+    assert.equal(spendShareTextV1({ productName: 'PUBG Mobile UC International', collateralSymbol: 'NVDAc' }),
+      'Paid for PUBG Mobile UC International with a USDC loan against my NVDA, without selling it. One transaction on Base, through Still.');
+    assert.match(spendShareTextV1({ productName: 'Bitrefill eSIM Germany', collateralSymbol: 'cbBTC' }), /against my cbBTC,/);
+  });
+
+  it('after the loan is confirmed, offers X and Farcaster with the stills.lat link once the server signed one', () => {
+    const order = spendOrderViewV1({ order: { orderId: '2ff5ad58-0000-4000-8000-000000000000', productName: 'PUBG Mobile UC International', packageValue: '10 UC',
+      faceCurrency: null, priceAtomic: '180000', expiresAt: '2026-11-01T16:00:00.000Z', paymentLink: null }, status: { status: 'complete' } });
+    const url = `https://stills.lat/spend/p/${TOKEN}`;
+    const html = renderToStaticMarkup(<StillSpendPaid order={order} reading={false} share={{ url, text: 'Paid for PUBG Mobile UC International with a USDC loan.' }} />);
+    assert.match(html, /Share this purchase:/);
+    assert.ok(html.includes(`https://x.com/intent/tweet?text=Paid%20for%20PUBG%20Mobile%20UC%20International%20with%20a%20USDC%20loan.&amp;url=${encodeURIComponent(url)}`));
+    assert.ok(html.includes(`https://farcaster.xyz/~/compose?text=Paid%20for%20PUBG%20Mobile%20UC%20International%20with%20a%20USDC%20loan.&amp;embeds[]=${encodeURIComponent(url)}`));
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendPaid order={order} reading={false} />), /Share this purchase/);
+  });
+
+  it('a shared link shows its card and words, and an unverified one shows nothing it claims', () => {
+    const sky = skyStateV1({ now: new Date('2026-11-01T15:00:00Z') });
+    const html = renderToStaticMarkup(<StillSpendShared sky={sky} view={spendShareViewV1(SHARE)} reading={false} cardUrl="/api/public/still/spend-card.png?t=x" />);
+    assert.match(html, /Paid with a loan/);
+    assert.match(html, /PUBG Mobile UC International, 10 UC, for 0\.18 USDC\. Borrowed against NVDA through Aave and paid to Bitrefill in the same transaction on Base, without selling\./);
+    assert.match(html, /<img class="still-spend-card" src="\/api\/public\/still\/spend-card\.png\?t=x"/);
+    assert.match(html, /Not offered to US persons/);
+    const unverified = renderToStaticMarkup(<StillSpendShared sky={sky} view={null} reading={false} cardUrl={null} />);
+    assert.match(unverified, /could not be verified, so nothing about it is shown/);
+    assert.doesNotMatch(unverified, /<img|Still checked this loan/);
   });
 });

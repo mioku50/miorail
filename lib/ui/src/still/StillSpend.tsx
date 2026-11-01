@@ -1,6 +1,8 @@
 import React, { useEffect, useId, useRef } from 'react';
 import { formatCents } from '@mioagent/still-engine/format';
 
+import { composerLinksV1 } from '../console/composerLinks';
+import { ShareLinkV1 } from '../console/shareHost';
 import type { SkyStateV1 } from './skyState';
 import { StillHeader, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
@@ -12,6 +14,7 @@ import {
   spendPhonePrefixesTextV1,
   type SpendProductRowV1,
   type SpendOrderViewV1,
+  type SpendShareViewV1,
   type SpendProductViewV1,
   type SpendTypeV1,
 } from './spendView';
@@ -236,8 +239,11 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
 }
 
 /** After the loan that paid it is confirmed: where the Bitrefill order stands,
- * as Bitrefill says, and its own page. Still proves the payment, not the delivery. */
-export function StillSpendPaid({ order, reading }: { order: SpendOrderViewV1 | null; reading: boolean }) {
+ * as Bitrefill says, and its own page. Still proves the payment, not the delivery.
+ * The server offers a card to share once it confirmed the loan onchain; the
+ * link names the purchase and never the wallet. */
+export function StillSpendPaid({ order, reading, share }: { order: SpendOrderViewV1 | null; reading: boolean; share?: { url: string; text: string } | null }) {
+  const links = share ? composerLinksV1(share) : null;
   return (
     <div className="still-section still-extras" aria-label="Your Bitrefill order">
       <div className="still-extra">
@@ -252,6 +258,43 @@ export function StillSpendPaid({ order, reading }: { order: SpendOrderViewV1 | n
           {order?.esimInstallLink ? <a className="still-share-link" href={order.esimInstallLink} target="_blank" rel="noreferrer">Install the eSIM</a> : null}
         </span>
         {order?.orderLink ? <a className="still-extra-action" href={order.orderLink} target="_blank" rel="noreferrer">Open order</a> : null}
+      </div>
+      {links ? (
+        <div className="still-share">
+          <span className="still-note">Share this purchase:</span>
+          <ShareLinkV1 href={links.x} className="still-share-link">Post on X</ShareLinkV1>
+          <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** A purchase someone shared, as the server verified its link: the card, what
+ * it says, and Still's door. It names no wallet: the server signed the claim
+ * only after the loan that paid it was confirmed onchain. */
+export function StillSpendShared({ sky, view, reading, cardUrl }: { sky: SkyStateV1; view: SpendShareViewV1 | null; reading: boolean; cardUrl: string | null }) {
+  return (
+    <div className="still-borrow still-spend">
+      <StillHeader
+        title={view ? 'Paid with a loan' : 'Spend'}
+        sky={sky}
+        lede={view
+          ? `${view.productName}, ${view.packageLabel}, for ${view.priceUsdc} USDC. Borrowed against ${view.collateralLabel} through ${view.venueName} and paid to Bitrefill in the same transaction on Base, without selling.`
+          : reading ? 'Reading this purchase…' : 'This purchase card could not be verified, so nothing about it is shown.'}
+      />
+      {view && cardUrl ? (
+        <div className="still-section">
+          <img className="still-spend-card" src={cardUrl} width={1200} height={630}
+            alt={`Paid for ${view.productName} (${view.packageLabel}, ${view.priceUsdc} USDC) with a loan against ${view.collateralLabel} through ${view.venueName}, on Still.`} />
+        </div>
+      ) : null}
+      <div className="still-section still-borrow-foot">
+        <p className="still-note">
+          {view ? 'Still checked this loan onchain before it signed the card. ' : ''}
+          Still is not a lender: a wallet borrows from the lending protocol directly, and Bitrefill sells under its own terms. A loan creates debt, and collateral can be liquidated. Not offered to US persons.
+        </p>
+        <StillLink href="/spend">See what a loan could pay for</StillLink>
       </div>
     </div>
   );

@@ -92,6 +92,7 @@ const StillBorrowPage = lazy(() =>
 );
 const StillRepayPage = lazy(() => import('../features/still/StillRepayPage').then(m => ({ default: m.StillRepayPage })));
 const StillSpendPage = lazy(() => import('../features/still/StillSpendPage').then(m => ({ default: m.StillSpendPage })));
+const StillSpendSharePage = lazy(() => import('../features/still/StillSpendSharePage').then(m => ({ default: m.StillSpendSharePage })));
 const LendingReviewPage = lazy(() => import('../features/rwa/LendingReviewPage').then(m => ({ default: m.LendingReviewPage })));
 const TodayPage = lazy(() =>
   import('../features/today/TodayPage').then((m) => ({ default: m.TodayPage })),
@@ -432,6 +433,10 @@ export function App() {
         </Route>
         <Route path="/spend">
           <StillSpendPage />
+        </Route>
+        {/* A purchase someone shared: public, from its signed link alone. */}
+        <Route path="/spend/p/:token">
+          <StillSpendSharePage />
         </Route>
         <Route path="/assistants">
           <StillAssistantsPage />

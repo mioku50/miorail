@@ -19,6 +19,7 @@ import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { bindLoanStepV1, recheckLoanStepsV1 } from '../lib/lendingSteps.js';
+import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -274,5 +275,7 @@ rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   });
   if (!record) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
   res.json({ ...loanExecutionWireV1(record), facts: record.run.facts,
-    transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode });
+    transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode,
+    // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.
+    share: loanExecutionShareV1(record, rwaLendingRuntimeV1.secret()) });
 });

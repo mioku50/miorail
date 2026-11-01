@@ -2053,6 +2053,17 @@ export function useStillSpendOrderV1(orderId: string | null, options?: { refetch
   });
 }
 
+/** A shared Still Spend purchase: the claim its link carries, as the server verifies it. Public. */
+export function useStillSpendShareV1(token: string | null) {
+  return useQuery({
+    queryKey: ['still-spend-share', token],
+    enabled: token !== null,
+    retry: false,
+    staleTime: 60 * 60_000,
+    queryFn: async () => fetchApi<unknown>(`/api/public/still/spend-share?t=${encodeURIComponent(token!)}`),
+  });
+}
+
 /** Still's terms with no wallet: the shares, the closed-market window and each stock's earnings window. */
 export function useStillTerms(options?: { enabled?: boolean }) {
   return useQuery({

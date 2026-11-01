@@ -5,7 +5,7 @@ import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
-import { StillFrame, StillLoanAlertsOffer, StillSpendPaid, spendOrderViewV1 } from '@mioagent/ui/still';
+import { StillFrame, StillLoanAlertsOffer, StillSpendPaid, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
@@ -52,11 +52,16 @@ export function LendingReviewPage() {
   const order = useStillSpendOrderV1(paidOrder, { refetchInterval: delivered ? false : 15_000 });
   const orderView = order.data !== undefined ? spendOrderViewV1(order.data) : null;
   useEffect(() => { if (orderView?.delivered) setDelivered(true); }, [orderView?.delivered]);
+  // The card the server signed once it confirmed the loan; its link names the purchase, never the wallet.
+  const sharePath = paidOrder ? spendSharePathV1(review.model.execution?.share?.path) : null;
+  const facts = review.model.body?.facts;
+  const share = sharePath && facts?.payment ? { url: `https://stills.lat${sharePath}`,
+    text: spendShareTextV1({ productName: facts.payment.productName, collateralSymbol: facts.collateralSymbol }) } : null;
   return <StillFrame tab="assets" sky={sky}>{session.booting
     ? <p className="still-section still-note" role="status">Checking your sign-in…</p>
     : <>
       <LendingReviewScreen model={review.model} />
-      {paidOrder ? <StillSpendPaid order={orderView} reading={order.isFetching} /> : null}
+      {paidOrder ? <StillSpendPaid order={orderView} reading={order.isFetching} share={share} /> : null}
       {confirmedLoan ? <StillLoanAlertsOffer telegram={telegram} /> : null}
     </>}</StillFrame>;
 }

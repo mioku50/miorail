@@ -3,6 +3,7 @@ import { formatCents } from '@mioagent/still-engine/format';
 import type { MirrorOutcome } from '@mioagent/still-engine';
 import { logger } from '@mioagent/utils';
 
+import { stillSpendShareWordsV1, verifyStillSpendShareV1, type StillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
 import {
   indexHtmlV1,
@@ -22,8 +23,12 @@ import {
 // a shared link unfurls with its number; a slow chain gets the general head
 // and the card reads the wallet again when it is fetched.
 //
-// nginx sends /w/ here and serves the static index.html when this cannot
-// answer, so a head is an improvement to a page, never a precondition for it.
+// A Still Spend purchase someone shared, /spend/p/<token>, gets one too: the
+// claim signed in its link, and its card (stillPublic.ts /spend-card.png).
+//
+// nginx sends /w/ and /spend/p/ here and serves the static index.html when
+// this cannot answer, so a head is an improvement to a page, never a
+// precondition for it.
 // ---------------------------------------------------------------------------
 
 export const stillPagesRouter = Router();
@@ -129,5 +134,61 @@ stillPagesRouter.get('/w/:subject', async (req: Request, res: Response) => {
     clearTimeout(timer);
   }
   const { status, meta } = stillWalletMetaV1({ origin, canonical, subject, outcome });
+  sendDocumentV1(res, status, renderStockPageHtmlV1(html, meta));
+});
+
+/** A shared purchase's head: what the signed link says, or Still's own head and a 404. */
+export function stillSpendShareMetaV1(input: { origin: string; canonical: string; token: string; share: StillSpendShareV1 | null }): { status: number; meta: StockPageMetaV1 } {
+  if (!input.share) {
+    return {
+      status: 404,
+      meta: {
+        canonicalUrl: null,
+        imageUrl: `${input.origin}/og-still.png`,
+        noindex: true,
+        siteName: 'Still',
+        miniApp: { imageUrl: `${input.origin}/og-still-3x2.png`, buttonTitle: 'Open Still', url: `${input.canonical}/spend` },
+        title: 'Spend · Still',
+        description: 'This purchase card could not be verified. Still Spend shows what a loan against tokenized stocks and crypto on Base could pay for, without selling them.',
+      },
+    };
+  }
+  const share = input.share;
+  const words = stillSpendShareWordsV1(share);
+  const path = `/spend/p/${input.token}`;
+  const card = (shape: 'wide' | 'tall') =>
+    `${input.origin}/api/public/still/spend-card.png?t=${encodeURIComponent(input.token)}${shape === 'tall' ? '&shape=tall' : ''}`;
+  return {
+    status: 200,
+    meta: {
+      canonicalUrl: `${input.origin}${path}`,
+      imageUrl: card('wide'),
+      noindex: true,
+      siteName: 'Still',
+      miniApp: { imageUrl: card('tall'), buttonTitle: 'Open on Still', url: `${input.canonical}${path}` },
+      title: `Paid with a loan: ${share.productName} · Still`,
+      description: `${share.packageLabel} for ${words.priceUsdc} USDC, borrowed against ${words.collateralLabel} through ${words.venueName} and paid to Bitrefill in the same transaction on Base. Nothing was sold.`,
+      image: {
+        width: 1200,
+        height: 630,
+        alt: `Paid for ${share.productName} (${share.packageLabel}, ${words.priceUsdc} USDC) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
+      },
+    },
+  };
+}
+
+stillPagesRouter.get('/spend/p/:token', async (req: Request, res: Response) => {
+  let html: string;
+  try {
+    html = await indexHtmlV1();
+  } catch (error) {
+    logger.warn('Still page template unavailable', { errorName: error instanceof Error ? error.name : typeof error });
+    res.status(503).json({ outcome: 'template_unavailable' });
+    return;
+  }
+  const canonical = stockPagesRuntime.origin();
+  const token = String(req.params.token ?? '');
+  const share = verifyStillSpendShareV1(token, publicStillRuntimeV1.secret());
+  const { status, meta } = stillSpendShareMetaV1({ origin: stillOriginForHostV1(req.headers.host, canonical), canonical, token, share });
   sendDocumentV1(res, status, renderStockPageHtmlV1(html, meta));
 });
