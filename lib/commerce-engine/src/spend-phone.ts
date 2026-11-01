@@ -47,6 +47,13 @@ export function spendCallingCodeV1(country: string | null | undefined): string |
   return typeof country === 'string' ? CALLING_CODES_V1[country.toUpperCase()] ?? null : null;
 }
 
+/** The prefixes a number of this country starts with: its calling code, or,
+ * where countries share one, its own part of it ("76", "77" for Kazakhstan). */
+export function spendPhonePrefixesV1(country: string | null | undefined): readonly string[] | null {
+  const code = spendCallingCodeV1(country);
+  return code === null ? null : OWN_PREFIXES_V1[country!.toUpperCase()] ?? [code];
+}
+
 /** The number to top up, in Bitrefill's international format (digits, no
  * "+"), or null when it is not a number of this country. Spaces, dashes, dots
  * and brackets are dropped; a leading "+" or "00" is the international prefix. */
@@ -57,7 +64,7 @@ export function spendPhoneV1(raw: string, country: string | null | undefined): s
   if (digits.startsWith('+')) digits = digits.slice(1);
   else if (digits.startsWith('00')) digits = digits.slice(2);
   if (!/^\d{7,15}$/.test(digits)) return null;
-  const prefixes = OWN_PREFIXES_V1[country!.toUpperCase()] ?? [code];
+  const prefixes = spendPhonePrefixesV1(country)!;
   // At least four digits after the code: a code alone, or nearly, is no number.
   return prefixes.some((prefix) => digits.startsWith(prefix)) && digits.length - code.length >= 4 ? digits : null;
 }

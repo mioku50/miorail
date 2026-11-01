@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 
-import { spendCallingCodeV1, spendPhoneV1 } from '../src/index.js';
+import { spendCallingCodeV1, spendPhonePrefixesV1, spendPhoneV1 } from '../src/index.js';
 
 // The numbers here are made up in each country's shape; none is anyone's.
 describe('a top-up number is sent only as a number of the operator’s country', () => {
@@ -36,5 +36,6 @@ describe('a top-up number is sent only as a number of the operator’s country',
   it('names the code a person writes first', () => {
     assert.deepEqual(['IN', 'kz', 'DO', 'GB', 'XX'].map(spendCallingCodeV1), ['91', '7', '1', '44', null]);
     assert.equal(spendCallingCodeV1(null), null);
+    assert.deepEqual(['IN', 'KZ', 'DO', 'XX'].map(spendPhonePrefixesV1), [['91'], ['76', '77'], ['1809', '1829', '1849'], null]);
   });
 });

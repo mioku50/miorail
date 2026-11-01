@@ -76,7 +76,7 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean }
     if (path === '/api/public/still/spend/product') {
       const id = url.searchParams.get('id');
       if (id === 'beeline-kazakhstan') {
-        return route.fulfill({ json: { checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '7' } }, outcome: 'product', readAt: NOW.toISOString(),
+        return route.fulfill({ json: { checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '7', prefixes: ['76', '77'] } }, outcome: 'product', readAt: NOW.toISOString(),
           product: { id, name: 'Beeline Kazakhstan', country: 'KZ', inStock: true, recipientType: 'phone_number', url: null,
             packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }, { value: '500', faceCurrency: 'KZT', priceUsdc: '1.28' }] } } });
       }
@@ -142,6 +142,9 @@ for (const width of [390, 1366]) {
     const row = page.locator('.still-spend-price', { hasText: '1GB, 7 Days' });
     await row.getByRole('button', { name: 'Pay with Still', exact: true }).click();
     await expect(page.getByRole('heading', { name: '2.53 USDC for Bitrefill eSIM Germany · 1GB, 7 Days' })).toBeVisible();
+    // The checkout opens under the price and is brought into view, with the email field ready.
+    await expect(page.locator('.still-spend-checkout')).toBeInViewport();
+    await expect(page.getByLabel('Email for Bitrefill’s receipt', { exact: true })).toBeFocused();
     await page.getByLabel('Email for Bitrefill’s receipt', { exact: true }).fill('buyer@example.com');
     await page.getByRole('button', { name: 'Open invoice and choose collateral', exact: true }).click();
     await expect(page).toHaveURL(new RegExp(`/borrow\\?spend=${ORDER_ID}$`));
@@ -171,9 +174,13 @@ test('a phone top-up asks for the number with its calling code, and Get money na
   await expect(row).toContainText('0.26 USDC');
   await row.getByRole('button', { name: 'Pay with Still', exact: true }).click();
   await expect(page.getByRole('heading', { name: '0.26 USDC for Beeline Kazakhstan · 100 KZT' })).toBeVisible();
+  await expect(page.locator('.still-spend-checkout')).toBeInViewport();
   await page.getByLabel('Email for Bitrefill’s receipt', { exact: true }).fill('buyer@example.com');
   const open = page.getByRole('button', { name: 'Open invoice and choose collateral', exact: true });
-  await expect(page.getByText('Write it with the country code, +7.', { exact: false })).toBeVisible();
+  await expect(page.getByText('Write it with the country code: numbers here start with +7 6 or +7 7.', { exact: false })).toBeVisible();
+  await expect(open).toBeDisabled();
+  // Russia shares +7: a Russian number is not offered to a Kazakh operator.
+  await page.getByLabel('Phone number to top up', { exact: true }).fill('+7 912 345 67 89');
   await expect(open).toBeDisabled();
   await page.getByLabel('Phone number to top up', { exact: true }).fill('+7 777 123 45 67');
   await expect(page.locator('.still-spend-checkout')).toContainText('Bitrefill tops up +77771234567.');

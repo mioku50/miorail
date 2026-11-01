@@ -3,6 +3,7 @@ import {
   SPEND_PRODUCT_TYPES_V1,
   createBitrefillGuestCatalogV1,
   spendCallingCodeV1,
+  spendPhonePrefixesV1,
   type BitrefillGuestCatalogV1,
   type SpendFailureV1,
   type SpendProductTypeV1,
@@ -191,9 +192,11 @@ publicStillRouter.get('/spend/product', async (req: Request, res: Response) => {
     });
     // Whether it can be paid from Still now is read per request, never cached with the catalogue.
     const available = stillSpendPayEnabledV1() && body.product.inStock && spendBuyableV1(body.product);
-    // A top-up asks for the number it goes to, written with this calling code.
+    // A top-up asks for the number it goes to: its calling code, and the
+    // prefixes this country's numbers start with where countries share one.
     const callingCode = available && spendNeedsPhoneV1(body.product) ? spendCallingCodeV1(body.product.country) : null;
-    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1(), available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString(), phone: callingCode ? { callingCode } : null } });
+    const phone = callingCode ? { callingCode, prefixes: [...spendPhonePrefixesV1(body.product.country)!] } : null;
+    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1(), available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString(), phone } });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
     if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend product failed', { errorName: error instanceof Error ? error.name : typeof error });

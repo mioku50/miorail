@@ -56,7 +56,8 @@ export interface SpendInvoiceStatusV1 {
   esimInstallLink: string | null;
 }
 
-export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string };
+/** A refusal names the answer's keys (`shape`) and the one it could not read (`field`), never a value. */
+export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string; field?: string };
 
 export interface BitrefillGuestCheckoutV1 {
   /** `refillInput` is the number a phone top-up goes to, from `spendPhoneV1`; nothing else needs one. */
@@ -72,9 +73,15 @@ const DECIMAL_V1 = /^(0|[1-9]\d{0,9})(?:\.(\d{1,6}))?$/;
 const BASE_UNITS_V1 = /^[1-9]\d{0,15}$/;
 /** Bitrefill's own email pattern, from the buy-products input schema. */
 export const SPEND_EMAIL_V1 = /^(?!\.)(?!.*\.\.)([A-Za-z0-9_'+\-.]*)[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\.)+[A-Za-z]{2,}$/;
-/** The names a payment_info amount might carry. Which one is read never
- * matters to what is paid: the value must equal the quoted price either way. */
-const AMOUNT_KEYS_V1 = ['amount', 'price', 'payment_amount', 'altcoin_price'] as const;
+/** The names a payment_info amount might carry, in decimal USDC. Which one is
+ * read never matters to what is paid: the value must equal the quoted price
+ * either way. Bitrefill's first real usdc_base invoices (2026-11-01) carried
+ * `altcoinPrice` beside `altBasePrice`, `contractAddress` and `paymentUri`. */
+const AMOUNT_KEYS_V1 = ['amount', 'price', 'payment_amount', 'altcoin_price', 'altcoinPrice'] as const;
+/** The same price in the coin's smallest unit. */
+const BASE_UNIT_KEYS_V1 = ['altBasePrice'] as const;
+/** USDC on Base: the one token a usdc_base invoice may ask for. */
+const USDC_BASE_V1 = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 
 /** Keys and value kinds only, for a log line: never a value. */
 export function spendShapeV1(value: unknown, depth = 0): string {
@@ -94,6 +101,34 @@ function usdcAtomicV1(value: unknown, quotedAtomic: bigint): bigint | null {
   return match ? BigInt(match[1]!) * 1_000_000n + BigInt((match[2] ?? '').padEnd(6, '0')) : null;
 }
 
+/** A whole number of base units, from a JSON number or a digit string. */
+function baseUnitsV1(value: unknown): bigint | null {
+  if (typeof value === 'number') return Number.isSafeInteger(value) && value > 0 ? BigInt(value) : null;
+  return typeof value === 'string' && BASE_UNITS_V1.test(value.trim()) ? BigInt(value.trim()) : null;
+}
+
+/** "260000" or "2.6e5" as an exact whole number; anything with a fraction is null. */
+function exactUintV1(text: string): bigint | null {
+  if (/^[1-9]\d{0,30}$/.test(text)) return BigInt(text);
+  const match = /^([1-9])(?:\.(\d{1,30}))?e\+?(\d{1,2})$/i.exec(text);
+  if (!match) return null;
+  const digits = `${match[1]}${match[2] ?? ''}`, exponent = Number(match[3]);
+  return digits.length - 1 > exponent ? null : BigInt(digits) * 10n ** BigInt(exponent - (digits.length - 1));
+}
+
+/** An EIP-681 ERC-20 transfer, "ethereum:<token>@<chain>/transfer?address=<to>&uint256=<amount>",
+ * or null when the text is not one. Exported for its tests. */
+export function spendPaymentUriV1(value: unknown): { token: string; chainId: number | null; to: string; amount: bigint } | null {
+  if (typeof value !== 'string' || value.length > 2000) return null;
+  const match = /^ethereum:(?:pay-)?(0x[0-9a-fA-F]{40})(?:@(\d{1,10}))?\/transfer\?([^#]*)$/.exec(value.trim());
+  if (!match) return null;
+  const params = new URLSearchParams(match[3]);
+  const to = params.get('address'), amount = params.get('uint256');
+  const units = amount === null ? null : exactUintV1(amount);
+  if (!to || !ADDRESS_V1.test(to) || units === null) return null;
+  return { token: match[1]!.toLowerCase(), chainId: match[2] ? Number(match[2]) : null, to: to.toLowerCase(), amount: units };
+}
+
 function httpsLinkV1(value: unknown): string | null {
   if (typeof value !== 'string' || value.length > 2000) return null;
   try {
@@ -106,27 +141,39 @@ function httpsLinkV1(value: unknown): string | null {
 
 /** Reads one buy-products answer. Exported for its tests. */
 export function spendInvoiceFromAnswerV1(answer: unknown, quotedAtomic: bigint, now: Date): SpendCheckoutResultV1<SpendInvoiceV1> {
-  const failed = (reason: SpendFailureV1 = 'bitrefill_invalid_response'): SpendCheckoutResultV1<SpendInvoiceV1> => ({ ok: false, reason, shape: spendShapeV1(answer) });
+  const failed = (field: string, reason: SpendFailureV1 = 'bitrefill_invalid_response'): SpendCheckoutResultV1<SpendInvoiceV1> => ({ ok: false, reason, shape: spendShapeV1(answer), field });
   // The partner guide wraps the invoice in `response`; the eCommerce page lists it flat.
   const invoice = object(answer) ? object(answer.response) ? answer.response : answer : null;
-  if (!invoice) return failed();
+  if (!invoice) return failed('response');
   const payment = invoice.payment_info;
-  if (typeof invoice.invoice_id !== 'string' || !UUID_V1.test(invoice.invoice_id) ||
-      typeof invoice.invoice_access_token !== 'string' || !TOKEN_V1.test(invoice.invoice_access_token) ||
-      !object(payment) || typeof payment.address !== 'string' || !ADDRESS_V1.test(payment.address)) return failed();
-  if (payment.currency !== undefined && (typeof payment.currency !== 'string' || !/^usdc/i.test(payment.currency))) return failed();
-  const amounts = AMOUNT_KEYS_V1.filter((key) => payment[key] !== undefined && payment[key] !== null).map((key) => usdcAtomicV1(payment[key], quotedAtomic));
-  if (amounts.length === 0 || amounts.some((amount) => amount === null)) return failed();
-  if (amounts.some((amount) => amount !== quotedAtomic)) return failed('bitrefill_invoice_price_changed');
+  if (typeof invoice.invoice_id !== 'string' || !UUID_V1.test(invoice.invoice_id)) return failed('invoice_id');
+  if (typeof invoice.invoice_access_token !== 'string' || !TOKEN_V1.test(invoice.invoice_access_token)) return failed('invoice_access_token');
+  if (!object(payment) || typeof payment.address !== 'string' || !ADDRESS_V1.test(payment.address)) return failed('payment_info.address');
+  const payTo = payment.address.toLowerCase();
+  if (payment.currency !== undefined && (typeof payment.currency !== 'string' || !/^usdc/i.test(payment.currency))) return failed('payment_info.currency');
+  // The token asked for is USDC on Base, or there is nothing Still can pay.
+  if (payment.contractAddress !== undefined && (typeof payment.contractAddress !== 'string' || payment.contractAddress.toLowerCase() !== USDC_BASE_V1)) return failed('payment_info.contractAddress');
+  const present = (key: string) => payment[key] !== undefined && payment[key] !== null;
+  const decimals = AMOUNT_KEYS_V1.filter(present).map((key) => [key, usdcAtomicV1(payment[key], quotedAtomic)] as const);
+  const units = BASE_UNIT_KEYS_V1.filter(present).map((key) => [key, baseUnitsV1(payment[key])] as const);
+  const amounts = [...decimals, ...units];
+  if (amounts.length === 0) return failed('payment_info.amount');
+  const unread = amounts.find(([, amount]) => amount === null);
+  if (unread) return failed(`payment_info.${unread[0]}`);
+  if (amounts.some(([, amount]) => amount !== quotedAtomic)) return failed('payment_info.amount', 'bitrefill_invoice_price_changed');
+  // A payment URI, where it can be read, must ask the same: USDC on Base, to the same address, the same amount.
+  const uri = spendPaymentUriV1(payment.paymentUri);
+  if (uri && (uri.token !== USDC_BASE_V1 || (uri.chainId !== null && uri.chainId !== 8453) || uri.to !== payTo)) return failed('payment_info.paymentUri');
+  if (uri && uri.amount !== quotedAtomic) return failed('payment_info.paymentUri', 'bitrefill_invoice_price_changed');
   const minutes = invoice.expiration_minutes;
-  if (minutes !== undefined && (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0)) return failed();
+  if (minutes !== undefined && (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0)) return failed('expiration_minutes');
   const lifetime = Math.min(SPEND_PRICE_LOCK_MS_V1, minutes === undefined ? SPEND_PRICE_LOCK_MS_V1 : minutes * 60_000);
   return {
     ok: true,
     value: {
       invoiceId: invoice.invoice_id.toLowerCase(),
       accessToken: invoice.invoice_access_token,
-      payTo: payment.address.toLowerCase() as `0x${string}`,
+      payTo: payTo as `0x${string}`,
       amountAtomic: quotedAtomic,
       expiresAt: new Date(now.getTime() + lifetime).toISOString(),
       paymentLink: httpsLinkV1(invoice.payment_link),

@@ -195,7 +195,12 @@ test('a product is its USDC packages, and one Bitrefill does not have is a 404, 
   answer = { ok: true, value: { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number',
     packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }], url: null } };
   const topUp = await request(server).get('/api/public/still/spend/product').query({ id: 'airtel-india' });
-  assert.deepEqual(topUp.body.checkout, { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '91' } });
+  assert.deepEqual(topUp.body.checkout, { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '91', prefixes: ['91'] } });
+  // Kazakhstan shares +7 with Russia, so the answer names Kazakhstan's own prefixes.
+  answer = { ok: true, value: { id: 'beeline-kazakhstan', name: 'Beeline Kazakhstan', country: 'KZ', inStock: true, recipientType: 'phone_number',
+    packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }], url: null } };
+  const kz = await request(server).get('/api/public/still/spend/product').query({ id: 'beeline-kazakhstan' });
+  assert.deepEqual(kz.body.checkout.phone, { callingCode: '7', prefixes: ['76', '77'] });
   // Where that code is unknown, nothing can be paid, and no number is asked for.
   answer = { ok: true, value: { id: 'unknown-operator', name: 'Unknown', country: null, inStock: true, recipientType: 'phone_number', packages: [], url: null } };
   const unknown = await request(server).get('/api/public/still/spend/product').query({ id: 'unknown-operator' });

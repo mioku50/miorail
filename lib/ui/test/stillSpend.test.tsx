@@ -13,6 +13,7 @@ import {
   spendOrderViewV1,
   spendPayOpenV1,
   spendPhoneDraftV1,
+  spendPhonePrefixesTextV1,
   spendProductViewV1,
   spendSearchViewV1,
 } from '../src/still/spendView';
@@ -141,21 +142,30 @@ describe('paying from Still, as the page says it', () => {
   it('a top-up is paid only with its number, written with the operator’s calling code', () => {
     const open = { ...AIRTEL, checkout: { enabled: true, available: true, capAtomic: '100000000', phone: { callingCode: '91' } } };
     const view = spendProductViewV1(open, { cents: '171', complete: true }).product!;
-    assert.deepEqual(view.phone, { callingCode: '91' });
+    assert.deepEqual(view.phone, { callingCode: '91', prefixes: ['91'] });
     assert.equal(view.needs, null);
     assert.deepEqual(view.packages.map((row) => [row.label, row.price, row.payable, row.room]), [['10 INR', '0.11 USDC', true, 'within'], ['120 INR', '1.31 USDC', true, 'within']]);
     // Without the calling code from the server there is no number to ask for, so nothing to pay.
     const unsaid = spendProductViewV1({ ...open, checkout: { enabled: true, available: true, capAtomic: '100000000', phone: null } }, null).product!;
     assert.deepEqual([unsaid.phone, unsaid.packages.map((row) => row.payable), unsaid.needs], [null, [false, false], 'Buying it needs the phone number to top up.']);
     assert.equal(spendProductViewV1({ ...open, checkout: { ...open.checkout, phone: { callingCode: '+91' } } }, null).product!.phone, null);
+    // Where countries share a code, the server names this country's own prefixes; a list that is not of this code is no rule.
+    assert.deepEqual(spendProductViewV1({ ...open, checkout: { ...open.checkout, phone: { callingCode: '7', prefixes: ['76', '77'] } } }, null).product!.phone, { callingCode: '7', prefixes: ['76', '77'] });
+    assert.equal(spendProductViewV1({ ...open, checkout: { ...open.checkout, phone: { callingCode: '7', prefixes: ['91'] } } }, null).product!.phone, null);
     // An eSIM never asks for a number, whatever the answer says.
     assert.equal(spendProductViewV1({ ...GERMANY, checkout: open.checkout }, null).product!.phone, null);
   });
 
   it('reads a number as Still will send it, and only with the calling code', () => {
-    for (const written of ['+91 98765 43210', '0091 98765-43210', '(+91) 98765.43210', '919876543210']) assert.equal(spendPhoneDraftV1(written, '91'), '+919876543210', written);
-    for (const written of ['98765 43210', '+1 202 555 0100', '+91 12', 'call me', '+91 98765 43210 98765', '']) assert.equal(spendPhoneDraftV1(written, '91'), null, written);
-    assert.equal(spendPhoneDraftV1('+7 777 123 4567', '7'), '+77771234567');
+    const india = { callingCode: '91', prefixes: ['91'] }, kazakhstan = { callingCode: '7', prefixes: ['76', '77'] };
+    for (const written of ['+91 98765 43210', '0091 98765-43210', '(+91) 98765.43210', '919876543210']) assert.equal(spendPhoneDraftV1(written, india), '+919876543210', written);
+    for (const written of ['98765 43210', '+1 202 555 0100', '+91 12', 'call me', '+91 98765 43210 98765', '']) assert.equal(spendPhoneDraftV1(written, india), null, written);
+    assert.equal(spendPhoneDraftV1('+7 777 123 4567', kazakhstan), '+77771234567');
+    // A Russian number shares +7, and a Kazakh operator cannot top it up.
+    assert.equal(spendPhoneDraftV1('+7 912 345 6789', kazakhstan), null);
+    assert.equal(spendPhonePrefixesTextV1(kazakhstan), '+7 6 or +7 7');
+    assert.equal(spendPhonePrefixesTextV1({ callingCode: '1', prefixes: ['1809', '1829', '1849'] }), '+1 809, +1 829 or +1 849');
+    assert.equal(spendPhonePrefixesTextV1(india), '+91');
   });
 
   it('says each refusal in the reader’s words, and anything unknown as nothing paid', () => {
@@ -212,6 +222,11 @@ describe('the Spend page', () => {
     assert.match(chosen, /Email for Bitrefill’s receipt/);
     assert.match(chosen, /Never buy a gift card because someone asked you to pay them with one/);
     assert.match(chosen, />Open invoice and choose collateral<\/button>/);
+    // The checkout opens right under the chosen price, before the prices after it.
+    const first = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1(open, null).product, pay: { ...pay, chosen: '1GB, 7 Days' } })} />);
+    const at = (text: string) => first.indexOf(text);
+    assert.ok(at('1GB, 7 Days</span>') < at('class="still-spend-checkout"') && at('class="still-spend-checkout"') < at('10GB, 30 Days</span>'));
+    assert.match(first, /<ul class="still-spend-prices" aria-label="Prices in USDC">.*<\/ul><form .*<\/form><ul class="still-spend-prices" aria-label="More prices in USDC">/);
     // Without the switch there is no button and the page still says nothing can be bought.
     const closed = renderToStaticMarkup(<StillSpend model={model({ pay: null })} />);
     assert.doesNotMatch(closed, /Pay with Still<\/button>/);
@@ -232,6 +247,12 @@ describe('the Spend page', () => {
     const typed = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', product, pay: { ...pay, phone: '+91 98765 43210' } })} />);
     assert.match(typed, /Bitrefill tops up <strong class="mono">\+919876543210<\/strong>\./);
     assert.match(typed, /<button type="submit" class="still-btn">Open invoice and choose collateral<\/button>/);
+    // Where the code is shared, the field says which numbers this operator tops up, and a number of the other country waits.
+    const kz = spendProductViewV1({ ...open, product: { ...open.product, id: 'beeline-kazakhstan', name: 'Beeline Kazakhstan', country: 'KZ',
+      packages: [{ value: '100', faceCurrency: 'KZT', priceUsdc: '0.26' }] }, checkout: { ...open.checkout, phone: { callingCode: '7', prefixes: ['76', '77'] } } }, null).product;
+    const russian = renderToStaticMarkup(<StillSpend model={model({ type: 'refill', product: kz, pay: { ...pay, chosen: '100', phone: '+7 912 345 67 89' } })} />);
+    assert.match(russian, /Write it with the country code: numbers here start with \+7 6 or \+7 7\./);
+    assert.match(russian, /<button type="submit" class="still-btn" disabled="">Open invoice and choose collateral<\/button>/);
     // A gift card or an eSIM never shows the field.
     const esim = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1({ ...GERMANY, checkout: open.checkout }, null).product, pay: { ...pay, chosen: '10GB, 30 Days' } })} />);
     assert.doesNotMatch(esim, /Phone number to top up/);

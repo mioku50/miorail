@@ -8,6 +8,7 @@ import {
   createBitrefillGuestTransportV1,
   spendInvoiceFromAnswerV1,
   spendInvoiceStatusFromAnswerV1,
+  spendPaymentUriV1,
   spendShapeV1,
 } from '../src/index.js';
 
@@ -93,6 +94,41 @@ describe('a Bitrefill invoice is read only when it asks the price just quoted', 
       assert.ok(!read.ok && read.shape && !read.shape.includes(PAY_TO) && !read.shape.includes('access-token'));
     }
     assert.equal(spendShapeV1(answer({ amount: '13.25' })).includes('payment_info:{address:string,amount:string}'), true);
+  });
+
+  it('reads Bitrefill’s own usdc_base answer: altcoinPrice, altBasePrice, the USDC contract and the payment URI', () => {
+    // The keys of the first real invoices (2026-11-01, from the server's shape log); the values are made up.
+    const USDC = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
+    const uri = (patch: { token?: string; chain?: string; to?: string; amount?: string } = {}) =>
+      `ethereum:${patch.token ?? USDC}@${patch.chain ?? '8453'}/transfer?address=${patch.to ?? PAY_TO}&uint256=${patch.amount ?? '13250000'}`;
+    const real = { altcoinPrice: '13.25', altBasePrice: 13_250_000, contractAddress: USDC, paymentUri: uri(), satoshiPrice: 17_000 };
+    const read = spendInvoiceFromAnswerV1({ ...answer(real), response: { ...answer(real).response, created_time: '2026-11-01T11:59:59Z' } }, QUOTED, NOW);
+    assert.equal(read.ok && read.value.payTo, PAY_TO);
+    assert.equal(read.ok && read.value.amountAtomic, QUOTED);
+    assert.equal(spendInvoiceFromAnswerV1(answer({ ...real, paymentUri: uri({ amount: '1.325e7' }) }), QUOTED, NOW).ok, true);
+    // A URI that is not an EIP-681 transfer is not read; the amounts and the contract still decide.
+    assert.equal(spendInvoiceFromAnswerV1(answer({ ...real, paymentUri: 'bitrefill:invoice' }), QUOTED, NOW).ok, true);
+    // Another token, another chain or another recipient is nothing Still can pay.
+    for (const [patch, field] of [
+      [{ contractAddress: '0x4200000000000000000000000000000000000006' }, 'payment_info.contractAddress'],
+      [{ paymentUri: uri({ chain: '1' }) }, 'payment_info.paymentUri'],
+      [{ paymentUri: uri({ to: '0x4444444444444444444444444444444444444444' }) }, 'payment_info.paymentUri'],
+      [{ paymentUri: uri({ token: '0x4200000000000000000000000000000000000006' }) }, 'payment_info.paymentUri'],
+      [{ altBasePrice: 13.25 }, 'payment_info.altBasePrice'],
+    ] as const) {
+      const refused = spendInvoiceFromAnswerV1(answer({ ...real, ...patch }), QUOTED, NOW);
+      assert.deepEqual(!refused.ok && [refused.reason, refused.field], ['bitrefill_invalid_response', field], JSON.stringify(patch));
+      assert.ok(!refused.ok && !refused.shape!.includes(PAY_TO));
+    }
+    // A different amount anywhere is a changed price.
+    for (const patch of [{ altBasePrice: 13_250_001 }, { altcoinPrice: '13.30' }, { paymentUri: uri({ amount: '13250001' }) }]) {
+      const changed = spendInvoiceFromAnswerV1(answer({ ...real, ...patch }), QUOTED, NOW);
+      assert.equal(!changed.ok && changed.reason, 'bitrefill_invoice_price_changed', JSON.stringify(patch));
+    }
+    // A price under a dollar in base units is read as base units only by its own key.
+    const small = spendInvoiceFromAnswerV1(answer({ altcoinPrice: '0.18', altBasePrice: 180_000, contractAddress: USDC, paymentUri: uri({ amount: '180000' }) }), 180_000n, NOW);
+    assert.equal(small.ok && small.value.amountAtomic, 180_000n);
+    assert.deepEqual(spendPaymentUriV1(uri()), { token: USDC.toLowerCase(), chainId: 8453, to: PAY_TO, amount: QUOTED });
   });
 
   it('a payment link counts only on bitrefill.com over https', () => {

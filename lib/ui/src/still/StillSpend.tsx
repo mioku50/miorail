@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useEffect, useId, useRef } from 'react';
 import { formatCents } from '@mioagent/still-engine/format';
 
 import type { SkyStateV1 } from './skyState';
@@ -9,6 +9,7 @@ import {
   spendCountryNameV1,
   spendCountryOptionsV1,
   spendPhoneDraftV1,
+  spendPhonePrefixesTextV1,
   type SpendProductRowV1,
   type SpendOrderViewV1,
   type SpendProductViewV1,
@@ -61,6 +62,16 @@ export interface StillSpendModelV1 {
 export function StillSpend({ model }: { model: StillSpendModelV1 }) {
   const id = useId();
   const product = model.product;
+  // A chosen price brings its checkout into view, with the first empty field ready to type in.
+  const checkoutRef = useRef<HTMLFormElement | null>(null);
+  const chosenValue = model.pay?.chosen ?? null;
+  useEffect(() => {
+    const form = checkoutRef.current;
+    if (chosenValue === null || !form) return;
+    form.scrollIntoView?.({ behavior: 'smooth', block: 'nearest' });
+    const empty = [...form.querySelectorAll<HTMLInputElement>('input')].find((input) => input.value.trim() === '');
+    empty?.focus({ preventScroll: true });
+  }, [chosenValue]);
   return (
     <div className="still-borrow still-spend">
       <StillHeader
@@ -134,8 +145,10 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
             : model.productError ? <p className="still-warn" role="alert">{model.productError}</p>
               : product ? (
                 <>
-                  <ul className="still-spend-prices" aria-label="Prices in USDC">
-                    {product.packages.map((row) => (
+                  {(() => {
+                    // The checkout opens right under the price it pays, not below the whole list.
+                    const chosenAt = model.pay && model.pay.chosen !== null ? product.packages.findIndex((row) => row.value === model.pay!.chosen) : -1;
+                    const priceRow = (row: SpendProductViewV1['packages'][number]) => (
                       <li key={row.label} className="still-spend-price" data-fit={row.room ?? 'unsaid'}>
                         <span className="still-spend-price-top">
                           <span className="still-spend-price-label">{row.label}</span>
@@ -155,52 +168,59 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                           </span>
                         ) : null}
                       </li>
-                    ))}
-                  </ul>
-                  {model.pay && model.pay.chosen !== null ? (() => {
-                    const chosen = product.packages.find((row) => row.value === model.pay!.chosen);
-                    if (!chosen) return null;
-                    const number = product.phone ? spendPhoneDraftV1(model.pay!.phone, product.phone.callingCode) : null;
-                    return (
-                      <form className="still-spend-checkout" aria-labelledby={`${id}-pay`} onSubmit={(event) => { event.preventDefault(); model.pay!.onCreate(); }}>
-                        <div className="still-step"><span className="n" aria-hidden="true">3</span>Pay</div>
-                        <h3 id={`${id}-pay`}>{chosen.price} for {product.name} · {chosen.label}</h3>
-                        <p className="still-note">
-                          Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice in
-                          the same transaction, and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
-                        </p>
-                        <label className="still-borrow-label" htmlFor={`${id}-email`}>Email for Bitrefill’s receipt</label>
-                        <div className="still-borrow-amount">
-                          <input id={`${id}-email`} type="email" autoComplete="email" spellCheck={false} maxLength={254} value={model.pay.email}
-                            onChange={(event) => model.pay!.onEmail(event.target.value)} placeholder="you@example.com" />
-                          <span aria-hidden="true" />
-                        </div>
-                        <p className="still-note">Bitrefill sends the receipt and the order there. Still passes it to Bitrefill and keeps no copy.</p>
-                        {product.phone ? (
-                          <>
-                            <label className="still-borrow-label" htmlFor={`${id}-phone`}>Phone number to top up</label>
-                            <div className="still-borrow-amount">
-                              <input id={`${id}-phone`} type="tel" inputMode="tel" autoComplete="tel" spellCheck={false} maxLength={32} value={model.pay.phone}
-                                onChange={(event) => model.pay!.onPhone(event.target.value)} placeholder={`+${product.phone.callingCode} …`} aria-describedby={`${id}-phone-help`} />
-                              <span aria-hidden="true" />
-                            </div>
-                            <p id={`${id}-phone-help`} className="still-note">
-                              {number ? <>Bitrefill tops up <strong className="mono">{number}</strong>. </> : <>Write it with the country code, +{product.phone.callingCode}. </>}
-                              A top-up sent to a wrong number cannot be taken back. Still passes the number to Bitrefill and holds it only while the invoice is open.
-                            </p>
-                          </>
-                        ) : null}
-                        {model.type === 'giftcard' ? <p className="still-warn">Never buy a gift card because someone asked you to pay them with one. Nobody legitimate asks for that.</p> : null}
-                        {model.pay.error ? <p className="still-warn" role="alert">{model.pay.error}</p> : null}
-                        <div className="still-spend-checkout-actions">
-                          <button type="submit" className="still-btn" disabled={model.pay.creating || model.pay.email.trim() === '' || (product.phone !== null && number === null)}>
-                            {model.pay.creating ? 'Opening the invoice…' : 'Open invoice and choose collateral'}
-                          </button>
-                          <button type="button" className="still-btn sec" disabled={model.pay.creating} onClick={() => model.pay!.onChoose(null)}>Cancel</button>
-                        </div>
-                      </form>
                     );
-                  })() : null}
+                    const list = (rows: SpendProductViewV1['packages'], label: string) => rows.length > 0
+                      ? <ul className="still-spend-prices" aria-label={label}>{rows.map(priceRow)}</ul> : null;
+                    if (chosenAt < 0 || !model.pay) return list(product.packages, 'Prices in USDC');
+                    const chosen = product.packages[chosenAt]!;
+                    const number = product.phone ? spendPhoneDraftV1(model.pay.phone, product.phone) : null;
+                    const shared = product.phone !== null && product.phone.prefixes.some((prefix) => prefix !== product.phone!.callingCode);
+                    return (
+                      <>
+                        {list(product.packages.slice(0, chosenAt + 1), 'Prices in USDC')}
+                        <form ref={checkoutRef} className="still-spend-checkout" aria-labelledby={`${id}-pay`} onSubmit={(event) => { event.preventDefault(); model.pay!.onCreate(); }}>
+                          <div className="still-step"><span className="n" aria-hidden="true">3</span>Pay</div>
+                          <h3 id={`${id}-pay`}>{chosen.price} for {product.name} · {chosen.label}</h3>
+                          <p className="still-note">
+                            Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice in
+                            the same transaction, and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
+                          </p>
+                          <label className="still-borrow-label" htmlFor={`${id}-email`}>Email for Bitrefill’s receipt</label>
+                          <div className="still-borrow-amount">
+                            <input id={`${id}-email`} type="email" autoComplete="email" spellCheck={false} maxLength={254} value={model.pay.email}
+                              onChange={(event) => model.pay!.onEmail(event.target.value)} placeholder="you@example.com" />
+                            <span aria-hidden="true" />
+                          </div>
+                          <p className="still-note">Bitrefill sends the receipt and the order there. Still passes it to Bitrefill and keeps no copy.</p>
+                          {product.phone ? (
+                            <>
+                              <label className="still-borrow-label" htmlFor={`${id}-phone`}>Phone number to top up</label>
+                              <div className="still-borrow-amount">
+                                <input id={`${id}-phone`} type="tel" inputMode="tel" autoComplete="tel" spellCheck={false} maxLength={32} value={model.pay.phone}
+                                  onChange={(event) => model.pay!.onPhone(event.target.value)} placeholder={`+${product.phone.callingCode} …`} aria-describedby={`${id}-phone-help`} />
+                                <span aria-hidden="true" />
+                              </div>
+                              <p id={`${id}-phone-help`} className="still-note">
+                                {number ? <>Bitrefill tops up <strong className="mono">{number}</strong>. </>
+                                  : shared ? <>Write it with the country code: numbers here start with {spendPhonePrefixesTextV1(product.phone)}. </>
+                                    : <>Write it with the country code, +{product.phone.callingCode}. </>}
+                                A top-up sent to a wrong number cannot be taken back. Still passes the number to Bitrefill and holds it only while the invoice is open.
+                              </p>
+                            </>
+                          ) : null}
+                          {model.type === 'giftcard' ? <p className="still-warn">Never buy a gift card because someone asked you to pay them with one. Nobody legitimate asks for that.</p> : null}
+                          {model.pay.error ? <p className="still-warn" role="alert">{model.pay.error}</p> : null}
+                          <div className="still-spend-checkout-actions">
+                            <button type="submit" className="still-btn" disabled={model.pay.creating || model.pay.email.trim() === '' || (product.phone !== null && number === null)}>
+                              {model.pay.creating ? 'Opening the invoice…' : 'Open invoice and choose collateral'}
+                            </button>
+                            <button type="button" className="still-btn sec" disabled={model.pay.creating} onClick={() => model.pay!.onChoose(null)}>Cancel</button>
+                          </div>
+                        </form>
+                        {list(product.packages.slice(chosenAt + 1), 'More prices in USDC')}
+                      </>
+                    );
+                  })()}
                   {product.packages.length === 0 ? <p className="still-note">Bitrefill quoted no price in USDC for it.</p> : null}
                   {product.needs ? <p className="still-note">{product.needs}</p> : null}
                 </>

@@ -115,7 +115,7 @@ stillSpendRouter.post('/orders', async (req: Request, res: Response) => {
   });
   if (!invoice.ok) {
     // The shape names keys and kinds only: never an address, an amount or a token.
-    logger.warn('Still Spend invoice not opened', { reason: invoice.reason, ...(invoice.shape ? { shape: invoice.shape } : {}) });
+    logger.warn('Still Spend invoice not opened', { reason: invoice.reason, ...(invoice.shape ? { shape: invoice.shape } : {}), ...(invoice.field ? { field: invoice.field } : {}) });
     res.status(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503).json({ error: invoice.reason });
     return;
   }

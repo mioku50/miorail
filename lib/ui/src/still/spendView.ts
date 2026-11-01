@@ -50,14 +50,23 @@ export function spendCountryOptionsV1(): ReadonlyArray<{ code: string; name: str
   return countryOptionsV1 ??= SPEND_COUNTRIES_V1.map((code) => ({ code, name: spendCountryNameV1(code) })).sort((a, b) => a.name.localeCompare(b.name, 'en'));
 }
 
-/** The number as Still sends it, "+919876543210", when it is written with this
- * calling code; else null. The server checks it again against the operator's
- * own country before Bitrefill sees it. */
-export function spendPhoneDraftV1(raw: string, callingCode: string): string | null {
+/** What a top-up's number must start with, as the server said for its country. */
+export interface SpendPhoneRuleV1 { callingCode: string; prefixes: readonly string[] }
+
+/** The number as Still sends it, "+919876543210", when it starts with one of
+ * the country's prefixes; else null. The server checks it again against the
+ * operator's own country before Bitrefill sees it. */
+export function spendPhoneDraftV1(raw: string, rule: SpendPhoneRuleV1): string | null {
   let digits = raw.trim().replace(/[\s().-]/g, '');
   if (digits.startsWith('+')) digits = digits.slice(1);
   else if (digits.startsWith('00')) digits = digits.slice(2);
-  return /^\d{7,15}$/.test(digits) && digits.startsWith(callingCode) && digits.length - callingCode.length >= 4 ? `+${digits}` : null;
+  return /^\d{7,15}$/.test(digits) && rule.prefixes.some((prefix) => digits.startsWith(prefix)) && digits.length - rule.callingCode.length >= 4 ? `+${digits}` : null;
+}
+
+/** "+7 6 or +7 7", "+1 809, +1 829 or +1 849": how a country's own numbers begin. */
+export function spendPhonePrefixesTextV1(rule: SpendPhoneRuleV1): string {
+  const labels = rule.prefixes.map((prefix) => `+${rule.callingCode}${prefix.length > rule.callingCode.length ? ` ${prefix.slice(rule.callingCode.length)}` : ''}`);
+  return labels.length < 2 ? labels.join('') : `${labels.slice(0, -1).join(', ')} or ${labels.at(-1)}`;
 }
 
 const object = (value: unknown): value is Record<string, unknown> => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -111,8 +120,8 @@ export interface SpendProductViewV1 {
   packages: SpendPackageRowV1[];
   /** Said when buying would need something Still does not ask for, such as an account. */
   needs: string | null;
-  /** A top-up paid from Still asks for the number, written with this calling code; null for anything else. */
-  phone: { callingCode: string } | null;
+  /** A top-up paid from Still asks for the number, starting with one of these prefixes; null for anything else. */
+  phone: SpendPhoneRuleV1 | null;
   /** The most one purchase may cost when paid from Still, "100 USDC"; null when it cannot be paid here. */
   cap: string | null;
 }
@@ -137,7 +146,12 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
   const recipient = typeof product.recipientType === 'string' ? product.recipientType : '';
   const topUp = /phone/i.test(recipient);
   const offered = topUp && capAtomic !== null && checkout && object(checkout.phone) ? checkout.phone : null;
-  const phone = offered && typeof offered.callingCode === 'string' && /^[1-9]\d{0,3}$/.test(offered.callingCode) ? { callingCode: offered.callingCode } : null;
+  const code = offered && typeof offered.callingCode === 'string' && /^[1-9]\d{0,3}$/.test(offered.callingCode) ? offered.callingCode : null;
+  // A country that shares its calling code names its own prefixes; without them, the code is the prefix.
+  const listed = code && Array.isArray(offered!.prefixes) && offered!.prefixes.length > 0 && offered!.prefixes.length <= 8 &&
+    offered!.prefixes.every((prefix) => typeof prefix === 'string' && /^[1-9]\d{0,5}$/.test(prefix) && prefix.startsWith(code)) ? offered!.prefixes as string[] : null;
+  const prefixes = code === null ? null : offered!.prefixes === undefined ? [code] : listed;
+  const phone = code && prefixes ? { callingCode: code, prefixes } : null;
   const packages: SpendPackageRowV1[] = [];
   for (const row of product.packages) {
     if (!object(row) || !text(row.value, 80) || typeof row.priceUsdc !== 'string') continue;
