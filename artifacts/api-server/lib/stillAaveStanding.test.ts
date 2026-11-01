@@ -25,6 +25,14 @@ describe('Still Aave bounded same-block standing', () => {
     const weekend = stillAaveCapacityV1({ ...common, calendar: calendar(), now: new Date('2026-10-24T15:00:00Z') });
     assert.equal(day.shareBpsByStock.NVDAc, 5000); assert.equal(unread.shareBpsByStock.NVDAc, 4000); assert.equal(weekend.shareBpsByStock.NVDAc, 4000);
     assert(unread.limitAssets < day.limitAssets);
+    // What lowered it, for the page to say: nothing on a weekday, the closed
+    // market until Sunday 20:00 New York time, an unread calendar as such.
+    assert.equal(day.loweredByStock.NVDAc, undefined);
+    assert.deepEqual(weekend.loweredByStock.NVDAc, { reason: 'market_closed', until: '2026-10-26T00:00:00.000Z' });
+    assert.deepEqual(unread.loweredByStock.NVDAc, { reason: 'earnings_unread' });
+    const report = stillAaveCapacityV1({ ...common, calendar: calendar({ NVDAc: ['2026-10-22'] }), now: new Date('2026-10-21T15:00:00Z') });
+    assert.equal(report.shareBpsByStock.NVDAc, 4000);
+    assert.deepEqual(report.loweredByStock.NVDAc, { reason: 'earnings', reportDate: '2026-10-22', until: '2026-10-24T00:00:00.000Z' });
   });
   it('does not require a health factor, oracle or borrow allowance for repayment', async () => {
     const r = aaveReadFixture(); if (!r.snapshot.aave) throw Error('fixture');

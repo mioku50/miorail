@@ -569,6 +569,13 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-borrow .still-borrow-facts { margin: 14px 0 0; }
 .still-borrow .still-borrow-facts > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 12px; }
 .still-borrow .still-borrow-facts dt { color: var(--sm-ink2); }
+.still-borrow .still-borrow-compare { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--sm-line); }
+.still-borrow .still-borrow-compare-list { margin: 0; }
+.still-borrow .still-borrow-compare-list > div { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; margin-top: 8px; font-size: 12px; }
+.still-borrow .still-borrow-compare-list > div:first-child { margin-top: 0; }
+.still-borrow .still-borrow-compare-list dt { color: var(--sm-ink2); }
+.still-borrow .still-borrow-compare-list dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
+.still-borrow .still-borrow-compare .still-note { margin-top: 8px; }
 .still-borrow .still-borrow-facts dd { min-width: 0; margin: 0; text-align: right; overflow-wrap: anywhere; }
 .still-borrow .still-borrow-block { margin: 12px 0 0; }
 .still-borrow .still-borrow-foot { margin-top: 18px; font-size: 14px; }

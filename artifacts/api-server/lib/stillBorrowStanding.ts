@@ -21,6 +21,7 @@ import { morphoStillCapacityV1 } from '@mioagent/still-engine/capacity';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { loadMorphoUniverse, readWallet, type Universe, type WalletSnapshot } from '@mioagent/still-engine/read';
 import { stillRpcUrlsV1 } from './stillMirror.js';
+import { stillLimitComparisonV1 } from './stillLimitComparison.js';
 
 // Still uses these two immutable markets, not the first page of an API's market
 // directory. Reuse the Mirror's chain reader and accrual, at one reading block.
@@ -43,6 +44,17 @@ export function stillBorrowCapacityWireV1(token: string, standing: MorphoBorrowS
       roundingMarginCents: capacity.roundingMarginCents.toString(),
       ...(collateralSupplyAssets > 0n ? { collateralSupplyAtomic: collateralSupplyAssets.toString() } : {}),
     };
+  } catch { return null; }
+}
+
+/** Still's limit beside Morpho's own for the same collateral. Crypto is never lowered. */
+export function stillBorrowComparisonWireV1(token: string, standing: MorphoBorrowStandingV1, collateralSupplyAssets = 0n) {
+  const asset = stillBorrowAssetV1(token);
+  if (!asset || !standing.position || standing.market.marketId.toLowerCase() !== asset.morphoMarket.toLowerCase()) return null;
+  try {
+    const capacity = morphoStillCapacityV1({ market: standing.market.state, position: standing.position, additionalCollateralAssets: collateralSupplyAssets });
+    return stillLimitComparisonV1({ protocol: 'Morpho', protocolLimitAssets: capacity.protocolLimitAssets, stillLimitAssets: capacity.limitAssets,
+      shareBps: capacity.shareBps, lowered: null });
   } catch { return null; }
 }
 

@@ -15,6 +15,7 @@ import { refreshLoanExecutionV1, loanExecutionWireV1 } from '../lib/loanExecutio
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
 import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js';
+import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -48,7 +49,10 @@ export async function readAaveBorrowCapacityWireV1(input: { tokenAddress: string
     walletCollateralAtomic: s.walletCollateralAssets.toString(), collateralAtomic: s.existingSuppliedAssets.toString(),
     collateralSupplyAtomic: input.collateralSupplyAssets.toString(), blockNumber: s.blockNumber,
     still: { scope: input.collateralSupplyAssets > 0n ? 'selected_collateral' : 'existing_collateral',
-      availableAtomic: s.capacity.availableAssets.toString(), limitAtomic: s.capacity.limitAssets.toString(), debtAtomic: s.debtAssets.toString(), termsVersion: s.termsVersion } }] };
+      availableAtomic: s.capacity.availableAssets.toString(), limitAtomic: s.capacity.limitAssets.toString(), debtAtomic: s.debtAssets.toString(), termsVersion: s.termsVersion },
+    // Still's limit beside Aave's own, for the whole account the loan would use.
+    comparison: stillLimitComparisonV1({ protocol: 'Aave V4', protocolLimitAssets: s.capacity.protocolLimitAssets, stillLimitAssets: s.capacity.limitAssets,
+      shareBps: s.capacity.shareBpsByStock[s.selectedStock.id], lowered: s.capacity.loweredByStock[s.selectedStock.id] ?? null }) }] };
 }
 
 rwaLendingRouter.use((_req, res, next) => { res.setHeader('Cache-Control', 'private, no-store'); next(); });

@@ -1,6 +1,8 @@
 import { CRYPTO, STOCKS, ADDRESSES } from '@mioagent/still-engine/registry';
+import { formatCents, formatPercentBps } from '@mioagent/still-engine/format';
 import { tokenDecimalV1 } from '../console/stockSellAmount';
-import type { StillBorrowAssetV1, StillBorrowModelV1 } from './StillBorrow';
+import { STILL_SHARES_V1, newYorkMomentV1 } from './skyState';
+import type { StillBorrowAssetV1, StillBorrowComparisonV1, StillBorrowModelV1 } from './StillBorrow';
 
 /** The host accepts a label from a query, never an arbitrary token address. */
 export function borrowAssetFromQueryV1(value: string | null): StillBorrowAssetV1 | null {
@@ -32,6 +34,47 @@ export function parseBorrowDecimalV1(text: string, decimals: number, allowZero =
 
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const atomic = (value: unknown): value is string => typeof value === 'string' && /^(0|[1-9][0-9]{0,38})$/.test(value);
+
+/** "1,234.56" from USDC base units, rounded down to the cent. */
+const usdcV1 = (value: string) => formatCents(BigInt(value) / 10_000n).slice(1);
+const REPORT_DAY_V1 = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
+const instant = (value: unknown): value is string => typeof value === 'string' && Number.isFinite(Date.parse(value));
+const bps = (value: unknown): value is number => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 10_000;
+
+/** Why the selected stock counts at a lower share now; null at the full
+ * share; undefined when the server's reason cannot be read exactly. */
+function loweredSentenceV1(lowered: unknown, asset: StillBorrowAssetV1, share: string): string | null | undefined {
+  if (lowered === null) return null;
+  const stock = STOCKS.find(row => row.id === asset);
+  if (!object(lowered) || !stock) return undefined;
+  const full = `${STILL_SHARES_V1.full}%`;
+  if (lowered.reason === 'market_closed' && instant(lowered.until)) {
+    return `Stocks count at ${share}, not ${full}, until ${newYorkMomentV1(lowered.until)} New York time: Wall Street is closed, and a stock can open far from the price its token trades at on Base.`;
+  }
+  if (lowered.reason === 'earnings' && instant(lowered.until) && typeof lowered.reportDate === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(lowered.reportDate)) {
+    const day = REPORT_DAY_V1.format(new Date(`${lowered.reportDate}T12:00:00Z`));
+    return `${stock.id} counts at ${share}, not ${full}, until ${newYorkMomentV1(lowered.until)} New York time: ${stock.name} reports earnings on ${day}, and the price can jump either way.`;
+  }
+  if (lowered.reason === 'earnings_unread') {
+    return `${stock.id} counts at ${share}, not ${full}: Still could not read the earnings calendar just now, so it counts the stock as if a report were near. Read the limit again later.`;
+  }
+  return undefined;
+}
+
+/** Still's limit beside the protocol's own, both measured by the server.
+ * Anything that cannot be read exactly leaves the comparison out. */
+export function stillBorrowComparisonViewV1(value: unknown, asset: StillBorrowAssetV1): StillBorrowComparisonV1 | null {
+  if (!object(value)) return null;
+  const stock = STOCKS.some(row => row.id === asset);
+  const protocol = stock ? 'Aave V4' : 'Morpho';
+  const { protocolLimitAtomic: protocolLimit, stillLimitAtomic: stillLimit, shareBps, marginAtStillLimitBps: margin } = value;
+  if (value.protocol !== protocol || !atomic(protocolLimit) || !atomic(stillLimit) || !bps(shareBps) || shareBps === 0 || !bps(margin) ||
+      BigInt(protocolLimit) === 0n || BigInt(stillLimit) > BigInt(protocolLimit)) return null;
+  const sharePercent = formatPercentBps(shareBps);
+  const lowered = loweredSentenceV1(value.lowered, asset, sharePercent);
+  if (lowered === undefined) return null;
+  return { protocol, protocolLimitUsdc: usdcV1(protocolLimit), stillLimitUsdc: usdcV1(stillLimit), sharePercent, marginPercent: formatPercentBps(margin), lowered };
+}
 
 /** Format the server's own allowance for the selected pledge. Missing data
  * remains unread; a different market/amount cannot become this form's quote. */
@@ -76,6 +119,7 @@ export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAs
       walletBalance: row.walletCollateralAtomic === null ? null : tokenDecimalV1(row.walletCollateralAtomic as string, expected.decimals),
       pledged: row.collateralAtomic === null ? null : tokenDecimalV1(row.collateralAtomic as string, expected.decimals),
       maximumUsdc: tokenDecimalV1(row.still.availableAtomic, 6), blockNumber: row.blockNumber as number,
+      comparison: stillBorrowComparisonViewV1(row.comparison, asset),
     },
     error: null,
   };

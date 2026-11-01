@@ -28,8 +28,9 @@ describe('Get money shows a server allowance for one selected pledge', () => {
   it('uses the registry and formats exact quantities without recomputing risk', () => {
     assert.equal(borrowCollateralTokenV1('cbBTC'), CRYPTO[0]!.token);
     assert.equal(borrowCollateralTokenV1('WETH'), CRYPTO[1]!.token);
+    // A server that sends no comparison gets none shown, never one worked out here.
     assert.deepEqual(stillBorrowCapacityViewV1(response(), 'cbBTC', '0'), { error: null, capacity: {
-      walletBalance: '1.23456789', pledged: '1', maximumUsdc: '12.34', blockNumber: 53100000,
+      walletBalance: '1.23456789', pledged: '1', maximumUsdc: '12.34', blockNumber: 53100000, comparison: null,
     } });
   });
   it('does not carry an old or different asset amount into the next selection', () => {
@@ -63,7 +64,7 @@ describe('Get money shows a server allowance for one selected pledge', () => {
     const read = { state: 'read', marketScope: 'still_registered_market', markets: [wethRow] };
     assert.deepEqual(stillBorrowCapacityViewV1(read, 'ETH', '10000000000000000'), {
       error: null,
-      capacity: { nativeReserve: '0.0005', walletBalance: '0.025', pledged: '0.003', maximumUsdc: '12.34', blockNumber: 53100000 },
+      capacity: { nativeReserve: '0.0005', walletBalance: '0.025', pledged: '0.003', maximumUsdc: '12.34', blockNumber: 53100000, comparison: null },
     });
     assert.equal(stillBorrowCapacityViewV1(read, 'WETH', '10000000000000000').capacity, null);
     assert.equal(stillBorrowCapacityViewV1({ ...read, markets: [{ ...wethRow, funding: undefined }] }, 'ETH', '10000000000000000').capacity, null);

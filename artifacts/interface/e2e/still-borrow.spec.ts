@@ -75,6 +75,11 @@ async function install(page: Page, signedIn = true, wallet: 'none' | 'no-batches
           collateralAtomic: stock ? '0' : asset!.id === 'cbBTC' ? '1000000' : '100000000000000000', blockNumber: 53_177_777,
           ...(native ? { funding: 'native', nativeReserveAtomic: '500000000000000', feeQuoteState: 'wallet_quote_required' } : {}),
           still: { availableAtomic: '5000000', scope: supply === '0' ? 'existing_collateral' : 'selected_collateral' },
+          // The server's two limits; a stock in Still's closed-market window counts at 40%.
+          comparison: stock
+            ? { protocol: 'Aave V4', protocolLimitAtomic: '12500000', stillLimitAtomic: '5000000', shareBps: 4000, marginAtStillLimitBps: 6000,
+                lowered: { reason: 'market_closed', until: '2026-11-02T01:00:00.000Z' } }
+            : { protocol: 'Morpho', protocolLimitAtomic: '10000000', stillLimitAtomic: '5000000', shareBps: 5000, marginAtStillLimitBps: 5000, lowered: null },
         }],
       } });
     }
@@ -100,6 +105,13 @@ for (const width of [390, 1366]) {
     expect(state.limitReads).toHaveLength(0);
     await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
     await expect(page.locator('.still-borrow-maximum')).toContainText('5 USDC');
+    // What Still's limit is worth: Aave's beside it, and why it is lower now.
+    const compare = page.locator('.still-borrow-compare');
+    await expect(compare.getByText('Aave V4 would lend up to', { exact: true })).toBeVisible();
+    await expect(compare.getByText('12.50 USDC', { exact: true })).toBeVisible();
+    await expect(compare.getByText('5.00 USDC · 40% of it', { exact: true })).toBeVisible();
+    await expect(compare.getByText(/Borrowing Still’s, your collateral could fall 60% first\./)).toBeVisible();
+    await expect(compare.getByText(/^Stocks count at 40%, not 50%, until Sun 8 PM New York time: Wall Street is closed/)).toBeVisible();
     expect(state.limitReads[0]!.searchParams.get('collateralSupplyAtomic')).toBe('5000001');
     expect(state.limitReads[0]!.searchParams.get('token')).toBe(STOCKS.find(row => row.id === 'NVDAc')!.token);
     await page.getByLabel('USDC to borrow', { exact: true }).fill('3');

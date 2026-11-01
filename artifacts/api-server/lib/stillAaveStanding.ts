@@ -6,6 +6,7 @@ import { aaveSpokeAbi, aaveHubAbi, aaveOracleAbi } from '@mioagent/still-engine/
 import { Batch } from '@mioagent/still-engine/rpc';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { stillRpcUrlsV1 } from './stillMirror.js';
+import type { StillShareLoweredV1 } from './stillLimitComparison.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentReadV1, type AaveV4DeploymentStatusV1, type AaveV4ReserveBindingV1 } from './aaveV4BorrowPlan.js';
 
 const ZERO = BigInt(0), BPS = BigInt(10_000), USDC = BigInt(1_000_000), CENT = BigInt(10_000);
@@ -37,6 +38,8 @@ export interface StillAaveCapacityV1 {
   availableAssets: bigint;
   /** Each contributing stock names its actual financial-policy haircut. */
   shareBpsByStock: Partial<Record<StockId, number>>;
+  /** Why a contributing stock counts at a lower share now; absent at the full share. */
+  loweredByStock: Partial<Record<StockId, StillShareLoweredV1>>;
 }
 export interface StillAaveStandingV1 extends StillAaveSnapshotV1 {
   walletAddress: Address;
@@ -280,11 +283,22 @@ function need<T>(value: { ok: true; value: T } | { ok: false } | undefined): T {
   if (!value?.ok) throw new Error('aave_required_read_missing');
   return value.value;
 }
-function stockShare(stock: StockId, calendar: CalendarRead, blockAt: Date, now: Date): bigint {
+/** The lower of the shares at the read block and now, and what lowered it. */
+export function stockShareTermsV1(stock: StockId, calendar: CalendarRead, blockAt: Date, now: Date): { share: bigint; lowered: StillShareLoweredV1 | null } {
   const dates = calendar.ok ? calendar.calendar.dates.get(stock) : undefined;
-  const at = (when: Date) => stillShareBps('stock', weekendWindow(when).active, dates === undefined || earningsWindow(when, dates)?.active === true);
-  const blockShare = at(blockAt), nowShare = at(now);
-  return blockShare < nowShare ? blockShare : nowShare;
+  let share: bigint = TERMS.shareOfProtocolBps;
+  let lowered: StillShareLoweredV1 | null = null;
+  for (const when of [now, blockAt]) {
+    const closed = weekendWindow(when);
+    const earnings = dates === undefined ? null : earningsWindow(when, dates);
+    const at = stillShareBps('stock', closed.active, dates === undefined || earnings?.active === true);
+    if (at >= share) continue;
+    share = at;
+    lowered = closed.active ? { reason: 'market_closed', until: closed.endsAt.toISOString() }
+      : earnings?.active ? { reason: 'earnings', reportDate: earnings.reportDate, until: earnings.endsAt.toISOString() }
+        : { reason: 'earnings_unread' };
+  }
+  return { share, lowered };
 }
 
 /** Aave and Still account for every currently enabled pledged reserve.
@@ -308,6 +322,7 @@ export function stillAaveCapacityV1(input: {
   const lendable = config.paused || config.frozen || !config.borrowable || !spoke.active || spoke.halted ? ZERO : (liquidity < drawRoom ? liquidity : drawRoom);
   let limitAssets = ZERO, protocolLimitAssets = ZERO;
   const shareBpsByStock: Partial<Record<StockId, number>> = {};
+  const loweredByStock: Partial<Record<StockId, StillShareLoweredV1>> = {};
   const blockAt = new Date(Number(snapshot.block.timestamp) * 1000);
   for (const reserve of aave.reserves) {
     if (reserve.info.role.kind !== 'stock') continue;
@@ -323,8 +338,9 @@ export function stillAaveCapacityV1(input: {
     // of the recorded and newest factor also covers the refresh conservatively.
     const factor = latestFactor < userFactor ? latestFactor : userFactor;
     if (price <= ZERO || factor < ZERO || factor > BPS || registry.multiplier <= ZERO || registry.paused || flags.paused || flags.frozen || !caps.active || caps.halted) throw new Error('aave_collateral_unavailable');
-    const share = stockShare(stock.id, calendar, blockAt, now);
+    const { share, lowered } = stockShareTermsV1(stock.id, calendar, blockAt, now);
     shareBpsByStock[stock.id] = Number(share);
+    if (lowered) loweredByStock[stock.id] = lowered;
     const denominator = (BigInt(10) ** BigInt(stock.decimals)) * BPS * usdcPrice;
     const protocol = pledged * price * factor * USDC / denominator;
     protocolLimitAssets += protocol;
@@ -332,7 +348,7 @@ export function stillAaveCapacityV1(input: {
   }
   const headroom = limitAssets > debt ? limitAssets - debt : ZERO;
   const atomic = headroom < lendable ? headroom : lendable;
-  return { limitAssets, protocolLimitAssets, debtAssets: debt, liquidityAssets: lendable, availableAssets: atomic / CENT * CENT, shareBpsByStock };
+  return { limitAssets, protocolLimitAssets, debtAssets: debt, liquidityAssets: lendable, availableAssets: atomic / CENT * CENT, shareBpsByStock, loweredByStock };
 }
 
 export async function readStillAaveStandingV1(input: {

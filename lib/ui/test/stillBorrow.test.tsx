@@ -133,3 +133,44 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     assert.doesNotMatch(html, /No collateral|No funds|Review loan/);
   });
 });
+
+describe('what Still’s limit is worth, in numbers', () => {
+  const aave = { protocol: 'Aave V4', protocolLimitAtomic: '1234567890', stillLimitAtomic: '617283945', shareBps: 5_000, marginAtStillLimitBps: 5_000, lowered: null };
+
+  it('reads the server’s two limits, rounded down to the cent, with the margin at Still’s', async () => {
+    const { stillBorrowComparisonViewV1 } = await import('../src/still/borrowIntent');
+    assert.deepEqual(stillBorrowComparisonViewV1(aave, 'NVDAc'), {
+      protocol: 'Aave V4', protocolLimitUsdc: '1,234.56', stillLimitUsdc: '617.28', sharePercent: '50%', marginPercent: '50%', lowered: null,
+    });
+    // A crypto loan is Morpho's, and a figure from the other protocol is not this one's.
+    assert.equal(stillBorrowComparisonViewV1(aave, 'cbBTC'), null);
+    assert.equal(stillBorrowComparisonViewV1({ ...aave, protocol: 'Morpho' }, 'cbBTC')?.protocol, 'Morpho');
+    // Anything not exact leaves the comparison out, never a guess.
+    for (const odd of [{ ...aave, stillLimitAtomic: '1234567891' }, { ...aave, protocolLimitAtomic: '0', stillLimitAtomic: '0' },
+      { ...aave, shareBps: 0 }, { ...aave, marginAtStillLimitBps: 10_001 }, { ...aave, lowered: { reason: 'tea_time' } }, { ...aave, lowered: undefined }]) {
+      assert.equal(stillBorrowComparisonViewV1(odd, 'NVDAc'), null, JSON.stringify(odd));
+    }
+  });
+
+  it('says why a stock counts lower: the closed market, the company’s report, or a calendar we could not read', async () => {
+    const { stillBorrowComparisonViewV1 } = await import('../src/still/borrowIntent');
+    const lowered = (value: unknown) => stillBorrowComparisonViewV1({ ...aave, shareBps: 4_000, marginAtStillLimitBps: 6_000, lowered: value }, 'NVDAc')!.lowered;
+    assert.equal(lowered({ reason: 'market_closed', until: '2026-11-02T01:00:00.000Z' }),
+      'Stocks count at 40%, not 50%, until Sun 8 PM New York time: Wall Street is closed, and a stock can open far from the price its token trades at on Base.');
+    assert.equal(lowered({ reason: 'earnings', reportDate: '2026-11-19', until: '2026-11-21T01:00:00.000Z' }),
+      'NVDAc counts at 40%, not 50%, until Fri 8 PM New York time: NVIDIA reports earnings on Nov 19, and the price can jump either way.');
+    assert.match(lowered({ reason: 'earnings_unread' })!, /^NVDAc counts at 40%, not 50%: Still could not read the earnings calendar just now/);
+  });
+
+  it('prints both limits and both margins where the amount is chosen', () => {
+    const html = render({ asset: 'NVDAc', needsRead: false, capacity: { ...capacity, comparison: {
+      protocol: 'Aave V4', protocolLimitUsdc: '1,234.56', stillLimitUsdc: '617.28', sharePercent: '40%', marginPercent: '60%',
+      lowered: 'Stocks count at 40%, not 50%, until Sun 8 PM New York time: Wall Street is closed.',
+    } } });
+    assert.match(html, /<dt>Aave V4 would lend up to<\/dt><dd class="mono">1,234\.56 USDC<\/dd>/);
+    assert.match(html, /<dt>Still lends up to<\/dt><dd class="mono">617\.28 USDC · 40% of it<\/dd>/);
+    assert.match(html, /Borrowing Aave V4’s full amount, the smallest fall in price could start liquidation\. Borrowing Still’s, your collateral could fall 60% first\./);
+    assert.match(html, /until Sun 8 PM New York time: Wall Street is closed\./);
+    assert.doesNotMatch(render({ asset: 'NVDAc', needsRead: false, capacity }), /would lend up to/);
+  });
+});

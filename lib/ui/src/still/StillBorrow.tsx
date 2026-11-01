@@ -7,6 +7,17 @@ import { STOCKS, type StockId } from '@mioagent/still-engine/registry';
 void React;
 
 export type StillBorrowAssetV1 = 'cbBTC' | 'WETH' | 'ETH' | StockId;
+/** Still's limit beside the protocol's own, in the page's words. */
+export interface StillBorrowComparisonV1 {
+  protocol: 'Aave V4' | 'Morpho';
+  protocolLimitUsdc: string;
+  stillLimitUsdc: string;
+  sharePercent: string;
+  /** How far all the collateral could fall before liquidation, with the debt at Still's full limit. */
+  marginPercent: string;
+  /** Why the stock counts lower now; null at the full share. */
+  lowered: string | null;
+}
 export interface StillBorrowModelV1 {
   sky: SkyStateV1;
   signedIn: boolean;
@@ -30,6 +41,8 @@ export interface StillBorrowModelV1 {
     pledged: string | null;
     maximumUsdc: string | null;
     blockNumber: number | null;
+    /** The protocol's limit and Still's, as the server measured both. */
+    comparison?: StillBorrowComparisonV1 | null;
   };
   error: string | null;
   /** An amount the server said this wallet can add, after refusing more. */
@@ -135,6 +148,19 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                       {capacity.existingDebt ? <div><dt>Current debt</dt><dd className="mono">{capacity.existingDebt} USDC</dd></div> : null}
                     </dl>
                     <p className="still-note still-borrow-block">{capacity.blockNumber === null ? 'Reading block not available.' : <>Read at Base block <span className="mono">{capacity.blockNumber.toLocaleString('en-US')}</span>.</>}</p>
+                    {/* What Still's limit is worth, in numbers: the operator
+                        asked on 2026-10-31 for "Aave would lend $X, Still
+                        lends $Y, because…" where the amount is chosen. */}
+                    {capacity.comparison ? (
+                      <div className="still-borrow-compare">
+                        <dl className="still-borrow-compare-list">
+                          <div><dt>{capacity.comparison.protocol} would lend up to</dt><dd className="mono">{capacity.comparison.protocolLimitUsdc} USDC</dd></div>
+                          <div><dt>Still lends up to</dt><dd className="mono">{capacity.comparison.stillLimitUsdc} USDC · {capacity.comparison.sharePercent} of it</dd></div>
+                        </dl>
+                        <p className="still-note">Borrowing {capacity.comparison.protocol}’s full amount, the smallest fall in price could start liquidation. Borrowing Still’s, your collateral could fall {capacity.comparison.marginPercent} first.</p>
+                        {capacity.comparison.lowered ? <p className="still-note">{capacity.comparison.lowered}</p> : null}
+                      </div>
+                    ) : null}
                   </div>
                   {capacity.maximumUsdc === null ? <p className="still-note">The limit could not be read. Read it again before continuing.</p> : null}
                   {capacity.nativeReserve ? <p className="still-note">At least {capacity.nativeReserve} ETH is kept out of the collateral for wallet/network fees. Fees are not quoted here; your wallet calculates them before approval.</p> : null}

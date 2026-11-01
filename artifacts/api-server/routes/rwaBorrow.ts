@@ -3,7 +3,7 @@ import { BORROW_REVIEW_REFUSALS_V1 } from '@mioagent/rwa-issuer/borrowReview';
 import { morphoBorrowCapacityV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 
 import { issueBorrowDraftV1, verifyBorrowDraftV1 } from '../lib/borrowDraft.js';
-import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1 } from '../lib/stillBorrowStanding.js';
+import { readBorrowStandingV1, stillBorrowAssetV1, stillBorrowCapacityWireV1, stillBorrowComparisonWireV1 } from '../lib/stillBorrowStanding.js';
 import { runMorphoBorrowV1, type MorphoBorrowRunV1 } from '../lib/morphoBorrowRunner.js';
 import { nativeMorphoFundingRefusalV1 } from '../lib/nativeMorphoBorrowPlan.js';
 import { TERMS } from '@mioagent/still-engine/policy';
@@ -203,6 +203,7 @@ rwaBorrowRouter.get('/rwa/borrow/capacity', async (req, res) => {
           ...(native ? { funding:'native', nativeReserveAtomic:TERMS.ethGasReserveWei.toString(), feeQuoteState:'wallet_quote_required' } : {}),
           collateralSupplyAtomic: supply.toString(),
           still: stillBorrowCapacityWireV1(token, entry, supply),
+          comparison: stillBorrowComparisonWireV1(token, entry, supply),
         } : {}),
         availableToBorrowAtomic: capacity?.assets.toString() ?? null,
         bound: capacity?.bound ?? null,
