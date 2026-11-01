@@ -24,6 +24,15 @@ export function sunPointV1(share: number): { x: number; y: number } {
   return { x: u * u * 34 + 2 * u * s * 195 + s * s * 356, y: u * u * 124 + 2 * u * s * -36 + s * s * 124 };
 }
 
+/** The same city, alone, for the band at the top of Still's other pages: no sun and no clouds, which say things. */
+export function StillSkylineV1({ className }: { className?: string }) {
+  return (
+    <svg className={className} viewBox="0 254 390 56" preserveAspectRatio="xMaxYMax meet" aria-hidden="true" focusable="false">
+      <path d={SKYLINE_V1} />
+    </svg>
+  );
+}
+
 function Cloud({ x, y, scale }: { x: number; y: number; scale: number }) {
   return (
     <g className="sky-cloud" transform={`translate(${x} ${y}) scale(${scale})`}>

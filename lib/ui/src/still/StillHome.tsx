@@ -7,6 +7,7 @@ import { type ComingUpV1, type HomeViewV1, type MobileInputV1 } from './homeView
 import { SkyLayer } from './Sky';
 import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
+import { StillIconV1 } from './icons';
 import { StillMobile } from './StillMobile';
 import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
 import { composerLinksV1 } from '../console/composerLinks';
@@ -151,13 +152,22 @@ function TelegramIconV1() {
 }
 
 /**
- * Two quiet doors at the foot of Home: Still in an assistant, and alerts in
- * Telegram. Neither is the page's subject, so each is one line and one action.
+ * Quiet doors at the foot of Home: what a loan could pay for, Still in an
+ * assistant, and alerts in Telegram. None is the page's subject, so each is
+ * one line and one action.
  */
 export function StillExtras({ telegram }: { telegram?: TelegramAlertsModelV1 | null }) {
   const view = telegram?.view ?? null;
   return (
     <div className="still-section still-extras">
+      <StillLink href="/spend" className="still-extra">
+        <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
+        <span className="still-extra-body">
+          <span className="still-extra-title">Spend with Still</span>
+          <span className="still-extra-note">Mobile data, top-ups and gift cards a loan could pay for, priced in USDC.</span>
+        </span>
+        <span className="still-extra-go" aria-hidden="true">›</span>
+      </StillLink>
       <StillLink href={STILL_ASSISTANTS_V1.path} className="still-extra">
         <span className="still-extra-icon"><AssistantIconV1 /></span>
         <span className="still-extra-body">

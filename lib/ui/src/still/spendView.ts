@@ -66,6 +66,8 @@ export interface SpendPackageRowV1 {
   price: string;
   /** Against the reader's Still room: within it, more than it, or not said. */
   room: 'within' | 'over' | null;
+  /** How much of a fully read room the price takes, 0 to 1; null when the room is partial or unknown. */
+  share: number | null;
 }
 
 export interface SpendProductViewV1 {
@@ -98,7 +100,9 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
     if (cents === null) continue;
     const face = typeof row.faceCurrency === 'string' && /^[A-Z]{3}$/.test(row.faceCurrency) && /^\d+(?:\.\d+)?$/.test(row.value) ? ` ${row.faceCurrency}` : '';
     const fits = roomCents === null ? null : cents <= roomCents ? 'within' as const : room!.complete ? 'over' as const : null;
-    packages.push({ label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits });
+    // A share of a partial room would overstate it, so the bar is drawn only against a whole one.
+    const share = roomCents === null || !room!.complete || roomCents === 0n ? null : cents >= roomCents ? 1 : Number(cents) / Number(roomCents);
+    packages.push({ label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share });
   }
   const recipient = typeof product.recipientType === 'string' ? product.recipientType : '';
   const needs = /phone/i.test(recipient) ? 'Buying it needs the phone number to top up.'

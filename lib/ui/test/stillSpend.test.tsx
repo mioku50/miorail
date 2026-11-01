@@ -46,10 +46,19 @@ describe('what a loan could pay for, as the page says it', () => {
     assert.equal(odd.product!.packages[0]!.room, 'over');
   });
 
+  it('measures a price against a whole room only, and a price over it fills the bar', () => {
+    const full = spendProductViewV1(GERMANY, { cents: '1325', complete: true }).product!;
+    assert.deepEqual(full.packages.map((row) => row.share), [253 / 1325, 1, 1]);
+    // A partial room is a floor: a share of it would overstate the price's weight.
+    assert.deepEqual(spendProductViewV1(GERMANY, { cents: '1325', complete: false }).product!.packages.map((row) => row.share), [null, null, null]);
+    assert.deepEqual(spendProductViewV1(GERMANY, { cents: '0', complete: true }).product!.packages.map((row) => row.share), [null, null, null]);
+    assert.deepEqual(spendProductViewV1(GERMANY, null).product!.packages.map((row) => row.share), [null, null, null]);
+  });
+
   it('a gift card shows its face value with its currency; a top-up says it needs the number', () => {
     const card = spendProductViewV1({ outcome: 'product', product: { id: 'amazon_de-germany', name: 'Amazon.de', recipientType: null,
       packages: [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }] } }, null).product!;
-    assert.deepEqual(card.packages[0], { label: '50 EUR', price: '58.80 USDC', room: null });
+    assert.deepEqual(card.packages[0], { label: '50 EUR', price: '58.80 USDC', room: null, share: null });
     assert.equal(card.needs, null);
     const topUp = spendProductViewV1({ outcome: 'product', product: { id: 'ortel-germany', name: 'Ortel', recipientType: 'phone_number', packages: [] } }, null).product!;
     assert.equal(topUp.needs, 'Buying it needs the phone number to top up.');
@@ -77,9 +86,10 @@ describe('the Spend page', () => {
   it('says it cannot buy, shows each USDC price against the room, and names who sells', () => {
     const html = renderToStaticMarkup(<StillSpend model={model()} />);
     assert.match(html, /Nothing can be bought here yet\. Paying from Still, with the loan and the payment in one transaction, is the next step\./);
-    assert.match(html, /<dt>10GB, 30 Days<\/dt><dd><span class="mono">13\.25 USDC<\/span><span class="still-spend-fit">within your room<\/span><\/dd>/);
-    assert.match(html, /<dt>Unlimited, 15 Days<\/dt><dd><span class="mono">40\.00 USDC<\/span><span class="still-spend-fit">more than your room<\/span><\/dd>/);
-    assert.match(html, /Your Still room now: \$13\.25\./);
+    assert.match(html, /<li class="still-spend-price" data-fit="within"><span class="still-spend-price-top"><span class="still-spend-price-label">10GB, 30 Days<\/span><span class="mono still-spend-price-amount">13\.25 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-fit">Within your room<\/span><\/li>/);
+    assert.match(html, /<li class="still-spend-price" data-fit="over"><span class="still-spend-price-top"><span class="still-spend-price-label">Unlimited, 15 Days<\/span><span class="mono still-spend-price-amount">40\.00 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-fit">More than your room<\/span><\/li>/);
+    assert.match(html, /<span class="still-spend-price-label">1GB, 7 Days<\/span>.*?<span style="width:19%"><\/span>/);
+    assert.match(html, /<span class="still-spend-room-label">Your Still room now<\/span><span class="still-spend-room-amount">\$13\.25<\/span>/);
     assert.match(html, /Bitrefill sells these under its own terms/);
     assert.match(html, /Not offered to US persons/);
     assert.doesNotMatch(html, /Buy|Pay now|<form/);
@@ -88,7 +98,7 @@ describe('the Spend page', () => {
   it('signed out, it offers sign-in instead of a comparison; gift cards ask for a brand', () => {
     const html = renderToStaticMarkup(<StillSpend model={model({ signedIn: false, room: null, product: spendProductViewV1(GERMANY, null).product })} />);
     assert.match(html, /<a href="\/signin\?next=%2Fspend">Sign in<\/a> to see which of these your Still room covers\./);
-    assert.doesNotMatch(html, /within your room|more than your room/);
+    assert.doesNotMatch(html, /within your room|more than your room|still-spend-meter/i);
     const cards = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', products: [], selected: null, product: null })} />);
     assert.match(cards, /<label class="still-borrow-label" for="[^"]+-brand">Brand<\/label>/);
     assert.match(cards, /Nothing in stock here for Germany\./);

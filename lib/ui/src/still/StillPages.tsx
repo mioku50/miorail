@@ -5,6 +5,7 @@ import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1 } from '../c
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
+import { StillIconV1, type StillIconNameV1 } from './icons';
 
 void React;
 
@@ -37,18 +38,19 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
         </div>
       ) : view ? (
         <>
-          <div className="still-section still-borrow-entry">
-            <StillLink href="/borrow" className="still-btn">Get money</StillLink>
-            <StillLink href="/repay" className="still-btn sec">Repay</StillLink>
-            <p className="still-note">Reviewed stocks through Aave V4; cbBTC and WETH through Morpho.</p>
-          </div>
-          <div className="still-section">
+          <div className="still-section still-balance">
+            <div className="still-balance-label">Reviewed holdings</div>
             {view.total ? (
-              <div className="still-big"><span className="d" style={{ fontSize: 48 }}>{view.total.split('.')[0]}</span><span className="c" style={{ fontSize: 24 }}>.{view.total.split('.')[1]}</span></div>
+              <div className="still-big"><span className="d">{view.total.split('.')[0]}</span><span className="c">.{view.total.split('.')[1]}</span></div>
             ) : (
               <div className="still-sub">Total not read this time.</div>
             )}
-            <div className="still-note" style={{ marginTop: 6 }}>{view.count} reviewed {view.count === 1 ? 'holding' : 'holdings'} · prices are each venue’s own</div>
+            <div className="still-balance-note">{view.count} reviewed {view.count === 1 ? 'holding' : 'holdings'} · prices are each venue’s own</div>
+            <div className="still-balance-actions">
+              <StillLink href="/borrow" className="still-btn">Get money</StillLink>
+              <StillLink href="/repay" className="still-btn sec">Repay</StillLink>
+            </div>
+            <p className="still-balance-note">Reviewed stocks through Aave V4; cbBTC and WETH through Morpho.</p>
           </div>
           <div className="still-tabs" role="tablist" aria-label="Assets">
             <button type="button" role="tab" aria-selected={tab === 'holdings'} onClick={() => setTab('holdings')}>Holdings</button>
@@ -122,22 +124,22 @@ export interface StillMoreModelV1 {
   signInHref: string;
 }
 
-const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title: string; blurb: string; href: string }> }> = [
-  { label: 'Spend', rows: [{ title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend' }] },
-  { label: 'Trade', rows: [{ title: 'Swap AI', blurb: 'Any token on Base, by a checked route', href: '/routes' }] },
+const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title: string; blurb: string; href: string; icon: StillIconNameV1; badge?: string }> }> = [
+  { label: 'Spend', rows: [{ title: 'Spend', blurb: 'Mobile data, top-ups and gift cards a loan could pay for, in USDC', href: '/spend', icon: 'spend', badge: 'New' }] },
+  { label: 'Trade', rows: [{ title: 'Swap AI', blurb: 'Any token on Base, by a checked route', href: '/routes', icon: 'swap' }] },
   {
     label: 'Research',
     rows: [
-      { title: 'Discover', blurb: 'Officially issued assets, and what getting back out costs', href: '/opportunities' },
-      { title: 'Watch', blurb: 'Any address read in full, what issuers can do to your tokens, the markets you watch', href: '/watch' },
-      { title: 'Today', blurb: 'The classic first screen: balances, cash-out and your Aave card', href: '/today' },
+      { title: 'Discover', blurb: 'Officially issued assets, and what getting back out costs', href: '/opportunities', icon: 'discover' },
+      { title: 'Watch', blurb: 'Any address read in full, what issuers can do to your tokens, the markets you watch', href: '/watch', icon: 'watch' },
+      { title: 'Today', blurb: 'The classic first screen: balances, cash-out and your Aave card', href: '/today', icon: 'today' },
     ],
   },
   {
     label: 'Assistants',
     rows: [
-      { title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: STILL_ASSISTANTS_V1.path },
-      { title: 'Wallet MCP', blurb: 'Coinbase’s wallet in your assistant, with Miorail inside', href: '/extensions' },
+      { title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: STILL_ASSISTANTS_V1.path, icon: 'assistant' },
+      { title: 'Wallet MCP', blurb: 'Coinbase’s wallet in your assistant, with Miorail inside', href: '/extensions', icon: 'wallet' },
     ],
   },
 ];
@@ -146,34 +148,38 @@ export function StillMore({ model }: { model: StillMoreModelV1 }) {
   return (
     <div className="still-more-page">
       <StillHeader title="More" sky={model.sky} />
-      <div className="still-section still-card" style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-        <span className="still-dot crypto" aria-hidden="true">{(model.account ?? '?')[0]?.toUpperCase()}</span>
-        <span style={{ flex: 1, minWidth: 0 }}>
-          <span style={{ display: 'block', fontSize: 16, fontWeight: 600, overflowWrap: 'anywhere' }}>{model.account ?? 'Not signed in'}</span>
-          <span className="still-note">{model.account ? 'Signed in with your wallet' : 'Sign in to read your own wallet'}</span>
+      <div className="still-section still-account">
+        <span className="still-account-mark" aria-hidden="true">{(model.account ?? '?')[0]?.toUpperCase()}</span>
+        <span className="still-account-body">
+          <span className="still-account-name">{model.account ?? 'Not signed in'}</span>
+          <span className="still-account-note">{model.account ? 'Signed in with your wallet' : 'Sign in to read your own wallet'}</span>
         </span>
-        {model.account ? null : <a className="still-btn" style={{ height: 40, fontSize: 15 }} href={model.signInHref}>Sign in</a>}
-      </div>
-      <div className="still-btns" style={{ marginTop: 10 }}>
-        <StillLink href="/plan/history" className="still-btn sec" style={{ height: 44, fontSize: 15 }}>Activity</StillLink>
-        <StillLink href="/settings" className="still-btn sec" style={{ height: 44, fontSize: 15 }}>Settings</StillLink>
+        {model.account ? null : <a className="still-account-signin" href={model.signInHref}>Sign in</a>}
+        <span className="still-account-links">
+          <StillLink href="/plan/history" className="still-account-link"><StillIconV1 name="activity" />Activity</StillLink>
+          <StillLink href="/settings" className="still-account-link"><StillIconV1 name="settings" />Settings</StillLink>
+        </span>
       </div>
       <div className="still-more-groups">
-      {MORE_GROUPS_V1.map((group) => (
-        <div key={group.label}>
-          <div className="still-section still-eyebrow">{group.label}</div>
-          <ul className="still-links">
-            {group.rows.map((row) => (
-              <li key={row.href}>
-                <StillLink href={row.href}>
-                  <span><span className="t">{row.title}</span><span className="b">{row.blurb}</span></span>
-                  {CHEVRON_V1}
-                </StillLink>
-              </li>
-            ))}
-          </ul>
-        </div>
-      ))}
+        {MORE_GROUPS_V1.map((group) => (
+          <section key={group.label} className="still-more-group" aria-label={group.label}>
+            <h2 className="still-more-group-head">{group.label}</h2>
+            <ul className="still-links">
+              {group.rows.map((row) => (
+                <li key={row.href}>
+                  <StillLink href={row.href}>
+                    <span className="still-link-icon"><StillIconV1 name={row.icon} /></span>
+                    <span className="still-link-text">
+                      <span className="t">{row.title}{row.badge ? <span className="still-badge">{row.badge}</span> : null}</span>
+                      <span className="b">{row.blurb}</span>
+                    </span>
+                    {CHEVRON_V1}
+                  </StillLink>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
       </div>
       <p className="still-section still-note">
         <a href="/metrics">Public metrics</a> · <a href={MIORAIL_SOURCE_URL_V1} target="_blank" rel="noopener noreferrer">Source (AGPL-3.0)</a>
@@ -238,7 +244,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
           one block. No API key, and nothing is signed there: you approve every loan in your own wallet.
         </div>
       </div>
-      <div className="still-section">
+      <div className="still-section still-feature">
         <div className="still-eyebrow">Still’s MCP server · read only, no sign-in</div>
         <CopyRow label="the Still MCP address" value={STILL_MCP_URL_V1} />
         <p className="still-note" style={{ marginTop: 6 }}>

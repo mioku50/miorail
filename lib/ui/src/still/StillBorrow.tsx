@@ -104,7 +104,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
           ) : null}
           <div className="still-borrow-grid">
             <section className="still-card still-borrow-step" aria-labelledby={`${id}-collateral-title`}>
-              <div className="still-eyebrow">1 · Collateral</div>
+              <div className="still-step"><span className="n" aria-hidden="true">1</span>Collateral</div>
               <h2 id={`${id}-collateral-title`}>Choose what to add.</h2>
               <form onSubmit={(event) => { event.preventDefault(); if (canRead) model.onReadLimit(); }}>
                 <div className="still-borrow-assets" role="group" aria-label="Collateral token">
@@ -142,7 +142,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
             </section>
 
             <section className="still-card still-borrow-step" aria-labelledby={`${id}-loan-title`} aria-busy={busy}>
-              <div className="still-eyebrow">2 · Borrowing</div>
+              <div className="still-step"><span className="n" aria-hidden="true">2</span>Borrowing</div>
               <h2 id={`${id}-loan-title`}>Choose your loan.</h2>
               {model.reading ? <p className="still-note" role="status">Reading your balance and borrowing limit…</p> : null}
               {capacity ? (

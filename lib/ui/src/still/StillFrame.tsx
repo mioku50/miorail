@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
+import { StillSkylineV1 } from './Sky';
 import { skyStateV1, type SkyEarningsV1, type SkyStateV1 } from './skyState';
 
 void React;
@@ -202,10 +203,11 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
   );
 }
 
-export function StillHeader({ title, trail, sky, extra }: { title: string; trail?: string | null; sky: SkyStateV1; extra?: ReactNode }) {
+/** A page's title on a band of the same sky as Home's, with the market clock. */
+export function StillHeader({ title, trail, sky, extra, lede }: { title: string; trail?: string | null; sky: SkyStateV1; extra?: ReactNode; lede?: ReactNode }) {
   return (
     <div className="still-head">
-      <div style={{ minWidth: 0 }}>
+      <div className="still-head-text">
         <h1>{title}</h1>
         {trail ? <div className="still-trail">{trail}</div> : null}
       </div>
@@ -213,6 +215,8 @@ export function StillHeader({ title, trail, sky, extra }: { title: string; trail
         {extra}
         <StillClockPill sky={sky} />
       </div>
+      {lede ? <div className="still-head-lede">{lede}</div> : null}
+      <StillSkylineV1 className="still-head-city" />
     </div>
   );
 }
