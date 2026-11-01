@@ -27,7 +27,7 @@ function model(patch: Partial<LendingReviewConsoleModelV1> = {}): LendingReviewC
 const render = (patch: Partial<LendingReviewConsoleModelV1> = {}) => renderToStaticMarkup(<LendingReviewScreen model={model(patch)} />);
 function entry(patch: Partial<RepayEntryModelV1> = {}): RepayEntryModelV1 {
   return { signedIn: true, signInHref: '/signin', asset: 'cbBTC', mode: 'assets', amount: '', maximum: '', read: null,
-    reading: false, preparing: false, error: null, onAsset: NOOP, onMode: NOOP, onAmount: NOOP, onMaximum: NOOP, onRead: NOOP, onReview: NOOP, ...patch };
+    reading: false, preparing: false, error: null, onAsset: NOOP, onMode: NOOP, onAmount: NOOP, onMaximum: NOOP, onRead: NOOP, onReview: NOOP, onMax: NOOP, ...patch };
 }
 const capacity = { venue: 'morpho' as const, marketId: `0x${'a'.repeat(64)}`, collateralTokenAddress: REPAY_COLLATERALS_V1[0]!.token,
   collateralSymbol: 'cbBTC', collateralDecimals: 8, debtAtomic: '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000 };
@@ -240,9 +240,12 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ signedIn: false, read: capacity })} />);
     assert.match(html, /Sign in/); assert.doesNotMatch(html, /3\.125001|4\.5|Read repayment position|Review repayment|<input/);
   });
-  it('never autofills an amount or maximum from the position and names zero only from a read', () => {
+  it('never autofills an amount or maximum from the position, and Max fills only when pressed', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ mode: 'all', read: capacity })} />);
-    assert.match(html, /Enter your own maximum/); assert.match(html, /value=""/); assert.doesNotMatch(html, /value="4\.5"|>Max<|value="3\.125001"/);
+    assert.match(html, /Enter your own maximum/); assert.match(html, /value=""/); assert.doesNotMatch(html, /value="4\.5"|value="3\.125001"/);
+    // 2026-11-01, the operator: a Max beside the amount, so the wallet need not be opened to look.
+    // It is the person's press, never a value the page chose for them.
+    assert.match(html, /<button type="button" class="still-borrow-max" title="All the USDC in your wallet, as the most this can spend">Max<\/button>/);
     assert.match(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: { ...capacity, debtAtomic: '0' } })} />), /No debt was recorded in this market/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry()} />), /No debt was recorded/);
   });

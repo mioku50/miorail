@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { CRYPTO } from '@mioagent/still-engine/registry';
-import { borrowAssetFromQueryV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
+import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
+import { borrowAssetFromQueryV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
+import { repayMaxV1 } from '../src/console/repayEntry.js';
 
 describe('a chosen collateral amount is interpreted exactly', () => {
   for (const [text, decimals, atomic] of [['.00000001', 8, '1'], ['0001.20', 6, '1200000'], ['.000000000000000001', 18, '1'], ['0', 18, '0']] as const) {
@@ -91,3 +92,34 @@ describe('Get money shows a server allowance for one selected pledge', () => {
     }
   });
 });
+
+describe('Max fills the amount from the server’s own read', () => {
+  const NVDAC = STOCKS.find(stock => stock.id === 'NVDAc')!;
+  const stockRow = { marketId: ADDRESSES.aaveSpoke.toLowerCase(), collateralTokenAddress: NVDAC.token.toLowerCase(), walletCollateralAtomic: '2028750' };
+  it('a token is all of it in the wallet; native ETH keeps the fee reserve; WETH is the token', () => {
+    assert.deepEqual(stillBorrowBalanceViewV1({ state: 'read', marketScope: 'still_aave_spoke', markets: [stockRow] }, 'NVDAc'), { maxAtomic: '2028750', error: null });
+    assert.deepEqual(stillBorrowBalanceViewV1(response(), 'cbBTC'), { maxAtomic: '123456789', error: null });
+    const weth = CRYPTO.find(row => row.id === 'ETH')!;
+    const native = { state: 'read', marketScope: 'still_registered_market', markets: [{ marketId: weth.morphoMarket, walletCollateralAtomic: '3300000000000000',
+      funding: 'native', nativeReserveAtomic: '500000000000000' }] };
+    assert.deepEqual(stillBorrowBalanceViewV1(native, 'ETH'), { maxAtomic: '2800000000000000', error: null });
+    // The server's own figure when it refused even one wei: zero ETH to add is an answer.
+    assert.deepEqual(stillBorrowBalanceViewV1({ state: 'refused', refusal: 'native_fee_reserve_insufficient', maximumNativeAtomic: '0', detail: 'x' }, 'ETH'),
+      { maxAtomic: '0', error: null });
+  });
+  it('an unread balance is said, never filled in as zero; a row for another market is not this one', () => {
+    const unread = stillBorrowBalanceViewV1({ state: 'read', marketScope: 'still_aave_spoke', markets: [{ ...stockRow, walletCollateralAtomic: null }] }, 'NVDAc');
+    assert.equal(unread.maxAtomic, null);
+    assert.match(unread.error!, /could not be read just now/);
+    assert.equal(stillBorrowBalanceViewV1({ state: 'read', marketScope: 'still_aave_spoke', markets: [stockRow] }, 'AAPLc').maxAtomic, null);
+    assert.equal(stillBorrowBalanceViewV1(response(), 'NVDAc').maxAtomic, null);
+    assert.deepEqual(stillBorrowBalanceViewV1({ state: 'refused', detail: 'Still could not establish this Aave account at one Base block.' }, 'NVDAc'),
+      { maxAtomic: null, error: 'Still could not establish this Aave account at one Base block.' });
+  });
+  it('on Repay, the smaller of the debt and the wallet’s USDC; for Repay all, the wallet’s USDC as the bound', () => {
+    assert.equal(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'assets'), '10000000');
+    assert.equal(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '4000000' }, 'assets'), '4000000');
+    assert.equal(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'all'), '25000000');
+  });
+});
+

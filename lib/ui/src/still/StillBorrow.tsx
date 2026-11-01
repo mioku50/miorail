@@ -51,6 +51,9 @@ export interface StillBorrowModelV1 {
    * limit can still be read; the loan cannot be sent from this wallet. */
   walletNote?: string | null;
   onSuggestedAmount?: (amount: string) => void;
+  /** Fills the amount with what the wallet holds of the chosen collateral. */
+  onMax?: () => void;
+  maxReading?: boolean;
 }
 
 /** Choose a precise pledge, read the server's limit, then choose a loan.
@@ -124,8 +127,13 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                   {STOCKS.map(stock => <option value={stock.id} key={stock.id}>{stock.id} · {stock.name}</option>)}
                 </select>
                 <label className="still-borrow-label" htmlFor={`${id}-collateral`}>Amount to add</label>
-                <div className="still-borrow-amount">
+                <div className={model.onMax ? 'still-borrow-amount has-max' : 'still-borrow-amount'}>
                   <input id={`${id}-collateral`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.collateralAmount} placeholder="0" disabled={busy || model.asset === null} aria-describedby={`${id}-collateral-unit ${id}-collateral-help`} onChange={(event) => model.onCollateralAmount(event.target.value)} />
+                  {model.onMax ? (
+                    <button type="button" className="still-borrow-max" disabled={busy || model.maxReading || model.asset === null}
+                      title={model.asset === 'ETH' ? 'All the ETH in your wallet, less 0.0005 ETH kept for network fees' : 'All of it in your wallet'}
+                      onClick={model.onMax}>{model.maxReading ? 'Reading…' : 'Max'}</button>
+                  ) : null}
                   <span id={`${id}-collateral-unit`} className="mono">{model.asset ?? 'Token'}</span>
                 </div>
                 <p id={`${id}-collateral-help`} className="still-note">{model.asset === 'ETH' ? 'Enter the exact ETH to wrap and pledge. Wallet-held WETH is not spent. Keep ETH for wallet/network fees.' : 'Enter 0 to use only collateral already deposited. Choosing an amount does not move it.'}</p>

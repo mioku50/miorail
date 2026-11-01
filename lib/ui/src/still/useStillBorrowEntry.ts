@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
-import { useBorrowCapacity, useCreateBorrowIntentV1 } from '@mioagent/api-client-react';
-import { borrowCollateralTokenV1, borrowCollateralDecimalsV1, parseBorrowDecimalV1, stillBorrowCapacityViewV1 } from './borrowIntent';
+import { readBorrowCapacityOnceV1, useBorrowCapacity, useCreateBorrowIntentV1 } from '@mioagent/api-client-react';
+import { tokenDecimalV1 } from '../console/stockSellAmount';
+import { borrowCollateralTokenV1, borrowCollateralDecimalsV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from './borrowIntent';
 import type { StillBorrowAssetV1, StillBorrowModelV1 } from './StillBorrow';
 import type { SkyStateV1 } from './skyState';
 interface AskedLimitV1 { asset: StillBorrowAssetV1; supplyAtomic: string; wallet: string }
@@ -16,9 +17,12 @@ export function useStillBorrowEntryV1(input: {
   const [borrowAmount, setBorrowAmount] = useState('');
   const [asked, setAsked] = useState<AskedLimitV1 | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [maxReading, setMaxReading] = useState(false);
   const preparing = useRef(false);
   const mounted = useRef(true);
   const identity = JSON.stringify([signedIn, wallet?.toLowerCase() ?? null, asset, collateralAmount, borrowAmount]);
+  const assetRef = useRef(asset);
+  assetRef.current = asset;
   const currentIdentity = useRef(identity);
   currentIdentity.current = identity;
   useEffect(() => {
@@ -51,6 +55,28 @@ export function useStillBorrowEntryV1(input: {
       // still asks for a fresh answer, including after an earlier refusal.
       void limit.refetch();
     } else setAsked({ asset, supplyAtomic: parsed.atomic, wallet: owner });
+  };
+
+  // Max asks the server for this wallet's balance of the chosen collateral, once,
+  // and fills the field with it; the person still reads the limit for it.
+  const onMax = async () => {
+    if (!signedIn || !owner || !asset || maxReading || preparing.current || limit.isFetching) return;
+    const chosen = asset;
+    const openedFor = JSON.stringify([owner, chosen]);
+    setMaxReading(true);
+    setError(null);
+    try {
+      // Native ETH is read as a pledge of one wei: the server answers with the balance and the fee reserve.
+      const payload = await readBorrowCapacityOnceV1(borrowCollateralTokenV1(chosen), chosen === 'ETH' ? '1' : '0', chosen === 'ETH' ? 'native' : undefined);
+      if (!mounted.current || JSON.stringify([owner, chosen]) !== openedFor || assetRef.current !== chosen) return;
+      const view = stillBorrowBalanceViewV1(payload, chosen);
+      if (view.maxAtomic === null) { setError(view.error); return; }
+      setCollateralAmount(tokenDecimalV1(view.maxAtomic, borrowCollateralDecimalsV1(chosen)));
+    } catch {
+      if (mounted.current && assetRef.current === chosen) setError('Your balance could not be read just now. Enter the amount yourself, or press Max again.');
+    } finally {
+      if (mounted.current) setMaxReading(false);
+    }
   };
 
   const onReview = async () => {
@@ -87,6 +113,7 @@ export function useStillBorrowEntryV1(input: {
           collateralAmount, onCollateralAmount: (next) => { setCollateralAmount(next); setError(null); },
           borrowAmount, onBorrowAmount: (next) => { setBorrowAmount(next); setError(null); },
           reading, preparing: intent.isPending, needsRead, onReadLimit, onReview: () => void onReview(),
+          maxReading, onMax: () => void onMax(),
           capacity: view.capacity,
           error: error ?? (!needsRead && !reading ? limit.error ? 'Your borrowing limit could not be read. Read it again before continuing.' : view.error : null),
           walletNote: signedIn ? input.walletBlocker ?? null : null,

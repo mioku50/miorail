@@ -1632,6 +1632,15 @@ export function useBorrowCapacity(tokenAddress: string | null | undefined, colla
   });
 }
 
+/** One explicit read of a collateral's capacity row, for a press of Max: the
+ * same server read as Read borrowing limit, asked only when the person asks. */
+export function readBorrowCapacityOnceV1(tokenAddress: string, collateralSupplyAtomic: string, funding?: 'native'): Promise<unknown> {
+  if (!/^0x[0-9a-fA-F]{40}$/.test(tokenAddress) || !/^(0|[1-9][0-9]{0,38})$/.test(collateralSupplyAtomic)) {
+    return Promise.reject(new Error('borrow_capacity_request_invalid'));
+  }
+  return fetchApi<unknown>(`/api/route-intelligence/rwa/borrow/capacity?token=${encodeURIComponent(tokenAddress)}&collateralSupplyAtomic=${collateralSupplyAtomic}${funding === 'native' ? '&funding=native' : ''}`);
+}
+
 /** A wallet-bound question link. This request never prepares or submits calls. */
 export function useCreateBorrowIntentV1() {
   return useMutation({

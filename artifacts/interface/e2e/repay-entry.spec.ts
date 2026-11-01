@@ -56,6 +56,20 @@ test('full repayment requires the person to type a maximum and keeps stock marke
   await max.fill('4'); await review.click(); await expect.poll(() => state.intents.length).toBe(1);
   expect(state.intents[0]).toEqual({ collateralTokenAddress: STOCKS.find(s => s.id === 'NVDAc')!.token.toLowerCase(), amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '4000000' });
 });
+test('Max fills from the position just read: the smaller of debt and wallet USDC, or the wallet as the bound', async ({ page }) => {
+  const state = await install(page); await page.goto('/repay?asset=cbBTC');
+  await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await expect(page.getByText('3.125001 USDC', { exact: true })).toBeVisible();
+  const amount = page.getByLabel('USDC to repay', { exact: true }); await expect(amount).toHaveValue('');
+  await page.getByRole('button', { name: 'Max', exact: true }).click();
+  await expect(amount).toHaveValue('3.125001');
+  await page.getByRole('button', { name: 'Repay all debt', exact: true }).click();
+  const bound = page.getByLabel('Maximum USDC funding', { exact: true }); await expect(bound).toHaveValue('');
+  await page.getByRole('button', { name: 'Max', exact: true }).click();
+  await expect(bound).toHaveValue('4.5');
+  // Pressing Max read nothing more and prepared nothing.
+  expect(state.reads).toEqual([CBBTC]); expect(state.intents).toEqual([]);
+});
 test('wrong token reading never turns into a usable balance or repayment question', async ({ page }) => {
   const state = await install(page); state.wrongToken = true; await page.goto('/repay?asset=cbBTC');
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();

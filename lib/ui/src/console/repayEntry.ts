@@ -37,3 +37,13 @@ export function repayIntentAmountsV1(input: { mode: 'assets' | 'all'; amount: st
   if (BigInt(exact.atomic) > BigInt(input.walletUsdcAtomic)) return { intent: null, error: 'The chosen USDC funding exceeds the balance read for this wallet.' };
   return { intent: { amountMode: input.mode, repayAmountAtomic: input.mode === 'assets' ? exact.atomic : null, maximumUsdcAtomic: exact.atomic }, error: null };
 }
+
+/** What Max fills on Repay, from the position just read: the smaller of the
+ * debt and the wallet's USDC, or for Repay all the wallet's USDC as the bound.
+ * Interest can move the exact debt before the transaction, which is why
+ * Repay all, with a bound, is the way to close a loan completely. */
+export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>, mode: 'assets' | 'all'): string {
+  const wallet = BigInt(read.walletUsdcAtomic), debt = BigInt(read.debtAtomic);
+  return (mode === 'all' || wallet < debt ? wallet : debt).toString();
+}
+

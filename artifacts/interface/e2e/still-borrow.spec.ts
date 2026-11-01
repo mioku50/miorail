@@ -122,6 +122,25 @@ for (const width of [390, 1366]) {
     await noWalletAction(page);
   });
 
+  test(`Max fills the whole balance from one server read, and native ETH keeps the fee reserve (${width}px)`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 }); const state = await install(page);
+    await page.goto('/borrow');
+    await page.getByLabel('Stock collateral · Aave V4', { exact: true }).selectOption('NVDAc');
+    await page.getByRole('button', { name: 'Max', exact: true }).click();
+    await expect(page.getByLabel('Amount to add', { exact: true })).toHaveValue('1');
+    expect(state.limitReads).toHaveLength(1);
+    expect(state.limitReads[0]!.searchParams.get('collateralSupplyAtomic')).toBe('0');
+    await page.getByRole('button', { name: /ETH\s*Wrap native ETH/ }).click();
+    await page.getByRole('button', { name: 'Max', exact: true }).click();
+    await expect(page.getByLabel('Amount to add', { exact: true })).toHaveValue('0.4995');
+    expect(state.limitReads[1]!.searchParams.get('funding')).toBe('native');
+    expect(state.limitReads[1]!.searchParams.get('collateralSupplyAtomic')).toBe('1');
+    // The limit itself is still read only when the person asks for it.
+    await expect(page.locator('.still-borrow-maximum')).toHaveCount(0);
+    expect(state.writes).toEqual([]);
+    await noWalletAction(page);
+  });
+
   test(`a selected pledge is read on demand and becomes only a review question (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page);

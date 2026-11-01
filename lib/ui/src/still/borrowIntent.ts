@@ -76,6 +76,32 @@ export function stillBorrowComparisonViewV1(value: unknown, asset: StillBorrowAs
   return { protocol, protocolLimitUsdc: usdcV1(protocolLimit), stillLimitUsdc: usdcV1(stillLimit), sharePercent, marginPercent: formatPercentBps(margin), lowered };
 }
 
+/** The most this wallet can pledge of the asset now, from the server's read:
+ * the wallet's tokens, or for native ETH its balance less the fee reserve.
+ * An unread balance is said, never filled in as zero. */
+export function stillBorrowBalanceViewV1(payload: unknown, asset: StillBorrowAssetV1): { maxAtomic: string | null; error: string | null } {
+  const failed = { maxAtomic: null, error: 'Your balance could not be read just now. Enter the amount yourself, or press Max again.' };
+  if (!object(payload)) return failed;
+  if (payload.state === 'refused') {
+    // The server's own figure: ETH it can add after the fee reserve, zero included.
+    if (asset === 'ETH' && payload.refusal === 'native_fee_reserve_insufficient' && atomic(payload.maximumNativeAtomic)) {
+      return { maxAtomic: payload.maximumNativeAtomic, error: null };
+    }
+    return { maxAtomic: null, error: typeof payload.detail === 'string' ? payload.detail : failed.error };
+  }
+  const stock = STOCKS.find(row => row.id === asset);
+  if (payload.state !== 'read' || payload.marketScope !== (stock ? 'still_aave_spoke' : 'still_registered_market') || !Array.isArray(payload.markets)) return failed;
+  const marketId = stock ? ADDRESSES.aaveSpoke.toLowerCase() : CRYPTO.find(row => row.id === (asset === 'cbBTC' ? 'cbBTC' : 'ETH'))!.morphoMarket;
+  const rows = payload.markets.filter(row => object(row) && row.marketId === marketId && (!stock || row.collateralTokenAddress === stock.token.toLowerCase()));
+  if (rows.length !== 1) return failed;
+  const row = rows[0] as Record<string, unknown>;
+  if (!atomic(row.walletCollateralAtomic)) return failed;
+  if (asset !== 'ETH') return { maxAtomic: row.walletCollateralAtomic, error: null };
+  if (row.funding !== 'native' || !atomic(row.nativeReserveAtomic)) return failed;
+  const left = BigInt(row.walletCollateralAtomic) - BigInt(row.nativeReserveAtomic);
+  return { maxAtomic: left > 0n ? left.toString() : '0', error: null };
+}
+
 /** Format the server's own allowance for the selected pledge. Missing data
  * remains unread; a different market/amount cannot become this form's quote. */
 export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAssetV1, collateralSupplyAtomic: string): {

@@ -559,6 +559,9 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-borrow .still-borrow-amount { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1.5px solid var(--sm-line); border-radius: 14px; background: var(--sm-ground); padding-right: 14px; }
 .still-borrow .still-borrow-amount input { width: 100%; min-width: 0; height: 52px; border: 0; border-radius: 14px; background: transparent; padding: 0 14px; color: var(--sm-ink); font: inherit; font-size: 20px; }
 .still-borrow .still-borrow-amount > span { font-size: 12px; color: var(--sm-ink2); }
+.still-borrow .still-borrow-amount.has-max { grid-template-columns: minmax(0, 1fr) auto auto; }
+.still-borrow .still-borrow-max { height: 30px; padding: 0 12px; border: 1px solid var(--sm-line); border-radius: 999px; background: transparent; color: var(--sm-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
+.still-borrow .still-borrow-max:disabled { opacity: 0.6; cursor: not-allowed; }
 .still-borrow .still-borrow-step form > .still-note { margin: 8px 0 16px; }
 .still-borrow .still-borrow-step .still-btn { width: 100%; height: 50px; font-size: 16px; }
 .still-borrow .still-borrow-choice:disabled { opacity: 0.55; cursor: not-allowed; }

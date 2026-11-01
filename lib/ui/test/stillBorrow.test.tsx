@@ -174,3 +174,15 @@ describe('what Still’s limit is worth, in numbers', () => {
     assert.doesNotMatch(render({ asset: 'NVDAc', needsRead: false, capacity }), /would lend up to/);
   });
 });
+
+describe('Max beside the amount', () => {
+  it('sits in the collateral field, says what it fills, and waits for the asset', () => {
+    const html = render({ asset: 'NVDAc', onMax: noop });
+    assert.match(html, /<div class="still-borrow-amount has-max"><input id="[^"]+-collateral"/);
+    assert.match(html, /<button type="button" class="still-borrow-max" title="All of it in your wallet">Max<\/button>/);
+    assert.match(render({ asset: 'ETH', onMax: noop }), /title="All the ETH in your wallet, less 0\.0005 ETH kept for network fees"/);
+    assert.match(render({ asset: null, onMax: noop }), /<button type="button" class="still-borrow-max" disabled=""/);
+    assert.match(render({ asset: 'NVDAc', onMax: noop, maxReading: true }), />Reading…<\/button>/);
+    assert.doesNotMatch(render({ asset: 'NVDAc' }), /still-borrow-max/);
+  });
+});

@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { tokenDecimalV1 } from './stockSellAmount';
-import { REPAY_COLLATERALS_V1, repayCapacityViewV1, repayIntentAmountsV1, type RepayCapacityWireV1 } from './repayEntry';
+import { REPAY_COLLATERALS_V1, repayCapacityViewV1, repayIntentAmountsV1, repayMaxV1, type RepayCapacityWireV1 } from './repayEntry';
 
 void React;
 
@@ -16,6 +16,9 @@ export interface RepayEntryModelV1 {
   read: RepayCapacityWireV1 | null; reading: boolean; preparing: boolean; error: string | null;
   onAsset: (asset: string) => void; onMode: (mode: 'assets' | 'all') => void;
   onAmount: (value: string) => void; onMaximum: (value: string) => void; onRead: () => void; onReview: () => void;
+  /** Fills the field from the position just read: the smaller of the debt and
+   * the wallet's USDC, or for Repay all, the wallet's USDC as the bound. */
+  onMax: () => void;
 }
 
 /** One explicit position read, then a signed question. Neither this form nor
@@ -70,6 +73,11 @@ export function useRepayEntryConsoleV1(input: {
     onAmount: amount => { if (!busy.current) patch({ amount, error: null }); },
     onMaximum: maximum => { if (!busy.current) patch({ maximum, error: null }); },
     onRead: () => void onRead(), onReview: () => void onReview(),
+    onMax: () => {
+      if (busy.current || !read) return;
+      const max = tokenDecimalV1(repayMaxV1(read, active.mode), 6);
+      patch(active.mode === 'all' ? { maximum: max, error: null } : { amount: max, error: null });
+    },
   } };
 }
 
@@ -111,9 +119,12 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
                 <button className="still-borrow-choice" type="button" aria-pressed={model.mode === 'all'} onClick={() => model.onMode('all')}>Repay all debt</button>
               </div>
               <label className="still-borrow-label" htmlFor={`${id}-amount`}>{model.mode === 'assets' ? 'USDC to repay' : 'Maximum USDC funding'}</label>
-              <div className="still-borrow-amount"><input id={`${id}-amount`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false}
+              <div className="still-borrow-amount has-max"><input id={`${id}-amount`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false}
                 value={model.mode === 'assets' ? model.amount : model.maximum} aria-describedby={`${id}-funding-note`}
-                onChange={event => model.mode === 'assets' ? model.onAmount(event.target.value) : model.onMaximum(event.target.value)} /><span>USDC</span></div>
+                onChange={event => model.mode === 'assets' ? model.onAmount(event.target.value) : model.onMaximum(event.target.value)} />
+                <button type="button" className="still-borrow-max" onClick={model.onMax}
+                  title={model.mode === 'all' ? 'All the USDC in your wallet, as the most this can spend' : 'The smaller of your debt and the USDC in your wallet'}>Max</button>
+                <span>USDC</span></div>
               <p className="still-note" id={`${id}-funding-note`}>{model.mode === 'all'
                 ? 'Enter your own maximum. Interest can change the exact debt. The contract cannot spend more than this bound; unused funding is returned or stays in your wallet.'
                 : 'This exact amount is also your maximum USDC debit. Amounts are never rounded.'}</p>
