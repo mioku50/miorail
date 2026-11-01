@@ -5285,14 +5285,18 @@ describe('trading from the answer card', () => {
     assert.match(card, /<button type="button" class="btn alt">Sell<\/button>/);
   });
 
-  test('a holder gets Sell as loud as Buy; a wallet known to hold none is not offered Sell', () => {
+  test('a holder gets Sell as loud as Buy; a wallet known to hold none sees Sell disabled, and why', () => {
     const trade = { note: null, tokenDecimals: { [LEAD]: 8 } };
     const holder = render({ trade, onTrade: () => null, held: true });
     assert.match(holder, /<button type="button" class="btn" aria-expanded="false">Buy<\/button>/);
     assert.match(holder, /<button type="button" class="btn" aria-expanded="false">Sell<\/button>/);
+    assert.doesNotMatch(holder, /holds no/);
+    // 2026-10-31: a Sell that vanished once the holdings were read looked
+    // like a bug, so it stays and says why it cannot be used.
     const none = render({ trade, onTrade: () => null, held: false });
     assert.match(none, />Buy<\/button>/);
-    assert.doesNotMatch(none, />Sell</);
+    assert.match(none, /<button type="button" class="btn alt" disabled="" aria-expanded="false">Sell<\/button>/);
+    assert.match(none, /<p class="lnote">This wallet holds no [^<]+ to sell\.<\/p>/);
   });
 
   test('the quick amounts only fill the field, and the button still says what it read', () => {
