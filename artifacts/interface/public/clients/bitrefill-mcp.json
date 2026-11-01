@@ -1,0 +1,8 @@
+{
+  "client_id": "https://stills.lat/clients/bitrefill-mcp.json",
+  "client_name": "Still",
+  "client_uri": "https://stills.lat",
+  "grant_types": ["client_credentials"],
+  "token_endpoint_auth_method": "none",
+  "scope": "mcp"
+}
