@@ -120,6 +120,7 @@ app.use(
 import { routes } from './routes';
 import { mcpServerRouter } from './routes/mcp/index.js';
 import { mcpPrivateRouter } from './routes/mcpPrivate/index.js';
+import { stillMcpRouter } from './routes/mcpStill/index.js';
 import { stockPagesRouter } from './routes/stockPages.js';
 import { giftPagesRouter } from './routes/giftPages.js';
 import { foundPagesRouter } from './routes/foundPages.js';
@@ -137,6 +138,10 @@ import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 // MCP client has no Miorail cookie — but unlike the public one, it refuses
 // every caller who cannot prove a wallet.
 app.use('/mcp/private', mcpPrivateRouter);
+
+// Still's own MCP: three read-only tools, the same public check any visitor
+// runs on stills.lat/w/<wallet>. Like /mcp it needs no session.
+app.use('/mcp/still', stillMcpRouter);
 
 // T72 §1 — the read-only MCP endpoint, at the root and NOT under /api.
 //

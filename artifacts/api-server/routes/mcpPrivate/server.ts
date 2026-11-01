@@ -34,6 +34,13 @@ import {
   MiorailGetMyStillResultV1Schema,
 } from './outputs.js';
 import type { McpPrivateIdentityV1 } from './session.js';
+import { rwaLendingRuntimeV1 } from '../rwaLending.js';
+import {
+  StillLoanRefusalV1,
+  StillPrepareLoanReviewInputV1Schema,
+  StillPrepareLoanReviewOutputV1Schema,
+  stillPrepareLoanReviewV1,
+} from './stillLoanTool.js';
 import { StockBriefInputV1Schema, StockBriefV1Schema, StockInboxReadInputV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { acknowledgeStockInboxV1, StockInboxErrorV1 } from '../../lib/stockInboxRead.js';
 import { readMyStocksTodayV1 } from '../../lib/stockBriefRead.js';
@@ -66,7 +73,7 @@ import { stillMineRuntimeV1 } from '../stillMine.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.8.1';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.9.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -74,7 +81,7 @@ Miorail never signs and never broadcasts. It holds no private key. What it can d
 
 THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound sixteen below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
-Still is spend without selling: get_still_terms reads its public terms and miorail_get_my_still reads this connected wallet's Mirror through the same service as the page. Preserve the reading block and time. When headline.complete is false, availableCents is at least that amount, not a complete total; null stays unknown. A chain_unavailable outcome is our failure, never an empty wallet. This read prepares nothing. Still's terms are not advice to borrow.
+Still is spend without selling: get_still_terms reads its public terms and miorail_get_my_still reads this connected wallet's Mirror through the same service as the page. Preserve the reading block and time. When headline.complete is false, availableCents is at least that amount, not a complete total; null stays unknown. A chain_unavailable outcome is our failure, never an empty wallet. This read prepares nothing. To borrow through Still, miorail_prepare_still_loan turns the collateral and the amount the USER named into a five-minute review link for this wallet: stocks on Aave V4; cbBTC, WETH or native ETH on Morpho. The page reads everything again and the user's own wallet signs. Still's terms are not advice to borrow.
 
 Call the reopen, the weekend game: get_reopen_round reads the round; miorail_get_my_reopen reads this wallet's picks, score and record; miorail_call_the_reopen makes or changes this wallet's picks before the Sunday 17:00 ET lock, for the stocks the USER named and with the side the USER said — never a pick of yours. Nothing is won but the record.
 
@@ -98,6 +105,7 @@ BORROWING AGAINST A TOKENIZED SECURITY IS A SEPARATE, SHORTER PATH, and it is th
 
 a. miorail_read_borrow_capacity — keep every returned market in its own row. For cbBTC/WETH, marketScope still_registered_market means the one code-owned Still market, not every Morpho market. availableToBorrowAtomic is the protocol maximum; still.availableAtomic is Still's stricter allowance against collateral already deposited. Null is unread, not zero. Never silently add wallet-held tokens or native ETH as collateral.
 b. miorail_review_borrow — reads, has the VENUE write the calldata, executes it once against real state, and checks the loan asset actually arrives here in the reviewed amount. It returns a review and a link. It returns no calls, and there is no tool here that turns that review into calls: the user decides on the review page, in their own wallet.
+c. A Still loan against a stock goes through miorail_prepare_still_loan: the stock loans are on Aave V4, which miorail_review_borrow does not read.
 
 The certified B20 entry path above is buy-only. For Stocks, miorail_prepare_stock_action can prepare a buy or a sell review link. A sell must bind an exact token amount chosen on that review page, and its cash output is refreshed there. After the user signs on the Miorail review page, read miorail_get_execution_status with that actionDraftId. Do not ask them to paste a clearance or prepare a second trade to find the first trade's outcome. These paths do not accept an arbitrary router or calldata of your own.`;
 
@@ -136,7 +144,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   );
 
   // The read half, first — because it is the half a connected assistant needs
-  // before any of the sixteen below can be called at all. A client that connected
+  // before any of the seventeen below can be called at all. A client that connected
   // here used to be able to prepare a review of an exact representation with no
   // way to FIND that representation, and had to be pointed at a second,
   // separately configured server to do it. The import runs one way: this file
@@ -175,6 +183,21 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
       logger.warn('Still connected mirror read failed', { errorName: error instanceof Error ? error.name : typeof error });
       return { isError: true, content: [{ type: 'text' as const,
         text: 'still_mirror_unavailable: Your Still overview could not be read. This is our failure and does not establish that your wallet or loans are empty.' }] };
+    }
+  });
+
+  server.registerTool('miorail_prepare_still_loan', {
+    title: 'Prepare a Still loan for the owner to review',
+    description: `Prepares ONE Still loan for this connected wallet to review: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC, WETH or native ETH on Morpho, with an optional pledge from the wallet and an exact USDC amount. Returns a link, never a call: the same wallet-bound review Get money opens on stills.lat, valid for five minutes. Opening it reads the position again, applies Still's limit (50% of the protocol's, 40% for a stock while Wall Street is closed or around its earnings) and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for what the wallet could borrow now, and never pick an amount or collateral the user did not name. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow.`,
+    inputSchema: StillPrepareLoanReviewInputV1Schema.shape,
+    outputSchema: StillPrepareLoanReviewOutputV1Schema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+  }, async (args) => {
+    try {
+      return reply(stillPrepareLoanReviewV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
+    } catch (error) {
+      if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
+      return refuse(error);
     }
   });
 

@@ -483,6 +483,27 @@ printf '%s' "$mcp_tools" | jq -e '
 printf '  mcp tools/list %-28s %s read-only tools\n' "$MCP_PUBLIC_URL" \
   "$(printf '%s' "$mcp_tools" | jq -r '.result.tools | length')"
 
+# Still's own MCP, /mcp/still: three read-only tools under Still's name,
+# asserted the same way as the server above, so a registry change that forgets
+# this list fails here, not in an assistant's cached tool list.
+STILL_MCP_URL="${MCP_PUBLIC_URL%/mcp}/mcp/still"
+still_mcp_post() {
+  curl --silent --show-error --fail-with-body --connect-timeout 10 --max-time 30 \
+    --header 'Content-Type: application/json' --header "Accept: $MCP_ACCEPT" \
+    --data-binary "$1" "$STILL_MCP_URL"
+}
+still_initialize=$(still_mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' | mcp_data_json) \
+  || { echo 'FAILED: the Still MCP endpoint did not answer initialize'; exit 1; }
+printf '%s' "$still_initialize" | jq -e '.result.serverInfo.name == "still" and .result.serverInfo.version == "1.0.0"' >/dev/null \
+  || { echo 'FAILED: Still MCP initialize response is not Still 1.0.0'; exit 1; }
+still_tools=$(still_mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | mcp_data_json) \
+  || { echo 'FAILED: the Still MCP endpoint did not answer tools/list'; exit 1; }
+printf '%s' "$still_tools" | jq -e '.result.tools | map(.name) | sort == ["get_still_terms", "still_check_wallet", "still_what_if"]' >/dev/null \
+  || { echo 'FAILED: Still MCP tool registry is not the reviewed read-only surface'; exit 1; }
+printf '  mcp still      %-28s Still %s, %s read-only tools\n' "$STILL_MCP_URL" \
+  "$(printf '%s' "$still_initialize" | jq -r '.result.serverInfo.version')" \
+  "$(printf '%s' "$still_tools" | jq -r '.result.tools | length')"
+
 # MCP OAuth discovery, checked through Nginx rather than against the app.
 #
 # Every one of these paths lives at the API root, and until 2026-09-01 Nginx

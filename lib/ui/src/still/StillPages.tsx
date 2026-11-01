@@ -1,7 +1,7 @@
 import React, { useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
-import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_PUBLIC_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1 } from '../console/WalletMcpMiorailCard';
+import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1 } from '../console/WalletMcpMiorailCard';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
@@ -208,14 +208,23 @@ export interface StillAssistantsModelV1 {
   sky: SkyStateV1;
 }
 
-// The addresses are the Wallet MCP card's own: the plugin file names the same
-// ones, and a page that drifted from it would send people to a server the
-// plugin does not describe.
+/** Still's own MCP server: three read-only tools, asserted by the deploy. */
+export const STILL_MCP_URL_V1 = 'https://stills.lat/mcp/still';
+
+// The addresses are the servers' own. The signed-in one is the Wallet MCP
+// card's, and the plugin file names it too: a page that drifted from it would
+// send people to a server the plugin does not describe.
 export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
   const commands: Array<[string, ReactNode]> = [
-    ['Claude Code', <CopyRow key="claude" label="the Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />],
-    ['Codex CLI', <CopyRow key="codex" label="the Codex command" value={`codex mcp add miorail --url ${MIORAIL_CONNECTED_MCP_URL_V1}`} />],
-    ['Cursor and other JSON clients', <pre key="json" className="still-pre">{`{\n  "mcpServers": {\n    "miorail": { "url": "${MIORAIL_CONNECTED_MCP_URL_V1}" }\n  }\n}`}</pre>],
+    ['Claude Code', <CopyRow key="claude" label="the Claude Code command" value={`claude mcp add --transport http still ${STILL_MCP_URL_V1}`} />],
+    ['Codex CLI', <CopyRow key="codex" label="the Codex command" value={`codex mcp add still --url ${STILL_MCP_URL_V1}`} />],
+    ['Cursor and other JSON clients', <pre key="json" className="still-pre">{`{\n  "mcpServers": {\n    "still": { "url": "${STILL_MCP_URL_V1}" }\n  }\n}`}</pre>],
+  ];
+  // Each one is answered by a tool on that server, as written.
+  const asks = [
+    'How much could 0x… borrow through Still without selling?',
+    'What happens to that wallet’s Still loan if NVIDIA falls 30%?',
+    'What are Still’s terms this weekend?',
   ];
   return (
     <>
@@ -223,19 +232,16 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
       <div className="still-section">
         <div className="still-word">Still in your assistant.</div>
         <div className="still-sub">
-          Your assistant reads the same numbers you see here, from Base: stock prices, what a buy or a sell would cost, your dividends.
-          It prepares calls; you approve every one in your own wallet. No API key.
+          Ask Claude, ChatGPT, Cursor or Codex what Still answers here: how much a wallet could borrow against its stocks and crypto
+          without selling, how safe a loan is, and what a fall in price would do to it. The figures are Still’s own, read from Base at
+          one block. No API key, and nothing is signed there: you approve every loan in your own wallet.
         </div>
       </div>
       <div className="still-section">
-        <div className="still-eyebrow">One line, for an assistant with Wallet MCP</div>
-        <CopyRow label="the plugin line" value={MIORAIL_WALLET_MCP_PROMPT_V1} />
-      </div>
-      <div className="still-section">
-        <div className="still-eyebrow">The MCP server</div>
-        <CopyRow label="the MCP address" value={MIORAIL_CONNECTED_MCP_URL_V1} />
+        <div className="still-eyebrow">Still’s MCP server · read only, no sign-in</div>
+        <CopyRow label="the Still MCP address" value={STILL_MCP_URL_V1} />
         <p className="still-note" style={{ marginTop: 6 }}>
-          It opens your wallet’s sign-in on first use. Reading without signing in: <span className="mono">{MIORAIL_PUBLIC_MCP_URL_V1}</span>
+          Three tools: <span className="mono">get_still_terms</span>, <span className="mono">still_check_wallet</span> and <span className="mono">still_what_if</span>.
         </p>
       </div>
       {commands.map(([title, body]) => (
@@ -244,8 +250,25 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
           {body}
         </div>
       ))}
+      <div className="still-section">
+        <div className="still-eyebrow">Ask it</div>
+        {asks.map((ask) => <p key={ask} className="still-note">“{ask}”</p>)}
+      </div>
+      <div className="still-section">
+        <div className="still-eyebrow">To prepare a loan from your assistant</div>
+        <p className="still-note">
+          Connect Miorail’s signed-in server instead. It opens your wallet’s sign-in on first use; then <span className="mono">miorail_prepare_still_loan</span> turns
+          the collateral and the amount you name into a review link, and your own wallet signs on stills.lat.
+        </p>
+        <CopyRow label="the signed-in Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />
+      </div>
+      <div className="still-section">
+        <div className="still-eyebrow">One line, for an assistant with Wallet MCP</div>
+        <CopyRow label="the plugin line" value={MIORAIL_WALLET_MCP_PROMPT_V1} />
+      </div>
       <p className="still-section still-note">
-        Miorail measures; it gives no advice and never signs. Tokenized stocks are issued under their issuers’ terms and are not offered to US persons.
+        Still measures; it gives no advice and never signs. Borrowing creates debt, and collateral can be liquidated. Tokenized stocks are
+        issued under their issuers’ terms and are not offered to US persons.
       </p>
     </>
   );

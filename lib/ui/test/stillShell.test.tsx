@@ -446,7 +446,12 @@ describe('the frame', () => {
     assert.match(more, /href="\/watch"/);
     assert.doesNotMatch(more, /href="\/(?:investigate|radar|portfolio)"/);
     const assistants = renderToStaticMarkup(<StillAssistants model={{ sky: skyStateV1({ now: WEDNESDAY }) }} />);
+    // Still's own server leads; the signed-in one is for preparing a loan.
+    assert.match(assistants, /claude mcp add --transport http still https:\/\/stills\.lat\/mcp\/still/);
+    assert.match(assistants, /get_still_terms.*still_check_wallet.*still_what_if/);
+    assert.match(assistants, /What happens to that wallet’s Still loan if NVIDIA falls 30%\?/);
     assert.match(assistants, /claude mcp add --transport http miorail https:\/\/miorail\.xyz\/mcp\/private/);
+    assert.match(assistants, /miorail_prepare_still_loan/);
     assert.match(assistants, /Use the Miorail plugin for Wallet MCP: https:\/\/miorail\.xyz\/wallet-mcp\/miorail\.md/);
     assert.match(assistants, /not offered to US persons/);
   });

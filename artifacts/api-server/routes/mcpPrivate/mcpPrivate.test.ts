@@ -811,6 +811,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'outputs.ts',
       'server.ts',
       'session.ts',
+      'stillLoanTool.ts',
       'tools.ts',
     ]);
   });
@@ -906,7 +907,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry plus sixteen', async () => {
+  test('the connected surface is exactly the public registry plus seventeen', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -924,7 +925,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 16);
+    assert.equal(connectedNames.size, publicNames.length + 17);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -975,6 +976,8 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       // mints a short-lived review draft. Nothing executable leaves, and it is
       // not a read of anything.
       'miorail_review_borrow',
+      // Mints the same short-lived, wallet-bound review draft as Get money.
+      'miorail_prepare_still_loan',
     ]);
     // Reads may record an audit/baseline but acknowledge no update or release calls.
     const readOnly = new Set([
