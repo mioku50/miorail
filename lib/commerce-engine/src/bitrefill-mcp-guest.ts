@@ -1,0 +1,255 @@
+import { z } from 'zod';
+import { partnerFetch } from '@mioagent/security/httpAllowlist';
+
+import { BITREFILL_ORIGIN_V1 } from './pinned-config.js';
+import { ToonParseError, decodeToonV1 } from './toon.js';
+
+// ---------------------------------------------------------------------------
+// Still Spend, stage 1: Bitrefill's catalogue, read as a guest of their MCP.
+//
+// Still never buys through the operator's Personal API key: Bitrefill writes
+// that it is for personal projects and that one key must not be handed to many
+// end users. A guest reads the catalogue with no account at all. Still is
+// registered by a Client ID Metadata Document (stills.lat/clients/
+// bitrefill-mcp.json), so the client_id is that URL and there is no secret.
+// The token lives six hours and is held in memory only.
+//
+// This module READS: search-products and get-product-details. It never calls
+// buy-products or get-invoice-by-id, and nothing here can pay.
+// ---------------------------------------------------------------------------
+
+export const BITREFILL_MCP_URL_V1 = `${BITREFILL_ORIGIN_V1}/mcp`;
+export const BITREFILL_MCP_TOKEN_URL_V1 = `${BITREFILL_ORIGIN_V1}/oauth/mcp/token`;
+export const STILL_BITREFILL_CLIENT_ID_V1 = 'https://stills.lat/clients/bitrefill-mcp.json';
+/** The only tools this client may call. */
+export const BITREFILL_GUEST_READ_TOOLS_V1 = ['search-products', 'get-product-details'] as const;
+
+export const SPEND_PRODUCT_TYPES_V1 = ['esim', 'refill', 'giftcard'] as const;
+export type SpendProductTypeV1 = (typeof SPEND_PRODUCT_TYPES_V1)[number];
+
+export interface SpendProductSummaryV1 {
+  id: string;
+  name: string;
+  /** ISO alpha-2 codes the product serves. */
+  countries: string[];
+  inStock: boolean;
+}
+
+export interface SpendPackageV1 {
+  /** What is bought: "10GB, 30 Days", or a face value such as "50". */
+  value: string;
+  /** The currency of a face value, "EUR" for a 50 EUR card; null when Bitrefill named none. */
+  faceCurrency: string | null;
+  /** Its price in USDC, as Bitrefill quoted it, a decimal string. */
+  priceUsdc: string;
+}
+
+export interface SpendProductV1 {
+  id: string;
+  name: string;
+  country: string | null;
+  inStock: boolean;
+  /** Whether a phone number or an account is needed to buy it, as Bitrefill says. */
+  recipientType: string | null;
+  packages: SpendPackageV1[];
+  url: string | null;
+}
+
+export type SpendFailureV1 =
+  | 'bitrefill_unreachable'
+  | 'bitrefill_refused'
+  | 'bitrefill_rate_limited'
+  | 'bitrefill_invalid_response'
+  | 'bitrefill_product_not_found';
+
+export type SpendResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1 };
+
+const SLUG_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
+const COUNTRY_V1 = /^[A-Z]{2}$/;
+const PRICE_V1 = /^(?:0|[1-9]\d{0,9})(?:\.\d{1,6})?$/;
+
+const TokenSchemaV1 = z.object({ access_token: z.string().min(16).max(4096), expires_in: z.number().int().positive().optional() }).passthrough();
+const RpcSchemaV1 = z.object({
+  result: z.object({
+    isError: z.boolean().optional(),
+    content: z.array(z.object({ type: z.string(), text: z.string().optional() }).passthrough()),
+  }).passthrough().optional(),
+  error: z.object({ code: z.number(), message: z.string() }).passthrough().optional(),
+}).passthrough();
+
+const TextSchemaV1 = z.union([z.string(), z.number()]).transform(String);
+const SearchSchemaV1 = z.object({
+  products: z.array(z.object({
+    slug: z.string(),
+    name: TextSchemaV1,
+    countries: z.array(TextSchemaV1).optional(),
+    in_stock: z.boolean().optional(),
+  }).passthrough()).max(250),
+}).passthrough();
+const DetailSchemaV1 = z.object({
+  id: z.string(),
+  name: TextSchemaV1,
+  country_code: z.string().optional(),
+  in_stock: z.boolean().optional(),
+  recipient_type: z.string().optional(),
+  packages: z.array(z.object({
+    package_value: TextSchemaV1,
+    package_currency: z.string().optional(),
+    payment_price: TextSchemaV1,
+    payment_currency: z.string(),
+  }).passthrough()).max(200).optional(),
+  url: z.string().optional(),
+}).passthrough();
+
+export interface BitrefillGuestCatalogV1 {
+  search(input: { type: SpendProductTypeV1; country: string; query?: string }): Promise<SpendResultV1<SpendProductSummaryV1[]>>;
+  product(id: string): Promise<SpendResultV1<SpendProductV1>>;
+}
+
+export function createBitrefillGuestCatalogV1(options: {
+  clientId?: string;
+  fetchImpl?: typeof fetch;
+  timeoutMs?: number;
+  now?: () => number;
+  /** Calls a minute, under Bitrefill's thirty per token. */
+  perMinute?: number;
+} = {}): BitrefillGuestCatalogV1 {
+  const clientId = options.clientId ?? STILL_BITREFILL_CLIENT_ID_V1;
+  const timeoutMs = options.timeoutMs ?? 10_000;
+  const now = options.now ?? (() => Date.now());
+  const perMinute = options.perMinute ?? 20;
+  let token: { value: string; expiresAt: number } | null = null;
+  let window: number[] = [];
+  let id = 0;
+
+  function spend(): boolean {
+    const at = now();
+    window = window.filter((t) => at - t < 60_000);
+    if (window.length >= perMinute) return false;
+    window.push(at);
+    return true;
+  }
+
+  async function guestToken(): Promise<SpendResultV1<string>> {
+    if (token && token.expiresAt > now()) return { ok: true, value: token.value };
+    if (!spend()) return { ok: false, reason: 'bitrefill_rate_limited' };
+    let response: Response;
+    try {
+      response = await partnerFetch(BITREFILL_MCP_TOKEN_URL_V1, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
+        body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, scope: 'mcp', resource: BITREFILL_MCP_URL_V1 }).toString(),
+      }, { timeoutMs, fetchImpl: options.fetchImpl });
+    } catch {
+      return { ok: false, reason: 'bitrefill_unreachable' };
+    }
+    if (response.status === 429) return { ok: false, reason: 'bitrefill_rate_limited' };
+    if (!response.ok) return { ok: false, reason: 'bitrefill_refused' };
+    const parsed = TokenSchemaV1.safeParse(await response.json().catch(() => null));
+    if (!parsed.success) return { ok: false, reason: 'bitrefill_invalid_response' };
+    // Ten minutes early, so a token never lapses between two calls of one read.
+    const lifetime = (parsed.data.expires_in ?? 21_600) * 1000;
+    token = { value: parsed.data.access_token, expiresAt: now() + Math.max(60_000, lifetime - 600_000) };
+    return { ok: true, value: token.value };
+  }
+
+  async function callTool(name: (typeof BITREFILL_GUEST_READ_TOOLS_V1)[number], args: Record<string, unknown>, retried = false): Promise<SpendResultV1<string>> {
+    const bearer = await guestToken();
+    if (!bearer.ok) return bearer;
+    if (!spend()) return { ok: false, reason: 'bitrefill_rate_limited' };
+    let response: Response;
+    try {
+      response = await partnerFetch(BITREFILL_MCP_URL_V1, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${bearer.value}`, 'content-type': 'application/json', accept: 'application/json, text/event-stream' },
+        body: JSON.stringify({ jsonrpc: '2.0', id: ++id, method: 'tools/call', params: { name, arguments: args } }),
+      }, { timeoutMs, fetchImpl: options.fetchImpl });
+    } catch {
+      return { ok: false, reason: 'bitrefill_unreachable' };
+    }
+    if (response.status === 401 && !retried) {
+      token = null;
+      return callTool(name, args, true);
+    }
+    if (response.status === 429) return { ok: false, reason: 'bitrefill_rate_limited' };
+    if (!response.ok) return { ok: false, reason: 'bitrefill_refused' };
+    const raw = await response.text().catch(() => '');
+    // A stateless answer is one SSE event, or plain JSON.
+    const data = raw.split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).pop() ?? raw;
+    let json: unknown;
+    try { json = JSON.parse(data); } catch { return { ok: false, reason: 'bitrefill_invalid_response' }; }
+    const rpc = RpcSchemaV1.safeParse(json);
+    if (!rpc.success || rpc.data.error || !rpc.data.result) return { ok: false, reason: 'bitrefill_invalid_response' };
+    const text = rpc.data.result.content.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('\n');
+    if (rpc.data.result.isError) return { ok: false, reason: /not[_ ]found/i.test(text) ? 'bitrefill_product_not_found' : 'bitrefill_refused' };
+    return { ok: true, value: text };
+  }
+
+  function decode<S extends z.ZodTypeAny>(text: string, schema: S): SpendResultV1<z.output<S>> {
+    let value: unknown;
+    try { value = decodeToonV1(text); } catch (error) {
+      if (error instanceof ToonParseError) return { ok: false, reason: 'bitrefill_invalid_response' };
+      throw error;
+    }
+    const parsed = schema.safeParse(value);
+    return parsed.success ? { ok: true, value: parsed.data } : { ok: false, reason: 'bitrefill_invalid_response' };
+  }
+
+  return {
+    async search(input) {
+      if (!COUNTRY_V1.test(input.country)) return { ok: false, reason: 'bitrefill_refused' };
+      const answer = await callTool('search-products', {
+        query: input.query?.trim() || '*',
+        intent: 'Show what a loan against tokenized stocks could pay for, with prices in USDC',
+        country: input.country,
+        product_type: input.type,
+        in_stock: true,
+        per_page: 30,
+      });
+      if (!answer.ok) return answer;
+      const parsed = decode(answer.value, SearchSchemaV1);
+      if (!parsed.ok) return parsed;
+      return {
+        ok: true,
+        value: parsed.value.products
+          .filter((product) => SLUG_V1.test(product.slug))
+          .map((product) => ({
+            id: product.slug,
+            name: product.name.slice(0, 120),
+            countries: (product.countries ?? []).filter((code) => COUNTRY_V1.test(code)).slice(0, 60),
+            inStock: product.in_stock !== false,
+          })),
+      };
+    },
+
+    async product(productId) {
+      if (!SLUG_V1.test(productId)) return { ok: false, reason: 'bitrefill_product_not_found' };
+      const answer = await callTool('get-product-details', { product_id: productId, currency: 'USDC' });
+      if (!answer.ok) return answer;
+      const parsed = decode(answer.value, DetailSchemaV1);
+      if (!parsed.ok) return parsed;
+      const detail = parsed.value;
+      if (detail.id !== productId) return { ok: false, reason: 'bitrefill_invalid_response' };
+      // Only packages priced in USDC: a price in anything else is not this answer.
+      const packages = (detail.packages ?? [])
+        .filter((row) => row.payment_currency === 'USDC' && PRICE_V1.test(row.payment_price))
+        .map((row) => ({
+          value: row.package_value.slice(0, 80),
+          faceCurrency: row.package_currency && /^[A-Z]{3}$/.test(row.package_currency) ? row.package_currency : null,
+          priceUsdc: row.payment_price,
+        }));
+      return {
+        ok: true,
+        value: {
+          id: detail.id,
+          name: detail.name.slice(0, 120),
+          country: detail.country_code && COUNTRY_V1.test(detail.country_code) ? detail.country_code : null,
+          inStock: detail.in_stock !== false,
+          recipientType: detail.recipient_type?.slice(0, 40) ?? null,
+          packages,
+          url: detail.url && /^https:\/\/www\.bitrefill\.com\//.test(detail.url) ? detail.url : null,
+        },
+      };
+    },
+  };
+}
