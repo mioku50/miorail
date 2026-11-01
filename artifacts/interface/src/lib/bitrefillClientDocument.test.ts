@@ -13,6 +13,10 @@ test('the Bitrefill client document names its own address and asks for nothing s
   const document = JSON.parse(text) as Record<string, unknown>;
   assert.equal(document.client_id, 'https://stills.lat/clients/bitrefill-mcp.json');
   assert.deepEqual(document.grant_types, ['client_credentials']);
+  // Bitrefill's validator requires the field even for client_credentials
+  // (2026-11-01: "Invalid client_id metadata document … redirect_uris").
+  // It names Still's home, which handles no code: nothing here asks for one.
+  assert.deepEqual(document.redirect_uris, ['https://stills.lat/']);
   assert.equal(document.token_endpoint_auth_method, 'none');
   assert.equal(document.scope, 'mcp');
   assert.ok(Buffer.byteLength(text) < 10_240);
