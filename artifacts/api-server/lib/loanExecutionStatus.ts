@@ -5,6 +5,7 @@ import { stripErc8021SuffixV1, userOperationCallsV1 } from './sponsoredGas.js';
 import { createViemBaseReceiptReader, type BaseChainReaderV1, type BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from './stockExecutionStatus.js';
 import { loanExecutionRuntimeV1, type LoanExecutionStoreV1, type LoanExecutionV1, type LoanOwnerV1 } from './loanExecutionStore.js';
+import { refreshSequentialLoanExecutionV1 } from './lendingSteps.js';
 
 const HANDLE_OPS_ABI = parseAbi([
   'function handleOps((address sender, uint256 nonce, bytes initCode, bytes callData, uint256 callGasLimit, uint256 verificationGasLimit, uint256 preVerificationGas, uint256 maxFeePerGas, uint256 maxPriorityFeePerGas, bytes paymasterAndData, bytes signature)[] ops, address beneficiary)',
@@ -103,7 +104,10 @@ function receiptFingerprint(receipt: VerifiedReceiptSourceV1): string {
  * nor a borrowed amount supplied by the browser can produce confirmed. */
 export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string; refresh: boolean }, deps: LoanExecutionStatusDepsV1): Promise<LoanExecutionV1 | null> {
   const record = await deps.store.get(input);
-  if (!record || !input.refresh || record.state === 'ready' || (record.state === 'awaiting_wallet' && !record.batchId) || record.errorCode === 'conflicting_batch_hints') return record;
+  if (!record || !input.refresh || record.state === 'ready' || record.errorCode === 'conflicting_batch_hints') return record;
+  // A loan in steps is read step by step, and not while its steps are still being sent.
+  if (record.run.delivery === 'sequential') return refreshSequentialLoanExecutionV1(input, record, deps);
+  if (record.state === 'awaiting_wallet' && !record.batchId) return record;
   const set = async (state: 'confirmed' | 'failed' | 'unknown', transactionHash: HashV1 | null, proof: Record<string, unknown> | null, errorCode: string | null) => {
     const next = await deps.store.recordVerification({ ...input, expectedVersion: record.version, state, transactionHash, proof, errorCode, now: deps.now() });
     // A conflicting concurrent update must never cause a stale confirmed view.

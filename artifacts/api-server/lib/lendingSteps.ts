@@ -1,0 +1,138 @@
+import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
+import type { VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
+import type { BaseTransactionSourceV1 } from './baseReceiptReader.js';
+import type { LendingQuestionV1 } from './lendingDraft.js';
+import type { LendingRunV1 } from './lendingReview.js';
+import type { LoanExecutionStatusDepsV1 } from './loanExecutionStatus.js';
+import type { LoanExecutionV1, LoanOwnerV1 } from './loanExecutionStore.js';
+import { stripErc8021SuffixV1 } from './sponsoredGas.js';
+
+// ---------------------------------------------------------------------------
+// A loan in steps, for a wallet that cannot send a batch.
+//
+// Rabby has no wallet_sendCalls, and Coinbase Wallet with an imported key
+// refuses one, so an Aave V4 loan or repayment goes to them as the same
+// approved calls, one transaction each (operator, 2026-11-01: «если это не
+// сломает текущий флоу»; the batch path is untouched). Three rules hold:
+// - each step is the wallet's own transaction carrying exactly approved call
+//   `index`, landed after the review;
+// - before the next step, the review runs again from the chain as it is now,
+//   and its fresh calls must equal the calls still to send;
+// - confirmed means every step landed and the effects of all of them together
+//   are the loan's, read from the receipts and the position at the last one.
+// The hashes travel as one viem EIP-5792 fallback batch id, as swaps in steps
+// do, so the batch poller and the store need nothing new.
+// ---------------------------------------------------------------------------
+
+const FALLBACK_MAGIC_V1 = '5792579257925792579257925792579257925792579257925792579257925792';
+
+/** viem's fallback batch id: the transaction hashes, the chain id, the marker. */
+export function sequentialBatchIdV1(hashes: readonly string[], chainId = 8453): string {
+  return `0x${hashes.map((hash) => hash.slice(2).toLowerCase()).join('')}${chainId.toString(16).padStart(64, '0')}${FALLBACK_MAGIC_V1}`;
+}
+
+/** The transaction hashes of a fallback batch id on Base, in order, or null when it is not one. */
+export function sequentialHashesV1(batchId: string): HashV1[] | null {
+  const id = batchId.toLowerCase();
+  if (!/^0x[0-9a-f]+$/.test(id) || !id.endsWith(FALLBACK_MAGIC_V1)) return null;
+  const body = id.slice(2, -FALLBACK_MAGIC_V1.length);
+  if (body.length < 128 || body.length % 64 !== 0 || body.length > 64 * 17) return null;
+  const words = body.match(/.{64}/g)!;
+  if (BigInt(`0x${words.pop()!}`) !== 8453n) return null;
+  return words.map((word) => `0x${word}` as HashV1);
+}
+
+export type LoanStepBindingV1 =
+  | { state: 'matched' }
+  | { state: 'failed'; errorCode: 'loan_step_reverted' }
+  | { state: 'unknown'; errorCode: 'loan_step_out_of_range' | 'loan_step_not_matched' | 'loan_step_predates_review' };
+
+/** One step: the wallet's own transaction, exactly approved call `index`, landed after the review. */
+export function bindLoanStepV1(input: { execution: LoanExecutionV1; index: number; transaction: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }): LoanStepBindingV1 {
+  const call = input.execution.run.calls[input.index];
+  if (!call) return { state: 'unknown', errorCode: 'loan_step_out_of_range' };
+  const { transaction: tx, receipt } = input;
+  if (tx.from.toLowerCase() !== input.execution.walletAddress.toLowerCase() || tx.to?.toLowerCase() !== call.to.toLowerCase() ||
+      tx.value !== BigInt(call.valueWei) || stripErc8021SuffixV1(tx.input) !== stripErc8021SuffixV1(call.data) ||
+      (receipt.from != null && receipt.from.toLowerCase() !== tx.from.toLowerCase())) return { state: 'unknown', errorCode: 'loan_step_not_matched' };
+  if (receipt.blockNumber < BigInt(input.execution.run.facts.blockNumber)) return { state: 'unknown', errorCode: 'loan_step_predates_review' };
+  return receipt.status === 'success' ? { state: 'matched' } : { state: 'failed', errorCode: 'loan_step_reverted' };
+}
+
+/** The question of the calls still to send: the approved one, less a pledge already supplied. */
+export function remainingQuestionV1(record: LoanExecutionV1, landed: number): LendingQuestionV1 {
+  const f = record.run.facts;
+  if (f.operation === 'repay') {
+    return { operation: 'repay', collateralTokenAddress: f.collateralTokenAddress, amountMode: f.amountMode,
+      repayAssets: f.amountMode === 'assets' ? f.requestedAssets : null, maximumAssets: f.maximumDebitAssets };
+  }
+  const supplied = record.run.calls.slice(0, landed).some((call) => call.callType === 'deposit');
+  return { operation: 'borrow', collateralTokenAddress: f.collateralTokenAddress, borrowAssets: f.requestedAssets!,
+    collateralSupplyAssets: supplied ? '0' : f.collateralSupplyAssets };
+}
+
+/**
+ * Before the next step: the same review, from the chain as it is now. It must
+ * be ready, and its fresh calls must be exactly the approved calls not yet
+ * sent; anything else stops the steps, and the person is told why.
+ */
+export async function recheckLoanStepsV1(input: {
+  record: LoanExecutionV1;
+  landed: number;
+  review: (question: LendingQuestionV1) => Promise<LendingRunV1>;
+}): Promise<{ ok: true } | { ok: false; refusal: string; detail: string }> {
+  const remaining = input.record.run.calls.slice(input.landed);
+  if (remaining.length === 0) return { ok: true };
+  const fresh = await input.review(remainingQuestionV1(input.record, input.landed));
+  if (fresh.state !== 'ready') return { ok: false, refusal: fresh.refusal, detail: fresh.detail };
+  const same = fresh.calls.length === remaining.length && fresh.calls.every((call, index) => {
+    const approved = remaining[index]!;
+    return call.to.toLowerCase() === approved.to.toLowerCase() && call.data.toLowerCase() === approved.data.toLowerCase() && call.valueWei === approved.valueWei;
+  });
+  return same ? { ok: true } : { ok: false, refusal: 'lending_steps_changed',
+    detail: 'Checked again from the chain, the next steps differ from the ones you approved, so they were not sent.' };
+}
+
+function stepsFingerprintV1(receipts: readonly VerifiedReceiptSourceV1[]): string {
+  return stableHashV1('loan-steps-receipts/v1', receipts.map((receipt) => ({ transactionHash: receipt.transactionHash.toLowerCase(),
+    blockNumber: receipt.blockNumber.toString(), status: receipt.status,
+    logs: receipt.logs.map((log) => ({ address: log.address.toLowerCase(), topics: log.topics.map((topic) => topic.toLowerCase()), data: log.data.toLowerCase() })) })));
+}
+
+/** Reads a loan sent in steps from the chain. Steps still being sent are not judged. */
+export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwnerV1; executionId: string }, record: LoanExecutionV1, deps: LoanExecutionStatusDepsV1): Promise<LoanExecutionV1> {
+  if (record.state === 'awaiting_wallet') return record;
+  const set = async (state: 'confirmed' | 'failed' | 'unknown', transactionHash: HashV1 | null, proof: Record<string, unknown> | null, errorCode: string | null) =>
+    await deps.store.recordVerification({ ...input, expectedVersion: record.version, state, transactionHash, proof, errorCode, now: deps.now() })
+      ?? { ...record, state: 'unknown' as const, errorCode: 'loan_execution_changed_while_reading' };
+  const hashes = record.batchId ? sequentialHashesV1(record.batchId) : null;
+  if (!hashes || hashes.length === 0 || hashes.length > record.run.calls.length) return set('unknown', record.transactionHash, null, 'loan_steps_unread');
+  const steps: Array<{ hash: HashV1; transaction: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }> = [];
+  for (const [index, hash] of hashes.entries()) {
+    let receipt: VerifiedReceiptSourceV1 | null, transaction: BaseTransactionSourceV1 | null;
+    try { [receipt, transaction] = await Promise.all([deps.reader.getTransactionReceipt(hash), deps.reader.getTransaction(hash)]); }
+    catch { return set('unknown', record.transactionHash, null, 'loan_receipt_unavailable'); }
+    if (!receipt || !transaction || receipt.transactionHash.toLowerCase() !== hash) return set('unknown', record.transactionHash, null, 'loan_receipt_unavailable');
+    const bound = bindLoanStepV1({ execution: record, index, transaction, receipt });
+    if (bound.state === 'unknown') return set('unknown', hash, null, bound.errorCode);
+    if (bound.state === 'failed') {
+      return set('failed', hash, { callsHash: record.run.callsHash, steps: hashes, failedStep: index, blockNumber: receipt.blockNumber.toString() }, bound.errorCode);
+    }
+    steps.push({ hash, transaction, receipt });
+  }
+  const fingerprint = stepsFingerprintV1(steps.map((step) => step.receipt));
+  if (record.verification?.receiptFingerprint && record.verification.receiptFingerprint !== fingerprint) return set('unknown', steps.at(-1)!.hash, null, 'loan_receipt_changed');
+  // Stopped part way: what landed is kept, and no loan or repayment is claimed.
+  if (steps.length < record.run.calls.length) {
+    return set('unknown', steps.at(-1)!.hash, { callsHash: record.run.callsHash, steps: hashes, stepsLanded: steps.length, receiptFingerprint: fingerprint }, 'loan_steps_incomplete');
+  }
+  const last = steps.at(-1)!;
+  let effect: Awaited<ReturnType<LoanExecutionStatusDepsV1['verifyEffectPosition']>>;
+  try {
+    effect = await deps.verifyEffectPosition({ execution: record, transaction: last.transaction, receipt: last.receipt,
+      logs: steps.flatMap((step) => step.receipt.logs), operationNonce: null });
+  } catch { return set('unknown', last.hash, null, 'loan_effect_read_unavailable'); }
+  if (effect.state !== 'matched') return set('unknown', last.hash, null, effect.errorCode);
+  return set('confirmed', last.hash, { receiptFingerprint: fingerprint, blockNumber: last.receipt.blockNumber.toString(), callsHash: record.run.callsHash,
+    operationNonce: null, steps: hashes, effect: effect.proof }, null);
+}

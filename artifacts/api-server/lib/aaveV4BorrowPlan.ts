@@ -79,6 +79,10 @@ export interface AaveV4BorrowPlanInputV1 {
   existingSuppliedAssets: bigint;
   collateralAlreadyEnabled: boolean;
   deployment: AaveV4DeploymentReadV1;
+  /** One batch (the default), or one transaction at a time for a wallet that cannot send a batch. */
+  delivery?: 'atomic' | 'sequential';
+  /** For steps: the wallet's allowance of the stock to the Spoke, read at the same block. */
+  allowanceAssets?: bigint;
 }
 
 export interface AaveV4PreparedPlanV1 {
@@ -88,7 +92,7 @@ export interface AaveV4PreparedPlanV1 {
   authorizations: readonly [];
   targets: readonly string[];
   venueSimulation: null;
-  forceAtomic: true;
+  forceAtomic: boolean;
 }
 export type AaveV4PlanResultV1 =
   | { ok: true; plan: AaveV4PreparedPlanV1 }
@@ -105,7 +109,7 @@ function binding(value: AaveV4ReserveBindingV1, token: string, decimals: number)
 }
 const invalid = (detail: string): AaveV4PlanResultV1 => ({ ok: false, refusal: 'aave_inputs_invalid', detail });
 
-function assembler(operation: 'borrow' | 'repay') {
+function assembler(operation: 'borrow' | 'repay', sequential = false) {
   const calls: ExecutionCallV1[] = [], steps: MorphoPlanStepV1[] = [];
   function push(to: string, data: Hex, callType: ExecutionCallV1['callType'], amount: bigint | null, recipient: string | null, spender: string | null, reading: string) {
     const index = calls.length;
@@ -116,10 +120,12 @@ function assembler(operation: 'borrow' | 'repay') {
   function approve(token: string, amount: bigint) {
     push(token, encodeFunctionData({ abi: approvalAbi, functionName: 'approve', args: [ADDRESSES.aaveSpoke, amount] }),
       'approval', amount, null, ADDRESSES.aaveSpoke,
-      amount === BigInt(0) ? 'Clears this token’s allowance to the registered Aave Spoke.' : `Allows only the registered Aave Spoke to move up to ${amount} atomic units in this atomic batch.`);
+      amount === BigInt(0) ? 'Clears this token’s allowance to the registered Aave Spoke.'
+        : sequential ? `Allows only the registered Aave Spoke to move up to ${amount} atomic units; the next step uses exactly this allowance.`
+          : `Allows only the registered Aave Spoke to move up to ${amount} atomic units in this atomic batch.`);
   }
   function finish(): AaveV4PlanResultV1 {
-    return { ok: true, plan: { operation, calls, steps, authorizations: [], targets: [...new Set(calls.map(c => c.to))], venueSimulation: null, forceAtomic: true } };
+    return { ok: true, plan: { operation, calls, steps, authorizations: [], targets: [...new Set(calls.map(c => c.to))], venueSimulation: null, forceAtomic: !sequential } };
   }
   return { push, approve, finish };
 }
@@ -136,11 +142,19 @@ export function aaveV4BorrowPlanV1(input: AaveV4BorrowPlanInputV1): AaveV4PlanRe
   if (input.collateralSupplyAssets > input.walletCollateralAssets || input.collateralSupplyAssets + input.existingSuppliedAssets === BigInt(0)) {
     return { ok: false, refusal: 'aave_funding_insufficient', detail: 'Only the selected wallet tokens and the recorded supplied position may secure this loan.' };
   }
-  const batch = assembler('borrow');
+  const sequential = input.delivery === 'sequential';
+  if (sequential && (input.allowanceAssets === undefined || !uint(input.allowanceAssets))) return invalid('Steps need the wallet’s current allowance, read at the same block.');
+  const batch = assembler('borrow', sequential);
   if (input.collateralSupplyAssets > BigInt(0)) {
-    // Clear any old allowance, set one exact budget, then clear it again after
-    // the operation. The final cleanup also bounds nonstandard allowance use.
-    batch.approve(stock.token, BigInt(0)); batch.approve(stock.token, input.collateralSupplyAssets);
+    if (sequential) {
+      // One transaction each: an allowance for exactly the pledge, used up by
+      // the supply that follows. One already exactly in place is not asked again.
+      if (input.allowanceAssets !== input.collateralSupplyAssets) batch.approve(stock.token, input.collateralSupplyAssets);
+    } else {
+      // Clear any old allowance, set one exact budget, then clear it again after
+      // the operation. The final cleanup also bounds nonstandard allowance use.
+      batch.approve(stock.token, BigInt(0)); batch.approve(stock.token, input.collateralSupplyAssets);
+    }
     batch.push(ADDRESSES.aaveSpoke, encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'supply', args: [BigInt(input.collateralReserve.reserveId), input.collateralSupplyAssets, wallet] }),
       'deposit', input.collateralSupplyAssets, ADDRESSES.aaveHub, null, 'Supplies exactly the selected stock amount for this wallet; the verified Spoke transfers it directly to the Hub.');
   }
@@ -149,7 +163,7 @@ export function aaveV4BorrowPlanV1(input: AaveV4BorrowPlanInputV1): AaveV4PlanRe
     'other', null, wallet, null, 'Enables only the selected supplied stock as collateral for this wallet.');
   batch.push(ADDRESSES.aaveSpoke, encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'borrow', args: [BigInt(input.loanReserve.reserveId), input.borrowAssets, wallet] }),
     'other', input.borrowAssets, wallet, null, 'Borrows the exact selected USDC amount for this wallet; the verified Spoke pays its caller.');
-  if (input.collateralSupplyAssets > BigInt(0)) batch.approve(stock.token, BigInt(0));
+  if (input.collateralSupplyAssets > BigInt(0) && !sequential) batch.approve(stock.token, BigInt(0));
   return batch.finish();
 }
 
@@ -159,6 +173,9 @@ export interface AaveV4RepayPlanInputV1 {
   maximumRepayAssets: bigint;
   walletUsdcAssets: bigint;
   deployment: AaveV4DeploymentReadV1;
+  delivery?: 'atomic' | 'sequential';
+  /** For steps: the wallet's USDC allowance to the Spoke, read at the same block. */
+  allowanceAssets?: bigint;
 }
 
 /** repay(amount) itself takes min(amount,current debt). Never encode an
@@ -169,11 +186,16 @@ export function aaveV4RepayPlanV1(input: AaveV4RepayPlanInputV1): AaveV4PlanResu
   if (!matchesAaveV4DeploymentV1(input.deployment)) return { ok: false, refusal: 'aave_deployment_changed', detail: 'The current Aave proxy or implementation does not match the reviewed deployment.' };
   if (!binding(input.loanReserve, ADDRESSES.usdc, 6)) return { ok: false, refusal: 'aave_reserve_mismatch', detail: 'The registered USDC reserve was not established.' };
   if (input.maximumRepayAssets > input.walletUsdcAssets) return { ok: false, refusal: 'aave_funding_insufficient', detail: 'The wallet USDC balance is below the confirmed maximum.' };
-  const batch = assembler('repay');
-  batch.approve(ADDRESSES.usdc, BigInt(0)); batch.approve(ADDRESSES.usdc, input.maximumRepayAssets);
+  const sequential = input.delivery === 'sequential';
+  if (sequential && (input.allowanceAssets === undefined || !uint(input.allowanceAssets))) return invalid('Steps need the wallet’s current allowance, read at the same block.');
+  const batch = assembler('repay', sequential);
+  if (!sequential) { batch.approve(ADDRESSES.usdc, BigInt(0)); batch.approve(ADDRESSES.usdc, input.maximumRepayAssets); }
+  // In steps, what repay leaves of the allowance stays with the Spoke, which
+  // spends an allowance only for calls this wallet itself makes.
+  else if (input.allowanceAssets !== input.maximumRepayAssets) batch.approve(ADDRESSES.usdc, input.maximumRepayAssets);
   batch.push(ADDRESSES.aaveSpoke, encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'repay', args: [BigInt(input.loanReserve.reserveId), input.maximumRepayAssets, wallet] }),
     'other', input.maximumRepayAssets, ADDRESSES.aaveHub, null, 'Repays up to the exact confirmed USDC maximum for this wallet without withdrawing collateral or granting a position manager.');
-  batch.approve(ADDRESSES.usdc, BigInt(0));
+  if (!sequential) batch.approve(ADDRESSES.usdc, BigInt(0));
   return batch.finish();
 }
 

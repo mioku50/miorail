@@ -1,4 +1,4 @@
-import { keccak256, type Address } from 'viem';
+import { erc20Abi, keccak256, type Address } from 'viem';
 import { createEarningsCalendar, createProviders, earningsWindow, stillShareBps, weekendWindow, type CalendarRead, type StockAsset } from '@mioagent/still-engine';
 import { readWallet, type Universe, type WalletSnapshot } from '@mioagent/still-engine/read';
 import { ADDRESSES, STOCKS, type StockId } from '@mioagent/still-engine/registry';
@@ -235,6 +235,22 @@ async function inspectOneDeploymentProviderV1(
     proxyCodeHash: hash(proxyCode!),
   };
   return { status: classifyAaveV4DeploymentReadV1(blockNumber, deployment), deployment };
+}
+
+/** The wallet's ERC-20 allowance to the Aave Spoke at one block, for a loan in
+ * steps: an allowance already exactly in place is not asked for again. Null
+ * when no provider answers, never a guess. */
+export async function readSpokeAllowanceAtV1(input: { token: string; walletAddress: string; blockNumber: number }): Promise<bigint | null> {
+  if (!Number.isSafeInteger(input.blockNumber) || input.blockNumber <= 0) return null;
+  const list = providers ??= createProviders(stillRpcUrlsV1(), 'miorail-still-aave/1');
+  for (const provider of list) {
+    try {
+      const value = await provider.client.readContract({ address: input.token as Address, abi: erc20Abi, functionName: 'allowance',
+        args: [input.walletAddress as Address, ADDRESSES.aaveSpoke as Address], blockNumber: BigInt(input.blockNumber) });
+      if (typeof value === 'bigint') return value;
+    } catch { /* the next provider */ }
+  }
+  return null;
 }
 
 /** Rechecks deployed proxy/runtime at the exact simulation or receipt block

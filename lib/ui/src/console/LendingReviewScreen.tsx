@@ -21,6 +21,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   const debtIncrease = facts && !repay ? BigInt(facts.debtAfterAssets) - BigInt(facts.debtBeforeAssets) : BigInt(0);
   const shareRoundingExtra = facts && !repay && facts.requestedAssets !== null && debtIncrease > BigInt(facts.requestedAssets);
   const knownState = model.execution?.state ?? (body.state === 'refused' ? body.executionState : null);
+  const inSteps = body.state === 'ready' && body.delivery === 'sequential';
   const blocked = Boolean(model.submissionLock || model.batchId || (knownState && knownState !== 'ready'));
   return (
     <div className="still-section still-lending-review">
@@ -73,8 +74,13 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
           </div> : null}
           <p className="still-note">Simulated at Base block {body.measured.blockNumber.toLocaleString('en-US')}. The position and exact calls are checked again before your wallet opens.</p>
           <details className="still-disclosure" open>
-            <summary>Verified atomic batch ({body.steps.length} {body.steps.length === 1 ? 'call' : 'calls'}) &amp; technical details</summary>
-            <p className="still-note">Some wallets (including Coinbase Wallet) may display &ldquo;Transaction preview unavailable&rdquo; for multi-call atomic batches. Still has already simulated all {body.steps.length} {body.steps.length === 1 ? 'call' : 'calls'} below at Base block {body.measured.blockNumber.toLocaleString('en-US')} and verified every asset movement.</p>
+            {inSteps ? <>
+              <summary>Steps in your wallet ({body.steps.length} {body.steps.length === 1 ? 'transaction' : 'transactions'}) &amp; technical details</summary>
+              <p className="still-note">Your wallet sends these one at a time. Still simulated all {body.steps.length} together at Base block {body.measured.blockNumber.toLocaleString('en-US')} and verified every asset movement, and it reviews each next step again, from the chain as it is then, before your wallet asks for it.</p>
+            </> : <>
+              <summary>Verified atomic batch ({body.steps.length} {body.steps.length === 1 ? 'call' : 'calls'}) &amp; technical details</summary>
+              <p className="still-note">Some wallets (including Coinbase Wallet) may display &ldquo;Transaction preview unavailable&rdquo; for multi-call atomic batches. Still has already simulated all {body.steps.length} {body.steps.length === 1 ? 'call' : 'calls'} below at Base block {body.measured.blockNumber.toLocaleString('en-US')} and verified every asset movement.</p>
+            </>}
             {!repay ? <>
               <p className="still-note">Still total debt limit: {facts.policyLimitAssets == null ? 'Not read' : usdc(facts.policyLimitAssets)}.</p>
               <p className="still-note">Protocol total debt limit: {facts.protocolLimitAssets == null ? 'Not read' : usdc(facts.protocolLimitAssets)}.</p>
@@ -99,8 +105,11 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       {model.batchId && !model.execution ? <p className="still-note" role="status">Submitted from your wallet. A batch ID is a submission handle; it is not a confirmed blockchain result.</p> : null}
       {model.execution?.transactionHash ? <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>Transaction: {model.execution.transactionHash}</p> : null}
       {model.submissionLock && knownState !== 'confirmed' ? <p className="still-note" role="status">{model.submissionLock}</p> : null}
+      {model.step ? <p className="still-note" role="status">{model.step.phase === 'wallet' ? `Step ${model.step.index} of ${model.step.total}: confirm it in your wallet.`
+        : model.step.phase === 'confirming' ? `Step ${model.step.index} of ${model.step.total} sent. Waiting for it to land on Base…`
+          : `Step ${model.step.index} of ${model.step.total} landed. Still checks the next step against the chain…`}</p> : null}
       {body.state === 'ready' && model.onOpen && !blocked ? <button type="button" className="still-btn" disabled={model.walletBusy} onClick={model.onOpen}>
-        {model.walletBusy ? 'Waiting for your wallet…' : 'Open in your wallet'}
+        {model.walletBusy ? 'Waiting for your wallet…' : inSteps ? `Open step 1 of ${body.steps.length} in your wallet` : 'Open in your wallet'}
       </button> : null}
       {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onCheck}>
         {model.checking ? 'Checking the onchain result…' : 'Check onchain result'}

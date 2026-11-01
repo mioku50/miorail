@@ -18,6 +18,7 @@ import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
+import { bindLoanStepV1, recheckLoanStepsV1 } from '../lib/lendingSteps.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -28,6 +29,8 @@ export const rwaLendingRuntimeV1 = {
   // Still Spend: the open invoices, Bitrefill's own reading of one, and the payment call.
   spendOrders: spendOrderStoreV1, spendEnabled: () => stillSpendPayEnabledV1(),
   spendCheckout: stillSpendCheckoutV1, attachPayment: attachSpendPaymentV1,
+  // A loan in steps: how long to wait between reads of a step the read RPC has not seen yet.
+  stepReadDelayMs: 1_500,
 };
 interface OwnerV1 { tenantId: string; walletAddress: string }
 function ownerV1(req: Request): OwnerV1 | null {
@@ -112,6 +115,15 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   } else verified = verifyLendingDraftV1({ ...owner, draft: signed, secret, now, allowExpiredForStatus: true });
   if (!verified.ok) { res.status(verified.refusal.endsWith('wrong_wallet') ? 403 : 400).json({ error: verified.refusal }); return; }
   const claims = verified.claims, q = claims.question;
+  // A wallet that cannot send a batch asks for steps. They are granted only
+  // for an Aave V4 loan or repayment: native ETH and a Spend payment need one transaction.
+  const sequential = req.query.delivery === 'sequential';
+  if (sequential && (claims.venue !== 'aave-v4' || (q.operation === 'borrow' && (q.payment !== undefined || q.nativeFundingAssets !== undefined)))) {
+    res.json({ state: 'refused', refusal: 'lending_steps_unavailable', detail: q.operation === 'borrow' && q.payment !== undefined
+      ? 'Paying Bitrefill from a loan goes only as one transaction, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.'
+      : 'A loan against cbBTC, WETH or ETH goes only as one transaction for now, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.' });
+    return;
+  }
   const store = await rwaLendingRuntimeV1.store();
   const prior = await store.getByDraft({ owner, draftId: claims.draftId });
   if (prior && prior.state !== 'ready') {
@@ -165,7 +177,7 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
             expiresAt: answer.expiresAt, atomicRequired: true, steps: answer.plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })),
             measured: { provider: answer.measured.providerId, blockNumber: answer.measured.blockNumber, loanDeltaAssets: answer.measured.arrivedAssets } };
   } else {
-    run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question: q });
+    run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question: q, ...(sequential ? { delivery: 'sequential' as const } : {}) });
   }
   if (payment) run = await rwaLendingRuntimeV1.attachPayment({ walletAddress: owner.walletAddress, run, payment, now });
   if (run.state === 'refused') { res.json(lendingWireV1(run)); return; }
@@ -209,6 +221,49 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/transaction', async (req, res
     transactionHash: body.data.transactionHash.toLowerCase() as `0x${string}`, proof: null, errorCode: 'loan_transaction_hint_unverified', now: rwaLendingRuntimeV1.now() });
   if (!saved) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
   res.json({ ...loanExecutionWireV1(saved), facts: saved.run.facts });
+});
+/** A loan in steps: the step that just landed, read from the chain, and the
+ * review run again before the next one. The answer says whether the wallet
+ * may be asked for the next step; it never sends anything itself. */
+rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
+  const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
+  const body = z.object({ attemptId: id, index: z.number().int().min(0).max(15), transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i), stop: z.boolean().optional() }).strict().safeParse(req.body);
+  if (!id.safeParse(req.params.id).success || !body.success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
+  const store = await rwaLendingRuntimeV1.store(), executionId = String(req.params.id), hash = body.data.transactionHash.toLowerCase() as `0x${string}`;
+  const record = await store.get({ owner, executionId });
+  if (!record || record.run.delivery !== 'sequential' || record.state !== 'awaiting_wallet' || record.attemptId !== body.data.attemptId) {
+    res.status(409).json({ error: 'lending_attempt_changed' }); return;
+  }
+  // The wallet saw the receipt; the read RPC may lag a block or two behind it.
+  const reader = rwaLendingRuntimeV1.reader();
+  let read: { receipt: Awaited<ReturnType<typeof reader.getTransactionReceipt>>; transaction: Awaited<ReturnType<typeof reader.getTransaction>> } | null = null;
+  for (let attempt = 0; attempt < 6 && !read; attempt++) {
+    if (attempt > 0) await new Promise(resolve => setTimeout(resolve, rwaLendingRuntimeV1.stepReadDelayMs));
+    try {
+      const [receipt, transaction] = await Promise.all([reader.getTransactionReceipt(hash), reader.getTransaction(hash)]);
+      if (receipt && transaction && receipt.transactionHash.toLowerCase() === hash) read = { receipt, transaction };
+    } catch { /* read again */ }
+  }
+  if (!read?.receipt || !read.transaction) { res.status(409).json({ error: 'lending_step_unread' }); return; }
+  const bound = bindLoanStepV1({ execution: record, index: body.data.index, transaction: read.transaction, receipt: read.receipt });
+  if (bound.state === 'unknown') { res.status(409).json({ error: bound.errorCode }); return; }
+  const last = body.data.index === record.run.calls.length - 1;
+  const saved = await store.recordStep({ owner, executionId, attemptId: body.data.attemptId, index: body.data.index, transactionHash: hash,
+    stop: !last && (bound.state === 'failed' || body.data.stop === true), now: rwaLendingRuntimeV1.now() });
+  if (!saved) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
+  if (bound.state === 'failed') {
+    res.json({ state: 'stopped', refusal: 'loan_step_reverted', detail: `Step ${body.data.index + 1} failed onchain, so the rest was not sent.`, batchId: saved.batchId }); return;
+  }
+  if (last) { res.json({ state: 'submitted', batchId: saved.batchId }); return; }
+  if (body.data.stop) { res.json({ state: 'stopped', refusal: 'loan_steps_stopped', detail: 'The remaining steps were not sent.', batchId: saved.batchId }); return; }
+  const check = await recheckLoanStepsV1({ record: saved, landed: body.data.index + 1,
+    review: question => rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, delivery: 'sequential' }) });
+  if (!check.ok) {
+    // What landed is submitted, so the record reads it from the chain; nothing more is asked of the wallet.
+    const stopped = await store.recordSubmission({ owner, executionId, attemptId: body.data.attemptId, outcome: 'submitted', batchId: saved.batchId, now: rwaLendingRuntimeV1.now() });
+    res.json({ state: 'stopped', refusal: check.refusal, detail: check.detail, batchId: stopped?.batchId ?? saved.batchId }); return;
+  }
+  res.json({ state: 'next', index: body.data.index + 1, batchId: saved.batchId });
 });
 rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }

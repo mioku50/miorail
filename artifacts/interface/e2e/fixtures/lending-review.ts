@@ -10,24 +10,40 @@ export function ready() {
     facts: { operation: 'repay', venue: 'morpho', collateralTokenAddress: WALLET, collateralSymbol: 'cbBTC', collateralDecimals: 8, marketId: `0x${'a'.repeat(64)}`,
       amountMode: 'assets', requestedAssets: '3000000', maximumDebitAssets: '3000000', collateralSupplyAssets: '0', debtBeforeAssets: '3125001', debtAfterAssets: '125001', collateralBeforeAssets: '1234567', collateralAfterAssets: '1234567', debtBeforeShares: '3125001000000', debtAfterShares: '125001000000', blockNumber: 53_200_000, warnings: [] } };
 }
+/** A stock loan the server granted in steps, for a wallet without batches: approve, supply, borrow. */
+export function stepsReady() {
+  const spoke = '0x17905db0e4a3514467539956c084180616ae7b8d', stock = '0x3333333333333333333333333333333333333333';
+  return { ...ready(), atomicRequired: false, delivery: 'sequential',
+    calls: [{ to: stock, data: '0x095ea7b3', value: '0' }, { to: spoke, data: '0x12345601', value: '0' }, { to: spoke, data: '0x12345602', value: '0' }],
+    steps: [{ index: 0, to: stock, reading: 'Allows only the registered Aave Spoke to move up to 1000000 atomic units; the next step uses exactly this allowance.' },
+      { index: 1, to: spoke, reading: 'Supplies exactly the selected stock amount for this wallet.' }, { index: 2, to: spoke, reading: 'Borrows the exact selected USDC amount for this wallet.' }],
+    measured: { ...ready().measured, loanDeltaAssets: '180000' },
+    facts: { ...ready().facts, operation: 'borrow', venue: 'aave-v4', collateralTokenAddress: stock, collateralSymbol: 'NVDAc', collateralDecimals: 18, marketId: spoke,
+      requestedAssets: '180000', maximumDebitAssets: '0', collateralSupplyAssets: '1000000', debtBeforeAssets: '0', debtAfterAssets: '180000', debtBeforeShares: '0', debtAfterShares: '180000',
+      warnings: ['Your wallet sends this as 3 steps, one transaction each, and pays each network fee. Still reviews each next step again before your wallet asks for it.'] } };
+}
+const stepHash = (n: number) => `0x${String(n).padStart(64, '0')}`;
 export type FixtureWindow = Window & {
+  lendingStepSends: string[];
   lendingWalletAttempts: number;
   setLendingFixtureIdentity: (next: { session: string; connected: string }) => void;
   finishLendingWallet: (batch: string) => void;
 };
-export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' = 'submitted') {
+export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'steps' | 'steps-declined' = 'submitted') {
   await page.clock.setFixedTime(NOW);
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
     'export function AuthProvider({children}) {return children;} export function useAuthGate(){return{showPrivateSurfaces:true,phase:"authenticated",sessionAuthenticated:true};}' }));
-  const state = { response: ready() as Record<string, unknown>, reviewReads: 0, order: [] as string[], executionState: 'ready', failRefresh: false, transactionHints: [] as string[] };
+  const state = { response: ready() as Record<string, unknown>, reviewReads: 0, order: [] as string[], executionState: 'ready', failRefresh: false, transactionHints: [] as string[],
+    stepsResponse: stepsReady() as Record<string, unknown>, stepAnswers: [] as Array<Record<string, unknown>>, reviewQueries: [] as string[] };
   await page.route('**/api/**', route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
     if (path.includes('/rwa/lending/review/')) {
-      state.order.push('review'); state.reviewReads++;
+      state.order.push('review'); state.reviewReads++; state.reviewQueries.push(new URL(request.url()).search);
       if (state.failRefresh) return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
-      return route.fulfill({ json: state.executionState === 'ready' ? state.response : {
+      const steps = new URL(request.url()).searchParams.get('delivery') === 'sequential';
+      return route.fulfill({ json: state.executionState === 'ready' ? steps ? state.stepsResponse : state.response : {
         state: 'refused', refusal: 'lending_submission_pending', detail: 'This review has an existing wallet attempt.',
         executionId: 'execution_1', executionState: state.executionState, facts: ready().facts,
       } });
@@ -43,6 +59,14 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       expect(body.attemptId).toBe('attempt_1');
       state.executionState = body.outcome === 'rejected' ? 'ready' : body.outcome;
       return route.fulfill({ json: { executionId: 'execution_1', state: state.executionState } });
+    }
+    if (path.endsWith('/executions/execution_1/steps') && request.method() === 'POST') {
+      const body = request.postDataJSON(); state.order.push(`step:${body.index}`);
+      expect(body.attemptId).toBe('attempt_1');
+      expect(body.transactionHash).toBe(stepHash(body.index + 1));
+      const answer = state.stepAnswers[body.index] ?? (body.index === 2 ? { state: 'submitted', batchId: 'fixture-steps-3' } : { state: 'next', index: body.index + 1, batchId: `fixture-steps-${body.index + 1}` });
+      if (answer.state === 'submitted') state.executionState = 'submitted';
+      return route.fulfill({ json: answer });
     }
     if (path.endsWith('/executions/execution_1/transaction') && request.method() === 'POST') {
       state.order.push('hint'); state.transactionHints.push(request.postDataJSON().transactionHash);
@@ -71,7 +95,12 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
         sendCalls:async()=>{ window.lendingWalletAttempts++;
           ${outcome === 'timeout' ? "throw new Error('wallet response lost');" : outcome === 'rejected' ? "throw Object.assign(new Error('declined'),{code:4001});" : outcome === 'unsupported' ? "throw Object.assign(new Error('An internal error was received.'),{code:-32603,details:'atomic batch is not supported'});" : outcome === 'pending' ? 'return await new Promise(resolve=>{window.finishLendingWallet=resolve;});' : "return 'fixture-batch';"}
         },
-        onWalletRefusal:()=>{ window.lendingWalletRefusals=(window.lendingWalletRefusals??0)+1; }});
+        onWalletRefusal:()=>{ window.lendingWalletRefusals=(window.lendingWalletRefusals??0)+1; },
+        ${outcome.startsWith('steps') ? `steps:{
+          send:async call=>{ window.lendingStepSends=[...(window.lendingStepSends??[]),call.to];
+            ${outcome === 'steps-declined' ? "if(window.lendingStepSends.length===2) throw Object.assign(new Error('declined'),{code:4001});" : ''}
+            return '0x'+String(window.lendingStepSends.length).padStart(64,'0'); },
+          receipt:async()=>'success' },` : ''}});
       return React.createElement('main',{className:'still'},React.createElement(LendingReviewScreen,{model}));
     }
   ` }));

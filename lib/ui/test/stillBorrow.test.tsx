@@ -200,3 +200,15 @@ describe('Max beside the amount', () => {
     assert.match(render({ spend: { state: 'reading' }, needsRead: false, capacity, borrowAmount: '' }), /<button type="submit" class="still-btn" disabled="">Review loan and payment<\/button>/);
   });
 });
+
+describe('what Get money says to a wallet that cannot send a batch', () => {
+  it('a stock loan goes in steps; cbBTC, WETH, ETH and a Spend payment need one transaction', async () => {
+    const { stillBorrowWalletNoteV1 } = await import('../src/still/StillBorrow');
+    assert.equal(stillBorrowWalletNoteV1({ cannotBatch: false, walletName: 'Rabby Wallet', asset: 'cbBTC', paying: false }), null);
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: 'NVDAc' as never, paying: false })!,
+      /^Rabby Wallet sends one transaction at a time, so a loan against a stock goes in steps/);
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Injected', asset: 'WETH', paying: false })!,
+      /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now\. Choose a stock/);
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: null, paying: true })!, /paying Bitrefill from a loan needs the loan and the payment in one/);
+  });
+});

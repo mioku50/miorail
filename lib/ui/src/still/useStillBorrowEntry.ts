@@ -8,8 +8,6 @@ interface AskedLimitV1 { asset: StillBorrowAssetV1; supplyAtomic: string; wallet
 export function useStillBorrowEntryV1(input: {
   sky: SkyStateV1; signedIn: boolean; wallet: string | null | undefined; initialAsset: StillBorrowAssetV1 | null;
   onReviewLink: (href: string) => void;
-  /** What the connected wallet said about sending one batch, from the host. */
-  walletBlocker?: string | null;
   /** Still Spend: the Bitrefill invoice the loan pays, as its owner's page read it. */
   spend?: { orderId: string; view: StillBorrowSpendV1 } | null;
 }): { model: StillBorrowModelV1 } {
@@ -127,7 +125,6 @@ export function useStillBorrowEntryV1(input: {
           maxReading, onMax: () => void onMax(),
           capacity: view.capacity,
           error: error ?? (!needsRead && !reading ? limit.error ? 'Your borrowing limit could not be read. Read it again before continuing.' : view.error : null),
-          walletNote: signedIn ? input.walletBlocker ?? null : null,
           // Fills the field; the person still presses Read borrowing limit.
           suggestedAmount: !error && !needsRead && !reading && view.suggestedAmount ? view.suggestedAmount : null,
           onSuggestedAmount: (amount: string) => { setCollateralAmount(amount); setError(null); },

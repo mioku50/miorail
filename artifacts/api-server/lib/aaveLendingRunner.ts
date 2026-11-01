@@ -2,7 +2,7 @@ import { hashApprovedCallsV1, stableHashV1 } from '@mioagent/route-domain';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
 import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { aaveV4BorrowPlanV1, aaveV4RepayPlanV1, classifyAaveV4DeploymentReadV1, matchesAaveV4DeploymentV1, type AaveV4DeploymentStatusV1 } from './aaveV4BorrowPlan.js';
-import { inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1 } from './stillAaveStanding.js';
+import { inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readSpokeAllowanceAtV1 } from './stillAaveStanding.js';
 import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4BorrowPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
@@ -12,11 +12,20 @@ export interface AaveLendingDepsV1 {
   read?: typeof readAaveStandingV1;
   deploymentAt?: typeof readAaveV4DeploymentAtV1;
   inspectDeploymentAt?: typeof inspectAaveV4DeploymentAtV1;
+  allowance?: typeof readSpokeAllowanceAtV1;
   chain?: SimulationChainV1;
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
 }
 const fail = (refusal: string, detail: string): LendingRunV1 => ({ state: 'refused', refusal, detail });
+
+/** Said on a review that goes in steps, before anything is signed. */
+function stepsWarningV1(count: number, operation: 'borrow' | 'repay'): string {
+  const steps = count === 1 ? 'one transaction' : `${count} steps, one transaction each`;
+  return operation === 'borrow'
+    ? `Your wallet sends this as ${steps}, and pays each network fee. Still reviews each next step again before your wallet asks for it. Stopping between steps takes no loan: an allowance or a deposit already sent stays in place.`
+    : `Your wallet sends this as ${steps}, and pays each network fee. Stopping after the allowance repays nothing. Whatever the repayment leaves of the allowance stays with the Aave Spoke, which takes funds only for calls your own wallet makes.`;
+}
 const NO_DEBT_HEALTH_SENTINEL = 1n << 128n;
 
 function deploymentFailureV1(status: Exclude<AaveV4DeploymentStatusV1, 'matched'>): LendingRunV1 {
@@ -36,9 +45,11 @@ function deploymentFailureV1(status: Exclude<AaveV4DeploymentStatusV1, 'matched'
 
 /** The direct V4 Spoke acts for msg.sender. No position-manager grant, V3
  * method, unregistered stock, recipient from a model or native ETH is used.
- * A ready result requires the exact same-state debt and collateral proof. */
-export async function runAaveLendingV1(input: { walletAddress: string; question: LendingQuestionV1 }, deps: AaveLendingDepsV1 = {}): Promise<LendingRunV1> {
-  const now = deps.now ?? (() => new Date()), q = input.question;
+ * A ready result requires the exact same-state debt and collateral proof.
+ * `delivery: 'sequential'` plans the same action as one transaction per call,
+ * for a wallet that cannot send a batch; it is simulated and checked alike. */
+export async function runAaveLendingV1(input: { walletAddress: string; question: LendingQuestionV1; delivery?: 'atomic' | 'sequential' }, deps: AaveLendingDepsV1 = {}): Promise<LendingRunV1> {
+  const now = deps.now ?? (() => new Date()), q = input.question, sequential = input.delivery === 'sequential';
   const supply = q.operation === 'borrow' ? BigInt(q.collateralSupplyAssets) : 0n;
   const read = await (deps.read ?? readAaveStandingV1)({ tokenAddress: q.collateralTokenAddress,
     walletAddress: input.walletAddress, operation: q.operation, collateralSupplyAssets: supply });
@@ -59,13 +70,22 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
     if (q.amountMode === 'assets' && ask > s.debtAssets) return fail('repay_exceeds_debt', 'The exact partial repayment exceeds the recorded debt. Choose full repayment with an explicit maximum instead.');
     if (ask > BigInt(q.maximumAssets)) return fail('repay_maximum_exceeded', 'The chosen repayment exceeds the explicit USDC budget.');
   }
+  // In steps, an allowance already exactly in place is not asked for again, read at the same block.
+  let allowanceAssets = 0n;
+  if (sequential && (q.operation === 'repay' || supply > 0n)) {
+    const read = await (deps.allowance ?? readSpokeAllowanceAtV1)({ token: q.operation === 'borrow' ? s.selectedStock.token : ADDRESSES.usdc,
+      walletAddress: s.walletAddress, blockNumber: s.blockNumber });
+    if (read === null) return fail('aave_allowance_unread', 'The wallet’s current allowance to the Aave Spoke could not be read, so the steps could not be planned.');
+    allowanceAssets = read;
+  }
+  const delivery = sequential ? { delivery: 'sequential' as const, allowanceAssets } : {};
   const planned = q.operation === 'borrow'
     ? aaveV4BorrowPlanV1({ walletAddress: s.walletAddress, stockId: s.selectedStock.id,
         collateralReserve: s.collateralReserve, loanReserve: s.loanReserve, collateralSupplyAssets: supply,
         borrowAssets: ask, walletCollateralAssets: s.walletCollateralAssets, existingSuppliedAssets: s.existingSuppliedAssets,
-        collateralAlreadyEnabled: s.collateralAlreadyEnabled, deployment: s.deployment })
+        collateralAlreadyEnabled: s.collateralAlreadyEnabled, deployment: s.deployment, ...delivery })
     : aaveV4RepayPlanV1({ walletAddress: s.walletAddress, loanReserve: s.loanReserve,
-        maximumRepayAssets: ask, walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment });
+        maximumRepayAssets: ask, walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment, ...delivery });
   if (!planned.ok) return fail(planned.refusal, planned.detail);
   const plan = planned.plan;
   const probes = buildAaveV4PoststateProbesV1(s, q.operation);
@@ -126,14 +146,20 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
       'This creates USDC debt in the reviewed Aave V4 equities Spoke. Its existing collateral and USDC debt are measured together.',
       `Still’s ${s.termsVersion} allowance was checked at the simulation block. Prices, rates and financial windows can change before your wallet submits.`,
       'Aave enforces its own health rules onchain. Your collateral can be liquidated. A server review is not an onchain price or Still-limit guarantee.',
+      ...(sequential ? [stepsWarningV1(plan.calls.length, 'borrow')] : []),
     ] : ['This repays the USDC debt of the Aave V4 equities Spoke. Collateral remains deposited.',
-      'The Spoke takes at most your explicit USDC maximum, clears the temporary allowance in the same atomic batch and requests no position-manager grant.'] };
+      sequential ? 'The Spoke takes at most your explicit USDC maximum and requests no position-manager grant.'
+        : 'The Spoke takes at most your explicit USDC maximum, clears the temporary allowance in the same atomic batch and requests no position-manager grant.',
+      ...(sequential ? [stepsWarningV1(plan.calls.length, 'repay')] : [])] };
+  // The way it is sent is part of what is signed: steps are never armed as a batch, nor a batch as steps.
   const signingTermsHash = stableHashV1('aave-v4-lending-signing-terms/v1', {
     wallet: s.walletAddress,
     callsHash,
     facts: lendingSigningTermsFactsV1(facts),
+    ...(sequential ? { delivery: 'sequential' } : {}),
   });
   return { state: 'ready', facts, calls: plan.calls, callsHash, signingTermsHash, expiresAt: new Date(now().getTime() + 30_000).toISOString(),
-    atomicRequired: true, steps: plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })),
+    ...(sequential ? { atomicRequired: false as const, delivery: 'sequential' as const } : { atomicRequired: true as const }),
+    steps: plan.steps.map(step => ({ index: step.index, to: step.to, reading: step.reading })),
     measured: { provider: 'base_same_state', blockNumber: answer.response.blockNumber, loanDeltaAssets: usdcNet.toString() } };
 }

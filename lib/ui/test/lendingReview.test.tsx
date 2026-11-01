@@ -264,3 +264,40 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
     assert.equal(parseLendingReviewWireV1({ ...body, facts: { ...body.facts, operation: 'repay', payment } }), null);
   });
 });
+
+describe('a review granted in steps, for a wallet that cannot send a batch', () => {
+  const stepsBody = (): LendingReadyWireV1 => ({ ...ready(), atomicRequired: false, delivery: 'sequential',
+    calls: [{ to: ADDRESS, data: '0x095ea7b3', value: '0' }, { to: ADDRESS, data: '0x12345678', value: '0' }],
+    steps: [{ index: 0, to: ADDRESS, reading: 'Allows only the registered Aave Spoke to move up to 3000000 atomic units; the next step uses exactly this allowance.' },
+      { index: 1, to: ADDRESS, reading: 'Repays up to the exact confirmed USDC maximum.' }],
+    facts: { ...ready().facts, venue: 'aave-v4' } });
+
+  it('is read only for Aave V4, without native ETH or a payment, and never as a half-batch', () => {
+    assert.equal(parseLendingReviewWireV1(stepsBody())?.state, 'ready');
+    for (const changed of [
+      { facts: { ...stepsBody().facts, venue: 'morpho' as const } },
+      { atomicRequired: true },
+      { delivery: undefined },
+      { facts: { ...stepsBody().facts, payment: { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: ADDRESS, assets: '3000000',
+        productName: 'x', packageValue: '1', faceCurrency: null, expiresAt: NOW } } },
+    ]) assert.equal(parseLendingReviewWireV1({ ...stepsBody(), ...changed }), null, JSON.stringify(Object.keys(changed)));
+    assert.equal(parseLendingReviewWireV1({ ...ready(), delivery: 'sequential' }), null);
+  });
+
+  it('says it goes in steps, opens step one, and shows where the steps stand', () => {
+    const html = render({ body: stepsBody() });
+    assert.match(html, /Steps in your wallet \(2 transactions\)/);
+    assert.match(html, /reviews each next step again, from the chain as it is then, before your wallet asks for it/);
+    assert.doesNotMatch(html, /Verified atomic batch|Transaction preview unavailable/);
+    assert.match(html, />Open step 1 of 2 in your wallet</);
+    assert.match(render({ body: stepsBody(), walletBusy: true, step: { index: 2, total: 2, phase: 'wallet' } }), /Step 2 of 2: confirm it in your wallet\./);
+    assert.match(render({ body: stepsBody(), walletBusy: true, step: { index: 1, total: 2, phase: 'checking' } }), /Step 1 of 2 landed\. Still checks the next step against the chain…/);
+    // A batch review reads as before.
+    assert.match(render(), />Open in your wallet</);
+  });
+
+  it('binds a far health ratio as one bucket on the client too', () => {
+    const far = (wad: string) => ({ ...ready(), facts: { ...ready().facts, operation: 'borrow' as const, requestedAssets: '180000', maximumDebitAssets: '0', debtBeforeAssets: '3', healthBeforeWad: wad } });
+    assert.equal(describeLendingTermsChangesV1(far('2152681126303693684440118'), far('2152681088235212709150883')).includes('health ratio'), false);
+  });
+});

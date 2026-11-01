@@ -63,6 +63,20 @@ export type StillBorrowSpendV1 =
   | { state: 'gone' }
   | { state: 'ready'; productName: string; packageValue: string; priceUsdc: string; expiresAt: string; refillTo?: string | null };
 
+/** What Get money says to a wallet that cannot send a batch, before anything is
+ * asked: a stock loan goes in steps; cbBTC, WETH, ETH and a Spend payment need one transaction. */
+export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletName: string | null; asset: StillBorrowAssetV1 | null; paying: boolean }): string | null {
+  if (!input.cannotBatch) return null;
+  const name = input.walletName?.trim();
+  const wallet = name && name.length <= 40 && !/^(injected|browser wallet)$/i.test(name) ? name : 'This wallet';
+  const others = 'Base Account, Coinbase Wallet (Base App) or MetaMask';
+  if (input.paying) return `${wallet} sends one transaction at a time, and paying Bitrefill from a loan needs the loan and the payment in one. Use ${others}.`;
+  if (input.asset === 'cbBTC' || input.asset === 'WETH' || input.asset === 'ETH') {
+    return `${wallet} sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now. Choose a stock, or use ${others}.`;
+  }
+  return `${wallet} sends one transaction at a time, so a loan against a stock goes in steps: your wallet asks for each one, and Still checks each next step again before it does.`;
+}
+
 function heldUntilV1(iso: string): string {
   const at = new Date(iso);
   return Number.isFinite(at.getTime()) ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'soon';

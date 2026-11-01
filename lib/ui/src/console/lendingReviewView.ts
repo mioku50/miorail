@@ -18,7 +18,9 @@ export interface LendingFactsWireV1 {
 export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
   state: 'ready'; facts: LendingFactsWireV1; executionId: string;
   calls: { to: string; value: string; data: string }[];
-  callsHash: string; signingTermsHash: string; expiresAt: string; atomicRequired: true;
+  callsHash: string; signingTermsHash: string; expiresAt: string;
+  /** One batch, or, granted by the server for a wallet without batches, one transaction per call. */
+  atomicRequired: boolean; delivery?: 'sequential';
   steps: { index: number; to: string; reading: string }[];
   measured: { provider: string; blockNumber: number; loanDeltaAssets: string };
 }
@@ -71,12 +73,16 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
     ...(isLendingFactsWireV1(value.facts) ? { facts: value.facts } : {}), ...(id(value.executionId) ? { executionId: value.executionId } : {}),
     ...(['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed'].includes(String(value.executionState)) ? { executionState: value.executionState as LendingExecutionStateV1 } : {}) };
   if (value.state !== 'ready' || !hasBorrowSigningTermsV1(value as FreshBorrowReviewV1, 8) || !isLendingFactsWireV1(value.facts) ||
-      !id(value.executionId) || value.atomicRequired !== true || !Array.isArray(value.calls) || !value.calls.every(c => object(c) && atomic(c.value)) ||
+      !id(value.executionId) || !Array.isArray(value.calls) || !value.calls.every(c => object(c) && atomic(c.value)) ||
       !Array.isArray(value.steps) || value.steps.length !== value.calls.length || !value.steps.every((s, index) => object(s) && s.index === index && address(s.to) &&
         (value.calls as { to: string }[])[index]?.to.toLowerCase() === s.to.toLowerCase() && text(s.reading)) ||
       !object(value.measured) || !text(value.measured.provider) || !integer(value.measured.blockNumber) ||
       typeof value.measured.loanDeltaAssets !== 'string' || !/^-?(0|[1-9][0-9]{0,77})$/.test(value.measured.loanDeltaAssets)) return null;
   const native = value.facts.nativeFunding;
+  // Steps only where the server grants them: an Aave V4 action without native ETH or a payment.
+  const delivered = value.atomicRequired === true ? value.delivery === undefined
+    : value.atomicRequired === false && value.delivery === 'sequential' && value.facts.venue === 'aave-v4' && !native && !value.facts.payment;
+  if (!delivered) return null;
   const calls=value.calls as {to:string;value:string;data:string}[];
   if (!native) {
     if(calls.some(c=>c.value!=='0')) return null;
@@ -109,6 +115,8 @@ export function lendingExecutionCopyV1(state: LendingExecutionStateV1): string {
 
 const NO_DEBT_HEALTH_SENTINEL = BigInt(1) << BigInt(128);
 const HEALTH_HUNDREDTH_WAD = BigInt(10) ** BigInt(16);
+/** As the server's bucket: from 100 up the ratio is "far from liquidation", one bucket. */
+const HEALTH_FAR_WAD = BigInt(100) * BigInt(10) ** BigInt(18);
 const USDC_BASE = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
 const MORPHO_BLUE = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb';
 const MORPHO_BUNDLER = '0x4d28d900e381ece4b351302f1abe588496793a2b';
@@ -118,6 +126,7 @@ export function materialLendingHealthBucketV1(value: string | null | undefined, 
   try {
     const parsed = BigInt(value);
     if (parsed < BigInt(0) || parsed >= NO_DEBT_HEALTH_SENTINEL) return null;
+    if (parsed >= HEALTH_FAR_WAD) return 'far';
     return (parsed / HEALTH_HUNDREDTH_WAD).toString();
   } catch {
     return null;

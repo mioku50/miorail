@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import { ExecutionCallV1Schema, hashApprovedCallsV1, type HashV1 } from '@mioagent/route-domain';
 import type { LendingRunV1 } from './lendingReview.js';
+import { sequentialBatchIdV1, sequentialHashesV1 } from './lendingSteps.js';
 
 type ReadyRunV1 = Extract<LendingRunV1, { state: 'ready' }>;
 export interface LoanOwnerV1 { tenantId: string; walletAddress: string }
@@ -30,6 +31,10 @@ export interface LoanExecutionStoreV1 {
   recordSubmission(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; outcome: 'submitted' | 'unknown' | 'rejected'; batchId?: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
   recordVerification(input: { owner: LoanOwnerV1; executionId: string; expectedVersion: number; state: 'confirmed' | 'failed' | 'unknown'; transactionHash: HashV1 | null;
     proof: Record<string, unknown> | null; errorCode: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
+  /** A loan in steps: step `index` landed as `transactionHash`. The hashes so
+   * far are kept as one viem fallback batch id; the last step submits it, and
+   * `stop` submits what landed when the rest will not be sent. */
+  recordStep(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; index: number; transactionHash: HashV1; stop?: boolean; now: Date }): Promise<LoanExecutionV1 | null>;
 }
 
 type SqlV1 = (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>;
@@ -41,7 +46,10 @@ function assertOwner(owner: LoanOwnerV1): void {
 function assertReady(input: { owner: LoanOwnerV1; draftId: string; run: ReadyRunV1; now: Date }): void {
   assertOwner(input.owner);
   const { run } = input;
-  if (!validId(input.draftId) || run.state !== 'ready' || run.atomicRequired !== true || !['morpho', 'aave-v4'].includes(run.facts.venue) ||
+  // One batch, or steps only where they were granted: an Aave V4 action without native ETH or a payment.
+  const delivery = run.atomicRequired === true ? run.delivery === undefined
+    : run.atomicRequired === false && run.delivery === 'sequential' && run.facts.venue === 'aave-v4' && !run.facts.nativeFunding && !run.facts.payment;
+  if (!validId(input.draftId) || run.state !== 'ready' || !delivery || !['morpho', 'aave-v4'].includes(run.facts.venue) ||
       !['borrow', 'repay'].includes(run.facts.operation) || !validId(run.facts.marketId) || run.calls.length === 0 || run.calls.length > 16 ||
       run.calls.some((call, index) => !ExecutionCallV1Schema.safeParse(call).success || call.index !== index) ||
       run.callsHash !== hashApprovedCallsV1(run.calls) || !Number.isFinite(Date.parse(run.expiresAt)) || Date.parse(run.expiresAt) <= input.now.getTime() ||
@@ -122,6 +130,23 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     row.state = input.state; row.transactionHash = input.transactionHash; row.verification = copy(input.proof); row.errorCode = input.errorCode;
     row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
   }
+  async recordStep(input: Parameters<LoanExecutionStoreV1['recordStep']>[0]): Promise<LoanExecutionV1 | null> {
+    assertOwner(input.owner); const row = this.rows.get(input.executionId);
+    if (!row || !sameOwner(row, input.owner) || row.attemptId !== input.attemptId || row.state !== 'awaiting_wallet') return null;
+    const next = nextStepV1(row, input);
+    if (!next) return null;
+    row.batchId = next.batchId; if (next.submitted) row.state = 'submitted';
+    row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
+  }
+}
+
+/** The batch id after one more step, or null when this step is not the next one. */
+function nextStepV1(row: LoanExecutionV1, input: Parameters<LoanExecutionStoreV1['recordStep']>[0]): { batchId: string; submitted: boolean } | null {
+  if (row.run.delivery !== 'sequential' || !/^0x[0-9a-f]{64}$/.test(input.transactionHash)) return null;
+  const landed = row.batchId === null ? [] : sequentialHashesV1(row.batchId);
+  if (!landed || input.index !== landed.length || input.index >= row.run.calls.length || landed.includes(input.transactionHash)) return null;
+  const hashes = [...landed, input.transactionHash];
+  return { batchId: sequentialBatchIdV1(hashes), submitted: hashes.length === row.run.calls.length || input.stop === true };
 }
 
 function validateSubmission(input: Parameters<LoanExecutionStoreV1['recordSubmission']>[0]): void {
@@ -214,6 +239,20 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
           WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
             AND attempt_id = ${input.attemptId} AND state IN ('awaiting_wallet', 'submitted', 'unknown') RETURNING *`;
       return rows[0] ? rowFromDb(rows[0]) : null;
+    },
+    async recordStep(input) {
+      assertOwner(input.owner); const { owner } = input;
+      const rows = await sql`SELECT * FROM lending_executions WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}`;
+      const row = rows[0] ? rowFromDb(rows[0]) : null;
+      if (!row || row.attemptId !== input.attemptId || row.state !== 'awaiting_wallet') return null;
+      const next = nextStepV1(row, input);
+      if (!next) return null;
+      // Compare-and-set on the version read, so two step reports cannot both land.
+      const updated = await sql`UPDATE lending_executions SET batch_id = ${next.batchId}, state = ${next.submitted ? 'submitted' : 'awaiting_wallet'},
+          updated_at = ${input.now.toISOString()}::timestamptz, version = version + 1
+        WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
+          AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' AND version = ${row.version} RETURNING *`;
+      return updated[0] ? rowFromDb(updated[0]) : null;
     },
     async recordVerification(input) {
       assertOwner(input.owner); validateVerification(input); const { owner } = input;

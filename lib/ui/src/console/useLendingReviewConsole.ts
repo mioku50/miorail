@@ -9,14 +9,33 @@ import { describeLendingTermsChangesV1, parseLendingExecutionWireV1, parseLendin
 
 const ROOT = '/api/route-intelligence/rwa/lending';
 type CallsV1 = LendingReadyWireV1['calls'];
+
+/** Where a loan in steps stands: which step, and whether the wallet, the chain or Still has it. */
+export interface LendingStepProgressV1 { index: number; total: number; phase: 'wallet' | 'confirming' | 'checking' }
+/** A wallet that cannot send a batch: one call as one transaction, and how it ended once mined. */
+export interface LendingStepsWalletV1 {
+  send: (call: CallsV1[number]) => Promise<string>;
+  receipt: (hash: string) => Promise<'success' | 'reverted' | null>;
+}
+/** The steps stopped after some landed: what landed is recorded, and the person is told what it means. */
+export class LendingStepsStoppedV1 extends Error {
+  readonly batchId: string | null;
+  constructor(message: string, batchId: string | null) { super(message); this.batchId = batchId; }
+}
+function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null): string {
+  const kept = index === 1 ? 'Step 1 is in place' : `Steps 1–${index} are in place`;
+  const after = operation === 'borrow' ? 'and no loan was taken. Open Get money again to go on from here.' : 'and nothing was repaid. Open Repay again to go on from here.';
+  return `${detail ? `${detail} ` : `Step ${index + 1} of ${total} was not sent. `}${kept}, ${after}`;
+}
+
 interface StateV1 {
   identity: string; loading: boolean; body: LendingReviewWireV1 | null; error: string | null;
   walletError: string | null; walletBusy: boolean; checking: boolean;
   marker: BorrowSubmissionMarkerV1 | null; batchId: string | null; execution: LendingExecutionWireV1 | null;
-  transactionHint: string;
+  transactionHint: string; step: LendingStepProgressV1 | null;
 }
 const initial = (identity: string): StateV1 => ({ identity, loading: true, body: null, error: null, walletError: null,
-  walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '' });
+  walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null });
 const address = (value: string | null): value is string => value !== null && /^0x[0-9a-f]{40}$/i.test(value);
 const readableError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : '';
@@ -34,6 +53,8 @@ export interface LendingReviewConsoleModelV1 {
   transactionHint?: string;
   onTransactionHint?: (value: string) => void;
   onFindTransaction?: (() => void) | null;
+  /** A loan in steps, while it is being sent. */
+  step?: LendingStepProgressV1 | null;
 }
 
 /** One signed-in session and one connected wallet own this hook's state.
@@ -52,11 +73,15 @@ export function useLendingReviewConsoleV1(input: {
   /** Told when the wallet refused because of what it is, so the host stops
    * offering it a batch before the next press. */
   onWalletRefusal?: (error: unknown) => void;
+  /** For a wallet that cannot send a batch: the review is asked for steps,
+   * and a review granted in steps goes one transaction at a time. */
+  steps?: LendingStepsWalletV1 | null;
 }): { model: LendingReviewConsoleModelV1; body: LendingReviewWireV1 | null } {
   const session = input.sessionWalletAddress?.toLowerCase() ?? null;
   const connected = input.walletAddress?.toLowerCase() ?? null;
   const eligible = Boolean(input.draft && address(session) && session === connected);
-  const identity = JSON.stringify([input.draft, session, connected]);
+  const sequential = Boolean(input.steps);
+  const identity = JSON.stringify([input.draft, session, connected, sequential]);
   const current = useRef(identity); current.current = identity;
   const alive = useRef(true);
   const opening = useRef(false);
@@ -69,12 +94,12 @@ export function useLendingReviewConsoleV1(input: {
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const read = useCallback(async (): Promise<LendingReviewWireV1> => {
     try {
-      const answer = parseLendingReviewWireV1(await lendingRequestV1(`${ROOT}/review/${encodeURIComponent(input.draft ?? '')}`));
+      const answer = parseLendingReviewWireV1(await lendingRequestV1(`${ROOT}/review/${encodeURIComponent(input.draft ?? '')}${sequential ? '?delivery=sequential' : ''}`));
       if (!answer) throw new Error('lending_review_unreadable');
       update({ body: answer, loading: false, error: null });
       return answer;
     } catch (error) { update({ body: null, loading: false, error: readableError(error) }); throw error; }
-  }, [input.draft, update]);
+  }, [input.draft, sequential, update]);
 
   useEffect(() => {
     let valid = true;
@@ -153,6 +178,43 @@ export function useLendingReviewConsoleV1(input: {
                   { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome, ...(batchId ? { batchId } : {}) }) });
               };
               if (current.current !== identity) { await report('unknown').catch(() => undefined); throw new Error('lending_identity_changed'); }
+              if (approved.delivery === 'sequential') {
+                if (!input.steps) { await report('rejected').catch(() => undefined); throw new Error('lending_steps_unavailable'); }
+                // One transaction per call. After each lands, Still reads it from the
+                // chain and runs the review again before the wallet is asked for the next.
+                const wallet = input.steps, operation = approved.facts.operation;
+                let landed: string | null = null;
+                for (let index = 0; index < calls.length; index++) {
+                  if (current.current !== identity || !alive.current) throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null), landed);
+                  update({ step: { index: index + 1, total: calls.length, phase: 'wallet' } });
+                  let hash: string;
+                  try { handedToWallet = true; hash = await wallet.send(calls[index]!); }
+                  catch (error) {
+                    if (index === 0) { await report(walletDidNotSendV1(error) ? 'rejected' : 'unknown').catch(() => undefined); throw error; }
+                    // What landed stays recorded as submitted; nothing more is asked of the wallet.
+                    if (landed) await report('submitted', landed).catch(() => undefined);
+                    throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length,
+                      borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null), landed);
+                  }
+                  update({ step: { index: index + 1, total: calls.length, phase: 'confirming' } });
+                  await wallet.receipt(hash).catch(() => null);
+                  update({ step: { index: index + 1, total: calls.length, phase: 'checking' } });
+                  let answer: { state?: unknown; batchId?: unknown; detail?: unknown; refusal?: unknown };
+                  try {
+                    answer = await lendingRequestV1(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/steps`,
+                      { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, index, transactionHash: hash }) });
+                  } catch {
+                    throw new LendingStepsStoppedV1(`Step ${index + 1} of ${calls.length} was sent, and Still could not read it from the chain yet. Check the onchain result before pressing again.`, landed);
+                  }
+                  const batch: string | null = typeof answer.batchId === 'string' ? answer.batchId : landed;
+                  if (answer.state === 'submitted' && batch) return batch;
+                  if (answer.state === 'next') { landed = batch; continue; }
+                  // A step that failed onchain is not in place; one that landed before a refused review is.
+                  const inPlace = answer.refusal === 'loan_step_reverted' ? index : index + 1;
+                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null), batch);
+                }
+                throw new LendingStepsStoppedV1('The steps ended without a final answer. Check the onchain result before pressing again.', landed);
+              }
               try {
                 handedToWallet = true;
                 const batchId = await input.sendCalls({ calls });
@@ -184,12 +246,13 @@ export function useLendingReviewConsoleV1(input: {
       }
     } catch (error) {
       confirmed.current = null;
+      if (error instanceof LendingStepsStoppedV1) { update({ walletError: error.message, ...(error.batchId ? { batchId: error.batchId } : {}) }); return; }
       if (walletCannotSendSentenceV1(error) !== null) input.onWalletRefusal?.(error);
       update({ walletError: borrowUserRejectedV1(error) ? 'You declined in your wallet. Nothing was sent.'
         : walletCannotSendSentenceV1(error, input.walletName) ?? (error instanceof BorrowSubmissionStorageErrorV1 ? error.message
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'
             : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.') });
-    } finally { opening.current = false; update({ walletBusy: false }); }
+    } finally { opening.current = false; update({ walletBusy: false, step: null }); }
   }, [active, eligible, identity, input, read, session, update]);
 
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
@@ -205,5 +268,6 @@ export function useLendingReviewConsoleV1(input: {
     transactionHint: eligible ? active.transactionHint : '',
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,
     onFindTransaction: eligible && executionId && locked && !['confirmed','failed'].includes(active.execution?.state ?? '') ? () => void onFindTransaction() : null,
+    step: eligible ? active.step : null,
   } };
 }

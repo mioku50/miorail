@@ -56,3 +56,38 @@ describe('Aave V4 code-owned atomic plan', () => {
     assert(r.plan.calls.every(c => c.to === ADDRESSES.usdc.toLowerCase() || c.to === ADDRESSES.aaveSpoke.toLowerCase()));
   });
 });
+
+describe('Aave V4 plan in steps, for a wallet that cannot send a batch', () => {
+  it('asks for exactly the pledge once, then supply, enable and borrow, and no allowance resets', async () => {
+    const i = await input(), r = aaveV4BorrowPlanV1({ ...i, delivery: 'sequential', allowanceAssets: 0n });
+    assert.equal(r.ok, true); if (!r.ok) return;
+    assert.equal(r.plan.forceAtomic, false);
+    assert.deepEqual(r.plan.calls.map(c => c.callType), ['approval', 'deposit', 'other', 'other']);
+    assert.equal(r.plan.calls[0]!.amountAtomic, i.collateralSupplyAssets.toString());
+    assert.match(r.plan.steps[0]!.reading, /the next step uses exactly this allowance/);
+    const methods = r.plan.calls.slice(1).map(c => decodeFunctionData({ abi: aaveV4WriteAbiV1, data: c.data }).functionName);
+    assert.deepEqual(methods, ['supply', 'setUsingAsCollateral', 'borrow']);
+    // The same supply and borrow calldata as the batch: only the allowance housekeeping differs.
+    const atomic = aaveV4BorrowPlanV1(i);
+    assert.ok(atomic.ok);
+    if (atomic.ok) assert.deepEqual(r.plan.calls.slice(1).map(c => c.data), atomic.plan.calls.slice(2, 5).map(c => c.data));
+  });
+  it('an allowance already exactly in place is not asked again; any other is set exactly', async () => {
+    const i = await input();
+    const kept = aaveV4BorrowPlanV1({ ...i, delivery: 'sequential', allowanceAssets: i.collateralSupplyAssets, collateralAlreadyEnabled: true });
+    assert.ok(kept.ok); if (kept.ok) assert.deepEqual(kept.plan.calls.map(c => c.callType), ['deposit', 'other']);
+    const larger = aaveV4BorrowPlanV1({ ...i, delivery: 'sequential', allowanceAssets: i.collateralSupplyAssets + 1n });
+    assert.ok(larger.ok); if (larger.ok) assert.equal(larger.plan.calls[0]!.amountAtomic, i.collateralSupplyAssets.toString());
+    // Steps need the allowance read at the same block.
+    assert.equal(aaveV4BorrowPlanV1({ ...i, delivery: 'sequential' }).ok, false);
+  });
+  it('repay in steps: the exact maximum as one allowance, then repay; none again when it is in place', async () => {
+    const s = await aaveStandingFixture('repay');
+    const base = { walletAddress: s.walletAddress, loanReserve: s.loanReserve, maximumRepayAssets: BigInt(4_000_000), walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment };
+    const steps = aaveV4RepayPlanV1({ ...base, delivery: 'sequential', allowanceAssets: 0n });
+    assert.ok(steps.ok); if (!steps.ok) return;
+    assert.deepEqual(steps.plan.calls.map(c => [c.callType, c.amountAtomic]), [['approval', '4000000'], ['other', '4000000']]);
+    const ready = aaveV4RepayPlanV1({ ...base, delivery: 'sequential', allowanceAssets: BigInt(4_000_000) });
+    assert.ok(ready.ok); if (ready.ok) assert.equal(ready.plan.calls.length, 1);
+  });
+});

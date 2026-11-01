@@ -22,5 +22,5 @@ export function loanReadyFixture(patch: Partial<Extract<LendingRunV1, { state: '
     maximumDebitAssets: '2000000', collateralSupplyAssets: '0', debtBeforeAssets: '3000000', debtAfterAssets: '1000000',
     collateralBeforeAssets: '100', collateralAfterAssets: '100', debtBeforeShares: '3000000', debtAfterShares: '1000000', blockNumber: 53000000, warnings: [] },
     calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${'9'.repeat(64)}`, expiresAt: new Date(LOAN_NOW_FIXTURE.getTime() + 30_000).toISOString(), atomicRequired: true,
-    steps: [], measured: { provider: 'fixture', blockNumber: 53000000, loanDeltaAssets: '-2000000' }, ...patch };
+    steps: [], measured: { provider: 'fixture', blockNumber: 53000000, loanDeltaAssets: '-2000000' }, ...patch } as Extract<LendingRunV1, { state: 'ready' }>;
 }

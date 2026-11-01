@@ -248,3 +248,34 @@ describe('Aave runner keeps the observed action bound to the owned question', ()
     assert.equal((await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, h.deps)).state, 'refused');
   });
 });
+
+describe('Aave runner plans the same action in steps for a wallet that cannot send a batch', () => {
+  it('is checked like a batch, says it goes in steps, and signs differently from the batch', async () => {
+    const h = await harness();
+    const atomic = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, h.deps);
+    let read: unknown = null;
+    const steps = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q, delivery: 'sequential' },
+      { ...h.deps, allowance: async (input) => { read = input; return ZERO; } });
+    assert.equal(steps.state, 'ready', steps.state === 'refused' ? steps.detail : '');
+    if (steps.state !== 'ready' || atomic.state !== 'ready') return;
+    assert.deepEqual([steps.atomicRequired, steps.delivery], [false, 'sequential']);
+    assert.deepEqual(read, { token: h.s.selectedStock!.token, walletAddress: h.s.walletAddress, blockNumber: h.s.blockNumber });
+    assert.equal(steps.calls[0]!.callType, 'approval');
+    assert.ok(steps.calls.length < atomic.calls.length);
+    assert.match(steps.facts.warnings.at(-1)!, /^Your wallet sends this as \d steps, one transaction each, and pays each network fee\. Still reviews each next step again/);
+    assert.notEqual(steps.signingTermsHash, atomic.signingTermsHash);
+    assert.deepEqual(steps.facts.requestedAssets, atomic.facts.requestedAssets);
+  });
+  it('refuses to plan steps when the allowance cannot be read, and never claims an atomic cleanup', async () => {
+    const h = await harness();
+    const unread = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q, delivery: 'sequential' }, { ...h.deps, allowance: async () => null });
+    assert.equal(unread.state === 'refused' && unread.refusal, 'aave_allowance_unread');
+    const repay = await harness('repay');
+    const r = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: repay.q, delivery: 'sequential' }, { ...repay.deps, allowance: async () => ZERO });
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : '');
+    if (r.state === 'ready') {
+      assert.ok(r.facts.warnings.every(warning => !/same atomic batch/.test(warning)));
+      assert.match(r.facts.warnings.at(-1)!, /takes funds only for calls your own wallet makes/);
+    }
+  });
+});
