@@ -28,6 +28,7 @@ The governing rule is simple:
 | If you want to | Read |
 | --- | --- |
 | understand Still | [Still: spend without selling](#still-spend-without-selling) |
+| decide between Still and Aave or Morpho directly | [Why borrow through Still](#why-borrow-through-still-and-not-from-aave-or-morpho-directly) |
 | run it locally | [Running it yourself](#running-it-yourself) |
 | understand the subject | [Tokenized stocks on Base](#tokenized-stocks-on-base) |
 | connect an AI to the evidence | [Public Miorail MCP](#public-miorail-mcp) |
@@ -99,9 +100,36 @@ Each answer carries its Base block and what it holds fixed, and the page shows t
 
 **Shared links.** `/w/<address or name>` is the public check any visitor can run on Home, with a head of its own: a link shared on X or Farcaster previews as that wallet's card (`/api/public/still/card.png`, 1200×630 and 3:2), drawn with the same mobile as Home. Every other page previews as Still's own card.
 
-**For assistants.** The public MCP has `get_still_terms`; the signed-in MCP has `miorail_get_my_still` for the OAuth owner's wallet only. The Wallet MCP plugin is `https://miorail.xyz/wallet-mcp/miorail.md`.
+**For assistants.** Still has its own MCP server, `https://stills.lat/mcp/still`: read-only, no sign-in, three tools. `get_still_terms` gives the shares and windows in force now. `still_check_wallet` reads any Base wallet by address or name, the same public check as `/w/<wallet>`. `still_what_if` applies a price move, a draw, a repayment or a deposit and answers with the Agent's own engine. It prepares and signs nothing, under the public check's limit of thirty calls a minute per client:
+
+```bash
+claude mcp add --transport http still https://stills.lat/mcp/still
+```
+
+To prepare a loan from an assistant, the signed-in Miorail server (`https://miorail.xyz/mcp/private`, OAuth with the wallet) has `miorail_get_my_still` for the owner's own wallet and `miorail_prepare_still_loan`. That tool turns the collateral and amount the person named into the same five-minute, wallet-bound review link Get money opens, for stocks on Aave V4 as well as cbBTC, WETH and ETH on Morpho; it returns a link, never a call. The Wallet MCP plugin is `https://miorail.xyz/wallet-mcp/miorail.md`.
 
 Dividends stay first-class: Stocks › Dividends, the holder lines in Assets and Home's "coming up". A dividend reaches whoever holds the token when it converts, and an estimate is called an estimate.
+
+### Why borrow through Still, and not from Aave or Morpho directly
+
+Still is not a lender. It never holds collateral or USDC, and it adds no fee to a loan or a repayment. A Still loan *is* an Aave V4 or Morpho loan: the wallet supplies its collateral and borrows directly from the protocol, and the position is recorded there, under that wallet, where the protocol's own app can manage it as well.
+
+| Collateral | Protocol | Market |
+| --- | --- | --- |
+| Coinbase tokenized stocks: AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, TSLAc | Aave V4 | the Coinbase Stocks spoke |
+| cbBTC | Morpho | cbBTC/USDC |
+| WETH, or native ETH wrapped in the same transaction | Morpho | WETH/USDC |
+
+So the real question is what the layer on top adds, because it has to earn the risk it brings. Today it adds four things.
+
+1. **A limit that knows it is lending against stocks.** A protocol's collateral factor is the same at every hour of the week; a stock's risk is not. While Wall Street is closed, on weekends and market holidays, the token keeps trading on Base but its reference price stands still, and the next session can open with a gap. Around a company's earnings report the price can jump either way. Still lends at 50% of the protocol's own factor, and at 40% for a stock while the market is closed and around that company's report. Borrowing the protocol's full maximum, the smallest fall in price can start liquidation. Borrowing Still's full limit, the collateral can fall 50% before it can, or 60% in those windows. That margin is protection the protocol itself does not give.
+2. **One answer to "how much can I borrow?"** Every stock and crypto asset in the wallet is counted together, in dollars and plain words, read at one Base block. A read that failed is said to be unread, never shown as zero.
+3. **A check before anything is signed.** Every loan is simulated on a fresh block before the wallet opens, every call is decoded, and the amounts are exact. The server enforces Still's share. When native ETH is wrapped and pledged in the same transaction, Morpho's bundle contract enforces Still's cap onchain too.
+4. **Company after the loan.** The Agent answers what-ifs ("what if NVDA falls 30%?") with the engine's arithmetic, not a model's guess. Still also shows which dividends reach the token and keeps track of the stock market's hours. A connected Telegram chat is told, once per step, when a loan's margin falls below 37.5%, below 20%, and when it can be liquidated.
+
+Get money shows the first point as numbers before the amount is chosen: the protocol's own limit beside Still's, how far the collateral could fall at each, and, when a stock counts lower, why and until when.
+
+Someone at home in Aave or Morpho gains little from this. Still is for people who hold tokenized stocks, are not DeFi specialists, and want to borrow against their shares without selling them.
 
 ## Product loop
 
