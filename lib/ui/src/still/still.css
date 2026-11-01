@@ -562,6 +562,10 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-borrow .still-borrow-amount.has-max { grid-template-columns: minmax(0, 1fr) auto auto; }
 .still-borrow .still-borrow-max { height: 30px; padding: 0 12px; border: 1px solid var(--sm-line); border-radius: 999px; background: transparent; color: var(--sm-ink); font: inherit; font-size: 12px; font-weight: 600; cursor: pointer; }
 .still-borrow .still-borrow-max:disabled { opacity: 0.6; cursor: not-allowed; }
+.still-spend .still-spend-results { margin-top: 16px; }
+.still-spend .still-spend-results .still-borrow-choice { min-height: 56px; }
+.still-spend .still-spend-fit { display: block; margin-top: 2px; font-size: 11px; color: var(--sm-ink2); }
+.still-spend .still-spend-room { margin-top: 14px; }
 .still-borrow .still-borrow-step form > .still-note { margin: 8px 0 16px; }
 .still-borrow .still-borrow-step .still-btn { width: 100%; height: 50px; font-size: 16px; }
 .still-borrow .still-borrow-choice:disabled { opacity: 0.55; cursor: not-allowed; }

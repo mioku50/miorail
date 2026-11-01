@@ -1,4 +1,11 @@
 import { Router, type Request, type Response } from 'express';
+import {
+  SPEND_PRODUCT_TYPES_V1,
+  createBitrefillGuestCatalogV1,
+  type BitrefillGuestCatalogV1,
+  type SpendFailureV1,
+  type SpendProductTypeV1,
+} from '@mioagent/commerce-engine';
 import { stillTerms } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
@@ -20,9 +27,13 @@ import { createPublicReadCacheV1 } from './publicStocks.js';
 
 export const publicStillRouter = Router();
 
+let spendCatalogV1: BitrefillGuestCatalogV1 | null = null;
+
 export const publicStillRuntimeV1 = {
   limiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
   service: () => stillMirrorRuntimeV1.service(),
+  /** Bitrefill's catalogue, read as a guest of their MCP: Still Spend, stage 1. */
+  spend: (): BitrefillGuestCatalogV1 => (spendCatalogV1 ??= createBitrefillGuestCatalogV1()),
   now: () => new Date(),
   renderPng: (svg: string): Promise<Uint8Array> => renderCardPngV1(svg),
 };
@@ -31,10 +42,23 @@ export const publicStillRuntimeV1 = {
 const walletCardCacheV1 = createPublicReadCacheV1({ ttlMs: 10 * 60_000, max: 256 });
 const brandCardCacheV1 = createPublicReadCacheV1({ ttlMs: 24 * 60 * 60_000, max: 2 });
 
+/** Bitrefill's catalogue moves in hours (they advise refreshing hourly), so a
+ * search is kept half an hour and a product's prices a quarter of one. */
+const spendSearchCacheV1 = createPublicReadCacheV1({ ttlMs: 30 * 60_000, max: 200 });
+const spendProductCacheV1 = createPublicReadCacheV1({ ttlMs: 15 * 60_000, max: 400 });
+
 /** Testing seam. */
 export function resetStillCardCachesV1(): void {
   walletCardCacheV1.clear();
   brandCardCacheV1.clear();
+  spendSearchCacheV1.clear();
+  spendProductCacheV1.clear();
+}
+
+class SpendReadFailedV1 extends Error {
+  constructor(readonly reason: SpendFailureV1) {
+    super(reason);
+  }
 }
 
 publicStillRouter.use(async (req: Request, res: Response, next) => {
@@ -117,3 +141,57 @@ publicStillRouter.get('/card.png', async (req: Request, res: Response) => {
     res.status(500).json({ outcome: 'internal_error' });
   }
 });
+
+// ---------------------------------------------------------------------------
+// Still Spend, stage 1: what a loan could pay for. Bitrefill's eSIMs, phone
+// top-ups and gift cards with their prices in USDC, read as a guest. Nothing
+// here can buy: the guest client calls search-products and get-product-details
+// only. A failed read is Bitrefill's or ours and is never kept.
+// ---------------------------------------------------------------------------
+
+const SPEND_QUERY_V1 = /^[\p{L}\p{N} .&'+-]{0,40}$/u;
+const SPEND_ID_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
+const spendStatusV1 = (reason: SpendFailureV1): number => (reason === 'bitrefill_product_not_found' ? 404 : 503);
+
+publicStillRouter.get('/spend/search', async (req: Request, res: Response) => {
+  const type = typeof req.query.type === 'string' ? req.query.type : '';
+  const country = typeof req.query.country === 'string' ? req.query.country.trim().toUpperCase() : '';
+  const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+  if (!(SPEND_PRODUCT_TYPES_V1 as readonly string[]).includes(type) || !/^[A-Z]{2}$/.test(country) || !SPEND_QUERY_V1.test(query)) {
+    res.status(400).json({ outcome: 'invalid' });
+    return;
+  }
+  try {
+    const body = await spendSearchCacheV1.read(`${type}|${country}|${query.toLowerCase()}`, async () => {
+      const found = await publicStillRuntimeV1.spend().search({ type: type as SpendProductTypeV1, country, query: query || undefined });
+      if (!found.ok) throw new SpendReadFailedV1(found.reason);
+      return { outcome: 'products' as const, type, country, query, products: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
+    });
+    res.json(body);
+  } catch (error) {
+    const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
+    if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend search failed', { errorName: error instanceof Error ? error.name : typeof error });
+    res.status(spendStatusV1(reason)).json({ outcome: 'unavailable', reason });
+  }
+});
+
+publicStillRouter.get('/spend/product', async (req: Request, res: Response) => {
+  const id = typeof req.query.id === 'string' ? req.query.id.trim() : '';
+  if (!SPEND_ID_V1.test(id)) {
+    res.status(400).json({ outcome: 'invalid' });
+    return;
+  }
+  try {
+    const body = await spendProductCacheV1.read(id, async () => {
+      const found = await publicStillRuntimeV1.spend().product(id);
+      if (!found.ok) throw new SpendReadFailedV1(found.reason);
+      return { outcome: 'product' as const, product: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
+    });
+    res.json(body);
+  } catch (error) {
+    const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
+    if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend product failed', { errorName: error instanceof Error ? error.name : typeof error });
+    res.status(spendStatusV1(reason)).json({ outcome: 'unavailable', reason });
+  }
+});
+

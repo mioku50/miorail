@@ -17,5 +17,7 @@ export * from './StillAgent';
 export * from './StillConsole';
 export * from './StillBorrow';
 export * from './borrowIntent';
+export * from './spendView';
+export * from './StillSpend';
 
 export { useStillBorrowEntryV1 } from './useStillBorrowEntry';

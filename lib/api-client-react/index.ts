@@ -2009,6 +2009,28 @@ export function useStillMine(walletAddress: string | null, options?: { enabled?:
   });
 }
 
+/** Still Spend: Bitrefill's catalogue as Still reads it, one product type and country at a time. */
+export function useStillSpendSearchV1(input: { type: 'esim' | 'refill' | 'giftcard'; country: string; query: string } | null) {
+  return useQuery({
+    queryKey: ['still-spend-search', input?.type ?? null, input?.country ?? null, input?.query ?? ''],
+    enabled: input !== null,
+    retry: false,
+    staleTime: 10 * 60_000,
+    queryFn: async () => fetchApi<unknown>(`/api/public/still/spend/search?type=${encodeURIComponent(input!.type)}&country=${encodeURIComponent(input!.country)}${input!.query ? `&q=${encodeURIComponent(input!.query)}` : ''}`),
+  });
+}
+
+/** One Bitrefill product's packages, priced in USDC. */
+export function useStillSpendProductV1(id: string | null) {
+  return useQuery({
+    queryKey: ['still-spend-product', id],
+    enabled: id !== null,
+    retry: false,
+    staleTime: 5 * 60_000,
+    queryFn: async () => fetchApi<unknown>(`/api/public/still/spend/product?id=${encodeURIComponent(id!)}`),
+  });
+}
+
 /** Still's terms with no wallet: the shares, the closed-market window and each stock's earnings window. */
 export function useStillTerms(options?: { enabled?: boolean }) {
   return useQuery({

@@ -91,6 +91,7 @@ const StillBorrowPage = lazy(() =>
   import('../features/still/StillBorrowPage').then((m) => ({ default: m.StillBorrowPage })),
 );
 const StillRepayPage = lazy(() => import('../features/still/StillRepayPage').then(m => ({ default: m.StillRepayPage })));
+const StillSpendPage = lazy(() => import('../features/still/StillSpendPage').then(m => ({ default: m.StillSpendPage })));
 const LendingReviewPage = lazy(() => import('../features/rwa/LendingReviewPage').then(m => ({ default: m.LendingReviewPage })));
 const TodayPage = lazy(() =>
   import('../features/today/TodayPage').then((m) => ({ default: m.TodayPage })),
@@ -428,6 +429,9 @@ export function App() {
         </Route>
         <Route path="/more">
           <StillMorePage />
+        </Route>
+        <Route path="/spend">
+          <StillSpendPage />
         </Route>
         <Route path="/assistants">
           <StillAssistantsPage />

@@ -125,3 +125,63 @@ test('Still reads the way the API reads: the configured endpoint, then Base’s 
   assert.deepEqual(stillRpcUrlsV1({ BASE_RPC_URL: 'https://fallback.example' }), ['https://fallback.example', 'https://mainnet.base.org']);
   assert.deepEqual(stillRpcUrlsV1({}), ['https://mainnet.base.org']);
 });
+
+// Still Spend, stage 1: Bitrefill's catalogue as a guest, cached, never buying.
+function fakeSpend(answers: { search?: () => Promise<unknown>; product?: () => Promise<unknown> }) {
+  const asked: string[] = [];
+  const catalog = {
+    search: async (input: unknown) => { asked.push(`search ${JSON.stringify(input)}`); return answers.search!(); },
+    product: async (id: string) => { asked.push(`product ${id}`); return answers.product!(); },
+  };
+  publicStillRuntimeV1.spend = () => catalog as never;
+  return asked;
+}
+
+test('Spend reads Bitrefill’s catalogue once per half hour, and a failure is never kept', async (t) => {
+  const { resetStillCardCachesV1 } = await import('./stillPublic.js');
+  resetStillCardCachesV1();
+  t.after(() => resetStillCardCachesV1());
+  let fail = true;
+  const asked = fakeSpend({ search: async () => (fail ? { ok: false, reason: 'bitrefill_rate_limited' } : {
+    ok: true, value: [{ id: 'bitrefill-esim-germany', name: 'Bitrefill eSIM Germany', countries: ['DE'], inStock: true }],
+  }) });
+  const server = app(fakeService(async () => assert.fail('no wallet read')).service);
+  const failed = await request(server).get('/api/public/still/spend/search').query({ type: 'esim', country: 'de' });
+  assert.deepEqual([failed.status, failed.body], [503, { outcome: 'unavailable', reason: 'bitrefill_rate_limited' }]);
+  fail = false;
+  const first = await request(server).get('/api/public/still/spend/search').query({ type: 'esim', country: 'DE' });
+  const again = await request(server).get('/api/public/still/spend/search').query({ type: 'esim', country: 'DE' });
+  assert.equal(first.status, 200);
+  assert.equal(first.body.outcome, 'products');
+  assert.equal(first.body.products[0].id, 'bitrefill-esim-germany');
+  assert.deepEqual(again.body, first.body);
+  assert.deepEqual(asked, ['search {"type":"esim","country":"DE"}', 'search {"type":"esim","country":"DE"}']);
+});
+
+test('Spend refuses what cannot be a product type, a country, a search or a product id, before asking anyone', async () => {
+  const asked = fakeSpend({ search: async () => assert.fail('never asked'), product: async () => assert.fail('never asked') });
+  const server = app(fakeService(async () => assert.fail('no wallet read')).service);
+  for (const query of [{ type: 'loan', country: 'DE' }, { type: 'esim', country: 'DEU' }, { type: 'esim', country: 'DE', q: '<script>' }, { type: 'esim', country: 'DE', q: 'x'.repeat(41) }]) {
+    assert.equal((await request(server).get('/api/public/still/spend/search').query(query)).status, 400, JSON.stringify(query));
+  }
+  for (const id of ['', '../buy-products', 'Amazon DE', 'x'.repeat(101)]) {
+    assert.equal((await request(server).get('/api/public/still/spend/product').query({ id })).status, 400, id);
+  }
+  assert.deepEqual(asked, []);
+});
+
+test('a product is its USDC packages, and one Bitrefill does not have is a 404, not our failure', async (t) => {
+  const { resetStillCardCachesV1 } = await import('./stillPublic.js');
+  resetStillCardCachesV1();
+  t.after(() => resetStillCardCachesV1());
+  let answer: unknown = { ok: false, reason: 'bitrefill_product_not_found' };
+  fakeSpend({ product: async () => answer });
+  const server = app(fakeService(async () => assert.fail('no wallet read')).service);
+  const missing = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
+  assert.deepEqual([missing.status, missing.body.reason], [404, 'bitrefill_product_not_found']);
+  answer = { ok: true, value: { id: 'amazon_de-germany', name: 'Amazon.de', country: 'DE', inStock: true, recipientType: null,
+    packages: [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }], url: null } };
+  const found = await request(server).get('/api/public/still/spend/product').query({ id: 'amazon_de-germany' });
+  assert.equal(found.status, 200);
+  assert.deepEqual(found.body.product.packages, [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }]);
+});

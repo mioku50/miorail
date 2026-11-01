@@ -90,6 +90,8 @@ Still turns a Base wallet into a credit line it never has to sell. It is one app
 
 **What it prepares.** *Get money* (`/borrow`) takes an explicit collateral choice, reads the live limit for it, and prepares the exact calls; the review (`/lending/:draft`) simulates them on a fresh block and enforces Still's share on the server before anything reaches the wallet. *Repay* (`/repay`) pays an exact amount or all of it. The person's own wallet signs; a repeat submission is refused, and the outcome is reconciled from the receipt. Every lending batch carries the ERC-8021 Builder Code (checked onchain on real Aave V4 borrow and repay transactions). Not offered to US persons.
 
+**Spend (preview).** `/spend` shows what a loan could pay for: Bitrefill's eSIMs, phone top-ups and gift cards in a chosen country, each priced in USDC as Bitrefill quotes it, and, for a signed-in wallet, whether the price fits its Still room now. The server reads the catalogue as a guest of Bitrefill's MCP: the client is registered by a Client ID Metadata Document (`/clients/bitrefill-mcp.json`), so there is no secret and no account, its TOON answers are parsed strictly, and no purchase tool is ever called. Nothing can be bought yet; paying from Still, with the loan and the payment in one transaction, is the next stage.
+
 **The Agent** (`/agent`) answers about the signed-in wallet only, in three modes:
 
 - **direct reads** (room, loan safety, market hours, dividends, holdings) answered by the page without a model;
