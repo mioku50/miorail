@@ -48,6 +48,7 @@ import {
   stillPrepareRepayReviewV1,
 } from './stillLoanTool.js';
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
+import { STILL_CARD_TOOL_META_V1, registerStillCardV1 } from './stillCard.js';
 import { registerStillSpendReadsV1 } from '../mcpStill/server.js';
 import { refreshLoanExecutionV1 } from '../../lib/loanExecutionStatus.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
@@ -83,7 +84,7 @@ import { stillMineRuntimeV1 } from '../stillMine.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.10.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.11.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -147,7 +148,8 @@ const SLIPPAGE_ARG_V1 = z
   .optional()
   .describe('Maximum acceptable exit slippage, in basis points. Defaults to 300 (3%).');
 
-export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, hooks: EvidenceReadHooksV1 = {}): McpServer {
+export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, hooks: EvidenceReadHooksV1 = {},
+  options: { /** The client draws MCP Apps: Still's tools come with their review card. */ apps?: boolean } = {}): McpServer {
   const server = new McpServer(
     { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1 },
     { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1 },
@@ -174,6 +176,10 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
       content: [{ type: 'text' as const, text: `${failure.code}: ${failure.message}` }],
     };
   };
+
+  // A host that draws apps shows Still's prepare and status results as a card.
+  const card = options.apps ? { _meta: STILL_CARD_TOOL_META_V1 } : {};
+  if (options.apps) registerStillCardV1(server);
 
   server.registerTool('miorail_get_my_still', {
     title: 'My Still — what is held, owed and available without selling',
@@ -202,6 +208,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     inputSchema: StillPrepareLoanReviewInputV1Schema.shape,
     outputSchema: StillPrepareLoanReviewOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    ...card,
   }, async (args) => {
     try {
       return reply(stillPrepareLoanReviewV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
@@ -220,6 +227,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     inputSchema: StillPreparePurchaseInputV1Schema.shape,
     outputSchema: StillPreparePurchaseOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    ...card,
   }, async (args) => {
     try {
       return reply(await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
@@ -235,6 +243,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     inputSchema: StillPrepareRepayInputV1Schema.shape,
     outputSchema: StillPrepareRepayOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
+    ...card,
   }, async (args) => {
     try {
       return reply(stillPrepareRepayReviewV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
@@ -250,6 +259,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     inputSchema: StillReviewStatusInputV1Schema.shape,
     outputSchema: StillReviewStatusOutputV1Schema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    ...card,
   }, async (args) => {
     try {
       return reply(await stillReviewStatusV1(identity, args, {

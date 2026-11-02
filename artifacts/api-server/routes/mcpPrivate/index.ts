@@ -2,6 +2,7 @@ import { Router, type Request, type Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
+import { drawsStillCardV1 } from './stillCard.js';
 import { MCP_PRIVATE_AUTH_COPY_V1, resolvePrivateIdentityV1 } from './session.js';
 import { mcpOAuthResourceUrlV1 } from '../../lib/mcpOAuthProvider.js';
 import { evidenceReadUsageV1 } from '../../lib/mcpEvidenceUsage.js';
@@ -43,6 +44,35 @@ export const mcpPrivateRouter = Router();
  */
 const authedLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
 const unauthedLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 10 });
+
+/**
+ * MCP Apps: the grants whose client said, when it connected, that it draws
+ * ui:// apps, and so gets Still's review card. This endpoint keeps no session,
+ * and a client sends its capabilities once, with initialize, so they are
+ * remembered per durable grant. A grant nobody remembers, after a restart for
+ * one, gets text until its client connects again: the card is an addition,
+ * never the only way through.
+ */
+export const mcpPrivateAppsRuntimeV1 = {
+  grants: new Map<string, number>(),
+  forMs: 30 * 24 * 60 * 60_000,
+  now: () => Date.now(),
+};
+
+function drawsAppsV1(identity: { tokenId: string; tenantId: string }, body: unknown): boolean {
+  const { grants, forMs, now } = mcpPrivateAppsRuntimeV1;
+  // A browser session's token id is the same word for every wallet; the grant and its wallet together are one client.
+  const tokenId = `${identity.tokenId}|${identity.tenantId}`;
+  const request = body as { method?: unknown; params?: { capabilities?: unknown } } | null;
+  if (request?.method === 'initialize') {
+    grants.delete(tokenId);
+    if (drawsStillCardV1(request.params?.capabilities)) grants.set(tokenId, now() + forMs);
+    // A handful of assistants per wallet: the bound is headroom, oldest first.
+    while (grants.size > 10_000) grants.delete(grants.keys().next().value!);
+  }
+  const until = grants.get(tokenId);
+  return until !== undefined && until > now();
+}
 
 function jsonRpcError(res: Response, status: number, message: string): void {
   res.status(status).json({
@@ -87,16 +117,18 @@ mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
   // §10 — the audit record. Token id and tenant, never the token itself and
   // never the request body: a tool call on this surface can carry a plan id,
   // and the body may carry a batch id.
+  const apps = drawsAppsV1(identity, req.body);
   logger.info('MCP private request', {
     tokenId: identity.tokenId,
     tenantId: identity.tenantId,
     source: identity.source,
     method: typeof req.body?.method === 'string' ? req.body.method : 'unknown',
+    apps,
   });
 
   const server = createMiorailPrivateMcpServerV1(identity, { onEvidenceRead: evidenceReadUsageV1({
     surface: 'connected', actorKey: identity.tenantId, userAgent: req.get('user-agent') ?? '',
-  }) });
+  }) }, { apps });
   const transport = new StreamableHTTPServerTransport({ sessionIdGenerator: undefined });
   res.on('close', () => {
     void transport.close();

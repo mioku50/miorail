@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build -c vite.mcp-app.config.ts",
     "lint": "oxlint",
     "preview": "vite preview",
     "test:browser": "playwright test",
@@ -25,6 +25,7 @@
     "@mioagent/ui": "workspace:*",
     "@mioagent/wallet-actions": "workspace:*",
     "@mioagent/x402-actions": "workspace:*",
+    "@modelcontextprotocol/ext-apps": "^2.0.3",
     "@tailwindcss/vite": "4.3.1",
     "@tanstack/react-query": "^5.101.1",
     "@x402/core": "2.17.0",
@@ -50,6 +51,7 @@
     "oxlint": "^1.69.0",
     "playwright": "^1.61.1",
     "typescript": "~6.0.2",
-    "vite": "^8.1.0"
+    "vite": "^8.1.0",
+    "vite-plugin-singlefile": "^2.3.4"
   }
 }

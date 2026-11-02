@@ -3,7 +3,7 @@ title: "Miorail Plugin"
 description: "Still terms, wallet readings and loan, purchase and repayment reviews via Miorail MCP; stock actions → send_calls."
 tags: [tokenized-stocks, trading, swap, discovery, borrowing]
 name: miorail
-version: 0.3.0
+version: 0.3.1
 integration: external-mcp
 chains: [base]
 requires:
@@ -66,6 +66,8 @@ codex mcp add miorail --url https://miorail.xyz/mcp/private
 
 **Claude.ai and ChatGPT:** open Settings → Connectors, add a custom connector, and paste `https://miorail.xyz/mcp/private`.
 
+**Grok:** open grok.com/connectors, choose New Connector → Custom, and paste `https://miorail.xyz/mcp/private`.
+
 **Public readings, without signing in:** use `https://miorail.xyz/mcp` instead. It carries Still's terms and the public stock reads, but no wallet-bound tool. Still's own MCP, `https://stills.lat/mcp/still`, needs no sign-in either: the terms, any wallet's check, what-ifs and the Spend reads.
 
 ## Auth
@@ -76,7 +78,7 @@ The grant is bound to the ONE wallet that signed in. No argument can read, prepa
 
 ## Surface Routing
 
-| Capability | Every surface (Claude Code, Codex, Cursor, Claude.ai, ChatGPT) |
+| Capability | Every surface (Claude Code, Codex, Cursor, Claude.ai, ChatGPT, Grok) |
 |---|---|
 | Still's current terms, supported assets and closed-market or earnings windows | `get_still_terms` (public or signed-in MCP). |
 | Still's Mirror for the connected wallet: holdings, loans and amounts | `miorail_get_my_still` (signed-in connector only, no wallet argument). |

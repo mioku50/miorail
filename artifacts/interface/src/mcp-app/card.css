@@ -1,0 +1,17 @@
+/* Still's review card inside an assistant's chat: one card, the chat's own width. */
+
+html, body { margin: 0; padding: 0; background: transparent; }
+.still-mcp-card { font-family: 'Jost', system-ui, sans-serif; color: var(--sm-ink); background: transparent; padding: 4px; }
+.still-mcp-card .still-card { border: 1px solid var(--sm-line); }
+.still-mcp-title { margin: 6px 0 2px; font-size: 22px; font-weight: 600; line-height: 1.2; overflow-wrap: anywhere; }
+.still-mcp-steps { display: flex; flex-wrap: wrap; gap: 6px 14px; list-style: none; margin: 14px 0 6px; padding: 0; font-size: 13px; }
+.still-mcp-steps li { display: inline-flex; align-items: center; gap: 6px; color: var(--sm-ink2); }
+.still-mcp-steps li::before { content: ''; width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--sm-line); }
+.still-mcp-steps li[data-done='yes'] { color: var(--sm-ink); }
+.still-mcp-steps li[data-done='yes']::before { background: var(--sm-accent); border-color: var(--sm-accent); }
+.still-mcp-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 12px; }
+.still-mcp-actions .still-btn { height: 46px; font-size: 16px; }
+.still-mcp-foot { margin-top: 12px; }
+.still-mcp-done { margin: 10px 0 0; font-size: 18px; font-weight: 600; color: var(--sm-ink); }
+.still-mcp-done span { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; margin-right: 6px; border-radius: 50%;
+  background: var(--sm-ink); color: var(--sm-card); font-size: 14px; }

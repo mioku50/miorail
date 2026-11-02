@@ -226,6 +226,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
     ['Claude Code', <CopyRow key="claude" label="the Claude Code command" value={`claude mcp add --transport http still ${STILL_MCP_URL_V1}`} />],
     ['Codex CLI', <CopyRow key="codex" label="the Codex command" value={`codex mcp add still --url ${STILL_MCP_URL_V1}`} />],
     ['Cursor and other JSON clients', <pre key="json" className="still-pre">{`{\n  "mcpServers": {\n    "still": { "url": "${STILL_MCP_URL_V1}" }\n  }\n}`}</pre>],
+    ['Grok', <p key="grok" className="still-note">On grok.com/connectors: New Connector, Custom, then paste the address above.</p>],
   ];
   // Each one is answered by a tool on that server, as written.
   const asks = [
@@ -240,7 +241,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
       <div className="still-section">
         <div className="still-word">Still in your assistant.</div>
         <div className="still-sub">
-          Ask Claude, ChatGPT, Cursor or Codex what Still answers here: how much a wallet could borrow against its stocks and crypto
+          Ask Claude, ChatGPT, Grok, Cursor or Codex what Still answers here: how much a wallet could borrow against its stocks and crypto
           without selling, how safe a loan is, what a fall in price would do to it, and what a loan could pay for at Bitrefill. The
           figures are Still’s own, read from Base at one block. No API key, and nothing is signed there: you approve every loan in your
           own wallet.
@@ -270,7 +271,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
           Connect Miorail’s signed-in server instead. It opens your wallet’s sign-in on first use; then <span className="mono">miorail_prepare_still_loan</span>,{' '}
           <span className="mono">miorail_prepare_still_purchase</span> and <span className="mono">miorail_prepare_still_repay</span> turn what you name into a
           review link, and your own wallet signs on stills.lat. <span className="mono">miorail_get_still_review_status</span> then tells your assistant
-          what happened.
+          what happened. In a chat that draws MCP Apps, as Claude does, the review comes as a card that opens it and follows it to Base.
         </p>
         <CopyRow label="the signed-in Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />
       </div>
