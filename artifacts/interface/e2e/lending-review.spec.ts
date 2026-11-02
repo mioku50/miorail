@@ -49,7 +49,8 @@ test('only an explicit wallet rejection permits a repeat lending attempt', async
   await expect(page.getByText('You declined in your wallet. Nothing was sent.', { exact: true })).toBeVisible();
   await expect(open).toBeEnabled(); await open.click(); await expect.poll(() => attempts(page)).toBe(2);
   expect(state.order.filter(row => row === 'submission:rejected')).toHaveLength(2);
-  expect(await page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('miorail:borrow-attempt:v1:')))).toEqual([]);
+  // The marker is cleared once the rejection is recorded, a moment after the server saw it.
+  await expect.poll(() => page.evaluate(() => Object.keys(sessionStorage).filter(k => k.startsWith('miorail:borrow-attempt:v1:')))).toEqual([]);
 });
 test('a wallet that answers it does not support the batch sent nothing: the review is freed, not locked', async ({ page }) => {
   // Coinbase Wallet with an imported key, 2026-10-31: -32603 with "...is not

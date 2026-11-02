@@ -14,11 +14,12 @@
 
 import type { Hex } from 'viem';
 import { Attribution } from 'ox/erc8021';
+// The builder-code module alone: the package's barrel builds every route schema at import.
 import {
   builderCodeAdviceV1,
   resolveBuilderCodeV1,
   type BuilderCodeEnvV1,
-} from '@mioagent/route-domain';
+} from '@mioagent/route-domain/builder-code';
 
 export {
   builderCodeAdviceV1,
@@ -26,7 +27,7 @@ export {
   resolveBuilderCodeV1,
   type BuilderCodeEnvV1,
   type BuilderCodeResolutionV1,
-} from '@mioagent/route-domain';
+} from '@mioagent/route-domain/builder-code';
 
 let warnedMissing = false;
 

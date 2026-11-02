@@ -1,11 +1,14 @@
 import assert from 'node:assert/strict';
+import { mkdtempSync, mkdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
 import request from 'supertest';
 
 import { mcpPrivateAuthRuntime } from './session.js';
 import { mcpPrivateAppsRuntimeV1, mcpPrivateRouter } from './index.js';
-import { STILL_CARD_MIME_V1, STILL_CARD_URI_V1, drawsStillCardV1, stillCardRuntimeV1 } from './stillCard.js';
+import { STILL_CARD_MIME_V1, STILL_CARD_URI_V1, drawsStillCardV1, resetStillCardHtmlV1, stillCardRuntimeV1 } from './stillCard.js';
 
 // Still's review card (MCP Apps) through the real endpoint: a client that says
 // it draws apps gets the card on Still's tools; one that does not gets the same
@@ -61,7 +64,11 @@ test('a client that draws apps gets the card on Still’s four tools and can rea
   const card = (await rpc(server, WALLET, 'resources/read', { uri: STILL_CARD_URI_V1 })).result!.contents as Array<Record<string, unknown>>;
   assert.equal(card[0]!.mimeType, STILL_CARD_MIME_V1);
   assert.equal(card[0]!.text, '<!doctype html><title>Still review</title>');
-  assert.deepEqual((card[0]!._meta as { ui: { csp: unknown } }).ui.csp, { connectDomains: [], resourceDomains: ['https://fonts.googleapis.com', 'https://fonts.gstatic.com'] });
+  const csp = (card[0]!._meta as { ui: { csp: { connectDomains: string[]; resourceDomains: string[]; frameDomains: string[] } } }).ui.csp;
+  // Its fonts and WalletConnect, nothing of Still's: every read of Still's goes through the host.
+  assert.deepEqual(csp.resourceDomains, ['https://fonts.googleapis.com', 'https://fonts.gstatic.com']);
+  assert.ok(csp.connectDomains.includes('wss://relay.walletconnect.org') && csp.frameDomains.includes('https://verify.walletconnect.org'));
+  assert.ok([...csp.connectDomains, ...csp.frameDomains].every((origin) => /^(?:wss|https):\/\/[a-z]+\.walletconnect\.(?:org|com)$/.test(origin)));
 
   // Another wallet's client said nothing about apps: text only, and no card to read.
   await rpc(server, OTHER, 'initialize', initialize({}));
@@ -73,4 +80,23 @@ test('a client that draws apps gets the card on Still’s four tools and can rea
   await rpc(server, WALLET, 'initialize', initialize({}));
   const again = (await rpc(server, WALLET, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
   assert.equal(again.find((tool) => tool.name === 'miorail_prepare_still_purchase')?._meta, undefined);
+});
+
+test('the deployed file gets the server’s WalletConnect project id, and an id that is not one leaves the card without it', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'still-card-'));
+  mkdirSync(path.join(root, 'mcp-app'));
+  writeFileSync(path.join(root, 'mcp-app', 'index.html'), '<meta name="still-walletconnect" content="__STILL_WALLETCONNECT_PROJECT_ID__">');
+  const env = { index: process.env.MIORAIL_WEB_INDEX_HTML, id: process.env.STILL_WALLETCONNECT_PROJECT_ID };
+  t.after(() => {
+    for (const [key, value] of [['MIORAIL_WEB_INDEX_HTML', env.index], ['STILL_WALLETCONNECT_PROJECT_ID', env.id]] as const) {
+      if (value === undefined) delete process.env[key]; else process.env[key] = value;
+    }
+    resetStillCardHtmlV1();
+  });
+  process.env.MIORAIL_WEB_INDEX_HTML = path.join(root, 'index.html');
+  for (const [id, expected] of [['0123456789abcdef0123456789abcdef', '0123456789abcdef0123456789abcdef'], ['not-an-id', ''], [undefined, '']] as const) {
+    if (id === undefined) delete process.env.STILL_WALLETCONNECT_PROJECT_ID; else process.env.STILL_WALLETCONNECT_PROJECT_ID = id;
+    resetStillCardHtmlV1();
+    assert.equal(await stillCardRuntimeV1.html(), `<meta name="still-walletconnect" content="${expected}">`);
+  }
 });

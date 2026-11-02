@@ -30,6 +30,36 @@ export interface StillCardStateV1 {
   dark: boolean;
 }
 
+/** How the review screen asks Still, from the card: the page's own routes, as
+ * the grant's wallet, through the host. Every answer names that wallet; one
+ * that is not the wallet connected in the card is refused here, exactly as the
+ * page refuses a review prepared for another wallet, so calls prepared for one
+ * address are never sent from another. */
+export type StillCardRequestV1 = <T = unknown>(path: string, options?: { method?: string; body?: BodyInit | null }) => Promise<T>;
+
+export function stillCardRequestV1(host: Pick<StillCardHostV1, 'callServerTool'>, connected: string): StillCardRequestV1 {
+  return async <T,>(path: string, options?: { method?: string; body?: BodyInit | null }): Promise<T> => {
+    const method = options?.method === 'POST' ? 'POST' : 'GET';
+    const body = typeof options?.body === 'string' ? JSON.parse(options.body) as Record<string, unknown> : undefined;
+    const answer = await host.callServerTool({ name: 'still_card_lending', arguments: { method, path, ...(body ? { body } : {}) } });
+    const reply = answer.structuredContent as { status?: unknown; body?: unknown; wallet?: unknown } | undefined;
+    if (answer.isError || !reply || typeof reply.status !== 'number') throw new Error('lending_unavailable');
+    if (typeof reply.wallet !== 'string' || reply.wallet.toLowerCase() !== connected.toLowerCase()) throw new Error('lending_draft_wrong_wallet');
+    if (reply.status >= 400) {
+      const failure = reply.body as { error?: unknown; detail?: unknown } | null;
+      const code = typeof failure?.error === 'string' ? failure.error : `API error: ${reply.status}`;
+      throw new Error(typeof failure?.detail === 'string' && failure.detail ? `${code}: ${failure.detail}` : code);
+    }
+    return reply.body as T;
+  };
+}
+
+/** The WalletConnect project id the server wrote into the card; null when there is none. */
+export function stillCardProjectIdV1(doc: Pick<Document, 'querySelector'>): string | null {
+  const content = doc.querySelector('meta[name="still-walletconnect"]')?.getAttribute('content') ?? '';
+  return /^[0-9a-f]{32}$/.test(content) ? content : null;
+}
+
 export interface StillCardStoreV1 {
   get(): StillCardStateV1;
   subscribe(listener: () => void): () => void;

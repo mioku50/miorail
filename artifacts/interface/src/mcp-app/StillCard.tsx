@@ -1,6 +1,7 @@
 import { useSyncExternalStore } from 'react';
 import type { StillCardPhaseV1 } from './stillCardView';
-import type { StillCardStoreV1 } from './stillCardStore';
+import type { StillCardHostV1, StillCardStoreV1 } from './stillCardStore';
+import { StillCardSign } from './StillCardSign';
 
 // What the person sees in the chat: what the assistant prepared, the one way to
 // review and sign it (stills.lat, in their own wallet), and where it stands.
@@ -18,7 +19,7 @@ function untilV1(expiresAt: string | null): string | null {
   return Number.isFinite(at.getTime()) ? at.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : null;
 }
 
-export function StillCard({ store }: { store: StillCardStoreV1 }) {
+export function StillCard({ store, host, projectId }: { store: StillCardStoreV1; host: Pick<StillCardHostV1, 'callServerTool'>; projectId: string | null }) {
   const state = useSyncExternalStore(store.subscribe, store.get);
   const { prepared, status } = state;
   const phase = status?.phase ?? 'waiting';
@@ -59,9 +60,14 @@ export function StillCard({ store }: { store: StillCardStoreV1 }) {
               ) : null}
             </div>
             {state.linkRefused ? <p className="still-note">The chat did not open the link. It is in the assistant’s message too.</p> : null}
+            {projectId && prepared.reviewUrl && !settled && phase !== 'expired' ? (
+              <StillCardSign host={host} projectId={projectId} draft={prepared.reviewUrl.slice(prepared.reviewUrl.indexOf('/lending/') + '/lending/'.length)}
+                onSent={() => store.checkAgain()} />
+            ) : null}
             {settled ? null : (
               <p className="still-note still-mcp-foot">
-                The review reads everything again and your own wallet signs there; nothing is sent from this card.
+                {projectId ? 'Either way the review reads everything again, and only your own wallet signs.'
+                  : 'The review reads everything again and your own wallet signs there; nothing is sent from this card.'}
                 {phase === 'waiting' && untilV1(prepared.expiresAt) ? ` The link works until ${untilV1(prepared.expiresAt)}.` : ''}
               </p>
             )}

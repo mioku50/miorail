@@ -80,7 +80,11 @@ export function useLendingReviewConsoleV1(input: {
   /** For a wallet that cannot send a batch: the review is asked for steps,
    * and a review granted in steps goes one transaction at a time. */
   steps?: LendingStepsWalletV1 | null;
+  /** How the review and its execution are asked for: the page's own session by
+   * default; Still's card in an assistant's chat asks through the MCP host. */
+  request?: typeof lendingRequestV1;
 }): { model: LendingReviewConsoleModelV1; body: LendingReviewWireV1 | null } {
+  const request = input.request ?? lendingRequestV1;
   const session = input.sessionWalletAddress?.toLowerCase() ?? null;
   const connected = input.walletAddress?.toLowerCase() ?? null;
   const eligible = Boolean(input.draft && address(session) && session === connected);
@@ -98,12 +102,12 @@ export function useLendingReviewConsoleV1(input: {
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
   const read = useCallback(async (): Promise<LendingReviewWireV1> => {
     try {
-      const answer = parseLendingReviewWireV1(await lendingRequestV1(`${ROOT}/review/${encodeURIComponent(input.draft ?? '')}${sequential ? '?delivery=sequential' : ''}`));
+      const answer = parseLendingReviewWireV1(await request(`${ROOT}/review/${encodeURIComponent(input.draft ?? '')}${sequential ? '?delivery=sequential' : ''}`));
       if (!answer) throw new Error('lending_review_unreadable');
       update({ body: answer, loading: false, error: null });
       return answer;
     } catch (error) { update({ body: null, loading: false, error: readableError(error) }); throw error; }
-  }, [input.draft, sequential, update]);
+  }, [input.draft, request, sequential, update]);
 
   useEffect(() => {
     let valid = true;
@@ -128,12 +132,12 @@ export function useLendingReviewConsoleV1(input: {
     if (!eligible || !executionId || active.checking) return;
     update({ checking: true, walletError: null });
     try {
-      const answer = parseLendingExecutionWireV1(await lendingRequestV1(`${ROOT}/executions/${encodeURIComponent(executionId)}`), executionId);
+      const answer = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}`), executionId);
       if (!answer) throw new Error('lending_execution_unreadable');
       update({ execution: answer });
     } catch { update({ walletError: 'The onchain result could not be read. The submission remains unconfirmed, and this review will not be sent again.' }); }
     finally { update({ checking: false }); }
-  }, [active.checking, eligible, executionId, update]);
+  }, [active.checking, eligible, executionId, request, update]);
 
   const onFindTransaction = useCallback(async () => {
     if (!eligible || !executionId || active.checking || current.current !== identity) return;
@@ -141,17 +145,17 @@ export function useLendingReviewConsoleV1(input: {
     if (!/^0x[0-9a-f]{64}$/i.test(hash)) { update({ walletError: 'Paste the full transaction hash from your wallet activity.' }); return; }
     update({ checking: true, walletError: null });
     try {
-      const saved = parseLendingExecutionWireV1(await lendingRequestV1(`${ROOT}/executions/${encodeURIComponent(executionId)}/transaction`, {
+      const saved = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}/transaction`, {
         method: 'POST', body: JSON.stringify({ transactionHash: hash }),
       }), executionId);
       if (!saved || current.current !== identity) return;
       update({ execution: saved });
-      const checked = parseLendingExecutionWireV1(await lendingRequestV1(`${ROOT}/executions/${encodeURIComponent(executionId)}`), executionId);
+      const checked = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}`), executionId);
       if (!checked) throw new Error('lending_execution_unreadable');
       update({ execution: checked });
     } catch { update({ walletError: 'The transaction could not be verified. No new wallet request was made; this review remains locked.' }); }
     finally { update({ checking: false }); }
-  }, [active.checking, active.transactionHint, eligible, executionId, identity, update]);
+  }, [active.checking, active.transactionHint, eligible, executionId, identity, request, update]);
 
   const onOpen = useCallback(async () => {
     if (!eligible || active.body?.state !== 'ready' || opening.current || active.marker || active.batchId ||
@@ -173,12 +177,12 @@ export function useLendingReviewConsoleV1(input: {
           try {
             return await submitBorrowOnceV1({ key, storage, enteredWallet: () => handedToWallet, send: async () => {
               if (current.current !== identity) throw new Error('lending_identity_changed');
-              const arm = await lendingRequestV1<{ attemptId?: unknown }>(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/arm`,
+              const arm = await request<{ attemptId?: unknown }>(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/arm`,
                 { method: 'POST', body: JSON.stringify({ callsHash: approved.callsHash, signingTermsHash: approved.signingTermsHash }) });
               if (typeof arm.attemptId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(arm.attemptId)) throw new Error('lending_arm_unreadable');
               const report = async (outcome: 'submitted' | 'unknown' | 'rejected', batchId?: string) => {
                 if (current.current !== identity || !alive.current) throw new Error('lending_identity_changed');
-                await lendingRequestV1(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
+                await request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
                   { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome, ...(batchId ? { batchId } : {}) }) });
               };
               if (current.current !== identity) { await report('unknown').catch(() => undefined); throw new Error('lending_identity_changed'); }
@@ -205,7 +209,7 @@ export function useLendingReviewConsoleV1(input: {
                   update({ step: { index: index + 1, total: calls.length, phase: 'checking' } });
                   let answer: { state?: unknown; batchId?: unknown; detail?: unknown; refusal?: unknown };
                   try {
-                    answer = await lendingRequestV1(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/steps`,
+                    answer = await request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/steps`,
                       { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, index, transactionHash: hash }) });
                   } catch {
                     throw new LendingStepsStoppedV1(`Step ${index + 1} of ${calls.length} was sent, and Still could not read it from the chain yet. Check the onchain result before pressing again.`, landed);
@@ -257,7 +261,7 @@ export function useLendingReviewConsoleV1(input: {
           : handedToWallet ? 'The wallet result is unknown. Check its activity and the onchain result; this review will not be sent again.'
             : 'The wallet request could not be armed. Your wallet was not asked. Check this review’s recorded result before trying another action.') });
     } finally { opening.current = false; update({ walletBusy: false, step: null }); }
-  }, [active, eligible, identity, input, read, session, update]);
+  }, [active, eligible, identity, input, read, request, session, update]);
 
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
   return { body: eligible ? active.body : null, model: {

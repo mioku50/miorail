@@ -812,6 +812,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'server.ts',
       'session.ts',
       'stillCard.ts',
+      'stillCardLending.ts',
       'stillLoanTool.ts',
       'stillReviewTool.ts',
       'tools.ts',

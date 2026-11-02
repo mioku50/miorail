@@ -48,7 +48,8 @@ import {
   stillPrepareRepayReviewV1,
 } from './stillLoanTool.js';
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
-import { STILL_CARD_TOOL_META_V1, registerStillCardV1 } from './stillCard.js';
+import { STILL_CARD_TOOL_META_V1, STILL_CARD_URI_V1, registerStillCardV1 } from './stillCard.js';
+import { STILL_CARD_LENDING_TOOL_V1, StillCardLendingInputV1Schema, StillCardLendingOutputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
 import { registerStillSpendReadsV1 } from '../mcpStill/server.js';
 import { refreshLoanExecutionV1 } from '../../lib/loanExecutionStatus.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
@@ -179,7 +180,25 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   // A host that draws apps shows Still's prepare and status results as a card.
   const card = options.apps ? { _meta: STILL_CARD_TOOL_META_V1 } : {};
-  if (options.apps) registerStillCardV1(server);
+  if (options.apps) {
+    registerStillCardV1(server);
+    // The card's own way to the review it signs: hidden from the model by the host.
+    server.registerTool(STILL_CARD_LENDING_TOOL_V1, {
+      title: 'Still review card: the lending review',
+      description: 'Used by Still’s review card only, never by the assistant: the lending review, its arming, the wallet’s submission and the onchain result, through stills.lat’s own routes as this grant’s wallet.',
+      inputSchema: StillCardLendingInputV1Schema.shape,
+      outputSchema: StillCardLendingOutputV1Schema,
+      annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+      _meta: { ui: { resourceUri: STILL_CARD_URI_V1, visibility: ['app'] } },
+    }, async (args) => {
+      try {
+        return reply(await stillCardLendingV1(identity, args));
+      } catch (error) {
+        logger.warn('Still card lending request failed', { errorName: error instanceof Error ? error.name : typeof error });
+        return { isError: true as const, content: [{ type: 'text' as const, text: 'still_card_unavailable: Still could not answer the card just now. This is our failure; nothing was sent.' }] };
+      }
+    });
+  }
 
   server.registerTool('miorail_get_my_still', {
     title: 'My Still — what is held, owed and available without selling',
