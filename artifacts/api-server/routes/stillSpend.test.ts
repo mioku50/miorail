@@ -9,7 +9,7 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
-import { createSpendOrderStoreV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import { createSpendOrderStoreV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
 import { stillSpendRouter, stillSpendRuntimeV1 } from './stillSpend.js';
@@ -233,5 +233,16 @@ describe('a loan that pays the invoice', () => {
     }
     assert.equal(loanRuns, 0);
     assert.equal(attached, 0);
+  });
+});
+
+describe('Still’s registered Bitrefill client', () => {
+  it('comes from the environment, and without a usable id the metadata document stays the client', () => {
+    assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_ID: ' 00000000-0000-4000-8000-000000000001 ', STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret' }),
+      { clientId: '00000000-0000-4000-8000-000000000001', clientSecret: 'fixture-secret' });
+    assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_ID: '00000000-0000-4000-8000-000000000001' }), { clientId: '00000000-0000-4000-8000-000000000001' });
+    assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_SECRET: 'fixture-secret' }), {});
+    assert.deepEqual(stillBitrefillClientV1({ STILL_BITREFILL_CLIENT_ID: 'not an id' }), {});
+    assert.deepEqual(stillBitrefillClientV1({}), {});
   });
 });

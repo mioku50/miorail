@@ -9,10 +9,15 @@ import { ToonParseError, decodeToonV1 } from './toon.js';
 //
 // Still never buys through the operator's Personal API key: Bitrefill writes
 // that it is for personal projects and that one key must not be handed to many
-// end users. A guest reads the catalogue with no account at all. Still is
+// end users. A guest reads the catalogue with no account at all. Still was
 // registered by a Client ID Metadata Document (stills.lat/clients/
-// bitrefill-mcp.json), so the client_id is that URL and there is no secret.
-// The token lives six hours and is held in memory only.
+// bitrefill-mcp.json), a client_id that is that URL and needs no secret. On
+// 2026-11-02 Bitrefill stopped trusting it ("client_id metadata document URL is
+// not trusted by this authorization server"), and Still registered at
+// Bitrefill's own registration endpoint instead: a guest client still, with no
+// account, whose id and secret the server's environment holds. The document
+// remains the client when no registered one is configured. The token lives six
+// hours and is held in memory only.
 //
 // The catalogue READS: search-products and get-product-details. The transport
 // refuses any tool its caller did not list; the checkout beside it
@@ -140,6 +145,10 @@ export interface BitrefillGuestCatalogV1 {
 
 export interface BitrefillGuestOptionsV1 {
   clientId?: string;
+  /** A registered client's secret, sent as client_secret_post. Without one the
+   * client is Still's metadata document, which Bitrefill stopped trusting on
+   * 2026-11-02; Still registered by Bitrefill's own registration endpoint. */
+  clientSecret?: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
   now?: () => number;
@@ -178,7 +187,8 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
       response = await partnerFetch(BITREFILL_MCP_TOKEN_URL_V1, {
         method: 'POST',
         headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' },
-        body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, scope: 'mcp', resource: BITREFILL_MCP_URL_V1 }).toString(),
+        body: new URLSearchParams({ grant_type: 'client_credentials', client_id: clientId, ...(options.clientSecret ? { client_secret: options.clientSecret } : {}),
+          scope: 'mcp', resource: BITREFILL_MCP_URL_V1 }).toString(),
       }, { timeoutMs, fetchImpl: options.fetchImpl });
     } catch {
       return { ok: false, reason: 'bitrefill_unreachable' };

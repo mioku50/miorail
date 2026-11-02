@@ -15,7 +15,7 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { renderCardPngV1 } from '../lib/cardImage.js';
 import { stillBrandCardSvgV1, stillSpendCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
-import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
+import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillBitrefillClientV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { stillSpendShareWordsV1, verifyStillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
 
@@ -38,7 +38,7 @@ export const publicStillRuntimeV1 = {
   limiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
   service: () => stillMirrorRuntimeV1.service(),
   /** Bitrefill's catalogue, read as a guest of their MCP: Still Spend, stage 1. */
-  spend: (): BitrefillGuestCatalogV1 => (spendCatalogV1 ??= createBitrefillGuestCatalogV1()),
+  spend: (): BitrefillGuestCatalogV1 => (spendCatalogV1 ??= createBitrefillGuestCatalogV1(stillBitrefillClientV1())),
   now: () => new Date(),
   renderPng: (svg: string): Promise<Uint8Array> => renderCardPngV1(svg),
   /** What signs a shared Still Spend purchase (stillSpendShare.ts). */

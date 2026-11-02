@@ -122,6 +122,15 @@ export function spendDraftPaymentV1(order: SpendOrderV1, now: Date): LendingPaym
     packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt };
 }
 
+/** Still's client registered at Bitrefill (2026-11-02), from the environment;
+ * without one the guest client is the metadata document. Never logged. */
+export function stillBitrefillClientV1(env: NodeJS.ProcessEnv = process.env): { clientId?: string; clientSecret?: string } {
+  const clientId = env.STILL_BITREFILL_CLIENT_ID?.trim() ?? '';
+  const clientSecret = env.STILL_BITREFILL_CLIENT_SECRET?.trim() ?? '';
+  if (!/^[A-Za-z0-9._:/-]{8,200}$/.test(clientId)) return {};
+  return { clientId, ...(clientSecret ? { clientSecret } : {}) };
+}
+
 let checkoutV1: BitrefillGuestCheckoutV1 | null = null;
 /** One guest checkout for the process: one token and one rate window. */
-export const stillSpendCheckoutV1 = (): BitrefillGuestCheckoutV1 => (checkoutV1 ??= createBitrefillGuestCheckoutV1());
+export const stillSpendCheckoutV1 = (): BitrefillGuestCheckoutV1 => (checkoutV1 ??= createBitrefillGuestCheckoutV1(stillBitrefillClientV1()));

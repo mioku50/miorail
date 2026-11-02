@@ -135,6 +135,16 @@ describe('Still reads Bitrefill’s catalogue as a guest', () => {
     assert.deepEqual([body.params.arguments.country, body.params.arguments.product_type, body.params.arguments.query], ['DE', 'esim', '*']);
   });
 
+  it('a client registered at Bitrefill sends its id and secret to the token endpoint only, as client_secret_post', async () => {
+    const { fetchImpl, calls } = bitrefill([token(), () => rpc(SEARCH_V1)]);
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl, clientId: '00000000-0000-4000-8000-000000000001', clientSecret: 'fixture-secret-never-production' });
+    assert.equal((await catalog.search({ type: 'esim', country: 'DE' })).ok, true);
+    assert.deepEqual(Object.fromEntries(new URLSearchParams(calls[0]!.body)), {
+      grant_type: 'client_credentials', client_id: '00000000-0000-4000-8000-000000000001', client_secret: 'fixture-secret-never-production', scope: 'mcp', resource: BITREFILL_MCP_URL_V1,
+    });
+    assert.ok(!calls[1]!.body.includes('fixture-secret') && calls[1]!.auth === 'Bearer guest-token-0123456789', 'the MCP call carries the token, never the secret');
+  });
+
   it('keeps only packages priced in USDC, and never the reviews or the HTML', async () => {
     const { fetchImpl } = bitrefill([token(), () => rpc(DETAIL_V1)]);
     const product = await createBitrefillGuestCatalogV1({ fetchImpl }).product('bitrefill-esim-germany');
