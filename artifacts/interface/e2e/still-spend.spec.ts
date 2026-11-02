@@ -97,7 +97,7 @@ for (const width of [390, 1366]) {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page, true);
     await page.goto('/spend');
-    await expect(page.getByText('Nothing can be bought here yet.', { exact: false })).toBeVisible();
+    await expect(page.getByText('Paying with Still is not open on this server.', { exact: false })).toBeVisible();
     await page.getByLabel('Country', { exact: true }).selectOption('DE');
     await page.getByRole('button', { name: /Bitrefill eSIM Europe\s*3 countries/ }).waitFor();
     await page.getByRole('button', { name: /^Bitrefill eSIM Germany/ }).click();

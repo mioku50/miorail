@@ -278,5 +278,5 @@ export function spendShareViewV1(payload: unknown): SpendShareViewV1 | null {
  * (NVDAc) is named by its ticker, as the card names it. */
 export function spendShareTextV1(input: { productName: string; collateralSymbol: string }): string {
   const collateral = /^[A-Z]{1,6}c$/.test(input.collateralSymbol) ? input.collateralSymbol.slice(0, -1) : input.collateralSymbol;
-  return `Paid for ${input.productName} with a USDC loan against my ${collateral}, without selling it. One transaction on Base, through Still.`;
+  return `Paid for ${input.productName} with a USDC loan against my ${collateral}, without selling it. On Base, through Still.`;
 }

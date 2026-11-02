@@ -245,7 +245,7 @@ export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendSh
         textLinesV1(product, x, productTop, 54, 62, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
         `<text x="${x}" y="${last + 58}" font-family="${SANS}" font-size="34" fill="${INK}">${escapeXmlV1(share.packageLabel)}<tspan fill="${INK2}">\u00a0·\u00a0</tspan><tspan font-weight="600">${escapeXmlV1(words.priceUsdc)} USDC</tspan></text>`,
         textLinesV1(
-          wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}, and paid Bitrefill in the same transaction.`, 24, width, 3),
+          wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}, and paid Bitrefill with that loan.`, 24, width, 3),
           x, last + 112, 24, 34, `font-family="${SANS}" fill="${INK2}"`,
         ),
         baseSquareV1(x, bottom - 26, 24),

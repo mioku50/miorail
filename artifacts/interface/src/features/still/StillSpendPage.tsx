@@ -70,6 +70,7 @@ export function StillSpendPage() {
         selected, onSelect: (id) => { setSelected(id); pick(null); },
         product: detail?.product ?? null, productLoading: product.isFetching, productError,
         room,
+        payAfterSignIn: !session.signedIn && (spendPayOpenV1(product.data) || spendPayOpenV1(search.data)),
         pay: payOpen ? {
           chosen, onChoose: pick, email, onEmail: (next) => { setEmail(next); setPayError(null); },
           phone, onPhone: (next) => { setPhone(next); setPayError(null); },

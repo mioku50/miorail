@@ -43,6 +43,8 @@ export interface StillSpendModelV1 {
   productError: string | null;
   /** The reader's Still room from the Mirror; null signed out or unread. */
   room: { cents: string; complete: boolean } | null;
+  /** Paying open on this server, for a reader who has not signed in yet. */
+  payAfterSignIn?: boolean;
   /** Paying from Still: null when this server does not pay Bitrefill from a loan. */
   pay?: null | {
     /** The package value chosen to pay, or none yet. */
@@ -85,9 +87,11 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
       <p className="still-section still-notice">
         <StillIconV1 name="info" />
         {model.pay ? (
-          <span>Pay with Still: a loan for the exact price pays Bitrefill in the same transaction, which you approve in your own wallet. Up to 100 USDC a purchase.</span>
+          <span>Pay with Still: a loan for the exact price pays Bitrefill, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot. Up to 100 USDC a purchase.</span>
+        ) : model.payAfterSignIn ? (
+          <span>Sign in with your wallet to pay with Still: a loan for the exact price pays Bitrefill, and your own wallet approves it. Up to 100 USDC a purchase.</span>
         ) : (
-          <span>Nothing can be bought here yet. Paying from Still, with the loan and the payment in one transaction, is the next step.</span>
+          <span>Paying with Still is not open on this server. The prices below are Bitrefill’s own, in USDC.</span>
         )}
       </p>
       <div className="still-borrow-grid">
@@ -185,8 +189,8 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                           <div className="still-step"><span className="n" aria-hidden="true">3</span>Pay</div>
                           <h3 id={`${id}-pay`}>{chosen.price} for {product.name} · {chosen.label}</h3>
                           <p className="still-note">
-                            Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice in
-                            the same transaction, and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
+                            Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice,
+                            and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
                           </p>
                           <label className="still-borrow-label" htmlFor={`${id}-email`}>Email for Bitrefill’s receipt</label>
                           <div className="still-borrow-amount">
@@ -249,7 +253,7 @@ export function StillSpendPaid({ order, reading, share }: { order: SpendOrderVie
       <div className="still-extra">
         <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
         <span className="still-extra-body">
-          <span className="still-extra-title">{order?.delivered ? 'Bitrefill delivered your order' : 'Paid to Bitrefill in the same transaction'}</span>
+          <span className="still-extra-title">{order?.delivered ? 'Bitrefill delivered your order' : 'Paid to Bitrefill with the loan'}</span>
           <span className="still-extra-note">
             {order ? <>{order.productName} · {order.packageLabel}{order.refillTo ? ` for ${order.refillTo}` : ''}. {order.status ? `Bitrefill: ${order.status}.` : 'Bitrefill’s status could not be read just now.'} </>
               : reading ? 'Reading the order from Bitrefill… ' : ''}
@@ -280,7 +284,7 @@ export function StillSpendShared({ sky, view, reading, cardUrl }: { sky: SkyStat
         title={view ? 'Paid with a loan' : 'Spend'}
         sky={sky}
         lede={view
-          ? `${view.productName}, ${view.packageLabel}, for ${view.priceUsdc} USDC. Borrowed against ${view.collateralLabel} through ${view.venueName} and paid to Bitrefill in the same transaction on Base, without selling.`
+          ? `${view.productName}, ${view.packageLabel}, for ${view.priceUsdc} USDC. Borrowed against ${view.collateralLabel} through ${view.venueName} and paid to Bitrefill with that loan on Base, without selling.`
           : reading ? 'Reading this purchase…' : 'This purchase card could not be verified, so nothing about it is shown.'}
       />
       {view && cardUrl ? (

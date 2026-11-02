@@ -21,13 +21,15 @@ const NOW = new Date('2026-11-01T12:00:00Z');
 const INVOICE_ID = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
 const PAY_TO = '0x3333333333333333333333333333333333333333';
 const QUOTED = 13_250_000n;
+/** USDC on Base, which every real invoice names (2026-11-01). */
+const USDC_BASE = '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913';
 
 function answer(payment: Record<string, unknown>, extra: Record<string, unknown> = {}) {
   return {
     response: {
       invoice_id: INVOICE_ID, invoice_access_token: 'access-token-0123456789', expiration_minutes: 30,
       cart_items: [{ product_id: 'bitrefill-esim-germany', package_value: '10GB, 30 Days' }],
-      payment_info: { address: PAY_TO, ...payment },
+      payment_info: { address: PAY_TO, contractAddress: USDC_BASE, ...payment },
       payment_link: `https://www.bitrefill.com/invoice/${INVOICE_ID}?token=t`, x402_payment_url: 'https://api.bitrefill.com/x402/invoice/pay',
       ...extra,
     },
@@ -94,7 +96,7 @@ describe('a Bitrefill invoice is read only when it asks the price just quoted', 
       assert.equal(read.ok, false);
       assert.ok(!read.ok && read.shape && !read.shape.includes(PAY_TO) && !read.shape.includes('access-token'));
     }
-    assert.equal(spendShapeV1(answer({ amount: '13.25' })).includes('payment_info:{address:string,amount:string}'), true);
+    assert.equal(spendShapeV1(answer({ amount: '13.25' })).includes('payment_info:{address:string,amount:string,contractAddress:string}'), true);
   });
 
   it('reads Bitrefill’s own usdc_base answer: altcoinPrice, altBasePrice, the USDC contract and the payment URI', () => {
@@ -130,6 +132,19 @@ describe('a Bitrefill invoice is read only when it asks the price just quoted', 
     const small = spendInvoiceFromAnswerV1(answer({ altcoinPrice: '0.18', altBasePrice: 180_000, contractAddress: USDC, paymentUri: uri({ amount: '180000' }) }), 180_000n, NOW);
     assert.equal(small.ok && small.value.amountAtomic, 180_000n);
     assert.deepEqual(spendPaymentUriV1(uri()), { token: USDC.toLowerCase(), chainId: 8453, to: PAY_TO, amount: QUOTED });
+  });
+
+  it('pays only an invoice that names Base itself, and refuses one naming another network', () => {
+    // Neither Base's USDC contract nor a payment URI on chain 8453: an address and an amount fit any network.
+    const silent = spendInvoiceFromAnswerV1(answer({ amount: '13.25', contractAddress: undefined }), QUOTED, NOW);
+    assert.deepEqual(!silent.ok && [silent.reason, silent.field], ['bitrefill_invalid_response', 'payment_info.network']);
+    const uri = `ethereum:${USDC_BASE}@8453/transfer?address=${PAY_TO}&uint256=13250000`;
+    assert.equal(spendInvoiceFromAnswerV1(answer({ amount: '13.25', contractAddress: undefined, paymentUri: uri }), QUOTED, NOW).ok, true);
+    for (const currency of ['USDC', 'usdc_base', 'USDC_BASE']) assert.equal(spendInvoiceFromAnswerV1(answer({ amount: '13.25', currency }), QUOTED, NOW).ok, true, currency);
+    for (const currency of ['usdc_polygon', 'usdc_ethereum', 'USDC_WRONG_CHAIN', 'usdc-base']) {
+      const refused = spendInvoiceFromAnswerV1(answer({ amount: '13.25', currency }), QUOTED, NOW);
+      assert.deepEqual(!refused.ok && refused.field, 'payment_info.currency', currency);
+    }
   });
 
   it('a payment link counts only on bitrefill.com over https', () => {

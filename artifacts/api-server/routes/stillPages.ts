@@ -167,7 +167,7 @@ export function stillSpendShareMetaV1(input: { origin: string; canonical: string
       siteName: 'Still',
       miniApp: { imageUrl: card('tall'), buttonTitle: 'Open on Still', url: `${input.canonical}${path}` },
       title: `Paid with a loan: ${share.productName} · Still`,
-      description: `${share.packageLabel} for ${words.priceUsdc} USDC, borrowed against ${words.collateralLabel} through ${words.venueName} and paid to Bitrefill in the same transaction on Base. Nothing was sold.`,
+      description: `${share.packageLabel} for ${words.priceUsdc} USDC, borrowed against ${words.collateralLabel} through ${words.venueName} and paid to Bitrefill with that loan on Base. Nothing was sold.`,
       image: {
         width: 1200,
         height: 630,

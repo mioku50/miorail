@@ -3,6 +3,7 @@ import qrcode from 'qrcode-generator';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, useLendingReviewConsoleV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix } from '@mioagent/wallet-actions/attribution';
 import { connectStillCardWalletV1, type StillCardProviderV1, type StillCardWalletV1 } from './stillCardWallet';
+import { stillCardHandsHashV1, stillCardLooksUpBatchV1 } from './stillCardRecovery';
 import { stillCardRequestV1, type StillCardHostV1, type StillCardRequestV1 } from './stillCardStore';
 
 // Signing inside the chat: the person's phone wallet pairs by WalletConnect,
@@ -86,9 +87,12 @@ export function StillCardSign({ host, draft, projectId, reviewHost, onSent }: {
   // its transaction hash, asked of the wallet itself, then verified by Still.
   const { batchId, execution, transactionHint, checking, onTransactionHint, onFindTransaction } = review.model;
   const found = useRef<string | null>(null);
-  const settling = execution?.state === 'submitted' || execution?.state === 'unknown';
+  const handed = useRef<string | null>(null);
+  // Another review starts with nothing found and nothing handed.
+  useEffect(() => { found.current = null; handed.current = null; }, [draft]);
+  const looking = stillCardLooksUpBatchV1({ paired: Boolean(wallet), batchId: batchId ?? null, executionState: execution?.state ?? null, found: found.current });
   useEffect(() => {
-    if (!wallet || !batchId || !settling || found.current) return undefined;
+    if (!wallet || !batchId || !looking) return undefined;
     let live = true;
     const timer = setInterval(() => {
       void wallet.batchHashes(batchId).then((hashes) => {
@@ -98,9 +102,11 @@ export function StillCardSign({ host, draft, projectId, reviewHost, onSent }: {
       });
     }, 3_000);
     return () => { live = false; clearInterval(timer); };
-  }, [wallet, batchId, settling, onTransactionHint]);
+  }, [wallet, batchId, looking, onTransactionHint]);
   useEffect(() => {
-    if (found.current && transactionHint === found.current && !checking) void onFindTransaction?.();
+    if (!stillCardHandsHashV1({ found: found.current, hint: transactionHint ?? '', checking, handed: handed.current })) return;
+    handed.current = found.current;
+    void onFindTransaction?.();
   }, [transactionHint, checking, onFindTransaction]);
   const sent = Boolean(batchId) || (execution !== null && execution.state !== 'ready');
   const told = useRef(false);

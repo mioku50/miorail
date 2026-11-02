@@ -150,7 +150,8 @@ export function spendInvoiceFromAnswerV1(answer: unknown, quotedAtomic: bigint, 
   if (typeof invoice.invoice_access_token !== 'string' || !TOKEN_V1.test(invoice.invoice_access_token)) return failed('invoice_access_token');
   if (!object(payment) || typeof payment.address !== 'string' || !ADDRESS_V1.test(payment.address)) return failed('payment_info.address');
   const payTo = payment.address.toLowerCase();
-  if (payment.currency !== undefined && (typeof payment.currency !== 'string' || !/^usdc/i.test(payment.currency))) return failed('payment_info.currency');
+  // USDC itself, or USDC on Base: a currency naming another network is refused, whatever else the invoice says.
+  if (payment.currency !== undefined && (typeof payment.currency !== 'string' || !/^usdc(?:_base)?$/i.test(payment.currency))) return failed('payment_info.currency');
   // The token asked for is USDC on Base, or there is nothing Still can pay.
   if (payment.contractAddress !== undefined && (typeof payment.contractAddress !== 'string' || payment.contractAddress.toLowerCase() !== USDC_BASE_V1)) return failed('payment_info.contractAddress');
   const present = (key: string) => payment[key] !== undefined && payment[key] !== null;
@@ -165,6 +166,9 @@ export function spendInvoiceFromAnswerV1(answer: unknown, quotedAtomic: bigint, 
   const uri = spendPaymentUriV1(payment.paymentUri);
   if (uri && (uri.token !== USDC_BASE_V1 || (uri.chainId !== null && uri.chainId !== 8453) || uri.to !== payTo)) return failed('payment_info.paymentUri');
   if (uri && uri.amount !== quotedAtomic) return failed('payment_info.paymentUri', 'bitrefill_invoice_price_changed');
+  // The invoice must say Base itself: Base's USDC contract, or a payment URI on chain 8453. An address and
+  // an amount alone fit any network's USDC, and a transfer on the wrong one is never credited.
+  if (payment.contractAddress === undefined && !(uri && uri.chainId === 8453)) return failed('payment_info.network');
   const minutes = invoice.expiration_minutes;
   if (minutes !== undefined && (typeof minutes !== 'number' || !Number.isFinite(minutes) || minutes <= 0)) return failed('expiration_minutes');
   const lifetime = Math.min(SPEND_PRICE_LOCK_MS_V1, minutes === undefined ? SPEND_PRICE_LOCK_MS_V1 : minutes * 60_000);

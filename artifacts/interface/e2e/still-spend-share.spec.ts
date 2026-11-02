@@ -46,7 +46,7 @@ for (const width of [390, 1366]) {
     const state = await install(page);
     await page.goto(`/spend/p/${TOKEN}`, { waitUntil: 'domcontentloaded' });
     await expect(page.getByRole('heading', { name: 'Paid with a loan', exact: true })).toBeVisible();
-    await expect(page.getByText('PUBG Mobile UC International, 10 UC, for 0.18 USDC. Borrowed against NVDA through Aave and paid to Bitrefill in the same transaction on Base, without selling.')).toBeVisible();
+    await expect(page.getByText('PUBG Mobile UC International, 10 UC, for 0.18 USDC. Borrowed against NVDA through Aave and paid to Bitrefill with that loan on Base, without selling.')).toBeVisible();
     const card = page.locator('img.still-spend-card');
     await expect(card).toBeVisible();
     await expect(card).toHaveAttribute('src', `/api/public/still/spend-card.png?t=${TOKEN}`);

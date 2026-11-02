@@ -127,7 +127,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
           <div className="still-section still-notice" role="note">
             <span>
               <strong>Paying Bitrefill · {paying.productName} · {paying.packageValue}{paying.refillTo ? ` for ${paying.refillTo}` : ''}: {paying.priceUsdc} USDC.</strong>{' '}
-              Bitrefill holds this price until {heldUntilV1(paying.expiresAt)}. The loan is exactly this amount, and the same transaction pays the invoice.
+              Bitrefill holds this price until {heldUntilV1(paying.expiresAt)}. The loan is exactly this amount, and it pays the invoice.
             </span>
           </div>
         ) : null}
@@ -225,7 +225,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                       <span className="mono" aria-hidden="true">USDC</span>
                     </div>
                     <p id={`${id}-loan-help`} className="still-note">{model.spend
-                      ? 'The next page checks the loan and the payment together, as one transaction, before you approve anything in your wallet.'
+                      ? 'The next page checks the loan and the payment together before you approve anything in your wallet.'
                       : 'The next page checks this exact amount and shows the terms before you approve anything in your wallet.'}</p>
                     <button type="submit" className="still-btn" disabled={!canReview}>{model.preparing ? 'Preparing review…' : model.spend ? 'Review loan and payment' : 'Review loan'}</button>
                   </form>
