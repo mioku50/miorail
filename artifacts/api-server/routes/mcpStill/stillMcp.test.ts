@@ -52,6 +52,19 @@ async function connected(t: test.TestContext) {
   return client;
 }
 
+// GHSA-46jr-4wx8-v453: a call carrying a vast argument payload is refused before
+// any schema walks it, on this server and on the two others that share the cap.
+test('a tool call with more than the capped number of argument elements is refused before it is validated', async (t) => {
+  const client = await connected(t);
+  const result = await client.callTool({ name: 'get_still_terms', arguments: { junk: Array.from({ length: 2_000 }, () => 0) } });
+  assert.equal(result.isError, true);
+  assert.match(JSON.stringify(result.content), /more than the maximum of 1000 elements/);
+  const repo = (relative: string) => process.cwd().endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(process.cwd(), '../..', relative) : path.join(process.cwd(), relative);
+  for (const file of ['routes/mcp/server.ts', 'routes/mcpPrivate/server.ts', 'routes/mcpStill/server.ts']) {
+    assert.match(readFileSync(repo(`artifacts/api-server/${file}`), 'utf8'), /new McpServer\([\s\S]{0,200}maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1/, file);
+  }
+});
+
 const structured = (result: unknown) => (result as { structuredContent: Record<string, unknown> }).structuredContent;
 
 test('five tools under Still’s own name, every one a read, and instructions that say what it cannot do', async (t) => {

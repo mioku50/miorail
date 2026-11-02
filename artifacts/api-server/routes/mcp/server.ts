@@ -63,6 +63,7 @@ import {
   ReopenRoundAgentOutputV1Schema,
   miorailGetReopenRoundV1,
 } from './reopenTool.js';
+import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
 
 // ---------------------------------------------------------------------------
 // T72/Phase 12B.1 — eight legacy B20 tools plus three read-only Market Reality
@@ -674,7 +675,7 @@ Evidence older than a day is labelled stale and describes what was true when it 
 export function createMiorailMcpServerV1(hooks: EvidenceReadHooksV1 = {}): McpServer {
   const server = new McpServer(
     { name: MIORAIL_MCP_NAME_V1, version: MIORAIL_MCP_VERSION_V1 },
-    { instructions: MIORAIL_MCP_INSTRUCTIONS_V1 },
+    { instructions: MIORAIL_MCP_INSTRUCTIONS_V1, maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1 },
   );
   registerMiorailReadOnlyToolsV1(server, hooks);
   return server;

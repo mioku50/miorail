@@ -61,6 +61,7 @@ import { measureMyStockCashOutV1, StockPositionQuoteErrorV1 } from '../../lib/st
 import { ReopenCallAgentInputV1Schema, ReopenMineAgentOutputV1Schema } from '@mioagent/rwa-market-reality/reopen-agent';
 import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/reopenAgentRead.js';
 import { stillMineRuntimeV1 } from '../stillMine.js';
+import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -153,7 +154,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   options: { /** The client draws MCP Apps: Still's tools come with their review card. */ apps?: boolean } = {}): McpServer {
   const server = new McpServer(
     { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1 },
-    { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1 },
+    { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1, maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1 },
   );
 
   // The read half, first — because it is the half a connected assistant needs

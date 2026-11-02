@@ -17,6 +17,7 @@ import {
   stillSpendProductV1,
   stillWhatIfV1,
 } from './tools.js';
+import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
 
 // ---------------------------------------------------------------------------
 // Still's own MCP server, at /mcp/still: five tools and nothing else.
@@ -58,7 +59,7 @@ Say what a report says at its block and time, and do not repeat its figures late
 export function createStillMcpServerV1(): McpServer {
   const server = new McpServer(
     { name: STILL_MCP_NAME_V1, version: STILL_MCP_VERSION_V1 },
-    { instructions: STILL_MCP_INSTRUCTIONS_V1 },
+    { instructions: STILL_MCP_INSTRUCTIONS_V1, maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1 },
   );
   const reply = (payload: Record<string, unknown>) => ({
     content: [{ type: 'text' as const, text: JSON.stringify(payload, null, 2) }],
