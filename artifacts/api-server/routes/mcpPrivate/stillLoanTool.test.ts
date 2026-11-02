@@ -165,6 +165,16 @@ test('a top-up sends only a number of its own country, and what cannot be bought
   assert.ok(!JSON.stringify(topUp).includes('9876543210'), 'the number is not repeated back');
 });
 
+test('a purchase Bitrefill refuses says Bitrefill’s own words, and nothing was paid', async (t) => {
+  spend(t);
+  const refusing = stillSpendRuntimeV1.checkout;
+  stillSpendRuntimeV1.checkout = () => ({ ...refusing(), createInvoice: async () => ({ ok: false as const, reason: 'bitrefill_refused' as const, detail: 'Minimum order is 1 USD' }) });
+  await assert.rejects(stillPreparePurchaseV1(IDENTITY,
+    { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW }),
+  (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'bitrefill_refused'
+    && error.message === 'Bitrefill refused to open the invoice and said: “Minimum order is 1 USD” Nothing was paid.');
+});
+
 test('with paying switched off the purchase is refused before Bitrefill is asked', async (t) => {
   const { opened } = spend(t, { enabled: false });
   await assert.rejects(stillPreparePurchaseV1(IDENTITY,

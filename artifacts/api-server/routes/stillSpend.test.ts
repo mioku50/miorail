@@ -116,6 +116,13 @@ describe('opening a Bitrefill invoice from Still', () => {
     assert.equal((await request(app(OTHER)).get(`/api/still/spend/orders/${INVOICE}`)).status, 404);
   });
 
+  it('a refusal by Bitrefill carries its own cleaned words, and logs no email', async () => {
+    Object.assign(stillSpendRuntimeV1, { checkout: () => ({ ...checkout(), createInvoice: async () => ({ ok: false, reason: 'bitrefill_refused', detail: 'Minimum order is 1 USD' }) }) });
+    const r = await request(app()).post('/api/still/spend/orders').send(ORDER);
+    assert.equal(r.status, 503);
+    assert.deepEqual(r.body, { error: 'bitrefill_refused', detail: 'Minimum order is 1 USD' });
+  });
+
   it('refuses a package not on offer, one over the cap, a product needing an account, and stray fields', async () => {
     for (const body of [{ ...ORDER, packageValue: '99GB' }, { ...ORDER, packageValue: 'Unlimited' }, { ...ORDER, email: 'nobody' }, { ...ORDER, payTo: OTHER }]) {
       const r = await request(app()).post('/api/still/spend/orders').send(body);

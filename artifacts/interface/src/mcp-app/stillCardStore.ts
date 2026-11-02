@@ -1,4 +1,4 @@
-import { stillCardFromStatusV1, stillCardPreparedV1, stillCardStatusV1, type StillCardPreparedV1, type StillCardStatusV1 } from './stillCardView';
+import { stillCardFromStatusV1, stillCardPreparedV1, stillCardStatusV1, type StillCardPhaseV1, type StillCardPreparedV1, type StillCardStatusV1 } from './stillCardView';
 
 // The card's one store: the host's notifications come in, the status reads go
 // out through the host with the person's own connection to Miorail. It reads
@@ -69,7 +69,16 @@ export interface StillCardStoreV1 {
   openTransaction(): Promise<void>;
 }
 
-const FOLLOW_MS_V1 = 6_000, BITREFILL_MS_V1 = 15_000, FOLLOW_FOR_MS_V1 = 15 * 60_000;
+const FOLLOW_FOR_MS_V1 = 15 * 60_000;
+
+/** How long between two reads. Each is one of the connection's twenty a minute,
+ * which the assistant shares; two cards at six seconds once took all of them
+ * (2026-11-02). A review being read on stills.lat is slow, a transaction on its
+ * way a little faster, and Bitrefill finishing an order slowest. */
+export function stillCardIntervalMsV1(phase: StillCardPhaseV1 | undefined): number {
+  if (phase === 'wallet' || phase === 'sent' || phase === 'unknown') return 8_000;
+  return phase === 'confirmed' ? 20_000 : 15_000;
+}
 
 function refusalOfV1(content: unknown): string {
   const first = Array.isArray(content) ? content[0] as { text?: unknown } | undefined : undefined;
@@ -93,7 +102,7 @@ export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () =
       if (state.following) set({ following: false });
       return;
     }
-    timer = setTimeout(() => void read(), status?.phase === 'confirmed' ? BITREFILL_MS_V1 : FOLLOW_MS_V1);
+    timer = setTimeout(() => void read(), stillCardIntervalMsV1(status?.phase));
   };
   const read = async () => {
     const prepared = state.prepared;
@@ -125,11 +134,11 @@ export function createStillCardStoreV1(host: StillCardHostV1, clock: { now: () =
     if (params.isError) { set({ refusal: refusalOfV1(params.content) }); return; }
     const prepared = stillCardPreparedV1(params.structuredContent);
     if (prepared) { set({ prepared, refusal: null }); void read(); return; }
-    // A status read drawn as the card: no link, and it follows only what is still moving.
+    // A status read drawn as the card: a snapshot with no link. The card of the
+    // prepared review is the one that follows; this one reads again when pressed.
     const shown = stillCardFromStatusV1(params.structuredContent, clock.now());
     if (!shown) { set({ refusal: 'This card could not read the result. The assistant’s message has it.' }); return; }
     set({ prepared: shown.prepared, status: shown.status, refusal: null });
-    if (!shown.status.settled && shown.status.phase !== 'waiting') follow();
   };
   host.onhostcontextchanged = (context) => { if (context.theme) set({ dark: context.theme === 'dark' }); };
   void host.connect().then(() => set({ dark: host.getHostContext()?.theme === 'dark' }), () => undefined);

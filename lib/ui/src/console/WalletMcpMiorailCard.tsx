@@ -23,6 +23,16 @@ export const MIORAIL_PUBLIC_MCP_URL_V1 = 'https://miorail.xyz/mcp';
 export const MIORAIL_WALLET_MCP_PLUGIN_PATH_V1 = '/wallet-mcp/miorail.md';
 export const MIORAIL_WALLET_MCP_PROMPT_V1 = `Use the Miorail plugin for Wallet MCP: https://miorail.xyz${MIORAIL_WALLET_MCP_PLUGIN_PATH_V1}`;
 
+/** Claude's own "add custom connector" form with the name and address filled in.
+ * Claude says the link came from outside and asks the person to confirm it. */
+export function addToClaudeUrlV1(name: string, url: string): string {
+  return `https://claude.ai/customize/connectors?modal=add-custom-connector&connectorName=${encodeURIComponent(name)}&connectorUrl=${encodeURIComponent(url)}`;
+}
+
+/** A new chat with the question already typed, in Claude or ChatGPT. */
+export const askClaudeUrlV1 = (question: string): string => `https://claude.ai/new?q=${encodeURIComponent(question)}`;
+export const askChatGptUrlV1 = (question: string): string => `https://chatgpt.com/?q=${encodeURIComponent(question)}`;
+
 /** One value to copy. A webview without clipboard access says so instead of
  * pretending it copied. */
 function CopyLine({ label, value }: { label: string; value: string }) {
@@ -73,6 +83,7 @@ export function WalletMcpMiorailCard() {
           <li>
             <b>Add Miorail</b> the same way, and sign in with the same wallet.
             <CopyLine label="the Miorail MCP address" value={MIORAIL_CONNECTED_MCP_URL_V1} />
+            <a className="btn" href={addToClaudeUrlV1('Miorail', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer">Add to Claude</a>
           </li>
           <li>
             <b>Tell your assistant</b> to use the plugin.

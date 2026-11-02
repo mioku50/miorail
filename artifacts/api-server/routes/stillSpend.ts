@@ -62,7 +62,7 @@ function orderWireV1(order: SpendOrderV1) {
   };
 }
 
-export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string };
+export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string; detail?: string };
 
 /** One invoice for this owner, as the page and the connected MCP open it:
  * the hourly limit, a fresh quote, the product's own rules, the cap, then
@@ -89,8 +89,9 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   });
   if (!invoice.ok) {
     // The shape names keys and kinds only: never an address, an amount or a token.
-    logger.warn('Still Spend invoice not opened', { reason: invoice.reason, ...(invoice.shape ? { shape: invoice.shape } : {}), ...(invoice.field ? { field: invoice.field } : {}) });
-    return refuse(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503, invoice.reason);
+    logger.warn('Still Spend invoice not opened', { reason: invoice.reason, ...(invoice.shape ? { shape: invoice.shape } : {}), ...(invoice.field ? { field: invoice.field } : {}),
+      ...(invoice.detail ? { detail: invoice.detail } : {}) });
+    return { ...refuse(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503, invoice.reason), ...(invoice.detail ? { detail: invoice.detail } : {}) };
   }
   if (invoice.value.payTo === owner.walletAddress) return refuse(409, 'spend_payee_refused');
   const order: SpendOrderV1 = {
@@ -116,7 +117,7 @@ stillSpendRouter.post('/orders', async (req: Request, res: Response) => {
   }
   const opened = await openSpendOrderV1({ tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, parsed.data);
   if (!opened.ok) {
-    res.status(opened.status).json({ error: opened.error });
+    res.status(opened.status).json({ error: opened.error, ...(opened.detail ? { detail: opened.detail } : {}) });
     return;
   }
   res.json({ order: orderWireV1(opened.order) });

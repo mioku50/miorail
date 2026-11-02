@@ -1,7 +1,7 @@
 import React, { useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
-import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1 } from '../console/WalletMcpMiorailCard';
+import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1 } from '../console/WalletMcpMiorailCard';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
@@ -250,6 +250,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
       <div className="still-section still-feature">
         <div className="still-eyebrow">Still’s MCP server · read only, no sign-in</div>
         <CopyRow label="the Still MCP address" value={STILL_MCP_URL_V1} />
+        <a className="still-btn" href={addToClaudeUrlV1('Still', STILL_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ marginTop: 10 }}>Add to Claude</a>
         <p className="still-note" style={{ marginTop: 6 }}>
           Five tools: <span className="mono">get_still_terms</span>, <span className="mono">still_check_wallet</span>, <span className="mono">still_what_if</span>,{' '}
           <span className="mono">still_find_spend</span> and <span className="mono">still_spend_product</span>.
@@ -263,7 +264,11 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
       ))}
       <div className="still-section">
         <div className="still-eyebrow">Ask it</div>
-        {asks.map((ask) => <p key={ask} className="still-note">“{ask}”</p>)}
+        {asks.map((ask) => (
+          <p key={ask} className="still-note">
+            “{ask}” <a href={askClaudeUrlV1(ask)} target="_blank" rel="noreferrer">Ask Claude</a> · <a href={askChatGptUrlV1(ask)} target="_blank" rel="noreferrer">ChatGPT</a>
+          </p>
+        ))}
       </div>
       <div className="still-section">
         <div className="still-eyebrow">To prepare a loan, a purchase or a repayment from your assistant</div>
@@ -273,6 +278,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
           review link, and your own wallet signs on stills.lat. <span className="mono">miorail_get_still_review_status</span> then tells your assistant
           what happened. In a chat that draws MCP Apps, as Claude does, the review comes as a card that opens it and follows it to Base.
         </p>
+        <a className="still-btn sec" href={addToClaudeUrlV1('Miorail', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ margin: '10px 0' }}>Add Miorail to Claude</a>
         <CopyRow label="the signed-in Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />
       </div>
       <div className="still-section">

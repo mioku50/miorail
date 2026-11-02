@@ -174,6 +174,9 @@ describe('paying from Still, as the page says it', () => {
   it('says each refusal in the reader’s words, and anything unknown as nothing paid', () => {
     assert.match(spendOrderErrorV1('spend_over_cap'), /at most 100 USDC/);
     assert.match(spendOrderErrorV1('bitrefill_invoice_price_changed'), /different price/);
+    // Bitrefill's own words, as the server cleaned them, or the plain fact when it said nothing.
+    assert.equal(spendOrderErrorV1('bitrefill_refused: Minimum order is 1 USD'), 'Bitrefill refused this invoice and said: “Minimum order is 1 USD” Nothing was paid.');
+    assert.equal(spendOrderErrorV1('bitrefill_refused'), 'Bitrefill refused this invoice. Nothing was paid.');
     assert.match(spendOrderErrorV1('spend_phone_needed'), /phone number to top up/);
     assert.match(spendOrderErrorV1('spend_phone_invalid'), /country code/);
     assert.match(spendOrderErrorV1('spend_product_not_buyable'), /account or a username/);

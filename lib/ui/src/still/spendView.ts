@@ -238,6 +238,11 @@ export function spendOrderErrorV1(message: string): string {
     case 'bitrefill_invoice_price_changed': return 'Bitrefill’s invoice asked a different price than it quoted a moment before. Nothing was opened to pay; read the product again.';
     case 'spend_rate_limited': return 'You opened several invoices this hour. Try again later.';
     case 'spend_request_invalid': return 'Check the email address: Bitrefill sends the receipt there.';
+    case 'bitrefill_refused': {
+      // Bitrefill's own words, as the server cleaned them.
+      const detail = message.includes(':') ? message.slice(message.indexOf(':') + 1).trim() : '';
+      return detail ? `Bitrefill refused this invoice and said: “${detail}” Nothing was paid.` : 'Bitrefill refused this invoice. Nothing was paid.';
+    }
     default: return 'Bitrefill’s invoice could not be opened just now. Nothing was paid. Try again in a minute.';
   }
 }

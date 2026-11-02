@@ -455,6 +455,11 @@ describe('the frame', () => {
     assert.match(assistants, /still_find_spend.*still_spend_product/);
     assert.match(assistants, /miorail_prepare_still_purchase.*miorail_prepare_still_repay.*miorail_get_still_review_status/);
     assert.match(assistants, /Claude, ChatGPT, Grok, Cursor or Codex/);
+    // Claude's own add-connector form, filled in for each server, and each question one click from a chat.
+    assert.match(assistants, /href="https:\/\/claude\.ai\/customize\/connectors\?modal=add-custom-connector&amp;connectorName=Still&amp;connectorUrl=https%3A%2F%2Fstills\.lat%2Fmcp%2Fstill"/);
+    assert.match(assistants, /connectorName=Miorail&amp;connectorUrl=https%3A%2F%2Fmiorail\.xyz%2Fmcp%2Fprivate/);
+    assert.match(assistants, /href="https:\/\/claude\.ai\/new\?q=What%20are%20Still%E2%80%99s%20terms%20this%20weekend%3F"/);
+    assert.match(assistants, /href="https:\/\/chatgpt\.com\/\?q=/);
     assert.match(assistants, /grok\.com\/connectors: New Connector, Custom/);
     assert.match(assistants, /Use the Miorail plugin for Wallet MCP: https:\/\/miorail\.xyz\/wallet-mcp\/miorail\.md/);
     assert.match(assistants, /not offered to US persons/);

@@ -66,7 +66,18 @@ export type SpendFailureV1 =
   /** The invoice asks a different amount than the price quoted a moment before. */
   | 'bitrefill_invoice_price_changed';
 
-export type SpendResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1 };
+export type SpendResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; detail?: string };
+
+/** Bitrefill's own words for a refusal, safe to log and to show: one line, no
+ * email, no link, no long number (a phone, an order or an account). */
+export function spendRefusalDetailV1(text: string): string | undefined {
+  const line = text.replace(/\s+/g, ' ').trim()
+    .replace(/[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}/g, '[email]')
+    .replace(/https?:\/\/\S+/g, '[link]')
+    .replace(/\d{6,}/g, '[number]')
+    .slice(0, 160);
+  return line || undefined;
+}
 
 const SLUG_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
 const COUNTRY_V1 = /^[A-Z]{2}$/;
@@ -194,7 +205,11 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
     const rpc = RpcSchemaV1.safeParse(json);
     if (!rpc.success || rpc.data.error || !rpc.data.result) return { ok: false, reason: 'bitrefill_invalid_response' };
     const text = rpc.data.result.content.filter((part) => part.type === 'text').map((part) => part.text ?? '').join('\n');
-    if (rpc.data.result.isError) return { ok: false, reason: /not[_ ]found/i.test(text) ? 'bitrefill_product_not_found' : 'bitrefill_refused' };
+    if (rpc.data.result.isError) {
+      if (/not[_ ]found/i.test(text)) return { ok: false, reason: 'bitrefill_product_not_found' };
+      const detail = spendRefusalDetailV1(text);
+      return { ok: false, reason: 'bitrefill_refused', ...(detail ? { detail } : {}) };
+    }
     return { ok: true, value: text };
   }
 

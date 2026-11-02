@@ -48,8 +48,12 @@ test('opening the review follows it to the chain, then stops', async (t) => {
   await tick();
   assert.deepEqual(opened, [URL]);
   assert.equal(store.get().status?.phase, 'open');
-  for (const phase of ['sent', 'confirmed']) {
-    t.mock.timers.tick(6_000);
+  // A review being read is asked every fifteen seconds, a transaction on its way every eight.
+  for (const [wait, phase] of [[15_000, 'sent'], [8_000, 'confirmed']] as const) {
+    t.mock.timers.tick(wait - 1);
+    await tick();
+    assert.notEqual(store.get().status?.phase, phase, 'not before its interval');
+    t.mock.timers.tick(1);
     await tick(); await tick();
     assert.equal(store.get().status?.phase, phase);
   }
@@ -57,6 +61,20 @@ test('opening the review follows it to the chain, then stops', async (t) => {
   t.mock.timers.tick(60_000);
   await tick();
   assert.equal(calls.length, 4, 'a confirmed loan is read no more');
+});
+
+test('a status card is a snapshot: it reads again only when pressed', async (t) => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const { fake, calls } = host(['ready']);
+  const store = createStillCardStoreV1(fake);
+  fake.ontoolresult!({ structuredContent: { reviewId: REVIEW_ID, state: 'awaiting_wallet', operation: 'borrow', venue: 'aave-v4', collateral: 'NVDAc' } });
+  assert.equal(store.get().status?.phase, 'wallet');
+  t.mock.timers.tick(120_000);
+  await tick();
+  assert.equal(calls.length, 0, 'the prepared review’s own card is the one that follows');
+  store.checkAgain();
+  await tick();
+  assert.equal(calls.length, 1);
 });
 
 test('a refused link is said, the tool’s own refusal is shown in its words, and an unread status is our failure', async () => {

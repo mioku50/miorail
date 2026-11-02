@@ -57,7 +57,7 @@ export interface SpendInvoiceStatusV1 {
 }
 
 /** A refusal names the answer's keys (`shape`) and the one it could not read (`field`), never a value. */
-export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string; field?: string };
+export type SpendCheckoutResultV1<T> = { ok: true; value: T } | { ok: false; reason: SpendFailureV1; shape?: string; field?: string; detail?: string };
 
 export interface BitrefillGuestCheckoutV1 {
   /** `refillInput` is the number a phone top-up goes to, from `spendPhoneV1`; nothing else needs one. */

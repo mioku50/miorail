@@ -9,6 +9,7 @@ import {
   spendInvoiceFromAnswerV1,
   spendInvoiceStatusFromAnswerV1,
   spendPaymentUriV1,
+  spendRefusalDetailV1,
   spendShapeV1,
 } from '../src/index.js';
 
@@ -178,6 +179,15 @@ describe('Still’s guest checkout talks to Bitrefill only as it says', () => {
     assert.equal(calls.length, 0);
     const refused = await checkout.createInvoice({ productId: 'bitrefill-esim-germany', packageValue: '1GB', email: 'buyer@example.com', quotedAtomic: QUOTED, now: NOW });
     assert.equal(!refused.ok && refused.reason, 'bitrefill_refused');
+    // Bitrefill's own words come along, so a refusal can say why.
+    assert.equal(!refused.ok && refused.detail, '{"error":"INVALID_INPUT"}');
+  });
+
+  it('a refusal keeps Bitrefill’s words in one line, without an email, a link or a long number', () => {
+    assert.equal(spendRefusalDetailV1('Order failed for buyer@example.com:\n minimum 1 USD, see https://www.bitrefill.com/x?token=abc phone 4915123456789'),
+      'Order failed for [email]: minimum 1 USD, see [link] phone [number]');
+    assert.equal(spendRefusalDetailV1(`Too many unpaid invoices ${'x'.repeat(300)}`)?.length, 160);
+    assert.equal(spendRefusalDetailV1('   '), undefined);
   });
 
   it('the catalogue and any other caller cannot reach a tool they did not list', async () => {

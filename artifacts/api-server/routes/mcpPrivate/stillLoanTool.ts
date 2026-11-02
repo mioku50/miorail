@@ -184,8 +184,9 @@ export async function stillPreparePurchaseV1(
     productId: args.productId, packageValue: args.packageValue, email: args.email, ...(args.phone !== undefined ? { phone: args.phone } : {}),
   });
   if (!opened.ok) {
-    throw new StillLoanRefusalV1(opened.error, SPEND_REFUSALS_V1[opened.error]
-      ?? 'Bitrefill could not open the invoice right now. This is Bitrefill’s failure or ours; nothing was paid.');
+    throw new StillLoanRefusalV1(opened.error, SPEND_REFUSALS_V1[opened.error] ?? (opened.detail
+      ? `Bitrefill refused to open the invoice and said: “${opened.detail}” Nothing was paid.`
+      : 'Bitrefill could not open the invoice right now. This is Bitrefill’s failure or ours; nothing was paid.'));
   }
   const order = opened.order, payment = spendDraftPaymentV1(order, deps.now);
   if (!payment) throw new StillLoanRefusalV1('spend_order_expiring', 'Bitrefill holds this price too briefly for a review to be signed. Nothing was paid; prepare it again.');
