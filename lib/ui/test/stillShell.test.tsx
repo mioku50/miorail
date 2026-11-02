@@ -9,6 +9,7 @@ import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/divi
 
 import { EXAMPLE, SATURDAY, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
 import { telegramAlertsViewV1 } from '../src/console/telegramAlertsView';
+import { STILL_PUBLIC_ORIGIN_V1 } from '../src/stillOrigin';
 import {
   agentAnswerV1,
   agentRouteV2,
@@ -156,13 +157,14 @@ describe('Home', () => {
     assert.doesNotMatch(html, /You can borrow|guaranteed|\bSafe\b/i);
   });
 
-  it('shares a wallet’s card by its stills.lat link, saying the card names the wallet', () => {
+  it('shares a wallet’s card by its Still link, saying the card names the wallet', () => {
     const sky = skyStateV1({ now: WEDNESDAY });
     const r = report();
     const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, subject: 'example.base.eth' }} />);
     assert.match(html, /Share this wallet’s card:/);
-    assert.match(html, /href="https:\/\/x\.com\/intent\/tweet\?text=[^"]*&amp;url=https%3A%2F%2Fstills\.lat%2Fw%2Fexample\.base\.eth"/);
-    assert.match(html, /href="https:\/\/farcaster\.xyz\/~\/compose\?text=[^"]*&amp;embeds\[\]=https%3A%2F%2Fstills\.lat%2Fw%2Fexample\.base\.eth"/);
+    const card = encodeURIComponent(`${STILL_PUBLIC_ORIGIN_V1}/w/example.base.eth`).replace(/\./g, '\\.');
+    assert.match(html, new RegExp(`href="https://x\\.com/intent/tweet\\?text=[^"]*&amp;url=${card}"`));
+    assert.match(html, new RegExp(`href="https://farcaster\\.xyz/~/compose\\?text=[^"]*&amp;embeds\\[\\]=${card}"`));
     // The words carry no figure: the card does, at the block it was read.
     assert.doesNotMatch(decodeURIComponent(/intent\/tweet\?text=([^&"]*)/.exec(html)![1]!), /\$\d/);
   });
@@ -447,7 +449,7 @@ describe('the frame', () => {
     assert.doesNotMatch(more, /href="\/(?:investigate|radar|portfolio)"/);
     const assistants = renderToStaticMarkup(<StillAssistants model={{ sky: skyStateV1({ now: WEDNESDAY }) }} />);
     // Still's own server leads; the signed-in one is for preparing a loan.
-    assert.match(assistants, /claude mcp add --transport http still https:\/\/stills\.lat\/mcp\/still/);
+    assert.ok(assistants.includes(`claude mcp add --transport http still ${STILL_PUBLIC_ORIGIN_V1}/mcp/still`));
     assert.match(assistants, /get_still_terms.*still_check_wallet.*still_what_if/);
     assert.match(assistants, /What happens to that wallet’s Still loan if NVIDIA falls 30%\?/);
     assert.match(assistants, /claude mcp add --transport http miorail https:\/\/miorail\.xyz\/mcp\/private/);
@@ -456,7 +458,7 @@ describe('the frame', () => {
     assert.match(assistants, /miorail_prepare_still_purchase.*miorail_prepare_still_repay.*miorail_get_still_review_status/);
     assert.match(assistants, /Claude, ChatGPT, Grok, Cursor or Codex/);
     // Claude's own add-connector form, filled in for each server, and each question one click from a chat.
-    assert.match(assistants, /href="https:\/\/claude\.ai\/customize\/connectors\?modal=add-custom-connector&amp;connectorName=Still&amp;connectorUrl=https%3A%2F%2Fstills\.lat%2Fmcp%2Fstill"/);
+    assert.ok(assistants.includes(`href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=Still&amp;connectorUrl=${encodeURIComponent(`${STILL_PUBLIC_ORIGIN_V1}/mcp/still`)}"`));
     assert.match(assistants, /connectorName=Miorail&amp;connectorUrl=https%3A%2F%2Fmiorail\.xyz%2Fmcp%2Fprivate/);
     assert.match(assistants, /href="https:\/\/claude\.ai\/new\?q=What%20are%20Still%E2%80%99s%20terms%20this%20weekend%3F"/);
     assert.match(assistants, /href="https:\/\/chatgpt\.com\/\?q=/);

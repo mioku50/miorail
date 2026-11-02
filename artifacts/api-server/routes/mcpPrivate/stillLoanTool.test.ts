@@ -6,6 +6,7 @@ import type { BitrefillGuestCheckoutV1, SpendProductV1 } from '@mioagent/commerc
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import { verifyLendingDraftV1 } from '../../lib/lendingDraft.js';
+import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import { createSpendOrderStoreV1, type SpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
@@ -19,7 +20,7 @@ const NOW = new Date('2026-11-02T15:00:00.000Z');
 const NVDAC = STOCKS.find((stock) => stock.id === 'NVDAc')!.token.toLowerCase();
 
 function draftOf(url: string) {
-  const draft = url.replace('https://stills.lat/lending/', '');
+  const draft = url.replace(`${STILL_PUBLIC_ORIGIN_V1}/lending/`, '');
   const verified = verifyLendingDraftV1({ draft, ...IDENTITY, secret: SECRET, now: NOW });
   assert.ok(verified.ok, 'the link carries a draft this server signed for this wallet');
   return verified.claims;
@@ -27,7 +28,7 @@ function draftOf(url: string) {
 
 test('a stock loan is the same wallet-bound Aave V4 question Get money issues', () => {
   const review = stillPrepareLoanReviewV1(IDENTITY, { collateral: 'NVDAc', addCollateral: '0.05', borrowUsdc: '500' }, { secret: SECRET, now: NOW });
-  assert.match(review.reviewUrl, /^https:\/\/stills\.lat\/lending\/miorail-lending-v1\./);
+  assert.ok(review.reviewUrl.startsWith(`${STILL_PUBLIC_ORIGIN_V1}/lending/miorail-lending-v1.`), review.reviewUrl);
   assert.equal(review.venue, 'aave-v4');
   assert.equal(review.expiresAt, '2026-11-02T15:05:00.000Z');
   const claims = draftOf(review.reviewUrl);
@@ -121,7 +122,7 @@ test('a purchase opens the invoice as Spend does, and the link is the review of 
   const { orders, opened } = spend(t);
   const prepared = await stillPreparePurchaseV1(IDENTITY,
     { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW });
-  assert.match(prepared.reviewUrl, /^https:\/\/stills\.lat\/lending\/miorail-lending-v3\./);
+  assert.ok(prepared.reviewUrl.startsWith(`${STILL_PUBLIC_ORIGIN_V1}/lending/miorail-lending-v3.`), prepared.reviewUrl);
   assert.equal(prepared.borrowUsdc, '9.8');
   assert.deepEqual(prepared.purchase, { productId: ESIM.id, productName: ESIM.name, packageValue: '5GB, 30 Days', faceCurrency: 'USD',
     priceUsdc: '9.8', invoiceExpiresAt: '2026-11-02T15:15:00.000Z' });

@@ -3,7 +3,7 @@ import { useRoute } from 'wouter';
 import { concat, type Hex } from 'viem';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
-import { LendingReviewScreen, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
+import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { StillFrame, StillLoanAlertsOffer, StillSpendPaid, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
@@ -55,7 +55,7 @@ export function LendingReviewPage() {
   // The card the server signed once it confirmed the loan; its link names the purchase, never the wallet.
   const sharePath = paidOrder ? spendSharePathV1(review.model.execution?.share?.path) : null;
   const facts = review.model.body?.facts;
-  const share = sharePath && facts?.payment ? { url: `https://stills.lat${sharePath}`,
+  const share = sharePath && facts?.payment ? { url: `${STILL_PUBLIC_ORIGIN_V1}${sharePath}`,
     text: spendShareTextV1({ productName: facts.payment.productName, collateralSymbol: facts.collateralSymbol }) } : null;
   return <StillFrame tab="assets" sky={sky}>{session.booting
     ? <p className="still-section still-note" role="status">Checking your sign-in…</p>

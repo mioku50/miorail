@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import qrcode from 'qrcode-generator';
-import { LendingReviewScreen, useLendingReviewConsoleV1, type LendingStepsWalletV1 } from '@mioagent/ui';
+import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, useLendingReviewConsoleV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix } from '@mioagent/wallet-actions/attribution';
 import { connectStillCardWalletV1, type StillCardProviderV1, type StillCardWalletV1 } from './stillCardWallet';
 import { stillCardRequestV1, type StillCardHostV1, type StillCardRequestV1 } from './stillCardStore';
 
 // Signing inside the chat: the person's phone wallet pairs by WalletConnect,
-// and the card shows the review stills.lat shows, through the same controller
+// and the card shows the review Still's page shows, through the same controller
 // and screen, asked through the host as the grant's wallet. Nothing is asked of
 // Still before a wallet is connected here, and the wallet asks the person.
 
@@ -29,8 +29,10 @@ function PairingCodeV1({ uri }: { uri: string }) {
   return <div className="still-mcp-qr" role="img" aria-label="WalletConnect pairing code" dangerouslySetInnerHTML={{ __html: svg }} />;
 }
 
-export function StillCardSign({ host, draft, projectId, onSent }: {
+export function StillCardSign({ host, draft, projectId, reviewHost, onSent }: {
   host: Pick<StillCardHostV1, 'callServerTool'>; draft: string; projectId: string;
+  /** Where the review opens, as the card's button names it. */
+  reviewHost: string;
   /** The wallet sent it: the card's own status starts following. */
   onSent: () => void;
 }) {
@@ -47,10 +49,10 @@ export function StillCardSign({ host, draft, projectId, onSent }: {
       const { UniversalProvider } = await import('@walletconnect/universal-provider');
       const instance = await UniversalProvider.init({ projectId, metadata: {
         name: 'Still', description: 'A Still review, signed in your own wallet.',
-        // The chat's own sandbox is where this runs, and a wallet that checks would read stills.lat as a mismatch.
+        // The chat's own sandbox is where this runs, and a wallet that checks would read Still's host as a mismatch.
         // A sandbox with no origin of its own ("null") has nothing to check against; then the wallet is told Still's.
-        url: window.location.origin && window.location.origin !== 'null' ? window.location.origin : 'https://stills.lat',
-        icons: ['https://stills.lat/miniapp-icon.png'],
+        url: window.location.origin && window.location.origin !== 'null' ? window.location.origin : STILL_PUBLIC_ORIGIN_V1,
+        icons: [`${STILL_PUBLIC_ORIGIN_V1}/miniapp-icon.png`],
       } });
       instance.on('display_uri', (value: string) => setUri(value));
       provider.current = instance as unknown as StillCardProviderV1;
@@ -59,12 +61,12 @@ export function StillCardSign({ host, draft, projectId, onSent }: {
     } catch (error) {
       setUri(null);
       setFailure(error instanceof Error && error.message === 'wallet_not_on_base'
-        ? 'The wallet connected without Base. Connect it on Base, or review on stills.lat.'
-        : 'The wallet did not connect. Try again, or review on stills.lat.');
+        ? `The wallet connected without Base. Connect it on Base, or review on ${reviewHost}.`
+        : `The wallet did not connect. Try again, or review on ${reviewHost}.`);
     } finally {
       setPairing(false);
     }
-  }, [projectId]);
+  }, [projectId, reviewHost]);
   const disconnect = useCallback(async () => {
     await provider.current?.disconnect().catch(() => undefined);
     provider.current = null;

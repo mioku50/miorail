@@ -31,8 +31,18 @@ const object = (value: unknown): value is Record<string, unknown> => typeof valu
 const text = (value: unknown, max = 200): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REVIEW_URL = /^https:\/\/(?:stills\.lat|miorail\.xyz)\/lending\/miorail-lending-v[123]\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const SHARE_URL = /^https:\/\/(?:stills\.lat|miorail\.xyz)\/spend\/p\/ss1\./;
 const venueName = (venue: unknown) => (venue === 'morpho' ? 'Morpho' : 'Aave V4');
 const pledge = (amount: unknown, collateral: string) => (text(amount, 40) && amount !== '0' ? `, pledging ${amount} ${collateral}` : '');
+
+/** The host a review link opens on, as the card's button names it. */
+export function stillCardReviewHostV1(reviewUrl: string): string {
+  try {
+    return new URL(reviewUrl).host;
+  } catch {
+    return 'Still';
+  }
+}
 
 /** The prepared review from a prepare tool's structured result; null for anything else. */
 export function stillCardPreparedV1(structured: unknown): StillCardPreparedV1 | null {
@@ -75,7 +85,7 @@ export function stillCardStatusV1(status: unknown, prepared: Pick<StillCardPrepa
   const purchase = object(status.purchase) ? status.purchase : null;
   const word = purchase && text(purchase.invoiceStatus, 40) ? purchase.invoiceStatus : null;
   const bitrefill = word === null ? null : BITREFILL_V1[word] ?? `Bitrefill reports the order as ${word.replace(/_/g, ' ')}. Its email says what happens next.`;
-  const shareUrl = purchase && text(purchase.shareUrl, 2000) && /^https:\/\/stills\.lat\/spend\/p\/ss1\./.test(purchase.shareUrl) ? purchase.shareUrl : null;
+  const shareUrl = purchase && text(purchase.shareUrl, 2000) && SHARE_URL.test(purchase.shareUrl) ? purchase.shareUrl : null;
   const transactionHash = text(status.transactionHash, 66) && /^0x[0-9a-f]{64}$/.test(status.transactionHash) ? status.transactionHash : null;
   const out = (phase: StillCardPhaseV1, line: string, settled: boolean): StillCardStatusV1 => ({ phase, line, settled, bitrefill, shareUrl, transactionHash });
   switch (status.state) {

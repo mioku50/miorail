@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
 
 import type { LoanExecutionStoreV1, LoanExecutionV1, LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
+import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import type { SpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { loanExecutionShareV1 } from '../../lib/stillSpendShare.js';
 
@@ -98,7 +99,7 @@ export async function stillReviewStatusV1(
     const share = loanExecutionShareV1(record, deps.secret);
     purchase = {
       productName: payment.productName, packageValue: payment.packageValue, priceUsdc: usdcTextV1(payment.assets), invoiceExpiresAt: payment.expiresAt,
-      invoiceStatus, invoiceStatusError, shareUrl: share ? `${deps.origin ?? 'https://stills.lat'}${share.path}` : null,
+      invoiceStatus, invoiceStatusError, shareUrl: share ? `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}${share.path}` : null,
     };
   }
   const paid = record.state === 'confirmed' && purchase

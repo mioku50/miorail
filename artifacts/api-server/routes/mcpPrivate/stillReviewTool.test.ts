@@ -9,6 +9,7 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import type { LendingPaymentV1 } from '../../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../../lib/lendingReview.js';
 import { MemoryLoanExecutionStoreV1, type LoanExecutionV1 } from '../../lib/loanExecutionStore.js';
+import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import { createSpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { verifyStillSpendShareV1 } from '../../lib/stillSpendShare.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
@@ -92,8 +93,8 @@ test('a confirmed purchase carries Bitrefill’s own word for the invoice and a 
   assert.deepEqual(invoiceReads, [INVOICE]);
   assert.match(status.next, /Confirmed onchain.*Bitrefill reads it as complete/);
   const shareUrl = status.purchase?.shareUrl ?? '';
-  assert.match(shareUrl, /^https:\/\/stills\.lat\/spend\/p\/ss1\./);
-  const claim = verifyStillSpendShareV1(shareUrl.replace('https://stills.lat/spend/p/', ''), SECRET);
+  assert.ok(shareUrl.startsWith(`${STILL_PUBLIC_ORIGIN_V1}/spend/p/ss1.`), shareUrl);
+  const claim = verifyStillSpendShareV1(shareUrl.replace(`${STILL_PUBLIC_ORIGIN_V1}/spend/p/`, ''), SECRET);
   assert.deepEqual(claim, { productName: PAYMENT.productName, packageLabel: '5GB, 30 Days', priceAtomic: '9800000', collateral: 'NVDAc', venue: 'aave-v4' });
   assert.ok(!shareUrl.includes(WALLET.slice(2)) && !shareUrl.includes(TX.slice(2)));
 });

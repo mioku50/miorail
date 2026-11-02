@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { stillCardFromStatusV1, stillCardPreparedV1, stillCardStatusV1 } from './stillCardView';
+import { stillCardFromStatusV1, stillCardPreparedV1, stillCardReviewHostV1, stillCardStatusV1 } from './stillCardView';
 
 // Every review, hash and link here is synthetic.
 const REVIEW_ID = '0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11';
@@ -60,4 +60,16 @@ test('a status result draws its own card from the status’s facts, with no link
   const repay = stillCardFromStatusV1({ reviewId: REVIEW_ID, state: 'confirmed', operation: 'repay', venue: 'morpho', collateral: 'WETH' }, NOW);
   assert.deepEqual([repay?.prepared.title, repay?.status.line], ['Repayment on the WETH loan', 'Confirmed onchain: the repayment is in.']);
   assert.equal(stillCardFromStatusV1({ reviewId: REVIEW_ID }, NOW), null);
+});
+
+test('the card names the host its review opens on, and shares a card link from either of Still’s hosts', () => {
+  const onMiorail = 'https://miorail.xyz/lending/miorail-lending-v3.eyJhIjoxfQ.c2lnbmF0dXJl';
+  assert.equal(stillCardReviewHostV1(URL), 'stills.lat');
+  assert.equal(stillCardReviewHostV1(onMiorail), 'miorail.xyz');
+  assert.equal(stillCardReviewHostV1('not a link'), 'Still');
+  const prepared = stillCardPreparedV1({ ...PURCHASE, reviewUrl: onMiorail })!;
+  assert.equal(prepared.reviewUrl, onMiorail);
+  const share = 'https://miorail.xyz/spend/p/ss1.eyJ2IjoxfQ.c2lnbmF0dXJlLXNpZ25hdHVyZS1zaWduYXR1cmUtc2lnbmE';
+  const status = stillCardStatusV1({ reviewId: REVIEW_ID, state: 'confirmed', purchase: { invoiceStatus: 'complete', invoiceStatusError: null, shareUrl: share } }, prepared, NOW);
+  assert.equal(status?.shareUrl, share);
 });

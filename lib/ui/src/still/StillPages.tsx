@@ -2,6 +2,7 @@ import React, { useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
 import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1 } from '../console/WalletMcpMiorailCard';
+import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../stillOrigin';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillHeader, StillLink } from './StillFrame';
@@ -216,7 +217,7 @@ export interface StillAssistantsModelV1 {
 }
 
 /** Still's own MCP server: five read-only tools, asserted by the deploy. */
-export const STILL_MCP_URL_V1 = 'https://stills.lat/mcp/still';
+export const STILL_MCP_URL_V1 = `${STILL_PUBLIC_ORIGIN_V1}/mcp/still`;
 
 // The addresses are the servers' own. The signed-in one is the Wallet MCP
 // card's, and the plugin file names it too: a page that drifted from it would
@@ -275,7 +276,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         <p className="still-note">
           Connect Miorail’s signed-in server instead. It opens your wallet’s sign-in on first use; then <span className="mono">miorail_prepare_still_loan</span>,{' '}
           <span className="mono">miorail_prepare_still_purchase</span> and <span className="mono">miorail_prepare_still_repay</span> turn what you name into a
-          review link, and your own wallet signs on stills.lat. <span className="mono">miorail_get_still_review_status</span> then tells your assistant
+          review link, and your own wallet signs on {STILL_PUBLIC_HOST_V1}. <span className="mono">miorail_get_still_review_status</span> then tells your assistant
           what happened. In a chat that draws MCP Apps, as Claude does, the review comes as a card that opens it and follows it to Base.
         </p>
         <a className="still-btn sec" href={addToClaudeUrlV1('Miorail', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ margin: '10px 0' }}>Add Miorail to Claude</a>

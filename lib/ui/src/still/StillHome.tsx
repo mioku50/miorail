@@ -12,6 +12,7 @@ import { StillMobile } from './StillMobile';
 import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
 import { composerLinksV1 } from '../console/composerLinks';
 import { ShareLinkV1 } from '../console/shareHost';
+import { STILL_PUBLIC_ORIGIN_V1 } from '../stillOrigin';
 
 void React;
 
@@ -114,12 +115,12 @@ export interface StillHomeModelV1 {
 }
 
 /**
- * A wallet's card, for X or Farcaster. The link is stills.lat/w/<wallet>: its
+ * A wallet's card, for X or Farcaster. The link is Still's /w/<wallet>: its
  * head carries the card, which names the wallet, so the row says so.
  */
 export function StillShareRowV1({ subject, label }: { subject: string; label: string }) {
   const links = composerLinksV1({
-    url: `https://stills.lat/w/${encodeURIComponent(subject)}`,
+    url: `${STILL_PUBLIC_ORIGIN_V1}/w/${encodeURIComponent(subject)}`,
     text: 'Spend without selling: modelled borrowing room on Still, read from Base.',
   });
   return (

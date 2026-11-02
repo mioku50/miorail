@@ -27,3 +27,4 @@ export * from './IntelligenceBudgetPanel';
 export * from './PublicMetricsDashboard';
 export * from './PublicIdentityCheck';
 export * from './console';
+export * from './stillOrigin';

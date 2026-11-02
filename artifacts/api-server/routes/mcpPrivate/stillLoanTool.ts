@@ -3,6 +3,7 @@ import { SPEND_EMAIL_V1 } from '@mioagent/commerce-engine';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import { issueLendingDraftV1 } from '../../lib/lendingDraft.js';
+import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import { spendDraftPaymentV1 } from '../../lib/stillSpendOrders.js';
 import { openSpendOrderV1, stillSpendRuntimeV1 } from '../stillSpend.js';
 import { SPEND_ID_V1 } from '../stillPublic.js';
@@ -98,7 +99,7 @@ export function stillPrepareLoanReviewV1(
     now: deps.now,
   });
   return {
-    reviewUrl: `${deps.origin ?? 'https://stills.lat'}/lending/${issued.draft}`,
+    reviewUrl: `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}/lending/${issued.draft}`,
     reviewId: issued.draftId,
     expiresAt: issued.expiresAt,
     venue,
@@ -206,7 +207,7 @@ export async function stillPreparePurchaseV1(
   });
   const price = usdcTextV1(BigInt(order.priceAtomic));
   return {
-    reviewUrl: `${deps.origin ?? 'https://stills.lat'}/lending/${issued.draft}`,
+    reviewUrl: `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}/lending/${issued.draft}`,
     reviewId: issued.draftId,
     expiresAt: issued.expiresAt,
     venue,
@@ -275,7 +276,7 @@ export function stillPrepareRepayReviewV1(
     now: deps.now,
   });
   return {
-    reviewUrl: `${deps.origin ?? 'https://stills.lat'}/lending/${issued.draft}`,
+    reviewUrl: `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}/lending/${issued.draft}`,
     reviewId: issued.draftId,
     expiresAt: issued.expiresAt,
     venue,

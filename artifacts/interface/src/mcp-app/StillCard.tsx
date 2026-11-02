@@ -1,10 +1,10 @@
 import { useSyncExternalStore } from 'react';
-import type { StillCardPhaseV1 } from './stillCardView';
+import { stillCardReviewHostV1, type StillCardPhaseV1 } from './stillCardView';
 import type { StillCardHostV1, StillCardStoreV1 } from './stillCardStore';
 import { StillCardSign } from './StillCardSign';
 
 // What the person sees in the chat: what the assistant prepared, the one way to
-// review and sign it (stills.lat, in their own wallet), and where it stands.
+// review and sign it (on Still, in their own wallet), and where it stands.
 
 const STEPS_V1: Array<{ label: string; phases: StillCardPhaseV1[] }> = [
   { label: 'Prepared', phases: ['waiting', 'expired', 'open', 'wallet', 'sent', 'unknown', 'confirmed', 'failed'] },
@@ -49,7 +49,7 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
             {state.statusUnread ? <p className="still-note">Still could not read the status just now. This is our failure; it says nothing about the transaction.</p> : null}
             <div className="still-mcp-actions">
               {!settled && phase !== 'expired' && prepared.reviewUrl ? (
-                <button type="button" className="still-btn" onClick={() => void store.openReview()}>Review and sign on stills.lat</button>
+                <button type="button" className="still-btn" onClick={() => void store.openReview()}>Review and sign on {stillCardReviewHostV1(prepared.reviewUrl)}</button>
               ) : null}
               {status?.shareUrl ? <button type="button" className="still-btn" onClick={() => void store.openShare()}>Share the purchase</button> : null}
               {status?.transactionHash ? <button type="button" className="still-btn sec" onClick={() => void store.openTransaction()}>View on BaseScan</button> : null}
@@ -62,7 +62,7 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
             {state.linkRefused ? <p className="still-note">The chat did not open the link. It is in the assistant’s message too.</p> : null}
             {projectId && prepared.reviewUrl && !settled && phase !== 'expired' ? (
               <StillCardSign host={host} projectId={projectId} draft={prepared.reviewUrl.slice(prepared.reviewUrl.indexOf('/lending/') + '/lending/'.length)}
-                onSent={() => store.checkAgain()} />
+                reviewHost={stillCardReviewHostV1(prepared.reviewUrl)} onSent={() => store.checkAgain()} />
             ) : null}
             {settled ? null : (
               <p className="still-note still-mcp-foot">
