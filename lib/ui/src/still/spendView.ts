@@ -165,7 +165,8 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
     const payable = capAtomic !== null && cents * 10_000n <= capAtomic && (!topUp || phone !== null);
     packages.push({ value: row.value, label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share, payable });
   }
-  const needs = topUp ? phone ? null : 'Buying it needs the phone number to top up.'
+  const needs = product.prepayment === true ? 'Bitrefill sells this only after steps such as the player’s game ID, which it does not offer to Still, so it cannot be paid from Still.'
+    : topUp ? phone ? null : 'Buying it needs the phone number to top up.'
     : /mixed|account|email|user/i.test(recipient) && !/esim/i.test(product.id) ? 'Buying it may need an account, an email or a number for the recipient.'
       : null;
   const cap = capAtomic === null ? null : `${(capAtomic / 1_000_000n).toString()} USDC`;
@@ -231,6 +232,7 @@ export function spendOrderErrorV1(message: string): string {
   switch (code) {
     case 'spend_pay_off': return 'Paying from Still is not switched on yet.';
     case 'spend_over_cap': return 'One purchase paid from Still can cost at most 100 USDC.';
+    case 'spend_product_prepayment': return 'Bitrefill sells this only after steps such as the player’s game ID, which it does not offer to Still, so Still cannot pay for it. Nothing was opened.';
     case 'spend_product_not_buyable': return 'This product needs details Still does not send, such as an account or a username.';
     case 'spend_phone_needed': return 'Write the phone number to top up.';
     case 'spend_phone_invalid': return 'Check the phone number: write it with the country code of the operator’s country, as the field shows.';

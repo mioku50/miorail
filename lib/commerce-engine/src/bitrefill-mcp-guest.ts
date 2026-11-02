@@ -60,6 +60,10 @@ export interface SpendProductV1 {
   recipientType: string | null;
   packages: SpendPackageV1[];
   url: string | null;
+  /** Bitrefill sells it only after its prepayment steps (submit-prepayment-step:
+   * a game's player ID and the like), which it does not offer Still's guest
+   * client, so Still cannot buy it. Absent on a value not read from Bitrefill. */
+  prepayment?: boolean;
 }
 
 export type SpendFailureV1 =
@@ -129,6 +133,7 @@ const DetailSchemaV1 = z.object({
   country_code: z.string().optional(),
   in_stock: z.boolean().optional(),
   recipient_type: z.string().optional(),
+  prepayment: z.unknown().optional(),
   packages: z.array(z.object({
     package_value: TextSchemaV1,
     package_currency: z.string().optional(),
@@ -320,6 +325,8 @@ export function createBitrefillGuestCatalogV1(options: BitrefillGuestOptionsV1 =
           recipientType: detail.recipient_type?.slice(0, 40) ?? null,
           packages,
           url: detail.url && /^https:\/\/www\.bitrefill\.com\//.test(detail.url) ? detail.url : null,
+          // Mobile Legends, 2026-11-02: "This product requires bill_payment_id".
+          prepayment: detail.prepayment !== undefined && detail.prepayment !== null,
         },
       };
     },

@@ -155,8 +155,16 @@ describe('Still reads Bitrefill’s catalogue as a guest', () => {
         { value: '10GB, 30 Days', faceCurrency: 'USD', priceUsdc: '13.25' },
         { value: 'Unlimited, 5 Days', faceCurrency: 'USD', priceUsdc: '20.00' },
       ],
-      url: 'https://www.bitrefill.com/bitrefill-esim-germany/',
+      url: 'https://www.bitrefill.com/bitrefill-esim-germany/', prepayment: false,
     } });
+  });
+
+  it('marks a product Bitrefill sells only after its prepayment steps, as Mobile Legends is', async () => {
+    // The block's shape as Bitrefill sent it for mobile-legends-international on 2026-11-02.
+    const prepaid = DETAIL_V1.replace('url: ', 'prepayment:\n  first_form[1]:\n    - id: user_id\n      label: User ID\n      type: text\nurl: ');
+    const { fetchImpl } = bitrefill([token(), () => rpc(prepaid)]);
+    const product = await createBitrefillGuestCatalogV1({ fetchImpl }).product('bitrefill-esim-germany');
+    assert.equal(product.ok && product.value.prepayment, true);
   });
 
   it('reuses its token, asks again once after a 401, and names each failure as ours or theirs', async () => {

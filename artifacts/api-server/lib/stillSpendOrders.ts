@@ -37,7 +37,9 @@ export function spendNeedsPhoneV1(product: Pick<SpendProductV1, 'recipientType'>
  * username. Still sends a phone number, checked against the calling code of
  * the operator's country, and nothing else, so a product needing an account
  * or a username is not bought here. An eSIM reports "mixed" and needs nothing more. */
-export function spendBuyableV1(product: Pick<SpendProductV1, 'id' | 'recipientType' | 'country'>): boolean {
+export function spendBuyableV1(product: Pick<SpendProductV1, 'id' | 'recipientType' | 'country' | 'prepayment'>): boolean {
+  // Bitrefill's prepayment steps are not offered to Still's guest client.
+  if (product.prepayment) return false;
   const recipient = (product.recipientType ?? '').toLowerCase();
   if (recipient === '' || recipient === 'none') return true;
   if (spendNeedsPhoneV1(product)) return spendCallingCodeV1(product.country) !== null;

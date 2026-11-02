@@ -66,6 +66,13 @@ describe('what a loan could pay for, as the page says it', () => {
     assert.equal(odd.product!.packages[0]!.room, 'over');
   });
 
+  it('says a product sold only after Bitrefill’s prepayment steps cannot be paid from Still', () => {
+    const prepaid = spendProductViewV1({ ...GERMANY, product: { ...GERMANY.product, recipientType: 'none', prepayment: true },
+      checkout: { enabled: true, available: false, capAtomic: '100000000', phone: null } }, null).product!;
+    assert.match(prepaid.needs ?? '', /^Bitrefill sells this only after steps such as the player’s game ID/);
+    assert.ok(prepaid.packages.every((row) => !row.payable));
+  });
+
   it('measures a price against a whole room only, and a price over it fills the bar', () => {
     const full = spendProductViewV1(GERMANY, { cents: '1325', complete: true }).product!;
     assert.deepEqual(full.packages.map((row) => row.share), [253 / 1325, 1, 1]);
@@ -178,6 +185,7 @@ describe('paying from Still, as the page says it', () => {
     assert.equal(spendOrderErrorV1('bitrefill_refused: Minimum order is 1 USD'), 'Bitrefill refused this invoice and said: “Minimum order is 1 USD” Nothing was paid.');
     assert.equal(spendOrderErrorV1('bitrefill_refused'), 'Bitrefill refused this invoice. Nothing was paid.');
     assert.equal(spendOrderErrorV1('bitrefill_guest_refused: invalid_client'), 'Bitrefill is not letting Still in right now, so Spend cannot open an invoice for any product. Nothing was paid.');
+    assert.match(spendOrderErrorV1('spend_product_prepayment'), /^Bitrefill sells this only after steps such as the player’s game ID/);
     // Still's own limit is said to be Still's, never Bitrefill's.
     assert.equal(spendOrderErrorV1('spend_rate_limited'), 'Still opens at most six invoices an hour for one wallet, and you have opened six. Try again later; nothing was opened.');
     assert.match(spendOrderErrorV1('spend_phone_needed'), /phone number to top up/);

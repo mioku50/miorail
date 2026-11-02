@@ -261,6 +261,8 @@ export const StillSpendProductOutputV1Schema = z.object({
     name: z.string(),
     country: z.string().nullable(),
     inStock: z.boolean(),
+    /** Bitrefill sells it only after steps such as a game's player ID, which it does not offer to Still: Still cannot buy it. */
+    prepayment: z.boolean(),
     packages: z.array(z.object({ value: z.string(), faceCurrency: z.string().nullable(), priceUsdc: z.string(), withinCap: z.boolean() }).strict()),
   }).strict().optional(),
   readAt: z.string().optional(),
@@ -308,7 +310,7 @@ export async function stillSpendProductV1(args: z.infer<typeof StillSpendProduct
   return StillSpendProductOutputV1Schema.parse({
     outcome: 'product',
     product: {
-      id: product.id, name: product.name, country: product.country, inStock: product.inStock,
+      id: product.id, name: product.name, country: product.country, inStock: product.inStock, prepayment: product.prepayment === true,
       packages: product.packages.map((row) => {
         const price = spendPriceAtomicV1(row.priceUsdc);
         return { value: row.value, faceCurrency: row.faceCurrency, priceUsdc: row.priceUsdc, withinCap: price !== null && price > 0n && price <= STILL_SPEND_CAP_ATOMIC_V1 };

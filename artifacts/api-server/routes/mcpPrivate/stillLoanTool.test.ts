@@ -198,6 +198,16 @@ test('a catalogue Bitrefill could not serve is named as that, not as a refusal',
   assert.equal(opened.length, 0);
 });
 
+test('a product sold only after Bitrefill’s prepayment steps is refused before Bitrefill is asked for an invoice', async (t) => {
+  const { opened } = spend(t);
+  stillSpendRuntimeV1.catalog = () => ({ search: async () => ({ ok: true, value: [] }),
+    product: async () => ({ ok: true, value: { ...ESIM, recipientType: 'none', prepayment: true } }) }) as unknown as ReturnType<typeof stillSpendRuntimeV1.catalog>;
+  await assert.rejects(stillPreparePurchaseV1(IDENTITY,
+    { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW }),
+  (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_product_prepayment' && /such as a game’s player ID/.test(error.message));
+  assert.equal(opened.length, 0);
+});
+
 test('Bitrefill not letting Still in is said to be about every product, in Bitrefill’s own words', async (t) => {
   const { opened } = spend(t);
   stillSpendRuntimeV1.catalog = () => ({ search: async () => ({ ok: true, value: [] }),

@@ -157,6 +157,7 @@ const SPEND_REFUSALS_V1: Readonly<Record<string, string>> = {
   bitrefill_unreachable: 'Still could not reach Bitrefill just now, so no invoice was opened. Nothing was paid; try again in a minute.',
   bitrefill_invalid_response: 'Bitrefill answered in a way Still could not read, so Still kept no invoice. Nothing was paid; try again in a minute.',
   bitrefill_product_not_found: 'Bitrefill has no product with this id. Find it again with still_find_spend; nothing was opened.',
+  spend_product_prepayment: 'Bitrefill sells this only after its prepayment steps, such as a game’s player ID, and it does not offer those steps to Still. Still cannot buy it; nothing was opened.',
   spend_product_not_buyable: 'Bitrefill has it out of stock, or it needs an account or a username, which Still does not send. Nothing was opened.',
   spend_request_invalid: 'This product is not a phone top-up, so it takes no number. Nothing was opened.',
   spend_phone_needed: 'A phone top-up needs the number it goes to, from the user, in international format. Nothing was opened.',

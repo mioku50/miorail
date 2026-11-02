@@ -80,6 +80,7 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   // A fresh quote, not the page's cached one: the invoice is checked against it.
   const product = await stillSpendRuntimeV1.catalog().product(request.productId);
   if (!product.ok) return refuse(product.reason === 'bitrefill_product_not_found' ? 404 : 503, product.reason, product.detail ? { detail: product.detail } : {});
+  if (product.value.prepayment) return refuse(409, 'spend_product_prepayment');
   if (!product.value.inStock || !spendBuyableV1(product.value)) return refuse(409, 'spend_product_not_buyable');
   // A number goes to Bitrefill only for a top-up, and only as a number of the operator's own country.
   const needsPhone = spendNeedsPhoneV1(product.value);
