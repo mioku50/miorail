@@ -34,11 +34,12 @@ import {
 } from './attribution';
 import { CallsStatusPoller, normalizeCall } from './useWalletConfirmAction';
 import { sponsoredGasPlanV1, type SponsoredGasOfferV1, type SponsoredGasStateV1 } from './sponsoredGas';
-import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
+import { useWalletBatchSupportV1, walletCannotSendSentenceV1, walletDidNotSendV1, walletSubmissionFailureMessageV1 } from './walletBatchSupport';
 import {
   SEQUENTIAL_ALLOWANCE_FAILED_V1,
   SEQUENTIAL_ALLOWANCE_UNREAD_V1,
   SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1,
+  SEQUENTIAL_SEND_UNREAD_V1,
   SEQUENTIAL_SWAP_DECLINED_V1,
   SWAP_NEEDS_ONE_BATCH_V1,
   batchFailureInvitesStepsV1,
@@ -93,6 +94,19 @@ export function isWalletRejectionError(error: unknown): boolean {
     (error as { code?: number })?.code === 4001 ||
     ((error as { shortMessage?: string })?.shortMessage?.toLowerCase()?.includes('reject') ?? false)
   );
+}
+
+/**
+ * What a step's send error says happened. Only a refusal the wallet names, the
+ * person's own (4001) or a request it cannot do, means nothing went out. Any
+ * other error may arrive after the wallet already sent the transaction, its
+ * answer lost on the way back (a relay timeout is the usual one): the outcome
+ * is unknown, and the same approval is not offered again. The looser
+ * isWalletRejectionError only picks the words once nothing was sent.
+ */
+export function sequentialSendOutcomeV1(cause: unknown): 'cancelled' | 'failed' | 'submitted_unknown' {
+  if (!walletDidNotSendV1(cause)) return 'submitted_unknown';
+  return isWalletRejectionError(cause) ? 'cancelled' : 'failed';
 }
 
 export interface BlueprintPreflightInput {
@@ -434,7 +448,11 @@ export function useSubmitApprovedBlueprint({
     const stop = async (status: 'failed' | 'cancelled' | 'submitted_unknown' | 'expired', message: string, receipts?: unknown[]) => {
       setStep(null);
       setTxHashes([...sent]);
-      await record({ status: status === 'expired' ? 'cancelled' : status, error: message, ...(receipts ? { receipts } : {}) });
+      // An unknown outcome is recorded against the hashes it has; with none, there
+      // is nothing for the server to bind, and the locked button is the guard.
+      if (!(status === 'submitted_unknown' && sent.length === 0)) {
+        await record({ status: status === 'expired' ? 'cancelled' : status, error: message, ...(receipts ? { receipts } : {}) });
+      }
       setStatus(status);
       setError(message);
     };
@@ -472,11 +490,13 @@ export function useSubmitApprovedBlueprint({
           data: suffix ? concat([call.data, suffix as Hex]) : call.data,
         });
       } catch (cause) {
-        const declined = isWalletRejectionError(cause);
-        if (sent.length === 0) {
-          await stop(declined ? 'cancelled' : 'failed', declined ? 'Cancelled in wallet' : walletSubmissionFailureMessageV1(cause, walletName));
+        const outcome = sequentialSendOutcomeV1(cause);
+        if (outcome === 'submitted_unknown') {
+          await stop('submitted_unknown', SEQUENTIAL_SEND_UNREAD_V1);
+        } else if (sent.length === 0) {
+          await stop(outcome, outcome === 'cancelled' ? 'Cancelled in wallet' : walletSubmissionFailureMessageV1(cause, walletName));
         } else {
-          await stop(declined ? 'cancelled' : 'failed', declined ? SEQUENTIAL_SWAP_DECLINED_V1 : walletSubmissionFailureMessageV1(cause, walletName));
+          await stop(outcome, outcome === 'cancelled' ? SEQUENTIAL_SWAP_DECLINED_V1 : walletSubmissionFailureMessageV1(cause, walletName));
         }
         return;
       }

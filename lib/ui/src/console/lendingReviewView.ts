@@ -106,7 +106,9 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
       (value.errorCode !== null && !text(value.errorCode))) return null;
   return value as unknown as LendingExecutionWireV1;
 }
-export function lendingExecutionCopyV1(state: LendingExecutionStateV1): string {
+export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null): string {
+  // A loan in steps that stopped on purpose is final with what landed, not a revert.
+  if (state === 'failed' && errorCode === 'loan_steps_stopped') return 'Stopped part way: the steps that landed are in place on Base, and the rest was never sent. You can repay or start a new review now.';
   switch (state) {
     case 'ready': return 'The review is ready. Nothing has been submitted.';
     case 'awaiting_wallet': return 'A wallet request was armed. Its outcome is not yet confirmed. This review will not be sent again.';

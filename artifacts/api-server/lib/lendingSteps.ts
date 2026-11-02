@@ -28,6 +28,9 @@ import { stripErc8021SuffixV1 } from './sponsoredGas.js';
 /** A payment step needs this much of Bitrefill's price hold left to land in. */
 export const PAYMENT_LAND_MARGIN_MS_V1 = 30_000;
 
+/** A loan in steps stopped on purpose: what landed is submitted and the rest will never be sent. */
+export const LOAN_STEPS_STOPPED_V1 = 'loan_steps_stopped';
+
 const FALLBACK_MAGIC_V1 = '5792579257925792579257925792579257925792579257925792579257925792';
 
 /** viem's fallback batch id: the transaction hashes, the chain id, the marker. */
@@ -145,14 +148,21 @@ export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwner
   const set = async (state: 'confirmed' | 'failed' | 'unknown', transactionHash: HashV1 | null, proof: Record<string, unknown> | null, errorCode: string | null) =>
     await deps.store.recordVerification({ ...input, expectedVersion: record.version, state, transactionHash, proof, errorCode, now: deps.now() })
       ?? { ...record, state: 'unknown' as const, errorCode: 'loan_execution_changed_while_reading' };
-  const hashes = record.batchId ? sequentialHashesV1(record.batchId) : null;
+  // Stopped on purpose (declined in the wallet, or refused before it was asked): the rest was never sent,
+  // so what landed decides, and a reading that fails keeps the record as it is rather than losing that.
+  const stopped = record.errorCode === LOAN_STEPS_STOPPED_V1;
+  const recorded = record.batchId ? sequentialHashesV1(record.batchId) : [];
+  // A hash the person pasted from their wallet is read as the next step, bound by the same exact-call,
+  // sender and ordering checks as a step Still recorded itself.
+  const hint = record.transactionHash;
+  const hashes = recorded && hint && !recorded.includes(hint) && recorded.length < record.run.calls.length ? [...recorded, hint] : recorded;
   if (!hashes || hashes.length === 0 || hashes.length > record.run.calls.length) return set('unknown', record.transactionHash, null, 'loan_steps_unread');
   const steps: Array<{ hash: HashV1; transaction: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }> = [];
   for (const [index, hash] of hashes.entries()) {
     let receipt: VerifiedReceiptSourceV1 | null, transaction: BaseTransactionSourceV1 | null;
     try { [receipt, transaction] = await Promise.all([deps.reader.getTransactionReceipt(hash), deps.reader.getTransaction(hash)]); }
-    catch { return set('unknown', record.transactionHash, null, 'loan_receipt_unavailable'); }
-    if (!receipt || !transaction || receipt.transactionHash.toLowerCase() !== hash) return set('unknown', record.transactionHash, null, 'loan_receipt_unavailable');
+    catch { return stopped ? record : set('unknown', record.transactionHash, null, 'loan_receipt_unavailable'); }
+    if (!receipt || !transaction || receipt.transactionHash.toLowerCase() !== hash) return stopped ? record : set('unknown', record.transactionHash, null, 'loan_receipt_unavailable');
     const bound = bindLoanStepV1({ execution: record, index, transaction, receipt });
     if (bound.state === 'unknown') return set('unknown', hash, null, bound.errorCode);
     if (bound.state === 'failed') {
@@ -162,9 +172,12 @@ export async function refreshSequentialLoanExecutionV1(input: { owner: LoanOwner
   }
   const fingerprint = stepsFingerprintV1(steps.map((step) => step.receipt));
   if (record.verification?.receiptFingerprint && record.verification.receiptFingerprint !== fingerprint) return set('unknown', steps.at(-1)!.hash, null, 'loan_receipt_changed');
-  // Stopped part way: what landed is kept, and no loan or repayment is claimed.
+  // Stopped part way: what landed is kept, and no loan or repayment is claimed. Stopped on purpose, that is
+  // final and holds nothing; otherwise a later step may still be on its way, and the market stays held.
   if (steps.length < record.run.calls.length) {
-    return set('unknown', steps.at(-1)!.hash, { callsHash: record.run.callsHash, steps: hashes, stepsLanded: steps.length, receiptFingerprint: fingerprint }, 'loan_steps_incomplete');
+    const landed = { callsHash: record.run.callsHash, steps: hashes, stepsLanded: steps.length, receiptFingerprint: fingerprint };
+    return stopped ? set('failed', steps.at(-1)!.hash, { ...landed, stoppedAt: steps.length }, LOAN_STEPS_STOPPED_V1)
+      : set('unknown', steps.at(-1)!.hash, landed, 'loan_steps_incomplete');
   }
   const last = steps.at(-1)!;
   let effect: Awaited<ReturnType<LoanExecutionStatusDepsV1['verifyEffectPosition']>>;

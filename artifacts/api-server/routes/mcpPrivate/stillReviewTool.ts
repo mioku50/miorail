@@ -2,6 +2,7 @@ import { z } from 'zod';
 import type { BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
 
 import type { LoanExecutionStoreV1, LoanExecutionV1, LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
+import { LOAN_STEPS_STOPPED_V1 } from '../../lib/lendingSteps.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import type { SpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { loanExecutionShareV1 } from '../../lib/stillSpendShare.js';
@@ -65,6 +66,9 @@ const NEXT_V1: Readonly<Record<z.infer<typeof StillReviewStatusOutputV1Schema>['
   failed: 'Base shows the transaction failed (errorCode). Open the review link to see what is in place before preparing another.',
 };
 
+/** A loan in steps that stopped on purpose: final with what landed, and not a failed transaction. */
+const STOPPED_NEXT_V1 = 'Stopped part way: the steps that landed are on Base and the rest was never sent, so nothing more happens from this review. Where the loan step landed, the USDC is in the wallet: the user can repay it, or open a new invoice from Spend.';
+
 function usdcTextV1(atomic: string): string {
   const value = BigInt(atomic), fraction = (value % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
   return `${value / 1_000_000n}${fraction ? `.${fraction}` : ''}`;
@@ -109,6 +113,6 @@ export async function stillReviewStatusV1(
     reviewId, state: record.state, operation: facts.operation, venue: facts.venue, collateral: facts.collateralSymbol,
     transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,
     ...(purchase ? { purchase } : {}),
-    next: `${NEXT_V1[record.state]}${paid}`,
+    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1 : NEXT_V1[record.state]}${paid}`,
   };
 }

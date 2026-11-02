@@ -129,8 +129,10 @@ describe('a loan in steps is confirmed from the chain only when every step lande
     assert.equal((await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: record.executionId }, sending, deps(store, receipts, {}))).state, 'awaiting_wallet');
     assert.ok(await store.recordStep({ owner: OWNER, executionId: record.executionId, attemptId, index: 1, transactionHash: hash(2), stop: true, now: NOW }));
     const stopped = (await store.get({ owner: OWNER, executionId: record.executionId }))!;
+    // Stopped on purpose: what landed is final, and nothing holds the market any longer.
     const partial = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: record.executionId }, stopped, deps(store, receipts, {}));
-    assert.deepEqual([partial.state, partial.errorCode, (partial.verification as { stepsLanded: number }).stepsLanded], ['unknown', 'loan_steps_incomplete', 2]);
+    assert.deepEqual([partial.state, partial.errorCode, (partial.verification as { stepsLanded: number; stoppedAt: number }).stepsLanded,
+      (partial.verification as { stoppedAt: number }).stoppedAt], ['failed', 'loan_steps_stopped', 2, 2]);
 
     const second = await armed();
     for (const index of [0, 1]) await second.store.recordStep({ owner: OWNER, executionId: second.record.executionId, attemptId: second.attemptId, index, transactionHash: hash(index + 1), stop: index === 1, now: NOW });
@@ -138,6 +140,66 @@ describe('a loan in steps is confirmed from the chain only when every step lande
     const reverted = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: second.record.executionId },
       (await second.store.get({ owner: OWNER, executionId: second.record.executionId }))!, deps(second.store, receipts, {}));
     assert.deepEqual([reverted.state, reverted.errorCode, (reverted.verification as { failedStep: number }).failedStep], ['failed', 'loan_step_reverted', 1]);
+  });
+
+  it('a later step the wallet may have sent keeps the market held; one never sent frees it for a repayment', async () => {
+    const receipts = new Map([1, 2, 3].map((n) => [hash(n), receipt(n)] as const));
+    // The wallet did not answer for step 3: the two that landed are submitted, and nothing is claimed about the third.
+    const uncertain = await armed();
+    for (const index of [0, 1]) await uncertain.store.recordStep({ owner: OWNER, executionId: uncertain.record.executionId, attemptId: uncertain.attemptId, index, transactionHash: hash(index + 1), now: NOW });
+    await uncertain.store.recordSubmission({ owner: OWNER, executionId: uncertain.record.executionId, attemptId: uncertain.attemptId, outcome: 'submitted',
+      batchId: sequentialBatchIdV1([hash(1), hash(2)]), now: NOW });
+    const held = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: uncertain.record.executionId },
+      (await uncertain.store.get({ owner: OWNER, executionId: uncertain.record.executionId }))!, deps(uncertain.store, receipts, {}));
+    assert.deepEqual([held.state, held.errorCode], ['unknown', 'loan_steps_incomplete']);
+
+    // The person declined step 3 (the payment, in a Spend loan): the steps that landed are the result, and Repay arms.
+    const declined = await armed();
+    for (const index of [0, 1]) await declined.store.recordStep({ owner: OWNER, executionId: declined.record.executionId, attemptId: declined.attemptId, index, transactionHash: hash(index + 1), now: NOW });
+    const stopped = await declined.store.recordSubmission({ owner: OWNER, executionId: declined.record.executionId, attemptId: declined.attemptId, outcome: 'stopped',
+      batchId: sequentialBatchIdV1([hash(1), hash(2)]), now: NOW });
+    assert.deepEqual([stopped?.state, stopped?.errorCode], ['submitted', 'loan_steps_stopped']);
+    const final = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: declined.record.executionId }, stopped!, deps(declined.store, receipts, {}));
+    assert.deepEqual([final.state, final.errorCode, final.transactionHash], ['failed', 'loan_steps_stopped', hash(2)]);
+    const repay = loanReadyFixture();
+    const repayRun = { ...repay, facts: { ...repay.facts, operation: 'repay' as const, venue: 'aave-v4' as const, marketId: SPOKE } };
+    const ready = await declined.store.putReady({ owner: OWNER, draftId: 'repay-after-stop', run: repayRun, now: NOW });
+    const arm = await declined.store.arm({ owner: OWNER, executionId: ready.executionId, callsHash: ready.run.callsHash, signingTermsHash: ready.run.signingTermsHash, now: NOW });
+    assert.equal(arm.ok, true);
+    // While a stopped record could not yet be read, it is kept as it is rather than losing that it stopped.
+    const unread = await armed();
+    await unread.store.recordStep({ owner: OWNER, executionId: unread.record.executionId, attemptId: unread.attemptId, index: 0, transactionHash: hash(1), stop: true, now: NOW });
+    const waiting = (await unread.store.get({ owner: OWNER, executionId: unread.record.executionId }))!;
+    const kept = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: unread.record.executionId }, waiting, deps(unread.store, new Map(), {}));
+    assert.deepEqual([kept.state, kept.errorCode, kept.version], ['submitted', 'loan_steps_stopped', waiting.version]);
+  });
+
+  it('a hash pasted from the wallet is read as the next step, under the same checks as a recorded one', async () => {
+    const { store, record, attemptId } = await armed();
+    assert.ok(await store.recordStep({ owner: OWNER, executionId: record.executionId, attemptId, index: 0, transactionHash: hash(1), now: NOW }));
+    // Step 2 landed, and its answer never reached Still; the person pastes its hash.
+    const before = (await store.get({ owner: OWNER, executionId: record.executionId }))!;
+    const hinted = await store.recordVerification({ owner: OWNER, executionId: record.executionId, expectedVersion: before.version, state: 'unknown',
+      transactionHash: hash(2), proof: null, errorCode: 'loan_transaction_hint_unverified', now: NOW });
+    let reads = 0;
+    const receipts = new Map([1, 2].map((n) => [hash(n), receipt(n)] as const));
+    const counting = deps(store, receipts, {});
+    const reader = counting.reader;
+    counting.reader = { ...reader, async getTransactionReceipt(h) { reads += 1; return reader.getTransactionReceipt(h); } } as LoanExecutionStatusDepsV1['reader'];
+    const read = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: record.executionId }, hinted!, counting);
+    assert.equal(reads, 2);
+    assert.deepEqual([read.state, read.errorCode, (read.verification as { stepsLanded: number }).stepsLanded], ['unknown', 'loan_steps_incomplete', 2]);
+    // A hash that is not the next approved call is not adopted as one.
+    const wrong = await armed();
+    const fresh = (await wrong.store.get({ owner: OWNER, executionId: wrong.record.executionId }))!;
+    await wrong.store.recordSubmission({ owner: OWNER, executionId: wrong.record.executionId, attemptId: wrong.attemptId, outcome: 'unknown', now: NOW });
+    const unknown = (await wrong.store.get({ owner: OWNER, executionId: wrong.record.executionId }))!;
+    const pasted = await wrong.store.recordVerification({ owner: OWNER, executionId: wrong.record.executionId, expectedVersion: unknown.version, state: 'unknown',
+      transactionHash: hash(3), proof: null, errorCode: 'loan_transaction_hint_unverified', now: NOW });
+    assert.ok(fresh && pasted);
+    const refused = await refreshSequentialLoanExecutionV1({ owner: OWNER, executionId: wrong.record.executionId }, pasted!, deps(wrong.store, new Map([[hash(3), receipt(3)]]), {}));
+    assert.equal(refused.state, 'unknown');
+    assert.notEqual(refused.errorCode, 'loan_steps_incomplete');
   });
 
   it('records each step once, in order, for its own attempt only', async () => {

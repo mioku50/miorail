@@ -29,8 +29,10 @@ test('declining a later step keeps what landed, says so, and asks nothing more',
   await page.goto('/lending/miorail-lending-v2.steps.fixture');
   await page.getByRole('button', { name: 'Open step 1 of 3 in your wallet', exact: true }).click();
   await expect(page.getByText('You declined step 2 of 3. Step 1 is in place, and no loan was taken. Open Get money again to go on from here.')).toBeVisible();
-  expect(state.order.filter(entry => entry !== 'review')).toEqual(['arm', 'step:0', 'submission:submitted']);
+  // Declined in the wallet, so the rest was never sent: the stop is told to the server as such.
+  expect(state.order.filter(entry => entry !== 'review')).toEqual(['arm', 'step:0', 'submission:stopped']);
   expect(await sends(page)).toHaveLength(2);
+  await expect(page.getByText(/reverted onchain/)).toHaveCount(0);
   await expect(page.getByRole('button', { name: /Open step/ })).toHaveCount(0);
 });
 

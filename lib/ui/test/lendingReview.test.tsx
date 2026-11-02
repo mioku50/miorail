@@ -4,7 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
 import { describeLendingTermsChangesV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
-import type { LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
+import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
 import { REPAY_COLLATERALS_V1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1 } from '../src/console/repayEntry';
 
@@ -139,6 +139,24 @@ describe('lending review presentation does not call a submission a repayment', (
     assert.match(html, /Check onchain result/);
     assert.equal(html.includes('Confirmed onchain:'), state === 'confirmed');
     assert.equal(lendingExecutionCopyV1(state).length > 0, true);
+  });
+  it('a loan stopped in steps reads as stopped with what landed, never as a revert', () => {
+    const html = render({ execution: { executionId: 'execution_1', state: 'failed', transactionHash: null, errorCode: 'loan_steps_stopped' } });
+    assert.match(html, /Stopped part way: the steps that landed are in place on Base, and the rest was never sent\. You can repay or start a new review now\./);
+    assert.doesNotMatch(html, /reverted onchain/);
+    assert.match(lendingExecutionCopyV1('failed', 'loan_step_reverted'), /reverted onchain/);
+  });
+  it('a later step the wallet may have sent is never said to be unsent', () => {
+    // Steps 1–2 landed, and the wallet did not answer for step 3.
+    const unknown = stepsUnknownV1('borrow', 2, 3);
+    assert.equal(unknown, 'The wallet did not say whether it sent step 3 of 3. Steps 1–2 are in place; check the onchain result before pressing again.');
+    assert.doesNotMatch(unknown, /not sent|no loan was taken/);
+    // The payment of a Spend loan, with the loan in place.
+    const paying = stepsUnknownV1('borrow', 3, 4, true);
+    assert.match(paying, /^The wallet did not say whether it sent the payment to Bitrefill\. The loan is in place/);
+    assert.doesNotMatch(paying, /was not sent/);
+    // Declined, it is unsent, and says so.
+    assert.match(stepsStoppedV1('borrow', 2, 3, 'You declined step 3 of 3.'), /^You declined step 3 of 3\. Steps 1–2 are in place, and no loan was taken\./);
   });
   it('a wallet batch id remains a submission handle', () => {
     const html = render({ batchId: 'batch_1' }); assert.match(html, /not a confirmed blockchain result/); assert.doesNotMatch(html, /Open in your wallet|Confirmed onchain:/);

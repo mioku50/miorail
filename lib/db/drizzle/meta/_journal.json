@@ -659,6 +659,13 @@
       "when": 1793480400000,
       "tag": "0093_still_loan_alerts",
       "breakpoints": true
+    },
+    {
+      "idx": 94,
+      "version": "7",
+      "when": 1793642400000,
+      "tag": "0094_lending_one_invoice",
+      "breakpoints": true
     }
   ]
 }

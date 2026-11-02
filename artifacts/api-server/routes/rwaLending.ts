@@ -10,7 +10,7 @@ import { runMorphoBorrowV1 } from '../lib/morphoBorrowRunner.js';
 import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
 import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
-import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
+import { loanExecutionRuntimeV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
 import { refreshLoanExecutionV1, loanExecutionWireV1 } from '../lib/loanExecutionStatus.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
@@ -188,6 +188,17 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   res.json({ ...lendingWireV1(record.run), executionId: record.executionId });
 });
 
+/** What reads a loan's result from the chain: the same for every route that asks. */
+function lendingStatusDepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>) {
+  return { store, reader: rwaLendingRuntimeV1.reader(), readBatchHashes: rwaLendingRuntimeV1.readBatchHashes,
+    verifyEffectPosition: rwaLendingRuntimeV1.verifyEffectPosition, now: rwaLendingRuntimeV1.now };
+}
+/** Reads a loan in steps that stopped on purpose, so what landed is its result now. A failed read leaves
+ * it as it was, to be read again. */
+async function settleStoppedStepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>, owner: LoanOwnerV1, executionId: string) {
+  return refreshLoanExecutionV1({ owner, executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
+}
+
 rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   const body = z.object({ callsHash: z.string().regex(/^0x[0-9a-f]{64}$/i), signingTermsHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }).strict().safeParse(req.body);
@@ -198,17 +209,32 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   if (paying && (await store.listByPaymentOrder({ owner, orderId: paying.orderId })).some(row => row.executionId !== executionId && row.state !== 'ready')) {
     res.status(409).json({ error: 'spend_invoice_has_attempt' }); return;
   }
-  const result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
-  if (!result.ok) { res.status(409).json({ error: result.refusal }); return; }
+  let result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
+  if (!result.ok && result.refusal === 'execution_active') {
+    // A lock is only as current as its last reading: what holds this market is read from the chain once
+    // (a stopped loan in steps, a batch that landed since), then the same question is asked again.
+    for (const held of await store.listActiveInScope({ owner, executionId })) {
+      await refreshLoanExecutionV1({ owner, executionId: held.executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
+    }
+    result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
+  }
+  if (!result.ok) { res.status(409).json({ error: result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal }); return; }
   res.json({ attemptId: result.attemptId });
 });
 rwaLendingRouter.post('/rwa/lending/executions/:id/submission', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
-  const body = z.object({ attemptId: id, outcome: z.enum(['submitted','unknown','rejected']), batchId: z.string().min(1).max(2000).optional() }).strict().safeParse(req.body);
-  if (!id.safeParse(req.params.id).success || !body.success || (body.data.outcome === 'submitted' && !body.data.batchId)) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  const record = await (await rwaLendingRuntimeV1.store()).recordSubmission({ owner, executionId: String(req.params.id), ...body.data, now: rwaLendingRuntimeV1.now() });
+  const body = z.object({ attemptId: id, outcome: z.enum(['submitted','unknown','rejected','stopped']), batchId: z.string().min(1).max(2000).optional() }).strict().safeParse(req.body);
+  if (!id.safeParse(req.params.id).success || !body.success || ((body.data.outcome === 'submitted' || body.data.outcome === 'stopped') && !body.data.batchId)) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
+  const store = await rwaLendingRuntimeV1.store(), executionId = String(req.params.id);
+  // Only a loan in steps can stop part way; a batch is sent whole or not at all.
+  if (body.data.outcome === 'stopped' && (await store.get({ owner, executionId }))?.run.delivery !== 'sequential') {
+    res.status(409).json({ error: 'lending_attempt_changed' }); return;
+  }
+  const record = await store.recordSubmission({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
   if (!record) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
-  res.json({ executionId: record.executionId, state: record.state });
+  // Stopped on purpose: what landed is read now, so the market is free as soon as the chain says what is in place.
+  const settled = body.data.outcome === 'stopped' ? await settleStoppedStepsV1(store, owner, executionId) : null;
+  res.json({ executionId: record.executionId, state: (settled ?? record).state });
 });
 rwaLendingRouter.post('/rwa/lending/executions/:id/transaction', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
@@ -257,7 +283,10 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
     res.json({ state: 'stopped', refusal: 'loan_step_reverted', detail: `Step ${body.data.index + 1} failed onchain, so the rest was not sent.`, batchId: saved.batchId }); return;
   }
   if (last) { res.json({ state: 'submitted', batchId: saved.batchId }); return; }
-  if (body.data.stop) { res.json({ state: 'stopped', refusal: 'loan_steps_stopped', detail: 'The remaining steps were not sent.', batchId: saved.batchId }); return; }
+  if (body.data.stop) {
+    await settleStoppedStepsV1(store, owner, executionId);
+    res.json({ state: 'stopped', refusal: 'loan_steps_stopped', detail: 'The remaining steps were not sent.', batchId: saved.batchId }); return;
+  }
   // A Spend loan is reviewed again with its payment attached, and before the
   // payment itself Bitrefill's invoice is read again (lendingSteps).
   const payment = saved.run.facts.payment ?? null;
@@ -274,8 +303,9 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
       return status.ok ? { ok: true as const, status: status.value.status } : { ok: false as const, refusal: 'spend_invoice_unread' as const };
     } } : {}) });
   if (!check.ok) {
-    // What landed is submitted, so the record reads it from the chain; nothing more is asked of the wallet.
-    const stopped = await store.recordSubmission({ owner, executionId, attemptId: body.data.attemptId, outcome: 'submitted', batchId: saved.batchId, now: rwaLendingRuntimeV1.now() });
+    // What landed is submitted and the rest is never asked of the wallet, so it is final from the chain.
+    const stopped = await store.recordSubmission({ owner, executionId, attemptId: body.data.attemptId, outcome: 'stopped', batchId: saved.batchId, now: rwaLendingRuntimeV1.now() });
+    if (stopped) await settleStoppedStepsV1(store, owner, executionId);
     res.json({ state: 'stopped', refusal: check.refusal, detail: check.detail, batchId: stopped?.batchId ?? saved.batchId }); return;
   }
   res.json({ state: 'next', index: body.data.index + 1, batchId: saved.batchId });
@@ -283,10 +313,7 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
 rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   if (!id.safeParse(req.params.id).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  const record = await refreshLoanExecutionV1({ owner, executionId: String(req.params.id), refresh: true }, {
-    store: await rwaLendingRuntimeV1.store(), reader: rwaLendingRuntimeV1.reader(), readBatchHashes: rwaLendingRuntimeV1.readBatchHashes,
-    verifyEffectPosition: rwaLendingRuntimeV1.verifyEffectPosition, now: rwaLendingRuntimeV1.now,
-  });
+  const record = await refreshLoanExecutionV1({ owner, executionId: String(req.params.id), refresh: true }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()));
   if (!record) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
   res.json({ ...loanExecutionWireV1(record), facts: record.run.facts,
     transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode,

@@ -117,6 +117,9 @@ export const SEQUENTIAL_ALLOWANCE_FAILED_V1 =
 export const SEQUENTIAL_ALLOWANCE_UNREAD_V1 =
   'The allowance was sent, and its result could not be read within three minutes, so the swap was not sent. Check your wallet’s activity before pressing again.';
 
+export const SEQUENTIAL_SEND_UNREAD_V1 =
+  'The wallet did not say whether it sent this step: its answer never came back. Check your wallet’s activity before anything else, because it may already be on Base.';
+
 export const SEQUENTIAL_EXPIRED_AFTER_ALLOWANCE_V1 =
   'The quote expired while the allowance confirmed, so the swap was not sent. The allowance is in place: go back to routes for a fresh quote, and it will not ask for another.';
 

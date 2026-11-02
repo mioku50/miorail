@@ -261,7 +261,7 @@ export interface AlchemySafeRequestV1 {
   method: 'eth_simulateV1';
   chainId: number;
   from: string;
-  blockTag: 'latest';
+  blockTag: 'latest' | `0x${string}`;
   calls: { to: string; value: string; data: string }[];
 }
 
@@ -273,7 +273,9 @@ export interface AlchemySafeRequestV1 {
 export function buildAlchemySafeRequestV1(
   walletAddress: string,
   calls: readonly ExecutionCallV1[],
+  baseBlockNumber?: number,
 ): AlchemySafeRequestV1 | null {
+  if (baseBlockNumber !== undefined && (!Number.isSafeInteger(baseBlockNumber) || baseBlockNumber <= 0)) return null;
   const mapped: AlchemySafeRequestV1['calls'] = [];
   for (const call of calls) {
     const value = toHexQuantityV1(call.valueWei);
@@ -285,7 +287,7 @@ export function buildAlchemySafeRequestV1(
     method: 'eth_simulateV1',
     chainId: BASE_MAINNET_CHAIN_ID_V1,
     from: walletAddress.toLowerCase(),
-    blockTag: 'latest',
+    blockTag: baseBlockNumber === undefined ? 'latest' : `0x${baseBlockNumber.toString(16)}`,
     calls: mapped,
   };
 }
@@ -413,7 +415,7 @@ export function createEthSimulateV1ProviderV1(
         return failureV1('provider_blueprint_mismatch', 'Blueprint calls do not match their calls hash');
       }
 
-      const safeRequest = buildAlchemySafeRequestV1(request.walletAddress, request.calls);
+      const safeRequest = buildAlchemySafeRequestV1(request.walletAddress, request.calls, request.baseBlockNumber);
       if (!safeRequest) {
         return failureV1('provider_blueprint_mismatch', 'Blueprint call values are not unsigned integers');
       }
@@ -475,7 +477,7 @@ export function createEthSimulateV1ProviderV1(
             traceTransfers: false,
             returnFullTransactionObjects: false,
           },
-          'latest',
+          safeRequest.blockTag,
         ],
       };
 

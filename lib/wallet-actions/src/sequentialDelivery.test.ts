@@ -14,7 +14,7 @@ import {
   sequentialNoticeV1,
   swapDeliveryPlanV1,
 } from './sequentialDelivery';
-import { blueprintSubmitPreflight } from './useSubmitApprovedBlueprint';
+import { blueprintSubmitPreflight, sequentialSendOutcomeV1 } from './useSubmitApprovedBlueprint';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
@@ -152,4 +152,19 @@ test('the page says before the first press that the wallet will be asked once pe
   assert.match(sequentialNoticeV1('Injected'), /^This wallet sends one transaction at a time/);
   assert.match(sequentialNoticeV1(null), /exactly the amount you swap/);
   assert.match(sequentialNoticeV1(null), /Stopping after the allowance leaves it in place/);
+});
+
+test('a step the wallet may have sent is unknown: only a refusal the wallet names sent nothing', () => {
+  const rejected = Object.assign(new Error('User rejected the request.'), { name: 'TransactionExecutionError', cause: { name: 'UserRejectedRequestError', code: 4001 } });
+  assert.equal(sequentialSendOutcomeV1(rejected), 'cancelled');
+  assert.equal(sequentialSendOutcomeV1(Object.assign(new Error('Method not found'), { code: -32601 })), 'failed');
+  // An answer lost on the way back, even in words that read like a refusal.
+  assert.equal(sequentialSendOutcomeV1(new Error('Request expired. Please try again.')), 'submitted_unknown');
+  assert.equal(sequentialSendOutcomeV1(new Error('WebSocket connection closed abnormally')), 'submitted_unknown');
+  assert.equal(sequentialSendOutcomeV1(Object.assign(new Error('Internal JSON-RPC error.'), { code: -32603 })), 'submitted_unknown');
+  // The steps stop there, locked, never as a failure the button offers again.
+  const source = readFileSync(path.join(here, 'useSubmitApprovedBlueprint.ts'), 'utf8');
+  const steps = source.slice(source.indexOf('const sendOneAtATime = async'), source.indexOf('const submit = async'));
+  assert.match(steps, /const outcome = sequentialSendOutcomeV1\(cause\);\s+if \(outcome === 'submitted_unknown'\) \{\s+await stop\('submitted_unknown', SEQUENTIAL_SEND_UNREAD_V1\);/);
+  assert.doesNotMatch(steps, /declined \? 'cancelled' : 'failed'/);
 });

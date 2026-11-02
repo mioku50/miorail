@@ -139,14 +139,15 @@ describe('each step is read from the chain, and the review runs again before the
     assert.equal((await store.get({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: id }))!.state, 'submitted');
   });
 
-  it('stops when the review again refuses, and keeps what landed for the chain read', async () => {
+  it('stops when the review again refuses, and what landed is the result, holding nothing', async () => {
     const { id, attemptId } = await start();
     land(1, APPROVE);
     chain.overLimit = true;
     const stopped = await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
     assert.deepEqual([stopped.body.state, stopped.body.refusal], ['stopped', 'aave_over_still_limit']);
     const record = await store.get({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: id });
-    assert.deepEqual([record!.state, sequentialHashesV1(record!.batchId!)], ['submitted', [hash(1)]]);
+    // Still refused the next step, so it was never asked of the wallet: read now, the stop is final.
+    assert.deepEqual([record!.state, record!.errorCode, sequentialHashesV1(record!.batchId!)], ['failed', 'loan_steps_stopped', [hash(1)]]);
   });
 
   it('refuses a transaction that is not this step’s call, a step out of order, and a stale attempt', async () => {
@@ -229,7 +230,7 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     assert.deepEqual(sequentialHashesV1(done.batchId), [hash(1), hash(2), hash(3), hash(4)]);
   });
 
-  it('does not pay an invoice Bitrefill no longer waits for, and keeps the loan that landed', async () => {
+  it('does not pay an invoice Bitrefill no longer waits for, keeps the loan that landed, and leaves the market free to repay it', async () => {
     const { id, attemptId } = await start();
     land(1, APPROVE); await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
     land(2, SUPPLY); await steps(id, { attemptId, index: 1, transactionHash: hash(2) });
@@ -239,7 +240,9 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
     assert.deepEqual([stopped.state, stopped.refusal], ['stopped', 'spend_invoice_not_unpaid']);
     assert.match(stopped.detail, /^Bitrefill reports this invoice as denied, so the payment was not sent\.$/);
     const record = await store.get({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: id });
-    assert.deepEqual([record!.state, sequentialHashesV1(record!.batchId!)], ['submitted', [hash(1), hash(2), hash(3)]]);
+    assert.deepEqual([record!.state, record!.errorCode, record!.transactionHash, sequentialHashesV1(record!.batchId!)],
+      ['failed', 'loan_steps_stopped', hash(3), [hash(1), hash(2), hash(3)]]);
+    assert.deepEqual(await store.listActiveInScope({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: id }), []);
   });
 
   it('takes no loan for an invoice that stopped waiting before the borrow', async () => {

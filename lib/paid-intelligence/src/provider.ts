@@ -18,6 +18,11 @@ export interface SimulationProviderRequestV1 {
     before: readonly SimulationObservationCallV1[];
     after: readonly SimulationObservationCallV1[];
   };
+  /** Simulate on top of this block rather than the latest one: a second
+   * simulation that must see exactly the state an earlier one measured. A
+   * provider that cannot honour it answers at another block, and the caller
+   * refuses that answer by its block number. */
+  baseBlockNumber?: number;
 }
 
 // Transport-level result only — NOT yet validated against

@@ -72,12 +72,18 @@ export async function attachSpendPaymentV1(
     chainId: 8453, walletAddress: wallet,
     blueprintHash: stableHashV1('still-spend-payment/v1', { wallet, loanCallsHash: run.callsHash, payment }),
     callsHash, calls,
+    // The loan's own figures (its position, Still's limit, the Spoke's code) were proved at its simulated
+    // block, so the loan and the payment are run on that same state, not on a newer one.
+    baseBlockNumber: run.measured.blockNumber - 1,
   };
   const answer = await runSimulationChainV1({
     chain: deps.chain ?? buildSimulationChainV1(deps.env ?? process.env), request, nowIso: now.toISOString(),
     label: 'Still Spend payment simulation', logContext: { callsHash },
   });
   if (!answer.ok) return fail(answer.errorCode, 'The loan and the payment could not be executed together in simulation. Nothing can be signed.');
+  if (answer.response.blockNumber !== run.measured.blockNumber) {
+    return fail('spend_simulation_moved', 'The loan and the payment could not be checked on the same Base state as the loan’s own figures. Nothing can be signed; open the review again.');
+  }
   if (answer.response.status !== 'success') return fail('spend_simulation_reverted', 'The loan and the payment reverted together in simulation. Nothing can be signed.');
   const changes = answer.response.assetChanges;
   if (!changes || changes.status !== 'available') return fail('spend_effects_unread', 'The simulation did not establish every movement of the loan and the payment.');
@@ -121,6 +127,6 @@ export async function attachSpendPaymentV1(
     state: 'ready', facts: paying, calls, callsHash, signingTermsHash, expiresAt: new Date(expiresAt).toISOString(),
     ...(sequential ? { atomicRequired: false as const, delivery: 'sequential' as const } : { atomicRequired: true as const }),
     steps: [...run.steps, { index: transfer.index, to: transfer.to, reading: `Pay Bitrefill: send ${usdcText} to the invoice address ${short}` }],
-    measured: { ...run.measured, blockNumber: answer.response.blockNumber },
+    measured: run.measured,
   };
 }

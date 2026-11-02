@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import { hashApprovedCallsV1 } from '@mioagent/route-domain';
 import { MemoryLoanExecutionStoreV1, type LoanExecutionStoreV1, type LoanOwnerV1 } from './loanExecutionStore.js';
 import { loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_OTHER_WALLET_FIXTURE as OTHER, LOAN_NOW_FIXTURE as NOW, LOAN_TX_FIXTURE as TX } from './loanExecutionTestFixtures.js';
@@ -49,6 +51,31 @@ describe('owned lending execution locks', () => {
     const store = new MemoryLoanExecutionStoreV1(); const first = await ready(store); const second = await ready(store, 'second-draft');
     const results = await Promise.all([first, second].map(row => store.arm({ owner: OWNER, executionId: row.executionId, callsHash: row.run.callsHash, signingTermsHash: row.run.signingTermsHash, now: NOW })));
     assert.equal(results.filter(result => result.ok).length, 1); assert.equal(results.filter(result => !result.ok && result.refusal === 'execution_active').length, 1);
+  });
+  it('reserves one invoice once across every market, even when both reviews arm at the same moment', async () => {
+    const store = new MemoryLoanExecutionStoreV1();
+    const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: `0x${'3'.repeat(40)}`, assets: '2000000',
+      productName: 'Bitrefill eSIM Japan', packageValue: '1GB, 7 Days', faceCurrency: null, expiresAt: new Date(NOW.getTime() + 600_000).toISOString() };
+    const paying = (venue: 'aave-v4' | 'morpho', marketId: string) => { const run = loanReadyFixture(); run.facts = { ...run.facts, operation: 'borrow', venue, marketId, payment }; return run; };
+    const aave = await store.putReady({ owner: OWNER, draftId: 'invoice-on-aave', run: paying('aave-v4', 'aave-v4:NVDAc'), now: NOW });
+    const morpho = await store.putReady({ owner: OWNER, draftId: 'invoice-on-morpho', run: paying('morpho', 'morpho:cbBTC'), now: NOW });
+    const results = await Promise.all([aave, morpho].map(row => store.arm({ owner: OWNER, executionId: row.executionId, callsHash: row.run.callsHash, signingTermsHash: row.run.signingTermsHash, now: NOW })));
+    assert.equal(results.filter(result => result.ok).length, 1);
+    assert.equal(results.filter(result => !result.ok && result.refusal === 'invoice_has_attempt').length, 1);
+    // PostgreSQL holds the same invariant as a unique index, and the store names that index when it refuses.
+    const repo = (relative: string) => process.cwd().endsWith(`${path.sep}artifacts${path.sep}api-server`) ? path.join(process.cwd(), '../..', relative) : path.join(process.cwd(), relative);
+    const migration = readFileSync(repo('lib/db/drizzle/0094_lending_one_invoice.sql'), 'utf8');
+    assert.match(migration, /CREATE UNIQUE INDEX IF NOT EXISTS lending_execution_one_invoice\s+ON lending_executions \(tenant_id, wallet_address, \(run_json->'facts'->'payment'->>'orderId'\)\)\s+WHERE state <> 'ready'/);
+    assert.match(readFileSync(repo('artifacts/api-server/lib/loanExecutionStore.ts'), 'utf8'), /conflictingIndexV1\(error\) === 'lending_execution_one_invoice' \? 'invoice_has_attempt'/);
+  });
+  it('a loan stopped in steps names what landed, and the attempts holding a market can be listed', async () => {
+    const store = new MemoryLoanExecutionStoreV1(); const record = await ready(store);
+    const arm = await store.arm({ owner: OWNER, executionId: record.executionId, callsHash: record.run.callsHash, signingTermsHash: record.run.signingTermsHash, now: NOW });
+    assert.ok(arm.ok);
+    await assert.rejects(store.recordSubmission({ owner: OWNER, executionId: record.executionId, attemptId: arm.ok ? arm.attemptId : '', outcome: 'stopped', now: NOW }), /submission_invalid/);
+    const waiting = await ready(store, 'same-market');
+    assert.deepEqual((await store.listActiveInScope({ owner: OWNER, executionId: waiting.executionId })).map(row => row.executionId), [record.executionId]);
+    assert.deepEqual(await store.listActiveInScope({ owner: otherOwner, executionId: waiting.executionId }), []);
   });
   it('serializes all Aave stock reserves because they share a spoke debt', async () => {
     const store = new MemoryLoanExecutionStoreV1(); const make = (marketId: string) => {

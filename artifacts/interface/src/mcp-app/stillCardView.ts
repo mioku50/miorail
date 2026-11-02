@@ -104,7 +104,9 @@ export function stillCardStatusV1(status: unknown, prepared: Pick<StillCardPrepa
       const settled = prepared.kind !== 'purchase' || word === 'complete' || (purchase !== null && purchase.invoiceStatusError === 'spend_order_forgotten');
       return out('confirmed', done, settled);
     }
-    case 'failed': return out('failed', 'Base shows the transaction failed. Open the review to see what is in place before preparing another.', true);
+    case 'failed': return status.errorCode === 'loan_steps_stopped'
+      ? out('failed', 'Stopped part way: what landed is in place, and the rest was never sent. Open the review to see where it stands.', true)
+      : out('failed', 'Base shows the transaction failed. Open the review to see what is in place before preparing another.', true);
     default: return null;
   }
 }

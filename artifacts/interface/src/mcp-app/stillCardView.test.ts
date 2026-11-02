@@ -38,6 +38,9 @@ test('every state the status tool returns has its own line, and only a finished 
   assert.match(line({ state: 'unknown' })!.line, /This is not a failure/);
   assert.deepEqual([line({ state: 'failed' })?.phase, line({ state: 'failed' })?.settled], ['failed', true]);
   assert.equal(line({ state: 'something_new' }), null);
+  // A loan in steps stopped on purpose is final with what landed, not a failed transaction.
+  assert.match(line({ state: 'failed', errorCode: 'loan_steps_stopped' })!.line, /^Stopped part way: what landed is in place, and the rest was never sent\./);
+  assert.match(line({ state: 'failed', errorCode: 'loan_step_reverted' })!.line, /^Base shows the transaction failed/);
 
   // A confirmed purchase waits for Bitrefill to finish, and shares only Still's own card link.
   const share = 'https://stills.lat/spend/p/ss1.eyJ2IjoxfQ.c2lnbmF0dXJlLXNpZ25hdHVyZS1zaWduYXR1cmUtc2lnbmE';

@@ -35,7 +35,8 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
     'export function AuthProvider({children}) {return children;} export function useAuthGate(){return{showPrivateSurfaces:true,phase:"authenticated",sessionAuthenticated:true};}' }));
   const state = { response: ready() as Record<string, unknown>, reviewReads: 0, order: [] as string[], executionState: 'ready', failRefresh: false, transactionHints: [] as string[],
-    stepsResponse: stepsReady() as Record<string, unknown>, stepAnswers: [] as Array<Record<string, unknown>>, reviewQueries: [] as string[] };
+    stepsResponse: stepsReady() as Record<string, unknown>, stepAnswers: [] as Array<Record<string, unknown>>, reviewQueries: [] as string[],
+    stoppedOnPurpose: false, lastStepHash: null as string | null };
   await page.route('**/api/**', route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
@@ -57,11 +58,13 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     if (path.endsWith('/executions/execution_1/submission') && request.method() === 'POST') {
       const body = request.postDataJSON(); state.order.push(`submission:${body.outcome}`);
       expect(body.attemptId).toBe('attempt_1');
-      state.executionState = body.outcome === 'rejected' ? 'ready' : body.outcome;
+      // As the server: a stop on purpose is final once what landed is read, and holds nothing.
+      state.stoppedOnPurpose = body.outcome === 'stopped';
+      state.executionState = body.outcome === 'rejected' ? 'ready' : body.outcome === 'stopped' ? 'failed' : body.outcome;
       return route.fulfill({ json: { executionId: 'execution_1', state: state.executionState } });
     }
     if (path.endsWith('/executions/execution_1/steps') && request.method() === 'POST') {
-      const body = request.postDataJSON(); state.order.push(`step:${body.index}`);
+      const body = request.postDataJSON(); state.order.push(`step:${body.index}`); state.lastStepHash = body.transactionHash;
       expect(body.attemptId).toBe('attempt_1');
       expect(body.transactionHash).toBe(stepHash(body.index + 1));
       const answer = state.stepAnswers[body.index] ?? (body.index === 2 ? { state: 'submitted', batchId: 'fixture-steps-3' } : { state: 'next', index: body.index + 1, batchId: `fixture-steps-${body.index + 1}` });
@@ -76,7 +79,8 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     if (path.endsWith('/executions/execution_1') && request.method() === 'GET') {
       state.order.push('result');
       return route.fulfill({ json: { executionId: 'execution_1', state: state.executionState,
-        transactionHash: state.executionState === 'confirmed' ? `0x${'9'.repeat(64)}` : null, errorCode: null } });
+        transactionHash: state.executionState === 'confirmed' ? `0x${'9'.repeat(64)}` : state.stoppedOnPurpose ? state.lastStepHash : null,
+        errorCode: state.stoppedOnPurpose ? 'loan_steps_stopped' : null } });
     }
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });

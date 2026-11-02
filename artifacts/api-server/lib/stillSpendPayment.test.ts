@@ -47,7 +47,8 @@ function chain(changes: Change[] = MOVED, status: 'success' | 'reverted' = 'succ
   const requests: Parameters<SimulationProvider['simulate']>[0][] = [];
   const provider: SimulationProvider = { providerId: 'spend-fixture', async simulate(request) {
     requests.push(request);
-    return { ok: true, body: { status, blockNumber: 53_100_002, gasUsed: '300000', stateChanges: [], revertReason: null,
+    // A provider honours the pin: its simulated block is the one on top of the base it was given.
+    return { ok: true, body: { status, blockNumber: request.baseBlockNumber === undefined ? 53_100_002 : request.baseBlockNumber + 1, gasUsed: '300000', stateChanges: [], revertReason: null,
       assetChanges: { status: 'available', unavailableReason: null, changes } } };
   } };
   return { chain: { providers: [provider], batchCapableIds: new Set(['spend-fixture']) }, requests };
@@ -73,7 +74,20 @@ describe('the loan’s USDC pays the invoice in the same batch', () => {
     // One execution of the whole batch, the loan's calls first.
     assert.equal(fixture.requests.length, 1);
     assert.equal(fixture.requests[0]!.callsHash, paid.callsHash);
-    assert.equal(paid.measured.blockNumber, 53_100_002);
+    // On the loan's own state: the facts, the measured block and the combined run are one block.
+    assert.equal(fixture.requests[0]!.baseBlockNumber, 53_099_999);
+    assert.equal(paid.measured.blockNumber, 53_100_000);
+    assert.equal(paid.facts.blockNumber, 53_100_000);
+  });
+
+  it('refuses a loan and payment checked on another block than the loan’s own figures', async () => {
+    const later: SimulationProvider = { providerId: 'spend-later', async simulate() {
+      return { ok: true, body: { status: 'success', blockNumber: 53_100_001, gasUsed: '300000', stateChanges: [], revertReason: null,
+        assetChanges: { status: 'available', unavailableReason: null, changes: MOVED } } };
+    } };
+    const paid = await attachSpendPaymentV1({ walletAddress: WALLET, run: loan(), payment: PAYMENT, now: NOW },
+      { chain: { providers: [later], batchCapableIds: new Set(['spend-later']) } });
+    assert.deepEqual([paid.state, paid.state === 'refused' ? paid.refusal : null], ['refused', 'spend_simulation_moved']);
   });
 
   it('for a loan in steps, keeps the steps: the payment is the last one, and the warning says how it is checked', async () => {

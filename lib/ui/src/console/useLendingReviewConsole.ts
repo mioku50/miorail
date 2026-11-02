@@ -22,7 +22,7 @@ export class LendingStepsStoppedV1 extends Error {
   readonly batchId: string | null;
   constructor(message: string, batchId: string | null) { super(message); this.batchId = batchId; }
 }
-function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null, paying = false): string {
+export function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null, paying = false): string {
   // A Spend loan pays last: with every step but the payment in place, the loan was taken and Bitrefill was not paid.
   if (paying && operation === 'borrow' && index === total - 1) {
     return `${detail ? `${detail} ` : 'The payment to Bitrefill was not sent. '}The loan is in place and the USDC is in your wallet. Repay it, or open Spend for a new invoice.`;
@@ -30,6 +30,14 @@ function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: num
   const kept = index === 1 ? 'Step 1 is in place' : `Steps 1–${index} are in place`;
   const after = operation === 'borrow' ? 'and no loan was taken. Open Get money again to go on from here.' : 'and nothing was repaid. Open Repay again to go on from here.';
   return `${detail ? `${detail} ` : `Step ${index + 1} of ${total} was not sent. `}${kept}, ${after}`;
+}
+/** A later step the wallet may have sent: what landed is in place, and nothing is claimed about the rest until the chain says. */
+export function stepsUnknownV1(operation: 'borrow' | 'repay', index: number, total: number, paying = false): string {
+  if (paying && operation === 'borrow' && index === total - 1) {
+    return 'The wallet did not say whether it sent the payment to Bitrefill. The loan is in place and the USDC is in your wallet. Check the onchain result before paying again or repaying.';
+  }
+  const kept = index === 1 ? 'Step 1 is in place' : `Steps 1–${index} are in place`;
+  return `The wallet did not say whether it sent step ${index + 1} of ${total}. ${kept}; check the onchain result before pressing again.`;
 }
 
 interface StateV1 {
@@ -180,7 +188,7 @@ export function useLendingReviewConsoleV1(input: {
               const arm = await request<{ attemptId?: unknown }>(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/arm`,
                 { method: 'POST', body: JSON.stringify({ callsHash: approved.callsHash, signingTermsHash: approved.signingTermsHash }) });
               if (typeof arm.attemptId !== 'string' || !/^[a-zA-Z0-9_-]{1,100}$/.test(arm.attemptId)) throw new Error('lending_arm_unreadable');
-              const report = async (outcome: 'submitted' | 'unknown' | 'rejected', batchId?: string) => {
+              const report = async (outcome: 'submitted' | 'unknown' | 'rejected' | 'stopped', batchId?: string) => {
                 if (current.current !== identity || !alive.current) throw new Error('lending_identity_changed');
                 await request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
                   { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome, ...(batchId ? { batchId } : {}) }) });
@@ -192,17 +200,27 @@ export function useLendingReviewConsoleV1(input: {
                 // chain and runs the review again before the wallet is asked for the next.
                 const wallet = input.steps, operation = approved.facts.operation, paying = Boolean(approved.facts.payment);
                 let landed: string | null = null;
+                // Left part way (another review, or the page closed): nothing more is sent from this one, so what
+                // landed is its result. Addressed to its own attempt, so no other review is touched.
+                const leave = (batchId: string) => request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
+                  { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome: 'stopped', batchId }) });
                 for (let index = 0; index < calls.length; index++) {
-                  if (current.current !== identity || !alive.current) throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying), landed);
+                  if (current.current !== identity || !alive.current) {
+                    if (landed) await leave(landed).catch(() => undefined);
+                    throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying), landed);
+                  }
                   update({ step: { index: index + 1, total: calls.length, phase: 'wallet' } });
                   let hash: string;
                   try { handedToWallet = true; hash = await wallet.send(calls[index]!); }
                   catch (error) {
                     if (index === 0) { await report(walletDidNotSendV1(error) ? 'rejected' : 'unknown').catch(() => undefined); throw error; }
-                    // What landed stays recorded as submitted; nothing more is asked of the wallet.
-                    if (landed) await report('submitted', landed).catch(() => undefined);
-                    throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length,
-                      borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null, paying), landed);
+                    // What landed stays recorded. A refusal the wallet names sent nothing more, so the rest is
+                    // stopped for good; any other error may have sent this step, and the chain says which.
+                    const unsent = walletDidNotSendV1(error);
+                    if (landed) await report(unsent ? 'stopped' : 'submitted', landed).catch(() => undefined);
+                    throw new LendingStepsStoppedV1(unsent
+                      ? stepsStoppedV1(operation, index, calls.length, borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null, paying)
+                      : stepsUnknownV1(operation, index, calls.length, paying), landed);
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'confirming' } });
                   await wallet.receipt(hash).catch(() => null);

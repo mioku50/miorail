@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import { ExecutionCallV1Schema, hashApprovedCallsV1, type HashV1 } from '@mioagent/route-domain';
 import type { LendingRunV1 } from './lendingReview.js';
-import { sequentialBatchIdV1, sequentialHashesV1 } from './lendingSteps.js';
+import { LOAN_STEPS_STOPPED_V1, sequentialBatchIdV1, sequentialHashesV1 } from './lendingSteps.js';
 
 type ReadyRunV1 = Extract<LendingRunV1, { state: 'ready' }>;
 export interface LoanOwnerV1 { tenantId: string; walletAddress: string }
@@ -26,9 +26,13 @@ export interface LoanExecutionStoreV1 {
   getByDraft(input: { owner: LoanOwnerV1; draftId: string }): Promise<LoanExecutionV1 | null>;
   /** Every loan of this owner that pays one Bitrefill invoice (Still Spend). */
   listByPaymentOrder(input: { owner: LoanOwnerV1; orderId: string }): Promise<LoanExecutionV1[]>;
+  /** The other attempts holding this execution's market (Aave: its whole spoke). */
+  listActiveInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]>;
   arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): Promise<
-    { ok: true; execution: LoanExecutionV1; attemptId: string } | { ok: false; refusal: 'execution_not_ready' | 'execution_active' }>;
-  recordSubmission(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; outcome: 'submitted' | 'unknown' | 'rejected'; batchId?: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
+    { ok: true; execution: LoanExecutionV1; attemptId: string } | { ok: false; refusal: 'execution_not_ready' | 'execution_active' | 'invoice_has_attempt' }>;
+  /** `stopped`: the steps in `batchId` landed and the rest was never sent (declined in the wallet, or refused
+   * before it was asked), so what landed decides the result. */
+  recordSubmission(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; outcome: 'submitted' | 'unknown' | 'rejected' | 'stopped'; batchId?: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
   recordVerification(input: { owner: LoanOwnerV1; executionId: string; expectedVersion: number; state: 'confirmed' | 'failed' | 'unknown'; transactionHash: HashV1 | null;
     proof: Record<string, unknown> | null; errorCode: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
   /** A loan in steps: step `index` landed as `transactionHash`. The hashes so
@@ -59,6 +63,7 @@ function assertReady(input: { owner: LoanOwnerV1; draftId: string; run: ReadyRun
       JSON.stringify(run).length > 512_000) throw new Error('loan_execution_ready_invalid');
 }
 const sameOwner = (row: LoanExecutionV1, owner: LoanOwnerV1) => row.tenantId === owner.tenantId && row.walletAddress === owner.walletAddress;
+const invoiceOf = (row: LoanExecutionV1) => row.run.facts.payment?.orderId ?? null;
 const sameQuestion = (row: LoanExecutionV1, run: ReadyRunV1) => {
   const a = row.run.facts, b = run.facts;
   return a.venue === b.venue && a.operation === b.operation && a.marketId === b.marketId &&
@@ -102,9 +107,17 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     assertOwner(input.owner);
     return [...this.rows.values()].filter(row => sameOwner(row, input.owner) && row.run.facts.payment?.orderId === input.orderId).map(copy);
   }
+  async listActiveInScope(input: { owner: LoanOwnerV1; executionId: string }): Promise<LoanExecutionV1[]> {
+    assertOwner(input.owner); const row = this.rows.get(input.executionId);
+    if (!row || !sameOwner(row, input.owner)) return [];
+    return [...this.rows.values()].filter(other => other.executionId !== row.executionId && sameScope(other, row) && active(other.state)).map(copy);
+  }
   async arm(input: { owner: LoanOwnerV1; executionId: string; callsHash: string; signingTermsHash: string; now: Date }): ReturnType<LoanExecutionStoreV1['arm']> {
     assertOwner(input.owner); const row = this.rows.get(input.executionId);
     if (!row || !sameOwner(row, input.owner) || row.state !== 'ready' || row.run.callsHash !== input.callsHash || row.run.signingTermsHash !== input.signingTermsHash || Date.parse(row.run.expiresAt) <= input.now.getTime()) return { ok: false, refusal: 'execution_not_ready' };
+    // One invoice is paid once, whichever market a review of it chose (index lending_execution_one_invoice).
+    const invoice = invoiceOf(row);
+    if (invoice && [...this.rows.values()].some(other => other.executionId !== row.executionId && sameOwner(other, input.owner) && invoiceOf(other) === invoice && other.state !== 'ready')) return { ok: false, refusal: 'invoice_has_attempt' };
     if ([...this.rows.values()].some(other => other.executionId !== row.executionId && sameScope(other, row) && active(other.state))) return { ok: false, refusal: 'execution_active' };
     row.state = 'awaiting_wallet'; row.attemptId = crypto.randomUUID(); row.updatedAt = input.now.toISOString(); row.version++;
     return { ok: true, execution: copy(row), attemptId: row.attemptId };
@@ -120,6 +133,7 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
       // batch hints remain unknown rather than selecting a winner.
       if (row.errorCode === 'conflicting_batch_hints' || (row.batchId && input.batchId && row.batchId !== input.batchId)) { row.state = 'unknown'; row.errorCode = 'conflicting_batch_hints'; }
       else { row.batchId ??= input.batchId ?? null; row.state = row.batchId ? 'submitted' : 'unknown'; }
+      if (input.outcome === 'stopped' && row.state === 'submitted') row.errorCode = LOAN_STEPS_STOPPED_V1;
     }
     row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
   }
@@ -138,6 +152,7 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     const next = nextStepV1(row, input);
     if (!next) return null;
     row.batchId = next.batchId; if (next.submitted) row.state = 'submitted';
+    if (next.submitted && input.stop === true) row.errorCode = LOAN_STEPS_STOPPED_V1;
     row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
   }
 }
@@ -152,8 +167,8 @@ function nextStepV1(row: LoanExecutionV1, input: Parameters<LoanExecutionStoreV1
 }
 
 function validateSubmission(input: Parameters<LoanExecutionStoreV1['recordSubmission']>[0]): void {
-  if (!validId(input.attemptId) || !['submitted', 'unknown', 'rejected'].includes(input.outcome) ||
-      (input.outcome === 'submitted' && !input.batchId) ||
+  if (!validId(input.attemptId) || !['submitted', 'unknown', 'rejected', 'stopped'].includes(input.outcome) ||
+      ((input.outcome === 'submitted' || input.outcome === 'stopped') && !input.batchId) ||
       (input.batchId != null && (typeof input.batchId !== 'string' || input.batchId.length < 1 || input.batchId.length > 2000))) throw new Error('loan_execution_submission_invalid');
 }
 function validateVerification(input: Parameters<LoanExecutionStoreV1['recordVerification']>[0]): void {
@@ -169,6 +184,9 @@ function rowFromDb(row: Record<string, unknown>): LoanExecutionV1 {
     verification: row.verification_json == null ? null : (typeof row.verification_json === 'string' ? JSON.parse(row.verification_json) : row.verification_json) as Record<string, unknown>,
     errorCode: row.error_code == null ? null : String(row.error_code), version: Number(row.version),
     createdAt: new Date(row.created_at as string | Date).toISOString(), updatedAt: new Date(row.updated_at as string | Date).toISOString() };
+}
+function conflictingIndexV1(error: unknown): string | null {
+  return error && typeof error === 'object' && 'constraint_name' in error ? String(error.constraint_name) : null;
 }
 function uniqueConflict(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && 'code' in error && error.code === '23505');
@@ -216,6 +234,15 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
         AND run_json->'facts'->'payment'->>'orderId' = ${orderId}`;
       return rows.map(rowFromDb);
     },
+    async listActiveInScope({ owner, executionId }) {
+      assertOwner(owner);
+      const rows = await sql`SELECT other.* FROM lending_executions AS self JOIN lending_executions AS other
+          ON other.tenant_id = self.tenant_id AND other.wallet_address = self.wallet_address AND other.venue = self.venue
+          AND (self.venue = 'aave-v4' OR other.market_id = self.market_id)
+        WHERE self.execution_id = ${executionId} AND self.tenant_id = ${owner.tenantId} AND self.wallet_address = ${owner.walletAddress}
+          AND other.execution_id <> self.execution_id AND other.state IN ('awaiting_wallet', 'submitted', 'unknown')`;
+      return rows.map(rowFromDb);
+    },
     async arm({ owner, executionId, callsHash, signingTermsHash, now }) {
       assertOwner(owner); const attemptId = crypto.randomUUID();
       try {
@@ -224,7 +251,10 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
             AND state = 'ready' AND calls_hash = ${callsHash} AND run_json->>'signingTermsHash' = ${signingTermsHash}
             AND expires_at > ${now.toISOString()}::timestamptz RETURNING *`;
         return rows[0] ? { ok: true, execution: rowFromDb(rows[0]), attemptId } : { ok: false, refusal: 'execution_not_ready' };
-      } catch (error) { if (uniqueConflict(error)) return { ok: false, refusal: 'execution_active' }; throw error; }
+      } catch (error) {
+        if (uniqueConflict(error)) return { ok: false, refusal: conflictingIndexV1(error) === 'lending_execution_one_invoice' ? 'invoice_has_attempt' : 'execution_active' };
+        throw error;
+      }
     },
     async recordSubmission(input) {
       assertOwner(input.owner); validateSubmission(input); const { owner } = input; const at = input.now.toISOString();
@@ -236,7 +266,9 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
           state = CASE WHEN error_code = 'conflicting_batch_hints' OR (batch_id IS NOT NULL AND ${input.batchId ?? null}::text IS NOT NULL AND batch_id <> ${input.batchId ?? null}::text) THEN 'unknown'
             WHEN COALESCE(batch_id, ${input.batchId ?? null}::text) IS NULL THEN 'unknown' ELSE 'submitted' END,
           error_code = CASE WHEN batch_id IS NOT NULL AND ${input.batchId ?? null}::text IS NOT NULL AND batch_id <> ${input.batchId ?? null}::text
-            THEN 'conflicting_batch_hints' ELSE error_code END,
+            THEN 'conflicting_batch_hints'
+            WHEN ${input.outcome === 'stopped'}::boolean AND error_code IS DISTINCT FROM 'conflicting_batch_hints' AND COALESCE(batch_id, ${input.batchId ?? null}::text) IS NOT NULL
+            THEN ${LOAN_STEPS_STOPPED_V1}::text ELSE error_code END,
           batch_id = COALESCE(batch_id, ${input.batchId ?? null}::text), updated_at = ${at}::timestamptz, version = version + 1
           WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
             AND attempt_id = ${input.attemptId} AND state IN ('awaiting_wallet', 'submitted', 'unknown') RETURNING *`;
@@ -251,6 +283,7 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
       if (!next) return null;
       // Compare-and-set on the version read, so two step reports cannot both land.
       const updated = await sql`UPDATE lending_executions SET batch_id = ${next.batchId}, state = ${next.submitted ? 'submitted' : 'awaiting_wallet'},
+          error_code = CASE WHEN ${next.submitted && input.stop === true}::boolean THEN ${LOAN_STEPS_STOPPED_V1}::text ELSE error_code END,
           updated_at = ${input.now.toISOString()}::timestamptz, version = version + 1
         WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
           AND attempt_id = ${input.attemptId} AND state = 'awaiting_wallet' AND version = ${row.version} RETURNING *`;

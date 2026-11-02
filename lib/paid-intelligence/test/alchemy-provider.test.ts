@@ -102,6 +102,17 @@ function body(result: { ok: boolean; body?: unknown }) {
 }
 
 describe('createAlchemySimulationProviderV1 — request mapping', () => {
+  it('simulates on top of the block a request names, and on the latest one otherwise', async () => {
+    const records: FetchRecord[] = [];
+    const pinned = await provider(rpcFetch(okResponse([callResult()]), { records })).simulate({ ...requestFor(SINGLE_CALL), baseBlockNumber: 53_100_000 });
+    assert.equal(pinned.ok, true);
+    assert.equal(JSON.parse(String(records[0].init?.body)).params[1], '0x32a3de0');
+    // A block that is not one is refused before anything is asked.
+    const refused = await provider(rpcFetch(okResponse([callResult()]), { records })).simulate({ ...requestFor(SINGLE_CALL), baseBlockNumber: 0 });
+    assert.equal(refused.ok, false);
+    assert.equal(records.length, 1);
+  });
+
   it('maps a single persisted call to eth_simulateV1 with canonical hex quantities', async () => {
     const records: FetchRecord[] = [];
     const result = await provider(rpcFetch(okResponse([callResult()]), { records })).simulate(requestFor(SINGLE_CALL));
