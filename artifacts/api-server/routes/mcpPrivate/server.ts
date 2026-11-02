@@ -62,6 +62,7 @@ import { ReopenCallAgentInputV1Schema, ReopenMineAgentOutputV1Schema } from '@mi
 import { callTheReopenV1, readMyReopenV1, ReopenAgentErrorV1 } from '../../lib/reopenAgentRead.js';
 import { stillMineRuntimeV1 } from '../stillMine.js';
 import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
+import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 // ---------------------------------------------------------------------------
 // T72-B §2 — the authenticated MCP server.
@@ -186,7 +187,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     // The card's own way to the review it signs: hidden from the model by the host.
     server.registerTool(STILL_CARD_LENDING_TOOL_V1, {
       title: 'Still review card: the lending review',
-      description: 'Used by Still’s review card only, never by the assistant: the lending review, its arming, the wallet’s submission and the onchain result, through stills.lat’s own routes as this grant’s wallet.',
+      description: 'Used by Still’s review card only, never by the assistant: the lending review, its arming, the wallet’s submission and the onchain result, through Still’s own routes as this grant’s wallet.',
       inputSchema: StillCardLendingInputV1Schema.shape,
       outputSchema: StillCardLendingOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -224,7 +225,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_prepare_still_loan', {
     title: 'Prepare a Still loan for the owner to review',
-    description: `Prepares ONE Still loan for this connected wallet to review: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC, WETH or native ETH on Morpho, with an optional pledge from the wallet and an exact USDC amount. Returns a link, never a call: the same wallet-bound review Get money opens on stills.lat, valid for five minutes. Opening it reads the position again, applies Still's limit (50% of the protocol's, 40% for a stock while Wall Street is closed or around its earnings) and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for what the wallet could borrow now, and never pick an amount or collateral the user did not name. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow.`,
+    description: `Prepares ONE Still loan for this connected wallet to review: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC, WETH or native ETH on Morpho, with an optional pledge from the wallet and an exact USDC amount. Returns a link, never a call: the same wallet-bound review Get money opens on ${STILL_PUBLIC_HOST_V1}, valid for five minutes. Opening it reads the position again, applies Still's limit (50% of the protocol's, 40% for a stock while Wall Street is closed or around its earnings) and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for what the wallet could borrow now, and never pick an amount or collateral the user did not name. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow.`,
     inputSchema: StillPrepareLoanReviewInputV1Schema.shape,
     outputSchema: StillPrepareLoanReviewOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
@@ -243,7 +244,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_prepare_still_purchase', {
     title: 'Prepare a Still purchase for the owner to review',
-    description: `Opens ONE Bitrefill invoice for this connected wallet, exactly as stills.lat/spend opens it, and prepares the Still loan that pays it: the loan borrows exactly the invoice's price in USDC and pays it in the same transaction. Find the product and its package with still_find_spend and still_spend_product first, and use only the product, package, email, number and collateral the USER named. Returns a link, never a call: the same wallet-bound review Spend opens, valid for five minutes, while Bitrefill holds the price for about fifteen. Opening it reads the position again, applies Still's limit and simulates the exact calls before the user's own wallet opens; an unpaid invoice simply lapses. A product whose still_spend_product answer says prepayment true cannot be bought through Still: Bitrefill sells it only after steps such as a game's player ID, which it does not offer to Still. At most 100 USDC a purchase and six opened invoices an hour per wallet: these are Still's limits, not Bitrefill's, and a refused invoice does not count. A refusal names whose it is: Bitrefill's own words, Still's limit or Miorail's rate limit on this connection. The email and a top-up's number go to Bitrefill only, are never logged and are not repeated back; the number stays with the open invoice for its owner, as on the page. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow or to buy. Not offered to US persons.`,
+    description: `Opens ONE Bitrefill invoice for this connected wallet, exactly as ${STILL_PUBLIC_HOST_V1}/spend opens it, and prepares the Still loan that pays it: the loan borrows exactly the invoice's price in USDC and pays it in the same transaction. Find the product and its package with still_find_spend and still_spend_product first, and use only the product, package, email, number and collateral the USER named. Returns a link, never a call: the same wallet-bound review Spend opens, valid for five minutes, while Bitrefill holds the price for about fifteen. Opening it reads the position again, applies Still's limit and simulates the exact calls before the user's own wallet opens; an unpaid invoice simply lapses. A product whose still_spend_product answer says prepayment true cannot be bought through Still: Bitrefill sells it only after steps such as a game's player ID, which it does not offer to Still. At most 100 USDC a purchase and six opened invoices an hour per wallet: these are Still's limits, not Bitrefill's, and a refused invoice does not count. A refusal names whose it is: Bitrefill's own words, Still's limit or Miorail's rate limit on this connection. The email and a top-up's number go to Bitrefill only, are never logged and are not repeated back; the number stays with the open invoice for its owner, as on the page. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow or to buy. Not offered to US persons.`,
     inputSchema: StillPreparePurchaseInputV1Schema.shape,
     outputSchema: StillPreparePurchaseOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -259,7 +260,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_prepare_still_repay', {
     title: 'Prepare a Still repayment for the owner to review',
-    description: `Prepares ONE repayment of this connected wallet's Still loan, for the owner to review: an exact USDC amount, or all of it ("all") up to a maximum the user agreed to, since interest moves the exact debt. The loan is named by its collateral: a stock token on Aave V4, cbBTC or WETH on Morpho. Returns a link, never a call: the same wallet-bound review Repay opens on stills.lat, valid for five minutes. Opening it reads the loan again and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for the debt, and never pick an amount the user did not name.`,
+    description: `Prepares ONE repayment of this connected wallet's Still loan, for the owner to review: an exact USDC amount, or all of it ("all") up to a maximum the user agreed to, since interest moves the exact debt. The loan is named by its collateral: a stock token on Aave V4, cbBTC or WETH on Morpho. Returns a link, never a call: the same wallet-bound review Repay opens on ${STILL_PUBLIC_HOST_V1}, valid for five minutes. Opening it reads the loan again and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for the debt, and never pick an amount the user did not name.`,
     inputSchema: StillPrepareRepayInputV1Schema.shape,
     outputSchema: StillPrepareRepayOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

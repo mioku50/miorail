@@ -5,6 +5,7 @@ import { logger } from '@mioagent/utils';
 import { rwaLendingRouter } from '../rwaLending.js';
 import { McpAuditUnavailableError, recordAuditV1 } from './audit.js';
 import type { McpPrivateIdentityV1 } from './session.js';
+import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 // ---------------------------------------------------------------------------
 // The review card's own way to the lending review, as the grant's wallet.
@@ -78,7 +79,7 @@ export async function stillCardLendingV1(identity: McpPrivateIdentityV1, args: z
     } catch (error) {
       if (!(error instanceof McpAuditUnavailableError)) throw error;
       logger.warn('Still card review withheld: the release could not be audited', { tenantId: identity.tenantId });
-      return { status: 503, body: { error: 'lending_unavailable', detail: 'Still could not record this review, so it was not handed to the card. Open it on stills.lat instead.' }, wallet };
+      return { status: 503, body: { error: 'lending_unavailable', detail: `Still could not record this review, so it was not handed to the card. Open it on ${STILL_PUBLIC_HOST_V1} instead.` }, wallet };
     }
   }
   return { ...answer, wallet };

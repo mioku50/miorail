@@ -121,9 +121,11 @@ for (const width of [390, 1280]) {
     await nav.getByRole('link', { name: 'More', exact: true }).click();
     await expect(page).toHaveURL(/\/more$/);
     await expect(page.getByRole('main').getByText('0x1111…1111', { exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByText(/Wallet MCP/)).toHaveCount(0);
     await page.getByRole('link', { name: /Still for assistants/ }).click();
     await expect(page).toHaveURL(/\/assistants$/);
-    await expect(page.getByText('Use the Miorail plugin for Wallet MCP: https://miorail.xyz/wallet-mcp/miorail.md', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Add to Claude', exact: true })).toBeVisible();
+    await expect(page.getByRole('main').getByText(/Wallet MCP/)).toHaveCount(0);
     await expect(nav.getByRole('link', { name: 'More', exact: true })).toHaveAttribute('aria-current', 'page');
 
     // A console page, in the same frame: its title from the breadcrumb, the five places beside it.

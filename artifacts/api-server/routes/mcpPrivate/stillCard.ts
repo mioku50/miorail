@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 // ---------------------------------------------------------------------------
 // Still's review card in an assistant's chat (MCP Apps, io.modelcontextprotocol/ui).
@@ -65,7 +66,7 @@ export const stillCardRuntimeV1 = {
 export function registerStillCardV1(server: McpServer): void {
   server.registerResource('still-review-card', STILL_CARD_URI_V1, {
     title: 'Still review card',
-    description: 'What an assistant prepared through Still, a button to review and sign it on stills.lat, and where it stands.',
+    description: `What an assistant prepared through Still, a button to review and sign it on ${STILL_PUBLIC_HOST_V1}, and where it stands.`,
     mimeType: STILL_CARD_MIME_V1,
   }, async (uri) => ({
     contents: [{ uri: uri.href, mimeType: STILL_CARD_MIME_V1, text: await stillCardRuntimeV1.html(),

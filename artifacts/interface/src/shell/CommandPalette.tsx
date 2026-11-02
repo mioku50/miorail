@@ -32,7 +32,7 @@ export function CommandPalette() {
       <div className="w-[560px] bg-panel rounded-[18px] shadow-lg overflow-hidden" onClick={(e) => e.stopPropagation()}>
         <Command label="Command Palette">
           <Command.Input
-            placeholder="Find a page… Home, Assets, Agent, Wallet MCP"
+            placeholder="Find a page… Home, Assets, Agent, Stocks"
             className="w-full border-none outline-none px-[20px] py-[18px] text-[16px] border-b border-line bg-transparent text-ink"
             autoFocus
           />

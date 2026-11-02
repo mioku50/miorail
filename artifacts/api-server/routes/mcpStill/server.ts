@@ -18,6 +18,7 @@ import {
   stillWhatIfV1,
 } from './tools.js';
 import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
+import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 // ---------------------------------------------------------------------------
 // Still's own MCP server, at /mcp/still: five tools and nothing else.
@@ -41,9 +42,9 @@ export const STILL_MCP_VERSION_V1 = '1.1.0';
 
 export const STILL_MCP_TOOLS_V1 = ['get_still_terms', 'still_check_wallet', 'still_what_if', 'still_find_spend', 'still_spend_product'] as const;
 
-export const STILL_MCP_INSTRUCTIONS_V1 = `Still: spend without selling. Still answers how much a Base wallet could borrow in USDC against its tokenized stocks (Coinbase AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, TSLAc), cbBTC and ETH without selling them, how safe its loans are, and what a price move, more borrowing, a repayment or a deposit would do. Every figure is read from Base at one block by the same engine as stills.lat.
+export const STILL_MCP_INSTRUCTIONS_V1 = `Still: spend without selling. Still answers how much a Base wallet could borrow in USDC against its tokenized stocks (Coinbase AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, TSLAc), cbBTC and ETH without selling them, how safe its loans are, and what a price move, more borrowing, a repayment or a deposit would do. Every figure is read from Base at one block by the same engine as Still's own pages.
 
-Still is not a lender. The loans live in Aave V4 (stocks) and Morpho (cbBTC, WETH), under the wallet. Still lends at 50% of the protocol's own limit, and at 40% for a stock while Wall Street is closed and around its earnings report. This server only reads: it prepares, signs and sends nothing. A loan is reviewed and approved on stills.lat, in the owner's own wallet.
+Still is not a lender. The loans live in Aave V4 (stocks) and Morpho (cbBTC, WETH), under the wallet. Still lends at 50% of the protocol's own limit, and at 40% for a stock while Wall Street is closed and around its earnings report. This server only reads: it prepares, signs and sends nothing. A loan is reviewed and approved on Still's site (${STILL_PUBLIC_HOST_V1}), in the owner's own wallet.
 
 Five tools:
 1. get_still_terms: the shares and windows in force now. No wallet needed.
@@ -52,7 +53,7 @@ Five tools:
 4. still_find_spend: what a Still loan could pay for at Bitrefill, for one country: eSIM data plans, phone top-ups and gift cards.
 5. still_spend_product: one of them, with each package's price in USDC and whether Still can pay for it now.
 
-To buy one, the owner connects Miorail's signed-in server (https://miorail.xyz/mcp/private): miorail_prepare_still_purchase opens the invoice they chose and returns the review of the loan that pays it, which their own wallet signs on stills.lat.
+To buy one, the owner connects Miorail's signed-in server (https://miorail.xyz/mcp/private): miorail_prepare_still_purchase opens the invoice they chose and returns the review of the loan that pays it, which their own wallet signs on ${STILL_PUBLIC_HOST_V1}.
 
 Say what a report says at its block and time, and do not repeat its figures later as if current. null means unread, never zero; headline.complete false means "at least". chain_unavailable is our failure, never an empty wallet. Never advise anyone to borrow, buy or sell: Still's limit is not a recommendation. Not offered to US persons.`;
 
@@ -86,7 +87,7 @@ export function createStillMcpServerV1(): McpServer {
 
   server.registerTool('still_check_wallet', {
     title: 'What a Base wallet could borrow through Still',
-    description: 'Reads one Base wallet, by 0x address or by Basename or ENS name, the way stills.lat/w/<wallet> does: what it could borrow now without selling (headline.availableCents, cents of USDC, rounded down), each eligible holding with its price and Still’s factor, each existing loan with its debt, safety (marginBps: how far all collateral may fall together before liquidation; state calm, watch, act or liquidation) and liquidation prices, and what could not be read. Public chain state only. Outcomes other than report: invalid_subject, name_not_found, names_unavailable and chain_unavailable; the last two are our failure, never a fact about the wallet.',
+    description: `Reads one Base wallet, by 0x address or by Basename or ENS name, the way ${STILL_PUBLIC_HOST_V1}/w/<wallet> does: what it could borrow now without selling (headline.availableCents, cents of USDC, rounded down), each eligible holding with its price and Still’s factor, each existing loan with its debt, safety (marginBps: how far all collateral may fall together before liquidation; state calm, watch, act or liquidation) and liquidation prices, and what could not be read. Public chain state only. Outcomes other than report: invalid_subject, name_not_found, names_unavailable and chain_unavailable; the last two are our failure, never a fact about the wallet.`,
     inputSchema: StillCheckWalletInputV1Schema,
     outputSchema: StillCheckWalletOutputV1Schema,
     annotations: READ_ONLY,
@@ -127,7 +128,7 @@ export function registerStillSpendReadsV1(server: McpServer): void {
 
   server.registerTool('still_find_spend', {
     title: 'What a Still loan could pay for',
-    description: 'Searches Bitrefill’s catalogue, the one stills.lat/spend shows, for what a Still loan could pay for in one country: eSIM data plans (esim), phone top-ups (refill) or gift cards (giftcard), narrowed by a brand or word. Returns each product’s id, name, the countries it serves and whether Bitrefill has it in stock; read one product with still_spend_product for its packages and prices. checkout.enabled says whether Still pays Bitrefill from a loan on this server now. outcome unavailable is Bitrefill’s failure or ours, never an empty catalogue. Cuba, Iran, North Korea and Syria are not offered. It reads only: nothing is bought, reserved or opened.',
+    description: `Searches Bitrefill’s catalogue, the one ${STILL_PUBLIC_HOST_V1}/spend shows, for what a Still loan could pay for in one country: eSIM data plans (esim), phone top-ups (refill) or gift cards (giftcard), narrowed by a brand or word. Returns each product’s id, name, the countries it serves and whether Bitrefill has it in stock; read one product with still_spend_product for its packages and prices. checkout.enabled says whether Still pays Bitrefill from a loan on this server now. outcome unavailable is Bitrefill’s failure or ours, never an empty catalogue. Cuba, Iran, North Korea and Syria are not offered. It reads only: nothing is bought, reserved or opened.`,
     inputSchema: StillFindSpendInputV1Schema,
     outputSchema: StillFindSpendOutputV1Schema,
     annotations: READ_ONLY,

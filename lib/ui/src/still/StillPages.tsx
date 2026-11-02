@@ -1,7 +1,7 @@
 import React, { useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
-import { MIORAIL_CONNECTED_MCP_URL_V1, MIORAIL_WALLET_MCP_PROMPT_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1 } from '../console/WalletMcpMiorailCard';
+import { MIORAIL_CONNECTED_MCP_URL_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1 } from '../console/WalletMcpMiorailCard';
 import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../stillOrigin';
 import type { AssetsViewV1 } from './assetsView';
 import type { SkyStateV1 } from './skyState';
@@ -136,12 +136,12 @@ const MORE_GROUPS_V1: ReadonlyArray<{ label: string; rows: ReadonlyArray<{ title
       { title: 'Today', blurb: 'The classic first screen: balances, cash-out and your Aave card', href: '/today', icon: 'today' },
     ],
   },
+  // Wallet MCP is Coinbase's wallet, not a place of Still's, and people took it
+  // for one (operator, 2026-11-03). Its page stays at /extensions for the links
+  // that lead into it; More no longer offers it.
   {
     label: 'Assistants',
-    rows: [
-      { title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: STILL_ASSISTANTS_V1.path, icon: 'assistant' },
-      { title: 'Wallet MCP', blurb: 'Coinbase’s wallet in your assistant, with Miorail inside', href: '/extensions', icon: 'wallet' },
-    ],
+    rows: [{ title: 'Still for assistants', blurb: 'Connect Claude, ChatGPT, Cursor or Codex', href: STILL_ASSISTANTS_V1.path, icon: 'assistant' }],
   },
 ];
 
@@ -281,10 +281,6 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         </p>
         <a className="still-btn sec" href={addToClaudeUrlV1('Miorail', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ margin: '10px 0' }}>Add Miorail to Claude</a>
         <CopyRow label="the signed-in Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />
-      </div>
-      <div className="still-section">
-        <div className="still-eyebrow">One line, for an assistant with Wallet MCP</div>
-        <CopyRow label="the plugin line" value={MIORAIL_WALLET_MCP_PROMPT_V1} />
       </div>
       <p className="still-section still-note">
         Still measures; it gives no advice and never signs. Borrowing creates debt, and collateral can be liquidated. Tokenized stocks are

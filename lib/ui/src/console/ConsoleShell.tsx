@@ -203,11 +203,11 @@ export interface ConsoleHeaderModelV1 {
  * one a deployment can quietly point somewhere else while still shipping this
  * licence. A fork that moves its source changes this line, in a diff.
  *
- * Deliberately the CURRENT repository name. GitHub redirects an old name to a
- * new one and not the other way round, so this keeps working across a rename;
- * pointing it at the intended future name would 404 until the day of.
+ * The public repository. The source was published as a new one rather than
+ * by renaming mioku50/mioagent, which stayed private, so that name answers a
+ * visitor with a 404 (found 2026-11-03).
  */
-export const MIORAIL_SOURCE_URL_V1 = 'https://github.com/mioku50/mioagent';
+export const MIORAIL_SOURCE_URL_V1 = 'https://github.com/mioku50/miorail';
 
 /**
  * What pages still hand the status bar. Since 2026-10-03 the bar renders none

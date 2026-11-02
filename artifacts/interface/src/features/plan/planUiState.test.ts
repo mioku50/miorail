@@ -75,8 +75,9 @@ test('no payment surface became a tab', () => {
 test('no command carries an emoji or the retired vocabulary', () => {
   const commands = appCommands();
   // Still's own places lead; all existing console destinations remain available.
+  // Wallet MCP is Coinbase's: its page stays, the palette does not offer it.
   for (const section of CONSOLE_SECTIONS_V1) {
-    assert.equal(commands.filter((command) => command.path === CONSOLE_SECTION_TABLE_V1[section].path).length, 1);
+    assert.equal(commands.filter((command) => command.path === CONSOLE_SECTION_TABLE_V1[section].path).length, section === 'extensions' ? 0 : 1, section);
   }
   for (const [label, path] of [['Home', '/'], ['Assets', '/assets'], ['Agent', '/agent'], ['More', '/more'], ['For assistants', '/assistants']]) {
     assert.equal(commands.filter((command) => command.path === path && command.label === label).length, 1);

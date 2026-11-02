@@ -102,10 +102,10 @@ Each answer carries its Base block and what it holds fixed, and the page shows t
 
 **Shared links.** `/w/<address or name>` is the public check any visitor can run on Home, with a head of its own: a link shared on X or Farcaster previews as that wallet's card (`/api/public/still/card.png`, 1200×630 and 3:2), drawn with the same mobile as Home. After a loan that paid Bitrefill is confirmed onchain, its owner can share the purchase: `/spend/p/<token>` previews as a card naming the product, its USDC price, the collateral and the protocol (`/api/public/still/spend-card.png`). The server signs that claim in the link itself, so it needs no table and cannot be forged, and it names no wallet, transaction or block: with the price, any of them would lead to the wallet. Every other page previews as Still's own card.
 
-**For assistants.** Still has its own MCP server, `https://stills.lat/mcp/still`: read-only, no sign-in, five tools. `get_still_terms` gives the shares and windows in force now. `still_check_wallet` reads any Base wallet by address or name, the same public check as `/w/<wallet>`. `still_what_if` applies a price move, a draw, a repayment or a deposit and answers with the Agent's own engine. `still_find_spend` and `still_spend_product` read what a loan could pay for at Bitrefill, the same catalogue and prices as Spend. It prepares and signs nothing, under the public check's limit of thirty calls a minute per client:
+**For assistants.** Still has its own MCP server, `https://miorail.xyz/mcp/still`: read-only, no sign-in, five tools. `get_still_terms` gives the shares and windows in force now. `still_check_wallet` reads any Base wallet by address or name, the same public check as `/w/<wallet>`. `still_what_if` applies a price move, a draw, a repayment or a deposit and answers with the Agent's own engine. `still_find_spend` and `still_spend_product` read what a loan could pay for at Bitrefill, the same catalogue and prices as Spend. It prepares and signs nothing, under the public check's limit of thirty calls a minute per client:
 
 ```bash
-claude mcp add --transport http still https://stills.lat/mcp/still
+claude mcp add --transport http still https://miorail.xyz/mcp/still
 ```
 
 In Grok, add the same address at grok.com/connectors as a custom connector.

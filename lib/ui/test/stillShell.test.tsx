@@ -441,9 +441,13 @@ describe('the frame', () => {
     for (const label of ['Home', 'Assets', 'Agent', 'Stocks', 'More']) assert.match(html, new RegExp(`>${label}</a>`));
     assert.match(html, /href="\/stocks" aria-current="page"/);
     assert.match(html, /Source \(AGPL-3\.0\)/);
+    // The public repository: mioku50/mioagent is private and answers a visitor with a 404.
+    assert.match(html, /href="https:\/\/github\.com\/mioku50\/miorail"/);
     assert.match(html, /data-sky="day"/);
     const more = renderToStaticMarkup(<StillMore model={{ sky: skyStateV1({ now: WEDNESDAY }), account: null, signInHref: '/signin' }} />);
-    for (const label of ['Swap AI', 'Discover', 'Watch', 'Wallet MCP', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
+    for (const label of ['Swap AI', 'Discover', 'Watch', 'Still for assistants', 'Activity', 'Settings']) assert.match(more, new RegExp(label));
+    // Wallet MCP is Coinbase's: its page stays (the path map above), More does not offer it.
+    assert.doesNotMatch(more, /Wallet MCP|href="\/extensions"/);
     // Investigate, B20 controls and Radar are one page now, and More has one door to it.
     assert.match(more, /href="\/watch"/);
     assert.doesNotMatch(more, /href="\/(?:investigate|radar|portfolio)"/);
@@ -463,7 +467,7 @@ describe('the frame', () => {
     assert.match(assistants, /href="https:\/\/claude\.ai\/new\?q=What%20are%20Still%E2%80%99s%20terms%20this%20weekend%3F"/);
     assert.match(assistants, /href="https:\/\/chatgpt\.com\/\?q=/);
     assert.match(assistants, /grok\.com\/connectors: New Connector, Custom/);
-    assert.match(assistants, /Use the Miorail plugin for Wallet MCP: https:\/\/miorail\.xyz\/wallet-mcp\/miorail\.md/);
+    assert.doesNotMatch(assistants, /Wallet MCP/);
     assert.match(assistants, /not offered to US persons/);
   });
 });

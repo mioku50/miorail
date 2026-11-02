@@ -36,8 +36,10 @@ export interface AppCommand {
 }
 
 /** Every section, Settings included — the palette is where you reach the things
- * that are deliberately not in the header. */
-export const CONSOLE_COMMANDS: AppCommand[] = CONSOLE_SECTIONS_V1.map((section: ConsoleSectionV1) => {
+ * that are deliberately not in the header. All but Wallet MCP, which is
+ * Coinbase's wallet and not a place of Still's (operator, 2026-11-03): its page
+ * stays at its path for the links that lead into it. */
+export const CONSOLE_COMMANDS: AppCommand[] = CONSOLE_SECTIONS_V1.filter((section) => section !== 'extensions').map((section: ConsoleSectionV1) => {
   const definition = CONSOLE_SECTION_TABLE_V1[section];
   return {
     id: definition.id,

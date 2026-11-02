@@ -14,6 +14,7 @@ import { EXAMPLE, calendar, snapshot, universe } from '../../../../lib/still-eng
 import { publicStillRuntimeV1, resetStillCardCachesV1 } from '../stillPublic.js';
 import { STILL_MCP_TOOLS_V1, STILL_MCP_VERSION_V1, createStillMcpServerV1 } from './server.js';
 import { stillMcpRouter, stillMcpRuntimeV1 } from './index.js';
+import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const here = __dirname;
@@ -80,6 +81,19 @@ test('five tools under Still’s own name, every one a read, and instructions th
   assert.match(instructions, /null means unread, never zero/);
   assert.match(instructions, /Not offered to US persons/);
   assert.match(instructions, /miorail_prepare_still_purchase opens the invoice they chose/);
+});
+
+// While stills.lat does not resolve (since 2026-11-02) Still's links go to
+// miorail.xyz. What this server tells an assistant names that same door, so an
+// assistant never sends someone to the dark one.
+test('the instructions and every tool name the host Still’s links use', async (t) => {
+  fixture(t, { check: async () => assert.fail('listing reads no wallet') });
+  const client = await connected(t);
+  const { tools } = await client.listTools();
+  const words = [client.getInstructions() ?? '', ...tools.map((tool) => tool.description ?? '')].join('\n');
+  assert.ok(words.includes(`${STILL_PUBLIC_HOST_V1}/w/<wallet>`));
+  assert.ok(words.includes(`${STILL_PUBLIC_HOST_V1}/spend`));
+  assert.equal(words.includes('stills.lat'), STILL_PUBLIC_HOST_V1 === 'stills.lat');
 });
 
 // Bitrefill's answers below are synthetic, in the guest client's own shapes.

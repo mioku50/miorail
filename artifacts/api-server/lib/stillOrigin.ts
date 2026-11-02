@@ -7,3 +7,5 @@
  * artifacts/interface/index.html; stillOrigin.test.ts keeps the three equal.
  */
 export const STILL_PUBLIC_ORIGIN_V1 = 'https://miorail.xyz';
+/** The same, as the MCP servers name it to an assistant. */
+export const STILL_PUBLIC_HOST_V1 = STILL_PUBLIC_ORIGIN_V1.replace(/^https:\/\//, '');

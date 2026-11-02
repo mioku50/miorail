@@ -10,6 +10,7 @@ import { EXAMPLE, calendar, reverted, snapshot, universe } from '../../../../lib
 import { stillMineRouter, stillMineRuntimeV1 } from '../stillMine.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { MiorailGetMyStillResultV1Schema } from './outputs.js';
+import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const OTHER = `0x${'2'.repeat(40)}` as const;
@@ -65,6 +66,17 @@ test('the protocol advertises the wallet-free read, the source block and partial
   assert.match(tool.description ?? '', /reading\.block/);
   assert.ok(tool.outputSchema?.properties?.report);
   assert.doesNotMatch(JSON.stringify(tool.outputSchema), /approvalCalldata|transactionRequest|signedTransaction/);
+});
+
+// While stills.lat does not resolve (since 2026-11-02) a review link goes to
+// miorail.xyz; the tools that hand one over name that same door.
+test('every tool names the host Still’s review links use', async t => {
+  fixture(t, async () => assert.fail('listing does not read the wallet'));
+  const client = await connected(t);
+  const words = (await client.listTools()).tools.map(entry => entry.description ?? '').join('\n');
+  assert.ok(words.includes(`Get money opens on ${STILL_PUBLIC_HOST_V1},`));
+  assert.ok(words.includes(`${STILL_PUBLIC_HOST_V1}/spend`));
+  assert.equal(words.includes('stills.lat'), STILL_PUBLIC_HOST_V1 === 'stills.lat');
 });
 
 test('web and Connected read the same owner’s report with unchanged integers, provenance and cache flag', async t => {
