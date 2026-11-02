@@ -76,6 +76,20 @@ describe('the loan’s USDC pays the invoice in the same batch', () => {
     assert.equal(paid.measured.blockNumber, 53_100_002);
   });
 
+  it('for a loan in steps, keeps the steps: the payment is the last one, and the warning says how it is checked', async () => {
+    const fixture = chain(), run = { ...loan(), atomicRequired: false as const, delivery: 'sequential' as const };
+    const paid = await attachSpendPaymentV1({ walletAddress: WALLET, run, payment: PAYMENT, now: NOW }, { chain: fixture.chain });
+    assert.equal(paid.state, 'ready', paid.state === 'refused' ? paid.detail : '');
+    if (paid.state !== 'ready') return;
+    assert.deepEqual([paid.atomicRequired, paid.delivery, paid.calls.at(-1)!.callType], [false, 'sequential', 'transfer']);
+    assert.match(paid.facts.warnings.at(-1)!, /^The last step then pays 13\.25 USDC to Bitrefill’s invoice address 0x3333…3333 for Bitrefill eSIM Germany · 10GB, 30 Days\. Still reads the invoice again before your wallet is asked for it/);
+    // The whole sequence is still executed once, as the wallet will send it.
+    assert.equal(fixture.requests.length, 1);
+    // A batch stays a batch.
+    const batch = await attachSpendPaymentV1({ walletAddress: WALLET, run: loan(), payment: PAYMENT, now: NOW }, { chain: chain().chain });
+    assert.deepEqual(batch.state === 'ready' ? [batch.atomicRequired, batch.delivery] : null, [true, undefined]);
+  });
+
   it('refuses a payee that is the wallet, a token or a contract the loan calls', async () => {
     for (const payTo of [WALLET, ADDRESSES.usdc.toLowerCase(), ADDRESSES.aaveSpoke.toLowerCase(), STOCK, '0x0000000000000000000000000000000000000000']) {
       const paid = await attachSpendPaymentV1({ walletAddress: WALLET, run: loan(), payment: { ...PAYMENT, payTo }, now: NOW }, { chain: chain().chain });

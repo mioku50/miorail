@@ -1,5 +1,6 @@
 import { stableHashV1, type HashV1 } from '@mioagent/route-domain';
 import type { VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
+import { ADDRESSES } from '@mioagent/still-engine/registry';
 import type { BaseTransactionSourceV1 } from './baseReceiptReader.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
 import type { LendingRunV1 } from './lendingReview.js';
@@ -23,6 +24,9 @@ import { stripErc8021SuffixV1 } from './sponsoredGas.js';
 // The hashes travel as one viem EIP-5792 fallback batch id, as swaps in steps
 // do, so the batch poller and the store need nothing new.
 // ---------------------------------------------------------------------------
+
+/** A payment step needs this much of Bitrefill's price hold left to land in. */
+export const PAYMENT_LAND_MARGIN_MS_V1 = 30_000;
 
 const FALLBACK_MAGIC_V1 = '5792579257925792579257925792579257925792579257925792579257925792';
 
@@ -71,18 +75,54 @@ export function remainingQuestionV1(record: LoanExecutionV1, landed: number): Le
     collateralSupplyAssets: supplied ? '0' : f.collateralSupplyAssets };
 }
 
+/** Bitrefill's invoice as it stands now, for a loan that pays it (Still Spend). */
+export type LoanStepInvoiceReadV1 = { ok: true; status: string } | { ok: false; refusal: 'spend_pay_off' | 'spend_order_unread' | 'spend_invoice_unread' };
+
+const INVOICE_UNREAD_V1: Record<'spend_pay_off' | 'spend_order_unread' | 'spend_invoice_unread', string> = {
+  spend_pay_off: 'Paying from Still was turned off on this server',
+  spend_order_unread: 'Still no longer holds this Bitrefill invoice (it expired, or the server restarted)',
+  spend_invoice_unread: 'Bitrefill’s invoice could not be read just now',
+};
+
 /**
  * Before the next step: the same review, from the chain as it is now. It must
  * be ready, and its fresh calls must be exactly the approved calls not yet
  * sent; anything else stops the steps, and the person is told why.
+ *
+ * A loan that pays a Bitrefill invoice reads the invoice before every step: a
+ * loan is not taken for an invoice that no longer waits. The payment goes
+ * last; when only the payment is left the loan has landed and a fresh review
+ * would borrow again, so the invoice, the exact transfer and the time left on
+ * Bitrefill's price are what is checked.
  */
 export async function recheckLoanStepsV1(input: {
   record: LoanExecutionV1;
   landed: number;
   review: (question: LendingQuestionV1) => Promise<LendingRunV1>;
+  invoice?: () => Promise<LoanStepInvoiceReadV1>;
+  now?: Date;
 }): Promise<{ ok: true } | { ok: false; refusal: string; detail: string }> {
   const remaining = input.record.run.calls.slice(input.landed);
   if (remaining.length === 0) return { ok: true };
+  const payment = input.record.run.facts.payment;
+  if (payment) {
+    const last = remaining.length === 1;
+    const tail = last ? 'so the payment was not sent.' : 'so nothing more was sent.';
+    if (last) {
+      const call = remaining[0]!;
+      if (call.callType !== 'transfer' || call.to.toLowerCase() !== ADDRESSES.usdc.toLowerCase() || call.recipient?.toLowerCase() !== payment.payTo.toLowerCase() ||
+          call.amountAtomic !== payment.assets) {
+        return { ok: false, refusal: 'spend_payment_step_mismatch', detail: 'The last step is not exactly the payment you approved, so it was not sent.' };
+      }
+      if (Date.parse(payment.expiresAt) - (input.now ?? new Date()).getTime() < PAYMENT_LAND_MARGIN_MS_V1) {
+        return { ok: false, refusal: 'spend_invoice_expiring', detail: `Bitrefill’s hold on this price is ending, ${tail}` };
+      }
+    }
+    const read: LoanStepInvoiceReadV1 = input.invoice ? await input.invoice() : { ok: false, refusal: 'spend_invoice_unread' };
+    if (!read.ok) return { ok: false, refusal: read.refusal, detail: `${INVOICE_UNREAD_V1[read.refusal]}, ${tail}` };
+    if (read.status !== 'unpaid') return { ok: false, refusal: 'spend_invoice_not_unpaid', detail: `Bitrefill reports this invoice as ${read.status.replace(/_/g, ' ')}, ${tail}` };
+    if (last) return { ok: true };
+  }
   const fresh = await input.review(remainingQuestionV1(input.record, input.landed));
   if (fresh.state !== 'ready') return { ok: false, refusal: fresh.refusal, detail: fresh.detail };
   const same = fresh.calls.length === remaining.length && fresh.calls.every((call, index) => {

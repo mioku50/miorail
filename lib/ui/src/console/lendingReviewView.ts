@@ -81,9 +81,11 @@ export function parseLendingReviewWireV1(value: unknown): LendingReviewWireV1 | 
       !object(value.measured) || !text(value.measured.provider) || !integer(value.measured.blockNumber) ||
       typeof value.measured.loanDeltaAssets !== 'string' || !/^-?(0|[1-9][0-9]{0,77})$/.test(value.measured.loanDeltaAssets)) return null;
   const native = value.facts.nativeFunding;
-  // Steps only where the server grants them: an Aave V4 action without native ETH or a payment.
+  // Steps only where the server grants them: an Aave V4 action without native
+  // ETH; a Spend payment goes last, to Base USDC.
   const delivered = value.atomicRequired === true ? value.delivery === undefined
-    : value.atomicRequired === false && value.delivery === 'sequential' && value.facts.venue === 'aave-v4' && !native && !value.facts.payment;
+    : value.atomicRequired === false && value.delivery === 'sequential' && value.facts.venue === 'aave-v4' && !native &&
+      (!value.facts.payment || (value.calls as { to: string }[]).at(-1)?.to.toLowerCase() === USDC_BASE);
   if (!delivered) return null;
   const calls=value.calls as {to:string;value:string;data:string}[];
   if (!native) {

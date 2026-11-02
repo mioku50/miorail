@@ -22,7 +22,11 @@ export class LendingStepsStoppedV1 extends Error {
   readonly batchId: string | null;
   constructor(message: string, batchId: string | null) { super(message); this.batchId = batchId; }
 }
-function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null): string {
+function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null, paying = false): string {
+  // A Spend loan pays last: with every step but the payment in place, the loan was taken and Bitrefill was not paid.
+  if (paying && operation === 'borrow' && index === total - 1) {
+    return `${detail ? `${detail} ` : 'The payment to Bitrefill was not sent. '}The loan is in place and the USDC is in your wallet. Repay it, or open Spend for a new invoice.`;
+  }
   const kept = index === 1 ? 'Step 1 is in place' : `Steps 1–${index} are in place`;
   const after = operation === 'borrow' ? 'and no loan was taken. Open Get money again to go on from here.' : 'and nothing was repaid. Open Repay again to go on from here.';
   return `${detail ? `${detail} ` : `Step ${index + 1} of ${total} was not sent. `}${kept}, ${after}`;
@@ -182,10 +186,10 @@ export function useLendingReviewConsoleV1(input: {
                 if (!input.steps) { await report('rejected').catch(() => undefined); throw new Error('lending_steps_unavailable'); }
                 // One transaction per call. After each lands, Still reads it from the
                 // chain and runs the review again before the wallet is asked for the next.
-                const wallet = input.steps, operation = approved.facts.operation;
+                const wallet = input.steps, operation = approved.facts.operation, paying = Boolean(approved.facts.payment);
                 let landed: string | null = null;
                 for (let index = 0; index < calls.length; index++) {
-                  if (current.current !== identity || !alive.current) throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null), landed);
+                  if (current.current !== identity || !alive.current) throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying), landed);
                   update({ step: { index: index + 1, total: calls.length, phase: 'wallet' } });
                   let hash: string;
                   try { handedToWallet = true; hash = await wallet.send(calls[index]!); }
@@ -194,7 +198,7 @@ export function useLendingReviewConsoleV1(input: {
                     // What landed stays recorded as submitted; nothing more is asked of the wallet.
                     if (landed) await report('submitted', landed).catch(() => undefined);
                     throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length,
-                      borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null), landed);
+                      borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null, paying), landed);
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'confirming' } });
                   await wallet.receipt(hash).catch(() => null);
@@ -211,7 +215,7 @@ export function useLendingReviewConsoleV1(input: {
                   if (answer.state === 'next') { landed = batch; continue; }
                   // A step that failed onchain is not in place; one that landed before a refused review is.
                   const inPlace = answer.refusal === 'loan_step_reverted' ? index : index + 1;
-                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null), batch);
+                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null, paying), batch);
                 }
                 throw new LendingStepsStoppedV1('The steps ended without a final answer. Check the onchain result before pressing again.', landed);
               }

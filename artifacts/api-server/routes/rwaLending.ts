@@ -117,11 +117,12 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   if (!verified.ok) { res.status(verified.refusal.endsWith('wrong_wallet') ? 403 : 400).json({ error: verified.refusal }); return; }
   const claims = verified.claims, q = claims.question;
   // A wallet that cannot send a batch asks for steps. They are granted only
-  // for an Aave V4 loan or repayment: native ETH and a Spend payment need one transaction.
+  // for an Aave V4 loan or repayment, a Spend payment included (it goes last);
+  // native ETH and Morpho need one transaction.
   const sequential = req.query.delivery === 'sequential';
-  if (sequential && (claims.venue !== 'aave-v4' || (q.operation === 'borrow' && (q.payment !== undefined || q.nativeFundingAssets !== undefined)))) {
+  if (sequential && (claims.venue !== 'aave-v4' || (q.operation === 'borrow' && q.nativeFundingAssets !== undefined))) {
     res.json({ state: 'refused', refusal: 'lending_steps_unavailable', detail: q.operation === 'borrow' && q.payment !== undefined
-      ? 'Paying Bitrefill from a loan goes only as one transaction, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.'
+      ? 'Paying Bitrefill from a loan against cbBTC, WETH or ETH goes only as one transaction, and this wallet sends one at a time. Nothing was sent. Choose a stock, or use Base Account, Coinbase Wallet (Base App) or MetaMask.'
       : 'A loan against cbBTC, WETH or ETH goes only as one transaction for now, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.' });
     return;
   }
@@ -257,8 +258,21 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
   }
   if (last) { res.json({ state: 'submitted', batchId: saved.batchId }); return; }
   if (body.data.stop) { res.json({ state: 'stopped', refusal: 'loan_steps_stopped', detail: 'The remaining steps were not sent.', batchId: saved.batchId }); return; }
-  const check = await recheckLoanStepsV1({ record: saved, landed: body.data.index + 1,
-    review: question => rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, delivery: 'sequential' }) });
+  // A Spend loan is reviewed again with its payment attached, and before the
+  // payment itself Bitrefill's invoice is read again (lendingSteps).
+  const payment = saved.run.facts.payment ?? null;
+  const check = await recheckLoanStepsV1({ record: saved, landed: body.data.index + 1, now: rwaLendingRuntimeV1.now(),
+    review: async question => {
+      const run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, delivery: 'sequential' });
+      return payment ? rwaLendingRuntimeV1.attachPayment({ walletAddress: owner.walletAddress, run, payment, now: rwaLendingRuntimeV1.now() }) : run;
+    },
+    ...(payment ? { invoice: async () => {
+      if (!rwaLendingRuntimeV1.spendEnabled()) return { ok: false as const, refusal: 'spend_pay_off' as const };
+      const order = rwaLendingRuntimeV1.spendOrders.get(owner, payment.orderId);
+      if (!order || order.payTo !== payment.payTo || order.priceAtomic !== payment.assets) return { ok: false as const, refusal: 'spend_order_unread' as const };
+      const status = await rwaLendingRuntimeV1.spendCheckout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+      return status.ok ? { ok: true as const, status: status.value.status } : { ok: false as const, refusal: 'spend_invoice_unread' as const };
+    } } : {}) });
   if (!check.ok) {
     // What landed is submitted, so the record reads it from the chain; nothing more is asked of the wallet.
     const stopped = await store.recordSubmission({ owner, executionId, attemptId: body.data.attemptId, outcome: 'submitted', batchId: saved.batchId, now: rwaLendingRuntimeV1.now() });

@@ -4,12 +4,15 @@ import express from 'express';
 import request from 'supertest';
 import { hashApprovedCallsV1, type ExecutionCallV1, type HashV1 } from '@mioagent/route-domain';
 import type { VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
+import type { BitrefillGuestCheckoutV1, SpendInvoiceStatusNameV1 } from '@mioagent/commerce-engine';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import type { BaseTransactionSourceV1 } from '../lib/baseReceiptReader.js';
 import type { LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
+import type { LendingPaymentV1 } from '../lib/lendingDraft.js';
+import { createSpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
 import { sequentialHashesV1 } from '../lib/lendingSteps.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
@@ -163,5 +166,96 @@ describe('each step is read from the chain, and the review runs again before the
     sent.get(hash(1))!.receipt.status = 'reverted';
     const r = await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
     assert.deepEqual([r.body.state, r.body.refusal], ['stopped', 'loan_step_reverted']);
+  });
+});
+
+describe('a Spend loan goes in steps too, and pays Bitrefill last, only while the invoice waits', () => {
+  const ORDER_ID = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
+  const PAY_TO = '0x3333333333333333333333333333333333333333' as `0x${string}`;
+  const TRANSFER: ExecutionCallV1 = { index: 3, callType: 'transfer', to: ADDRESSES.usdc.toLowerCase() as `0x${string}`, valueWei: '0', data: '0xa9059cbb33',
+    asset: null, amountAtomic: '180000', recipient: PAY_TO, spender: null };
+  let invoiceStatus: SpendInvoiceStatusNameV1, reads: number;
+
+  beforeEach(() => {
+    invoiceStatus = 'unpaid'; reads = 0;
+    const orders = createSpendOrderStoreV1({ now: () => NOW });
+    orders.put({ orderId: ORDER_ID, tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET, productId: 'bitrefill-esim-germany', productName: 'Bitrefill eSIM Germany',
+      packageValue: '1GB, 7 Days', faceCurrency: 'USD', priceAtomic: '180000', payTo: PAY_TO, refillTo: null, createdAt: NOW.toISOString(),
+      expiresAt: new Date(NOW.getTime() + 15 * 60_000).toISOString(), accessToken: 'access-token-0123456789', paymentLink: null });
+    const checkout = (): BitrefillGuestCheckoutV1 => ({
+      async createInvoice() { throw new Error('no invoice is opened here'); },
+      async readInvoice() { reads++; return { ok: true, value: { status: invoiceStatus, accessLink: null, esimInstallLink: null } }; },
+    });
+    Object.assign(rwaBorrowRuntimeV1, { spendOrders: orders, spendEnabled: () => true });
+    Object.assign(rwaLendingRuntimeV1, { spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout,
+      // The payment, appended as the real one does: last, and keeping the loan's delivery.
+      attachPayment: async ({ run, payment }: { run: LendingRunV1; payment: LendingPaymentV1 }) => {
+        if (run.state !== 'ready') return run;
+        const calls = [...run.calls, { ...TRANSFER, index: run.calls.length }];
+        return { ...run, calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${'33'.repeat(32)}`, facts: { ...run.facts, payment },
+          steps: [...run.steps, { index: run.calls.length, to: TRANSFER.to, reading: 'Pay Bitrefill' }] };
+      } });
+  });
+
+  async function start() {
+    const r = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+      .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '180000', collateralSupplyAtomic: '1000000', spendOrderId: ORDER_ID });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const ready = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(r.body.reviewUrl).slice('/lending/'.length)}`).query({ delivery: 'sequential' })).body;
+    assert.equal(ready.state, 'ready', JSON.stringify(ready));
+    assert.deepEqual([ready.atomicRequired, ready.delivery, ready.calls.length, ready.facts.payment.payTo], [false, 'sequential', 4, PAY_TO]);
+    const armed = await request(app()).post(`/api/route-intelligence/rwa/lending/executions/${ready.executionId}/arm`)
+      .send({ callsHash: ready.callsHash, signingTermsHash: ready.signingTermsHash });
+    assert.equal(armed.status, 200);
+    return { id: ready.executionId as string, attemptId: armed.body.attemptId as string };
+  }
+
+  it('reviews the loan steps with the payment attached, reads the invoice before paying, and submits after the payment', async () => {
+    const { id, attemptId } = await start();
+    land(1, APPROVE);
+    assert.equal((await steps(id, { attemptId, index: 0, transactionHash: hash(1) })).body.state, 'next');
+    land(2, SUPPLY);
+    assert.equal((await steps(id, { attemptId, index: 1, transactionHash: hash(2) })).body.state, 'next');
+    const readsBefore = reads;
+    land(3, BORROW);
+    const pay = (await steps(id, { attemptId, index: 2, transactionHash: hash(3) })).body;
+    assert.deepEqual([pay.state, pay.index], ['next', 3]);
+    // Before the payment only the invoice is read: a fresh review would have borrowed again.
+    assert.equal(reads, readsBefore + 1);
+    assert.equal(asked.length, 3);
+    land(4, TRANSFER);
+    const done = (await steps(id, { attemptId, index: 3, transactionHash: hash(4) })).body;
+    assert.equal(done.state, 'submitted');
+    assert.deepEqual(sequentialHashesV1(done.batchId), [hash(1), hash(2), hash(3), hash(4)]);
+  });
+
+  it('does not pay an invoice Bitrefill no longer waits for, and keeps the loan that landed', async () => {
+    const { id, attemptId } = await start();
+    land(1, APPROVE); await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
+    land(2, SUPPLY); await steps(id, { attemptId, index: 1, transactionHash: hash(2) });
+    invoiceStatus = 'denied';
+    land(3, BORROW);
+    const stopped = (await steps(id, { attemptId, index: 2, transactionHash: hash(3) })).body;
+    assert.deepEqual([stopped.state, stopped.refusal], ['stopped', 'spend_invoice_not_unpaid']);
+    assert.match(stopped.detail, /^Bitrefill reports this invoice as denied, so the payment was not sent\.$/);
+    const record = await store.get({ owner: { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET }, executionId: id });
+    assert.deepEqual([record!.state, sequentialHashesV1(record!.batchId!)], ['submitted', [hash(1), hash(2), hash(3)]]);
+  });
+
+  it('takes no loan for an invoice that stopped waiting before the borrow', async () => {
+    const { id, attemptId } = await start();
+    land(1, APPROVE);
+    invoiceStatus = 'payment_detected';
+    const stopped = (await steps(id, { attemptId, index: 0, transactionHash: hash(1) })).body;
+    assert.deepEqual([stopped.state, stopped.refusal, stopped.detail], ['stopped', 'spend_invoice_not_unpaid', 'Bitrefill reports this invoice as payment detected, so nothing more was sent.']);
+  });
+
+  it('still refuses steps for a payment from a crypto loan', async () => {
+    const r = await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+      .send({ collateralTokenAddress: CRYPTO[0]!.token, borrowAmountAtomic: '180000', collateralSupplyAtomic: '0', spendOrderId: ORDER_ID });
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const refused = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${String(r.body.reviewUrl).slice('/lending/'.length)}`).query({ delivery: 'sequential' })).body;
+    assert.deepEqual([refused.state, refused.refusal], ['refused', 'lending_steps_unavailable']);
+    assert.match(refused.detail, /Choose a stock/);
   });
 });

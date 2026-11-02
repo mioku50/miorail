@@ -209,6 +209,10 @@ describe('what Get money says to a wallet that cannot send a batch', () => {
       /^Rabby Wallet sends one transaction at a time, so a loan against a stock goes in steps/);
     assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Injected', asset: 'WETH', paying: false })!,
       /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now\. Choose a stock/);
-    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: null, paying: true })!, /paying Bitrefill from a loan needs the loan and the payment in one/);
+    // A Spend payment goes as the last step of a stock loan, and only in one transaction against crypto.
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: 'NVDAc' as never, paying: true })!,
+      /^Rabby Wallet sends one transaction at a time, so this loan goes in steps and the last one pays Bitrefill\. Still reads the invoice again before that step/);
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: 'cbBTC', paying: true })!,
+      /paying Bitrefill from a loan against cbBTC, WETH or ETH goes only as one transaction\. Choose a stock/);
   });
 });

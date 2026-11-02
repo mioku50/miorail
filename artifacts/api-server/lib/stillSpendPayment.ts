@@ -23,6 +23,11 @@ import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } 
 //
 // The address and the amount come from the signed lending question, which the
 // server wrote from Bitrefill's own answer; never from the browser.
+//
+// For a wallet that cannot send a batch (Rabby; Coinbase Wallet with an
+// imported key) the same calls go as steps, the payment last; the whole
+// sequence is still executed once here, as the wallet will send it, and the
+// server checks the invoice again before the wallet is asked for the payment.
 // ---------------------------------------------------------------------------
 
 export interface SpendPaymentDepsV1 {
@@ -99,18 +104,22 @@ export async function attachSpendPaymentV1(
   const short = `${payTo.slice(0, 6)}…${payTo.slice(-4)}`;
   // A face value says its currency: a top-up of "10" is 10 INR.
   const packageText = payment.faceCurrency && /^\d+(?:\.\d+)?$/.test(payment.packageValue) ? `${payment.packageValue} ${payment.faceCurrency}` : payment.packageValue;
+  const sequential = run.atomicRequired === false;
   const paying: LendingFactsV1 = {
     ...facts,
     payment,
     warnings: [
       ...facts.warnings,
-      `The same transaction then pays ${usdcText} to Bitrefill’s invoice address ${short} for ${payment.productName} · ${packageText}. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund.`,
+      sequential
+        ? `The last step then pays ${usdcText} to Bitrefill’s invoice address ${short} for ${payment.productName} · ${packageText}. Still reads the invoice again before your wallet is asked for it; if Bitrefill no longer waits for this payment, it is not sent and the loan stays yours to repay. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund.`
+        : `The same transaction then pays ${usdcText} to Bitrefill’s invoice address ${short} for ${payment.productName} · ${packageText}. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund.`,
     ],
   };
   const signingTermsHash = stableHashV1('still-spend-signing-terms/v1', { wallet, callsHash, loanSigningTermsHash: run.signingTermsHash, payment });
   const expiresAt = Math.min(Date.parse(run.expiresAt), Date.parse(payment.expiresAt) - STILL_SPEND_REVIEW_MARGIN_MS_V1);
   return {
-    state: 'ready', facts: paying, calls, callsHash, signingTermsHash, expiresAt: new Date(expiresAt).toISOString(), atomicRequired: true,
+    state: 'ready', facts: paying, calls, callsHash, signingTermsHash, expiresAt: new Date(expiresAt).toISOString(),
+    ...(sequential ? { atomicRequired: false as const, delivery: 'sequential' as const } : { atomicRequired: true as const }),
     steps: [...run.steps, { index: transfer.index, to: transfer.to, reading: `Pay Bitrefill: send ${usdcText} to the invoice address ${short}` }],
     measured: { ...run.measured, blockNumber: answer.response.blockNumber },
   };

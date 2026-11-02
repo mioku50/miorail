@@ -272,7 +272,7 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
       { index: 1, to: ADDRESS, reading: 'Repays up to the exact confirmed USDC maximum.' }],
     facts: { ...ready().facts, venue: 'aave-v4' } });
 
-  it('is read only for Aave V4, without native ETH or a payment, and never as a half-batch', () => {
+  it('is read only for Aave V4, without native ETH, and never as a half-batch', () => {
     assert.equal(parseLendingReviewWireV1(stepsBody())?.state, 'ready');
     for (const changed of [
       { facts: { ...stepsBody().facts, venue: 'morpho' as const } },
@@ -282,6 +282,26 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
         productName: 'x', packageValue: '1', faceCurrency: null, expiresAt: NOW } } },
     ]) assert.equal(parseLendingReviewWireV1({ ...stepsBody(), ...changed }), null, JSON.stringify(Object.keys(changed)));
     assert.equal(parseLendingReviewWireV1({ ...ready(), delivery: 'sequential' }), null);
+  });
+
+  it('a Spend loan goes in steps with the payment last, to Base USDC, and says so', () => {
+    const USDC = '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913';
+    const payment = { merchant: 'bitrefill' as const, orderId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', payTo: '0x3333333333333333333333333333333333333333', assets: '3000000',
+      productName: 'Bitrefill eSIM Germany', packageValue: '1GB, 7 Days', faceCurrency: 'USD', expiresAt: '2026-11-01T12:15:00.000Z' };
+    const base = stepsBody();
+    const paying: LendingReadyWireV1 = { ...base, calls: [...base.calls, { to: USDC, data: '0xa9059cbb', value: '0' }],
+      steps: [...base.steps, { index: 2, to: USDC, reading: 'Pay Bitrefill: send 3.00 USDC to the invoice address 0x3333…3333' }],
+      facts: { ...base.facts, operation: 'borrow', requestedAssets: '3000000', maximumDebitAssets: '0', payment } };
+    assert.equal(parseLendingReviewWireV1(paying)?.state, 'ready');
+    const html = render({ body: paying });
+    assert.match(html, /Then pay Bitrefill 3 USDC for Bitrefill eSIM Germany · 1GB, 7 Days, as the last step\./);
+    assert.match(html, /Still reads the invoice again before your wallet is asked for that step; if Bitrefill no longer waits for it, nothing is paid\./);
+    assert.match(html, />Open step 1 of 3 in your wallet</);
+    // A payment whose last step is anything but the Base USDC transfer is not a review.
+    assert.equal(parseLendingReviewWireV1({ ...paying, calls: [...base.calls, { to: ADDRESS, data: '0xa9059cbb', value: '0' }],
+      steps: [...base.steps, { index: 2, to: ADDRESS, reading: 'Pay Bitrefill' }] }), null);
+    // The batch review still says "in the same transaction".
+    assert.match(render({ body: { ...paying, atomicRequired: true, delivery: undefined } as LendingReadyWireV1 }), /, in the same transaction\./);
   });
 
   it('says it goes in steps, opens step one, and shows where the steps stand', () => {
