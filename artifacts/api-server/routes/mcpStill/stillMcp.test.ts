@@ -6,11 +6,12 @@ import express from 'express';
 import request from 'supertest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import type { BitrefillGuestCatalogV1, SpendProductV1 } from '@mioagent/commerce-engine';
 import { computeMirror, type MirrorInput, type MirrorService } from '@mioagent/still-engine';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { EXAMPLE, calendar, snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
-import { publicStillRuntimeV1 } from '../stillPublic.js';
+import { publicStillRuntimeV1, resetStillCardCachesV1 } from '../stillPublic.js';
 import { STILL_MCP_TOOLS_V1, STILL_MCP_VERSION_V1, createStillMcpServerV1 } from './server.js';
 import { stillMcpRouter, stillMcpRuntimeV1 } from './index.js';
 
@@ -53,7 +54,7 @@ async function connected(t: test.TestContext) {
 
 const structured = (result: unknown) => (result as { structuredContent: Record<string, unknown> }).structuredContent;
 
-test('three tools under Still’s own name, every one a read, and instructions that say what it cannot do', async (t) => {
+test('five tools under Still’s own name, every one a read, and instructions that say what it cannot do', async (t) => {
   fixture(t, { check: async () => assert.fail('listing reads no wallet') });
   const client = await connected(t);
   const { tools } = await client.listTools();
@@ -65,6 +66,75 @@ test('three tools under Still’s own name, every one a read, and instructions t
   assert.match(instructions, /This server only reads: it prepares, signs and sends nothing/);
   assert.match(instructions, /null means unread, never zero/);
   assert.match(instructions, /Not offered to US persons/);
+  assert.match(instructions, /miorail_prepare_still_purchase opens the invoice they chose/);
+});
+
+// Bitrefill's answers below are synthetic, in the guest client's own shapes.
+const ESIM: SpendProductV1 = { id: 'bitrefill-esim-japan', name: 'Bitrefill eSIM Japan', country: 'JP', inStock: true, recipientType: 'mixed', url: null,
+  packages: [{ value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80' }, { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00' }] };
+const TOP_UP: SpendProductV1 = { id: 'airtel-india', name: 'Airtel India', country: 'IN', inStock: true, recipientType: 'phone_number', url: null,
+  packages: [{ value: '10', faceCurrency: 'INR', priceUsdc: '0.11' }] };
+
+function catalogue(t: test.TestContext, catalog: Partial<BitrefillGuestCatalogV1>, pay = true) {
+  const original = { ...publicStillRuntimeV1 }, env = process.env.STILL_SPEND_PAY_V1;
+  const asked: unknown[] = [];
+  publicStillRuntimeV1.spend = () => ({
+    search: async (input) => { asked.push(input); return { ok: true, value: [] }; },
+    product: async (id) => { asked.push(id); return { ok: false, reason: 'bitrefill_product_not_found' }; },
+    ...catalog,
+  });
+  process.env.STILL_SPEND_PAY_V1 = pay ? 'on' : 'off';
+  resetStillCardCachesV1();
+  t.after(() => {
+    Object.assign(publicStillRuntimeV1, original);
+    if (env === undefined) delete process.env.STILL_SPEND_PAY_V1; else process.env.STILL_SPEND_PAY_V1 = env;
+    resetStillCardCachesV1();
+  });
+  return { asked };
+}
+
+test('what a loan could pay for is the Spend page’s own catalogue read, and one product’s prices are against Still’s cap', async (t) => {
+  const { asked } = catalogue(t, {
+    search: async (input) => {
+      asked.push(input);
+      return { ok: true, value: [{ id: ESIM.id, name: ESIM.name, countries: ['JP'], inStock: true }] };
+    },
+    product: async (id) => ({ ok: true, value: id === TOP_UP.id ? TOP_UP : ESIM }),
+  });
+  const client = await connected(t);
+  const found = structured(await client.callTool({ name: 'still_find_spend', arguments: { type: 'esim', country: 'jp' } }));
+  assert.equal(found.outcome, 'products');
+  assert.equal(found.country, 'JP');
+  assert.deepEqual(found.products, [{ id: ESIM.id, name: ESIM.name, countries: ['JP'], inStock: true }]);
+  assert.deepEqual(found.checkout, { enabled: true });
+  // The page and the assistant read the same cached search: the second asks Bitrefill nothing.
+  await client.callTool({ name: 'still_find_spend', arguments: { type: 'esim', country: 'JP' } });
+  assert.deepEqual(asked, [{ type: 'esim', country: 'JP', query: undefined }]);
+
+  const product = structured(await client.callTool({ name: 'still_spend_product', arguments: { productId: ESIM.id } }));
+  assert.equal(product.outcome, 'product');
+  assert.deepEqual((product.product as { packages: unknown[] }).packages, [
+    { value: '5GB, 30 Days', faceCurrency: 'USD', priceUsdc: '9.80', withinCap: true },
+    { value: 'Unlimited, 30 Days', faceCurrency: 'USD', priceUsdc: '120.00', withinCap: false },
+  ]);
+  assert.deepEqual(product.checkout, { enabled: true, available: true, capUsdc: '100', phone: null });
+  const topUp = structured(await client.callTool({ name: 'still_spend_product', arguments: { productId: TOP_UP.id } }));
+  assert.deepEqual((topUp.checkout as { phone: unknown }).phone, { callingCode: '91', prefixes: ['91'] });
+});
+
+test('an embargoed country is refused, and Bitrefill’s failure is never an empty catalogue', async (t) => {
+  catalogue(t, {
+    search: async () => ({ ok: false, reason: 'bitrefill_unreachable' }),
+    product: async () => ({ ok: false, reason: 'bitrefill_rate_limited' }),
+  }, false);
+  const client = await connected(t);
+  const embargoed = await client.callTool({ name: 'still_find_spend', arguments: { type: 'giftcard', country: 'IR' } });
+  assert.equal((embargoed as { isError?: boolean }).isError, true);
+  assert.match(JSON.stringify(embargoed), /still_spend_country_not_offered/);
+  const failed = structured(await client.callTool({ name: 'still_find_spend', arguments: { type: 'giftcard', country: 'DE', query: 'Amazon' } }));
+  assert.deepEqual(failed, { outcome: 'unavailable', type: 'giftcard', country: 'DE', query: 'Amazon', reason: 'bitrefill_unreachable', checkout: { enabled: false } });
+  const unread = structured(await client.callTool({ name: 'still_spend_product', arguments: { productId: ESIM.id } }));
+  assert.deepEqual(unread, { outcome: 'unavailable', reason: 'bitrefill_rate_limited' });
 });
 
 test('a wallet check is the page’s own check, through the same service', async (t) => {

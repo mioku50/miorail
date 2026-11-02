@@ -9,7 +9,7 @@ import { nativeMorphoFundingRefusalV1 } from '../lib/nativeMorphoBorrowPlan.js';
 import { TERMS } from '@mioagent/still-engine/policy';
 import { STOCKS, CRYPTO, ADDRESSES } from '@mioagent/still-engine/registry';
 import { issueLendingDraftV1, type LendingPaymentV1 } from '../lib/lendingDraft.js';
-import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
+import { spendDraftPaymentV1, spendOrderStoreV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { readAaveBorrowCapacityWireV1 } from './rwaLending.js';
 
 // ---------------------------------------------------------------------------
@@ -246,10 +246,9 @@ rwaBorrowRouter.post('/rwa/borrow/intent', (req, res) => {
       const order = typeof body.spendOrderId === 'string' && /^[0-9a-f-]{36}$/.test(body.spendOrderId)
         ? rwaBorrowRuntimeV1.spendOrders.get({ tenantId: user.id, walletAddress: user.address }, body.spendOrderId) : null;
       if (!order) { res.status(409).json({ error: 'spend_order_not_found' }); return; }
-      if (Date.parse(order.expiresAt) - rwaBorrowRuntimeV1.now().getTime() < STILL_SPEND_REVIEW_MARGIN_MS_V1 + 60_000) { res.status(409).json({ error: 'spend_order_expiring' }); return; }
+      payment = spendDraftPaymentV1(order, rwaBorrowRuntimeV1.now());
+      if (!payment) { res.status(409).json({ error: 'spend_order_expiring' }); return; }
       if (borrow !== BigInt(order.priceAtomic)) { res.status(400).json({ error: 'borrow_request_not_exact' }); return; }
-      payment = { merchant: 'bitrefill', orderId: order.orderId, payTo: order.payTo, assets: order.priceAtomic, productName: order.productName,
-        packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt };
     }
     const issued = issueLendingDraftV1({ tenantId: user.id, walletAddress: user.address,
       question: { operation: 'borrow', collateralTokenAddress: chosenToken, borrowAssets: borrow.toString(), collateralSupplyAssets: supply.toString(),

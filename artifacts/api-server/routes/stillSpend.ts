@@ -12,6 +12,7 @@ import {
   spendPriceAtomicV1,
   stillSpendCheckoutV1,
   stillSpendPayEnabledV1,
+  type SpendOrderOwnerV1,
   type SpendOrderV1,
 } from '../lib/stillSpendOrders.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
@@ -42,7 +43,7 @@ stillSpendRouter.use((_req, res, next) => {
   next();
 });
 
-const OrderRequestV1 = z.object({
+export const SpendOrderRequestV1Schema = z.object({
   productId: z.string().regex(/^[a-z0-9][a-z0-9_.-]{0,99}$/),
   packageValue: z.string().min(1).max(80),
   email: z.string().max(254).regex(SPEND_EMAIL_V1),
@@ -61,75 +62,64 @@ function orderWireV1(order: SpendOrderV1) {
   };
 }
 
-stillSpendRouter.post('/orders', async (req: Request, res: Response) => {
-  const wallet = sessionWalletV1(req, res);
-  if (!wallet) return;
-  const owner = { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet };
-  if (!stillSpendRuntimeV1.enabled()) {
-    res.status(503).json({ error: 'spend_pay_off' });
-    return;
-  }
-  const parsed = OrderRequestV1.safeParse(req.body);
-  if (!parsed.success) {
-    res.status(400).json({ error: 'spend_request_invalid' });
-    return;
-  }
-  if (stillSpendRuntimeV1.orders.openedLastHour(owner) >= 6) {
-    res.status(429).json({ error: 'spend_rate_limited' });
-    return;
-  }
+export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string };
+
+/** One invoice for this owner, as the page and the connected MCP open it:
+ * the hourly limit, a fresh quote, the product's own rules, the cap, then
+ * Bitrefill's invoice, checked against that quote. Paying is on already. */
+export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infer<typeof SpendOrderRequestV1Schema>): Promise<SpendOrderOpenedV1> {
+  const refuse = (status: number, error: string) => ({ ok: false as const, status, error });
+  if (stillSpendRuntimeV1.orders.openedLastHour(owner) >= 6) return refuse(429, 'spend_rate_limited');
   // A fresh quote, not the page's cached one: the invoice is checked against it.
-  const product = await stillSpendRuntimeV1.catalog().product(parsed.data.productId);
-  if (!product.ok) {
-    res.status(product.reason === 'bitrefill_product_not_found' ? 404 : 503).json({ error: product.reason });
-    return;
-  }
-  if (!product.value.inStock || !spendBuyableV1(product.value)) {
-    res.status(409).json({ error: 'spend_product_not_buyable' });
-    return;
-  }
+  const product = await stillSpendRuntimeV1.catalog().product(request.productId);
+  if (!product.ok) return refuse(product.reason === 'bitrefill_product_not_found' ? 404 : 503, product.reason);
+  if (!product.value.inStock || !spendBuyableV1(product.value)) return refuse(409, 'spend_product_not_buyable');
   // A number goes to Bitrefill only for a top-up, and only as a number of the operator's own country.
   const needsPhone = spendNeedsPhoneV1(product.value);
-  if (!needsPhone && parsed.data.phone !== undefined) {
-    res.status(400).json({ error: 'spend_request_invalid' });
-    return;
-  }
-  const refillTo = needsPhone && parsed.data.phone !== undefined ? spendPhoneV1(parsed.data.phone, product.value.country) : null;
-  if (needsPhone && refillTo === null) {
-    res.status(400).json({ error: parsed.data.phone === undefined ? 'spend_phone_needed' : 'spend_phone_invalid' });
-    return;
-  }
-  const offered = product.value.packages.find((row) => row.value === parsed.data.packageValue);
+  if (!needsPhone && request.phone !== undefined) return refuse(400, 'spend_request_invalid');
+  const refillTo = needsPhone && request.phone !== undefined ? spendPhoneV1(request.phone, product.value.country) : null;
+  if (needsPhone && refillTo === null) return refuse(400, request.phone === undefined ? 'spend_phone_needed' : 'spend_phone_invalid');
+  const offered = product.value.packages.find((row) => row.value === request.packageValue);
   const quoted = offered ? spendPriceAtomicV1(offered.priceUsdc) : null;
-  if (!offered || quoted === null || quoted <= 0n) {
-    res.status(409).json({ error: 'spend_package_not_offered' });
-    return;
-  }
-  if (quoted > STILL_SPEND_CAP_ATOMIC_V1) {
-    res.status(409).json({ error: 'spend_over_cap' });
-    return;
-  }
+  if (!offered || quoted === null || quoted <= 0n) return refuse(409, 'spend_package_not_offered');
+  if (quoted > STILL_SPEND_CAP_ATOMIC_V1) return refuse(409, 'spend_over_cap');
   const now = stillSpendRuntimeV1.now();
   const invoice = await stillSpendRuntimeV1.checkout().createInvoice({
-    productId: product.value.id, packageValue: offered.value, email: parsed.data.email, ...(refillTo !== null ? { refillInput: refillTo } : {}), quotedAtomic: quoted, now,
+    productId: product.value.id, packageValue: offered.value, email: request.email, ...(refillTo !== null ? { refillInput: refillTo } : {}), quotedAtomic: quoted, now,
   });
   if (!invoice.ok) {
     // The shape names keys and kinds only: never an address, an amount or a token.
     logger.warn('Still Spend invoice not opened', { reason: invoice.reason, ...(invoice.shape ? { shape: invoice.shape } : {}), ...(invoice.field ? { field: invoice.field } : {}) });
-    res.status(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503).json({ error: invoice.reason });
-    return;
+    return refuse(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503, invoice.reason);
   }
-  if (invoice.value.payTo === wallet) {
-    res.status(409).json({ error: 'spend_payee_refused' });
-    return;
-  }
+  if (invoice.value.payTo === owner.walletAddress) return refuse(409, 'spend_payee_refused');
   const order: SpendOrderV1 = {
     orderId: invoice.value.invoiceId, ...owner, productId: product.value.id, productName: product.value.name,
     packageValue: offered.value, faceCurrency: offered.faceCurrency, priceAtomic: quoted.toString(), payTo: invoice.value.payTo, refillTo,
     createdAt: now.toISOString(), expiresAt: invoice.value.expiresAt, accessToken: invoice.value.accessToken, paymentLink: invoice.value.paymentLink,
   };
   stillSpendRuntimeV1.orders.put(order);
-  res.json({ order: orderWireV1(order) });
+  return { ok: true, order };
+}
+
+stillSpendRouter.post('/orders', async (req: Request, res: Response) => {
+  const wallet = sessionWalletV1(req, res);
+  if (!wallet) return;
+  if (!stillSpendRuntimeV1.enabled()) {
+    res.status(503).json({ error: 'spend_pay_off' });
+    return;
+  }
+  const parsed = SpendOrderRequestV1Schema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'spend_request_invalid' });
+    return;
+  }
+  const opened = await openSpendOrderV1({ tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, parsed.data);
+  if (!opened.ok) {
+    res.status(opened.status).json({ error: opened.error });
+    return;
+  }
+  res.json({ order: orderWireV1(opened.order) });
 });
 
 stillSpendRouter.get('/orders/:id', async (req: Request, res: Response) => {

@@ -215,7 +215,7 @@ export interface StillAssistantsModelV1 {
   sky: SkyStateV1;
 }
 
-/** Still's own MCP server: three read-only tools, asserted by the deploy. */
+/** Still's own MCP server: five read-only tools, asserted by the deploy. */
 export const STILL_MCP_URL_V1 = 'https://stills.lat/mcp/still';
 
 // The addresses are the servers' own. The signed-in one is the Wallet MCP
@@ -232,6 +232,7 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
     'How much could 0x… borrow through Still without selling?',
     'What happens to that wallet’s Still loan if NVIDIA falls 30%?',
     'What are Still’s terms this weekend?',
+    'What eSIM data plans for Japan could a Still loan pay for?',
   ];
   return (
     <>
@@ -240,15 +241,17 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         <div className="still-word">Still in your assistant.</div>
         <div className="still-sub">
           Ask Claude, ChatGPT, Cursor or Codex what Still answers here: how much a wallet could borrow against its stocks and crypto
-          without selling, how safe a loan is, and what a fall in price would do to it. The figures are Still’s own, read from Base at
-          one block. No API key, and nothing is signed there: you approve every loan in your own wallet.
+          without selling, how safe a loan is, what a fall in price would do to it, and what a loan could pay for at Bitrefill. The
+          figures are Still’s own, read from Base at one block. No API key, and nothing is signed there: you approve every loan in your
+          own wallet.
         </div>
       </div>
       <div className="still-section still-feature">
         <div className="still-eyebrow">Still’s MCP server · read only, no sign-in</div>
         <CopyRow label="the Still MCP address" value={STILL_MCP_URL_V1} />
         <p className="still-note" style={{ marginTop: 6 }}>
-          Three tools: <span className="mono">get_still_terms</span>, <span className="mono">still_check_wallet</span> and <span className="mono">still_what_if</span>.
+          Five tools: <span className="mono">get_still_terms</span>, <span className="mono">still_check_wallet</span>, <span className="mono">still_what_if</span>,{' '}
+          <span className="mono">still_find_spend</span> and <span className="mono">still_spend_product</span>.
         </p>
       </div>
       {commands.map(([title, body]) => (
@@ -262,10 +265,12 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         {asks.map((ask) => <p key={ask} className="still-note">“{ask}”</p>)}
       </div>
       <div className="still-section">
-        <div className="still-eyebrow">To prepare a loan from your assistant</div>
+        <div className="still-eyebrow">To prepare a loan, a purchase or a repayment from your assistant</div>
         <p className="still-note">
-          Connect Miorail’s signed-in server instead. It opens your wallet’s sign-in on first use; then <span className="mono">miorail_prepare_still_loan</span> turns
-          the collateral and the amount you name into a review link, and your own wallet signs on stills.lat.
+          Connect Miorail’s signed-in server instead. It opens your wallet’s sign-in on first use; then <span className="mono">miorail_prepare_still_loan</span>,{' '}
+          <span className="mono">miorail_prepare_still_purchase</span> and <span className="mono">miorail_prepare_still_repay</span> turn what you name into a
+          review link, and your own wallet signs on stills.lat. <span className="mono">miorail_get_still_review_status</span> then tells your assistant
+          what happened.
         </p>
         <CopyRow label="the signed-in Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />
       </div>

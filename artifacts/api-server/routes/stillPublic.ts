@@ -7,6 +7,7 @@ import {
   type BitrefillGuestCatalogV1,
   type SpendFailureV1,
   type SpendProductTypeV1,
+  type SpendProductV1,
 } from '@mioagent/commerce-engine';
 import { stillTerms } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
@@ -64,7 +65,7 @@ export function resetStillCardCachesV1(): void {
   spendProductCacheV1.clear();
 }
 
-class SpendReadFailedV1 extends Error {
+export class SpendReadFailedV1 extends Error {
   constructor(readonly reason: SpendFailureV1) {
     super(reason);
   }
@@ -195,9 +196,38 @@ publicStillRouter.get('/spend-share', (req: Request, res: Response) => {
 // only. A failed read is Bitrefill's or ours and is never kept.
 // ---------------------------------------------------------------------------
 
-const SPEND_QUERY_V1 = /^[\p{L}\p{N} .&'+-]{0,40}$/u;
-const SPEND_ID_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
+export const SPEND_QUERY_V1 = /^[\p{L}\p{N} .&'+-]{0,40}$/u;
+export const SPEND_ID_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
 const spendStatusV1 = (reason: SpendFailureV1): number => (reason === 'bitrefill_product_not_found' ? 404 : 503);
+
+/** One search, kept half an hour; the page and the assistants read the same one. Throws SpendReadFailedV1. */
+export function readSpendSearchV1(input: { type: SpendProductTypeV1; country: string; query: string }) {
+  return spendSearchCacheV1.read(`${input.type}|${input.country}|${input.query.toLowerCase()}`, async () => {
+    const found = await publicStillRuntimeV1.spend().search({ type: input.type, country: input.country, query: input.query || undefined });
+    if (!found.ok) throw new SpendReadFailedV1(found.reason);
+    return { outcome: 'products' as const, type: input.type, country: input.country, query: input.query, products: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
+  });
+}
+
+/** One product's packages and prices, kept a quarter of an hour. Throws SpendReadFailedV1. */
+export function readSpendProductV1(id: string) {
+  return spendProductCacheV1.read(id, async () => {
+    const found = await publicStillRuntimeV1.spend().product(id);
+    if (!found.ok) throw new SpendReadFailedV1(found.reason);
+    return { outcome: 'product' as const, product: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
+  });
+}
+
+/** Whether a product can be paid from Still now: read per request, never cached with the catalogue. */
+export function spendProductCheckoutV1(product: SpendProductV1) {
+  const enabled = stillSpendPayEnabledV1();
+  const available = enabled && product.inStock && spendBuyableV1(product);
+  // A top-up asks for the number it goes to: its calling code, and the
+  // prefixes this country's numbers start with where countries share one.
+  const callingCode = available && spendNeedsPhoneV1(product) ? spendCallingCodeV1(product.country) : null;
+  const phone = callingCode ? { callingCode, prefixes: [...spendPhonePrefixesV1(product.country)!] } : null;
+  return { enabled, available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString(), phone };
+}
 
 publicStillRouter.get('/spend/search', async (req: Request, res: Response) => {
   const type = typeof req.query.type === 'string' ? req.query.type : '';
@@ -208,11 +238,7 @@ publicStillRouter.get('/spend/search', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const body = await spendSearchCacheV1.read(`${type}|${country}|${query.toLowerCase()}`, async () => {
-      const found = await publicStillRuntimeV1.spend().search({ type: type as SpendProductTypeV1, country, query: query || undefined });
-      if (!found.ok) throw new SpendReadFailedV1(found.reason);
-      return { outcome: 'products' as const, type, country, query, products: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
-    });
+    const body = await readSpendSearchV1({ type: type as SpendProductTypeV1, country, query });
     res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1() } });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
@@ -228,22 +254,11 @@ publicStillRouter.get('/spend/product', async (req: Request, res: Response) => {
     return;
   }
   try {
-    const body = await spendProductCacheV1.read(id, async () => {
-      const found = await publicStillRuntimeV1.spend().product(id);
-      if (!found.ok) throw new SpendReadFailedV1(found.reason);
-      return { outcome: 'product' as const, product: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
-    });
-    // Whether it can be paid from Still now is read per request, never cached with the catalogue.
-    const available = stillSpendPayEnabledV1() && body.product.inStock && spendBuyableV1(body.product);
-    // A top-up asks for the number it goes to: its calling code, and the
-    // prefixes this country's numbers start with where countries share one.
-    const callingCode = available && spendNeedsPhoneV1(body.product) ? spendCallingCodeV1(body.product.country) : null;
-    const phone = callingCode ? { callingCode, prefixes: [...spendPhonePrefixesV1(body.product.country)!] } : null;
-    res.json({ ...body, checkout: { enabled: stillSpendPayEnabledV1(), available, capAtomic: STILL_SPEND_CAP_ATOMIC_V1.toString(), phone } });
+    const body = await readSpendProductV1(id);
+    res.json({ ...body, checkout: spendProductCheckoutV1(body.product) });
   } catch (error) {
     const reason = error instanceof SpendReadFailedV1 ? error.reason : 'bitrefill_unreachable';
     if (!(error instanceof SpendReadFailedV1)) logger.warn('Still spend product failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(spendStatusV1(reason)).json({ outcome: 'unavailable', reason });
   }
 });
-

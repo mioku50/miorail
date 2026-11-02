@@ -812,6 +812,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'server.ts',
       'session.ts',
       'stillLoanTool.ts',
+      'stillReviewTool.ts',
       'tools.ts',
     ]);
   });
@@ -907,7 +908,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry plus seventeen', async () => {
+  test('the connected surface is exactly the public registry, twenty of its own and Still’s two Spend reads', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -925,7 +926,8 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     for (const name of publicNames) {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
-    assert.equal(connectedNames.size, publicNames.length + 17);
+    for (const name of ['still_find_spend', 'still_spend_product']) assert.ok(connectedNames.has(name), `the connected surface is missing ${name}`);
+    assert.equal(connectedNames.size, publicNames.length + 20 + 2);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -978,6 +980,10 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'miorail_review_borrow',
       // Mints the same short-lived, wallet-bound review draft as Get money.
       'miorail_prepare_still_loan',
+      // Opens a Bitrefill invoice for this wallet and mints the review of the
+      // loan that pays it; the repayment mints Repay's review draft.
+      'miorail_prepare_still_purchase',
+      'miorail_prepare_still_repay',
     ]);
     // Reads may record an audit/baseline but acknowledge no update or release calls.
     const readOnly = new Set([
@@ -986,6 +992,8 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'miorail_get_my_stocks_today',
       'miorail_get_my_reopen',
       'miorail_get_my_still',
+      // Refreshes the review page's own record from Base, as the page does.
+      'miorail_get_still_review_status',
     ]);
 
     for (const tool of tools) {

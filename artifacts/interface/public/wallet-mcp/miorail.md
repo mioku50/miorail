@@ -1,9 +1,9 @@
 ---
 title: "Miorail Plugin"
-description: "Still terms and wallet readings via Miorail MCP; Morpho reviews open in Miorail, stock actions → send_calls."
+description: "Still terms, wallet readings and loan, purchase and repayment reviews via Miorail MCP; stock actions → send_calls."
 tags: [tokenized-stocks, trading, swap, discovery, borrowing]
 name: miorail
-version: 0.2.1
+version: 0.3.0
 integration: external-mcp
 chains: [base]
 requires:
@@ -27,11 +27,12 @@ risk: [slippage, liquidation]
 
 ## Overview
 
-[Still](https://miorail.xyz) is the front door to Miorail's engine on Base: it reads what a wallet could borrow in USDC without selling supported collateral. Its terms and wallet Mirror cover Coinbase tokenized stocks through Aave V4 and cbBTC and ETH through Morpho Blue; a reading is not an executable loan. Miorail also measures reviewed stock contracts, prices, cash-out costs, pools and lending. A stock buy or sell can produce **unsigned calldata** for Wallet MCP `send_calls`, after the user confirms Miorail's live review. A Morpho borrow review returns a browser link and no calls; the person decides and signs there. Miorail never signs, never broadcasts and holds no key.
+[Still](https://miorail.xyz) is the front door to Miorail's engine on Base: it reads what a wallet could borrow in USDC without selling supported collateral, and what such a loan could pay for at Bitrefill (eSIM data plans, phone top-ups, gift cards). Its terms and wallet Mirror cover Coinbase tokenized stocks through Aave V4 and cbBTC and ETH through Morpho Blue; a reading is not an executable loan. Miorail also measures reviewed stock contracts, prices, cash-out costs, pools and lending. A stock buy or sell can produce **unsigned calldata** for Wallet MCP `send_calls`, after the user confirms Miorail's live review. A Still loan, a Bitrefill purchase paid by a loan, a repayment and a Morpho borrow review each return a browser link and no calls; the person decides and signs there. Miorail never signs, never broadcasts and holds no key.
 
 ## Detection
 
 - If `get_still_terms` is exposed, the client can read Still's current terms. `miorail_get_my_still` requires the signed-in connector and reads only its own wallet.
+- If `miorail_prepare_still_loan`, `miorail_prepare_still_purchase` and `miorail_prepare_still_repay` are exposed, the signed-in connector can prepare Still reviews and `miorail_get_still_review_status` follows them; `still_find_spend` and `still_spend_product` read Bitrefill's catalogue for a purchase.
 - If tools named `list_reviewed_stocks`, `get_representations` and `miorail_prepare_stock_action` are exposed, the Miorail connector is installed and signed in.
 - If only public tools are exposed, the user installed `https://miorail.xyz/mcp`. Public readings work; the wallet Mirror, personal borrowing checks and actions need the signed-in connector (see `## Installation`).
 - Read the live tool descriptions before choosing a flow. If stock tools are present but a Still tool is missing, refresh the connector's catalogue once or report that the tool is unavailable. Do not substitute a website fetch or assume a missing action is supported.
@@ -65,7 +66,7 @@ codex mcp add miorail --url https://miorail.xyz/mcp/private
 
 **Claude.ai and ChatGPT:** open Settings → Connectors, add a custom connector, and paste `https://miorail.xyz/mcp/private`.
 
-**Public readings, without signing in:** use `https://miorail.xyz/mcp` instead. It carries Still's terms and the public stock reads, but no wallet-bound tool.
+**Public readings, without signing in:** use `https://miorail.xyz/mcp` instead. It carries Still's terms and the public stock reads, but no wallet-bound tool. Still's own MCP, `https://stills.lat/mcp/still`, needs no sign-in either: the terms, any wallet's check, what-ifs and the Spend reads.
 
 ## Auth
 
@@ -80,6 +81,9 @@ The grant is bound to the ONE wallet that signed in. No argument can read, prepa
 | Still's current terms, supported assets and closed-market or earnings windows | `get_still_terms` (public or signed-in MCP). |
 | Still's Mirror for the connected wallet: holdings, loans and amounts | `miorail_get_my_still` (signed-in connector only, no wallet argument). |
 | Check a specifically requested Morpho loan | `miorail_read_borrow_capacity`, then `miorail_review_borrow` for an exact amount and market → the user's browser review. |
+| What a Still loan could pay for at Bitrefill | `still_find_spend`, then `still_spend_product` for packages and USDC prices (signed-in connector, or Still's own MCP). |
+| Prepare a Still loan, a purchase paid by a loan, or a repayment | `miorail_prepare_still_loan`, `miorail_prepare_still_purchase` or `miorail_prepare_still_repay` → a review link the user opens in a browser. |
+| What happened after the user signed | `miorail_get_still_review_status` with the `reviewId` the prepare call returned. |
 | Find a company's tokenized stocks, prices on Base, cost to buy or sell, pools and lending | Miorail MCP read tools (external MCP). |
 | A personal daily read, or what the user's whole position would fetch | Miorail MCP wallet-bound tools (signed-in connector). |
 | Prepare a buy or sell | `miorail_prepare_stock_action` → a review link the user opens in a browser. |
@@ -95,7 +99,16 @@ No surface needs a shell or the `web_request` allowlist: every Miorail call is a
 2. For the user's own holdings and loans, call `miorail_get_my_still` with no wallet argument. Its owner comes from the signed-in connection, never from a wallet address supplied in chat.
 3. Keep `reading.block` and the reading time beside the amounts. They are a snapshot and become stale. When `headline.complete` is false, describe the headline amount as **at least** the returned amount; do not silently turn partial coverage into a complete total.
 4. If the tool reports `chain_unavailable`, state that Miorail could not read the chain. Do not report an empty wallet, zero debt or zero available money from that failure.
-5. A Mirror amount is not a prepared loan. Aave V4 stock holdings and debt can be read, but an Aave V4 borrow, collateral supply or repayment is not available through this plugin. Do not build those calls yourself.
+5. A Mirror amount is not a prepared loan. To act on it, use the Still review tools below; do not build lending calls yourself.
+
+### Still: a loan, a purchase or a repayment the user asked for
+
+1. Proceed only when the user names what to do: the collateral and the USDC amount for a loan; the product, package, email for Bitrefill's receipt and, for a top-up, the number, plus the collateral, for a purchase; the loan and an exact amount, or "all" with a maximum, for a repayment. Never pick an amount, a product, a package or collateral for them.
+2. A loan: `miorail_prepare_still_loan` with `collateral`, `addCollateral` and `borrowUsdc`. A purchase: `still_find_spend` for the type and country, `still_spend_product` for the packages, their USDC prices and a top-up's calling code, then `miorail_prepare_still_purchase`. A repayment: `miorail_get_my_still` for the debt, then `miorail_prepare_still_repay`.
+3. Each returns `reviewUrl`, `reviewId`, `expiresAt` and `next`. Give the user the link with its expiry and stop. The page reads the position again, applies Still's limit and simulates the exact calls; the user signs in their own wallet. A purchase borrows exactly the invoice's price and pays it in the same transaction; Bitrefill holds that price until `purchase.invoiceExpiresAt`, and an unpaid invoice lapses.
+4. The email and a top-up's number go to Bitrefill only: the tool does not return them; do not repeat them. A refusal names its reason (for example `spend_over_cap` or `spend_phone_invalid`): report it as returned and stop.
+5. A link is not a completed loan, purchase or repayment, and no tool here turns it into calls for Wallet MCP `send_calls`.
+6. When the user says they signed, call `miorail_get_still_review_status` with that `reviewId`. Report `state` as returned: `confirmed` is read from Base; `submitted` and `unknown` are not failures, so read again later rather than prepare another. For a purchase, `purchase.invoiceStatus` is Bitrefill's own word for the invoice, and `purchase.shareUrl` shares the purchase without naming the wallet.
 
 ### Review a specifically requested Morpho borrow
 
@@ -153,7 +166,7 @@ Map it to `send_calls` unchanged:
 - `value` and `data` are already hex.
 - If `send_calls` returns `{ approvalUrl, requestId }`, follow the approval flow in the Wallet MCP skill's [approval-mode.md](https://github.com/coinbase/agents/blob/main/skills/wallet-mcp/references/approval-mode.md).
 
-For Still's terms, Mirror and borrow-capacity reads, submission is **none**: they only read. For `miorail_review_borrow`, submission through Wallet MCP is also **none**: it returns a review link, not a batch. The person opens the review and signs there; do not apply the stock `send_calls` mapping to a borrowing review.
+For Still's terms, Mirror, Spend and borrow-capacity reads, submission is **none**: they only read. For `miorail_review_borrow` and the three Still review tools, submission through Wallet MCP is also **none**: they return a review link, not a batch. The person opens the review and signs there; do not apply the stock `send_calls` mapping to a lending review.
 
 ## Example Prompts
 
@@ -179,10 +192,17 @@ For Still's terms, Mirror and borrow-capacity reads, submission is **none**: the
 2. Keep the user-selected market and exact requested amount. `miorail_review_borrow` uses `borrowAmountAtomic: "10000000"` only for a market whose loan asset is USDC (6 decimals).
 3. If refused, give the reason and stop. If `ready_for_your_approval`, give `reviewUrl` and its expiry; the user reviews and signs there. Do not call Wallet MCP `send_calls` with this response.
 
+**"Pay for a Japan eSIM with a loan against my NVDAc."**
+1. `still_find_spend` with `type: "esim"` and `country: "JP"` → the products; the user chooses one.
+2. `still_spend_product` → its packages and USDC prices; the user chooses a package and gives the email for Bitrefill's receipt.
+3. `miorail_prepare_still_purchase` with that product, package and email, `collateral: "NVDAc"` and the `addCollateral` the user names (`"0"` for what is already pledged) → give `reviewUrl` and its expiry, and stop. Do not call Wallet MCP `send_calls`.
+4. After the user signs on the review page, `miorail_get_still_review_status` with the returned `reviewId` → `confirmed`, Bitrefill's `invoiceStatus`, and `shareUrl`.
+
 ## Risks & Warnings
 
 - **slippage**: a router quote moves within seconds, which is why terms are confirmed on the review page and not in chat. Miorail re-simulates after the confirmation and refuses if the market moved past the reviewed bounds. Never restate a price from earlier in the conversation, and never raise a tolerance to make a call go through.
 - **liquidation**: collateral prices, accrued debt and protocol terms can move a borrowing position toward liquidation. Preserve the review's current health, liquidation warnings, block and expiry, including persistent adapter authorisations. Still's allowance is not a guarantee against liquidation; do not increase it or suggest borrowing.
+- **purchase**: a paid Bitrefill order is final, and a top-up sent to a wrong number cannot be taken back. Use only the product, number and email the user gave; the loan that pays it is debt like any other.
 - **Submitting stock calls**: send only after the user confirmed on the review page AND approves in their wallet, and only when `action.from` is their Wallet MCP wallet. Never auto-approve. Submit each clearance once. A borrow review stays on its own browser approval path.
 - **Tokenized stocks** are tokens issued by their issuers, and each issuer has its own terms and transfer rules. Wall Street's weekend and holiday closures do not stop trading on Base, so a price there can sit away from the last close. Say so when it matters, and never present a weekend price as a forecast of the reopen.
 
@@ -190,6 +210,6 @@ For Still's terms, Mirror and borrow-capacity reads, submission is **none**: the
 
 - Miorail's public, read-only MCP: `https://miorail.xyz/mcp`. Its signed-in connector, `https://miorail.xyz/mcp/private`, carries the same reads plus the wallet-bound tools.
 - Site and live boards: `https://miorail.xyz/stocks`. Settings → "Connect Miorail to your AI" shows and revokes grants.
-- Still's Home and wallet readings use the same Miorail engine and current terms. A read or a review link is not proof of a completed borrow; this plugin does not prepare Aave V4 actions or a Morpho repayment.
+- Still's Home and wallet readings use the same Miorail engine and current terms. A read or a review link is not proof of a completed loan, purchase or repayment.
 - USDC on Base: 6 decimals. Stock tokens have their own decimals; take them from Miorail's answers, never assume 18.
 - This plugin is published by Miorail at `https://miorail.xyz/wallet-mcp/miorail.md`. It is not a native Wallet MCP plugin.

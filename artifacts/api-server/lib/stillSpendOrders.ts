@@ -1,5 +1,7 @@
 import { createBitrefillGuestCheckoutV1, spendCallingCodeV1, type BitrefillGuestCheckoutV1, type SpendProductV1 } from '@mioagent/commerce-engine';
 
+import type { LendingPaymentV1 } from './lendingDraft.js';
+
 // ---------------------------------------------------------------------------
 // Still Spend, stage 3: the Bitrefill invoices people opened, held in memory.
 //
@@ -111,6 +113,14 @@ export function createSpendOrderStoreV1(input: { now?: () => Date; ttlMs?: numbe
 }
 
 export const spendOrderStoreV1 = createSpendOrderStoreV1();
+
+/** The invoice a loan's review pays, as the server read it: the loan is
+ * exactly its price. Null when it would lapse before a review is signed. */
+export function spendDraftPaymentV1(order: SpendOrderV1, now: Date): LendingPaymentV1 | null {
+  if (Date.parse(order.expiresAt) - now.getTime() < STILL_SPEND_REVIEW_MARGIN_MS_V1 + 60_000) return null;
+  return { merchant: 'bitrefill', orderId: order.orderId, payTo: order.payTo, assets: order.priceAtomic, productName: order.productName,
+    packageValue: order.packageValue, faceCurrency: order.faceCurrency, expiresAt: order.expiresAt };
+}
 
 let checkoutV1: BitrefillGuestCheckoutV1 | null = null;
 /** One guest checkout for the process: one token and one rate window. */

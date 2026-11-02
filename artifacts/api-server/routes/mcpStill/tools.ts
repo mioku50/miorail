@@ -4,8 +4,19 @@ import type { MirrorReport, VenueLine } from '@mioagent/still-engine/report';
 import { scenarioV1, type ScenarioEditV1, type ScenarioVenueV1 } from '@mioagent/still-engine/scenario';
 import { z } from 'zod';
 
+import { SPEND_PRODUCT_TYPES_V1, spendCallingCodeV1 } from '@mioagent/commerce-engine';
+
 import { stillAgentToolAnswerV1 } from '../../lib/stillAgentTools.js';
-import { publicStillRuntimeV1 } from '../stillPublic.js';
+import { STILL_SPEND_CAP_ATOMIC_V1, spendPriceAtomicV1, stillSpendPayEnabledV1 } from '../../lib/stillSpendOrders.js';
+import {
+  SPEND_ID_V1,
+  SPEND_QUERY_V1,
+  SpendReadFailedV1,
+  publicStillRuntimeV1,
+  readSpendProductV1,
+  readSpendSearchV1,
+  spendProductCheckoutV1,
+} from '../stillPublic.js';
 import { McpPublicError } from '../mcp/tools.js';
 
 // ---------------------------------------------------------------------------
@@ -210,5 +221,100 @@ export async function stillWhatIfV1(args: z.infer<typeof StillWhatIfInputV1Schem
   }
   return StillWhatIfOutputV1Schema.parse({
     outcome: 'answer', subject, reading: at, answer: words, before: sideV1(outcome.before), after: sideV1(outcome.after),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Still Spend for assistants: what a Still loan could pay for, from Bitrefill's
+// catalogue, through the same reads and cache as stills.lat/spend. Nothing here
+// opens an invoice: a purchase is prepared on the connected server
+// (miorail_prepare_still_purchase), reviewed and signed on stills.lat.
+// ---------------------------------------------------------------------------
+
+export const StillFindSpendInputV1Schema = z.object({
+  type: z.enum(SPEND_PRODUCT_TYPES_V1)
+    .describe('"esim": a mobile data plan for a trip; "refill": credit for a phone number; "giftcard": shops, travel, food and games.'),
+  country: z.string().regex(/^[A-Za-z]{2}$/).describe('Where it is used, as an ISO 3166-1 alpha-2 code such as "JP".'),
+  query: z.string().regex(SPEND_QUERY_V1).optional().describe('A brand or a word to narrow the list, such as "Amazon"; at most 40 characters.'),
+}).strict();
+
+export const StillFindSpendOutputV1Schema = z.object({
+  outcome: z.enum(['products', 'unavailable']),
+  type: z.enum(SPEND_PRODUCT_TYPES_V1),
+  country: z.string(),
+  query: z.string(),
+  products: z.array(z.object({ id: z.string(), name: z.string(), countries: z.array(z.string()), inStock: z.boolean() }).strict()).optional(),
+  readAt: z.string().optional(),
+  /** Bitrefill's failure or ours, for `unavailable`. */
+  reason: z.string().optional(),
+  checkout: z.object({ enabled: z.boolean() }).strict(),
+}).strict();
+
+export const StillSpendProductInputV1Schema = z.object({
+  productId: z.string().regex(SPEND_ID_V1).describe('A product id from still_find_spend, such as "bitrefill-esim-japan".'),
+}).strict();
+
+export const StillSpendProductOutputV1Schema = z.object({
+  outcome: z.enum(['product', 'not_found', 'unavailable']),
+  product: z.object({
+    id: z.string(),
+    name: z.string(),
+    country: z.string().nullable(),
+    inStock: z.boolean(),
+    packages: z.array(z.object({ value: z.string(), faceCurrency: z.string().nullable(), priceUsdc: z.string(), withinCap: z.boolean() }).strict()),
+  }).strict().optional(),
+  readAt: z.string().optional(),
+  checkout: z.object({
+    enabled: z.boolean(),
+    available: z.boolean(),
+    capUsdc: z.string(),
+    phone: z.object({ callingCode: z.string(), prefixes: z.array(z.string()) }).strict().nullable(),
+  }).strict().optional(),
+  reason: z.string().optional(),
+}).strict();
+
+const SPEND_UNREAD_V1 = 'Still could not read Bitrefill’s catalogue right now. This is our failure and says nothing about what Bitrefill sells.';
+
+function usdcTextV1(atomic: bigint): string {
+  const fraction = (atomic % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
+  return `${atomic / 1_000_000n}${fraction ? `.${fraction}` : ''}`;
+}
+
+export async function stillFindSpendV1(args: z.infer<typeof StillFindSpendInputV1Schema>): Promise<z.infer<typeof StillFindSpendOutputV1Schema>> {
+  const country = args.country.toUpperCase(), query = (args.query ?? '').trim();
+  // The page's countries: every one with a calling code, which leaves out Cuba, Iran, North Korea and Syria.
+  if (spendCallingCodeV1(country) === null) {
+    throw new McpPublicError('still_spend_country_not_offered', 'Still Spend is not offered for this country code. Cuba, Iran, North Korea and Syria are left out.');
+  }
+  const checkout = { enabled: stillSpendPayEnabledV1() };
+  try {
+    const body = await readSpendSearchV1({ type: args.type, country, query });
+    return StillFindSpendOutputV1Schema.parse({ ...body, checkout });
+  } catch (error) {
+    if (error instanceof SpendReadFailedV1) return { outcome: 'unavailable', type: args.type, country, query, reason: error.reason, checkout };
+    throw new McpPublicError('still_spend_unavailable', SPEND_UNREAD_V1);
+  }
+}
+
+export async function stillSpendProductV1(args: z.infer<typeof StillSpendProductInputV1Schema>): Promise<z.infer<typeof StillSpendProductOutputV1Schema>> {
+  let body;
+  try {
+    body = await readSpendProductV1(args.productId);
+  } catch (error) {
+    if (error instanceof SpendReadFailedV1) return { outcome: error.reason === 'bitrefill_product_not_found' ? 'not_found' : 'unavailable', reason: error.reason };
+    throw new McpPublicError('still_spend_unavailable', SPEND_UNREAD_V1);
+  }
+  const { product } = body, checkout = spendProductCheckoutV1(product);
+  return StillSpendProductOutputV1Schema.parse({
+    outcome: 'product',
+    product: {
+      id: product.id, name: product.name, country: product.country, inStock: product.inStock,
+      packages: product.packages.map((row) => {
+        const price = spendPriceAtomicV1(row.priceUsdc);
+        return { value: row.value, faceCurrency: row.faceCurrency, priceUsdc: row.priceUsdc, withinCap: price !== null && price > 0n && price <= STILL_SPEND_CAP_ATOMIC_V1 };
+      }),
+    },
+    readAt: body.readAt,
+    checkout: { enabled: checkout.enabled, available: checkout.available, capUsdc: usdcTextV1(BigInt(checkout.capAtomic)), phone: checkout.phone },
   });
 }
