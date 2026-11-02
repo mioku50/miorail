@@ -187,9 +187,12 @@ export async function stillPreparePurchaseV1(
     productId: args.productId, packageValue: args.packageValue, email: args.email, ...(args.phone !== undefined ? { phone: args.phone } : {}),
   });
   if (!opened.ok) {
-    throw new StillLoanRefusalV1(opened.error, SPEND_REFUSALS_V1[opened.error] ?? (opened.detail
-      ? `Bitrefill refused to open the invoice and said: “${opened.detail}” Nothing was paid.`
-      : 'Bitrefill could not open the invoice right now. This is Bitrefill’s failure or ours; nothing was paid.'));
+    // Bitrefill not letting Still in is about every product, and the words say so.
+    throw new StillLoanRefusalV1(opened.error, opened.error === 'bitrefill_guest_refused'
+      ? `Bitrefill is not letting Still in right now${opened.detail ? `, and said: “${opened.detail}”` : ''}. Until that changes Still cannot open an invoice for any product: it is not about this one, and trying again will not help. Nothing was opened or paid.`
+      : SPEND_REFUSALS_V1[opened.error] ?? (opened.detail
+        ? `Bitrefill refused to open the invoice and said: “${opened.detail}” Nothing was paid.`
+        : 'Bitrefill could not open the invoice right now. This is Bitrefill’s failure or ours; nothing was paid.'));
   }
   const order = opened.order, payment = spendDraftPaymentV1(order, deps.now);
   if (!payment) throw new StillLoanRefusalV1('spend_order_expiring', 'Bitrefill holds this price too briefly for a review to be signed. Nothing was paid; prepare it again.');

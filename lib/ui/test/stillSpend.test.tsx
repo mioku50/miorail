@@ -177,6 +177,7 @@ describe('paying from Still, as the page says it', () => {
     // Bitrefill's own words, as the server cleaned them, or the plain fact when it said nothing.
     assert.equal(spendOrderErrorV1('bitrefill_refused: Minimum order is 1 USD'), 'Bitrefill refused this invoice and said: “Minimum order is 1 USD” Nothing was paid.');
     assert.equal(spendOrderErrorV1('bitrefill_refused'), 'Bitrefill refused this invoice. Nothing was paid.');
+    assert.equal(spendOrderErrorV1('bitrefill_guest_refused: invalid_client'), 'Bitrefill is not letting Still in right now, so Spend cannot open an invoice for any product. Nothing was paid.');
     // Still's own limit is said to be Still's, never Bitrefill's.
     assert.equal(spendOrderErrorV1('spend_rate_limited'), 'Still opens at most six invoices an hour for one wallet, and you have opened six. Try again later; nothing was opened.');
     assert.match(spendOrderErrorV1('spend_phone_needed'), /phone number to top up/);

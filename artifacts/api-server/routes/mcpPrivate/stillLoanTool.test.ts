@@ -198,6 +198,18 @@ test('a catalogue Bitrefill could not serve is named as that, not as a refusal',
   assert.equal(opened.length, 0);
 });
 
+test('Bitrefill not letting Still in is said to be about every product, in Bitrefill’s own words', async (t) => {
+  const { opened } = spend(t);
+  stillSpendRuntimeV1.catalog = () => ({ search: async () => ({ ok: true, value: [] }),
+    product: async () => ({ ok: false, reason: 'bitrefill_guest_refused', detail: 'invalid_client: client_id metadata document URL is not trusted by this authorization server' }) }) as unknown as ReturnType<typeof stillSpendRuntimeV1.catalog>;
+  await assert.rejects(stillPreparePurchaseV1(IDENTITY,
+    { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW }),
+  (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'bitrefill_guest_refused'
+    && error.message === 'Bitrefill is not letting Still in right now, and said: “invalid_client: client_id metadata document URL is not trusted by this authorization server”. '
+      + 'Until that changes Still cannot open an invoice for any product: it is not about this one, and trying again will not help. Nothing was opened or paid.');
+  assert.equal(opened.length, 0);
+});
+
 test('with paying switched off the purchase is refused before Bitrefill is asked', async (t) => {
   const { opened } = spend(t, { enabled: false });
   await assert.rejects(stillPreparePurchaseV1(IDENTITY,

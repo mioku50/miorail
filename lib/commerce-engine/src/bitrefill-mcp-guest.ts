@@ -60,6 +60,8 @@ export interface SpendProductV1 {
 export type SpendFailureV1 =
   | 'bitrefill_unreachable'
   | 'bitrefill_refused'
+  /** Bitrefill would not let Still in as its guest: nothing can be read or bought until that changes. */
+  | 'bitrefill_guest_refused'
   | 'bitrefill_rate_limited'
   | 'bitrefill_invalid_response'
   | 'bitrefill_product_not_found'
@@ -77,6 +79,21 @@ export function spendRefusalDetailV1(text: string): string | undefined {
     .replace(/\d{6,}/g, '[number]')
     .slice(0, 160);
   return line || undefined;
+}
+
+/** What a refusing HTTP answer said: an OAuth or JSON-RPC error's own words, or its text. */
+function refusalTextV1(raw: string): string {
+  const data = raw.split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).pop() ?? raw;
+  try {
+    const json = JSON.parse(data) as Record<string, unknown>;
+    const error = json.error as unknown;
+    if (error && typeof error === 'object' && typeof (error as { message?: unknown }).message === 'string') return (error as { message: string }).message;
+    const words = [error, json.error_description, json.message].filter((word): word is string => typeof word === 'string');
+    if (words.length) return words.join(': ');
+  } catch {
+    // Not JSON: its text, without markup.
+  }
+  return data.replace(/<[^>]*>/g, ' ');
 }
 
 const SLUG_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
@@ -167,7 +184,13 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
       return { ok: false, reason: 'bitrefill_unreachable' };
     }
     if (response.status === 429) return { ok: false, reason: 'bitrefill_rate_limited' };
-    if (!response.ok) return { ok: false, reason: 'bitrefill_refused' };
+    if (!response.ok) {
+      // On 2026-11-02 this said "client_id metadata document URL is not trusted
+      // by this authorization server", and every product and invoice failed
+      // with it while the words were dropped here.
+      const detail = spendRefusalDetailV1(refusalTextV1(await response.text().catch(() => '')));
+      return { ok: false, reason: response.status >= 500 ? 'bitrefill_unreachable' : 'bitrefill_guest_refused', ...(detail ? { detail } : {}) };
+    }
     const parsed = TokenSchemaV1.safeParse(await response.json().catch(() => null));
     if (!parsed.success) return { ok: false, reason: 'bitrefill_invalid_response' };
     // Ten minutes early, so a token never lapses between two calls of one read.
@@ -196,7 +219,11 @@ export function createBitrefillGuestTransportV1(tools: readonly string[], option
       return callTool(name, args, true);
     }
     if (response.status === 429) return { ok: false, reason: 'bitrefill_rate_limited' };
-    if (!response.ok) return { ok: false, reason: 'bitrefill_refused' };
+    if (!response.ok) {
+      const detail = spendRefusalDetailV1(refusalTextV1(await response.text().catch(() => '')));
+      // A second 401, with a fresh token, is Bitrefill not letting Still in at all.
+      return { ok: false, reason: response.status === 401 ? 'bitrefill_guest_refused' : 'bitrefill_refused', ...(detail ? { detail } : {}) };
+    }
     const raw = await response.text().catch(() => '');
     // A stateless answer is one SSE event, or plain JSON.
     const data = raw.split('\n').filter((line) => line.startsWith('data: ')).map((line) => line.slice(6)).pop() ?? raw;

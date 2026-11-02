@@ -200,11 +200,19 @@ export const SPEND_QUERY_V1 = /^[\p{L}\p{N} .&'+-]{0,40}$/u;
 export const SPEND_ID_V1 = /^[a-z0-9][a-z0-9_.-]{0,99}$/;
 const spendStatusV1 = (reason: SpendFailureV1): number => (reason === 'bitrefill_product_not_found' ? 404 : 503);
 
+/** A failed catalogue read, on record with Bitrefill's own words: the page and the assistants hear only the reason. */
+function spendReadFailedV1(found: { reason: SpendFailureV1; detail?: string }): SpendReadFailedV1 {
+  if (found.reason !== 'bitrefill_product_not_found') {
+    logger.warn('Still Spend catalogue not read', { reason: found.reason, ...(found.detail ? { detail: found.detail } : {}) });
+  }
+  return new SpendReadFailedV1(found.reason);
+}
+
 /** One search, kept half an hour; the page and the assistants read the same one. Throws SpendReadFailedV1. */
 export function readSpendSearchV1(input: { type: SpendProductTypeV1; country: string; query: string }) {
   return spendSearchCacheV1.read(`${input.type}|${input.country}|${input.query.toLowerCase()}`, async () => {
     const found = await publicStillRuntimeV1.spend().search({ type: input.type, country: input.country, query: input.query || undefined });
-    if (!found.ok) throw new SpendReadFailedV1(found.reason);
+    if (!found.ok) throw spendReadFailedV1(found);
     return { outcome: 'products' as const, type: input.type, country: input.country, query: input.query, products: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
   });
 }
@@ -213,7 +221,7 @@ export function readSpendSearchV1(input: { type: SpendProductTypeV1; country: st
 export function readSpendProductV1(id: string) {
   return spendProductCacheV1.read(id, async () => {
     const found = await publicStillRuntimeV1.spend().product(id);
-    if (!found.ok) throw new SpendReadFailedV1(found.reason);
+    if (!found.ok) throw spendReadFailedV1(found);
     return { outcome: 'product' as const, product: found.value, readAt: publicStillRuntimeV1.now().toISOString() };
   });
 }

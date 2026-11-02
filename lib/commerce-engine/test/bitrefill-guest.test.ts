@@ -178,6 +178,26 @@ describe('Still reads Bitrefill’s catalogue as a guest', () => {
     at += 1;
   });
 
+  it('keeps Bitrefill’s own words when it will not let Still in, or refuses a call outright', async () => {
+    // As Bitrefill answered on 2026-11-02, when every read and invoice failed with the words dropped.
+    const shut = bitrefill([() => new Response(JSON.stringify({ error: 'invalid_client', error_description: 'client_id metadata document URL is not trusted by this authorization server' }),
+      { status: 400, headers: { 'content-type': 'application/json' } })]);
+    assert.deepEqual(await createBitrefillGuestCatalogV1({ fetchImpl: shut.fetchImpl, now: () => 1_000 }).product('mobile-legends-international'),
+      { ok: false, reason: 'bitrefill_guest_refused', detail: 'invalid_client: client_id metadata document URL is not trusted by this authorization server' });
+    const down = bitrefill([() => new Response('<html><body>Bad gateway</body></html>', { status: 502 })]);
+    assert.deepEqual(await createBitrefillGuestCatalogV1({ fetchImpl: down.fetchImpl, now: () => 1_000 }).product('mobile-legends-international'),
+      { ok: false, reason: 'bitrefill_unreachable', detail: 'Bad gateway' });
+
+    const refusing = bitrefill([
+      token(), () => new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, error: { code: -32602, message: 'Invalid arguments: package_value' } }), { status: 400 }),
+      () => new Response('', { status: 401 }), token('second-token-0123456789'), () => new Response('<html><body>Unauthorized</body></html>', { status: 401 }),
+    ]);
+    const catalog = createBitrefillGuestCatalogV1({ fetchImpl: refusing.fetchImpl, now: () => 1_000 });
+    assert.deepEqual(await catalog.product('mobile-legends-international'), { ok: false, reason: 'bitrefill_refused', detail: 'Invalid arguments: package_value' });
+    // A fresh token refused as well is Bitrefill not letting Still in at all.
+    assert.deepEqual(await catalog.product('mobile-legends-international'), { ok: false, reason: 'bitrefill_guest_refused', detail: 'Unauthorized' });
+  });
+
   it('stays under Bitrefill’s limit by itself', async () => {
     const answers = [token(), ...Array.from({ length: 5 }, () => () => rpc(SEARCH_V1))];
     const { fetchImpl } = bitrefill(answers);
