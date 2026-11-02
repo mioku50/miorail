@@ -63,7 +63,7 @@ stillMineRouter.get('/mine', async (req: Request, res: Response) => {
 // Asked with `Accept: application/x-ndjson`, the answer streams: one line per
 // stage of the work as it happens, then the answer. nginx buffers responses by
 // default, so the stream says it must not be.
-stillMineRouter.post('/agent/ask', express.json({ limit: '8kb' }), async (req: Request, res: Response) => {
+stillMineRouter.post('/agent/ask', express.json({ limit: '8kb', inflate: false }), async (req: Request, res: Response) => {
   res.set('Cache-Control', 'private, no-store');
   const wallet = sessionWalletV1(req, res);
   if (!wallet) return;

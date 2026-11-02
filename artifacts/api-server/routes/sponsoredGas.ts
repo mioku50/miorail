@@ -187,7 +187,7 @@ function requestBytesV1(req: Request): number | null {
   return Number.isSafeInteger(length) && length >= 0 ? length : null;
 }
 
-sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPONSORED_GAS_BODY_LIMIT_V1 }), async (req: Request, res: Response) => {
+sponsoredGasRouter.post(['/', '/sponsorship/:token'], express.json({ limit: SPONSORED_GAS_BODY_LIMIT_V1, inflate: false }), async (req: Request, res: Response) => {
   const bytes = requestBytesV1(req);
   const body = req.body as { jsonrpc?: unknown; id?: unknown; method?: unknown; params?: unknown } | undefined;
   const id = typeof body?.id === 'number' || typeof body?.id === 'string' ? body.id : null;

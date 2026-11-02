@@ -7,6 +7,9 @@ packages:
 # Moved from the deprecated `pnpm.overrides` field in package.json.
 overrides:
   '@neondatabase/serverless': 0.10.4
+  # GHSA-27r3-jxmh-p828: before 2.4.0 a decompressor stayed piped after the body
+  # was read. Every parser in the API also refuses compressed bodies (inflate: false).
+  body-parser: 2.4.0
 
 # Supply-chain policy: refuse to resolve any package (incl. transitive)
 # published within the last 7 days. Guards against dependency-confusion and

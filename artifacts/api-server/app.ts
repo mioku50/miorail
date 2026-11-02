@@ -63,8 +63,9 @@ app.use(
   })
 );
 
-// Body parser
-app.use(express.json());
+// Body parser. No client of ours compresses a request body, so none is ever
+// decompressed: an encoded body is refused before any decoder exists.
+app.use(express.json({ inflate: false }));
 
 // Session middleware
 app.use(
@@ -181,6 +182,16 @@ app.use((_req: Request, res: Response) => {
 import { logger } from '@mioagent/utils';
 // Global error handler
 app.use((err: Error, req: Request, res: Response, _next: NextFunction) => {
+  // A body the parser refused (malformed, too large, compressed, an unknown
+  // charset) is the caller's error and is answered as one; only ours are 500.
+  const refused = err as { status?: unknown; expose?: unknown; type?: unknown };
+  if (typeof refused.status === 'number' && refused.status >= 400 && refused.status < 500 && refused.expose === true
+    && typeof refused.type === 'string' && /^(entity|request|charset|encoding)\./.test(refused.type)) {
+    logger.warn('Request body refused', { type: refused.type, status: refused.status,
+      traceId: (req as unknown as { context?: { traceId?: string } }).context?.traceId });
+    res.status(refused.status).json({ error: refused.type });
+    return;
+  }
   logger.error('Unhandled API Error', {
     error: err.message,
     stack: err.stack,
