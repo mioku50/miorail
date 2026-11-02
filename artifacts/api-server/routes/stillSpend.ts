@@ -68,7 +68,14 @@ export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false
  * the hourly limit, a fresh quote, the product's own rules, the cap, then
  * Bitrefill's invoice, checked against that quote. Paying is on already. */
 export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infer<typeof SpendOrderRequestV1Schema>): Promise<SpendOrderOpenedV1> {
-  const refuse = (status: number, error: string) => ({ ok: false as const, status, error });
+  // Every refusal is on record by its reason, Still's own as well as
+  // Bitrefill's: an assistant's account of it is not evidence of whose it was.
+  // The shape names keys and kinds only: never an address, an amount or a token.
+  const refuse = (status: number, error: string, seen: { shape?: unknown; field?: unknown; detail?: string } = {}) => {
+    logger.warn('Still Spend invoice not opened', { reason: error, ...(seen.shape ? { shape: seen.shape } : {}), ...(seen.field ? { field: seen.field } : {}),
+      ...(seen.detail ? { detail: seen.detail } : {}) });
+    return { ok: false as const, status, error, ...(seen.detail ? { detail: seen.detail } : {}) };
+  };
   if (stillSpendRuntimeV1.orders.openedLastHour(owner) >= 6) return refuse(429, 'spend_rate_limited');
   // A fresh quote, not the page's cached one: the invoice is checked against it.
   const product = await stillSpendRuntimeV1.catalog().product(request.productId);
@@ -88,10 +95,8 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
     productId: product.value.id, packageValue: offered.value, email: request.email, ...(refillTo !== null ? { refillInput: refillTo } : {}), quotedAtomic: quoted, now,
   });
   if (!invoice.ok) {
-    // The shape names keys and kinds only: never an address, an amount or a token.
-    logger.warn('Still Spend invoice not opened', { reason: invoice.reason, ...(invoice.shape ? { shape: invoice.shape } : {}), ...(invoice.field ? { field: invoice.field } : {}),
-      ...(invoice.detail ? { detail: invoice.detail } : {}) });
-    return { ...refuse(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503, invoice.reason), ...(invoice.detail ? { detail: invoice.detail } : {}) };
+    return refuse(invoice.reason === 'bitrefill_invoice_price_changed' ? 409 : 503, invoice.reason,
+      { shape: invoice.shape, field: invoice.field, ...(invoice.detail ? { detail: invoice.detail } : {}) });
   }
   if (invoice.value.payTo === owner.walletAddress) return refuse(409, 'spend_payee_refused');
   const order: SpendOrderV1 = {

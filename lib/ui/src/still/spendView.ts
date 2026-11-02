@@ -236,7 +236,7 @@ export function spendOrderErrorV1(message: string): string {
     case 'spend_phone_invalid': return 'Check the phone number: write it with the country code of the operator’s country, as the field shows.';
     case 'spend_package_not_offered': return 'Bitrefill no longer offers this package at this price. Read the product again.';
     case 'bitrefill_invoice_price_changed': return 'Bitrefill’s invoice asked a different price than it quoted a moment before. Nothing was opened to pay; read the product again.';
-    case 'spend_rate_limited': return 'You opened several invoices this hour. Try again later.';
+    case 'spend_rate_limited': return 'Still opens at most six invoices an hour for one wallet, and you have opened six. Try again later; nothing was opened.';
     case 'spend_request_invalid': return 'Check the email address: Bitrefill sends the receipt there.';
     case 'bitrefill_refused': {
       // Bitrefill's own words, as the server cleaned them.

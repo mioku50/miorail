@@ -43,7 +43,23 @@ export const mcpPrivateRouter = Router();
  * back to IP so a caller cannot buy attempts by omitting the header.
  */
 const authedLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 20 });
+// What a host repeats before every turn (Claude.ai: discover, initialize,
+// initialized, the lists, about ten requests in two seconds) does no work
+// upstream. Counted apart, it no longer spends the allowance the assistant's own
+// tool calls need: on 2026-11-02 a reconnect beside two polling cards turned a
+// purchase into a 429 that the assistant reported as Bitrefill refusing it.
+const protocolLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 120 });
 const unauthedLimiter = new InMemoryRateLimiter({ windowMs: 60_000, max: 10 });
+const PROTOCOL_METHODS_V1 = new Set(['initialize', 'ping', 'server/discover', 'tools/list', 'resources/list', 'resources/templates/list', 'prompts/list']);
+
+/** The JSON-RPC method and id, and a tool call's tool: a name of ours, never an argument. */
+function requestNameV1(body: unknown): { method: string; tool?: string; id: string | number | null } {
+  const row = body && typeof body === 'object' && !Array.isArray(body) ? body as Record<string, unknown> : {};
+  const method = typeof row.method === 'string' ? row.method : 'unknown';
+  const name = row.params && typeof row.params === 'object' ? (row.params as Record<string, unknown>).name : undefined;
+  const tool = method === 'tools/call' && typeof name === 'string' && /^[a-z][a-z0-9_]{0,63}$/.test(name) ? name : undefined;
+  return { method, ...(tool ? { tool } : {}), id: typeof row.id === 'string' || typeof row.id === 'number' ? row.id : null };
+}
 
 /**
  * MCP Apps: the grants whose client said, when it connected, that it draws
@@ -74,11 +90,11 @@ function drawsAppsV1(identity: { tokenId: string; tenantId: string }, body: unkn
   return until !== undefined && until > now();
 }
 
-function jsonRpcError(res: Response, status: number, message: string): void {
+function jsonRpcError(res: Response, status: number, message: string, id: string | number | null = null): void {
   res.status(status).json({
     jsonrpc: '2.0',
     error: { code: status === 429 ? -32000 : -32001, message },
-    id: null,
+    id,
   });
 }
 
@@ -105,12 +121,25 @@ mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
   }
 
   const identity = auth.identity;
-  const limit = await authedLimiter.consume(`mcp-private:${identity.tokenId}:${identity.tenantId}`);
+  const request = requestNameV1(req.body);
+  const protocol = PROTOCOL_METHODS_V1.has(request.method) || request.method.startsWith('notifications/');
+  const limit = protocol
+    ? await protocolLimiter.consume(`mcp-private-protocol:${identity.tokenId}:${identity.tenantId}`)
+    : await authedLimiter.consume(`mcp-private:${identity.tokenId}:${identity.tenantId}`);
   res.setHeader('X-RateLimit-Limit', limit.limit);
   res.setHeader('X-RateLimit-Remaining', limit.remaining);
   res.setHeader('X-RateLimit-Reset', limit.resetTime);
   if (!limit.success) {
-    jsonRpcError(res, 429, 'Too many requests. Miorail rate-limits its authenticated MCP endpoint per token.');
+    const wait = Math.max(1, Math.ceil((limit.resetTime - Date.now()) / 1000));
+    res.setHeader('Retry-After', String(wait));
+    logger.warn('MCP private request rate-limited', { tokenId: identity.tokenId, tenantId: identity.tenantId, method: request.method, ...(request.tool ? { tool: request.tool } : {}) });
+    const said = `Miorail did not run this: the connection made more than ${limit.limit} ${protocol ? 'requests' : 'calls'} in a minute. `
+      + `This is Miorail's own limit, not Bitrefill's, a lending protocol's or the chain's, and nothing was done. Try again in ${wait} seconds.`;
+    // A tool call hears it as the tool's own result, which the model reads, so
+    // it is not taken for the merchant's or the chain's answer.
+    if (request.method === 'tools/call' && request.id !== null) {
+      res.status(200).json({ jsonrpc: '2.0', id: request.id, result: { content: [{ type: 'text', text: said }], isError: true } });
+    } else jsonRpcError(res, 429, said, request.id);
     return;
   }
 
@@ -122,7 +151,9 @@ mcpPrivateRouter.post('/', async (req: Request, res: Response) => {
     tokenId: identity.tokenId,
     tenantId: identity.tenantId,
     source: identity.source,
-    method: typeof req.body?.method === 'string' ? req.body.method : 'unknown',
+    method: request.method,
+    // The tool's name is one of ours; its arguments never are logged.
+    ...(request.tool ? { tool: request.tool } : {}),
     apps,
   });
 

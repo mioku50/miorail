@@ -152,7 +152,10 @@ export const StillPreparePurchaseOutputV1Schema = z.object({
 
 /** What each refusal means to the person, in the Spend page's terms. */
 const SPEND_REFUSALS_V1: Readonly<Record<string, string>> = {
-  spend_rate_limited: 'This wallet opened six Bitrefill invoices in the last hour. Wait before opening another; nothing was opened.',
+  spend_rate_limited: 'Still opens at most six Bitrefill invoices an hour for one wallet, and this wallet has opened six. This is Still’s own limit, not Bitrefill’s, and an invoice that was refused does not count. Wait before opening another; nothing was opened.',
+  bitrefill_rate_limited: 'Bitrefill asked Still to slow down, so no invoice was opened. Nothing was paid; try again in a minute.',
+  bitrefill_unreachable: 'Still could not reach Bitrefill just now, so no invoice was opened. Nothing was paid; try again in a minute.',
+  bitrefill_invalid_response: 'Bitrefill answered in a way Still could not read, so Still kept no invoice. Nothing was paid; try again in a minute.',
   bitrefill_product_not_found: 'Bitrefill has no product with this id. Find it again with still_find_spend; nothing was opened.',
   spend_product_not_buyable: 'Bitrefill has it out of stock, or it needs an account or a username, which Still does not send. Nothing was opened.',
   spend_request_invalid: 'This product is not a phone top-up, so it takes no number. Nothing was opened.',

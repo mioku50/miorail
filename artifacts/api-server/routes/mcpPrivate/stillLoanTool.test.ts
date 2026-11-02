@@ -175,6 +175,29 @@ test('a purchase Bitrefill refuses says Bitrefill’s own words, and nothing was
     && error.message === 'Bitrefill refused to open the invoice and said: “Minimum order is 1 USD” Nothing was paid.');
 });
 
+test('six opened invoices an hour is Still’s own limit and says so, and refusals before it are not counted', async (t) => {
+  const { opened } = spend(t);
+  const purchase = (packageValue = '5GB, 30 Days') => stillPreparePurchaseV1(IDENTITY,
+    { productId: ESIM.id, packageValue, email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW });
+  await assert.rejects(purchase('Unlimited, 30 Days'), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_over_cap');
+  for (let n = 0; n < 6; n += 1) await purchase();
+  await assert.rejects(purchase(), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_rate_limited'
+    && /Still opens at most six Bitrefill invoices an hour for one wallet, and this wallet has opened six\. This is Still’s own limit, not Bitrefill’s/.test(error.message));
+  assert.equal(opened.length, 6, 'the seventh never reached Bitrefill');
+});
+
+test('a catalogue Bitrefill could not serve is named as that, not as a refusal', async (t) => {
+  const { opened } = spend(t);
+  for (const [reason, said] of [['bitrefill_unreachable', /^Still could not reach Bitrefill just now/], ['bitrefill_rate_limited', /^Bitrefill asked Still to slow down/],
+    ['bitrefill_invalid_response', /^Bitrefill answered in a way Still could not read/]] as const) {
+    stillSpendRuntimeV1.catalog = () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: false, reason }) }) as unknown as ReturnType<typeof stillSpendRuntimeV1.catalog>;
+    await assert.rejects(stillPreparePurchaseV1(IDENTITY,
+      { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' }, { secret: SECRET, now: NOW }),
+    (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === reason && said.test(error.message) && !/refused/.test(error.message));
+  }
+  assert.equal(opened.length, 0);
+});
+
 test('with paying switched off the purchase is refused before Bitrefill is asked', async (t) => {
   const { opened } = spend(t, { enabled: false });
   await assert.rejects(stillPreparePurchaseV1(IDENTITY,
