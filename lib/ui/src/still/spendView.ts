@@ -352,6 +352,11 @@ export interface SpendWalletViewV1 {
   warnings: string[];
   expiresAt: string | null;
   transactionHash: string | null;
+  /** The armed attempt, and the batch id the wallet answered with: a page gives a lost answer again only for its own attempt. */
+  attemptId: string | null;
+  batchId: string | null;
+  /** Why a result is not known yet, in the server's code: a pasted hash that is not this payment says so. */
+  errorCode: string | null;
   /** Only while it can be armed: what the wallet is asked to send, exactly as the server prepared it. */
   ready: null | { calls: Array<{ to: string; value: string; data: string }>; callsHash: string; signingTermsHash: string };
 }
@@ -366,7 +371,8 @@ export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
   if (state === 'refused') {
     return { orderId: payload.orderId, state, refusal: typeof payload.refusal === 'string' ? payload.refusal : null,
       detail: text(payload.detail, 400) ? payload.detail : 'Still could not prepare this payment. Nothing was sent.',
-      price: null, productName: null, packageLabel: null, payTo: null, before: null, after: null, block: null, warnings: [], expiresAt: null, transactionHash: null, ready: null };
+      price: null, productName: null, packageLabel: null, payTo: null, before: null, after: null, block: null, warnings: [], expiresAt: null, transactionHash: null,
+      attemptId: null, batchId: null, errorCode: null, ready: null };
   }
   const facts = object(payload.facts) ? payload.facts : null, payment = facts && object(facts.payment) ? facts.payment : null;
   if (!facts || !payment || payment.orderId !== payload.orderId || typeof payment.payTo !== 'string' || !/^0x[0-9a-f]{40}$/.test(payment.payTo) ||
@@ -389,6 +395,9 @@ export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
     warnings: Array.isArray(facts.warnings) ? facts.warnings.filter((line): line is string => text(line, 600)).slice(0, 4) : [],
     expiresAt: typeof payload.expiresAt === 'string' && Number.isFinite(Date.parse(payload.expiresAt)) ? payload.expiresAt : null,
     transactionHash: typeof payload.transactionHash === 'string' && HASH_V1.test(payload.transactionHash) ? payload.transactionHash : null,
+    attemptId: typeof payload.attemptId === 'string' && /^[0-9a-f-]{36}$/.test(payload.attemptId) ? payload.attemptId : null,
+    batchId: typeof payload.batchId === 'string' && payload.batchId.length > 0 && payload.batchId.length <= 2000 ? payload.batchId : null,
+    errorCode: typeof payload.errorCode === 'string' && /^[a-z0-9_]{1,80}$/.test(payload.errorCode) ? payload.errorCode : null,
     ready,
   };
 }

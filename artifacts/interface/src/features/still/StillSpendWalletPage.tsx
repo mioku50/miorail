@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useRoute } from 'wouter';
 import { concat, type Hex } from 'viem';
 import { useAccount, useConfig, useSendCalls } from 'wagmi';
-import { sendTransaction } from 'wagmi/actions';
+import { getCallsStatus, sendTransaction } from 'wagmi/actions';
 import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
 import { walletRefusedBatchesV1 } from '@mioagent/ui';
 import { StillFrame, StillSpendWalletPay, spendOrderViewV1, useSpendWalletPaymentV1 } from '@mioagent/ui/still';
@@ -18,7 +18,10 @@ const SPEND_BUILDER_SUFFIX_V1 = builderCodeToDataSuffix(builderCodeForSurfaceV1(
  * wallet: one call, as a batch of one where the wallet sends batches and as one
  * transaction where it cannot, each with Still's builder code. A wallet that
  * refuses a batch for what it is (Coinbase Wallet with an imported key) sent
- * nothing, so the same call goes as one transaction on the same press. */
+ * nothing, so the same call goes as one transaction on the same press. Both
+ * name the signed-in wallet that read the payment: another account picked in
+ * the wallet meanwhile is refused by wagmi, not asked (re-audit R2,
+ * 2026-11-04). A batch id only that wallet knows is asked of it (R5). */
 export function StillSpendWalletPage() {
   const [, params] = useRoute('/spend/pay/:id');
   const sky = useStillSky(), session = useStillWallet();
@@ -28,12 +31,13 @@ export function StillSpendWalletPage() {
   const payment = useSpendWalletPaymentV1({
     orderId, sessionWalletAddress: session.signedIn ? session.wallet : null, walletAddress: address ?? null, walletName: batches.walletName,
     send: async (call) => {
-      const asOne = async () => ({ transactionHash: (await sendTransaction(config, { account: address!, chainId: 8453, to: call.to as Hex, value: BigInt(call.value),
+      const owner = session.wallet as Hex;
+      const asOne = async () => ({ transactionHash: (await sendTransaction(config, { account: owner, chainId: 8453, to: call.to as Hex, value: BigInt(call.value),
         data: SPEND_BUILDER_SUFFIX_V1 ? concat([call.data as Hex, SPEND_BUILDER_SUFFIX_V1 as Hex]) : call.data as Hex })).toLowerCase() });
       if (batches.blocker && address) return asOne();
       let result: unknown;
       try {
-        result = await sendCalls.mutateAsync({ chainId: 8453, forceAtomic: true,
+        result = await sendCalls.mutateAsync({ account: owner, chainId: 8453, forceAtomic: true,
           calls: [{ to: call.to as `0x${string}`, data: call.data as `0x${string}`, value: BigInt(call.value) }],
           capabilities: SPEND_BUILDER_SUFFIX_V1 ? { dataSuffix: { value: SPEND_BUILDER_SUFFIX_V1, optional: true } } : undefined,
         });
@@ -46,6 +50,7 @@ export function StillSpendWalletPage() {
       if (!batchId) throw new Error('spend_wallet_no_batch_id');
       return { batchId };
     },
+    lookup: async (batchId) => (await getCallsStatus(config, { id: batchId })).receipts?.map((receipt) => receipt.transactionHash) ?? null,
   });
   // Once Base shows the payment, Bitrefill says where the order stands.
   const paid = payment.view?.state === 'confirmed' ? orderId : null;

@@ -72,9 +72,9 @@ export function lendingRequestV1<T = unknown>(path: string, options?: RequestIni
   return fetchApi<T>(path, options);
 }
 
-/** Still Spend paid from the wallet's own USDC: one invoice's review, arm, submission and result, nothing else. */
+/** Still Spend paid from the wallet's own USDC: one invoice's review, arm, submission, a hash from the wallet and result, nothing else. */
 export function spendWalletRequestV1<T = unknown>(path: string, options?: RequestInit): Promise<T> {
-  if (!/^\/api\/still\/spend\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/wallet(?:\/(?:arm|submission))?$/.test(path)) throw new Error('spend_wallet_path_invalid');
+  if (!/^\/api\/still\/spend\/orders\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/wallet(?:\/(?:arm|submission|transaction))?$/.test(path)) throw new Error('spend_wallet_path_invalid');
   return fetchApi<T>(path, options);
 }
 

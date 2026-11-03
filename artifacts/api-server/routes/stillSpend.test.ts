@@ -5,6 +5,7 @@ import request from 'supertest';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import type { BitrefillGuestCheckoutV1, SpendInvoiceStatusNameV1, SpendProductV1 } from '@mioagent/commerce-engine';
 import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
+import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
@@ -81,7 +82,9 @@ beforeEach(() => {
   loans = new MemoryLoanExecutionStoreV1();
   wallets = new MemorySpendWalletStoreV1();
   enabled = true; invoiceStatus = 'unpaid'; opened = []; attached = 0; loanRuns = 0; walletRuns = 0;
+  // Each test its own budget: the server's limiters count across a minute, and these tests run in less.
   Object.assign(stillSpendRuntimeV1, { ...originals.spend, orders, enabled: () => enabled, now: () => NOW, checkout,
+    walletLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }), walletStatusLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
     catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: ESIM }) }),
     walletPayments: async () => wallets, loans: async () => loans,
     prepareWallet: async ({ payment }: { payment: LendingPaymentV1 }) => { walletRuns++; return walletRun(payment); } });
@@ -298,6 +301,30 @@ describe('paying the invoice from the wallet’s own USDC', () => {
     walletRuns = 0;
     const read = await request(app()).post(wallet());
     assert.deepEqual([read.body.state, read.body.calls, walletRuns], ['submitted', undefined, 0]);
+  });
+
+  // Re-audit R5, 2026-11-04: a batch id only the wallet knows, or an answer that never reached Still,
+  // left a payment that may have landed "on its way" for good.
+  it('takes a hash from the wallet as a lookup hint for a payment on its way, replaceable, and never for a settled one', async () => {
+    await openOrder();
+    const review = (await request(app()).post(wallet())).body;
+    assert.equal((await request(app()).post(wallet('/transaction')).send({ transactionHash: `0x${'ab'.repeat(32)}` })).status, 409);
+    const armed = await request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash });
+    await request(app()).post(wallet('/submission')).send({ attemptId: armed.body.attemptId, outcome: 'submitted', batchId: 'mm-batch-1' });
+    assert.equal((await request(app()).post(wallet('/transaction')).send({ transactionHash: 'not-a-hash' })).status, 400);
+    assert.equal((await request(app(OTHER)).post(wallet('/transaction')).send({ transactionHash: `0x${'ab'.repeat(32)}` })).status, 409);
+    const first = await request(app()).post(wallet('/transaction')).send({ transactionHash: `0x${'AB'.repeat(32)}` });
+    assert.deepEqual([first.status, first.body.state, first.body.transactionHash, first.body.batchId, first.body.errorCode],
+      [200, 'unknown', `0x${'ab'.repeat(32)}`, 'mm-batch-1', 'spend_wallet_transaction_hint_unverified']);
+    // A hint that matched nothing is replaced by the next, as the loan's is.
+    const second = await request(app()).post(wallet('/transaction')).send({ transactionHash: `0x${'cd'.repeat(32)}` });
+    assert.deepEqual([second.status, second.body.transactionHash], [200, `0x${'cd'.repeat(32)}`]);
+    const store = await stillSpendRuntimeV1.walletPayments();
+    const owner = { tenantId: `eip155:8453:${WALLET}`, walletAddress: WALLET };
+    const held = await store.get({ owner, orderId: INVOICE });
+    await store.recordVerification({ owner, orderId: INVOICE, expectedVersion: held!.version, state: 'confirmed', transactionHash: `0x${'cd'.repeat(32)}`,
+      proof: { receiptFingerprint: `0x${'ee'.repeat(32)}` }, errorCode: null, now: new Date() });
+    assert.deepEqual((await request(app()).post(wallet('/transaction')).send({ transactionHash: `0x${'ab'.repeat(32)}` })).body, { error: 'spend_wallet_attempt_changed' });
   });
 
   it('a wallet that declined leaves the invoice free to pay again, by either way', async () => {

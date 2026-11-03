@@ -18,40 +18,60 @@ const wire = (state: string, patch: Record<string, unknown> = {}) => ({ orderId:
   transactionHash: null, errorCode: null, updatedAt: NOW.toISOString(), facts,
   ...(state === 'ready' ? { calls: [CALL], callsHash: `0x${'1'.repeat(64)}`, signingTermsHash: `0x${'2'.repeat(64)}`, expiresAt: '2026-11-03T18:02:00.000Z', steps: [] } : {}), ...patch });
 
-type Outcome = 'paid' | 'declined' | 'changed';
+// paid: the wallet answers with a hash. batch / manual: with a batch id only that wallet knows, which
+// it can (batch) or cannot (manual) say more about. lost: Still does not hear the answer the first time.
+// switch: another account is picked in the wallet while the payment is being armed.
+type Outcome = 'paid' | 'declined' | 'changed' | 'batch' | 'manual' | 'lost' | 'switch';
+const OTHER_WALLET = '0x2222222222222222222222222222222222222222';
 async function install(page: Page, outcome: Outcome) {
   await page.clock.setFixedTime(NOW);
   await page.route('https://**/*', (route) => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', (route) => route.fulfill({ contentType: 'application/javascript', body:
     'export function AuthProvider({children}) {return children;} export function useAuthGate(){return{showPrivateSurfaces:true,phase:"authenticated",sessionAuthenticated:true};}' }));
-  const state = { order: [] as string[], server: 'ready', reviews: 0, submissions: [] as Array<Record<string, unknown>>, polls: 0 };
+  const state = { order: [] as string[], server: 'ready', reviews: 0, submissions: [] as Array<Record<string, unknown>>, polls: 0,
+    hash: null as string | null, batch: null as string | null, hints: [] as string[], loseNextSubmission: outcome === 'lost' };
+  // As the server's wire: what the wallet answered rides on every reading after the arm.
+  const held = (status: string, patch: Record<string, unknown> = {}) => wire(status, status === 'ready' ? patch : { transactionHash: state.hash, batchId: state.batch, ...patch });
   const base = `/api/still/spend/orders/${ORDER_ID}/wallet`;
-  await page.route('**/api/**', (route) => {
+  await page.route('**/api/**', async (route) => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
     if (path === base && request.method() === 'POST') {
       state.order.push('review'); state.reviews++;
       // A second reading names other terms: the one the person read is not the one that would be sent.
       if (outcome === 'changed' && state.reviews > 1) return route.fulfill({ json: wire('ready', { signingTermsHash: `0x${'3'.repeat(64)}` }) });
-      return route.fulfill({ json: wire(state.server, state.server === 'ready' ? {} : { transactionHash: HASH }) });
+      return route.fulfill({ json: held(state.server) });
     }
     if (path === `${base}/arm` && request.method() === 'POST') {
       state.order.push('arm');
       expect(request.postDataJSON()).toEqual({ callsHash: `0x${'1'.repeat(64)}`, signingTermsHash: `0x${'2'.repeat(64)}` });
       state.server = 'awaiting_wallet';
+      // The other account is picked while Still arms the payment; the answer comes after.
+      if (outcome === 'switch') await page.evaluate((next) => (window as unknown as { switchWallet: (wallet: string) => void }).switchWallet(next), OTHER_WALLET);
       return route.fulfill({ json: { attemptId: ATTEMPT } });
     }
     if (path === `${base}/submission` && request.method() === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
       state.order.push(`submission:${String(body.outcome)}`); state.submissions.push(body);
+      if (state.loseNextSubmission) { state.loseNextSubmission = false; return route.fulfill({ status: 502, json: { error: 'fixture_lost' } }); }
       state.server = body.outcome === 'rejected' ? 'ready' : 'submitted';
-      return route.fulfill({ json: wire(state.server, state.server === 'ready' ? {} : { transactionHash: HASH }) });
+      state.hash ??= typeof body.transactionHash === 'string' ? body.transactionHash : null;
+      state.batch ??= typeof body.batchId === 'string' ? body.batchId : null;
+      return route.fulfill({ json: held(state.server) });
+    }
+    if (path === `${base}/transaction` && request.method() === 'POST') {
+      const body = request.postDataJSON() as { transactionHash: string };
+      state.order.push('hint'); state.hints.push(body.transactionHash);
+      state.server = 'unknown'; state.hash = body.transactionHash;
+      return route.fulfill({ json: held('unknown', { errorCode: 'spend_wallet_transaction_hint_unverified' }) });
     }
     if (path === base && request.method() === 'GET') {
       state.order.push('result'); state.polls++;
-      // As the server: once Base has the receipt and its transfer, the payment is confirmed.
-      if (state.server === 'submitted') state.server = 'confirmed';
-      return route.fulfill({ json: wire(state.server, state.server === 'ready' ? {} : { transactionHash: HASH }) });
+      // As the server: a hash it can read on Base, with its transfer, confirms the payment; a batch id
+      // only the wallet knows tells it nothing.
+      if ((state.server === 'submitted' || state.server === 'unknown') && state.hash === HASH) state.server = 'confirmed';
+      const unmatched = state.server === 'unknown' && state.hash !== null && state.hash !== HASH;
+      return route.fulfill({ json: held(state.server, unmatched ? { errorCode: 'spend_wallet_receipt_not_matched' } : {}) });
     }
     if (path === `/api/still/spend/orders/${ORDER_ID}`) {
       return route.fulfill({ json: { order: { orderId: ORDER_ID, productId: 'pubg-mobile', productName: 'PUBG Mobile', packageValue: '60 UC', faceCurrency: null, priceAtomic: '2000000',
@@ -66,16 +86,20 @@ async function install(page: Page, outcome: Outcome) {
   expect(reactPath).toBeTruthy();
   const send = outcome === 'declined'
     ? "throw Object.assign(new Error('declined'),{code:4001});"
-    : `return {transactionHash:'${HASH}'};`;
+    : outcome === 'batch' || outcome === 'manual' ? "return {batchId:'mm-batch-1'};" : `return {transactionHash:'${HASH}'};`;
+  const lookup = outcome === 'batch' ? `return ['${HASH.toUpperCase().replace('0X', '0x')}'];` : 'return null;';
   await page.route('**/StillSpendWalletPage.tsx*', (route) => route.fulfill({ contentType: 'application/javascript', body: `
     import React from '${reactPath}';
     import {useSpendWalletPaymentV1} from '${uiRoot}useSpendWalletPayment.ts';
     import {StillSpendWalletPay} from '${uiRoot}StillSpend.tsx';
     import {skyStateV1} from '${uiRoot}skyState.ts';
-    window.spendWalletSends=[];
+    window.spendWalletSends=[]; window.spendWalletLookups=[];
     export function StillSpendWalletPage(){
-      const model=useSpendWalletPaymentV1({orderId:location.pathname.split('/').pop(),sessionWalletAddress:'${WALLET}',walletAddress:'${WALLET}',pollMs:150,
-        send:async call=>{ window.spendWalletSends.push(call); ${send} }});
+      const [wallet,setWallet]=React.useState('${WALLET}');
+      window.switchWallet=setWallet;
+      const model=useSpendWalletPaymentV1({orderId:location.pathname.split('/').pop(),sessionWalletAddress:'${WALLET}',walletAddress:wallet,pollMs:150,
+        send:async call=>{ window.spendWalletSends.push(call); ${send} },
+        lookup:async id=>{ window.spendWalletLookups.push(id); ${lookup} }});
       return React.createElement('main',{className:'still'},React.createElement(StillSpendWalletPay,{sky:skyStateV1({now:new Date('${NOW.toISOString()}')}),model,order:null,orderReading:false}));
     }
   ` }));
@@ -119,4 +143,57 @@ test('a payment whose terms changed since it was read is not sent', async ({ pag
   await expect(page.getByText('The payment changed since you read it.', { exact: false })).toBeVisible();
   expect(state.order).not.toContain('arm');
   expect(await sends(page)).toEqual([]);
+});
+
+// Re-audit R2, 2026-11-04: an account picked in the wallet while the payment was being armed was asked
+// to send it as itself. Now that wallet is never asked, and the arm is let go for the next press.
+test('an account picked in the wallet while the payment is armed is never asked to send it', async ({ page }) => {
+  const state = await install(page, 'switch');
+  await page.goto(`/spend/pay/${ORDER_ID}`);
+  await page.getByRole('button', { name: 'Pay 2.00 USDC', exact: true }).click();
+  await expect(page.getByText('Sign in and connect the wallet that opened this invoice to pay it.', { exact: true })).toBeVisible();
+  await expect.poll(() => state.submissions).toEqual([{ attemptId: ATTEMPT, outcome: 'rejected' }]);
+  expect(state.order.slice(0, 4)).toEqual(['review', 'review', 'arm', 'submission:rejected']);
+  expect(await sends(page)).toEqual([]);
+});
+
+// Re-audit R5, 2026-11-04: a batch id only the wallet knows never resolved on the server, and a payment
+// that had landed stayed on its way for good.
+test('a batch only the wallet knows is asked of that wallet, and its hash settles the payment from Base', async ({ page }) => {
+  const state = await install(page, 'batch');
+  await page.goto(`/spend/pay/${ORDER_ID}`);
+  await page.getByRole('button', { name: 'Pay 2.00 USDC', exact: true }).click();
+  await expect(page.getByText('Paid: Base shows your transfer to Bitrefill’s invoice.', { exact: false })).toBeVisible();
+  expect(state.submissions).toEqual([{ attemptId: ATTEMPT, outcome: 'submitted', batchId: 'mm-batch-1' }]);
+  expect(await page.evaluate(() => (window as unknown as { spendWalletLookups: string[] }).spendWalletLookups)).toContain('mm-batch-1');
+  expect(state.hints).toEqual([HASH]);
+  expect(await sends(page)).toEqual([CALL]);
+});
+
+test('an answer Still did not hear is given again by the next reading, for the same attempt', async ({ page }) => {
+  const state = await install(page, 'lost');
+  await page.goto(`/spend/pay/${ORDER_ID}`);
+  await page.getByRole('button', { name: 'Pay 2.00 USDC', exact: true }).click();
+  await expect(page.getByText('Paid: Base shows your transfer to Bitrefill’s invoice.', { exact: false })).toBeVisible();
+  expect(state.submissions).toEqual([
+    { attemptId: ATTEMPT, outcome: 'submitted', transactionHash: HASH },
+    { attemptId: ATTEMPT, outcome: 'submitted', transactionHash: HASH },
+  ]);
+  await expect(page.getByText(/could not record it just now/)).toHaveCount(0);
+  expect(await sends(page)).toEqual([CALL]);
+});
+
+test('a hash pasted from the wallet’s activity is checked against this payment, and nothing is sent', async ({ page }) => {
+  const state = await install(page, 'manual');
+  await page.goto(`/spend/pay/${ORDER_ID}`);
+  await page.getByRole('button', { name: 'Pay 2.00 USDC', exact: true }).click();
+  await page.getByText('Your wallet sent it, and the result is not here?', { exact: true }).click();
+  await page.getByLabel('Transaction hash').fill(`0x${'cd'.repeat(32)}`);
+  await page.getByRole('button', { name: 'Find this transaction', exact: true }).click();
+  await expect(page.getByText('Base has that transaction, and it is not this payment.', { exact: false })).toBeVisible();
+  await page.getByLabel('Transaction hash').fill(HASH.toUpperCase().replace('0X', '0x'));
+  await page.getByRole('button', { name: 'Find this transaction', exact: true }).click();
+  await expect(page.getByText('Paid: Base shows your transfer to Bitrefill’s invoice.', { exact: false })).toBeVisible();
+  expect(state.hints).toEqual([`0x${'cd'.repeat(32)}`, HASH]);
+  expect(await sends(page)).toEqual([CALL]);
 });

@@ -432,7 +432,8 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
   });
 
   const walletModel = (patch: Partial<StillSpendWalletModelV1> = {}): StillSpendWalletModelV1 => ({
-    loading: false, error: null, view: spendWalletViewV1(ready), busy: false, walletError: null, lock: null, onPay: noop, checking: false, onCheck: null, onRetry: null, ...patch });
+    loading: false, error: null, view: spendWalletViewV1(ready), busy: false, walletError: null, lock: null, onPay: noop, checking: false, onCheck: null, onRetry: null,
+    transactionHint: '', onTransactionHint: null, onFindTransaction: null, ...patch });
   const sky = skyStateV1({ now: new Date('2026-11-03T18:00:00Z') });
 
   it('the payment page shows what was checked and offers one button for exactly the price', () => {
@@ -473,5 +474,17 @@ describe('paying from the wallet’s own USDC, as the page says it', () => {
       model={walletModel({ view: spendWalletViewV1({ ...ready, state: 'confirmed', calls: undefined, transactionHash: hash }) })} />);
     assert.match(paid, /Paid to Bitrefill from your wallet/);
     assert.doesNotMatch(paid, /with the loan|Share this purchase/);
+  });
+
+  it('a payment on its way takes a hash from the wallet’s activity, and the view keeps its attempt and batch', () => {
+    const view = spendWalletViewV1({ ...ready, state: 'submitted', calls: undefined, attemptId: '0d3c6a52-6f8e-4f0a-9d3e-2b1f8c7a6e5d', batchId: 'mm-batch-1', errorCode: null });
+    assert.equal(view?.attemptId, '0d3c6a52-6f8e-4f0a-9d3e-2b1f8c7a6e5d');
+    assert.equal(view?.batchId, 'mm-batch-1');
+    const waiting = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
+      model={walletModel({ view, onFindTransaction: noop, onTransactionHint: noop })} />);
+    assert.match(waiting, /<summary>Your wallet sent it, and the result is not here\?<\/summary>/);
+    assert.match(waiting, /checks that transaction against this exact payment; it sends nothing\./);
+    assert.match(waiting, /Find this transaction<\/button>/);
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel()} order={null} orderReading={false} />), /Find this transaction/);
   });
 });

@@ -183,6 +183,7 @@ const WalletSubmissionV1Schema = z.object({
   attemptId: z.string().uuid(), outcome: z.enum(['submitted', 'unknown', 'rejected']),
   batchId: z.string().min(1).max(2000).optional(), transactionHash: z.string().regex(HASH_V1).optional(),
 }).strict().refine((v) => v.outcome === 'submitted' ? (v.batchId === undefined) !== (v.transactionHash === undefined) : v.batchId === undefined && v.transactionHash === undefined);
+const WalletTransactionHintV1Schema = z.object({ transactionHash: z.string().regex(HASH_V1) }).strict();
 
 function walletOrderV1(req: Request, res: Response): { wallet: string; owner: SpendOrderOwnerV1; orderId: string } | null {
   const wallet = sessionWalletV1(req, res);
@@ -300,6 +301,39 @@ stillSpendRouter.post('/orders/:id/wallet/submission', async (req: Request, res:
     return;
   }
   res.json(spendWalletWireV1(record));
+});
+
+/** A transaction hash from the wallet's own activity, for a payment whose result Still cannot find:
+ * a batch id only that wallet knows, or an answer that never reached Still (re-audit R5, 2026-11-04).
+ * Only a lookup hint: the result is still read from the chain against the approved call, and a hint
+ * that matches nothing is replaced by the next one. Two different wallet answers stay as they are. */
+stillSpendRouter.post('/orders/:id/wallet/transaction', async (req: Request, res: Response) => {
+  const asked = walletOrderV1(req, res);
+  if (!asked) return;
+  const { wallet, owner, orderId } = asked;
+  const body = WalletTransactionHintV1Schema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: 'spend_request_invalid' });
+    return;
+  }
+  if (!(await stillSpendRuntimeV1.walletLimiter.consume(wallet)).success) {
+    res.status(429).json({ error: 'spend_rate_limited' });
+    return;
+  }
+  const store = await stillSpendRuntimeV1.walletPayments();
+  const record = await store.get({ owner, orderId });
+  if (!record || !['awaiting_wallet', 'submitted', 'unknown'].includes(record.state) || record.errorCode === 'conflicting_wallet_answers') {
+    res.status(409).json({ error: 'spend_wallet_attempt_changed' });
+    return;
+  }
+  const saved = await store.recordVerification({ owner, orderId, expectedVersion: record.version, state: 'unknown',
+    transactionHash: body.data.transactionHash.toLowerCase() as `0x${string}`, proof: null, errorCode: 'spend_wallet_transaction_hint_unverified',
+    now: stillSpendRuntimeV1.now() });
+  if (!saved) {
+    res.status(409).json({ error: 'spend_wallet_attempt_changed' });
+    return;
+  }
+  res.json(spendWalletWireV1(saved));
 });
 
 /** The result, read from the chain. Over the limit, what was last recorded. */

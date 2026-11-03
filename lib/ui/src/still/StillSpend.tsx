@@ -385,6 +385,17 @@ export function StillSpendWalletPay({ sky, model, order, orderReading }: {
             <p className={paying.state === 'failed' ? 'still-warn' : 'still-note'} role="status">{walletStatusTextV1(paying.state, paying.transactionHash)}</p>
           )}
           {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking} onClick={() => model.onCheck?.()}>{model.checking ? 'Reading…' : 'Read the result again'}</button> : null}
+          {model.onFindTransaction ? (
+            <details className="still-lending-details">
+              <summary>Your wallet sent it, and the result is not here?</summary>
+              <p className="still-note">Paste the transaction hash from your wallet’s activity. Still checks that transaction against this exact payment; it sends nothing.</p>
+              <label className="still-borrow-label">Transaction hash
+                <input className="still-borrow-stock-select mono" type="text" autoComplete="off" spellCheck={false} value={model.transactionHint}
+                  onChange={(event) => model.onTransactionHint?.(event.target.value)} disabled={model.checking} />
+              </label>
+              <button type="button" className="still-btn sec" onClick={() => model.onFindTransaction?.()} disabled={model.checking}>Find this transaction</button>
+            </details>
+          ) : null}
         </section>
       ) : null}
       {paying?.state === 'confirmed' ? <StillSpendPaid order={order} reading={orderReading} paidWith="wallet" /> : null}
