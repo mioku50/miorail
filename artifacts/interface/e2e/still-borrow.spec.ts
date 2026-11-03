@@ -7,6 +7,16 @@ const NOW = new Date('2026-10-28T15:00:00Z');
 const WALLET = '0x1111111111111111111111111111111111111111';
 const REVIEW_URL = '/lending/miorail-lending-v1.fixturepayload.fixturesignature';
 
+/**
+ * The stubbed gate says signed in at once, but the wallet's address comes
+ * with the session read, and a press before it reads for no wallet and is
+ * dropped. The wallet bar names the address from that same read.
+ */
+async function openSignedIn(page: Page, url: string) {
+  await page.goto(url, { waitUntil: 'domcontentloaded' });
+  await expect(page.getByRole('banner', { name: 'Wallet and account' }).getByText(`${WALLET.slice(0, 6)}…${WALLET.slice(-4)}`, { exact: true })).toBeVisible();
+}
+
 async function install(page: Page, signedIn = true, wallet: 'none' | 'no-batches' = 'none') {
   await page.clock.setFixedTime(NOW);
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
@@ -99,7 +109,7 @@ async function noWalletAction(page: Page) {
 for (const width of [390, 1366]) {
   test(`stock collateral uses its own exact decimals and Aave review (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 }); const state = await install(page);
-    await page.goto('/borrow');
+    await openSignedIn(page, '/borrow');
     await page.getByLabel('Stock collateral · Aave V4', { exact: true }).selectOption('NVDAc');
     await page.getByLabel('Amount to add', { exact: true }).fill('0.05000001');
     expect(state.limitReads).toHaveLength(0);
@@ -124,7 +134,7 @@ for (const width of [390, 1366]) {
 
   test(`Max fills the whole balance from one server read, and native ETH keeps the fee reserve (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 }); const state = await install(page);
-    await page.goto('/borrow');
+    await openSignedIn(page, '/borrow');
     await page.getByLabel('Stock collateral · Aave V4', { exact: true }).selectOption('NVDAc');
     await page.getByRole('button', { name: 'Max', exact: true }).click();
     await expect(page.getByLabel('Amount to add', { exact: true })).toHaveValue('1');
@@ -144,7 +154,7 @@ for (const width of [390, 1366]) {
   test(`a selected pledge is read on demand and becomes only a review question (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page);
-    await page.goto('/borrow', { waitUntil: 'domcontentloaded' });
+    await openSignedIn(page, '/borrow');
     await expect(page.getByRole('heading', { name: 'Get money', exact: true })).toBeVisible();
     await expect(page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: 'Assets', exact: true })).toHaveAttribute('aria-current', 'page');
     expect(state.limitReads).toHaveLength(0);
@@ -185,7 +195,7 @@ for (const width of [390, 1366]) {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page);
     state.mode = 'unavailable';
-    await page.goto('/borrow?asset=WETH', { waitUntil: 'domcontentloaded' });
+    await openSignedIn(page, '/borrow?asset=WETH');
     await expect(page.getByRole('button', { name: /WETH/ })).toHaveAttribute('aria-pressed', 'true');
     expect(state.limitReads).toHaveLength(0);
     await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
@@ -216,7 +226,7 @@ test('a visitor sees a sign-in link and never starts a private balance read', as
 
 test('an explicit native-ETH query requires a positive amount, keeps the fee reserve and submits nativeFundingAtomic', async ({ page }) => {
   const state = await install(page);
-  await page.goto('/borrow?asset=ETH', { waitUntil: 'domcontentloaded' });
+  await openSignedIn(page, '/borrow?asset=ETH');
   await expect(page.getByRole('button', { name: /cbBTC/ })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByRole('button', { name: /WETH/ })).toHaveAttribute('aria-pressed', 'false');
   await expect(page.getByRole('button', { name: /ETH\s*Wrap native ETH/ })).toHaveAttribute('aria-pressed', 'true');
@@ -244,7 +254,7 @@ test('an explicit native-ETH query requires a positive amount, keeps the fee res
 test('ETH that would spend the fee reserve is refused with the amount that works, filled in one press', async ({ page }) => {
   const state = await install(page);
   state.mode = 'native-short';
-  await page.goto('/borrow?asset=ETH', { waitUntil: 'domcontentloaded' });
+  await openSignedIn(page, '/borrow?asset=ETH');
   await page.getByLabel('Amount to add', { exact: true }).fill('0.0033');
   await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
   await expect(page.getByRole('alert')).toHaveText(
@@ -265,7 +275,7 @@ for (const width of [390, 1366]) {
   test(`a wallet with no batch methods hears which loans go in steps before it reads or reviews anything (${width}px)`, async ({ page }, testInfo) => {
     await page.setViewportSize({ width, height: 900 });
     const state = await install(page, true, 'no-batches');
-    await page.goto('/borrow?asset=ETH', { waitUntil: 'domcontentloaded' });
+    await openSignedIn(page, '/borrow?asset=ETH');
     // The catch-all injected connector names no wallet, so the sentence does not either.
     await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now\./ })).toBeVisible();
     await expect(page.getByText(/Choose a stock, or use Base Account, Coinbase Wallet \(Base App\) or MetaMask\./)).toBeVisible();
@@ -278,7 +288,7 @@ for (const width of [390, 1366]) {
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: testInfo.outputPath(`no-batches-${width}.png`), fullPage: true });
     // A stock loan goes in steps, so the same wallet is told how instead of turned away.
-    await page.goto('/borrow?asset=NVDAc', { waitUntil: 'domcontentloaded' });
+    await openSignedIn(page, '/borrow?asset=NVDAc');
     await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, so a loan against a stock goes in steps: your wallet asks for each one/ })).toBeVisible();
     await expect(page.getByText(/Use Base Account, Coinbase Wallet/)).toHaveCount(0);
     expect(state.limitReads).toEqual([]);
@@ -290,7 +300,7 @@ test('a late prepared link cannot pull the person back after leaving the form', 
   const state = await install(page);
   let release!: () => void;
   state.intentGate = new Promise<void>(resolve => { release = resolve; });
-  await page.goto('/borrow?asset=cbBTC', { waitUntil: 'domcontentloaded' });
+  await openSignedIn(page, '/borrow?asset=cbBTC');
   await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
   await page.getByLabel('USDC to borrow', { exact: true }).fill('3');
   await page.getByRole('button', { name: 'Review loan', exact: true }).click();
