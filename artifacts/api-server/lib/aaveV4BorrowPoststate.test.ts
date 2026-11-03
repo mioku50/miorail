@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { buildAaveV4PoststateProbesV1, verifyAaveV4PoststateV1 } from './aaveV4BorrowPoststate.js';
-import { aaveReadFixture, aaveStandingFixture, aavePoststateFixture, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
+import { aaveReadFixture, aaveRepaidReadFixture, aaveStandingFixture, aavePoststateFixture, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 
 describe('Aave independent whole-Spoke same-state proof', () => {
   it('keeps the cross-collateral account bounded within eight aggregate probes', async () => {
@@ -77,5 +77,60 @@ describe('Aave independent whole-Spoke same-state proof', () => {
     const f = aavePoststateFixture(s, 'repay', amount, p => { p.debts.set(0, BigInt(1)); });
     const r = verifyAaveV4PoststateV1({ ...f, expected: { standing: s, operation: 'repay', maximumRepayAssets: amount } });
     assert(r.ok, !r.ok ? r.detail : '');
+  });
+});
+
+describe('Aave same-state proof of repaying all and taking the stock back', () => {
+  const max = BigInt(20_000_000);
+  it('proves the full repayment, the whole deposit leaving for the wallet, the refreshed key and a zero premium', async () => {
+    const read = aaveReadFixture(), s0 = await aaveStandingFixture('repay', read);
+    // A stale key on the stock's own position: the deployed withdrawal refreshes it to the latest.
+    read.positions.find(p => p.reserveId === s0.collateralReserve!.reserveId)!.dynamicConfigKey += 1;
+    const s = await aaveStandingFixture('repay', read), deposit = s.existingSuppliedAssets;
+    const f = aavePoststateFixture(s, 'repay', max, (p, after) => { if (!after) p.riskPremium = BigInt(1000); }, true);
+    const r = verifyAaveV4PoststateV1({ ...f, expected: { standing: s, operation: 'repay', maximumRepayAssets: max, fullRepay: true, returnCollateralAssets: deposit } });
+    assert(r.ok, !r.ok ? r.detail : ''); if (!r.ok) return;
+    assert.equal(r.after.selectedSuppliedAssets, BigInt(0)); assert.equal(r.after.walletCollateralAssets - r.before.walletCollateralAssets, deposit);
+    assert.equal(r.usdcMovedAssets, s.debtAssets); assert.equal(r.after.debtAssets, BigInt(0)); assert.equal(r.after.riskPremium, BigInt(0));
+    const kept = aavePoststateFixture(s, 'repay', max, (p, after) => { if (after) p.positions.get(s.collateralReserve!.reserveId)!.dynamicConfigKey = s.collateralReserve!.dynamicConfigKey + 1; }, true);
+    assert(!verifyAaveV4PoststateV1({ ...kept, expected: { standing: s, operation: 'repay', maximumRepayAssets: max, fullRepay: true, returnCollateralAssets: deposit } }).ok);
+  });
+  it('refuses dust left behind, a stock that does not arrive, a premium kept and any other debt', async () => {
+    const s = await aaveStandingFixture('repay'), id = s.collateralReserve!.reserveId, token = s.selectedStock!.token.toLowerCase();
+    for (const mutation of ['dust', 'arrival', 'premium'] as const) {
+      const f = aavePoststateFixture(s, 'repay', max, (p, after) => { if (!after) return;
+        if (mutation === 'dust') { p.positions.get(id)!.suppliedShares = BigInt(1); p.supplied.set(id, BigInt(1)); }
+        if (mutation === 'arrival') p.wallets.set(token, p.wallets.get(token)! - BigInt(1));
+        if (mutation === 'premium') p.riskPremium = BigInt(5);
+      }, true);
+      assert(!verifyAaveV4PoststateV1({ ...f, expected: { standing: s, operation: 'repay', maximumRepayAssets: max, fullRepay: true, returnCollateralAssets: s.existingSuppliedAssets } }).ok, mutation);
+    }
+    const read = aaveReadFixture(); read.positions[0]!.drawnShares = BigInt(1);
+    const other = await aaveStandingFixture('repay', read);
+    const f = aavePoststateFixture(other, 'repay', max, p => { p.debts.set(0, BigInt(1)); }, true);
+    const r = verifyAaveV4PoststateV1({ ...f, expected: { standing: other, operation: 'repay', maximumRepayAssets: max, fullRepay: true, returnCollateralAssets: other.existingSuppliedAssets } });
+    assert(!r.ok); if (!r.ok) assert.equal(r.refusal, 'aave_poststate_debt_mismatch');
+    const partial = aavePoststateFixture(s, 'repay', max, undefined, true);
+    assert(!verifyAaveV4PoststateV1({ ...partial, expected: { standing: s, operation: 'repay', maximumRepayAssets: max, returnCollateralAssets: s.existingSuppliedAssets } }).ok);
+  });
+  it('with no debt left proves the withdrawal alone, and refuses any USDC that moves', async () => {
+    const s = await aaveStandingFixture('repay', aaveRepaidReadFixture());
+    const expected = { standing: s, operation: 'repay' as const, maximumRepayAssets: BigInt(0), fullRepay: true, returnCollateralAssets: s.existingSuppliedAssets };
+    const f = aavePoststateFixture(s, 'repay', BigInt(0), undefined, true), r = verifyAaveV4PoststateV1({ ...f, expected });
+    assert(r.ok, !r.ok ? r.detail : ''); if (r.ok) { assert.equal(r.usdcMovedAssets, BigInt(0)); assert.equal(r.after.selectedSuppliedAssets, BigInt(0)); }
+    const usdc = ADDRESSES.usdc.toLowerCase();
+    const moved = aavePoststateFixture(s, 'repay', BigInt(0), (p, after) => { if (after) p.wallets.set(usdc, p.wallets.get(usdc)! - BigInt(1)); }, true);
+    assert(!verifyAaveV4PoststateV1({ ...moved, expected }).ok);
+    assert(!verifyAaveV4PoststateV1({ ...f, expected: { ...expected, maximumRepayAssets: BigInt(1) } }).ok);
+  });
+  it('in steps a Repay all with a buffer leaves the rest of the allowance with the Spoke, which one batch never does', async () => {
+    const s = await aaveStandingFixture('repay');
+    const f = aavePoststateFixture(s, 'repay', max, (p, after) => { if (after) p.allowance = max - s.debtAssets; });
+    const expected = { standing: s, operation: 'repay' as const, maximumRepayAssets: max, fullRepay: true };
+    assert(verifyAaveV4PoststateV1({ ...f, expected: { ...expected, sequential: true } }).ok);
+    assert(!verifyAaveV4PoststateV1({ ...f, expected }).ok);
+    const cleared = aavePoststateFixture(s, 'repay', max);
+    assert(verifyAaveV4PoststateV1({ ...cleared, expected }).ok);
+    assert(!verifyAaveV4PoststateV1({ ...cleared, expected: { ...expected, sequential: true } }).ok);
   });
 });

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import express from 'express';
 import request from 'supertest';
 import { hashApprovedCallsV1, type ExecutionCallV1 } from '@mioagent/route-domain';
-import { STOCKS, ADDRESSES } from '@mioagent/still-engine/registry';
+import { STOCKS, ADDRESSES, CRYPTO } from '@mioagent/still-engine/registry';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
@@ -58,6 +58,24 @@ describe('session-owned lending HTTP boundary', () => {
       const r = await request(app()).post(`${base}/repay/intent`).send({ collateralTokenAddress: token, amountMode: 'assets', repayAmountAtomic: '1000000', maximumUsdcAtomic: '1000000', ...patch });
       assert.equal(r.status, 400);
     }
+  });
+  it('takes the stock back only with Repay all of an Aave V4 stock, and lets the maximum be zero for it alone', async () => {
+    const body = { collateralTokenAddress: token, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true };
+    const r = await request(app()).post(`${base}/repay/intent`).send(body);
+    assert.equal(r.status, 200); assert.match(r.body.reviewUrl, /^\/lending\/miorail-lending-v1\./); assert.equal(simulations, 0);
+    const claims = JSON.parse(Buffer.from(String(r.body.reviewUrl).split('.')[1]!, 'base64url').toString());
+    assert.deepEqual(claims.question, { operation: 'repay', collateralTokenAddress: token, amountMode: 'all', repayAssets: null, maximumAssets: '0', returnCollateral: true });
+    for (const patch of [{ returnCollateral: false }, { amountMode: 'assets', repayAmountAtomic: '1000000', maximumUsdcAtomic: '1000000' }, { returnCollateral: undefined }]) {
+      assert.equal((await request(app()).post(`${base}/repay/intent`).send({ ...body, ...patch })).status, 400, JSON.stringify(patch));
+    }
+    const morpho = await request(app()).post(`${base}/repay/intent`).send({ ...body, collateralTokenAddress: CRYPTO[0]!.token.toLowerCase(), maximumUsdcAtomic: '1000000' });
+    assert.equal(morpho.status, 400); assert.equal(morpho.body.error, 'lending_return_unsupported');
+  });
+  it('reads a stock loan with its deposit, so the page can offer it back', async () => {
+    rwaLendingRuntimeV1.readAave = (async () => ({ state: 'read', standing: { debtAssets: 0n, walletUsdcAssets: 5n, blockNumber: 53100000, existingSuppliedAssets: 3014121n } })) as unknown as typeof rwaLendingRuntimeV1.readAave;
+    const r = await request(app()).get(`${base}/repay/capacity?token=${token}`);
+    assert.equal(r.status, 200);
+    assert.deepEqual([r.body.read.debtAtomic, r.body.read.walletUsdcAtomic, r.body.read.collateralAtomic], ['0', '5', '3014121']);
   });
   it('opens only the draft owner and carries no calls on refusal', async () => {
     const signed = draft(repayQuestion);

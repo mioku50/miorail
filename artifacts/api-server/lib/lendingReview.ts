@@ -34,6 +34,8 @@ export interface LendingFactsV1 {
   };
   /** Still Spend: the borrowed USDC pays this Bitrefill invoice in the same batch. */
   payment?: LendingPaymentV1;
+  /** Repay all and take the stock back: the deposit that returns to the wallet, after the repayment. */
+  collateralReturnAssets?: string;
   warnings: string[];
 }
 
@@ -116,6 +118,7 @@ export function lendingSigningTermsFactsV1(facts: LendingFactsV1): Record<string
         }
       : {}),
     ...(facts.payment ? { payment: facts.payment } : {}),
+    ...(facts.collateralReturnAssets !== undefined ? { collateralReturnAssets: facts.collateralReturnAssets } : {}),
     warnings: facts.warnings,
   };
 }

@@ -235,6 +235,8 @@ export const StillPrepareRepayInputV1Schema = z.object({
     .describe('USDC to pay back from this wallet, such as "50", or "all" to close the loan with its interest.'),
   maximumUsdc: z.string().regex(DECIMAL_V1).optional()
     .describe('With "all" only, and needed there: the most USDC the user agreed to pay, interest included. The review refuses if the debt has grown past it.'),
+  returnCollateral: z.boolean().optional()
+    .describe('true when the user asked for their stock back: with "all", the same review then returns the whole stock deposit to this wallet. A stock on Aave V4 only. When nothing is owed any more it only returns the stock, and maximumUsdc may be "0".'),
 }).strict();
 
 export const StillPrepareRepayOutputV1Schema = z.object({
@@ -245,6 +247,7 @@ export const StillPrepareRepayOutputV1Schema = z.object({
   collateral: z.enum(STILL_TOKEN_COLLATERAL_V1),
   repayUsdc: z.string(),
   maximumUsdc: z.string(),
+  returnCollateral: z.boolean(),
   next: z.string(),
 }).strict();
 
@@ -254,7 +257,13 @@ export function stillPrepareRepayReviewV1(
   deps: { secret: string; now: Date; origin?: string },
 ): z.infer<typeof StillPrepareRepayOutputV1Schema> {
   const { token, venue } = tokenOfV1(args.collateral);
-  const all = args.repayUsdc === 'all';
+  const all = args.repayUsdc === 'all', back = args.returnCollateral === true;
+  if (back && venue !== 'aave-v4') {
+    throw new StillLoanRefusalV1('still_return_unsupported', 'Taking the collateral back is offered for a stock on Aave V4. A cbBTC or WETH loan on Morpho is repaid without it for now.');
+  }
+  if (back && !all) {
+    throw new StillLoanRefusalV1('still_repay_amount_invalid', 'returnCollateral goes with "all": the stock comes back once the whole loan is repaid.');
+  }
   const repay = all ? null : unitsV1(args.repayUsdc, 6);
   if (!all && (repay === null || repay === 0n)) {
     throw new StillLoanRefusalV1('still_repay_amount_invalid', 'The USDC to pay back is an amount above zero with at most six decimals, or "all".');
@@ -263,7 +272,7 @@ export function stillPrepareRepayReviewV1(
     throw new StillLoanRefusalV1('still_repay_amount_invalid', 'maximumUsdc goes with "all" only: an exact repayment takes exactly its amount.');
   }
   const maximum = all ? (args.maximumUsdc === undefined ? null : unitsV1(args.maximumUsdc, 6)) : repay;
-  if (maximum === null || maximum === 0n) {
+  if (maximum === null || (maximum === 0n && !back)) {
     throw new StillLoanRefusalV1('still_repay_amount_invalid', 'Repaying all needs maximumUsdc: the most USDC the user agreed to pay, interest included, above zero with at most six decimals.');
   }
   if (deps.secret.length < 16) throw new StillLoanRefusalV1('still_loan_unavailable', 'Still cannot prepare a review on this server right now.');
@@ -271,7 +280,8 @@ export function stillPrepareRepayReviewV1(
   const issued = issueLendingDraftV1({
     tenantId: identity.tenantId,
     walletAddress: wallet,
-    question: { operation: 'repay', collateralTokenAddress: token, amountMode: all ? 'all' : 'assets', repayAssets: repay === null ? null : repay.toString(), maximumAssets: maximum.toString() },
+    question: { operation: 'repay', collateralTokenAddress: token, amountMode: all ? 'all' : 'assets', repayAssets: repay === null ? null : repay.toString(), maximumAssets: maximum.toString(),
+      ...(back ? { returnCollateral: true as const } : {}) },
     secret: deps.secret,
     now: deps.now,
   });
@@ -283,6 +293,7 @@ export function stillPrepareRepayReviewV1(
     collateral: args.collateral,
     repayUsdc: args.repayUsdc,
     maximumUsdc: usdcTextV1(maximum),
+    returnCollateral: back,
     next: 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes. The page reads the loan again and simulates the exact calls before the user’s own wallet opens; the USDC comes from this wallet, and "all" closes the loan with its interest up to maximumUsdc. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) repays a stock loan in steps; cbBTC and WETH need one transaction. Nothing has been sent. After the user signs, miorail_get_still_review_status with reviewId reads what happened.',
   };
 }

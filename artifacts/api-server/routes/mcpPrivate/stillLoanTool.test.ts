@@ -251,6 +251,20 @@ test('a repayment is Repay’s own question: an exact amount, or all of it up to
   refused({ collateral: 'NVDAc', repayUsdc: '1.0000001' }, /at most six decimals/);
 });
 
+test('taking the stock back goes with "all" on an Aave V4 stock, and its maximum may be zero when nothing is owed', () => {
+  const back = stillPrepareRepayReviewV1(IDENTITY, { collateral: 'NVDAc', repayUsdc: 'all', maximumUsdc: '0', returnCollateral: true }, { secret: SECRET, now: NOW });
+  assert.deepEqual([back.returnCollateral, back.maximumUsdc, back.venue], [true, '0', 'aave-v4']);
+  assert.deepEqual(draftOf(back.reviewUrl).question, {
+    operation: 'repay', collateralTokenAddress: NVDAC, amountMode: 'all', repayAssets: null, maximumAssets: '0', returnCollateral: true,
+  });
+  assert.equal(stillPrepareRepayReviewV1(IDENTITY, { collateral: 'NVDAc', repayUsdc: '50' }, { secret: SECRET, now: NOW }).returnCollateral, false);
+  const refused = (args: Parameters<typeof stillPrepareRepayReviewV1>[1], code: string) =>
+    assert.throws(() => stillPrepareRepayReviewV1(IDENTITY, args, { secret: SECRET, now: NOW }), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === code);
+  refused({ collateral: 'cbBTC', repayUsdc: 'all', maximumUsdc: '1', returnCollateral: true }, 'still_return_unsupported');
+  refused({ collateral: 'NVDAc', repayUsdc: '50', returnCollateral: true }, 'still_repay_amount_invalid');
+  refused({ collateral: 'NVDAc', repayUsdc: 'all', maximumUsdc: '0' }, 'still_repay_amount_invalid');
+});
+
 test('the connected surface lists the purchase and the repayment as writes that return links, beside Still’s Spend reads', async (t) => {
   spend(t);
   const original = { ...rwaLendingRuntimeV1 };

@@ -66,12 +66,15 @@ export function bindLoanStepV1(input: { execution: LoanExecutionV1; index: numbe
   return receipt.status === 'success' ? { state: 'matched' } : { state: 'failed', errorCode: 'loan_step_reverted' };
 }
 
-/** The question of the calls still to send: the approved one, less a pledge already supplied. */
+/** The question of the calls still to send: the approved one, less a pledge already supplied.
+ * Taking a stock back asks the same question again: once the repayment has
+ * landed no debt is left, so its fresh review is the withdrawal alone. */
 export function remainingQuestionV1(record: LoanExecutionV1, landed: number): LendingQuestionV1 {
   const f = record.run.facts;
   if (f.operation === 'repay') {
     return { operation: 'repay', collateralTokenAddress: f.collateralTokenAddress, amountMode: f.amountMode,
-      repayAssets: f.amountMode === 'assets' ? f.requestedAssets : null, maximumAssets: f.maximumDebitAssets };
+      repayAssets: f.amountMode === 'assets' ? f.requestedAssets : null, maximumAssets: f.maximumDebitAssets,
+      ...(f.collateralReturnAssets !== undefined ? { returnCollateral: true as const } : {}) };
   }
   const supplied = record.run.calls.slice(0, landed).some((call) => call.callType === 'deposit');
   return { operation: 'borrow', collateralTokenAddress: f.collateralTokenAddress, borrowAssets: f.requestedAssets!,

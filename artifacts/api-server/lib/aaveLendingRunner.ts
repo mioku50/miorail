@@ -20,11 +20,12 @@ export interface AaveLendingDepsV1 {
 const fail = (refusal: string, detail: string): LendingRunV1 => ({ state: 'refused', refusal, detail });
 
 /** Said on a review that goes in steps, before anything is signed. */
-function stepsWarningV1(count: number, operation: 'borrow' | 'repay'): string {
+function stepsWarningV1(count: number, operation: 'borrow' | 'repay', returning = false): string {
   const steps = count === 1 ? 'one transaction' : `${count} steps, one transaction each`;
   return operation === 'borrow'
     ? `Your wallet sends this as ${steps}, and pays each network fee. Still reviews each next step again before your wallet asks for it. Stopping between steps takes no loan: an allowance or a deposit already sent stays in place.`
-    : `Your wallet sends this as ${steps}, and pays each network fee. Stopping after the allowance repays nothing. Whatever the repayment leaves of the allowance stays with the Aave Spoke, which takes funds only for calls your own wallet makes.`;
+    : `Your wallet sends this as ${steps}, and pays each network fee. Stopping after the allowance repays nothing. Whatever the repayment leaves of the allowance stays with the Aave Spoke, which takes funds only for calls your own wallet makes.${
+      returning ? ' Stopping after the repayment leaves the stock deposited, to take back later.' : ''}`;
 }
 const NO_DEBT_HEALTH_SENTINEL = 1n << 128n;
 
@@ -50,6 +51,7 @@ function deploymentFailureV1(status: Exclude<AaveV4DeploymentStatusV1, 'matched'
  * for a wallet that cannot send a batch; it is simulated and checked alike. */
 export async function runAaveLendingV1(input: { walletAddress: string; question: LendingQuestionV1; delivery?: 'atomic' | 'sequential' }, deps: AaveLendingDepsV1 = {}): Promise<LendingRunV1> {
   const now = deps.now ?? (() => new Date()), q = input.question, sequential = input.delivery === 'sequential';
+  const returning = q.operation === 'repay' && q.returnCollateral === true;
   const supply = q.operation === 'borrow' ? BigInt(q.collateralSupplyAssets) : 0n;
   const read = await (deps.read ?? readAaveStandingV1)({ tokenAddress: q.collateralTokenAddress,
     walletAddress: input.walletAddress, operation: q.operation, collateralSupplyAssets: supply });
@@ -62,17 +64,24 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
     return fail('aave_question_mismatch', 'The measured owner, operation or stock differs from this exact question.');
   }
   const ask = q.operation === 'borrow' ? BigInt(q.borrowAssets) : q.amountMode === 'assets' ? BigInt(q.repayAssets!) : BigInt(q.maximumAssets);
-  if (ask <= 0n || ask >= (1n << 128n)) return fail('aave_amount_invalid', 'Choose an exact positive USDC amount.');
+  if ((ask <= 0n && !returning) || ask < 0n || ask >= (1n << 128n)) return fail('aave_amount_invalid', 'Choose an exact positive USDC amount.');
   if (q.operation === 'borrow' && (!s.capacity || ask > s.capacity.availableAssets)) return fail('aave_over_still_limit', 'The requested loan exceeds the measured Still allowance for this exact collateral choice.');
   if (q.operation === 'repay') {
-    if (s.debtAssets === 0n) return fail('nothing_to_repay', 'No USDC debt was recorded in this Aave Spoke at the reading block.');
+    if (returning && s.existingSuppliedAssets === 0n) return fail('nothing_to_return', `No ${s.selectedStock.id} is deposited in this Aave Spoke at the reading block, so there is nothing to take back.`);
+    if (returning && s.snapshot.aave?.reserves.some(r => r.info.role.kind !== 'usdc' && (!r.status.ok || r.status.value.borrowing))) {
+      return fail('aave_other_debt_open', 'Another asset is borrowed in this Aave account, so a stock is not taken back here. Only a USDC loan is repaid and closed by Still.');
+    }
+    if (s.debtAssets === 0n && !returning) return fail('nothing_to_repay', 'No USDC debt was recorded in this Aave Spoke at the reading block.');
     if (q.amountMode === 'all' && s.debtAssets > ask) return fail('repay_maximum_exceeded', 'The recorded debt exceeds your explicit maximum USDC budget.');
     if (q.amountMode === 'assets' && ask > s.debtAssets) return fail('repay_exceeds_debt', 'The exact partial repayment exceeds the recorded debt. Choose full repayment with an explicit maximum instead.');
     if (ask > BigInt(q.maximumAssets)) return fail('repay_maximum_exceeded', 'The chosen repayment exceeds the explicit USDC budget.');
   }
   // In steps, an allowance already exactly in place is not asked for again, read at the same block.
+  // Taking a stock back repays first while any debt is left; with none, it only withdraws.
+  const back = returning ? { stockId: s.selectedStock.id, collateralReserve: s.collateralReserve, assets: s.existingSuppliedAssets, repay: s.debtAssets > 0n } : undefined;
+  const repayAssets = back && !back.repay ? 0n : ask;
   let allowanceAssets = 0n;
-  if (sequential && (q.operation === 'repay' || supply > 0n)) {
+  if (sequential && ((q.operation === 'repay' && repayAssets > 0n) || supply > 0n)) {
     const read = await (deps.allowance ?? readSpokeAllowanceAtV1)({ token: q.operation === 'borrow' ? s.selectedStock.token : ADDRESSES.usdc,
       walletAddress: s.walletAddress, blockNumber: s.blockNumber });
     if (read === null) return fail('aave_allowance_unread', 'The wallet’s current allowance to the Aave Spoke could not be read, so the steps could not be planned.');
@@ -85,7 +94,7 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
         borrowAssets: ask, walletCollateralAssets: s.walletCollateralAssets, existingSuppliedAssets: s.existingSuppliedAssets,
         collateralAlreadyEnabled: s.collateralAlreadyEnabled, deployment: s.deployment, ...delivery })
     : aaveV4RepayPlanV1({ walletAddress: s.walletAddress, loanReserve: s.loanReserve,
-        maximumRepayAssets: ask, walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment, ...delivery });
+        maximumRepayAssets: repayAssets, walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment, ...delivery, ...(back ? { returnCollateral: back } : {}) });
   if (!planned.ok) return fail(planned.refusal, planned.detail);
   const plan = planned.plan;
   const probes = buildAaveV4PoststateProbesV1(s, q.operation);
@@ -111,18 +120,22 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   }
   const changes = answer.response.assetChanges;
   if (!changes || changes.status !== 'available') return fail('aave_effects_unread', 'The simulation did not establish all wallet asset movements.');
-  let usdcNet = 0n, stockOut = 0n, grossUsdcOut = 0n;
+  let usdcNet = 0n, stockOut = 0n, grossUsdcOut = 0n, stockIn = 0n;
   for (const c of changes.changes) {
     if (!/^(0|[1-9][0-9]{0,77})$/.test(c.amountAtomic)) return fail('aave_effects_unread', 'A wallet movement could not be read exactly.');
     const amount = BigInt(c.amountAtomic); if (amount === 0n) continue;
     if (c.counterparty?.toLowerCase() !== ADDRESSES.aaveHub.toLowerCase() || c.kind !== 'erc20_transfer') return fail('aave_transfer_counterparty_mismatch', 'A wallet movement did not reach or come from the registered Aave Hub.');
     if (c.token.toLowerCase() === ADDRESSES.usdc.toLowerCase()) { usdcNet += c.direction === 'in' ? amount : -amount; if (c.direction === 'out') grossUsdcOut += amount; }
     else if (q.operation === 'borrow' && c.token.toLowerCase() === s.selectedStock.token.toLowerCase() && c.direction === 'out') stockOut += amount;
+    else if (back && c.token.toLowerCase() === s.selectedStock.token.toLowerCase() && c.direction === 'in') stockIn += amount;
     else return fail('aave_unrequested_asset_change', 'An asset moved outside the exact collateral and USDC action you chose.');
   }
-  if (q.operation === 'borrow' ? usdcNet !== ask || stockOut !== supply || grossUsdcOut !== 0n : usdcNet >= 0n || -usdcNet > ask || grossUsdcOut !== -usdcNet || stockOut !== 0n) return fail('aave_effects_mismatch', 'The wallet movements do not match the selected Aave action.');
+  // With no debt left, taking the stock back moves no USDC at all.
+  const usdcMismatch = back && !back.repay ? usdcNet !== 0n || grossUsdcOut !== 0n : usdcNet >= 0n || -usdcNet > ask || grossUsdcOut !== -usdcNet;
+  if (q.operation === 'borrow' ? usdcNet !== ask || stockOut !== supply || grossUsdcOut !== 0n : usdcMismatch || stockOut !== 0n || stockIn !== (back?.assets ?? 0n)) return fail('aave_effects_mismatch', 'The wallet movements do not match the selected Aave action.');
   const measured = verifyAaveV4PoststateV1({ request, response: answer.response, expected: { standing: s, operation: q.operation,
-    ...(q.operation === 'borrow' ? { borrowAssets: ask } : { maximumRepayAssets: ask, fullRepay: q.amountMode === 'all' }) } });
+    ...(q.operation === 'borrow' ? { borrowAssets: ask } : { maximumRepayAssets: repayAssets, fullRepay: q.amountMode === 'all',
+      ...(back ? { returnCollateralAssets: back.assets } : {}), ...(sequential ? { sequential: true } : {}) }) } });
   if (!measured.ok) return fail(measured.refusal, measured.detail);
   const beforeLoan = measured.before.reserves.get(s.loanReserve.reserveId), afterLoan = measured.after.reserves.get(s.loanReserve.reserveId);
   const beforeStock = measured.before.reserves.get(s.collateralReserve.reserveId), afterStock = measured.after.reserves.get(s.collateralReserve.reserveId);
@@ -134,23 +147,29 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
   const facts: LendingFactsV1 = { operation: q.operation, venue: 'aave-v4', collateralTokenAddress: s.selectedStock.token.toLowerCase(),
     collateralSymbol: s.selectedStock.id, collateralDecimals: s.selectedStock.decimals, marketId: ADDRESSES.aaveSpoke.toLowerCase(),
     amountMode: q.operation === 'borrow' ? 'assets' : q.amountMode, requestedAssets: q.operation === 'borrow' || q.amountMode === 'assets' ? ask.toString() : null,
-    maximumDebitAssets: q.operation === 'repay' ? ask.toString() : '0', collateralSupplyAssets: supply.toString(),
+    maximumDebitAssets: q.operation === 'repay' ? repayAssets.toString() : '0', collateralSupplyAssets: supply.toString(),
     debtBeforeAssets: beforeLoan.debt.toString(), debtAfterAssets: afterLoan.debt.toString(),
     collateralBeforeAssets: beforeStock.supplied.toString(), collateralAfterAssets: afterStock.supplied.toString(),
     collateralBeforeShares: beforeStock.position.suppliedShares.toString(), collateralAfterShares: afterStock.position.suppliedShares.toString(),
     healthBeforeWad, healthAfterWad,
     ...(measured.capacity ? { policyLimitAssets: measured.capacity.limitAssets.toString(), protocolLimitAssets: measured.capacity.protocolLimitAssets.toString(), termsVersion: s.termsVersion } : {}),
     debtBeforeShares: beforeLoan.position.drawnShares.toString(), debtAfterShares: afterLoan.position.drawnShares.toString(),
+    ...(back ? { collateralReturnAssets: back.assets.toString() } : {}),
     blockNumber: answer.response.blockNumber, warnings: q.operation === 'borrow' ? [
       ...(!s.collateralAlreadyEnabled ? ['This also enables your selected stock deposit as collateral in this Spoke.'] : []),
       'This creates USDC debt in the reviewed Aave V4 equities Spoke. Its existing collateral and USDC debt are measured together.',
       `Still’s ${s.termsVersion} allowance was checked at the simulation block. Prices, rates and financial windows can change before your wallet submits.`,
       'Aave enforces its own health rules onchain. Your collateral can be liquidated. A server review is not an onchain price or Still-limit guarantee.',
       ...(sequential ? [stepsWarningV1(plan.calls.length, 'borrow')] : []),
-    ] : ['This repays the USDC debt of the Aave V4 equities Spoke. Collateral remains deposited.',
+    ] : back && !back.repay ? [`No USDC debt is open in the Aave V4 equities Spoke. This returns your ${s.selectedStock.id} deposit to this wallet, and no USDC moves.`,
+      ...(sequential ? [stepsWarningV1(plan.calls.length, 'repay', true)] : [])]
+      : [back ? `This repays all USDC debt of the Aave V4 equities Spoke, then returns your ${s.selectedStock.id} deposit to this wallet.`
+          : 'This repays the USDC debt of the Aave V4 equities Spoke. Collateral remains deposited.',
+      ...(back ? [sequential ? 'The stock is taken back in the last step, after Still has checked again that no debt is left.'
+        : 'Aave checks the account before the stock leaves: if any debt were left, the whole batch would revert and nothing would move.'] : []),
       sequential ? 'The Spoke takes at most your explicit USDC maximum and requests no position-manager grant.'
         : 'The Spoke takes at most your explicit USDC maximum, clears the temporary allowance in the same atomic batch and requests no position-manager grant.',
-      ...(sequential ? [stepsWarningV1(plan.calls.length, 'repay')] : [])] };
+      ...(sequential ? [stepsWarningV1(plan.calls.length, 'repay', Boolean(back))] : [])] };
   // The way it is sent is part of what is signed: steps are never armed as a batch, nor a batch as steps.
   const signingTermsHash = stableHashV1('aave-v4-lending-signing-terms/v1', {
     wallet: s.walletAddress,

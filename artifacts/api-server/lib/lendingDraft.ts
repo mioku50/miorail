@@ -13,7 +13,10 @@ export interface LendingPaymentV1 {
 }
 export type LendingQuestionV1 =
   | { operation: 'borrow'; collateralTokenAddress: string; borrowAssets: string; collateralSupplyAssets: string; nativeFundingAssets?: string; payment?: LendingPaymentV1 }
-  | { operation: 'repay'; collateralTokenAddress: string; amountMode: 'assets' | 'all'; repayAssets: string | null; maximumAssets: string };
+  | { operation: 'repay'; collateralTokenAddress: string; amountMode: 'assets' | 'all'; repayAssets: string | null; maximumAssets: string;
+      /** Repay all, then take the stock back to the wallet (Aave V4 stocks only).
+       * With no debt left only the stock moves, so the maximum may be zero. */
+      returnCollateral?: true };
 export interface LendingDraftClaimsV1 {
   version: 1 | 2 | 3; chainId: 8453; tenantId: string; walletAddress: string; draftId: string;
   venue: 'aave-v4' | 'morpho'; marketId: string; question: LendingQuestionV1; issuedAt: string; expiresAt: string;
@@ -51,8 +54,10 @@ function questionV1(value: unknown): value is LendingQuestionV1 {
       && (!native || q.collateralTokenAddress === ADDRESSES.weth.toLowerCase() && atom(q.nativeFundingAssets) && q.nativeFundingAssets === q.collateralSupplyAssets)
       && (!paying || isLendingPaymentV1(q.payment, q.borrowAssets));
   }
-  return q.operation === 'repay' && exact(q, ['operation','collateralTokenAddress','amountMode','repayAssets','maximumAssets'])
-    && atom(q.maximumAssets) && ((q.amountMode === 'all' && q.repayAssets === null)
+  const returning = q.operation === 'repay' && 'returnCollateral' in q;
+  if (returning && (q.returnCollateral !== true || q.amountMode !== 'all' || market.venue !== 'aave-v4')) return false;
+  return q.operation === 'repay' && exact(q, ['operation','collateralTokenAddress','amountMode','repayAssets','maximumAssets', ...(returning ? ['returnCollateral'] : [])])
+    && atom(q.maximumAssets, returning) && ((q.amountMode === 'all' && q.repayAssets === null)
       || (q.amountMode === 'assets' && atom(q.repayAssets) && BigInt(q.repayAssets) <= BigInt(q.maximumAssets)));
 }
 const signature = (secret: string, body: string, prefix: string = LENDING_DRAFT_PREFIX_V1) => crypto.createHmac('sha256', crypto.createHmac('sha256', secret)

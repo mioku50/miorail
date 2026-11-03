@@ -91,3 +91,47 @@ describe('Aave V4 plan in steps, for a wallet that cannot send a batch', () => {
     assert.ok(ready.ok); if (ready.ok) assert.equal(ready.plan.calls.length, 1);
   });
 });
+
+describe('Aave V4 repay all, then take the stock back', () => {
+  async function back(repay: boolean, steps?: { allowanceAssets: bigint }) {
+    const s = await aaveStandingFixture('repay');
+    const r = aaveV4RepayPlanV1({ walletAddress: s.walletAddress, loanReserve: s.loanReserve, maximumRepayAssets: repay ? BigInt(20_000_000) : BigInt(0),
+      walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment, ...(steps ? { delivery: 'sequential' as const, allowanceAssets: steps.allowanceAssets } : {}),
+      returnCollateral: { stockId: s.selectedStock!.id, collateralReserve: s.collateralReserve!, assets: s.existingSuppliedAssets, repay } });
+    return { s, r };
+  }
+  const methodsOf = (calls: readonly { to: string; data: `0x${string}` }[]) => calls.filter(c => c.to === ADDRESSES.aaveSpoke.toLowerCase()).map(c => decodeFunctionData({ abi: aaveV4WriteAbiV1, data: c.data }));
+  it('repays within the bound, clears the allowance, then withdraws exactly the measured deposit to the owner', async () => {
+    const { s, r } = await back(true); assert.equal(r.ok, true); if (!r.ok) return;
+    assert.deepEqual(r.plan.calls.map(c => c.callType), ['approval', 'approval', 'other', 'approval', 'withdraw']);
+    const methods = methodsOf(r.plan.calls);
+    assert.deepEqual(methods.map(m => m.functionName), ['repay', 'withdraw']);
+    assert.deepEqual(methods[1]!.args.slice(0, 2), [BigInt(s.collateralReserve!.reserveId), s.existingSuppliedAssets]);
+    assert.equal(String(methods[1]!.args[2]).toLowerCase(), s.walletAddress.toLowerCase());
+    assert.equal(r.plan.calls.at(-1)!.recipient, s.walletAddress.toLowerCase());
+    assert.doesNotMatch(r.plan.steps[2]!.reading, /without withdrawing collateral/);
+  });
+  it('with no debt left only withdraws: it approves nothing and asks for no USDC', async () => {
+    const { r } = await back(false); assert.equal(r.ok, true); if (!r.ok) return;
+    assert.deepEqual(r.plan.calls.map(c => c.callType), ['withdraw']);
+    assert.deepEqual(methodsOf(r.plan.calls).map(m => m.functionName), ['withdraw']);
+  });
+  it('in steps: the repayment, then the withdrawal, with no cleanup call between them', async () => {
+    const fresh = await back(true, { allowanceAssets: BigInt(0) }); assert.equal(fresh.r.ok, true);
+    if (fresh.r.ok) assert.deepEqual(fresh.r.plan.calls.map(c => c.callType), ['approval', 'other', 'withdraw']);
+    const allowed = await back(true, { allowanceAssets: BigInt(20_000_000) }); assert.equal(allowed.r.ok, true);
+    if (allowed.r.ok) assert.deepEqual(allowed.r.plan.calls.map(c => c.callType), ['other', 'withdraw']);
+  });
+  it('refuses a USDC maximum without a repayment, a zero one with it, and any reserve but the stock’s own', async () => {
+    const s = await aaveStandingFixture('repay');
+    const base = { walletAddress: s.walletAddress, loanReserve: s.loanReserve, walletUsdcAssets: s.walletUsdcAssets, deployment: s.deployment };
+    const own = { stockId: s.selectedStock!.id, collateralReserve: s.collateralReserve!, assets: s.existingSuppliedAssets };
+    assert.equal(aaveV4RepayPlanV1({ ...base, maximumRepayAssets: BigInt(1), returnCollateral: { ...own, repay: false } }).ok, false);
+    assert.equal(aaveV4RepayPlanV1({ ...base, maximumRepayAssets: BigInt(0), returnCollateral: { ...own, repay: true } }).ok, false);
+    assert.equal(aaveV4RepayPlanV1({ ...base, maximumRepayAssets: BigInt(0), returnCollateral: { ...own, repay: false, assets: BigInt(0) } }).ok, false);
+    for (const collateralReserve of [s.loanReserve, { ...s.collateralReserve!, underlying: ADDRESSES.cbbtc }]) {
+      const r = aaveV4RepayPlanV1({ ...base, maximumRepayAssets: BigInt(0), returnCollateral: { ...own, repay: false, collateralReserve } });
+      assert.equal(r.ok === false && r.refusal, 'aave_reserve_mismatch');
+    }
+  });
+});

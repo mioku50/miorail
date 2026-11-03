@@ -7,6 +7,9 @@ import type { MorphoPlanStepV1 } from '@mioagent/rwa-issuer/morphoBorrowPlan';
 // Base block 53217738 on 2026-10-28. These are the V4 Spoke's DIRECT methods;
 // V3 Pool calls and position-manager/router grants are deliberately excluded.
 // The server reads code + the implementation slot at the standing's block.
+// withdraw was read in the same verified source on 2026-11-03: it takes
+// min(amount, what the supplied shares are worth), sends that to its caller,
+// and checks the account's health when the reserve is collateral.
 export const AAVE_V4_DEPLOYMENT_PIN_V1 = {
   implementation: '0x81a73c282faa932de3b2541cee19549f4bf13b19',
   implementationCodeHash: '0x919242697bc12c3081610e470b50011f50312fedd852ea04282a1ee5294c3881',
@@ -19,12 +22,14 @@ export const aaveV4WriteAbiV1 = parseAbi([
   'function setUsingAsCollateral(uint256 reserveId,bool usingAsCollateral,address onBehalfOf)',
   'function borrow(uint256 reserveId,uint256 amount,address onBehalfOf) returns (uint256,uint256)',
   'function repay(uint256 reserveId,uint256 amount,address onBehalfOf) returns (uint256,uint256)',
+  'function withdraw(uint256 reserveId,uint256 amount,address onBehalfOf) returns (uint256,uint256)',
 ]);
 export const aaveV4ExecutionEventAbiV1 = parseAbi([
   'event Borrow(uint256 indexed reserveId,address indexed caller,address indexed user,uint256 drawnShares,uint256 drawnAmount)',
   'event Repay(uint256 indexed reserveId,address indexed caller,address indexed user,uint256 drawnShares,uint256 totalAmountRepaid,(int256 sharesDelta,int256 offsetRayDelta,uint256 restoredPremiumRay) premiumDelta)',
   'event Supply(uint256 indexed reserveId,address indexed caller,address indexed user,uint256 suppliedShares,uint256 suppliedAmount)',
   'event SetUsingAsCollateral(uint256 indexed reserveId,address indexed caller,address indexed user,bool usingAsCollateral)',
+  'event Withdraw(uint256 indexed reserveId,address indexed caller,address indexed user,uint256 withdrawnShares,uint256 withdrawnAmount)',
 ]);
 const approvalAbi = parseAbi(['function approve(address spender,uint256 amount) returns (bool)']);
 const MAX = (BigInt(1) << BigInt(256)) - BigInt(1);
@@ -176,26 +181,44 @@ export interface AaveV4RepayPlanInputV1 {
   delivery?: 'atomic' | 'sequential';
   /** For steps: the wallet's USDC allowance to the Spoke, read at the same block. */
   allowanceAssets?: bigint;
+  /** Repay all and take the stock back (2026-11-03): after the repayment,
+   * withdraw exactly the measured deposit of this stock to the wallet. With no
+   * debt left there is no repayment, only the withdrawal, and no USDC moves. */
+  returnCollateral?: { stockId: StockId; collateralReserve: AaveV4ReserveBindingV1; assets: bigint; repay: boolean };
 }
 
 /** repay(amount) itself takes min(amount,current debt). Never encode an
- * unlimited sentinel: the explicit person's maximum remains the onchain cap. */
+ * unlimited sentinel: the explicit person's maximum remains the onchain cap.
+ * withdraw(amount) likewise takes min(amount, the deposit), so the exact
+ * measured deposit is encoded, never a sentinel. */
 export function aaveV4RepayPlanV1(input: AaveV4RepayPlanInputV1): AaveV4PlanResultV1 {
-  const wallet = input.walletAddress.toLowerCase();
-  if (!address(wallet) || !uint(input.maximumRepayAssets, true) || !uint(input.walletUsdcAssets)) return invalid('A wallet and exact positive maximum USDC debit are required.');
+  const wallet = input.walletAddress.toLowerCase(), back = input.returnCollateral;
+  const repaying = !back || back.repay === true;
+  if (!address(wallet) || !uint(input.maximumRepayAssets, repaying) || (!repaying && input.maximumRepayAssets !== BigInt(0)) || !uint(input.walletUsdcAssets)) return invalid('A wallet and exact positive maximum USDC debit are required.');
   if (!matchesAaveV4DeploymentV1(input.deployment)) return { ok: false, refusal: 'aave_deployment_changed', detail: 'The current Aave proxy or implementation does not match the reviewed deployment.' };
   if (!binding(input.loanReserve, ADDRESSES.usdc, 6)) return { ok: false, refusal: 'aave_reserve_mismatch', detail: 'The registered USDC reserve was not established.' };
+  const stock = back ? STOCKS.find(s => s.id === back.stockId) : undefined;
+  if (back && (!stock || !uint(back.assets, true) || typeof back.repay !== 'boolean')) return invalid('Taking a stock back needs the exact registered stock and its measured deposit.');
+  if (back && (!binding(back.collateralReserve, stock!.token, stock!.decimals) || back.collateralReserve.reserveId === input.loanReserve.reserveId)) {
+    return { ok: false, refusal: 'aave_reserve_mismatch', detail: 'The exact registered stock and USDC reserves were not established.' };
+  }
   if (input.maximumRepayAssets > input.walletUsdcAssets) return { ok: false, refusal: 'aave_funding_insufficient', detail: 'The wallet USDC balance is below the confirmed maximum.' };
   const sequential = input.delivery === 'sequential';
-  if (sequential && (input.allowanceAssets === undefined || !uint(input.allowanceAssets))) return invalid('Steps need the wallet’s current allowance, read at the same block.');
+  if (sequential && repaying && (input.allowanceAssets === undefined || !uint(input.allowanceAssets))) return invalid('Steps need the wallet’s current allowance, read at the same block.');
   const batch = assembler('repay', sequential);
-  if (!sequential) { batch.approve(ADDRESSES.usdc, BigInt(0)); batch.approve(ADDRESSES.usdc, input.maximumRepayAssets); }
-  // In steps, what repay leaves of the allowance stays with the Spoke, which
-  // spends an allowance only for calls this wallet itself makes.
-  else if (input.allowanceAssets !== input.maximumRepayAssets) batch.approve(ADDRESSES.usdc, input.maximumRepayAssets);
-  batch.push(ADDRESSES.aaveSpoke, encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'repay', args: [BigInt(input.loanReserve.reserveId), input.maximumRepayAssets, wallet] }),
-    'other', input.maximumRepayAssets, ADDRESSES.aaveHub, null, 'Repays up to the exact confirmed USDC maximum for this wallet without withdrawing collateral or granting a position manager.');
-  if (!sequential) batch.approve(ADDRESSES.usdc, BigInt(0));
+  if (repaying) {
+    if (!sequential) { batch.approve(ADDRESSES.usdc, BigInt(0)); batch.approve(ADDRESSES.usdc, input.maximumRepayAssets); }
+    // In steps, what repay leaves of the allowance stays with the Spoke, which
+    // spends an allowance only for calls this wallet itself makes.
+    else if (input.allowanceAssets !== input.maximumRepayAssets) batch.approve(ADDRESSES.usdc, input.maximumRepayAssets);
+    batch.push(ADDRESSES.aaveSpoke, encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'repay', args: [BigInt(input.loanReserve.reserveId), input.maximumRepayAssets, wallet] }),
+      'other', input.maximumRepayAssets, ADDRESSES.aaveHub, null, back
+        ? 'Repays up to the exact confirmed USDC maximum for this wallet without granting a position manager.'
+        : 'Repays up to the exact confirmed USDC maximum for this wallet without withdrawing collateral or granting a position manager.');
+    if (!sequential) batch.approve(ADDRESSES.usdc, BigInt(0));
+  }
+  if (back) batch.push(ADDRESSES.aaveSpoke, encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'withdraw', args: [BigInt(back.collateralReserve.reserveId), back.assets, wallet] }),
+    'withdraw', back.assets, wallet, null, `Withdraws exactly the ${stock!.id} this wallet supplied (${back.assets} atomic units) and sends it to this wallet; the verified Spoke pays its caller, and Aave checks the account before the stock leaves.`);
   return batch.finish();
 }
 

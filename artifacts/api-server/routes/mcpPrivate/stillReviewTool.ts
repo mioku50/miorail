@@ -28,6 +28,8 @@ export const StillReviewStatusOutputV1Schema = z.object({
   operation: z.enum(['borrow', 'repay']).optional(),
   venue: z.enum(['aave-v4', 'morpho']).optional(),
   collateral: z.string().optional(),
+  /** Repay all and take the stock back: how much of the stock this review returns to the wallet, in its own units. */
+  collateralReturned: z.string().optional(),
   transactionHash: z.string().nullable().optional(),
   errorCode: z.string().nullable().optional(),
   updatedAt: z.string().optional(),
@@ -109,10 +111,18 @@ export async function stillReviewStatusV1(
   const paid = record.state === 'confirmed' && purchase
     ? ` The loan paid Bitrefill’s invoice; ${purchase.invoiceStatus === null ? 'Bitrefill’s own reading of it was not available here, and its email to the user is the receipt' : `Bitrefill reads it as ${purchase.invoiceStatus}`}. shareUrl shares the purchase without naming the wallet.`
     : '';
+  const returned = facts.collateralReturnAssets === undefined ? null : unitsTextV1(BigInt(facts.collateralReturnAssets), facts.collateralDecimals);
   return {
     reviewId, state: record.state, operation: facts.operation, venue: facts.venue, collateral: facts.collateralSymbol,
+    ...(returned === null ? {} : { collateralReturned: returned }),
     transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,
     ...(purchase ? { purchase } : {}),
-    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1 : NEXT_V1[record.state]}${paid}`,
+    next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
+      record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}`,
   };
+}
+
+function unitsTextV1(atomic: bigint, decimals: number): string {
+  const scale = 10n ** BigInt(decimals), fraction = (atomic % scale).toString().padStart(decimals, '0').replace(/0+$/, '');
+  return `${atomic / scale}${fraction ? `.${fraction}` : ''}`;
 }

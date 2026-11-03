@@ -22,6 +22,16 @@ export function aaveReadFixture(): StillAaveSnapshotV1 {
   return { universe: u, snapshot: s, reserves, positions, deployment: { chainId: 8453, blockNumber: Number(s.block.number),
     implementationAddress: AAVE_V4_DEPLOYMENT_PIN_V1.implementation, implementationCodeHash: AAVE_V4_DEPLOYMENT_PIN_V1.implementationCodeHash, proxyCodeHash: AAVE_V4_DEPLOYMENT_PIN_V1.proxyCodeHash } };
 }
+/** The same account with its USDC loan repaid: the stock stays deposited, nothing is owed. */
+export function aaveRepaidReadFixture(): StillAaveSnapshotV1 {
+  const read = aaveReadFixture();
+  const usdc = read.snapshot.aave!.reserves.find(r => r.info.role.kind === 'usdc')!;
+  read.snapshot.aave!.usdcDebt = { ok: true, value: ZERO };
+  if (usdc.status.ok) usdc.status = { ok: true, value: { ...usdc.status.value, borrowing: false } };
+  read.positions.find(p => p.reserveId === usdc.info.reserveId)!.drawnShares = ZERO;
+  read.snapshot.aave!.account = { ok: true, value: { healthFactor: (BigInt(1) << BigInt(256)) - BigInt(1), borrowCount: ZERO } };
+  return read;
+}
 /** Appends reserves Still does not model, as Aave listed a ninth one on 2026-11-01. */
 export function withUnmodeledReserves(read: StillAaveSnapshotV1, count = 1, supplied = BigInt(0), borrowing = false): StillAaveSnapshotV1 {
   if (!read.universe.aave.ok || !read.snapshot.aave) throw Error('fixture');
@@ -71,7 +81,9 @@ const extras = parseAbi([
 const allAbi = [...aaveSpokeAbi, ...aaveOracleAbi, ...aaveHubAbi, ...erc20Abi, ...multicall3Abi, ...extras] as Abi;
 const encode = encodeFunctionResult as (v: { abi: Abi; functionName: string; result: unknown }) => Hex;
 const ceil = (n: bigint, d: bigint) => (n + d - BigInt(1)) / d;
-export function aavePoststateFixture(standing: StillAaveStandingV1, operation: 'borrow' | 'repay', amount: bigint, patch?: (phase: AavePhaseFixture, after: boolean) => void) {
+/** `returning`: the repayment is followed by taking the selected stock's whole deposit back, as Aave does it:
+ * the shares leave, the stock arrives, and a collateral withdrawal refreshes every collateral key and the premium. */
+export function aavePoststateFixture(standing: StillAaveStandingV1, operation: 'borrow' | 'repay', amount: bigint, patch?: (phase: AavePhaseFixture, after: boolean) => void, returning = false) {
   const probes = buildAaveV4PoststateProbesV1(standing, operation);
   if (!probes.ok) throw Error(probes.detail);
   const aave = standing.snapshot.aave!;
@@ -104,9 +116,19 @@ export function aavePoststateFixture(standing: StillAaveStandingV1, operation: '
     loan.premiumOffsetRay = loan.premiumShares * after.drawnIndex - (premium - restoredPremium);
     after.wallets.set(ADDRESSES.usdc.toLowerCase(), after.wallets.get(ADDRESSES.usdc.toLowerCase())! - debit);
   }
+  if (returning) {
+    const id = standing.collateralReserve!.reserveId, token = standing.selectedStock!.token.toLowerCase(), deposit = after.supplied.get(id)!;
+    after.positions.get(id)!.suppliedShares = ZERO; after.supplied.set(id, ZERO);
+    after.wallets.set(token, after.wallets.get(token)! + deposit);
+    if (before.enabled.get(id)) {
+      after.riskPremium = ZERO;
+      for (const r of standing.reserves) if (after.enabled.get(r.reserveId)) after.positions.get(r.reserveId)!.dynamicConfigKey = r.dynamicConfigKey;
+    }
+  }
   const debtOf = (p: TestPosition, m: AavePhaseFixture) => ceil(p.drawnShares * m.drawnIndex, RAY) + ceil(p.premiumShares * m.drawnIndex - p.premiumOffsetRay, RAY);
   after.debts.set(standing.loanReserve.reserveId, debtOf(loan, after));
-  after.allowance = operation === 'repay' || standing.collateralSupplyAssets > ZERO ? ZERO : before.allowance;
+  // Taking the stock back with no debt left approves and repays nothing.
+  after.allowance = (operation === 'repay' && !(returning && amount === ZERO)) || standing.collateralSupplyAssets > ZERO ? ZERO : before.allowance;
   patch?.(after, true);
   const output = (phase: AavePhaseFixture, data: Hex, to: string): Hex => {
     if (data.startsWith('0xd4197e82')) return encodeAbiParameters([{ type: 'uint256' }, { type: 'bool' }], [WAD, false]);

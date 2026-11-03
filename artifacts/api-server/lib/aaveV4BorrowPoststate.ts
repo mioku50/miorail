@@ -230,9 +230,17 @@ export type AaveV4PoststateV1 = { ok: true; before: AaveV4MeasuredPhaseV1; after
 export function verifyAaveV4PoststateV1(input: {
   request: Pick<SimulationProviderRequestV1, 'walletAddress' | 'callsHash' | 'observations'> & { chainId: number };
   response: { blockNumber: number; observations?: unknown };
-  expected: { standing: StillAaveStandingV1; operation: 'borrow' | 'repay'; borrowAssets?: bigint; maximumRepayAssets?: bigint; fullRepay?: boolean };
+  expected: { standing: StillAaveStandingV1; operation: 'borrow' | 'repay'; borrowAssets?: bigint; maximumRepayAssets?: bigint; fullRepay?: boolean;
+    /** Repay all and take the stock back: the whole measured deposit of the selected stock leaves the Spoke for the wallet. */
+    returnCollateralAssets?: bigint;
+    /** In steps no cleanup call follows the repayment, so what it leaves of the allowance stays with the Spoke. */
+    sequential?: boolean };
 }): AaveV4PoststateV1 {
   const { request, response, expected } = input, standing = expected.standing;
+  const returning = expected.returnCollateralAssets;
+  if (returning !== undefined && (expected.operation !== 'repay' || !expected.fullRepay || returning <= ZERO || !standing.selectedStock || !standing.collateralReserve)) {
+    return refuse('aave_poststate_inputs_invalid', 'Taking a stock back needs a full repayment of the selected stock’s loan.');
+  }
   const built = buildAaveV4PoststateProbesV1(standing, expected.operation);
   if (!built.ok) return built;
   if (request.chainId !== 8453 || !same(request.walletAddress, standing.walletAddress) || !/^0x[a-fA-F0-9]{64}$/.test(request.callsHash) ||
@@ -259,6 +267,9 @@ export function verifyAaveV4PoststateV1(input: {
       !same(before.oracle, ADDRESSES.aaveOracle) || !same(after.oracle, before.oracle) || before.drawnIndex <= ZERO || before.drawnIndex !== after.drawnIndex ||
       before.riskPremium >= (BigInt(1) << BigInt(24)) || after.riskPremium >= (BigInt(1) << BigInt(24))) return refuse('aave_poststate_reserve_mismatch', 'The same simulation block, exact whole Spoke or debt index was not established.');
   const loanId = standing.loanReserve.reserveId, selectedId = standing.collateralReserve?.reserveId;
+  // A withdrawal from a collateral reserve refreshes every collateral position's
+  // config key and the account's risk premium, which is zero with no debt left.
+  const refreshed = returning !== undefined && before.reserves.get(selectedId!)!.usingAsCollateral;
   for (const binding of standing.reserves) {
     const pre = before.reserves.get(binding.reserveId)!, post = after.reserves.get(binding.reserveId)!;
     const readPosition = standing.positions.find(p => p.reserveId === binding.reserveId)!;
@@ -271,19 +282,24 @@ export function verifyAaveV4PoststateV1(input: {
     const selectedSupply = expected.operation === 'borrow' && binding.reserveId === selectedId ? standing.collateralSupplyAssets : ZERO;
     if (selectedSupply > ZERO) {
       if (before.projectedSupplyShares === null || before.projectedSupplyShares <= ZERO || post.position.suppliedShares - pre.position.suppliedShares !== before.projectedSupplyShares || post.supplied < pre.supplied || post.supplied - pre.supplied > selectedSupply) return refuse('aave_poststate_position_mismatch', 'The exact selected stock supply and its shares were not established.');
+    } else if (returning !== undefined && binding.reserveId === selectedId) {
+      if (pre.position.suppliedShares <= ZERO || pre.supplied !== returning || post.position.suppliedShares !== ZERO || post.supplied !== ZERO) return refuse('aave_poststate_position_mismatch', 'The whole measured deposit of the selected stock did not leave the Spoke.');
     } else if (post.position.suppliedShares !== pre.position.suppliedShares || post.supplied !== pre.supplied) return refuse('aave_poststate_position_mismatch', 'A collateral or supply position changed outside the selected pledge.');
     if (expected.operation === 'borrow') {
       const shouldUse = binding.reserveId === selectedId || pre.usingAsCollateral;
       if (post.usingAsCollateral !== shouldUse || (post.usingAsCollateral && post.position.dynamicConfigKey !== binding.dynamicConfigKey)) return refuse('aave_poststate_position_mismatch', 'Collateral enablement or the refreshed factor key was not established.');
       if (!post.usingAsCollateral && post.position.dynamicConfigKey !== pre.position.dynamicConfigKey) return refuse('aave_poststate_position_mismatch', 'An unrelated reserve configuration changed.');
       if (pre.price !== undefined && (pre.price <= ZERO || post.price !== pre.price || pre.factorBps !== post.factorBps || json(pre.registry) !== json(post.registry))) return refuse('aave_poststate_policy_refused', 'A reviewed collateral price, factor or issuer registry changed within this simulated action.');
-    } else if (post.usingAsCollateral !== pre.usingAsCollateral || post.position.dynamicConfigKey !== pre.position.dynamicConfigKey) return refuse('aave_poststate_position_mismatch', 'Repayment changed collateral configuration.');
+    } else if (post.usingAsCollateral !== pre.usingAsCollateral ||
+        post.position.dynamicConfigKey !== (refreshed && post.usingAsCollateral ? binding.dynamicConfigKey : pre.position.dynamicConfigKey)) return refuse('aave_poststate_position_mismatch', 'Repayment changed collateral configuration.');
+    if (returning !== undefined && post.debt !== ZERO) return refuse('aave_poststate_debt_mismatch', 'A stock is taken back only once no debt of this account is left in the Spoke.');
     if (binding.reserveId !== loanId && (post.position.premiumShares !== pre.position.premiumShares || post.position.premiumOffsetRay !== pre.position.premiumOffsetRay || post.borrowing !== pre.borrowing)) return refuse('aave_poststate_position_mismatch', 'Another debt or premium position changed.');
   }
   for (const stock of STOCKS) {
     const amount = expected.operation === 'borrow' && stock.id === standing.selectedStock?.id ? standing.collateralSupplyAssets : ZERO;
+    const back = returning !== undefined && stock.id === standing.selectedStock!.id ? returning : ZERO;
     const pre = before.walletStocks.get(stock.id)!, post = after.walletStocks.get(stock.id)!;
-    if (pre < amount || pre - post !== amount) return refuse('aave_poststate_funding_mismatch', 'The wallet stock debit did not equal only the explicitly selected pledge.');
+    if (pre < amount || pre - post !== amount - back) return refuse('aave_poststate_funding_mismatch', 'The wallet stock movement did not equal only the explicitly selected pledge or return.');
   }
   const preLoan = before.reserves.get(loanId)!, postLoan = after.reserves.get(loanId)!;
   const idx = before.drawnIndex;
@@ -300,7 +316,14 @@ export function verifyAaveV4PoststateV1(input: {
       return { ok: true, before, after, capacity, usdcMovedAssets: amount };
     }
     const maximum = expected.maximumRepayAssets;
-    if (maximum === undefined || maximum <= ZERO || before.walletUsdcAssets < maximum || after.allowance !== ZERO || before.riskPremium !== after.riskPremium) return refuse('aave_poststate_funding_mismatch', 'The confirmed maximum USDC budget and allowance cleanup were not established.');
+    const premiumAfter = refreshed ? ZERO : before.riskPremium;
+    // Nothing left to repay: only the stock moves, and no USDC or allowance does.
+    if (returning !== undefined && preLoan.debt === ZERO && preLoan.position.drawnShares === ZERO) {
+      if (maximum !== ZERO || after.walletUsdcAssets !== before.walletUsdcAssets || after.allowance !== before.allowance || after.riskPremium !== premiumAfter ||
+          postLoan.debt !== ZERO || postLoan.position.drawnShares !== ZERO || premiumRay(postLoan.position, idx) !== ZERO) return refuse('aave_poststate_funding_mismatch', 'Taking the stock back moved USDC or changed a debt.');
+      return { ok: true, before, after, capacity: null, usdcMovedAssets: ZERO };
+    }
+    if (maximum === undefined || maximum <= ZERO || before.walletUsdcAssets < maximum || after.riskPremium !== (returning === undefined ? before.riskPremium : premiumAfter)) return refuse('aave_poststate_funding_mismatch', 'The confirmed maximum USDC budget and allowance cleanup were not established.');
     const drawnDebt = ceil(preLoan.position.drawnShares * idx, RAY), premium = premiumRay(preLoan.position, idx), premiumDebt = ceil(premium, RAY);
     const full = maximum >= drawnDebt + premiumDebt;
     const restoredPremiumRay = full || maximum >= premiumDebt ? premium : maximum * RAY;
@@ -309,6 +332,10 @@ export function verifyAaveV4PoststateV1(input: {
     if (debit <= ZERO || debit > maximum || before.walletUsdcAssets - after.walletUsdcAssets !== debit || postLoan.position.drawnShares !== preLoan.position.drawnShares - burnt ||
         premiumRay(postLoan.position, idx) !== premium - restoredPremiumRay || postLoan.position.premiumShares !== ceil(postLoan.position.drawnShares * after.riskPremium, BPS) || postLoan.debt >= preLoan.debt ||
         postLoan.borrowing !== (postLoan.position.drawnShares !== ZERO)) return refuse('aave_poststate_debt_mismatch', 'The exact bounded repayment did not reduce only this USDC principal/premium debt.');
+    // One batch clears the allowance again. In steps the allowance before the
+    // repayment is exactly the maximum, and the repayment spends the debit of it
+    // (2026-11-03: requiring zero refused every Repay all with a buffer in steps).
+    if (after.allowance !== (expected.sequential ? maximum - debit : ZERO)) return refuse('aave_poststate_funding_mismatch', 'The confirmed maximum USDC budget and allowance cleanup were not established.');
     if (expected.fullRepay && (postLoan.position.drawnShares !== ZERO || premiumRay(postLoan.position, idx) !== ZERO || postLoan.debt !== ZERO)) return refuse('aave_poststate_debt_mismatch', 'Full repayment did not establish zero remaining principal and premium debt.');
     return { ok: true, before, after, capacity: null, usdcMovedAssets: debit };
   } catch { return refuse('aave_poststate_observations_unread', 'The read account did not satisfy the bounded deployed accounting contract.'); }

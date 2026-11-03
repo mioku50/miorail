@@ -220,3 +220,55 @@ describe('protocol lending receipt effects and pinned positions', () => {
     });
   }
 });
+
+describe('repay all, then take the stock back: what the receipt must show', () => {
+  const STOCK = STOCKS[0]!.token, DEPOSIT = 100n, CLOSED = { debtAssets: 0n, debtShares: 0n, collateralAssets: 0n, collateralShares: 0n };
+  function returning(repay = true): LoanExecutionV1 {
+    const record = execution('aave-v4', 'repay');
+    Object.assign(record.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: repay ? '4000000' : '0', collateralReturnAssets: DEPOSIT.toString(),
+      collateralBeforeAssets: DEPOSIT.toString(), collateralAfterAssets: '0', collateralAfterShares: '0', debtAfterAssets: '0', debtAfterShares: '0',
+      ...(repay ? {} : { debtBeforeAssets: '0', debtBeforeShares: '0' }) });
+    const withdraw = { ...record.run.calls[1]!, callType: 'withdraw' as const, amountAtomic: DEPOSIT.toString(), recipient: WALLET,
+      data: encodeFunctionData({ abi: aaveV4WriteAbiV1, functionName: 'withdraw', args: [0n, DEPOSIT, WALLET as Address] }) };
+    record.run.calls = repay ? [...record.run.calls, { ...withdraw, index: record.run.calls.length }] : [{ ...withdraw, index: 0 }];
+    record.run.callsHash = hashApprovedCallsV1(record.run.calls);
+    return record;
+  }
+  function withdrawn(amount = DEPOSIT, patch: { reserveId?: bigint; caller?: string } = {}): VerifiedReceiptLogV1 {
+    return { address: ADDRESSES.aaveSpoke, topics: encodeEventTopics({ abi: aaveV4ExecutionEventAbiV1, eventName: 'Withdraw', args: {
+      reserveId: patch.reserveId ?? 0n, caller: (patch.caller ?? WALLET) as Address, user: WALLET as Address } }) as Hex[],
+      data: encodeAbiParameters([{ type: 'uint256' }, { type: 'uint256' }], [amount, amount]) };
+  }
+  const arrived = (amount = DEPOSIT) => transfer(STOCK, ADDRESSES.aaveHub, WALLET, amount);
+  it('matches the repayment, the one withdrawal of the whole deposit and its arrival, with nothing left in the Spoke', async () => {
+    const { result } = await check(returning(), [outAave(), aaveEvent('repay'), arrived(), withdrawn()], CLOSED);
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+    if (result.state === 'matched') assert.equal(result.proof.collateralReturnedAssets, DEPOSIT.toString());
+  });
+  it('with no debt left matches the withdrawal alone, and refuses a repayment nobody approved', async () => {
+    assert.equal((await check(returning(false), [arrived(), withdrawn()], CLOSED)).result.state, 'matched');
+    const { result } = await check(returning(false), [outAave(), aaveEvent('repay'), arrived(), withdrawn()], CLOSED);
+    assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_protocol_event_not_unique');
+  });
+  it('refuses a short withdrawal, a missing arrival, another reserve or caller, and a deposit still in the Spoke', async () => {
+    for (const logs of [
+      [outAave(), aaveEvent('repay'), arrived(), withdrawn(DEPOSIT - 1n)],
+      [outAave(), aaveEvent('repay'), withdrawn()],
+      [outAave(), aaveEvent('repay'), arrived(), withdrawn(DEPOSIT, { reserveId: 1n })],
+      [outAave(), aaveEvent('repay'), arrived(), withdrawn(DEPOSIT, { caller: OTHER })],
+      [outAave(), aaveEvent('repay'), arrived(), withdrawn(), withdrawn()],
+    ]) {
+      const { result } = await check(returning(), logs, CLOSED);
+      assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_withdraw_event_mismatch');
+    }
+    const held = await check(returning(), [outAave(), aaveEvent('repay'), arrived(), withdrawn()], { ...CLOSED, collateralAssets: DEPOSIT, collateralShares: DEPOSIT });
+    assert.equal(held.result.state, 'unavailable');
+  });
+  it('a plain repayment still refuses any withdrawal and any stock that arrives', async () => {
+    const plain = execution('aave-v4', 'repay');
+    const a = await check(plain, [outAave(), aaveEvent('repay'), withdrawn()]);
+    assert.equal(a.result.state === 'mismatched' && a.result.errorCode, 'loan_unrequested_collateral_withdrawal');
+    const b = await check(plain, [outAave(), aaveEvent('repay'), arrived()]);
+    assert.equal(b.result.state === 'mismatched' && b.result.errorCode, 'loan_unrequested_receipt_asset_change');
+  });
+});

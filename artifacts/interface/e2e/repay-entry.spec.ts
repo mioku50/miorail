@@ -21,7 +21,7 @@ async function install(page: Page, signedIn = true) {
       const stock = STOCKS.find(s => s.token.toLowerCase() === token);
       return route.fulfill({ json: { state: 'read', read: { venue: stock ? 'aave-v4' : 'morpho', marketId: stock ? '0x17905db0e4a3514467539956c084180616ae7b8d' : CRYPTO[0]!.morphoMarket,
         collateralTokenAddress: state.wrongToken ? WALLET : token, collateralSymbol: stock?.id ?? 'cbBTC', collateralDecimals: 8,
-        debtAtomic: state.zeroDebt ? '0' : '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000 } } });
+        debtAtomic: state.zeroDebt ? '0' : '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000, ...(stock ? { collateralAtomic: '3014121' } : {}) } } });
     }
     if (path.endsWith('/rwa/repay/intent') && request.method() === 'POST') {
       state.intents.push(request.postDataJSON());
@@ -69,6 +69,27 @@ test('Max fills from the position just read: the smaller of debt and wallet USDC
   await expect(bound).toHaveValue('4.5');
   // Pressing Max read nothing more and prepared nothing.
   expect(state.reads).toEqual([CBBTC]); expect(state.intents).toEqual([]);
+});
+test('a stock loan is repaid in full and its stock taken back in one review; with no debt left, the stock alone', async ({ page }) => {
+  const state = await install(page), nvda = STOCKS.find(s => s.id === 'NVDAc')!.token.toLowerCase();
+  await page.goto('/repay?asset=NVDAc');
+  await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await expect(page.getByText('0.03014121 NVDAc', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Repay all, take back NVDAc', exact: true }).click();
+  await page.getByLabel('Maximum USDC funding', { exact: true }).fill('4');
+  await expect(page.getByText(/Then your 0\.03014121 NVDAc comes back to this wallet in the same review/)).toBeVisible();
+  await page.getByRole('button', { name: 'Review repayment', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(1);
+  expect(state.intents[0]).toEqual({ collateralTokenAddress: nvda, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '4000000', returnCollateral: true });
+  state.zeroDebt = true; await page.goto('/repay?asset=NVDAc');
+  await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await expect(page.getByText(/No debt is open in this market/)).toBeVisible();
+  await expect(page.getByLabel('Maximum USDC funding', { exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Take back NVDAc', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(2);
+  expect(state.intents[1]).toEqual({ collateralTokenAddress: nvda, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
+  // A Morpho loan is repaid without it for now.
+  await page.goto('/repay?asset=cbBTC'); await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await expect(page.getByText('No debt was recorded in this market at the reading block.', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /take back/i })).toHaveCount(0);
 });
 test('wrong token reading never turns into a usable balance or repayment question', async ({ page }) => {
   const state = await install(page); state.wrongToken = true; await page.goto('/repay?asset=cbBTC');

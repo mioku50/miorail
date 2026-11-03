@@ -6,7 +6,7 @@ import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
 import { describeLendingTermsChangesV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
-import { REPAY_COLLATERALS_V1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1 } from '../src/console/repayEntry';
+import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1 } from '../src/console/repayEntry';
 
 void React;
 const NOOP = () => {};
@@ -27,7 +27,7 @@ function model(patch: Partial<LendingReviewConsoleModelV1> = {}): LendingReviewC
 const render = (patch: Partial<LendingReviewConsoleModelV1> = {}) => renderToStaticMarkup(<LendingReviewScreen model={model(patch)} />);
 function entry(patch: Partial<RepayEntryModelV1> = {}): RepayEntryModelV1 {
   return { signedIn: true, signInHref: '/signin', asset: 'cbBTC', mode: 'assets', amount: '', maximum: '', read: null,
-    reading: false, preparing: false, error: null, onAsset: NOOP, onMode: NOOP, onAmount: NOOP, onMaximum: NOOP, onRead: NOOP, onReview: NOOP, onMax: NOOP, ...patch };
+    reading: false, preparing: false, error: null, canReturn: false, onAsset: NOOP, onMode: NOOP, onAmount: NOOP, onMaximum: NOOP, onRead: NOOP, onReview: NOOP, onTakeBack: NOOP, onMax: NOOP, ...patch };
 }
 const capacity = { venue: 'morpho' as const, marketId: `0x${'a'.repeat(64)}`, collateralTokenAddress: REPAY_COLLATERALS_V1[0]!.token,
   collateralSymbol: 'cbBTC', collateralDecimals: 8, debtAtomic: '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000 };
@@ -337,5 +337,51 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
   it('binds a far health ratio as one bucket on the client too', () => {
     const far = (wad: string) => ({ ...ready(), facts: { ...ready().facts, operation: 'borrow' as const, requestedAssets: '180000', maximumDebitAssets: '0', debtBeforeAssets: '3', healthBeforeWad: wad } });
     assert.equal(describeLendingTermsChangesV1(far('2152681126303693684440118'), far('2152681088235212709150883')).includes('health ratio'), false);
+  });
+});
+
+describe('repay all and take the stock back', () => {
+  const NVDAC = REPAY_COLLATERALS_V1.find(row => row.id === 'NVDAc')!;
+  const stock = { venue: 'aave-v4' as const, marketId: `0x${'b'.repeat(40)}`, collateralTokenAddress: NVDAC.token, collateralSymbol: 'NVDAc', collateralDecimals: 8,
+    debtAtomic: '180030', walletUsdcAtomic: '200000', blockNumber: 53_447_233, collateralAtomic: '3014121' };
+  function returned(onlyBack = false): LendingReadyWireV1 {
+    const body = ready();
+    Object.assign(body.facts, { venue: 'aave-v4', collateralTokenAddress: NVDAC.token, collateralSymbol: 'NVDAc', marketId: stock.marketId, amountMode: 'all', requestedAssets: null,
+      maximumDebitAssets: onlyBack ? '0' : '190000', debtBeforeAssets: onlyBack ? '0' : '180030', debtAfterAssets: '0', collateralBeforeAssets: '3014121', collateralAfterAssets: '0',
+      collateralReturnAssets: '3014121' });
+    return body;
+  }
+  it('reads the deposit of a stock loan and offers it back, never for Morpho', () => {
+    const read = repayCapacityViewV1({ state: 'read', read: stock }, NVDAC.token).read;
+    assert.equal(read?.collateralAtomic, '3014121'); assert.equal(repayCanReturnV1(read), true);
+    assert.equal(repayCanReturnV1({ ...stock, collateralAtomic: '0' }), false);
+    assert.equal(repayCapacityViewV1({ state: 'read', read: { ...capacity, collateralAtomic: '5' } }, capacity.collateralTokenAddress).read, null);
+    const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: stock, canReturn: true, mode: 'return' })} />);
+    assert.match(html, /Deposited in Aave/); assert.match(html, /0\.03014121 NVDAc/);
+    assert.match(html, /Repay all, take back NVDAc/); assert.match(html, /Then your 0\.03014121 NVDAc comes back to this wallet in the same review/);
+    assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: capacity })} />), /take back/i);
+  });
+  it('with no debt left offers the stock back alone, asking for no USDC', () => {
+    const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, debtAtomic: '0' }, canReturn: true })} />);
+    assert.match(html, /No debt is open in this market/); assert.match(html, /Take back NVDAc/); assert.doesNotMatch(html, /Maximum USDC funding/);
+    assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '', walletUsdcAtomic: '0', debtAtomic: '0' }).intent,
+      { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
+    assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '0.19', walletUsdcAtomic: '200000', debtAtomic: '180030' }).intent,
+      { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '190000', returnCollateral: true });
+    assert.equal(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '', walletUsdcAtomic: '200000', debtAtomic: '180030' }).intent, null);
+  });
+  it('the review names the stock coming back, and with no debt says no USDC moves', () => {
+    assert.equal(parseLendingReviewWireV1(returned())?.state, 'ready');
+    const html = render({ body: returned() });
+    assert.match(html, /Repay all and take back NVDAc/); assert.match(html, /Then take back <strong>0\.03014121 NVDAc<\/strong> to this wallet, in the same transaction/);
+    assert.doesNotMatch(html, /Your collateral stays deposited/);
+    const alone = render({ body: returned(true) });
+    assert.match(alone, /Take back NVDAc/); assert.match(alone, /No USDC debt is open/); assert.doesNotMatch(alone, /Maximum USDC funding/);
+  });
+  it('refuses a return on a borrow, an exact repayment or a Morpho loan', () => {
+    for (const patch of [{ operation: 'borrow' }, { amountMode: 'assets', requestedAssets: '1' }, { venue: 'morpho' }, { collateralReturnAssets: '0' }]) {
+      const body = returned(); Object.assign(body.facts, patch);
+      assert.equal(parseLendingReviewWireV1(body), null, JSON.stringify(patch));
+    }
   });
 });

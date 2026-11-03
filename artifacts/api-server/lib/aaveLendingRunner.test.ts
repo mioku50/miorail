@@ -3,7 +3,8 @@ import { describe, it } from 'node:test';
 import { stableHashV1 } from '@mioagent/route-domain';
 import type { SimulationProvider, SimulationProviderResponseV1 } from '@mioagent/paid-intelligence';
 import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
-import { aavePoststateFixture, aaveReadFixture, aaveStandingFixture, AAVE_TEST_WALLET } from './aaveV4BorrowFixtures.testhelper.js';
+import { aavePoststateFixture, aaveReadFixture, aaveRepaidReadFixture, aaveStandingFixture, AAVE_TEST_WALLET } from './aaveV4BorrowFixtures.testhelper.js';
+import { lendingSigningTermsFactsV1 } from './lendingReview.js';
 import { runAaveLendingV1 } from './aaveLendingRunner.js';
 import type { LendingQuestionV1 } from './lendingDraft.js';
 import type { StillAaveStandingV1 } from './stillAaveStanding.js';
@@ -277,5 +278,70 @@ describe('Aave runner plans the same action in steps for a wallet that cannot se
       assert.ok(r.facts.warnings.every(warning => !/same atomic batch/.test(warning)));
       assert.match(r.facts.warnings.at(-1)!, /takes funds only for calls your own wallet makes/);
     }
+  });
+});
+
+describe('Aave runner: repay all, then take the stock back', () => {
+  async function returning(debt = true, change?: (body: SimulationProviderResponseV1) => void, delivery?: 'sequential') {
+    const s = await aaveStandingFixture('repay', debt ? aaveReadFixture() : aaveRepaidReadFixture());
+    const maximum = debt ? BigInt(20_000_000) : ZERO, stock = s.selectedStock!;
+    const q: LendingQuestionV1 = { operation: 'repay', collateralTokenAddress: stock.token.toLowerCase(), amountMode: 'all', repayAssets: null,
+      maximumAssets: maximum.toString(), returnCollateral: true };
+    let simulations = 0;
+    const provider: SimulationProvider = { providerId: 'aave-fixture', async simulate(request) {
+      simulations++;
+      // In steps the repayment leaves the rest of its allowance with the Spoke.
+      const f = aavePoststateFixture(s, 'repay', maximum, (p, after) => { if (after && delivery && debt) p.allowance = maximum - s.debtAssets; }, true);
+      const observations = { ...f.response.observations, requestHash: stableHashV1('simulation-observations/v1', { chainId: 8453, walletAddress: request.walletAddress.toLowerCase(), callsHash: request.callsHash,
+        before: request.observations!.before, after: request.observations!.after }) };
+      const body: SimulationProviderResponseV1 = { status: 'success', blockNumber: s.blockNumber, gasUsed: '300000', stateChanges: [], revertReason: null, observations,
+        assetChanges: { status: 'available', unavailableReason: null, changes: [
+          ...(debt ? [{ kind: 'erc20_transfer' as const, token: ADDRESSES.usdc, direction: 'out' as const, amountAtomic: s.debtAssets.toString(), counterparty: ADDRESSES.aaveHub, callIndex: 2 }] : []),
+          { kind: 'erc20_transfer', token: stock.token, direction: 'in', amountAtomic: s.existingSuppliedAssets.toString(), counterparty: ADDRESSES.aaveHub, callIndex: debt ? 4 : 0 },
+        ] } };
+      change?.(body); return { ok: true, body };
+    } };
+    const deps = { read: async () => ({ state: 'read' as const, standing: s }), deploymentAt: async () => s.deployment, allowance: async () => ZERO,
+      chain: { providers: [provider], batchCapableIds: new Set(['aave-fixture']) }, now: () => NOW };
+    return { s, q, deps, simulations: () => simulations,
+      run: () => runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: q, ...(delivery ? { delivery } : {}) }, deps) };
+  }
+  it('repays the whole debt and returns the whole deposit in one batch, and binds the return into what is signed', async () => {
+    const h = await returning(), r = await h.run();
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : ''); if (r.state !== 'ready') return;
+    assert.equal(r.atomicRequired, true);
+    assert.deepEqual(r.calls.map(c => c.callType), ['approval', 'approval', 'other', 'approval', 'withdraw']);
+    assert.equal(r.facts.collateralReturnAssets, h.s.existingSuppliedAssets.toString());
+    assert.deepEqual([r.facts.debtAfterAssets, r.facts.collateralAfterAssets, r.facts.maximumDebitAssets, r.facts.amountMode], ['0', '0', '20000000', 'all']);
+    assert.match(r.facts.warnings[0]!, /repays all USDC debt .* then returns your NVDAc deposit to this wallet/);
+    assert.equal(lendingSigningTermsFactsV1(r.facts).collateralReturnAssets, h.s.existingSuppliedAssets.toString());
+  });
+  it('with no debt left returns the stock alone: one withdrawal, no USDC and a zero maximum', async () => {
+    const h = await returning(false), r = await h.run();
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : ''); if (r.state !== 'ready') return;
+    assert.deepEqual(r.calls.map(c => c.callType), ['withdraw']);
+    assert.deepEqual([r.facts.debtBeforeAssets, r.facts.maximumDebitAssets, r.measured.loanDeltaAssets], ['0', '0', '0']);
+    assert.match(r.facts.warnings[0]!, /No USDC debt is open/);
+  });
+  it('refuses with nothing deposited or another asset borrowed, before anything is simulated', async () => {
+    const empty = await returning(); empty.s.existingSuppliedAssets = ZERO;
+    const a = await empty.run(); assert.equal(a.state === 'refused' && a.refusal, 'nothing_to_return'); assert.equal(empty.simulations(), 0);
+    const other = await returning(); const reserve = other.s.snapshot.aave!.reserves.find(r => r.info.role.kind === 'stock')!;
+    reserve.status = { ok: true, value: { usingAsCollateral: true, borrowing: true } };
+    const b = await other.run(); assert.equal(b.state === 'refused' && b.refusal, 'aave_other_debt_open'); assert.equal(other.simulations(), 0);
+  });
+  it('refuses a stock that arrives short of the deposit, and a stock that arrives when the question did not ask for it', async () => {
+    const short = await returning(true, body => { const change = body.assetChanges!.changes.at(-1)!; change.amountAtomic = (BigInt(change.amountAtomic) - BigInt(1)).toString(); });
+    const a = await short.run(); assert.equal(a.state === 'refused' && a.refusal, 'aave_effects_mismatch');
+    const plain = await harness('repay', body => { body.assetChanges!.changes.push({ kind: 'erc20_transfer', token: plain.s.selectedStock!.token, direction: 'in', amountAtomic: '1', counterparty: ADDRESSES.aaveHub, callIndex: 2 }); });
+    const b = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: plain.q }, plain.deps);
+    assert.equal(b.state === 'refused' && b.refusal, 'aave_unrequested_asset_change');
+  });
+  it('in steps: the repayment, then the withdrawal, with the rest of the allowance left to the Spoke', async () => {
+    const h = await returning(true, undefined, 'sequential'), r = await h.run();
+    assert.equal(r.state, 'ready', r.state === 'refused' ? r.detail : ''); if (r.state !== 'ready') return;
+    assert.deepEqual([r.atomicRequired, r.delivery], [false, 'sequential']);
+    assert.deepEqual(r.calls.map(c => c.callType), ['approval', 'other', 'withdraw']);
+    assert.match(r.facts.warnings.at(-1)!, /Stopping after the repayment leaves the stock deposited/);
   });
 });

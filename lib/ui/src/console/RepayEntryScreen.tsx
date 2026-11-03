@@ -1,21 +1,25 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { tokenDecimalV1 } from './stockSellAmount';
-import { REPAY_COLLATERALS_V1, repayCapacityViewV1, repayIntentAmountsV1, repayMaxV1, type RepayCapacityWireV1 } from './repayEntry';
+import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayIntentAmountsV1, repayMaxV1, type RepayCapacityWireV1, type RepayModeV1 } from './repayEntry';
 
 void React;
 
 interface EntryStateV1 {
-  owner: string; asset: string | null; mode: 'assets' | 'all'; amount: string; maximum: string;
+  owner: string; asset: string | null; mode: RepayModeV1; amount: string; maximum: string;
   read: RepayCapacityWireV1 | null; reading: boolean; preparing: boolean; error: string | null;
 }
 const initial = (owner: string, asset: string | null): EntryStateV1 => ({ owner, asset, mode: 'assets', amount: '', maximum: '',
   read: null, reading: false, preparing: false, error: null });
 export interface RepayEntryModelV1 {
-  signedIn: boolean; signInHref: string; asset: string | null; mode: 'assets' | 'all'; amount: string; maximum: string;
+  signedIn: boolean; signInHref: string; asset: string | null; mode: RepayModeV1; amount: string; maximum: string;
   read: RepayCapacityWireV1 | null; reading: boolean; preparing: boolean; error: string | null;
-  onAsset: (asset: string) => void; onMode: (mode: 'assets' | 'all') => void;
+  /** The read shows an Aave V4 deposit, which Repay all can take back. */
+  canReturn: boolean;
+  onAsset: (asset: string) => void; onMode: (mode: RepayModeV1) => void;
   onAmount: (value: string) => void; onMaximum: (value: string) => void; onRead: () => void; onReview: () => void;
+  /** Nothing owed: prepares the stock's return alone. */
+  onTakeBack: () => void;
   /** Fills the field from the position just read: the smaller of the debt and
    * the wallet's USDC, or for Repay all, the wallet's USDC as the bound. */
   onMax: () => void;
@@ -48,9 +52,9 @@ export function useRepayEntryConsoleV1(input: {
     } catch { if (alive.current && current.current === openedFor) patch({ error: 'The repayment position could not be read. Nothing was prepared.' }); }
     finally { busy.current = false; if (alive.current && current.current === openedFor) patch({ reading: false }); }
   };
-  const onReview = async () => {
-    if (!owner || !chosen || !read || read.debtAtomic === '0' || busy.current) return;
-    const amounts = repayIntentAmountsV1({ mode: active.mode, amount: active.amount, maximum: active.maximum, walletUsdcAtomic: read.walletUsdcAtomic });
+  const onReview = async (mode: RepayModeV1 = active.mode) => {
+    if (!owner || !chosen || !read || busy.current || (mode === 'return' ? !repayCanReturnV1(read) : read.debtAtomic === '0')) return;
+    const amounts = repayIntentAmountsV1({ mode, amount: active.amount, maximum: active.maximum, walletUsdcAtomic: read.walletUsdcAtomic, debtAtomic: read.debtAtomic });
     if (!amounts.intent) { patch({ error: amounts.error }); return; }
     busy.current = true; const openedFor = identity; patch({ preparing: true, error: null });
     try {
@@ -68,15 +72,16 @@ export function useRepayEntryConsoleV1(input: {
   };
   return { model: { signedIn: Boolean(owner), signInHref: input.signInHref, asset: active.asset, mode: active.mode,
     amount: active.amount, maximum: active.maximum, read, reading: active.reading, preparing: active.preparing, error: active.error,
+    canReturn: repayCanReturnV1(read),
     onAsset: asset => { if (!busy.current && REPAY_COLLATERALS_V1.some(row => row.id === asset)) patch({ asset, read: null, error: null }); },
     onMode: mode => { if (!busy.current) patch({ mode, error: null }); },
     onAmount: amount => { if (!busy.current) patch({ amount, error: null }); },
     onMaximum: maximum => { if (!busy.current) patch({ maximum, error: null }); },
-    onRead: () => void onRead(), onReview: () => void onReview(),
+    onRead: () => void onRead(), onReview: () => void onReview(), onTakeBack: () => void onReview('return'),
     onMax: () => {
       if (busy.current || !read) return;
       const max = tokenDecimalV1(repayMaxV1(read, active.mode), 6);
-      patch(active.mode === 'all' ? { maximum: max, error: null } : { amount: max, error: null });
+      patch(active.mode === 'assets' ? { amount: max, error: null } : { maximum: max, error: null });
     },
   } };
 }
@@ -84,8 +89,10 @@ export function useRepayEntryConsoleV1(input: {
 export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
   const id = useId(), busy = model.reading || model.preparing;
   const asset = REPAY_COLLATERALS_V1.find(row => row.id === model.asset);
+  const symbol = model.read?.collateralSymbol ?? asset?.symbol ?? '';
+  const deposit = model.read?.collateralAtomic !== undefined ? `${tokenDecimalV1(model.read.collateralAtomic, model.read.collateralDecimals)} ${model.read.collateralSymbol}` : null;
   return <div className="still-borrow">
-    <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC. Keep your collateral deposited.</p></div>
+    <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC, or repay all of a stock loan and take the stock back to your wallet.</p></div>
     {!model.signedIn ? <section className="still-section still-card"><p className="still-sub">Sign in to read your repayment position.</p><a className="still-btn" href={model.signInHref}>Sign in</a></section> : <>
       {model.error ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
       <div className="still-borrow-grid">
@@ -104,6 +111,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
             <dl className="still-borrow-facts">
               <div><dt>Debt read</dt><dd className="mono">{tokenDecimalV1(model.read.debtAtomic, 6)} USDC</dd></div>
               <div><dt>USDC in your wallet</dt><dd className="mono">{tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC</dd></div>
+              {deposit ? <div><dt>Deposited in Aave</dt><dd className="mono">{deposit}</dd></div> : null}
               <div><dt>Base block</dt><dd className="mono">{model.read.blockNumber.toLocaleString('en-US')}</dd></div>
             </dl>
             {BigInt(model.read.debtAtomic) > BigInt(0) && BigInt(model.read.debtAtomic) < BigInt(10_000) ? <p className="still-note">Exact micro-debt of {tokenDecimalV1(model.read.debtAtomic, 6)} USDC ({model.read.debtAtomic} atomic USDC) is shown without rounding to zero. Use Repay all debt to clear residual shares completely.</p> : null}
@@ -111,23 +119,28 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
         </section>
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-repay-title`}>
           <h2 id={`${id}-repay-title`}>Choose the repayment.</h2>
-          {model.read?.debtAtomic === '0' ? <p className="still-note">No debt was recorded in this market at the reading block.</p> : <form onSubmit={event => { event.preventDefault(); model.onReview(); }}>
+          {model.read?.debtAtomic === '0' ? model.canReturn ? <>
+            <p className="still-note">No debt is open in this market. Your {deposit} is still deposited in Aave V4, and it can come back to your wallet now, with no USDC.</p>
+            <button type="button" className="still-btn" disabled={busy} onClick={model.onTakeBack}>{model.preparing ? 'Preparing review…' : `Take back ${symbol}`}</button>
+          </> : <p className="still-note">No debt was recorded in this market at the reading block.</p> : <form onSubmit={event => { event.preventDefault(); model.onReview(); }}>
             <fieldset disabled={busy || !model.read} style={{ border: 0, padding: 0, margin: 0 }}>
               <legend className="still-borrow-label">Repayment mode</legend>
               <div className="still-borrow-assets">
                 <button className="still-borrow-choice" type="button" aria-pressed={model.mode === 'assets'} onClick={() => model.onMode('assets')}>Exact USDC</button>
                 <button className="still-borrow-choice" type="button" aria-pressed={model.mode === 'all'} onClick={() => model.onMode('all')}>Repay all debt</button>
+                {model.canReturn ? <button className="still-borrow-choice" type="button" aria-pressed={model.mode === 'return'} onClick={() => model.onMode('return')}>Repay all, take back {symbol}</button> : null}
               </div>
               <label className="still-borrow-label" htmlFor={`${id}-amount`}>{model.mode === 'assets' ? 'USDC to repay' : 'Maximum USDC funding'}</label>
               <div className="still-borrow-amount has-max"><input id={`${id}-amount`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false}
                 value={model.mode === 'assets' ? model.amount : model.maximum} aria-describedby={`${id}-funding-note`}
                 onChange={event => model.mode === 'assets' ? model.onAmount(event.target.value) : model.onMaximum(event.target.value)} />
                 <button type="button" className="still-borrow-max" onClick={model.onMax}
-                  title={model.mode === 'all' ? 'All the USDC in your wallet, as the most this can spend' : 'The smaller of your debt and the USDC in your wallet'}>Max</button>
+                  title={model.mode === 'assets' ? 'The smaller of your debt and the USDC in your wallet' : 'All the USDC in your wallet, as the most this can spend'}>Max</button>
                 <span>USDC</span></div>
-              <p className="still-note" id={`${id}-funding-note`}>{model.mode === 'all'
-                ? 'Enter your own maximum. Interest can change the exact debt. The contract cannot spend more than this bound; unused funding is returned or stays in your wallet.'
-                : 'This exact amount is also your maximum USDC debit. Amounts are never rounded.'}</p>
+              <p className="still-note" id={`${id}-funding-note`}>{model.mode === 'assets'
+                ? 'This exact amount is also your maximum USDC debit. Amounts are never rounded.'
+                : `Enter your own maximum. Interest can change the exact debt. The contract cannot spend more than this bound; unused funding is returned or stays in your wallet.${
+                  model.mode === 'return' ? ` Then your ${deposit ?? symbol} comes back to this wallet in the same review.` : ''}`}</p>
               <button type="submit" className="still-btn" disabled={!model.read || busy || !(model.mode === 'assets' ? model.amount : model.maximum).trim()}>{model.preparing ? 'Preparing review…' : 'Review repayment'}</button>
             </fieldset>
           </form>}

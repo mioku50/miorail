@@ -109,23 +109,41 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
       const paid = rows.filter(e => e.name === 'Transfer' && e.address === ADDRESSES.usdc.toLowerCase() && same(e.args.from, wallet) && same(e.args.to, payment.payTo));
       if (f.operation !== 'borrow' || native || paid.length !== 1 || paid[0]!.args.value !== paidAssets) return mismatch('loan_payment_receipt_mismatch');
     }
-    let usdcNet = 0n, collateralOut = 0n, grossUsdcOut = 0n;
+    // Repay all and take the stock back: the deposit returns to the wallet, and only then.
+    const returned = f.collateralReturnAssets === undefined ? null : BigInt(f.collateralReturnAssets);
+    if (returned !== null && (f.operation !== 'repay' || f.venue !== 'aave-v4' || f.amountMode !== 'all' || returned <= 0n || native || payment)) return mismatch('loan_return_question_mismatch');
+    let usdcNet = 0n, collateralOut = 0n, grossUsdcOut = 0n, collateralIn = 0n;
     for (const e of rows.filter(e => e.name === 'Transfer')) {
       const amount = e.args.value; if (typeof amount !== 'bigint' || amount === 0n) continue;
       const out = same(e.args.from, wallet), into = same(e.args.to, wallet);
       if (!out && !into) continue;
       if (e.address === ADDRESSES.usdc.toLowerCase()) { usdcNet += into ? amount : 0n; usdcNet -= out ? amount : 0n; if (out) grossUsdcOut += amount; }
       else if (e.address === f.collateralTokenAddress.toLowerCase() && f.operation === 'borrow' && out && !into) collateralOut += amount;
+      else if (e.address === f.collateralTokenAddress.toLowerCase() && returned !== null && into && !out) collateralIn += amount;
       else return mismatch('loan_unrequested_receipt_asset_change');
     }
     const contract = f.venue === 'morpho' ? ADDRESSES.morpho.toLowerCase() : ADDRESSES.aaveSpoke.toLowerCase();
     const protocol = rows.filter(e => e.address === contract && (same(e.args.onBehalf, wallet) || same(e.args.user, wallet)));
-    if (protocol.some(e => e.name === 'WithdrawCollateral' || e.name === 'Withdraw')) return mismatch('loan_unrequested_collateral_withdrawal');
+    const approved = (name: 'repay' | 'withdraw') => f.venue !== 'aave-v4' ? [] : execution.run.calls.filter(call => call.to.toLowerCase() === contract).flatMap(call => {
+      try { const value = decodeFunctionData({ abi: aaveV4WriteAbiV1, data: call.data as Hex }); return value.functionName === name ? [value] : []; }
+      catch { return []; }
+    });
+    const withdrawals = protocol.filter(e => e.name === 'WithdrawCollateral' || e.name === 'Withdraw');
+    if (returned === null) {
+      if (withdrawals.length > 0) return mismatch('loan_unrequested_collateral_withdrawal');
+    } else {
+      const w = withdrawals[0], call = approved('withdraw');
+      if (withdrawals.length !== 1 || w!.name !== 'Withdraw' || call.length !== 1 || w!.args.reserveId !== call[0]!.args[0] || !same(w!.args.caller, wallet) ||
+          w!.args.suppliedAmount !== returned || collateralIn !== returned) return mismatch('loan_withdraw_event_mismatch');
+    }
+    // With no debt left, taking the stock back approved no repayment, and none may appear.
+    const repaying = f.operation === 'borrow' || returned === null || approved('repay').length === 1;
     const action = protocol.filter(e => e.name === (f.operation === 'borrow' ? 'Borrow' : 'Repay'));
-    if (action.length !== 1) return mismatch('loan_protocol_event_not_unique');
+    if (action.length !== (repaying ? 1 : 0)) return mismatch('loan_protocol_event_not_unique');
+    let assets = 0n, shares = 0n;
     const e = action[0]!;
-    let assets: bigint, shares: bigint;
-    if (f.venue === 'morpho') {
+    if (!repaying) { /* Nothing was repaid: assets and shares stay zero. */ }
+    else if (f.venue === 'morpho') {
       if (!same(e.args.id, f.marketId) || typeof e.args.assets !== 'bigint' || typeof e.args.shares !== 'bigint' || e.args.assets <= 0n || e.args.shares <= 0n
         || (f.operation === 'borrow' && !same(e.args.receiver, native ? STILL_REPAY_BLUE_BUNDLES_V1 : wallet))) return mismatch('loan_protocol_event_mismatch');
       assets = e.args.assets; shares = e.args.shares;
@@ -187,17 +205,18 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
           typeof supplies[0]!.args.suppliedShares !== 'bigint' || supplies[0]!.args.suppliedShares <= 0n) return mismatch('loan_collateral_event_mismatch');
         suppliedShares = supplies[0]!.args.suppliedShares;
       } else if (supplies.length !== 0) return mismatch('loan_unrequested_supply');
-      if (p.collateralShares !== BigInt(f.collateralBeforeShares) + suppliedShares) return unknown('loan_collateral_position_changed');
+      if (p.collateralShares !== (returned === null ? BigInt(f.collateralBeforeShares) + suppliedShares : 0n)) return unknown('loan_collateral_position_changed');
       // Deposit value and premium can accrue after review. The exact own
       // Repay event, USDC debit and principal-share delta prove repayment;
       // comparing the final debt against a stale review would reject a real
       // premium-only payment. Collateral SHARES above remain the invariant.
-      if (p.debtAssets < 0n || p.collateralAssets < BigInt(f.collateralBeforeAssets) ||
+      if (p.debtAssets < 0n || (returned === null ? p.collateralAssets < BigInt(f.collateralBeforeAssets) : p.collateralAssets !== 0n) ||
           (f.operation === 'borrow' && p.debtAssets < assets)) return unknown('loan_position_changed_outside_receipt');
     }
     if (f.operation === 'repay' && f.amountMode === 'all' && (p.debtAssets !== 0n || p.debtShares !== 0n)) return unknown('loan_full_repayment_not_closed');
     return { state: 'matched', proof: { operation: f.operation, venue: f.venue, appliedAssets: assets.toString(), appliedShares: shares.toString(),
       remainingDebtAssets: p.debtAssets.toString(), remainingDebtShares: p.debtShares.toString(), collateralAssets: p.collateralAssets.toString(), blockNumber: receipt.blockNumber.toString(),
+      ...(returned !== null ? { collateralReturnedAssets: returned.toString() } : {}),
       ...(payment ? { payment: { merchant: payment.merchant, orderId: payment.orderId, payTo: payment.payTo, assets: payment.assets } } : {}) } };
   };
 }

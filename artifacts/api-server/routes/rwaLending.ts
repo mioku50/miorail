@@ -43,9 +43,12 @@ const atom = z.string().regex(/^(0|[1-9][0-9]{0,38})$/).refine(v => /^(0|[1-9][0
 const positive = atom.refine(v => /^[1-9][0-9]{0,38}$/.test(v));
 const token = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform(v => v.toLowerCase());
 const id = z.string().uuid();
-const RepayIntentV1 = z.object({ collateralTokenAddress: token, amountMode: z.enum(['assets','all']), repayAmountAtomic: positive.nullable(), maximumUsdcAtomic: positive }).strict()
-  .refine(v => v.amountMode === 'all' ? v.repayAmountAtomic === null : positive.safeParse(v.repayAmountAtomic).success &&
-    positive.safeParse(v.maximumUsdcAtomic).success && BigInt(v.repayAmountAtomic!) <= BigInt(v.maximumUsdcAtomic));
+// Taking the stock back goes with Repay all only; with no debt left the maximum may be zero.
+const RepayIntentV1 = z.object({ collateralTokenAddress: token, amountMode: z.enum(['assets','all']), repayAmountAtomic: positive.nullable(), maximumUsdcAtomic: atom,
+  returnCollateral: z.literal(true).optional() }).strict()
+  .refine(v => v.amountMode === 'all' ? v.repayAmountAtomic === null && (v.returnCollateral === true || positive.safeParse(v.maximumUsdcAtomic).success)
+    : v.returnCollateral === undefined && positive.safeParse(v.repayAmountAtomic).success &&
+      positive.safeParse(v.maximumUsdcAtomic).success && BigInt(v.repayAmountAtomic!) <= BigInt(v.maximumUsdcAtomic));
 
 export async function readAaveBorrowCapacityWireV1(input: { tokenAddress: string; walletAddress: string; collateralSupplyAssets: bigint }): Promise<Record<string, unknown>> {
   const answer = await rwaLendingRuntimeV1.readAave({ tokenAddress: input.tokenAddress, walletAddress: input.walletAddress,
@@ -80,18 +83,22 @@ rwaLendingRouter.get('/rwa/repay/capacity', async (req, res) => {
     const answer = await rwaLendingRuntimeV1.readAave({ tokenAddress: collateralTokenAddress, walletAddress: owner.walletAddress, operation: 'repay' });
     if (answer.state === 'refused') { res.json(answer); return; }
     const s = answer.standing, stock = STOCKS.find(row => row.token.toLowerCase() === collateralTokenAddress)!;
+    // The deposit too: a stock can be taken back once its loan is repaid.
     res.json({ state: 'read', read: { venue: market.venue, marketId: market.marketId, collateralTokenAddress,
-      collateralSymbol: stock.id, collateralDecimals: stock.decimals, debtAtomic: s.debtAssets.toString(), walletUsdcAtomic: s.walletUsdcAssets.toString(), blockNumber: s.blockNumber } });
+      collateralSymbol: stock.id, collateralDecimals: stock.decimals, debtAtomic: s.debtAssets.toString(), walletUsdcAtomic: s.walletUsdcAssets.toString(), blockNumber: s.blockNumber,
+      collateralAtomic: s.existingSuppliedAssets.toString() } });
   }
 });
 
 rwaLendingRouter.post('/rwa/repay/intent', (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   const parsed = RepayIntentV1.safeParse(req.body); if (!parsed.success || !lendingMarketV1(parsed.data.collateralTokenAddress)) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
+  if (parsed.data.returnCollateral && lendingMarketV1(parsed.data.collateralTokenAddress)!.venue !== 'aave-v4') { res.status(400).json({ error: 'lending_return_unsupported' }); return; }
   if (rwaLendingRuntimeV1.secret().length < 16) { res.status(503).json({ error: 'lending_unavailable' }); return; }
   const q = parsed.data;
   const issued = issueLendingDraftV1({ ...owner, question: { operation: 'repay', collateralTokenAddress: q.collateralTokenAddress,
-    amountMode: q.amountMode, repayAssets: q.repayAmountAtomic, maximumAssets: q.maximumUsdcAtomic }, secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() });
+    amountMode: q.amountMode, repayAssets: q.repayAmountAtomic, maximumAssets: q.maximumUsdcAtomic, ...(q.returnCollateral ? { returnCollateral: true as const } : {}) },
+    secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() });
   res.json({ draftId: issued.draftId, reviewUrl: `/lending/${issued.draft}`, expiresAt: issued.expiresAt });
 });
 

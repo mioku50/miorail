@@ -14,7 +14,7 @@ import { createSpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { verifyStillSpendShareV1 } from '../../lib/stillSpendShare.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { stillReviewStatusV1, type StillReviewStatusDepsV1 } from './stillReviewTool.js';
+import { StillReviewStatusOutputV1Schema, stillReviewStatusV1, type StillReviewStatusDepsV1 } from './stillReviewTool.js';
 
 // What happened to a review an assistant prepared. Every loan, invoice, hash
 // and address here is synthetic.
@@ -38,10 +38,14 @@ function run(payment: LendingPaymentV1 | null): Extract<LendingRunV1, { state: '
       ...(payment ? { payment } : {}) } };
 }
 
-async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: string; state?: LoanExecutionV1['state']; heldOrder?: boolean; allowRead?: boolean } = {}) {
+async function fixture(input: { payment?: LendingPaymentV1 | null; owner?: string; state?: LoanExecutionV1['state']; heldOrder?: boolean; allowRead?: boolean; returning?: boolean } = {}) {
   const store = new MemoryLoanExecutionStoreV1();
   const owner = input.owner ?? WALLET;
-  await store.putReady({ owner: { tenantId: `eip155:8453:${owner}`, walletAddress: owner }, draftId: DRAFT, run: run(input.payment === undefined ? PAYMENT : input.payment), now: NOW });
+  const review = run(input.payment === undefined ? PAYMENT : input.payment);
+  // Repay all, then take the stock back.
+  if (input.returning) Object.assign(review.facts, { operation: 'repay', amountMode: 'all', requestedAssets: null, maximumDebitAssets: '190000',
+    debtBeforeAssets: '180030', debtAfterAssets: '0', collateralBeforeAssets: '3014121', collateralAfterAssets: '0', collateralReturnAssets: '3014121' });
+  await store.putReady({ owner: { tenantId: `eip155:8453:${owner}`, walletAddress: owner }, draftId: DRAFT, run: review, now: NOW });
   const orders = createSpendOrderStoreV1({ now: () => NOW });
   if (input.heldOrder ?? true) {
     orders.put({ orderId: INVOICE, ...IDENTITY, productId: 'bitrefill-esim-japan', productName: PAYMENT.productName, packageValue: PAYMENT.packageValue, faceCurrency: 'USD',
@@ -109,6 +113,16 @@ test('a forgotten order or a spent limit leaves Bitrefill unread, and says so', 
   const twice = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, limited.deps);
   assert.equal(twice.purchase?.invoiceStatusError, 'bitrefill_rate_limited');
   assert.deepEqual(limited.invoiceReads, []);
+});
+
+test('a repayment that took the stock back names how much of it came back, once confirmed', async () => {
+  const { deps } = await fixture({ payment: null, state: 'confirmed', returning: true });
+  const status = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, deps);
+  assert.deepEqual([status.operation, status.collateralReturned], ['repay', '0.03014121']);
+  assert.match(status.next, /The loan is closed and 0\.03014121 NVDAc is back in the wallet\./);
+  assert.equal(StillReviewStatusOutputV1Schema.safeParse(status).success, true);
+  const open = await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, (await fixture({ payment: null, state: 'submitted', returning: true })).deps);
+  assert.doesNotMatch(open.next, /back in the wallet/);
 });
 
 test('a loan without a purchase has no purchase block, and unknown is never called a failure', async () => {

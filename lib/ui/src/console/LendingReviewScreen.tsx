@@ -14,7 +14,9 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   if (!model.body) return <p className="still-section still-note">There is no lending review to display.</p>;
   const body = model.body, facts = body.facts;
   const repay = facts?.operation === 'repay';
-  const title = facts ? repay ? 'Review repayment' : 'Review loan' : 'Lending review';
+  // Repay all and take the stock back; with nothing owed, the stock alone.
+  const back = facts?.collateralReturnAssets ?? null, onlyBack = back !== null && facts?.maximumDebitAssets === '0';
+  const title = facts ? repay ? back !== null ? `${onlyBack ? 'Take back' : 'Repay all and take back'} ${facts.collateralSymbol}` : 'Review repayment' : 'Review loan' : 'Lending review';
   const asset = (value: string) => facts ? `${tokenDecimalV1(value, facts.collateralDecimals)} ${facts.collateralSymbol}` : value;
   const usdc = (value: string) => `${tokenDecimalV1(value, 6)} USDC`;
   const health = (value: string | null | undefined, debtAssets: string) => formatLendingHealthRatioV1(value, debtAssets, facts?.operation ?? 'borrow');
@@ -47,14 +49,18 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         </table>
         <p className="still-note">
           {repay && facts.healthBeforeWad == null && facts.healthAfterWad == null
-            ? 'Health ratio is not checked during repayment: repaying USDC only reduces your debt and keeps collateral deposited, so execution does not depend on live oracle prices.'
+            ? back !== null ? 'Aave checks the account before the stock leaves. With the whole debt repaid first, nothing is left for it to secure, so no health ratio applies.'
+              : 'Health ratio is not checked during repayment: repaying USDC only reduces your debt and keeps collateral deposited, so execution does not depend on live oracle prices.'
             : 'Health ratio is calculated at the simulation block. It does not guarantee protection against liquidation after prices change.'}
         </p>
         {body.state === 'ready' ? <>
           {repay ? <>
-            <p className="still-sub">{facts.amountMode === 'all' ? 'Repay the entire debt position at execution.' : <>Repay exactly {usdc(facts.requestedAssets!)}.</>}</p>
-            <p className="still-sub">Maximum USDC funding: <strong>{usdc(facts.maximumDebitAssets)}</strong>.</p>
-            <p className="still-note">Your wallet must hold that maximum. Unused funding is returned or remains in your wallet. Your collateral stays deposited.</p>
+            {onlyBack ? <p className="still-sub">No USDC debt is open. Take back <strong>{asset(back!)}</strong> to this wallet; no USDC moves.</p> : <>
+              <p className="still-sub">{facts.amountMode === 'all' ? 'Repay the entire debt position at execution.' : <>Repay exactly {usdc(facts.requestedAssets!)}.</>}</p>
+              <p className="still-sub">Maximum USDC funding: <strong>{usdc(facts.maximumDebitAssets)}</strong>.</p>
+              <p className="still-note">Your wallet must hold that maximum. Unused funding is returned or remains in your wallet.{back !== null ? '' : ' Your collateral stays deposited.'}</p>
+              {back !== null ? <p className="still-sub">Then take back <strong>{asset(back)}</strong> to this wallet, {inSteps ? 'as the last step' : 'in the same transaction'}.</p> : null}
+            </>}
             {facts.amountMode === 'assets' && BigInt(facts.debtAfterAssets) > BigInt(0) && BigInt(facts.debtAfterAssets) < BigInt(10_000) ? <p className="still-note">Remaining micro-debt ({usdc(facts.debtAfterAssets)}) comes from onchain share rounding and accrued interest when repaying exact {usdc(facts.requestedAssets!)}. To close the entire debt to 0 USDC, use Repay all debt with a small USDC buffer.</p> : null}
           </> : <>
             <p className="still-sub">Borrow {facts.requestedAssets === null ? 'the measured amount' : usdc(facts.requestedAssets)} to this wallet.</p>
@@ -89,7 +95,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
             </> : null}
             <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>
               Atomic units — {repay
-                ? `repay request: ${facts.requestedAssets ?? 'all'}, max USDC debit: ${facts.maximumDebitAssets}, wallet USDC delta: ${body.measured.loanDeltaAssets}`
+                ? `repay request: ${facts.requestedAssets ?? 'all'}, max USDC debit: ${facts.maximumDebitAssets}, wallet USDC delta: ${body.measured.loanDeltaAssets}${back !== null ? `, collateral returned: ${back}` : ''}`
                 : `borrow request: ${facts.requestedAssets ?? '0'}, wallet USDC delta: ${body.measured.loanDeltaAssets}, collateral supply: ${facts.collateralSupplyAssets}`}; debt: {facts.debtBeforeAssets} → {facts.debtAfterAssets}{facts.debtBeforeShares !== null && facts.debtAfterShares !== null ? ` (shares: ${facts.debtBeforeShares} → ${facts.debtAfterShares})` : ''}; collateral: {facts.collateralBeforeAssets} → {facts.collateralAfterAssets}{facts.collateralBeforeShares != null && facts.collateralAfterShares != null ? ` (shares: ${facts.collateralBeforeShares} → ${facts.collateralAfterShares})` : ''}.
             </p>
             {body.steps.map(step => <div key={step.index} style={{ padding: '0.45rem 0', borderTop: '1px solid rgba(255,255,255,0.08)' }}>

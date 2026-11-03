@@ -78,6 +78,13 @@ describe('before each next step, the review runs again and must ask exactly what
     assert.deepEqual(remainingQuestionV1(record, 1), { operation: 'borrow', collateralTokenAddress: STOCK, borrowAssets: '180000', collateralSupplyAssets: '1000000' });
     assert.deepEqual(remainingQuestionV1(record, 2), { operation: 'borrow', collateralTokenAddress: STOCK, borrowAssets: '180000', collateralSupplyAssets: '0' });
   });
+  it('asks a repayment that takes the stock back the same again: once repaid, its fresh review is the withdrawal alone', async () => {
+    const { record } = await armed();
+    Object.assign(record.run.facts, { operation: 'repay', amountMode: 'all', requestedAssets: null, maximumDebitAssets: '2000000', collateralReturnAssets: '1000000' });
+    assert.deepEqual(remainingQuestionV1(record, 2), { operation: 'repay', collateralTokenAddress: STOCK, amountMode: 'all', repayAssets: null, maximumAssets: '2000000', returnCollateral: true });
+    delete record.run.facts.collateralReturnAssets;
+    assert.equal('returnCollateral' in remainingQuestionV1(record, 2), false);
+  });
   it('goes on only when the fresh calls equal the remaining approved ones', async () => {
     const { record } = await armed();
     const asked: LendingQuestionV1[] = [];

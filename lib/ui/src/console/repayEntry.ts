@@ -9,6 +9,15 @@ export const REPAY_COLLATERALS_V1 = [
 export interface RepayCapacityWireV1 {
   venue: 'morpho' | 'aave-v4'; marketId: string; collateralTokenAddress: string; collateralSymbol: string;
   collateralDecimals: number; debtAtomic: string; walletUsdcAtomic: string; blockNumber: number;
+  /** Aave V4: the stock deposited, which Repay all can take back to the wallet. */
+  collateralAtomic?: string;
+}
+/** How a repayment is asked: an exact amount, all of it, or all of it and the stock back. */
+export type RepayModeV1 = 'assets' | 'all' | 'return';
+
+/** Whether this read offers the stock back: an Aave V4 deposit is there. */
+export function repayCanReturnV1(read: Pick<RepayCapacityWireV1, 'venue' | 'collateralAtomic'> | null): boolean {
+  return read?.venue === 'aave-v4' && read.collateralAtomic !== undefined && BigInt(read.collateralAtomic) > BigInt(0);
 }
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const atomic = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]{0,38})$/.test(v);
@@ -25,25 +34,29 @@ export function repayCapacityViewV1(payload: unknown, token: string): { read: Re
   const row = payload.read;
   if (payload.state !== 'read' || !object(row) || row.venue !== known.venue || row.collateralTokenAddress !== known.token ||
       row.collateralSymbol !== known.symbol || row.collateralDecimals !== known.decimals || typeof row.marketId !== 'string' ||
-      !atomic(row.debtAtomic) || !atomic(row.walletUsdcAtomic) || !Number.isSafeInteger(row.blockNumber) || (row.blockNumber as number) <= 0) return fail;
+      !atomic(row.debtAtomic) || !atomic(row.walletUsdcAtomic) || !Number.isSafeInteger(row.blockNumber) || (row.blockNumber as number) <= 0 ||
+      (row.collateralAtomic !== undefined && (row.venue !== 'aave-v4' || !atomic(row.collateralAtomic)))) return fail;
   return { read: row as unknown as RepayCapacityWireV1, error: null };
 }
-export function repayIntentAmountsV1(input: { mode: 'assets' | 'all'; amount: string; maximum: string; walletUsdcAtomic: string }): {
-  intent: { amountMode: 'assets' | 'all'; repayAmountAtomic: string | null; maximumUsdcAtomic: string } | null; error: string | null;
+export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string; maximum: string; walletUsdcAtomic: string; debtAtomic?: string }): {
+  intent: { amountMode: 'assets' | 'all'; repayAmountAtomic: string | null; maximumUsdcAtomic: string; returnCollateral?: true } | null; error: string | null;
 } {
+  // Nothing owed: taking the stock back spends no USDC, so no maximum is asked.
+  if (input.mode === 'return' && input.debtAtomic === '0') return { intent: { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true }, error: null };
   const exact = parseBorrowDecimalV1(input.mode === 'assets' ? input.amount : input.maximum, 6);
   if (exact.atomic === null) return { intent: null, error: exact.error };
   if (!atomic(input.walletUsdcAtomic)) return { intent: null, error: 'The wallet USDC balance has not been read.' };
   if (BigInt(exact.atomic) > BigInt(input.walletUsdcAtomic)) return { intent: null, error: 'The chosen USDC funding exceeds the balance read for this wallet.' };
-  return { intent: { amountMode: input.mode, repayAmountAtomic: input.mode === 'assets' ? exact.atomic : null, maximumUsdcAtomic: exact.atomic }, error: null };
+  return { intent: { amountMode: input.mode === 'assets' ? 'assets' : 'all', repayAmountAtomic: input.mode === 'assets' ? exact.atomic : null, maximumUsdcAtomic: exact.atomic,
+    ...(input.mode === 'return' ? { returnCollateral: true as const } : {}) }, error: null };
 }
 
 /** What Max fills on Repay, from the position just read: the smaller of the
  * debt and the wallet's USDC, or for Repay all the wallet's USDC as the bound.
  * Interest can move the exact debt before the transaction, which is why
  * Repay all, with a bound, is the way to close a loan completely. */
-export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>, mode: 'assets' | 'all'): string {
+export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>, mode: RepayModeV1): string {
   const wallet = BigInt(read.walletUsdcAtomic), debt = BigInt(read.debtAtomic);
-  return (mode === 'all' || wallet < debt ? wallet : debt).toString();
+  return (mode !== 'assets' || wallet < debt ? wallet : debt).toString();
 }
 
