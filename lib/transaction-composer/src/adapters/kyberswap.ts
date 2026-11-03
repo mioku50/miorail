@@ -1,6 +1,6 @@
 import { encodeFunctionData, erc20Abi } from 'viem';
 import { canonicalUsdcForBaseChain } from '@mioagent/security/baseGuards';
-import { loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
+import { KYBERSWAP_CLIENT_ID_V1, loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
 import {
   KYBERSWAP_BASE_ROUTER,
   atomicToHumanDecimal,
@@ -135,7 +135,7 @@ export class KyberSwapBuildAdapter implements SwapBuildAdapter {
       recipient: input.walletAddress,
       slippageTolerance: intent.slippageConstraint.maxBps,
       deadline,
-      source: 'miorail',
+      source: KYBERSWAP_CLIENT_ID_V1,
     };
 
     let buildResponse;

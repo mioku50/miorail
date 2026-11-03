@@ -1,5 +1,5 @@
 import { JsonObjectV1Schema, type GasEstimateV1 } from '@mioagent/route-domain';
-import { loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
+import { KYBERSWAP_CLIENT_ID_V1, loadSkillExecutor, type BaseMcpSkillExecutor } from '@mioagent/runtime-skills';
 import { z } from 'zod';
 import { buildQuoteArtifacts, KYBERSWAP_PROVIDER_V1 } from './candidate.js';
 import {
@@ -186,7 +186,7 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
       ['amountIn', input.intent.amount.amountAtomic],
       ['to', input.walletAddress],
       ['slippageTolerance', String(input.intent.slippageConstraint.maxBps)],
-      ['source', 'miorail'],
+      ['source', KYBERSWAP_CLIENT_ID_V1],
     ]);
     const path = `/base/api/v1/routes?${parameters.toString()}`;
     const safeRequest = {
@@ -197,7 +197,7 @@ export class KyberSwapRouteAdapter implements SwapRouteAdapter {
       amountIn: input.intent.amount.amountAtomic,
       to: input.walletAddress,
       slippageToleranceBps: input.intent.slippageConstraint.maxBps,
-      source: 'miorail',
+      source: KYBERSWAP_CLIENT_ID_V1,
     };
 
     let response: Awaited<ReturnType<BaseMcpSkillExecutor['request']>>;

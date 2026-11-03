@@ -537,6 +537,15 @@ export async function pluginHttpRequest(
   };
 }
 
+/**
+ * Who we are to KyberSwap. Its `x-client-id` header names the integrator on
+ * every call ("set it to your company or app name", the same on GET /routes
+ * and POST /route/build; calls without one are rate-limited more strictly), and
+ * the `source` its route/build records onchain is what base.dev's KyberSwap
+ * integrator code matches (2026-11-03). One name for both.
+ */
+export const KYBERSWAP_CLIENT_ID_V1 = 'miorail';
+
 function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | null {
   const manifest = skill.manifest;
   if (!manifest || manifest.integration !== 'http-api') return null;
@@ -569,6 +578,8 @@ function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | nu
       const url = skill.namespace === 'gmgn'
         ? `https://${host}${path}${path.includes('?') ? '&' : '?'}timestamp=${Math.floor(Date.now() / 1000)}&client_id=${randomUUID()}`
         : `https://${host}${path}`;
+      // KyberSwap's client id is transport too, on quote and build alike.
+      const extraHeaders = skill.namespace === 'kyberswap' ? { 'x-client-id': KYBERSWAP_CLIENT_ID_V1 } : undefined;
       return pluginHttpRequest({
         plugin: skill.namespace,
         url,
@@ -576,6 +587,7 @@ function buildExecutor(skill: RuntimeSkillDefinition): BaseMcpSkillExecutor | nu
         body,
         chainId,
         timeoutMs,
+        ...(extraHeaders ? { extraHeaders } : {}),
         ...(fetchImpl ? { fetchImpl } : {}),
       });
     },
