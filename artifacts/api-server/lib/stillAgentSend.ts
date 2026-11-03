@@ -83,6 +83,13 @@ export async function stillAgentSendAnswerV1(input: {
     );
   }
   const recipient = request.recipient;
+  // The first one written is not necessarily the one meant, so nothing is prepared from it.
+  if (request.unclear) {
+    return say(t(
+      'В вопросе больше одного получателя или сказано, кому не отправлять. Спросите ещё раз и напишите только того, кому перевести: адрес 0x… или имя .base.eth. Сам я получателя не выбираю.',
+      'Your question names more than one recipient, or says who not to send to. Ask again with only the one who should receive it: a 0x address or a .base.eth name. I never pick one for you.',
+    ));
+  }
   if (!recipient) {
     return say(t('Кому перевести? Напишите в вопросе адрес 0x… или имя .base.eth: получателя я беру только из ваших слов.', 'Who should receive it? Write a 0x address or a .base.eth name in the question: I take the recipient only from your own words.'));
   }

@@ -350,6 +350,9 @@ test('a transfer goes to the send review: the wallet’s own stock, and the reci
     [`скинь биткоин на ${FRIEND}`, /^Перевод я готовлю только для акций Coinbase/],
     ['отправь другу NVDA', /^Кому перевести\? Напишите в вопросе адрес 0x… или имя \.base\.eth/],
     ['отправь $5 NVDA на friend.base.eth', /^Назовите количество в NVDAc или «все»/],
+    // Re-audit R6, 2026-11-04: this prepared a send to the address it was told not to use.
+    [`Do not send to ${FRIEND}. Send 0.1 NVDAc to ${`0x${'3'.repeat(40)}`}`, /^Your question names more than one recipient, or says who not to send to\./],
+    [`не переводи NVDA на ${FRIEND}`, /^В вопросе больше одного получателя или сказано, кому не отправлять\./],
   ] as const) {
     const refused = (await ask(server, question)).body.answer;
     assert.match(refused.text, said, question);

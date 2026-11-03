@@ -50,14 +50,16 @@ export interface AssetsViewV1 {
   others: Array<{ symbol: string; amount: string; href: string }>;
   /** The report's block: "53,000,000". */
   block: string;
+  /** The block USDC was read at, when it is another one: it is read on its own (re-audit R7, 2026-11-04). */
+  usdcBlock: string | null;
   loans: LoanRowV1[];
   /** Missing venue debt reads cannot establish a count of zero loans. */
   loansReadComplete: boolean;
   receivedDividends: string | null;
 }
 
-/** The wallet's USDC as the page holds it: read, still being read, or not read. */
-export type WalletUsdcV1 = { raw: string; decimals: number } | 'loading' | 'unread';
+/** The wallet's USDC as the page holds it: read (at its own block, when known), still being read, or not read. */
+export type WalletUsdcV1 = { raw: string; decimals: number; block?: string } | 'loading' | 'unread';
 
 const UNREAD_V1 = 'Not read just now: our failure, not a fact about the wallet';
 
@@ -190,6 +192,8 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     rows,
     others,
     block: Number(report.reading.block).toLocaleString('en-US'),
+    usdcBlock: typeof input.usdc === 'object' && input.usdc.block !== undefined && /^\d+$/.test(input.usdc.block) && input.usdc.block !== String(report.reading.block)
+      ? Number(input.usdc.block).toLocaleString('en-US') : null,
     loans,
     loansReadComplete: report.venues.length > 0 && report.venues.every(venue => venue.debtCents !== null),
     receivedDividends: positiveDividendMoneyV1(input.dividends?.receivedUsd),

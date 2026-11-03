@@ -401,6 +401,13 @@ const SEND_ADDRESS_V2 = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/;
 // A name ending in .eth; a sentence's own full stop after it is not part of it.
 const SEND_NAME_V2 = /(?:^|[^\p{L}\p{N}.-])((?:[\p{L}\p{N}-]+\.)+eth)(?![\p{L}\p{N}-]|\.[\p{L}\p{N}])/iu;
 const SEND_USDC_V2 = /usdc|usd coin|юсдс|юсдц/iu;
+// Every recipient the question writes, to count them: one is read, more than one is asked back.
+const SEND_ADDRESSES_V2 = new RegExp(SEND_ADDRESS_V2.source, 'g');
+const SEND_NAMES_V2 = new RegExp(SEND_NAME_V2.source, 'giu');
+// Where NOT to send: "do not send to A", "…, not to A", "не переводи на A", "…, не на A".
+const SEND_RECIPIENT_V2 = '(?:0x[0-9a-f]{40}|(?:[\\p{L}\\p{N}-]+\\.)+eth)';
+const SEND_NEGATED_V2 = new RegExp(`${EDGE}(?:(?:do\\s+not|don['’]?t|never)\\s+(?:send|transfer)|not\\s+to\\s+${SEND_RECIPIENT_V2}`
+  + `|не\\s+(?:надо\\s+|нужно\\s+)?(?:перевод|перевед|перевест|перечисл|отправ|пошли|посыла|скид|скинь|шли)|не\\s+на\\s+${SEND_RECIPIENT_V2})`, 'iu');
 const SEND_DOLLARS_V2 = /\$|доллар|бакс/iu;
 
 export interface AgentSendRequestV2 {
@@ -411,6 +418,9 @@ export interface AgentSendRequestV2 {
   amount: { kind: 'exact'; value: string } | { kind: 'share'; share: 'all' | 'half' } | { kind: 'dollars' } | null;
   /** As the question wrote it. A name that is not a Basename cannot be resolved here. */
   recipient: { kind: 'address' | 'basename' | 'other_name'; value: string } | null;
+  /** More than one recipient written, or where not to send: asked back, never read for the first one
+   * (re-audit R6, 2026-11-04: "Do not send to A. Send 0.1 NVDAc to B" prepared a send to A). */
+  unclear: 'several' | 'negated' | null;
 }
 
 /** A request to send a token to someone, read by fixed rules; null when the question is not one. */
@@ -436,7 +446,10 @@ export function agentSendRequestV2(question: string): AgentSendRequestV2 | null 
     const raw = /(\d+(?:[.,]\d+)?)/u.exec(rest)?.[1] ?? null;
     if (raw && Number(raw.replace(',', '.')) > 0) amount = { kind: 'exact', value: raw.replace(',', '.') };
   }
-  return { asset: assets.length === 1 ? assets[0]! : null, named: assets.length, amount, recipient };
+  const written = new Set([...Array.from(question.matchAll(SEND_ADDRESSES_V2), (match) => match[0].toLowerCase()),
+    ...Array.from(question.matchAll(SEND_NAMES_V2), (match) => match[1]!.toLowerCase())]);
+  const unclear = written.size > 1 ? 'several' : SEND_NEGATED_V2.test(question) ? 'negated' : null;
+  return { asset: assets.length === 1 ? assets[0]! : null, named: assets.length, amount, recipient, unclear };
 }
 
 /** The page's own answer to a transfer, when the server is not asked: it reads the wallet and the recipient. */

@@ -88,7 +88,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
                     . Each is priced on its stock’s page.
                   </p>
                 ) : null}
-                <p className="still-section still-note still-assets-foot">Read from Base at block {view.block}. ETH includes WETH. Prices are the venues’ own oracles at that block; USDC counts at $1.</p>
+                <p className="still-section still-note still-assets-foot">Read from Base at block {view.block}{view.usdcBlock ? `; USDC at block ${view.usdcBlock}` : ''}. ETH includes WETH. Prices are the venues’ own oracles at that block; USDC counts at $1.</p>
               </div>
               <aside className="still-assets-aside still-section">
                 <StillLink href="/stocks/dividends" className="still-card still-feature-link">

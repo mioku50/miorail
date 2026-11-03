@@ -325,6 +325,17 @@ describe('what the wallet holds, on Assets', () => {
     assert.deepEqual(view.others, []);
   });
 
+  // Re-audit R7, 2026-11-04: USDC is read on its own, and the page named the holdings' block for it.
+  it('names the block USDC was read at when it is not the holdings’ one', () => {
+    const r = report();
+    assert.equal(assetsViewV1({ report: r, usdc: { raw: '1000000', decimals: 6, block: '53000500' } }).usdcBlock, '53,000,500');
+    assert.equal(assetsViewV1({ report: r, usdc: { raw: '1000000', decimals: 6, block: '53000000' } }).usdcBlock, null);
+    assert.equal(assetsViewV1({ report: r, usdc: 'unread' }).usdcBlock, null);
+    const view = assetsViewV1({ report: r, usdc: { raw: '1000000', decimals: 6, block: '53000500' } });
+    const html = renderToStaticMarkup(<StillAssets model={{ sky: skyStateV1({ now: WEDNESDAY }), view, loading: false, failed: null, onRetry: () => {}, signedIn: true, signInHref: '/signin' }} />);
+    assert.match(html, /Read from Base at block 53,000,000; USDC at block 53,000,500\. ETH includes WETH\./);
+  });
+
   it('says a read that did not answer, and names the other Coinbase stocks the wallet holds', () => {
     const r = report();
     assert.deepEqual(assetsViewV1({ report: r, usdc: 'loading' }).rows[0], { id: 'USDC', kind: 'cash', name: 'USD Coin', amount: '… USDC', value: '…', lines: [] });
@@ -454,18 +465,30 @@ describe('the Agent', () => {
     // and read the list of what the Agent answers.
     const asked = 'подготовь для меня перевод всех Nvdac на friend.base.eth адрес';
     assert.deepEqual(agentRouteV2(asked), { route: 'send', topic: 'action_prep' });
-    assert.deepEqual(agentSendRequestV2(asked), { asset: 'NVDAc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'friend.base.eth' } });
+    assert.deepEqual(agentSendRequestV2(asked), { asset: 'NVDAc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'friend.base.eth' }, unclear: null });
     const address = `0x${'ab'.repeat(20)}`;
     for (const [q, expected] of [
-      [`переведи 0,5 NVDA на ${address}`, { asset: 'NVDAc', named: 1, amount: { kind: 'exact', value: '0.5' }, recipient: { kind: 'address', value: address } }],
-      ['send 10 AAPL to alice.base.eth.', { asset: 'AAPLc', named: 1, amount: { kind: 'exact', value: '10' }, recipient: { kind: 'basename', value: 'alice.base.eth' } }],
-      ['transfer half my tesla to bob.eth', { asset: 'TSLAc', named: 1, amount: { kind: 'share', share: 'half' }, recipient: { kind: 'other_name', value: 'bob.eth' } }],
-      ['отправь другу NVDA', { asset: 'NVDAc', named: 1, amount: null, recipient: null }],
+      [`переведи 0,5 NVDA на ${address}`, { asset: 'NVDAc', named: 1, amount: { kind: 'exact', value: '0.5' }, recipient: { kind: 'address', value: address }, unclear: null }],
+      ['send 10 AAPL to alice.base.eth.', { asset: 'AAPLc', named: 1, amount: { kind: 'exact', value: '10' }, recipient: { kind: 'basename', value: 'alice.base.eth' }, unclear: null }],
+      ['transfer half my tesla to bob.eth', { asset: 'TSLAc', named: 1, amount: { kind: 'share', share: 'half' }, recipient: { kind: 'other_name', value: 'bob.eth' }, unclear: null }],
+      ['отправь другу NVDA', { asset: 'NVDAc', named: 1, amount: null, recipient: null, unclear: null }],
       // A recipient's name is a person, not a stock.
-      ['отправь nvda.base.eth все акции AAPL', { asset: 'AAPLc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'nvda.base.eth' } }],
+      ['отправь nvda.base.eth все акции AAPL', { asset: 'AAPLc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'nvda.base.eth' }, unclear: null }],
     ] as const) {
       assert.deepEqual(agentSendRequestV2(q), expected, q);
       assert.equal(agentRouteV2(q).route, 'send', q);
+    }
+    // Re-audit R6, 2026-11-04: two recipients, or where not to send, are asked back, never read for the first.
+    const other = `0x${'cd'.repeat(20)}`;
+    for (const [q, unclear] of [
+      [`Do not send to ${address}. Send 0.1 NVDAc to ${other}`, 'several'],
+      [`send 1 NVDA to alice.base.eth, not to ${address}`, 'several'],
+      [`переведи 1 NVDA на ${other}, не на ${address}`, 'several'],
+      [`don't send my NVDA to ${address}`, 'negated'],
+      [`не переводи NVDA на ${address}`, 'negated'],
+      [`send 1 NVDA to ${address.toUpperCase().replace('0X', '0x')} (${address})`, null],
+    ] as const) {
+      assert.equal(agentSendRequestV2(q)?.unclear, unclear, q);
     }
     // A loan first, a what-if, a translation, a price and a request for words are not transfers.
     assert.equal(agentRouteV2('Займи $500 и отправь другу').route, 'action_prep');
