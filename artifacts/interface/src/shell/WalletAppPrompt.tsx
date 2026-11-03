@@ -18,20 +18,28 @@ function bringMetaMaskForwardV1(): void {
 }
 
 export function WalletAppPrompt() {
-  const { connector, isConnected } = useAccount();
+  const { connector, status } = useAccount();
   const pending = useSyncExternalStore(subscribeWalletAppPendingV1, walletAppPendingV1, () => 0);
-  const paired = isConnected && connector?.type === 'walletConnect';
+  // While wagmi reconnects after a reload, the connector it hands out is the
+  // one it stored: an id, a name and a type, with no methods yet. Calling
+  // getProvider on it failed every load of the page in Safari once MetaMask
+  // had paired (2026-11-03), so only a connected one is asked.
+  const paired = status === 'connected' && connector?.type === 'walletConnect';
 
   useEffect(() => {
-    if (!paired || !connector) return;
+    if (!paired || !connector || typeof connector.getProvider !== 'function') return;
     let cancelled = false;
-    void Promise.resolve(connector.getProvider())
-      .then((provider) => {
-        if (!cancelled && provider && typeof (provider as WalletAppProviderV1).request === 'function') {
-          trackWalletAppRequestsV1(provider as WalletAppProviderV1, bringMetaMaskForwardV1);
-        }
-      })
-      .catch(() => undefined);
+    try {
+      void Promise.resolve(connector.getProvider())
+        .then((provider) => {
+          if (!cancelled && provider && typeof (provider as WalletAppProviderV1).request === 'function') {
+            trackWalletAppRequestsV1(provider as WalletAppProviderV1, bringMetaMaskForwardV1);
+          }
+        })
+        .catch(() => undefined);
+    } catch {
+      // The banner is a help, never a reason for the page to fail.
+    }
     return () => { cancelled = true; };
   }, [connector, paired]);
 
