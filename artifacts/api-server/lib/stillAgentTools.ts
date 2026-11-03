@@ -437,7 +437,7 @@ function unsupportedAnswerV1(reason: PlanUnsupportedV1, w: Words): AgentAnswerV1
     trade: t(w, 'Сделки и обмены — в Swap AI. Здесь — займы без продажи.', 'Trades and swaps are on Swap AI. This is about borrowing without selling.'),
     other: null,
   }[reason];
-  return { topic: null, mode: text ? 'refused' : undefined, text: text ?? agentCapabilitiesV2(w.ru), sources: [] };
+  return { topic: null, mode: text ? 'refused' : undefined, text: text ?? t(w, 'Это я не могу ни посчитать, ни подготовить. ', 'That is not something I can compute or prepare. ') + agentCapabilitiesV2(w.ru), sources: [] };
 }
 
 export interface StillAgentToolInputV1 {

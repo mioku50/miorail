@@ -236,6 +236,50 @@ test('a calculation streams its stages from the server and says what it holds fi
   expect(JSON.parse(body)).toEqual({ question: 'What happens if NVDA drops 30%?' });
 });
 
+test('a transfer the Agent prepares opens the send review, with the recipient in history state and never in the address', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  await install(page, true, MONDAY);
+  const FRIEND = '0x2222222222222222222222222222222222222222';
+  const TOKEN = '0xb20000000000000000000078ee7ce2fe4908108c';
+  const send = { tokenAddress: TOKEN, amountAtomic: '80000000', symbol: 'NVDAc', decimals: 8 };
+  await page.route('**/api/still/agent/ask', (route) => {
+    const lines = [
+      { type: 'stage', stage: 'reading' },
+      { type: 'stage', stage: 'read', block: '53000000', blockTime: '2026-10-26T15:04:58Z' },
+      { type: 'stage', stage: 'understood', summary: 'send 0.8 NVDAc → friend.base.eth', by: 'rules' },
+      { type: 'stage', stage: 'resolving', summary: 'friend.base.eth' },
+      { type: 'stage', stage: 'resolved', summary: 'friend.base.eth → 0x2222…2222' },
+      {
+        type: 'answer',
+        answer: {
+          topic: 'action_prep',
+          mode: 'action_prep',
+          text: `Prepared a transfer: 0.8 NVDAc (all of it in the wallet) to friend.base.eth (${FRIEND}). I sign nothing.`,
+          steps: [`Recipient: friend.base.eth → ${FRIEND}, read on Base`],
+          sources: ['BOUNDARY · preparation only, wallet signs', 'READ · Base block 53,000,000'],
+          sendAction: { ...send, recipient: FRIEND, recipientName: 'friend.base.eth' },
+          calculatedAt: { block: '53000000', blockTime: '2026-10-26T15:04:58Z' },
+        },
+      },
+    ];
+    return route.fulfill({ contentType: 'application/x-ndjson', body: `${lines.map((line) => JSON.stringify(line)).join('\n')}\n` });
+  });
+  await page.goto('/agent');
+  await page.getByRole('textbox', { name: 'A question about your money', exact: true }).fill('send all my NVDA to friend.base.eth');
+  await page.getByRole('button', { name: 'Ask', exact: true }).click();
+  const answer = page.locator('.still-bubble').last();
+  await expect(answer.locator('.still-agent-mode-badge')).toHaveText('Action prep · wallet confirmation');
+  await expect(answer).toContainText('question read by fixed rules · recipient read on Base');
+  await expect(answer.locator('.still-orb-trail .still-orb.is-done')).toHaveCount(2);
+  // The full address is one long word: it wraps inside the answer.
+  await noSidewaysScroll(page);
+  await answer.getByRole('link', { name: 'Review the transfer →', exact: true }).click();
+  await expect(page).toHaveURL(/\/routes\?from=agent&token=0xb2[0-9a-f]{38}&side=gift$/);
+  expect(page.url()).not.toContain(FRIEND.slice(2));
+  expect(await page.evaluate(() => window.history.state?.gift)).toEqual({ recipient: FRIEND, recipientName: 'friend.base.eth', send });
+  await expect(page.getByText('Gift to friend.base.eth', { exact: true })).toBeVisible();
+});
+
 test('Berlin night keeps the US closed-market caption and its financial deadline', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await install(page, false, SATURDAY);

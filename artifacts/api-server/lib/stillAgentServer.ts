@@ -12,6 +12,8 @@ import {
 } from '../../../lib/ui/src/still/agentAnswers.js';
 import { skyStateV1 } from '../../../lib/ui/src/still/skyState.js';
 import { numbersInV1, stripNarrationFormattingV1 } from './b20AnswerVerify.js';
+import { resolveBaseNameV1, type BaseNameResolutionV1 } from './baseNameResolver.js';
+import { stillAgentSendAnswerV1 } from './stillAgentSend.js';
 import { groundProposalV1, modelProposalV1, planSummaryV1, rulesProposalV1 } from './stillAgentPlan.js';
 import { stillAgentToolAnswerV1 } from './stillAgentTools.js';
 import { earlierStillReadingV1, rememberStillReadingV1, stillReadingChangeV1 } from './stillReadings.js';
@@ -20,8 +22,8 @@ import { earlierStillReadingV1, rememberStillReadingV1, stillReadingChangeV1 } f
 // The Still Agent, end to end, on the server.
 //
 //   read     the session wallet's own report and the chain reading under it
-//   route    the page's one rule: a direct read, a request to act, or a
-//            calculation (lib/ui/src/still/agentAnswers.ts)
+//   route    the page's one rule: a direct read, a request to act, a
+//            transfer, or a calculation (lib/ui/src/still/agentAnswers.ts)
 //   plan     fixed rules first; a model reads only what they do not, and
 //            every number, asset and loan it proposes must be in the words
 //   compute  the Mirror engine, on the same reading with the change applied
@@ -61,6 +63,8 @@ export type StillAgentStageV1 =
   | { stage: 'understood'; summary: string; by: 'rules' | 'model' }
   | { stage: 'computing'; summary: string }
   | { stage: 'computed'; figures: number }
+  | { stage: 'resolving'; summary: string }
+  | { stage: 'resolved'; summary: string }
   | { stage: 'wording' }
   | { stage: 'checked'; verified: boolean; figures: number };
 
@@ -180,6 +184,8 @@ export interface StillAgentAskV3 {
   read: () => Promise<MirrorReadingV1>;
   /** The wallet's USDC, for "swap all my USDC": the report reads only collateral. */
   readUsdc?: () => Promise<{ raw: string; decimals: number; block: string } | null>;
+  /** A Basename a transfer's question writes, resolved on Base. */
+  resolveName?: (name: string) => Promise<BaseNameResolutionV1>;
   onStage?: (stage: StillAgentStageV1) => void;
   now?: Date;
 }
@@ -214,6 +220,10 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
         ? ((await input.readUsdc().catch(() => null)) ?? 'unread')
         : null;
     return agentSwapAnswerV2({ question, report, usdcBalance });
+  }
+  // A transfer is read by the rules alone: its recipient is the question's own words.
+  if (route === 'send') {
+    return stillAgentSendAnswerV1({ question, wallet, report, resolveName: input.resolveName ?? resolveBaseNameV1, stage });
   }
   // A direct read and a request to act are the page's own answers: no model.
   if (route === 'fast' || route === 'action_prep') return agentAnswerV1({ question, report, sky, signedIn: true });
@@ -253,7 +263,8 @@ export async function answerStillAgentV3(input: StillAgentAskV3): Promise<AgentA
     }),
     understoodBy: by,
   };
-  stage({ stage: 'computed', figures: evidenceFiguresV2(base).size });
+  // Only a plan that was computed says so: a refusal computed nothing.
+  if (summary) stage({ stage: 'computed', figures: evidenceFiguresV2(base).size });
   // A refusal or a request for what is missing is ours, said plainly.
   if (base.mode !== 'analysis') return base;
   return narrateV2(base, question, ru, stage);

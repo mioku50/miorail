@@ -3,6 +3,7 @@ import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
 import { AGENT_BASE_USDC_V2 } from '../../../lib/ui/src/still/agentAnswers.js';
+import { resolveBaseNameV1 } from '../lib/baseNameResolver.js';
 import { answerStillAgentV3 } from '../lib/stillAgentServer.js';
 import { readStockHoldingV1 } from '../lib/stockTokenRead.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
@@ -27,6 +28,8 @@ export const stillMineRuntimeV1 = {
     const held = await readStockHoldingV1(AGENT_BASE_USDC_V2, wallet);
     return held.ok ? { raw: held.balanceAtomic, decimals: held.decimals, block: held.blockNumber } : null;
   },
+  /** The Basename a transfer names, on Base, as the stock page's gift form resolves it. */
+  resolveName: (name: string) => resolveBaseNameV1(name),
   // A question can cost two model calls and a chain read: a person asks a few
   // a minute, a script asks hundreds.
   askLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }),
@@ -98,6 +101,7 @@ stillMineRouter.post('/agent/ask', express.json({ limit: '8kb', inflate: false }
       wallet,
       read: () => service.reading(wallet as `0x${string}`),
       readUsdc: () => stillMineRuntimeV1.readUsdc(wallet),
+      resolveName: (name) => stillMineRuntimeV1.resolveName(name),
       onStage: (stage) => send({ type: 'stage', ...stage }),
     });
     if (stream) {

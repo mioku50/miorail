@@ -6,9 +6,11 @@ import {
   AGENT_PROMPTS_V1,
   agentAnswerV1,
   agentRouteV2,
+  agentTradeWordsV2,
   isRussianV1,
   type AgentAnswerV1,
   type AgentModeV2,
+  type AgentSendActionV1,
   type DividendReadStateV1,
 } from './agentAnswers';
 import type { SkyStateV1 } from './skyState';
@@ -18,7 +20,7 @@ void React;
 
 /** One stage of the server's work, as it streams it: what is being done, with what it found. */
 export interface AgentStageV2 {
-  stage: 'reading' | 'read' | 'understanding' | 'understood' | 'computing' | 'computed' | 'wording' | 'checked';
+  stage: 'reading' | 'read' | 'understanding' | 'understood' | 'computing' | 'computed' | 'resolving' | 'resolved' | 'wording' | 'checked';
   block?: string;
   blockTime?: string;
   summary?: string;
@@ -49,6 +51,10 @@ export function stageLabelV2(event: AgentStageV2, ru: boolean): string {
       return ru ? `Движок Still считает: ${event.summary}…` : `Still engine computing: ${event.summary}…`;
     case 'computed':
       return ru ? `Посчитано, чисел: ${event.figures}` : `Computed: ${event.figures} figures`;
+    case 'resolving':
+      return ru ? `Проверяю получателя на Base: ${event.summary}…` : `Checking the recipient on Base: ${event.summary}…`;
+    case 'resolved':
+      return ru ? `Получатель: ${event.summary}` : `Recipient: ${event.summary}`;
     case 'wording':
       return ru ? 'Пересказываю; каждое число будет сверено…' : 'Wording the answer; every figure will be checked…';
     case 'checked':
@@ -71,6 +77,35 @@ export function ThinkingOrbs({ event, russian = false }: { event: AgentStageV2; 
   );
 }
 
+/** After an answer, the phases the server's work went through, lit where they ran. */
+function OrbTrailV2({ trace }: { trace: readonly AgentStageV2[] }) {
+  const ran = new Set(trace.map((event) => phaseOfV2(event.stage)));
+  if (ran.size === 0) return null;
+  return (
+    <span className="still-orbs-cluster still-orb-trail" aria-hidden="true">
+      {(['evidence', 'risk', 'llm'] as const).map((phase) => (
+        <span key={phase} className={`still-orb orb-${phase}${ran.has(phase) ? ' is-done' : ''}`} />
+      ))}
+    </span>
+  );
+}
+
+/** Where the Agent's transfer opens: the stock page's own send review. The
+ * recipient rides history state, never the address bar, as from the stock page. */
+function agentSendHrefV2(send: AgentSendActionV1): string {
+  return `/routes?${new URLSearchParams({ from: 'agent', token: send.tokenAddress, side: 'gift' }).toString()}`;
+}
+
+function agentSendStateV2(send: AgentSendActionV1) {
+  return {
+    gift: {
+      recipient: send.recipient,
+      recipientName: send.recipientName,
+      send: { tokenAddress: send.tokenAddress, amountAtomic: send.amountAtomic, symbol: send.symbol, decimals: send.decimals },
+    },
+  };
+}
+
 function modeBadgeLabelV2(mode: AgentModeV2 | undefined, ru: boolean): string | null {
   if (mode === 'fast') return ru ? 'Прямое чтение' : 'Direct read';
   if (mode === 'analysis') return ru ? 'Расчёт · движок Still' : 'Calculated · Still engine';
@@ -84,7 +119,8 @@ function traceLineV2(trace: readonly AgentStageV2[], ru: boolean): string | null
   const parts: string[] = [];
   const understood = trace.find((e) => e.stage === 'understood');
   if (understood) parts.push(understood.by === 'model' ? (ru ? 'вопрос прочитан моделью и сверен с вашими словами' : 'question read by a model, checked against your words') : (ru ? 'вопрос прочитан правилами' : 'question read by fixed rules'));
-  if (trace.some((e) => e.stage === 'computed')) parts.push(ru ? 'посчитано движком Still' : 'computed by the Still engine');
+  if (trace.some((e) => e.stage === 'computed' && (e.figures ?? 0) > 0)) parts.push(ru ? 'посчитано движком Still' : 'computed by the Still engine');
+  if (trace.some((e) => e.stage === 'resolved')) parts.push(ru ? 'получатель прочитан на Base' : 'recipient read on Base');
   const checked = trace.find((e) => e.stage === 'checked');
   if (checked) parts.push(checked.verified ? (ru ? 'пересказ сверен' : 'wording checked') : (ru ? 'пересказ отклонён' : 'wording rejected'));
   return parts.length ? parts.join(' · ') : null;
@@ -201,9 +237,9 @@ function StillAgentSession({ model }: { model: StillAgentModelV1 }) {
     });
     const id = nextTurnId.current++;
     setDraft('');
-    // A calculation, a swap of a balance, and any question the page's rules do
-    // not know, are the server's: it reads the wallet itself.
-    const remote = (route === 'analysis' || route === 'unknown' || route === 'swap') && model.signedIn && model.report !== null && typeof window !== 'undefined' && typeof window.fetch === 'function';
+    // A calculation, a swap of a balance, a transfer, and any question the
+    // page's rules do not know, are the server's: it reads the wallet itself.
+    const remote = (route === 'analysis' || route === 'unknown' || route === 'swap' || route === 'send') && model.signedIn && model.report !== null && typeof window !== 'undefined' && typeof window.fetch === 'function';
     if (!remote) {
       setTurns((previous) => [...previous, { id, question: text, answer: local(), stage: null, trace: [], receivedAt: Date.now() }]);
       return;
@@ -290,14 +326,21 @@ function StillAgentSession({ model }: { model: StillAgentModelV1 }) {
                         </StillLink>
                       </div>
                     ) : null}
+                    {answer.sendAction ? (
+                      <div className="still-agent-action" style={{ marginTop: 10 }}>
+                        <StillLink href={agentSendHrefV2(answer.sendAction)} state={agentSendStateV2(answer.sendAction)} className="still-btn">
+                          {ru ? 'Проверить перевод →' : 'Review the transfer →'}
+                        </StillLink>
+                      </div>
+                    ) : null}
                     {answer.sources.length > 0 || age || trace ? (
                       <div className="mono still-clock" style={{ marginTop: 8, lineHeight: 1.5 }}>
                         {answer.sources.map((source) => <div key={source}>{source}</div>)}
                         {age ? <div>{age}</div> : null}
-                        {trace ? <div>{trace}</div> : null}
+                        {trace ? <div><OrbTrailV2 trace={turn.trace} />{trace}</div> : null}
                       </div>
                     ) : null}
-                    {answer.topic === null && !answer.mode ? (
+                    {answer.topic === null && !answer.mode && agentTradeWordsV2(turn.question) ? (
                       <p className="still-note" style={{ marginTop: 8 }}>
                         {ru ? 'Для обмена токенов есть ' : 'For swapping tokens there is '}
                         <StillLink href="/routes">Swap AI</StillLink>.

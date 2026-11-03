@@ -24,6 +24,11 @@ import { dividendMoneyV1 } from './dividendMoney.js';
 //                   goal for Swap AI, where routes are compared and simulated
 //                   and the person signs. The agent reads an amount ("all my
 //                   USDC") and never picks a route.
+//   `send`        — a request to send a stock from the wallet to an address or
+//                   a Basename the question writes: handed to Miorail's send
+//                   review, which simulates the one transfer, and the person
+//                   signs it. The recipient is only ever the question's own
+//                   words, resolved on Base by the server.
 //
 // A question none of these recognise goes to the server's planner when the
 // person is signed in, and gets the list of what the agent answers otherwise.
@@ -31,12 +36,27 @@ import { dividendMoneyV1 } from './dividendMoney.js';
 
 export type AgentTopicV1 = 'borrow' | 'safety' | 'closed' | 'dividends' | 'holdings' | 'analysis' | 'action_prep';
 export type AgentModeV2 = 'fast' | 'analysis' | 'action_prep' | 'refused';
-export type AgentRouteV2 = 'fast' | 'analysis' | 'action_prep' | 'swap' | 'unknown';
+export type AgentRouteV2 = 'fast' | 'analysis' | 'action_prep' | 'swap' | 'send' | 'unknown';
 export type DividendReadStateV1 = 'not_loaded' | 'loading' | 'unavailable' | 'read';
 
 export interface AgentActionLinkV2 {
   href: string;
   label: string;
+}
+
+/**
+ * A transfer the Agent hands to Miorail's send review. It travels in history
+ * state, never in the address bar, and the review checks all of it again on
+ * the server before the wallet is shown a call.
+ */
+export interface AgentSendActionV1 {
+  tokenAddress: string;
+  amountAtomic: string;
+  symbol: string;
+  decimals: number;
+  recipient: string;
+  /** The Basename the question wrote, when it wrote one. */
+  recipientName: string | null;
 }
 
 export interface AgentAnswerV1 {
@@ -49,6 +69,8 @@ export interface AgentAnswerV1 {
   steps?: string[];
   /** The screen where the person reviews and signs; the agent never does. */
   actionLink?: AgentActionLinkV2 | null;
+  /** A transfer prepared for Miorail's send review, which the person signs. */
+  sendAction?: AgentSendActionV1 | null;
   /** The figures and outcome a re-wording may not lose or contradict. */
   engineFacts?: Record<string, unknown> | null;
   /** The Base block the figures were read at, and its time. */
@@ -125,6 +147,7 @@ const FAST_V2: ReadonlyArray<[AgentTopicV1, RegExp]> = [
 export function agentRouteV2(question: string): { route: AgentRouteV2; topic: AgentTopicV1 | null } {
   const whatIf = WHAT_IF_V2.test(question);
   if (!whatIf && agentSwapRequestV2(question)) return { route: 'swap', topic: 'action_prep' };
+  if (!whatIf && agentSendRequestV2(question)) return { route: 'send', topic: 'action_prep' };
   if (!whatIf && ACTION_V2.test(question)) return { route: 'action_prep', topic: 'action_prep' };
   if (ANALYSIS_V2.some((pattern) => pattern.test(question))) return { route: 'analysis', topic: 'analysis' };
   if (whatIf && /(?:займу|возьму|borrow|take)\S*\s.*\d/iu.test(question)) return { route: 'analysis', topic: 'analysis' };
@@ -148,8 +171,8 @@ export const AGENT_PROMPTS_V1: ReadonlyArray<{ en: string; ru: string }> = [
 /** What the agent answers, said when a question is not one of them. */
 export function agentCapabilitiesV2(ru: boolean): string {
   return ru
-    ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при движении цены (например, NVDA −30% или BTC до названной вами цены), что изменит погашение, новый займ или залог, сколько стоят проценты, почему изменился лимит, когда действуют выходные лимиты и когда дивиденды.'
-    : 'I answer about your own money: how much you can borrow without selling, what a price move would do (e.g. NVDA down 30%, or BTC to a price you name), what a repayment, more borrowing or more collateral would change, what the interest costs, why your limit changed, when weekend limits start, and your dividends.';
+    ? 'Я отвечаю о ваших деньгах: сколько можно занять без продажи, что будет при движении цены (например, NVDA −30% или BTC до названной вами цены), что изменит погашение, новый займ или залог, сколько стоят проценты, почему изменился лимит, когда действуют выходные лимиты и когда дивиденды. И готовлю перевод акции из кошелька на адрес 0x… или имя .base.eth: подписываете его вы.'
+    : 'I answer about your own money: how much you can borrow without selling, what a price move would do (e.g. NVDA down 30%, or BTC to a price you name), what a repayment, more borrowing or more collateral would change, what the interest costs, why your limit changed, when weekend limits start, and your dividends. I also prepare a transfer of a stock from your wallet to a 0x address or a .base.eth name, which you sign.';
 }
 
 function parseDollarCentsV2(question: string): bigint | null {
@@ -238,7 +261,8 @@ export function agentSwapRequestV2(question: string): AgentSwapRequestV2 | null 
   return { from, to, amount };
 }
 
-function atomicToDecimalV2(raw: bigint, decimals: number): string {
+/** Base units as the exact decimal, trailing zeros dropped. */
+export function atomicToDecimalV2(raw: bigint, decimals: number): string {
   const unit = 10n ** BigInt(decimals);
   const whole = raw / unit;
   const fraction = (raw % unit).toString().padStart(decimals, '0').replace(/0+$/, '');
@@ -354,6 +378,84 @@ export function agentSwapAnswerV2(input: {
   );
 }
 
+/** Whether a question is about trading, for the page's pointer to Swap AI. */
+export function agentTradeWordsV2(question: string): boolean {
+  return SWAP_WORDS_V2.test(question) || BUY_WORDS_V2.test(question) || SELL_WORDS_V2.test(question);
+}
+
+// ---------------------------------------------------------------------------
+// A transfer. On 2026-11-03 the operator asked "подготовь для меня перевод
+// всех Nvdac на <name>.base.eth" and read the list of what the Agent answers.
+// A stock sent from the wallet now goes to Miorail's send review, the Gift
+// Send kernel: one transfer, simulated, signed in the person's own wallet.
+// Fixed rules read the request and no model does: the recipient may only
+// ever be what the question wrote, and the server resolves it on Base.
+// ---------------------------------------------------------------------------
+
+const SEND_WORDS_V2 = new RegExp(`${EDGE}(?:перевод|перевед|перевест|перечисл|отправ|пошли|послать|скинь|скинуть|send|transfer)`, 'iu');
+// A loan taken first stays the boundary's answer ("borrow $500 and send it to a friend").
+const SEND_BORROW_V2 = new RegExp(`${EDGE}(?:займи|займу|одолжи|возьми|занять|borrow|lend)`, 'iu');
+// "Send me a summary" asks for words, not for a transfer.
+const SEND_TO_ME_V2 = new RegExp(`${EDGE}(?:send|отправь|пришли|скинь)\\s+(?:me|мне)(?:$|[^\\p{L}])`, 'iu');
+const SEND_ADDRESS_V2 = /0x[0-9a-fA-F]{40}(?![0-9a-fA-F])/;
+// A name ending in .eth; a sentence's own full stop after it is not part of it.
+const SEND_NAME_V2 = /(?:^|[^\p{L}\p{N}.-])((?:[\p{L}\p{N}-]+\.)+eth)(?![\p{L}\p{N}-]|\.[\p{L}\p{N}])/iu;
+const SEND_USDC_V2 = /usdc|usd coin|юсдс|юсдц/iu;
+const SEND_DOLLARS_V2 = /\$|доллар|бакс/iu;
+
+export interface AgentSendRequestV2 {
+  /** The one asset named; null when none, or more than one, is. */
+  asset: string | null;
+  /** How many assets the question names, USDC included. */
+  named: number;
+  amount: { kind: 'exact'; value: string } | { kind: 'share'; share: 'all' | 'half' } | { kind: 'dollars' } | null;
+  /** As the question wrote it. A name that is not a Basename cannot be resolved here. */
+  recipient: { kind: 'address' | 'basename' | 'other_name'; value: string } | null;
+}
+
+/** A request to send a token to someone, read by fixed rules; null when the question is not one. */
+export function agentSendRequestV2(question: string): AgentSendRequestV2 | null {
+  if (!SEND_WORDS_V2.test(question) || SEND_BORROW_V2.test(question)) return null;
+  const address = SEND_ADDRESS_V2.exec(question)?.[0] ?? null;
+  const name = address ? null : (SEND_NAME_V2.exec(question)?.[1] ?? null);
+  const recipient: AgentSendRequestV2['recipient'] = address
+    ? { kind: 'address', value: address }
+    : name
+      ? { kind: /\.base\.eth$/iu.test(name) ? 'basename' : 'other_name', value: name }
+      : null;
+  if (!recipient && SEND_TO_ME_V2.test(question)) return null;
+  // The recipient is read first and set aside: "nvda.base.eth" names a person, not a stock.
+  const rest = recipient ? question.replace(recipient.value, ' ') : question;
+  const assets = [...assetsNamedInV2(rest), ...(SEND_USDC_V2.test(rest) ? ['USDC'] : [])];
+  if (!recipient && assets.length !== 1) return null;
+  let amount: AgentSendRequestV2['amount'] = null;
+  if (ALL_WORDS_V2.test(rest)) amount = { kind: 'share', share: 'all' };
+  else if (HALF_WORDS_V2.test(rest)) amount = { kind: 'share', share: 'half' };
+  else if (SEND_DOLLARS_V2.test(rest)) amount = { kind: 'dollars' };
+  else {
+    const raw = /(\d+(?:[.,]\d+)?)/u.exec(rest)?.[1] ?? null;
+    if (raw && Number(raw.replace(',', '.')) > 0) amount = { kind: 'exact', value: raw.replace(',', '.') };
+  }
+  return { asset: assets.length === 1 ? assets[0]! : null, named: assets.length, amount, recipient };
+}
+
+/** The page's own answer to a transfer, when the server is not asked: it reads the wallet and the recipient. */
+function agentSendPageAnswerV2(question: string, signedIn: boolean): AgentAnswerV1 {
+  const ru = isRussianV1(question);
+  return {
+    topic: 'action_prep',
+    mode: 'action_prep',
+    text: signedIn
+      ? ru
+        ? 'Перевод сейчас не подготовлен: сервер не ответил, это наш сбой, а не факт о вашем кошельке. Спросите ещё раз через минуту.'
+        : 'The transfer was not prepared: the server did not answer, which is our failure, not a fact about your wallet. Ask again in a minute.'
+      : ru
+        ? 'Войдите, и я прочитаю ваш кошелёк и подготовлю перевод. Подписываете его вы, в своём кошельке.'
+        : 'Sign in and I will read your wallet and prepare the transfer. You sign it in your own wallet.',
+    sources: [ru ? 'БЕЗОПАСНОСТЬ · только подготовка, подпись в кошельке' : 'BOUNDARY · preparation only, wallet signs'],
+  };
+}
+
 export function agentAnswerV1(input: {
   question: string;
   report: MirrorReport | null;
@@ -365,6 +467,7 @@ export function agentAnswerV1(input: {
   const ru = isRussianV1(input.question);
   const { route, topic } = agentRouteV2(input.question);
   if (route === 'swap') return agentSwapAnswerV2({ question: input.question, report: input.report, usdcBalance: null });
+  if (route === 'send') return agentSendPageAnswerV2(input.question, input.signedIn === true);
   const { report, sky } = input;
   const read = report ? [ru ? `ЧТЕНИЕ · блок Base ${Number(report.reading.block).toLocaleString('en-US')}` : `READ · Base block ${Number(report.reading.block).toLocaleString('en-US')}`] : [];
   const terms = report ? [ru ? `УСЛОВИЯ · Still ${report.terms.version}` : `TERMS · Still ${report.terms.version}`] : [];

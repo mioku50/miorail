@@ -41,13 +41,19 @@ export function stillTabForPathV1(path: string): StillTabV1 {
 }
 
 /** Single-page navigation, provided by the app. Without it a link loads the page. */
-export const StillNavigateContext = createContext<((path: string) => void) | null>(null);
+export const StillNavigateContext = createContext<((path: string, options?: { state?: unknown }) => void) | null>(null);
 
 /** The web app supplies its existing wallet/session controls. Other hosts
  * keep their own wallet connection rather than importing a second stack. */
 export const StillWalletControlsContext = createContext<ReactNode>(null);
 
-export function StillLink({ href, className, children, ...rest }: { href: string; className?: string; children: ReactNode } & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
+export function StillLink({ href, className, children, state, ...rest }: {
+  href: string;
+  className?: string;
+  children: ReactNode;
+  /** History state for the page it opens. Without the app's navigation the page opens without it. */
+  state?: unknown;
+} & Omit<React.AnchorHTMLAttributes<HTMLAnchorElement>, 'href'>) {
   const navigate = useContext(StillNavigateContext);
   return (
     <a
@@ -59,7 +65,7 @@ export function StillLink({ href, className, children, ...rest }: { href: string
         if (event.defaultPrevented || !navigate || event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
         if (!href.startsWith('/')) return;
         event.preventDefault();
-        navigate(href);
+        navigate(href, state === undefined ? undefined : { state });
       }}
     >
       {children}

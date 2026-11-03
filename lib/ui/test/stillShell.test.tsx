@@ -13,8 +13,10 @@ import { STILL_PUBLIC_ORIGIN_V1 } from '../src/stillOrigin';
 import {
   agentAnswerV1,
   agentRouteV2,
+  agentSendRequestV2,
   agentSwapAnswerV2,
   agentSwapRequestV2,
+  agentTradeWordsV2,
   assetsNamedInV2,
   assetsViewV1,
   homeViewV1,
@@ -371,6 +373,41 @@ describe('the Agent', () => {
     assert.equal(unclear.actionLink?.href, '/routes');
   });
 
+  it('reads a transfer by its rules: the stock, how much, and the recipient the question wrote', () => {
+    // 2026-11-03: the operator asked for "перевод всех Nvdac на <name>.base.eth"
+    // and read the list of what the Agent answers.
+    const asked = 'подготовь для меня перевод всех Nvdac на friend.base.eth адрес';
+    assert.deepEqual(agentRouteV2(asked), { route: 'send', topic: 'action_prep' });
+    assert.deepEqual(agentSendRequestV2(asked), { asset: 'NVDAc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'friend.base.eth' } });
+    const address = `0x${'ab'.repeat(20)}`;
+    for (const [q, expected] of [
+      [`переведи 0,5 NVDA на ${address}`, { asset: 'NVDAc', named: 1, amount: { kind: 'exact', value: '0.5' }, recipient: { kind: 'address', value: address } }],
+      ['send 10 AAPL to alice.base.eth.', { asset: 'AAPLc', named: 1, amount: { kind: 'exact', value: '10' }, recipient: { kind: 'basename', value: 'alice.base.eth' } }],
+      ['transfer half my tesla to bob.eth', { asset: 'TSLAc', named: 1, amount: { kind: 'share', share: 'half' }, recipient: { kind: 'other_name', value: 'bob.eth' } }],
+      ['отправь другу NVDA', { asset: 'NVDAc', named: 1, amount: null, recipient: null }],
+      // A recipient's name is a person, not a stock.
+      ['отправь nvda.base.eth все акции AAPL', { asset: 'AAPLc', named: 1, amount: { kind: 'share', share: 'all' }, recipient: { kind: 'basename', value: 'nvda.base.eth' } }],
+    ] as const) {
+      assert.deepEqual(agentSendRequestV2(q), expected, q);
+      assert.equal(agentRouteV2(q).route, 'send', q);
+    }
+    // A loan first, a what-if, a translation, a price and a request for words are not transfers.
+    assert.equal(agentRouteV2('Займи $500 и отправь другу').route, 'action_prep');
+    assert.equal(agentRouteV2('что будет, если я отправлю все NVDA на alice.base.eth?').route, 'unknown');
+    assert.equal(agentSendRequestV2('переведи на английский'), null);
+    assert.equal(agentSendRequestV2('Сколько стоит перевод?'), null);
+    assert.equal(agentSendRequestV2('send me a summary of my NVDA'), null);
+    // Without the server the page prepares nothing, and says why.
+    const sky = skyStateV1({ now: WEDNESDAY });
+    assert.match(agentAnswerV1({ question: asked, report: report(), sky, signedIn: false }).text, /^Войдите, и я прочитаю ваш кошелёк и подготовлю перевод/);
+    const unanswered = agentAnswerV1({ question: asked, report: report(), sky, signedIn: true });
+    assert.match(unanswered.text, /сервер не ответил, это наш сбой/);
+    assert.equal(unanswered.sendAction, undefined);
+    // Swap AI is pointed to for a trade, not for any question the list answers.
+    assert.equal(agentTradeWordsV2('обменяй всё на eth'), true);
+    assert.equal(agentTradeWordsV2(asked), false);
+  });
+
   it('answers the direct reads from the numbers on screen, in the language of the question', () => {
     const r = report();
     const sky = skyStateV1({ now: WEDNESDAY });
@@ -420,6 +457,9 @@ describe('the Agent', () => {
     assert.match(computing, /Still engine computing: NVIDIA −30%/);
     assert.match(renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'read', block: '53000000' }} />), /Read at block 53,000,000/);
     assert.match(renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'checked', verified: false }} />), /data-phase="llm".*failed the check/);
+    const resolving = renderToStaticMarkup(<ThinkingOrbs event={{ stage: 'resolving', summary: 'friend.base.eth' }} russian />);
+    assert.match(resolving, /data-phase="risk"/);
+    assert.match(resolving, /Проверяю получателя на Base: friend\.base\.eth…/);
   });
 });
 

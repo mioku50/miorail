@@ -443,14 +443,14 @@ a.still-extra:hover { border-color: var(--sm-link); }
 }
 .still-thinking { display: inline-flex; animation: sm-turn 3.2s linear infinite; }
 .still-thinking-orbs {
-  display: inline-flex; align-items: center; gap: 10px;
-  padding: 6px 12px; border-radius: 999px;
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 9px 16px; border-radius: 999px;
   background: var(--sm-chip); border: 1px solid var(--sm-line);
-  font-size: 13px; color: var(--sm-ink2);
+  font-size: 14px; color: var(--sm-ink2);
 }
-.still-orbs-cluster { display: inline-flex; align-items: center; gap: 5px; }
+.still-orbs-cluster { display: inline-flex; align-items: center; gap: 7px; }
 .still-orb {
-  width: 8px; height: 8px; border-radius: 50%;
+  width: 13px; height: 13px; border-radius: 50%;
   animation: sm-orb-pulse 1.5s ease-in-out infinite;
 }
 .still-orb.orb-evidence { background: var(--sm-stock); animation-delay: 0s; }
@@ -465,6 +465,10 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-thinking-orbs[data-phase='risk'] .orb-evidence,
 .still-thinking-orbs[data-phase='llm'] .orb-evidence,
 .still-thinking-orbs[data-phase='llm'] .orb-risk { opacity: 1; transform: none; }
+/* After the answer: the same three orbs, still, lit for the phases that ran. */
+.still-orb-trail { gap: 4px; margin-right: 8px; vertical-align: -1px; }
+.still-orb-trail .still-orb { width: 8px; height: 8px; animation: none; opacity: 0.22; }
+.still-orb-trail .still-orb.is-done { opacity: 1; }
 .still-agent-bounds { margin-top: 10px; font-size: 12.5px; line-height: 1.45; color: var(--sm-ink2); }
 .still-agent-bounds ul { margin: 4px 0 0; padding-left: 18px; }
 .still-agent-bounds li + li { margin-top: 3px; }
@@ -514,6 +518,8 @@ a.still-extra:hover { border-color: var(--sm-link); }
   .still-agent-composer { grid-column: 1; grid-row: 2; align-self: end; }
 }
 .still-bubble-me { max-width: 320px; background: var(--sm-blue); color: var(--sm-on-blue); border-radius: 18px 18px 4px 18px; padding: 10px 14px; font-size: 15px; line-height: 1.4; }
+/* A 0x address is one 42-character word: at 390 px it must wrap, not widen the page. */
+.still-bubble, .still-bubble-me { overflow-wrap: anywhere; }
 .still-bubble { border-radius: 18px 18px 18px 4px; }
 .still-chip { height: 34px; padding: 0 14px; border-radius: 999px; border: none; background: var(--sm-chip); color: var(--sm-ink); font-size: 14px; cursor: pointer; }
 .still-chip[disabled] { opacity: 0.55; cursor: progress; }

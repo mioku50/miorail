@@ -7,6 +7,7 @@ import { computeMirror, type MirrorInput, type MirrorOutcome, type MirrorReading
 import type { LlmProvider, LlmRequest } from '@mioagent/llm';
 
 import { EXAMPLE, SATURDAY, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
+import type { BaseNameResolutionV1 } from '../lib/baseNameResolver.js';
 import { stillAgentLlmRuntimeV1 } from '../lib/stillAgentServer.js';
 import { createMemoryStillReadingStoreV1, stillReadingsRuntimeV1 } from '../lib/stillReadings.js';
 import { stillMineRouter, stillMineRuntimeV1 } from './stillMine.js';
@@ -269,6 +270,101 @@ test('a swap is written out for Swap AI: no model, nothing signed, the goal in t
   usdc = { raw: '6898728', decimals: 6, block: '53337500' };
   const all = await ask(server, 'Мне нужен свап моих всех usdc на eth');
   assert.equal(all.body.answer.actionLink.href, `/routes?goal=${encodeURIComponent('Swap 6.898728 USDC to ETH')}`);
+});
+
+test('a transfer goes to the send review: the wallet’s own stock, and the recipient the question wrote, read on Base', async () => {
+  // 2026-11-03: "подготовь для меня перевод всех Nvdac на <name>.base.eth" was
+  // read by the model as unsupported, and the operator got the list.
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('a transfer is not planned by a model');
+  stillAgentLlmRuntimeV1.narrator = never('a transfer is not re-worded by a model');
+  const FRIEND = `0x${'2'.repeat(40)}` as const;
+  const looked: string[] = [];
+  stillMineRuntimeV1.resolveName = async (name): Promise<BaseNameResolutionV1> => {
+    looked.push(name);
+    if (name === 'friend.base.eth') return { outcome: 'resolved', name, address: FRIEND };
+    if (name === 'me.base.eth') return { outcome: 'resolved', name, address: WALLET as `0x${string}` };
+    return { outcome: 'unresolved', name, errorCode: 'base_name_unresolved' };
+  };
+  const nvda = (readingFor(WALLET) as Extract<MirrorReadingV1, { outcome: 'report' }>).report.assets.find((line) => line.asset === 'NVDAc')!;
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+
+  const res = await ask(server, 'подготовь для меня перевод всех Nvdac на friend.base.eth адрес', true);
+  const lines = res.text.trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(lines.map((line) => line.stage ?? line.type), ['reading', 'read', 'understood', 'resolving', 'resolved', 'answer']);
+  assert.equal(lines[2].by, 'rules');
+  assert.equal(lines[2].summary, 'перевод 0.8 NVDAc → friend.base.eth');
+  const answer = lines.at(-1).answer;
+  assert.equal(answer.mode, 'action_prep');
+  // The stock page's own send, from the wallet's 0.8 NVDAc; the 3.4 pledged stay.
+  assert.deepEqual(answer.sendAction, {
+    tokenAddress: nvda.token.toLowerCase(),
+    amountAtomic: '80000000',
+    symbol: 'NVDAc',
+    decimals: 8,
+    recipient: FRIEND,
+    recipientName: 'friend.base.eth',
+  });
+  assert.match(answer.text, new RegExp(`^Подготовил перевод: 0\\.8 NVDAc \\(всё, что в кошельке\\) на friend\\.base\\.eth \\(${FRIEND}\\)\\. Я ничего не подписываю`));
+  assert.match(answer.text, /Ещё 3\.4 NVDAc в залоге Aave V4: этот перевод их не трогает\.$/);
+  assert.ok(answer.steps.some((step: string) => step === `Получатель: friend.base.eth → ${FRIEND}, прочитано на Base`));
+  assert.deepEqual(looked, ['friend.base.eth']);
+
+  // An exact amount, and an address typed out, need no name read.
+  const exact = await ask(server, `send 0.25 NVDA to ${FRIEND}`);
+  assert.equal(exact.body.answer.sendAction.amountAtomic, '25000000');
+  assert.equal(exact.body.answer.sendAction.recipientName, null);
+  assert.deepEqual(looked, ['friend.base.eth']);
+  // More than the wallet holds, the wallet itself, a name that points nowhere,
+  // a coin, and no recipient at all: said, and nothing handed over.
+  for (const [question, said] of [
+    ['переведи 2 NVDA на friend.base.eth', /^В кошельке 0\.8 NVDAc \(блок Base 53,000,000\), меньше чем 2\./],
+    ['переведи все NVDA на me.base.eth', /^me\.base\.eth — это ваш же кошелёк/],
+    ['переведи все NVDA на nobody.base.eth', /^nobody\.base\.eth не указывает ни на какой адрес в Base/],
+    ['transfer all my NVDA to bob.eth', /^I read \.base\.eth names and 0x addresses, and cannot check bob\.eth/],
+    [`скинь биткоин на ${FRIEND}`, /^Перевод я готовлю только для акций Coinbase/],
+    ['отправь другу NVDA', /^Кому перевести\? Напишите в вопросе адрес 0x… или имя \.base\.eth/],
+    ['отправь $5 NVDA на friend.base.eth', /^Назовите количество в NVDAc или «все»/],
+  ] as const) {
+    const refused = (await ask(server, question)).body.answer;
+    assert.match(refused.text, said, question);
+    assert.equal(refused.sendAction ?? null, null, question);
+  }
+});
+
+test('a stock that is all pledged is said to be, with the way to take it back first', async () => {
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.planner = never('a transfer is not planned by a model');
+  stillAgentLlmRuntimeV1.narrator = never('a transfer is not re-worded by a model');
+  stillMineRuntimeV1.resolveName = async () => assert.fail('nothing to send yet, so no recipient is looked up');
+  let debt = '240170000';
+  const pledgedOnly = (address: string): MirrorReadingV1 => {
+    const reading = readingFor(address) as Extract<MirrorReadingV1, { outcome: 'report' }>;
+    reading.report.assets.find((line) => line.asset === 'NVDAc')!.wallet = { raw: '0', decimals: 8 };
+    reading.report.venues.find((line) => line.venue === 'aave-v4')!.debtAtomic = debt;
+    return reading;
+  };
+  const { server } = app(WALLET, async () => assert.fail('not checked'), async (address) => pledgedOnly(address));
+  const owed = (await ask(server, 'переведи все NVDAc на friend.base.eth')).body.answer;
+  assert.match(owed.text, /^Ваши 3\.4 NVDAc лежат залогом в Aave V4, а в кошельке их 0 \(блок Base 53,000,000\)\./);
+  assert.match(owed.text, /Repay → «Repay all, take back NVDAc»\. Для этого в кошельке нужно не меньше 240\.17 USDC/);
+  assert.equal(owed.actionLink.href, '/repay');
+  assert.equal(owed.sendAction ?? null, null);
+  // Nothing owed: taking it back needs no USDC.
+  debt = '0';
+  const free = (await ask(server, 'send all my NVDA to friend.base.eth')).body.answer;
+  assert.match(free.text, /Nothing is owed, so you can take them back without USDC: Repay → “Take back NVDAc”\./);
+});
+
+test('a question the planner cannot place is said so, and nothing claims to have been computed', async () => {
+  store = createMemoryStillReadingStoreV1();
+  stillAgentLlmRuntimeV1.narrator = never('nothing to re-word');
+  stillAgentLlmRuntimeV1.planner = () => model('{"task":"unsupported","reason":"other"}');
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  const res = await ask(server, 'Напиши стихотворение про мой кошелёк', true);
+  const lines = res.text.trim().split('\n').map((line) => JSON.parse(line));
+  assert.deepEqual(lines.map((line) => line.stage ?? line.type), ['reading', 'read', 'understanding', 'answer']);
+  assert.match(lines.at(-1).answer.text, /^Это я не могу ни посчитать, ни подготовить\. Я отвечаю о ваших деньгах/);
 });
 
 test('a repayment is described option by option, without advice', async () => {
