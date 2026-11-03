@@ -13,19 +13,19 @@
 // from, query included, which is what every page here wants.
 // ---------------------------------------------------------------------------
 
-export const MINI_APP_NAME_V1 = 'Miorail';
-/** The page colour (index.html's theme-color), behind the splash icon. */
-export const MINI_APP_SPLASH_BACKGROUND_V1 = '#070A17';
+export const MINI_APP_NAME_V1 = 'Still';
+/** Still's night ground, behind the splash icon, which is drawn on the same colour (stillIconSvgV1). */
+export const MINI_APP_SPLASH_BACKGROUND_V1 = '#0B0F2E';
 export const MINI_APP_BUTTON_TITLE_MAX_V1 = 32;
 /** What a button says when the one it was given is longer than Farcaster takes. */
-const MINI_APP_FALLBACK_TITLE_V1 = 'Open Miorail';
+const MINI_APP_FALLBACK_TITLE_V1 = 'Open Still';
 
 export function miniAppIconUrlV1(origin: string): string {
-  return `${origin}/miniapp-icon.png`;
+  return `${origin}/still-icon.png`;
 }
 
 export function miniAppSplashUrlV1(origin: string): string {
-  return `${origin}/miniapp-splash.png`;
+  return `${origin}/still-splash.png`;
 }
 
 export type MiniAppEmbedV1 = {

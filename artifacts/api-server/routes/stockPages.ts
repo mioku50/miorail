@@ -296,9 +296,9 @@ export function stockPageMetaV1(input: {
     title: `${named} on Base · Miorail`,
     description: `${named} as a tokenized stock on Base: the price against the real share, what it costs to get back out, and which contract is official.${measured} No wallet needed to look.`,
     canonicalUrl: `${input.origin}/stocks/${symbol.toLowerCase()}`,
-    imageUrl: `${input.origin}/og-stocks.png`,
+    imageUrl: `${input.origin}/og-still-stocks.png`,
     noindex: false,
-    miniApp: { imageUrl: `${input.origin}/og-stocks-3x2.png`, buttonTitle: `Open ${symbol} on Base` },
+    miniApp: { imageUrl: `${input.origin}/og-still-stocks-3x2.png`, buttonTitle: `Open ${symbol} on Base` },
   };
 }
 
@@ -318,9 +318,9 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
       description:
         'Your tokenized stocks on Base: what they fetch now, what changed about them, and the dividends that reached them. Read from your own wallet once you sign in.',
       canonicalUrl: null,
-      imageUrl: `${origin}/og-stocks.png`,
+      imageUrl: `${origin}/og-still-stocks.png`,
       noindex: true,
-      miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Open my stocks' },
+      miniApp: { imageUrl: `${origin}/og-still-stocks-3x2.png`, buttonTitle: 'Open my stocks' },
     };
   }
   if (section === 'dividends') {
@@ -329,9 +329,9 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
       description:
         'When each Coinbase tokenized stock on Base pays next, about how much reaches one token, and what each past dividend did to it, read from the token. No wallet needed to look.',
       canonicalUrl: `${origin}/stocks/dividends`,
-      imageUrl: `${origin}/og-stocks.png`,
+      imageUrl: `${origin}/og-still-stocks.png`,
       noindex: false,
-      miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'See the dividends' },
+      miniApp: { imageUrl: `${origin}/og-still-stocks-3x2.png`, buttonTitle: 'See the dividends' },
     };
   }
   return {
@@ -339,9 +339,9 @@ export function stockSectionMetaV1(origin: string, section: StockSectionPageV1):
     description:
       "While Wall Street is closed, tokenized stocks keep trading on Base. Call the reopen: will five stocks open above or below Friday's close? Base makes its own call. No wallet needed to play.",
     canonicalUrl: `${origin}/stocks/weekend`,
-    imageUrl: `${origin}/og-stocks.png`,
+    imageUrl: `${origin}/og-still-stocks.png`,
     noindex: false,
-    miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Call the reopen' },
+    miniApp: { imageUrl: `${origin}/og-still-stocks-3x2.png`, buttonTitle: 'Call the reopen' },
   };
 }
 
@@ -351,9 +351,9 @@ function listMetaV1(origin: string): StockPageMetaV1 {
     description:
       'Every Coinbase tokenized stock on Base: what it costs to get in and back out at $100 to $100k, the price against the real share, and which contract is official. No wallet needed to look.',
     canonicalUrl: `${origin}/stocks`,
-    imageUrl: `${origin}/og-stocks.png`,
+    imageUrl: `${origin}/og-still-stocks.png`,
     noindex: false,
-    miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Open the stocks board' },
+    miniApp: { imageUrl: `${origin}/og-still-stocks-3x2.png`, buttonTitle: 'Open the stocks board' },
   };
 }
 
@@ -363,9 +363,9 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
     description:
       'Miorail has no reviewed tokenized stock under that ticker. That is a statement about Miorail’s corpus, not about what exists on Base.',
     canonicalUrl: null,
-    imageUrl: `${origin}/og-stocks.png`,
+    imageUrl: `${origin}/og-still-stocks.png`,
     noindex: true,
-    miniApp: { imageUrl: `${origin}/og-stocks-3x2.png`, buttonTitle: 'Open the stocks board' },
+    miniApp: { imageUrl: `${origin}/og-still-stocks-3x2.png`, buttonTitle: 'Open the stocks board' },
   };
 }
 

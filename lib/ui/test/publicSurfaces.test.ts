@@ -357,14 +357,15 @@ test('the edge serves the Farcaster manifest from the API, and the preview pictu
   assert.doesNotMatch(block, /3020/);
 
   // Farcaster reads no-store as max-age=0 and may show grey while it refetches.
-  const pictures = nginx.indexOf('location ~ ^/(?:og-[a-z0-9-]+|miniapp-(?:icon|splash))\\.png$ {');
+  const pictures = nginx.indexOf('location ~ ^/(?:og-[a-z0-9-]+|(?:miniapp|still)-(?:icon|splash))\\.png$ {');
   assert.ok(pictures >= 0, 'Nginx has no location of its own for the preview pictures');
   assert.ok(pictures < nginx.indexOf('location / {'), 'declared before the catch-all, for readers');
   const pictureBlock = nginx.slice(pictures, nginx.indexOf('\n}', pictures));
   assert.match(pictureBlock, /add_header Cache-Control "public, max-age=86400";/);
   assert.match(pictureBlock, /try_files \$uri =404;/);
-  const pattern = new RegExp('^/(?:og-[a-z0-9-]+|miniapp-(?:icon|splash))\\.png$');
-  for (const file of ['/og-stocks.png', '/og-stocks-3x2.png', '/og-gift-3x2.png', '/og-still.png', '/og-still-3x2.png', '/miniapp-icon.png', '/miniapp-splash.png']) {
+  const pattern = new RegExp('^/(?:og-[a-z0-9-]+|(?:miniapp|still)-(?:icon|splash))\\.png$');
+  for (const file of ['/og-stocks.png', '/og-stocks-3x2.png', '/og-gift-3x2.png', '/og-still.png', '/og-still-3x2.png', '/miniapp-icon.png', '/miniapp-splash.png',
+    '/og-still-stocks.png', '/og-still-stocks-3x2.png', '/og-still-gift.png', '/og-still-gift-3x2.png', '/still-icon.png', '/still-splash.png']) {
     assert.ok(pattern.test(file), file);
   }
   // index.html and the app's routes stay out of it.

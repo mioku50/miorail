@@ -593,15 +593,16 @@ printf '%s' "$found_page" | grep -q '<title>Card not found · Miorail</title>' \
   || { echo 'FAILED: /found/<code> came back without its own head (nginx served the static file)'; exit 1; }
 printf '  found cards    %-28s %s\n' "$oauth_origin/found/…" 'unknown code answers with the card head'
 
-# Farcaster mini app (2026-10-11). The manifest must be the API's, for the
-# board; the /app shell used to serve one, unsigned and pointing at /app.
+# Farcaster mini app (2026-10-11). The manifest must be the API's, for Still's
+# Home since 2026-11-03 (the board before); the /app shell used to serve one,
+# unsigned and pointing at /app.
 # Whether Farcaster can tie it to an account is printed, not required: only
 # the owner can sign it, in Farcaster.
 fc_manifest=$(curl -fsS --max-time 20 "$oauth_origin/.well-known/farcaster.json" 2>/dev/null) || fc_manifest=''
-printf '%s' "$fc_manifest" | jq -e --arg o "$oauth_origin" '.miniapp.homeUrl == ($o + "/stocks")' >/dev/null \
-  || { echo 'FAILED: /.well-known/farcaster.json is not the mini app manifest for the board'; exit 1; }
+printf '%s' "$fc_manifest" | jq -e --arg o "$oauth_origin" '.miniapp.homeUrl == ($o + "/")' >/dev/null \
+  || { echo 'FAILED: /.well-known/farcaster.json is not the mini app manifest for Still'; exit 1; }
 fc_signed=$(printf '%s' "$fc_manifest" | jq -r 'if .accountAssociation then "signed" else "not signed yet" end')
-printf '  farcaster      %-28s %s\n' "$oauth_origin/.well-known/…" "mini app manifest for /stocks, $fc_signed"
+printf '  farcaster      %-28s %s\n' "$oauth_origin/.well-known/…" "mini app manifest for Still, $fc_signed"
 
 # Sponsored gas (growth plan step 2). The wallet calls /api/paymaster from its
 # own origin, so the preflight must come back with an allowed origin — the

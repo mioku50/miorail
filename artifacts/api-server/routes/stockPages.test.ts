@@ -86,7 +86,7 @@ test('a stock page is the app, with a head that names the stock and dates its nu
   assert.match(html, /<title>NVIDIA \(NVDA\) on Base · Miorail<\/title>/);
   assert.match(html, /Round trip at \$1,000: 0\.11%, measured 2 h ago\./);
   assert.match(html, /<link rel="canonical" href="https:\/\/miorail\.xyz\/stocks\/nvda" \/>/);
-  assert.match(html, /property="og:image" content="https:\/\/miorail\.xyz\/og-stocks\.png"/);
+  assert.match(html, /property="og:image" content="https:\/\/miorail\.xyz\/og-still-stocks\.png"/);
   // The app still boots: the body is the static document's, untouched.
   assert.match(html, /<script type="module" src="\/assets\/index-abc\.js"><\/script>/);
   // Exactly one title and one description — an unfurler meeting two picks one.
@@ -496,13 +496,13 @@ test('every page casts as a mini app Farcaster accepts, opening the page itself'
     assert.ok(parsed.success, `${path}: ${JSON.stringify(parsed.error?.issues)}`);
     assert.ok(miniAppEmbedNextSchema.safeParse(frame).success, path);
     const embed = miniApp as { imageUrl: string; button: { title: string; action: Record<string, unknown> } };
-    assert.equal(embed.imageUrl, 'https://miorail.xyz/og-stocks-3x2.png', path);
+    assert.equal(embed.imageUrl, 'https://miorail.xyz/og-still-stocks-3x2.png', path);
     assert.equal(embed.button.title, title, path);
     assert.equal(embed.button.action.type, 'launch_miniapp', path);
     assert.equal((frame as typeof embed).button.action.type, 'launch_frame', path);
     // No url: the button opens the page it was cast from, query and all.
     assert.equal(embed.button.action.url, undefined, path);
-    assert.equal(embed.button.action.splashImageUrl, 'https://miorail.xyz/miniapp-splash.png', path);
+    assert.equal(embed.button.action.splashImageUrl, 'https://miorail.xyz/still-splash.png', path);
   }
 });
 
@@ -527,7 +527,7 @@ test('a button title Farcaster would refuse becomes one it takes', () => {
     miniApp: { imageUrl: 'https://miorail.xyz/og-stocks-3x2.png', buttonTitle: 'x'.repeat(33) },
   });
   const [embed] = embedsV1(html, 'fc:miniapp') as Array<{ button: { title: string } }>;
-  assert.equal(embed!.button.title, 'Open Miorail');
+  assert.equal(embed!.button.title, 'Open Still');
 });
 
 test('the page may sit in Farcaster’s frame on the web, like the static file', async (t) => {

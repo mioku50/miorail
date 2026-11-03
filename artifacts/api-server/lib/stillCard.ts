@@ -137,7 +137,7 @@ function brandV1(x: number, y: number): string {
   ].join('');
 }
 
-function frameV1(shape: StillCardShapeV1, mobile: MobileInputV1, right: (box: { x: number; top: number; bottom: number; width: number }) => string, alt: string): string {
+function frameV1(shape: StillCardShapeV1, mobile: MobileInputV1, right: (box: { x: number; top: number; bottom: number; width: number }) => string, alt: string, hung = ''): string {
   const { width, height } = STILL_CARD_SIZE_V1[shape];
   const pad = 40;
   const boxW = shape === 'wide' ? 500 : 540;
@@ -159,7 +159,7 @@ function frameV1(shape: StillCardShapeV1, mobile: MobileInputV1, right: (box: { 
     `<rect x="${pad}" y="${pad}" width="${boxW}" height="${boxH}" fill="#27347A"/>`,
     sceneTop > pad ? extraStars : '',
     sceneTop > pad ? `<line x1="${pivotX.toFixed(1)}" y1="${pad}" x2="${pivotX.toFixed(1)}" y2="${sceneTop.toFixed(1)}" stroke="${INK}" stroke-width="${(1.5 * scale).toFixed(2)}"/>` : '',
-    `<g transform="translate(${pad} ${sceneTop.toFixed(1)}) scale(${scale.toFixed(4)})">${skyV1()}${mobileV1(mobile)}</g>`,
+    `<g transform="translate(${pad} ${sceneTop.toFixed(1)}) scale(${scale.toFixed(4)})">${skyV1()}${mobileV1(mobile)}${hung}</g>`,
     '</g>',
     right({ x: textX, top: pad, bottom: height - pad, width: width - textX - pad }),
     '</svg>',
@@ -177,7 +177,7 @@ export function stillBrandCardSvgV1(shape: StillCardShapeV1): string {
         brandV1(x, top + 18),
         textLinesV1(['Spend without', 'selling.'], x, mid - 52, 66, 74, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
         textLinesV1(wrapV1('Borrow USDC against tokenized stocks, bitcoin and ether on Base, and keep them. Your wallet signs every step.', 26, width, 3), x, mid + 70, 26, 36, `font-family="${SANS}" fill="${INK2}"`),
-        `<text x="${x}" y="${bottom - 6}" font-family="${MONO}" font-size="20" letter-spacing="3" fill="${INK2}">STILLS.LAT</text>`,
+        `<text x="${x}" y="${bottom - 6}" font-family="${MONO}" font-size="20" letter-spacing="3" fill="${INK2}">MIORAIL.XYZ</text>`,
       ].join('');
     },
     'Still: spend without selling. A mobile of stocks and bitcoin hangs in balance under a dusk sky.',
@@ -207,7 +207,7 @@ export function stillWalletCardSvgV1(shape: StillCardShapeV1, report: MirrorRepo
         parts.push(`<text x="${x}" y="${top + 230}" font-family="${SANS}" font-size="44" fill="${INK}">Not read this time</text>`);
       }
       parts.push(textLinesV1(wrapV1(`${view.stateWord} ${view.stateLine}`, 26, width, 3), x, top + 318, 26, 36, `font-family="${SANS}" fill="${INK2}"`));
-      parts.push(`<text x="${x}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">${escapeXmlV1(`READ FROM BASE · BLOCK ${block} · STILLS.LAT`)}</text>`);
+      parts.push(`<text x="${x}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">${escapeXmlV1(`READ FROM BASE · BLOCK ${block} · MIORAIL.XYZ`)}</text>`);
       return parts.join('');
     },
     amount ? `${who}: ${amount.atLeast ? 'at least ' : ''}${amount.dollars}${amount.cents} modelled borrowing room on Still, read from Base at block ${block}.` : `${who} on Still: not read this time.`,
@@ -250,9 +250,89 @@ export function stillSpendCardSvgV1(shape: StillCardShapeV1, share: StillSpendSh
         ),
         baseSquareV1(x, bottom - 26, 24),
         `<text x="${x + 38}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">CHECKED ONCHAIN ON BASE</text>`,
-        `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">STILLS.LAT</text>`,
+        `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">MIORAIL.XYZ</text>`,
       ].join('');
     },
     `Paid for ${share.productName} (${share.packageLabel}, ${words.priceUsdc} USDC) with a loan against ${words.collateralLabel} through ${words.venueName}, on Still.`,
   );
+}
+
+/** Stocks alone, in balance: the Stocks board's picture. No wallet, no loan. */
+const STOCKS_MOBILE_V1: MobileInputV1 = {
+  holdings: [
+    { id: 'nvda', kind: 'stock', label: 'NVDA', valueCents: 90_000 },
+    { id: 'aapl', kind: 'stock', label: 'AAPL', valueCents: 62_000 },
+    { id: 'tsla', kind: 'stock', label: 'TSLA', valueCents: 41_000 },
+  ],
+  // As the brand's picture: a loan with no figure on it.
+  loan: { owedCents: 24_000, limitCents: 78_000, weekdayLimitCents: null, owedLabel: ' ' },
+  state: 'calm',
+};
+
+/** The Stocks board and a stock's page. */
+export function stillStocksCardSvgV1(shape: StillCardShapeV1): string {
+  return frameV1(shape, STOCKS_MOBILE_V1, ({ x, top, bottom, width }) => {
+    const mid = (top + bottom) / 2;
+    return [
+      brandV1(x, top + 18),
+      `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">TOKENIZED STOCKS ON BASE</text>`,
+      textLinesV1(['Every stock,', 'measured.'], x, mid - 20, 66, 74, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
+      textLinesV1(wrapV1('The price against the real share, what getting back out costs, and which contract is official. No wallet needed to look.', 25, width, 4), x, mid + 100, 25, 35, `font-family="${SANS}" fill="${INK2}"`),
+      `<text x="${x}" y="${bottom - 6}" font-family="${MONO}" font-size="20" letter-spacing="3" fill="${INK2}">MIORAIL.XYZ/STOCKS</text>`,
+    ].join('');
+  }, 'Still: tokenized stocks on Base, measured. A mobile of stocks hangs in balance under a dusk sky.');
+}
+
+const GIFT_MOBILE_V1: MobileInputV1 = {
+  holdings: [
+    { id: 'aapl', kind: 'stock', label: 'AAPL', valueCents: 70_000 },
+    { id: 'nvda', kind: 'stock', label: 'NVDA', valueCents: 70_000 },
+  ],
+  // The square hangs as the gift: a box with its ribbon, and no figure.
+  loan: { owedCents: 30_000, limitCents: 30_000, weekdayLimitCents: null, owedLabel: ' ' },
+  state: 'calm',
+};
+
+/** The ribbon over the gift's box, in the stock's blue, where the layout hung the square. */
+function ribbonV1(): string {
+  const box = mobileLayoutV1(GIFT_MOBILE_V1).loan;
+  if (!box) return '';
+  const band = Math.max(3, box.side / 7), cx = box.x + box.side / 2, cy = box.y + box.side / 2;
+  return [
+    `<rect x="${(cx - band / 2).toFixed(1)}" y="${box.y}" width="${band.toFixed(1)}" height="${box.side}" fill="${STOCK}"/>`,
+    `<rect x="${box.x}" y="${(cy - band / 2).toFixed(1)}" width="${box.side}" height="${band.toFixed(1)}" fill="${STOCK}"/>`,
+  ].join('');
+}
+
+/** A gift of a stock: the gift page's picture. */
+export function stillGiftCardSvgV1(shape: StillCardShapeV1): string {
+  return frameV1(shape, GIFT_MOBILE_V1, ({ x, top, bottom, width }) => {
+    const mid = (top + bottom) / 2;
+    return [
+      brandV1(x, top + 18),
+      `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">A GIFT ON BASE</text>`,
+      textLinesV1(['Give someone', 'a stock.'], x, mid - 20, 66, 74, `font-family="${SANS}" font-weight="500" fill="${INK}"`),
+      textLinesV1(wrapV1('Bought and delivered in one transaction, and held in their own wallet. From $0.10 to $100 in USDC.', 25, width, 4), x, mid + 100, 25, 35, `font-family="${SANS}" fill="${INK2}"`),
+      `<text x="${x}" y="${bottom - 6}" font-family="${MONO}" font-size="20" letter-spacing="3" fill="${INK2}">MIORAIL.XYZ</text>`,
+    ].join('');
+  }, 'Still: give someone a stock on Base. Two stocks and a gift hang in balance under a dusk sky.', ribbonV1());
+}
+
+/** Still's icon: the frame's glyph, large, on the night ground. Square; the mini app's icon and splash. */
+export function stillIconSvgV1(size: number): string {
+  // The glyph spans x 1..27 and y 0..23 in its own units (brandV1); centred, at 61% of the side.
+  const s = (size * 0.61) / 26;
+  const x = (size - 26 * s) / 2 - s, y = (size - 23 * s) / 2;
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
+    `<rect width="${size}" height="${size}" fill="${GROUND}"/>`,
+    `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${s.toFixed(4)})">`,
+    `<line x1="15" y1="0" x2="15" y2="7" stroke="${INK}" stroke-width="2"/>`,
+    `<line x1="3" y1="7" x2="27" y2="7" stroke="${INK}" stroke-width="2" stroke-linecap="round"/>`,
+    `<line x1="7" y1="7" x2="7" y2="11" stroke="${INK}" stroke-width="1.5"/>`,
+    `<circle cx="7" cy="17" r="6" fill="${STOCK}"/>`,
+    `<line x1="23.5" y1="7" x2="23.5" y2="11" stroke="${INK}" stroke-width="1.5"/>`,
+    `<rect x="20" y="11" width="7" height="7" fill="${INK}"/>`,
+    '</g></svg>',
+  ].join('');
 }

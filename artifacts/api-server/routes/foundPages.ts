@@ -49,9 +49,9 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
     title: 'Card not found · Miorail',
     description: 'No Found card under this link. Miorail reads what your wallet can claim on Aerodrome and Uniswap, from Base itself.',
     canonicalUrl: null,
-    imageUrl: `${origin}/og-stocks.png`,
+    imageUrl: `${origin}/og-still-stocks.png`,
     noindex: true,
-    miniApp: { imageUrl: `${origin}/og-stocks${cardFileSuffixV1('embed')}.png`, buttonTitle: 'Open Miorail' },
+    miniApp: { imageUrl: `${origin}/og-still-stocks${cardFileSuffixV1('embed')}.png`, buttonTitle: 'Open Still' },
   };
 }
 

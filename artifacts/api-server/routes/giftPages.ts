@@ -133,9 +133,9 @@ export function giftPageMetaV1(input: { origin: string; summary: GiftSummaryV1 }
     // A gift link is unguessable, not secret; a search engine must never turn
     // one into a page anybody can find.
     canonicalUrl: null,
-    imageUrl: `${input.origin}/og-gift.png`,
+    imageUrl: `${input.origin}/og-still-gift.png`,
     noindex: true,
-    miniApp: { imageUrl: `${input.origin}/og-gift-3x2.png`, buttonTitle: 'See the gift' },
+    miniApp: { imageUrl: `${input.origin}/og-still-gift-3x2.png`, buttonTitle: 'See the gift' },
   };
 }
 
@@ -144,9 +144,9 @@ function notFoundMetaV1(origin: string): StockPageMetaV1 {
     title: 'Gift not found · Miorail',
     description: 'This gift link is not valid. It may have been revoked by the person who shared it.',
     canonicalUrl: null,
-    imageUrl: `${origin}/og-gift.png`,
+    imageUrl: `${origin}/og-still-gift.png`,
     noindex: true,
-    miniApp: { imageUrl: `${origin}/og-gift-3x2.png`, buttonTitle: 'Open Miorail' },
+    miniApp: { imageUrl: `${origin}/og-still-gift-3x2.png`, buttonTitle: 'Open Still' },
   };
 }
 
@@ -155,9 +155,9 @@ function genericMetaV1(origin: string): StockPageMetaV1 {
     title: 'A gift of stock on Base · Miorail',
     description: 'A tokenized stock, given on Base. The record checks itself in your browser.',
     canonicalUrl: null,
-    imageUrl: `${origin}/og-gift.png`,
+    imageUrl: `${origin}/og-still-gift.png`,
     noindex: true,
-    miniApp: { imageUrl: `${origin}/og-gift-3x2.png`, buttonTitle: 'See the gift' },
+    miniApp: { imageUrl: `${origin}/og-still-gift-3x2.png`, buttonTitle: 'See the gift' },
   };
 }
 

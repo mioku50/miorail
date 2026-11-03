@@ -42,8 +42,8 @@ test('the manifest opens the board, and Farcaster’s own schema accepts every f
   };
   const parsed = domainMiniAppConfigSchema.safeParse(manifest.miniapp);
   assert.ok(parsed.success, JSON.stringify(parsed.error?.issues));
-  assert.equal(manifest.miniapp.homeUrl, 'https://miorail.xyz/stocks');
-  assert.equal(manifest.miniapp.iconUrl, 'https://miorail.xyz/miniapp-icon.png');
+  assert.equal(manifest.miniapp.homeUrl, 'https://miorail.xyz/');
+  assert.equal(manifest.miniapp.iconUrl, 'https://miorail.xyz/still-icon.png');
   assert.equal(manifest.miniapp.canonicalDomain, 'miorail.xyz');
   assert.deepEqual(manifest.miniapp.requiredChains, ['eip155:8453']);
   // Nothing signed, nothing claimed.
@@ -80,11 +80,11 @@ test('the route serves the signed manifest to anyone, from any origin', async (t
   assert.equal(response.headers['cache-control'], 'public, max-age=300');
   const parsed = domainManifestSchema.safeParse(response.body);
   assert.ok(parsed.success, JSON.stringify(parsed.error?.issues));
-  assert.equal(response.body.miniapp.homeUrl, 'https://miorail.xyz/stocks');
+  assert.equal(response.body.miniapp.homeUrl, 'https://miorail.xyz/');
 });
 
 test('an association for another domain is left out, not served', async (t) => {
   const response = await request(appV1(t, associationV1('example.com'))).get('/.well-known/farcaster.json').expect(200);
   assert.equal(response.body.accountAssociation, undefined);
-  assert.equal(response.body.miniapp.name, 'Miorail');
+  assert.equal(response.body.miniapp.name, 'Still');
 });

@@ -117,8 +117,8 @@ test('a gift previews as who gave whom which stock, for X and Farcaster alike', 
   assert.match(html, /0\.00044006 NVDAc: tokenized NVIDIA stock, delivered on Base in one transaction\./);
   // X reads twitter:*, Farcaster renders a plain link from og:*.
   assert.match(html, /<meta name="twitter:card" content="summary_large_image" \/>/);
-  assert.match(html, /property="og:image" content="https:\/\/miorail\.xyz\/og-gift\.png"/);
-  assert.match(html, /name="twitter:image" content="https:\/\/miorail\.xyz\/og-gift\.png"/);
+  assert.match(html, /property="og:image" content="https:\/\/miorail\.xyz\/og-still-gift\.png"/);
+  assert.match(html, /name="twitter:image" content="https:\/\/miorail\.xyz\/og-still-gift\.png"/);
   // Unguessable is not secret: never indexed, never canonical.
   assert.match(html, /<meta name="robots" content="noindex" \/>/);
   assert.doesNotMatch(html, /rel="canonical"/);
