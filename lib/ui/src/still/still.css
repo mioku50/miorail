@@ -42,6 +42,9 @@
   --sm-accent-card: linear-gradient(135deg, #0052FF 0%, #2B6BFF 55%, #5C8EFF 100%);
   --sm-shadow: 0 1px 2px #0D1B3D0F, 0 8px 24px #0D1B3D0D;
   --sm-rail-frame: #BCD0F5;
+  --sm-lead-glint: #8CD0FF;
+  --sm-lead-halo: #0052FF14;
+  --sm-lead-glow: #0052FF66;
   font-family: 'Jost', system-ui, sans-serif;
   color: var(--sm-ink);
   background: var(--sm-ground);
@@ -74,6 +77,9 @@
   --sm-accent-card: linear-gradient(135deg, #1D2E9E 0%, #2F48C4 55%, #4D6BE0 100%);
   --sm-shadow: 0 0 0 transparent;
   --sm-rail-frame: #34408F;
+  --sm-lead-glint: #FFFFFF;
+  --sm-lead-halo: #8FB0FF1F;
+  --sm-lead-glow: #8FB0FF59;
 }
 
 .still *, .still *::before, .still *::after { box-sizing: border-box; }
@@ -166,6 +172,8 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-head h1 { margin: 0; font-weight: 600; font-size: 32px; letter-spacing: -0.01em; line-height: 1.1; color: var(--sm-band-ink); }
 .still-head .still-trail { color: var(--sm-band-ink2); }
 .still-head-lede { grid-column: 1 / -1; margin-top: 10px; max-width: 62ch; font-size: 15px; line-height: 1.45; color: var(--sm-band-ink); }
+/* The seller named in a lede: a light chip on the band, as the clock pill is. */
+.still-provider { display: inline-block; padding: 0 9px; border-radius: 999px; background: var(--sm-card); color: var(--sm-accent); font-weight: 600; line-height: 1.55; box-shadow: 0 1px 3px #0D1B3D1F; }
 .still-head-city { position: absolute; right: 0; bottom: 0; z-index: -1; width: min(440px, 75%); height: auto; fill: var(--sm-band-city); pointer-events: none; }
 .still-head .still-pill { background: #FFFFFFE0; color: #0D1B3D; }
 .still-frame:is([data-visual-phase='dusk'], [data-visual-phase='night']) .still-head .still-pill { background: #0B0F2EB3; color: #EEF1FF; }
@@ -261,8 +269,21 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
   color: var(--sm-ink); text-decoration: none;
 }
 a.still-extra:hover { border-color: var(--sm-link); }
-/* Spend is Home's one door about the money itself, so it is the one that is seen. */
-.still-extra.is-lead { padding: 14px 16px; border-color: var(--sm-accent); background: var(--sm-accent-soft); box-shadow: var(--sm-shadow); }
+/* Spend is Home's one door about the money itself, so it is the one that is
+   seen: a light runs slowly round its frame, over a soft glow. Without
+   @property the frame keeps the same gradient, still. */
+@property --still-lead-turn { syntax: '<angle>'; inherits: false; initial-value: 0deg; }
+@keyframes still-lead-turn { to { --still-lead-turn: 360deg; } }
+.still-extra.is-lead {
+  padding: 14px 16px; border: 2px solid transparent;
+  background:
+    linear-gradient(var(--sm-accent-soft), var(--sm-accent-soft)) padding-box,
+    conic-gradient(from var(--still-lead-turn), var(--sm-accent) 0deg, var(--sm-accent) 200deg, var(--sm-lead-glint) 290deg, var(--sm-accent) 360deg) border-box;
+  box-shadow: 0 0 0 4px var(--sm-lead-halo), 0 10px 28px -12px var(--sm-lead-glow);
+  animation: still-lead-turn 6s linear infinite;
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
+a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-1px); box-shadow: 0 0 0 5px var(--sm-lead-halo), 0 14px 32px -12px var(--sm-lead-glow); }
 .still-extra.is-lead .still-extra-icon { width: 40px; height: 40px; background: var(--sm-accent); color: var(--sm-accent-on); }
 .still-extra.is-lead .still-extra-title { font-size: 16px; }
 .still-extra.is-lead .still-extra-go { color: var(--sm-accent); }
@@ -303,6 +324,9 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-dot { width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 15px; font-weight: 600; }
 .still-dot.stock { background: var(--sm-stock); color: var(--sm-stock-text); }
 .still-dot.crypto { background: var(--sm-crypto-fill); color: var(--sm-ink); border: 2px solid var(--sm-wire); }
+.still-dot.cash { background: var(--sm-ink2); color: var(--sm-card); }
+.still-assets-others { margin-top: 12px; }
+.still-assets-foot { margin-top: 8px; font-size: 12px; }
 
 .still-links { list-style: none; margin: 2px 20px 0; padding: 0; }
 .still-links a { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px; border-radius: 14px; color: var(--sm-ink); text-decoration: none; }
@@ -517,30 +541,8 @@ a.still-extra:hover { border-color: var(--sm-link); }
 .still-agent-steps li + li { margin-top: 5px; }
 .still-agent-action .still-btn { display: inline-flex; align-items: center; height: 38px; padding: 0 14px; font-size: 14px; text-decoration: none; }
 @media (prefers-reduced-motion: reduce) {
-  .sm-swing, .still-thinking, .still-orb { animation: none !important; }
+  .sm-swing, .still-thinking, .still-orb, .still-extra.is-lead { animation: none !important; }
 }
-
-/* ---- Home: what the wallet holds ---- */
-.still-wallet { max-width: 560px; padding: 14px 16px 12px; border: 1px solid var(--sm-line); border-radius: 18px; background: var(--sm-card); box-shadow: var(--sm-shadow); }
-.still-wallet-head { display: flex; align-items: baseline; justify-content: space-between; gap: 6px 12px; flex-wrap: wrap; }
-.still-wallet-head h2 { margin: 0; }
-.still-wallet-rows { list-style: none; margin: 6px 0 0; padding: 0; }
-.still-wallet-row {
-  display: grid; grid-template-columns: 12px minmax(0, 1fr) auto; grid-template-areas: 'dot sym val' '. amt amt';
-  align-items: center; column-gap: 10px; row-gap: 1px; padding: 9px 0;
-}
-.still-wallet-row + .still-wallet-row { border-top: 1px solid var(--sm-line); }
-.still-wallet-dot { grid-area: dot; width: 12px; height: 12px; border-radius: 50%; box-sizing: border-box; }
-/* Base blue is a stock; a coin is outlined, as everywhere in Still. */
-.still-wallet-row[data-kind='stock'] .still-wallet-dot { background: var(--sm-stock); }
-.still-wallet-row[data-kind='crypto'] .still-wallet-dot { background: var(--sm-crypto-fill); border: 2px solid var(--sm-wire); }
-.still-wallet-row[data-kind='cash'] .still-wallet-dot { background: var(--sm-ink2); }
-.still-wallet-sym { grid-area: sym; font-size: 15px; font-weight: 600; }
-.still-wallet-val { grid-area: val; font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; text-align: right; }
-.still-wallet-amt { grid-area: amt; min-width: 0; font-size: 13px; line-height: 1.35; color: var(--sm-ink2); overflow-wrap: anywhere; }
-.still-wallet-amt .mono { font-size: 12.5px; color: var(--sm-ink); }
-.still-wallet-others { margin: 8px 0 0; font-size: 13px; }
-.still-wallet-foot { margin: 6px 0 0; font-size: 12px; }
 
 /* ---- the Agent ---- */
 

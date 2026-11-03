@@ -15,7 +15,6 @@ import {
   homeViewV1,
   stillCheckMessageV1,
   stillTabForPathV1,
-  walletViewV1,
 } from '@mioagent/ui/still';
 import { useAuthGate } from '../../app/AuthProvider';
 import { AppLoading } from '../../app/AppLoading';
@@ -137,12 +136,6 @@ function StillHomePage() {
     () => (still.report ? homeViewV1({ report: still.report, sky, dividends: still.dividends }) : null),
     [still.report, still.dividends, sky],
   );
-  // The report reads what can be collateral; USDC, what a loan pays out and a repayment takes, is read beside it.
-  const usdc = useStillUsdcV1(still.wallet, { enabled: still.signedIn });
-  const wallet = useMemo(
-    () => (still.report ? walletViewV1({ report: still.report, usdc: usdc.data ?? (usdc.error ? 'unread' : 'loading'), dividends: still.dividends }) : null),
-    [still.report, still.dividends, usdc.data, usdc.error],
-  );
   const answer = check.data ?? null;
   const result = useMemo(
     () => (answer?.outcome === 'report' ? { view: homeViewV1({ report: answer.report, sky }), report: answer.report } : null),
@@ -156,7 +149,7 @@ function StillHomePage() {
       ) : still.signedIn ? (
         <StillHomeSignedIn
           model={{ sky, view, reading: still.report?.reading ?? null, loading: still.loading, failed: still.failed, onRetry: still.retry, telegram,
-            subject: still.report ? still.report.subject.name ?? still.report.subject.address : null, wallet }}
+            subject: still.report ? still.report.subject.name ?? still.report.subject.address : null }}
         />
       ) : (
         <StillHomeSignedOut
@@ -182,7 +175,12 @@ export function StillAssetsPage() {
   const sky = useStillSky();
   const signInHref = useSignInHref();
   const still = useMyStill();
-  const view = useMemo(() => (still.report ? assetsViewV1({ report: still.report, dividends: still.dividends }) : null), [still.report, still.dividends]);
+  // The report reads what can be collateral; USDC, what a loan pays out and a repayment takes, is read beside it.
+  const usdc = useStillUsdcV1(still.wallet, { enabled: still.signedIn });
+  const view = useMemo(
+    () => (still.report ? assetsViewV1({ report: still.report, dividends: still.dividends, usdc: usdc.data ?? (usdc.error ? 'unread' : 'loading') }) : null),
+    [still.report, still.dividends, usdc.data, usdc.error],
+  );
   return (
     <StillFrame tab="assets" sky={sky}>
       {/* While the session is checked the page stays empty rather than asking a signed-in reader to sign in. */}

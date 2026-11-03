@@ -2017,7 +2017,7 @@ export interface StillUsdcV1 {
 }
 
 /**
- * The signed-in wallet's USDC, for Home's wallet card: the Still report reads
+ * The signed-in wallet's USDC, for the Assets page: the Still report reads
  * only what can be collateral. A read that did not answer is an error, never
  * a zero balance.
  */

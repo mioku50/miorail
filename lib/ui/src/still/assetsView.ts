@@ -1,25 +1,28 @@
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
-import { CRYPTO } from '@mioagent/still-engine/registry';
+import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { dividendMoneyV1, positiveDividendMoneyV1, sumDividendMoneyV1 } from './dividendMoney';
 
 
 // ---------------------------------------------------------------------------
-// Assets: the wallet's reviewed holdings, modelled capacity and recorded loans.
+// Assets: what the wallet holds, its modelled capacity and recorded loans.
 //
-// From the Mirror report (the chain at one block) and Miorail's dividend
-// calendar for this wallet. A dividend reaches whoever holds the token when it
-// converts, as more shares; an amount ahead is an estimate and says so.
+// From the Mirror report (the chain at one block), the wallet's USDC read
+// beside it, and Miorail's dividend calendar for this wallet. A dividend
+// reaches whoever holds the token when it converts, as more shares; an amount
+// ahead is an estimate and says so. A read that did not answer is said so,
+// never a zero (operator, 2026-11-03: «сейчас не понятно что лежит у меня в
+// кошельке»).
 // ---------------------------------------------------------------------------
 
 export interface AssetRowV1 {
   id: string;
-  kind: 'stock' | 'crypto';
+  kind: 'stock' | 'crypto' | 'cash';
   name: string;
   /** "4.2 NVDAc". */
   amount: string;
-  /** "$785.57", or null when the price was not read. */
+  /** "$785.57", "…" while it is read, or null when it was not read. */
   value: string | null;
   lines: Array<{ text: string; strong?: string }>;
 }
@@ -38,14 +41,25 @@ export interface LoanRowV1 {
 }
 
 export interface AssetsViewV1 {
+  /** What the reviewed holdings are worth, wallet and pledged. USDC is not one of them. */
   total: string | null;
   count: number;
+  /** USDC when it was read beside the report, ETH and cbBTC, then the stocks by value. */
   rows: AssetRowV1[];
+  /** Coinbase stocks outside Still's reviewed set: an amount, priced on their own page. */
+  others: Array<{ symbol: string; amount: string; href: string }>;
+  /** The report's block: "53,000,000". */
+  block: string;
   loans: LoanRowV1[];
   /** Missing venue debt reads cannot establish a count of zero loans. */
   loansReadComplete: boolean;
   receivedDividends: string | null;
 }
+
+/** The wallet's USDC as the page holds it: read, still being read, or not read. */
+export type WalletUsdcV1 = { raw: string; decimals: number } | 'loading' | 'unread';
+
+const UNREAD_V1 = 'Not read just now: our failure, not a fact about the wallet';
 
 /** "4.2" from raw units: the engine's amount, truncated to four places, trailing zeros gone. */
 export function tokenTextV1(raw: bigint, decimals: number): string {
@@ -56,18 +70,45 @@ function venueNameV1(venue: string): string {
   return venue === 'aave-v4' ? 'Aave' : 'Morpho';
 }
 
-export function assetsViewV1(input: { report: MirrorReport; dividends?: DividendWalletResponseV1 | null }): AssetsViewV1 {
+/** "1.23456789" as base units with its own places, so it is shown like every other amount. */
+function decimalTextV1(value: string): string {
+  const [whole = '0', fraction = ''] = value.split('.');
+  return tokenTextV1(BigInt(`${whole}${fraction}`), fraction.length);
+}
+
+/** USDC counts at $1: what a loan pays out and a repayment takes. */
+function usdcRowV1(usdc: WalletUsdcV1): AssetRowV1 {
+  const row = { id: 'USDC', kind: 'cash' as const, name: 'USD Coin' };
+  if (usdc === 'loading') return { ...row, amount: '… USDC', value: '…', lines: [] };
+  if (usdc === 'unread') return { ...row, amount: '— USDC', value: null, lines: [{ text: UNREAD_V1 }] };
+  const raw = BigInt(usdc.raw);
+  // Cents are its base units over 10^(decimals − 2).
+  const cents = usdc.decimals >= 2 ? raw / BigInt(10) ** BigInt(usdc.decimals - 2) : raw * BigInt(10) ** BigInt(2 - usdc.decimals);
+  return {
+    ...row,
+    amount: `${tokenTextV1(raw, usdc.decimals)} USDC`,
+    value: formatCents(cents),
+    lines: [{ text: 'What a loan pays out and Repay takes; not counted in Reviewed holdings' }],
+  };
+}
+
+export function assetsViewV1(input: { report: MirrorReport; dividends?: DividendWalletResponseV1 | null; usdc?: WalletUsdcV1 }): AssetsViewV1 {
   const { report } = input;
   const debtOn = new Map(report.venues.map((v) => [v.venue === 'aave-v4' ? 'aave-v4' : v.market.toLowerCase(), v]));
-  const rows: AssetRowV1[] = [];
+  const coins = new Map<string, AssetRowV1>();
+  const stocks: Array<{ row: AssetRowV1; cents: bigint }> = [];
   let total = BigInt(0);
   let priced = true;
+  let count = 0;
   for (const line of report.assets) {
+    // The report has a line only for what is held or not read: a measured zero has none.
+    const unread = line.wallet === null;
     const wallet = line.wallet ? BigInt(line.wallet.raw) : BigInt(0);
     const pledged = line.pledged ? BigInt(line.pledged.raw) : BigInt(0);
     const decimals = line.wallet?.decimals ?? line.pledged?.decimals ?? 8;
-    if (wallet + pledged === BigInt(0)) continue;
-    if (line.valueCents === null) priced = false;
+    if (!unread && wallet + pledged === BigInt(0)) continue;
+    if (!unread) count += 1;
+    if (unread || line.valueCents === null) priced = false;
     else total += BigInt(line.valueCents);
     const lines: AssetRowV1['lines'] = [];
     const venue = line.venue === 'aave-v4' ? debtOn.get('aave-v4') : report.venues.find((v) => v.venue === 'morpho' && v.label.includes(line.symbol === 'ETH' ? 'WETH' : line.symbol));
@@ -75,13 +116,14 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
     if (pledged > BigInt(0)) {
       lines.push({
         strong: `${tokenTextV1(pledged, decimals)} ${owes ? `hold up your ${venueNameV1(line.venue)} loan` : `pledged on ${venueNameV1(line.venue)}`}`,
-        text: wallet > BigInt(0) ? ` · ${tokenTextV1(wallet, decimals)} free` : '',
+        text: !unread && wallet > BigInt(0) ? ` · ${tokenTextV1(wallet, decimals)} free` : '',
       });
-    } else if (line.capacityCents !== null && line.capacityCents !== '0') {
+    } else if (!unread && line.capacityCents !== null && line.capacityCents !== '0') {
       lines.push({ text: `Modelled room · up to ${formatCents(line.capacityCents)} on ${venueNameV1(line.venue)}` });
-    } else if (line.limits.length > 0) {
+    } else if (!unread && line.limits.length > 0) {
       lines.push({ text: 'Not counted now: the venue limits it' });
     }
+    if (unread) lines.push({ text: UNREAD_V1 });
     const dividend = input.dividends?.holdings.find((h) => h.tokenAddress === line.token.toLowerCase());
     if (dividend) {
       const received = sumDividendMoneyV1(dividend.received.map(event => event.usd));
@@ -93,16 +135,32 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
         if (amount) lines.push({ text: `Dividend ahead: ${estimate && !amount.startsWith('<') ? '≈ ' : ''}${amount}, if you hold ${dividend.tokenSymbol} when it converts${estimate ? ' (an estimate)' : ''}` });
       }
     }
-    rows.push({
+    const row: AssetRowV1 = {
       id: line.asset,
       kind: line.kind,
       name: line.name,
-      amount: `${tokenTextV1(wallet + pledged, decimals)} ${line.symbol === 'ETH' ? 'ETH' : line.symbol}`,
-      value: line.valueCents === null ? null : formatCents(line.valueCents),
+      amount: `${unread ? '—' : tokenTextV1(wallet + pledged, decimals)} ${line.symbol}`,
+      value: unread || line.valueCents === null ? null : formatCents(line.valueCents),
       lines,
-    });
+    };
+    if (line.kind === 'crypto') coins.set(line.asset, row);
+    else stocks.push({ row, cents: row.value === null ? BigInt(-1) : BigInt(line.valueCents!) });
   }
-  rows.sort((a, b) => valueOfV1(b) - valueOfV1(a));
+
+  const rows: AssetRowV1[] = input.usdc === undefined ? [] : [usdcRowV1(input.usdc)];
+  // ETH is shown either way, as what a wallet without sponsored gas pays
+  // with; cbBTC and the stocks when there is some.
+  rows.push(coins.get('ETH') ?? { id: 'ETH', kind: 'crypto', name: CRYPTO.find((asset) => asset.id === 'ETH')!.name, amount: '0 ETH', value: formatCents(BigInt(0)), lines: [] });
+  const btc = coins.get('cbBTC');
+  if (btc) rows.push(btc);
+  stocks.sort((a, b) => (a.cents === b.cents ? a.row.name.localeCompare(b.row.name) : a.cents > b.cents ? -1 : 1));
+  rows.push(...stocks.map((stock) => stock.row));
+
+  const reviewed = new Set([...STOCKS.map((stock) => stock.token), ...report.assets.map((line) => line.token)].map((token) => token.toLowerCase()));
+  const others = (input.dividends?.holdings ?? [])
+    .filter((holding) => !reviewed.has(holding.tokenAddress.toLowerCase()) && /[1-9]/.test(holding.tokens))
+    .map((holding) => ({ symbol: holding.tokenSymbol, amount: decimalTextV1(holding.tokens), href: `/stocks/${holding.symbol.toLowerCase()}` }))
+    .sort((a, b) => a.symbol.localeCompare(b.symbol));
 
   const loans: LoanRowV1[] = report.venues
     .filter((v) => v.debtCents !== null && v.debtCents !== '0')
@@ -128,14 +186,12 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
 
   return {
     total: priced ? formatCents(total) : null,
-    count: rows.length,
+    count,
     rows,
+    others,
+    block: Number(report.reading.block).toLocaleString('en-US'),
     loans,
     loansReadComplete: report.venues.length > 0 && report.venues.every(venue => venue.debtCents !== null),
     receivedDividends: positiveDividendMoneyV1(input.dividends?.receivedUsd),
   };
-}
-
-function valueOfV1(row: AssetRowV1): number {
-  return row.value === null ? -1 : Number(row.value.replace(/[$,]/g, ''));
 }

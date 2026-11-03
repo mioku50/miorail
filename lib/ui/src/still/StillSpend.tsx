@@ -82,16 +82,17 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
       <StillHeader
         title="Spend"
         sky={model.sky}
-        lede="What a loan against what you hold could pay for: mobile data, phone top-ups and gift cards from Bitrefill, priced in USDC."
+        // Who sells is said where the page begins: Bitrefill, under its own terms.
+        lede={<>What a loan against what you hold could pay for: mobile data, phone top-ups and gift cards from <strong className="still-provider">Bitrefill</strong>, priced in USDC.</>}
       />
       <p className="still-section still-notice">
         <StillIconV1 name="info" />
         {model.pay ? (
-          <span>Pay with Still: a loan for the exact price pays Bitrefill, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot. Up to 100 USDC a purchase.</span>
+          <span>Pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot. Up to 100 USDC a purchase.</span>
         ) : model.payAfterSignIn ? (
-          <span>Sign in with your wallet to pay with Still: a loan for the exact price pays Bitrefill, and your own wallet approves it. Up to 100 USDC a purchase.</span>
+          <span>Sign in with your wallet to pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it. Up to 100 USDC a purchase.</span>
         ) : (
-          <span>Paying with Still is not open on this server. The prices below are Bitrefill’s own, in USDC.</span>
+          <span>Paying with Still is not open on this server. The prices below are <strong>Bitrefill</strong>’s own, in USDC.</span>
         )}
       </p>
       <div className="still-borrow-grid">

@@ -96,12 +96,12 @@ for (const width of [390, 1280]) {
     await expect(page.getByRole('img', { name: /NVDA.* on the left hold up a \$240\.17 loan on the right/ })).toBeVisible();
     await expect(page.getByText('≈ NOV 12 Apple dividend · ≈ $0.19 as more AAPLc, an estimate', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: /^Still in your assistant/ })).toHaveAttribute('href', '/assistants');
-    // What the wallet holds, under the actions: USDC read beside the report, the pledge said apart.
-    const wallet = page.getByRole('region', { name: 'In your wallet', exact: true });
-    await expect(wallet).toContainText('Base block 53,000,000');
-    await expect(wallet.locator('.still-wallet-row').first()).toContainText('USDC$12.3412.3456');
-    await expect(wallet).toContainText('4.2 · 3.4 of it pledged on Aave, under your loan');
-    await expect(page.getByRole('link', { name: /^Spend with Still/ })).toBeVisible();
+    // Under the actions the modelled room, then Spend: what the wallet holds is on Assets, so a desktop sees Spend at once.
+    await expect(page.getByRole('region', { name: 'In your wallet', exact: true })).toHaveCount(0);
+    const spend = page.getByRole('link', { name: /^Spend with Still/ });
+    await expect(spend).toBeVisible();
+    expect((await page.locator('.still-modelled-room').boundingBox())!.y).toBeLessThan((await spend.boundingBox())!.y);
+    if (width >= 900) await expect(spend).toBeInViewport();
     // On a desktop the assistant and Telegram doors sit in the rail under the pages; on a phone, at the foot of Home.
     const rail = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /^Still in your assistant/ });
     if (width >= 900) await expect(rail).toBeVisible();
@@ -114,6 +114,12 @@ for (const width of [390, 1280]) {
     await expect(page.getByRole('heading', { name: 'Assets', exact: true })).toBeVisible();
     await expect(page.getByText('4.2 NVDAc', { exact: true })).toBeVisible();
     await expect(page.getByText('3.4 hold up your Aave loan', { exact: true })).toBeVisible();
+    // What the wallet holds: USDC read beside the report first, ETH a measured zero, and the block it was all read at.
+    const holdings = page.getByRole('tabpanel', { name: 'Holdings', exact: true }).locator('.still-row');
+    await expect(holdings.first()).toContainText('USD Coin12.3456 USDC');
+    await expect(holdings.first()).toContainText('$12.34');
+    await expect(holdings.nth(1)).toContainText('Ether0 ETH');
+    await expect(page.getByText(/^Read from Base at block 53,000,000\./)).toBeVisible();
     await page.getByRole('tab', { name: 'Loans · 1', exact: true }).click();
     await expect(page.getByText('Prices can fall 52% together before liquidation.', { exact: true })).toBeVisible();
     await noSidewaysScroll(page);

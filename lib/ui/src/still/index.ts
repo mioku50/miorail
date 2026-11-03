@@ -5,7 +5,6 @@
 export * from './skyState';
 export * from './homeView';
 export * from './assetsView';
-export * from './walletView';
 export * from './agentAnswers';
 export * from './checkView';
 export * from './mobileLayout';

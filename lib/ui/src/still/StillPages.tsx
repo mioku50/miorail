@@ -60,11 +60,11 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
           {tab === 'holdings' ? (
             <div className="still-assets-layout">
               <div className="still-assets-primary">
-                {view.rows.length === 0 ? <p className="still-section still-note">No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC or ETH.</p> : null}
+                {view.count === 0 ? <p className="still-section still-note">No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC or ETH.</p> : null}
                 <ul className="still-rows" role="tabpanel" aria-label="Holdings">
                   {view.rows.map((row) => (
                     <li key={row.id} className="still-row">
-                      <span className={`still-dot ${row.kind}`} aria-hidden="true">{row.name[0]}</span>
+                      <span className={`still-dot ${row.kind}`} aria-hidden="true">{row.kind === 'cash' ? '$' : row.name[0]}</span>
                       <div style={{ minWidth: 0 }}>
                         <div className="name">{row.name}</div>
                         <div className="mono amt">{row.amount}</div>
@@ -76,6 +76,19 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
                     </li>
                   ))}
                 </ul>
+                {view.others.length > 0 ? (
+                  <p className="still-section still-note still-assets-others">
+                    Also in the wallet:{' '}
+                    {view.others.map((other, i) => (
+                      <React.Fragment key={other.href}>
+                        {i > 0 ? ' · ' : null}
+                        <StillLink href={other.href}>{other.symbol} {other.amount}</StillLink>
+                      </React.Fragment>
+                    ))}
+                    . Each is priced on its stock’s page.
+                  </p>
+                ) : null}
+                <p className="still-section still-note still-assets-foot">Read from Base at block {view.block}. ETH includes WETH. Prices are the venues’ own oracles at that block; USDC counts at $1.</p>
               </div>
               <aside className="still-assets-aside still-section">
                 <StillLink href="/stocks/dividends" className="still-card still-feature-link">

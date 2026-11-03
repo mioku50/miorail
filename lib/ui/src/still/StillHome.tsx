@@ -9,7 +9,6 @@ import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
 import { StillMobile } from './StillMobile';
-import type { WalletViewV1 } from './walletView';
 import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
 import { composerLinksV1 } from '../console/composerLinks';
 import { ShareLinkV1 } from '../console/shareHost';
@@ -113,8 +112,6 @@ export interface StillHomeModelV1 {
   telegram?: TelegramAlertsModelV1 | null;
   /** The wallet's name, or its address: what a shared card names. */
   subject?: string | null;
-  /** What the wallet holds now, for the card under the state line. */
-  wallet?: WalletViewV1 | null;
 }
 
 /**
@@ -152,48 +149,6 @@ function TelegramIconV1() {
       <path d="M20.5 4.2L3.6 10.8c-.8.3-.8 1.4 0 1.7l4.2 1.4 1.6 5c.2.7 1.1.9 1.6.4l2.4-2.2 4.3 3.1c.6.4 1.4.1 1.6-.6l2.8-13.4c.2-.9-.7-1.6-1.6-1.1z" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
       <path d="M7.8 13.9l9.6-6.3-7.2 7.4" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinejoin="round" />
     </svg>
-  );
-}
-
-/**
- * What the wallet holds now (operator, 2026-11-03: «сейчас не понятно что
- * лежит у меня в кошельке»): USDC, ETH and cbBTC, then the stocks by value,
- * each with what is pledged said apart, and a read that failed said so.
- */
-export function StillWalletCard({ wallet }: { wallet: WalletViewV1 }) {
-  return (
-    <section className="still-section still-wallet" aria-label="In your wallet">
-      <div className="still-wallet-head">
-        <h2 className="still-eyebrow">In your wallet</h2>
-        <span className="mono still-clock">Base block {wallet.block}</span>
-      </div>
-      <ul className="still-wallet-rows">
-        {wallet.rows.map((row) => (
-          <li key={row.id} className="still-wallet-row" data-kind={row.kind}>
-            <span className="still-wallet-dot" aria-hidden="true" />
-            <span className="still-wallet-sym">{row.symbol}</span>
-            <span className="still-wallet-val">{row.value ?? '—'}</span>
-            <span className="still-wallet-amt">
-              <span className="mono">{row.amount}</span>
-              {row.where ? <span className="still-wallet-where"> · {row.where}</span> : null}
-            </span>
-          </li>
-        ))}
-      </ul>
-      {wallet.others.length > 0 ? (
-        <p className="still-note still-wallet-others">
-          Also in the wallet:{' '}
-          {wallet.others.map((other, i) => (
-            <React.Fragment key={other.href}>
-              {i > 0 ? ' · ' : null}
-              <StillLink href={other.href}>{other.symbol} {other.amount}</StillLink>
-            </React.Fragment>
-          ))}
-          . Each is priced on its stock’s page.
-        </p>
-      ) : null}
-      <p className="still-note still-wallet-foot">ETH includes WETH. Prices are the venues’ own oracles at that block; USDC counts at $1.</p>
-    </section>
   );
 }
 
@@ -338,9 +293,7 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <StillLink href="/agent" className="still-btn sec">Ask Still</StillLink>
         </> : null}
       </div>
-      {/* Under the actions, so Get money stays in the first screen at every width. */}
-      {view && model.wallet ? <StillWalletCard wallet={model.wallet} /> : null}
-      {view ? <StillSpendDoor /> : null}
+      {/* The room a loan has is read before what it could pay for: Spend follows it. */}
       {view ? (
         <details className="still-section still-modelled-room">
           <summary aria-label={view.available ? `${view.available.atLeast ? 'At least ' : ''}${view.available.dollars}${view.available.cents} modelled borrowing room` : 'Modelled borrowing room not read'}>
@@ -351,6 +304,7 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           {model.subject ? <StillShareRowV1 subject={model.subject} label="Share this wallet’s card:" /> : null}
         </details>
       ) : null}
+      {view ? <StillSpendDoor /> : null}
       {view ? <StillComingUp items={view.comingUp} /> : null}
       {/* The doors stay when the wallet could not be read: they do not need it. */}
       {!view && (model.loading || model.failed) ? <StillSpendDoor /> : null}

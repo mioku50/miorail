@@ -208,7 +208,9 @@ describe('the Spend page', () => {
 
   it('says it cannot buy, shows each USDC price against the room, and names who sells', () => {
     const html = renderToStaticMarkup(<StillSpend model={model()} />);
-    assert.match(html, /Paying with Still is not open on this server\. The prices below are Bitrefill’s own, in USDC\./);
+    assert.match(html, /Paying with Still is not open on this server\. The prices below are <strong>Bitrefill<\/strong>’s own, in USDC\./);
+    // Who sells is said where the page begins.
+    assert.match(html, /gift cards from <strong class="still-provider">Bitrefill<\/strong>, priced in USDC\./);
     assert.match(html, /<li class="still-spend-price" data-fit="within"><span class="still-spend-price-top"><span class="still-spend-price-label">10GB, 30 Days<\/span><span class="mono still-spend-price-amount">13\.25 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fit">Within your room<\/span><\/span><\/li>/);
     assert.match(html, /<li class="still-spend-price" data-fit="over"><span class="still-spend-price-top"><span class="still-spend-price-label">Unlimited, 15 Days<\/span><span class="mono still-spend-price-amount">40\.00 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fit">More than your room<\/span><\/span><\/li>/);
     assert.match(html, /<span class="still-spend-price-label">1GB, 7 Days<\/span>.*?<span style="width:19%"><\/span>/);
@@ -231,7 +233,7 @@ describe('the Spend page', () => {
     const pay = { chosen: null, onChoose: noop, email: '', onEmail: noop, phone: '', onPhone: noop, creating: false, error: null, onCreate: noop };
     const open = { ...GERMANY, checkout: { enabled: true, available: true, capAtomic: '100000000' } };
     const html = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1(open, { cents: '1325', complete: true }).product, pay })} />);
-    assert.match(html, /Pay with Still: a loan for the exact price pays Bitrefill, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot\./);
+    assert.match(html, /Pay with Still: a loan for the exact price pays <strong>Bitrefill<\/strong>, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot\./);
     assert.equal((html.match(/>Pay with Still<\/button>/g) ?? []).length, 3);
     assert.doesNotMatch(html, /Email for Bitrefill/);
     const chosen = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', product: spendProductViewV1(open, null).product, pay: { ...pay, chosen: '10GB, 30 Days', email: 'buyer@example.com' } })} />);
