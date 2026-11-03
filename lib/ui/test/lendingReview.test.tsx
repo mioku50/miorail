@@ -158,6 +158,19 @@ describe('lending review presentation does not call a submission a repayment', (
     // Declined, it is unsent, and says so.
     assert.match(stepsStoppedV1('borrow', 2, 3, 'You declined step 3 of 3.'), /^You declined step 3 of 3\. Steps 1–2 are in place, and no loan was taken\./);
   });
+  // Re-audit R4, 2026-11-04: words about money that the chain contradicted.
+  it('a repay-all whose take-back step did not go out says the debt is repaid, and an unknown payment does not place the USDC', () => {
+    const declined = stepsStoppedV1('repay', 2, 3, 'You declined step 3 of 3.', false, true);
+    assert.equal(declined, 'You declined step 3 of 3. Your debt is repaid, and your collateral was not taken back yet. Open Repay to take it back.');
+    assert.doesNotMatch(declined, /nothing was repaid/);
+    assert.match(stepsUnknownV1('repay', 2, 3, false, true), /^The wallet did not say whether it sent step 3 of 3, which takes your collateral back\. Your debt is repaid;/);
+    // Stopped before the repayment, nothing was repaid, take-back or not.
+    assert.match(stepsStoppedV1('repay', 1, 3, null, false, true), /^Step 2 of 3 was not sent\. Step 1 is in place, and nothing was repaid\./);
+    assert.match(stepsStoppedV1('repay', 1, 2, null), /nothing was repaid/);
+    const paying = stepsUnknownV1('borrow', 3, 4, true);
+    assert.match(paying, /either still in your wallet or already with Bitrefill/);
+    assert.doesNotMatch(paying, /the USDC is in your wallet/);
+  });
   it('a wallet batch id remains a submission handle', () => {
     const html = render({ batchId: 'batch_1' }); assert.match(html, /not a confirmed blockchain result/); assert.doesNotMatch(html, /Open in your wallet|Confirmed onchain:/);
   });

@@ -22,19 +22,28 @@ export class LendingStepsStoppedV1 extends Error {
   readonly batchId: string | null;
   constructor(message: string, batchId: string | null) { super(message); this.batchId = batchId; }
 }
-export function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null, paying = false): string {
+export function stepsStoppedV1(operation: 'borrow' | 'repay', index: number, total: number, detail: string | null, paying = false, returning = false): string {
   // A Spend loan pays last: with every step but the payment in place, the loan was taken and Bitrefill was not paid.
   if (paying && operation === 'borrow' && index === total - 1) {
     return `${detail ? `${detail} ` : 'The payment to Bitrefill was not sent. '}The loan is in place and the USDC is in your wallet. Repay it, or open Spend for a new invoice.`;
+  }
+  // Repay all and take the collateral back takes it back last: with every step but that one in place, the
+  // debt was repaid (re-audit R4, 2026-11-04: this said "nothing was repaid").
+  if (returning && operation === 'repay' && index === total - 1 && total > 1) {
+    return `${detail ? `${detail} ` : `Step ${total} of ${total} was not sent. `}Your debt is repaid, and your collateral was not taken back yet. Open Repay to take it back.`;
   }
   const kept = index === 1 ? 'Step 1 is in place' : `Steps 1–${index} are in place`;
   const after = operation === 'borrow' ? 'and no loan was taken. Open Get money again to go on from here.' : 'and nothing was repaid. Open Repay again to go on from here.';
   return `${detail ? `${detail} ` : `Step ${index + 1} of ${total} was not sent. `}${kept}, ${after}`;
 }
 /** A later step the wallet may have sent: what landed is in place, and nothing is claimed about the rest until the chain says. */
-export function stepsUnknownV1(operation: 'borrow' | 'repay', index: number, total: number, paying = false): string {
+export function stepsUnknownV1(operation: 'borrow' | 'repay', index: number, total: number, paying = false, returning = false): string {
+  // The payment may have gone, so where the USDC is is not said (re-audit R4, 2026-11-04).
   if (paying && operation === 'borrow' && index === total - 1) {
-    return 'The wallet did not say whether it sent the payment to Bitrefill. The loan is in place and the USDC is in your wallet. Check the onchain result before paying again or repaying.';
+    return 'The wallet did not say whether it sent the payment to Bitrefill. The loan is in place, and its USDC is either still in your wallet or already with Bitrefill. Check the onchain result before paying again or repaying.';
+  }
+  if (returning && operation === 'repay' && index === total - 1 && total > 1) {
+    return `The wallet did not say whether it sent step ${total} of ${total}, which takes your collateral back. Your debt is repaid; check the onchain result before pressing again.`;
   }
   const kept = index === 1 ? 'Step 1 is in place' : `Steps 1–${index} are in place`;
   return `The wallet did not say whether it sent step ${index + 1} of ${total}. ${kept}; check the onchain result before pressing again.`;
@@ -201,6 +210,7 @@ export function useLendingReviewConsoleV1(input: {
                 // One transaction per call. After each lands, Still reads it from the
                 // chain and runs the review again before the wallet is asked for the next.
                 const wallet = input.steps, operation = approved.facts.operation, paying = Boolean(approved.facts.payment);
+                const returning = approved.facts.collateralReturnAssets !== undefined;
                 let landed: string | null = null;
                 // Left part way (another review, or the page closed): nothing more is sent from this one, so what
                 // landed is its result. Addressed to its own attempt, so no other review is touched.
@@ -209,7 +219,7 @@ export function useLendingReviewConsoleV1(input: {
                 for (let index = 0; index < calls.length; index++) {
                   if (current.current !== identity || !alive.current) {
                     if (landed) await leave(landed).catch(() => undefined);
-                    throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying), landed);
+                    throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying, returning), landed);
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'wallet' } });
                   let hash: string;
@@ -221,8 +231,8 @@ export function useLendingReviewConsoleV1(input: {
                     const unsent = walletDidNotSendV1(error);
                     if (landed) await report(unsent ? 'stopped' : 'submitted', landed).catch(() => undefined);
                     throw new LendingStepsStoppedV1(unsent
-                      ? stepsStoppedV1(operation, index, calls.length, borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null, paying)
-                      : stepsUnknownV1(operation, index, calls.length, paying), landed);
+                      ? stepsStoppedV1(operation, index, calls.length, borrowUserRejectedV1(error) ? `You declined step ${index + 1} of ${calls.length}.` : null, paying, returning)
+                      : stepsUnknownV1(operation, index, calls.length, paying, returning), landed);
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'confirming' } });
                   await wallet.receipt(hash).catch(() => null);
@@ -239,7 +249,7 @@ export function useLendingReviewConsoleV1(input: {
                   if (answer.state === 'next') { landed = batch; continue; }
                   // A step that failed onchain is not in place; one that landed before a refused review is.
                   const inPlace = answer.refusal === 'loan_step_reverted' ? index : index + 1;
-                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null, paying), batch);
+                  throw new LendingStepsStoppedV1(stepsStoppedV1(operation, inPlace, calls.length, typeof answer.detail === 'string' ? answer.detail : null, paying, returning), batch);
                 }
                 throw new LendingStepsStoppedV1('The steps ended without a final answer. Check the onchain result before pressing again.', landed);
               }
