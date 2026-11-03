@@ -12,8 +12,15 @@ import { AppErrorBoundary } from './app/AppErrorBoundary';
 import { detectBaseAppEarly } from './lib/detectBaseAppEarly';
 import { detectFarcasterHostV1, type FarcasterHostV1 } from './lib/miniAppHost';
 import { isMobileBrowserV1 } from './lib/walletChoices';
+import { viewportForScreenV1 } from './lib/phoneScale';
 
 const queryClient = new QueryClient();
+
+// index.html draws phones at three quarters; a tablet keeps the size it is
+// made for. A desktop browser reads neither. See lib/phoneScale.ts.
+const viewportTag = document.querySelector('meta[name="viewport"]');
+const wantedViewport = viewportForScreenV1(window.screen);
+if (viewportTag && viewportTag.getAttribute('content') !== wantedViewport) viewportTag.setAttribute('content', wantedViewport);
 
 // The remote font stylesheet must never hold up the module that mounts React.
 // It starts as print-only in the HTML and becomes active once it has arrived.
