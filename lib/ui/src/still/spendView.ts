@@ -250,9 +250,9 @@ export function spendOrderErrorV1(message: string): string {
   }
 }
 
-/** A purchase card's link as the server issued it, /spend/p/<token>, or null. */
+/** A purchase's (ss1) or a loan's (sl1) card link as the server issued it, /spend/p/<token>, or null. */
 export function spendSharePathV1(value: unknown): string | null {
-  return typeof value === 'string' && /^\/spend\/p\/ss1\.[A-Za-z0-9_-]{1,1100}\.[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
+  return typeof value === 'string' && /^\/spend\/p\/s[sl]1\.[A-Za-z0-9_-]{1,1100}\.[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 }
 
 export interface SpendShareViewV1 {
@@ -272,6 +272,29 @@ export function spendShareViewV1(payload: unknown): SpendShareViewV1 | null {
       !text(s.collateralLabel, 12) || !text(s.collateralName, 40) || (s.venueName !== 'Aave' && s.venueName !== 'Morpho')) return null;
   return { productName: s.productName, packageLabel: s.packageLabel, priceUsdc: s.priceUsdc, collateralLabel: s.collateralLabel,
     collateralName: s.collateralName, venueName: s.venueName };
+}
+
+/** A shared loan as the server verified its link: how much, against what, through which protocol. */
+export interface LoanShareViewV1 {
+  borrowedUsdc: string;
+  collateralLabel: string;
+  collateralName: string;
+  venueName: 'Aave' | 'Morpho';
+}
+
+/** A shared loan as the server verified its link; null for a purchase, or when it did not verify. */
+export function loanShareViewV1(payload: unknown): LoanShareViewV1 | null {
+  if (!object(payload) || payload.outcome !== 'share' || !object(payload.share) || payload.share.kind !== 'loan') return null;
+  const s = payload.share;
+  if (typeof s.borrowedUsdc !== 'string' || !/^\d{1,7}\.\d{2,6}$/.test(s.borrowedUsdc) || !text(s.collateralLabel, 12) || !text(s.collateralName, 40) ||
+      (s.venueName !== 'Aave' && s.venueName !== 'Morpho')) return null;
+  return { borrowedUsdc: s.borrowedUsdc, collateralLabel: s.collateralLabel, collateralName: s.collateralName, venueName: s.venueName };
+}
+
+/** What a post says beside a loan's card. */
+export function loanShareTextV1(input: { collateralSymbol: string }): string {
+  const collateral = /^[A-Z]{1,6}c$/.test(input.collateralSymbol) ? input.collateralSymbol.slice(0, -1) : input.collateralSymbol;
+  return `Spent without selling: a USDC loan against my ${collateral}, which I keep. On Base, through Still.`;
 }
 
 /** What a post says beside its card; the card says the rest. A stock token

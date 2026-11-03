@@ -8,7 +8,7 @@ import { computeMirror, type MirrorOutcome, type MirrorService } from '@mioagent
 import { EXAMPLE, calendar, snapshot, universe } from '../../../lib/still-engine/test/fixtures.js';
 import { renderCardPngV1 } from '../lib/cardImage.js';
 import { stillBrandCardSvgV1 } from '../lib/stillCard.js';
-import { issueStillSpendShareV1 } from '../lib/stillSpendShare.js';
+import { issueStillLoanShareV1, issueStillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { stillPagesRouter, stillPagesRuntimeV1 } from './stillPages.js';
 import { publicStillRouter, publicStillRuntimeV1, resetStillCardCachesV1 } from './stillPublic.js';
 import { resetStockPagesTemplateV1, stockPagesRuntime } from './stockPages.js';
@@ -186,6 +186,38 @@ test('a shared purchase previews with its own card, and reads and names no walle
   assert.equal(words.status, 200);
   assert.deepEqual(words.body, { outcome: 'share', share: { productName: 'PUBG Mobile UC International', packageLabel: '10 UC', priceUsdc: '0.18',
     collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } });
+});
+
+test('a shared loan previews with its own card at the purchase cards’ address, and reads and names no wallet', async () => {
+  // 2026-11-03, the operator: «нет карточки после успешного взятия займа для шаринга».
+  const { server, drawn } = app(async () => assert.fail('a loan link reads no wallet'));
+  publicStillRuntimeV1.secret = () => SHARE_SECRET;
+  const token = issueStillLoanShareV1({ borrowedAtomic: '2000000', collateral: 'NVDAc', venue: 'aave-v4' }, SHARE_SECRET);
+  const res = await request(server).get(`/spend/p/${token}`).set('Host', 'miorail.xyz');
+  assert.equal(res.status, 200);
+  assert.match(res.text, /<title>Spent without selling: 2\.00 USDC · Still<\/title>/);
+  assert.deepEqual(metaContent(res.text, 'og:image'), [`https://miorail.xyz/api/public/still/spend-card.png?t=${token}`]);
+  assert.deepEqual(metaContent(res.text, 'robots'), ['noindex']);
+  assert.match(metaContent(res.text, 'description')[0]!, /^2\.00 USDC borrowed against NVDA through Aave on Base\. Nothing was sold: the stock is the loan’s collateral\.$/);
+  const embed = JSON.parse(metaContent(res.text, 'fc:miniapp')[0]!);
+  assert.equal(embed.imageUrl, `https://miorail.xyz/api/public/still/spend-card.png?t=${token}&shape=tall`);
+  assert.equal(embed.button.title, 'Open on Still');
+
+  const tall = await request(server).get('/api/public/still/spend-card.png').query({ t: token, shape: 'tall' });
+  assert.equal(tall.status, 200);
+  assert.equal(tall.headers['cache-control'], 'public, max-age=86400');
+  const svg = drawn.at(-1)!;
+  assert.match(svg, /width="1200" height="800"/);
+  assert.match(svg, /SPENT WITHOUT SELLING/);
+  // SVG does not wrap: the card sets its words line by line.
+  assert.match(svg, />Borrowed against NVDA through Aave\.<\/text>/);
+  assert.match(svg, />Nothing was sold: the stock is the<\/text>/);
+  assert.match(svg, /MIORAIL\.XYZ/);
+  assert.doesNotMatch(svg, /0x[0-9a-fA-F]{6}/);
+
+  const words = await request(server).get('/api/public/still/spend-share').query({ t: token });
+  assert.equal(words.status, 200);
+  assert.deepEqual(words.body, { outcome: 'share', share: { kind: 'loan', borrowedUsdc: '2.00', collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } });
 });
 
 test('a purchase link Still did not sign keeps its 404, and its card says nothing about it', async () => {

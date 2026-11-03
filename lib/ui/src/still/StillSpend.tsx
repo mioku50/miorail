@@ -14,6 +14,7 @@ import {
   spendPhonePrefixesTextV1,
   type SpendProductRowV1,
   type SpendOrderViewV1,
+  type LoanShareViewV1,
   type SpendShareViewV1,
   type SpendProductViewV1,
   type SpendTypeV1,
@@ -271,6 +272,50 @@ export function StillSpendPaid({ order, reading, share }: { order: SpendOrderVie
           <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** After a plain loan is confirmed: its card, to share. The server signed it once
+ * it confirmed the loan onchain; it says how much, against what and through which
+ * protocol, and names no wallet and no transaction (the operator, 2026-11-03:
+ * «нет карточки после успешного взятия займа для шаринга»). */
+export function StillLoanShare({ share, cardUrl }: { share: { url: string; text: string }; cardUrl: string }) {
+  const links = composerLinksV1(share);
+  return (
+    <div className="still-section still-extras" aria-label="Your loan’s card">
+      <img className="still-spend-card" src={cardUrl} width={1200} height={630}
+        alt="Your loan’s card: how much, against what and through which protocol. It names no wallet and no transaction." />
+      <div className="still-share">
+        <span className="still-note">Share this loan’s card:</span>
+        <ShareLinkV1 href={links.x} className="still-share-link">Post on X</ShareLinkV1>
+        <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
+      </div>
+    </div>
+  );
+}
+
+/** A loan someone shared, as the server verified its link: the card and what it claims, and nothing about whose it is. */
+export function StillLoanShared({ sky, view, cardUrl }: { sky: SkyStateV1; view: LoanShareViewV1; cardUrl: string | null }) {
+  return (
+    <div className="still-borrow still-spend">
+      <StillHeader
+        title="Spent without selling"
+        sky={sky}
+        lede={`${view.borrowedUsdc} USDC borrowed against ${view.collateralLabel} through ${view.venueName} on Base. Nothing was sold: it is the loan’s collateral.`}
+      />
+      {cardUrl ? (
+        <div className="still-section">
+          <img className="still-spend-card" src={cardUrl} width={1200} height={630}
+            alt={`A loan of ${view.borrowedUsdc} USDC against ${view.collateralLabel} through ${view.venueName}, on Still: nothing sold.`} />
+        </div>
+      ) : null}
+      <div className="still-section still-borrow-foot">
+        <p className="still-note">
+          Still checked this loan onchain before it signed the card. Still is not a lender: a wallet borrows from the lending protocol directly. A loan creates debt, and collateral can be liquidated. Not offered to US persons.
+        </p>
+        <StillLink href="/">See what a wallet could borrow without selling</StillLink>
+      </div>
     </div>
   );
 }

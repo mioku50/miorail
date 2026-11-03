@@ -5,11 +5,15 @@ import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import type { LoanExecutionV1 } from './loanExecutionStore.js';
 import { LOAN_NOW_FIXTURE, LOAN_OWNER_FIXTURE, LOAN_TX_FIXTURE, loanReadyFixture } from './loanExecutionTestFixtures.js';
 import {
+  issueStillLoanShareV1,
   issueStillSpendShareV1,
   loanExecutionShareV1,
+  stillLoanShareOfV1,
   stillSpendShareOfV1,
   stillSpendShareWordsV1,
+  verifyStillLoanShareV1,
   verifyStillSpendShareV1,
+  type StillLoanShareV1,
   type StillSpendShareV1,
 } from './stillSpendShare.js';
 
@@ -88,5 +92,49 @@ describe('a purchase card says what was bought, and nothing that leads to the wa
     assert.throws(() => issueStillSpendShareV1({ ...PUBG, collateral: 'DOGE' }, SECRET), /still_spend_share_invalid/);
     assert.throws(() => issueStillSpendShareV1({ ...PUBG, productName: 'line\nbreak' }, SECRET), /still_spend_share_invalid/);
     assert.throws(() => issueStillSpendShareV1(PUBG, 'short'), /still_spend_share_invalid/);
+  });
+});
+
+describe('a loan card says how much, against what and where, and nothing that leads to the wallet', () => {
+  // 2026-11-03, the operator: «нет карточки после успешного взятия займа для шаринга».
+  const plainLoan = (patch: Partial<LoanExecutionV1> = {}, facts: Record<string, unknown> = {}) =>
+    paidLoan(patch, { payment: undefined, requestedAssets: '2000000', ...facts });
+  const TWO: StillLoanShareV1 = { borrowedAtomic: '2000000', collateral: 'NVDAc', venue: 'aave-v4' };
+
+  it('is issued for a confirmed loan that paid no invoice, and for nothing else', () => {
+    assert.deepEqual(stillLoanShareOfV1(plainLoan()), TWO);
+    for (const state of ['ready', 'awaiting_wallet', 'submitted', 'unknown', 'failed'] as const) {
+      assert.equal(stillLoanShareOfV1(plainLoan({ state })), null, state);
+    }
+    // A loan that paid an invoice has its purchase card instead.
+    assert.equal(stillLoanShareOfV1(paidLoan()), null);
+    assert.equal(stillLoanShareOfV1(plainLoan({}, { operation: 'repay' })), null);
+    assert.equal(stillLoanShareOfV1(plainLoan({}, { collateralTokenAddress: `0x${'9'.repeat(40)}` })), null);
+  });
+
+  it('carries no wallet, transaction or block, and the confirmed loan offers it at the purchase cards’ address', () => {
+    const token = issueStillLoanShareV1(TWO, SECRET);
+    assert.match(token, /^sl1\./);
+    assert.deepEqual(JSON.parse(Buffer.from(token.split('.')[1]!, 'base64url').toString('utf8')), { v: 1, a: '2000000', c: 'NVDAc', m: 'aave-v4' });
+    for (const secret of [LOAN_OWNER_FIXTURE.walletAddress, LOAN_TX_FIXTURE, '53379248']) assert.equal(token.includes(secret), false, secret);
+    assert.deepEqual(loanExecutionShareV1(plainLoan(), SECRET), { path: `/spend/p/${token}` });
+    assert.equal(loanExecutionShareV1(plainLoan({ state: 'submitted' }), SECRET), null);
+    assert.equal(loanExecutionShareV1(plainLoan(), 'short'), null);
+    assert.deepEqual(stillSpendShareWordsV1({ priceAtomic: TWO.borrowedAtomic, collateral: TWO.collateral, venue: TWO.venue }).priceUsdc, '2.00');
+  });
+
+  it('reads back only what this server signed as a loan, and never as a purchase', () => {
+    const token = issueStillLoanShareV1(TWO, SECRET);
+    assert.deepEqual(verifyStillLoanShareV1(token, SECRET), TWO);
+    // Each kind is signed in its own context: neither reads as the other.
+    assert.equal(verifyStillSpendShareV1(token, SECRET), null);
+    assert.equal(verifyStillLoanShareV1(issueStillSpendShareV1(PUBG, SECRET), SECRET), null);
+    const [prefix, body, mac] = token.split('.') as [string, string, string];
+    const forged = Buffer.from(JSON.stringify({ v: 1, a: '99000000', c: 'NVDAc', m: 'aave-v4' })).toString('base64url');
+    for (const bad of [`${prefix}.${forged}.${mac}`, `ss1.${body}.${mac}`, `${prefix}.${body}`, issueStillLoanShareV1(TWO, `${SECRET}-other`), 'x'.repeat(900), null]) {
+      assert.equal(verifyStillLoanShareV1(bad, SECRET), null, String(bad).slice(0, 40));
+    }
+    assert.throws(() => issueStillLoanShareV1({ ...TWO, borrowedAtomic: '0' }, SECRET), /still_loan_share_invalid/);
+    assert.throws(() => issueStillLoanShareV1({ ...TWO, collateral: 'DOGE' }, SECRET), /still_loan_share_invalid/);
   });
 });

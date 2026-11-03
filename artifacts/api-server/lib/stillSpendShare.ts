@@ -4,7 +4,11 @@ import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import type { LoanExecutionV1 } from './loanExecutionStore.js';
 
 // ---------------------------------------------------------------------------
-// A Still Spend purchase as a link anyone can open: /spend/p/<token>.
+// A Still Spend purchase as a link anyone can open: /spend/p/<token>. A plain
+// loan gets one too, since 2026-11-03 (the operator: «нет карточки после
+// успешного взятия займа для шаринга»): how much, against what, through which
+// protocol. Spending without selling is what a loan is for, so it shares the
+// address; its token has its own prefix and signing context.
 //
 // The token is the claim itself, signed by this server once the loan that
 // paid the invoice was confirmed onchain: what was bought, at what price,
@@ -78,10 +82,66 @@ export function issueStillSpendShareV1(share: StillSpendShareV1, secret: string)
   return `${PREFIX_V1}.${body}.${signature(secret, body)}`;
 }
 
-/** The link a confirmed loan that paid an invoice offers its owner, or null. */
+const LOAN_PREFIX_V1 = 'sl1';
+const LOAN_CONTEXT_V1 = 'still-loan-share/v1';
+
+export interface StillLoanShareV1 {
+  /** USDC base units the loan paid out to the wallet. */
+  borrowedAtomic: string;
+  /** Still's registry id of the collateral: a stock (NVDAc), cbBTC, WETH or ETH. */
+  collateral: string;
+  venue: 'aave-v4' | 'morpho';
+}
+
+const loanSignature = (secret: string, body: string) =>
+  crypto.createHmac('sha256', crypto.createHmac('sha256', secret).update(LOAN_CONTEXT_V1).digest()).update(`${LOAN_PREFIX_V1}.${body}`).digest('base64url');
+
+function loanShareV1(value: Record<string, unknown>): value is StillLoanShareV1 & Record<string, unknown> {
+  return typeof value.borrowedAtomic === 'string' && /^[1-9]\d{0,11}$/.test(value.borrowedAtomic) &&
+    typeof value.collateral === 'string' && COLLATERAL_V1.has(value.collateral) &&
+    (value.venue === 'aave-v4' || value.venue === 'morpho');
+}
+
+/** What a loan that paid no invoice may say in public once it is confirmed onchain: how much, against what, where. */
+export function stillLoanShareOfV1(execution: LoanExecutionV1): StillLoanShareV1 | null {
+  const facts = execution.run.facts;
+  if (execution.state !== 'confirmed' || facts.operation !== 'borrow' || facts.payment || facts.requestedAssets == null) return null;
+  const share = { borrowedAtomic: facts.requestedAssets, collateral: collateralOfV1(facts.collateralTokenAddress, Boolean(facts.nativeFunding)), venue: facts.venue };
+  return loanShareV1(share) ? share : null;
+}
+
+export function issueStillLoanShareV1(share: StillLoanShareV1, secret: string): string {
+  if (secret.length < 16 || !loanShareV1({ ...share })) throw new Error('still_loan_share_invalid');
+  const body = Buffer.from(JSON.stringify({ v: 1, a: share.borrowedAtomic, c: share.collateral, m: share.venue })).toString('base64url');
+  return `${LOAN_PREFIX_V1}.${body}.${loanSignature(secret, body)}`;
+}
+
+export function verifyStillLoanShareV1(token: unknown, secret: string): StillLoanShareV1 | null {
+  if (secret.length < 16 || typeof token !== 'string' || token.length > 600) return null;
+  const parts = token.split('.');
+  if (parts.length !== 3 || parts[0] !== LOAN_PREFIX_V1 || !/^[A-Za-z0-9_-]+$/.test(parts[1]!) || !/^[A-Za-z0-9_-]{43}$/.test(parts[2]!)) return null;
+  const wanted = Buffer.from(loanSignature(secret, parts[1]!));
+  const got = Buffer.from(parts[2]!);
+  if (wanted.length !== got.length || !crypto.timingSafeEqual(wanted, got)) return null;
+  try {
+    const claim: unknown = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
+    if (!claim || typeof claim !== 'object' || Array.isArray(claim)) return null;
+    const c = claim as Record<string, unknown>;
+    if (Object.keys(c).sort().join(',') !== 'a,c,m,v' || c.v !== 1) return null;
+    const share = { borrowedAtomic: c.a, collateral: c.c, venue: c.m };
+    return loanShareV1(share) ? { borrowedAtomic: share.borrowedAtomic, collateral: share.collateral, venue: share.venue } : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The link a confirmed loan offers its owner: its purchase when it paid an invoice, the loan itself when not. */
 export function loanExecutionShareV1(execution: LoanExecutionV1, secret: string): { path: string } | null {
+  if (secret.length < 16) return null;
   const share = stillSpendShareOfV1(execution);
-  return share && secret.length >= 16 ? { path: `/spend/p/${issueStillSpendShareV1(share, secret)}` } : null;
+  if (share) return { path: `/spend/p/${issueStillSpendShareV1(share, secret)}` };
+  const loan = stillLoanShareOfV1(execution);
+  return loan ? { path: `/spend/p/${issueStillLoanShareV1(loan, secret)}` } : null;
 }
 
 /** The claim, when this server signed it; null for anything else. */
@@ -105,7 +165,7 @@ export function verifyStillSpendShareV1(token: unknown, secret: string): StillSp
 }
 
 /** The words a card and its page say, from the claim alone. */
-export function stillSpendShareWordsV1(share: StillSpendShareV1): {
+export function stillSpendShareWordsV1(share: Pick<StillSpendShareV1, 'priceAtomic' | 'collateral' | 'venue'>): {
   priceUsdc: string; collateralLabel: string; collateralKind: 'stock' | 'crypto'; collateralName: string; venueName: string;
 } {
   const atomic = BigInt(share.priceAtomic);

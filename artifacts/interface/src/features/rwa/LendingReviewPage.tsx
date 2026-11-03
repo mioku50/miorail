@@ -5,7 +5,7 @@ import { useAccount, useConfig, useSendCalls } from 'wagmi';
 import { sendTransaction, waitForTransactionReceipt } from 'wagmi/actions';
 import { LendingReviewScreen, STILL_PUBLIC_ORIGIN_V1, useLendingReviewConsoleV1, useTelegramAlertsV1, type LendingStepsWalletV1 } from '@mioagent/ui';
 import { useStillSpendOrderV1 } from '@mioagent/api-client-react';
-import { StillFrame, StillLoanAlertsOffer, StillSpendPaid, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
+import { StillFrame, StillLoanAlertsOffer, StillLoanShare, StillSpendPaid, loanShareTextV1, spendOrderViewV1, spendSharePathV1, spendShareTextV1 } from '@mioagent/ui/still';
 import { builderCodeForSurfaceV1, builderCodeToDataSuffix, useWalletBatchSupportV1 } from '@mioagent/wallet-actions';
 import { useStillSky, useStillWallet } from '../still/useStillSky';
 
@@ -57,11 +57,15 @@ export function LendingReviewPage() {
   const facts = review.model.body?.facts;
   const share = sharePath && facts?.payment ? { url: `${STILL_PUBLIC_ORIGIN_V1}${sharePath}`,
     text: spendShareTextV1({ productName: facts.payment.productName, collateralSymbol: facts.collateralSymbol }) } : null;
+  // A plain loan's card: how much, against what, through which protocol; never the wallet.
+  const loanPath = confirmedLoan && !paidOrder ? spendSharePathV1(review.model.execution?.share?.path) : null;
+  const loanShare = loanPath && facts ? { url: `${STILL_PUBLIC_ORIGIN_V1}${loanPath}`, text: loanShareTextV1({ collateralSymbol: facts.collateralSymbol }) } : null;
   return <StillFrame tab="assets" sky={sky}>{session.booting
     ? <p className="still-section still-note" role="status">Checking your sign-in…</p>
     : <>
       <LendingReviewScreen model={review.model} />
       {paidOrder ? <StillSpendPaid order={orderView} reading={order.isFetching} share={share} /> : null}
+      {loanShare && loanPath ? <StillLoanShare share={loanShare} cardUrl={`/api/public/still/spend-card.png?t=${encodeURIComponent(loanPath.slice('/spend/p/'.length))}`} /> : null}
       {confirmedLoan ? <StillLoanAlertsOffer telegram={telegram} /> : null}
     </>}</StillFrame>;
 }

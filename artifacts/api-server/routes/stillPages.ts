@@ -3,7 +3,7 @@ import { formatCents } from '@mioagent/still-engine/format';
 import type { MirrorOutcome } from '@mioagent/still-engine';
 import { logger } from '@mioagent/utils';
 
-import { stillSpendShareWordsV1, verifyStillSpendShareV1, type StillSpendShareV1 } from '../lib/stillSpendShare.js';
+import { stillSpendShareWordsV1, verifyStillLoanShareV1, verifyStillSpendShareV1, type StillLoanShareV1, type StillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { publicStillRuntimeV1 } from './stillPublic.js';
 import {
   indexHtmlV1,
@@ -24,7 +24,8 @@ import {
 // and the card reads the wallet again when it is fetched.
 //
 // A Still Spend purchase someone shared, /spend/p/<token>, gets one too: the
-// claim signed in its link, and its card (stillPublic.ts /spend-card.png).
+// claim signed in its link, and its card (stillPublic.ts /spend-card.png). So
+// does a plain loan, under the same address with its own token.
 //
 // nginx sends /w/ and /spend/p/ here and serves the static index.html when
 // this cannot answer, so a head is an improvement to a page, never a
@@ -141,6 +142,32 @@ stillPagesRouter.get('/w/:subject', async (req: Request, res: Response) => {
   sendDocumentV1(res, status, renderStockPageHtmlV1(html, meta));
 });
 
+/** A shared loan's head: what its signed link says. */
+export function stillLoanShareMetaV1(input: { origin: string; canonical: string; token: string; loan: StillLoanShareV1 }): { status: number; meta: StockPageMetaV1 } {
+  const words = stillSpendShareWordsV1({ priceAtomic: input.loan.borrowedAtomic, collateral: input.loan.collateral, venue: input.loan.venue });
+  const path = `/spend/p/${input.token}`;
+  const card = (shape: 'wide' | 'tall') =>
+    `${input.origin}/api/public/still/spend-card.png?t=${encodeURIComponent(input.token)}${shape === 'tall' ? '&shape=tall' : ''}`;
+  const kept = words.collateralKind === 'stock' ? 'stock' : 'coin';
+  return {
+    status: 200,
+    meta: {
+      canonicalUrl: `${input.origin}${path}`,
+      imageUrl: card('wide'),
+      noindex: true,
+      siteName: 'Still',
+      miniApp: { imageUrl: card('tall'), buttonTitle: 'Open on Still', url: `${input.canonical}${path}` },
+      title: `Spent without selling: ${words.priceUsdc} USDC · Still`,
+      description: `${words.priceUsdc} USDC borrowed against ${words.collateralLabel} through ${words.venueName} on Base. Nothing was sold: the ${kept} is the loan’s collateral.`,
+      image: {
+        width: 1200,
+        height: 630,
+        alt: `A loan of ${words.priceUsdc} USDC against ${words.collateralLabel} through ${words.venueName}, on Still: nothing sold.`,
+      },
+    },
+  };
+}
+
 /** A shared purchase's head: what the signed link says, or Still's own head and a 404. */
 export function stillSpendShareMetaV1(input: { origin: string; canonical: string; token: string; share: StillSpendShareV1 | null }): { status: number; meta: StockPageMetaV1 } {
   if (!input.share) {
@@ -193,6 +220,8 @@ stillPagesRouter.get('/spend/p/:token', async (req: Request, res: Response) => {
   const canonical = stockPagesRuntime.origin();
   const token = String(req.params.token ?? '');
   const share = verifyStillSpendShareV1(token, publicStillRuntimeV1.secret());
-  const { status, meta } = stillSpendShareMetaV1({ origin: stillOriginForHostV1(req.headers.host, canonical), canonical, token, share });
+  const loan = share ? null : verifyStillLoanShareV1(token, publicStillRuntimeV1.secret());
+  const origin = stillOriginForHostV1(req.headers.host, canonical);
+  const { status, meta } = loan ? stillLoanShareMetaV1({ origin, canonical, token, loan }) : stillSpendShareMetaV1({ origin, canonical, token, share });
   sendDocumentV1(res, status, renderStockPageHtmlV1(html, meta));
 });

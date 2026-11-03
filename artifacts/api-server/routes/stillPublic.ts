@@ -13,10 +13,10 @@ import { stillTerms } from '@mioagent/still-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
 import { renderCardPngV1 } from '../lib/cardImage.js';
-import { stillBrandCardSvgV1, stillSpendCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
+import { stillBrandCardSvgV1, stillLoanCardSvgV1, stillSpendCardSvgV1, stillWalletCardSvgV1, type StillCardShapeV1 } from '../lib/stillCard.js';
 import { STILL_OUTCOME_STATUS_V1, stillMirrorRuntimeV1 } from '../lib/stillMirror.js';
 import { STILL_SPEND_CAP_ATOMIC_V1, spendBuyableV1, spendNeedsPhoneV1, stillBitrefillClientV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
-import { stillSpendShareWordsV1, verifyStillSpendShareV1 } from '../lib/stillSpendShare.js';
+import { stillSpendShareWordsV1, verifyStillLoanShareV1, verifyStillSpendShareV1 } from '../lib/stillSpendShare.js';
 import { createPublicReadCacheV1 } from './publicStocks.js';
 
 // ---------------------------------------------------------------------------
@@ -164,21 +164,33 @@ publicStillRouter.get('/spend-card.png', async (req: Request, res: Response) => 
   const shape: StillCardShapeV1 = req.query.shape === 'tall' ? 'tall' : 'wide';
   const token = typeof req.query.t === 'string' ? req.query.t : '';
   const share = verifyStillSpendShareV1(token, publicStillRuntimeV1.secret());
+  // A plain loan's card shares the address: its token has its own prefix and signing context.
+  const loan = share ? null : verifyStillLoanShareV1(token, publicStillRuntimeV1.secret());
   try {
-    if (!share) {
+    if (!share && !loan) {
       sendCardPngV1(res, await brandCardPngV1(shape), 60);
       return;
     }
-    sendCardPngV1(res, await spendCardCacheV1.read(`${token}|${shape}`, () => publicStillRuntimeV1.renderPng(stillSpendCardSvgV1(shape, share))), 86_400);
+    sendCardPngV1(res, await spendCardCacheV1.read(`${token}|${shape}`,
+      () => publicStillRuntimeV1.renderPng(share ? stillSpendCardSvgV1(shape, share) : stillLoanCardSvgV1(shape, loan!))), 86_400);
   } catch (error) {
     logger.warn('Still Spend card render failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });
   }
 });
 
-/** The same claim in words, for the page a shared purchase link opens. */
+/** The same claim in words, for the page a shared purchase or loan link opens. */
 publicStillRouter.get('/spend-share', (req: Request, res: Response) => {
-  const share = verifyStillSpendShareV1(typeof req.query.t === 'string' ? req.query.t : '', publicStillRuntimeV1.secret());
+  const token = typeof req.query.t === 'string' ? req.query.t : '';
+  const share = verifyStillSpendShareV1(token, publicStillRuntimeV1.secret());
+  const loan = share ? null : verifyStillLoanShareV1(token, publicStillRuntimeV1.secret());
+  if (loan) {
+    const words = stillSpendShareWordsV1({ priceAtomic: loan.borrowedAtomic, collateral: loan.collateral, venue: loan.venue });
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+    res.json({ outcome: 'share', share: { kind: 'loan', borrowedUsdc: words.priceUsdc, collateralLabel: words.collateralLabel,
+      collateralName: words.collateralName, venueName: words.venueName } });
+    return;
+  }
   if (!share) {
     res.status(404).json({ outcome: 'share_invalid' });
     return;

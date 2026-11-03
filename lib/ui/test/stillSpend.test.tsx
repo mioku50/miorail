@@ -3,7 +3,7 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { StillSpend, StillSpendPaid, StillSpendShared, type StillSpendModelV1 } from '../src/still/StillSpend';
+import { StillLoanShare, StillLoanShared, StillSpend, StillSpendPaid, StillSpendShared, type StillSpendModelV1 } from '../src/still/StillSpend';
 import { skyStateV1 } from '../src/still/skyState';
 import {
   SPEND_COUNTRIES_V1,
@@ -16,6 +16,8 @@ import {
   spendPhonePrefixesTextV1,
   spendProductViewV1,
   spendSearchViewV1,
+  loanShareTextV1,
+  loanShareViewV1,
   spendSharePathV1,
   spendShareTextV1,
   spendShareViewV1,
@@ -321,5 +323,41 @@ describe('a purchase, shared', () => {
     const unverified = renderToStaticMarkup(<StillSpendShared sky={sky} view={null} reading={false} cardUrl={null} />);
     assert.match(unverified, /could not be verified, so nothing about it is shown/);
     assert.doesNotMatch(unverified, /<img|Still checked this loan/);
+  });
+});
+
+describe('a loan, shared', () => {
+  // 2026-11-03, the operator: «нет карточки после успешного взятия займа для шаринга».
+  const TOKEN = `sl1.${'e'.repeat(60)}.${'s'.repeat(43)}`;
+  const LOAN = { outcome: 'share', share: { kind: 'loan', borrowedUsdc: '2.00', collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } };
+
+  it('takes a loan link the server issued, and reads its words apart from a purchase’s', () => {
+    assert.equal(spendSharePathV1(`/spend/p/${TOKEN}`), `/spend/p/${TOKEN}`);
+    assert.equal(spendSharePathV1(`/spend/p/sx1.${'e'.repeat(60)}.${'s'.repeat(43)}`), null);
+    assert.deepEqual(loanShareViewV1(LOAN), { borrowedUsdc: '2.00', collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' });
+    // A loan's words are not a purchase, and a purchase's are not a loan.
+    assert.equal(spendShareViewV1(LOAN), null);
+    assert.equal(loanShareViewV1({ outcome: 'share', share: { productName: 'PUBG', packageLabel: '10 UC', priceUsdc: '0.18', collateralLabel: 'NVDA', collateralName: 'NVIDIA stock', venueName: 'Aave' } }), null);
+    assert.equal(loanShareViewV1({ ...LOAN, share: { ...LOAN.share, borrowedUsdc: '2 USDC' } }), null);
+    assert.equal(loanShareTextV1({ collateralSymbol: 'NVDAc' }), 'Spent without selling: a USDC loan against my NVDA, which I keep. On Base, through Still.');
+  });
+
+  it('after the loan is confirmed, shows its card and offers X and Farcaster', () => {
+    const url = `https://miorail.xyz/spend/p/${TOKEN}`;
+    const html = renderToStaticMarkup(<StillLoanShare share={{ url, text: loanShareTextV1({ collateralSymbol: 'NVDAc' }) }} cardUrl={`/api/public/still/spend-card.png?t=${TOKEN}`} />);
+    assert.match(html, /<img class="still-spend-card" src="\/api\/public\/still\/spend-card\.png\?t=sl1\./);
+    assert.match(html, /Share this loan’s card:/);
+    assert.ok(html.includes(`embeds[]=${encodeURIComponent(url)}`));
+    assert.ok(html.includes(`https://x.com/intent/tweet?text=Spent%20without%20selling`));
+  });
+
+  it('a shared loan link shows its card and what it claims, and no wallet', () => {
+    const sky = skyStateV1({ now: new Date('2026-11-03T15:00:00Z') });
+    const html = renderToStaticMarkup(<StillLoanShared sky={sky} view={loanShareViewV1(LOAN)!} cardUrl="/api/public/still/spend-card.png?t=x" />);
+    assert.match(html, /Spent without selling/);
+    assert.match(html, /2\.00 USDC borrowed against NVDA through Aave on Base\. Nothing was sold: it is the loan’s collateral\./);
+    assert.match(html, /<img class="still-spend-card" src="\/api\/public\/still\/spend-card\.png\?t=x"/);
+    assert.match(html, /Not offered to US persons/);
+    assert.doesNotMatch(html, /0x[0-9a-fA-F]{6}/);
   });
 });
