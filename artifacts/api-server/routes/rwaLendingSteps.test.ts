@@ -30,11 +30,11 @@ const BORROW: ExecutionCallV1 = { index: 2, callType: 'other', to: SPOKE, valueW
 
 const originals = { borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 } };
 let store: MemoryLoanExecutionStoreV1, chain: { allowance: boolean; supplied: boolean; overLimit: boolean };
-let asked: Array<{ question: LendingQuestionV1; delivery?: string }>, sent: Map<string, { tx: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }>;
+let asked: Array<{ question: LendingQuestionV1; delivery?: string; atLeastBlock?: bigint }>, sent: Map<string, { tx: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }>;
 
 /** The runner as the chain stands: in steps, what already landed is not asked again. */
-function review(input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential' }): LendingRunV1 {
-  asked.push({ question: input.question, ...(input.delivery ? { delivery: input.delivery } : {}) });
+function review(input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }): LendingRunV1 {
+  asked.push({ question: input.question, ...(input.delivery ? { delivery: input.delivery } : {}), ...(input.atLeastBlock !== undefined ? { atLeastBlock: input.atLeastBlock } : {}) });
   if (chain.overLimit) return { state: 'refused', refusal: 'aave_over_still_limit', detail: 'The requested loan exceeds the measured Still allowance.' };
   const q = input.question, sequential = input.delivery === 'sequential';
   if (q.operation !== 'borrow') throw new Error('borrow only');
@@ -72,7 +72,7 @@ beforeEach(() => {
   store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; sent = new Map();
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => store, secret: () => SECRET, now: () => NOW, stepReadDelayMs: 0,
-    runAave: async (input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential' }) => review(input),
+    runAave: async (input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => review(input),
     reader: () => ({
       async getTransactionReceipt(h: HashV1) { return sent.get(h)?.receipt ?? null; },
       async getTransaction(h: HashV1) { return sent.get(h)?.tx ?? null; },
@@ -132,6 +132,9 @@ describe('each step is read from the chain, and the review runs again before the
     // After the supply landed, the fresh review asked the loan without a new pledge.
     const lastAsked = asked.at(-1)!.question;
     assert.equal(lastAsked.operation === 'borrow' ? lastAsked.collateralSupplyAssets : null, '0');
+    // Each next step is planned from a block that holds the one that just landed, read from its receipt
+    // (2026-11-03: planned from a node a block behind, both Farcaster loans stopped after their first step).
+    assert.deepEqual(asked.filter(entry => entry.atLeastBlock !== undefined).map(entry => entry.atLeastBlock), [53_000_011n, 53_000_012n]);
     land(3, BORROW);
     const last = await steps(id, { attemptId, index: 2, transactionHash: hash(3) });
     assert.equal(last.body.state, 'submitted');

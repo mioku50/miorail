@@ -50,12 +50,13 @@ function deploymentFailureV1(status: Exclude<AaveV4DeploymentStatusV1, 'matched'
  * A ready result requires the exact same-state debt and collateral proof.
  * `delivery: 'sequential'` plans the same action as one transaction per call,
  * for a wallet that cannot send a batch; it is simulated and checked alike. */
-export async function runAaveLendingV1(input: { walletAddress: string; question: LendingQuestionV1; delivery?: 'atomic' | 'sequential' }, deps: AaveLendingDepsV1 = {}): Promise<LendingRunV1> {
+export async function runAaveLendingV1(input: { walletAddress: string; question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }, deps: AaveLendingDepsV1 = {}): Promise<LendingRunV1> {
   const now = deps.now ?? (() => new Date()), q = input.question, sequential = input.delivery === 'sequential';
   const returning = q.operation === 'repay' && q.returnCollateral === true;
   const supply = q.operation === 'borrow' ? BigInt(q.collateralSupplyAssets) : 0n;
   const read = await (deps.read ?? readAaveStandingV1)({ tokenAddress: q.collateralTokenAddress,
-    walletAddress: input.walletAddress, operation: q.operation, collateralSupplyAssets: supply });
+    walletAddress: input.walletAddress, operation: q.operation, collateralSupplyAssets: supply,
+    ...(input.atLeastBlock !== undefined ? { atLeastBlock: input.atLeastBlock } : {}) });
   if (read.state === 'refused') return fail(read.refusal, read.detail);
   const s = read.standing;
   if (!s.selectedStock || !s.collateralReserve) return fail('aave_reserve_mismatch', 'This review did not establish the exact registered stock reserve.');

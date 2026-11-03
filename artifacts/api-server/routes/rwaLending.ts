@@ -281,6 +281,9 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
     } catch { /* read again */ }
   }
   if (!read?.receipt || !read.transaction) { res.status(409).json({ error: 'lending_step_unread' }); return; }
+  // The next step is planned from a block that holds this one: its receipt was read here, through
+  // another node than the review reads (headAtLeastV1).
+  const landedBlock = read.receipt.blockNumber;
   const bound = bindLoanStepV1({ execution: record, index: body.data.index, transaction: read.transaction, receipt: read.receipt });
   if (bound.state === 'unknown') { res.status(409).json({ error: bound.errorCode }); return; }
   const last = body.data.index === record.run.calls.length - 1;
@@ -300,7 +303,7 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/steps', async (req, res) => {
   const payment = saved.run.facts.payment ?? null;
   const check = await recheckLoanStepsV1({ record: saved, landed: body.data.index + 1, now: rwaLendingRuntimeV1.now(),
     review: async question => {
-      const run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, delivery: 'sequential' });
+      const run = await rwaLendingRuntimeV1.runAave({ walletAddress: owner.walletAddress, question, delivery: 'sequential', atLeastBlock: landedBlock });
       return payment ? rwaLendingRuntimeV1.attachPayment({ walletAddress: owner.walletAddress, run, payment, now: rwaLendingRuntimeV1.now() }) : run;
     },
     ...(payment ? { invoice: async () => {

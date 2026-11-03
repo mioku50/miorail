@@ -4,7 +4,7 @@ import { ADDRESSES } from '@mioagent/still-engine/registry';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 import { aaveReadFixture, AAVE_TEST_WALLET, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1 } from './aaveV4BorrowPlan.js';
-import { STILL_AAVE_MAX_RESERVES_V1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
+import { STILL_AAVE_MAX_RESERVES_V1, headAtLeastV1, inspectAaveV4DeploymentAtV1, readAaveStandingV1, readAaveV4DeploymentAtV1, readStillAaveStandingV1, stillAaveCapacityV1, validAaveReserveBindingsV1, type AaveV4DeploymentProviderClientV1 } from './stillAaveStanding.js';
 
 const input = (r = aaveReadFixture()) => ({ walletAddress: AAVE_TEST_WALLET, operation: 'borrow' as const, stockId: 'NVDAc' as const, collateralSupplyAssets: BigInt(0),
   deps: { now: () => new Date('2026-10-21T15:00:00Z'), snapshot: async () => r, calendar: async () => calendar() } });
@@ -54,6 +54,31 @@ describe('Still Aave bounded same-block standing', () => {
     assert.equal((await readAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, tokenAddress: stock.underlying, operation: 'borrow', deps: base.deps })).state, 'read');
     assert.equal((await readAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, tokenAddress: ADDRESSES.usdc, operation: 'repay', deps: base.deps })).state, 'read');
     assert.equal((await readAaveStandingV1({ walletAddress: AAVE_TEST_WALLET, tokenAddress: ADDRESSES.cbbtc, operation: 'borrow', deps: base.deps })).state, 'refused');
+  });
+});
+
+describe('after a step of a loan in steps, the account is read at a block that holds it', () => {
+  // 2026-11-03: both Farcaster loans stopped one second after their first step, planned from a node a block behind.
+  it('waits for a node behind the landed block, and gives up when it stays behind', async () => {
+    const heads = [BigInt(9), BigInt(9), BigInt(10)];
+    let reads = 0;
+    assert.equal(await headAtLeastV1(async () => heads[Math.min(reads++, heads.length - 1)]!, BigInt(10), { tries: 5, delayMs: 0 }), BigInt(10));
+    assert.equal(reads, 3);
+    reads = 0;
+    assert.equal(await headAtLeastV1(async () => { reads++; return BigInt(7); }, undefined), BigInt(7));
+    assert.equal(reads, 1);
+    await assert.rejects(headAtLeastV1(async () => BigInt(9), BigInt(10), { tries: 3, delayMs: 0 }), /aave_head_behind/);
+  });
+
+  it('hands that block to the snapshot, and refuses a snapshot from before it', async () => {
+    const r = aaveReadFixture(), at = BigInt(r.snapshot.block.number), base = input(r);
+    let handed: bigint | undefined;
+    const read = await readStillAaveStandingV1({ ...base, atLeastBlock: at, deps: { ...base.deps, snapshot: async (_wallet, atLeast) => { handed = atLeast; return r; } } });
+    assert.equal(read.state, 'read');
+    assert.equal(handed, at);
+    const behind = await readStillAaveStandingV1({ ...base, atLeastBlock: at + BigInt(1) });
+    assert.deepEqual(behind.state === 'refused' ? [behind.refusal, behind.detail] : null,
+      ['aave_unread', 'Still could not read this Aave account at a block that holds the step that just landed.']);
   });
 });
 

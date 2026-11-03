@@ -76,18 +76,37 @@ export type StillAaveReadingV1 =
 
 export interface StillAaveReaderDepsV1 {
   now?: () => Date;
-  snapshot?: (wallet: Address) => Promise<StillAaveSnapshotV1>;
+  snapshot?: (wallet: Address, atLeastBlock?: bigint) => Promise<StillAaveSnapshotV1>;
   calendar?: () => Promise<CalendarRead>;
 }
 const refuse = (refusal: Extract<StillAaveReadingV1, { state: 'refused' }>['refusal'], detail: string): StillAaveReadingV1 => ({ state: 'refused', refusal, detail });
 let providers: ReturnType<typeof createProviders> | null = null;
 const calendarSource = createEarningsCalendar();
 
-async function freshSnapshot(wallet: Address): Promise<StillAaveSnapshotV1> {
+/**
+ * A node's head, once it holds `atLeast`. After a step of a loan in steps,
+ * the next one is planned from a block that holds that step, but its receipt
+ * was read through another node, and this one can be a block behind. Read
+ * from there, the review planned the landed allowance again, or did not see
+ * the landed deposit, and the steps stopped (2026-11-03, both Farcaster loans,
+ * one second after their first step).
+ */
+export async function headAtLeastV1(read: () => Promise<bigint>, atLeast: bigint | undefined,
+  wait: { tries: number; delayMs: number } = { tries: 10, delayMs: 500 }): Promise<bigint> {
+  let head = await read();
+  for (let attempt = 1; atLeast !== undefined && head < atLeast && attempt < wait.tries; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, wait.delayMs));
+    head = await read();
+  }
+  if (atLeast !== undefined && head < atLeast) throw new Error('aave_head_behind');
+  return head;
+}
+
+async function freshSnapshot(wallet: Address, atLeastBlock?: bigint): Promise<StillAaveSnapshotV1> {
   providers ??= createProviders(stillRpcUrlsV1(), 'miorail-still-aave/1');
   for (const provider of providers) {
     try {
-      const at = await provider.client.getBlockNumber();
+      const at = await headAtLeastV1(() => provider.client.getBlockNumber(), atLeastBlock);
       const [chainId, slot, proxyCode] = await Promise.all([
         provider.client.getChainId(),
         provider.client.getStorageAt({ address: ADDRESSES.aaveSpoke, slot: AAVE_V4_DEPLOYMENT_PIN_V1.implementationSlot, blockNumber: at }),
@@ -301,11 +320,14 @@ export async function readAaveStandingV1(input: {
   walletAddress: string;
   collateralSupplyAssets?: bigint;
   operation: 'borrow' | 'repay';
+  /** After a step of a loan in steps: the block that holds it, the earliest this may be read at. */
+  atLeastBlock?: bigint;
   deps?: StillAaveReaderDepsV1;
 }): Promise<StillAaveReadingV1> {
   const stock = input.tokenAddress ? STOCKS.find(s => same(s.token, input.tokenAddress!)) : undefined;
   if (input.tokenAddress && !stock && !(input.operation === 'repay' && same(input.tokenAddress, ADDRESSES.usdc))) return refuse('aave_inputs_invalid', 'The collateral must be an exact registered stock address.');
-  return readStillAaveStandingV1({ walletAddress: input.walletAddress, stockId: stock?.id, operation: input.operation, collateralSupplyAssets: input.collateralSupplyAssets, deps: input.deps });
+  return readStillAaveStandingV1({ walletAddress: input.walletAddress, stockId: stock?.id, operation: input.operation, collateralSupplyAssets: input.collateralSupplyAssets,
+    ...(input.atLeastBlock !== undefined ? { atLeastBlock: input.atLeastBlock } : {}), deps: input.deps });
 }
 
 function need<T>(value: { ok: true; value: T } | { ok: false } | undefined): T {
@@ -385,6 +407,7 @@ export async function readStillAaveStandingV1(input: {
   operation: 'borrow' | 'repay';
   stockId?: StockId;
   collateralSupplyAssets?: bigint;
+  atLeastBlock?: bigint;
   deps?: StillAaveReaderDepsV1;
 }): Promise<StillAaveReadingV1> {
   const wallet = input.walletAddress.toLowerCase(), supply = input.collateralSupplyAssets ?? ZERO;
@@ -393,8 +416,11 @@ export async function readStillAaveStandingV1(input: {
       (input.operation !== 'borrow' && input.operation !== 'repay') || (input.operation === 'borrow' && !selectedStock) || (input.operation === 'repay' && supply !== ZERO)) return refuse('aave_inputs_invalid', 'The exact registered operation, wallet and selected pledge are required.');
   const now = input.deps?.now?.() ?? new Date();
   let read: StillAaveSnapshotV1;
-  try { read = await (input.deps?.snapshot ?? freshSnapshot)(wallet as Address); }
+  try { read = await (input.deps?.snapshot ?? freshSnapshot)(wallet as Address, input.atLeastBlock); }
   catch { return refuse('aave_unread', 'Still could not establish this Aave account at one Base block.'); }
+  if (input.atLeastBlock !== undefined && BigInt(read.snapshot.block.number) < input.atLeastBlock) {
+    return refuse('aave_unread', 'Still could not read this Aave account at a block that holds the step that just landed.');
+  }
   if (!matchesAaveV4DeploymentV1(read.deployment) || read.deployment.blockNumber !== Number(read.snapshot.block.number)) return refuse('aave_deployment_changed', 'The Aave deployment could not be bound to this read block.');
   if (!validAaveReserveBindingsV1(read)) return refuse('aave_reserve_mismatch', 'Every reserve on the reviewed Spoke must match its registered stock or USDC identity.');
   const aave = read.snapshot.aave!;
