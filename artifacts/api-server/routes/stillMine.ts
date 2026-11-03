@@ -33,6 +33,8 @@ export const stillMineRuntimeV1 = {
   // A question can cost two model calls and a chain read: a person asks a few
   // a minute, a script asks hundreds.
   askLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }),
+  /** One chain read each: Home asks once a visit, a script asks without end. */
+  usdcLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
 };
 export const stillMineRouter = Router();
 
@@ -56,6 +58,32 @@ stillMineRouter.get('/mine', async (req: Request, res: Response) => {
     logger.warn('Still mirror read failed', { errorName: error instanceof Error ? error.name : typeof error });
     res.status(500).json({ outcome: 'internal_error' });
   }
+});
+
+// The wallet's USDC, for Home's wallet card. The report reads only what can be
+// collateral, and USDC is what a loan pays out and a repayment takes, so a
+// person who cannot see it cannot tell whether they can repay (2026-11-03).
+// A read that did not answer is 503, never a zero.
+stillMineRouter.get('/mine/usdc', async (req: Request, res: Response) => {
+  res.set('Cache-Control', 'private, no-store');
+  const wallet = sessionWalletV1(req, res);
+  if (!wallet) return;
+  if (Object.keys(req.query).length > 0) {
+    res.status(400).json({ outcome: 'invalid_input' });
+    return;
+  }
+  const allowed = await stillMineRuntimeV1.usdcLimiter.consume(`still-usdc:${wallet}`);
+  if (!allowed.success) {
+    res.setHeader('Retry-After', String(Math.max(1, Math.ceil((allowed.resetTime - Date.now()) / 1000))));
+    res.status(429).json({ outcome: 'rate_limited' });
+    return;
+  }
+  const held = await stillMineRuntimeV1.readUsdc(wallet).catch(() => null);
+  if (!held) {
+    res.status(503).json({ outcome: 'unread' });
+    return;
+  }
+  res.json({ outcome: 'read', usdc: held });
 });
 
 // The Agent's questions about this wallet. The browser sends only the question:

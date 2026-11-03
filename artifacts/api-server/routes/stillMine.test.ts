@@ -16,7 +16,10 @@ const original = { ...stillMineRuntimeV1 };
 const originalLlm = { ...stillAgentLlmRuntimeV1 };
 const originalReadings = { ...stillReadingsRuntimeV1 };
 afterEach(() => {
-  Object.assign(stillMineRuntimeV1, original, { askLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }) });
+  Object.assign(stillMineRuntimeV1, original, {
+    askLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }),
+    usdcLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
+  });
   Object.assign(stillAgentLlmRuntimeV1, originalLlm);
   Object.assign(stillReadingsRuntimeV1, originalReadings);
 });
@@ -119,6 +122,28 @@ test('an unreadable chain is 503 and names no provider address', async () => {
   const failed = await request(failing.server).get('/api/still/mine');
   assert.equal(failed.status, 500);
   assert.doesNotMatch(failed.text, /SECRET|https?:/);
+});
+
+test('the wallet’s USDC for Home: the session’s own, never cached, and a failed read is not a zero', async () => {
+  let held: { raw: string; decimals: number; block: string } | null = { raw: '12345', decimals: 6, block: '53000000' };
+  const asked: string[] = [];
+  stillMineRuntimeV1.readUsdc = async (wallet) => {
+    asked.push(wallet);
+    return held;
+  };
+  assert.equal((await request(app(null, async () => assert.fail('not checked')).server).get('/api/still/mine/usdc')).status, 401);
+  const { server } = app(WALLET, async () => assert.fail('not checked'));
+  const read = await request(server).get('/api/still/mine/usdc');
+  assert.equal(read.status, 200);
+  assert.equal(read.headers['cache-control'], 'private, no-store');
+  assert.deepEqual(read.body, { outcome: 'read', usdc: { raw: '12345', decimals: 6, block: '53000000' } });
+  // No other wallet can be asked for.
+  assert.equal((await request(server).get(`/api/still/mine/usdc?wallet=0x${'2'.repeat(40)}`)).status, 400);
+  assert.deepEqual(asked, [WALLET]);
+  held = null;
+  const unread = await request(server).get('/api/still/mine/usdc');
+  assert.equal(unread.status, 503);
+  assert.deepEqual(unread.body, { outcome: 'unread' });
 });
 
 const ask = (server: express.Express, question: string, stream = false) => {

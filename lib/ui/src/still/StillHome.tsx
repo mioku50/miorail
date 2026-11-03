@@ -9,6 +9,7 @@ import { STILL_SHARES_V1, skyCaptionV1, type SkyStateV1 } from './skyState';
 import { STILL_ASSISTANTS_V1, StillGlyph, StillLink } from './StillFrame';
 import { StillIconV1 } from './icons';
 import { StillMobile } from './StillMobile';
+import type { WalletViewV1 } from './walletView';
 import type { TelegramAlertsModelV1 } from '../console/TelegramAlertsStrip';
 import { composerLinksV1 } from '../console/composerLinks';
 import { ShareLinkV1 } from '../console/shareHost';
@@ -112,6 +113,8 @@ export interface StillHomeModelV1 {
   telegram?: TelegramAlertsModelV1 | null;
   /** The wallet's name, or its address: what a shared card names. */
   subject?: string | null;
+  /** What the wallet holds now, for the card under the state line. */
+  wallet?: WalletViewV1 | null;
 }
 
 /**
@@ -153,15 +156,52 @@ function TelegramIconV1() {
 }
 
 /**
- * Quiet doors at the foot of Home: what a loan could pay for, Still in an
- * assistant, and alerts in Telegram. None is the page's subject, so each is
- * one line and one action.
+ * What the wallet holds now (operator, 2026-11-03: «сейчас не понятно что
+ * лежит у меня в кошельке»): USDC, ETH and cbBTC, then the stocks by value,
+ * each with what is pledged said apart, and a read that failed said so.
  */
-export function StillExtras({ telegram }: { telegram?: TelegramAlertsModelV1 | null }) {
-  const view = telegram?.view ?? null;
+export function StillWalletCard({ wallet }: { wallet: WalletViewV1 }) {
+  return (
+    <section className="still-section still-wallet" aria-label="In your wallet">
+      <div className="still-wallet-head">
+        <h2 className="still-eyebrow">In your wallet</h2>
+        <span className="mono still-clock">Base block {wallet.block}</span>
+      </div>
+      <ul className="still-wallet-rows">
+        {wallet.rows.map((row) => (
+          <li key={row.id} className="still-wallet-row" data-kind={row.kind}>
+            <span className="still-wallet-dot" aria-hidden="true" />
+            <span className="still-wallet-sym">{row.symbol}</span>
+            <span className="still-wallet-val">{row.value ?? '—'}</span>
+            <span className="still-wallet-amt">
+              <span className="mono">{row.amount}</span>
+              {row.where ? <span className="still-wallet-where"> · {row.where}</span> : null}
+            </span>
+          </li>
+        ))}
+      </ul>
+      {wallet.others.length > 0 ? (
+        <p className="still-note still-wallet-others">
+          Also in the wallet:{' '}
+          {wallet.others.map((other, i) => (
+            <React.Fragment key={other.href}>
+              {i > 0 ? ' · ' : null}
+              <StillLink href={other.href}>{other.symbol} {other.amount}</StillLink>
+            </React.Fragment>
+          ))}
+          . Each is priced on its stock’s page.
+        </p>
+      ) : null}
+      <p className="still-note still-wallet-foot">ETH includes WETH. Prices are the venues’ own oracles at that block; USDC counts at $1.</p>
+    </section>
+  );
+}
+
+/** What a loan could pay for: Home's one door that is about the money itself. */
+export function StillSpendDoor() {
   return (
     <div className="still-section still-extras">
-      <StillLink href="/spend" className="still-extra">
+      <StillLink href="/spend" className="still-extra is-lead">
         <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
         <span className="still-extra-body">
           <span className="still-extra-title">Spend with Still</span>
@@ -169,6 +209,19 @@ export function StillExtras({ telegram }: { telegram?: TelegramAlertsModelV1 | n
         </span>
         <span className="still-extra-go" aria-hidden="true">›</span>
       </StillLink>
+    </div>
+  );
+}
+
+/**
+ * Quiet doors: Still in an assistant, and alerts in Telegram. Neither is a
+ * page's subject, so each is one line and one action. A desktop shows them in
+ * the left rail under the pages; a phone, at the foot of Home.
+ */
+export function StillDoors({ telegram, rail }: { telegram?: TelegramAlertsModelV1 | null; rail?: boolean }) {
+  const view = telegram?.view ?? null;
+  return (
+    <div className={rail ? 'still-rail-doors' : 'still-section still-extras still-home-doors'}>
       <StillLink href={STILL_ASSISTANTS_V1.path} className="still-extra">
         <span className="still-extra-icon"><AssistantIconV1 /></span>
         <span className="still-extra-body">
@@ -285,6 +338,9 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <StillLink href="/agent" className="still-btn sec">Ask Still</StillLink>
         </> : null}
       </div>
+      {/* Under the actions, so Get money stays in the first screen at every width. */}
+      {view && model.wallet ? <StillWalletCard wallet={model.wallet} /> : null}
+      {view ? <StillSpendDoor /> : null}
       {view ? (
         <details className="still-section still-modelled-room">
           <summary aria-label={view.available ? `${view.available.atLeast ? 'At least ' : ''}${view.available.dollars}${view.available.cents} modelled borrowing room` : 'Modelled borrowing room not read'}>
@@ -297,7 +353,8 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
       ) : null}
       {view ? <StillComingUp items={view.comingUp} /> : null}
       {/* The doors stay when the wallet could not be read: they do not need it. */}
-      {view || model.loading || model.failed ? <StillExtras telegram={model.telegram} /> : null}
+      {!view && (model.loading || model.failed) ? <StillSpendDoor /> : null}
+      {view || model.loading || model.failed ? <StillDoors telegram={model.telegram} /> : null}
       </div>
     </div>
   );
@@ -376,7 +433,8 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
         Still models up to {STILL_SHARES_V1.full}% of each protocol’s limit, and {STILL_SHARES_V1.closed}% for stocks while Wall Street is closed. A live loan needs a fresh review and your wallet approval.
         Not offered to US persons.
       </p>
-      <StillExtras />
+      <StillSpendDoor />
+      <StillDoors />
       </div>
     </div>
   );

@@ -26,6 +26,7 @@ import {
 } from '../features/still/StillRoutes';
 import { AppLoading } from './AppLoading';
 import { StillWalletControlsProvider } from '../features/still/StillWalletControls';
+import { StillRailDoorsProvider } from '../features/still/StillRailDoors';
 
 
 // ---------------------------------------------------------------------------
@@ -193,6 +194,7 @@ export function App() {
   return (
     <StillNavigateContext.Provider value={navigate}>
     <StillWalletControlsProvider>
+    <StillRailDoorsProvider>
     <ConsoleFrameContextV1.Provider value={StillConsoleFrame}>
       <ChainEnvMismatchBanner />
       <Suspense fallback={<AppLoading />}>
@@ -467,6 +469,7 @@ export function App() {
       <Toaster />
       <BaseMcpOAuthBridge />
     </ConsoleFrameContextV1.Provider>
+    </StillRailDoorsProvider>
     </StillWalletControlsProvider>
     </StillNavigateContext.Provider>
   );

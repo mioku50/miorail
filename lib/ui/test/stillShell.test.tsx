@@ -4,6 +4,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { computeMirror, type CalendarRead } from '@mioagent/still-engine';
 import { stillTerms } from '@mioagent/still-engine/terms';
+import { formatCents } from '@mioagent/still-engine/format';
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/dividend-wallet';
 
@@ -25,8 +26,12 @@ import {
   skyEarningsFromTermsV1,
   skyStateV1,
   stillTabForPathV1,
+  walletViewV1,
   StillAgent,
   StillAssets,
+  StillDoors,
+  StillRailDoorsContext,
+  StillWalletCard,
   StillFrame,
   StillHomeSignedIn,
   StillLoanAlertsOffer,
@@ -294,6 +299,68 @@ describe('Assets', () => {
     const microView = homeViewV1({ report: microReport, sky: skyStateV1({ now: WEDNESDAY }) });
     assert.equal(microView.mobile.loan?.owedLabel, '<$0.01');
     assert.equal(homeViewV1({ report: report(), sky: skyStateV1({ now: WEDNESDAY }) }).mobile.loan?.owedLabel, undefined);
+  });
+});
+
+describe('the wallet card', () => {
+  // 2026-11-03, the operator: «сейчас не понятно что лежит у меня в кошельке».
+  it('says what the wallet holds: USDC, ETH and cbBTC, then the stocks by value, with what is pledged said apart', () => {
+    const r = report();
+    const view = walletViewV1({ report: r, usdc: { raw: '12345678', decimals: 6 }, dividends });
+    assert.equal(view.block, '53,000,000');
+    const stocks = r.assets.filter((line) => line.kind === 'stock').sort((a, b) => Number(BigInt(b.valueCents!) - BigInt(a.valueCents!))).map((line) => line.symbol);
+    assert.deepEqual(view.rows.map((row) => row.symbol), ['USDC', 'ETH', 'cbBTC', ...stocks]);
+    assert.deepEqual(view.rows[0], { id: 'USDC', symbol: 'USDC', kind: 'cash', amount: '12.3456', value: '$12.34', where: null });
+    // Not held is a measured zero: the report has no line for it, and the card says 0.
+    assert.deepEqual(view.rows[1], { id: 'ETH', symbol: 'ETH', kind: 'crypto', amount: '0', value: '$0.00', where: null });
+    const nvda = view.rows.find((row) => row.symbol === 'NVDAc')!;
+    assert.equal(nvda.amount, '4.2');
+    assert.equal(nvda.where, '3.4 of it pledged on Aave, under your loan');
+    assert.equal(nvda.value, formatCents(r.assets.find((line) => line.symbol === 'NVDAc')!.valueCents!));
+    assert.equal(view.rows.find((row) => row.symbol === 'AAPLc')!.where, null);
+    // Apple is one of Still's reviewed stocks: it is a row, not an "also".
+    assert.deepEqual(view.others, []);
+  });
+
+  it('says a read that did not answer, and names the other Coinbase stocks the wallet holds', () => {
+    const r = report();
+    assert.deepEqual(walletViewV1({ report: r, usdc: 'loading' }).rows[0], { id: 'USDC', symbol: 'USDC', kind: 'cash', amount: '…', value: null, where: null });
+    const unread = walletViewV1({ report: r, usdc: 'unread' }).rows[0]!;
+    assert.equal(unread.amount, '—');
+    assert.match(unread.where!, /^not read just now: our failure, not a fact about the wallet$/);
+    // A stock whose balance was not read is never shown as none.
+    const failed = JSON.parse(JSON.stringify(r)) as MirrorReport;
+    failed.assets.find((line) => line.symbol === 'TSLAc')!.wallet = null;
+    assert.deepEqual(walletViewV1({ report: failed, usdc: 'loading' }).rows.find((row) => row.symbol === 'TSLAc'), {
+      id: 'TSLAc', symbol: 'TSLAc', kind: 'stock', amount: '—', value: null, where: 'not read just now: our failure, not a fact about the wallet',
+    });
+    const sony = { ...dividends.holdings[0]!, underlyingKey: 'security:isin:US8356993076', symbol: 'SONY', company: 'Sony', tokenAddress: `0x${'5'.repeat(40)}`, tokenSymbol: 'SONYc', tokens: '1.250000', upcoming: [] };
+    const none = { ...sony, symbol: 'KO', tokenAddress: `0x${'6'.repeat(40)}`, tokenSymbol: 'KOc', tokens: '0' };
+    assert.deepEqual(walletViewV1({ report: r, usdc: 'loading', dividends: { ...dividends, holdings: [...dividends.holdings, sony, none] } }).others, [
+      { symbol: 'SONYc', amount: '1.25', href: '/stocks/sony' },
+    ]);
+  });
+
+  it('sits on Home under the actions; Spend is the door that is seen, and the other two sit in the rail on a desktop', () => {
+    const sky = skyStateV1({ now: WEDNESDAY });
+    const r = report();
+    const wallet = walletViewV1({ report: r, usdc: { raw: '12345678', decimals: 6 }, dividends });
+    const html = renderToStaticMarkup(<StillHomeSignedIn model={{ sky, view: homeViewV1({ report: r, sky }), reading: r.reading, loading: false, failed: null, onRetry: () => {}, wallet }} />);
+    // Under the actions, so Get money stays in the first screen, and above Spend.
+    assert.ok(html.indexOf('In your wallet') > html.indexOf('>Get money<'));
+    assert.ok(html.indexOf('In your wallet') < html.indexOf('Spend with Still'));
+    assert.match(html, /<li class="still-wallet-row" data-kind="stock">.*NVDAc.*3\.4 of it pledged on Aave, under your loan/);
+    assert.match(html, /USDC counts at \$1/);
+    assert.match(html, /<a href="\/spend" class="still-extra is-lead">/);
+    // On a phone the assistant and Telegram stay at the foot of Home.
+    assert.match(html, /class="still-section still-extras still-home-doors"/);
+    assert.match(renderToStaticMarkup(<StillWalletCard wallet={{ ...wallet, others: [{ symbol: 'SONYc', amount: '1.25', href: '/stocks/sony' }] }} />), /Also in the wallet: <a href="\/stocks\/sony">SONYc 1\.25<\/a>\. Each is priced on its stock’s page\./);
+    const rail = renderToStaticMarkup(
+      <StillRailDoorsContext.Provider value={<StillDoors rail />}>
+        <StillFrame tab="home" sky={sky}><p>page</p></StillFrame>
+      </StillRailDoorsContext.Provider>,
+    );
+    assert.match(rail, /<nav class="still-nav"[^>]*>.*<div class="still-rail-doors">.*Still in your assistant.*<\/div><div class="still-rail-foot">/);
   });
 });
 

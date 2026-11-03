@@ -164,7 +164,7 @@ The web app is Still's shell: **Home · Assets · Agent · Stocks · More**.
 
 | Surface | Web path | What it owns |
 | --- | --- | --- |
-| **Home** | `/` | The wallet's sky and mobile, its modelled borrowing room, what is coming up; signed out, a check of any Base wallet by address or name. Quiet doors to Still in an assistant and to alerts in Telegram. |
+| **Home** | `/` | The wallet's sky and mobile; what the wallet holds (USDC, ETH and cbBTC, then the stocks by value, with what is pledged said apart, and other Coinbase stocks it holds); its modelled borrowing room, Spend, and what is coming up. Signed out, a check of any Base wallet by address or name. Quiet doors to Still in an assistant and to alerts in Telegram sit in the left rail on a desktop and at the foot of Home on a phone. |
 | **Wallet check** | `/w/:subject` | The same public check as a link, with a card of its own for X and Farcaster. |
 | **Purchase card** | `/spend/p/:token` | A Still Spend purchase its owner shared: the signed claim, its card for X and Farcaster, and a door to Spend. |
 | **Assets** | `/assets` | What the wallet holds, what is pledged and what hangs on it; *Get money* (`/borrow`), *Repay* (`/repay`) and the lending review (`/lending/:draft`). |

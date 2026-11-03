@@ -47,6 +47,10 @@ export const StillNavigateContext = createContext<((path: string, options?: { st
  * keep their own wallet connection rather than importing a second stack. */
 export const StillWalletControlsContext = createContext<ReactNode>(null);
 
+/** What the left rail shows under the pages on a desktop: the app's doors,
+ * which need its session (Telegram alerts) and so are provided, not built here. */
+export const StillRailDoorsContext = createContext<ReactNode>(null);
+
 export function StillLink({ href, className, children, state, ...rest }: {
   href: string;
   className?: string;
@@ -165,6 +169,7 @@ export function useStillClientPaletteV1(sky: SkyStateV1): 'day' | 'night' {
 
 export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky: SkyStateV1; children: ReactNode; wide?: boolean }) {
   const walletControls = useContext(StillWalletControlsContext);
+  const railDoors = useContext(StillRailDoorsContext);
   useEffect(() => {
     // The console's pages read the same palette through data-theme; still.css
     // sets the color scheme from it.
@@ -191,6 +196,7 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
             {item.label}
           </StillLink>
         ))}
+        {railDoors}
         <div className="still-rail-foot">
           <a href="/metrics">Public metrics</a>
           {/* AGPL-3.0 section 13: the running service offers its source. */}

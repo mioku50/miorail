@@ -39,6 +39,7 @@ async function install(page: Page, signedIn: boolean, now: Date, earningsCalenda
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/public/still/terms') return route.fulfill({ json: JSON.parse(JSON.stringify(stillTerms(calendar(), now))) });
     if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(WALLET, null, earningsCalendar), cached: false } });
+    if (path === '/api/still/mine/usdc' && signedIn) return route.fulfill({ json: { outcome: 'read', usdc: { raw: '12345678', decimals: 6, block: '53000000' } } });
     if (path === '/api/stocks/dividends/mine' && signedIn) return route.fulfill({ json: DIVIDENDS });
     if (path === '/api/public/still/mirror') {
       const subject = url.searchParams.get('subject') ?? '';
@@ -95,6 +96,16 @@ for (const width of [390, 1280]) {
     await expect(page.getByRole('img', { name: /NVDA.* on the left hold up a \$240\.17 loan on the right/ })).toBeVisible();
     await expect(page.getByText('≈ NOV 12 Apple dividend · ≈ $0.19 as more AAPLc, an estimate', { exact: true })).toBeVisible();
     await expect(page.getByRole('link', { name: /^Still in your assistant/ })).toHaveAttribute('href', '/assistants');
+    // What the wallet holds, under the actions: USDC read beside the report, the pledge said apart.
+    const wallet = page.getByRole('region', { name: 'In your wallet', exact: true });
+    await expect(wallet).toContainText('Base block 53,000,000');
+    await expect(wallet.locator('.still-wallet-row').first()).toContainText('USDC$12.3412.3456');
+    await expect(wallet).toContainText('4.2 · 3.4 of it pledged on Aave, under your loan');
+    await expect(page.getByRole('link', { name: /^Spend with Still/ })).toBeVisible();
+    // On a desktop the assistant and Telegram doors sit in the rail under the pages; on a phone, at the foot of Home.
+    const rail = page.getByRole('navigation', { name: 'Main' }).getByRole('link', { name: /^Still in your assistant/ });
+    if (width >= 900) await expect(rail).toBeVisible();
+    else await expect(page.locator('.still-home-doors').getByRole('link', { name: /^Still in your assistant/ })).toBeVisible();
     await noSidewaysScroll(page);
     await page.screenshot({ path: testInfo.outputPath(`home-signed-in-${width}.png`), fullPage: true });
 
