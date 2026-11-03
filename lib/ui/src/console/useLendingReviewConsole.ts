@@ -58,6 +58,12 @@ interface StateV1 {
 const initial = (identity: string): StateV1 => ({ identity, loading: true, body: null, error: null, walletError: null,
   walletBusy: false, checking: false, marker: null, batchId: null, execution: null, transactionHint: '', step: null });
 const address = (value: string | null): value is string => value !== null && /^0x[0-9a-f]{40}$/i.test(value);
+/** The server's own sentence for a refusal it names (`code: detail`), or null for anything else. */
+function serverDetailV1(error: unknown, codes: RegExp): string | null {
+  const message = error instanceof Error ? error.message : '';
+  const at = message.indexOf(': ');
+  return at > 0 && codes.test(message.slice(0, at)) && message.length > at + 2 ? message.slice(at + 2) : null;
+}
 const readableError = (error: unknown): string => {
   const message = error instanceof Error ? error.message : '';
   if (/authentication_required|wrong_wallet/.test(message)) return 'Sign in and connect the wallet this review was prepared for.';
@@ -74,6 +80,8 @@ export interface LendingReviewConsoleModelV1 {
   transactionHint?: string;
   onTransactionHint?: (value: string) => void;
   onFindTransaction?: (() => void) | null;
+  /** A loan in steps left part way: stop it after the steps that landed (the server checks Base first). */
+  onStop?: (() => void) | null;
   /** A loan in steps, while it is being sent. */
   step?: LendingStepProgressV1 | null;
   /** The page that asked this review, offered when it is refused or cannot be read. */
@@ -172,9 +180,29 @@ export function useLendingReviewConsoleV1(input: {
       const checked = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}`), executionId);
       if (!checked) throw new Error('lending_execution_unreadable');
       update({ execution: checked });
-    } catch { update({ walletError: 'The transaction could not be verified. No new wallet request was made; this review remains locked.' }); }
+    } catch (error) {
+      // A stopped loan in steps is not locked by a hash that is not its next step; the server says so.
+      update({ walletError: serverDetailV1(error, /^(?:loan_step_not_matched|lending_market_held)$/) ?? 'The transaction could not be verified. No new wallet request was made; this review remains locked.' });
+    }
     finally { update({ checking: false }); }
   }, [active.checking, active.transactionHint, eligible, executionId, identity, request, update]);
+
+  // Stopped here only when Base shows the wallet sent nothing after the last landed step; the server says why not.
+  const onStop = useCallback(async () => {
+    if (!eligible || !executionId || active.checking || active.walletBusy || current.current !== identity) return;
+    update({ checking: true, walletError: null });
+    try {
+      const stopped = parseLendingExecutionWireV1(await request(`${ROOT}/executions/${encodeURIComponent(executionId)}/stop`, {
+        method: 'POST', body: JSON.stringify({}),
+      }), executionId);
+      if (!stopped) throw new Error('lending_execution_unreadable');
+      update({ execution: stopped });
+    } catch (error) {
+      update({ walletError: serverDetailV1(error, /^(?:lending_attempt_changed|loan_steps_[a-z_]+|loan_step_[a-z_]+|loan_receipt_[a-z_]+)$/)
+        ?? 'Still could not stop this loan just now. Nothing was changed; check the onchain result.' });
+    }
+    finally { update({ checking: false }); }
+  }, [active.checking, active.walletBusy, eligible, executionId, identity, request, update]);
 
   const onOpen = useCallback(async () => {
     if (!eligible || active.body?.state !== 'ready' || opening.current || active.marker || active.batchId ||
@@ -294,6 +322,8 @@ export function useLendingReviewConsoleV1(input: {
   }, [active, eligible, identity, input, read, request, session, update]);
 
   const locked = Boolean(active.marker || active.batchId || (active.execution && active.execution.state !== 'ready') || active.body?.state === 'refused');
+  // A loan in steps stopped part way still takes a step its wallet sent after all, by that step's hash.
+  const stoppedInSteps = active.execution?.state === 'failed' && active.execution.errorCode === 'loan_steps_stopped' && Boolean(active.execution.steps);
   return { body: eligible ? active.body : null, model: {
     loading: eligible && active.loading, error: !eligible ? 'Sign in and connect the same wallet to read this private review.' : active.error,
     body: eligible ? active.body : null, walletBusy: eligible && active.walletBusy,
@@ -305,7 +335,8 @@ export function useLendingReviewConsoleV1(input: {
     onCheck: eligible && executionId ? () => void onCheck() : null,
     transactionHint: eligible ? active.transactionHint : '',
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,
-    onFindTransaction: eligible && executionId && locked && !['confirmed','failed'].includes(active.execution?.state ?? '') ? () => void onFindTransaction() : null,
+    onFindTransaction: eligible && executionId && locked && (!['confirmed','failed'].includes(active.execution?.state ?? '') || stoppedInSteps) ? () => void onFindTransaction() : null,
+    onStop: eligible && executionId && active.execution?.steps?.stoppable && !active.walletBusy && !active.step ? () => void onStop() : null,
     step: eligible ? active.step : null,
     back: lendingBackLinkV1(input.draft),
   } };

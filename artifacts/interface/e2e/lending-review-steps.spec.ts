@@ -80,3 +80,27 @@ test('an invoice that stopped waiting before the payment leaves the loan in plac
   expect(await sends(page)).toHaveLength(3);
   await expect(page.getByRole('button', { name: /Open step/ })).toHaveCount(0);
 });
+
+// Re-audit R3, 2026-11-04: step 2 landed, its answer never reached Still, and the loan held its market.
+test('a loan left part way is stopped there after a reload, only on the server’s word', async ({ page }) => {
+  const state = await install(page, 'steps');
+  Object.assign(state, { executionState: 'unknown', errorCode: 'loan_steps_incomplete', stepsStanding: { landed: 2, total: 3, stoppable: true }, refusedFacts: stepsReady().facts });
+  state.stopAnswers.push({ status: 409, json: { error: 'loan_steps_later_transaction',
+    detail: 'Your wallet sent another transaction after step 2. Still cannot tell from Base whether it was step 3 of 3, so this loan was not stopped. If it was, paste its hash below.' } });
+  state.stopAnswers.push({ status: 200, json: { executionId: 'execution_1', state: 'failed', transactionHash: `0x${'2'.padStart(64, '0')}`, errorCode: 'loan_steps_stopped',
+    steps: { landed: 2, total: 3, stoppable: false } } });
+  await page.goto('/lending/miorail-lending-v2.steps.fixture');
+  await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
+  await expect(page.getByText('Steps 1–2 of 3 are in place on Base, and Still has not seen step 3 land.')).toBeVisible();
+  await expect(page.getByText(/only then is this loan recorded as stopped after step 2, and Repay works again\./)).toBeVisible();
+  // Refused, the server's own reason is what the page says, and the offer stays.
+  await page.getByRole('button', { name: 'Stop here', exact: true }).click();
+  await expect(page.getByText(/^Your wallet sent another transaction after step 2\. Still cannot tell from Base whether it was step 3 of 3/)).toBeVisible();
+  await page.getByRole('button', { name: 'Stop here', exact: true }).click();
+  await expect(page.getByText(/^Stopped part way: the steps that landed are in place on Base/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Stop here' })).toHaveCount(0);
+  await expect(page.getByText('Your wallet sent step 3 after all?')).toBeVisible();
+  expect(state.order.filter(entry => entry !== 'review')).toEqual(['result', 'stop', 'stop']);
+  expect(await sends(page)).toHaveLength(0);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});

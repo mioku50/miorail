@@ -34,6 +34,8 @@ export interface LendingExecutionWireV1 {
   transactionHash: string | null; errorCode: string | null;
   /** Still Spend: a confirmed loan that paid an invoice offers its owner a card to share. */
   share?: { path: string } | null;
+  /** A loan in steps: how many landed, of how many, and whether its owner can stop it there. */
+  steps?: { landed: number; total: number; stoppable: boolean } | null;
 }
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 const text = (value: unknown): value is string => typeof value === 'string' && value.length > 0 && value.length <= 2000;
@@ -107,8 +109,12 @@ export function parseLendingExecutionWireV1(value: unknown, executionId: string)
   if (!object(value) || value.executionId !== executionId || !id(value.executionId) ||
       !['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed'].includes(String(value.state)) ||
       (value.transactionHash !== null && (typeof value.transactionHash !== 'string' || !/^0x[0-9a-f]{64}$/i.test(value.transactionHash))) ||
-      (value.errorCode !== null && !text(value.errorCode))) return null;
+      (value.errorCode !== null && !text(value.errorCode)) || (value.steps != null && !stepsStanding(value.steps))) return null;
   return value as unknown as LendingExecutionWireV1;
+}
+function stepsStanding(value: unknown): boolean {
+  return object(value) && Number.isSafeInteger(value.landed) && Number.isSafeInteger(value.total) && typeof value.stoppable === 'boolean' &&
+    (value.landed as number) >= 0 && (value.total as number) >= 1 && (value.total as number) <= 16 && (value.landed as number) <= (value.total as number);
 }
 export function lendingExecutionCopyV1(state: LendingExecutionStateV1, errorCode: string | null = null): string {
   // A loan in steps that stopped on purpose is final with what landed, not a revert.

@@ -10,7 +10,7 @@ import { runMorphoBorrowV1 } from '../lib/morphoBorrowRunner.js';
 import { readRepayStandingV1 } from '../lib/stillRepayStanding.js';
 import { readAaveStandingV1 } from '../lib/stillAaveStanding.js';
 import { runAaveLendingV1 } from '../lib/aaveLendingRunner.js';
-import { loanExecutionRuntimeV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
+import { loanExecutionRuntimeV1, type LoanExecutionV1, type LoanOwnerV1 } from '../lib/loanExecutionStore.js';
 import { refreshLoanExecutionV1, loanExecutionWireV1 } from '../lib/loanExecutionStatus.js';
 import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
 import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
@@ -18,7 +18,7 @@ import { verifyLendingEffectsAtReceiptV1 } from '../lib/lendingReceiptEffects.js
 import { stillLimitComparisonV1 } from '../lib/stillLimitComparison.js';
 import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
-import { bindLoanStepV1, recheckLoanStepsV1 } from '../lib/lendingSteps.js';
+import { bindLoanStepV1, LOAN_STEPS_STOPPED_V1, loanStepsStandingV1, nextStoppedStepLandedV1, recheckLoanStepsV1, stopSequentialLoanExecutionV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
 import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
 import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
@@ -214,6 +214,13 @@ function lendingStatusDepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV
 async function settleStoppedStepsV1(store: Awaited<ReturnType<typeof rwaLendingRuntimeV1.store>>, owner: LoanOwnerV1, executionId: string) {
   return refreshLoanExecutionV1({ owner, executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
 }
+/** A loan's result as its owner reads it. A loan in steps says how many landed, and whether it can be stopped there. */
+function executionAnswerV1(record: LoanExecutionV1) {
+  return { ...loanExecutionWireV1(record), facts: record.run.facts,
+    transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode, steps: loanStepsStandingV1(record),
+    // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.
+    share: loanExecutionShareV1(record, rwaLendingRuntimeV1.secret()) };
+}
 
 rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
@@ -265,13 +272,23 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/transaction', async (req, res
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   const body = z.object({ transactionHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }).strict().safeParse(req.body);
   if (!id.safeParse(req.params.id).success || !body.success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  const store = await rwaLendingRuntimeV1.store(), executionId = String(req.params.id);
+  const store = await rwaLendingRuntimeV1.store(), executionId = String(req.params.id), hash = body.data.transactionHash.toLowerCase() as `0x${string}`;
   const record = await store.get({ owner, executionId });
-  if (!record || !['awaiting_wallet','submitted','unknown'].includes(record.state)) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
+  // A loan in steps that was stopped takes back a step the wallet sent after all, and nothing else: the
+  // hash must be exactly its next step, landed, before the stopped loan holds its market again.
+  const stopped = record?.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1;
+  const reopened = stopped ? await nextStoppedStepLandedV1(record, hash, rwaLendingRuntimeV1.reader()) : null;
+  if (stopped && !reopened) {
+    res.status(409).json({ error: 'loan_step_not_matched', detail: 'This transaction is not the next step of this loan, landed on Base, so the stopped loan was left as it is.' }); return;
+  }
+  if (!record || (!reopened && !['awaiting_wallet','submitted','unknown'].includes(record.state))) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
   // A pasted hash is only a lookup hint. The ordinary exact-call, own-operation,
   // protocol-event and receipt-block position verifier is still mandatory.
   const saved = await store.recordVerification({ owner, executionId, expectedVersion: record.version, state: 'unknown',
-    transactionHash: body.data.transactionHash.toLowerCase() as `0x${string}`, proof: null, errorCode: 'loan_transaction_hint_unverified', now: rwaLendingRuntimeV1.now() });
+    transactionHash: hash, proof: null, errorCode: 'loan_transaction_hint_unverified', ...(reopened ? { batchId: reopened.batchId } : {}), now: rwaLendingRuntimeV1.now() });
+  if (!saved && reopened) {
+    res.status(409).json({ error: 'lending_market_held', detail: 'Another loan or repayment in this market was opened after this one stopped, so Still cannot add this step to it until that one is finished.' }); return;
+  }
   if (!saved) { res.status(409).json({ error: 'lending_attempt_changed' }); return; }
   res.json({ ...loanExecutionWireV1(saved), facts: saved.run.facts });
 });
@@ -343,8 +360,15 @@ rwaLendingRouter.get('/rwa/lending/executions/:id', async (req, res) => {
   if (!id.safeParse(req.params.id).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
   const record = await refreshLoanExecutionV1({ owner, executionId: String(req.params.id), refresh: true }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()));
   if (!record) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
-  res.json({ ...loanExecutionWireV1(record), facts: record.run.facts,
-    transactionHash: record.transactionHash, verification: record.verification, errorCode: record.errorCode,
-    // Still Spend: once the loan that paid an invoice is confirmed, its owner gets a card to share.
-    share: loanExecutionShareV1(record, rwaLendingRuntimeV1.secret()) });
+  res.json(executionAnswerV1(record));
+});
+/** A loan in steps left part way: its owner stops it after the steps that landed, once Base shows that the
+ * wallet sent nothing since and has nothing waiting (lendingSteps). It sends and signs nothing. */
+rwaLendingRouter.post('/rwa/lending/executions/:id/stop', async (req, res) => {
+  const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
+  if (!id.safeParse(req.params.id).success || !z.object({}).strict().safeParse(req.body ?? {}).success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
+  const result = await stopSequentialLoanExecutionV1({ owner, executionId: String(req.params.id) }, lendingStatusDepsV1(await rwaLendingRuntimeV1.store()));
+  if (!result) { res.status(404).json({ error: 'lending_execution_not_found' }); return; }
+  if (!result.ok) { res.status(409).json({ error: result.refusal, detail: result.detail }); return; }
+  res.json(executionAnswerV1(result.record));
 });

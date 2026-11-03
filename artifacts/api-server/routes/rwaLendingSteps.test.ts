@@ -32,6 +32,8 @@ const BORROW: ExecutionCallV1 = { index: 2, callType: 'other', to: SPOKE, valueW
 const originals = { borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 } };
 let store: MemoryLoanExecutionStoreV1, chain: { allowance: boolean; supplied: boolean; overLimit: boolean };
 let asked: Array<{ question: LendingQuestionV1; delivery?: string; atLeastBlock?: bigint }>, sent: Map<string, { tx: BaseTransactionSourceV1; receipt: VerifiedReceiptSourceV1 }>;
+// What Base says the wallet has sent, mined and with what the node holds pending.
+let count: { latest: number; pending: number };
 
 /** The runner as the chain stands: in steps, what already landed is not asked again. */
 function review(input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }): LendingRunV1 {
@@ -70,13 +72,14 @@ function app() {
 }
 
 beforeEach(() => {
-  store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; sent = new Map();
+  store = new MemoryLoanExecutionStoreV1(); chain = { allowance: false, supplied: false, overLimit: false }; asked = []; sent = new Map(); count = { latest: 0, pending: 0 };
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => store, secret: () => SECRET, now: () => NOW, stepReadDelayMs: 0,
     runAave: async (input: { question: LendingQuestionV1; delivery?: 'atomic' | 'sequential'; atLeastBlock?: bigint }) => review(input),
     reader: () => ({
       async getTransactionReceipt(h: HashV1) { return sent.get(h)?.receipt ?? null; },
       async getTransaction(h: HashV1) { return sent.get(h)?.tx ?? null; },
+      async getTransactionCount(_address: string, tag: 'latest' | 'pending') { return tag === 'latest' ? count.latest : count.pending; },
     }) });
 });
 afterEach(() => {
@@ -171,6 +174,73 @@ describe('each step is read from the chain, and the review runs again before the
     sent.get(hash(1))!.receipt.status = 'reverted';
     const r = await steps(id, { attemptId, index: 0, transactionHash: hash(1) });
     assert.deepEqual([r.body.state, r.body.refusal], ['stopped', 'loan_step_reverted']);
+  });
+
+  // Re-audit R3, 2026-11-04: a step landed, its answer never reached Still, and the loan held its market.
+  const ROOT = '/api/route-intelligence/rwa/lending/executions';
+  async function lostAnswer() {
+    const { id, attemptId } = await start();
+    land(1, APPROVE, { nonce: 7 });
+    assert.equal((await steps(id, { attemptId, index: 0, transactionHash: hash(1) })).body.state, 'next');
+    // Step 2 lands as the wallet's transaction 8, and its answer never reaches Still.
+    land(2, SUPPLY, { nonce: 8 });
+    assert.equal((await request(app()).post(`${ROOT}/${id}/transaction`).send({ transactionHash: hash(2) })).status, 200);
+    const read = (await request(app()).get(`${ROOT}/${id}`)).body;
+    assert.deepEqual([read.state, read.errorCode, read.steps], ['unknown', 'loan_steps_incomplete', { landed: 2, total: 3, stoppable: true }]);
+    return id;
+  }
+
+  it('a loan whose step answer was lost is stopped there by its owner, and the market arms again', async () => {
+    const id = await lostAnswer();
+    // Another loan in the same market is held off by this one, read again from the chain or not.
+    const link = await draft();
+    const other = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`).query({ delivery: 'sequential' })).body;
+    const arm = () => request(app()).post(`${ROOT}/${other.executionId}/arm`).send({ callsHash: other.callsHash, signingTermsHash: other.signingTermsHash });
+    assert.deepEqual([(await arm()).status, (await arm()).body.error], [409, 'execution_active']);
+    // Base shows a later transaction from the wallet: not stopped, and nothing recorded.
+    count = { latest: 10, pending: 10 };
+    const refused = await request(app()).post(`${ROOT}/${id}/stop`).send({});
+    assert.deepEqual([refused.status, refused.body.error], [409, 'loan_steps_later_transaction']);
+    assert.match(refused.body.detail, /^Your wallet sent another transaction after step 2\./);
+    // Nothing sent after step 2, nothing waiting: stopped after step 2, and the market is free.
+    count = { latest: 9, pending: 9 };
+    const stopped = await request(app()).post(`${ROOT}/${id}/stop`).send({});
+    assert.equal(stopped.status, 200, JSON.stringify(stopped.body));
+    assert.deepEqual([stopped.body.state, stopped.body.errorCode, stopped.body.transactionHash, stopped.body.steps], ['failed', 'loan_steps_stopped', hash(2), { landed: 2, total: 3, stoppable: false }]);
+    assert.equal((await arm()).status, 200);
+    // The stop only read: no review ran for it, only the one before step 2.
+    assert.equal(asked.filter(entry => entry.atLeastBlock !== undefined).length, 1);
+    // Step 3 sent after all, while the other loan holds the market: the stopped one is left as it is, and says why.
+    land(3, BORROW, { nonce: 9 });
+    const held = await request(app()).post(`${ROOT}/${id}/transaction`).send({ transactionHash: hash(3) });
+    assert.deepEqual([held.status, held.body.error], [409, 'lending_market_held']);
+    assert.equal((await request(app()).get(`${ROOT}/${id}`)).body.errorCode, 'loan_steps_stopped');
+  });
+
+  it('a step the wallet sent after the stop is taken back by its hash, and a wrong hash changes nothing', async () => {
+    const id = await lostAnswer();
+    count = { latest: 9, pending: 9 };
+    assert.equal((await request(app()).post(`${ROOT}/${id}/stop`).send({})).status, 200);
+    land(3, BORROW, { nonce: 9 });
+    land(4, APPROVE, { nonce: 10 });
+    const wrong = await request(app()).post(`${ROOT}/${id}/transaction`).send({ transactionHash: hash(4) });
+    assert.deepEqual([wrong.status, wrong.body.error], [409, 'loan_step_not_matched']);
+    assert.equal((await request(app()).get(`${ROOT}/${id}`)).body.errorCode, 'loan_steps_stopped');
+    // Step 3 after all: the loan is read whole again, and confirmed from the effects of all three.
+    Object.assign(rwaLendingRuntimeV1, { verifyEffectPosition: async () => ({ state: 'matched', proof: { operation: 'borrow' } }) });
+    assert.equal((await request(app()).post(`${ROOT}/${id}/transaction`).send({ transactionHash: hash(3) })).status, 200);
+    const read = (await request(app()).get(`${ROOT}/${id}`)).body;
+    assert.deepEqual([read.state, read.transactionHash, read.verification.steps, read.steps], ['confirmed', hash(3), [hash(1), hash(2), hash(3)], { landed: 3, total: 3, stoppable: false }]);
+  });
+
+  it('stop takes no body, knows no loan it does not hold, and is refused for a loan sent as one batch', async () => {
+    const id = await lostAnswer();
+    assert.equal((await request(app()).post(`${ROOT}/${id}/stop`).send({ force: true })).status, 400);
+    assert.equal((await request(app()).post(`${ROOT}/6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34/stop`).send({})).status, 404);
+    const link = await draft();
+    const batch = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${link}`)).body;
+    const refused = await request(app()).post(`${ROOT}/${batch.executionId}/stop`).send({});
+    assert.deepEqual([refused.status, refused.body.error], [409, 'lending_attempt_changed']);
   });
 });
 

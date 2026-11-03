@@ -8,7 +8,8 @@ import type { LendingQuestionV1 } from './lendingDraft.js';
 import type { LendingRunV1 } from './lendingReview.js';
 import type { LoanExecutionStatusDepsV1 } from './loanExecutionStatus.js';
 import { MemoryLoanExecutionStoreV1, type LoanExecutionV1 } from './loanExecutionStore.js';
-import { bindLoanStepV1, recheckLoanStepsV1, refreshSequentialLoanExecutionV1, remainingQuestionV1, sequentialBatchIdV1, sequentialHashesV1 } from './lendingSteps.js';
+import { bindLoanStepV1, loanStepsStandingV1, nextStoppedStepLandedV1, recheckLoanStepsV1, refreshSequentialLoanExecutionV1, remainingQuestionV1, sequentialBatchIdV1,
+  sequentialHashesV1, stopSequentialLoanExecutionV1 } from './lendingSteps.js';
 import { loanReadyFixture, LOAN_OWNER_FIXTURE as OWNER, LOAN_WALLET_FIXTURE as WALLET, LOAN_NOW_FIXTURE as NOW } from './loanExecutionTestFixtures.js';
 
 // A stock loan in steps, made up for these tests: approve, supply, borrow.
@@ -234,5 +235,133 @@ describe('a loan in steps is confirmed from the chain only when every step lande
     const arm = await store.arm({ owner: OWNER, executionId: batch.executionId, callsHash: batch.run.callsHash, signingTermsHash: batch.run.signingTermsHash, now: NOW });
     assert.ok(arm.ok);
     assert.equal(arm.ok && await store.recordStep({ owner: OWNER, executionId: batch.executionId, attemptId: arm.attemptId, index: 0, transactionHash: hash(1), now: NOW }), null);
+  });
+});
+
+describe('a loan in steps left part way is stopped by its owner only when Base shows the wallet sent nothing since (re-audit R3)', () => {
+  // Step n is the wallet's own transaction number 6 + n; `count` is what Base says the wallet has sent so far.
+  type CountV1 = { latest: number | null; pending: number | null } | null;
+  function stopDeps(store: MemoryLoanExecutionStoreV1, count: CountV1, receipts: Map<string, VerifiedReceiptSourceV1>): LoanExecutionStatusDepsV1 {
+    return {
+      store, now: () => NOW, readBatchHashes: async () => null,
+      reader: {
+        async getTransactionReceipt(h) { return receipts.get(h) ?? null; },
+        async getTransaction(h) { const n = Number(BigInt(h)); return n >= 1 && n <= 3 ? tx(n - 1, { nonce: 6 + n }) : n === 4 ? tx(0, { nonce: 10 }) : null; },
+        ...(count ? { async getTransactionCount(_address: string, tag: 'latest' | 'pending') { return tag === 'latest' ? count.latest : count.pending; } } : {}),
+      } as LoanExecutionStatusDepsV1['reader'],
+      verifyEffectPosition: async () => ({ state: 'matched', proof: { operation: 'borrow' } }),
+    };
+  }
+  const receipts = new Map([1, 2, 3, 4].map((n) => [hash(n), receipt(n)] as const));
+  const at = (record: LoanExecutionV1) => ({ owner: OWNER, executionId: record.executionId });
+  async function twoLanded() {
+    const armedLoan = await armed();
+    for (const index of [0, 1]) {
+      assert.ok(await armedLoan.store.recordStep({ owner: OWNER, executionId: armedLoan.record.executionId, attemptId: armedLoan.attemptId, index, transactionHash: hash(index + 1), now: NOW }));
+    }
+    return armedLoan;
+  }
+  const proofOf = (record: LoanExecutionV1) => {
+    const proof = record.verification as { stepsLanded?: number; stoppedAt?: number; stoppedBy?: string; nonceAfter?: number } | null;
+    return [proof?.stepsLanded, proof?.stoppedAt, proof?.stoppedBy, proof?.nonceAfter];
+  };
+
+  it('stops after the steps that landed, keeps them, frees the market, and stays stopped when read again', async () => {
+    const { store, record } = await twoLanded();
+    // Step 2 was recorded and the page never asked for step 3: the loan still waits on its wallet, holding the market.
+    const waiting = (await store.get(at(record)))!;
+    assert.equal(waiting.state, 'awaiting_wallet');
+    assert.deepEqual(loanStepsStandingV1(waiting), { landed: 2, total: 3, stoppable: true });
+    // Step 2 was the wallet's transaction 8; with nothing sent since, it has sent 9 and holds nothing pending.
+    const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
+    assert.ok(result?.ok);
+    const stopped = result.record;
+    assert.deepEqual([stopped.state, stopped.errorCode, stopped.transactionHash, sequentialHashesV1(stopped.batchId!)], ['failed', 'loan_steps_stopped', hash(2), [hash(1), hash(2)]]);
+    assert.deepEqual(proofOf(stopped), [2, 2, 'person', 9]);
+    assert.deepEqual(loanStepsStandingV1(stopped), { landed: 2, total: 3, stoppable: false });
+    // Read again from Base (the page's Check), it stays stopped by its owner; pressed again, it is the same stop.
+    const reread = await refreshSequentialLoanExecutionV1(at(record), stopped, stopDeps(store, null, receipts));
+    assert.deepEqual([reread.state, reread.errorCode, ...proofOf(reread)], ['failed', 'loan_steps_stopped', 2, 2, 'person', 9]);
+    const again = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 12, pending: 12 }, receipts));
+    assert.ok(again?.ok);
+    assert.equal(again.record.version, reread.version);
+    // Repay arms in the same market now.
+    const repay = loanReadyFixture();
+    const ready = await store.putReady({ owner: OWNER, draftId: 'repay-after-person-stop', run: { ...repay, facts: { ...repay.facts, operation: 'repay', venue: 'aave-v4', marketId: SPOKE } }, now: NOW });
+    assert.equal((await store.arm({ owner: OWNER, executionId: ready.executionId, callsHash: ready.run.callsHash, signingTermsHash: ready.run.signingTermsHash, now: NOW })).ok, true);
+  });
+
+  it('refuses while Base shows a later transaction, one waiting, or cannot say, and changes nothing', async () => {
+    const { store, record } = await twoLanded();
+    const before = (await store.get(at(record)))!;
+    const cases: Array<[CountV1, string]> = [
+      [{ latest: 10, pending: 10 }, 'loan_steps_later_transaction'],
+      [{ latest: 9, pending: 10 }, 'loan_steps_transaction_pending'],
+      // A node behind the last step, a count it could not read, a reader that cannot count.
+      [{ latest: 8, pending: 8 }, 'loan_steps_count_unread'],
+      [{ latest: null, pending: 9 }, 'loan_steps_count_unread'],
+      [null, 'loan_steps_count_unread'],
+    ];
+    for (const [count, refusal] of cases) {
+      const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts));
+      assert.deepEqual(result && !result.ok ? result.refusal : 'stopped', refusal);
+    }
+    const later = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 11, pending: 11 }, receipts));
+    assert.equal(later && !later.ok ? later.detail : null,
+      'Your wallet sent another transaction after step 2. Still cannot tell from Base whether it was step 3 of 3, so this loan was not stopped. If it was, paste its hash below.');
+    const after = (await store.get(at(record)))!;
+    assert.deepEqual([after.state, after.version, after.verification], ['awaiting_wallet', before.version, null]);
+  });
+
+  it('stops after a step whose hash was pasted, and keeps that step with the ones Still recorded', async () => {
+    const { store, record, attemptId } = await armed();
+    assert.ok(await store.recordStep({ owner: OWNER, executionId: record.executionId, attemptId, index: 0, transactionHash: hash(1), now: NOW }));
+    // Step 2 landed, and its answer never reached Still (re-audit R3's own case): the person pastes its hash.
+    const sending = (await store.get(at(record)))!;
+    const hinted = await store.recordVerification({ owner: OWNER, executionId: record.executionId, expectedVersion: sending.version, state: 'unknown',
+      transactionHash: hash(2), proof: null, errorCode: 'loan_transaction_hint_unverified', now: NOW });
+    const read = await refreshSequentialLoanExecutionV1(at(record), hinted!, stopDeps(store, null, receipts));
+    assert.deepEqual([read.state, read.errorCode], ['unknown', 'loan_steps_incomplete']);
+    assert.deepEqual(loanStepsStandingV1(read), { landed: 2, total: 3, stoppable: true });
+    const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
+    assert.ok(result?.ok);
+    assert.deepEqual([result.record.transactionHash, sequentialHashesV1(result.record.batchId!)], [hash(2), [hash(1), hash(2)]]);
+  });
+
+  it('refuses a loan with no step recorded, one whose every step landed, a hash that is not its step, and a batch', async () => {
+    const count = { latest: 9, pending: 9 };
+    const refusalOf = async (store: MemoryLoanExecutionStoreV1, record: LoanExecutionV1) => {
+      const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, count, receipts));
+      return result && !result.ok ? result.refusal : result ? 'stopped' : 'missing';
+    };
+    const none = await armed();
+    assert.equal(await refusalOf(none.store, none.record), 'loan_steps_unread');
+    const all = await armed();
+    for (const index of [0, 1, 2]) await all.store.recordStep({ owner: OWNER, executionId: all.record.executionId, attemptId: all.attemptId, index, transactionHash: hash(index + 1), now: NOW });
+    assert.equal(await refusalOf(all.store, all.record), 'loan_steps_complete');
+    const wrong = await armed();
+    await wrong.store.recordStep({ owner: OWNER, executionId: wrong.record.executionId, attemptId: wrong.attemptId, index: 0, transactionHash: hash(1), now: NOW });
+    const sending = (await wrong.store.get(at(wrong.record)))!;
+    await wrong.store.recordVerification({ owner: OWNER, executionId: wrong.record.executionId, expectedVersion: sending.version, state: 'unknown',
+      transactionHash: hash(3), proof: null, errorCode: 'loan_transaction_hint_unverified', now: NOW });
+    assert.equal(await refusalOf(wrong.store, wrong.record), 'loan_step_not_matched');
+    const store = new MemoryLoanExecutionStoreV1();
+    const batch = await store.putReady({ owner: OWNER, draftId: 'batch', run: loanReadyFixture(), now: NOW });
+    assert.equal(await refusalOf(store, batch), 'lending_attempt_changed');
+    assert.equal(await stopSequentialLoanExecutionV1({ owner: OWNER, executionId: '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34' }, stopDeps(store, count, receipts)), null);
+  });
+
+  it('takes back a step the wallet sent after the stop only when it is exactly the next one, landed', async () => {
+    const { store, record } = await twoLanded();
+    const result = await stopSequentialLoanExecutionV1(at(record), stopDeps(store, { latest: 9, pending: 9 }, receipts));
+    assert.ok(result?.ok);
+    const stopped = await refreshSequentialLoanExecutionV1(at(record), result.record, stopDeps(store, null, receipts));
+    const reader = stopDeps(store, null, receipts).reader;
+    assert.deepEqual(await nextStoppedStepLandedV1(stopped, hash(3), reader), { batchId: sequentialBatchIdV1([hash(1), hash(2)]) });
+    // A step already in place, a hash Base does not know, and step 1's call sent again are not step 3.
+    for (const h of [hash(2), hash(9), hash(4)]) assert.equal(await nextStoppedStepLandedV1(stopped, h, reader), null);
+    // A loan that was not stopped has nothing to take back this way.
+    const incomplete = await twoLanded();
+    assert.equal(await nextStoppedStepLandedV1((await incomplete.store.get(at(incomplete.record)))!, hash(3), reader), null);
   });
 });

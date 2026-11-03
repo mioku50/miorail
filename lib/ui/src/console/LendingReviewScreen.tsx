@@ -26,6 +26,10 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   const knownState = model.execution?.state ?? (body.state === 'refused' ? body.executionState : null);
   const inSteps = body.state === 'ready' && body.delivery === 'sequential';
   const blocked = Boolean(model.submissionLock || model.batchId || (knownState && knownState !== 'ready'));
+  // A loan in steps that went part way: what landed, the step Still has not seen, and the step after a stop.
+  const standing = model.execution?.steps ?? null;
+  const inPlace = standing ? standing.landed === 1 ? `Step 1 of ${standing.total} is in place on Base` : `Steps 1–${standing.landed} of ${standing.total} are in place on Base` : '';
+  const stoppedInSteps = standing !== null && knownState === 'failed' && model.execution?.errorCode === 'loan_steps_stopped' && standing.landed < standing.total;
   return (
     <div className="still-section still-lending-review">
       <div className="still-eyebrow">{facts ? facts.venue === 'aave-v4' ? 'Aave V4 · Base' : 'Morpho · Base' : 'Base lending'}</div>
@@ -122,9 +126,18 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onCheck}>
         {model.checking ? 'Checking the onchain result…' : 'Check onchain result'}
       </button> : null}
+      {model.onStop && standing ? <>
+        <p className="still-note" role="status">{inPlace}, and Still has not seen step {standing.landed + 1} land.</p>
+        <p className="still-note">If you will not send step {standing.landed + 1}, stop here. Still first checks on Base that your wallet sent nothing after step {standing.landed} and has
+          nothing waiting; only then is this {repay ? 'repayment' : 'loan'} recorded as stopped after step {standing.landed}, and Repay works again. Do not stop while your wallet
+          still asks you to approve step {standing.landed + 1}.</p>
+        <button type="button" className="still-btn sec" disabled={model.checking || model.walletBusy} onClick={model.onStop}>{model.checking ? 'Checking Base…' : 'Stop here'}</button>
+      </> : null}
       {model.onFindTransaction ? <details className="still-lending-details">
-        <summary>Wallet sent it, but the result is still unknown?</summary>
-        <p className="still-note">Paste the transaction hash from your wallet activity. Still will check that transaction against this exact action; it will not send anything.</p>
+        <summary>{stoppedInSteps ? `Your wallet sent step ${standing.landed + 1} after all?` : 'Wallet sent it, but the result is still unknown?'}</summary>
+        <p className="still-note">{stoppedInSteps
+          ? `Paste its hash from your wallet activity. Still adds it to this ${repay ? 'repayment' : 'loan'} only if it is exactly step ${standing.landed + 1}, landed on Base; it will not send anything.`
+          : 'Paste the transaction hash from your wallet activity. Still will check that transaction against this exact action; it will not send anything.'}</p>
         <label className="still-borrow-label">Transaction hash
           <input className="still-borrow-stock-select mono" type="text" autoComplete="off" spellCheck={false} value={model.transactionHint ?? ''}
             onChange={event => model.onTransactionHint?.(event.target.value)} disabled={model.checking || model.walletBusy} />

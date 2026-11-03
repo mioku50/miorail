@@ -33,8 +33,10 @@ export interface LoanExecutionStoreV1 {
   /** `stopped`: the steps in `batchId` landed and the rest was never sent (declined in the wallet, or refused
    * before it was asked), so what landed decides the result. */
   recordSubmission(input: { owner: LoanOwnerV1; executionId: string; attemptId: string; outcome: 'submitted' | 'unknown' | 'rejected' | 'stopped'; batchId?: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
+  /** `batchId`: a loan in steps stopped by its owner keeps every step read as landed, a pasted hash among
+   * them, as one fallback batch id. */
   recordVerification(input: { owner: LoanOwnerV1; executionId: string; expectedVersion: number; state: 'confirmed' | 'failed' | 'unknown'; transactionHash: HashV1 | null;
-    proof: Record<string, unknown> | null; errorCode: string | null; now: Date }): Promise<LoanExecutionV1 | null>;
+    proof: Record<string, unknown> | null; errorCode: string | null; batchId?: string; now: Date }): Promise<LoanExecutionV1 | null>;
   /** A loan in steps: step `index` landed as `transactionHash`. The hashes so
    * far are kept as one viem fallback batch id; the last step submits it, and
    * `stop` submits what landed when the rest will not be sent. */
@@ -144,6 +146,7 @@ export class MemoryLoanExecutionStoreV1 implements LoanExecutionStoreV1 {
     // Retain the scope lock on unknown, including after a suspected reorg.
     if (input.state === 'unknown' && [...this.rows.values()].some(other => other.executionId !== row.executionId && sameScope(other, row) && active(other.state))) return null;
     row.state = input.state; row.transactionHash = input.transactionHash; row.verification = copy(input.proof); row.errorCode = input.errorCode;
+    if (input.batchId !== undefined) row.batchId = input.batchId;
     row.updatedAt = input.now.toISOString(); row.version++; return copy(row);
   }
   async recordStep(input: Parameters<LoanExecutionStoreV1['recordStep']>[0]): Promise<LoanExecutionV1 | null> {
@@ -174,7 +177,8 @@ function validateSubmission(input: Parameters<LoanExecutionStoreV1['recordSubmis
 function validateVerification(input: Parameters<LoanExecutionStoreV1['recordVerification']>[0]): void {
   if (!['confirmed', 'failed', 'unknown'].includes(input.state) || !Number.isSafeInteger(input.expectedVersion) || input.expectedVersion < 0 ||
       (input.transactionHash !== null && !/^0x[0-9a-f]{64}$/.test(input.transactionHash)) ||
-      (input.state !== 'unknown' && (input.transactionHash === null || input.proof === null))) throw new Error('loan_execution_verification_invalid');
+      (input.state !== 'unknown' && (input.transactionHash === null || input.proof === null)) ||
+      (input.batchId !== undefined && sequentialHashesV1(input.batchId) === null)) throw new Error('loan_execution_verification_invalid');
 }
 function rowFromDb(row: Record<string, unknown>): LoanExecutionV1 {
   return { executionId: String(row.execution_id), tenantId: String(row.tenant_id), walletAddress: String(row.wallet_address), draftId: String(row.draft_id),
@@ -294,7 +298,7 @@ export function createDatabaseLoanExecutionStoreV1(sql: SqlV1): LoanExecutionSto
       try {
         const rows = await sql`UPDATE lending_executions SET state = ${input.state}, transaction_hash = ${input.transactionHash},
           verification_json = ${input.proof === null ? null : JSON.stringify(input.proof)}::text::jsonb, error_code = ${input.errorCode},
-          updated_at = ${input.now.toISOString()}::timestamptz, version = version + 1
+          batch_id = COALESCE(${input.batchId ?? null}::text, batch_id), updated_at = ${input.now.toISOString()}::timestamptz, version = version + 1
           WHERE execution_id = ${input.executionId} AND tenant_id = ${owner.tenantId} AND wallet_address = ${owner.walletAddress}
             AND version = ${input.expectedVersion} AND state <> 'ready' RETURNING *`;
         return rows[0] ? rowFromDb(rows[0]) : null;

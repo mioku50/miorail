@@ -23,11 +23,16 @@ export interface BaseTransactionSourceV1 {
   to: string | null;
   value: bigint;
   input: string;
+  /** The sender's own transaction count when it sent this one; absent when the reader did not say. */
+  nonce?: number;
 }
 
 export interface BaseChainReaderV1 extends BaseReceiptReader {
   /** Null when the transaction cannot be read, never a guess. */
   getTransaction(hash: HashV1): Promise<BaseTransactionSourceV1 | null>;
+  /** How many transactions this address has sent, as of the latest block or with those the node holds
+   * pending; null when it cannot be read. A reader without it is one that cannot say. */
+  getTransactionCount?(address: string, blockTag: 'latest' | 'pending'): Promise<number | null>;
 }
 
 export function createViemBaseReceiptReader(): BaseChainReaderV1 {
@@ -41,7 +46,15 @@ export function createViemBaseReceiptReader(): BaseChainReaderV1 {
           to: transaction.to ? transaction.to.toLowerCase() : null,
           value: transaction.value,
           input: transaction.input.toLowerCase(),
+          nonce: transaction.nonce,
         };
+      } catch {
+        return null;
+      }
+    },
+    async getTransactionCount(address: string, blockTag: 'latest' | 'pending'): Promise<number | null> {
+      try {
+        return await publicClient.getTransactionCount({ address: address as `0x${string}`, blockTag });
       } catch {
         return null;
       }

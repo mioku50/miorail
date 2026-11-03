@@ -27,7 +27,7 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 export const STILL_CARD_LENDING_TOOL_V1 = 'still_card_lending';
 const ROOT_V1 = '/api/route-intelligence';
-const PATH_V1 = /^\/api\/route-intelligence\/rwa\/lending\/(?:review\/[A-Za-z0-9._-]{1,6000}(?:\?delivery=sequential)?|executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:arm|submission|transaction|steps))?)$/;
+const PATH_V1 = /^\/api\/route-intelligence\/rwa\/lending\/(?:review\/[A-Za-z0-9._-]{1,6000}(?:\?delivery=sequential)?|executions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}(?:\/(?:arm|submission|transaction|steps|stop))?)$/;
 
 export const StillCardLendingInputV1Schema = z.object({
   method: z.enum(['GET', 'POST']),
@@ -67,7 +67,7 @@ function routeV1(identity: McpPrivateIdentityV1, method: 'GET' | 'POST', path: s
 
 export async function stillCardLendingV1(identity: McpPrivateIdentityV1, args: z.infer<typeof StillCardLendingInputV1Schema>): Promise<z.infer<typeof StillCardLendingOutputV1Schema>> {
   const wallet = identity.walletAddress.toLowerCase();
-  const writes = /\/(?:arm|submission|transaction|steps)$/.test(args.path);
+  const writes = /\/(?:arm|submission|transaction|steps|stop)$/.test(args.path);
   if ((args.method === 'POST') !== writes) return { status: 400, body: { error: 'lending_request_invalid' }, wallet };
   const answer = await routeV1(identity, args.method, args.path, args.body ?? {});
   const review = answer.body as { state?: unknown; executionId?: unknown; callsHash?: unknown } | null;

@@ -36,7 +36,10 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     'export function AuthProvider({children}) {return children;} export function useAuthGate(){return{showPrivateSurfaces:true,phase:"authenticated",sessionAuthenticated:true};}' }));
   const state = { response: ready() as Record<string, unknown>, reviewReads: 0, order: [] as string[], executionState: 'ready', failRefresh: false, transactionHints: [] as string[],
     stepsResponse: stepsReady() as Record<string, unknown>, stepAnswers: [] as Array<Record<string, unknown>>, reviewQueries: [] as string[],
-    stoppedOnPurpose: false, lastStepHash: null as string | null };
+    stoppedOnPurpose: false, lastStepHash: null as string | null,
+    // A loan in steps left part way, as the server reads it, and its answers to Stop here, in order.
+    stepsStanding: null as Record<string, unknown> | null, errorCode: null as string | null, refusedFacts: ready().facts as Record<string, unknown>,
+    stopAnswers: [] as Array<{ status: number; json: Record<string, unknown> }> };
   await page.route('**/api/**', route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
@@ -46,7 +49,7 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       const steps = new URL(request.url()).searchParams.get('delivery') === 'sequential';
       return route.fulfill({ json: state.executionState === 'ready' ? steps ? state.stepsResponse : state.response : {
         state: 'refused', refusal: 'lending_submission_pending', detail: 'This review has an existing wallet attempt.',
-        executionId: 'execution_1', executionState: state.executionState, facts: ready().facts,
+        executionId: 'execution_1', executionState: state.executionState, facts: state.refusedFacts,
       } });
     }
     if (path.endsWith('/executions/execution_1/arm') && request.method() === 'POST') {
@@ -76,11 +79,19 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
       state.executionState = 'unknown';
       return route.fulfill({ json: { executionId: 'execution_1', state: 'unknown', transactionHash: request.postDataJSON().transactionHash, errorCode: 'loan_transaction_hint_unverified' } });
     }
+    if (path.endsWith('/executions/execution_1/stop') && request.method() === 'POST') {
+      state.order.push('stop');
+      const answer = state.stopAnswers.shift() ?? { status: 503, json: { error: 'fixture_unavailable' } };
+      if (answer.status === 200) {
+        state.executionState = String(answer.json.state); state.errorCode = answer.json.errorCode as string | null; state.stepsStanding = answer.json.steps as Record<string, unknown> | null;
+      }
+      return route.fulfill({ status: answer.status, json: answer.json });
+    }
     if (path.endsWith('/executions/execution_1') && request.method() === 'GET') {
       state.order.push('result');
       return route.fulfill({ json: { executionId: 'execution_1', state: state.executionState,
         transactionHash: state.executionState === 'confirmed' ? `0x${'9'.repeat(64)}` : state.stoppedOnPurpose ? state.lastStepHash : null,
-        errorCode: state.stoppedOnPurpose ? 'loan_steps_stopped' : null } });
+        errorCode: state.errorCode ?? (state.stoppedOnPurpose ? 'loan_steps_stopped' : null), ...(state.stepsStanding ? { steps: state.stepsStanding } : {}) } });
     }
     return route.fulfill({ status: 503, json: { error: 'fixture_unavailable' } });
   });

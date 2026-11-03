@@ -351,6 +351,40 @@ describe('a review granted in steps, for a wallet that cannot send a batch', () 
     const far = (wad: string) => ({ ...ready(), facts: { ...ready().facts, operation: 'borrow' as const, requestedAssets: '180000', maximumDebitAssets: '0', debtBeforeAssets: '3', healthBeforeWad: wad } });
     assert.equal(describeLendingTermsChangesV1(far('2152681126303693684440118'), far('2152681088235212709150883')).includes('health ratio'), false);
   });
+
+  // Re-audit R3, 2026-11-04: a step whose answer was lost left the loan holding its market.
+  it('offers to stop a loan left part way, saying what is in place and what Still checks first', () => {
+    const borrow = { ...stepsBody(), facts: { ...stepsBody().facts, operation: 'borrow' as const, requestedAssets: '180000', maximumDebitAssets: '0' } };
+    const execution = { executionId: 'execution_1', state: 'unknown' as const, transactionHash: null, errorCode: 'loan_steps_incomplete', steps: { landed: 2, total: 3, stoppable: true } };
+    const html = render({ body: borrow, execution, onStop: NOOP });
+    assert.match(html, /Steps 1–2 of 3 are in place on Base, and Still has not seen step 3 land\./);
+    assert.match(html, /If you will not send step 3, stop here\. Still first checks on Base that your wallet sent nothing after step 2 and has nothing waiting; only then is this loan recorded as stopped after step 2, and Repay works again\. Do not stop while your wallet still asks you to approve step 3\./);
+    assert.match(html, />Stop here</);
+    assert.match(render({ body: borrow, execution: { ...execution, steps: { landed: 1, total: 3, stoppable: true } }, onStop: NOOP }), /Step 1 of 3 is in place on Base, and Still has not seen step 2 land\./);
+    // A repayment says so; without the server's offer nothing is shown.
+    assert.match(render({ body: stepsBody(), execution, onStop: NOOP }), /only then is this repayment recorded as stopped after step 2/);
+    assert.doesNotMatch(render({ body: borrow, execution }), /Stop here|has not seen step/);
+  });
+
+  it('a stopped loan in steps takes a step the wallet sent after all, by its hash', () => {
+    const execution = { executionId: 'execution_1', state: 'failed' as const, transactionHash: null, errorCode: 'loan_steps_stopped', steps: { landed: 2, total: 3, stoppable: false } };
+    const html = render({ body: { ...stepsBody(), facts: { ...stepsBody().facts, operation: 'borrow' as const } }, execution, onFindTransaction: NOOP });
+    assert.match(html, /Stopped part way:/);
+    assert.match(html, /Your wallet sent step 3 after all\?/);
+    assert.match(html, /Still adds it to this loan only if it is exactly step 3, landed on Base; it will not send anything\./);
+    assert.doesNotMatch(html, />Stop here</);
+    assert.match(render({ execution: { ...execution, state: 'unknown', errorCode: null, steps: null }, onFindTransaction: NOOP }), /Wallet sent it, but the result is still unknown\?/);
+  });
+
+  it('reads where a loan in steps stands only as the server put it', () => {
+    const base = { executionId: 'execution_1', state: 'unknown', transactionHash: null, errorCode: 'loan_steps_incomplete' };
+    assert.deepEqual(parseLendingExecutionWireV1({ ...base, steps: { landed: 2, total: 3, stoppable: true } }, 'execution_1')?.steps, { landed: 2, total: 3, stoppable: true });
+    assert.equal(parseLendingExecutionWireV1({ ...base, steps: null }, 'execution_1')?.steps, null);
+    for (const steps of [{ landed: 4, total: 3, stoppable: true }, { landed: 1, total: 0, stoppable: false }, { landed: 1.5, total: 3, stoppable: true },
+      { landed: 1, total: 3, stoppable: 'yes' }, { landed: -1, total: 3, stoppable: false }, 'steps']) {
+      assert.equal(parseLendingExecutionWireV1({ ...base, steps }, 'execution_1'), null, JSON.stringify(steps));
+    }
+  });
 });
 
 describe('repay all and take the stock back', () => {

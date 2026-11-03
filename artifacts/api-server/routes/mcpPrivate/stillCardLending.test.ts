@@ -11,7 +11,7 @@ import { MemoryLoanExecutionStoreV1 } from '../../lib/loanExecutionStore.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { mcpAuditRuntime } from './audit.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { stillCardLendingV1 } from './stillCardLending.js';
+import { StillCardLendingInputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
 
 // The card's way to the review it signs: the page's own lending routes, run as
 // the grant's wallet. Every loan, hash and wallet here is synthetic.
@@ -75,6 +75,12 @@ test('another wallet’s draft is refused by the same check, a write must be a P
   assert.equal(theirs.status, 403);
   const wrongMethod = await stillCardLendingV1(IDENTITY, { method: 'GET', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/arm` });
   assert.deepEqual([wrongMethod.status, (wrongMethod.body as { error: string }).error], [400, 'lending_request_invalid']);
+  // Stopping a loan in steps where it stands is a write too, and reaches the page's own route.
+  assert.equal(StillCardLendingInputV1Schema.safeParse({ method: 'POST', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/stop`, body: {} }).success, true);
+  const readStop = await stillCardLendingV1(IDENTITY, { method: 'GET', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/stop` });
+  assert.equal(readStop.status, 400);
+  const stop = await stillCardLendingV1(IDENTITY, { method: 'POST', path: `${ROOT}/executions/0b8f4a51-5d0a-4c55-9d4e-0a6a3f3e2c11/stop`, body: {} });
+  assert.deepEqual([stop.status, (stop.body as { error: string }).error], [404, 'lending_execution_not_found']);
   const withheld = await stillCardLendingV1(IDENTITY, { method: 'GET', path: `${ROOT}/review/${draft()}` });
   assert.equal(withheld.status, 503);
   assert.ok(!JSON.stringify(withheld.body).includes('0x12345678'), 'no calls leave without their audit row');
