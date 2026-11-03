@@ -11,7 +11,7 @@ async function install(page: Page, signedIn = true) {
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
     `export function AuthProvider({children}) {return children;} export function useAuthGate(){return{showPrivateSurfaces:${signedIn},phase:'${signedIn ? 'authenticated' : 'anonymous'}',sessionAuthenticated:${signedIn}};}` }));
-  const state = { reads: [] as string[], intents: [] as Record<string, unknown>[], wrongToken: false, zeroDebt: false, noDeposit: false };
+  const state = { reads: [] as string[], intents: [] as Record<string, unknown>[], wrongToken: false, zeroDebt: false, noDeposit: false, debt: '3125001', wallet: '4500000' };
   await page.route('**/api/**', route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } : null } });
@@ -21,7 +21,7 @@ async function install(page: Page, signedIn = true) {
       const stock = STOCKS.find(s => s.token.toLowerCase() === token);
       return route.fulfill({ json: { state: 'read', read: { venue: stock ? 'aave-v4' : 'morpho', marketId: stock ? '0x17905db0e4a3514467539956c084180616ae7b8d' : CRYPTO[0]!.morphoMarket,
         collateralTokenAddress: state.wrongToken ? WALLET : token, collateralSymbol: stock?.id ?? 'cbBTC', collateralDecimals: 8,
-        debtAtomic: state.zeroDebt ? '0' : '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000, collateralAtomic: state.noDeposit ? '0' : '3014121' } } });
+        debtAtomic: state.zeroDebt ? '0' : state.debt, walletUsdcAtomic: state.wallet, blockNumber: 53_200_000, collateralAtomic: state.noDeposit ? '0' : '3014121' } } });
     }
     if (path.endsWith('/rwa/repay/intent') && request.method() === 'POST') {
       state.intents.push(request.postDataJSON());
@@ -92,6 +92,21 @@ test('a stock loan is repaid in full and its stock taken back in one review; wit
   await page.getByRole('button', { name: 'Take back cbBTC', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(3);
   expect(state.intents[2]).toEqual({ collateralTokenAddress: CBBTC, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
 });
+test('Repay all from a wallet short of the debt by interest says so by the button and asks nothing of the server', async ({ page }) => {
+  // 2026-11-03, in Farcaster: the 2 USDC borrowed was in the wallet, the debt was 2.000003 eleven minutes later.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await install(page); state.debt = '2000003'; state.wallet = '2000000';
+  await page.goto('/repay?asset=NVDAc');
+  await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await page.getByRole('button', { name: 'Repay all, take back NVDAc', exact: true }).click();
+  await page.getByLabel('Maximum USDC funding', { exact: true }).fill('2');
+  const why = page.getByText(/^This wallet holds 2 USDC and the debt is 2\.000003 USDC now, 0\.000003 USDC short\./);
+  await expect(why).toBeVisible();
+  await expect(why).toContainText('for example 0.02 USDC, then read the position again.');
+  await expect(page.getByRole('button', { name: 'Review repayment', exact: true })).toBeDisabled();
+  expect(state.intents).toEqual([]);
+});
+
 test('wrong token reading never turns into a usable balance or repayment question', async ({ page }) => {
   const state = await install(page); state.wrongToken = true; await page.goto('/repay?asset=cbBTC');
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();

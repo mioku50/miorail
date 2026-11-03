@@ -4,7 +4,7 @@ import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
 import { walletCannotSendSentenceV1, walletDidNotSendV1 } from './walletBatchSupport';
-import { describeLendingTermsChangesV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
+import { describeLendingTermsChangesV1, lendingBackLinkV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
   type LendingExecutionWireV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
 const ROOT = '/api/route-intelligence/rwa/lending';
@@ -67,6 +67,8 @@ export interface LendingReviewConsoleModelV1 {
   onFindTransaction?: (() => void) | null;
   /** A loan in steps, while it is being sent. */
   step?: LendingStepProgressV1 | null;
+  /** The page that asked this review, offered when it is refused or cannot be read. */
+  back?: { href: string; label: string } | null;
 }
 
 /** One signed-in session and one connected wallet own this hook's state.
@@ -295,5 +297,6 @@ export function useLendingReviewConsoleV1(input: {
     onTransactionHint: eligible ? value => update({ transactionHint: value }) : undefined,
     onFindTransaction: eligible && executionId && locked && !['confirmed','failed'].includes(active.execution?.state ?? '') ? () => void onFindTransaction() : null,
     step: eligible ? active.step : null,
+    back: lendingBackLinkV1(input.draft),
   } };
 }

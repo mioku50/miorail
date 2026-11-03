@@ -3,10 +3,10 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
-import { describeLendingTermsChangesV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
+import { describeLendingTermsChangesV1, lendingBackLinkV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
-import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1 } from '../src/console/repayEntry';
+import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1, repayTopUpAtomicV1 } from '../src/console/repayEntry';
 
 void React;
 const NOOP = () => {};
@@ -365,12 +365,38 @@ describe('repay all and take the stock back', () => {
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: capacity })} />), /take back/i);
     assert.match(html, /Deposited in Aave V4/);
   });
-  it('says plainly when the wallet holds less USDC than the debt, before any amount is asked', () => {
+  it('says plainly when the wallet holds less USDC than the debt, by the button it disables', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, walletUsdcAtomic: '0' }, canReturn: true, mode: 'return' })} />);
-    assert.match(html, /This wallet holds 0 USDC on Base, and the debt is 0\.18003 USDC\./);
-    assert.match(html, /A loan is repaid in USDC from this wallet: add at least the debt/);
+    assert.match(html, /This wallet holds 0 USDC and the debt is 0\.18003 USDC now, 0\.18003 USDC short\..*for example 0\.2 USDC, then read the position again\.<\/p><button type="submit" class="still-btn" disabled="">Review repayment/);
+    // 2026-11-03: a wallet holding the 2 USDC it borrowed owed 2.000003 eleven minutes later.
+    const dust = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, walletUsdcAtomic: '2000000', debtAtomic: '2000003' }, canReturn: true, mode: 'return', maximum: '2' })} />);
+    assert.match(dust, /This wallet holds 2 USDC and the debt is 2\.000003 USDC now, 0\.000003 USDC short\..*for example 0\.02 USDC/);
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000000' }), BigInt(20_000));
+    assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000003' }), null);
+    // A maximum below the debt is refused before any review, with both numbers.
+    assert.match(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '2', walletUsdcAtomic: '2500000', debtAtomic: '2000003' }).error!,
+      /^The debt is 2\.000003 USDC now, more than this maximum of 2 USDC: interest adds to it every second\./);
+    assert.match(repayIntentAmountsV1({ mode: 'all', amount: '', maximum: '2', walletUsdcAtomic: '2000000', debtAtomic: '2000003' }).error!, /0\.000003 USDC short/);
+    // An exact repayment can be smaller than the debt: said at the top, and not blocked.
+    const exact = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, walletUsdcAtomic: '0' }, canReturn: true, mode: 'assets', amount: '0.1' })} />);
+    assert.match(exact, /This wallet holds 0 USDC on Base, and the debt is 0\.18003 USDC\..*An exact repayment can be smaller than the debt\./);
+    assert.doesNotMatch(exact, /disabled="">Review repayment/);
+    // A review that could not be prepared is said by the button, not above the fold.
+    const refused = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: stock, canReturn: true, mode: 'return', maximum: '0.1', error: 'The debt is 0.18003 USDC now.' })} />);
+    assert.match(refused, /<p class="still-warn" role="alert">The debt is 0\.18003 USDC now\.<\/p><button type="submit"/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: stock, canReturn: true, mode: 'return' })} />), /This wallet holds/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, debtAtomic: '0', walletUsdcAtomic: '0' }, canReturn: true })} />), /This wallet holds/);
+  });
+  it('a refused review says why and offers the page that asked it', () => {
+    const link = (claims: unknown) => `miorail-lending-v1.${Buffer.from(JSON.stringify(claims)).toString('base64url')}.${'s'.repeat(43)}`;
+    assert.deepEqual(lendingBackLinkV1(link({ question: { operation: 'repay', collateralTokenAddress: NVDAC.token.toLowerCase() } })), { href: `/repay?token=${NVDAC.token.toLowerCase()}`, label: 'Back to Repay' });
+    assert.deepEqual(lendingBackLinkV1(link({ question: { operation: 'borrow' } })), { href: '/borrow', label: 'Back to Get money' });
+    assert.equal(lendingBackLinkV1('not a review link'), null);
+    assert.equal(lendingBackLinkV1(null), null);
+    const detail = 'The debt is 2.000003 USDC now, more than your maximum of 2 USDC: interest adds to it every second.';
+    const html = render({ body: { state: 'refused', refusal: 'repay_maximum_exceeded', detail }, back: { href: '/repay?token=0xabc', label: 'Back to Repay' } });
+    assert.match(html, /The debt is 2\.000003 USDC now[^<]*<\/p><a class="still-btn sec" href="\/repay\?token=0xabc">Back to Repay<\/a>/);
+    assert.match(render({ error: 'This review link expired.', back: { href: '/borrow', label: 'Back to Get money' } }), /This review link expired\.<\/p><a class="still-btn sec" href="\/borrow">Back to Get money<\/a>/);
   });
   it('with no debt left offers the stock back alone, asking for no USDC', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, debtAtomic: '0' }, canReturn: true })} />);

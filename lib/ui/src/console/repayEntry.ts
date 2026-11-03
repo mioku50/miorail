@@ -1,5 +1,6 @@
 import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { parseBorrowDecimalV1 } from '../still/borrowIntent';
+import { tokenDecimalV1 } from './stockSellAmount';
 
 export const REPAY_COLLATERALS_V1 = [
   ...CRYPTO.map(asset => ({ id: asset.id === 'ETH' ? 'WETH' : asset.id, symbol: asset.id === 'ETH' ? 'WETH' : asset.id,
@@ -46,6 +47,14 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
   const exact = parseBorrowDecimalV1(input.mode === 'assets' ? input.amount : input.maximum, 6);
   if (exact.atomic === null) return { intent: null, error: exact.error };
   if (!atomic(input.walletUsdcAtomic)) return { intent: null, error: 'The wallet USDC balance has not been read.' };
+  // Repay all closes the loan, so its bound must cover the debt the wallet holds the USDC for.
+  if (input.mode !== 'assets' && input.debtAtomic !== undefined && atomic(input.debtAtomic) && BigInt(input.debtAtomic) > BigInt(0)) {
+    const short = repayShortTextV1({ debtAtomic: input.debtAtomic, walletUsdcAtomic: input.walletUsdcAtomic });
+    if (short) return { intent: null, error: short };
+    if (BigInt(exact.atomic) < BigInt(input.debtAtomic)) {
+      return { intent: null, error: `The debt is ${usdcTextV1(input.debtAtomic)} now, more than this maximum of ${usdcTextV1(exact.atomic)}: interest adds to it every second. Set the maximum to at least the debt; what is not needed stays in your wallet.` };
+    }
+  }
   if (BigInt(exact.atomic) > BigInt(input.walletUsdcAtomic)) return { intent: null, error: 'The chosen USDC funding exceeds the balance read for this wallet.' };
   return { intent: { amountMode: input.mode === 'assets' ? 'assets' : 'all', repayAmountAtomic: input.mode === 'assets' ? exact.atomic : null, maximumUsdcAtomic: exact.atomic,
     ...(input.mode === 'return' ? { returnCollateral: true as const } : {}) }, error: null };
@@ -58,5 +67,24 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
 export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>, mode: RepayModeV1): string {
   const wallet = BigInt(read.walletUsdcAtomic), debt = BigInt(read.debtAtomic);
   return (mode !== 'assets' || wallet < debt ? wallet : debt).toString();
+}
+
+const usdcTextV1 = (atomicUsdc: string | bigint) => `${tokenDecimalV1(atomicUsdc.toString(), 6)} USDC`;
+
+/** What a wallet short of its debt adds before Repay all: the shortfall rounded up to the
+ * cent, and one cent more for the interest that keeps accruing until it is signed. */
+export function repayTopUpAtomicV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>): bigint | null {
+  const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic), cent = BigInt(10_000);
+  return short > BigInt(0) ? ((short + cent - BigInt(1)) / cent) * cent + cent : null;
+}
+
+/** Why Repay all cannot be prepared from this wallet yet, in its own numbers (2026-11-03: a
+ * wallet holding the 2 USDC it borrowed owed 2.000003 eleven minutes later). */
+export function repayShortTextV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>): string | null {
+  const add = repayTopUpAtomicV1(read);
+  if (add === null) return null;
+  const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
+  return `This wallet holds ${usdcTextV1(read.walletUsdcAtomic)} and the debt is ${usdcTextV1(read.debtAtomic)} now, ${usdcTextV1(short)} short. `
+    + `Interest adds to the debt every second, so add a little more than that, for example ${usdcTextV1(add)}, then read the position again.`;
 }
 

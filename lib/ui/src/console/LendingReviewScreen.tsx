@@ -10,7 +10,8 @@ export { formatLendingHealthRatioV1 };
  * server; the screen formats exact decimals and never recalculates risk. */
 export function LendingReviewScreen({ model }: { model: LendingReviewConsoleModelV1 }) {
   if (model.loading) return <p className="still-section still-note" role="status">Reading the position and simulating the exact calls…</p>;
-  if (model.error) return <p className="still-section still-warn" role="alert">{model.error}</p>;
+  const backLink = model.back ? <a className="still-btn sec" href={model.back.href}>{model.back.label}</a> : null;
+  if (model.error) return <div className="still-section"><p className="still-warn" role="alert">{model.error}</p>{backLink}</div>;
   if (!model.body) return <p className="still-section still-note">There is no lending review to display.</p>;
   const body = model.body, facts = body.facts;
   const repay = facts?.operation === 'repay';
@@ -30,7 +31,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
       <div className="still-eyebrow">{facts ? facts.venue === 'aave-v4' ? 'Aave V4 · Base' : 'Morpho · Base' : 'Base lending'}</div>
       <h1>{title}</h1>
       <p className="still-sub">Read the measured terms before anything is signed.</p>
-      {body.state === 'refused' ? <p className="still-warn" role="alert">{body.detail}</p> : null}
+      {body.state === 'refused' ? <><p className="still-warn" role="alert">{body.detail}</p>{backLink}</> : null}
       {facts ? <>
         <p className="still-note mono" style={{ overflowWrap: 'anywhere' }}>{facts.marketId}</p>
         {facts.nativeFunding ? <div className="still-card">

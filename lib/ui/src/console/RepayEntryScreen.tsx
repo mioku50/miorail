@@ -1,7 +1,7 @@
 import React, { useEffect, useId, useRef, useState } from 'react';
 import { lendingRequestV1 } from '@mioagent/api-client-react';
 import { tokenDecimalV1 } from './stockSellAmount';
-import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayIntentAmountsV1, repayMaxV1, type RepayCapacityWireV1, type RepayModeV1 } from './repayEntry';
+import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayIntentAmountsV1, repayMaxV1, repayShortTextV1, type RepayCapacityWireV1, type RepayModeV1 } from './repayEntry';
 
 void React;
 
@@ -94,10 +94,14 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
   const deposit = model.read?.collateralAtomic !== undefined ? `${tokenDecimalV1(model.read.collateralAtomic, model.read.collateralDecimals)} ${model.read.collateralSymbol}` : null;
   // A loan is repaid in USDC from this wallet: say so before a field asks for an amount it cannot cover.
   const short = model.read !== null && BigInt(model.read.walletUsdcAtomic) < BigInt(model.read.debtAtomic);
+  // Repay all cannot be prepared short of the debt: the reason sits by the button it disables.
+  const shortForAll = model.read && model.mode !== 'assets' ? repayShortTextV1(model.read) : null;
+  // A review that could not be prepared is said where the person pressed, not above the fold.
+  const errorAtForm = model.error !== null && model.read !== null && model.read.debtAtomic !== '0';
   return <div className="still-borrow">
     <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC, or repay all of a loan and take its collateral back to your wallet.</p></div>
     {!model.signedIn ? <section className="still-section still-card"><p className="still-sub">Sign in to read your repayment position.</p><a className="still-btn" href={model.signInHref}>Sign in</a></section> : <>
-      {model.error ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
+      {model.error && !errorAtForm ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
       <div className="still-borrow-grid">
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-position-title`}>
           <h2 id={`${id}-position-title`}>Read your position.</h2>
@@ -126,7 +130,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
             <p className="still-note">No debt is open in this market. Your {deposit} is still deposited in {venue}, and it can come back to your wallet now, with no USDC.</p>
             <button type="button" className="still-btn" disabled={busy} onClick={model.onTakeBack}>{model.preparing ? 'Preparing review…' : `Take back ${symbol}`}</button>
           </> : <p className="still-note">No debt was recorded in this market at the reading block.</p> : <>
-          {short && model.read ? <p className="still-warn" role="note">
+          {short && model.read && model.mode === 'assets' ? <p className="still-warn" role="note">
             This wallet holds {tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC on Base, and the debt is {tokenDecimalV1(model.read.debtAtomic, 6)} USDC.
             A loan is repaid in USDC from this wallet: add at least the debt, and a little more for the interest that keeps accruing, then read the position again.
             {model.mode === 'assets' ? ' An exact repayment can be smaller than the debt.' : null}
@@ -150,7 +154,9 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
                 ? 'This exact amount is also your maximum USDC debit. Amounts are never rounded.'
                 : `Enter your own maximum. Interest can change the exact debt. The contract cannot spend more than this bound; unused funding is returned or stays in your wallet.${
                   model.mode === 'return' ? ` Then your ${deposit ?? symbol} comes back to this wallet in the same review.` : ''}`}</p>
-              <button type="submit" className="still-btn" disabled={!model.read || busy || !(model.mode === 'assets' ? model.amount : model.maximum).trim()}>{model.preparing ? 'Preparing review…' : 'Review repayment'}</button>
+              {shortForAll ? <p className="still-warn" role="note">{shortForAll}</p> : null}
+              {errorAtForm && model.error !== shortForAll ? <p className="still-warn" role="alert">{model.error}</p> : null}
+              <button type="submit" className="still-btn" disabled={!model.read || busy || shortForAll !== null || !(model.mode === 'assets' ? model.amount : model.maximum).trim()}>{model.preparing ? 'Preparing review…' : 'Review repayment'}</button>
             </fieldset>
           </form></>}
           <p className="still-note">The review checks the exact position again and simulates the calls. Only your wallet can approve the repayment.</p>

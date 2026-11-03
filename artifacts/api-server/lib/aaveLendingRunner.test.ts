@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { usdcWordsV1 } from './repayWords.js';
 import { describe, it } from 'node:test';
 import { stableHashV1 } from '@mioagent/route-domain';
 import type { SimulationProvider, SimulationProviderResponseV1 } from '@mioagent/paid-intelligence';
@@ -282,6 +283,23 @@ describe('Aave runner plans the same action in steps for a wallet that cannot se
 });
 
 describe('Aave runner: repay all, then take the stock back', () => {
+  it('a maximum below the debt, or above the wallet’s USDC, is refused in the wallet’s own numbers', async () => {
+    const h = await returning();
+    const below = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: { ...h.q, maximumAssets: (h.s.debtAssets - 1n).toString() } }, h.deps);
+    assert.equal(below.state, 'refused');
+    if (below.state === 'refused') {
+      assert.equal(below.refusal, 'repay_maximum_exceeded');
+      assert.ok(below.detail.startsWith(`The debt is ${usdcWordsV1(h.s.debtAssets)} now, more than your maximum of ${usdcWordsV1(h.s.debtAssets - 1n)}: interest adds to it every second.`), below.detail);
+    }
+    const short = { ...h.s, walletUsdcAssets: h.s.debtAssets - 3n };
+    const funding = await runAaveLendingV1({ walletAddress: AAVE_TEST_WALLET, question: h.q }, { ...h.deps, read: async () => ({ state: 'read' as const, standing: short }) });
+    assert.equal(funding.state, 'refused');
+    if (funding.state === 'refused') {
+      assert.equal(funding.refusal, 'aave_funding_insufficient');
+      assert.match(funding.detail, /^This wallet holds [\d.]+ USDC, less than your maximum of 20 USDC\. The debt is [\d.]+ USDC, 0\.000003 USDC more than the wallet holds/);
+    }
+    assert.equal(h.simulations(), 0);
+  });
   async function returning(debt = true, change?: (body: SimulationProviderResponseV1) => void, delivery?: 'sequential') {
     const s = await aaveStandingFixture('repay', debt ? aaveReadFixture() : aaveRepaidReadFixture());
     const maximum = debt ? BigInt(20_000_000) : ZERO, stock = s.selectedStock!;

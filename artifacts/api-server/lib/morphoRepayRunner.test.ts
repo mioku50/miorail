@@ -46,6 +46,15 @@ function harness(all = false, mutate?: (body: SimulationProviderResponseV1) => v
     deps: { read: async () => ({ state: 'read' as const, readAt: now.toISOString(), standing: s }), chain: { providers: [provider], batchCapableIds: new Set(['repay-fixture']) }, now: () => now }, simulated: () => simulated };
 }
 describe('canonical repayment runner proves the actual debt reduction', () => {
+  it('a full repayment whose maximum is below the debt is refused with both numbers', async () => {
+    const h = harness(true), r = await runMorphoRepayV1({ ...h.request, maximumAssets: 1n }, h.deps);
+    assert.equal(r.state, 'refused');
+    if (r.state === 'refused') {
+      assert.equal(r.refusal, 'repay_maximum_exceeded');
+      assert.match(r.detail, /^The debt is [\d.]+ USDC now, more than your maximum of 0\.000001 USDC: interest adds to it every second\./);
+    }
+    assert.equal(h.simulated(), 0);
+  });
   it('accepts exact assets and full shares with an atomic bounded funding/refund', async () => {
     for (const all of [false, true]) {
       const h = harness(all), r = await runMorphoRepayV1(h.request, h.deps);

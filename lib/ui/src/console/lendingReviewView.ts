@@ -212,3 +212,26 @@ export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next
   const detail = changes.length > 0 ? ` (${changes.join('; ')})` : '';
   return `The terms changed${detail}. Read the updated review, then open your wallet again to accept these exact terms.`;
 }
+
+/**
+ * Where a refused or unreadable review sends the person: the page that asked
+ * it. Read from the link's own question and trusted for nothing else; it only
+ * picks a page (2026-11-03: a refusal in Farcaster left one red line and no
+ * way on).
+ */
+export function lendingBackLinkV1(draft: string | null | undefined): { href: string; label: string } | null {
+  const body = typeof draft === 'string' ? draft.split('.')[1] : undefined;
+  if (!body || !/^[A-Za-z0-9_-]+$/.test(body) || typeof atob !== 'function') return null;
+  try {
+    const question = (JSON.parse(atob(body.replace(/-/g, '+').replace(/_/g, '/'))) as { question?: { operation?: unknown; collateralTokenAddress?: unknown } }).question;
+    if (question?.operation === 'repay') {
+      const token = typeof question.collateralTokenAddress === 'string' && /^0x[0-9a-f]{40}$/.test(question.collateralTokenAddress) ? question.collateralTokenAddress : null;
+      return { href: token ? `/repay?token=${token}` : '/repay', label: 'Back to Repay' };
+    }
+    if (question?.operation === 'borrow') return { href: '/borrow', label: 'Back to Get money' };
+  } catch {
+    // Not a link this page can read: no way back is offered, and nothing else depends on it.
+  }
+  return null;
+}
+

@@ -1,5 +1,6 @@
 import { hashApprovedCallsV1, stableHashV1, type ExecutionCallV1 } from '@mioagent/route-domain';
 import { MORPHO_BLUE_BASE_V1, buildMorphoRepayPlanV1, morphoWithdrawCollateralCallV1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { toAssetsUpV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { morphoRepayProjectionV1, type MorphoRepayAmountV1 } from '@mioagent/rwa-issuer/morphoRepayMath';
 import { ADDRESSES } from '@mioagent/still-engine/registry';
 import type { SimulationProviderRequestV1 } from '@mioagent/paid-intelligence';
@@ -7,6 +8,7 @@ import { readRepayStandingV1, STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepaySt
 import { buildMorphoRepayProbesV1, verifyMorphoRepayPoststateV1 } from './morphoRepayPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
+import { repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
 
 export interface MorphoRepayRequestV1 {
   collateralTokenAddress: string;
@@ -49,11 +51,16 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
   let steps: Array<{ index: number; to: string; reading: string }> = [];
   let deadline: bigint | null = null;
   if (repaying) {
-    const projected = morphoRepayProjectionV1({ totals: { ...s.storedTotals, ...s.accruedTotals }, position: s.position,
-      amount, maximumAssets: request.maximumAssets });
+    const totals = { ...s.storedTotals, ...s.accruedTotals };
+    const projected = morphoRepayProjectionV1({ totals, position: s.position, amount, maximumAssets: request.maximumAssets });
+    // The debt as the contract rounds it against the borrower, for the words only.
+    const debt = toAssetsUpV1(s.position.borrowShares, totals.totalBorrowAssets, totals.totalBorrowShares);
     if (!projected.ok) return fail(projected.refusal, projected.refusal === 'nothing_to_repay'
-      ? 'No debt shares were recorded in this market at the reading block.' : 'The exact repayment and maximum USDC budget could not be established.');
-    if (s.walletLoanAssets < encodedMaximum) return fail('repay_usdc_insufficient', 'Your USDC balance is below the maximum this repayment must fund before any refund.');
+      ? 'No debt shares were recorded in this market at the reading block.'
+      : projected.refusal === 'repay_maximum_exceeded' && amount.mode === 'all'
+        ? repayMaximumBelowDebtWordsV1({ debt, maximum: request.maximumAssets, wallet: s.walletLoanAssets })
+        : 'The exact repayment and maximum USDC budget could not be established.');
+    if (s.walletLoanAssets < encodedMaximum) return fail('repay_usdc_insufficient', repayWalletBelowMaximumWordsV1({ debt, maximum: encodedMaximum, wallet: s.walletLoanAssets }));
     const planned = buildMorphoRepayPlanV1({ marketId: s.marketId, walletAddress: s.walletAddress, marketParams: s.params,
       amount, maximumAssets: request.maximumAssets, runtimeCodeHash: s.blueBundlesRuntimeHash, now: now(), returnsCollateralAfter: returning });
     if (!planned.ok) return fail(planned.refusal, planned.detail ?? 'The canonical repayment calls were refused.');
