@@ -83,9 +83,9 @@ test('five tools under Still’s own name, every one a read, and instructions th
   assert.match(instructions, /miorail_prepare_still_purchase opens the invoice they chose/);
 });
 
-// While stills.lat does not resolve (since 2026-11-02) Still's links go to
-// miorail.xyz. What this server tells an assistant names that same door, so an
-// assistant never sends someone to the dark one.
+// Still's links go to its one address, miorail.xyz since 2026-11-03. What this
+// server tells an assistant names that same door, not the one that only leads
+// there.
 test('the instructions and every tool name the host Still’s links use', async (t) => {
   fixture(t, { check: async () => assert.fail('listing reads no wallet') });
   const client = await connected(t);

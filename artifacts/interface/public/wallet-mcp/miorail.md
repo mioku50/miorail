@@ -3,7 +3,7 @@ title: "Miorail Plugin"
 description: "Still terms, wallet readings and loan, purchase and repayment reviews via Miorail MCP; stock actions → send_calls."
 tags: [tokenized-stocks, trading, swap, discovery, borrowing]
 name: miorail
-version: 0.3.1
+version: 0.3.2
 integration: external-mcp
 chains: [base]
 requires:
@@ -68,7 +68,7 @@ codex mcp add miorail --url https://miorail.xyz/mcp/private
 
 **Grok:** open grok.com/connectors, choose New Connector → Custom, and paste `https://miorail.xyz/mcp/private`.
 
-**Public readings, without signing in:** use `https://miorail.xyz/mcp` instead. It carries Still's terms and the public stock reads, but no wallet-bound tool. Still's own MCP, `https://stills.lat/mcp/still`, needs no sign-in either: the terms, any wallet's check, what-ifs and the Spend reads.
+**Public readings, without signing in:** use `https://miorail.xyz/mcp` instead. It carries Still's terms and the public stock reads, but no wallet-bound tool. Still's own MCP, `https://miorail.xyz/mcp/still`, needs no sign-in either: the terms, any wallet's check, what-ifs and the Spend reads.
 
 ## Auth
 

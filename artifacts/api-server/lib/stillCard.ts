@@ -166,7 +166,7 @@ function frameV1(shape: StillCardShapeV1, mobile: MobileInputV1, right: (box: { 
   ].join('');
 }
 
-/** stills.lat itself. */
+/** Still itself. */
 export function stillBrandCardSvgV1(shape: StillCardShapeV1): string {
   return frameV1(
     shape,

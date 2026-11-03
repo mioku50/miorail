@@ -223,7 +223,7 @@ export async function stillPreparePurchaseV1(
 }
 
 // ---------------------------------------------------------------------------
-// A repayment, prepared the same way as Repay on stills.lat: an exact amount,
+// A repayment, prepared the same way as Still's Repay page: an exact amount,
 // or all of it up to a bound the user agreed to, because interest moves the
 // exact debt between the reading and the block.
 // ---------------------------------------------------------------------------

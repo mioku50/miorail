@@ -68,8 +68,8 @@ test('the protocol advertises the wallet-free read, the source block and partial
   assert.doesNotMatch(JSON.stringify(tool.outputSchema), /approvalCalldata|transactionRequest|signedTransaction/);
 });
 
-// While stills.lat does not resolve (since 2026-11-02) a review link goes to
-// miorail.xyz; the tools that hand one over name that same door.
+// A review link goes to Still's one address, miorail.xyz since 2026-11-03;
+// the tools that hand one over name that same door.
 test('every tool names the host Still’s review links use', async t => {
   fixture(t, async () => assert.fail('listing does not read the wallet'));
   const client = await connected(t);

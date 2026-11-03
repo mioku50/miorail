@@ -38,7 +38,11 @@ export const stillPagesRuntimeV1 = {
   headBudgetMs: 2_500,
 };
 
-/** stills.lat is Still's own door; every other host keeps the canonical origin. */
+/**
+ * A head read on stills.lat names stills.lat; every other host keeps the
+ * canonical origin. Since 2026-11-03 stills.lat leads people to miorail.xyz
+ * (a 302), so this matters only if it serves pages again.
+ */
 export function stillOriginForHostV1(host: string | undefined, canonical: string): string {
   const name = (host ?? '').toLowerCase().split(':')[0];
   return name === 'stills.lat' || name === 'www.stills.lat' ? 'https://stills.lat' : canonical;

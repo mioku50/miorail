@@ -27,13 +27,13 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 // stock markets, and by design takes no wallet at all. An assistant asked
 // "how much could this wallet borrow without selling?" had one Still tool
 // there, the terms, and no way to answer. This server answers it with the
-// same check any visitor runs on stills.lat (/w/<wallet>), which reads only
+// same check any visitor runs on Still's site (/w/<wallet>), which reads only
 // public chain state, under the same per-client limit.
 //
 // Since 2026-11-02 it also reads what a loan could pay for at Bitrefill, the
-// same catalogue as stills.lat/spend. It reads; it prepares, signs and submits
-// nothing. A loan or a purchase is reviewed and approved on stills.lat, in the
-// owner's own wallet.
+// same catalogue as Still's /spend. It reads; it prepares, signs and submits
+// nothing. A loan or a purchase is reviewed and approved on Still's site, in
+// the owner's own wallet.
 // ---------------------------------------------------------------------------
 
 export const STILL_MCP_NAME_V1 = 'still';

@@ -8,7 +8,7 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 //
 // A host that draws apps renders ui://still/review.html beside the result of a
 // miorail_prepare_still_* or status tool: what was prepared, one button to
-// review and sign it on stills.lat, and where it stands, read through the
+// review and sign it on Still's site, and where it stands, read through the
 // host with the person's own connection; or, where the server has a
 // WalletConnect project id, the same review signed from the person's phone
 // wallet inside the chat (stillCardLending.ts). The card holds no key: the

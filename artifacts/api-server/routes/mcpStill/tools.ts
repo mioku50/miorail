@@ -27,7 +27,7 @@ import { McpPublicError } from '../mcp/tools.js';
 // Both tools read public chain state through the same Mirror service as the
 // page (`/w/<wallet>` and the Agent), so an assistant and a person looking at
 // the same wallet at the same block read the same figures. They prepare
-// nothing: a loan is reviewed and signed on stills.lat, in the owner's wallet.
+// nothing: a loan is reviewed and signed on Still's site, in the owner's wallet.
 // ---------------------------------------------------------------------------
 
 const ASSET_IDS_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'cbBTC', 'ETH'] as const;
@@ -226,9 +226,9 @@ export async function stillWhatIfV1(args: z.infer<typeof StillWhatIfInputV1Schem
 
 // ---------------------------------------------------------------------------
 // Still Spend for assistants: what a Still loan could pay for, from Bitrefill's
-// catalogue, through the same reads and cache as stills.lat/spend. Nothing here
+// catalogue, through the same reads and cache as Still's /spend. Nothing here
 // opens an invoice: a purchase is prepared on the connected server
-// (miorail_prepare_still_purchase), reviewed and signed on stills.lat.
+// (miorail_prepare_still_purchase), reviewed and signed on Still's site.
 // ---------------------------------------------------------------------------
 
 export const StillFindSpendInputV1Schema = z.object({

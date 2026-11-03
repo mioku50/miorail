@@ -73,7 +73,7 @@ const FOLLOW_FOR_MS_V1 = 15 * 60_000;
 
 /** How long between two reads. Each is one of the connection's twenty a minute,
  * which the assistant shares; two cards at six seconds once took all of them
- * (2026-11-02). A review being read on stills.lat is slow, a transaction on its
+ * (2026-11-02). A review being read on Still's site is slow, a transaction on its
  * way a little faster, and Bitrefill finishing an order slowest. */
 export function stillCardIntervalMsV1(phase: StillCardPhaseV1 | undefined): number {
   if (phase === 'wallet' || phase === 'sent' || phase === 'unknown') return 8_000;

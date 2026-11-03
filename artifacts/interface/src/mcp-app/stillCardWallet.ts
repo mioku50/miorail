@@ -6,7 +6,7 @@
 // What it can send decides how: a wallet that sends one batch atomically gets
 // the loan and its payment as one (EIP-5792), with Still's builder code as a
 // dataSuffix capability; any other gets the review in steps, each transaction
-// carrying the builder code in its own calldata, as on stills.lat.
+// carrying the builder code in its own calldata, as on Still's site.
 
 export interface StillCardCallV1 { to: string; data: string; value: string }
 

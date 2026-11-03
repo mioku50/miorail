@@ -140,8 +140,9 @@ import { sponsoredGasRouter } from './routes/sponsoredGas.js';
 // every caller who cannot prove a wallet.
 app.use('/mcp/private', mcpPrivateRouter);
 
-// Still's own MCP: three read-only tools, the same public check any visitor
-// runs on stills.lat/w/<wallet>. Like /mcp it needs no session.
+// Still's own MCP: five read-only tools, the terms, the public check any
+// visitor runs on Still's /w/<wallet>, its what-ifs and the Spend reads. Like
+// /mcp it needs no session.
 app.use('/mcp/still', stillMcpRouter);
 
 // T72 §1 — the read-only MCP endpoint, at the root and NOT under /api.

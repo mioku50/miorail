@@ -11,7 +11,7 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 // The review card's own way to the lending review, as the grant's wallet.
 //
 // Still's card in an assistant's chat (stillCard.ts) shows the review
-// stills.lat shows and sends it from the person's own wallet through
+// Still's site shows and sends it from the person's own wallet through
 // WalletConnect. It asks for the review, arms it, records what the wallet sent
 // and reads the result through this one tool, which hands each request to
 // rwaLendingRouter itself with the grant's wallet as the session: the same
