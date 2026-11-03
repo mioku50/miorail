@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, loadEnv } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
@@ -10,6 +11,12 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     resolve: {
+      // WalletConnect's provider loads Reown's modal only for showQrModal, which
+      // the app never sets (main.tsx draws its own pairing link): the modal's
+      // code is not bundled at all.
+      alias: {
+        '@reown/appkit/core': fileURLToPath(new URL('./src/lib/noWalletConnectModal.ts', import.meta.url)),
+      },
       dedupe: [
         'react',
         'react-dom',

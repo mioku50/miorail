@@ -7,6 +7,7 @@ import { useUiStore } from '../lib/state';
 import { CHAIN_ENV } from '../lib/chain';
 import { CommandPalette } from '../shell/CommandPalette';
 import { Toaster } from '../shell/Toast';
+import { WalletAppPrompt } from '../shell/WalletAppPrompt';
 import { BaseMcpOAuthBridge } from './BaseMcpOAuthBridge';
 import {
   baseMcpPopupMessageV1,
@@ -472,6 +473,7 @@ export function App() {
       </Suspense>
       <CommandPalette />
       <Toaster />
+      <WalletAppPrompt />
       <BaseMcpOAuthBridge />
     </ConsoleFrameContextV1.Provider>
     </StillRailDoorsProvider>

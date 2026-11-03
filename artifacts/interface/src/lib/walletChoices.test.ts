@@ -2,7 +2,10 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { detectBaseAppEarly } from './detectBaseAppEarly';
 import {
+  METAMASK_OPEN_HREF_V1,
   isMobileBrowserV1,
+  metaMaskPairHrefV1,
+  metaMaskPairSchemeV1,
   openInBaseAppHrefV1,
   openInMetaMaskHrefV1,
   walletChoicesV1,
@@ -16,6 +19,8 @@ const BASE_ACCOUNT: WalletConnectorViewV1 = { id: 'baseAccount', name: 'Base Acc
 const METAMASK: WalletConnectorViewV1 = { id: 'io.metamask', name: 'MetaMask', type: 'injected', icon: 'data:image/svg+xml,<svg/>' };
 const COINBASE: WalletConnectorViewV1 = { id: 'com.coinbase.wallet', name: 'Coinbase Wallet', type: 'injected', icon: 'data:image/png;base64,AA==' };
 const PAGE = 'https://miorail.xyz/routes?from=stocks&token=0xb20000000000000000000078ee7ce2fe4908108c&side=buy';
+// main.tsx adds it only on a phone browser with no wallet, with a project id.
+const WALLET_CONNECT: WalletConnectorViewV1 = { id: 'walletConnect', name: 'WalletConnect', type: 'walletConnect' };
 // What production logged for the operator's phone on 2026-09-24.
 const BASE_APP_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 18_7 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Mobile/15E148 CoinbaseWalletRN/30.13.95 (org.toshi.distribution; build:30130000; iOS 27.0)';
@@ -72,6 +77,39 @@ test('a phone browser with no wallet offers Base Account and reopening the page 
     ],
   );
   assert.equal(result.note, null);
+});
+
+test('a phone browser with WalletConnect offers MetaMask that stays in this browser, before reopening the page inside it', () => {
+  // 2026-11-03, the operator: "Open in MetaMask" opened the page inside MetaMask, where it should come back to Safari.
+  const result = walletChoicesV1({ connectors: [GENERIC, BASE_ACCOUNT, WALLET_CONNECT], inBaseApp: false, hasWindowProvider: false, mobile: true, pageUrl: PAGE });
+  assert.deepEqual(result.choices.map((choice) => [choice.kind, choice.name]), [
+    ['connector', 'Base Account'], ['connector', 'MetaMask'], ['open_in', 'MetaMask'], ['open_in', 'Base App (Coinbase Wallet)'],
+  ]);
+  const paired = result.choices[1]!;
+  assert.deepEqual(paired.kind === 'connector' && [paired.connectorId, paired.pairWith, paired.detail],
+    ['walletConnect', 'metamask', 'Stays in this browser: MetaMask opens to approve, then you come back here.']);
+  assert.equal(result.choices[2]!.detail, 'Opens this page inside the MetaMask app instead, where your MetaMask wallet connects.');
+  // Never where a wallet is already in the page, on a desktop, or inside an app that hosts the page.
+  for (const input of [
+    { hasWindowProvider: true, mobile: true, connectors: [GENERIC, BASE_ACCOUNT, METAMASK, WALLET_CONNECT] },
+    { hasWindowProvider: false, mobile: false, connectors: [GENERIC, BASE_ACCOUNT, WALLET_CONNECT] },
+  ]) {
+    assert.equal(walletChoicesV1({ ...input, inBaseApp: false, pageUrl: PAGE }).choices.some((choice) => choice.kind === 'connector' && choice.pairWith), false);
+  }
+  assert.equal(walletChoicesV1({ connectors: [GENERIC, WALLET_CONNECT], inBaseApp: true, hasWindowProvider: true, mobile: true, pageUrl: PAGE })
+    .choices.some((choice) => choice.kind === 'connector' && choice.pairWith), false);
+});
+
+test('a wallet paired by WalletConnect is named MetaMask, whose link paired it', () => {
+  assert.equal(walletDisplayNameV1(WALLET_CONNECT, false), 'MetaMask');
+});
+
+test('MetaMask’s pairing links carry the WalletConnect link whole, and bringing it forward names no request', () => {
+  const uri = 'wc:7f6e5d4c@2?relay-protocol=irn&symKey=0a1b2c&expiryTimestamp=1793740000';
+  assert.equal(metaMaskPairHrefV1(uri), `https://link.metamask.io/wc?uri=${encodeURIComponent(uri)}`);
+  assert.equal(metaMaskPairSchemeV1(uri), `metamask://wc?uri=${encodeURIComponent(uri)}`);
+  assert.equal(decodeURIComponent(new URL(metaMaskPairHrefV1(uri)).searchParams.get('uri') ?? ''), decodeURIComponent(uri));
+  assert.equal(METAMASK_OPEN_HREF_V1, 'metamask://');
 });
 
 test('inside a wallet app’s own browser the links are not offered — its wallet is already here', () => {

@@ -219,8 +219,19 @@ echo "  builder code   $public_builder_code  (must match base.dev exactly)"
 # ops/nginx/miorail-app.conf; all three are the same fact.
 miniapp_url=$(read_public_env_value NEXT_PUBLIC_URL)
 miniapp_url=${miniapp_url:-https://miorail.xyz/app}
+# MetaMask by WalletConnect on a phone browser (2026-11-03): the project id the
+# chat card already uses. It is public by design, and the page uses it only in
+# the shape of one (32 hex), so a missing or broken value leaves the choice out.
+walletconnect_project_id=$(read_public_env_value STILL_WALLETCONNECT_PROJECT_ID)
+if [[ "$walletconnect_project_id" =~ ^[0-9a-f]{32}$ ]]; then
+  echo "  walletconnect  project id set (MetaMask on phone browsers)"
+else
+  echo "  walletconnect  no usable project id: phone browsers offer no MetaMask pairing"
+  walletconnect_project_id=
+fi
 as_service_user env \
   VITE_BASE_BUILDER_CODE="$public_builder_code" \
+  VITE_WALLETCONNECT_PROJECT_ID="$walletconnect_project_id" \
   NEXT_PUBLIC_BASE_BUILDER_CODE="$public_builder_code" \
   NEXT_PUBLIC_URL="$miniapp_url" \
   pnpm -r build

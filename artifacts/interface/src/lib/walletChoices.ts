@@ -12,8 +12,11 @@
 //      when a host injects one without announcing it, that one;
 //   2. Base Account, which needs nothing installed (never inside Base App or
 //      Farcaster, where its popup cannot open — see main.tsx);
-//   3. on a phone with no wallet in the page, links that reopen this same page
-//      inside MetaMask or Base App, where their wallet connects.
+//   3. on a phone with no wallet in the page: MetaMask by WalletConnect, which
+//      keeps the page in this browser (2026-11-03, the operator: "Open in
+//      MetaMask" opened the page inside MetaMask, where it should come back to
+//      Safari), then links that reopen this same page inside MetaMask or Base
+//      App, where their wallet connects.
 // ---------------------------------------------------------------------------
 
 export interface WalletConnectorViewV1 {
@@ -24,7 +27,9 @@ export interface WalletConnectorViewV1 {
 }
 
 export type WalletChoiceV1 =
-  | { kind: 'connector'; key: string; connectorId: string; name: string; icon: string | null; detail: string }
+  | { kind: 'connector'; key: string; connectorId: string; name: string; icon: string | null; detail: string;
+      /** A WalletConnect pairing this wallet app is opened to approve. */
+      pairWith?: 'metamask' }
   | { kind: 'open_in'; key: string; name: string; href: string; detail: string };
 
 export interface WalletChoicesV1 {
@@ -36,10 +41,12 @@ export interface WalletChoicesV1 {
 /** wagmi's generic connector for whatever sits at `window.ethereum`. */
 const GENERIC_INJECTED_ID = 'injected';
 
-/** A wallet's name as a person knows it — never wagmi's "Injected". */
-export function walletDisplayNameV1(connector: { id: string; name: string } | null | undefined, inBaseApp: boolean): string {
+/** A wallet's name as a person knows it — never wagmi's "Injected" or "WalletConnect". */
+export function walletDisplayNameV1(connector: { id: string; name: string; type?: string } | null | undefined, inBaseApp: boolean): string {
   if (!connector) return 'your wallet';
   if (connector.id === GENERIC_INJECTED_ID) return inBaseApp ? 'Base App wallet' : 'Browser wallet';
+  // The page pairs WalletConnect only through MetaMask's own link (choice 3 below).
+  if (connector.type === 'walletConnect') return 'MetaMask';
   return connector.name.trim() || 'your wallet';
 }
 
@@ -47,6 +54,19 @@ export function walletDisplayNameV1(connector: { id: string; name: string } | nu
 export function openInMetaMaskHrefV1(pageUrl: string): string {
   return `https://link.metamask.io/dapp/${pageUrl.replace(/^https?:\/\//i, '')}`;
 }
+
+/** MetaMask's WalletConnect deeplink: the app opens on the pairing, and the page stays in this browser. */
+export function metaMaskPairHrefV1(uri: string): string {
+  return `https://link.metamask.io/wc?uri=${encodeURIComponent(uri)}`;
+}
+
+/** The same pairing by MetaMask's own scheme, which a page can open without leaving itself when the app is not there. */
+export function metaMaskPairSchemeV1(uri: string): string {
+  return `metamask://wc?uri=${encodeURIComponent(uri)}`;
+}
+
+/** Brings MetaMask forward for a request already sent to it over WalletConnect. */
+export const METAMASK_OPEN_HREF_V1 = 'metamask://';
 
 /** Coinbase Wallet's documented deeplink; Base App is the same app. */
 export function openInBaseAppHrefV1(pageUrl: string): string {
@@ -128,13 +148,28 @@ export function walletChoicesV1(input: {
 
   // 3. A phone browser has no wallet of its own; the wallet apps do.
   if (!walletInPage && input.mobile) {
+    // WalletConnect keeps the page here: MetaMask opens only to approve.
+    const paired = input.connectors.find((connector) => connector.type === 'walletConnect');
+    if (paired) {
+      choices.push({
+        kind: 'connector',
+        key: `connector:${paired.id}`,
+        connectorId: paired.id,
+        name: 'MetaMask',
+        icon: null,
+        detail: 'Stays in this browser: MetaMask opens to approve, then you come back here.',
+        pairWith: 'metamask',
+      });
+    }
     choices.push(
       {
         kind: 'open_in',
         key: 'open_in:metamask',
         name: 'MetaMask',
         href: openInMetaMaskHrefV1(input.pageUrl),
-        detail: 'Opens this page in the MetaMask app, where your MetaMask wallet connects.',
+        detail: paired
+          ? 'Opens this page inside the MetaMask app instead, where your MetaMask wallet connects.'
+          : 'Opens this page in the MetaMask app, where your MetaMask wallet connects.',
       },
       {
         kind: 'open_in',
