@@ -11,7 +11,7 @@ async function install(page: Page, signedIn = true) {
   await page.route('https://**/*', route => route.abort('blockedbyclient'));
   await page.route('**/AuthProvider.tsx*', route => route.fulfill({ contentType: 'application/javascript', body:
     `export function AuthProvider({children}) {return children;} export function useAuthGate(){return{showPrivateSurfaces:${signedIn},phase:'${signedIn ? 'authenticated' : 'anonymous'}',sessionAuthenticated:${signedIn}};}` }));
-  const state = { reads: [] as string[], intents: [] as Record<string, unknown>[], wrongToken: false, zeroDebt: false };
+  const state = { reads: [] as string[], intents: [] as Record<string, unknown>[], wrongToken: false, zeroDebt: false, noDeposit: false };
   await page.route('**/api/**', route => {
     const request = route.request(), url = new URL(request.url()), path = url.pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } : null } });
@@ -21,7 +21,7 @@ async function install(page: Page, signedIn = true) {
       const stock = STOCKS.find(s => s.token.toLowerCase() === token);
       return route.fulfill({ json: { state: 'read', read: { venue: stock ? 'aave-v4' : 'morpho', marketId: stock ? '0x17905db0e4a3514467539956c084180616ae7b8d' : CRYPTO[0]!.morphoMarket,
         collateralTokenAddress: state.wrongToken ? WALLET : token, collateralSymbol: stock?.id ?? 'cbBTC', collateralDecimals: 8,
-        debtAtomic: state.zeroDebt ? '0' : '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000, ...(stock ? { collateralAtomic: '3014121' } : {}) } } });
+        debtAtomic: state.zeroDebt ? '0' : '3125001', walletUsdcAtomic: '4500000', blockNumber: 53_200_000, collateralAtomic: state.noDeposit ? '0' : '3014121' } } });
     }
     if (path.endsWith('/rwa/repay/intent') && request.method() === 'POST') {
       state.intents.push(request.postDataJSON());
@@ -86,10 +86,11 @@ test('a stock loan is repaid in full and its stock taken back in one review; wit
   await expect(page.getByLabel('Maximum USDC funding', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Take back NVDAc', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(2);
   expect(state.intents[1]).toEqual({ collateralTokenAddress: nvda, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
-  // A Morpho loan is repaid without it for now.
+  // A Morpho loan's collateral comes back the same way.
   await page.goto('/repay?asset=cbBTC'); await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
-  await expect(page.getByText('No debt was recorded in this market at the reading block.', { exact: true })).toBeVisible();
-  await expect(page.getByRole('button', { name: /take back/i })).toHaveCount(0);
+  await expect(page.getByText(/is still deposited in Morpho/)).toBeVisible();
+  await page.getByRole('button', { name: 'Take back cbBTC', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(3);
+  expect(state.intents[2]).toEqual({ collateralTokenAddress: CBBTC, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
 });
 test('wrong token reading never turns into a usable balance or repayment question', async ({ page }) => {
   const state = await install(page); state.wrongToken = true; await page.goto('/repay?asset=cbBTC');
@@ -99,7 +100,7 @@ test('wrong token reading never turns into a usable balance or repayment questio
   await expect(page.getByLabel('USDC to repay', { exact: true })).toBeDisabled(); expect(state.intents).toEqual([]);
 });
 test('only a measured zero debt gets the no-debt sentence', async ({ page }) => {
-  const state = await install(page); state.zeroDebt = true; await page.goto('/repay?asset=cbBTC');
+  const state = await install(page); state.zeroDebt = true; state.noDeposit = true; await page.goto('/repay?asset=cbBTC');
   await expect(page.getByText(/No debt was recorded/)).toHaveCount(0);
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await expect(page.getByText('No debt was recorded in this market at the reading block.', { exact: true })).toBeVisible();

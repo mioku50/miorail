@@ -14,7 +14,7 @@ export interface LendingFactsWireV1 {
   policyLimitAssets?: string | null; protocolLimitAssets?: string | null; termsVersion?: string | null;
   /** Still Spend: the loan's USDC pays this Bitrefill invoice in the same batch. */
   payment?: { merchant: 'bitrefill'; orderId: string; payTo: string; assets: string; productName: string; packageValue: string; faceCurrency: string | null; expiresAt: string };
-  /** Repay all and take the stock back: the deposit that returns to the wallet. */
+  /** Repay all and take the collateral back: what returns to the wallet. */
   collateralReturnAssets?: string;
 }
 export interface LendingReadyWireV1 extends FreshBorrowReviewV1 {
@@ -52,7 +52,7 @@ export function isLendingFactsWireV1(value: unknown): value is LendingFactsWireV
       !(p.faceCurrency === null || typeof p.faceCurrency === 'string' && /^[A-Z]{3}$/.test(p.faceCurrency))) return false;
   }
   if (value.collateralReturnAssets !== undefined && (!atomic(value.collateralReturnAssets) || BigInt(value.collateralReturnAssets) <= BigInt(0) ||
-      value.operation !== 'repay' || value.venue !== 'aave-v4' || value.amountMode !== 'all')) return false;
+      value.operation !== 'repay' || value.amountMode !== 'all')) return false;
   if (value.nativeFunding !== undefined) {
     const n=value.nativeFunding;
     if (!object(n) || value.operation!=='borrow' || value.venue!=='morpho' || value.collateralTokenAddress!=='0x4200000000000000000000000000000000000006' ||

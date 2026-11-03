@@ -351,15 +351,26 @@ describe('repay all and take the stock back', () => {
       collateralReturnAssets: '3014121' });
     return body;
   }
-  it('reads the deposit of a stock loan and offers it back, never for Morpho', () => {
+  it('reads the deposit of a loan and offers it back, on Aave V4 and on Morpho', () => {
     const read = repayCapacityViewV1({ state: 'read', read: stock }, NVDAC.token).read;
     assert.equal(read?.collateralAtomic, '3014121'); assert.equal(repayCanReturnV1(read), true);
     assert.equal(repayCanReturnV1({ ...stock, collateralAtomic: '0' }), false);
-    assert.equal(repayCapacityViewV1({ state: 'read', read: { ...capacity, collateralAtomic: '5' } }, capacity.collateralTokenAddress).read, null);
+    assert.equal(repayCapacityViewV1({ state: 'read', read: { ...capacity, collateralAtomic: '5' } }, capacity.collateralTokenAddress).read?.collateralAtomic, '5');
+    assert.equal(repayCapacityViewV1({ state: 'read', read: { ...capacity, collateralAtomic: '5.0' } }, capacity.collateralTokenAddress).read, null);
+    const morpho = renderToStaticMarkup(<RepayEntryScreen model={entry({ read: { ...capacity, collateralAtomic: '100000000' }, canReturn: true })} />);
+    assert.match(morpho, /Deposited in Morpho/); assert.match(morpho, /Repay all, take back cbBTC/);
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: stock, canReturn: true, mode: 'return' })} />);
     assert.match(html, /Deposited in Aave/); assert.match(html, /0\.03014121 NVDAc/);
     assert.match(html, /Repay all, take back NVDAc/); assert.match(html, /Then your 0\.03014121 NVDAc comes back to this wallet in the same review/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: capacity })} />), /take back/i);
+    assert.match(html, /Deposited in Aave V4/);
+  });
+  it('says plainly when the wallet holds less USDC than the debt, before any amount is asked', () => {
+    const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, walletUsdcAtomic: '0' }, canReturn: true, mode: 'return' })} />);
+    assert.match(html, /This wallet holds 0 USDC on Base, and the debt is 0\.18003 USDC\./);
+    assert.match(html, /A loan is repaid in USDC from this wallet: add at least the debt/);
+    assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: stock, canReturn: true, mode: 'return' })} />), /This wallet holds/);
+    assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, debtAtomic: '0', walletUsdcAtomic: '0' }, canReturn: true })} />), /This wallet holds/);
   });
   it('with no debt left offers the stock back alone, asking for no USDC', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, debtAtomic: '0' }, canReturn: true })} />);
@@ -378,8 +389,11 @@ describe('repay all and take the stock back', () => {
     const alone = render({ body: returned(true) });
     assert.match(alone, /Take back NVDAc/); assert.match(alone, /No USDC debt is open/); assert.doesNotMatch(alone, /Maximum USDC funding/);
   });
-  it('refuses a return on a borrow, an exact repayment or a Morpho loan', () => {
-    for (const patch of [{ operation: 'borrow' }, { amountMode: 'assets', requestedAssets: '1' }, { venue: 'morpho' }, { collateralReturnAssets: '0' }]) {
+  it('refuses a return on a borrow or an exact repayment, and accepts one on Morpho', () => {
+    const morpho = returned(); Object.assign(morpho.facts, { venue: 'morpho' });
+    assert.equal(parseLendingReviewWireV1(morpho)?.state, 'ready');
+    assert.match(render({ body: morpho }), /Morpho checks the account before the collateral leaves/);
+    for (const patch of [{ operation: 'borrow' }, { amountMode: 'assets', requestedAssets: '1' }, { collateralReturnAssets: '0' }]) {
       const body = returned(); Object.assign(body.facts, patch);
       assert.equal(parseLendingReviewWireV1(body), null, JSON.stringify(patch));
     }

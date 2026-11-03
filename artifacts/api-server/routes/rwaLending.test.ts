@@ -59,7 +59,7 @@ describe('session-owned lending HTTP boundary', () => {
       assert.equal(r.status, 400);
     }
   });
-  it('takes the stock back only with Repay all of an Aave V4 stock, and lets the maximum be zero for it alone', async () => {
+  it('takes the collateral back only with Repay all, for a stock or a Morpho loan, and lets the maximum be zero for it alone', async () => {
     const body = { collateralTokenAddress: token, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true };
     const r = await request(app()).post(`${base}/repay/intent`).send(body);
     assert.equal(r.status, 200); assert.match(r.body.reviewUrl, /^\/lending\/miorail-lending-v1\./); assert.equal(simulations, 0);
@@ -69,7 +69,8 @@ describe('session-owned lending HTTP boundary', () => {
       assert.equal((await request(app()).post(`${base}/repay/intent`).send({ ...body, ...patch })).status, 400, JSON.stringify(patch));
     }
     const morpho = await request(app()).post(`${base}/repay/intent`).send({ ...body, collateralTokenAddress: CRYPTO[0]!.token.toLowerCase(), maximumUsdcAtomic: '1000000' });
-    assert.equal(morpho.status, 400); assert.equal(morpho.body.error, 'lending_return_unsupported');
+    assert.equal(morpho.status, 200);
+    assert.equal(JSON.parse(Buffer.from(String(morpho.body.reviewUrl).split('.')[1]!, 'base64url').toString()).question.returnCollateral, true);
   });
   it('reads a stock loan with its deposit, so the page can offer it back', async () => {
     rwaLendingRuntimeV1.readAave = (async () => ({ state: 'read', standing: { debtAssets: 0n, walletUsdcAssets: 5n, blockNumber: 53100000, existingSuppliedAssets: 3014121n } })) as unknown as typeof rwaLendingRuntimeV1.readAave;

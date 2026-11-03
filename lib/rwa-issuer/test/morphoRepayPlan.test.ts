@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { decodeFunctionData, encodeAbiParameters, encodeFunctionData, keccak256, type Address, type Hex } from 'viem';
 import {
-  buildMorphoRepayPlanV1, morphoRepayPlanV1, MORPHO_BLUE_BUNDLES_BASE_V1, MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1,
-  MORPHO_REPAY_APPROVAL_ABI_V1, MORPHO_REPAY_BUNDLE_ABI_V1, MORPHO_REPAY_MAX_UINT256_V1, MORPHO_REPAY_USDC_BASE_V1,
+  buildMorphoRepayPlanV1, morphoRepayPlanV1, morphoWithdrawCollateralCallV1, MORPHO_BLUE_BASE_V1, MORPHO_BLUE_BUNDLES_BASE_V1, MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1,
+  MORPHO_REPAY_APPROVAL_ABI_V1, MORPHO_REPAY_BUNDLE_ABI_V1, MORPHO_REPAY_MAX_UINT256_V1, MORPHO_REPAY_USDC_BASE_V1, MORPHO_WITHDRAW_COLLATERAL_ABI_V1,
 } from '../src/morphoRepayPlan.js';
 import type { PreparedTransactionV1 } from '../src/morphoBorrowPlan.js';
 
@@ -131,5 +131,29 @@ describe('canonical repayment calldata guard', () => {
   it('rejects an allowance grant after repayment and malformed approval order', () => {
     const action = prepared()[2]!;
     for (const calls of [[action, approve(1n)], [approve(1n), approve(2n), action], [approve(0n), action], [approve(1n), approve(0n), action]]) refuses(calls);
+  });
+});
+
+describe('the owner takes its collateral back with its own Morpho Blue call', () => {
+  it('withdraws exactly the whole collateral of the exact market, on behalf of and to the wallet itself', () => {
+    const r = morphoWithdrawCollateralCallV1({ walletAddress: WALLET, marketId: MARKET, marketParams: PARAMS, assets: 100_000_000n, index: 4 });
+    assert.equal(r.ok, true); if (!r.ok) return;
+    assert.deepEqual([r.call.to, r.call.callType, r.call.valueWei, r.call.recipient, r.call.amountAtomic, r.call.index], [MORPHO_BLUE_BASE_V1, 'withdraw', '0', WALLET, '100000000', 4]);
+    const decoded = decodeFunctionData({ abi: MORPHO_WITHDRAW_COLLATERAL_ABI_V1, data: r.call.data });
+    assert.equal(decoded.args[1], 100_000_000n);
+    assert.deepEqual([String(decoded.args[2]).toLowerCase(), String(decoded.args[3]).toLowerCase()], [WALLET, WALLET]);
+    assert.equal(String(decoded.args[0].collateralToken).toLowerCase(), PARAMS.collateralToken);
+    assert.match(r.step.reading, /no authorization is granted/);
+  });
+  it('refuses another market, a zero amount and a non-USDC loan token', () => {
+    for (const patch of [{ marketId: `0x${'ab'.repeat(32)}` }, { assets: 0n }, { marketParams: { ...PARAMS, loanToken: OTHER } }]) {
+      assert.equal(morphoWithdrawCollateralCallV1({ walletAddress: WALLET, marketId: MARKET, marketParams: PARAMS, assets: 1n, index: 0, ...patch }).ok, false, JSON.stringify(Object.keys(patch)));
+    }
+  });
+  it('a repayment followed by it no longer says that no collateral is withdrawn', () => {
+    const built = buildMorphoRepayPlanV1({ ...input(), amount: { mode: 'all' }, returnsCollateralAfter: true });
+    assert.equal(built.ok, true); if (!built.ok) return;
+    const action = built.plan.steps.find(step => step.to === MORPHO_BLUE_BUNDLES_BASE_V1)!;
+    assert.match(action.reading, /This call withdraws no collateral \(the next one returns it\)/);
   });
 });

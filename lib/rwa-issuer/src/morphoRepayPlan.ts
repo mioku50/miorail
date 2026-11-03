@@ -20,6 +20,15 @@ export const MORPHO_REPAY_BUNDLE_ABI_V1 = parseAbi([
 ]);
 export const MORPHO_REPAY_APPROVAL_ABI_V1 = parseAbi(['function approve(address spender,uint256 amount) returns (bool)']);
 
+// Morpho Blue on Base, read in Sourcify's verified source on 2026-11-03:
+// withdrawCollateral lets msg.sender == onBehalf act with no authorization,
+// subtracts exactly `assets`, checks health only while debt shares are left,
+// and pays `receiver`. The owner's own call needs no grant to any contract.
+export const MORPHO_BLUE_BASE_V1 = '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb' as const;
+export const MORPHO_WITHDRAW_COLLATERAL_ABI_V1 = parseAbi([
+  'function withdrawCollateral((address loanToken,address collateralToken,address oracle,address irm,uint256 lltv) marketParams,uint256 assets,address onBehalf,address receiver)',
+]);
+
 /** Immutable parameters from the bounded chain reader, which must first bind
  * the market to Still's registered cbBTC/USDC or WETH/USDC identity. */
 export interface MorphoRepayMarketParamsV1 {
@@ -69,6 +78,8 @@ export interface MorphoRepayPlanInputV1 {
   /** Actions action expiry, distinct from the shorter attestation lifetime. */
   actionExpiresAt?: string;
   venueSimulation?: { reverted: boolean; reason: string | null } | null;
+  /** The collateral is taken back by the call after this repayment, so its reading says so. */
+  returnsCollateralAfter?: boolean;
 }
 
 export function morphoRepayPlanV1(input: MorphoRepayPlanInputV1): MorphoRepayPlanResultV1 {
@@ -158,7 +169,8 @@ export function morphoRepayPlanV1(input: MorphoRepayPlanInputV1): MorphoRepayPla
     }
     const description = typeof tx.description === 'string' ? tx.description : null;
     const reading = isFinal
-      ? `Repays this wallet's ${input.amount.mode === 'all' ? 'entire debt-share balance at inclusion' : `${input.amount.assets} USDC atomic units`} in the exact market, with a gross USDC pull of at most ${maxRepayAssets}. No collateral is withdrawn, no permit or delegation is granted, and unused USDC is refunded.`
+      ? `Repays this wallet's ${input.amount.mode === 'all' ? 'entire debt-share balance at inclusion' : `${input.amount.assets} USDC atomic units`} in the exact market, with a gross USDC pull of at most ${maxRepayAssets}. ${
+        input.returnsCollateralAfter ? 'This call withdraws no collateral (the next one returns it)' : 'No collateral is withdrawn'}, no permit or delegation is granted, and unused USDC is refunded.`
       : index > actionIndex ? 'Revokes the USDC allowance to the verified repayment contract after repayment.'
         : `Approves only the verified Base BlueBundles repayment contract for ${approvalAmount} USDC atomic units.`;
     calls.push({ index, callType: isFinal ? 'other' : 'approval', to, data: tx.data.toLowerCase() as Hex, valueWei: '0',
@@ -179,6 +191,30 @@ export function morphoRepayPlanV1(input: MorphoRepayPlanInputV1): MorphoRepayPla
  * This does not call Actions and must never be described as a venue API's
  * preparation or attestation. Its maximum debit is in the contract bytes;
  * the runner must still independently simulate and prove debt reduction. */
+/** The owner's own withdrawal of its whole collateral from a registered market,
+ * after the debt is repaid: one direct Morpho Blue call, receiver the wallet. */
+export function morphoWithdrawCollateralCallV1(input: { walletAddress: string; marketId: string; marketParams: MorphoRepayMarketParamsV1; assets: bigint; index: number }):
+  { ok: true; call: ExecutionCallV1; step: MorphoPlanStepV1 } | { ok: false; refusal: MorphoRepayPlanRefusalV1; detail: string } {
+  const wallet = address(input.walletAddress), p = input.marketParams;
+  const params = { loanToken: address(p.loanToken), collateralToken: address(p.collateralToken), oracle: address(p.oracle), irm: address(p.irm), lltv: p.lltv };
+  if (!wallet || wallet === ZERO || !params.loanToken || !params.collateralToken || !params.oracle || !params.irm || params.loanToken !== MORPHO_REPAY_USDC_BASE_V1 ||
+      params.collateralToken === ZERO || typeof params.lltv !== 'bigint' || params.lltv <= 0n || params.lltv > 10n ** 18n ||
+      !uint128(input.assets) || input.assets === 0n || !Number.isSafeInteger(input.index) || input.index < 0) {
+    return { ok: false, refusal: 'repay_plan_inputs_invalid', detail: 'The exact owner, market and collateral to take back were not established.' };
+  }
+  const marketId = keccak256(encodeAbiParameters(
+    [{ type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint256' }],
+    [params.loanToken, params.collateralToken, params.oracle, params.irm, params.lltv],
+  ));
+  if (marketId !== input.marketId.toLowerCase()) return { ok: false, refusal: 'repay_market_mismatch', detail: 'The immutable parameters do not derive this market id.' };
+  const data = encodeFunctionData({ abi: MORPHO_WITHDRAW_COLLATERAL_ABI_V1, functionName: 'withdrawCollateral',
+    args: [{ loanToken: params.loanToken, collateralToken: params.collateralToken, oracle: params.oracle, irm: params.irm, lltv: params.lltv }, input.assets, wallet, wallet] }).toLowerCase() as Hex;
+  return { ok: true,
+    call: { index: input.index, callType: 'withdraw', to: MORPHO_BLUE_BASE_V1, data, valueWei: '0', asset: null, amountAtomic: input.assets.toString(), recipient: wallet, spender: null },
+    step: { index: input.index, to: MORPHO_BLUE_BASE_V1, selector: data.slice(0, 10), venueDescription: null, decodedByMiorail: true,
+      reading: `Withdraws this wallet's whole collateral in the exact market, ${input.assets} atomic units, to this wallet. It is the wallet's own call to Morpho Blue, so no authorization is granted, and Morpho lets it go only once no debt is left.` } };
+}
+
 export function buildMorphoRepayPlanV1(input: Omit<MorphoRepayPlanInputV1, 'prepared' | 'preparedMaximumAssets' | 'actionExpiresAt' | 'venueSimulation'>): MorphoRepayPlanResultV1 {
   const fail = (detail: string): MorphoRepayPlanResultV1 => ({ ok: false, refusal: 'repay_plan_inputs_invalid', detail });
   const p = input.marketParams;

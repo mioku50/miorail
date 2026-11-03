@@ -14,7 +14,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
   if (!model.body) return <p className="still-section still-note">There is no lending review to display.</p>;
   const body = model.body, facts = body.facts;
   const repay = facts?.operation === 'repay';
-  // Repay all and take the stock back; with nothing owed, the stock alone.
+  // Repay all and take the collateral back; with nothing owed, the collateral alone.
   const back = facts?.collateralReturnAssets ?? null, onlyBack = back !== null && facts?.maximumDebitAssets === '0';
   const title = facts ? repay ? back !== null ? `${onlyBack ? 'Take back' : 'Repay all and take back'} ${facts.collateralSymbol}` : 'Review repayment' : 'Review loan' : 'Lending review';
   const asset = (value: string) => facts ? `${tokenDecimalV1(value, facts.collateralDecimals)} ${facts.collateralSymbol}` : value;
@@ -49,7 +49,7 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         </table>
         <p className="still-note">
           {repay && facts.healthBeforeWad == null && facts.healthAfterWad == null
-            ? back !== null ? 'Aave checks the account before the stock leaves. With the whole debt repaid first, nothing is left for it to secure, so no health ratio applies.'
+            ? back !== null ? `${facts.venue === 'morpho' ? 'Morpho' : 'Aave'} checks the account before the collateral leaves. With the whole debt repaid first, nothing is left for it to secure, so no health ratio applies.`
               : 'Health ratio is not checked during repayment: repaying USDC only reduces your debt and keeps collateral deposited, so execution does not depend on live oracle prices.'
             : 'Health ratio is calculated at the simulation block. It does not guarantee protection against liquidation after prices change.'}
         </p>

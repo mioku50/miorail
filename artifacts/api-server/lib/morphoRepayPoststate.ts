@@ -88,14 +88,22 @@ export function verifyMorphoRepayPoststateV1(input: {
     maximumAssets: bigint;
     position: MorphoPositionV1;
     blockNumber: number;
+    /** Repay all and take the collateral back: the whole collateral leaves the market for the wallet. */
+    returnCollateralAssets?: bigint;
   };
 }): MorphoRepayPoststateV1 {
   const { request, response, expected } = input;
   const built = buildMorphoRepayProbesV1({ ...expected, walletAddress: request.walletAddress });
   if (!built.ok) return built;
+  const returning = expected.returnCollateralAssets;
+  // With no debt left, taking the collateral back repays nothing.
+  const repaying = returning === undefined || expected.position.borrowShares > 0n;
+  if (returning !== undefined && (expected.amount.mode !== 'all' || returning <= 0n || returning !== expected.position.collateral)) {
+    return fail('repay_inputs_invalid', 'Taking the collateral back needs a full repayment of the whole recorded collateral.');
+  }
   if (request.chainId !== 8453 || !/^0x[0-9a-f]{64}$/i.test(request.callsHash) ||
-      !uint128(expected.maximumAssets) || expected.maximumAssets === 0n || !uint128(expected.position.collateral) ||
-      !uint128(expected.position.borrowShares) || expected.position.borrowShares === 0n ||
+      !uint128(expected.maximumAssets) || (repaying ? expected.maximumAssets === 0n : expected.maximumAssets !== 0n) || !uint128(expected.position.collateral) ||
+      !uint128(expected.position.borrowShares) || (repaying && expected.position.borrowShares === 0n) ||
       !Number.isSafeInteger(expected.blockNumber) || expected.blockNumber <= 0 || !Number.isSafeInteger(response.blockNumber) ||
       response.blockNumber < expected.blockNumber) return fail('repay_inputs_invalid', 'The exact repayment maximum, debt and reading block were not established.');
   const probes = SimulationObservationRequestV1Schema.safeParse(request.observations);
@@ -129,11 +137,11 @@ export function verifyMorphoRepayPoststateV1(input: {
       params[1].toLowerCase() !== expected.collateralTokenAddress.toLowerCase() || params[4] <= 0n || params[4] > WAD ||
       JSON.stringify(params.map(String)) !== JSON.stringify(after.params.map(String))) return fail('repay_market_mismatch', 'The immutable parameters do not match this registered repayment market.');
   if (before.position[2] !== expected.position.collateral || before.position[1] !== expected.position.borrowShares ||
-      after.position[2] !== before.position[2] || after.position[0] !== before.position[0] ||
-      after.position[1] >= before.position[1]) return fail('repay_position_mismatch', 'The simulated debt did not decrease while preserving collateral and supply shares.');
+      after.position[2] !== (returning === undefined ? before.position[2] : 0n) || after.position[0] !== before.position[0] ||
+      (repaying ? after.position[1] >= before.position[1] : after.position[1] !== 0n)) return fail('repay_position_mismatch', 'The simulated debt did not decrease while preserving collateral and supply shares.');
   const repaidAssets = before.loanWallet - after.loanWallet;
-  if (repaidAssets <= 0n || repaidAssets > expected.maximumAssets || before.loanWallet < expected.maximumAssets ||
-      before.collateralWallet !== after.collateralWallet) return fail('repay_funding_mismatch', 'The exact USDC debit, funding maximum or unchanged wallet collateral was not established.');
+  if ((repaying ? repaidAssets <= 0n || repaidAssets > expected.maximumAssets || before.loanWallet < expected.maximumAssets : repaidAssets !== 0n) ||
+      after.collateralWallet - before.collateralWallet !== (returning ?? 0n)) return fail('repay_funding_mismatch', 'The exact USDC debit, funding maximum or wallet collateral movement was not established.');
   const pre = before.totals, post = after.totals;
   const interest = post.totalSupplyAssets - pre.totalSupplyAssets;
   const repaidShares = before.position[1] - after.position[1];
@@ -147,12 +155,20 @@ export function verifyMorphoRepayPoststateV1(input: {
   const accrued: MorphoMarketTotalsV1 = { ...pre, totalBorrowAssets: accruedBorrowAssets,
     totalSupplyAssets: post.totalSupplyAssets, totalSupplyShares: post.totalSupplyShares, lastUpdate: post.lastUpdate };
   const beforePosition: MorphoPositionV1 = { collateral: before.position[2], borrowShares: before.position[1] };
+  if (!repaying) {
+    // Only interest accrued in the market; this wallet owed nothing and still owes nothing.
+    if (post.totalBorrowAssets !== accruedBorrowAssets) return fail('repay_totals_mismatch', 'The market changed beyond accrued interest while only collateral moved.');
+    return { ok: true, repaidAssets: 0n, repaidShares: 0n, before: { position: beforePosition, totals: accrued, debtAssets: 0n },
+      after: { position: { collateral: 0n, borrowShares: 0n }, totals: post, debtAssets: 0n } };
+  }
   const projected = morphoRepayProjectionV1({ totals: accrued, position: beforePosition, amount: expected.amount, maximumAssets: expected.maximumAssets });
   if (!projected.ok || projected.repaidAssets !== repaidAssets || projected.repaidShares !== repaidShares ||
       projected.position.borrowShares !== after.position[1] || projected.totals.totalBorrowShares !== post.totalBorrowShares ||
       projected.totals.totalBorrowAssets !== post.totalBorrowAssets) return fail('repay_amount_mismatch', 'The observed debit and debt shares do not equal the exact requested repayment.');
   const debt = (p: MorphoPositionV1, t: MorphoMarketTotalsV1) => toAssetsUpV1(p.borrowShares, t.totalBorrowAssets, t.totalBorrowShares);
+  if (returning !== undefined && projected.position.borrowShares !== 0n) return fail('repay_amount_mismatch', 'Collateral is taken back only once the whole debt is repaid.');
+  const afterPosition = returning === undefined ? projected.position : { ...projected.position, collateral: 0n };
   return { ok: true, repaidAssets, repaidShares,
     before: { position: beforePosition, totals: accrued, debtAssets: debt(beforePosition, accrued) },
-    after: { position: projected.position, totals: post, debtAssets: debt(projected.position, post) } };
+    after: { position: afterPosition, totals: post, debtAssets: debt(afterPosition, post) } };
 }

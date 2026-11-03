@@ -9,15 +9,15 @@ export const REPAY_COLLATERALS_V1 = [
 export interface RepayCapacityWireV1 {
   venue: 'morpho' | 'aave-v4'; marketId: string; collateralTokenAddress: string; collateralSymbol: string;
   collateralDecimals: number; debtAtomic: string; walletUsdcAtomic: string; blockNumber: number;
-  /** Aave V4: the stock deposited, which Repay all can take back to the wallet. */
+  /** The collateral deposited (a stock on Aave V4, cbBTC or WETH on Morpho), which Repay all can take back. */
   collateralAtomic?: string;
 }
 /** How a repayment is asked: an exact amount, all of it, or all of it and the stock back. */
 export type RepayModeV1 = 'assets' | 'all' | 'return';
 
-/** Whether this read offers the stock back: an Aave V4 deposit is there. */
-export function repayCanReturnV1(read: Pick<RepayCapacityWireV1, 'venue' | 'collateralAtomic'> | null): boolean {
-  return read?.venue === 'aave-v4' && read.collateralAtomic !== undefined && BigInt(read.collateralAtomic) > BigInt(0);
+/** Whether this read offers the collateral back: some is deposited. */
+export function repayCanReturnV1(read: Pick<RepayCapacityWireV1, 'collateralAtomic'> | null): boolean {
+  return read?.collateralAtomic !== undefined && BigInt(read.collateralAtomic) > BigInt(0);
 }
 const object = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 const atomic = (v: unknown): v is string => typeof v === 'string' && /^(0|[1-9][0-9]{0,38})$/.test(v);
@@ -35,7 +35,7 @@ export function repayCapacityViewV1(payload: unknown, token: string): { read: Re
   if (payload.state !== 'read' || !object(row) || row.venue !== known.venue || row.collateralTokenAddress !== known.token ||
       row.collateralSymbol !== known.symbol || row.collateralDecimals !== known.decimals || typeof row.marketId !== 'string' ||
       !atomic(row.debtAtomic) || !atomic(row.walletUsdcAtomic) || !Number.isSafeInteger(row.blockNumber) || (row.blockNumber as number) <= 0 ||
-      (row.collateralAtomic !== undefined && (row.venue !== 'aave-v4' || !atomic(row.collateralAtomic)))) return fail;
+      (row.collateralAtomic !== undefined && !atomic(row.collateralAtomic))) return fail;
   return { read: row as unknown as RepayCapacityWireV1, error: null };
 }
 export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string; maximum: string; walletUsdcAtomic: string; debtAtomic?: string }): {

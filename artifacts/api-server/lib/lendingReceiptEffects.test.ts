@@ -4,7 +4,7 @@ import { encodeAbiParameters, encodeEventTopics, encodeFunctionData, parseAbi, t
 import { hashApprovedCallsV1 } from '@mioagent/route-domain';
 import type { VerifiedReceiptLogV1, VerifiedReceiptSourceV1 } from '@mioagent/route-proof';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
-import { MORPHO_BLUE_BUNDLES_BASE_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { MORPHO_BLUE_BUNDLES_BASE_V1, MORPHO_WITHDRAW_COLLATERAL_ABI_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { aaveV4ExecutionEventAbiV1, aaveV4WriteAbiV1 } from './aaveV4BorrowPlan.js';
 import { lendingReceiptVerifierV1, type LendingReceiptPositionV1 } from './lendingReceiptEffects.js';
 import { type LoanExecutionV1 } from './loanExecutionStore.js';
@@ -270,5 +270,56 @@ describe('repay all, then take the stock back: what the receipt must show', () =
     assert.equal(a.result.state === 'mismatched' && a.result.errorCode, 'loan_unrequested_collateral_withdrawal');
     const b = await check(plain, [outAave(), aaveEvent('repay'), arrived()]);
     assert.equal(b.result.state === 'mismatched' && b.result.errorCode, 'loan_unrequested_receipt_asset_change');
+  });
+});
+
+describe('repay all on Morpho, then the wallet takes its collateral back: what the receipt must show', () => {
+  const CBBTC = CRYPTO[0]!, COLLATERAL = 100n, CLOSED = { debtAssets: 0n, debtShares: 0n, collateralAssets: 0n };
+  const withdrawEvents = parseAbi(['event WithdrawCollateral(bytes32 indexed id,address caller,address indexed onBehalf,address indexed receiver,uint256 assets)']);
+  function returning(repay = true): LoanExecutionV1 {
+    const record = execution('morpho', 'repay');
+    Object.assign(record.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: repay ? '4000000' : '0', collateralReturnAssets: COLLATERAL.toString(),
+      collateralBeforeAssets: COLLATERAL.toString(), collateralAfterAssets: '0', debtAfterAssets: '0', debtAfterShares: '0',
+      ...(repay ? {} : { debtBeforeAssets: '0', debtBeforeShares: '0' }) });
+    const params = { loanToken: ADDRESSES.usdc, collateralToken: CBBTC.token, oracle: `0x${'a1'.repeat(20)}` as Address, irm: `0x${'a2'.repeat(20)}` as Address, lltv: 860_000_000_000_000_000n };
+    const back = { index: 0, callType: 'withdraw' as const, to: ADDRESSES.morpho.toLowerCase() as Address, valueWei: '0', asset: null, amountAtomic: COLLATERAL.toString(), recipient: WALLET, spender: null,
+      data: encodeFunctionData({ abi: MORPHO_WITHDRAW_COLLATERAL_ABI_V1, functionName: 'withdrawCollateral', args: [params, COLLATERAL, WALLET as Address, WALLET as Address] }) };
+    record.run.calls = repay ? [...record.run.calls, { ...back, index: record.run.calls.length }] : [back];
+    record.run.callsHash = hashApprovedCallsV1(record.run.calls);
+    return record;
+  }
+  function withdrawn(patch: { receiver?: string; caller?: string; assets?: bigint } = {}): VerifiedReceiptLogV1 {
+    return { address: ADDRESSES.morpho, topics: encodeEventTopics({ abi: withdrawEvents, eventName: 'WithdrawCollateral', args: {
+      id: bytes32(CBBTC.morphoMarket), onBehalf: WALLET as Address, receiver: (patch.receiver ?? WALLET) as Address } }) as Hex[],
+      data: encodeAbiParameters([{ type: 'address' }, { type: 'uint256' }], [(patch.caller ?? WALLET) as Address, patch.assets ?? COLLATERAL]) };
+  }
+  const arrived = (amount = COLLATERAL) => transfer(CBBTC.token, ADDRESSES.morpho, WALLET, amount);
+  const repaid = () => [outMorpho(4_000_000n), transfer(ADDRESSES.usdc, MORPHO_BLUE_BUNDLES_BASE_V1, WALLET, 1_000_000n), morphoEvent('repay', { assets: 3_000_000n, shares: 300n })];
+  it('matches the bundled full repayment, then the owner’s own withdrawal of the whole collateral and its arrival', async () => {
+    const { result } = await check(returning(), [...repaid(), arrived(), withdrawn()], CLOSED);
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+    if (result.state === 'matched') assert.equal(result.proof.collateralReturnedAssets, COLLATERAL.toString());
+  });
+  it('with no debt left matches the withdrawal alone', async () => {
+    const { result } = await check(returning(false), [arrived(), withdrawn()], CLOSED);
+    assert.equal(result.state, 'matched', result.state !== 'matched' ? result.errorCode : '');
+  });
+  it('refuses another receiver or caller, a short withdrawal, a missing arrival, and collateral still in the market', async () => {
+    for (const logs of [
+      [...repaid(), arrived(), withdrawn({ receiver: OTHER })],
+      [...repaid(), arrived(), withdrawn({ caller: MORPHO_BLUE_BUNDLES_BASE_V1 })],
+      [...repaid(), arrived(), withdrawn({ assets: COLLATERAL - 1n })],
+      [...repaid(), withdrawn()],
+    ]) {
+      const { result } = await check(returning(), logs, CLOSED);
+      assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_withdraw_event_mismatch');
+    }
+    const held = await check(returning(), [...repaid(), arrived(), withdrawn()], { ...CLOSED, collateralAssets: COLLATERAL });
+    assert.equal(held.result.state, 'unavailable');
+  });
+  it('a plain Morpho repayment still refuses any collateral withdrawal', async () => {
+    const plain = execution('morpho', 'repay'); Object.assign(plain.run.facts, { amountMode: 'all', requestedAssets: null, maximumDebitAssets: '4000000' });
+    const { result } = await check(plain, [...repaid(), withdrawn()], { debtAssets: 0n, debtShares: 0n, collateralAssets: 100n });
+    assert.equal(result.state === 'mismatched' && result.errorCode, 'loan_unrequested_collateral_withdrawal');
   });
 });

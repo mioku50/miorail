@@ -90,9 +90,12 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
   const id = useId(), busy = model.reading || model.preparing;
   const asset = REPAY_COLLATERALS_V1.find(row => row.id === model.asset);
   const symbol = model.read?.collateralSymbol ?? asset?.symbol ?? '';
+  const venue = (model.read?.venue ?? asset?.venue) === 'morpho' ? 'Morpho' : 'Aave V4';
   const deposit = model.read?.collateralAtomic !== undefined ? `${tokenDecimalV1(model.read.collateralAtomic, model.read.collateralDecimals)} ${model.read.collateralSymbol}` : null;
+  // A loan is repaid in USDC from this wallet: say so before a field asks for an amount it cannot cover.
+  const short = model.read !== null && BigInt(model.read.walletUsdcAtomic) < BigInt(model.read.debtAtomic);
   return <div className="still-borrow">
-    <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC, or repay all of a stock loan and take the stock back to your wallet.</p></div>
+    <div className="still-section"><h1 className="still-word">Repay</h1><p className="still-sub">Reduce debt with USDC, or repay all of a loan and take its collateral back to your wallet.</p></div>
     {!model.signedIn ? <section className="still-section still-card"><p className="still-sub">Sign in to read your repayment position.</p><a className="still-btn" href={model.signInHref}>Sign in</a></section> : <>
       {model.error ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
       <div className="still-borrow-grid">
@@ -111,7 +114,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
             <dl className="still-borrow-facts">
               <div><dt>Debt read</dt><dd className="mono">{tokenDecimalV1(model.read.debtAtomic, 6)} USDC</dd></div>
               <div><dt>USDC in your wallet</dt><dd className="mono">{tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC</dd></div>
-              {deposit ? <div><dt>Deposited in Aave</dt><dd className="mono">{deposit}</dd></div> : null}
+              {deposit ? <div><dt>Deposited in {venue}</dt><dd className="mono">{deposit}</dd></div> : null}
               <div><dt>Base block</dt><dd className="mono">{model.read.blockNumber.toLocaleString('en-US')}</dd></div>
             </dl>
             {BigInt(model.read.debtAtomic) > BigInt(0) && BigInt(model.read.debtAtomic) < BigInt(10_000) ? <p className="still-note">Exact micro-debt of {tokenDecimalV1(model.read.debtAtomic, 6)} USDC ({model.read.debtAtomic} atomic USDC) is shown without rounding to zero. Use Repay all debt to clear residual shares completely.</p> : null}
@@ -120,9 +123,15 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-repay-title`}>
           <h2 id={`${id}-repay-title`}>Choose the repayment.</h2>
           {model.read?.debtAtomic === '0' ? model.canReturn ? <>
-            <p className="still-note">No debt is open in this market. Your {deposit} is still deposited in Aave V4, and it can come back to your wallet now, with no USDC.</p>
+            <p className="still-note">No debt is open in this market. Your {deposit} is still deposited in {venue}, and it can come back to your wallet now, with no USDC.</p>
             <button type="button" className="still-btn" disabled={busy} onClick={model.onTakeBack}>{model.preparing ? 'Preparing review…' : `Take back ${symbol}`}</button>
-          </> : <p className="still-note">No debt was recorded in this market at the reading block.</p> : <form onSubmit={event => { event.preventDefault(); model.onReview(); }}>
+          </> : <p className="still-note">No debt was recorded in this market at the reading block.</p> : <>
+          {short && model.read ? <p className="still-warn" role="note">
+            This wallet holds {tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC on Base, and the debt is {tokenDecimalV1(model.read.debtAtomic, 6)} USDC.
+            A loan is repaid in USDC from this wallet: add at least the debt, and a little more for the interest that keeps accruing, then read the position again.
+            {model.mode === 'assets' ? ' An exact repayment can be smaller than the debt.' : null}
+          </p> : null}
+          <form onSubmit={event => { event.preventDefault(); model.onReview(); }}>
             <fieldset disabled={busy || !model.read} style={{ border: 0, padding: 0, margin: 0 }}>
               <legend className="still-borrow-label">Repayment mode</legend>
               <div className="still-borrow-assets">
@@ -143,7 +152,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
                   model.mode === 'return' ? ` Then your ${deposit ?? symbol} comes back to this wallet in the same review.` : ''}`}</p>
               <button type="submit" className="still-btn" disabled={!model.read || busy || !(model.mode === 'assets' ? model.amount : model.maximum).trim()}>{model.preparing ? 'Preparing review…' : 'Review repayment'}</button>
             </fieldset>
-          </form>}
+          </form></>}
           <p className="still-note">The review checks the exact position again and simulates the calls. Only your wallet can approve the repayment.</p>
         </section>
       </div>

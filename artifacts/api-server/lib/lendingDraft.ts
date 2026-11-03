@@ -14,8 +14,8 @@ export interface LendingPaymentV1 {
 export type LendingQuestionV1 =
   | { operation: 'borrow'; collateralTokenAddress: string; borrowAssets: string; collateralSupplyAssets: string; nativeFundingAssets?: string; payment?: LendingPaymentV1 }
   | { operation: 'repay'; collateralTokenAddress: string; amountMode: 'assets' | 'all'; repayAssets: string | null; maximumAssets: string;
-      /** Repay all, then take the stock back to the wallet (Aave V4 stocks only).
-       * With no debt left only the stock moves, so the maximum may be zero. */
+      /** Repay all, then take the collateral back to the wallet: a stock on Aave V4,
+       * cbBTC or WETH on Morpho. With no debt left only it moves, so the maximum may be zero. */
       returnCollateral?: true };
 export interface LendingDraftClaimsV1 {
   version: 1 | 2 | 3; chainId: 8453; tenantId: string; walletAddress: string; draftId: string;
@@ -55,7 +55,7 @@ function questionV1(value: unknown): value is LendingQuestionV1 {
       && (!paying || isLendingPaymentV1(q.payment, q.borrowAssets));
   }
   const returning = q.operation === 'repay' && 'returnCollateral' in q;
-  if (returning && (q.returnCollateral !== true || q.amountMode !== 'all' || market.venue !== 'aave-v4')) return false;
+  if (returning && (q.returnCollateral !== true || q.amountMode !== 'all')) return false;
   return q.operation === 'repay' && exact(q, ['operation','collateralTokenAddress','amountMode','repayAssets','maximumAssets', ...(returning ? ['returnCollateral'] : [])])
     && atom(q.maximumAssets, returning) && ((q.amountMode === 'all' && q.repayAssets === null)
       || (q.amountMode === 'assets' && atom(q.repayAssets) && BigInt(q.repayAssets) <= BigInt(q.maximumAssets)));

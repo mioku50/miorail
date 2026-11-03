@@ -78,12 +78,13 @@ rwaLendingRouter.get('/rwa/repay/capacity', async (req, res) => {
     if (answer.state === 'refused') { res.json(answer); return; }
     const s = answer.standing;
     res.json({ state: 'read', read: { venue: market.venue, marketId: market.marketId, collateralTokenAddress,
-      collateralSymbol: s.collateral.symbol, collateralDecimals: s.collateral.decimals, debtAtomic: s.debtAssets.toString(), walletUsdcAtomic: s.walletLoanAssets.toString(), blockNumber: Number(s.block.number) } });
+      collateralSymbol: s.collateral.symbol, collateralDecimals: s.collateral.decimals, debtAtomic: s.debtAssets.toString(), walletUsdcAtomic: s.walletLoanAssets.toString(), blockNumber: Number(s.block.number),
+      collateralAtomic: s.position.collateral.toString() } });
   } else {
     const answer = await rwaLendingRuntimeV1.readAave({ tokenAddress: collateralTokenAddress, walletAddress: owner.walletAddress, operation: 'repay' });
     if (answer.state === 'refused') { res.json(answer); return; }
     const s = answer.standing, stock = STOCKS.find(row => row.token.toLowerCase() === collateralTokenAddress)!;
-    // The deposit too: a stock can be taken back once its loan is repaid.
+    // The deposit too: collateral can be taken back once its loan is repaid.
     res.json({ state: 'read', read: { venue: market.venue, marketId: market.marketId, collateralTokenAddress,
       collateralSymbol: stock.id, collateralDecimals: stock.decimals, debtAtomic: s.debtAssets.toString(), walletUsdcAtomic: s.walletUsdcAssets.toString(), blockNumber: s.blockNumber,
       collateralAtomic: s.existingSuppliedAssets.toString() } });
@@ -93,7 +94,6 @@ rwaLendingRouter.get('/rwa/repay/capacity', async (req, res) => {
 rwaLendingRouter.post('/rwa/repay/intent', (req, res) => {
   const owner = ownerV1(req); if (!owner) { res.status(401).json({ error: 'authentication_required' }); return; }
   const parsed = RepayIntentV1.safeParse(req.body); if (!parsed.success || !lendingMarketV1(parsed.data.collateralTokenAddress)) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
-  if (parsed.data.returnCollateral && lendingMarketV1(parsed.data.collateralTokenAddress)!.venue !== 'aave-v4') { res.status(400).json({ error: 'lending_return_unsupported' }); return; }
   if (rwaLendingRuntimeV1.secret().length < 16) { res.status(503).json({ error: 'lending_unavailable' }); return; }
   const q = parsed.data;
   const issued = issueLendingDraftV1({ ...owner, question: { operation: 'repay', collateralTokenAddress: q.collateralTokenAddress,
@@ -174,7 +174,8 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   let run: LendingRunV1;
   if (claims.venue === 'morpho' && q.operation === 'repay') {
     run = await rwaLendingRuntimeV1.runRepay({ collateralTokenAddress: q.collateralTokenAddress, marketId: claims.marketId,
-      walletAddress: owner.walletAddress, amount: q.amountMode === 'all' ? { mode: 'all' } : { mode: 'assets', assets: BigInt(q.repayAssets!) }, maximumAssets: BigInt(q.maximumAssets) });
+      walletAddress: owner.walletAddress, amount: q.amountMode === 'all' ? { mode: 'all' } : { mode: 'assets', assets: BigInt(q.repayAssets!) }, maximumAssets: BigInt(q.maximumAssets),
+      ...(q.returnCollateral ? { returnCollateral: true } : {}) });
   } else if (claims.venue === 'morpho' && q.operation === 'borrow' && q.nativeFundingAssets !== undefined) {
     run = await rwaLendingRuntimeV1.runNativeBorrow({walletAddress:owner.walletAddress,supplyAssets:BigInt(q.nativeFundingAssets),borrowAssets:BigInt(q.borrowAssets)});
   } else if (claims.venue === 'morpho' && q.operation === 'borrow') {

@@ -10,7 +10,7 @@ import type { LoanEffectPositionCheckV1 } from './loanExecutionStatus.js';
 import type { LendingFactsV1 } from './lendingReview.js';
 import type { VerifiedReceiptLogV1 } from '@mioagent/route-proof';
 import { nativeMorphoAuthorizationAbiV1, NATIVE_WETH_RUNTIME_HASH_V1 } from './nativeMorphoBorrowPlan.js';
-import { MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
+import { MORPHO_BLUE_BUNDLES_RUNTIME_HASH_V1, MORPHO_WITHDRAW_COLLATERAL_ABI_V1 } from '@mioagent/rwa-issuer/morphoRepayPlan';
 import { STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepayStanding.js';
 
 const events = parseAbi([
@@ -111,7 +111,7 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     }
     // Repay all and take the stock back: the deposit returns to the wallet, and only then.
     const returned = f.collateralReturnAssets === undefined ? null : BigInt(f.collateralReturnAssets);
-    if (returned !== null && (f.operation !== 'repay' || f.venue !== 'aave-v4' || f.amountMode !== 'all' || returned <= 0n || native || payment)) return mismatch('loan_return_question_mismatch');
+    if (returned !== null && (f.operation !== 'repay' || f.amountMode !== 'all' || returned <= 0n || native || payment)) return mismatch('loan_return_question_mismatch');
     let usdcNet = 0n, collateralOut = 0n, grossUsdcOut = 0n, collateralIn = 0n;
     for (const e of rows.filter(e => e.name === 'Transfer')) {
       const amount = e.args.value; if (typeof amount !== 'bigint' || amount === 0n) continue;
@@ -128,16 +128,27 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
       try { const value = decodeFunctionData({ abi: aaveV4WriteAbiV1, data: call.data as Hex }); return value.functionName === name ? [value] : []; }
       catch { return []; }
     });
+    // Morpho: the owner's own withdrawCollateral to Morpho Blue, decoded from the approved calls.
+    const morphoBack = f.venue !== 'morpho' ? [] : execution.run.calls.filter(call => call.to.toLowerCase() === contract).flatMap(call => {
+      try { const value = decodeFunctionData({ abi: MORPHO_WITHDRAW_COLLATERAL_ABI_V1, data: call.data as Hex }); return [value]; }
+      catch { return []; }
+    });
     const withdrawals = protocol.filter(e => e.name === 'WithdrawCollateral' || e.name === 'Withdraw');
     if (returned === null) {
       if (withdrawals.length > 0) return mismatch('loan_unrequested_collateral_withdrawal');
-    } else {
+    } else if (f.venue === 'aave-v4') {
       const w = withdrawals[0], call = approved('withdraw');
       if (withdrawals.length !== 1 || w!.name !== 'Withdraw' || call.length !== 1 || w!.args.reserveId !== call[0]!.args[0] || !same(w!.args.caller, wallet) ||
           w!.args.suppliedAmount !== returned || collateralIn !== returned) return mismatch('loan_withdraw_event_mismatch');
+    } else {
+      const w = withdrawals[0], call = morphoBack[0];
+      if (withdrawals.length !== 1 || w!.name !== 'WithdrawCollateral' || morphoBack.length !== 1 || !same(w!.args.id, f.marketId) ||
+          !same(w!.args.caller, wallet) || !same(w!.args.onBehalf, wallet) || !same(w!.args.receiver, wallet) || w!.args.assets !== returned ||
+          call!.args[1] !== returned || !same(call!.args[2], wallet) || !same(call!.args[3], wallet) || collateralIn !== returned) return mismatch('loan_withdraw_event_mismatch');
     }
-    // With no debt left, taking the stock back approved no repayment, and none may appear.
-    const repaying = f.operation === 'borrow' || returned === null || approved('repay').length === 1;
+    // With no debt left, taking the collateral back approved no repayment, and none may appear.
+    const repaying = f.operation === 'borrow' || returned === null ||
+      (f.venue === 'aave-v4' ? approved('repay').length === 1 : execution.run.calls.some(call => same(call.to, STILL_REPAY_BLUE_BUNDLES_V1)));
     const action = protocol.filter(e => e.name === (f.operation === 'borrow' ? 'Borrow' : 'Repay'));
     if (action.length !== (repaying ? 1 : 0)) return mismatch('loan_protocol_event_not_unique');
     let assets = 0n, shares = 0n;
@@ -187,7 +198,8 @@ export function lendingReceiptVerifierV1(deps: LendingReceiptDepsV1 = {}): LoanE
     if (f.venue === 'morpho') {
       if (f.debtBeforeShares === null) return unknown('loan_initial_shares_unread');
       const before = BigInt(f.debtBeforeShares), expected = f.operation === 'borrow' ? before + shares : f.amountMode === 'all' ? 0n : before - shares;
-      if (expected < 0n || p.debtShares !== expected || p.collateralAssets !== BigInt(f.collateralBeforeAssets) + BigInt(f.collateralSupplyAssets)) return unknown('loan_position_changed_outside_receipt');
+      if (expected < 0n || p.debtShares !== expected ||
+          p.collateralAssets !== (returned === null ? BigInt(f.collateralBeforeAssets) + BigInt(f.collateralSupplyAssets) : 0n)) return unknown('loan_position_changed_outside_receipt');
     } else {
       if (f.debtBeforeShares === null) return unknown('loan_initial_shares_unread');
       const expectedDebtShares = f.operation === 'borrow' ? BigInt(f.debtBeforeShares) + shares :

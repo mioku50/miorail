@@ -236,7 +236,7 @@ export const StillPrepareRepayInputV1Schema = z.object({
   maximumUsdc: z.string().regex(DECIMAL_V1).optional()
     .describe('With "all" only, and needed there: the most USDC the user agreed to pay, interest included. The review refuses if the debt has grown past it.'),
   returnCollateral: z.boolean().optional()
-    .describe('true when the user asked for their stock back: with "all", the same review then returns the whole stock deposit to this wallet. A stock on Aave V4 only. When nothing is owed any more it only returns the stock, and maximumUsdc may be "0".'),
+    .describe('true when the user asked for their collateral back: with "all", the same review then returns the whole collateral to this wallet, for a stock on Aave V4 or cbBTC or WETH on Morpho (a loan opened with native ETH comes back as WETH). When nothing is owed any more it only returns the collateral, and maximumUsdc may be "0".'),
 }).strict();
 
 export const StillPrepareRepayOutputV1Schema = z.object({
@@ -258,11 +258,8 @@ export function stillPrepareRepayReviewV1(
 ): z.infer<typeof StillPrepareRepayOutputV1Schema> {
   const { token, venue } = tokenOfV1(args.collateral);
   const all = args.repayUsdc === 'all', back = args.returnCollateral === true;
-  if (back && venue !== 'aave-v4') {
-    throw new StillLoanRefusalV1('still_return_unsupported', 'Taking the collateral back is offered for a stock on Aave V4. A cbBTC or WETH loan on Morpho is repaid without it for now.');
-  }
   if (back && !all) {
-    throw new StillLoanRefusalV1('still_repay_amount_invalid', 'returnCollateral goes with "all": the stock comes back once the whole loan is repaid.');
+    throw new StillLoanRefusalV1('still_repay_amount_invalid', 'returnCollateral goes with "all": the collateral comes back once the whole loan is repaid.');
   }
   const repay = all ? null : unitsV1(args.repayUsdc, 6);
   if (!all && (repay === null || repay === 0n)) {

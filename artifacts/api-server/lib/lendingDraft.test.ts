@@ -15,17 +15,16 @@ const questions: LendingQuestionV1[] = [
 ];
 describe('a repayment that takes the stock back', () => {
   const stock = STOCKS[5]!.token.toLowerCase();
-  it('round trips for an Aave V4 stock with Repay all, the maximum zero when nothing is owed', () => {
-    for (const maximumAssets of ['3000000', '0']) {
-      const question: LendingQuestionV1 = { operation: 'repay', collateralTokenAddress: stock, amountMode: 'all', repayAssets: null, maximumAssets, returnCollateral: true };
+  it('round trips with Repay all for a stock on Aave V4 and cbBTC on Morpho, the maximum zero when nothing is owed', () => {
+    for (const [token, maximumAssets] of [[stock, '3000000'], [stock, '0'], [CRYPTO[0]!.token.toLowerCase(), '1'], [CRYPTO[0]!.token.toLowerCase(), '0']] as const) {
+      const question: LendingQuestionV1 = { operation: 'repay', collateralTokenAddress: token, amountMode: 'all', repayAssets: null, maximumAssets, returnCollateral: true };
       const issued = issueLendingDraftV1({ ...owner, question, secret, now }), read = verifyLendingDraftV1({ ...owner, ...issued, secret, now });
       assert(read.ok); assert.deepEqual(read.claims.question, question);
     }
   });
-  it('is refused for an exact repayment, a Morpho loan, a false flag, and a zero maximum without it', () => {
+  it('is refused for an exact repayment, a false flag, and a zero maximum without it', () => {
     for (const question of [
       { operation: 'repay', collateralTokenAddress: stock, amountMode: 'assets', repayAssets: '1', maximumAssets: '1', returnCollateral: true },
-      { operation: 'repay', collateralTokenAddress: CRYPTO[0]!.token.toLowerCase(), amountMode: 'all', repayAssets: null, maximumAssets: '1', returnCollateral: true },
       { operation: 'repay', collateralTokenAddress: stock, amountMode: 'all', repayAssets: null, maximumAssets: '1', returnCollateral: false },
       { operation: 'repay', collateralTokenAddress: stock, amountMode: 'all', repayAssets: null, maximumAssets: '0' },
     ]) assert.throws(() => issueLendingDraftV1({ ...owner, question: question as LendingQuestionV1, secret, now }), /lending_question_invalid/);
