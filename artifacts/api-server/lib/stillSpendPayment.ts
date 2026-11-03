@@ -37,8 +37,9 @@ export interface SpendPaymentDepsV1 {
 
 const lower = (value: string) => value.toLowerCase();
 
-export function spendPayeeRefusedV1(payTo: string, wallet: string, facts: LendingFactsV1, calls: readonly ExecutionCallV1[]): boolean {
-  const known = [wallet, ADDRESSES.usdc, ADDRESSES.aaveHub, ADDRESSES.aaveSpoke, ADDRESSES.morpho, ADDRESSES.weth, facts.collateralTokenAddress,
+/** An invoice address Still never pays: not a 0x address, the wallet itself, a contract Still's calls use, or a call's own target. */
+export function spendPayeeRefusedV1(payTo: string, wallet: string, collateralTokenAddress: string | null, calls: readonly ExecutionCallV1[]): boolean {
+  const known = [wallet, ADDRESSES.usdc, ADDRESSES.aaveHub, ADDRESSES.aaveSpoke, ADDRESSES.morpho, ADDRESSES.weth, ...(collateralTokenAddress ? [collateralTokenAddress] : []),
     '0x0000000000000000000000000000000000000000'].map(lower);
   return !/^0x[0-9a-f]{40}$/.test(payTo) || known.includes(payTo) || calls.some((call) => lower(call.to) === payTo);
 }
@@ -54,7 +55,7 @@ export async function attachSpendPaymentV1(
   if (facts.operation !== 'borrow' || facts.nativeFunding || facts.requestedAssets !== payment.assets || assets <= 0n) {
     return fail('spend_payment_question_mismatch', 'The loan measured is not the exact amount of this Bitrefill invoice. Nothing can be signed.');
   }
-  if (spendPayeeRefusedV1(payTo, wallet, facts, run.calls)) {
+  if (spendPayeeRefusedV1(payTo, wallet, facts.collateralTokenAddress, run.calls)) {
     return fail('spend_payee_refused', 'Bitrefill’s invoice address is not one Still can pay. Nothing can be signed.');
   }
   if (!(Date.parse(payment.expiresAt) - now.getTime() >= STILL_SPEND_REVIEW_MARGIN_MS_V1)) {

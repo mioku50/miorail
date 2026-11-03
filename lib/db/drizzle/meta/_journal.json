@@ -666,6 +666,13 @@
       "when": 1793642400000,
       "tag": "0094_lending_one_invoice",
       "breakpoints": true
+    },
+    {
+      "idx": 95,
+      "version": "7",
+      "when": 1793728800000,
+      "tag": "0095_spend_wallet_payments",
+      "breakpoints": true
     }
   ]
 }

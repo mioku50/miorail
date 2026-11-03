@@ -3,7 +3,8 @@
 // The catalogue is Bitrefill's, read by Still's server as a guest; every price
 // is the one Bitrefill quoted in USDC. Whether a price fits is said against the
 // reader's own Still room, from the Mirror report, and only when that is known:
-// a partial room says "within" or nothing, never "over".
+// a partial room says "within" or nothing, never "over". Beside it, whether the
+// USDC already in the wallet covers the price, which pays it with no loan.
 
 export type SpendTypeV1 = 'esim' | 'refill' | 'giftcard';
 
@@ -112,6 +113,8 @@ export interface SpendPackageRowV1 {
   share: number | null;
   /** It can be paid from Still now: the server pays this product, and the price is under its cap. */
   payable: boolean;
+  /** The USDC already in the wallet covers it, so it can be paid with no loan; null when that USDC was not read. */
+  wallet: boolean | null;
 }
 
 export interface SpendProductViewV1 {
@@ -135,7 +138,7 @@ function priceCentsV1(price: string): bigint | null {
   return (micros + 9_999n) / 10_000n;
 }
 
-export function spendProductViewV1(payload: unknown, room: { cents: string; complete: boolean } | null): { product: SpendProductViewV1 | null; error: string | null } {
+export function spendProductViewV1(payload: unknown, room: { cents: string; complete: boolean } | null, walletAtomic: string | null = null): { product: SpendProductViewV1 | null; error: string | null } {
   const failed = { product: null, error: 'This product could not be read from Bitrefill just now.' };
   if (!object(payload) || payload.outcome !== 'product' || !object(payload.product)) return failed;
   const product = payload.product;
@@ -163,7 +166,7 @@ export function spendProductViewV1(payload: unknown, room: { cents: string; comp
     const share = roomCents === null || !room!.complete || roomCents === 0n ? null : cents >= roomCents ? 1 : Number(cents) / Number(roomCents);
     // A top-up is paid only with the number it goes to.
     const payable = capAtomic !== null && cents * 10_000n <= capAtomic && (!topUp || phone !== null);
-    packages.push({ value: row.value, label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share, payable });
+    packages.push({ value: row.value, label: `${row.value}${face}`, price: `${row.priceUsdc} USDC`, room: fits, share, payable, wallet: spendWalletCoversV1(walletAtomic, row.priceUsdc) });
   }
   const needs = product.prepayment === true ? 'Bitrefill sells this only after steps such as the player’s game ID, which it does not offer to Still, so it cannot be paid from Still.'
     : topUp ? phone ? null : 'Buying it needs the phone number to top up.'
@@ -302,4 +305,90 @@ export function loanShareTextV1(input: { collateralSymbol: string }): string {
 export function spendShareTextV1(input: { productName: string; collateralSymbol: string }): string {
   const collateral = /^[A-Z]{1,6}c$/.test(input.collateralSymbol) ? input.collateralSymbol.slice(0, -1) : input.collateralSymbol;
   return `Paid for ${input.productName} with a USDC loan against my ${collateral}, without selling it. On Base, through Still.`;
+}
+
+/** USDC base units in words, "2.12 USDC": two decimals at least, every non-zero one after them. */
+export function spendUsdcTextV1(atomic: string): string | null {
+  if (!/^(0|[1-9]\d{0,20})$/.test(atomic)) return null;
+  const units = BigInt(atomic), micro = (units % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
+  return `${(units / 1_000_000n).toString()}.${micro.padEnd(2, '0')} USDC`;
+}
+
+/** Whether the wallet's own USDC covers a price exactly; null when either was not read. */
+export function spendWalletCoversV1(walletAtomic: string | null, price: string): boolean | null {
+  const match = PRICE.exec(price);
+  if (walletAtomic === null || !/^(0|[1-9]\d{0,20})$/.test(walletAtomic) || !match) return null;
+  return BigInt(walletAtomic) >= BigInt(match[1]!) * 1_000_000n + BigInt((match[2] ?? '').padEnd(6, '0'));
+}
+
+/** What Spend's room card says beside the room: what is owed already, and
+ * the USDC already in the wallet. The operator asked on 2026-11-03 why Spend
+ * offered $0.20 right after a loan paid them 2 USDC: the room is what Still
+ * can lend on top of the debt, and the wallet's USDC was not said at all. */
+export function spendOwedCentsV1(report: { venues: ReadonlyArray<{ debtCents: string | null }> } | null | undefined): string | null {
+  if (!report || report.venues.length === 0 || report.venues.some((venue) => venue.debtCents === null || !/^\d{1,15}$/.test(venue.debtCents))) return null;
+  const owed = report.venues.reduce((sum, venue) => sum + BigInt(venue.debtCents!), 0n);
+  return owed > 0n ? owed.toString() : null;
+}
+
+export type SpendWalletStateV1 = 'ready' | 'awaiting_wallet' | 'submitted' | 'unknown' | 'confirmed' | 'failed' | 'refused';
+/** A Spend payment from the wallet's own USDC, as the server answered for it. */
+export interface SpendWalletViewV1 {
+  orderId: string;
+  state: SpendWalletStateV1;
+  refusal: string | null;
+  /** The server's own sentence for a refusal. */
+  detail: string | null;
+  /** "2.00 USDC" */
+  price: string | null;
+  productName: string | null;
+  packageLabel: string | null;
+  /** The invoice address, shortened: "0x3333…3333". */
+  payTo: string | null;
+  /** The wallet's USDC before and after this payment, at `block`. */
+  before: string | null;
+  after: string | null;
+  block: number | null;
+  warnings: string[];
+  expiresAt: string | null;
+  transactionHash: string | null;
+  /** Only while it can be armed: what the wallet is asked to send, exactly as the server prepared it. */
+  ready: null | { calls: Array<{ to: string; value: string; data: string }>; callsHash: string; signingTermsHash: string };
+}
+
+const STATES_V1: readonly SpendWalletStateV1[] = ['ready', 'awaiting_wallet', 'submitted', 'unknown', 'confirmed', 'failed', 'refused'];
+const HASH_V1 = /^0x[0-9a-f]{64}$/;
+
+export function spendWalletViewV1(payload: unknown): SpendWalletViewV1 | null {
+  if (!object(payload) || typeof payload.orderId !== 'string' || !/^[0-9a-f-]{36}$/.test(payload.orderId) ||
+      typeof payload.state !== 'string' || !(STATES_V1 as readonly string[]).includes(payload.state)) return null;
+  const state = payload.state as SpendWalletStateV1;
+  if (state === 'refused') {
+    return { orderId: payload.orderId, state, refusal: typeof payload.refusal === 'string' ? payload.refusal : null,
+      detail: text(payload.detail, 400) ? payload.detail : 'Still could not prepare this payment. Nothing was sent.',
+      price: null, productName: null, packageLabel: null, payTo: null, before: null, after: null, block: null, warnings: [], expiresAt: null, transactionHash: null, ready: null };
+  }
+  const facts = object(payload.facts) ? payload.facts : null, payment = facts && object(facts.payment) ? facts.payment : null;
+  if (!facts || !payment || payment.orderId !== payload.orderId || typeof payment.payTo !== 'string' || !/^0x[0-9a-f]{40}$/.test(payment.payTo) ||
+      typeof payment.assets !== 'string' || !text(payment.productName, 120) || !text(payment.packageValue, 80)) return null;
+  const price = spendUsdcTextV1(payment.assets), before = typeof facts.usdcBeforeAtomic === 'string' ? spendUsdcTextV1(facts.usdcBeforeAtomic) : null;
+  const after = typeof facts.usdcAfterAtomic === 'string' ? spendUsdcTextV1(facts.usdcAfterAtomic) : null;
+  if (!price) return null;
+  const face = typeof payment.faceCurrency === 'string' && /^[A-Z]{3}$/.test(payment.faceCurrency) && /^\d+(?:\.\d+)?$/.test(payment.packageValue) ? ` ${payment.faceCurrency}` : '';
+  const calls = Array.isArray(payload.calls) && payload.calls.length === 1 && payload.calls.every((call) => object(call) && typeof call.to === 'string' && /^0x[0-9a-f]{40}$/.test(call.to) &&
+    typeof call.value === 'string' && /^\d{1,78}$/.test(call.value) && typeof call.data === 'string' && /^0x[0-9a-f]*$/.test(call.data))
+    ? (payload.calls as Array<{ to: string; value: string; data: string }>).map((call) => ({ to: call.to, value: call.value, data: call.data })) : null;
+  const ready = state === 'ready' && calls && typeof payload.callsHash === 'string' && HASH_V1.test(payload.callsHash) &&
+    typeof payload.signingTermsHash === 'string' && HASH_V1.test(payload.signingTermsHash)
+    ? { calls, callsHash: payload.callsHash, signingTermsHash: payload.signingTermsHash } : null;
+  if (state === 'ready' && !ready) return null;
+  return {
+    orderId: payload.orderId, state, refusal: null, detail: null, price, productName: payment.productName, packageLabel: `${payment.packageValue}${face}`,
+    payTo: `${payment.payTo.slice(0, 6)}…${payment.payTo.slice(-4)}`, before, after,
+    block: typeof facts.blockNumber === 'number' && Number.isSafeInteger(facts.blockNumber) ? facts.blockNumber : null,
+    warnings: Array.isArray(facts.warnings) ? facts.warnings.filter((line): line is string => text(line, 600)).slice(0, 4) : [],
+    expiresAt: typeof payload.expiresAt === 'string' && Number.isFinite(Date.parse(payload.expiresAt)) ? payload.expiresAt : null,
+    transactionHash: typeof payload.transactionHash === 'string' && HASH_V1.test(payload.transactionHash) ? payload.transactionHash : null,
+    ready,
+  };
 }

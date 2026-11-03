@@ -22,7 +22,7 @@ const ORDER = { orderId: ORDER_ID, productId: 'bitrefill-esim-germany', productN
 // A top-up's order, as the server holds it for its owner: the number it goes to included. The number is made up.
 const TOP_UP_ORDER = { ...ORDER, productId: 'beeline-kazakhstan', productName: 'Beeline Kazakhstan', packageValue: '100', faceCurrency: 'KZT', priceAtomic: '260000', refillTo: '+77771234567' };
 
-async function install(page: Page, signedIn: boolean, options: { pay?: boolean } = {}) {
+async function install(page: Page, signedIn: boolean, options: { pay?: boolean; usdcAtomic?: string } = {}) {
   const reads: string[] = [], writes: string[] = [], walletMethods: string[] = [], bodies: Record<string, unknown> = {};
   let opened: typeof ORDER = ORDER;
   const checkout = options.pay ? { checkout: { enabled: true, available: true, capAtomic: '100000000' } } : {};
@@ -59,6 +59,7 @@ async function install(page: Page, signedIn: boolean, options: { pay?: boolean }
     if (options.pay && path.startsWith('/api/route-intelligence/rwa/lending/review/')) return route.fulfill({ json: { state: 'refused', refusal: 'fixture', detail: 'Fixture review stops before any wallet action.' } });
     if (path === '/api/auth/session') return route.fulfill({ json: { user: signedIn ? { id: 'fixture', address: WALLET, chainId: 8453 } : null } });
     if (path === '/api/still/mine' && signedIn) return route.fulfill({ json: { outcome: 'report', report: report(), cached: false } });
+    if (path === '/api/still/mine/usdc' && signedIn && options.usdcAtomic) return route.fulfill({ json: { outcome: 'read', usdc: { raw: options.usdcAtomic, decimals: 6, block: '53470000' } } });
     if (path === '/api/public/still/spend/search') {
       if (url.searchParams.get('type') === 'refill') {
         return route.fulfill({ json: { ...checkout, outcome: 'products', type: 'refill', country: url.searchParams.get('country'), query: '', readAt: NOW.toISOString(),
@@ -162,6 +163,26 @@ for (const width of [390, 1366]) {
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   });
 }
+
+test('the USDC already in the wallet pays a price it covers: the invoice opens, then its own payment page, and a loan stays one press away (390px)', async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 900 });
+  const state = await install(page, true, { pay: true, usdcAtomic: '3000000' });
+  await page.goto('/spend');
+  await page.getByRole('button', { name: /^Bitrefill eSIM Germany/ }).click();
+  await expect(page.locator('.still-spend-room-wallet')).toContainText('In your wallet3.00 USDC');
+  const covered = page.locator('.still-spend-price', { hasText: '1GB, 7 Days' });
+  await expect(covered).toContainText('Your USDC covers it');
+  await expect(page.locator('.still-spend-price', { hasText: '10GB, 30 Days' })).not.toContainText('Your USDC covers it');
+  await covered.getByRole('button', { name: 'Pay with Still', exact: true }).click();
+  await page.getByLabel('Email for Bitrefill’s receipt', { exact: true }).fill('buyer@example.com');
+  await expect(page.getByRole('button', { name: 'Borrow it instead', exact: true })).toBeEnabled();
+  await page.getByRole('button', { name: 'Pay 2.53 USDC from your wallet', exact: true }).click();
+  await expect(page).toHaveURL(new RegExp(`/spend/pay/${ORDER_ID}$`));
+  await expect(page.getByRole('heading', { name: 'Pay from your wallet', exact: true })).toBeVisible();
+  expect(state.bodies['/api/still/spend/orders']).toEqual({ productId: 'bitrefill-esim-germany', packageValue: '1GB, 7 Days', email: 'buyer@example.com' });
+  expect(state.walletMethods.filter(method => /sign|send|transaction/i.test(method))).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
+});
 
 test('a phone top-up asks for the number with its calling code, and Get money names it beside the price (390px)', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 900 });

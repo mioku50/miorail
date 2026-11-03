@@ -21,3 +21,4 @@ export * from './spendView';
 export * from './StillSpend';
 
 export { useStillBorrowEntryV1 } from './useStillBorrowEntry';
+export { useSpendWalletPaymentV1, type SpendWalletSentV1, type StillSpendWalletModelV1 } from './useSpendWalletPayment';

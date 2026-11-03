@@ -20,6 +20,8 @@ import { attachSpendPaymentV1 } from '../lib/stillSpendPayment.js';
 import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendOrderStoreV1, stillSpendCheckoutV1, stillSpendPayEnabledV1 } from '../lib/stillSpendOrders.js';
 import { bindLoanStepV1, recheckLoanStepsV1 } from '../lib/lendingSteps.js';
 import { loanExecutionShareV1 } from '../lib/stillSpendShare.js';
+import { withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
+import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 
 export const rwaLendingRouter = Router();
 export const rwaLendingRuntimeV1 = {
@@ -30,6 +32,8 @@ export const rwaLendingRuntimeV1 = {
   // Still Spend: the open invoices, Bitrefill's own reading of one, and the payment call.
   spendOrders: spendOrderStoreV1, spendEnabled: () => stillSpendPayEnabledV1(),
   spendCheckout: stillSpendCheckoutV1, attachPayment: attachSpendPaymentV1,
+  // An invoice the wallet paid from its own USDC, or tried to, is not paid again by a loan.
+  walletPayments: spendWalletStoreRuntimeV1.store,
   // A loan in steps: how long to wait between reads of a step the read RPC has not seen yet.
   stepReadDelayMs: 1_500,
 };
@@ -165,6 +169,10 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
     if (attempts.some(row => row.draftId !== claims.draftId && row.state !== 'ready')) {
       refuse('spend_invoice_has_attempt', 'Another review already sent, or tried to send, this invoice’s payment. Check it in Activity before paying again.'); return;
     }
+    const fromWallet = await (await rwaLendingRuntimeV1.walletPayments()).get({ owner, orderId: payment.orderId });
+    if (fromWallet && fromWallet.state !== 'ready') {
+      refuse('spend_invoice_has_attempt', 'Your wallet already paid this invoice from its own USDC, or tried to. Check it on Spend before paying again.'); return;
+    }
     const status = await rwaLendingRuntimeV1.spendCheckout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
     if (!status.ok) { refuse('spend_invoice_unread', 'Bitrefill’s invoice could not be read just now, so nothing can be paid. Try again in a minute.'); return; }
     if (status.value.status !== 'unpaid') {
@@ -212,20 +220,29 @@ rwaLendingRouter.post('/rwa/lending/executions/:id/arm', async (req, res) => {
   const body = z.object({ callsHash: z.string().regex(/^0x[0-9a-f]{64}$/i), signingTermsHash: z.string().regex(/^0x[0-9a-f]{64}$/i) }).strict().safeParse(req.body);
   if (!id.safeParse(req.params.id).success || !body.success) { res.status(400).json({ error: 'lending_request_invalid' }); return; }
   const store = await rwaLendingRuntimeV1.store(), executionId = String(req.params.id);
-  // One invoice is paid once: a second review of it cannot be armed after the first was.
+  // One invoice is paid once: a second review of it cannot be armed after the first was, nor after the
+  // wallet paid it from its own USDC. With an invoice, the reads and the arm run under its lock.
   const execution = await store.get({ owner, executionId }), paying = execution?.run.facts.payment;
-  if (paying && (await store.listByPaymentOrder({ owner, orderId: paying.orderId })).some(row => row.executionId !== executionId && row.state !== 'ready')) {
-    res.status(409).json({ error: 'spend_invoice_has_attempt' }); return;
-  }
-  let result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
-  if (!result.ok && result.refusal === 'execution_active') {
-    // A lock is only as current as its last reading: what holds this market is read from the chain once
-    // (a stopped loan in steps, a batch that landed since), then the same question is asked again.
-    for (const held of await store.listActiveInScope({ owner, executionId })) {
-      await refreshLoanExecutionV1({ owner, executionId: held.executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
+  const arm = async () => {
+    if (paying) {
+      const fromWallet = await (await rwaLendingRuntimeV1.walletPayments()).get({ owner, orderId: paying.orderId });
+      if ((fromWallet && fromWallet.state !== 'ready') ||
+          (await store.listByPaymentOrder({ owner, orderId: paying.orderId })).some(row => row.executionId !== executionId && row.state !== 'ready')) {
+        return { ok: false as const, refusal: 'invoice_has_attempt' as const };
+      }
     }
-    result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
-  }
+    let result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
+    if (!result.ok && result.refusal === 'execution_active') {
+      // A lock is only as current as its last reading: what holds this market is read from the chain once
+      // (a stopped loan in steps, a batch that landed since), then the same question is asked again.
+      for (const held of await store.listActiveInScope({ owner, executionId })) {
+        await refreshLoanExecutionV1({ owner, executionId: held.executionId, refresh: true }, lendingStatusDepsV1(store)).catch(() => null);
+      }
+      result = await store.arm({ owner, executionId, ...body.data, now: rwaLendingRuntimeV1.now() });
+    }
+    return result;
+  };
+  const result = paying ? await withSpendInvoiceLockV1(paying.orderId, arm) : await arm();
   if (!result.ok) { res.status(409).json({ error: result.refusal === 'invoice_has_attempt' ? 'spend_invoice_has_attempt' : result.refusal }); return; }
   res.json({ attemptId: result.attemptId });
 });

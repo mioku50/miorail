@@ -13,6 +13,7 @@ import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import type { LendingPaymentV1 } from '../lib/lendingDraft.js';
 import { createSpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { sequentialHashesV1 } from '../lib/lendingSteps.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
@@ -191,7 +192,7 @@ describe('a Spend loan goes in steps too, and pays Bitrefill last, only while th
       async readInvoice() { reads++; return { ok: true, value: { status: invoiceStatus, accessLink: null, esimInstallLink: null } }; },
     });
     Object.assign(rwaBorrowRuntimeV1, { spendOrders: orders, spendEnabled: () => true });
-    Object.assign(rwaLendingRuntimeV1, { spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout,
+    Object.assign(rwaLendingRuntimeV1, { spendOrders: orders, spendEnabled: () => true, spendCheckout: checkout, walletPayments: async () => new MemorySpendWalletStoreV1(),
       // The payment, appended as the real one does: last, and keeping the loan's delivery.
       attachPayment: async ({ run, payment }: { run: LendingRunV1; payment: LendingPaymentV1 }) => {
         if (run.state !== 'ready') return run;

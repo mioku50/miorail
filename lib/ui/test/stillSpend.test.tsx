@@ -3,7 +3,8 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
-import { StillLoanShare, StillLoanShared, StillSpend, StillSpendPaid, StillSpendShared, type StillSpendModelV1 } from '../src/still/StillSpend';
+import { StillLoanShare, StillLoanShared, StillSpend, StillSpendPaid, StillSpendShared, StillSpendWalletPay, type StillSpendModelV1 } from '../src/still/StillSpend';
+import type { StillSpendWalletModelV1 } from '../src/still/useSpendWalletPayment';
 import { skyStateV1 } from '../src/still/skyState';
 import {
   SPEND_COUNTRIES_V1,
@@ -21,6 +22,10 @@ import {
   spendSharePathV1,
   spendShareTextV1,
   spendShareViewV1,
+  spendOwedCentsV1,
+  spendUsdcTextV1,
+  spendWalletCoversV1,
+  spendWalletViewV1,
 } from '../src/still/spendView';
 
 void React;
@@ -87,7 +92,7 @@ describe('what a loan could pay for, as the page says it', () => {
   it('a gift card shows its face value with its currency; a top-up says it needs the number', () => {
     const card = spendProductViewV1({ outcome: 'product', product: { id: 'amazon_de-germany', name: 'Amazon.de', recipientType: null,
       packages: [{ value: '50', faceCurrency: 'EUR', priceUsdc: '58.80' }] } }, null).product!;
-    assert.deepEqual(card.packages[0], { value: '50', label: '50 EUR', price: '58.80 USDC', room: null, share: null, payable: false });
+    assert.deepEqual(card.packages[0], { value: '50', label: '50 EUR', price: '58.80 USDC', room: null, share: null, payable: false, wallet: null });
     assert.equal(card.needs, null);
     const topUp = spendProductViewV1({ outcome: 'product', product: { id: 'ortel-germany', name: 'Ortel', recipientType: 'phone_number', packages: [] } }, null).product!;
     assert.equal(topUp.needs, 'Buying it needs the phone number to top up.');
@@ -213,8 +218,8 @@ describe('the Spend page', () => {
     assert.match(html, /Paying with Still is not open on this server\. The prices below are <strong>Bitrefill<\/strong>’s own, in USDC\./);
     // Who sells is said where the page begins.
     assert.match(html, /gift cards from <strong class="still-provider">Bitrefill<\/strong>, priced in USDC\./);
-    assert.match(html, /<li class="still-spend-price" data-fit="within"><span class="still-spend-price-top"><span class="still-spend-price-label">10GB, 30 Days<\/span><span class="mono still-spend-price-amount">13\.25 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fit">Within your room<\/span><\/span><\/li>/);
-    assert.match(html, /<li class="still-spend-price" data-fit="over"><span class="still-spend-price-top"><span class="still-spend-price-label">Unlimited, 15 Days<\/span><span class="mono still-spend-price-amount">40\.00 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fit">More than your room<\/span><\/span><\/li>/);
+    assert.match(html, /<li class="still-spend-price" data-fit="within"><span class="still-spend-price-top"><span class="still-spend-price-label">10GB, 30 Days<\/span><span class="mono still-spend-price-amount">13\.25 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fits"><span class="still-spend-fit">Within your room<\/span><\/span><\/span><\/li>/);
+    assert.match(html, /<li class="still-spend-price" data-fit="over"><span class="still-spend-price-top"><span class="still-spend-price-label">Unlimited, 15 Days<\/span><span class="mono still-spend-price-amount">40\.00 USDC<\/span><\/span><span class="still-spend-meter" aria-hidden="true"><span style="width:100%"><\/span><\/span><span class="still-spend-price-foot"><span class="still-spend-fits"><span class="still-spend-fit">More than your room<\/span><\/span><\/span><\/li>/);
     assert.match(html, /<span class="still-spend-price-label">1GB, 7 Days<\/span>.*?<span style="width:19%"><\/span>/);
     assert.match(html, /<span class="still-spend-room-label">Your Still room now<\/span><span class="still-spend-room-amount">\$13\.25<\/span>/);
     assert.match(html, /Bitrefill sells these under its own terms/);
@@ -235,7 +240,7 @@ describe('the Spend page', () => {
     const pay = { chosen: null, onChoose: noop, email: '', onEmail: noop, phone: '', onPhone: noop, creating: false, error: null, onCreate: noop };
     const open = { ...GERMANY, checkout: { enabled: true, available: true, capAtomic: '100000000' } };
     const html = renderToStaticMarkup(<StillSpend model={model({ product: spendProductViewV1(open, { cents: '1325', complete: true }).product, pay })} />);
-    assert.match(html, /Pay with Still: a loan for the exact price pays <strong>Bitrefill<\/strong>, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot\./);
+    assert.match(html, /Pay with Still: a loan for the exact price pays <strong>Bitrefill<\/strong>, or the USDC already in your wallet does, with no loan\. Your own wallet approves either\./);
     assert.equal((html.match(/>Pay with Still<\/button>/g) ?? []).length, 3);
     assert.doesNotMatch(html, /Email for Bitrefill/);
     const chosen = renderToStaticMarkup(<StillSpend model={model({ type: 'giftcard', product: spendProductViewV1(open, null).product, pay: { ...pay, chosen: '10GB, 30 Days', email: 'buyer@example.com' } })} />);
@@ -359,5 +364,114 @@ describe('a loan, shared', () => {
     assert.match(html, /<img class="still-spend-card" src="\/api\/public\/still\/spend-card\.png\?t=x"/);
     assert.match(html, /Not offered to US persons/);
     assert.doesNotMatch(html, /0x[0-9a-fA-F]{6}/);
+  });
+});
+
+describe('paying from the wallet’s own USDC, as the page says it', () => {
+  const noop = () => {};
+  const ORDER = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34', PAY_TO = '0x3333333333333333333333333333333333333333';
+  const payment = { merchant: 'bitrefill', orderId: ORDER, payTo: PAY_TO, assets: '2000000', productName: 'PUBG Mobile', packageValue: '60 UC', faceCurrency: null, expiresAt: '2026-11-03T18:15:00.000Z' };
+  const ready = { orderId: ORDER, state: 'ready', attemptId: null, batchId: null, transactionHash: null, errorCode: null, updatedAt: '2026-11-03T18:00:00.000Z',
+    facts: { payment, usdcBeforeAtomic: '2120000', usdcAfterAtomic: '120000', blockNumber: 53_470_000,
+      warnings: ['Your wallet sends 2 USDC of its own to Bitrefill’s invoice address 0x3333…3333 for PUBG Mobile · 60 UC. No loan is taken.'] },
+    calls: [{ to: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913', value: '0', data: '0xa9059cbb' }], callsHash: `0x${'1'.repeat(64)}`, signingTermsHash: `0x${'2'.repeat(64)}`,
+    expiresAt: '2026-11-03T18:02:00.000Z', steps: [] };
+
+  it('says USDC exactly, compares the wallet’s USDC with a price to the unit, and sums a debt only when every one was read', () => {
+    assert.deepEqual(['2000000', '2120000', '13250000', '1500001', '0'].map(spendUsdcTextV1), ['2.00 USDC', '2.12 USDC', '13.25 USDC', '1.500001 USDC', '0.00 USDC']);
+    assert.equal(spendUsdcTextV1('-1'), null);
+    assert.deepEqual([spendWalletCoversV1('2530000', '2.53'), spendWalletCoversV1('2529999', '2.53'), spendWalletCoversV1(null, '2.53'), spendWalletCoversV1('9', 'x')], [true, false, null, null]);
+    assert.equal(spendOwedCentsV1({ venues: [{ debtCents: '201' }, { debtCents: '0' }] }), '201');
+    assert.equal(spendOwedCentsV1({ venues: [{ debtCents: '201' }, { debtCents: null }] }), null);
+    assert.equal(spendOwedCentsV1({ venues: [{ debtCents: '0' }] }), null);
+    assert.equal(spendOwedCentsV1(null), null);
+  });
+
+  it('reads the server’s answer: a ready payment with its one call, a refusal in its own words, and nothing that does not match', () => {
+    const view = spendWalletViewV1(ready)!;
+    assert.deepEqual({ state: view.state, price: view.price, payTo: view.payTo, before: view.before, after: view.after, block: view.block, label: view.packageLabel },
+      { state: 'ready', price: '2.00 USDC', payTo: '0x3333…3333', before: '2.12 USDC', after: '0.12 USDC', block: 53_470_000, label: '60 UC' });
+    assert.deepEqual(view.ready, { calls: ready.calls, callsHash: ready.callsHash, signingTermsHash: ready.signingTermsHash });
+    const sent = spendWalletViewV1({ ...ready, state: 'submitted', calls: undefined, callsHash: undefined, signingTermsHash: undefined, transactionHash: `0x${'ab'.repeat(32)}` })!;
+    assert.deepEqual([sent.state, sent.ready, sent.transactionHash], ['submitted', null, `0x${'ab'.repeat(32)}`]);
+    const refused = spendWalletViewV1({ orderId: ORDER, state: 'refused', refusal: 'spend_wallet_usdc_short', detail: 'Your wallet holds 1.50 USDC and this invoice is 2.00 USDC.' })!;
+    assert.deepEqual([refused.state, refused.refusal, refused.detail, refused.ready], ['refused', 'spend_wallet_usdc_short', 'Your wallet holds 1.50 USDC and this invoice is 2.00 USDC.', null]);
+    // Another invoice's facts, a ready answer without its call, or two calls are not this payment.
+    assert.equal(spendWalletViewV1({ ...ready, facts: { ...ready.facts, payment: { ...payment, orderId: '00000000-0000-4000-8000-000000000001' } } }), null);
+    assert.equal(spendWalletViewV1({ ...ready, calls: undefined }), null);
+    assert.equal(spendWalletViewV1({ ...ready, calls: [...ready.calls, ...ready.calls] }), null);
+  });
+
+  it('the room card says what is owed and the wallet’s USDC, and a covered price is paid from the wallet first', () => {
+    const open = { ...GERMANY, checkout: { enabled: true, available: true, capAtomic: '100000000' } };
+    const pay = { chosen: null, onChoose: noop, email: '', onEmail: noop, phone: '', onPhone: noop, creating: false, error: null, onCreate: noop };
+    const base = { sky: skyStateV1({ now: new Date('2026-10-28T15:00:00Z') }), signedIn: true, signInHref: '/signin', type: 'esim' as const, onType: noop,
+      country: 'DE', onCountry: noop, query: '', onQuery: noop, onSearch: noop, searching: false, products: null, searchError: null, selected: 'bitrefill-esim-germany', onSelect: noop,
+      productLoading: false, productError: null, room: { cents: '20', complete: true } };
+    const html = renderToStaticMarkup(<StillSpend model={{ ...base, product: spendProductViewV1(open, base.room, '3000000').product, owedCents: '201', walletUsdc: '3.00 USDC', pay }} />);
+    assert.match(html, /<span class="still-spend-room-label">Your Still room now<\/span><span class="still-spend-room-amount">\$0\.20<\/span>/);
+    assert.match(html, /What Still can lend you now, on top of the <strong>\$2\.01<\/strong> you already owe\./);
+    assert.match(html, /<span class="still-spend-room-label">In your wallet<\/span><span class="still-spend-room-usdc mono">3\.00 USDC<\/span><span class="still-spend-room-note">It pays a price up to this directly, with no loan\.<\/span>/);
+    // 2.53 is covered by the wallet's 3 USDC, though it is over the room; 13.25 is neither.
+    assert.match(html, /1GB, 7 Days<\/span>.*?<span class="still-spend-fit">More than your room<\/span><span class="still-spend-fit is-wallet">Your USDC covers it<\/span>/);
+    assert.doesNotMatch(html.slice(html.indexOf('10GB, 30 Days')), /^.*?Your USDC covers it.*?Unlimited/);
+    const chosen = renderToStaticMarkup(<StillSpend model={{ ...base, product: spendProductViewV1(open, base.room, '3000000').product, walletUsdc: '3.00 USDC',
+      pay: { ...pay, chosen: '1GB, 7 Days', email: 'buyer@example.com' } }} />);
+    assert.match(chosen, /the USDC already in your wallet pays it: one transfer of exactly 2\.53 USDC, no loan/);
+    assert.match(chosen, /<button type="submit" class="still-btn">Pay 2\.53 USDC from your wallet<\/button><button type="button" class="still-btn sec">Borrow it instead<\/button>/);
+    // A price the wallet does not cover is paid with a loan, and the page says why.
+    const over = renderToStaticMarkup(<StillSpend model={{ ...base, product: spendProductViewV1(open, base.room, '3000000').product, walletUsdc: '3.00 USDC',
+      pay: { ...pay, chosen: '10GB, 30 Days', email: 'buyer@example.com' } }} />);
+    assert.match(over, />Open invoice and choose collateral<\/button>/);
+    assert.match(over, /Your wallet holds 3\.00 USDC, less than this price\./);
+    assert.doesNotMatch(over, /from your wallet<\/button>/);
+    // Opening the invoice says which button opened it.
+    const opening = renderToStaticMarkup(<StillSpend model={{ ...base, product: spendProductViewV1(open, base.room, '3000000').product,
+      pay: { ...pay, chosen: '1GB, 7 Days', email: 'buyer@example.com', creating: true, creatingWith: 'wallet' } }} />);
+    assert.match(opening, /<button type="submit" class="still-btn" disabled="">Opening the invoice…<\/button><button type="button" class="still-btn sec" disabled="">Borrow it instead<\/button>/);
+  });
+
+  const walletModel = (patch: Partial<StillSpendWalletModelV1> = {}): StillSpendWalletModelV1 => ({
+    loading: false, error: null, view: spendWalletViewV1(ready), busy: false, walletError: null, lock: null, onPay: noop, checking: false, onCheck: null, onRetry: null, ...patch });
+  const sky = skyStateV1({ now: new Date('2026-11-03T18:00:00Z') });
+
+  it('the payment page shows what was checked and offers one button for exactly the price', () => {
+    const html = renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel()} order={null} orderReading={false} />);
+    assert.match(html, /<h1>Pay from your wallet<\/h1>/);
+    assert.match(html, /One transfer of the USDC already in your wallet pays <strong class="still-provider">Bitrefill<\/strong>’s invoice\. No loan is taken\./);
+    assert.match(html, /2\.00 USDC for PUBG Mobile · 60 UC/);
+    assert.match(html, /<dt>In your wallet<\/dt><dd class="mono">2\.12 USDC<\/dd><\/div><div><dt>After paying<\/dt><dd class="mono">0\.12 USDC<\/dd>/);
+    assert.match(html, /Read at Base block <span class="mono">53,470,000<\/span>; the transfer was run on that same state/);
+    assert.match(html, /<button type="button" class="still-btn">Pay 2\.00 USDC<\/button>/);
+    assert.match(html, /A payment sent cannot be taken back by Still/);
+    assert.doesNotMatch(renderToStaticMarkup(<StillSpendWalletPay sky={sky} model={walletModel({ onPay: null })} order={null} orderReading={false} />), /<button type="button" class="still-btn">Pay/);
+  });
+
+  it('the payment page says a refusal in the server’s words, and how a sent payment stands', () => {
+    const refused = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
+      model={walletModel({ view: spendWalletViewV1({ orderId: ORDER, state: 'refused', refusal: 'spend_wallet_usdc_short', detail: 'Your wallet holds 1.50 USDC and this invoice is 2.00 USDC.' }) })} />);
+    assert.match(refused, /role="alert">Your wallet holds 1\.50 USDC and this invoice is 2\.00 USDC\. <a [^>]*href="\/spend"[^>]*>Back to Spend<\/a>/);
+    assert.doesNotMatch(refused, /Pay 2\.00 USDC|Check again/);
+    // A refusal of a moment can be read again.
+    const again = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
+      model={walletModel({ onRetry: noop, view: spendWalletViewV1({ orderId: ORDER, state: 'refused', refusal: 'spend_simulation_moved', detail: 'The payment could not be checked on the same Base state as your wallet’s balance.' }) })} />);
+    assert.match(again, /<button type="button" class="still-btn sec">Check again<\/button>/);
+    const hash = `0x${'ab'.repeat(32)}`;
+    const states: Array<[string, RegExp]> = [
+      ['submitted', /Sent\. Still is reading the payment from Base\. Transaction 0xabababab…ababab\./],
+      ['unknown', /Your wallet did not say whether it sent the payment/],
+      ['failed', /The transfer failed onchain: no USDC left your wallet for it, and Bitrefill was not paid\./],
+      ['confirmed', /Paid: Base shows your transfer to Bitrefill’s invoice\./],
+    ];
+    for (const [state, words] of states) {
+      const html = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading={false}
+        model={walletModel({ view: spendWalletViewV1({ ...ready, state, calls: undefined, transactionHash: hash }) })} />);
+      assert.match(html, words, state);
+      assert.doesNotMatch(html, /<button type="button" class="still-btn">Pay/, state);
+    }
+    const paid = renderToStaticMarkup(<StillSpendWalletPay sky={sky} order={null} orderReading
+      model={walletModel({ view: spendWalletViewV1({ ...ready, state: 'confirmed', calls: undefined, transactionHash: hash }) })} />);
+    assert.match(paid, /Paid to Bitrefill from your wallet/);
+    assert.doesNotMatch(paid, /with the loan|Share this purchase/);
   });
 });

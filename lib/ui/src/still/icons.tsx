@@ -21,7 +21,8 @@ export type StillIconNameV1 =
   | 'esim'
   | 'refill'
   | 'giftcard'
-  | 'info';
+  | 'info'
+  | 'shield';
 
 const PATHS_V1: Record<StillIconNameV1, React.ReactNode> = {
   spend: (
@@ -101,6 +102,12 @@ const PATHS_V1: Record<StillIconNameV1, React.ReactNode> = {
       <circle cx="12" cy="12" r="8.5" />
       <path d="M12 11v5.2" />
       <path d="M12 7.6h.01" strokeWidth="2.6" />
+    </>
+  ),
+  shield: (
+    <>
+      <path d="M12 3.5 5.5 6v5.6c0 4.2 2.8 7.4 6.5 8.9 3.7-1.5 6.5-4.7 6.5-8.9V6z" />
+      <path d="m9.2 12.1 2 2 3.8-4" />
     </>
   ),
 };

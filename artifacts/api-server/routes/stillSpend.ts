@@ -3,10 +3,16 @@ import { z } from 'zod';
 import { SPEND_EMAIL_V1, spendPhoneV1, type BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 
+import { createViemBaseReceiptReader } from '../lib/baseReceiptReader.js';
+import { loanExecutionRuntimeV1 } from '../lib/loanExecutionStore.js';
 import { sessionWalletV1 } from '../lib/sessionWallet.js';
+import { readBaseWalletBatchHashesV1 } from '../lib/stockExecutionStatus.js';
+import { prepareSpendWalletPaymentV1, refreshSpendWalletPaymentV1, spendWalletWireV1, withSpendInvoiceLockV1 } from '../lib/stillSpendWallet.js';
+import { spendWalletStoreRuntimeV1 } from '../lib/stillSpendWalletStore.js';
 import {
   STILL_SPEND_CAP_ATOMIC_V1,
   spendBuyableV1,
+  spendDraftPaymentV1,
   spendNeedsPhoneV1,
   spendOrderStoreV1,
   spendPriceAtomicV1,
@@ -21,7 +27,9 @@ import { publicStillRuntimeV1 } from './stillPublic.js';
 // Still Spend, stage 3: one Bitrefill invoice for the signed-in wallet.
 //
 // Opening an invoice moves no money. It is paid by the loan's own batch, which
-// is reviewed, simulated and signed on the lending page like any other loan.
+// is reviewed, simulated and signed on the lending page like any other loan,
+// or from the USDC already in the wallet: one exact transfer, reviewed and
+// simulated here and signed in the person's own wallet (2026-11-03).
 // The email goes to Bitrefill for its receipt and is not kept here. A top-up's
 // number goes to Bitrefill too, and is held with the open order only, for its
 // owner to see.
@@ -35,6 +43,17 @@ export const stillSpendRuntimeV1 = {
   now: () => new Date(),
   // A person opens an invoice and reads it a few times; a script reads it in a loop.
   statusLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 20 }),
+  // Paying from the wallet's own USDC: its review and record, the loans that may already pay
+  // the same invoice, and the chain that says what was paid.
+  walletPayments: spendWalletStoreRuntimeV1.store,
+  loans: loanExecutionRuntimeV1.store,
+  prepareWallet: prepareSpendWalletPaymentV1,
+  reader: createViemBaseReceiptReader,
+  readBatchHashes: readBaseWalletBatchHashesV1,
+  // A review reads the wallet and runs a simulation, and a result reads the chain:
+  // a person asks a few times a minute, a script without end.
+  walletLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 12 }),
+  walletStatusLimiter: new InMemoryRateLimiter({ windowMs: 60_000, max: 30 }),
 };
 
 export const stillSpendRouter = Router();
@@ -149,4 +168,153 @@ stillSpendRouter.get('/orders/:id', async (req: Request, res: Response) => {
     : { ok: false as const, reason: 'bitrefill_rate_limited' as const };
   if (!status.ok && 'shape' in status && status.shape) logger.warn('Still Spend invoice status unread', { reason: status.reason, shape: status.shape });
   res.json({ order: orderWireV1(order), status: status.ok ? status.value : null, statusError: status.ok ? null : status.reason });
+});
+
+// ---------------------------------------------------------------------------
+// Paying an invoice from the wallet's own USDC. The page asks for the review,
+// arms it, has the wallet send its one call, says what the wallet answered,
+// then reads the result. Nothing here signs or sends.
+// ---------------------------------------------------------------------------
+
+const HASH_V1 = /^0x[0-9a-f]{64}$/i;
+const WalletArmV1Schema = z.object({ callsHash: z.string().regex(HASH_V1), signingTermsHash: z.string().regex(HASH_V1) }).strict();
+// A batch id (wallet_sendCalls) or a transaction hash (one transaction), never both; nothing with a refusal or an unknown.
+const WalletSubmissionV1Schema = z.object({
+  attemptId: z.string().uuid(), outcome: z.enum(['submitted', 'unknown', 'rejected']),
+  batchId: z.string().min(1).max(2000).optional(), transactionHash: z.string().regex(HASH_V1).optional(),
+}).strict().refine((v) => v.outcome === 'submitted' ? (v.batchId === undefined) !== (v.transactionHash === undefined) : v.batchId === undefined && v.transactionHash === undefined);
+
+function walletOrderV1(req: Request, res: Response): { wallet: string; owner: SpendOrderOwnerV1; orderId: string } | null {
+  const wallet = sessionWalletV1(req, res);
+  if (!wallet) return null;
+  const orderId = String(req.params.id ?? '').toLowerCase();
+  if (!UUID_V1.test(orderId)) {
+    res.status(400).json({ error: 'spend_request_invalid' });
+    return null;
+  }
+  return { wallet, owner: { tenantId: `eip155:8453:${wallet}`, walletAddress: wallet }, orderId };
+}
+
+/** A loan that paid this invoice, or tried to: one invoice is paid once. */
+async function loanHoldsInvoiceV1(owner: SpendOrderOwnerV1, orderId: string): Promise<boolean> {
+  const loans = await stillSpendRuntimeV1.loans();
+  return (await loans.listByPaymentOrder({ owner, orderId })).some((row) => row.state !== 'ready');
+}
+
+/** The review: the invoice must still be this wallet's, waiting at Bitrefill and not paid by a loan, and the wallet must hold its price. */
+stillSpendRouter.post('/orders/:id/wallet', async (req: Request, res: Response) => {
+  const asked = walletOrderV1(req, res);
+  if (!asked) return;
+  const { wallet, owner, orderId } = asked;
+  if (!stillSpendRuntimeV1.enabled()) {
+    res.status(503).json({ error: 'spend_pay_off' });
+    return;
+  }
+  const allowed = await stillSpendRuntimeV1.walletLimiter.consume(wallet);
+  if (!allowed.success) {
+    res.status(429).json({ error: 'spend_rate_limited' });
+    return;
+  }
+  const store = await stillSpendRuntimeV1.walletPayments();
+  // Sent, or tried: from then on a payment is read, never prepared again.
+  const prior = await store.get({ owner, orderId });
+  if (prior && prior.state !== 'ready') {
+    res.json(spendWalletWireV1(prior));
+    return;
+  }
+  const refuse = (refusal: string, detail: string) => { res.json({ orderId, state: 'refused', refusal, detail }); };
+  const order = stillSpendRuntimeV1.orders.get(owner, orderId);
+  if (!order) {
+    refuse('spend_order_unread', 'Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Open a new one from Spend. Nothing was sent.');
+    return;
+  }
+  const payment = spendDraftPaymentV1(order, stillSpendRuntimeV1.now());
+  if (!payment) {
+    refuse('spend_invoice_expiring', 'Bitrefill holds this price for less than three more minutes. Open a new invoice from Spend.');
+    return;
+  }
+  if (await loanHoldsInvoiceV1(owner, orderId)) {
+    refuse('spend_invoice_has_attempt', 'A loan from Still already paid this invoice, or tried to. Check it on the loan’s page before paying again.');
+    return;
+  }
+  const status = await stillSpendRuntimeV1.checkout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+  if (!status.ok) {
+    refuse('spend_invoice_unread', 'Bitrefill’s invoice could not be read just now, so nothing can be paid. Try again in a minute.');
+    return;
+  }
+  if (status.value.status !== 'unpaid') {
+    refuse('spend_invoice_not_unpaid', `Bitrefill reports this invoice as ${status.value.status.replace(/_/g, ' ')}, not waiting for payment. Nothing can be paid to it.`);
+    return;
+  }
+  const run = await stillSpendRuntimeV1.prepareWallet({ walletAddress: wallet, payment, now: stillSpendRuntimeV1.now() });
+  if (run.state === 'refused') {
+    res.json({ orderId, ...run });
+    return;
+  }
+  res.json(spendWalletWireV1(await store.putReady({ owner, run, now: stillSpendRuntimeV1.now() })));
+});
+
+stillSpendRouter.post('/orders/:id/wallet/arm', async (req: Request, res: Response) => {
+  const asked = walletOrderV1(req, res);
+  if (!asked) return;
+  const { owner, orderId } = asked;
+  const body = WalletArmV1Schema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: 'spend_request_invalid' });
+    return;
+  }
+  if (!stillSpendRuntimeV1.enabled()) {
+    res.status(503).json({ error: 'spend_pay_off' });
+    return;
+  }
+  if (!stillSpendRuntimeV1.orders.get(owner, orderId)) {
+    res.status(409).json({ error: 'spend_order_unread' });
+    return;
+  }
+  const store = await stillSpendRuntimeV1.walletPayments();
+  // Read beside the loans of the same invoice, one arm at a time: a loan armed first wins, and so does this.
+  const result = await withSpendInvoiceLockV1(orderId, async () => (await loanHoldsInvoiceV1(owner, orderId))
+    ? { ok: false as const, refusal: 'spend_invoice_has_attempt' }
+    : store.arm({ owner, orderId, ...body.data, now: stillSpendRuntimeV1.now() }));
+  if (!result.ok) {
+    res.status(409).json({ error: result.refusal === 'payment_not_ready' ? 'spend_wallet_not_ready' : result.refusal });
+    return;
+  }
+  res.json({ attemptId: result.attemptId });
+});
+
+stillSpendRouter.post('/orders/:id/wallet/submission', async (req: Request, res: Response) => {
+  const asked = walletOrderV1(req, res);
+  if (!asked) return;
+  const { owner, orderId } = asked;
+  const body = WalletSubmissionV1Schema.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: 'spend_request_invalid' });
+    return;
+  }
+  const store = await stillSpendRuntimeV1.walletPayments();
+  const record = await store.recordSubmission({ owner, orderId, attemptId: body.data.attemptId, outcome: body.data.outcome,
+    batchId: body.data.batchId ?? null, transactionHash: (body.data.transactionHash?.toLowerCase() ?? null) as `0x${string}` | null, now: stillSpendRuntimeV1.now() });
+  if (!record) {
+    res.status(409).json({ error: 'spend_wallet_attempt_changed' });
+    return;
+  }
+  res.json(spendWalletWireV1(record));
+});
+
+/** The result, read from the chain. Over the limit, what was last recorded. */
+stillSpendRouter.get('/orders/:id/wallet', async (req: Request, res: Response) => {
+  const asked = walletOrderV1(req, res);
+  if (!asked) return;
+  const { wallet, owner, orderId } = asked;
+  const store = await stillSpendRuntimeV1.walletPayments();
+  const allowed = await stillSpendRuntimeV1.walletStatusLimiter.consume(wallet);
+  const record = allowed.success
+    ? await refreshSpendWalletPaymentV1({ owner, orderId }, { store, reader: stillSpendRuntimeV1.reader(), readBatchHashes: stillSpendRuntimeV1.readBatchHashes, now: stillSpendRuntimeV1.now })
+    : await store.get({ owner, orderId });
+  if (!record) {
+    res.status(404).json({ error: 'spend_wallet_payment_not_found' });
+    return;
+  }
+  res.json(spendWalletWireV1(record));
 });

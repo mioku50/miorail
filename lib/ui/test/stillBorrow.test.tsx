@@ -46,6 +46,17 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     }
   });
 
+  it('says how Still keeps a loan far from liquidation, and never that one cannot happen', () => {
+    // 2026-11-03, the operator: a small but noticeable line about Still's system and liquidation.
+    for (const html of [render({ asset: null, collateralAmount: '' }), render({ signedIn: false })]) {
+      assert.match(html, /<p class="still-borrow-guard"><svg[^>]*>.*?<\/svg><span><strong>Built to stay far from liquidation\.<\/strong> Still lends at most half of what Aave or Morpho would/);
+      assert.match(html, /Even at Still’s full limit, your collateral could lose about half its value before\s+liquidation could start\./);
+      assert.doesNotMatch(html, /liquidation[^.]*(?:impossible|excluded|cannot happen|never happens)|no liquidation|risk-free|guaranteed/i);
+      // The limit's own warning stays where it was.
+      assert.match(html, /A loan creates debt and your collateral can be liquidated\./);
+    }
+  });
+
   it('offers the registered stocks, cbBTC, WETH and explicit native ETH without automatic-Max choices', () => {
     const html = render({ asset: null, collateralAmount: '' });
     assert.match(html, /aria-label="Collateral token"/);

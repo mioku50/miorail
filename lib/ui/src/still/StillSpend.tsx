@@ -19,6 +19,7 @@ import {
   type SpendProductViewV1,
   type SpendTypeV1,
 } from './spendView';
+import type { StillSpendWalletModelV1 } from './useSpendWalletPayment';
 
 void React;
 
@@ -44,6 +45,10 @@ export interface StillSpendModelV1 {
   productError: string | null;
   /** The reader's Still room from the Mirror; null signed out or unread. */
   room: { cents: string; complete: boolean } | null;
+  /** What the reader already owes on their loans, in cents; null when nothing is owed or a debt was not read. */
+  owedCents?: string | null;
+  /** The USDC already in the reader's wallet, "2.12 USDC"; null signed out or unread. */
+  walletUsdc?: string | null;
   /** Paying open on this server, for a reader who has not signed in yet. */
   payAfterSignIn?: boolean;
   /** Paying from Still: null when this server does not pay Bitrefill from a loan. */
@@ -57,14 +62,18 @@ export interface StillSpendModelV1 {
     phone: string;
     onPhone: (phone: string) => void;
     creating: boolean;
+    /** Which way the invoice being opened is paid. */
+    creatingWith?: 'loan' | 'wallet' | null;
     error: string | null;
-    onCreate: () => void;
+    /** Opens the invoice, then pays it with a loan (Get money) or from the wallet's own USDC. */
+    onCreate: (method: 'loan' | 'wallet') => void;
   };
 }
 
-/** Still Spend: what a loan could pay for, with Bitrefill's USDC prices.
- * Where the server pays Bitrefill from a loan, a price opens an invoice and the
- * Get money page; nothing is paid on this page, and nothing is signed here. */
+/** Still Spend: what a loan, or the USDC already in the wallet, could pay for,
+ * with Bitrefill's USDC prices. Where the server pays Bitrefill, a price opens
+ * an invoice, then the Get money page or the wallet payment's own page; nothing
+ * is paid on this page, and nothing is signed here. */
 export function StillSpend({ model }: { model: StillSpendModelV1 }) {
   const id = useId();
   const product = model.product;
@@ -84,12 +93,12 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
         title="Spend"
         sky={model.sky}
         // Who sells is said where the page begins: Bitrefill, under its own terms.
-        lede={<>What a loan against what you hold could pay for: mobile data, phone top-ups and gift cards from <strong className="still-provider">Bitrefill</strong>, priced in USDC.</>}
+        lede={<>What a loan against what you hold, or the USDC already in your wallet, could pay for: mobile data, phone top-ups and gift cards from <strong className="still-provider">Bitrefill</strong>, priced in USDC.</>}
       />
       <p className="still-section still-notice">
         <StillIconV1 name="info" />
         {model.pay ? (
-          <span>Pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it, as one transaction where it can send one and in steps where it cannot. Up to 100 USDC a purchase.</span>
+          <span>Pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, or the USDC already in your wallet does, with no loan. Your own wallet approves either. Up to 100 USDC a purchase.</span>
         ) : model.payAfterSignIn ? (
           <span>Sign in with your wallet to pay with Still: a loan for the exact price pays <strong>Bitrefill</strong>, and your own wallet approves it. Up to 100 USDC a purchase.</span>
         ) : (
@@ -142,11 +151,23 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
         <section className="still-card still-borrow-step" aria-labelledby={`${id}-price`} aria-busy={model.productLoading}>
           <div className="still-step"><span className="n" aria-hidden="true">2</span>Price</div>
           <h2 id={`${id}-price`}>{product ? product.name : 'Choose a product.'}</h2>
+          {/* The room is what Still can lend on top of the debt, and the wallet's USDC pays too: the
+              operator asked on 2026-11-03 why Spend offered $0.20 right after a loan paid them 2 USDC. */}
           {model.room ? (
             <div className="still-spend-room">
               <span className="still-spend-room-label">Your Still room now</span>
               <span className="still-spend-room-amount">{model.room.complete ? '' : 'at least '}{formatCents(model.room.cents)}</span>
-              <span className="still-spend-room-note">A loan for a price is read again, with Still’s terms, before anything is signed.</span>
+              <span className="still-spend-room-note">
+                {model.owedCents ? <>What Still can lend you now, on top of the <strong>{formatCents(model.owedCents)}</strong> you already owe. </> : null}
+                A loan for a price is read again, with Still’s terms, before anything is signed.
+              </span>
+              {model.walletUsdc ? (
+                <span className="still-spend-room-wallet">
+                  <span className="still-spend-room-label">In your wallet</span>
+                  <span className="still-spend-room-usdc mono">{model.walletUsdc}</span>
+                  {model.pay ? <span className="still-spend-room-note">It pays a price up to this directly, with no loan.</span> : null}
+                </span>
+              ) : null}
             </div>
           ) : model.signedIn ? <p className="still-note still-spend-room-missing">Your Still room could not be read just now, so no price is compared with it.</p>
             : <p className="still-note still-spend-room-missing"><a href={model.signInHref}>Sign in</a> to see which of these your Still room covers.</p>}
@@ -166,9 +187,12 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                         {row.share !== null ? (
                           <span className="still-spend-meter" aria-hidden="true"><span style={{ width: `${Math.max(2, Math.round(row.share * 100))}%` }} /></span>
                         ) : null}
-                        {row.room || (model.pay && row.payable) ? (
+                        {row.room || row.wallet || (model.pay && row.payable) ? (
                           <span className="still-spend-price-foot">
-                            {row.room ? <span className="still-spend-fit">{row.room === 'within' ? 'Within your room' : 'More than your room'}</span> : <span />}
+                            <span className="still-spend-fits">
+                              {row.room ? <span className="still-spend-fit">{row.room === 'within' ? 'Within your room' : 'More than your room'}</span> : null}
+                              {row.wallet ? <span className="still-spend-fit is-wallet">Your USDC covers it</span> : null}
+                            </span>
                             {model.pay && row.payable ? (
                               <button type="button" className="still-spend-pay" aria-pressed={model.pay.chosen === row.value} onClick={() => model.pay!.onChoose(model.pay!.chosen === row.value ? null : row.value)}>
                                 Pay with Still
@@ -184,16 +208,27 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                     const chosen = product.packages[chosenAt]!;
                     const number = product.phone ? spendPhoneDraftV1(model.pay.phone, product.phone) : null;
                     const shared = product.phone !== null && product.phone.prefixes.some((prefix) => prefix !== product.phone!.callingCode);
+                    const fromWallet = chosen.wallet === true;
+                    const unfilled = model.pay.creating || model.pay.email.trim() === '' || (product.phone !== null && number === null);
+                    const opening = (method: 'loan' | 'wallet') => model.pay!.creating && (model.pay!.creatingWith ?? 'loan') === method;
                     return (
                       <>
                         {list(product.packages.slice(0, chosenAt + 1), 'Prices in USDC')}
-                        <form ref={checkoutRef} className="still-spend-checkout" aria-labelledby={`${id}-pay`} onSubmit={(event) => { event.preventDefault(); model.pay!.onCreate(); }}>
+                        <form ref={checkoutRef} className="still-spend-checkout" aria-labelledby={`${id}-pay`} onSubmit={(event) => { event.preventDefault(); model.pay!.onCreate(fromWallet ? 'wallet' : 'loan'); }}>
                           <div className="still-step"><span className="n" aria-hidden="true">3</span>Pay</div>
                           <h3 id={`${id}-pay`}>{chosen.price} for {product.name} · {chosen.label}</h3>
-                          <p className="still-note">
-                            Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice,
-                            and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
-                          </p>
+                          {fromWallet ? (
+                            <p className="still-note">
+                              Still opens Bitrefill’s invoice for it, and the USDC already in your wallet pays it: one transfer of exactly {chosen.price}, no loan,
+                              which you approve in your own wallet. Or borrow it instead. Bitrefill holds the price for 15 minutes.
+                            </p>
+                          ) : (
+                            <p className="still-note">
+                              Still opens Bitrefill’s invoice for it, then you choose what to borrow against. A loan of exactly {chosen.price} pays the invoice,
+                              and you approve it in your own wallet. Bitrefill holds the price for 15 minutes.
+                              {chosen.wallet === false && model.walletUsdc ? <> Your wallet holds {model.walletUsdc}, less than this price.</> : null}
+                            </p>
+                          )}
                           <label className="still-borrow-label" htmlFor={`${id}-email`}>Email for Bitrefill’s receipt</label>
                           <div className="still-borrow-amount">
                             <input id={`${id}-email`} type="email" autoComplete="email" spellCheck={false} maxLength={254} value={model.pay.email}
@@ -220,9 +255,20 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
                           {model.type === 'giftcard' ? <p className="still-warn">Never buy a gift card because someone asked you to pay them with one. Nobody legitimate asks for that.</p> : null}
                           {model.pay.error ? <p className="still-warn" role="alert">{model.pay.error}</p> : null}
                           <div className="still-spend-checkout-actions">
-                            <button type="submit" className="still-btn" disabled={model.pay.creating || model.pay.email.trim() === '' || (product.phone !== null && number === null)}>
-                              {model.pay.creating ? 'Opening the invoice…' : 'Open invoice and choose collateral'}
-                            </button>
+                            {fromWallet ? (
+                              <>
+                                <button type="submit" className="still-btn" disabled={unfilled}>
+                                  {opening('wallet') ? 'Opening the invoice…' : `Pay ${chosen.price} from your wallet`}
+                                </button>
+                                <button type="button" className="still-btn sec" disabled={unfilled} onClick={() => model.pay!.onCreate('loan')}>
+                                  {opening('loan') ? 'Opening the invoice…' : 'Borrow it instead'}
+                                </button>
+                              </>
+                            ) : (
+                              <button type="submit" className="still-btn" disabled={unfilled}>
+                                {opening('loan') ? 'Opening the invoice…' : 'Open invoice and choose collateral'}
+                              </button>
+                            )}
                             <button type="button" className="still-btn sec" disabled={model.pay.creating} onClick={() => model.pay!.onChoose(null)}>Cancel</button>
                           </div>
                         </form>
@@ -237,7 +283,7 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
         </section>
       </div>
       <div className="still-section still-borrow-foot">
-        <p className="still-note">Bitrefill sells these under its own terms. Still shows them with the USDC price Bitrefill quoted, which can change by checkout. A loan creates debt, and your collateral can be liquidated. Not offered to US persons.</p>
+        <p className="still-note">Bitrefill sells these under its own terms. Still shows them with the USDC price Bitrefill quoted, which can change by checkout. A loan creates debt, and your collateral can be liquidated; paying from your wallet’s USDC takes no loan. Not offered to US persons.</p>
         <StillLink href="/borrow">Get money</StillLink>
       </div>
     </div>
@@ -248,14 +294,16 @@ export function StillSpend({ model }: { model: StillSpendModelV1 }) {
  * as Bitrefill says, and its own page. Still proves the payment, not the delivery.
  * The server offers a card to share once it confirmed the loan onchain; the
  * link names the purchase and never the wallet. */
-export function StillSpendPaid({ order, reading, share }: { order: SpendOrderViewV1 | null; reading: boolean; share?: { url: string; text: string } | null }) {
+export function StillSpendPaid({ order, reading, share, paidWith = 'loan' }: { order: SpendOrderViewV1 | null; reading: boolean; share?: { url: string; text: string } | null;
+  /** What paid it: the loan, or the USDC already in the wallet. */
+  paidWith?: 'loan' | 'wallet' }) {
   const links = share ? composerLinksV1(share) : null;
   return (
     <div className="still-section still-extras" aria-label="Your Bitrefill order">
       <div className="still-extra">
         <span className="still-extra-icon"><StillIconV1 name="spend" /></span>
         <span className="still-extra-body">
-          <span className="still-extra-title">{order?.delivered ? 'Bitrefill delivered your order' : 'Paid to Bitrefill with the loan'}</span>
+          <span className="still-extra-title">{order?.delivered ? 'Bitrefill delivered your order' : paidWith === 'wallet' ? 'Paid to Bitrefill from your wallet' : 'Paid to Bitrefill with the loan'}</span>
           <span className="still-extra-note">
             {order ? <>{order.productName} · {order.packageLabel}{order.refillTo ? ` for ${order.refillTo}` : ''}. {order.status ? `Bitrefill: ${order.status}.` : 'Bitrefill’s status could not be read just now.'} </>
               : reading ? 'Reading the order from Bitrefill… ' : ''}
@@ -272,6 +320,78 @@ export function StillSpendPaid({ order, reading, share }: { order: SpendOrderVie
           <ShareLinkV1 href={links.farcaster} className="still-share-link">Cast on Farcaster</ShareLinkV1>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+/** What a payment from the wallet's own USDC is doing now, in words. */
+function walletStatusTextV1(state: string, hash: string | null): string {
+  const tx = hash ? ` Transaction ${hash.slice(0, 10)}…${hash.slice(-6)}.` : '';
+  switch (state) {
+    case 'awaiting_wallet': return 'Waiting for your wallet to send the payment…';
+    case 'submitted': return `Sent. Still is reading the payment from Base.${tx}`;
+    case 'unknown': return `Your wallet did not say whether it sent the payment, so Still reads Base for it. Check your wallet’s activity before paying again.${tx}`;
+    case 'confirmed': return `Paid: Base shows your transfer to Bitrefill’s invoice.${tx}`;
+    case 'failed': return `The transfer failed onchain: no USDC left your wallet for it, and Bitrefill was not paid.${tx}`;
+    default: return '';
+  }
+}
+
+/** A Bitrefill invoice paid from the USDC already in the wallet: one exact
+ * transfer, no loan. The server prepared and simulated it and reads its result
+ * from Base; the wallet signs it, and nothing is sent from this page itself. */
+export function StillSpendWalletPay({ sky, model, order, orderReading }: {
+  sky: SkyStateV1; model: StillSpendWalletModelV1; order: SpendOrderViewV1 | null; orderReading: boolean;
+}) {
+  const id = useId();
+  const view = model.view;
+  const paying = view && view.state !== 'refused' ? view : null;
+  return (
+    <div className="still-borrow still-spend">
+      <StillHeader title="Pay from your wallet" sky={sky}
+        lede={<>One transfer of the USDC already in your wallet pays <strong className="still-provider">Bitrefill</strong>’s invoice. No loan is taken.</>} />
+      {model.loading ? <p className="still-section still-note" role="status">Reading the invoice and your wallet’s USDC…</p> : null}
+      {model.error && !model.loading ? <p className="still-section still-warn" role="alert">{model.error}</p> : null}
+      {view?.state === 'refused' ? (
+        <div className="still-section">
+          <p className="still-warn" role="alert">{view.detail} <StillLink href="/spend">Back to Spend</StillLink></p>
+          {model.walletError ? <p className="still-warn" role="status">{model.walletError}</p> : null}
+          {model.onRetry ? <button type="button" className="still-btn sec" disabled={model.checking} onClick={() => model.onRetry?.()}>{model.checking ? 'Reading…' : 'Check again'}</button> : null}
+        </div>
+      ) : null}
+      {paying ? (
+        <section className="still-section still-card still-spend-wallet" aria-labelledby={`${id}-title`}>
+          <div className="still-step"><span className="n" aria-hidden="true">✓</span>Checked</div>
+          <h2 id={`${id}-title`}>{paying.price} for {paying.productName} · {paying.packageLabel}</h2>
+          <dl className="still-borrow-facts">
+            <div><dt>Pays</dt><dd>Bitrefill’s invoice address <span className="mono">{paying.payTo}</span></dd></div>
+            {paying.before ? <div><dt>In your wallet</dt><dd className="mono">{paying.before}</dd></div> : null}
+            {paying.after ? <div><dt>After paying</dt><dd className="mono">{paying.after}</dd></div> : null}
+          </dl>
+          {paying.block !== null ? (
+            <p className="still-note still-borrow-block">Read at Base block <span className="mono">{paying.block.toLocaleString('en-US')}</span>; the transfer was run on that same state, and only the invoice’s price left the wallet.</p>
+          ) : null}
+          {paying.warnings.map((line) => <p key={line} className="still-note">{line}</p>)}
+          {model.walletError ? <p className="still-warn" role="alert">{model.walletError}</p> : null}
+          {model.lock ? <p className="still-note" role="status">{model.lock}</p> : null}
+          {paying.state === 'ready' ? (
+            <div className="still-spend-checkout-actions">
+              <button type="button" className="still-btn" disabled={!model.onPay || model.busy} onClick={() => model.onPay?.()}>
+                {model.busy ? 'Waiting for your wallet…' : `Pay ${paying.price}`}
+              </button>
+              <StillLink href="/spend">Cancel</StillLink>
+            </div>
+          ) : (
+            <p className={paying.state === 'failed' ? 'still-warn' : 'still-note'} role="status">{walletStatusTextV1(paying.state, paying.transactionHash)}</p>
+          )}
+          {model.onCheck ? <button type="button" className="still-btn sec" disabled={model.checking} onClick={() => model.onCheck?.()}>{model.checking ? 'Reading…' : 'Read the result again'}</button> : null}
+        </section>
+      ) : null}
+      {paying?.state === 'confirmed' ? <StillSpendPaid order={order} reading={orderReading} paidWith="wallet" /> : null}
+      <div className="still-section still-borrow-foot">
+        <p className="still-note">Bitrefill sells under its own terms. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund. Not offered to US persons.</p>
+        <StillLink href="/spend">Back to Spend</StillLink>
+      </div>
     </div>
   );
 }

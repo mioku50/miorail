@@ -728,7 +728,18 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-spend .still-spend-room-label { font-weight: 600; font-size: 11px; letter-spacing: 0.16em; text-transform: uppercase; color: #FFFFFFD9; }
 .still-spend .still-spend-room-amount { font-size: 30px; font-weight: 400; line-height: 1.2; overflow-wrap: anywhere; }
 .still-spend .still-spend-room-note { font-size: 12px; line-height: 1.4; color: #FFFFFFD9; }
+/* Get money: how Still keeps a loan far from liquidation, small but in view where the loan is chosen. */
+.still-borrow .still-borrow-guard { display: flex; align-items: flex-start; gap: 10px; margin: 12px 0 0; padding: 10px 12px; border-radius: 12px;
+  border: 1px solid var(--sm-accent); background: var(--sm-accent-soft); color: var(--sm-ink2); font-size: 12.5px; line-height: 1.45; }
+.still-borrow .still-borrow-guard svg { flex: none; width: 20px; height: 20px; margin-top: 1px; color: var(--sm-accent); }
+.still-borrow .still-borrow-guard strong { color: var(--sm-ink); }
 .still-spend .still-spend-room-missing { margin: 0 0 14px; }
+/* The wallet's own USDC, under the room: a second source of money, said where the room is. */
+.still-spend .still-spend-room-wallet { display: flex; flex-direction: column; gap: 2px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #FFFFFF33; }
+.still-spend .still-spend-room-usdc { font-size: 20px; line-height: 1.25; overflow-wrap: anywhere; }
+.still-spend .still-spend-fits { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.still-spend .still-spend-fit.is-wallet { border-color: var(--sm-accent); color: var(--sm-accent); }
+.still-spend .still-spend-wallet h2 { margin: 6px 0 10px; }
 .still-spend .still-spend-prices { list-style: none; display: grid; gap: 8px; margin: 0; padding: 0; }
 .still-spend .still-spend-price { display: grid; gap: 8px; padding: 12px 14px; border: 1px solid var(--sm-line); border-radius: 14px; background: var(--sm-ground); }
 .still-spend .still-spend-price[data-fit='within'] { border-color: var(--sm-accent); background: var(--sm-accent-soft); }

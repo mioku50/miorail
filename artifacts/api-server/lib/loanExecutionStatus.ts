@@ -18,7 +18,10 @@ export type LoanTransactionBindingV1 =
   | { state: 'failed'; errorCode: 'loan_transaction_reverted' | 'loan_operation_reverted' }
   | { state: 'unknown'; errorCode: string };
 
-function exactCalls(execution: LoanExecutionV1, actual: readonly { to: string; value: bigint | string; data: string }[]): boolean {
+/** What binding reads of an execution: its wallet and the calls it approved. A Spend payment from the
+ * wallet's own USDC is bound the same way (stillSpendWallet). */
+export type BindableExecutionV1 = Pick<LoanExecutionV1, 'walletAddress'> & { run: Pick<LoanExecutionV1['run'], 'calls' | 'callsHash'> };
+function exactCalls(execution: BindableExecutionV1, actual: readonly { to: string; value: bigint | string; data: string }[]): boolean {
   return execution.run.callsHash === hashApprovedCallsV1(execution.run.calls) && actual.length === execution.run.calls.length &&
     actual.every((call, index) => {
       const expected = execution.run.calls[index]!;
@@ -33,7 +36,7 @@ const topicAddress = (topic: string | undefined): string | null => topic && /^0x
  * approved call, exactly once and in order. The operation's own EntryPoint
  * event establishes success; neighbouring operations' logs are excluded. */
 export function bindLoanTransactionV1(input: {
-  execution: LoanExecutionV1;
+  execution: BindableExecutionV1;
   transaction: BaseTransactionSourceV1;
   receipt: VerifiedReceiptSourceV1;
 }): LoanTransactionBindingV1 {
@@ -94,7 +97,7 @@ export interface LoanExecutionStatusDepsV1 {
   now: () => Date;
 }
 
-function receiptFingerprint(receipt: VerifiedReceiptSourceV1): string {
+export function receiptFingerprintV1(receipt: VerifiedReceiptSourceV1): string {
   return stableHashV1('loan-receipt/v1', { transactionHash: receipt.transactionHash.toLowerCase(), blockNumber: receipt.blockNumber.toString(),
     status: receipt.status, logs: receipt.logs.map(log => ({ address: log.address.toLowerCase(), topics: log.topics.map(topic => topic.toLowerCase()), data: log.data.toLowerCase() })) });
 }
@@ -123,14 +126,14 @@ export async function refreshLoanExecutionV1(input: { owner: LoanOwnerV1; execut
     try { [receipt, transaction] = await Promise.all([deps.reader.getTransactionReceipt(txHash), deps.reader.getTransaction(txHash)]); }
     catch { continue; }
     if (!receipt || !transaction || receipt.transactionHash.toLowerCase() !== txHash) continue;
-    const fingerprint = receiptFingerprint(receipt);
+    const fingerprint = receiptFingerprintV1(receipt);
     if (record.transactionHash === txHash && record.verification?.receiptFingerprint && record.verification.receiptFingerprint !== fingerprint) return set('unknown', txHash, null, 'loan_receipt_changed');
     const binding = bindLoanTransactionV1({ execution: record, receipt, transaction });
     if (binding.state !== 'unknown') candidates.push({ hash: txHash, receipt, transaction, binding });
   }
   if (candidates.length !== 1) return set('unknown', record.transactionHash, null, candidates.length > 1 ? 'loan_multiple_matching_transactions' : 'loan_receipt_not_matched');
   const candidate = candidates[0]!;
-  const baseProof = { receiptFingerprint: receiptFingerprint(candidate.receipt), blockNumber: candidate.receipt.blockNumber.toString(), callsHash: record.run.callsHash };
+  const baseProof = { receiptFingerprint: receiptFingerprintV1(candidate.receipt), blockNumber: candidate.receipt.blockNumber.toString(), callsHash: record.run.callsHash };
   if (candidate.binding.state === 'failed') return set('failed', candidate.hash, baseProof, candidate.binding.errorCode);
   let effect: Awaited<ReturnType<LoanEffectPositionCheckV1>>;
   try { effect = await deps.verifyEffectPosition({ execution: record, transaction: candidate.transaction, receipt: candidate.receipt,

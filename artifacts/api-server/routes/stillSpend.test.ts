@@ -10,6 +10,8 @@ import { MemoryLoanExecutionStoreV1 } from '../lib/loanExecutionStore.js';
 import { verifyLendingDraftV1, type LendingPaymentV1, type LendingQuestionV1 } from '../lib/lendingDraft.js';
 import type { LendingRunV1 } from '../lib/lendingReview.js';
 import { createSpendOrderStoreV1, stillBitrefillClientV1, type SpendOrderStoreV1 } from '../lib/stillSpendOrders.js';
+import type { SpendWalletRunV1 } from '../lib/stillSpendWallet.js';
+import { MemorySpendWalletStoreV1 } from '../lib/stillSpendWalletStore.js';
 import { rwaBorrowRouter, rwaBorrowRuntimeV1 } from './rwaBorrow.js';
 import { rwaLendingRouter, rwaLendingRuntimeV1 } from './rwaLending.js';
 import { stillSpendRouter, stillSpendRuntimeV1 } from './stillSpend.js';
@@ -27,7 +29,7 @@ const ESIM: SpendProductV1 = { id: 'bitrefill-esim-germany', name: 'Bitrefill eS
   packages: [{ value: '10GB, 30 Days', faceCurrency: 'USD', priceUsdc: '13.25' }, { value: 'Unlimited', faceCurrency: 'USD', priceUsdc: '140.00' }] };
 
 const originals = { spend: { ...stillSpendRuntimeV1 }, borrow: { ...rwaBorrowRuntimeV1 }, lending: { ...rwaLendingRuntimeV1 } };
-let orders: SpendOrderStoreV1, loans: MemoryLoanExecutionStoreV1, enabled: boolean;
+let orders: SpendOrderStoreV1, loans: MemoryLoanExecutionStoreV1, wallets: MemorySpendWalletStoreV1, enabled: boolean, walletRuns: number;
 let invoiceStatus: SpendInvoiceStatusNameV1, opened: unknown[], attached: number, loanRuns: number;
 
 function checkout(): BitrefillGuestCheckoutV1 {
@@ -53,6 +55,15 @@ function loanRun(question: LendingQuestionV1): Extract<LendingRunV1, { state: 'r
       debtBeforeAssets: '0', debtAfterAssets: question.borrowAssets, collateralBeforeAssets: '0', collateralAfterAssets: '0', debtBeforeShares: '0', debtAfterShares: '1', blockNumber: 53_100_000, warnings: [] } };
 }
 
+// The wallet's own USDC pays the invoice: one transfer, as the real review prepares it.
+function walletRun(payment: LendingPaymentV1): SpendWalletRunV1 {
+  const calls: ExecutionCallV1[] = [{ index: 0, callType: 'transfer', to: ADDRESSES.usdc.toLowerCase() as `0x${string}`, valueWei: '0', data: '0xa9059cbb',
+    asset: null, amountAtomic: payment.assets, recipient: payment.payTo as `0x${string}`, spender: null }];
+  return { state: 'ready', calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${'44'.repeat(32)}`, expiresAt: new Date(NOW.getTime() + 120_000).toISOString(),
+    steps: [{ index: 0, to: calls[0]!.to, reading: 'Pay Bitrefill' }],
+    facts: { payment, usdcBeforeAtomic: '20000000', usdcAfterAtomic: String(20_000_000n - BigInt(payment.assets)), blockNumber: 53_100_000, warnings: [] } };
+}
+
 function app(owner: string | null = WALLET) {
   const a = express();
   a.use(express.json());
@@ -68,12 +79,15 @@ function app(owner: string | null = WALLET) {
 beforeEach(() => {
   orders = createSpendOrderStoreV1({ now: () => NOW });
   loans = new MemoryLoanExecutionStoreV1();
-  enabled = true; invoiceStatus = 'unpaid'; opened = []; attached = 0; loanRuns = 0;
+  wallets = new MemorySpendWalletStoreV1();
+  enabled = true; invoiceStatus = 'unpaid'; opened = []; attached = 0; loanRuns = 0; walletRuns = 0;
   Object.assign(stillSpendRuntimeV1, { ...originals.spend, orders, enabled: () => enabled, now: () => NOW, checkout,
-    catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: ESIM }) }) });
+    catalog: () => ({ search: async () => ({ ok: true, value: [] }), product: async () => ({ ok: true, value: ESIM }) }),
+    walletPayments: async () => wallets, loans: async () => loans,
+    prepareWallet: async ({ payment }: { payment: LendingPaymentV1 }) => { walletRuns++; return walletRun(payment); } });
   Object.assign(rwaBorrowRuntimeV1, { ...originals.borrow, secret: () => SECRET, now: () => NOW, spendOrders: orders, spendEnabled: () => enabled });
   Object.assign(rwaLendingRuntimeV1, { ...originals.lending, store: async () => loans, secret: () => SECRET, now: () => NOW,
-    spendOrders: orders, spendEnabled: () => enabled, spendCheckout: checkout,
+    spendOrders: orders, spendEnabled: () => enabled, spendCheckout: checkout, walletPayments: async () => wallets,
     runAave: async ({ question }: { question: LendingQuestionV1 }) => { loanRuns++; return loanRun(question); },
     attachPayment: async ({ run, payment }: { run: LendingRunV1; payment: LendingPaymentV1 }) => {
       attached++;
@@ -233,6 +247,112 @@ describe('a loan that pays the invoice', () => {
     }
     assert.equal(loanRuns, 0);
     assert.equal(attached, 0);
+  });
+});
+
+describe('paying the invoice from the wallet’s own USDC', () => {
+  async function openOrder() {
+    assert.equal((await request(app()).post('/api/still/spend/orders').send(ORDER)).status, 200);
+  }
+  const wallet = (path = '') => `/api/still/spend/orders/${INVOICE}/wallet${path}`;
+  const loanLink = async () => (await request(app()).post('/api/route-intelligence/rwa/borrow/intent')
+    .send({ collateralTokenAddress: STOCK, borrowAmountAtomic: '13250000', collateralSupplyAtomic: '0', spendOrderId: INVOICE })).body.reviewUrl.slice('/lending/'.length) as string;
+
+  it('reviews one exact transfer for the invoice’s owner, while Bitrefill waits for it', async () => {
+    await openOrder();
+    assert.equal((await request(app(null)).post(wallet())).status, 401);
+    const r = await request(app()).post(wallet());
+    assert.equal(r.status, 200);
+    assert.equal(r.body.state, 'ready');
+    assert.deepEqual(r.body.calls, [{ to: ADDRESSES.usdc.toLowerCase(), value: '0', data: '0xa9059cbb' }]);
+    assert.equal(r.body.facts.payment.payTo, PAY_TO);
+    assert.equal(r.body.facts.payment.assets, '13250000');
+    // Another wallet's invoice is not this one's to pay.
+    assert.deepEqual((await request(app(OTHER)).post(wallet())).body, { orderId: INVOICE, state: 'refused', refusal: 'spend_order_unread',
+      detail: 'Still no longer holds this Bitrefill invoice: it expired, or the server restarted. Open a new one from Spend. Nothing was sent.' });
+    for (const [setup, refusal] of [
+      [() => { invoiceStatus = 'payment_detected'; }, 'spend_invoice_not_unpaid'],
+      [() => { enabled = false; }, null],
+    ] as const) {
+      walletRuns = 0; setup();
+      const again = await request(app()).post(wallet());
+      if (refusal) assert.deepEqual([again.body.state, again.body.refusal, again.body.calls], ['refused', refusal, undefined]);
+      else assert.deepEqual([again.status, again.body.error], [503, 'spend_pay_off']);
+      assert.equal(walletRuns, 0);
+      invoiceStatus = 'unpaid'; enabled = true;
+    }
+  });
+
+  it('arms once, takes the wallet’s answer, and from then on is read, never prepared again', async () => {
+    await openOrder();
+    const review = (await request(app()).post(wallet())).body;
+    const terms = { callsHash: review.callsHash, signingTermsHash: review.signingTermsHash };
+    assert.deepEqual((await request(app()).post(wallet('/arm')).send({ ...terms, signingTermsHash: `0x${'55'.repeat(32)}` })).body, { error: 'spend_wallet_not_ready' });
+    const arms = await Promise.all([1, 2].map(() => request(app()).post(wallet('/arm')).send(terms)));
+    assert.deepEqual(arms.map((r) => r.status).sort(), [200, 409]);
+    const attemptId = arms.find((r) => r.status === 200)!.body.attemptId as string;
+    const hash = `0x${'ab'.repeat(32)}`;
+    assert.equal((await request(app()).post(wallet('/submission')).send({ attemptId, outcome: 'submitted', batchId: 'b', transactionHash: hash })).status, 400);
+    const sent = await request(app()).post(wallet('/submission')).send({ attemptId, outcome: 'submitted', transactionHash: hash });
+    assert.deepEqual([sent.body.state, sent.body.transactionHash, sent.body.calls], ['submitted', hash, undefined]);
+    walletRuns = 0;
+    const read = await request(app()).post(wallet());
+    assert.deepEqual([read.body.state, read.body.calls, walletRuns], ['submitted', undefined, 0]);
+  });
+
+  it('a wallet that declined leaves the invoice free to pay again, by either way', async () => {
+    await openOrder();
+    const review = (await request(app()).post(wallet())).body;
+    const armed = await request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash });
+    const declined = await request(app()).post(wallet('/submission')).send({ attemptId: armed.body.attemptId, outcome: 'rejected' });
+    assert.equal(declined.body.state, 'ready');
+    const loan = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`);
+    assert.equal(loan.body.state, 'ready');
+  });
+
+  it('pays one invoice once: a loan that holds it refuses the wallet, and the wallet that holds it refuses a loan', async () => {
+    await openOrder();
+    const loan = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`)).body;
+    const review = (await request(app()).post(wallet())).body;
+    assert.equal(review.state, 'ready');
+    assert.equal((await request(app()).post(`/api/route-intelligence/rwa/lending/executions/${loan.executionId}/arm`)
+      .send({ callsHash: loan.callsHash, signingTermsHash: loan.signingTermsHash })).status, 200);
+    assert.deepEqual((await request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash })).body,
+      { error: 'spend_invoice_has_attempt' });
+    const refused = await request(app()).post(wallet());
+    assert.deepEqual([refused.body.state, refused.body.refusal, refused.body.calls], ['refused', 'spend_invoice_has_attempt', undefined]);
+
+    // And the other way round, on a new invoice.
+    loans = new MemoryLoanExecutionStoreV1(); wallets = new MemorySpendWalletStoreV1();
+    Object.assign(rwaLendingRuntimeV1, { store: async () => loans, walletPayments: async () => wallets });
+    Object.assign(stillSpendRuntimeV1, { loans: async () => loans, walletPayments: async () => wallets });
+    const paying = (await request(app()).post(wallet())).body;
+    const second = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`)).body;
+    assert.equal(second.state, 'ready');
+    assert.equal((await request(app()).post(wallet('/arm')).send({ callsHash: paying.callsHash, signingTermsHash: paying.signingTermsHash })).status, 200);
+    assert.deepEqual((await request(app()).post(`/api/route-intelligence/rwa/lending/executions/${second.executionId}/arm`)
+      .send({ callsHash: second.callsHash, signingTermsHash: second.signingTermsHash })).body, { error: 'spend_invoice_has_attempt' });
+    const again = await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`);
+    assert.deepEqual([again.body.state, again.body.refusal], ['refused', 'spend_invoice_has_attempt']);
+  });
+
+  it('arms a loan and the wallet pressed at the same moment for one invoice: exactly one of them', async () => {
+    await openOrder();
+    const loan = (await request(app()).get(`/api/route-intelligence/rwa/lending/review/${await loanLink()}`)).body;
+    const review = (await request(app()).post(wallet())).body;
+    // Both stores answer a moment late, as a database does: each arm reads the other kind before the
+    // other's arm is written, and only the invoice's lock keeps the second from passing.
+    const late = <T extends (...args: never[]) => Promise<unknown>>(arm: T) => (async (...args: Parameters<T>) => {
+      await new Promise((resolve) => setTimeout(resolve, 20)); return arm(...args);
+    }) as T;
+    loans.arm = late(loans.arm.bind(loans));
+    wallets.arm = late(wallets.arm.bind(wallets));
+    const [byLoan, byWallet] = await Promise.all([
+      request(app()).post(`/api/route-intelligence/rwa/lending/executions/${loan.executionId}/arm`).send({ callsHash: loan.callsHash, signingTermsHash: loan.signingTermsHash }),
+      request(app()).post(wallet('/arm')).send({ callsHash: review.callsHash, signingTermsHash: review.signingTermsHash }),
+    ]);
+    assert.deepEqual([byLoan.status, byWallet.status].sort(), [200, 409]);
+    assert.equal([byLoan, byWallet].find((r) => r.status === 409)!.body.error, 'spend_invoice_has_attempt');
   });
 });
 
