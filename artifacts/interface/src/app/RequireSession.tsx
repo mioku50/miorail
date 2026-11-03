@@ -81,14 +81,21 @@ export function RequireSession({
         )}
 
         {gate.phase === 'needs-signin' && (
-          <button
-            type="button"
-            className="mt-3 w-full bg-accent px-4 py-3 text-sm font-semibold text-bg disabled:opacity-50"
-            disabled={gate.signing}
-            onClick={() => void gate.continueWithWallet()}
-          >
-            {gate.signing ? 'Waiting for wallet…' : `Sign in with ${walletName}`}
-          </button>
+          <>
+            <button
+              type="button"
+              className="mt-3 w-full bg-accent px-4 py-3 text-sm font-semibold text-bg disabled:opacity-50"
+              disabled={gate.signing && !gate.stalled}
+              onClick={() => void (gate.stalled ? gate.askAgain() : gate.continueWithWallet())}
+            >
+              {gate.stalled ? `Ask ${walletName} again` : gate.signing ? 'Waiting for wallet…' : `Sign in with ${walletName}`}
+            </button>
+            {gate.stalled && (
+              <p className="mt-2 text-xs text-muted" role="status">
+                {walletName} has not shown the sign-in request. Open it to sign, or ask again; the first request is let go.
+              </p>
+            )}
+          </>
         )}
 
         {connected && (

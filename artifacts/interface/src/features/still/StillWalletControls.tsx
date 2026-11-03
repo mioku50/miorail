@@ -103,9 +103,13 @@ export function StillWalletControls() {
           {view.warning ? <p className="still-wallet-warning">{view.warning}</p> : null}
           {!view.walletAddress ? <StillLink href={signInHref} className="still-wallet-action">Connect wallet</StillLink> : null}
           {view.signIn ? (
-            <button type="button" className="still-wallet-action" disabled={disabled} onClick={() => void gate.continueWithWallet()}>
-              {gate.signing ? 'Waiting for wallet…' : 'Sign in with this wallet'}
-            </button>
+            <>
+              <button type="button" className="still-wallet-action" disabled={gate.stalled ? Boolean(busy) || switchingChain : disabled}
+                onClick={() => void (gate.stalled ? gate.askAgain() : gate.continueWithWallet())}>
+                {gate.stalled ? 'Ask the wallet again' : gate.signing ? 'Waiting for wallet…' : 'Sign in with this wallet'}
+              </button>
+              {gate.stalled ? <p className="still-wallet-warning" role="status">Your wallet has not shown the sign-in request. Open it to sign, or ask again; the first request is let go.</p> : null}
+            </>
           ) : null}
           {view.switchChain ? (
             <button type="button" className="still-wallet-action" disabled={disabled} onClick={() => {

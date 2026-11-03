@@ -30,12 +30,12 @@ export function AuthStatus() {
     return (
       <button
         type="button"
-        onClick={() => void gate.continueWithWallet()}
-        disabled={gate.signing}
+        onClick={() => void (gate.stalled ? gate.askAgain() : gate.continueWithWallet())}
+        disabled={gate.signing && !gate.stalled}
         className="bg-accent hover:bg-accent-2 text-white px-[10px] py-[6px] rounded-[10px] text-[12px] transition-colors font-medium disabled:opacity-60 disabled:cursor-wait"
-        title="Sign in to unlock chats, actions, fuel and safety limits"
+        title={gate.stalled ? 'Your wallet has not shown the sign-in request: ask it again' : 'Sign in to unlock chats, actions, fuel and safety limits'}
       >
-        {gate.signing ? 'Waiting for wallet…' : 'Continue with wallet'}
+        {gate.stalled ? 'Ask the wallet again' : gate.signing ? 'Waiting for wallet…' : 'Continue with wallet'}
       </button>
     );
   }

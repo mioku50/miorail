@@ -22,7 +22,17 @@ export interface AuthGateContextValue extends AuthGateState {
   continueWithWallet: () => Promise<void>;
   signing: boolean;
   error: string | null;
+  /** The wallet has said nothing about the sign-in request for a while. */
+  stalled: boolean;
+  /** Asks the wallet again with a fresh request, when it stalled: the first is let go. */
+  askAgain: () => void;
 }
+
+/** How long a wallet may stay silent about the sign-in request before the page
+ * offers to ask again. MetaMask's app sometimes never shows a personal_sign
+ * (2026-11-03: the challenge was issued, no signature came back, and the
+ * button said "Waiting for wallet…" for good). */
+export const SIGN_IN_STALL_MS_V1 = 20_000;
 
 const AuthGateContext = createContext<AuthGateContextValue | null>(null);
 
@@ -40,6 +50,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const challenge = useWalletChallenge();
   const verify = useVerifyWallet();
   const attemptAddress = useRef<string | null>(null);
+  // Each press is one attempt; an answer to an attempt that was let go is not used.
+  const attemptSeq = useRef(0);
+  const [stalled, setStalled] = useState(false);
   const previousAddress = useRef<string | null>(null);
   const previousConnected = useRef<boolean>(false);
   const [error, setError] = useState<string | null>(null);
@@ -95,7 +108,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     if (addressChanged || justDisconnected) {
       attemptAddress.current = null;
+      attemptSeq.current++;
       setAwaitingSignature(false);
+      setStalled(false);
       setError(null);
       void (async () => {
         try {
@@ -119,27 +134,51 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (!address || chainId !== 8453) return;
     if (attemptAddress.current === address.toLowerCase()) return;
     attemptAddress.current = address.toLowerCase();
+    const seq = ++attemptSeq.current;
+    const current = () => attemptSeq.current === seq;
     setError(null);
+    setStalled(false);
+    let stall: ReturnType<typeof setTimeout> | undefined;
     try {
       if (session.data?.user) await logoutWalletSession();
       clearTenantClientState(queryClient);
       const nextChallenge = await challenge.mutateAsync({ address });
+      if (!current()) return;
       setAwaitingSignature(true);
+      stall = setTimeout(() => { if (current()) setStalled(true); }, SIGN_IN_STALL_MS_V1);
       let signature: `0x${string}`;
       try {
         signature = await signMessageAsync({ message: nextChallenge.message });
       } finally {
-        setAwaitingSignature(false);
+        clearTimeout(stall);
+        if (current()) {
+          setAwaitingSignature(false);
+          setStalled(false);
+        }
       }
+      // Asked again meanwhile: this signature answers a challenge the server no longer holds.
+      if (!current()) return;
       const result = await verify.mutateAsync({ message: nextChallenge.message, signature });
+      if (!current()) return;
       queryClient.setQueryData(['session'], { user: result.user });
     } catch (cause) {
+      if (!current()) return;
       setError(cause instanceof Error ? cause.message : 'Wallet authentication failed');
       await queryClient.invalidateQueries({ queryKey: ['session'] });
     } finally {
-      attemptAddress.current = null;
+      if (current()) attemptAddress.current = null;
     }
   }, [address, chainId, challenge, queryClient, session.data?.user, signMessageAsync, verify]);
+
+  const askAgain = useCallback(() => {
+    if (!stalled) return;
+    // The first request stays open in the wallet; whatever it answers is not used.
+    attemptSeq.current++;
+    attemptAddress.current = null;
+    setAwaitingSignature(false);
+    setStalled(false);
+    void continueWithWallet();
+  }, [continueWithWallet, stalled]);
 
   const gate = deriveAuthGate({
     isConnected,
@@ -154,6 +193,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     continueWithWallet,
     signing: challenge.isPending || awaitingSignature || verify.isPending,
     error,
+    stalled,
+    askAgain,
   };
 
   return <AuthGateContext.Provider value={value}>{children}</AuthGateContext.Provider>;
