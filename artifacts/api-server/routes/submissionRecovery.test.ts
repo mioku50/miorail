@@ -177,10 +177,34 @@ describe('creating an attempt re-verifies everything', () => {
     assert.equal(response.body.attempt.proofId, PROOF_ID);
   });
 
-  test('a repeat request is idempotent', async () => {
+  // Re-audit R1, 2026-11-04: a second press after a reload resumed the open
+  // attempt and the wallet was asked again, so one swap could go out twice.
+  test('a second attempt while the first is still open is refused, and dismissing the first frees the blueprint', async () => {
     const first = await create();
+    assert.equal(first.status, 200);
     const second = await create();
-    assert.equal(first.body.attempt.id, second.body.attempt.id);
+    assert.equal(second.status, 409);
+    assert.equal(second.body.code, 'submission_attempt_open');
+    assert.match(second.body.detail, /not known yet/);
+    assert.equal((await repository.listRecoverable(USER.id, WALLET)).length, 1);
+    await request(app()).post(`/api/route-intelligence/submission-attempts/${first.body.attempt.id}/abandon`);
+    const third = await create();
+    assert.equal(third.status, 200);
+    assert.notEqual(third.body.attempt.id, first.body.attempt.id);
+  });
+
+  test('a request that raced another gets the other one back from storage, and is refused all the same', async () => {
+    const earlier = await repository.createAttempt({ tenantId: USER.id, walletAddress: WALLET, goal: 'swap', routeRunId: 'run-1',
+      blueprintId: 'blueprint-1', approvedCallsHash: HASH, proofId: PROOF_ID, now: new Date(NOW.getTime() - 1_000) });
+    // Read before the other request's insert landed: no open attempt yet.
+    const find = repository.findOpenAttemptByBlueprint.bind(repository);
+    let reads = 0;
+    repository.findOpenAttemptByBlueprint = async (tenantId, blueprintId) => (reads++ === 0 ? null : find(tenantId, blueprintId));
+    const raced = await create();
+    assert.equal(raced.status, 409);
+    assert.equal(raced.body.code, 'submission_attempt_open');
+    const open = await repository.listRecoverable(USER.id, WALLET);
+    assert.deepEqual(open.map((attempt) => attempt.id), [earlier.id]);
   });
 
   test('an unapproved blueprint cannot get an attempt', async () => {

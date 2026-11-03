@@ -54,7 +54,10 @@ export function SubmissionRecoveryRail({
   );
 
   const attempts = useMemo(() => {
-    const rows = query.data?.attempts ?? [];
+    // A batch the wallet already reported as succeeded needs nothing from the
+    // person; its proof is read from the chain like any other. Listed, it made
+    // every finished swap look unfinished once each one opened an attempt.
+    const rows = (query.data?.attempts ?? []).filter((attempt) => attempt.status !== 'confirmed');
     // A batch id this browser saw but the server has not recorded still belongs
     // on the card — that IS the lost-record case. It is only ever attached to
     // an attempt the server already returned, so it cannot conjure one.

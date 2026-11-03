@@ -28,10 +28,12 @@ const receiptOf = (hash: string) => ({
   logs: [], logsBloom: `0x${'0'.repeat(512)}`, transactionIndex: '0x0', type: '0x2',
 });
 
-async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?: boolean } = {}) {
+// attempts: the server's submission attempts, one open per blueprint, as its route keeps them.
+// loseSwapReply: the wallet sends the swap and its answer never comes back.
+async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?: boolean; attempts?: boolean; loseSwapReply?: boolean; allowanceInPlace?: boolean } = {}) {
   await page.route('**/AuthProvider.tsx*', (route) => route.fulfill({ contentType: 'application/javascript',
     body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
-  await page.addInitScript(({ wallet, kind, hashes, declineSwapOnce, router }) => {
+  await page.addInitScript(({ wallet, kind, hashes, declineSwapOnce, loseSwapReply, router }) => {
     // Built here: a function does not cross into the page.
     const receipt = (hash: string) => ({
       transactionHash: hash, status: '0x1', blockNumber: '0x10', blockHash: `0x${'c'.repeat(64)}`, gasUsed: '0x5208',
@@ -66,6 +68,8 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
             throw Object.assign(new Error('User rejected the request.'), { code: 4001 });
           }
           sends.push({ data, at: Date.now() });
+          // Sent, and the answer lost on the way back: a relay timeout, no code.
+          if (loseSwapReply && data.startsWith('0x12345678')) throw new Error('Request expired. Please try again.');
           return hashes[sends.length - 1];
         }
         // What the batch poller asks the wallet for, as Rabby forwards it.
@@ -73,14 +77,17 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
         throw new Error(`Fixture does not answer ${method}`);
       },
     } });
-  }, { wallet: WALLET, kind, hashes: TX, declineSwapOnce: Boolean(options.declineSwapOnce), router: ROUTER });
+  }, { wallet: WALLET, kind, hashes: TX, declineSwapOnce: Boolean(options.declineSwapOnce), loseSwapReply: Boolean(options.loseSwapReply), router: ROUTER });
   const state = {
     approvals: [] as Array<Record<string, unknown>>,
     records: [] as Array<Record<string, unknown>>,
-    allowance: 0n,
+    allowance: options.allowanceInPlace ? AMOUNT : 0n,
     receiptReadAt: [] as Array<{ hash: string; at: number }>,
     allowanceReads: 0,
+    attempts: [] as Array<Record<string, unknown> & { id: string; status: string; blueprintId: string }>,
+    attemptAnswers: [] as Array<{ status: number; at: number }>,
   };
+  const OPEN = new Set(['wallet_pending', 'batch_observed', 'submitted', 'submitted_unknown', 'confirmed']);
   // The app's own Base transport: the allowance read and the wait for the
   // allowance to land.
   await page.route('https://mainnet.base.org/**', async (route) => {
@@ -131,9 +138,28 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
         sponsorship: steps ? null : { paymasterUrl: 'https://stills.lat/api/paymaster/sponsorship/fixture', context: { sponsorship: 'fixture' } },
       } });
     }
+    if (options.attempts && path === '/api/route-intelligence/submission-attempts' && request.method() === 'POST') {
+      const body = request.postDataJSON() as Record<string, string>;
+      if (state.attempts.some((attempt) => attempt.blueprintId === body.blueprintId && OPEN.has(attempt.status))) {
+        state.attemptAnswers.push({ status: 409, at: Date.now() });
+        return route.fulfill({ status: 409, json: { error: 'submission_attempt_open', code: 'submission_attempt_open',
+          detail: 'Your wallet already had this once, and what it did with it is not known yet. Nothing was asked of it again.' } });
+      }
+      const at = new Date().toISOString();
+      const attempt = { id: `attempt_${state.attempts.length + 1}`, walletAddress: WALLET, chainId: 8453, goal: body.goal, routeRunId: body.routeRunId,
+        blueprintId: body.blueprintId, proofId: 'proof_1', approvedCallsHash: body.approvedCallsHash, batchId: null, status: 'wallet_pending',
+        errorCode: null, createdAt: at, updatedAt: at, completedAt: null };
+      state.attempts.push(attempt);
+      state.attemptAnswers.push({ status: 200, at: Date.now() });
+      return route.fulfill({ json: { attempt } });
+    }
     if (path === '/api/route-intelligence/swap/blueprints/bp_1/submission' && request.method() === 'POST') {
       const body = request.postDataJSON() as Record<string, unknown>;
       state.records.push(body);
+      // As the server's attempt link: a cancelled or failed record closes the attempt it names.
+      const linked = state.attempts.find((attempt) => attempt.id === body.submissionAttemptId);
+      if (linked && (body.status === 'cancelled' || body.status === 'failed')) linked.status = String(body.status);
+      else if (linked && body.batchId) Object.assign(linked, { status: String(body.status), batchId: linked.batchId ?? body.batchId });
       // The server's own answer shape; a recorded submission is still a pending proof.
       const status = String(body.status);
       const finalStatus = status === 'confirmed' ? 'completed' : status === 'failed' || status === 'cancelled' ? status : 'pending';
@@ -224,4 +250,45 @@ test('a press before the wallet has answered asks it first, and a wallet with no
   const methods = await page.evaluate(() => (window as unknown as { __walletMethods: string[] }).__walletMethods);
   expect(methods).not.toContain('wallet_sendCalls');
   expect((await walletSends(page)).map((send) => send.data)).toEqual([ALLOWANCE_DATA, SWAP_DATA]);
+});
+
+// Re-audit R1, 2026-11-04: with the allowance already in place the swap was
+// the first call sent, its answer was lost, nothing reached the server, and
+// after a reload the same press could send it a second time.
+test('a swap whose wallet answer was lost is not sent again after a reload: the server holds its attempt', async ({ page }) => {
+  const state = await install(page, 'no-methods', { attempts: true, loseSwapReply: true, allowanceInPlace: true });
+  await page.goto('/lending/fixture-draft');
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Submitted — status unknown', exact: true })).toBeDisabled();
+  await expect(page.getByRole('alert').filter({ hasText: /^The wallet did not say whether it sent this step/ })).toBeVisible();
+  const first = await walletSends(page);
+  expect(first.map((send) => send.data)).toEqual([SWAP_DATA]);
+  // The attempt was held before the wallet was asked; nothing else was recorded.
+  expect(state.attemptAnswers.map((answer) => answer.status)).toEqual([200]);
+  expect(state.attemptAnswers[0]!.at).toBeLessThanOrEqual(first[0]!.at);
+  expect(state.attempts.map((attempt) => attempt.status)).toEqual(['wallet_pending']);
+  expect(state.records).toEqual([]);
+
+  await page.reload();
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /^Your wallet already had this once, and what it did with it is not known yet/ })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Submitted — status unknown', exact: true })).toBeDisabled();
+  expect(await walletSends(page)).toEqual([]);
+  expect(state.attemptAnswers.map((answer) => answer.status)).toEqual([200, 409]);
+  expect(state.records).toEqual([]);
+});
+
+test('a swap step declined in the wallet closes its attempt, so the next press is free to send the swap', async ({ page }) => {
+  const state = await install(page, 'no-methods', { attempts: true, declineSwapOnce: true });
+  await page.goto('/lending/fixture-draft');
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /^The allowance for the exact amount is in place; the swap itself was not sent/ })).toBeVisible();
+  expect(state.records).toEqual([expect.objectContaining({ status: 'cancelled', submissionAttemptId: 'attempt_1', transactionHashes: [TX[0]] })]);
+  expect(state.attempts.map((attempt) => attempt.status)).toEqual(['cancelled']);
+
+  await page.getByRole('button', { name: 'Cancelled in wallet — retry', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Confirmed onchain', exact: true })).toBeVisible();
+  expect((await walletSends(page)).map((send) => send.data)).toEqual([ALLOWANCE_DATA, SWAP_DATA]);
+  expect(state.attemptAnswers.map((answer) => answer.status)).toEqual([200, 200]);
+  expect(state.records.at(-1)).toMatchObject({ status: 'confirmed', submissionAttemptId: 'attempt_2', transactionHashes: [TX[1]] });
 });

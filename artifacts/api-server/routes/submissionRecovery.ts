@@ -41,6 +41,9 @@ import { getMiorailProductMigrationFlags } from '../lib/productMigrationConfig.j
 
 export const submissionRecoveryRouter = Router();
 
+export const SUBMISSION_ATTEMPT_OPEN_DETAIL_V1 =
+  'Your wallet already had this once, and what it did with it is not known yet. Nothing was asked of it again.';
+
 export const submissionRecoveryRuntime = {
   flags: getMiorailProductMigrationFlags,
   repository: (): SubmissionAttemptRepositoryV1 => createDatabaseSubmissionAttemptRepository(client),
@@ -233,7 +236,19 @@ submissionRecoveryRouter.post('/submission-attempts', async (req: Request, res: 
       return;
     }
 
-    const attempt = await submissionRecoveryRuntime.repository().createAttempt({
+    // An open attempt for this blueprint means an earlier press already handed
+    // its calls to a wallet, and what the wallet did with them is not known.
+    // Handing them out again is how one swap becomes two (re-audit R1,
+    // 2026-11-04): the person checks the wallet first, and dismissing the
+    // card frees the blueprint. A request that raced this one gets the
+    // repository's existing attempt back, and is refused the same way.
+    const repository = submissionRecoveryRuntime.repository();
+    if (await repository.findOpenAttemptByBlueprint(guard.user.id, parsed.data.blueprintId)) {
+      res.status(409).json({ error: 'submission_attempt_open', code: 'submission_attempt_open', detail: SUBMISSION_ATTEMPT_OPEN_DETAIL_V1 });
+      return;
+    }
+    const now = submissionRecoveryRuntime.now();
+    const attempt = await repository.createAttempt({
       tenantId: guard.user.id,
       walletAddress: guard.user.address,
       goal: parsed.data.goal,
@@ -241,8 +256,12 @@ submissionRecoveryRouter.post('/submission-attempts', async (req: Request, res: 
       blueprintId: parsed.data.blueprintId,
       approvedCallsHash: parsed.data.approvedCallsHash.toLowerCase(),
       proofId: binding.proofId ?? null,
-      now: submissionRecoveryRuntime.now(),
+      now,
     });
+    if (Date.parse(attempt.createdAt) !== now.getTime()) {
+      res.status(409).json({ error: 'submission_attempt_open', code: 'submission_attempt_open', detail: SUBMISSION_ATTEMPT_OPEN_DETAIL_V1 });
+      return;
+    }
     res.json(SubmissionAttemptResponseV1Schema.parse({ attempt: attemptWireV1(attempt) }));
   } catch (error) {
     storageFailure(res, error, 'create');

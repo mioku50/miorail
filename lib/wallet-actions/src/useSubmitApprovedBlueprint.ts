@@ -58,6 +58,11 @@ import {
   type MarkerStorageV1,
 } from './recoveryMarker';
 
+/** A press refused because an earlier one already handed these calls to a
+ * wallet, and what the wallet did with them was never heard. */
+export const SUBMISSION_IN_DOUBT_V1 =
+  'Your wallet already had this once, and what it did with it is not known yet, so it was not asked again. Check your wallet’s activity; if nothing went out, dismiss the unfinished submission and press again.';
+
 export type BlueprintSubmitStatus =
   | 'idle'
   | 'approving'
@@ -350,10 +355,10 @@ export function useSubmitApprovedBlueprint({
   // to the bounded reconciliation hook. Failures still degrade honestly to
   // `false` (never a fabricated proof id).
   const recordSafely = useCallback(
-    async (input: Parameters<typeof recordMutateAsync>[0]): Promise<boolean> => {
+    async (input: Parameters<typeof recordMutateAsync>[0], onAttempt = true): Promise<boolean> => {
       try {
         const response = await recordMutateAsync(
-          attemptRef.current ? { ...input, submissionAttemptId: attemptRef.current } : input,
+          onAttempt && attemptRef.current ? { ...input, submissionAttemptId: attemptRef.current } : input,
         );
         setProofId(response.proofId);
         setRecordedFinalStatus(response.finalStatus);
@@ -421,6 +426,56 @@ export function useSubmitApprovedBlueprint({
       : null;
 
   /**
+   * T67C.2, for a batch and for steps alike: a recovery attempt is opened
+   * BEFORE the wallet is asked, so a reload or another tab knows these calls
+   * went to a wallet. The server refuses a second one while the first is still
+   * open, because that press already handed them over and its answer was never
+   * heard; the wallet is not asked again (re-audit R1, 2026-11-04). Any other
+   * failure to open one lets the submission go ahead: recovery is a safety
+   * net, refusing to transact because the net could not be hung would be the
+   * worse trade, and `attemptId` stays null so nobody is told they are
+   * protected when they are not.
+   */
+  const openAttempt = async (
+    payload: ApprovedWalletPayload,
+    storage: MarkerStorageV1 | null,
+  ): Promise<'opened' | 'unprotected' | 'in_doubt'> => {
+    if (!recovery) return 'unprotected';
+    try {
+      const created = await createAttempt.mutateAsync({
+        walletAddress: payload.from as `0x${string}`,
+        goal,
+        routeRunId,
+        blueprintId,
+        approvedCallsHash: payload.approvedCallsHash,
+      });
+      attemptRef.current = created.attempt.id;
+      setAttemptId(created.attempt.id);
+      writeRecoveryMarkerV1(storage, {
+        schemaVersion: 'submission-recovery-marker/v1',
+        attemptId: created.attempt.id,
+        batchId: null,
+        goal,
+        routeRunId,
+        blueprintId,
+        proofId: created.attempt.proofId,
+        walletAddress: payload.from,
+        chainId: 8453,
+        createdAt: new Date().toISOString(),
+      });
+      return 'opened';
+    } catch (cause) {
+      attemptRef.current = null;
+      if (cause instanceof Error && cause.message.startsWith('submission_attempt_open')) {
+        setStatus('submitted_unknown');
+        setError(SUBMISSION_IN_DOUBT_V1);
+        return 'in_doubt';
+      }
+      return 'unprotected';
+    }
+  };
+
+  /**
    * The approved calls, one transaction at a time, each step waiting for the
    * one before to land, for a swap the server granted `sequential` delivery.
    *
@@ -434,7 +489,8 @@ export function useSubmitApprovedBlueprint({
     const suffix = builderCodeToDataSuffix(builderCode);
     const calls = payload.calls;
     const sent: Hex[] = [];
-    const record = (input: { status: 'submitted' | 'failed' | 'cancelled' | 'submitted_unknown'; error?: string; receipts?: unknown[] }) =>
+    const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
+    const record = (input: { status: 'submitted' | 'failed' | 'cancelled' | 'submitted_unknown'; error?: string; receipts?: unknown[] }, onAttempt = true) =>
       recordSafely({
         walletAddress: payload.from,
         routeRunId,
@@ -444,14 +500,20 @@ export function useSubmitApprovedBlueprint({
         ...(sent.length > 0 ? { batchId: sequentialBatchIdV1(sent, base.id), transactionHashes: [...sent] } : {}),
         ...(input.receipts ? { receipts: input.receipts } : {}),
         ...(input.error ? { error: input.error } : {}),
-      });
+      }, onAttempt);
     const stop = async (status: 'failed' | 'cancelled' | 'submitted_unknown' | 'expired', message: string, receipts?: unknown[]) => {
       setStep(null);
       setTxHashes([...sent]);
-      // An unknown outcome is recorded against the hashes it has; with none, there
-      // is nothing for the server to bind, and the locked button is the guard.
-      if (!(status === 'submitted_unknown' && sent.length === 0)) {
+      if (status === 'submitted_unknown') {
+        // What may have gone out is recorded against the hashes it has. The
+        // attempt stays open and unbound: it keeps these calls from a wallet
+        // after a reload or in another tab, and the hashes so far are not the
+        // whole swap, so they are not bound to it as if they were.
+        if (sent.length > 0) await record({ status, error: message }, false);
+      } else {
+        // Nothing more goes out for this press, and the record closes its attempt.
         await record({ status: status === 'expired' ? 'cancelled' : status, error: message, ...(receipts ? { receipts } : {}) });
+        if (attemptRef.current) clearRecoveryMarkerV1(storage, payload.from, attemptRef.current);
       }
       setStatus(status);
       setError(message);
@@ -523,6 +585,21 @@ export function useSubmitApprovedBlueprint({
       dataSuffixSupported: null,
     });
     const id = sequentialBatchIdV1(sent, base.id);
+    // As for a batch: the handle a reload needs is written before the next await.
+    if (attemptRef.current) {
+      writeRecoveryMarkerV1(storage, {
+        schemaVersion: 'submission-recovery-marker/v1',
+        attemptId: attemptRef.current,
+        batchId: id,
+        goal,
+        routeRunId,
+        blueprintId,
+        proofId: null,
+        walletAddress: payload.from,
+        chainId: 8453,
+        createdAt: new Date().toISOString(),
+      });
+    }
     setBatchId(id);
     setTxHashes([...sent]);
     const recorded = await record({ status: 'submitted' });
@@ -572,6 +649,11 @@ export function useSubmitApprovedBlueprint({
       return;
     }
     setSponsoredGas(null);
+    // A press that arrives here from a batch the wallet refused carries its attempt on.
+    if (!attemptRef.current) {
+      const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
+      if ((await openAttempt(payload, storage)) === 'in_doubt') return;
+    }
     await sendOneAtATime(payload);
   };
 
@@ -654,42 +736,9 @@ export function useSubmitApprovedBlueprint({
       }
       approvedRef.current = payload;
 
-      // --- T67C.2: open a recovery attempt BEFORE the wallet -----------------
-      // If this fails the submission still goes ahead. Recovery is a safety
-      // net; refusing to transact because the net could not be hung would be
-      // the worse trade, and the user is not told they are protected when they
-      // are not — `attemptId` stays null.
       const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
-      let attempt: string | null = null;
-      if (recovery) {
-        try {
-          const created = await createAttempt.mutateAsync({
-            walletAddress: payload.from as `0x${string}`,
-            goal,
-            routeRunId,
-            blueprintId,
-            approvedCallsHash: payload.approvedCallsHash,
-          });
-          attempt = created.attempt.id;
-          attemptRef.current = attempt;
-          setAttemptId(attempt);
-          writeRecoveryMarkerV1(storage, {
-            schemaVersion: 'submission-recovery-marker/v1',
-            attemptId: attempt,
-            batchId: null,
-            goal,
-            routeRunId,
-            blueprintId,
-            proofId: created.attempt.proofId,
-            walletAddress: payload.from,
-            chainId: 8453,
-            createdAt: new Date().toISOString(),
-          });
-        } catch {
-          attempt = null;
-          attemptRef.current = null;
-        }
-      }
+      if ((await openAttempt(payload, storage)) === 'in_doubt') return;
+      const attempt = attemptRef.current;
 
       const suffix = builderCodeToDataSuffix(builderCode);
       // Growth plan step 2: the fee, paid by Miorail when the approval offered
@@ -750,7 +799,6 @@ export function useSubmitApprovedBlueprint({
           // press after a "failed" was the operator's first complaint about
           // steps (2026-10-31).
           batchSupport.remember(cause);
-          if (attempt) clearRecoveryMarkerV1(storage, payload.from, attempt);
           setSponsoredGas(null);
           setStepsAfterFailure(true);
           await approveAndSendInSteps(approvalInput);

@@ -127,6 +127,10 @@ export function BlueprintSubmitButton({
       builderCode,
       goal,
       quoteExpiry,
+      // A swap whose wallet answer was lost must not go out twice after a
+      // reload or in another tab (re-audit R1, 2026-11-04). Earn and NFT,
+      // which go only as one batch, are left as they were.
+      recovery: goal === 'swap',
     });
 
   const lastReported = useRef<string>('');
