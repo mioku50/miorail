@@ -188,12 +188,19 @@ describe('trade events', () => {
 describe('the range a pass may read', () => {
   test('a pass stops short of the head by the confirmation depth', () => {
     const range = tailRangeV1({ lastBlock: 1_000, headBlock: 1_100, confirmations: 12 });
-    assert.deepEqual(range, { ok: true, fromBlock: 1_001, toBlock: 1_088 });
+    assert.deepEqual(range, { ok: true, fromBlock: 1_001, toBlock: 1_088, reachedHead: true });
   });
 
   test('the span is bounded even when the tail is far behind', () => {
     const range = tailRangeV1({ lastBlock: 0, headBlock: 1_000_000, maxSpan: 2_000, confirmations: 12 });
-    assert.deepEqual(range, { ok: true, fromBlock: 1, toBlock: 2_000 });
+    assert.deepEqual(range, { ok: true, fromBlock: 1, toBlock: 2_000, reachedHead: false });
+  });
+
+  test('a span that ends exactly at the safe head has reached it, so the run stops there', () => {
+    assert.deepEqual(tailRangeV1({ lastBlock: 1_000, headBlock: 3_012, maxSpan: 2_000, confirmations: 12 }), {
+      ok: true, fromBlock: 1_001, toBlock: 3_000, reachedHead: true,
+    });
+    assert.equal((tailRangeV1({ lastBlock: 1_000, headBlock: 3_013, maxSpan: 2_000, confirmations: 12 }) as { reachedHead: boolean }).reachedHead, false);
   });
 
   test('inside the confirmation window there is nothing to read yet', () => {
@@ -210,7 +217,7 @@ describe('Denim: five blocks a second', () => {
 
   test('the default depth still keeps about twenty-four seconds from the head', () => {
     assert.ok(MARKET_TAIL_CONFIRMATIONS_V1 * 200 >= 24_000);
-    assert.deepEqual(tailRangeV1({ lastBlock: 1_000, headBlock: 1_200 }), { ok: true, fromBlock: 1_001, toBlock: 1_080 });
+    assert.deepEqual(tailRangeV1({ lastBlock: 1_000, headBlock: 1_200 }), { ok: true, fromBlock: 1_001, toBlock: 1_080, reachedHead: true });
   });
 
   test('one hourly run can read two hours of the chain, on both tails', () => {

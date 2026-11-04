@@ -278,7 +278,10 @@ async function corporateActionStageV1(input: {
         `events ${rows.length}${reading.foreign > 0 ? `  foreign ${reading.foreign}` : ''}  ` +
         `calls 1 log + ${blocks.length} block`,
     );
-    if (args.dry) continue;
+    if (args.dry) {
+      if (range.reachedHead) break;
+      continue;
+    }
 
     const outcome = await actions.recordPass({
       chainId: CHAIN_ID_V1,
@@ -307,6 +310,7 @@ async function corporateActionStageV1(input: {
       });
       for (const key of recorded.recorded) console.log(`  signal ${key.split(':')[0]}`);
     }
+    if (range.reachedHead) break;
   }
 }
 
@@ -500,7 +504,10 @@ async function main(): Promise<void> {
         `events ${events.length}  calls ${logCalls} log + ${identityCalls} identity`,
     );
 
-    if (args.dry) continue;
+    if (args.dry) {
+      if (range.reachedHead) break;
+      continue;
+    }
     const outcome = await tail.recordPass({
       tailKey: OFFICIAL_ASSET_LEDGER_TAIL_KEY_V1,
       chainId: CHAIN_ID_V1,
@@ -517,6 +524,7 @@ async function main(): Promise<void> {
         `cursor at ${outcome.cursor.lastBlock} after ${outcome.cursor.passes} pass(es), ` +
         `${outcome.cursor.logCalls} log + ${outcome.cursor.identityCalls} identity calls total`,
     );
+    if (range.reachedHead) break;
   }
 
   if (!args.skipActions) await corporateActionStageV1({ args, source, tail, tokens });

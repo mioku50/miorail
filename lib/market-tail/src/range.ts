@@ -10,7 +10,11 @@ import { MARKET_TAIL_CONFIRMATIONS_V1, MARKET_TAIL_MAX_SPAN_V1 } from './constan
 // ---------------------------------------------------------------------------
 
 export type TailRangeV1 =
-  | { ok: true; fromBlock: number; toBlock: number }
+  /** `reachedHead`: the range ends at the safe head, not at the span. A run
+   * stops after such a pass: another one would only chase the blocks Base made
+   * while this one ran, and at Denim's five blocks a second it always finds
+   * some, so a run of N passes would always spend all N. */
+  | { ok: true; fromBlock: number; toBlock: number; reachedHead: boolean }
   | { ok: false; reason: 'caught_up' };
 
 export function tailRangeV1(input: {
@@ -25,5 +29,6 @@ export function tailRangeV1(input: {
   const safeHead = input.headBlock - confirmations;
   const fromBlock = input.lastBlock + 1;
   if (safeHead < fromBlock) return { ok: false, reason: 'caught_up' };
-  return { ok: true, fromBlock, toBlock: Math.min(safeHead, fromBlock + maxSpan - 1) };
+  const spanEnd = fromBlock + maxSpan - 1;
+  return { ok: true, fromBlock, toBlock: Math.min(safeHead, spanEnd), reachedHead: safeHead <= spanEnd };
 }
