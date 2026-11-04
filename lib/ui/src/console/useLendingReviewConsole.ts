@@ -232,7 +232,15 @@ export function useLendingReviewConsoleV1(input: {
                 await request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
                   { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome, ...(batchId ? { batchId } : {}) }) });
               };
-              if (current.current !== identity) { await report('unknown').catch(() => undefined); throw new Error('lending_identity_changed'); }
+              // The wallet was never asked for this arm: it goes back as not sent, for its own attempt, so the
+              // review is ready again. Only while the session is still this wallet's; another wallet leaves it.
+              const release = () => current.current === identity
+                ? request(`${ROOT}/executions/${encodeURIComponent(approved.executionId)}/submission`,
+                  { method: 'POST', body: JSON.stringify({ attemptId: arm.attemptId, outcome: 'rejected' }) }).catch(() => undefined)
+                : Promise.resolve();
+              // Left while the arm was answered (another wallet, or the page closed): the wallet is not asked, so no
+              // prompt opens after the person has gone, with nobody left to record what it sent (final audit FA2).
+              if (current.current !== identity || !alive.current) { await release(); throw new Error('lending_identity_changed'); }
               if (approved.delivery === 'sequential') {
                 if (!input.steps) { await report('rejected').catch(() => undefined); throw new Error('lending_steps_unavailable'); }
                 // One transaction per call. After each lands, Still reads it from the
@@ -247,6 +255,7 @@ export function useLendingReviewConsoleV1(input: {
                 for (let index = 0; index < calls.length; index++) {
                   if (current.current !== identity || !alive.current) {
                     if (landed) await leave(landed).catch(() => undefined);
+                    else if (!handedToWallet) await release();
                     throw new LendingStepsStoppedV1(stepsStoppedV1(operation, index, calls.length, null, paying, returning), landed);
                   }
                   update({ step: { index: index + 1, total: calls.length, phase: 'wallet' } });

@@ -28,6 +28,8 @@ export type FixtureWindow = Window & {
   lendingWalletAttempts: number;
   setLendingFixtureIdentity: (next: { session: string; connected: string }) => void;
   finishLendingWallet: (batch: string) => void;
+  /** Takes the review off the page, as leaving it does. */
+  closeLendingReview: () => void;
 };
 export async function install(page: Page, outcome: 'submitted' | 'timeout' | 'rejected' | 'pending' | 'unsupported' | 'steps' | 'steps-declined' = 'submitted') {
   await page.clock.setFixedTime(NOW);
@@ -39,8 +41,10 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     stoppedOnPurpose: false, lastStepHash: null as string | null,
     // A loan in steps left part way, as the server reads it, and its answers to Stop here, in order.
     stepsStanding: null as Record<string, unknown> | null, errorCode: null as string | null, refusedFacts: ready().facts as Record<string, unknown>,
-    stopAnswers: [] as Array<{ status: number; json: Record<string, unknown> }> };
-  await page.route('**/api/**', route => {
+    stopAnswers: [] as Array<{ status: number; json: Record<string, unknown> }>,
+    // Holds the arm's answer until it settles, as a slow server would.
+    armHeld: null as Promise<void> | null };
+  await page.route('**/api/**', async route => {
     const request = route.request(), path = new URL(request.url()).pathname;
     if (path === '/api/auth/session') return route.fulfill({ json: { user: { id: `eip155:8453:${WALLET}`, address: WALLET, chainId: 8453 } } });
     if (path.includes('/rwa/lending/review/')) {
@@ -54,6 +58,7 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     }
     if (path.endsWith('/executions/execution_1/arm') && request.method() === 'POST') {
       state.order.push('arm'); state.executionState = 'awaiting_wallet';
+      if (state.armHeld) await state.armHeld;
       expect(request.postDataJSON().callsHash).toBe(state.response.callsHash);
       expect(request.postDataJSON().signingTermsHash).toBe(state.response.signingTermsHash);
       return route.fulfill({ json: { attemptId: 'attempt_1' } });
@@ -104,6 +109,11 @@ export async function install(page: Page, outcome: 'submitted' | 'timeout' | 're
     import {LendingReviewScreen} from '${uiRoot}LendingReviewScreen.tsx';
     window.lendingWalletAttempts=0;
     export function LendingReviewPage(){
+      const [open,setOpen]=React.useState(true);
+      window.closeLendingReview=()=>setOpen(false);
+      return open ? React.createElement(Review) : React.createElement('main',{className:'still'},'Left the review');
+    }
+    function Review(){
       const [identity,setIdentity]=React.useState({session:'${WALLET}',connected:'${WALLET}'});
       window.setLendingFixtureIdentity=setIdentity;
       const {model}=useLendingReviewConsoleV1({draft:decodeURIComponent(location.pathname.split('/').pop()),sessionWalletAddress:identity.session,walletAddress:identity.connected,

@@ -80,6 +80,20 @@ test('late SDK result never posts an old execution under a changed session', asy
   expect(state.order).toEqual(['review', 'review', 'arm']);
 });
 
+// Final audit FA2, 2026-11-04: a review left while its arm was answered still asked the wallet for the batch,
+// and nothing was left on the page to record what the wallet did.
+test('a review left while its arm is answered never asks the wallet, and the arm goes back as not sent', async ({ page }) => {
+  const state = await install(page); await page.goto('/lending/fixture-lending');
+  let answerArm!: () => void; state.armHeld = new Promise<void>((resolve) => { answerArm = resolve; });
+  await page.getByRole('button', { name: 'Open in your wallet', exact: true }).click();
+  await expect.poll(() => state.order.includes('arm')).toBe(true);
+  await page.evaluate(() => (window as FixtureWindow).closeLendingReview()); await expect(page.locator('body')).toContainText('Left the review');
+  answerArm();
+  await expect.poll(() => state.order.at(-1)).toBe('submission:rejected');
+  expect(await attempts(page)).toBe(0); expect(state.executionState).toBe('ready');
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:rejected']);
+});
+
 test('an expired preparation retains only status access to an existing wallet attempt', async ({ page }) => {
   const state = await install(page); state.response = { state: 'refused', refusal: 'lending_preparation_expired',
     detail: 'The preparation expired. Your existing submission can still be checked; nothing can be sent from this link.',
