@@ -18,7 +18,7 @@ import {
   stillWhatIfV1,
 } from './tools.js';
 import { MCP_TOOL_INPUT_ELEMENTS_V1 } from '../mcpLimits.js';
-import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
+import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 
 // ---------------------------------------------------------------------------
 // Still's own MCP server, at /mcp/still: five tools and nothing else.
@@ -34,11 +34,25 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 // same catalogue as Still's /spend. It reads; it prepares, signs and submits
 // nothing. A loan or a purchase is reviewed and approved on Still's site, in
 // the owner's own wallet.
+//
+// Still's signed-in server (/mcp/private) is the one a person adds: it has the
+// terms and the Spend reads too, and reads only its own wallet, since no tool
+// there takes one. This one reads any wallet, for an assistant that signs in
+// nowhere.
 // ---------------------------------------------------------------------------
 
 export const STILL_MCP_NAME_V1 = 'still';
 /** Moves whenever the tool list moves: a client's cached list has no other key. */
-export const STILL_MCP_VERSION_V1 = '1.1.0';
+export const STILL_MCP_VERSION_V1 = '1.2.0';
+/** Still's own mark, for a host that draws a server's icon (MCP 2025-11-25), on both of Still's servers. */
+export const STILL_MCP_IDENTITY_V1 = {
+  title: 'Still',
+  websiteUrl: STILL_PUBLIC_ORIGIN_V1,
+  icons: [
+    { src: `${STILL_PUBLIC_ORIGIN_V1}/still-icon.png`, mimeType: 'image/png', sizes: ['1024x1024'] },
+    { src: `${STILL_PUBLIC_ORIGIN_V1}/still-favicon.svg`, mimeType: 'image/svg+xml', sizes: ['any'] },
+  ],
+};
 
 export const STILL_MCP_TOOLS_V1 = ['get_still_terms', 'still_check_wallet', 'still_what_if', 'still_find_spend', 'still_spend_product'] as const;
 
@@ -53,13 +67,13 @@ Five tools:
 4. still_find_spend: what Still could pay for at Bitrefill, with a loan or from the wallet's own USDC, for one country: eSIM data plans, phone top-ups and gift cards.
 5. still_spend_product: one of them, with each package's price in USDC and whether Still can pay for it now.
 
-To buy one, the owner connects Miorail's signed-in server (https://miorail.xyz/mcp/private): miorail_prepare_still_purchase opens the invoice they chose and returns the review of the loan that pays it, and miorail_prepare_still_wallet_purchase opens it to be paid from the USDC already in their wallet, with no loan. Either way their own wallet signs on ${STILL_PUBLIC_HOST_V1}.
+To buy one, the owner connects Still's signed-in server (https://miorail.xyz/mcp/private): miorail_prepare_still_purchase opens the invoice they chose and returns the review of the loan that pays it, and miorail_prepare_still_wallet_purchase opens it to be paid from the USDC already in their wallet, with no loan. Either way their own wallet signs on ${STILL_PUBLIC_HOST_V1}.
 
 Say what a report says at its block and time, and do not repeat its figures later as if current. null means unread, never zero; headline.complete false means "at least". chain_unavailable is our failure, never an empty wallet. Never advise anyone to borrow, buy or sell: Still's limit is not a recommendation. Not offered to US persons.`;
 
 export function createStillMcpServerV1(): McpServer {
   const server = new McpServer(
-    { name: STILL_MCP_NAME_V1, version: STILL_MCP_VERSION_V1 },
+    { name: STILL_MCP_NAME_V1, version: STILL_MCP_VERSION_V1, ...STILL_MCP_IDENTITY_V1 },
     { instructions: STILL_MCP_INSTRUCTIONS_V1, maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1 },
   );
   const reply = (payload: Record<string, unknown>) => ({
@@ -111,7 +125,7 @@ export function createStillMcpServerV1(): McpServer {
   return server;
 }
 
-/** The Spend reads, here and on Miorail's connected server, under one name
+/** The Spend reads, here and on Still's signed-in server, under one name
  * and one description: an assistant finds the same tool on either. */
 export function registerStillSpendReadsV1(server: McpServer): void {
   const reply = (payload: Record<string, unknown>) => ({
@@ -139,7 +153,7 @@ export function registerStillSpendReadsV1(server: McpServer): void {
 
   server.registerTool('still_spend_product', {
     title: 'One Bitrefill product, priced in USDC',
-    description: 'Reads one Bitrefill product by its id from still_find_spend: each package with its price in USDC as Bitrefill quoted it (prices can move within the hour; a purchase is quoted again), whether it fits Still’s cap of one purchase (withinCap, checkout.capUsdc), and checkout: whether Still can pay for it now, with a loan or from the wallet’s own USDC (available) and, for a phone top-up, the calling code and prefixes the number must start with. prepayment true means Bitrefill sells it only after steps such as a game’s player ID, which it does not offer to Still, so Still cannot buy it. outcome not_found means Bitrefill has no such product; unavailable is Bitrefill’s failure or ours. To buy it, the owner uses miorail_prepare_still_purchase (a loan pays) or miorail_prepare_still_wallet_purchase (the wallet’s own USDC pays) on Miorail’s signed-in server. It reads only: nothing is bought, reserved or opened.',
+    description: 'Reads one Bitrefill product by its id from still_find_spend: each package with its price in USDC as Bitrefill quoted it (prices can move within the hour; a purchase is quoted again), whether it fits Still’s cap of one purchase (withinCap, checkout.capUsdc), and checkout: whether Still can pay for it now, with a loan or from the wallet’s own USDC (available) and, for a phone top-up, the calling code and prefixes the number must start with. prepayment true means Bitrefill sells it only after steps such as a game’s player ID, which it does not offer to Still, so Still cannot buy it. outcome not_found means Bitrefill has no such product; unavailable is Bitrefill’s failure or ours. To buy it, the owner uses miorail_prepare_still_purchase (a loan pays) or miorail_prepare_still_wallet_purchase (the wallet’s own USDC pays) on Still’s signed-in server. It reads only: nothing is bought, reserved or opened.',
     inputSchema: StillSpendProductInputV1Schema,
     outputSchema: StillSpendProductOutputV1Schema,
     annotations: READ_ONLY,

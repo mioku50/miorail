@@ -54,7 +54,7 @@ import {
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
 import { registerStillCardV1, stillCardRuntimeV1, stillCardToolMetaV1 } from './stillCard.js';
 import { STILL_CARD_LENDING_TOOL_V1, StillCardLendingInputV1Schema, StillCardLendingOutputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
-import { registerStillSpendReadsV1 } from '../mcpStill/server.js';
+import { STILL_MCP_IDENTITY_V1, registerStillSpendReadsV1 } from '../mcpStill/server.js';
 import { refreshLoanExecutionV1 } from '../../lib/loanExecutionStatus.js';
 import { refreshSpendWalletPaymentV1 } from '../../lib/stillSpendWallet.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
@@ -92,7 +92,7 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.13.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.14.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -158,8 +158,9 @@ const SLIPPAGE_ARG_V1 = z
 
 export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, hooks: EvidenceReadHooksV1 = {},
   options: { /** The client draws MCP Apps: Still's tools come with their review card. */ apps?: boolean } = {}): McpServer {
+  // Shown as Still, with Still's mark: Still's signed-in server, the one an assistant needs to prepare anything.
   const server = new McpServer(
-    { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1 },
+    { name: MIORAIL_PRIVATE_MCP_NAME_V1, version: MIORAIL_PRIVATE_MCP_VERSION_V1, ...STILL_MCP_IDENTITY_V1 },
     { instructions: MIORAIL_PRIVATE_INSTRUCTIONS_V1, maxToolInputElements: MCP_TOOL_INPUT_ELEMENTS_V1 },
   );
 

@@ -357,3 +357,22 @@ export function stillIconSvgV1(size: number): string {
     '</g></svg>',
   ].join('');
 }
+
+/** The same mobile as a browser tab and an assistant's connector list draw it, at 16 to 192 px: larger on its
+ * ground and with heavier wires, which the icon's proportions lose at that size. */
+export function stillFaviconSvgV1(size: number): string {
+  const s = (size * 0.8) / 27;
+  const x = (size - 27 * s) / 2 - 0.5 * s, y = (size - 23.5 * s) / 2;
+  return [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${size} ${size}">`,
+    `<rect width="${size}" height="${size}" fill="${GROUND}"/>`,
+    `<g transform="translate(${x.toFixed(2)} ${y.toFixed(2)}) scale(${s.toFixed(4)})">`,
+    `<line x1="15" y1="0" x2="15" y2="7" stroke="${INK}" stroke-width="2.6"/>`,
+    `<line x1="2.5" y1="7" x2="27.5" y2="7" stroke="${INK}" stroke-width="2.6" stroke-linecap="round"/>`,
+    `<line x1="7" y1="7" x2="7" y2="11" stroke="${INK}" stroke-width="2.2"/>`,
+    `<circle cx="7" cy="17" r="6.5" fill="${STOCK}"/>`,
+    `<line x1="23.5" y1="7" x2="23.5" y2="11" stroke="${INK}" stroke-width="2.2"/>`,
+    `<rect x="19.75" y="11" width="7.5" height="7.5" fill="${INK}"/>`,
+    '</g></svg>',
+  ].join('');
+}

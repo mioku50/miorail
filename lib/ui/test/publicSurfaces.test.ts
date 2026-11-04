@@ -315,6 +315,21 @@ test('a gift page opens with no session, and never reads its recipient from the 
   assert.doesNotMatch(console, /searchParams[^\n]*get\(['"]recipient['"]\)/);
 });
 
+// 2026-11-04: Safari's tab and Claude's connector list drew Miorail's M for miorail.xyz, Still's one address.
+test('every page’s tab icon is Still’s mark, and every icon the head names is a file the site serves', () => {
+  const head = source('artifacts/interface/index.html');
+  const named = [...head.matchAll(/<link rel="(?:icon|apple-touch-icon)"[^>]*href="\/([^"]+)"/g)].map((match) => match[1]!);
+  assert.deepEqual(named, ['favicon.ico', 'still-favicon.svg', 'still-favicon-192.png', 'apple-touch-icon.png']);
+  for (const file of named) assert.ok(statSync(path.join(root, 'artifacts/interface/public', file)).size > 0, file);
+  // The old name, which browsers and readers kept, holds the same mark: a mobile on Still's night ground, no M.
+  const mark = source('artifacts/interface/public/still-favicon.svg');
+  assert.equal(source('artifacts/interface/public/favicon.svg'), mark);
+  assert.match(mark, /fill="#0B0F2E"/);
+  assert.match(mark, /<circle cx="7" cy="17"/);
+  const ico = readFileSync(path.join(root, 'artifacts/interface/public/favicon.ico'));
+  assert.deepEqual([ico.readUInt16LE(0), ico.readUInt16LE(2), ico.readUInt16LE(4)], [0, 1, 3], 'an icon file of three images');
+});
+
 test('robots.txt is a file, and it names the sitemap', () => {
   // Before this, /robots.txt fell through to the SPA and answered 200 with the
   // app's HTML — a crawler's first read of the site was a page, not rules.

@@ -8,6 +8,11 @@
  * name, and the old names get the new pictures for the links already posted
  * (2026-11-03: the stocks and gift cards and the mini app's icon became Still's).
  *
+ * The tab's icon is Still's too (2026-11-04: browsers and Claude's connector list
+ * drew Miorail's M for miorail.xyz): favicon.ico for whatever asks only for that,
+ * an SVG for browsers, a PNG for readers that want a large one, and the phone's
+ * home-screen icon. favicon.svg, the old name, gets the new mark.
+ *
  *   node --import tsx scripts/render_still_brand_cards.ts
  */
 import { writeFileSync } from 'node:fs';
@@ -15,19 +20,42 @@ import { createRequire } from 'node:module';
 import { resolve } from 'node:path';
 
 import { renderCardPngV1 } from '../artifacts/api-server/lib/cardImage.js';
-import { stillBrandCardSvgV1, stillGiftCardSvgV1, stillIconSvgV1, stillStocksCardSvgV1 } from '../artifacts/api-server/lib/stillCard.js';
+import { stillBrandCardSvgV1, stillFaviconSvgV1, stillGiftCardSvgV1, stillIconSvgV1, stillStocksCardSvgV1 } from '../artifacts/api-server/lib/stillCard.js';
 
 /** Farcaster refuses an icon or a splash with an alpha channel. sharp is the miniapp's dependency. */
-type SharpV1 = (input: Uint8Array) => { removeAlpha(): { png(): { toBuffer(): Promise<Buffer> } } };
+type SharpV1 = (input: Uint8Array) => {
+  removeAlpha(): { png(): { toBuffer(): Promise<Buffer> } };
+  resize(width: number, height: number, options: { kernel: 'lanczos3' }): { ensureAlpha(): { png(): { toBuffer(): Promise<Buffer> } } };
+};
+const sharpV1 = (): SharpV1 => createRequire(resolve(__dirname, '../artifacts/miniapp/package.json'))('sharp') as SharpV1;
 async function opaqueV1(png: Uint8Array): Promise<Uint8Array> {
-  const sharp = createRequire(resolve(__dirname, '../artifacts/miniapp/package.json'))('sharp') as SharpV1;
-  return new Uint8Array(await sharp(png).removeAlpha().png().toBuffer());
+  return new Uint8Array(await sharpV1()(png).removeAlpha().png().toBuffer());
+}
+
+/** An .ico of PNG images, one per size, which every browser since 2007 reads. */
+async function icoV1(png: Uint8Array, sizes: number[]): Promise<Uint8Array> {
+  const images = await Promise.all(sizes.map((size) => sharpV1()(png).resize(size, size, { kernel: 'lanczos3' }).ensureAlpha().png().toBuffer()));
+  const head = Buffer.alloc(6 + 16 * sizes.length);
+  head.writeUInt16LE(1, 2);
+  head.writeUInt16LE(sizes.length, 4);
+  let offset = head.length;
+  sizes.forEach((size, i) => {
+    const at = 6 + 16 * i;
+    head.writeUInt8(size, at);
+    head.writeUInt8(size, at + 1);
+    head.writeUInt16LE(1, at + 4);
+    head.writeUInt16LE(32, at + 6);
+    head.writeUInt32LE(images[i]!.length, at + 8);
+    head.writeUInt32LE(offset, at + 12);
+    offset += images[i]!.length;
+  });
+  return new Uint8Array(Buffer.concat([head, ...images]));
 }
 
 async function main(): Promise<void> {
   const out = resolve(__dirname, '../artifacts/interface/public');
-  const write = (names: string[], png: Uint8Array) => {
-    for (const name of names) writeFileSync(resolve(out, name), png);
+  const write = (names: string[], file: Uint8Array | string) => {
+    for (const name of names) writeFileSync(resolve(out, name), file);
   };
   write(['og-still.png'], await renderCardPngV1(stillBrandCardSvgV1('wide')));
   write(['og-still-3x2.png'], await renderCardPngV1(stillBrandCardSvgV1('tall')));
@@ -37,7 +65,11 @@ async function main(): Promise<void> {
   write(['og-still-gift-3x2.png', 'og-gift-3x2.png'], await renderCardPngV1(stillGiftCardSvgV1('tall')));
   write(['still-icon.png', 'miniapp-icon.png'], await opaqueV1(await renderCardPngV1(stillIconSvgV1(1024))));
   write(['still-splash.png', 'miniapp-splash.png'], await opaqueV1(await renderCardPngV1(stillIconSvgV1(200))));
-  console.log('wrote the Still cards, the icon and the splash');
+  write(['still-favicon.svg', 'favicon.svg'], `${stillFaviconSvgV1(64)}\n`);
+  write(['still-favicon-192.png'], await opaqueV1(await renderCardPngV1(stillFaviconSvgV1(192))));
+  write(['favicon.ico'], await icoV1(await renderCardPngV1(stillFaviconSvgV1(512)), [16, 32, 48]));
+  write(['apple-touch-icon.png'], await opaqueV1(await renderCardPngV1(stillIconSvgV1(180))));
+  console.log('wrote the Still cards, the icon, the splash and the tab icons');
 }
 
 main().then(

@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readdirSync, readFileSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import test from 'node:test';
 import express from 'express';
@@ -12,9 +12,9 @@ import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { EXAMPLE, calendar, snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
 import { publicStillRuntimeV1, resetStillCardCachesV1 } from '../stillPublic.js';
-import { STILL_MCP_TOOLS_V1, STILL_MCP_VERSION_V1, createStillMcpServerV1 } from './server.js';
+import { STILL_MCP_IDENTITY_V1, STILL_MCP_TOOLS_V1, STILL_MCP_VERSION_V1, createStillMcpServerV1 } from './server.js';
 import { stillMcpRouter, stillMcpRuntimeV1 } from './index.js';
-import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
+import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const here = __dirname;
@@ -73,7 +73,7 @@ test('five tools under Still’s own name, every one a read, and instructions th
   const client = await connected(t);
   const { tools } = await client.listTools();
   assert.deepEqual(tools.map((tool) => tool.name).sort(), [...STILL_MCP_TOOLS_V1].sort());
-  assert.deepEqual(client.getServerVersion(), { name: 'still', version: STILL_MCP_VERSION_V1 });
+  assert.deepEqual(client.getServerVersion(), { name: 'still', version: STILL_MCP_VERSION_V1, ...STILL_MCP_IDENTITY_V1 });
   for (const tool of tools) assert.equal(tool.annotations?.readOnlyHint, true, tool.name);
   const instructions = client.getInstructions() ?? '';
   assert.match(instructions, /Still is not a lender/);
@@ -81,6 +81,18 @@ test('five tools under Still’s own name, every one a read, and instructions th
   assert.match(instructions, /null means unread, never zero/);
   assert.match(instructions, /Not offered to US persons/);
   assert.match(instructions, /miorail_prepare_still_purchase opens the invoice they chose/);
+});
+
+// 2026-11-04: Claude drew Miorail's M beside both of Still's connectors.
+test('Still’s name and mark, as a host draws a server, and the mark is a file the site serves', async (t) => {
+  fixture(t, { check: async () => assert.fail('connecting reads no wallet') });
+  const info = (await connected(t)).getServerVersion()!;
+  assert.deepEqual([info.title, info.websiteUrl], ['Still', STILL_PUBLIC_ORIGIN_V1]);
+  assert.ok(info.icons?.some((icon) => icon.mimeType === 'image/png'), 'every host that draws icons draws PNG');
+  for (const icon of info.icons ?? []) {
+    assert.ok(icon.src.startsWith(`${STILL_PUBLIC_ORIGIN_V1}/`), icon.src);
+    assert.ok(existsSync(path.join(here, '../../../interface/public', icon.src.slice(STILL_PUBLIC_ORIGIN_V1.length + 1))), `${icon.src} is not one of the site's files`);
+  }
 });
 
 // Still's links go to its one address, miorail.xyz since 2026-11-03. What this

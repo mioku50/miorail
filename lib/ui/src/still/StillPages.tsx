@@ -235,14 +235,20 @@ export const STILL_MCP_URL_V1 = `${STILL_PUBLIC_ORIGIN_V1}/mcp/still`;
 // The addresses are the servers' own. The signed-in one is the Wallet MCP
 // card's, and the plugin file names it too: a page that drifted from it would
 // send people to a server the plugin does not describe.
+//
+// The signed-in server leads (2026-11-04): Claude, connected to the read-only
+// one, found the purchase its owner asked for and could not open it, and asked
+// for a second connector. The signed-in one reads the terms, the owner's own
+// wallet and the catalogue too, so it is the connection a person adds, under
+// Still's name. No tool there takes a wallet, so another wallet's reading and a
+// what-if stay on the read-only one.
 export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
   const commands: Array<[string, ReactNode]> = [
-    ['Claude Code', <CopyRow key="claude" label="the Claude Code command" value={`claude mcp add --transport http still ${STILL_MCP_URL_V1}`} />],
-    ['Codex CLI', <CopyRow key="codex" label="the Codex command" value={`codex mcp add still --url ${STILL_MCP_URL_V1}`} />],
-    ['Cursor and other JSON clients', <pre key="json" className="still-pre">{`{\n  "mcpServers": {\n    "still": { "url": "${STILL_MCP_URL_V1}" }\n  }\n}`}</pre>],
-    ['Grok', <p key="grok" className="still-note">On grok.com/connectors: New Connector, Custom, then paste the address above.</p>],
+    ['Claude Code', <CopyRow key="claude" label="the Claude Code command" value={`claude mcp add --transport http still ${MIORAIL_CONNECTED_MCP_URL_V1}`} />],
+    ['Codex CLI', <CopyRow key="codex" label="the Codex command" value={`codex mcp add still --url ${MIORAIL_CONNECTED_MCP_URL_V1}`} />],
+    ['Cursor and other JSON clients', <pre key="json" className="still-pre">{`{\n  "mcpServers": {\n    "still": { "url": "${MIORAIL_CONNECTED_MCP_URL_V1}" }\n  }\n}`}</pre>],
   ];
-  // Each one is answered by a tool on that server, as written.
+  // Each one is answered by a tool on one of the two servers, as written.
   const asks = [
     'How much could 0x… borrow through Still without selling?',
     'What happens to that wallet’s Still loan if NVIDIA falls 30%?',
@@ -256,18 +262,21 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         <div className="still-word">Still in your assistant.</div>
         <div className="still-sub">
           Ask Claude, ChatGPT, Grok, Cursor or Codex what Still answers here: how much a wallet could borrow against its stocks and crypto
-          without selling, how safe a loan is, what a fall in price would do to it, and what a loan could pay for at Bitrefill. The
-          figures are Still’s own, read from Base at one block. No API key, and nothing is signed there: you approve every loan in your
-          own wallet.
+          without selling, how safe a loan is, what a fall in price would do to it, and what a loan, or the USDC already in your wallet, could
+          pay for at Bitrefill. The figures are Still’s own, read from Base at one block. No API key, and nothing is signed there: your
+          assistant prepares, and you approve every loan and payment in your own wallet.
         </div>
       </div>
       <div className="still-section still-feature">
-        <div className="still-eyebrow">Still’s MCP server · read only, no sign-in</div>
-        <CopyRow label="the Still MCP address" value={STILL_MCP_URL_V1} />
-        <a className="still-btn" href={addToClaudeUrlV1('Still', STILL_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ marginTop: 10 }}>Add to Claude</a>
+        <div className="still-eyebrow">Still’s MCP server · sign in with your wallet</div>
+        <CopyRow label="the Still MCP address" value={MIORAIL_CONNECTED_MCP_URL_V1} />
+        <a className="still-btn" href={addToClaudeUrlV1('Still', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ marginTop: 10 }}>Add to Claude</a>
         <p className="still-note" style={{ marginTop: 6 }}>
-          Five tools: <span className="mono">get_still_terms</span>, <span className="mono">still_check_wallet</span>, <span className="mono">still_what_if</span>,{' '}
-          <span className="mono">still_find_spend</span> and <span className="mono">still_spend_product</span>.
+          It opens your wallet’s sign-in on first use. Then <span className="mono">miorail_prepare_still_loan</span>,{' '}
+          <span className="mono">miorail_prepare_still_purchase</span>, <span className="mono">miorail_prepare_still_wallet_purchase</span> and{' '}
+          <span className="mono">miorail_prepare_still_repay</span> turn what you name into a review link, and your own wallet signs on {STILL_PUBLIC_HOST_V1};{' '}
+          <span className="mono">miorail_get_still_review_status</span> tells your assistant what happened. In a chat that draws MCP Apps, as Claude does, the
+          review comes as a card. It reads Still’s terms, your own wallet and Bitrefill’s catalogue too.
         </p>
       </div>
       {commands.map(([title, body]) => (
@@ -285,15 +294,17 @@ export function StillAssistants({ model }: { model: StillAssistantsModelV1 }) {
         ))}
       </div>
       <div className="still-section">
-        <div className="still-eyebrow">To prepare a loan, a purchase or a repayment from your assistant</div>
-        <p className="still-note">
-          Connect Miorail’s signed-in server instead. It opens your wallet’s sign-in on first use; then <span className="mono">miorail_prepare_still_loan</span>,{' '}
-          <span className="mono">miorail_prepare_still_purchase</span> and <span className="mono">miorail_prepare_still_repay</span> turn what you name into a
-          review link, and your own wallet signs on {STILL_PUBLIC_HOST_V1}. <span className="mono">miorail_get_still_review_status</span> then tells your assistant
-          what happened. In a chat that draws MCP Apps, as Claude does, the review comes as a card that opens it and follows it to Base.
+        <div className="still-eyebrow">Read only, no sign-in</div>
+        <CopyRow label="the read-only Still MCP address" value={STILL_MCP_URL_V1} />
+        <p className="still-note" style={{ marginTop: 6 }}>
+          Five tools that read any wallet, what a change would do to its loans and Bitrefill’s catalogue, and prepare nothing:{' '}
+          <span className="mono">get_still_terms</span>, <span className="mono">still_check_wallet</span>, <span className="mono">still_what_if</span>,{' '}
+          <span className="mono">still_find_spend</span> and <span className="mono">still_spend_product</span>. Add it beside the signed-in one to read another
+          wallet or ask what a fall in price would do, or alone, for an assistant you would rather not sign in to. On grok.com/connectors: New Connector,
+          Custom, then paste this address.
         </p>
-        <a className="still-btn sec" href={addToClaudeUrlV1('Miorail', MIORAIL_CONNECTED_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ margin: '10px 0' }}>Add Miorail to Claude</a>
-        <CopyRow label="the signed-in Claude Code command" value={`claude mcp add --transport http miorail ${MIORAIL_CONNECTED_MCP_URL_V1}`} />
+        <a className="still-btn sec" href={addToClaudeUrlV1('Still (read only)', STILL_MCP_URL_V1)} target="_blank" rel="noreferrer" style={{ margin: '10px 0' }}>Add the read-only server to Claude</a>
+        <CopyRow label="the read-only Claude Code command" value={`claude mcp add --transport http still-read-only ${STILL_MCP_URL_V1}`} />
       </div>
       <p className="still-section still-note">
         Still measures; it gives no advice and never signs. Borrowing creates debt, and collateral can be liquidated. Tokenized stocks are

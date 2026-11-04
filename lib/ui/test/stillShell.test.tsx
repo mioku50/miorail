@@ -591,18 +591,20 @@ describe('the frame', () => {
     assert.match(more, /href="\/watch"/);
     assert.doesNotMatch(more, /href="\/(?:investigate|radar|portfolio)"/);
     const assistants = renderToStaticMarkup(<StillAssistants model={{ sky: skyStateV1({ now: WEDNESDAY }) }} />);
-    // Still's own server leads; the signed-in one is for preparing a loan.
-    assert.ok(assistants.includes(`claude mcp add --transport http still ${STILL_PUBLIC_ORIGIN_V1}/mcp/still`));
-    assert.match(assistants, /get_still_terms.*still_check_wallet.*still_what_if/);
+    // The signed-in server leads, under Still's name: it prepares. Another wallet and a what-if stay on the read-only one.
+    assert.ok(assistants.includes(`claude mcp add --transport http still https://miorail.xyz/mcp/private`));
+    assert.ok(assistants.includes(`codex mcp add still --url https://miorail.xyz/mcp/private`));
+    assert.match(assistants, /miorail_prepare_still_loan.*miorail_prepare_still_purchase.*miorail_prepare_still_wallet_purchase.*miorail_prepare_still_repay.*miorail_get_still_review_status/);
+    assert.ok(assistants.indexOf('/mcp/private') < assistants.indexOf('/mcp/still'), 'the signed-in server comes first');
+    // The read-only one stays, for an assistant that signs in nowhere.
+    assert.ok(assistants.includes(`claude mcp add --transport http still-read-only ${STILL_PUBLIC_ORIGIN_V1}/mcp/still`));
+    assert.match(assistants, /get_still_terms.*still_check_wallet.*still_what_if.*still_find_spend.*still_spend_product/);
     assert.match(assistants, /What happens to that wallet’s Still loan if NVIDIA falls 30%\?/);
-    assert.match(assistants, /claude mcp add --transport http miorail https:\/\/miorail\.xyz\/mcp\/private/);
-    assert.match(assistants, /miorail_prepare_still_loan/);
-    assert.match(assistants, /still_find_spend.*still_spend_product/);
-    assert.match(assistants, /miorail_prepare_still_purchase.*miorail_prepare_still_repay.*miorail_get_still_review_status/);
     assert.match(assistants, /Claude, ChatGPT, Grok, Cursor or Codex/);
+    assert.doesNotMatch(assistants, /Miorail’s signed-in server|connectorName=Miorail/);
     // Claude's own add-connector form, filled in for each server, and each question one click from a chat.
-    assert.ok(assistants.includes(`href="https://claude.ai/customize/connectors?modal=add-custom-connector&amp;connectorName=Still&amp;connectorUrl=${encodeURIComponent(`${STILL_PUBLIC_ORIGIN_V1}/mcp/still`)}"`));
-    assert.match(assistants, /connectorName=Miorail&amp;connectorUrl=https%3A%2F%2Fmiorail\.xyz%2Fmcp%2Fprivate/);
+    assert.match(assistants, /href="https:\/\/claude\.ai\/customize\/connectors\?modal=add-custom-connector&amp;connectorName=Still&amp;connectorUrl=https%3A%2F%2Fmiorail\.xyz%2Fmcp%2Fprivate"[^>]*>Add to Claude</);
+    assert.ok(assistants.includes(`connectorName=Still%20(read%20only)&amp;connectorUrl=${encodeURIComponent(`${STILL_PUBLIC_ORIGIN_V1}/mcp/still`)}`));
     assert.match(assistants, /href="https:\/\/claude\.ai\/new\?q=What%20are%20Still%E2%80%99s%20terms%20this%20weekend%3F"/);
     assert.match(assistants, /href="https:\/\/chatgpt\.com\/\?q=/);
     assert.match(assistants, /grok\.com\/connectors: New Connector, Custom/);

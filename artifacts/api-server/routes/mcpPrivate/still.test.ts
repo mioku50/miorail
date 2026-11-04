@@ -11,6 +11,7 @@ import { stillMineRouter, stillMineRuntimeV1 } from '../stillMine.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { MiorailGetMyStillResultV1Schema } from './outputs.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
+import { STILL_MCP_IDENTITY_V1 } from '../mcpStill/server.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const OTHER = `0x${'2'.repeat(40)}` as const;
@@ -62,7 +63,9 @@ test('the protocol advertises the wallet-free read, the source block and partial
   const client = await connected(t);
   const tool = (await client.listTools()).tools.find(entry => entry.name === NAME)!;
   assert.ok(tool);
-  assert.equal(client.getServerVersion()?.version, '1.13.0');
+  assert.equal(client.getServerVersion()?.version, '1.14.0');
+  // Still's signed-in server: shown as Still, with Still's mark, like Still's own server.
+  assert.deepEqual(client.getServerVersion(), { name: 'miorail-connected', version: '1.14.0', ...STILL_MCP_IDENTITY_V1 });
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), []);
   assert.equal(tool.inputSchema.additionalProperties, false);
   assert.equal(tool.annotations?.readOnlyHint, true);
