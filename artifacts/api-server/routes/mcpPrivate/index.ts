@@ -2,7 +2,8 @@ import { Router, type Request, type Response } from 'express';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import { InMemoryRateLimiter, logger } from '@mioagent/utils';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { drawsStillCardV1 } from './stillCard.js';
+import { STILL_CARD_ADDRESS_V1, drawsStillCardV1 } from './stillCard.js';
+import { STILL_CARD_LENDING_TOOL_V1 } from './stillCardLending.js';
 import { MCP_PRIVATE_AUTH_COPY_V1, resolvePrivateIdentityV1 } from './session.js';
 import { mcpOAuthResourceUrlV1 } from '../../lib/mcpOAuthProvider.js';
 import { evidenceReadUsageV1 } from '../../lib/mcpEvidenceUsage.js';
@@ -66,8 +67,11 @@ function requestNameV1(body: unknown): { method: string; tool?: string; id: stri
  * ui:// apps, and so gets Still's review card. This endpoint keeps no session,
  * and a client sends its capabilities once, with initialize, so they are
  * remembered per durable grant. A grant nobody remembers, after a restart for
- * one, gets text until its client connects again: the card is an addition,
- * never the only way through.
+ * one, gets text until its client connects again, or draws the card: reading
+ * the card, or calling the card's own tool, is what only a host that draws it
+ * does. On 2026-11-04 Claude did just that after a deploy, from the tools it
+ * had listed before, without connecting again. The card is an addition, never
+ * the only way through.
  */
 export const mcpPrivateAppsRuntimeV1 = {
   grants: new Map<string, number>(),
@@ -79,10 +83,12 @@ function drawsAppsV1(identity: { tokenId: string; tenantId: string }, body: unkn
   const { grants, forMs, now } = mcpPrivateAppsRuntimeV1;
   // A browser session's token id is the same word for every wallet; the grant and its wallet together are one client.
   const tokenId = `${identity.tokenId}|${identity.tenantId}`;
-  const request = body as { method?: unknown; params?: { capabilities?: unknown } } | null;
-  if (request?.method === 'initialize') {
+  const request = body as { method?: unknown; params?: { capabilities?: unknown; uri?: unknown; name?: unknown } } | null;
+  const drawsTheCard = (request?.method === 'resources/read' && typeof request.params?.uri === 'string' && STILL_CARD_ADDRESS_V1.test(request.params.uri))
+    || (request?.method === 'tools/call' && request.params?.name === STILL_CARD_LENDING_TOOL_V1);
+  if (request?.method === 'initialize' || drawsTheCard) {
     grants.delete(tokenId);
-    if (drawsStillCardV1(request.params?.capabilities)) grants.set(tokenId, now() + forMs);
+    if (drawsTheCard || drawsStillCardV1(request?.params?.capabilities)) grants.set(tokenId, now() + forMs);
     // A handful of assistants per wallet: the bound is headroom, oldest first.
     while (grants.size > 10_000) grants.delete(grants.keys().next().value!);
   }

@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ResourceTemplate, type McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 
 // ---------------------------------------------------------------------------
@@ -25,10 +26,19 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 // the wallet, and said it could not read the result: it listed the resources
 // again and never read the card. So the address names the card's content
 // (ui://still/review.<hash>.html), and a new card is a new address.
+//
+// A host also keeps the tools it listed, with the address they named. The
+// same day Claude, holding the list from before that deploy, read the card by
+// its old address from the restarted server, which no longer had that address
+// and had forgotten that this grant draws apps: it said "Unable to reach". So
+// every address the card has had answers with the card deployed now, and a
+// host that reads the card is known again to draw it (index.ts).
 // ---------------------------------------------------------------------------
 
 export const MCP_APPS_EXTENSION_V1 = 'io.modelcontextprotocol/ui';
 export const STILL_CARD_URI_V1 = 'ui://still/review.html';
+/** Every address the card has had: the plain one, and one named by its content. */
+export const STILL_CARD_ADDRESS_V1 = /^ui:\/\/still\/review(?:\.[0-9a-f]{12})?\.html$/;
 export const STILL_CARD_MIME_V1 = 'text/html;profile=mcp-app';
 /** On a tool: the spec's key, and the flat one older hosts read. */
 export function stillCardToolMetaV1(uri: string) {
@@ -79,12 +89,19 @@ export const stillCardRuntimeV1 = {
 };
 
 export function registerStillCardV1(server: McpServer, uri: string): void {
-  server.registerResource('still-review-card', uri, {
+  const about = {
     title: 'Still review card',
     description: `What an assistant prepared through Still, a button to review and sign it on ${STILL_PUBLIC_HOST_V1}, and where it stands.`,
     mimeType: STILL_CARD_MIME_V1,
-  }, async (uri) => ({
-    contents: [{ uri: uri.href, mimeType: STILL_CARD_MIME_V1, text: await stillCardRuntimeV1.html(),
+  };
+  const read = async (address: URL) => ({
+    contents: [{ uri: address.href, mimeType: STILL_CARD_MIME_V1, text: await stillCardRuntimeV1.html(),
       _meta: { ui: { csp: STILL_CARD_CSP_V1, prefersBorder: false } } }],
-  }));
+  });
+  server.registerResource('still-review-card', uri, about, read);
+  // Any address a host kept from before a deploy, through one template: the card deployed now.
+  server.registerResource('still-review-card-earlier', new ResourceTemplate('ui://still/review{rest}', { list: undefined }), about, async (address) => {
+    if (!STILL_CARD_ADDRESS_V1.test(address.href)) throw new McpError(ErrorCode.InvalidParams, `Resource ${address.href} not found`);
+    return read(address);
+  });
 }

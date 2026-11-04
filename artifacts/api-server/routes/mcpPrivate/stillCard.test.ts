@@ -73,16 +73,52 @@ test('a client that draws apps gets the card on Still’s four tools and can rea
   assert.ok(csp.connectDomains.includes('wss://relay.walletconnect.org') && csp.frameDomains.includes('https://verify.walletconnect.org'));
   assert.ok([...csp.connectDomains, ...csp.frameDomains].every((origin) => /^(?:wss|https):\/\/[a-z]+\.walletconnect\.(?:org|com)$/.test(origin)));
 
-  // Another wallet's client said nothing about apps: text only, and no card to read.
+  // Another wallet's client said nothing about apps: text only, and not the card's own tool.
   await rpc(server, OTHER, 'initialize', initialize({}));
   const plain = (await rpc(server, OTHER, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
   assert.ok(plain.every((tool) => tool._meta === undefined));
-  assert.ok((await rpc(server, OTHER, 'resources/read', { uri: CARD_URI })).error);
+  assert.equal(plain.some((tool) => tool.name === 'still_card_lending'), false);
 
   // Connecting again without the extension forgets it.
   await rpc(server, WALLET, 'initialize', initialize({}));
   const again = (await rpc(server, WALLET, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
   assert.equal(again.find((tool) => tool.name === 'miorail_prepare_still_purchase')?._meta, undefined);
+});
+
+// 2026-11-04 03:34 UTC: after a deploy Claude read the card by the address its tools had named before it, without
+// connecting again, from a server that had forgotten what the grant's initialize said. It drew "Unable to reach".
+test('after a restart, a host that kept its tools gets the card deployed now at any address the card had, and is known again to draw it', async (t) => {
+  const originalFlags = mcpPrivateAuthRuntime.flags, originalHtml = stillCardRuntimeV1.html, originalUri = stillCardRuntimeV1.uri;
+  mcpPrivateAuthRuntime.flags = (() => ({ routeIntelligenceV1: true, b20ControlV1: true, mcpPrivateV1: true })) as unknown as typeof originalFlags;
+  stillCardRuntimeV1.html = async () => '<!doctype html><title>Still review, now</title>';
+  stillCardRuntimeV1.uri = () => CARD_URI;
+  t.after(() => { mcpPrivateAuthRuntime.flags = originalFlags; stillCardRuntimeV1.html = originalHtml; stillCardRuntimeV1.uri = originalUri; });
+  const server = app();
+  const listed = async (wallet: string) => (await rpc(server, wallet, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
+
+  await rpc(server, WALLET, 'initialize', initialize(DRAWS));
+  mcpPrivateAppsRuntimeV1.grants.clear(); // the restart
+  assert.equal((await listed(WALLET)).find((tool) => tool.name === 'miorail_prepare_still_wallet_purchase')?._meta, undefined);
+  for (const uri of [STILL_CARD_URI_V1, 'ui://still/review.fedcba987654.html', CARD_URI]) {
+    const contents = (await rpc(server, WALLET, 'resources/read', { uri })).result?.contents as Array<Record<string, unknown>> | undefined;
+    assert.deepEqual([contents?.[0]?.uri, contents?.[0]?.mimeType, contents?.[0]?.text], [uri, STILL_CARD_MIME_V1, '<!doctype html><title>Still review, now</title>'], uri);
+  }
+  const again = await listed(WALLET);
+  assert.deepEqual(again.find((tool) => tool.name === 'miorail_prepare_still_wallet_purchase')?._meta, { ui: { resourceUri: CARD_URI }, 'ui/resourceUri': CARD_URI });
+  assert.ok(again.some((tool) => tool.name === 'still_card_lending'));
+
+  // The card's own tool, called after a restart, is there: this POST is refused by the tool itself, never as unknown.
+  mcpPrivateAppsRuntimeV1.grants.clear();
+  const call = await rpc(server, WALLET, 'tools/call', { name: 'still_card_lending', arguments: { method: 'POST', path: '/api/route-intelligence/rwa/lending/review/abc' } });
+  assert.deepEqual(call.result?.structuredContent, { status: 400, body: { error: 'lending_request_invalid' }, wallet: WALLET });
+
+  // No other address and no other request teaches it.
+  mcpPrivateAppsRuntimeV1.grants.clear();
+  for (const uri of ['ui://still/review.html.js', 'ui://still/review.0123.html', 'ui://still/other.html', 'ui://elsewhere/review.html']) {
+    assert.ok((await rpc(server, OTHER, 'resources/read', { uri })).error, uri);
+  }
+  await rpc(server, OTHER, 'initialize', initialize({}));
+  assert.ok((await listed(OTHER)).every((tool) => tool._meta === undefined && tool.name !== 'still_card_lending'));
 });
 
 test('the deployed file gets the server’s WalletConnect project id, and an id that is not one leaves the card without it', async (t) => {
