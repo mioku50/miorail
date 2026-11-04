@@ -15,6 +15,8 @@ import { STILL_CARD_MIME_V1, STILL_CARD_URI_V1, drawsStillCardV1, resetStillCard
 // tools as text, and no card it could not draw. Every wallet here is synthetic.
 const WALLET = `0x${'1'.repeat(40)}`, OTHER = `0x${'2'.repeat(40)}`;
 const DRAWS = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [STILL_CARD_MIME_V1] } } };
+// The card's address names its content (stillCard.ts): the one these tests serve.
+const CARD_URI = 'ui://still/review.0123456789ab.html';
 const STILL_TOOLS = ['miorail_prepare_still_loan', 'miorail_prepare_still_purchase', 'miorail_prepare_still_wallet_purchase', 'miorail_prepare_still_repay', 'miorail_get_still_review_status'];
 
 function app() {
@@ -49,19 +51,20 @@ test('only an initialize that names the MCP Apps extension with its HTML type co
 });
 
 test('a client that draws apps gets the card on Still’s four tools and can read it; one that does not gets neither', async (t) => {
-  const originalFlags = mcpPrivateAuthRuntime.flags, originalHtml = stillCardRuntimeV1.html;
+  const originalFlags = mcpPrivateAuthRuntime.flags, originalHtml = stillCardRuntimeV1.html, originalUri = stillCardRuntimeV1.uri;
   mcpPrivateAuthRuntime.flags = (() => ({ routeIntelligenceV1: true, b20ControlV1: true, mcpPrivateV1: true })) as unknown as typeof originalFlags;
   stillCardRuntimeV1.html = async () => '<!doctype html><title>Still review</title>';
-  t.after(() => { mcpPrivateAuthRuntime.flags = originalFlags; stillCardRuntimeV1.html = originalHtml; });
+  stillCardRuntimeV1.uri = () => CARD_URI;
+  t.after(() => { mcpPrivateAuthRuntime.flags = originalFlags; stillCardRuntimeV1.html = originalHtml; stillCardRuntimeV1.uri = originalUri; });
   const server = app();
 
   await rpc(server, WALLET, 'initialize', initialize(DRAWS));
   const tools = (await rpc(server, WALLET, 'tools/list')).result!.tools as Array<{ name: string; _meta?: Record<string, unknown> }>;
   for (const name of STILL_TOOLS) {
-    assert.deepEqual(tools.find((tool) => tool.name === name)?._meta, { ui: { resourceUri: STILL_CARD_URI_V1 }, 'ui/resourceUri': STILL_CARD_URI_V1 }, name);
+    assert.deepEqual(tools.find((tool) => tool.name === name)?._meta, { ui: { resourceUri: CARD_URI }, 'ui/resourceUri': CARD_URI }, name);
   }
   assert.equal(tools.find((tool) => tool.name === 'miorail_get_my_still')?._meta, undefined, 'a read with nothing to sign has no card');
-  const card = (await rpc(server, WALLET, 'resources/read', { uri: STILL_CARD_URI_V1 })).result!.contents as Array<Record<string, unknown>>;
+  const card = (await rpc(server, WALLET, 'resources/read', { uri: CARD_URI })).result!.contents as Array<Record<string, unknown>>;
   assert.equal(card[0]!.mimeType, STILL_CARD_MIME_V1);
   assert.equal(card[0]!.text, '<!doctype html><title>Still review</title>');
   const csp = (card[0]!._meta as { ui: { csp: { connectDomains: string[]; resourceDomains: string[]; frameDomains: string[] } } }).ui.csp;
@@ -74,7 +77,7 @@ test('a client that draws apps gets the card on Still’s four tools and can rea
   await rpc(server, OTHER, 'initialize', initialize({}));
   const plain = (await rpc(server, OTHER, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
   assert.ok(plain.every((tool) => tool._meta === undefined));
-  assert.ok((await rpc(server, OTHER, 'resources/read', { uri: STILL_CARD_URI_V1 })).error);
+  assert.ok((await rpc(server, OTHER, 'resources/read', { uri: CARD_URI })).error);
 
   // Connecting again without the extension forgets it.
   await rpc(server, WALLET, 'initialize', initialize({}));
@@ -99,4 +102,29 @@ test('the deployed file gets the server’s WalletConnect project id, and an id 
     resetStillCardHtmlV1();
     assert.equal(await stillCardRuntimeV1.html(), `<meta name="still-walletconnect" content="${expected}">`);
   }
+});
+
+// 2026-11-04: Claude drew the card it had fetched before a deploy, by the same address, and could not read a new result.
+test('the card’s address names its content, so a new card is a new address and the same card the same one', async (t) => {
+  const root = mkdtempSync(path.join(tmpdir(), 'still-card-'));
+  mkdirSync(path.join(root, 'mcp-app'));
+  const file = path.join(root, 'mcp-app', 'index.html');
+  const env = process.env.MIORAIL_WEB_INDEX_HTML;
+  t.after(() => { if (env === undefined) delete process.env.MIORAIL_WEB_INDEX_HTML; else process.env.MIORAIL_WEB_INDEX_HTML = env; resetStillCardHtmlV1(); });
+  process.env.MIORAIL_WEB_INDEX_HTML = path.join(root, 'index.html');
+  resetStillCardHtmlV1();
+  // No card deployed: the plain address, and nothing to read.
+  assert.equal(stillCardRuntimeV1.uri(), STILL_CARD_URI_V1);
+  await assert.rejects(stillCardRuntimeV1.html());
+  writeFileSync(file, '<!doctype html><title>Still review, before</title>');
+  resetStillCardHtmlV1();
+  const before = stillCardRuntimeV1.uri();
+  assert.match(before, /^ui:\/\/still\/review\.[0-9a-f]{12}\.html$/);
+  resetStillCardHtmlV1();
+  assert.equal(stillCardRuntimeV1.uri(), before, 'the same card keeps its address');
+  writeFileSync(file, '<!doctype html><title>Still review, after</title>');
+  resetStillCardHtmlV1();
+  const after = stillCardRuntimeV1.uri();
+  assert.notEqual(after, before);
+  assert.equal(await stillCardRuntimeV1.html(), '<!doctype html><title>Still review, after</title>');
 });

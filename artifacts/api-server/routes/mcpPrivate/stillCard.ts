@@ -1,4 +1,5 @@
-import { readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
@@ -18,13 +19,21 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 // A host that draws nothing would list the card's metadata as noise, so it is
 // attached only for a client that said, when it connected, that it draws apps
 // (index.ts remembers that per grant).
+//
+// A host keeps a card by its address. On 2026-11-04 Claude drew the card it
+// had fetched before a deploy, one that knew nothing of a purchase paid from
+// the wallet, and said it could not read the result: it listed the resources
+// again and never read the card. So the address names the card's content
+// (ui://still/review.<hash>.html), and a new card is a new address.
 // ---------------------------------------------------------------------------
 
 export const MCP_APPS_EXTENSION_V1 = 'io.modelcontextprotocol/ui';
 export const STILL_CARD_URI_V1 = 'ui://still/review.html';
 export const STILL_CARD_MIME_V1 = 'text/html;profile=mcp-app';
 /** On a tool: the spec's key, and the flat one older hosts read. */
-export const STILL_CARD_TOOL_META_V1 = { ui: { resourceUri: STILL_CARD_URI_V1 }, 'ui/resourceUri': STILL_CARD_URI_V1 };
+export function stillCardToolMetaV1(uri: string) {
+  return { ui: { resourceUri: uri }, 'ui/resourceUri': uri };
+}
 /** Its fonts, and WalletConnect: the relay that pairs the person's wallet,
  * its RPC for receipts, its Verify frame and its event counter. Every read of
  * Still's own goes through the host. */
@@ -43,28 +52,34 @@ export function drawsStillCardV1(capabilities: unknown): boolean {
   return Array.isArray(ui?.mimeTypes) && ui.mimeTypes.includes(STILL_CARD_MIME_V1);
 }
 
-let cardHtmlV1: Promise<string> | null = null;
+let cardV1: { html: string; uri: string } | null = null;
+/** The deployed file as it is served, and the address that names it; read once, since it changes only
+ * with a deploy, which restarts this process. A missing file is read again next time, not remembered. */
+function deployedCardV1(): { html: string; uri: string } | null {
+  if (cardV1) return cardV1;
+  const webIndex = (process.env.MIORAIL_WEB_INDEX_HTML ?? '').trim() || '/var/www/miorail/index.html';
+  // Public by design (a dapp's id), and still the operator's: an id that is not one leaves the card without WalletConnect.
+  const projectId = (process.env.STILL_WALLETCONNECT_PROJECT_ID ?? '').trim();
+  let html: string;
+  try { html = readFileSync(path.join(path.dirname(webIndex), 'mcp-app', 'index.html'), 'utf8'); } catch { return null; }
+  html = html.replaceAll(PROJECT_ID_SLOT_V1, /^[0-9a-f]{32}$/.test(projectId) ? projectId : '');
+  cardV1 = { html, uri: `ui://still/review.${createHash('sha256').update(html).digest('hex').slice(0, 12)}.html` };
+  return cardV1;
+}
 /** Testing seam: forget the file read once. */
-export function resetStillCardHtmlV1(): void { cardHtmlV1 = null; }
+export function resetStillCardHtmlV1(): void { cardV1 = null; }
 export const stillCardRuntimeV1 = {
-  /** The deployed file, read once: it changes only with a deploy, which restarts this process. */
-  html: (): Promise<string> => {
-    if (!cardHtmlV1) {
-      const webIndex = (process.env.MIORAIL_WEB_INDEX_HTML ?? '').trim() || '/var/www/miorail/index.html';
-      // Public by design (a dapp's id), and still the operator's: an id that is not one leaves the card without WalletConnect.
-      const projectId = (process.env.STILL_WALLETCONNECT_PROJECT_ID ?? '').trim();
-      const reading = readFile(path.join(path.dirname(webIndex), 'mcp-app', 'index.html'), 'utf8')
-        .then((html) => html.replaceAll(PROJECT_ID_SLOT_V1, /^[0-9a-f]{32}$/.test(projectId) ? projectId : ''));
-      cardHtmlV1 = reading;
-      // A missing file is read again next time, not remembered as missing.
-      reading.catch(() => { if (cardHtmlV1 === reading) cardHtmlV1 = null; });
-    }
-    return cardHtmlV1;
+  html: async (): Promise<string> => {
+    const card = deployedCardV1();
+    if (!card) throw new Error('still_card_missing');
+    return card.html;
   },
+  /** Where the card is: its content's own address, or the plain one where no card is deployed. */
+  uri: (): string => deployedCardV1()?.uri ?? STILL_CARD_URI_V1,
 };
 
-export function registerStillCardV1(server: McpServer): void {
-  server.registerResource('still-review-card', STILL_CARD_URI_V1, {
+export function registerStillCardV1(server: McpServer, uri: string): void {
+  server.registerResource('still-review-card', uri, {
     title: 'Still review card',
     description: `What an assistant prepared through Still, a button to review and sign it on ${STILL_PUBLIC_HOST_V1}, and where it stands.`,
     mimeType: STILL_CARD_MIME_V1,

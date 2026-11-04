@@ -52,7 +52,7 @@ import {
   usdcTextV1,
 } from './stillLoanTool.js';
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
-import { STILL_CARD_TOOL_META_V1, STILL_CARD_URI_V1, registerStillCardV1 } from './stillCard.js';
+import { registerStillCardV1, stillCardRuntimeV1, stillCardToolMetaV1 } from './stillCard.js';
 import { STILL_CARD_LENDING_TOOL_V1, StillCardLendingInputV1Schema, StillCardLendingOutputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
 import { registerStillSpendReadsV1 } from '../mcpStill/server.js';
 import { refreshLoanExecutionV1 } from '../../lib/loanExecutionStatus.js';
@@ -185,10 +185,11 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
     };
   };
 
-  // A host that draws apps shows Still's prepare and status results as a card.
-  const card = options.apps ? { _meta: STILL_CARD_TOOL_META_V1 } : {};
-  if (options.apps) {
-    registerStillCardV1(server);
+  // A host that draws apps shows Still's prepare and status results as a card, at the address of this card.
+  const cardUri = options.apps ? stillCardRuntimeV1.uri() : null;
+  const card = cardUri ? { _meta: stillCardToolMetaV1(cardUri) } : {};
+  if (cardUri) {
+    registerStillCardV1(server, cardUri);
     // The card's own way to the review it signs: hidden from the model by the host.
     server.registerTool(STILL_CARD_LENDING_TOOL_V1, {
       title: 'Still review card: the lending review',
@@ -196,7 +197,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
       inputSchema: StillCardLendingInputV1Schema.shape,
       outputSchema: StillCardLendingOutputV1Schema,
       annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
-      _meta: { ui: { resourceUri: STILL_CARD_URI_V1, visibility: ['app'] } },
+      _meta: { ui: { resourceUri: cardUri, visibility: ['app'] } },
     }, async (args) => {
       try {
         return reply(await stillCardLendingV1(identity, args));
