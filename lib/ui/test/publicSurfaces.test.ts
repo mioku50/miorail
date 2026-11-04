@@ -328,6 +328,11 @@ test('every page’s tab icon is Still’s mark, and every icon the head names i
   assert.match(mark, /<circle cx="7" cy="17"/);
   const ico = readFileSync(path.join(root, 'artifacts/interface/public/favicon.ico'));
   assert.deepEqual([ico.readUInt16LE(0), ico.readUInt16LE(2), ico.readUInt16LE(4)], [0, 1, 3], 'an icon file of three images');
+  // The phone's icon starts with /app, the mini app's prefix location: an exact one keeps it a file (it answered Next's 404).
+  const nginx = source('ops/nginx/miorail-app.conf');
+  const touch = nginx.indexOf('location = /apple-touch-icon.png {');
+  assert.ok(touch >= 0 && nginx.includes('location ^~ /app {'), 'nginx names the phone icon exactly');
+  assert.match(nginx.slice(touch, nginx.indexOf('\n}', touch)), /try_files \$uri =404;/);
 });
 
 test('robots.txt is a file, and it names the sitemap', () => {
