@@ -29,20 +29,25 @@ export const TOKEN1_SELECTOR_V1 = '0xd21220a7' as const;
  * How far short of the head a pass stops.
  *
  * The cursor does not rewind, so this depth is the ONLY defence against a
- * reorg writing an event for a transaction that later does not exist. Twelve
- * blocks is about twenty-four seconds on Base. Stated here rather than implied
- * by a magic number at a call site, because raising it is a safety decision
- * and lowering it is a risk decision.
+ * reorg writing an event for a transaction that later does not exist. It was
+ * twelve blocks, twenty-four seconds at Base's two-second blocks. Denim
+ * (mainnet, 2026-11-05 18:00 UTC) makes five blocks a second, so the same
+ * twenty-four seconds is 120 blocks; before activation 120 blocks is four
+ * minutes, which an hourly tail does not notice. Stated here rather than
+ * implied by a magic number at a call site, because raising it is a safety
+ * decision and lowering it is a risk decision.
  */
-export const MARKET_TAIL_CONFIRMATIONS_V1 = 12;
+export const MARKET_TAIL_CONFIRMATIONS_V1 = 120;
 
 /**
  * The widest span one `eth_getLogs` may ask for.
  *
  * mainnet.base.org serves ten thousand blocks in a single call, and a 2,000
  * block window over thirteen assets measured 5,833 logs in 1.5 seconds. Two
- * thousand keeps a pass comfortably inside any response-size ceiling while
- * still covering more than an hour, so an hourly tail is one call.
+ * thousand keeps a pass comfortably inside any response-size ceiling. At
+ * two-second blocks it covered more than an hour; since Denim it covers under
+ * seven minutes, so an hour of Base is nine passes and the timer's --passes
+ * is sized for that (ops/systemd/miorail-rwa-market-tail.service).
  */
 export const MARKET_TAIL_MAX_SPAN_V1 = 2_000;
 

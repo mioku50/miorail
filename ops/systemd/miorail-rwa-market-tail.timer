@@ -1,11 +1,14 @@
 [Unit]
-# Hourly, four passes each time.
+# Hourly, up to twenty-four passes each time.
 #
 # One eth_getLogs covers all thirteen assets over 2,000 blocks — measured, it
-# returned 5,833 transfers in 1.5 seconds. Four passes an hour keeps the cursor
-# roughly current at Base's two-second blocks while costing about four calls an
-# hour for the whole vertical, against ten to twelve per token for the
-# pool-by-pool measurement it replaces.
+# returned 5,833 transfers in 1.5 seconds. At Base's two-second blocks an hour
+# was 1,800 blocks and four passes kept the cursor current. Denim (mainnet,
+# 2026-11-05 18:00 UTC) makes five blocks a second: an hour is 18,000 blocks,
+# nine passes. Twenty-four cover 48,000, so a missed run is caught up by the
+# next one; a pass that reaches the head stops, so a quiet hour still costs
+# about nine calls for the whole vertical. The corporate-action tail reads
+# 10,000 blocks a pass: two passes an hour, six allowed.
 #
 # The cursor never rewinds and re-reading a range writes nothing, so a missed
 # hour costs only the blocks it did not reach.

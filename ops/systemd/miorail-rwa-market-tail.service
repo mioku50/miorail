@@ -24,7 +24,7 @@ WorkingDirectory=/home/miorail/mioagent
 EnvironmentFile=/home/miorail/mioagent/.env
 Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/market_tail.ts --passes 4 --actions-passes 2
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/market_tail.ts --passes 24 --actions-passes 6
 
 TimeoutStartSec=900
 NoNewPrivileges=true

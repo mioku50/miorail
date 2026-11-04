@@ -3,7 +3,12 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import test, { describe } from 'node:test';
 
-import { ERC20_TRANSFER_TOPIC_V1, UNISWAP_V4_SINGLETON_V1 } from '../src/constants.js';
+import {
+  ERC20_TRANSFER_TOPIC_V1,
+  MARKET_TAIL_CONFIRMATIONS_V1,
+  MARKET_TAIL_MAX_SPAN_V1,
+  UNISWAP_V4_SINGLETON_V1,
+} from '../src/constants.js';
 import { assetTransfersFromLogsV1, type RawLogV1 } from '../src/ledger.js';
 import { venueTransfersFromLedgerV1, venueTransferSideV1 } from '../src/events.js';
 import { tailRangeV1 } from '../src/range.js';
@@ -196,6 +201,24 @@ describe('the range a pass may read', () => {
       ok: false,
       reason: 'caught_up',
     });
+  });
+});
+
+describe('Denim: five blocks a second', () => {
+  // Base mainnet from 2026-11-05 18:00 UTC: a block every 200 ms, 18,000 an hour.
+  const BLOCKS_PER_HOUR_V1 = 18_000;
+
+  test('the default depth still keeps about twenty-four seconds from the head', () => {
+    assert.ok(MARKET_TAIL_CONFIRMATIONS_V1 * 200 >= 24_000);
+    assert.deepEqual(tailRangeV1({ lastBlock: 1_000, headBlock: 1_200 }), { ok: true, fromBlock: 1_001, toBlock: 1_080 });
+  });
+
+  test('one hourly run can read two hours of the chain, on both tails', () => {
+    const unit = readFileSync(resolve(import.meta.dirname, '../../../ops/systemd/miorail-rwa-market-tail.service'), 'utf8');
+    const flag = (name: string) => Number(unit.match(new RegExp(`--${name} (\\d+)`))?.[1]);
+    assert.ok(flag('passes') * MARKET_TAIL_MAX_SPAN_V1 >= 2 * BLOCKS_PER_HOUR_V1);
+    // A corporate-action pass reads 10,000 blocks (scripts/market_tail.ts, --actions-blocks).
+    assert.ok(flag('actions-passes') * 10_000 >= 2 * BLOCKS_PER_HOUR_V1);
   });
 });
 
