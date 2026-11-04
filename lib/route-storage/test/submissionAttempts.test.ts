@@ -48,6 +48,16 @@ describe('creating an attempt', () => {
     assert.equal(second.status, 'wallet_pending');
   });
 
+  // Final audit FA1, 2026-11-04: a caller learns from the store, not from a timestamp, that the attempt is its own.
+  test('only the call that made the attempt is told it did, even within one millisecond', async () => {
+    const repo = repository();
+    const first = await repo.openAttempt(input());
+    const second = await repo.openAttempt(input());
+    assert.deepEqual([first.created, second.created], [true, false]);
+    assert.equal(second.attempt.id, first.attempt.id);
+    assert.equal(second.attempt.createdAt, first.attempt.createdAt, 'the same millisecond, and still not created by the second');
+  });
+
   test('an open attempt bound to different approved calls is a conflict, not a reuse', async () => {
     // Reusing it would attach the next wallet batch to the wrong transaction.
     const repo = repository();

@@ -28,9 +28,11 @@ const receiptOf = (hash: string) => ({
   logs: [], logsBloom: `0x${'0'.repeat(512)}`, transactionIndex: '0x0', type: '0x2',
 });
 
-// attempts: the server's submission attempts, one open per blueprint, as its route keeps them.
+// attempts: the server's submission attempts, one open per blueprint, as its route keeps them; on unless
+// a test says otherwise, since a swap is not handed to a wallet without one (final audit FA1, 2026-11-04).
+// attemptsDown: the attempts route cannot record one (its storage is unavailable).
 // loseSwapReply: the wallet sends the swap and its answer never comes back.
-async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?: boolean; attempts?: boolean; loseSwapReply?: boolean; allowanceInPlace?: boolean } = {}) {
+async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?: boolean; attempts?: boolean; attemptsDown?: boolean; loseSwapReply?: boolean; allowanceInPlace?: boolean } = {}) {
   await page.route('**/AuthProvider.tsx*', (route) => route.fulfill({ contentType: 'application/javascript',
     body: 'export function AuthProvider({children}) { return children; } export function useAuthGate() { return { showPrivateSurfaces:true, phase:"authenticated", sessionAuthenticated:true }; }' }));
   await page.addInitScript(({ wallet, kind, hashes, declineSwapOnce, loseSwapReply, router }) => {
@@ -138,7 +140,11 @@ async function install(page: Page, kind: WalletKind, options: { declineSwapOnce?
         sponsorship: steps ? null : { paymasterUrl: 'https://stills.lat/api/paymaster/sponsorship/fixture', context: { sponsorship: 'fixture' } },
       } });
     }
-    if (options.attempts && path === '/api/route-intelligence/submission-attempts' && request.method() === 'POST') {
+    if (options.attempts !== false && path === '/api/route-intelligence/submission-attempts' && request.method() === 'POST') {
+      if (options.attemptsDown) {
+        state.attemptAnswers.push({ status: 503, at: Date.now() });
+        return route.fulfill({ status: 503, json: { error: 'submission_recovery_unavailable', code: 'submission_recovery_unavailable' } });
+      }
       const body = request.postDataJSON() as Record<string, string>;
       if (state.attempts.some((attempt) => attempt.blueprintId === body.blueprintId && OPEN.has(attempt.status))) {
         state.attemptAnswers.push({ status: 409, at: Date.now() });
@@ -275,6 +281,18 @@ test('a swap whose wallet answer was lost is not sent again after a reload: the 
   await expect(page.getByRole('button', { name: 'Submitted — status unknown', exact: true })).toBeDisabled();
   expect(await walletSends(page)).toEqual([]);
   expect(state.attemptAnswers.map((answer) => answer.status)).toEqual([200, 409]);
+  expect(state.records).toEqual([]);
+});
+
+// Final audit FA1, 2026-11-04: an attempt the server could not record let the swap go to the wallet anyway,
+// and a lost wallet answer could then be sent again after a reload.
+test('a swap whose attempt could not be recorded is not handed to the wallet, and nothing is recorded as sent', async ({ page }) => {
+  const state = await install(page, 'no-methods', { attemptsDown: true, allowanceInPlace: true });
+  await page.goto('/lending/fixture-draft');
+  await page.getByRole('button', { name: 'Confirm in your wallet', exact: true }).click();
+  await expect(page.getByRole('alert').filter({ hasText: /^This swap could not be recorded before your wallet was asked, so your wallet was not asked and nothing was sent/ })).toBeVisible();
+  expect(await walletSends(page)).toEqual([]);
+  expect(state.attemptAnswers.map((answer) => answer.status)).toEqual([503]);
   expect(state.records).toEqual([]);
 });
 

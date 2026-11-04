@@ -207,6 +207,20 @@ describe('creating an attempt re-verifies everything', () => {
     assert.deepEqual(open.map((attempt) => attempt.id), [earlier.id]);
   });
 
+  // Final audit FA1, 2026-11-04: the route judged "created by this request" by the row's time, and two
+  // requests in the same millisecond both got an attempt to hand to a wallet.
+  test('a request that raced another in the same millisecond is refused too', async () => {
+    const earlier = await repository.createAttempt({ tenantId: USER.id, walletAddress: WALLET, goal: 'swap', routeRunId: 'run-1',
+      blueprintId: 'blueprint-1', approvedCallsHash: HASH, proofId: PROOF_ID, now: NOW });
+    const find = repository.findOpenAttemptByBlueprint.bind(repository);
+    let reads = 0;
+    repository.findOpenAttemptByBlueprint = async (tenantId, blueprintId) => (reads++ === 0 ? null : find(tenantId, blueprintId));
+    const raced = await create();
+    assert.equal(raced.status, 409);
+    assert.equal(raced.body.code, 'submission_attempt_open');
+    assert.deepEqual((await repository.listRecoverable(USER.id, WALLET)).map((attempt) => attempt.id), [earlier.id]);
+  });
+
   test('an unapproved blueprint cannot get an attempt', async () => {
     blueprintStatus = 'prepared';
     const response = await create();

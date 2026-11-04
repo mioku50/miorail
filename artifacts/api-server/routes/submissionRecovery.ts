@@ -247,8 +247,10 @@ submissionRecoveryRouter.post('/submission-attempts', async (req: Request, res: 
       res.status(409).json({ error: 'submission_attempt_open', code: 'submission_attempt_open', detail: SUBMISSION_ATTEMPT_OPEN_DETAIL_V1 });
       return;
     }
-    const now = submissionRecoveryRuntime.now();
-    const attempt = await repository.createAttempt({
+    // Whether this request made the attempt is the store's own answer. A
+    // timestamp cannot say it: two requests can share a millisecond, and then
+    // both would hand the same calls to a wallet (final audit FA1, 2026-11-04).
+    const { attempt, created } = await repository.openAttempt({
       tenantId: guard.user.id,
       walletAddress: guard.user.address,
       goal: parsed.data.goal,
@@ -256,9 +258,9 @@ submissionRecoveryRouter.post('/submission-attempts', async (req: Request, res: 
       blueprintId: parsed.data.blueprintId,
       approvedCallsHash: parsed.data.approvedCallsHash.toLowerCase(),
       proofId: binding.proofId ?? null,
-      now,
+      now: submissionRecoveryRuntime.now(),
     });
-    if (Date.parse(attempt.createdAt) !== now.getTime()) {
+    if (!created) {
       res.status(409).json({ error: 'submission_attempt_open', code: 'submission_attempt_open', detail: SUBMISSION_ATTEMPT_OPEN_DETAIL_V1 });
       return;
     }

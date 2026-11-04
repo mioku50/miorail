@@ -62,6 +62,8 @@ import {
  * wallet, and what the wallet did with them was never heard. */
 export const SUBMISSION_IN_DOUBT_V1 =
   'Your wallet already had this once, and what it did with it is not known yet, so it was not asked again. Check your wallet’s activity; if nothing went out, dismiss the unfinished submission and press again.';
+export const SUBMISSION_UNRECORDED_V1 =
+  'This swap could not be recorded before your wallet was asked, so your wallet was not asked and nothing was sent. Press again in a moment.';
 
 export type BlueprintSubmitStatus =
   | 'idle'
@@ -430,16 +432,20 @@ export function useSubmitApprovedBlueprint({
    * BEFORE the wallet is asked, so a reload or another tab knows these calls
    * went to a wallet. The server refuses a second one while the first is still
    * open, because that press already handed them over and its answer was never
-   * heard; the wallet is not asked again (re-audit R1, 2026-11-04). Any other
-   * failure to open one lets the submission go ahead: recovery is a safety
-   * net, refusing to transact because the net could not be hung would be the
-   * worse trade, and `attemptId` stays null so nobody is told they are
-   * protected when they are not.
+   * heard; the wallet is not asked again (re-audit R1, 2026-11-04).
+   *
+   * Any other failure to open one stops the press too, before the wallet
+   * (final audit FA1, 2026-11-04). It used to let the submission go ahead, as
+   * a safety net that could not be hung; but the attempt is the only thing
+   * that keeps a swap whose wallet answer was lost from being sent again after
+   * a reload, so a swap with no attempt is a swap that can go out twice.
+   * Nothing is sent, and the next press tries again. Only a submission
+   * without recovery (`recovery` off) goes ahead with none.
    */
   const openAttempt = async (
     payload: ApprovedWalletPayload,
     storage: MarkerStorageV1 | null,
-  ): Promise<'opened' | 'unprotected' | 'in_doubt'> => {
+  ): Promise<'opened' | 'unprotected' | 'stopped'> => {
     if (!recovery) return 'unprotected';
     try {
       const created = await createAttempt.mutateAsync({
@@ -469,9 +475,11 @@ export function useSubmitApprovedBlueprint({
       if (cause instanceof Error && cause.message.startsWith('submission_attempt_open')) {
         setStatus('submitted_unknown');
         setError(SUBMISSION_IN_DOUBT_V1);
-        return 'in_doubt';
+        return 'stopped';
       }
-      return 'unprotected';
+      setStatus('failed');
+      setError(SUBMISSION_UNRECORDED_V1);
+      return 'stopped';
     }
   };
 
@@ -652,7 +660,7 @@ export function useSubmitApprovedBlueprint({
     // A press that arrives here from a batch the wallet refused carries its attempt on.
     if (!attemptRef.current) {
       const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
-      if ((await openAttempt(payload, storage)) === 'in_doubt') return;
+      if ((await openAttempt(payload, storage)) === 'stopped') return;
     }
     await sendOneAtATime(payload);
   };
@@ -737,7 +745,7 @@ export function useSubmitApprovedBlueprint({
       approvedRef.current = payload;
 
       const storage = markerStorage === undefined ? browserMarkerStorageV1() : markerStorage;
-      if ((await openAttempt(payload, storage)) === 'in_doubt') return;
+      if ((await openAttempt(payload, storage)) === 'stopped') return;
       const attempt = attemptRef.current;
 
       const suffix = builderCodeToDataSuffix(builderCode);

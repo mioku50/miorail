@@ -78,10 +78,14 @@ export function createDatabaseSubmissionAttemptRepository(
 
   const repository: SubmissionAttemptRepositoryV1 = {
     async createAttempt(input: CreateSubmissionAttemptInputV1): Promise<SubmissionAttemptV1> {
+      return (await repository.openAttempt(input)).attempt;
+    },
+
+    async openAttempt(input: CreateSubmissionAttemptInputV1): Promise<{ attempt: SubmissionAttemptV1; created: boolean }> {
       const open = await repository.findOpenAttemptByBlueprint(input.tenantId, input.blueprintId);
       const decision = submissionAttemptCreateEffectV1(open, input);
       if (decision.effect === 'conflict') throw submissionAttemptConflictV1(decision.reason);
-      if (decision.effect === 'return_existing') return open!;
+      if (decision.effect === 'return_existing') return { attempt: open!, created: false };
 
       const attempt = newSubmissionAttemptV1(newId(), input);
       const inserted = await sql`
@@ -112,9 +116,10 @@ export function createDatabaseSubmissionAttemptRepository(
             recheck.effect === 'conflict' ? recheck.reason : 'The submission attempt could not be stored',
           );
         }
-        return raced;
+        return { attempt: raced, created: false };
       }
-      return rowToAttemptV1(inserted[0] as Record<string, unknown>);
+      // Only the row this INSERT returned is this request's own.
+      return { attempt: rowToAttemptV1(inserted[0] as Record<string, unknown>), created: true };
     },
 
     async getAttempt(id: string, tenantId: string): Promise<SubmissionAttemptV1 | null> {

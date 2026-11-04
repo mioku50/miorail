@@ -56,6 +56,11 @@ export interface UpdateSubmissionAttemptInputV1 {
 export interface SubmissionAttemptRepositoryV1 {
   /** Idempotent per tenant + blueprint while an attempt is still open. */
   createAttempt(input: CreateSubmissionAttemptInputV1): Promise<SubmissionAttemptV1>;
+  /** The same, saying whether this call made the attempt: one already open, or one a
+   * concurrent request opened first, comes back with created false. A caller that
+   * hands calls to a wallet on the strength of it must not read that from the row's
+   * timestamps: two requests can share a millisecond (final audit FA1, 2026-11-04). */
+  openAttempt(input: CreateSubmissionAttemptInputV1): Promise<{ attempt: SubmissionAttemptV1; created: boolean }>;
   getAttempt(id: string, tenantId: string): Promise<SubmissionAttemptV1 | null>;
   findOpenAttemptByBlueprint(tenantId: string, blueprintId: string): Promise<SubmissionAttemptV1 | null>;
   findAttemptByBatch(batchId: string): Promise<SubmissionAttemptV1 | null>;

@@ -41,14 +41,18 @@ export class InMemorySubmissionAttemptRepositoryV1 implements SubmissionAttemptR
   }
 
   async createAttempt(input: CreateSubmissionAttemptInputV1): Promise<SubmissionAttemptV1> {
+    return (await this.openAttempt(input)).attempt;
+  }
+
+  async openAttempt(input: CreateSubmissionAttemptInputV1): Promise<{ attempt: SubmissionAttemptV1; created: boolean }> {
     const open = await this.findOpenAttemptByBlueprint(input.tenantId, input.blueprintId);
     const decision = submissionAttemptCreateEffectV1(open, input);
     if (decision.effect === 'conflict') throw submissionAttemptConflictV1(decision.reason);
-    if (decision.effect === 'return_existing') return this.clone(open!);
+    if (decision.effect === 'return_existing') return { attempt: this.clone(open!), created: false };
 
     const attempt = newSubmissionAttemptV1(this.nextId(), input);
     this.rows.set(attempt.id, this.clone(attempt));
-    return attempt;
+    return { attempt, created: true };
   }
 
   async getAttempt(id: string, tenantId: string): Promise<SubmissionAttemptV1 | null> {
