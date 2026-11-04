@@ -26,6 +26,8 @@ export const MiorailGetMyStillOutputV1Schema = z.object({
   outcome: z.enum(['report', 'chain_unavailable']),
   report: MirrorReportSchema.optional(), cached: z.boolean().optional(),
   attempts: z.array(StillProviderAttemptV1Schema).optional(),
+  /** The wallet's own USDC, read apart from the Mirror at its own block; null when Base did not answer. */
+  walletUsdc: z.object({ usdc: z.string(), atomic: z.string(), block: z.string() }).strict().nullable().optional(),
 }).strict();
 
 // ---------------------------------------------------------------------------

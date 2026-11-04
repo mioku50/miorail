@@ -43,15 +43,20 @@ import {
   StillPreparePurchaseOutputV1Schema,
   StillPrepareRepayInputV1Schema,
   StillPrepareRepayOutputV1Schema,
+  StillPrepareWalletPurchaseInputV1Schema,
+  StillPrepareWalletPurchaseOutputV1Schema,
   stillPrepareLoanReviewV1,
   stillPreparePurchaseV1,
   stillPrepareRepayReviewV1,
+  stillPrepareWalletPurchaseV1,
+  usdcTextV1,
 } from './stillLoanTool.js';
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
 import { STILL_CARD_TOOL_META_V1, STILL_CARD_URI_V1, registerStillCardV1 } from './stillCard.js';
 import { STILL_CARD_LENDING_TOOL_V1, StillCardLendingInputV1Schema, StillCardLendingOutputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
 import { registerStillSpendReadsV1 } from '../mcpStill/server.js';
 import { refreshLoanExecutionV1 } from '../../lib/loanExecutionStatus.js';
+import { refreshSpendWalletPaymentV1 } from '../../lib/stillSpendWallet.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
 import { StockBriefInputV1Schema, StockBriefV1Schema, StockInboxReadInputV1Schema, StockInboxReadResultV1Schema } from '@mioagent/rwa-market-reality/stock-brief';
 import { acknowledgeStockInboxV1, StockInboxErrorV1 } from '../../lib/stockInboxRead.js';
@@ -87,15 +92,15 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.12.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.13.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own wallet through Coinbase Wallet MCP (wallet-mcp.coinbase.com, formerly Base MCP at mcp.base.org: the same tools, including send_calls).
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound twenty below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound twenty-one below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
-Still is spend without selling: get_still_terms reads its public terms and miorail_get_my_still reads this connected wallet's Mirror through the same service as the page. Preserve the reading block and time. When headline.complete is false, availableCents is at least that amount, not a complete total; null stays unknown. A chain_unavailable outcome is our failure, never an empty wallet. This read prepares nothing. To borrow through Still, miorail_prepare_still_loan turns the collateral and the amount the USER named into a five-minute review link for this wallet: stocks on Aave V4; cbBTC, WETH or native ETH on Morpho. To pay for something with a loan, still_find_spend and still_spend_product read Bitrefill's catalogue, and miorail_prepare_still_purchase opens the invoice the USER chose, with the email and any number they gave, and returns the review of the loan that pays it. To pay a loan back, miorail_prepare_still_repay returns the review of an exact repayment, or of all of it up to a bound the USER named; with returnCollateral, the same review then gives the loan's whole collateral back to the wallet. The page reads everything again and the user's own wallet signs; afterwards miorail_get_still_review_status, with the reviewId each link came with, reads what happened from Base, and for a purchase Bitrefill's own reading of the invoice. Still's terms are not advice to borrow or to buy; Still is not offered to US persons.
+Still is spend without selling: get_still_terms reads its public terms and miorail_get_my_still reads this connected wallet's Mirror through the same service as the page. Preserve the reading block and time. When headline.complete is false, availableCents is at least that amount, not a complete total; null stays unknown. A chain_unavailable outcome is our failure, never an empty wallet. Beside it, walletUsdc is the USDC already in the wallet, read at its own block (the Mirror reads only what can be collateral); null is unread, never zero. This read prepares nothing. To borrow through Still, miorail_prepare_still_loan turns the collateral and the amount the USER named into a five-minute review link for this wallet: stocks on Aave V4; cbBTC, WETH or native ETH on Morpho. To pay for something, still_find_spend and still_spend_product read Bitrefill's catalogue; miorail_prepare_still_purchase opens the invoice the USER chose, with the email and any number they gave, and returns the review of the loan that pays it, and miorail_prepare_still_wallet_purchase opens it to be paid from the USDC already in the wallet, with no loan, and returns Spend's payment page for it. Which way pays is the USER's choice: name both when the wallet's USDC or its loan room covers the price. To pay a loan back, miorail_prepare_still_repay returns the review of an exact repayment, or of all of it up to a bound the USER named; with returnCollateral, the same review then gives the loan's whole collateral back to the wallet. The page reads everything again and the user's own wallet signs; afterwards miorail_get_still_review_status, with the reviewId each link came with, reads what happened from Base, and for a purchase Bitrefill's own reading of the invoice. Still's terms are not advice to borrow or to buy; Still is not offered to US persons.
 
 Call the reopen, the weekend game: get_reopen_round reads the round; miorail_get_my_reopen reads this wallet's picks, score and record; miorail_call_the_reopen makes or changes this wallet's picks before the Sunday 17:00 ET lock, for the stocks the USER named and with the side the USER said — never a pick of yours. Nothing is won but the record.
 
@@ -204,18 +209,21 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_get_my_still', {
     title: 'My Still — what is held, owed and available without selling',
-    description: `Read this grant owner's Still Mirror: eligible holdings, existing Aave V4 and Morpho loans, what Still's terms allow and what could not be read. It uses the same service and cache as GET /api/still/mine. Takes no arguments and can read only the OAuth identity's wallet. The report's amounts belong to reading.block and reading.blockTime and age from that reading; cached is explicit. If headline.complete is false, a non-null availableCents is "at least" that amount, never a complete total; null means unknown and never zero. Preserve coverage.failed and the separate venue rows. outcome chain_unavailable is our read failure, not a fact about the wallet and not an empty portfolio. This tool only reads: it creates no approval, plan, calldata or transaction. The terms are not advice to borrow.`,
+    description: `Read this grant owner's Still Mirror: eligible holdings, existing Aave V4 and Morpho loans, what Still's terms allow and what could not be read. It uses the same service and cache as GET /api/still/mine. Beside it, walletUsdc is the wallet's own USDC (usdc in whole units, atomic, and the Base block it was read at), which the Mirror does not read: what a purchase from the wallet pays with and a repayment takes; null means Base did not answer, never zero. Takes no arguments and can read only the OAuth identity's wallet. The report's amounts belong to reading.block and reading.blockTime and age from that reading; cached is explicit. If headline.complete is false, a non-null availableCents is "at least" that amount, never a complete total; null means unknown and never zero. Preserve coverage.failed and the separate venue rows. outcome chain_unavailable is our read failure, not a fact about the wallet and not an empty portfolio. This tool only reads: it creates no approval, plan, calldata or transaction. The terms are not advice to borrow.`,
     inputSchema: z.object({}).strict(),
     outputSchema: MiorailGetMyStillOutputV1Schema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
   }, async () => {
     try {
       const wallet = identity.walletAddress.toLowerCase();
-      const outcome = MiorailGetMyStillResultV1Schema.parse(await stillMineRuntimeV1.service().check(wallet));
+      // The wallet's own USDC is read beside the Mirror, which reads only what can be collateral.
+      const [checked, usdc] = await Promise.all([stillMineRuntimeV1.service().check(wallet), stillMineRuntimeV1.readUsdc(wallet).catch(() => null)]);
+      const outcome = MiorailGetMyStillResultV1Schema.parse(checked);
       if (outcome.outcome === 'report' && outcome.report.subject.address.toLowerCase() !== wallet) {
         throw new Error('still_mine_wallet_mismatch');
       }
-      return reply(outcome);
+      return reply({ ...outcome, walletUsdc: usdc && usdc.decimals === 6 && /^(0|[1-9][0-9]{0,77})$/.test(usdc.raw)
+        ? { usdc: usdcTextV1(BigInt(usdc.raw)), atomic: usdc.raw, block: usdc.block } : null });
     } catch (error) {
       logger.warn('Still connected mirror read failed', { errorName: error instanceof Error ? error.name : typeof error });
       return { isError: true, content: [{ type: 'text' as const,
@@ -244,7 +252,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_prepare_still_purchase', {
     title: 'Prepare a Still purchase for the owner to review',
-    description: `Opens ONE Bitrefill invoice for this connected wallet, exactly as ${STILL_PUBLIC_HOST_V1}/spend opens it, and prepares the Still loan that pays it: the loan borrows exactly the invoice's price in USDC and pays it in the same transaction. Find the product and its package with still_find_spend and still_spend_product first, and use only the product, package, email, number and collateral the USER named. Returns a link, never a call: the same wallet-bound review Spend opens, valid for five minutes, while Bitrefill holds the price for about fifteen. Opening it reads the position again, applies Still's limit and simulates the exact calls before the user's own wallet opens; an unpaid invoice simply lapses. A product whose still_spend_product answer says prepayment true cannot be bought through Still: Bitrefill sells it only after steps such as a game's player ID, which it does not offer to Still. At most 100 USDC a purchase and six opened invoices an hour per wallet: these are Still's limits, not Bitrefill's, and a refused invoice does not count. A refusal names whose it is: Bitrefill's own words, Still's limit or Miorail's rate limit on this connection. The email and a top-up's number go to Bitrefill only, are never logged and are not repeated back; the number stays with the open invoice for its owner, as on the page. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow or to buy. Not offered to US persons.`,
+    description: `Opens ONE Bitrefill invoice for this connected wallet, exactly as ${STILL_PUBLIC_HOST_V1}/spend opens it, and prepares the Still loan that pays it: the loan borrows exactly the invoice's price in USDC and pays it in the same transaction. To pay from the USDC already in the wallet instead, with no loan, use miorail_prepare_still_wallet_purchase. Find the product and its package with still_find_spend and still_spend_product first, and use only the product, package, email, number and collateral the USER named. Returns a link, never a call: the same wallet-bound review Spend opens, valid for five minutes, while Bitrefill holds the price for about fifteen. Opening it reads the position again, applies Still's limit and simulates the exact calls before the user's own wallet opens; an unpaid invoice simply lapses. A product whose still_spend_product answer says prepayment true cannot be bought through Still: Bitrefill sells it only after steps such as a game's player ID, which it does not offer to Still. At most 100 USDC a purchase and six opened invoices an hour per wallet: these are Still's limits, not Bitrefill's, and a refused invoice does not count. A refusal names whose it is: Bitrefill's own words, Still's limit or Miorail's rate limit on this connection. The email and a top-up's number go to Bitrefill only, are never logged and are not repeated back; the number stays with the open invoice for its owner, as on the page. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow or to buy. Not offered to US persons.`,
     inputSchema: StillPreparePurchaseInputV1Schema.shape,
     outputSchema: StillPreparePurchaseOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
@@ -252,6 +260,22 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   }, async (args) => {
     try {
       return reply(await stillPreparePurchaseV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
+    } catch (error) {
+      if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
+      return refuse(error);
+    }
+  });
+
+  server.registerTool('miorail_prepare_still_wallet_purchase', {
+    title: 'Prepare a Still purchase paid from the wallet’s own USDC',
+    description: `Opens ONE Bitrefill invoice for this connected wallet, exactly as ${STILL_PUBLIC_HOST_V1}/spend opens it, to be paid from the USDC already in the wallet, with no loan: Spend's "pay from your wallet". Find the product and its package with still_find_spend and still_spend_product first, and use only the product, package, email and number the USER named; walletUsdc in miorail_get_my_still says what the wallet holds. The wallet's USDC is read first, and a package it cannot pay opens no invoice. Returns a link, never a call: Spend's payment page for this wallet, which reads the invoice and the wallet again, simulates the one transfer of exactly the price to Bitrefill's invoice address, and has the user's own wallet sign it. The page can prepare the payment until expiresAt, while Bitrefill holds the price for about fifteen minutes; an unpaid invoice simply lapses. The same rules as a purchase with a loan: a product whose still_spend_product answer says prepayment true cannot be bought, at most 100 USDC a purchase and six opened invoices an hour per wallet (Still's limits, not Bitrefill's), and a refusal names whose it is. The email and a top-up's number go to Bitrefill only, are never logged and are not repeated back. A payment sent cannot be taken back by Still; if Bitrefill cannot deliver, its support handles the refund. This is not advice to buy. Not offered to US persons.`,
+    inputSchema: StillPrepareWalletPurchaseInputV1Schema.shape,
+    outputSchema: StillPrepareWalletPurchaseOutputV1Schema,
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    ...card,
+  }, async (args) => {
+    try {
+      return reply(await stillPrepareWalletPurchaseV1(identity, args, { now: stillSpendRuntimeV1.now(), readUsdc: stillMineRuntimeV1.readUsdc }));
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
       return refuse(error);
@@ -276,7 +300,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_get_still_review_status', {
     title: 'What happened to a Still review',
-    description: `Reads what happened to ONE Still review this connected wallet opened, by the reviewId miorail_prepare_still_loan, miorail_prepare_still_purchase or miorail_prepare_still_repay returned. It is the review page's own status, refreshed from Base: not_opened (nobody has opened it ready on this wallet yet), ready (open, not sent), awaiting_wallet, submitted, confirmed (Still read the loan or repayment, and a purchase's payment, from Base) or failed, with the transaction hash. unknown means Still could not establish the result yet, never that the transaction failed. A purchase also carries Bitrefill's own word for its invoice once the payment may have been sent (complete is Bitrefill's finished order), while Still holds the open order for half an hour, and, once confirmed, shareUrl: a card of the purchase that names no wallet. Reading it again is safe; it sends and signs nothing.`,
+    description: `Reads what happened to ONE Still review this connected wallet opened, by the reviewId miorail_prepare_still_loan, miorail_prepare_still_purchase, miorail_prepare_still_wallet_purchase or miorail_prepare_still_repay returned; a purchase paid from the wallet's own USDC says paidFrom wallet. It is the review page's own status, refreshed from Base: not_opened (nobody has opened it ready on this wallet yet), ready (open, not sent), awaiting_wallet, submitted, confirmed (Still read the loan or repayment, and a purchase's payment, from Base) or failed, with the transaction hash. unknown means Still could not establish the result yet, never that the transaction failed. A purchase also carries Bitrefill's own word for its invoice once the payment may have been sent (complete is Bitrefill's finished order), while Still holds the open order for half an hour, and, once confirmed, shareUrl: a card of the purchase that names no wallet. Reading it again is safe; it sends and signs nothing.`,
     inputSchema: StillReviewStatusInputV1Schema.shape,
     outputSchema: StillReviewStatusOutputV1Schema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
@@ -292,6 +316,13 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
         orders: stillSpendRuntimeV1.orders,
         checkout: stillSpendRuntimeV1.checkout,
         allowInvoiceRead: async (wallet) => (await stillSpendRuntimeV1.statusLimiter.consume(wallet)).success,
+        // As its payment page reads it: from Base under the page's own limit, otherwise as last recorded.
+        walletPayment: async (input) => {
+          const store = await stillSpendRuntimeV1.walletPayments();
+          return (await stillSpendRuntimeV1.walletStatusLimiter.consume(input.owner.walletAddress)).success
+            ? refreshSpendWalletPaymentV1(input, { store, reader: stillSpendRuntimeV1.reader(), readBatchHashes: stillSpendRuntimeV1.readBatchHashes, now: stillSpendRuntimeV1.now })
+            : store.get(input);
+        },
         secret: rwaLendingRuntimeV1.secret(),
       }));
     } catch (error) {

@@ -23,7 +23,12 @@ function report(partial = false, address = WALLET) {
     subject: { address, name: null, input: address }, assembledAt: new Date('2026-10-21T15:00:01.000Z') });
 }
 
-function fixture(t: test.TestContext, answer: (input: string) => Promise<MirrorOutcome>) {
+// The wallet's own USDC, read beside the Mirror at its own block.
+const USDC = { raw: '2500000', decimals: 6, block: '53000001' };
+const WALLET_USDC = { usdc: '2.5', atomic: '2500000', block: '53000001' };
+
+function fixture(t: test.TestContext, answer: (input: string) => Promise<MirrorOutcome>,
+  usdc: () => Promise<{ raw: string; decimals: number; block: string } | null> = async () => USDC) {
   const original = { ...stillMineRuntimeV1 }, asked: string[] = [];
   const service: MirrorService = {
     check: async input => { asked.push(input); return answer(input); },
@@ -31,6 +36,7 @@ function fixture(t: test.TestContext, answer: (input: string) => Promise<MirrorO
     earnings: async () => ({ ok: false }),
   };
   stillMineRuntimeV1.service = () => service;
+  stillMineRuntimeV1.readUsdc = usdc;
   t.after(() => Object.assign(stillMineRuntimeV1, original));
   const app = express();
   app.use((req, _res, next) => {
@@ -56,7 +62,7 @@ test('the protocol advertises the wallet-free read, the source block and partial
   const client = await connected(t);
   const tool = (await client.listTools()).tools.find(entry => entry.name === NAME)!;
   assert.ok(tool);
-  assert.equal(client.getServerVersion()?.version, '1.12.0');
+  assert.equal(client.getServerVersion()?.version, '1.13.0');
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), []);
   assert.equal(tool.inputSchema.additionalProperties, false);
   assert.equal(tool.annotations?.readOnlyHint, true);
@@ -87,8 +93,8 @@ test('web and Connected read the same owner’s report with unchanged integers, 
   await client.listTools(); // The SDK validates the advertised structured output.
   const result = await client.callTool({ name: NAME, arguments: {} });
   assert.notEqual(result.isError, true);
-  assert.deepEqual(result.structuredContent, web.body);
-  assert.deepEqual(result.structuredContent, outcome);
+  assert.deepEqual(result.structuredContent, { ...web.body, walletUsdc: WALLET_USDC });
+  assert.deepEqual(result.structuredContent, { ...outcome, walletUsdc: WALLET_USDC });
   assert.deepEqual(asked, [WALLET, WALLET]);
   assert.equal(outcome.report.reading.block, '53000000');
   assert.equal(outcome.report.subject.address, WALLET);
@@ -106,7 +112,28 @@ test('an incomplete Mirror remains a lower bound with unknown asset values, not 
   await client.listTools();
   const result = await client.callTool({ name: NAME, arguments: {} });
   assert.notEqual(result.isError, true);
-  assert.deepEqual(result.structuredContent, outcome);
+  assert.deepEqual(result.structuredContent, { ...outcome, walletUsdc: WALLET_USDC });
+});
+
+// 2026-11-04: an assistant told the owner Still does not read their USDC, and could offer only a loan.
+test('the wallet’s own USDC is read beside the Mirror at its own block, and one Base did not give is null, never zero', async t => {
+  const outcome: MirrorOutcome = { outcome: 'report', report: report(), cached: false };
+  let read: () => Promise<{ raw: string; decimals: number; block: string } | null> = async () => USDC;
+  fixture(t, async () => outcome, () => read());
+  const client = await connected(t);
+  assert.match((await client.listTools()).tools.find(entry => entry.name === NAME)?.description ?? '', /walletUsdc.*null means Base did not answer, never zero/);
+  for (const [usdc, expected] of [
+    [async () => USDC, WALLET_USDC],
+    [async () => ({ raw: '0', decimals: 6, block: '53000002' }), { usdc: '0', atomic: '0', block: '53000002' }],
+    [async () => null, null],
+    [async () => { throw new Error('rpc down'); }, null],
+    [async () => ({ raw: '1', decimals: 18, block: '53000002' }), null],
+  ] as const) {
+    read = usdc;
+    const result = await client.callTool({ name: NAME, arguments: {} });
+    assert.notEqual(result.isError, true);
+    assert.deepEqual((result.structuredContent as { walletUsdc?: unknown }).walletUsdc, expected);
+  }
 });
 
 test('a chain failure stays its own outcome through the real transport and never becomes a report', async t => {
@@ -117,8 +144,8 @@ test('a chain failure stays its own outcome through the real transport and never
   await client.listTools();
   const result = await client.callTool({ name: NAME, arguments: {} });
   assert.notEqual(result.isError, true);
-  assert.deepEqual(result.structuredContent, web.body);
-  assert.deepEqual(result.structuredContent, outcome);
+  assert.deepEqual(result.structuredContent, { ...web.body, walletUsdc: WALLET_USDC });
+  assert.deepEqual(result.structuredContent, { ...outcome, walletUsdc: WALLET_USDC });
   assert.equal('report' in (result.structuredContent ?? {}), false);
 });
 

@@ -4,8 +4,9 @@ import type { BitrefillGuestCheckoutV1 } from '@mioagent/commerce-engine';
 import type { LoanExecutionStoreV1, LoanExecutionV1, LoanOwnerV1 } from '../../lib/loanExecutionStore.js';
 import { LOAN_STEPS_STOPPED_V1 } from '../../lib/lendingSteps.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
-import type { SpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
+import type { SpendOrderStoreV1, SpendOrderV1 } from '../../lib/stillSpendOrders.js';
 import { loanExecutionShareV1 } from '../../lib/stillSpendShare.js';
+import type { SpendWalletPaymentV1 } from '../../lib/stillSpendWalletStore.js';
 
 // ---------------------------------------------------------------------------
 // What happened to a Still review an assistant prepared, by its reviewId.
@@ -15,11 +16,12 @@ import { loanExecutionShareV1 } from '../../lib/stillSpendShare.js';
 // a purchase's payment, from the chain, never that a wallet said so. For a
 // purchase it adds Bitrefill's own reading of the invoice while Still holds
 // the open order (half an hour), and, once confirmed, the link that shares the
-// purchase without naming the wallet.
+// purchase without naming the wallet. A purchase paid from the wallet's own
+// USDC is named by its invoice, and read as its payment page reads it.
 // ---------------------------------------------------------------------------
 
 export const StillReviewStatusInputV1Schema = z.object({
-  reviewId: z.string().uuid().describe('The reviewId a miorail_prepare_still_loan, _purchase or _repay call returned.'),
+  reviewId: z.string().uuid().describe('The reviewId a miorail_prepare_still_loan, _purchase, _wallet_purchase or _repay call returned.'),
 }).strict();
 
 export const StillReviewStatusOutputV1Schema = z.object({
@@ -33,6 +35,8 @@ export const StillReviewStatusOutputV1Schema = z.object({
   transactionHash: z.string().nullable().optional(),
   errorCode: z.string().nullable().optional(),
   updatedAt: z.string().optional(),
+  /** A purchase paid from the wallet's own USDC, with no loan. */
+  paidFrom: z.literal('wallet').optional(),
   purchase: z.object({
     productName: z.string(),
     packageValue: z.string(),
@@ -54,6 +58,8 @@ export interface StillReviewStatusDepsV1 {
   checkout: () => BitrefillGuestCheckoutV1;
   /** The Spend page's own limit on invoice reads, shared with it. */
   allowInvoiceRead: (wallet: string) => Promise<boolean>;
+  /** A purchase paid from the wallet's own USDC, by its invoice, refreshed from Base as its page refreshes it. */
+  walletPayment?: (input: { owner: LoanOwnerV1; orderId: string }) => Promise<SpendWalletPaymentV1 | null>;
   secret: string;
   origin?: string;
 }
@@ -66,6 +72,17 @@ const NEXT_V1: Readonly<Record<z.infer<typeof StillReviewStatusOutputV1Schema>['
   unknown: 'Still could not establish the result from Base yet (errorCode says why). This is not a failure of the transaction: read this again later, or open the review link.',
   confirmed: 'Confirmed onchain: Still read the expected result from Base.',
   failed: 'Base shows the transaction failed (errorCode). Open the review link to see what is in place before preparing another.',
+};
+
+/** Paid from the wallet's own USDC: the same states, said of its payment page. */
+const WALLET_NEXT_V1: Readonly<Record<z.infer<typeof StillReviewStatusOutputV1Schema>['state'], string>> = {
+  not_opened: 'The user has not opened the payment page yet, or it refused (it says why: the wallet’s USDC, Bitrefill’s invoice or the time left). It can prepare the payment until the expiresAt miorail_prepare_still_wallet_purchase returned; after that, prepare a new one. Nothing was sent.',
+  ready: 'The payment page is open and ready; the user has not sent it from their wallet yet.',
+  awaiting_wallet: NEXT_V1.awaiting_wallet,
+  submitted: NEXT_V1.submitted,
+  unknown: 'Still could not establish the payment from Base yet (errorCode says why). This is not a failure of the transaction: read this again later, or open the payment page.',
+  confirmed: 'Confirmed onchain: Still read the wallet’s USDC transfer of exactly the price to Bitrefill’s invoice from Base. No loan was taken.',
+  failed: 'Base shows the payment failed (errorCode). Open the payment page to see where it stands before preparing another.',
 };
 
 /** A loan in steps that stopped on purpose: final with what landed, and not a failed transaction. */
@@ -84,28 +101,26 @@ export async function stillReviewStatusV1(
   const owner = { tenantId: identity.tenantId, walletAddress: identity.walletAddress.toLowerCase() };
   const reviewId = args.reviewId.toLowerCase();
   const opened = await (await deps.store()).getByDraft({ owner, draftId: reviewId });
-  if (!opened) return { reviewId, state: 'not_opened', next: NEXT_V1.not_opened };
+  if (!opened) {
+    // A purchase paid from the wallet's own USDC is named by its invoice.
+    const payment = deps.walletPayment ? await deps.walletPayment({ owner, orderId: reviewId }) : null;
+    if (payment) return walletPurchaseStatusV1(reviewId, payment, owner, deps);
+    const order = deps.orders.get(owner, reviewId);
+    if (order) {
+      return { reviewId, state: 'not_opened', paidFrom: 'wallet', purchase: { ...orderPurchaseV1(order), invoiceStatus: null, invoiceStatusError: null, shareUrl: null },
+        next: WALLET_NEXT_V1.not_opened };
+    }
+    return { reviewId, state: 'not_opened', next: NEXT_V1.not_opened };
+  }
   const record = await deps.refresh({ owner, executionId: opened.executionId }) ?? opened;
   const facts = record.run.facts;
   let purchase: z.infer<typeof StillReviewStatusOutputV1Schema>['purchase'];
   if (facts.operation === 'borrow' && facts.payment) {
     const payment = facts.payment;
-    // Bitrefill is asked only once the payment may have been sent, and only
-    // while Still still holds the open order with its access token.
-    let invoiceStatus: string | null = null, invoiceStatusError: string | null = null;
-    if (record.state === 'submitted' || record.state === 'unknown' || record.state === 'confirmed') {
-      const order = deps.orders.get(owner, payment.orderId);
-      if (!order) invoiceStatusError = 'spend_order_forgotten';
-      else if (!(await deps.allowInvoiceRead(owner.walletAddress))) invoiceStatusError = 'bitrefill_rate_limited';
-      else {
-        const read = await deps.checkout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
-        if (read.ok) invoiceStatus = read.value.status; else invoiceStatusError = read.reason;
-      }
-    }
     const share = loanExecutionShareV1(record, deps.secret);
     purchase = {
-      productName: payment.productName, packageValue: payment.packageValue, priceUsdc: usdcTextV1(payment.assets), invoiceExpiresAt: payment.expiresAt,
-      invoiceStatus, invoiceStatusError, shareUrl: share ? `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}${share.path}` : null,
+      ...orderPurchaseV1({ ...payment, priceAtomic: payment.assets }), ...await invoiceReadV1(owner, payment.orderId, record.state, deps),
+      shareUrl: share ? `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}${share.path}` : null,
     };
   }
   const paid = record.state === 'confirmed' && purchase
@@ -119,6 +134,35 @@ export async function stillReviewStatusV1(
     ...(purchase ? { purchase } : {}),
     next: `${record.state === 'failed' && record.errorCode === LOAN_STEPS_STOPPED_V1 ? STOPPED_NEXT_V1 : NEXT_V1[record.state]}${paid}${
       record.state === 'confirmed' && returned !== null ? ` The loan is closed and ${returned} ${facts.collateralSymbol} is back in the wallet.` : ''}`,
+  };
+}
+
+function orderPurchaseV1(order: Pick<SpendOrderV1, 'productName' | 'packageValue' | 'priceAtomic' | 'expiresAt'>) {
+  return { productName: order.productName, packageValue: order.packageValue, priceUsdc: usdcTextV1(order.priceAtomic), invoiceExpiresAt: order.expiresAt };
+}
+
+/** Bitrefill's own word for an invoice: asked only once the payment may have been sent, and only while
+ * Still still holds the open order with its access token. */
+async function invoiceReadV1(owner: LoanOwnerV1, orderId: string, state: string, deps: StillReviewStatusDepsV1) {
+  if (state !== 'submitted' && state !== 'unknown' && state !== 'confirmed') return { invoiceStatus: null, invoiceStatusError: null };
+  const order = deps.orders.get(owner, orderId);
+  if (!order) return { invoiceStatus: null, invoiceStatusError: 'spend_order_forgotten' };
+  if (!(await deps.allowInvoiceRead(owner.walletAddress))) return { invoiceStatus: null, invoiceStatusError: 'bitrefill_rate_limited' };
+  const read = await deps.checkout().readInvoice({ invoiceId: order.orderId, accessToken: order.accessToken });
+  return read.ok ? { invoiceStatus: read.value.status, invoiceStatusError: null } : { invoiceStatus: null, invoiceStatusError: read.reason };
+}
+
+async function walletPurchaseStatusV1(reviewId: string, record: SpendWalletPaymentV1, owner: LoanOwnerV1, deps: StillReviewStatusDepsV1):
+  Promise<z.infer<typeof StillReviewStatusOutputV1Schema>> {
+  const payment = record.run.facts.payment;
+  const invoice = await invoiceReadV1(owner, payment.orderId, record.state, deps);
+  const paid = record.state === 'confirmed'
+    ? ` ${invoice.invoiceStatus === null ? 'Bitrefill’s own reading of the invoice was not available here, and its email to the user is the receipt' : `Bitrefill reads the invoice as ${invoice.invoiceStatus}`}.`
+    : '';
+  return {
+    reviewId, state: record.state, paidFrom: 'wallet', transactionHash: record.transactionHash, errorCode: record.errorCode, updatedAt: record.updatedAt,
+    purchase: { ...orderPurchaseV1({ ...payment, priceAtomic: payment.assets }), ...invoice, shareUrl: null },
+    next: `${WALLET_NEXT_V1[record.state]}${paid}`,
   };
 }
 

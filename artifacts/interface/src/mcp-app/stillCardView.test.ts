@@ -25,6 +25,31 @@ test('a prepared purchase, loan and repayment read in the person’s words, and 
   assert.equal(stillCardPreparedV1('a sentence'), null);
 });
 
+// 2026-11-04: a purchase paid from the USDC already in the wallet, on Spend's own payment page.
+const INVOICE = '6654a2ea-0df7-4f44-bc72-c1c6ad8b7b34';
+const FROM_WALLET = { reviewUrl: `https://miorail.xyz/spend/pay/${INVOICE}`, reviewId: INVOICE, expiresAt: '2026-11-02T15:12:00.000Z', paidFrom: 'wallet',
+  walletUsdc: { usdc: '12.5', block: '53000123' }, purchase: { ...PURCHASE.purchase, priceUsdc: '0.18', productName: 'PUBG Mobile', packageValue: '60 UC' }, next: 'Give the user this link.' };
+
+test('a purchase from the wallet’s own USDC is its payment page, with no loan, and its confirmation says so', () => {
+  const prepared = stillCardPreparedV1(FROM_WALLET);
+  assert.deepEqual(prepared, { kind: 'purchase', paidFrom: 'wallet', reviewId: INVOICE, reviewUrl: FROM_WALLET.reviewUrl, expiresAt: FROM_WALLET.expiresAt,
+    title: 'PUBG Mobile · 60 UC', detail: '0.18 USDC from your wallet, paid to Bitrefill. No loan is taken.' });
+  // Only Still's own payment page, for an invoice id, is drawn as one; a loan's review link is not a wallet payment.
+  for (const reviewUrl of [`https://example.com/spend/pay/${INVOICE}`, 'https://miorail.xyz/spend/pay/not-an-invoice', URL]) {
+    assert.equal(stillCardPreparedV1({ ...FROM_WALLET, reviewUrl }), null, reviewUrl);
+  }
+  assert.equal(stillCardPreparedV1({ ...FROM_WALLET, purchase: undefined }), null);
+  const confirmed = stillCardStatusV1({ reviewId: INVOICE, state: 'confirmed', paidFrom: 'wallet', transactionHash: `0x${'ab'.repeat(32)}`,
+    purchase: { invoiceStatus: 'complete', invoiceStatusError: null, shareUrl: null } }, prepared!, NOW);
+  assert.deepEqual([confirmed?.line, confirmed?.settled], ['Confirmed onchain: your USDC paid Bitrefill.', true]);
+  assert.equal(stillCardStatusV1({ reviewId: REVIEW_ID, state: 'confirmed', purchase: { invoiceStatus: 'complete' } }, stillCardPreparedV1(PURCHASE)!, NOW)?.line,
+    'Confirmed onchain: the loan paid Bitrefill.');
+  // A status result draws the same card, from the status's own facts.
+  const shown = stillCardFromStatusV1({ reviewId: INVOICE, state: 'submitted', paidFrom: 'wallet',
+    purchase: { productName: 'PUBG Mobile', packageValue: '60 UC', priceUsdc: '0.18', invoiceStatus: null, invoiceStatusError: null, shareUrl: null } }, NOW);
+  assert.deepEqual([shown?.prepared.paidFrom, shown?.prepared.detail, shown?.status.phase], ['wallet', '0.18 USDC from your wallet, paid to Bitrefill.', 'sent']);
+});
+
 test('every state the status tool returns has its own line, and only a finished one stops the card', () => {
   const prepared = stillCardPreparedV1(PURCHASE)!;
   const line = (status: Record<string, unknown>, now = NOW) => stillCardStatusV1({ reviewId: REVIEW_ID, ...status }, prepared, now);

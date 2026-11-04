@@ -9,9 +9,10 @@ import { verifyLendingDraftV1 } from '../../lib/lendingDraft.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import { createSpendOrderStoreV1, type SpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
+import { stillMineRuntimeV1 } from '../stillMine.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { StillLoanRefusalV1, stillPrepareLoanReviewV1, stillPreparePurchaseV1, stillPrepareRepayReviewV1 } from './stillLoanTool.js';
+import { StillLoanRefusalV1, stillPrepareLoanReviewV1, stillPreparePurchaseV1, stillPrepareRepayReviewV1, stillPrepareWalletPurchaseV1 } from './stillLoanTool.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const IDENTITY = { tenantId: `eip155:8453:${WALLET}` as const, walletAddress: WALLET };
@@ -229,6 +230,50 @@ test('with paying switched off the purchase is refused before Bitrefill is asked
   assert.equal(opened.length, 0);
 });
 
+// 2026-11-04: an assistant asked for a $0.18 card with $0.14 left to borrow could only offer to repay or pledge more.
+const held = (raw: string, block = '53000123') => async () => ({ raw, decimals: 6, block });
+
+test('a purchase from the wallet’s own USDC opens the same invoice and links Spend’s payment page, with no loan', async (t) => {
+  const { orders, opened } = spend(t);
+  const prepared = await stillPrepareWalletPurchaseV1(IDENTITY, { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL }, { now: NOW, readUsdc: held('12500000') });
+  assert.equal(prepared.reviewUrl, `${STILL_PUBLIC_ORIGIN_V1}/spend/pay/${INVOICE}`);
+  assert.deepEqual([prepared.reviewId, prepared.paidFrom, prepared.walletUsdc], [INVOICE, 'wallet', { usdc: '12.5', block: '53000123' }]);
+  assert.deepEqual(prepared.purchase, { productId: ESIM.id, productName: ESIM.name, packageValue: '5GB, 30 Days', faceCurrency: 'USD',
+    priceUsdc: '9.8', invoiceExpiresAt: '2026-11-02T15:15:00.000Z' });
+  // The page prepares a payment while Bitrefill holds the price three more minutes.
+  assert.equal(prepared.expiresAt, '2026-11-02T15:12:00.000Z');
+  assert.equal(orders.get(IDENTITY, INVOICE)?.priceAtomic, '9800000');
+  assert.equal(opened.length, 1);
+  assert.equal(opened[0]!.email, EMAIL);
+  const said = JSON.stringify(prepared);
+  for (const secret of [EMAIL, 'access-token', 'bitrefill.com/invoice']) assert.ok(!said.includes(secret), `the answer repeats ${secret}`);
+  assert.match(prepared.next, /No loan is taken\./);
+  assert.match(prepared.next, /Nothing has been paid\./);
+});
+
+test('a wallet that cannot pay the price, or whose USDC Base did not give, opens no invoice', async (t) => {
+  const { opened } = spend(t);
+  const ask = (readUsdc: Parameters<typeof stillPrepareWalletPurchaseV1>[2]['readUsdc'], packageValue = '5GB, 30 Days') =>
+    stillPrepareWalletPurchaseV1(IDENTITY, { productId: ESIM.id, packageValue, email: EMAIL }, { now: NOW, readUsdc });
+  await assert.rejects(ask(held('9799999')), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_wallet_usdc_short'
+    && error.message === 'This wallet holds 9.799999 USDC at Base block 53000123, and this package costs 9.8 USDC, so no invoice was opened. A loan from Still can pay it instead (miorail_prepare_still_purchase), within what this wallet can borrow.');
+  for (const unread of [async () => null, async () => { throw new Error('rpc down'); }, async () => ({ raw: '1', decimals: 18, block: '1' })]) {
+    await assert.rejects(ask(unread), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_wallet_usdc_unread' && /not an empty wallet/.test(error.message));
+  }
+  // Still's own rules come first, as for a purchase with a loan.
+  await assert.rejects(ask(held('500000000'), 'Unlimited, 30 Days'), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_over_cap');
+  assert.equal(opened.length, 0, 'no invoice exists for a purchase that was refused');
+  assert.equal(stillSpendRuntimeV1.orders.openedLastHour(IDENTITY), 0, 'a refused purchase is not one of the six an hour');
+});
+
+test('with paying switched off the wallet purchase is refused before its USDC is read', async (t) => {
+  const { opened } = spend(t, { enabled: false });
+  let reads = 0;
+  await assert.rejects(stillPrepareWalletPurchaseV1(IDENTITY, { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL },
+    { now: NOW, readUsdc: async () => { reads += 1; return null; } }), (error: unknown) => error instanceof StillLoanRefusalV1 && error.code === 'spend_pay_off');
+  assert.deepEqual([reads, opened.length], [0, 0]);
+});
+
 test('a repayment is Repay’s own question: an exact amount, or all of it up to the bound the user named', () => {
   const exact = stillPrepareRepayReviewV1(IDENTITY, { collateral: 'NVDAc', repayUsdc: '50' }, { secret: SECRET, now: NOW });
   assert.equal(exact.venue, 'aave-v4');
@@ -286,6 +331,9 @@ test('the connected surface lists the purchase and the repayment as writes that 
   assert.equal(purchase.annotations?.readOnlyHint, false);
   assert.equal(purchase.annotations?.openWorldHint, true);
   assert.equal(tools.find((entry) => entry.name === 'miorail_prepare_still_repay')?.annotations?.readOnlyHint, false);
+  const fromWallet = tools.find((entry) => entry.name === 'miorail_prepare_still_wallet_purchase')!;
+  assert.deepEqual(Object.keys(fromWallet.inputSchema.properties ?? {}).sort(), ['email', 'packageValue', 'phone', 'productId']);
+  assert.deepEqual([fromWallet.annotations?.readOnlyHint, fromWallet.annotations?.openWorldHint], [false, true]);
   for (const read of ['still_find_spend', 'still_spend_product']) assert.equal(tools.find((entry) => entry.name === read)?.annotations?.readOnlyHint, true, read);
 
   const bought = await client.callTool({ name: 'miorail_prepare_still_purchase',
@@ -296,6 +344,17 @@ test('the connected surface lists the purchase and the repayment as writes that 
   const native = await client.callTool({ name: 'miorail_prepare_still_purchase',
     arguments: { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'ETH', addCollateral: '0.01' } });
   assert.equal((native as { isError?: boolean }).isError, true);
+  const usdc = stillMineRuntimeV1.readUsdc;
+  stillMineRuntimeV1.readUsdc = held('20000000');
+  t.after(() => { stillMineRuntimeV1.readUsdc = usdc; });
+  const paid = await client.callTool({ name: 'miorail_prepare_still_wallet_purchase', arguments: { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL } });
+  assert.equal((paid as unknown as { structuredContent: { reviewUrl: string } }).structuredContent.reviewUrl, `${STILL_PUBLIC_ORIGIN_V1}/spend/pay/${INVOICE}`);
+  assert.ok(!JSON.stringify(paid).includes(EMAIL));
+  // The SDK drops arguments a tool does not take: collateral sent here borrows nothing.
+  const loanArgs = await client.callTool({ name: 'miorail_prepare_still_wallet_purchase',
+    arguments: { productId: ESIM.id, packageValue: '5GB, 30 Days', email: EMAIL, collateral: 'NVDAc', addCollateral: '0' } });
+  const stillWallet = (loanArgs as unknown as { structuredContent: { reviewUrl: string; paidFrom: string } }).structuredContent;
+  assert.deepEqual([stillWallet.paidFrom, stillWallet.reviewUrl], ['wallet', `${STILL_PUBLIC_ORIGIN_V1}/spend/pay/${INVOICE}`]);
   const repaid = await client.callTool({ name: 'miorail_prepare_still_repay', arguments: { collateral: 'NVDAc', repayUsdc: 'all', maximumUsdc: '75' } });
   assert.equal(draftOf((repaid as unknown as { structuredContent: { reviewUrl: string } }).structuredContent.reviewUrl).question.operation, 'repay');
   const unbounded = await client.callTool({ name: 'miorail_prepare_still_repay', arguments: { collateral: 'NVDAc', repayUsdc: 'all' } });

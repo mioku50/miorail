@@ -490,6 +490,7 @@ describe('the existing execution boundary is unchanged', () => {
         'miorail_prepare_still_loan',
         'miorail_prepare_still_purchase',
         'miorail_prepare_still_repay',
+        'miorail_prepare_still_wallet_purchase',
         'miorail_prepare_stock_action',
         'miorail_read_borrow_capacity',
         'miorail_record_base_mcp_submission',

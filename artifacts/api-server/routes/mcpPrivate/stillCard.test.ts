@@ -15,7 +15,7 @@ import { STILL_CARD_MIME_V1, STILL_CARD_URI_V1, drawsStillCardV1, resetStillCard
 // tools as text, and no card it could not draw. Every wallet here is synthetic.
 const WALLET = `0x${'1'.repeat(40)}`, OTHER = `0x${'2'.repeat(40)}`;
 const DRAWS = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [STILL_CARD_MIME_V1] } } };
-const STILL_TOOLS = ['miorail_prepare_still_loan', 'miorail_prepare_still_purchase', 'miorail_prepare_still_repay', 'miorail_get_still_review_status'];
+const STILL_TOOLS = ['miorail_prepare_still_loan', 'miorail_prepare_still_purchase', 'miorail_prepare_still_wallet_purchase', 'miorail_prepare_still_repay', 'miorail_get_still_review_status'];
 
 function app() {
   const a = express();

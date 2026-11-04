@@ -301,8 +301,8 @@ test('web receipts are shared with MCP, MCP receipts with web, while another wal
   assert.equal(marked.status, 200);
   const mcp = await connected();
   try {
-    assert.equal(mcp.client.getServerVersion()?.version, '1.12.0');
-    assert.equal((await mcp.client.listTools()).tools.length, 40);
+    assert.equal(mcp.client.getServerVersion()?.version, '1.13.0');
+    assert.equal((await mcp.client.listTools()).tools.length, 41);
     const first = (
       await mcp.client.callTool({ name: 'miorail_get_my_stocks_today', arguments: {} })
     ).structuredContent as any;

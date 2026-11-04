@@ -12,7 +12,10 @@ import { MemoryLoanExecutionStoreV1, type LoanExecutionV1 } from '../../lib/loan
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
 import { createSpendOrderStoreV1 } from '../../lib/stillSpendOrders.js';
 import { verifyStillSpendShareV1 } from '../../lib/stillSpendShare.js';
+import type { SpendWalletReadyV1 } from '../../lib/stillSpendWallet.js';
+import { MemorySpendWalletStoreV1, type SpendWalletPaymentV1 } from '../../lib/stillSpendWalletStore.js';
 import { rwaLendingRuntimeV1 } from '../rwaLending.js';
+import { stillSpendRuntimeV1 } from '../stillSpend.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
 import { StillReviewStatusOutputV1Schema, stillReviewStatusV1, type StillReviewStatusDepsV1 } from './stillReviewTool.js';
 
@@ -133,12 +136,52 @@ test('a loan without a purchase has no purchase block, and unknown is never call
   assert.match(status.next, /not a failure of the transaction/);
 });
 
+// A purchase paid from the wallet's own USDC is named by its invoice (2026-11-04).
+function walletRun(): SpendWalletReadyV1 {
+  const calls: ExecutionCallV1[] = [{ index: 0, callType: 'transfer', to: ADDRESSES.usdc.toLowerCase() as `0x${string}`, valueWei: '0', data: '0xa9059cbb', asset: null,
+    amountAtomic: PAYMENT.assets, recipient: PAYMENT.payTo as `0x${string}`, spender: null }];
+  return { state: 'ready', calls, callsHash: hashApprovedCallsV1(calls), signingTermsHash: `0x${'22'.repeat(32)}`, expiresAt: new Date(NOW.getTime() + 60_000).toISOString(),
+    steps: [{ index: 0, to: calls[0]!.to, reading: 'Synthetic fixture only' }],
+    facts: { payment: PAYMENT, usdcBeforeAtomic: '12500000', usdcAfterAtomic: '2700000', blockNumber: 53_100_000, warnings: [] } };
+}
+function walletPayment(state: SpendWalletPaymentV1['state']): SpendWalletPaymentV1 {
+  return { ...IDENTITY, paymentId: '9d7f5c2a-1b3e-4f60-8a7d-2c4b6e8f0a12', orderId: INVOICE, state, run: walletRun(), attemptId: state === 'ready' ? null : '7a1e3c5b-2d4f-4a6b-8c9d-0e1f2a3b4c5d',
+    batchId: null, transactionHash: state === 'confirmed' ? TX : null, verification: null, errorCode: null, version: 3, createdAt: NOW.toISOString(), updatedAt: NOW.toISOString() };
+}
+
+test('a purchase paid from the wallet is read by its invoice: waiting while Spend holds it, then its payment page’s own record', async () => {
+  const { deps, invoiceReads } = await fixture();
+  const asked: string[] = [];
+  let record: SpendWalletPaymentV1 | null = null;
+  const reading = { ...deps, walletPayment: async ({ orderId }: { orderId: string }) => { asked.push(orderId); return orderId === INVOICE ? record : null; } };
+  const waiting = await stillReviewStatusV1(IDENTITY, { reviewId: INVOICE }, reading);
+  assert.deepEqual([waiting.state, waiting.paidFrom, waiting.purchase?.priceUsdc, waiting.purchase?.invoiceStatus], ['not_opened', 'wallet', '9.8', null]);
+  assert.match(waiting.next, /payment page/);
+  record = walletPayment('ready');
+  const open = await stillReviewStatusV1(IDENTITY, { reviewId: INVOICE }, reading);
+  assert.deepEqual([open.state, open.paidFrom, open.transactionHash], ['ready', 'wallet', null]);
+  assert.deepEqual(invoiceReads, [], 'Bitrefill is asked nothing before the payment could have been sent');
+  record = walletPayment('confirmed');
+  const paid = await stillReviewStatusV1(IDENTITY, { reviewId: INVOICE }, reading);
+  assert.deepEqual([paid.state, paid.paidFrom, paid.transactionHash, paid.purchase?.invoiceStatus, paid.purchase?.shareUrl], ['confirmed', 'wallet', TX, 'complete', null]);
+  assert.match(paid.next, /No loan was taken\. Bitrefill reads the invoice as complete\.$/);
+  assert.equal(paid.operation, undefined);
+  assert.deepEqual(invoiceReads, [INVOICE]);
+  assert.deepEqual(asked, [INVOICE, INVOICE, INVOICE]);
+  for (const status of [waiting, open, paid]) assert.equal(StillReviewStatusOutputV1Schema.safeParse(status).success, true);
+  // A loan's review is still read as a loan, and an id Still knows nothing of says only that.
+  assert.equal((await stillReviewStatusV1(IDENTITY, { reviewId: DRAFT }, reading)).paidFrom, undefined);
+  const nothing = await stillReviewStatusV1(IDENTITY, { reviewId: '9e8d7c6b-5a49-4382-9170-6f5e4d3c2b1a' }, reading);
+  assert.deepEqual(Object.keys(nothing).sort(), ['next', 'reviewId', 'state']);
+});
+
 test('the connected surface lists it as a read, and its answer fits the schema it advertises', async (t) => {
-  const original = { ...rwaLendingRuntimeV1 };
-  const store = new MemoryLoanExecutionStoreV1();
+  const original = { ...rwaLendingRuntimeV1 }, spend = { ...stillSpendRuntimeV1 };
+  const store = new MemoryLoanExecutionStoreV1(), payments = new MemorySpendWalletStoreV1();
   rwaLendingRuntimeV1.store = async () => store;
   rwaLendingRuntimeV1.secret = () => SECRET;
-  t.after(() => Object.assign(rwaLendingRuntimeV1, original));
+  stillSpendRuntimeV1.walletPayments = async () => payments;
+  t.after(() => { Object.assign(rwaLendingRuntimeV1, original); Object.assign(stillSpendRuntimeV1, spend); });
   const client = new Client({ name: 'still-review-test', version: '1' });
   const server = createMiorailPrivateMcpServerV1({ ...IDENTITY, chainId: 8453, tokenId: 'test-grant', source: 'oauth' });
   const [a, b] = InMemoryTransport.createLinkedPair();
@@ -149,6 +192,11 @@ test('the connected surface lists it as a read, and its answer fits the schema i
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), ['reviewId']);
   const answer = await client.callTool({ name: 'miorail_get_still_review_status', arguments: { reviewId: DRAFT } });
   assert.deepEqual((answer as unknown as { structuredContent: { state: string } }).structuredContent.state, 'not_opened');
+  // A wallet payment the page prepared is read through the page's own store.
+  await payments.putReady({ owner: IDENTITY, run: walletRun(), now: NOW });
+  const ready = await client.callTool({ name: 'miorail_get_still_review_status', arguments: { reviewId: INVOICE } });
+  const wallet = (ready as unknown as { structuredContent: { state: string; paidFrom?: string } }).structuredContent;
+  assert.deepEqual([wallet.state, wallet.paidFrom], ['ready', 'wallet']);
   const odd = await client.callTool({ name: 'miorail_get_still_review_status', arguments: { reviewId: 'not-a-review' } });
   assert.equal((odd as { isError?: boolean }).isError, true);
 });

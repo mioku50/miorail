@@ -24,6 +24,8 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
   const { prepared, status } = state;
   const phase = status?.phase ?? 'waiting';
   const settled = status?.settled ?? false;
+  // Paid from the wallet's own USDC, it is paid on Spend's own page: the card signs only a loan's review.
+  const fromWallet = prepared?.paidFrom === 'wallet';
   return (
     <div className="still still-mcp-card" data-sky={state.dark ? 'night' : 'day'}>
       <div className="still-card">
@@ -49,7 +51,7 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
             {state.statusUnread ? <p className="still-note">Still could not read the status just now. This is our failure; it says nothing about the transaction.</p> : null}
             <div className="still-mcp-actions">
               {!settled && phase !== 'expired' && prepared.reviewUrl ? (
-                <button type="button" className="still-btn" onClick={() => void store.openReview()}>Review and sign on {stillCardReviewHostV1(prepared.reviewUrl)}</button>
+                <button type="button" className="still-btn" onClick={() => void store.openReview()}>{fromWallet ? 'Review and pay' : 'Review and sign'} on {stillCardReviewHostV1(prepared.reviewUrl)}</button>
               ) : null}
               {status?.shareUrl ? <button type="button" className="still-btn" onClick={() => void store.openShare()}>Share the purchase</button> : null}
               {status?.transactionHash ? <button type="button" className="still-btn sec" onClick={() => void store.openTransaction()}>View on BaseScan</button> : null}
@@ -60,14 +62,15 @@ export function StillCard({ store, host, projectId }: { store: StillCardStoreV1;
               ) : null}
             </div>
             {state.linkRefused ? <p className="still-note">The chat did not open the link. It is in the assistant’s message too.</p> : null}
-            {projectId && prepared.reviewUrl && !settled && phase !== 'expired' ? (
+            {projectId && prepared.reviewUrl && !fromWallet && !settled && phase !== 'expired' ? (
               <StillCardSign host={host} projectId={projectId} draft={prepared.reviewUrl.slice(prepared.reviewUrl.indexOf('/lending/') + '/lending/'.length)}
                 reviewHost={stillCardReviewHostV1(prepared.reviewUrl)} onSent={() => store.checkAgain()} />
             ) : null}
             {settled ? null : (
               <p className="still-note still-mcp-foot">
-                {projectId ? 'Either way the review reads everything again, and only your own wallet signs.'
-                  : 'The review reads everything again and your own wallet signs there; nothing is sent from this card.'}
+                {fromWallet ? 'The payment page reads the invoice and your USDC again, and your own wallet signs there; nothing is sent from this card.'
+                  : projectId ? 'Either way the review reads everything again, and only your own wallet signs.'
+                    : 'The review reads everything again and your own wallet signs there; nothing is sent from this card.'}
                 {phase === 'waiting' && untilV1(prepared.expiresAt) ? ` The link works until ${untilV1(prepared.expiresAt)}.` : ''}
               </p>
             )}

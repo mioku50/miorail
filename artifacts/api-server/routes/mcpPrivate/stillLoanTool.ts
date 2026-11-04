@@ -4,8 +4,8 @@ import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 
 import { issueLendingDraftV1 } from '../../lib/lendingDraft.js';
 import { STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOrigin.js';
-import { spendDraftPaymentV1 } from '../../lib/stillSpendOrders.js';
-import { openSpendOrderV1, stillSpendRuntimeV1 } from '../stillSpend.js';
+import { STILL_SPEND_REVIEW_MARGIN_MS_V1, spendDraftPaymentV1 } from '../../lib/stillSpendOrders.js';
+import { openSpendOrderV1, stillSpendRuntimeV1, type SpendOrderOpenedV1 } from '../stillSpend.js';
 import { SPEND_ID_V1 } from '../stillPublic.js';
 
 // ---------------------------------------------------------------------------
@@ -169,6 +169,16 @@ const SPEND_REFUSALS_V1: Readonly<Record<string, string>> = {
   spend_payee_refused: 'Bitrefill asked to be paid to this wallet itself, so Still did not keep the invoice. Nothing was paid.',
 };
 
+/** An invoice that was not opened, in the Spend page's terms, whose refusal it was included. */
+function spendOrderRefusalV1(opened: Extract<SpendOrderOpenedV1, { ok: false }>): StillLoanRefusalV1 {
+  // Bitrefill not letting Still in is about every product, and the words say so.
+  return new StillLoanRefusalV1(opened.error, opened.error === 'bitrefill_guest_refused'
+    ? `Bitrefill is not letting Still in right now${opened.detail ? `, and said: “${opened.detail}”` : ''}. Until that changes Still cannot open an invoice for any product: it is not about this one, and trying again will not help. Nothing was opened or paid.`
+    : SPEND_REFUSALS_V1[opened.error] ?? (opened.detail
+      ? `Bitrefill refused to open the invoice and said: “${opened.detail}” Nothing was paid.`
+      : 'Bitrefill could not open the invoice right now. This is Bitrefill’s failure or ours; nothing was paid.'));
+}
+
 export async function stillPreparePurchaseV1(
   identity: { tenantId: string; walletAddress: string },
   args: z.infer<typeof StillPreparePurchaseInputV1Schema>,
@@ -188,14 +198,7 @@ export async function stillPreparePurchaseV1(
   const opened = await openSpendOrderV1(owner, {
     productId: args.productId, packageValue: args.packageValue, email: args.email, ...(args.phone !== undefined ? { phone: args.phone } : {}),
   });
-  if (!opened.ok) {
-    // Bitrefill not letting Still in is about every product, and the words say so.
-    throw new StillLoanRefusalV1(opened.error, opened.error === 'bitrefill_guest_refused'
-      ? `Bitrefill is not letting Still in right now${opened.detail ? `, and said: “${opened.detail}”` : ''}. Until that changes Still cannot open an invoice for any product: it is not about this one, and trying again will not help. Nothing was opened or paid.`
-      : SPEND_REFUSALS_V1[opened.error] ?? (opened.detail
-        ? `Bitrefill refused to open the invoice and said: “${opened.detail}” Nothing was paid.`
-        : 'Bitrefill could not open the invoice right now. This is Bitrefill’s failure or ours; nothing was paid.'));
-  }
+  if (!opened.ok) throw spendOrderRefusalV1(opened);
   const order = opened.order, payment = spendDraftPaymentV1(order, deps.now);
   if (!payment) throw new StillLoanRefusalV1('spend_order_expiring', 'Bitrefill holds this price too briefly for a review to be signed. Nothing was paid; prepare it again.');
   const issued = issueLendingDraftV1({
@@ -219,6 +222,76 @@ export async function stillPreparePurchaseV1(
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
     next: 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC or WETH it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
+  };
+}
+
+// ---------------------------------------------------------------------------
+// A purchase paid from the USDC already in the wallet, with no loan, as Spend
+// pays it since 2026-11-03 (/spend/pay/<invoice>). The assistant gets the link
+// to that page, which reads Bitrefill's invoice and the wallet again, simulates
+// the one transfer of exactly the price to the invoice address, and has the
+// owner's own wallet sign it. On 2026-11-04 an assistant asked to buy a $0.18
+// card, with $0.14 left to borrow, could only offer to repay or pledge more:
+// this surface paid only with a loan and did not show the wallet's USDC.
+// ---------------------------------------------------------------------------
+
+export const StillPrepareWalletPurchaseInputV1Schema = StillPreparePurchaseInputV1Schema.omit({ collateral: true, addCollateral: true });
+
+export const StillPrepareWalletPurchaseOutputV1Schema = z.object({
+  reviewUrl: z.string(),
+  /** The invoice, for miorail_get_still_review_status once the user has opened the page. */
+  reviewId: z.string(),
+  /** Until then the page can prepare the payment; Bitrefill holds the price until purchase.invoiceExpiresAt. */
+  expiresAt: z.string(),
+  paidFrom: z.literal('wallet'),
+  /** The wallet's own USDC, read at its own Base block before the invoice was opened. */
+  walletUsdc: z.object({ usdc: z.string(), block: z.string() }).strict(),
+  purchase: StillPreparePurchaseOutputV1Schema.shape.purchase,
+  next: z.string(),
+}).strict();
+
+export async function stillPrepareWalletPurchaseV1(
+  identity: { tenantId: string; walletAddress: string },
+  args: z.infer<typeof StillPrepareWalletPurchaseInputV1Schema>,
+  deps: { now: Date; origin?: string; readUsdc: (wallet: string) => Promise<{ raw: string; decimals: number; block: string } | null> },
+): Promise<z.infer<typeof StillPrepareWalletPurchaseOutputV1Schema>> {
+  if (!stillSpendRuntimeV1.enabled()) {
+    throw new StillLoanRefusalV1('spend_pay_off', 'Still does not pay Bitrefill on this server right now. Nothing was opened.');
+  }
+  const owner = { tenantId: identity.tenantId, walletAddress: identity.walletAddress.toLowerCase() };
+  // The wallet's USDC first: an invoice it cannot pay is not opened, and Still opens six an hour for one wallet.
+  const held = await deps.readUsdc(owner.walletAddress).catch(() => null);
+  if (!held || held.decimals !== 6 || !/^(0|[1-9][0-9]{0,77})$/.test(held.raw) || !/^[1-9][0-9]{0,15}$/.test(held.block)) {
+    throw new StillLoanRefusalV1('spend_wallet_usdc_unread', 'This wallet’s USDC could not be read from Base just now, so no invoice was opened. This is our failure, not an empty wallet; try again in a minute.');
+  }
+  const balance = BigInt(held.raw);
+  const opened = await openSpendOrderV1(owner, {
+    productId: args.productId, packageValue: args.packageValue, email: args.email, ...(args.phone !== undefined ? { phone: args.phone } : {}),
+  }, { payableAtomic: balance });
+  if (!opened.ok) {
+    if (opened.error === 'spend_wallet_usdc_short') {
+      throw new StillLoanRefusalV1(opened.error, `This wallet holds ${usdcTextV1(balance)} USDC at Base block ${held.block}, and this package costs ${
+        opened.priceAtomic ? `${usdcTextV1(BigInt(opened.priceAtomic))} USDC` : 'more'}, so no invoice was opened. A loan from Still can pay it instead (miorail_prepare_still_purchase), within what this wallet can borrow.`);
+    }
+    throw spendOrderRefusalV1(opened);
+  }
+  const order = opened.order;
+  if (!spendDraftPaymentV1(order, deps.now)) {
+    throw new StillLoanRefusalV1('spend_order_expiring', 'Bitrefill holds this price too briefly for the payment to be signed. Nothing was paid; prepare it again.');
+  }
+  const price = usdcTextV1(BigInt(order.priceAtomic));
+  return {
+    reviewUrl: `${deps.origin ?? STILL_PUBLIC_ORIGIN_V1}/spend/pay/${order.orderId}`,
+    reviewId: order.orderId,
+    // The page prepares a payment only while Bitrefill holds the price this much longer (spendDraftPaymentV1).
+    expiresAt: new Date(Date.parse(order.expiresAt) - STILL_SPEND_REVIEW_MARGIN_MS_V1 - 60_000).toISOString(),
+    paidFrom: 'wallet',
+    walletUsdc: { usdc: usdcTextV1(balance), block: held.block },
+    purchase: {
+      productId: order.productId, productName: order.productName, packageValue: order.packageValue, faceCurrency: order.faceCurrency,
+      priceUsdc: price, invoiceExpiresAt: order.expiresAt,
+    },
+    next: `Give the user this link. It opens Spend’s payment page for this wallet only, signed in with it: the page reads Bitrefill’s invoice and the wallet’s USDC again, simulates the one transfer of exactly ${price} USDC to the invoice address, and the user’s own wallet signs it. No loan is taken. The page can prepare the payment until expiresAt; Bitrefill holds the price until purchase.invoiceExpiresAt. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been paid. After the user pays, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.`,
   };
 }
 
@@ -295,7 +368,7 @@ export function stillPrepareRepayReviewV1(
   };
 }
 
-function usdcTextV1(atomic: bigint): string {
+export function usdcTextV1(atomic: bigint): string {
   const fraction = (atomic % 1_000_000n).toString().padStart(6, '0').replace(/0+$/, '');
   return `${atomic / 1_000_000n}${fraction ? `.${fraction}` : ''}`;
 }

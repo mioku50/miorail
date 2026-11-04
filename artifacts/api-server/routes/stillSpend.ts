@@ -81,12 +81,15 @@ function orderWireV1(order: SpendOrderV1) {
   };
 }
 
-export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string; detail?: string };
+export type SpendOrderOpenedV1 = { ok: true; order: SpendOrderV1 } | { ok: false; status: number; error: string; detail?: string; priceAtomic?: string };
 
 /** One invoice for this owner, as the page and the connected MCP open it:
  * the hourly limit, a fresh quote, the product's own rules, the cap, then
- * Bitrefill's invoice, checked against that quote. Paying is on already. */
-export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infer<typeof SpendOrderRequestV1Schema>): Promise<SpendOrderOpenedV1> {
+ * Bitrefill's invoice, checked against that quote. Paying is on already.
+ * `payableAtomic`: paid from the wallet's own USDC, a price above what it
+ * holds opens no invoice. */
+export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infer<typeof SpendOrderRequestV1Schema>,
+  options: { payableAtomic?: bigint } = {}): Promise<SpendOrderOpenedV1> {
   // Every refusal is on record by its reason, Still's own as well as
   // Bitrefill's: an assistant's account of it is not evidence of whose it was.
   // The shape names keys and kinds only: never an address, an amount or a token.
@@ -110,6 +113,7 @@ export async function openSpendOrderV1(owner: SpendOrderOwnerV1, request: z.infe
   const quoted = offered ? spendPriceAtomicV1(offered.priceUsdc) : null;
   if (!offered || quoted === null || quoted <= 0n) return refuse(409, 'spend_package_not_offered');
   if (quoted > STILL_SPEND_CAP_ATOMIC_V1) return refuse(409, 'spend_over_cap');
+  if (options.payableAtomic !== undefined && quoted > options.payableAtomic) return { ...refuse(409, 'spend_wallet_usdc_short'), priceAtomic: quoted.toString() };
   const now = stillSpendRuntimeV1.now();
   const invoice = await stillSpendRuntimeV1.checkout().createInvoice({
     productId: product.value.id, packageValue: offered.value, email: request.email, ...(refillTo !== null ? { refillInput: refillTo } : {}), quotedAtomic: quoted, now,

@@ -50,10 +50,10 @@ Five tools:
 1. get_still_terms: the shares and windows in force now. No wallet needed.
 2. still_check_wallet: one wallet's report. headline.availableCents is what it could borrow now, in cents of USDC; assets lists each holding; venues lists each loan with safety.marginBps (how far all collateral may fall together before liquidation) and liquidation prices.
 3. still_what_if: the same wallet with one to four changes applied together. answer.text is the engine's own answer in words; before and after hold the figures.
-4. still_find_spend: what a Still loan could pay for at Bitrefill, for one country: eSIM data plans, phone top-ups and gift cards.
+4. still_find_spend: what Still could pay for at Bitrefill, with a loan or from the wallet's own USDC, for one country: eSIM data plans, phone top-ups and gift cards.
 5. still_spend_product: one of them, with each package's price in USDC and whether Still can pay for it now.
 
-To buy one, the owner connects Miorail's signed-in server (https://miorail.xyz/mcp/private): miorail_prepare_still_purchase opens the invoice they chose and returns the review of the loan that pays it, which their own wallet signs on ${STILL_PUBLIC_HOST_V1}.
+To buy one, the owner connects Miorail's signed-in server (https://miorail.xyz/mcp/private): miorail_prepare_still_purchase opens the invoice they chose and returns the review of the loan that pays it, and miorail_prepare_still_wallet_purchase opens it to be paid from the USDC already in their wallet, with no loan. Either way their own wallet signs on ${STILL_PUBLIC_HOST_V1}.
 
 Say what a report says at its block and time, and do not repeat its figures later as if current. null means unread, never zero; headline.complete false means "at least". chain_unavailable is our failure, never an empty wallet. Never advise anyone to borrow, buy or sell: Still's limit is not a recommendation. Not offered to US persons.`;
 
@@ -127,8 +127,8 @@ export function registerStillSpendReadsV1(server: McpServer): void {
   const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true } as const;
 
   server.registerTool('still_find_spend', {
-    title: 'What a Still loan could pay for',
-    description: `Searches Bitrefill’s catalogue, the one ${STILL_PUBLIC_HOST_V1}/spend shows, for what a Still loan could pay for in one country: eSIM data plans (esim), phone top-ups (refill) or gift cards (giftcard), narrowed by a brand or word. Returns each product’s id, name, the countries it serves and whether Bitrefill has it in stock; read one product with still_spend_product for its packages and prices. checkout.enabled says whether Still pays Bitrefill from a loan on this server now. outcome unavailable is Bitrefill’s failure or ours, never an empty catalogue. Cuba, Iran, North Korea and Syria are not offered. It reads only: nothing is bought, reserved or opened.`,
+    title: 'What Still could pay for at Bitrefill',
+    description: `Searches Bitrefill’s catalogue, the one ${STILL_PUBLIC_HOST_V1}/spend shows, for what Still could pay for in one country, with a loan or from the wallet’s own USDC: eSIM data plans (esim), phone top-ups (refill) or gift cards (giftcard), narrowed by a brand or word. Returns each product’s id, name, the countries it serves and whether Bitrefill has it in stock; read one product with still_spend_product for its packages and prices. checkout.enabled says whether Still pays Bitrefill on this server now. outcome unavailable is Bitrefill’s failure or ours, never an empty catalogue. Cuba, Iran, North Korea and Syria are not offered. It reads only: nothing is bought, reserved or opened.`,
     inputSchema: StillFindSpendInputV1Schema,
     outputSchema: StillFindSpendOutputV1Schema,
     annotations: READ_ONLY,
@@ -139,7 +139,7 @@ export function registerStillSpendReadsV1(server: McpServer): void {
 
   server.registerTool('still_spend_product', {
     title: 'One Bitrefill product, priced in USDC',
-    description: 'Reads one Bitrefill product by its id from still_find_spend: each package with its price in USDC as Bitrefill quoted it (prices can move within the hour; a purchase is quoted again), whether it fits Still’s cap of one purchase (withinCap, checkout.capUsdc), and checkout: whether Still can pay for it from a loan now (available) and, for a phone top-up, the calling code and prefixes the number must start with. prepayment true means Bitrefill sells it only after steps such as a game’s player ID, which it does not offer to Still, so Still cannot buy it. outcome not_found means Bitrefill has no such product; unavailable is Bitrefill’s failure or ours. To buy it, the owner uses miorail_prepare_still_purchase on Miorail’s signed-in server. It reads only: nothing is bought, reserved or opened.',
+    description: 'Reads one Bitrefill product by its id from still_find_spend: each package with its price in USDC as Bitrefill quoted it (prices can move within the hour; a purchase is quoted again), whether it fits Still’s cap of one purchase (withinCap, checkout.capUsdc), and checkout: whether Still can pay for it now, with a loan or from the wallet’s own USDC (available) and, for a phone top-up, the calling code and prefixes the number must start with. prepayment true means Bitrefill sells it only after steps such as a game’s player ID, which it does not offer to Still, so Still cannot buy it. outcome not_found means Bitrefill has no such product; unavailable is Bitrefill’s failure or ours. To buy it, the owner uses miorail_prepare_still_purchase (a loan pays) or miorail_prepare_still_wallet_purchase (the wallet’s own USDC pays) on Miorail’s signed-in server. It reads only: nothing is bought, reserved or opened.',
     inputSchema: StillSpendProductInputV1Schema,
     outputSchema: StillSpendProductOutputV1Schema,
     annotations: READ_ONLY,

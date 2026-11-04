@@ -7,6 +7,8 @@ export type StillCardKindV1 = 'loan' | 'purchase' | 'repay';
 
 export interface StillCardPreparedV1 {
   kind: StillCardKindV1;
+  /** A purchase paid from the wallet's own USDC, on Spend's payment page: no loan, and nothing signed in the card. */
+  paidFrom?: 'wallet';
   reviewId: string;
   /** Null when the card shows a status read, which carries no link. */
   reviewUrl: string | null;
@@ -31,6 +33,7 @@ const object = (value: unknown): value is Record<string, unknown> => typeof valu
 const text = (value: unknown, max = 200): value is string => typeof value === 'string' && value.length > 0 && value.length <= max;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const REVIEW_URL = /^https:\/\/(?:stills\.lat|miorail\.xyz)\/lending\/miorail-lending-v[123]\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/;
+const PAY_URL = /^https:\/\/(?:stills\.lat|miorail\.xyz)\/spend\/pay\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const SHARE_URL = /^https:\/\/(?:stills\.lat|miorail\.xyz)\/spend\/p\/ss1\./;
 const venueName = (venue: unknown) => (venue === 'morpho' ? 'Morpho' : 'Aave V4');
 const pledge = (amount: unknown, collateral: string) => (text(amount, 40) && amount !== '0' ? `, pledging ${amount} ${collateral}` : '');
@@ -44,19 +47,30 @@ export function stillCardReviewHostV1(reviewUrl: string): string {
   }
 }
 
+/** What a purchase is, as its card names it: a face value says its currency, as a top-up of "10" is 10 INR. */
+function purchaseTitleV1(p: Record<string, unknown>): string {
+  const face = text(p.faceCurrency, 3) && typeof p.packageValue === 'string' && /^\d+(?:\.\d+)?$/.test(p.packageValue.trim()) ? ` ${p.faceCurrency}` : '';
+  return `${String(p.productName)}${text(p.packageValue, 80) ? ` · ${p.packageValue}${face}` : ''}`;
+}
+
 /** The prepared review from a prepare tool's structured result; null for anything else. */
 export function stillCardPreparedV1(structured: unknown): StillCardPreparedV1 | null {
   if (!object(structured) || !text(structured.reviewId, 36) || !UUID.test(structured.reviewId)) return null;
-  const reviewUrl = text(structured.reviewUrl, 6000) && REVIEW_URL.test(structured.reviewUrl) ? structured.reviewUrl : null;
   const expiresAt = text(structured.expiresAt, 40) && Number.isFinite(Date.parse(structured.expiresAt)) ? structured.expiresAt : null;
+  const priced = object(structured.purchase) && text(structured.purchase.productName, 120) && text(structured.purchase.priceUsdc, 24) ? structured.purchase : null;
+  // Paid from the wallet's own USDC: Spend's payment page, with no loan and no collateral.
+  if (structured.paidFrom === 'wallet') {
+    if (!priced || !text(structured.reviewUrl, 200) || !PAY_URL.test(structured.reviewUrl)) return null;
+    return { kind: 'purchase', paidFrom: 'wallet', reviewId: structured.reviewId, reviewUrl: structured.reviewUrl, expiresAt, title: purchaseTitleV1(priced),
+      detail: `${String(priced.priceUsdc)} USDC from your wallet, paid to Bitrefill. No loan is taken.` };
+  }
+  const reviewUrl = text(structured.reviewUrl, 6000) && REVIEW_URL.test(structured.reviewUrl) ? structured.reviewUrl : null;
   const collateral = text(structured.collateral, 12) ? structured.collateral : null;
   if (!reviewUrl || !collateral) return null;
   const base = { reviewId: structured.reviewId, reviewUrl, expiresAt };
-  if (object(structured.purchase) && text(structured.purchase.productName, 120) && text(structured.purchase.priceUsdc, 24)) {
-    const p = structured.purchase;
-    const face = text(p.faceCurrency, 3) && typeof p.packageValue === 'string' && /^\d+(?:\.\d+)?$/.test(p.packageValue.trim()) ? ` ${p.faceCurrency}` : '';
-    return { ...base, kind: 'purchase', title: `${p.productName}${text(p.packageValue, 80) ? ` · ${p.packageValue}${face}` : ''}`,
-      detail: `${p.priceUsdc} USDC, borrowed against ${collateral} on ${venueName(structured.venue)}${pledge(structured.addCollateral, collateral)}, and paid to Bitrefill in the same review.` };
+  if (priced) {
+    return { ...base, kind: 'purchase', title: purchaseTitleV1(priced),
+      detail: `${String(priced.priceUsdc)} USDC, borrowed against ${collateral} on ${venueName(structured.venue)}${pledge(structured.addCollateral, collateral)}, and paid to Bitrefill in the same review.` };
   }
   if (text(structured.borrowUsdc, 24)) {
     return { ...base, kind: 'loan', title: `Borrow ${structured.borrowUsdc} USDC against ${collateral}`,
@@ -80,7 +94,7 @@ const BITREFILL_V1: Record<string, string> = {
 };
 
 /** Where the review stands, from miorail_get_still_review_status. */
-export function stillCardStatusV1(status: unknown, prepared: Pick<StillCardPreparedV1, 'expiresAt' | 'kind'>, now: Date): StillCardStatusV1 | null {
+export function stillCardStatusV1(status: unknown, prepared: Pick<StillCardPreparedV1, 'expiresAt' | 'kind' | 'paidFrom'>, now: Date): StillCardStatusV1 | null {
   if (!object(status) || !text(status.state, 20)) return null;
   const purchase = object(status.purchase) ? status.purchase : null;
   const word = purchase && text(purchase.invoiceStatus, 40) ? purchase.invoiceStatus : null;
@@ -99,7 +113,8 @@ export function stillCardStatusV1(status: unknown, prepared: Pick<StillCardPrepa
     case 'submitted': return out('sent', 'Sent. Still is reading the result from Base.', false);
     case 'unknown': return out('unknown', 'Still could not read the result from Base yet and is checking again. This is not a failure.', false);
     case 'confirmed': {
-      const done = prepared.kind === 'purchase' ? 'Confirmed onchain: the loan paid Bitrefill.' : prepared.kind === 'repay' ? 'Confirmed onchain: the repayment is in.' : 'Confirmed onchain: the USDC is in your wallet.';
+      const done = prepared.kind === 'purchase' ? prepared.paidFrom === 'wallet' ? 'Confirmed onchain: your USDC paid Bitrefill.' : 'Confirmed onchain: the loan paid Bitrefill.'
+        : prepared.kind === 'repay' ? 'Confirmed onchain: the repayment is in.' : 'Confirmed onchain: the USDC is in your wallet.';
       // A purchase settles when Bitrefill finishes, or when Still no longer holds the order to ask.
       const settled = prepared.kind !== 'purchase' || word === 'complete' || (purchase !== null && purchase.invoiceStatusError === 'spend_order_forgotten');
       return out('confirmed', done, settled);
@@ -116,12 +131,14 @@ export function stillCardFromStatusV1(structured: unknown, now: Date): { prepare
   if (!object(structured) || !text(structured.reviewId, 36) || !UUID.test(structured.reviewId) || !text(structured.state, 20)) return null;
   const purchase = object(structured.purchase) ? structured.purchase : null;
   const collateral = text(structured.collateral, 12) ? structured.collateral : null;
+  const fromWallet = structured.paidFrom === 'wallet' && purchase !== null;
   const kind: StillCardKindV1 = purchase ? 'purchase' : structured.operation === 'repay' ? 'repay' : 'loan';
   const title = purchase && text(purchase.productName, 120) ? `${purchase.productName}${text(purchase.packageValue, 80) ? ` · ${purchase.packageValue}` : ''}`
     : collateral ? (kind === 'repay' ? `Repayment on the ${collateral} loan` : `Loan against ${collateral}`) : 'Still review';
-  const detail = purchase && text(purchase.priceUsdc, 24) && collateral ? `${purchase.priceUsdc} USDC, borrowed against ${collateral} on ${venueName(structured.venue)}.`
-    : collateral ? `On ${venueName(structured.venue)}.` : 'Prepared by your assistant.';
-  const prepared: StillCardPreparedV1 = { kind, reviewId: structured.reviewId, reviewUrl: null, expiresAt: null, title, detail };
+  const detail = fromWallet && text(purchase.priceUsdc, 24) ? `${purchase.priceUsdc} USDC from your wallet, paid to Bitrefill.`
+    : purchase && text(purchase.priceUsdc, 24) && collateral ? `${purchase.priceUsdc} USDC, borrowed against ${collateral} on ${venueName(structured.venue)}.`
+      : collateral ? `On ${venueName(structured.venue)}.` : 'Prepared by your assistant.';
+  const prepared: StillCardPreparedV1 = { kind, ...(fromWallet ? { paidFrom: 'wallet' as const } : {}), reviewId: structured.reviewId, reviewUrl: null, expiresAt: null, title, detail };
   const status = stillCardStatusV1(structured, prepared, now);
   return status ? { prepared, status } : null;
 }

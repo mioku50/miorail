@@ -910,7 +910,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry, twenty of its own and Still’s two Spend reads', async () => {
+  test('the connected surface is exactly the public registry, twenty-one of its own and Still’s two Spend reads', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -929,7 +929,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
     for (const name of ['still_find_spend', 'still_spend_product']) assert.ok(connectedNames.has(name), `the connected surface is missing ${name}`);
-    assert.equal(connectedNames.size, publicNames.length + 20 + 2);
+    assert.equal(connectedNames.size, publicNames.length + 21 + 2);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -983,8 +983,10 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       // Mints the same short-lived, wallet-bound review draft as Get money.
       'miorail_prepare_still_loan',
       // Opens a Bitrefill invoice for this wallet and mints the review of the
-      // loan that pays it; the repayment mints Repay's review draft.
+      // loan that pays it, or links Spend's page that pays it from the wallet's
+      // own USDC; the repayment mints Repay's review draft.
       'miorail_prepare_still_purchase',
+      'miorail_prepare_still_wallet_purchase',
       'miorail_prepare_still_repay',
     ]);
     // Reads may record an audit/baseline but acknowledge no update or release calls.
