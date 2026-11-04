@@ -172,7 +172,7 @@ export async function runAaveLendingV1(input: { walletAddress: string; question:
       : [back ? `This repays all USDC debt of the Aave V4 equities Spoke, then returns your ${s.selectedStock.id} deposit to this wallet.`
           : 'This repays the USDC debt of the Aave V4 equities Spoke. Collateral remains deposited.',
       ...(back ? [sequential ? 'The stock is taken back in the last step, after Still has checked again that no debt is left.'
-        : 'Aave checks the account before the stock leaves: if any debt were left, the whole batch would revert and nothing would move.'] : []),
+        : 'The stock leaves in the same batch, after the repayment. Aave checks that the account stays healthy, not that the debt is zero, so Still reads the result from Base: a loan with any debt left is not called closed.'] : []),
       sequential ? 'The Spoke takes at most your explicit USDC maximum and requests no position-manager grant.'
         : 'The Spoke takes at most your explicit USDC maximum, clears the temporary allowance in the same atomic batch and requests no position-manager grant.',
       ...(sequential ? [stepsWarningV1(plan.calls.length, 'repay', Boolean(back))] : [])] };

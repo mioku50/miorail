@@ -332,6 +332,10 @@ describe('Aave runner: repay all, then take the stock back', () => {
     assert.equal(r.facts.collateralReturnAssets, h.s.existingSuppliedAssets.toString());
     assert.deepEqual([r.facts.debtAfterAssets, r.facts.collateralAfterAssets, r.facts.maximumDebitAssets, r.facts.amountMode], ['0', '0', '20000000', 'all']);
     assert.match(r.facts.warnings[0]!, /repays all USDC debt .* then returns your NVDAc deposit to this wallet/);
+    // Final audit FA3, 2026-11-04: the batch holds no zero-debt check, and Aave lets a stock leave a healthy
+    // account with debt left, so nothing may promise that leftover debt reverts it.
+    assert.match(r.facts.warnings[1]!, /Aave checks that the account stays healthy, not that the debt is zero, so Still reads the result from Base/);
+    assert.doesNotMatch(r.facts.warnings.join(' '), /revert/);
     assert.equal(lendingSigningTermsFactsV1(r.facts).collateralReturnAssets, h.s.existingSuppliedAssets.toString());
   });
   it('with no debt left returns the stock alone: one withdrawal, no USDC and a zero maximum', async () => {
