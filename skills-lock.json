@@ -1,23 +1,23 @@
 {
   "version": 1,
   "skills": {
-    "base-mcp": {
-      "source": "base/skills",
-      "sourceType": "github",
-      "skillPath": "skills/base-mcp/SKILL.md",
-      "computedHash": "7583c3e138031bcc7b6c1b36bd0f6e8351205e4edeb262a03ddf6c5512e7279c"
-    },
     "build-on-base": {
       "source": "base/skills",
       "sourceType": "github",
       "skillPath": "skills/build-on-base/SKILL.md",
-      "computedHash": "00be30136095eaf1aa8e9a49e8b593ab80c95a1789b09e4c1973cba71e7db22a"
+      "computedHash": "c0e0a8ff241fb21ee9abd63394cf0355135f78b83f8f24376ce396cdb2f41b7b"
     },
     "frontend-design": {
       "source": "anthropics/skills",
       "sourceType": "github",
       "skillPath": "skills/frontend-design/SKILL.md",
       "computedHash": "4eabc66183767153e404b39d1b839b1c37f2d82d86f0a0d7e880a579d8d62336"
+    },
+    "wallet-mcp": {
+      "source": "coinbase/agents",
+      "sourceType": "github",
+      "skillPath": "skills/wallet-mcp/SKILL.md",
+      "computedHash": "f2ba7fd18bb077bfba42990720522cc4622d0a63d346959ae712e2949c4145b6"
     }
   }
 }
