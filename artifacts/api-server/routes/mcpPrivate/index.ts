@@ -64,14 +64,16 @@ function requestNameV1(body: unknown): { method: string; tool?: string; id: stri
 
 /**
  * MCP Apps: the grants whose client said, when it connected, that it draws
- * ui:// apps, and so gets Still's review card. This endpoint keeps no session,
+ * ui:// apps, and so is listed the card's own tool, which hands a ready
+ * review's calls to the card. Every client's Still tools name the card itself
+ * (server.ts), whatever is remembered here. This endpoint keeps no session,
  * and a client sends its capabilities once, with initialize, so they are
  * remembered per durable grant. A grant nobody remembers, after a restart for
- * one, gets text until its client connects again, or draws the card: reading
- * the card, or calling the card's own tool, is what only a host that draws it
- * does. On 2026-11-04 Claude did just that after a deploy, from the tools it
- * had listed before, without connecting again. The card is an addition, never
- * the only way through.
+ * one, is not listed that tool until its client connects again, or draws the
+ * card: reading the card, or calling the card's own tool, is what only a host
+ * that draws it does. On 2026-11-04 Claude did just that after a deploy, from
+ * the tools it had listed before, without connecting again. The card is an
+ * addition, never the only way through.
  */
 export const mcpPrivateAppsRuntimeV1 = {
   grants: new Map<string, number>(),

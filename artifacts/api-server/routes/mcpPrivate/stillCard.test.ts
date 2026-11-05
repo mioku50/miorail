@@ -10,9 +10,10 @@ import { mcpPrivateAuthRuntime } from './session.js';
 import { mcpPrivateAppsRuntimeV1, mcpPrivateRouter } from './index.js';
 import { STILL_CARD_MIME_V1, STILL_CARD_URI_V1, drawsStillCardV1, resetStillCardHtmlV1, stillCardRuntimeV1 } from './stillCard.js';
 
-// Still's review card (MCP Apps) through the real endpoint: a client that says
-// it draws apps gets the card on Still's tools; one that does not gets the same
-// tools as text, and no card it could not draw. Every wallet here is synthetic.
+// Still's review card (MCP Apps) through the real endpoint: every client's
+// Still tools name the card, which a host that draws nothing ignores; only a
+// client that says it draws apps, or draws the card, is listed the card's own
+// tool, which hands a ready review's calls to the card. Every wallet here is synthetic.
 const WALLET = `0x${'1'.repeat(40)}`, OTHER = `0x${'2'.repeat(40)}`;
 const DRAWS = { extensions: { 'io.modelcontextprotocol/ui': { mimeTypes: [STILL_CARD_MIME_V1] } } };
 // The card's address names its content (stillCard.ts): the one these tests serve.
@@ -40,6 +41,15 @@ async function rpc(server: ReturnType<typeof app>, wallet: string, method: strin
 }
 
 const initialize = (capabilities: Record<string, unknown>) => ({ protocolVersion: '2025-06-18', capabilities, clientInfo: { name: 'card-test', version: '1' } });
+type ListedV1 = Array<{ name: string; _meta?: unknown }>;
+/** Still's five tools name the card; no other tool carries anything, but the card's own when it is listed. */
+function namesTheCard(tools: ListedV1): void {
+  for (const name of STILL_TOOLS) {
+    assert.deepEqual(tools.find((tool) => tool.name === name)?._meta, { ui: { resourceUri: CARD_URI }, 'ui/resourceUri': CARD_URI }, name);
+  }
+  assert.equal(tools.find((tool) => tool.name === 'miorail_get_my_still')?._meta, undefined, 'a read with nothing to sign has no card');
+  assert.deepEqual(tools.filter((tool) => !STILL_TOOLS.includes(tool.name) && tool.name !== 'still_card_lending' && tool._meta !== undefined).map((tool) => tool.name), []);
+}
 
 test.beforeEach(() => mcpPrivateAppsRuntimeV1.grants.clear());
 
@@ -50,7 +60,7 @@ test('only an initialize that names the MCP Apps extension with its HTML type co
   assert.equal(drawsStillCardV1(undefined), false);
 });
 
-test('a client that draws apps gets the card on Still’s four tools and can read it; one that does not gets neither', async (t) => {
+test('every client’s Still tools name the card, and only a client that draws apps is listed the card’s own tool', async (t) => {
   const originalFlags = mcpPrivateAuthRuntime.flags, originalHtml = stillCardRuntimeV1.html, originalUri = stillCardRuntimeV1.uri;
   mcpPrivateAuthRuntime.flags = (() => ({ routeIntelligenceV1: true, b20ControlV1: true, mcpPrivateV1: true })) as unknown as typeof originalFlags;
   stillCardRuntimeV1.html = async () => '<!doctype html><title>Still review</title>';
@@ -58,12 +68,11 @@ test('a client that draws apps gets the card on Still’s four tools and can rea
   t.after(() => { mcpPrivateAuthRuntime.flags = originalFlags; stillCardRuntimeV1.html = originalHtml; stillCardRuntimeV1.uri = originalUri; });
   const server = app();
 
+  const listed = async (wallet: string) => (await rpc(server, wallet, 'tools/list')).result!.tools as ListedV1;
   await rpc(server, WALLET, 'initialize', initialize(DRAWS));
-  const tools = (await rpc(server, WALLET, 'tools/list')).result!.tools as Array<{ name: string; _meta?: Record<string, unknown> }>;
-  for (const name of STILL_TOOLS) {
-    assert.deepEqual(tools.find((tool) => tool.name === name)?._meta, { ui: { resourceUri: CARD_URI }, 'ui/resourceUri': CARD_URI }, name);
-  }
-  assert.equal(tools.find((tool) => tool.name === 'miorail_get_my_still')?._meta, undefined, 'a read with nothing to sign has no card');
+  const tools = await listed(WALLET);
+  namesTheCard(tools);
+  assert.deepEqual(tools.find((tool) => tool.name === 'still_card_lending')?._meta, { ui: { resourceUri: CARD_URI, visibility: ['app'] } });
   const card = (await rpc(server, WALLET, 'resources/read', { uri: CARD_URI })).result!.contents as Array<Record<string, unknown>>;
   assert.equal(card[0]!.mimeType, STILL_CARD_MIME_V1);
   assert.equal(card[0]!.text, '<!doctype html><title>Still review</title>');
@@ -73,16 +82,19 @@ test('a client that draws apps gets the card on Still’s four tools and can rea
   assert.ok(csp.connectDomains.includes('wss://relay.walletconnect.org') && csp.frameDomains.includes('https://verify.walletconnect.org'));
   assert.ok([...csp.connectDomains, ...csp.frameDomains].every((origin) => /^(?:wss|https):\/\/[a-z]+\.walletconnect\.(?:org|com)$/.test(origin)));
 
-  // Another wallet's client said nothing about apps: text only, and not the card's own tool.
+  // Another wallet's client said nothing about apps: the same tools name the card, which it may ignore,
+  // and it is never listed the card's own tool.
   await rpc(server, OTHER, 'initialize', initialize({}));
-  const plain = (await rpc(server, OTHER, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
-  assert.ok(plain.every((tool) => tool._meta === undefined));
+  const plain = await listed(OTHER);
+  namesTheCard(plain);
   assert.equal(plain.some((tool) => tool.name === 'still_card_lending'), false);
 
-  // Connecting again without the extension forgets it.
+  // 2026-11-05: a second client of the same grant, one that draws nothing, connects last. The tools it lists,
+  // which the grant's other host may keep, still name the card; only the card's own tool goes.
   await rpc(server, WALLET, 'initialize', initialize({}));
-  const again = (await rpc(server, WALLET, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
-  assert.equal(again.find((tool) => tool.name === 'miorail_prepare_still_purchase')?._meta, undefined);
+  const again = await listed(WALLET);
+  namesTheCard(again);
+  assert.equal(again.some((tool) => tool.name === 'still_card_lending'), false);
 });
 
 // 2026-11-04 03:34 UTC: after a deploy Claude read the card by the address its tools had named before it, without
@@ -94,11 +106,14 @@ test('after a restart, a host that kept its tools gets the card deployed now at 
   stillCardRuntimeV1.uri = () => CARD_URI;
   t.after(() => { mcpPrivateAuthRuntime.flags = originalFlags; stillCardRuntimeV1.html = originalHtml; stillCardRuntimeV1.uri = originalUri; });
   const server = app();
-  const listed = async (wallet: string) => (await rpc(server, wallet, 'tools/list')).result!.tools as Array<{ name: string; _meta?: unknown }>;
+  const listed = async (wallet: string) => (await rpc(server, wallet, 'tools/list')).result!.tools as ListedV1;
 
   await rpc(server, WALLET, 'initialize', initialize(DRAWS));
   mcpPrivateAppsRuntimeV1.grants.clear(); // the restart
-  assert.equal((await listed(WALLET)).find((tool) => tool.name === 'miorail_prepare_still_wallet_purchase')?._meta, undefined);
+  // The tools still name the card; the card's own tool waits until the grant is known again to draw it.
+  const restarted = await listed(WALLET);
+  namesTheCard(restarted);
+  assert.equal(restarted.some((tool) => tool.name === 'still_card_lending'), false);
   for (const uri of [STILL_CARD_URI_V1, 'ui://still/review.fedcba987654.html', CARD_URI]) {
     const contents = (await rpc(server, WALLET, 'resources/read', { uri })).result?.contents as Array<Record<string, unknown>> | undefined;
     assert.deepEqual([contents?.[0]?.uri, contents?.[0]?.mimeType, contents?.[0]?.text], [uri, STILL_CARD_MIME_V1, '<!doctype html><title>Still review, now</title>'], uri);
@@ -118,7 +133,7 @@ test('after a restart, a host that kept its tools gets the card deployed now at 
     assert.ok((await rpc(server, OTHER, 'resources/read', { uri })).error, uri);
   }
   await rpc(server, OTHER, 'initialize', initialize({}));
-  assert.ok((await listed(OTHER)).every((tool) => tool._meta === undefined && tool.name !== 'still_card_lending'));
+  assert.ok((await listed(OTHER)).every((tool) => tool.name !== 'still_card_lending'));
 });
 
 test('the deployed file gets the server’s WalletConnect project id, and an id that is not one leaves the card without it', async (t) => {

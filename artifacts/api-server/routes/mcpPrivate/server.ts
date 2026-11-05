@@ -92,7 +92,7 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.15.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.15.1';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -187,11 +187,16 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
   };
 
   // A host that draws apps shows Still's prepare and status results as a card, at the address of this card.
-  const cardUri = options.apps ? stillCardRuntimeV1.uri() : null;
-  const card = cardUri ? { _meta: stillCardToolMetaV1(cardUri) } : {};
-  if (cardUri) {
-    registerStillCardV1(server, cardUri);
-    // The card's own way to the review it signs: hidden from the model by the host.
+  // Every client's tools name it, and any client can read it: a host that draws nothing ignores _meta, and one
+  // grant can serve two hosts. On 2026-11-05 at 08:02 UTC a client of the operator's Claude grant that draws no
+  // apps connected twice and listed tools without the card; at 12:22 claude.ai, which does draw it, showed a
+  // loan as a plain tool call, and the last tools listed for that grant carried no card.
+  const cardUri = stillCardRuntimeV1.uri();
+  const card = { _meta: stillCardToolMetaV1(cardUri) };
+  registerStillCardV1(server, cardUri);
+  // The card's own tool hands a ready review's calls to the card, so it is listed only to a client that said it
+  // draws apps, or that drew the card (index.ts), and is hidden from the model by that host.
+  if (options.apps) {
     server.registerTool(STILL_CARD_LENDING_TOOL_V1, {
       title: 'Still review card: the lending review',
       description: 'Used by Still’s review card only, never by the assistant: the lending review, its arming, the wallet’s submission and the onchain result, through Still’s own routes as this grant’s wallet.',

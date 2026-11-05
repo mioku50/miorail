@@ -17,9 +17,14 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
 // wallet signs. The file is the interface build's dist/mcp-app/index.html,
 // deployed to the web root beside index.html.
 //
-// A host that draws nothing would list the card's metadata as noise, so it is
-// attached only for a client that said, when it connected, that it draws apps
-// (index.ts remembers that per grant).
+// Every client's Still tools name the card, and any client can read it: a host
+// that draws nothing ignores _meta. The card used to be named only to a client
+// that said, when it connected, that it draws apps, remembered per grant. But
+// one grant can serve two hosts: on 2026-11-05 the operator's Claude grant was
+// listed last by a client that draws nothing, and claude.ai then showed a loan
+// as a plain tool call. Only the card's own tool (stillCardLending.ts), which
+// hands a ready review's calls to the card, is still for a client that draws
+// apps (index.ts remembers that per grant).
 //
 // A host keeps a card by its address. On 2026-11-04 Claude drew the card it
 // had fetched before a deploy, one that knew nothing of a purchase paid from

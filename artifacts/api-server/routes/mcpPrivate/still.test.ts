@@ -63,9 +63,9 @@ test('the protocol advertises the wallet-free read, the source block and partial
   const client = await connected(t);
   const tool = (await client.listTools()).tools.find(entry => entry.name === NAME)!;
   assert.ok(tool);
-  assert.equal(client.getServerVersion()?.version, '1.15.0');
+  assert.equal(client.getServerVersion()?.version, '1.15.1');
   // Still's signed-in server: shown as Still, with Still's mark, like Still's own server.
-  assert.deepEqual(client.getServerVersion(), { name: 'miorail-connected', version: '1.15.0', ...STILL_MCP_IDENTITY_V1 });
+  assert.deepEqual(client.getServerVersion(), { name: 'miorail-connected', version: '1.15.1', ...STILL_MCP_IDENTITY_V1 });
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}), []);
   assert.equal(tool.inputSchema.additionalProperties, false);
   assert.equal(tool.annotations?.readOnlyHint, true);
