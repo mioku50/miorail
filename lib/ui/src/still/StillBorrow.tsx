@@ -83,6 +83,22 @@ export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletNam
   return `${wallet} sends one transaction at a time, so a loan against a stock goes in steps: your wallet asks for each one, and Still checks each next step again before it does.`;
 }
 
+const CRYPTO_CHOICES_V1 = [
+  ['cbBTC', 'Bitcoin on Base', '₿'],
+  ['WETH', 'Wrapped ETH', 'Ξ'],
+  ['ETH', 'Wrap native ETH', 'Ξ'],
+] as const;
+
+/** One collateral card: its mark, its token, and what it is. */
+function BorrowChoiceV1(props: { asset: StillBorrowAssetV1; description: string; mark: string; stock: boolean; pressed: boolean; disabled: boolean; onChoose: (asset: StillBorrowAssetV1) => void }) {
+  return (
+    <button className="still-borrow-choice" type="button" aria-pressed={props.pressed} disabled={props.disabled} onClick={() => props.onChoose(props.asset)}>
+      <span className={props.stock ? 'still-borrow-symbol is-stock' : 'still-borrow-symbol'} aria-hidden="true">{props.mark}</span>
+      <span><strong>{props.asset}</strong><span className="still-note">{props.description}</span></span>
+    </button>
+  );
+}
+
 function heldUntilV1(iso: string): string {
   const at = new Date(iso);
   return Number.isFinite(at.getTime()) ? at.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) : 'soon';
@@ -165,25 +181,23 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
               <div className="still-step"><span className="n" aria-hidden="true">1</span>Collateral</div>
               <h2 id={`${id}-collateral-title`}>Choose what to add.</h2>
               <form onSubmit={(event) => { event.preventDefault(); if (canRead) model.onReadLimit(); }}>
-                <div className="still-borrow-assets" role="group" aria-label="Collateral token">
-                  {([
-                    ['cbBTC', 'Bitcoin on Base', '₿'],
-                    ['WETH', 'Wrapped ETH', 'Ξ'],
-                    ['ETH', 'Wrap native ETH', 'Ξ'],
-                  ] as const).filter(([asset]) => !(model.spend && asset === 'ETH')).map(([asset, description, symbol]) => (
-                    <button key={asset} className="still-borrow-choice" type="button" aria-pressed={model.asset === asset} disabled={busy} onClick={() => model.onAsset(asset)}>
-                      <span className="still-borrow-symbol" aria-hidden="true">{symbol}</span>
-                      <span><strong>{asset}</strong><span className="still-note">{description}</span></span>
-                    </button>
+                {/* Every collateral is the same kind of card, in two groups that each name the protocol
+                    the loan lives on. The operator asked on 2026-11-05 for the stocks to be chosen the
+                    way cbBTC and WETH are, with a mark each, instead of from a list. The mark is Still's
+                    own: a stock's is the blue circle with its company's initial, as on Assets, never the
+                    company's logo, which is not ours to copy. */}
+                <p className="still-borrow-label" id={`${id}-crypto-label`}>Crypto collateral · Morpho</p>
+                <div className="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby={`${id}-crypto-label`}>
+                  {CRYPTO_CHOICES_V1.filter(([asset]) => !(model.spend && asset === 'ETH')).map(([asset, description, symbol]) => (
+                    <BorrowChoiceV1 key={asset} asset={asset} description={description} mark={symbol} stock={false} pressed={model.asset === asset} disabled={busy} onChoose={model.onAsset} />
                   ))}
                 </div>
-                <label className="still-borrow-label" htmlFor={`${id}-stock`}>Stock collateral · Aave V4</label>
-                <select id={`${id}-stock`} className="still-borrow-stock-select" disabled={busy}
-                  value={STOCKS.some(stock => stock.id === model.asset) ? model.asset! : ''}
-                  onChange={event => { const stock = STOCKS.find(row => row.id === event.target.value); if (stock) model.onAsset(stock.id); }}>
-                  <option value="">Choose a stock</option>
-                  {STOCKS.map(stock => <option value={stock.id} key={stock.id}>{stock.id} · {stock.name}</option>)}
-                </select>
+                <p className="still-borrow-label" id={`${id}-stock-label`}>Stock collateral · Aave V4</p>
+                <div className="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby={`${id}-stock-label`}>
+                  {STOCKS.map((stock) => (
+                    <BorrowChoiceV1 key={stock.id} asset={stock.id} description={stock.name} mark={stock.name.charAt(0)} stock pressed={model.asset === stock.id} disabled={busy} onChoose={model.onAsset} />
+                  ))}
+                </div>
                 <label className="still-borrow-label" htmlFor={`${id}-collateral`}>Amount to add</label>
                 <div className={model.onMax ? 'still-borrow-amount has-max' : 'still-borrow-amount'}>
                   <input id={`${id}-collateral`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.collateralAmount} placeholder="0" disabled={busy || model.asset === null} aria-describedby={`${id}-collateral-unit ${id}-collateral-help`} onChange={(event) => model.onCollateralAmount(event.target.value)} />

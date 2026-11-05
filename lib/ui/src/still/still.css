@@ -696,6 +696,11 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-borrow .still-borrow-choice strong { font-size: 16px; font-weight: 600; }
 .still-borrow .still-borrow-choice .still-note { font-size: 11px; }
 .still-borrow .still-borrow-symbol { display: flex; flex: none; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1.5px solid var(--sm-wire); border-radius: 50%; color: var(--sm-ink); background: var(--sm-crypto-fill); font-size: 20px; }
+/* Get money's collateral: stocks and crypto as cards of one size, at least two to a row; a stock's
+   mark is the filled circle Assets gives a stock, a coin's the wired one. */
+.still-borrow .still-borrow-collateral { grid-template-columns: repeat(auto-fill, minmax(min(140px, calc(50% - 5px)), 1fr)); }
+.still-borrow .still-borrow-collateral .still-borrow-choice > span:last-child { min-width: 0; }
+.still-borrow .still-borrow-symbol.is-stock { border-color: var(--sm-stock); background: var(--sm-stock); color: var(--sm-stock-text); font-size: 15px; font-weight: 600; }
 .still-borrow .still-borrow-label { display: block; margin: 18px 0 7px; font-size: 14px; font-weight: 500; }
 .still-borrow .still-borrow-amount { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1.5px solid var(--sm-line); border-radius: 14px; background: var(--sm-ground); padding-right: 14px; }
 .still-borrow .still-borrow-amount input { width: 100%; min-width: 0; height: 52px; border: 0; border-radius: 14px; background: transparent; padding: 0 14px; color: var(--sm-ink); font: inherit; font-size: 20px; }

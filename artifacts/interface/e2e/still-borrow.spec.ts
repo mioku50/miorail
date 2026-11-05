@@ -110,7 +110,11 @@ for (const width of [390, 1366]) {
   test(`stock collateral uses its own exact decimals and Aave review (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 }); const state = await install(page);
     await openSignedIn(page, '/borrow');
-    await page.getByLabel('Stock collateral · Aave V4', { exact: true }).selectOption('NVDAc');
+    // The stocks are cards in a group that names Aave V4, like cbBTC's (2026-11-05).
+    const stocks = page.getByRole('group', { name: 'Stock collateral · Aave V4', exact: true });
+    await expect(stocks.getByRole('button')).toHaveCount(STOCKS.length);
+    await stocks.getByRole('button', { name: /^NVDAc\s*NVIDIA$/ }).click();
+    await expect(stocks.getByRole('button', { name: /^NVDAc\s*NVIDIA$/ })).toHaveAttribute('aria-pressed', 'true');
     await page.getByLabel('Amount to add', { exact: true }).fill('0.05000001');
     expect(state.limitReads).toHaveLength(0);
     await page.getByRole('button', { name: 'Read borrowing limit', exact: true }).click();
@@ -135,7 +139,7 @@ for (const width of [390, 1366]) {
   test(`Max fills the whole balance from one server read, and native ETH keeps the fee reserve (${width}px)`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 }); const state = await install(page);
     await openSignedIn(page, '/borrow');
-    await page.getByLabel('Stock collateral · Aave V4', { exact: true }).selectOption('NVDAc');
+    await page.getByRole('group', { name: 'Stock collateral · Aave V4', exact: true }).getByRole('button', { name: /^NVDAc\s*NVIDIA$/ }).click();
     await page.getByRole('button', { name: 'Max', exact: true }).click();
     await expect(page.getByLabel('Amount to add', { exact: true })).toHaveValue('1');
     expect(state.limitReads).toHaveLength(1);

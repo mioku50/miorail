@@ -3,6 +3,8 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
+import { STOCKS } from '@mioagent/still-engine/registry';
+
 import { StillBorrow, type StillBorrowModelV1 } from '../src/still/StillBorrow';
 import { skyStateV1 } from '../src/still/skyState';
 
@@ -25,6 +27,16 @@ function button(html: string, label: string): string {
   const found = html.match(new RegExp(`<button\\b[^>]*>${label}<\\/button>`));
   assert(found, `expected button ${label}`);
   return found[0];
+}
+const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+/** The collateral cards of the group a label names, as the page drew them. */
+function choiceGroup(html: string, label: string) {
+  const id = html.match(new RegExp(`<p class="still-borrow-label" id="([^"]+)">${escapeRegExp(label)}</p>`))?.[1];
+  assert(id, `expected the label ${label}`);
+  const group = html.match(new RegExp(`<div class="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby="${escapeRegExp(id)}">(.*?)</div>`))?.[1];
+  assert(group !== undefined, `expected the group ${label}`);
+  return [...group.matchAll(/<button class="still-borrow-choice" type="button" aria-pressed="(true|false)"( disabled="")?><span class="still-borrow-symbol( is-stock)?" aria-hidden="true">([^<]*)<\/span><span><strong>([^<]+)<\/strong><span class="still-note">([^<]+)<\/span><\/span><\/button>/g)]
+    .map((card) => ({ asset: card[5], description: card[6], mark: card[4], stock: card[3] !== undefined, pressed: card[1] === 'true', disabled: card[2] !== undefined }));
 }
 
 describe('Still borrowing starts with a selected pledge and a server read', () => {
@@ -59,18 +71,40 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
 
   it('offers the registered stocks, cbBTC, WETH and explicit native ETH without automatic-Max choices', () => {
     const html = render({ asset: null, collateralAmount: '' });
-    assert.match(html, /aria-label="Collateral token"/);
     assert.match(html, /<strong>cbBTC<\/strong>/);
     assert.match(html, /<strong>WETH<\/strong>/);
     assert.match(html, /<strong>ETH<\/strong>/);
     assert.match(html, /Wrapped ETH/);
     assert.match(html, /Wrap native ETH/);
     assert.match(html, /<dt>cbBTC, WETH or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
-    assert.match(html, /Stock collateral · Aave V4/);
-    assert.match(html, /<option value="NVDAc">NVDAc · NVIDIA<\/option>/);
     assert.match(button(html, 'Read borrowing limit'), /disabled=""/);
     assert.doesNotMatch(html, /<button[^>]*>Max|Review loan/);
     assert.match(html, /Choose your collateral and read the borrowing limit first/);
+  });
+
+  it('shows every registered stock as a card like cbBTC’s, in a group that names Aave V4', () => {
+    // 2026-11-05, the operator: the stocks are chosen the way cbBTC and WETH are, with a mark each.
+    const html = render({ asset: null, collateralAmount: '' });
+    const crypto = choiceGroup(html, 'Crypto collateral · Morpho');
+    assert.deepEqual(crypto.map((card) => card.asset), ['cbBTC', 'WETH', 'ETH']);
+    assert(crypto.every((card) => !card.stock), 'a coin wears the wired mark');
+    const stocks = choiceGroup(html, 'Stock collateral · Aave V4');
+    // Counted against the registry, not sampled: a stock added there appears here.
+    assert.deepEqual(stocks.map((card) => card.asset), STOCKS.map((stock) => stock.id));
+    for (const [index, stock] of STOCKS.entries()) {
+      assert.deepEqual(stocks[index], { asset: stock.id, description: stock.name, mark: stock.name.charAt(0), stock: true, pressed: false, disabled: false }, stock.id);
+    }
+    assert.doesNotMatch(html, /<select|<option/);
+  });
+
+  it('marks the chosen stock alone, and holds every card while the limit is read', () => {
+    const chosen = choiceGroup(render({ asset: 'SPCXc' }), 'Stock collateral · Aave V4');
+    assert.deepEqual(chosen.filter((card) => card.pressed).map((card) => card.asset), ['SPCXc']);
+    assert(choiceGroup(render({ asset: 'SPCXc' }), 'Crypto collateral · Morpho').every((card) => !card.pressed));
+    const reading = render({ asset: 'SPCXc', reading: true });
+    for (const label of ['Crypto collateral · Morpho', 'Stock collateral · Aave V4']) {
+      assert(choiceGroup(reading, label).every((card) => card.disabled), label);
+    }
   });
 
   it('distinguishes native ETH in the wallet from already-pledged WETH and states the fee reserve', () => {
