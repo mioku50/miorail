@@ -19,7 +19,8 @@ import {
   type PublicGiftLikeV1,
 } from '../src/console/giftView';
 import { ReviewScreen } from '../src/console/ConsoleScreens';
-import { GiftForm } from '../src/console/MarketRealityScreen';
+import { GiftForm, TradeAmountForm } from '../src/console/MarketRealityScreen';
+import { tradeMaxV1 } from '../src/console/stockSellAmount';
 
 // ---------------------------------------------------------------------------
 // A gift from what the wallet already holds: the form reads the holding first,
@@ -232,3 +233,25 @@ describe('the public gift page', () => {
     assert.doesNotMatch(view.note, /guaranteed minimum/);
   });
 });
+
+describe('Max on a buy or a sell', () => {
+  test('writes the whole balance exactly, and says where it came from', () => {
+    assert.deepEqual(tradeMaxV1({ status: 'read', symbol: 'AAPLc', decimals: 8, atomic: '2130000' }), { text: '0.0213', note: 'In your wallet: 0.0213 AAPLc.' });
+    assert.deepEqual(tradeMaxV1({ status: 'read', symbol: 'USDC', decimals: 6, atomic: '47600' }), { text: '0.0476', note: 'In your wallet: 0.0476 USDC.' });
+  });
+
+  test('offers no Max for nothing, or for a balance not read, and says which', () => {
+    assert.deepEqual(tradeMaxV1({ status: 'read', symbol: 'AAPLc', decimals: 8, atomic: '0' }), { text: null, note: 'Your wallet holds no AAPLc.' });
+    assert.deepEqual(tradeMaxV1({ status: 'none', symbol: 'AAPLc' }), { text: null, note: 'Your wallet holds no AAPLc.' });
+    assert.deepEqual(tradeMaxV1({ status: 'unavailable', message: 'Not read.' }), { text: null, note: 'Not read.' });
+    assert.deepEqual(tradeMaxV1(null), { text: null, note: null });
+  });
+
+  test('shows no Max before the balance is read', () => {
+    const html = renderToStaticMarkup(
+      <TradeAmountForm direction="sell" tokenDecimals={8} onSubmit={() => null} onCancel={() => undefined} loadBalance={() => new Promise(() => undefined)} />,
+    );
+    assert.doesNotMatch(html, />Max</);
+  });
+});
+

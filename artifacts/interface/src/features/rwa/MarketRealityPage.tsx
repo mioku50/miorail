@@ -25,7 +25,7 @@ import {
   type StocksConsoleQuestionV1,
   type StocksSectionV1,
 } from '@mioagent/ui';
-import { useGiftHolding, useResolveGiftRecipient, useSponsoredGasStatus, useStatus } from '@mioagent/api-client-react';
+import { fetchStillUsdcV1, useGiftHolding, useResolveGiftRecipient, useSponsoredGasStatus, useStatus } from '@mioagent/api-client-react';
 import { useConsoleNav } from '../console/useConsoleNav';
 import { useAuthGate } from '../../app/AuthProvider';
 import { expectedChainId } from '../../lib/chain';
@@ -266,6 +266,19 @@ export function MarketRealityPage({ symbol: segment }: { symbol?: string | null 
         };
       }
       if (read.outcome === 'none') return { status: 'none', symbol: read.symbol, decimals: read.decimals };
+      return { status: 'unavailable', message: read.message };
+    },
+    // Max: a sell is bounded by the same holding read as a gift from it, a
+    // buy by the wallet's own USDC. Signed out there is no wallet, so no Max.
+    tradeBalance: !gate.showPrivateSurfaces ? undefined : async ({ tokenAddress, direction }) => {
+      if (direction === 'buy') {
+        const usdc = await fetchStillUsdcV1().catch(() => null);
+        return usdc ? { status: 'read', symbol: 'USDC', decimals: usdc.decimals, atomic: usdc.raw }
+          : { status: 'unavailable', message: 'Your wallet’s USDC could not be read just now; type the amount.' };
+      }
+      const read = await giftHolding.mutateAsync({ tokenAddress });
+      if (read.outcome === 'held') return { status: 'read', symbol: read.symbol, decimals: read.decimals, atomic: read.balanceAtomic };
+      if (read.outcome === 'none') return { status: 'none', symbol: read.symbol };
       return { status: 'unavailable', message: read.message };
     },
   });

@@ -1,6 +1,7 @@
 import React, { useState, type ReactNode } from 'react';
 
 import { MIORAIL_SOURCE_URL_V1 } from '../console/ConsoleShell';
+import { stageGoalHandoffV1 } from '../console/goalHandoff';
 import { MIORAIL_CONNECTED_MCP_URL_V1, addToClaudeUrlV1, askChatGptUrlV1, askClaudeUrlV1 } from '../console/WalletMcpMiorailCard';
 import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../stillOrigin';
 import type { AssetsViewV1 } from './assetsView';
@@ -71,6 +72,11 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
                         {row.lines.map((line, index) => (
                           <div key={index} className="line">{line.strong ? <strong>{line.strong}</strong> : null}{line.text}</div>
                         ))}
+                        {row.sell ? (
+                          <div className="line">
+                            <StillLink href={row.sell.href} onClick={() => stageGoalHandoffV1(row.sell!.goal)}>Sell for USDC on Swap →</StillLink>
+                          </div>
+                        ) : null}
                       </div>
                       <div className="mono val">{row.value ?? 'Not read'}</div>
                     </li>

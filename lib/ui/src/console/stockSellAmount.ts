@@ -89,3 +89,30 @@ export function stockSellConfirmAllowedV1(
 ): boolean {
   return Boolean(amountAtomic) && state === 'established';
 }
+
+// ---------------------------------------------------------------------------
+// Max, on a buy or a sell: the whole balance, exactly.
+//
+// A buy spends USDC and a sell spends the stock, so each is bounded by a
+// different read: the wallet's USDC for a buy, its holding of this exact
+// contract for a sell. Max writes that balance into the field in full, never
+// rounded, and the field is then read like anything typed: the button still
+// says the amount it sends, and the route is planned and quoted again at it.
+// (Operator, 2026-11-05: a sell typed as 0.213 for a holding of 0.0213.)
+// ---------------------------------------------------------------------------
+
+export type TradeBalanceV1 =
+  | { status: 'read'; symbol: string; decimals: number; atomic: string }
+  | { status: 'none'; symbol: string }
+  | { status: 'unavailable'; message: string };
+
+/** What Max writes into the field, and the line that says where it came from. */
+export function tradeMaxV1(balance: TradeBalanceV1 | null): { text: string | null; note: string | null } {
+  if (balance === null) return { text: null, note: null };
+  if (balance.status === 'unavailable') return { text: null, note: balance.message };
+  if (balance.status === 'none' || !/^[0-9]+$/.test(balance.atomic) || !/[1-9]/.test(balance.atomic)) {
+    return { text: null, note: `Your wallet holds no ${balance.symbol}.` };
+  }
+  const text = tokenDecimalV1(balance.atomic, balance.decimals);
+  return { text, note: `In your wallet: ${text} ${balance.symbol}.` };
+}

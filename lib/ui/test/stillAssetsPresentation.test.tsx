@@ -114,3 +114,31 @@ describe('Still Assets presentation', () => {
     assert.ok(summary >= 0 && summary < tabs && tabs < holdings && holdings < dividends);
   });
 });
+
+describe('selling a holding on Swap, from Assets', () => {
+  const report = (holdings: Parameters<typeof snapshot>[0]): MirrorReport => JSON.parse(JSON.stringify(computeMirror({
+    universe: universe(),
+    snapshot: snapshot(holdings),
+    calendar: calendar(),
+    subject: { address: '0x00000000000000000000000000000000000b0b0b', name: null, input: 'example' },
+    assembledAt: NOW,
+  })));
+  const goalOf = (view: ReturnType<typeof assetsViewV1>, id: string) => view.rows.find((row) => row.id === id)?.sell?.goal ?? null;
+  const NVDA = '0xb20000000000000000000078ee7ce2fE4908108C';
+
+  it('hands over the whole free balance, exactly, by its contract', () => {
+    const view = assetsViewV1({ report: portfolio(), usdc: { raw: '1000000', decimals: 6 } });
+    // 0.8 NVDAc free beside 3.4 pledged: only the free part can be sold.
+    assert.equal(goalOf(view, 'NVDAc'), `swap my 0.8 ${NVDA} to USDC`);
+    assert.equal(view.rows.find((row) => row.id === 'NVDAc')!.sell!.href, `/routes?goal=${encodeURIComponent(`swap my 0.8 ${NVDA} to USDC`)}`);
+    assert.equal(goalOf(view, 'cbBTC'), 'swap my 0.012 0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf to USDC');
+    assert.equal(goalOf(view, 'USDC'), null);
+    assert.match(renderAssets(view), /Sell for USDC on Swap/);
+  });
+
+  it('offers nothing for what is all pledged, and asks how much ETH', () => {
+    const view = assetsViewV1({ report: report({ pledged: { NVDAc: 340_000_000n }, aaveDebt: 100_000_000n, wallet: { ETH: 10n ** 16n } }) });
+    assert.equal(goalOf(view, 'NVDAc'), null);
+    assert.equal(goalOf(view, 'ETH'), 'swap my ETH to USDC');
+  });
+});

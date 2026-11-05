@@ -137,3 +137,17 @@ export function swapTokenGoalV1(tokenAddress: string, amountDecimal?: string | n
 export function swapTokenHrefV1(tokenAddress: string, amountDecimal?: string | null): string {
   return `/routes?goal=${encodeURIComponent(swapTokenGoalV1(tokenAddress, amountDecimal))}`;
 }
+
+/**
+ * Leave the one-shot token for a goal this app is about to hand over, so the
+ * console compares it at once. Storage that is unavailable leaves the safe
+ * half: the goal still travels in the URL and waits for a click.
+ */
+export function stageGoalHandoffV1(goal: string): void {
+  try {
+    window.sessionStorage.setItem(GOAL_HANDOFF_KEY_V1, goal);
+  } catch {
+    // Private mode or a locked-down browser.
+  }
+}
+

@@ -2027,6 +2027,16 @@ export interface StillUsdcV1 {
  * only what can be collateral. A read that did not answer is an error, never
  * a zero balance.
  */
+/** The signed-in wallet's own USDC, read once: for a page that needs it on demand, as a buy's Max does. */
+export async function fetchStillUsdcV1(): Promise<StillUsdcV1> {
+  const result = await fetchApi<{ outcome?: unknown; usdc?: Partial<StillUsdcV1> }>('/api/still/mine/usdc');
+  const usdc = result.usdc;
+  if (result.outcome !== 'read' || !usdc || typeof usdc.raw !== 'string' || !/^\d+$/.test(usdc.raw) || usdc.decimals !== 6 || typeof usdc.block !== 'string') {
+    throw new Error('still_usdc_unread');
+  }
+  return { raw: usdc.raw, decimals: usdc.decimals, block: usdc.block };
+}
+
 export function useStillUsdcV1(walletAddress: string | null, options?: { enabled?: boolean }) {
   const wallet = walletAddress?.toLowerCase() ?? null;
   return useQuery({
@@ -2034,12 +2044,7 @@ export function useStillUsdcV1(walletAddress: string | null, options?: { enabled
     enabled: options?.enabled === true && wallet !== null, retry: false, staleTime: 20_000,
     queryFn: async (): Promise<StillUsdcV1> => {
       if (!wallet) throw new Error('authentication_required');
-      const result = await fetchApi<{ outcome?: unknown; usdc?: Partial<StillUsdcV1> }>('/api/still/mine/usdc');
-      const usdc = result.usdc;
-      if (result.outcome !== 'read' || !usdc || typeof usdc.raw !== 'string' || !/^\d+$/.test(usdc.raw) || usdc.decimals !== 6 || typeof usdc.block !== 'string') {
-        throw new Error('still_usdc_unread');
-      }
-      return { raw: usdc.raw, decimals: usdc.decimals, block: usdc.block };
+      return fetchStillUsdcV1();
     },
   });
 }

@@ -3,6 +3,8 @@ import type { DividendWalletResponseV1 } from '@mioagent/rwa-market-reality/divi
 import { formatCents, formatTokenAmount } from '@mioagent/still-engine/format';
 import { CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
 import { dividendMoneyV1, positiveDividendMoneyV1, sumDividendMoneyV1 } from './dividendMoney';
+import { swapTokenGoalV1 } from '../console/goalHandoff';
+import { tokenDecimalV1 } from '../console/stockSellAmount';
 
 
 // ---------------------------------------------------------------------------
@@ -25,6 +27,9 @@ export interface AssetRowV1 {
   /** "$785.57", "…" while it is read, or null when it was not read. */
   value: string | null;
   lines: Array<{ text: string; strong?: string }>;
+  /** Selling what is free in the wallet for USDC, on Swap: the goal it hands over and where.
+   * Absent for USDC, for nothing free (what is pledged holds up a loan) and for a row not read. */
+  sell?: { goal: string; href: string };
 }
 
 export interface LoanRowV1 {
@@ -145,6 +150,12 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       value: unread || line.valueCents === null ? null : formatCents(line.valueCents),
       lines,
     };
+    // The whole free balance, exactly, by its contract. ETH goes without an amount: all of it would
+    // leave nothing for the network fee, and the line counts WETH beside it, so Swap asks how much.
+    if (!unread && wallet > BigInt(0)) {
+      const goal = line.asset === 'ETH' ? swapTokenGoalV1('ETH') : swapTokenGoalV1(line.token, tokenDecimalV1(wallet.toString(), decimals));
+      row.sell = { goal, href: `/routes?goal=${encodeURIComponent(goal)}` };
+    }
     if (line.kind === 'crypto') coins.set(line.asset, row);
     else stocks.push({ row, cents: row.value === null ? BigInt(-1) : BigInt(line.valueCents!) });
   }

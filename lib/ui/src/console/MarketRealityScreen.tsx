@@ -34,7 +34,7 @@ import {
   usdcCentsLabelV1,
   type GiftHoldingV1,
 } from './giftView';
-import { tokenDecimalV1 } from './stockSellAmount';
+import { tokenDecimalV1, tradeMaxV1, type TradeBalanceV1 } from './stockSellAmount';
 import { WeekendMarketCard } from './WeekendMarketCard';
 import { ReopenGameCard, type ReopenGameModelV1 } from './ReopenGameCard';
 import { DividendCalendarCard } from './DividendCalendarCard';
@@ -231,6 +231,9 @@ export interface MarketRealityActionsV1 {
   /** What this wallet holds of a stock, read when the Gift form opens.
    * Absent: the form only offers buying the gift. */
   loadGiftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
+  /** What a buy or a sell can spend at most, read when its form opens: the wallet's USDC for a
+   * buy, its holding of the stock for a sell. Absent: the form has no Max. */
+  loadTradeBalance?: (input: { tokenAddress: string; direction: 'buy' | 'sell' }) => Promise<TradeBalanceV1>;
   /** Open the tenant's Radar feed. */
   onOpenRadar?: () => void;
   /** Measure the exact question now. Absent when the server does not offer it,
@@ -1379,6 +1382,7 @@ function HeadlineAnswer({
   onTrade,
   onGift,
   loadGiftHolding,
+  loadTradeBalance,
 }: {
   headline: StocksHeadlineViewV1;
   /** `NVDA`, and the company where the reviewed source names one. */
@@ -1394,6 +1398,7 @@ function HeadlineAnswer({
   onPrepare?: (tokenAddress: string, direction: 'buy' | 'sell') => void;
   onGift?: (gift: GiftRequestV1) => Promise<string | null>;
   loadGiftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
+  loadTradeBalance?: (input: { tokenAddress: string; direction: 'buy' | 'sell' }) => Promise<TradeBalanceV1>;
   trade?: {
     note: string | null;
     tokenDecimals: Readonly<Record<string, number | null>>;
@@ -1533,6 +1538,7 @@ function HeadlineAnswer({
           onSubmit={(amountAtomic) =>
             onTrade!({ tokenAddress: tradable.tokenAddress, direction: open, amountAtomic })
           }
+          loadBalance={loadTradeBalance ? () => loadTradeBalance({ tokenAddress: tradable.tokenAddress, direction: open }) : undefined}
         />
       ) : null}
       {tradable && trade?.note ? <p className="lnote">{trade.note}</p> : null}
@@ -1589,17 +1595,40 @@ export function TradeAmountForm({
   tokenDecimals,
   onSubmit,
   onCancel,
+  loadBalance,
 }: {
   direction: 'buy' | 'sell';
   tokenDecimals: number | null;
   onSubmit: (amountAtomic: string) => string | null;
   onCancel: () => void;
+  /** What this side can spend at most, read once when the form opens. Absent: no Max. */
+  loadBalance?: () => Promise<TradeBalanceV1>;
 }) {
   const [text, setText] = useState('');
   const [refusal, setRefusal] = useState<string | null>(null);
+  const [balance, setBalance] = useState<TradeBalanceV1 | null>(null);
   const input = useRef<HTMLInputElement>(null);
   // The reader pressed Buy or Sell to type a number; the caret goes there.
   useEffect(() => input.current?.focus(), []);
+  useEffect(() => {
+    if (!loadBalance) return;
+    let live = true;
+    loadBalance().then(
+      (read) => live && setBalance(read),
+      () => live && setBalance({ status: 'unavailable', message: 'What your wallet holds could not be read just now; type the amount.' }),
+    );
+    return () => {
+      live = false;
+    };
+    // Read once, when the form opens: the balance is the wallet's, not the text's.
+  }, []);
+  const max = tradeMaxV1(balance);
+  const fillMax = () => {
+    if (max.text === null) return;
+    setText(max.text);
+    setRefusal(null);
+    input.current?.focus();
+  };
   const buy = direction === 'buy';
   const amount = stockTradeAmountV1({ direction, text, tokenDecimals });
   const wrong = amount.status !== 'ready' && amount.status !== 'empty';
@@ -1633,6 +1662,11 @@ export function TradeAmountForm({
               ${preset}
             </button>
           ))}
+          {max.text !== null ? (
+            <button type="button" className={`pill${text === max.text ? ' on' : ''}`} aria-pressed={text === max.text} onClick={fillMax}>
+              Max
+            </button>
+          ) : null}
         </div>
       ) : null}
       <div className="mr-trade-row">
@@ -1654,6 +1688,11 @@ export function TradeAmountForm({
           }}
         />
         <span className="mr-trade-unit">{buy ? 'USDC' : 'tokens'}</span>
+        {!buy && max.text !== null ? (
+          <button type="button" className="btn alt" onClick={fillMax}>
+            Max
+          </button>
+        ) : null}
         <button
           type="submit"
           className="btn"
@@ -1676,9 +1715,9 @@ export function TradeAmountForm({
         {refusal ??
           (wrong
             ? amount.message
-            : buy
+            : `${max.note ? `${max.note} ` : ''}${buy
               ? 'From 0.1 USDC. The route is planned, quoted and simulated again at this amount before your wallet asks you to sign.'
-              : 'The exact number of tokens of this contract, as your wallet shows them. What they fetch in USDC is quoted again before your wallet asks you to sign.')}
+              : 'The exact number of tokens of this contract, as your wallet shows them. What they fetch in USDC is quoted again before your wallet asks you to sign.'}`)}
       </p>
     </form>
   );
@@ -2085,6 +2124,7 @@ export function MarketRealityScreen({ model }: { model: MarketRealityScreenModel
           onTrade={actions.onTrade}
           onGift={actions.onGift}
           loadGiftHolding={actions.loadGiftHolding}
+          loadTradeBalance={actions.loadTradeBalance}
         />
       ) : !model.view ? (
         <p className="empty">

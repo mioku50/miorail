@@ -70,6 +70,7 @@ import type {
   StocksVisitorNoticeV1,
 } from './MarketRealityScreen';
 import type { GiftHoldingV1 } from './giftView';
+import type { TradeBalanceV1 } from './stockSellAmount';
 
 // ---------------------------------------------------------------------------
 // Phase 15.1 — the Stocks console, once, for both surfaces.
@@ -242,6 +243,8 @@ export interface StocksConsoleInputV1 {
   /** What this wallet holds of a stock, for the Gift form. Absent: the form
    * only buys the gift. */
   giftHolding?: (tokenAddress: string) => Promise<GiftHoldingV1>;
+  /** The most a buy (the wallet's USDC) or a sell (its holding) can spend, for Max. */
+  tradeBalance?: (input: { tokenAddress: string; direction: 'buy' | 'sell' }) => Promise<TradeBalanceV1>;
 }
 
 /** What the card says under Buy and Sell — an offer, never a promise: the fee
@@ -1316,6 +1319,7 @@ export function useStocksConsoleV1(input: StocksConsoleInputV1): StocksConsoleRe
       ...(reality.data && input.onGift && input.trade
         ? {
             ...(input.giftHolding ? { loadGiftHolding: input.giftHolding } : {}),
+            ...(input.tradeBalance ? { loadTradeBalance: input.tradeBalance } : {}),
             onGift: async (gift: GiftRequestV1) => {
               if (gift.mode === 'send') {
                 // Nothing is bought, so there is no purchase sentence to build:
