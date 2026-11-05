@@ -274,6 +274,9 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           {view.failed.length > 0 ? (
             <p className="still-section still-warn">Not read this time: {view.failed.join(', ')}. The modelled amount is a floor from the reads that succeeded.</p>
           ) : null}
+          {view.unpublished.length > 0 ? (
+            <p className="still-section still-note">Not published yet: {view.unpublished.join(', ')}. Still counts it the careful way, so the modelled amount is a floor.</p>
+          ) : null}
         </>
       ) : (
         <h1 className="visually-hidden">Still</h1>

@@ -126,7 +126,8 @@ export interface Headline {
 
 export interface FailedRead {
   what: string;
-  /** "us": our provider or a call we could not decode; never the wallet's fault. */
+  /** "us": our provider or a call we could not decode; never the wallet's fault. "protocol": what the
+   * protocol's own source does not publish, such as a stock Aave's earnings calendar lists no date for. */
   owner: 'us' | 'protocol';
 }
 

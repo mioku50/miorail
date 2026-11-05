@@ -50,6 +50,8 @@ export interface HomeViewV1 {
   comingUp: ComingUpV1[];
   /** Reads that failed this time, named. */
   failed: string[];
+  /** What the protocol does not publish yet, named (SPCXc's earnings date, 2026-11-05): counted the careful way. */
+  unpublished: string[];
 }
 
 const TICKERS_V1: Readonly<Record<string, string>> = { cbBTC: 'BTC', ETH: 'ETH' };
@@ -202,7 +204,8 @@ export function homeViewV1(input: {
     });
   }
 
-  const failed = [...new Set([...report.coverage.failed.map((f) => f.what)])];
+  const failed = [...new Set(report.coverage.failed.filter((f) => f.owner === 'us').map((f) => f.what))];
+  const unpublished = [...new Set(report.coverage.failed.filter((f) => f.owner === 'protocol').map((f) => f.what))];
   return {
     state,
     stateWord: (debtUnread || safetyUnread) && (state === 'empty' || state === 'calm') ? 'Not fully read.' : stateWordV1(state),
@@ -212,6 +215,7 @@ export function homeViewV1(input: {
     mobile: { holdings, loan, state },
     comingUp,
     failed,
+    unpublished,
   };
 }
 

@@ -143,6 +143,15 @@ describe('the sky and Still’s terms', () => {
 });
 
 describe('Home', () => {
+  it('names a date the protocol does not publish apart from a read that failed', () => {
+    const left = homeViewV1({ report: report(undefined, calendar({}, ['NVDAc'])), sky: skyStateV1({ now: WEDNESDAY }), dividends });
+    assert.deepEqual(left.unpublished, ['NVDAc earnings date']);
+    assert.deepEqual(left.failed, []);
+    const unread = homeViewV1({ report: report(undefined, { ok: false }), sky: skyStateV1({ now: WEDNESDAY }), dividends });
+    assert.deepEqual(unread.failed, ['Earnings calendar (Aave API)']);
+    assert.deepEqual(unread.unpublished, []);
+  });
+
   it('says the loan is in balance, what can be spent and what is owed, from the report alone', () => {
     const view = homeViewV1({ report: report(), sky: skyStateV1({ now: WEDNESDAY }), dividends });
     assert.equal(view.state, 'calm');

@@ -54,23 +54,26 @@ const iso = (seconds: bigint): string => new Date(Number(seconds) * 1000).toISOS
 /** Collects the reads that failed, so the page can name them and the headline turns into a floor. */
 class Ledger {
   readonly failures: FailedRead[] = [];
-  need<T>(outcome: Outcome<T> | undefined, what: string, local?: string[]): T | undefined {
+  need<T>(outcome: Outcome<T> | undefined, what: string, local?: string[], owner: FailedRead['owner'] = 'us'): T | undefined {
     if (outcome?.ok) return outcome.value;
-    if (!this.failures.some((f) => f.what === what)) this.failures.push({ what, owner: 'us' });
+    if (!this.failures.some((f) => f.what === what)) this.failures.push({ what, owner });
     local?.push(what);
     return undefined;
   }
 }
 
-/** A stock's earnings note at the block's time, and the name of the read that failed, if one did. */
-type EarningsOf = (asset: StockAsset) => { note: EarningsNote; failed: string | null };
+/** A stock's earnings note at the block's time, and the read that failed, if one did, with its owner. */
+type EarningsOf = (asset: StockAsset) => { note: EarningsNote; failed: FailedRead | null };
 
 function earningsFrom(calendar: CalendarRead, at: Date): EarningsOf {
   return (asset) => {
     const dates = calendar.ok ? calendar.calendar.dates.get(asset.id) : undefined;
     if (dates === undefined) {
-      // Not knowing when a company reports counts as being inside its window.
-      const failed = calendar.ok ? `${asset.id} earnings date` : 'Earnings calendar (Aave API)';
+      // Not knowing when a company reports counts as being inside its window. A calendar that answered
+      // without the stock is Aave's to publish (SPCXc, listed 2026-11-04), not a read of ours that failed.
+      const failed: FailedRead = calendar.ok
+        ? { what: `${asset.id} earnings date`, owner: 'protocol' }
+        : { what: 'Earnings calendar (Aave API)', owner: 'us' };
       return { note: { source: 'unread', reportDate: null, window: null, lowered: true }, failed };
     }
     const window = earningsWindow(at, dates);
@@ -126,7 +129,7 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
   const shareOf = (asset: StockAsset, line: AssetLine): bigint => {
     const { note, failed } = earningsOf(asset);
     line.earnings = note;
-    if (failed !== null) ledger.need(undefined, failed, line.failed);
+    if (failed !== null) ledger.need(undefined, failed.what, line.failed, failed.owner);
     return stillShareBps('stock', weekend, note.lowered);
   };
 

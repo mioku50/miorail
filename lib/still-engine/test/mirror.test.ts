@@ -260,6 +260,8 @@ describe('earnings reports', () => {
     assertMatches(line(r, 'NVDAc'), { stillFactorBps: 2800, failed: ['NVDAc earnings date'], earnings: { source: 'unread', lowered: true } });
     assertMatches(line(r, 'AAPLc'), { stillFactorBps: 3900, failed: [] });
     assert.equal(r.headline.complete, false);
+    // The calendar answered: the date is the protocol's to publish, not a read of ours that failed.
+    assert.deepEqual(r.coverage.failed, [{ what: 'NVDAc earnings date', owner: 'protocol' }]);
   });
 
   it('a wallet without stocks does not depend on the calendar', () => {
