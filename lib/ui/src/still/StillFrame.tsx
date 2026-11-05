@@ -149,13 +149,13 @@ export function StillClockPill({ sky }: { sky: SkyStateV1 }) {
 }
 
 /** The sky now, re-read every half minute, with the earnings windows the page read. */
-export function useStillSkyV1(input?: { earnings?: readonly SkyEarningsV1[]; unread?: readonly string[] }): SkyStateV1 {
+export function useStillSkyV1(input?: { earnings?: readonly SkyEarningsV1[]; unread?: readonly string[]; calendarRead?: boolean }): SkyStateV1 {
   const [now, setNow] = useState(() => new Date());
   useEffect(() => {
     const timer = setInterval(() => setNow(new Date()), 30_000);
     return () => clearInterval(timer);
   }, []);
-  return skyStateV1({ now, earnings: input?.earnings, unread: input?.unread });
+  return skyStateV1({ now, earnings: input?.earnings, unread: input?.unread, calendarRead: input?.calendarRead });
 }
 
 /** A static/SSR host must hydrate the same palette it emitted. React does not

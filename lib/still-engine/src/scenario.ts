@@ -213,9 +213,10 @@ function apply(input: MirrorInput, snapshot: WalletSnapshot, edit: ScenarioEditV
   return applyMorphoDebt(snapshot, edit.venue.slice('morpho:'.length) as CryptoId, edit);
 }
 
-/** The same reading with the protocol's own health factor set aside, so the engine computes it. */
+/** The same reading with the protocol's own health factor and risk premium set aside, so the engine
+ * computes them: a borrow, a repayment or a deposit makes Aave set the premium again. */
 function withComputedHealth(input: MirrorInput, snapshot: WalletSnapshot): MirrorInput {
-  return { ...input, snapshot: { ...snapshot, aave: snapshot.aave ? { ...snapshot.aave, account: unread() } : null } };
+  return { ...input, snapshot: { ...snapshot, aave: snapshot.aave ? { ...snapshot.aave, account: unread(), riskPremiumBps: unread() } : null } };
 }
 
 /**

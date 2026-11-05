@@ -159,6 +159,8 @@ export interface AaveReserveSnapshot {
   status: Outcome<{ usingAsCollateral: boolean; borrowing: boolean }>;
   spokeConfig: Outcome<{ addCap: bigint; drawCap: bigint; active: boolean; halted: boolean }>;
   spokeAdded: Outcome<bigint>;
+  /** The reserve's collateral risk, in bps: what debt it covers adds to the rate (0 for every stock but SPCXc). */
+  collateralRiskBps: Outcome<bigint>;
 }
 
 export interface AaveSnapshot {
@@ -168,6 +170,9 @@ export interface AaveSnapshot {
   usdcDrawnRateRay: Outcome<bigint>;
   usdcSpokeOwed: Outcome<bigint>;
   account: Outcome<{ healthFactor: bigint; borrowCount: bigint }>;
+  /** The risk premium the position's debt accrues under now, in bps of the drawn rate: the one Aave
+   * stored at the position's last action (getUserLastRiskPremium), not one computed from today's prices. */
+  riskPremiumBps: Outcome<bigint>;
 }
 
 export interface MorphoSnapshot {
@@ -221,7 +226,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
   type AavePlan = {
     info: AaveReserveInfo;
     reserve: Slot<{ dynamicConfigKey: number }>;
-    config: Slot<{ paused: boolean; frozen: boolean; borrowable: boolean }>;
+    config: Slot<{ collateralRisk: number; paused: boolean; frozen: boolean; borrowable: boolean }>;
     dynamic: Slot<{ collateralFactor: number }>;
     price: Slot<bigint>;
     source: Slot<Address>;
@@ -232,7 +237,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
     spokeConfig: Slot<{ addCap: number; drawCap: number; active: boolean; halted: boolean }>;
     spokeAdded: Slot<bigint>;
   };
-  let aavePlan: { reserves: AavePlan[]; usdc: AaveReserveInfo; debt: Slot<bigint>; liquidity: Slot<bigint>; rate: Slot<bigint>; owed: Slot<bigint>; account: Slot<{ healthFactor: bigint; borrowCount: bigint }> } | null = null;
+  let aavePlan: { reserves: AavePlan[]; usdc: AaveReserveInfo; debt: Slot<bigint>; liquidity: Slot<bigint>; rate: Slot<bigint>; owed: Slot<bigint>; account: Slot<{ healthFactor: bigint; borrowCount: bigint }>; premium: Slot<bigint> } | null = null;
   if (universe.aave.ok) {
     const { reserves, usdc } = universe.aave;
     aavePlan = {
@@ -259,6 +264,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
       rate: batch.add(ADDRESSES.aaveHub, aaveHubAbi, 'getAssetDrawnRate', [BigInt(usdc.hubAssetId)]),
       owed: batch.add(ADDRESSES.aaveHub, aaveHubAbi, 'getSpokeTotalOwed', [BigInt(usdc.hubAssetId), ADDRESSES.aaveSpoke]),
       account: batch.add(ADDRESSES.aaveSpoke, aaveSpokeAbi, 'getUserAccountData', [user]),
+      premium: batch.add(ADDRESSES.aaveSpoke, aaveSpokeAbi, 'getUserLastRiskPremium', [user]),
     };
   }
 
@@ -334,6 +340,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
           status: map(r.status.outcome, ([usingAsCollateral, borrowing]) => ({ usingAsCollateral, borrowing })),
           spokeConfig: map(r.spokeConfig.outcome, (c) => ({ addCap: BigInt(c.addCap), drawCap: BigInt(c.drawCap), active: c.active, halted: c.halted })),
           spokeAdded: r.spokeAdded.outcome,
+          collateralRiskBps: map(r.config.outcome, (c) => BigInt(c.collateralRisk)),
         };
       }),
       usdcDebt: aavePlan.debt.outcome,
@@ -341,6 +348,7 @@ export async function readWallet(providers: readonly Provider[], universe: Unive
       usdcDrawnRateRay: aavePlan.rate.outcome,
       usdcSpokeOwed: aavePlan.owed.outcome,
       account: map(aavePlan.account.outcome, (a) => ({ healthFactor: a.healthFactor, borrowCount: a.borrowCount })),
+      riskPremiumBps: aavePlan.premium.outcome,
     };
   }
 

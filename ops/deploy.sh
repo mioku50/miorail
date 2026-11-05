@@ -505,8 +505,8 @@ still_mcp_post() {
 }
 still_initialize=$(still_mcp_post '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"miorail-deploy-smoke","version":"1.0.0"}}}' | mcp_data_json) \
   || { echo 'FAILED: the Still MCP endpoint did not answer initialize'; exit 1; }
-printf '%s' "$still_initialize" | jq -e '.result.serverInfo.name == "still" and .result.serverInfo.version == "1.2.0"' >/dev/null \
-  || { echo 'FAILED: Still MCP initialize response is not Still 1.2.0'; exit 1; }
+printf '%s' "$still_initialize" | jq -e '.result.serverInfo.name == "still" and .result.serverInfo.version == "1.3.0"' >/dev/null \
+  || { echo 'FAILED: Still MCP initialize response is not Still 1.3.0'; exit 1; }
 still_tools=$(still_mcp_post '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' | mcp_data_json) \
   || { echo 'FAILED: the Still MCP endpoint did not answer tools/list'; exit 1; }
 printf '%s' "$still_tools" | jq -e '.result.tools | map(.name) | sort == ["get_still_terms", "still_check_wallet", "still_find_spend", "still_spend_product", "still_what_if"]' >/dev/null \

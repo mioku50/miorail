@@ -92,7 +92,7 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.14.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.15.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
@@ -235,7 +235,7 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
 
   server.registerTool('miorail_prepare_still_loan', {
     title: 'Prepare a Still loan for the owner to review',
-    description: `Prepares ONE Still loan for this connected wallet to review: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC, WETH or native ETH on Morpho, with an optional pledge from the wallet and an exact USDC amount. Returns a link, never a call: the same wallet-bound review Get money opens on ${STILL_PUBLIC_HOST_V1}, valid for five minutes. Opening it reads the position again, applies Still's limit (50% of the protocol's, 40% for a stock while Wall Street is closed or around its earnings) and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for what the wallet could borrow now, and never pick an amount or collateral the user did not name. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow.`,
+    description: `Prepares ONE Still loan for this connected wallet to review: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC, WETH or native ETH on Morpho, with an optional pledge from the wallet and an exact USDC amount. Returns a link, never a call: the same wallet-bound review Get money opens on ${STILL_PUBLIC_HOST_V1}, valid for five minutes. Opening it reads the position again, applies Still's limit (50% of the protocol's, 40% for a stock while Wall Street is closed or around its earnings) and simulates the exact calls before the user's own wallet opens. Read miorail_get_my_still first for what the wallet could borrow now, and never pick an amount or collateral the user did not name. Borrowing creates debt and collateral can be liquidated: this is not advice to borrow.`,
     inputSchema: StillPrepareLoanReviewInputV1Schema.shape,
     outputSchema: StillPrepareLoanReviewOutputV1Schema,
     annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },

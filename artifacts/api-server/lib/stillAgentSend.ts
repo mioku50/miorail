@@ -1,4 +1,4 @@
-import type { MirrorReport } from '@mioagent/still-engine';
+import { STOCKS, type MirrorReport } from '@mioagent/still-engine';
 import {
   agentSendRequestV2,
   atomicToDecimalV2,
@@ -30,7 +30,8 @@ import {
 // stock that is all pledged is said to be so, with the way to take it back.
 // ---------------------------------------------------------------------------
 
-const STOCK_IDS_V1 = new Set(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc']);
+const STOCK_IDS_V1 = new Set<string>(STOCKS.map((stock) => stock.id));
+const STOCK_TICKERS_V1 = STOCKS.map((stock) => stock.ticker).join(', ');
 
 /** "0.5" in base units, exactly; null when it has more places than the token. */
 function unitsToAtomicV1(value: string, decimals: number): bigint | null {
@@ -77,8 +78,8 @@ export async function stillAgentSendAnswerV1(input: {
   if (!STOCK_IDS_V1.has(request.asset)) {
     return say(
       t(
-        `Перевод я готовлю только для акций Coinbase (AAPL, AMZN, GOOGL, META, MSFT, NVDA, TSLA): для них в Miorail есть проверенная передача. ${symbol} отправьте кнопкой Send в своём кошельке.`,
-        `I prepare transfers of Coinbase stocks only (AAPL, AMZN, GOOGL, META, MSFT, NVDA, TSLA): Miorail has a checked transfer for them. Send ${symbol} with your own wallet’s Send button.`,
+        `Перевод я готовлю только для акций Coinbase (${STOCK_TICKERS_V1}): для них в Miorail есть проверенная передача. ${symbol} отправьте кнопкой Send в своём кошельке.`,
+        `I prepare transfers of Coinbase stocks only (${STOCK_TICKERS_V1}): Miorail has a checked transfer for them. Send ${symbol} with your own wallet’s Send button.`,
       ),
     );
   }

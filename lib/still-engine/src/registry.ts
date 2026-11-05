@@ -8,6 +8,9 @@
 // - Morpho Blue market ids; their parameters are immutable and re-read and checked on every load;
 // - each stock token's name, ISIN and decimals, from the B20 token's own name(),
 //   extraMetadata("isin") and decimals().
+//
+// SPCXc is the spoke's ninth reserve (seen 2026-11-01; Aave announced it 2026-11-04): its name,
+// ISIN and decimals were read the same way on 2026-11-04 at block 53,519,193.
 
 import type { Address, Hex } from 'viem';
 
@@ -31,7 +34,7 @@ export const ADDRESSES = {
   basenamesL2Resolver: '0xC6d566A56A1aFf6508b41f6c90ff131615583BCD',
 } as const satisfies Record<string, Address>;
 
-export type StockId = 'AAPLc' | 'AMZNc' | 'GOOGLc' | 'METAc' | 'MSFTc' | 'NVDAc' | 'TSLAc';
+export type StockId = 'AAPLc' | 'AMZNc' | 'GOOGLc' | 'METAc' | 'MSFTc' | 'NVDAc' | 'SPCXc' | 'TSLAc';
 export type CryptoId = 'cbBTC' | 'ETH';
 export type AssetId = StockId | CryptoId;
 
@@ -71,6 +74,7 @@ export const STOCKS: readonly StockAsset[] = [
   { kind: 'stock', id: 'METAc', token: '0xb2000000000000000000008bC8786B856E61707C', decimals: 8, name: 'Meta', legalName: 'Meta Platforms Inc.', ticker: 'META', isin: 'US30303M1027' },
   { kind: 'stock', id: 'MSFTc', token: '0xB200000000000000000000Ab99cFa739E253872B', decimals: 8, name: 'Microsoft', legalName: 'Microsoft Corporation', ticker: 'MSFT', isin: 'US5949181045' },
   { kind: 'stock', id: 'NVDAc', token: '0xb20000000000000000000078ee7ce2fE4908108C', decimals: 8, name: 'NVIDIA', legalName: 'NVIDIA Corporation', ticker: 'NVDA', isin: 'US67066G1040' },
+  { kind: 'stock', id: 'SPCXc', token: '0xb2000000000000000000007b9fcbd005511aCBd5', decimals: 8, name: 'SpaceX', legalName: 'Space Exploration Technologies Corp.', ticker: 'SPCX', isin: 'US84615Q1031' },
   { kind: 'stock', id: 'TSLAc', token: '0xb2000000000000000000001e800a7f5189430cD0', decimals: 8, name: 'Tesla', legalName: 'Tesla Inc.', ticker: 'TSLA', isin: 'US88160R1014' },
 ];
 

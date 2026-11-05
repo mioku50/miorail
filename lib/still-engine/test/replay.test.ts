@@ -16,6 +16,9 @@ import { assertMatches } from './matches.js';
 // changing what is read.
 // USDC balanceOf for that same public burn address was added from its original
 // pinned block on 2026-10-28; the prior raw results are retained byte for byte.
+// Recaptured at the same pinned block on 2026-11-05, when SPCXc joined the stocks and the read
+// gained the position's stored risk premium: all 142 earlier calls answered byte for byte as
+// recorded, and three were new (the wallet's SPCXc, Coinbase's registry for it, the premium).
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/burn-address.json', import.meta.url), 'utf8')) as {
   address: Address;
   block: string;
@@ -56,7 +59,8 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
     assert.equal(snapshot.block.number.toString(), fixture.block);
     assert.equal(fixture.batches.filter((b) => b.blockNumber !== null).every((b) => b.blockNumber === fixture.block), true);
     assert.equal(snapshot.balances.get(ADDRESSES.usdc.toLowerCase())?.ok, true);
-    assert.equal(snapshot.balances.size, 10);
+    // USDC, cbBTC, WETH and the eight stocks.
+    assert.equal(snapshot.balances.size, 11);
   });
 
   it('can pin the initial wallet batch and refuses a provider answering another block', async () => {

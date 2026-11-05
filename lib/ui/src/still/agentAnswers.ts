@@ -94,6 +94,7 @@ export const AGENT_ASSET_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
   ['NVDAc', /nvda|nvidia|нвиди/iu],
   ['AAPLc', /aapl|apple|эппл|эпл|яблок/iu],
   ['TSLAc', /tsla|tesla|тесл/iu],
+  ['SPCXc', /spcx|space ?x|спейс ?икс|спейсикс/iu],
   ['MSFTc', /msft|microsoft|майкрософт/iu],
   ['AMZNc', /amzn|amazon|амазон/iu],
   ['GOOGLc', /googl|google|alphabet|гугл/iu],

@@ -1,4 +1,4 @@
-import { assetById, type AssetId } from '@mioagent/still-engine';
+import { STOCKS, assetById, type AssetId } from '@mioagent/still-engine';
 import { formatCents, formatPercentBps, formatTokenAmount } from '@mioagent/still-engine/format';
 import type { MirrorInput } from '@mioagent/still-engine';
 import type { MirrorReport, VenueLine } from '@mioagent/still-engine/report';
@@ -430,7 +430,7 @@ function needsAnswerV1(what: PlanNeedV1, report: MirrorReport, w: Words): AgentA
 
 function unsupportedAnswerV1(reason: PlanUnsupportedV1, w: Words): AgentAnswerV1 {
   const text = {
-    not_reviewed_asset: t(w, 'Still считает только акции Coinbase (AAPL, AMZN, GOOGL, META, MSFT, NVDA, TSLA), cbBTC и ETH. Других активов в расчёте нет.', 'Still computes only Coinbase stocks (AAPL, AMZN, GOOGL, META, MSFT, NVDA, TSLA), cbBTC and ETH. Nothing else is in the calculation.'),
+    not_reviewed_asset: t(w, `Still считает только акции Coinbase (${STOCKS.map((s) => s.ticker).join(', ')}), cbBTC и ETH. Других активов в расчёте нет.`, `Still computes only Coinbase stocks (${STOCKS.map((s) => s.ticker).join(', ')}), cbBTC and ETH. Nothing else is in the calculation.`),
     other_wallet: t(w, 'Я читаю только ваш кошелёк, с которым вы вошли. Любой адрес можно проверить на Home.', 'I read only the wallet you signed in with. Any address can be checked on Home.'),
     forecast: t(w, 'Я не предсказываю цены. Назовите движение, например «NVDA −20%», и я посчитаю, что оно сделает с займом.', 'I do not predict prices. Name a move, e.g. “NVDA −20%”, and I will compute what it does to your loan.'),
     tax: t(w, 'Налоги Still не считает.', 'Still does not compute taxes.'),

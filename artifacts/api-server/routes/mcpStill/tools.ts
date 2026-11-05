@@ -30,7 +30,7 @@ import { McpPublicError } from '../mcp/tools.js';
 // nothing: a loan is reviewed and signed on Still's site, in the owner's wallet.
 // ---------------------------------------------------------------------------
 
-const ASSET_IDS_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'cbBTC', 'ETH'] as const;
+const ASSET_IDS_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH'] as const;
 const LOANS_V1 = ['aave-v4', 'morpho:cbBTC', 'morpho:ETH'] as const;
 const DECIMAL_V1 = /^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,18})?$/;
 

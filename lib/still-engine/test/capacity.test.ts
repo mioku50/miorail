@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { morphoAfterBorrowV1, type MorphoMarketStateV1 } from '@mioagent/rwa-issuer/morphoBorrowMath';
-import { morphoStillCapacityV1, morphoStillDrawV1, stillBorrowCapacityV1, stillBorrowLimitV1 } from '../src/capacity.js';
+import { aaveRiskPremiumBpsV1, morphoStillCapacityV1, morphoStillDrawV1, stillBorrowCapacityV1, stillBorrowLimitV1 } from '../src/capacity.js';
 import { computeMirror } from '../src/mirror.js';
 import { ADDRESSES } from '../src/registry.js';
 import { calendar, ok, reverted, snapshot, universe } from './fixtures.js';
@@ -157,3 +157,26 @@ describe('the Mirror and executable offer share the same allowance', () => {
     assert.equal(s.balances.get(ADDRESSES.cbbtc.toLowerCase())!.ok, true);
   });
 });
+
+describe("Aave V4's risk premium, as its spoke computes it", () => {
+  it('is zero while collateral of no risk covers the whole debt', () => {
+    assert.equal(aaveRiskPremiumBpsV1([{ riskBps: 1_000n, value: 900n }, { riskBps: 0n, value: 500n }], 400n), 0n);
+  });
+
+  it('is the risk of what the debt needs, weighted by what each part covers, rounded up', () => {
+    // 60 covered at 0 and 40 at 1,000: 40,000 / 100.
+    assert.equal(aaveRiskPremiumBpsV1([{ riskBps: 1_000n, value: 100n }, { riskBps: 0n, value: 60n }], 100n), 400n);
+    // 1,000 / 3 = 333.3, rounded up.
+    assert.equal(aaveRiskPremiumBpsV1([{ riskBps: 0n, value: 2n }, { riskBps: 1_000n, value: 5n }], 3n), 334n);
+  });
+
+  it('a loan only SPCXc covers pays its whole collateral risk, even where the collateral falls short', () => {
+    assert.equal(aaveRiskPremiumBpsV1([{ riskBps: 1_000n, value: 900n }], 400n), 1_000n);
+    assert.equal(aaveRiskPremiumBpsV1([{ riskBps: 1_000n, value: 50n }], 100n), 1_000n);
+  });
+
+  it('no debt pays no premium', () => {
+    assert.equal(aaveRiskPremiumBpsV1([{ riskBps: 1_000n, value: 900n }], 0n), 0n);
+  });
+});
+

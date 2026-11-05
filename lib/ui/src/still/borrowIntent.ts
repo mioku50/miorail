@@ -55,6 +55,9 @@ function loweredSentenceV1(lowered: unknown, asset: StillBorrowAssetV1, share: s
     const day = REPORT_DAY_V1.format(new Date(`${lowered.reportDate}T12:00:00Z`));
     return `${stock.id} counts at ${share}, not ${full}, until ${newYorkMomentV1(lowered.until)} New York time: ${stock.name} reports earnings on ${day}, and the price can jump either way.`;
   }
+  if (lowered.reason === 'earnings_unlisted') {
+    return `${stock.id} counts at ${share}, not ${full}: Aave’s earnings calendar lists no report date for ${stock.name} yet, so Still counts it as if a report were near.`;
+  }
   if (lowered.reason === 'earnings_unread') {
     return `${stock.id} counts at ${share}, not ${full}: Still could not read the earnings calendar just now, so it counts the stock as if a report were near. Read the limit again later.`;
   }

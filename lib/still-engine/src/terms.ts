@@ -70,7 +70,7 @@ export type StillTerms = ReturnType<typeof stillTerms>;
 
 const ISO = z.string().datetime();
 const ADDRESS = z.custom<Address>((value) => typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value), 'not an address');
-const STOCK_ID = z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc']);
+const STOCK_ID = z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc']);
 
 export const StillTermsSchema = z
   .object({
@@ -104,7 +104,7 @@ export const StillTermsSchema = z
     assets: z.array(
       z
         .object({
-          id: z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'cbBTC', 'ETH']),
+          id: z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH']),
           name: z.string(),
           token: ADDRESS,
           venue: z.string(),

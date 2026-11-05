@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
-import { ADDRESSES } from '@mioagent/still-engine/registry';
+import { ADDRESSES, STOCKS } from '@mioagent/still-engine/registry';
 import { calendar } from '../../../lib/still-engine/test/fixtures.js';
 import { aaveReadFixture, AAVE_TEST_WALLET, withUnmodeledReserves } from './aaveV4BorrowFixtures.testhelper.js';
 import { AAVE_V4_DEPLOYMENT_PIN_V1 } from './aaveV4BorrowPlan.js';
@@ -30,6 +30,10 @@ describe('Still Aave bounded same-block standing', () => {
     assert.equal(day.loweredByStock.NVDAc, undefined);
     assert.deepEqual(weekend.loweredByStock.NVDAc, { reason: 'market_closed', until: '2026-10-26T00:00:00.000Z' });
     assert.deepEqual(unread.loweredByStock.NVDAc, { reason: 'earnings_unread' });
+    // A calendar that answered without the stock, as Aave's left SPCXc out on 2026-11-05, is not an unread one.
+    const unlisted = stillAaveCapacityV1({ ...common, calendar: calendar({}, ['NVDAc']), now: new Date('2026-10-21T15:00:00Z') });
+    assert.equal(unlisted.shareBpsByStock.NVDAc, 4000);
+    assert.deepEqual(unlisted.loweredByStock.NVDAc, { reason: 'earnings_unlisted' });
     const report = stillAaveCapacityV1({ ...common, calendar: calendar({ NVDAc: ['2026-10-22'] }), now: new Date('2026-10-21T15:00:00Z') });
     assert.equal(report.shareBpsByStock.NVDAc, 4000);
     assert.deepEqual(report.loweredByStock.NVDAc, { reason: 'earnings', reportDate: '2026-10-22', until: '2026-10-24T00:00:00.000Z' });
@@ -88,7 +92,7 @@ describe('a reserve Aave lists that Still does not model', () => {
     const after = await readStillAaveStandingV1(input(withUnmodeledReserves(aaveReadFixture())));
     assert.equal(before.state, 'read'); assert.equal(after.state, 'read');
     if (before.state !== 'read' || after.state !== 'read') return;
-    assert.equal(after.standing.reserves.length, 9);
+    assert.equal(after.standing.reserves.length, STOCKS.length + 2); // the stocks, USDC and the one Still does not model
     assert.equal(after.standing.capacity!.limitAssets, before.standing.capacity!.limitAssets);
     assert.equal(after.standing.capacity!.protocolLimitAssets, before.standing.capacity!.protocolLimitAssets);
   });
@@ -103,10 +107,11 @@ describe('a reserve Aave lists that Still does not model', () => {
   it('still has to be one bound identity, and the spoke cannot grow past its bound', () => {
     assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture())), true);
     const relabelled = withUnmodeledReserves(aaveReadFixture());
-    relabelled.reserves[8]!.underlying = ADDRESSES.usdc;
+    relabelled.reserves[STOCKS.length + 1]!.underlying = ADDRESSES.usdc;
     assert.equal(validAaveReserveBindingsV1(relabelled), false);
-    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture(), STILL_AAVE_MAX_RESERVES_V1 - 8)), true);
-    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture(), STILL_AAVE_MAX_RESERVES_V1 - 7)), false);
+    const listed = STOCKS.length + 1;
+    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture(), STILL_AAVE_MAX_RESERVES_V1 - listed)), true);
+    assert.equal(validAaveReserveBindingsV1(withUnmodeledReserves(aaveReadFixture(), STILL_AAVE_MAX_RESERVES_V1 - listed + 1)), false);
   });
 });
 

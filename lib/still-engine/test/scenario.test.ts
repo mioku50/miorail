@@ -83,6 +83,15 @@ describe('a debt change, computed by the Mirror engine', () => {
     assert.equal(aave.availableCents, '27028'); // 610.45 − 340.17
   });
 
+  it('a borrow that comes to need SPCXc pays the premium Aave sets at that borrow', () => {
+    // NVIDIA 3.4 × $211.907 = $720.4838 covers $720.4838 of $1,000; SPCXc the other $279.5162.
+    // Premium: ceil(279.5162 × 1,000 / 1,000) = 280 bps; 3.6585% × 1.028 = 3.7609%, rounded up.
+    const h: Holdings = { pledged: { NVDAc: 340_000_000n, SPCXc: 1_000_000_000n }, aaveDebt: 100_000_000n };
+    const { before, after } = run([{ kind: 'borrow', venue: 'aave-v4', usdcAtomic: 900_000_000n }], input(h));
+    assert.equal(venue(before, 'Aave').borrowRateBps, 366);
+    assert.equal(venue(after, 'Aave').borrowRateBps, 377);
+  });
+
   it('repaying all of it leaves no debt and the whole room', () => {
     const { after } = run([{ kind: 'repay', venue: 'aave-v4', usdcAtomic: 'all' }]);
     assert.equal(venue(after, 'Aave').debtCents, '0');

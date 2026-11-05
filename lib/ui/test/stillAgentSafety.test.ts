@@ -3,7 +3,8 @@ import { describe, it } from 'node:test';
 import { computeMirror } from '@mioagent/still-engine';
 import type { MirrorReport } from '@mioagent/still-engine/report';
 import { EXAMPLE, calendar, snapshot, universe } from '../../still-engine/test/fixtures';
-import { agentAnswerV1 } from '../src/still/agentAnswers';
+import { STOCKS } from '@mioagent/still-engine/registry';
+import { AGENT_ASSET_WORDS_V2, agentAnswerV1 } from '../src/still/agentAnswers';
 import { skyStateV1 } from '../src/still/skyState';
 import { homeViewV1 } from '../src/still/homeView';
 
@@ -76,5 +77,15 @@ describe('Agent debt and safety readings have separate unknown states', () => {
     assert.match(view.stateLine, /liquidation can start now/);
     assert.match(view.stateLine, /Debt could not be read in every reviewed market/);
     assert.equal(view.owed?.amount, 'Known debt $240.17');
+  });
+});
+
+describe('the words the Agent reads an asset by', () => {
+  it('name every stock Still models by its ticker and by what people call it', () => {
+    for (const stock of STOCKS) {
+      const entry = AGENT_ASSET_WORDS_V2.find(([id]) => id === stock.id);
+      assert.ok(entry, stock.id);
+      assert.ok(entry[1].test(stock.ticker) && entry[1].test(stock.name), stock.id);
+    }
   });
 });

@@ -20,16 +20,16 @@ import { SPEND_ID_V1 } from '../stillPublic.js';
 // NVDAc, Still's main case, had no way to start one.
 // ---------------------------------------------------------------------------
 
-export const STILL_LOAN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'cbBTC', 'WETH', 'ETH'] as const;
+export const STILL_LOAN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'WETH', 'ETH'] as const;
 type StillLoanCollateralV1 = (typeof STILL_LOAN_COLLATERAL_V1)[number];
 /** A purchase and a repayment name a loan by its token: native ETH is pledged as WETH. */
-export const STILL_TOKEN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'cbBTC', 'WETH'] as const;
+export const STILL_TOKEN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'WETH'] as const;
 
 const DECIMAL_V1 = /^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,18})?$/;
 
 export const StillPrepareLoanReviewInputV1Schema = z.object({
   collateral: z.enum(STILL_LOAN_COLLATERAL_V1)
-    .describe('The collateral: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC, WETH, or native ETH (wrapped to WETH in the same transaction) on Morpho.'),
+    .describe('The collateral: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC, WETH, or native ETH (wrapped to WETH in the same transaction) on Morpho.'),
   addCollateral: z.string().regex(DECIMAL_V1)
     .describe('Tokens to pledge from this wallet with the loan, in whole-token units such as "0.05". "0" borrows against what is already pledged. For ETH, the exact ETH to wrap and pledge, above zero.'),
   borrowUsdc: z.string().regex(DECIMAL_V1).describe('USDC to borrow, such as "500".'),
@@ -126,7 +126,7 @@ export const StillPreparePurchaseInputV1Schema = z.object({
   phone: z.string().min(1).max(32).optional()
     .describe('A phone top-up only: the number it goes to, as the USER gave it, in international format starting with the calling code still_spend_product lists. A top-up sent to a wrong number cannot be taken back.'),
   collateral: z.enum(STILL_TOKEN_COLLATERAL_V1)
-    .describe('What the loan is against: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC or WETH on Morpho. Native ETH cannot pay a purchase; WETH can.'),
+    .describe('What the loan is against: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC or WETH on Morpho. Native ETH cannot pay a purchase; WETH can.'),
   addCollateral: z.string().regex(DECIMAL_V1)
     .describe('Tokens to pledge from this wallet with the loan, in whole-token units such as "0.05". "0" borrows against what is already pledged.'),
 }).strict();
@@ -303,7 +303,7 @@ export async function stillPrepareWalletPurchaseV1(
 
 export const StillPrepareRepayInputV1Schema = z.object({
   collateral: z.enum(STILL_TOKEN_COLLATERAL_V1)
-    .describe('The loan, by its collateral: a Coinbase stock token (AAPLc … TSLAc) on Aave V4, or cbBTC or WETH on Morpho (WETH also for a loan opened with native ETH).'),
+    .describe('The loan, by its collateral: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC or WETH on Morpho (WETH also for a loan opened with native ETH).'),
   repayUsdc: z.union([z.string().regex(DECIMAL_V1), z.literal('all')])
     .describe('USDC to pay back from this wallet, such as "50", or "all" to close the loan with its interest.'),
   maximumUsdc: z.string().regex(DECIMAL_V1).optional()

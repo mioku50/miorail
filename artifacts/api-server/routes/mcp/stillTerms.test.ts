@@ -66,7 +66,7 @@ test('MCP and HTTP return identical terms from one cached calendar, including th
   assert.equal(mcp.weekend.stockSharePercentOfProtocol, 40);
   assert.equal(mcp.weekend.startsAt, '2026-11-26T01:00:00.000Z');
   assert.equal(mcp.weekend.endsAt, '2026-11-27T01:00:00.000Z');
-  assert.equal(mcp.earnings.stocks.length, 7);
+  assert.equal(mcp.earnings.stocks.length, STOCKS.length);
   assert.ok(mcp.earnings.stocks.every(stock => stock.calendarRead && !stock.countsAtEarningsRateNow));
   assert.deepEqual(mcp.assets.filter(asset => asset.id === 'cbBTC' || asset.id === 'ETH').map(asset => asset.id), ['cbBTC', 'ETH']);
   assert.equal(mcp.notOfferedTo, 'US persons');
@@ -83,7 +83,7 @@ test('an unread earnings calendar remains a conservative valid answer, while rea
   };
   const unread = await read();
   assert.equal(unread.earnings.calendarReadAt, null);
-  assert.equal(unread.earnings.stocks.length, 7);
+  assert.equal(unread.earnings.stocks.length, STOCKS.length);
   assert.ok(unread.earnings.stocks.every(stock => !stock.calendarRead && stock.countsAtEarningsRateNow));
   calendar = { ok: true, calendar: { readAt: NOW, dates: new Map([['NVDAc', ['2026-11-26']], ['TSLAc', []]]) } };
   const partial = await read();

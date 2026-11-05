@@ -176,3 +176,26 @@ export function morphoStillDrawV1(input: MorphoStillCapacityInputV1 & { borrowAs
   if (after.health.borrowedAssets > capacity.limitAssets) return { ok: false, capacity, refusal: 'projected_debt_over_still_limit' };
   return { ok: true, capacity, after };
 }
+
+/**
+ * Aave V4's risk premium for a position, in bps of the drawn rate: the average collateral risk of
+ * the collateral its debt needs, the least risky covering first. Spoke._processUserAccountData
+ * (aave/aave-v4, read 2026-11-05) sorts by risk ascending and value descending, lets each collateral
+ * cover what debt is left, and divides the sum of covered value times risk, rounding up, by the value
+ * covered. The debt then accrues at the drawn rate times one plus the premium. Collateral and debt
+ * values are in the same units; collateral rounded down and debt up, as the spoke does.
+ */
+export function aaveRiskPremiumBpsV1(collateral: ReadonlyArray<{ riskBps: bigint; value: bigint }>, debtValue: bigint): bigint {
+  const sorted = [...collateral].sort((a, b) =>
+    a.riskBps !== b.riskBps ? (a.riskBps < b.riskBps ? -1 : 1) : a.value === b.value ? 0 : a.value > b.value ? -1 : 1);
+  let left = debtValue;
+  let weighted = 0n;
+  for (const entry of sorted) {
+    if (left === 0n) break;
+    const covered = min(entry.value, left);
+    weighted += covered * entry.riskBps;
+    left -= covered;
+  }
+  const covered = debtValue - left;
+  return covered === 0n ? 0n : mulDiv(weighted, 1n, covered, 'up');
+}

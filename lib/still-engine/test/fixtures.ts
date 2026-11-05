@@ -22,6 +22,7 @@ export const STOCK_PRICES: Record<StockId, bigint> = {
   METAc: 64_056_000_000n,
   MSFTc: 52_258_000_000n,
   NVDAc: 21_190_700_000n,
+  SPCXc: 13_595_000_000n,
   TSLAc: 37_080_000_000n,
 };
 
@@ -32,6 +33,7 @@ export const FACTORS: Record<StockId, bigint> = {
   METAc: 6_500n,
   MSFTc: 7_900n,
   NVDAc: 7_000n,
+  SPCXc: 5_500n,
   TSLAc: 6_500n,
 };
 
@@ -40,20 +42,24 @@ export const CBBTC_PRICE = 80_300_250_000n * 10n ** 28n;
 export const WETH_PRICE = 2_330_250_000n * 10n ** 18n;
 export const LLTV = 860_000_000_000_000_000n;
 
+/** Reserve ids as the spoke numbers them: the first seven stocks, USDC, then SPCXc (listed 2026-11-01). */
+const RESERVE_IDS: Record<StockId, number> = { AAPLc: 0, AMZNc: 1, GOOGLc: 2, METAc: 3, MSFTc: 4, NVDAc: 5, TSLAc: 6, SPCXc: 8 };
+const USDC_RESERVE_ID = 7;
+
 export function universe(): Universe {
-  const reserves: AaveReserveInfo[] = STOCKS.map((asset, reserveId) => ({
+  const reserves: AaveReserveInfo[] = STOCKS.map((asset) => RESERVE_IDS[asset.id]).map((reserveId, index) => ({
     reserveId,
-    underlying: asset.token,
+    underlying: STOCKS[index]!.token,
     hubAssetId: reserveId,
     decimals: 8,
     dynamicConfigKey: 0,
     priceSource: `0x${(reserveId + 1).toString(16).padStart(40, '0')}` as Address,
-    role: { kind: 'stock', asset },
+    role: { kind: 'stock' as const, asset: STOCKS[index]! },
   }));
   const usdc: AaveReserveInfo = {
-    reserveId: 7,
+    reserveId: USDC_RESERVE_ID,
     underlying: ADDRESSES.usdc,
-    hubAssetId: 7,
+    hubAssetId: USDC_RESERVE_ID,
     decimals: 6,
     dynamicConfigKey: 0,
     priceSource: null,
@@ -62,7 +68,7 @@ export function universe(): Universe {
   return {
     loadedAt: new Date('2026-10-21T15:00:00Z'),
     provider: 'test',
-    aave: { ok: true, oracleDecimals: 8, reserves: [...reserves, usdc], usdc, noCap: NO_CAP },
+    aave: { ok: true, oracleDecimals: 8, reserves: [...reserves, usdc].sort((a, b) => a.reserveId - b.reserveId), usdc, noCap: NO_CAP },
     morpho: CRYPTO.map((asset) => ({
       ok: true as const,
       market: {
@@ -79,6 +85,8 @@ export interface Holdings {
   pledged?: Partial<Record<StockId, bigint>>;
   /** USDC base units owed on Aave. */
   aaveDebt?: bigint;
+  /** The risk premium Aave stored for the position, in bps; null for one that was not read. Default 0. */
+  aaveRiskPremium?: bigint | null;
   morpho?: Partial<Record<'cbBTC' | 'ETH', { collateral: bigint; borrowShares: bigint }>>;
 }
 
@@ -123,6 +131,8 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
       status: ok({ usingAsCollateral: supplied > 0n, borrowing: stock === null && (h.aaveDebt ?? 0n) > 0n }),
       spokeConfig: ok(stock ? { addCap: 24_000n, drawCap: 0n, active: true, halted: false } : { addCap: 32_000_000n, drawCap: 21_000_000n, active: true, halted: false }),
       spokeAdded: ok(stock ? 1_000n * E8 : 6_000_000n * 10n ** 6n),
+      // The chain's own: 1000 for SPCXc, 0 for the other stocks and USDC.
+      collateralRiskBps: ok(stock?.id === 'SPCXc' ? 1_000n : 0n),
     };
   });
 
@@ -160,6 +170,7 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
       usdcDrawnRateRay: ok(36_584_984_228_614_069_338_219_647n),
       usdcSpokeOwed: ok(5_103_903_801_787n),
       account: reverted(),
+      riskPremiumBps: h.aaveRiskPremium === null ? reverted() : ok(h.aaveRiskPremium ?? 0n),
     },
     morpho,
   };

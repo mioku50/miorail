@@ -7,7 +7,7 @@ import request from 'supertest';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import type { BitrefillGuestCatalogV1, SpendProductV1 } from '@mioagent/commerce-engine';
-import { computeMirror, type MirrorInput, type MirrorService } from '@mioagent/still-engine';
+import { STOCKS, computeMirror, type MirrorInput, type MirrorService } from '@mioagent/still-engine';
 import { InMemoryRateLimiter } from '@mioagent/utils';
 
 import { EXAMPLE, calendar, snapshot, universe } from '../../../../lib/still-engine/test/fixtures.js';
@@ -280,4 +280,25 @@ test('the deploy asserts this registry and version, so the two cannot drift apar
   assert.ok(list, 'deploy.sh checks the Still MCP tool list');
   assert.deepEqual(JSON.parse(list[1]!), [...STILL_MCP_TOOLS_V1].sort());
   assert.match(deploy, new RegExp(`serverInfo\\.name == "still" and \\.result\\.serverInfo\\.version == "${STILL_MCP_VERSION_V1.replaceAll('.', '\\.')}"`));
+});
+
+// SPCXc joined on 2026-11-05: a stock the registry models and a tool does not name is a question
+// an assistant cannot ask.
+test('still_what_if names every stock Still models', async (t) => {
+  const client = await connected(t);
+  const { tools } = await client.listTools();
+  const enums: string[][] = [];
+  const walk = (node: unknown): void => {
+    if (Array.isArray(node)) { node.forEach(walk); return; }
+    if (node === null || typeof node !== 'object') return;
+    for (const [key, value] of Object.entries(node)) {
+      if (key === 'enum' && Array.isArray(value)) enums.push(value as string[]);
+      else walk(value);
+    }
+  };
+  walk(tools.find((tool) => tool.name === 'still_what_if')!.inputSchema);
+  const assets = enums.filter((values) => values.includes('NVDAc'));
+  assert.ok(assets.length > 0);
+  for (const values of assets) for (const stock of STOCKS) assert.ok(values.includes(stock.id), stock.id);
+  assert.ok((client.getInstructions() ?? '').includes('SPCXc'));
 });

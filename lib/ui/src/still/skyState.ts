@@ -55,12 +55,15 @@ export interface SkyStateV1 {
   clouds: SkyEarningsV1[];
   /** Stocks counted at the earnings rate because their calendar was not read. */
   unread: string[];
+  /** Whether Aave's earnings calendar answered: a stock unread while it did is one it lists no date for
+   * (SPCXc, listed 2026-11-04), not a read that failed. */
+  calendarRead: boolean;
   /** False until Still's terms were read: without them the sky names no limits. */
   limitsRead: boolean;
 }
 
 /** The earnings windows and unread stocks in Still's terms, for the sky. */
-export function skyEarningsFromTermsV1(terms: StillTerms): { earnings: SkyEarningsV1[]; unread: string[] } {
+export function skyEarningsFromTermsV1(terms: StillTerms): { earnings: SkyEarningsV1[]; unread: string[]; calendarRead: boolean } {
   const nameOf = (id: string) => terms.assets.find((asset) => asset.id === id)?.name ?? id;
   const earnings: SkyEarningsV1[] = [];
   const unread: string[] = [];
@@ -70,7 +73,7 @@ export function skyEarningsFromTermsV1(terms: StillTerms): { earnings: SkyEarnin
       earnings.push({ asset: stock.id, name: nameOf(stock.id), startsAt: stock.windowStartsAt, endsAt: stock.windowEndsAt });
     }
   }
-  return { earnings, unread };
+  return { earnings, unread, calendarRead: terms.earnings.calendarReadAt !== null };
 }
 
 const CLOCK_V1 = new Intl.DateTimeFormat('en-US', {
@@ -115,7 +118,7 @@ export function newYorkMomentV1(iso: string): string {
 }
 
 /** `earnings` absent means Still's terms were not read, not that nobody reports. */
-export function skyStateV1(input: { now: Date; earnings?: readonly SkyEarningsV1[] | null; unread?: readonly string[] }): SkyStateV1 {
+export function skyStateV1(input: { now: Date; earnings?: readonly SkyEarningsV1[] | null; unread?: readonly string[]; calendarRead?: boolean }): SkyStateV1 {
   const { now } = input;
   const window = weekendWindow(now);
   const closed = { active: window.active, startsAt: window.startsAt.toISOString(), endsAt: window.endsAt.toISOString() };
@@ -129,7 +132,7 @@ export function skyStateV1(input: { now: Date; earnings?: readonly SkyEarningsV1
   const limitsRead = input.earnings !== undefined && input.earnings !== null;
   return {
     at: now.toISOString(), ...visual, clockZone: 'Europe/Berlin', daylightLabels: { open: '07:00', close: '19:00' },
-    marketPhase, marketClock: newYorkClockV1(now), closed, session, clouds, unread: [...(input.unread ?? [])], limitsRead,
+    marketPhase, marketClock: newYorkClockV1(now), closed, session, clouds, unread: [...(input.unread ?? [])], calendarRead: input.calendarRead ?? false, limitsRead,
   };
 }
 
@@ -149,7 +152,9 @@ export function skyCaptionV1(sky: SkyStateV1): SkyCaptionV1 {
       : `${listV1(reporting)} ${reporting.length === 1 ? 'reports' : 'report'} now: new loans against ${reporting.length === 1 ? 'it' : 'them'} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until ${newYorkMomentV1(maxIsoV1(sky.clouds.map((c) => c.endsAt)))} New York.`,
     sky.unread.length === 0
       ? null
-      : `The earnings calendar could not be read just now: new loans against ${sky.unread.length > 3 ? 'stocks' : listV1(sky.unread)} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until it is.`,
+      : sky.calendarRead
+        ? `Aave’s earnings calendar lists no report date for ${sky.unread.length > 3 ? `${sky.unread.length} stocks` : listV1(sky.unread)} yet: new loans against ${sky.unread.length === 1 ? 'it' : 'them'} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until it does.`
+        : `The earnings calendar could not be read just now: new loans against ${sky.unread.length > 3 ? 'stocks' : listV1(sky.unread)} count at ${STILL_SHARES_V1.earnings}% of the protocol’s limit until it is.`,
   ].filter((line): line is string => line !== null);
   const earningsDetail = details.length ? details.join(' ') : null;
   const limits = !sky.limitsRead ? null : sky.clouds.length > 0 || sky.unread.length > 0 ? 'earnings limits' : 'full limits';

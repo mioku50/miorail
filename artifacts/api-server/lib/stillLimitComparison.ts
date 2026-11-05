@@ -16,7 +16,9 @@ export type StillShareLoweredV1 =
   /** Around the company's earnings report. */
   | { reason: 'earnings'; reportDate: string; until: string }
   /** The earnings calendar could not be read, so the stock counts at the earnings share. */
-  | { reason: 'earnings_unread' };
+  | { reason: 'earnings_unread' }
+  /** The calendar answered with no date for this stock (SPCXc, listed 2026-11-04): it counts at the earnings share too. */
+  | { reason: 'earnings_unlisted' };
 
 export interface StillLimitComparisonWireV1 {
   protocol: 'Aave V4' | 'Morpho';

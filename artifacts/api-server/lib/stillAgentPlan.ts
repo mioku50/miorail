@@ -355,7 +355,7 @@ function plannerPromptV1(report: MirrorReport): string {
     .map(({ venue }) => (venue === 'aave-v4' ? 'aave' : venue === 'morpho:cbBTC' ? 'morpho_cbbtc' : 'morpho_eth'));
   return [
     'You turn one question about the reader\'s own Base wallet into a JSON calculation request for Still\'s engine. You never answer the question and never compute anything.',
-    'Assets the engine reads (id: names): NVDAc: NVIDIA, NVDA; AAPLc: Apple, AAPL; TSLAc: Tesla, TSLA; MSFTc: Microsoft, MSFT; AMZNc: Amazon, AMZN; GOOGLc: Alphabet, Google, GOOGL; METAc: Meta, META; cbBTC: Bitcoin, BTC; ETH: Ether, WETH.',
+    'Assets the engine reads (id: names): NVDAc: NVIDIA, NVDA; AAPLc: Apple, AAPL; TSLAc: Tesla, TSLA; SPCXc: SpaceX, SPCX; MSFTc: Microsoft, MSFT; AMZNc: Amazon, AMZN; GOOGLc: Alphabet, Google, GOOGL; METAc: Meta, META; cbBTC: Bitcoin, BTC; ETH: Ether, WETH.',
     `The wallet holds: ${held.length ? held.join(', ') : 'none of them'}. Its loans: ${loans.length ? loans.join(', ') : 'none'}.`,
     'Answer with ONE JSON object and nothing else:',
     '{"task": "scenario"|"repay_options"|"interest"|"limit"|"status"|"unsupported"|"chat",',

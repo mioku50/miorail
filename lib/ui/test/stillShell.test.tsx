@@ -114,14 +114,24 @@ describe('the sky and Still’s terms', () => {
   const MONDAY = new Date('2026-10-26T18:05:00Z');
   it('takes its clouds from the terms, and names no limits before the terms were read', () => {
     const read: CalendarRead = { ok: true, calendar: { readAt: MONDAY, dates: new Map([['NVDAc', ['2026-10-26']], ['TSLAc', []]]) } };
-    const { earnings, unread } = skyEarningsFromTermsV1(stillTerms(read, MONDAY));
+    const { earnings, unread, calendarRead } = skyEarningsFromTermsV1(stillTerms(read, MONDAY));
     assert.deepEqual(earnings.map((e) => e.name), ['NVIDIA']);
-    assert.deepEqual(unread, ['Apple', 'Amazon', 'Alphabet', 'Meta', 'Microsoft']);
-    const sky = skyStateV1({ now: MONDAY, earnings, unread });
+    assert.deepEqual(unread, ['Apple', 'Amazon', 'Alphabet', 'Meta', 'Microsoft', 'SpaceX']);
+    const sky = skyStateV1({ now: MONDAY, earnings, unread, calendarRead });
     assert.equal(sky.clouds.length, 1);
     assert.equal(skyCaptionV1(sky).headline, 'Market open · earnings limits');
-    assert.match(skyCaptionV1(sky).detail!, /NVIDIA reports now: .* The earnings calendar could not be read just now: new loans against stocks count at 40%/);
+    // The calendar answered and left them out: it lists no date for them, which is not a failed read.
+    assert.match(skyCaptionV1(sky).detail!, /NVIDIA reports now: .* Aave’s earnings calendar lists no report date for 6 stocks yet: new loans against them count at 40%/);
     assert.deepEqual(skyCaptionV1(skyStateV1({ now: MONDAY })), { headline: 'Market open', detail: null });
+  });
+
+  it('names the stock Aave’s calendar lists no date for, as SPCXc on 2026-11-05', () => {
+    assert.equal(
+      skyCaptionV1(skyStateV1({ now: MONDAY, earnings: [], unread: ['SpaceX'], calendarRead: true })).detail,
+      'Aave’s earnings calendar lists no report date for SpaceX yet: new loans against it count at 40% of the protocol’s limit until it does.',
+    );
+    const unreadCalendar = skyEarningsFromTermsV1(stillTerms({ ok: false }, MONDAY));
+    assert.equal(unreadCalendar.calendarRead, false);
   });
 
   it('says which stock an unread calendar lowers, when it is a few', () => {

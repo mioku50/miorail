@@ -10,7 +10,7 @@ import type { MirrorReport } from './report.js';
 const ADDRESS = z.custom<Address>((value) => typeof value === 'string' && /^0x[0-9a-fA-F]{40}$/.test(value), 'not an address');
 const INTEGER = z.string().regex(/^\d+$/);
 const ISO = z.string().datetime();
-const ASSET = z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'cbBTC', 'ETH']);
+const ASSET = z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH']);
 const VENUE = z.enum(['aave-v4', 'morpho']);
 const AMOUNT = z.object({ raw: INTEGER, decimals: z.number().int().min(0).max(36) }).strict();
 

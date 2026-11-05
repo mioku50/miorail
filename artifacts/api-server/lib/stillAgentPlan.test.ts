@@ -99,3 +99,21 @@ test('a proposal is grounded in the question’s own words, whoever wrote it', (
     edits: [{ kind: 'price_to', asset: 'ETH', cents: 150_000n }],
   });
 });
+
+test('SpaceX is SPCXc, in both languages', () => {
+  const held = computeMirror({
+    universe: universe(),
+    snapshot: snapshot({ wallet: { SPCXc: 1_000_000_000n } }),
+    calendar: calendar(),
+    subject: { address: WALLET, name: null, input: WALLET },
+    assembledAt: new Date('2026-10-21T15:00:01Z'),
+  });
+  const planFor = (question: string) => {
+    const proposal = rulesProposalV1(question, held);
+    return proposal ? groundProposalV1(proposal, question, held) : null;
+  };
+  const fall = { task: 'scenario', edits: [{ kind: 'price', asset: 'SPCXc', changeBps: -2000 }] };
+  assert.deepEqual(planFor('What if SpaceX falls 20%?'), fall);
+  assert.deepEqual(planFor('Что будет при падении SPCX на 20%?'), fall);
+  assert.deepEqual(planFor('если спейс икс упадёт на 20%'), fall);
+});

@@ -4,7 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import type { CalendarRead } from '../src/calendar.js';
 import { computeMirror } from '../src/mirror.js';
 import type { MirrorReport } from '../src/report.js';
-import { EXAMPLE, SATURDAY, SUNDAY, WEEKDAY, calendar, ok, reverted, snapshot, universe } from './fixtures.js';
+import { EXAMPLE, SATURDAY, SUNDAY, WEEKDAY, calendar, ok, reverted, snapshot, universe, type Holdings } from './fixtures.js';
 import { assertMatches } from './matches.js';
 
 const subject = { address: '0x00000000000000000000000000000000000b0b0b' as const, name: null, input: 'example' };
@@ -286,3 +286,30 @@ describe('earnings reports', () => {
     assert.deepEqual(line(later, 'NVDAc').earnings, { source: 'calendar', reportDate: null, window: null, lowered: false });
   });
 });
+
+describe('SPCXc, the stock with a collateral risk', () => {
+  // 10 SPCXc at $135.95 pledged, $100 owed; the drawn rate is 3.6585% (366 bps, rounded up).
+  const LOAN: Holdings = { pledged: { SPCXc: 1_000_000_000n }, aaveDebt: 100_000_000n };
+
+  it('counts at half its own 55% factor on a weekday, and at 40% of it while Aave lists no report date', () => {
+    assertMatches(line(run(snapshot({ wallet: { SPCXc: 1_000_000_000n } })), 'SPCXc'), { protocolFactorBps: 5500, stillFactorBps: 2750 });
+    assertMatches(line(run(snapshot({ wallet: { SPCXc: 1_000_000_000n } }), calendar({}, ['SPCXc'])), 'SPCXc'), { stillFactorBps: 2200 });
+  });
+
+  it('a loan it covers pays the drawn rate times one plus the premium Aave stored', () => {
+    // 3.6585% × 1.10 = 4.0243%, rounded up.
+    assert.equal(venue(run(snapshot({ ...LOAN, aaveRiskPremium: 1_000n })), 'Aave').borrowRateBps, 403);
+  });
+
+  it('the stored premium is what accrues until the position acts again, whatever today’s prices give', () => {
+    assert.equal(venue(run(snapshot({ ...LOAN, aaveRiskPremium: 0n })), 'Aave').borrowRateBps, 366);
+  });
+
+  it('a premium Aave did not answer is computed from the collateral the debt needs', () => {
+    assert.equal(venue(run(snapshot({ ...LOAN, aaveRiskPremium: null })), 'Aave').borrowRateBps, 403);
+    // NVIDIA, of no collateral risk, covers the whole $100 first.
+    const both: Holdings = { pledged: { SPCXc: 1_000_000_000n, NVDAc: 340_000_000n }, aaveDebt: 100_000_000n, aaveRiskPremium: null };
+    assert.equal(venue(run(snapshot(both)), 'Aave').borrowRateBps, 366);
+  });
+});
+

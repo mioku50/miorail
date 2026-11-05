@@ -18,7 +18,7 @@ import {
   type MorphoMarketStateV1,
 } from '@mioagent/rwa-issuer/morphoBorrowMath';
 import { BPS, RAY, WAD, divide, max, min, mulDiv, usdcToCents } from './math.js';
-import { morphoStillCapacityV1, stillBorrowLimitV1 } from './capacity.js';
+import { aaveRiskPremiumBpsV1, morphoStillCapacityV1, stillBorrowLimitV1 } from './capacity.js';
 import type { CalendarRead } from './calendar.js';
 import { TERMS, earningsWindow, safetyFromHealthFactor, stillShareBps, weekendWindow } from './policy.js';
 import type { AaveReserveSnapshot, AaveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from './read.js';
@@ -185,7 +185,7 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
   let capacityCents = 0n;
   let capacityComplete = true;
   const capacityKnown = usdcPrice !== undefined && usdcPrice > 0n;
-  const collateral: Array<{ reserve: AaveReserveSnapshot; asset: StockAsset; supplied: bigint; price: bigint; userFactor: bigint }> = [];
+  const collateral: Array<{ reserve: AaveReserveSnapshot; asset: StockAsset; supplied: bigint; price: bigint; userFactor: bigint; riskBps: bigint | undefined }> = [];
 
   for (const reserve of aave.reserves) {
     if (reserve.info.role.kind !== 'stock') continue;
@@ -254,7 +254,7 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     const using = reserve.status.ok ? reserve.status.value.usingAsCollateral : undefined;
     const userFactor = reserve.userFactorBps.ok ? reserve.userFactorBps.value : undefined;
     if (supplied !== undefined && supplied > 0n && using && price !== undefined && userFactor !== undefined) {
-      collateral.push({ reserve, asset, supplied, price, userFactor });
+      collateral.push({ reserve, asset, supplied, price, userFactor, riskBps: reserve.collateralRiskBps.ok ? reserve.collateralRiskBps.value : undefined });
     }
     lines.push(line);
   }
@@ -308,7 +308,22 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
     }
   }
 
-  const rate = aave.usdcDrawnRateRay.ok ? aave.usdcDrawnRateRay.value : undefined;
+  // Aave V4 charges the drawn rate times one plus the position's risk premium (aaveRiskPremiumBpsV1):
+  // 0 while the debt is covered by stocks of no collateral risk, up to SPCXc's 10% when it needs SPCXc.
+  // The premium the debt accrues now is the one Aave stored; one this engine computes stands in only
+  // where that was not read or an edit would make Aave set it again. A risk it cannot read leaves the
+  // rate unread rather than at the drawn rate alone.
+  let premiumBps: bigint | undefined = 0n;
+  if (debt !== undefined && debt > 0n) {
+    if (aave.riskPremiumBps.ok) premiumBps = aave.riskPremiumBps.value;
+    else if (usdcPrice === undefined || collateral.some((c) => c.userFactor > 0n && c.riskBps === undefined)) premiumBps = undefined;
+    else {
+      const debtValue = mulDiv(debt, usdcPrice, 10n ** BigInt(USDC_DECIMALS), 'up');
+      premiumBps = aaveRiskPremiumBpsV1(collateral.filter((c) => c.userFactor > 0n)
+        .map((c) => ({ riskBps: c.riskBps!, value: mulDiv(c.supplied, c.price, 10n ** BigInt(c.asset.decimals), 'down') })), debtValue);
+    }
+  }
+  const drawnRate = aave.usdcDrawnRateRay.ok ? aave.usdcDrawnRateRay.value : undefined;
   // A wallet with nothing on this venue gets no venue line: a row of zeros says nothing.
   const relevant = lines.length > 0 || debtCents !== 0n || venueFailed.length > 0;
   return {
@@ -323,7 +338,7 @@ function computeAave(universe: Universe, snapshot: WalletSnapshot, weekend: bool
         debtAtomic: debt === undefined ? null : debt.toString(),
         capacityCents: capacityKnown ? capacityCents.toString() : null,
         availableCents: cents(availableCents),
-        borrowRateBps: rate === undefined ? null : Number(mulDiv(rate, BPS, RAY, 'up')),
+        borrowRateBps: drawnRate === undefined || premiumBps === undefined ? null : Number(mulDiv(drawnRate, BPS + premiumBps, RAY, 'up')),
         liquidityCents: lendable === undefined ? null : usdcToCents(lendable, 'down').toString(),
         deductions: deductionsOf(capacityKnown ? capacityCents : null, debtCents, availableCents),
         safety,
@@ -607,7 +622,7 @@ export function computeMirror({ universe, snapshot, calendar, subject, assembled
         'Wallet balances of the 7 stock tokens Aave V4 accepts, cbBTC, WETH and ETH',
         'Aave V4 Coinbase Stocks: collateral supplied and USDC owed',
         'Morpho cbBTC/USDC and WETH/USDC: collateral and USDC owed',
-        'Earnings report dates of the 7 stocks, from the Aave V4 API calendar',
+        `Earnings report dates of the ${STOCKS.length} stocks, from the Aave V4 API calendar`,
       ],
       notCounted: [
         'Tokens inside liquidity pools, vaults or other lending markets',

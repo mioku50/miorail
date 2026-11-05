@@ -86,7 +86,7 @@ submitted by your own Base Account, from calls you approved.
 
 Still turns a Base wallet into a credit line it never has to sell. It is one app with Miorail, in this repository, under the same licence.
 
-**What it models.** Coinbase tokenized stocks (AAPL, AMZN, GOOGL, META, MSFT, NVDA, TSLA) on the Aave V4 "Coinbase Stocks" spoke, and cbBTC and ETH on Morpho Blue. Still counts **50% of each protocol's own collateral factor**, so a fresh draw starts half way from liquidation, and **40% for stocks while Wall Street is closed** (weekends and market holidays alike, by a reviewed calendar) **and around each company's earnings report**. 0.0005 ETH stays in the wallet for gas and never counts. Every figure is read from Base at one block by the Mirror engine (`lib/still-engine`), with its Morpho arithmetic mirroring the contract's.
+**What it models.** Coinbase tokenized stocks (AAPL, AMZN, GOOGL, META, MSFT, NVDA, SPCX, TSLA) on the Aave V4 "Coinbase Stocks" spoke, and cbBTC and ETH on Morpho Blue. Still counts **50% of each protocol's own collateral factor**, so a fresh draw starts half way from liquidation, and **40% for stocks while Wall Street is closed** (weekends and market holidays alike, by a reviewed calendar) **and around each company's earnings report**. 0.0005 ETH stays in the wallet for gas and never counts. Every figure is read from Base at one block by the Mirror engine (`lib/still-engine`), with its Morpho arithmetic mirroring the contract's.
 
 **What it prepares.** *Get money* (`/borrow`) takes an explicit collateral choice, reads the live limit for it, and prepares the exact calls; the review (`/lending/:draft`) simulates them on a fresh block and enforces Still's share on the server before anything reaches the wallet. *Repay* (`/repay`) pays an exact amount or all of it; Repay all can also take the collateral back to the wallet in the same review (a stock from Aave V4, cbBTC or WETH from Morpho), and with nothing owed it takes the collateral back alone. The person's own wallet signs; a repeat submission is refused, and the outcome is reconciled from the receipt. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) gets a stock loan or repayment in steps, one transaction each: the server reads each landed step from the chain and reviews the rest again before the wallet is asked for the next. Every lending batch carries the ERC-8021 Builder Code (checked onchain on real Aave V4 borrow and repay transactions), and each step carries it in its own calldata. Not offered to US persons.
 
@@ -120,7 +120,7 @@ Still is not a lender. It never holds collateral or USDC, and it adds no fee to 
 
 | Collateral | Protocol | Market |
 | --- | --- | --- |
-| Coinbase tokenized stocks: AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, TSLAc | Aave V4 | the Coinbase Stocks spoke |
+| Coinbase tokenized stocks: AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc | Aave V4 | the Coinbase Stocks spoke |
 | cbBTC | Morpho | cbBTC/USDC |
 | WETH, or native ETH wrapped in the same transaction | Morpho | WETH/USDC |
 

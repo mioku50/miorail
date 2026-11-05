@@ -171,6 +171,8 @@ describe('what Still’s limit is worth, in numbers', () => {
     assert.equal(lowered({ reason: 'earnings', reportDate: '2026-11-19', until: '2026-11-21T01:00:00.000Z' }),
       'NVDAc counts at 40%, not 50%, until Fri 8 PM New York time: NVIDIA reports earnings on Nov 19, and the price can jump either way.');
     assert.match(lowered({ reason: 'earnings_unread' })!, /^NVDAc counts at 40%, not 50%: Still could not read the earnings calendar just now/);
+    const spacex = stillBorrowComparisonViewV1({ ...aave, shareBps: 4_000, marginAtStillLimitBps: 6_000, lowered: { reason: 'earnings_unlisted' } }, 'SPCXc')!.lowered;
+    assert.equal(spacex, 'SPCXc counts at 40%, not 50%: Aave’s earnings calendar lists no report date for SpaceX yet, so Still counts it as if a report were near.');
   });
 
   it('prints both limits and both margins where the amount is chosen', () => {

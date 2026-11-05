@@ -95,7 +95,8 @@ export interface VenueLine {
   /** Still's limit from this venue's collateral, before debts. */
   capacityCents: string | null;
   availableCents: string | null;
-  /** Borrow rate a year in basis points, as the venue reports it now. */
+  /** Borrow rate a year in basis points, as the venue reports it now. On Aave V4 it includes the
+   * position's risk premium, which a loan SPCXc covers pays (10% of the drawn rate). */
   borrowRateBps: number | null;
   /** What the venue can lend now; the available amount never exceeds it. */
   liquidityCents: string | null;

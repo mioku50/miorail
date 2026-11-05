@@ -12,7 +12,7 @@ import { rwaLendingRuntimeV1 } from '../rwaLending.js';
 import { stillMineRuntimeV1 } from '../stillMine.js';
 import { stillSpendRuntimeV1 } from '../stillSpend.js';
 import { createMiorailPrivateMcpServerV1 } from './server.js';
-import { StillLoanRefusalV1, stillPrepareLoanReviewV1, stillPreparePurchaseV1, stillPrepareRepayReviewV1, stillPrepareWalletPurchaseV1 } from './stillLoanTool.js';
+import { STILL_LOAN_COLLATERAL_V1, STILL_TOKEN_COLLATERAL_V1, StillLoanRefusalV1, stillPrepareLoanReviewV1, stillPreparePurchaseV1, stillPrepareRepayReviewV1, stillPrepareWalletPurchaseV1 } from './stillLoanTool.js';
 
 const WALLET = `0x${'1'.repeat(40)}` as const;
 const IDENTITY = { tenantId: `eip155:8453:${WALLET}` as const, walletAddress: WALLET };
@@ -359,4 +359,11 @@ test('the connected surface lists the purchase and the repayment as writes that 
   assert.equal(draftOf((repaid as unknown as { structuredContent: { reviewUrl: string } }).structuredContent.reviewUrl).question.operation, 'repay');
   const unbounded = await client.callTool({ name: 'miorail_prepare_still_repay', arguments: { collateral: 'NVDAc', repayUsdc: 'all' } });
   assert.match(JSON.stringify(unbounded), /still_repay_amount_invalid/);
+});
+
+test('the loan, purchase and repay tools take every stock Still models as collateral', () => {
+  for (const stock of STOCKS) {
+    assert.ok((STILL_LOAN_COLLATERAL_V1 as readonly string[]).includes(stock.id), stock.id);
+    assert.ok((STILL_TOKEN_COLLATERAL_V1 as readonly string[]).includes(stock.id), stock.id);
+  }
 });

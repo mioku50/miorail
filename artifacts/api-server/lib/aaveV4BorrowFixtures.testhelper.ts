@@ -32,7 +32,7 @@ export function aaveRepaidReadFixture(): StillAaveSnapshotV1 {
   read.snapshot.aave!.account = { ok: true, value: { healthFactor: (BigInt(1) << BigInt(256)) - BigInt(1), borrowCount: ZERO } };
   return read;
 }
-/** Appends reserves Still does not model, as Aave listed a ninth one on 2026-11-01. */
+/** Appends reserves Still does not model, as Aave listed a ninth one on 2026-11-01 (SPCXc, modeled since 2026-11-05). */
 export function withUnmodeledReserves(read: StillAaveSnapshotV1, count = 1, supplied = BigInt(0), borrowing = false): StillAaveSnapshotV1 {
   if (!read.universe.aave.ok || !read.snapshot.aave) throw Error('fixture');
   for (let i = 0; i < count; i += 1) {
@@ -44,7 +44,8 @@ export function withUnmodeledReserves(read: StillAaveSnapshotV1, count = 1, supp
       factorBps: { ok: true, value: BigInt(5_000) }, userFactorBps: { ok: true, value: BigInt(5_000) }, price: { ok: true, value: BigInt(10_000_000_000) },
       priceUpdatedAt: { ok: false, reason: 'reverted' }, supplied: { ok: true, value: supplied },
       status: { ok: true, value: { usingAsCollateral: supplied > BigInt(0), borrowing } },
-      spokeConfig: { ok: true, value: { addCap: BigInt(1_000), drawCap: BigInt(0), active: true, halted: false } }, spokeAdded: { ok: true, value: BigInt(0) } });
+      spokeConfig: { ok: true, value: { addCap: BigInt(1_000), drawCap: BigInt(0), active: true, halted: false } }, spokeAdded: { ok: true, value: BigInt(0) },
+      collateralRiskBps: { ok: true, value: ZERO } });
     read.reserves.push({ reserveId, underlying, hub: ADDRESSES.aaveHub, hubAssetId: reserveId, decimals: 8, dynamicConfigKey: 0 });
     read.positions.push({ reserveId, drawnShares: borrowing ? BigInt(1) : BigInt(0), suppliedShares: supplied, premiumShares: BigInt(0), premiumOffsetRay: BigInt(0), dynamicConfigKey: 0 });
   }

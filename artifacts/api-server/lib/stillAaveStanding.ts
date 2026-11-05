@@ -347,7 +347,7 @@ export function stockShareTermsV1(stock: StockId, calendar: CalendarRead, blockA
     share = at;
     lowered = closed.active ? { reason: 'market_closed', until: closed.endsAt.toISOString() }
       : earnings?.active ? { reason: 'earnings', reportDate: earnings.reportDate, until: earnings.endsAt.toISOString() }
-        : { reason: 'earnings_unread' };
+        : calendar.ok ? { reason: 'earnings_unlisted' } : { reason: 'earnings_unread' };
   }
   return { share, lowered };
 }

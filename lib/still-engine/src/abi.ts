@@ -23,6 +23,7 @@ export const aaveSpokeAbi = parseAbi([
   'function getUserSuppliedAssets(uint256 reserveId, address user) view returns (uint256)',
   'function getUserTotalDebt(uint256 reserveId, address user) view returns (uint256)',
   'function getUserPosition(uint256 reserveId, address user) view returns ((uint120 drawnShares, uint120 premiumShares, int200 premiumOffsetRay, uint120 suppliedShares, uint32 dynamicConfigKey))',
+  'function getUserLastRiskPremium(address user) view returns (uint256)',
   'function getUserAccountData(address user) view returns ((uint256 riskPremium, uint256 avgCollateralFactor, uint256 healthFactor, uint256 totalCollateralValue, uint256 totalDebtValueRay, uint256 activeCollateralCount, uint256 borrowCount))',
 ]);
 
