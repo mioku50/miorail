@@ -198,3 +198,58 @@ export function sumPoolSwapsV1(
   }
   return { count: logs.length, amount0In, amount1In };
 }
+
+type SwapLogV1 = { address?: unknown; topics?: unknown; data?: unknown; blockNumber?: unknown };
+
+/**
+ * Every pool's `Swap` logs after its own start block, read together: one
+ * `eth_getLogs` per window for all the pools that window concerns, then split
+ * by pool. It used to be one read per pool and window; Denim's five blocks a
+ * second made a two-hour gap four windows instead of one, so a pass spent about
+ * 216 reads and eight minutes of pacing on what is now four to twelve reads.
+ *
+ * A pool's logs are null when a window inside its own range was not read, or
+ * when a log in it carries no block number to place it by: a total with a hole
+ * in it is not a total. A pool whose start is at or past `toBlock` has nothing
+ * to read and is absent from the answer.
+ */
+export async function readPoolSwapLogsTogetherV1(input: {
+  /** Logs are read for blocks after `fromBlock`, up to `toBlock`. */
+  pools: readonly { poolAddress: string; fromBlock: number }[];
+  toBlock: number;
+  /** The widest span one read may ask for. */
+  window: number;
+  readLogs: (query: { addresses: string[]; fromBlock: number; toBlock: number }) => Promise<
+    { ok: true; value: readonly SwapLogV1[] } | { ok: false }
+  >;
+}): Promise<Map<string, SwapLogV1[] | null>> {
+  const pools = input.pools
+    .map((pool) => ({ address: pool.poolAddress.toLowerCase(), fromBlock: pool.fromBlock }))
+    .filter((pool) => pool.fromBlock < input.toBlock);
+  const answer = new Map<string, SwapLogV1[] | null>(pools.map((pool) => [pool.address, []]));
+  if (pools.length === 0) return answer;
+  const window = Math.max(1, input.window);
+  const failedEnds: number[] = [];
+  const collected: SwapLogV1[] = [];
+  for (let start = Math.min(...pools.map((pool) => pool.fromBlock)) + 1; start <= input.toBlock; start += window) {
+    const end = Math.min(start + window - 1, input.toBlock);
+    // Only the pools whose own range reaches into this window.
+    const addresses = [...new Set(pools.filter((pool) => pool.fromBlock < end).map((pool) => pool.address))];
+    const read = await input.readLogs({ addresses, fromBlock: start, toBlock: end });
+    if (read.ok) collected.push(...read.value);
+    else failedEnds.push(end);
+  }
+  for (const pool of pools) {
+    if (failedEnds.some((end) => pool.fromBlock < end)) answer.set(pool.address, null);
+  }
+  for (const log of collected) {
+    const address = String(log.address ?? '').toLowerCase();
+    const mine = answer.get(address);
+    if (!mine) continue;
+    const pool = pools.find((entry) => entry.address === address)!;
+    const block = typeof log.blockNumber === 'string' ? Number.parseInt(log.blockNumber, 16) : Number.NaN;
+    if (!Number.isSafeInteger(block)) answer.set(address, null);
+    else if (block > pool.fromBlock) mine.push(log);
+  }
+  return answer;
+}

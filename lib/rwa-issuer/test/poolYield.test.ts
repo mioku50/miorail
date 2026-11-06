@@ -6,6 +6,7 @@ import type { B20BatchCallV1, B20ReaderV1 } from '@mioagent/b20-control';
 import {
   AERO_USD_FEED_BASE_V1,
   CL_SWAP_TOPIC_V1,
+  readPoolSwapLogsTogetherV1,
   readPoolYieldStateV1,
   sumPoolSwapsV1,
 } from '../src/poolYield.js';
@@ -32,6 +33,79 @@ describe('the swaps a pool logged', () => {
     assert.equal(sumPoolSwapsV1(POOL, [log(1n, -1n, { topics: [`0x${'1'.repeat(64)}`] })]), null);
     assert.equal(sumPoolSwapsV1(POOL, [{ address: POOL, topics: [CL_SWAP_TOPIC_V1], data: '0x12' }]), null);
     assert.deepEqual(sumPoolSwapsV1(POOL, []), { count: 0, amount0In: 0n, amount1In: 0n });
+  });
+});
+
+describe('every pool’s swaps, read together', () => {
+  const A = '0x00000000000000000000000000000000000000aa';
+  const B = '0x00000000000000000000000000000000000000bb';
+  const C = '0x00000000000000000000000000000000000000cc';
+  const at = (address: string, block: number) => ({ address, topics: [CL_SWAP_TOPIC_V1], data: '0x', blockNumber: `0x${block.toString(16)}` });
+  const chain = (logs: ReturnType<typeof at>[], failing: number[] = []) => {
+    const asked: { addresses: string[]; fromBlock: number; toBlock: number }[] = [];
+    return {
+      asked,
+      readLogs: async (query: { addresses: string[]; fromBlock: number; toBlock: number }) => {
+        asked.push(query);
+        if (failing.includes(query.fromBlock)) return { ok: false as const };
+        const value = logs.filter((log) => {
+          const block = Number.parseInt(log.blockNumber, 16);
+          return query.addresses.includes(log.address) && block >= query.fromBlock && block <= query.toBlock;
+        });
+        return { ok: true as const, value };
+      },
+    };
+  };
+
+  test('one read per window serves every pool, and each keeps only its own logs after its own start', async () => {
+    const { asked, readLogs } = chain([at(A, 120), at(B, 140), at(B, 160), at(A, 250)]);
+    const answer = await readPoolSwapLogsTogetherV1({
+      pools: [{ poolAddress: A, fromBlock: 100 }, { poolAddress: B, fromBlock: 150 }],
+      toBlock: 300,
+      window: 100,
+      readLogs,
+    });
+    // Two windows for two pools: two reads, where one per pool and window was four.
+    assert.deepEqual(asked.map((query) => [query.fromBlock, query.toBlock, query.addresses]), [[101, 200, [A, B]], [201, 300, [A, B]]]);
+    assert.deepEqual(answer.get(A)?.map((log) => log.blockNumber), ['0x78', '0xfa']);
+    // B's start is block 150: its swap at 140 belongs to the reading before.
+    assert.deepEqual(answer.get(B)?.map((log) => log.blockNumber), ['0xa0']);
+  });
+
+  test('a window that was not read voids only the pools whose range reaches into it', async () => {
+    const { asked, readLogs } = chain([at(A, 150), at(C, 280)], [101]);
+    const answer = await readPoolSwapLogsTogetherV1({
+      pools: [{ poolAddress: A, fromBlock: 100 }, { poolAddress: C, fromBlock: 250 }],
+      toBlock: 300,
+      window: 100,
+      readLogs,
+    });
+    // C starts after the first window, so it is not asked for there.
+    assert.deepEqual(asked[0]?.addresses, [A]);
+    assert.equal(answer.get(A), null);
+    assert.deepEqual(answer.get(C)?.map((log) => log.blockNumber), ['0x118']);
+  });
+
+  test('a log with no block number to place it by voids its pool, not the others', async () => {
+    const { readLogs } = chain([at(A, 150)]);
+    const answer = await readPoolSwapLogsTogetherV1({
+      pools: [{ poolAddress: A, fromBlock: 100 }, { poolAddress: B, fromBlock: 100 }],
+      toBlock: 200,
+      window: 100,
+      readLogs: async (query) => {
+        const read = await readLogs(query);
+        return read.ok ? { ok: true as const, value: [...read.value, { address: B, topics: [CL_SWAP_TOPIC_V1], data: '0x' }] } : read;
+      },
+    });
+    assert.equal(answer.get(B), null);
+    assert.equal(answer.get(A)?.length, 1);
+  });
+
+  test('a pool already read to the anchor asks for nothing', async () => {
+    const { asked, readLogs } = chain([]);
+    const answer = await readPoolSwapLogsTogetherV1({ pools: [{ poolAddress: A, fromBlock: 300 }], toBlock: 300, window: 100, readLogs });
+    assert.equal(asked.length, 0);
+    assert.equal(answer.has(A), false);
   });
 });
 

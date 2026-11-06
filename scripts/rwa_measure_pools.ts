@@ -47,6 +47,7 @@ import {
   poolVenueFromIdentityV1,
   readFactoryIdentityV1,
   readPoolShapesV1,
+  readPoolSwapLogsTogetherV1,
   readPoolYieldStateV1,
   sumPoolSwapsV1,
 } from '@mioagent/rwa-issuer';
@@ -300,13 +301,16 @@ async function main(): Promise<void> {
 
 /** Blocks per `eth_getLogs`: what mainnet.base.org serves in one answer. */
 const YIELD_LOG_WINDOW_V1 = 10_000;
-/** How far back a pool with no reading yet starts: six windows, about 33
- * hours at today's 2 s blocks, which is past the one day a fee figure needs.
- * Later passes read forward from their own last reading. */
-const YIELD_FIRST_WINDOWS_V1 = 6;
-/** The most windows one pass reads for one pool; a longer gap is skipped and
- * the fee figure says how many days it covers. */
-const YIELD_MAX_WINDOWS_V1 = 12;
+/** How far back a pool with no reading yet starts: 44 windows, about 24 hours
+ * at Denim's five blocks a second, which is the one day a fee figure needs. It
+ * was six windows, 33 hours at two-second blocks, and became 3.3 hours on
+ * 2026-11-05; reading every pool together (readPoolSwapLogsTogetherV1) is
+ * what makes the windows cheap enough to count by time again. Later passes
+ * read forward from their own last reading. */
+const YIELD_FIRST_WINDOWS_V1 = 44;
+/** The most windows one pass reads for one pool, about two days; a longer gap
+ * is skipped and the fee figure says how many days it covers. */
+const YIELD_MAX_WINDOWS_V1 = 87;
 /** The step's share of the unit's 20 minutes. */
 const YIELD_BUDGET_MS_V1 = 8 * 60_000;
 /** A yield looks back a week; a month is kept. */
@@ -349,6 +353,15 @@ async function measurePoolYieldsV1(input: {
   let withSwaps = 0;
   let unread = 0;
   let skipped = 0;
+  // First every pool's state and where its swaps start, then the swaps of all
+  // of them together (readPoolSwapLogsTogetherV1), then one reading each.
+  const entries: {
+    token: string;
+    pool: string;
+    state: Extract<Awaited<ReturnType<typeof readPoolYieldStateV1>>, { ok: true }>['state'];
+    previous: Awaited<ReturnType<typeof yields.latestWithSwaps>> | null;
+    fromBlock: number;
+  }[] = [];
   for (const token of input.tokens) {
     if (Date.now() - started > YIELD_BUDGET_MS_V1) {
       skipped += 1;
@@ -367,57 +380,60 @@ async function measurePoolYieldsV1(input: {
       console.log(`  ${token}  yield unread (${state.reason})`);
       continue;
     }
+    const previous = logs ? await yields.latestWithSwaps({ chainId: CHAIN_ID_V1, poolAddress: pool }) : null;
+    const earliest = input.blockNumber - YIELD_MAX_WINDOWS_V1 * YIELD_LOG_WINDOW_V1;
+    const fromBlock = previous
+      ? Math.max(previous.blockNumber, earliest)
+      : input.blockNumber - YIELD_FIRST_WINDOWS_V1 * YIELD_LOG_WINDOW_V1;
+    entries.push({ token, pool, state: state.state, previous, fromBlock });
+  }
 
-    let swaps: { fromBlock: number; fromAt: string; count: number; amount0InAtomic: string; amount1InAtomic: string } | null =
-      null;
-    if (logs) {
-      const previous = await yields.latestWithSwaps({ chainId: CHAIN_ID_V1, poolAddress: pool });
-      const earliest = input.blockNumber - YIELD_MAX_WINDOWS_V1 * YIELD_LOG_WINDOW_V1;
-      const fromBlock = previous
-        ? Math.max(previous.blockNumber, earliest)
-        : input.blockNumber - YIELD_FIRST_WINDOWS_V1 * YIELD_LOG_WINDOW_V1;
-      if (fromBlock < input.blockNumber) {
-        const collected: { address?: unknown; topics?: unknown; data?: unknown }[] = [];
-        let complete = true;
-        for (let start = fromBlock + 1; start <= input.blockNumber; start += YIELD_LOG_WINDOW_V1) {
-          const end = Math.min(start + YIELD_LOG_WINDOW_V1 - 1, input.blockNumber);
-          const read = await logs.eventLogs({ tokens: [pool], topics: [CL_SWAP_TOPIC_V1], fromBlock: start, toBlock: end });
-          if (!read.ok) {
-            complete = false;
-            break;
-          }
-          collected.push(...(read.value as { address?: unknown; topics?: unknown; data?: unknown }[]));
-        }
-        const sum = complete ? sumPoolSwapsV1(pool, collected) : null;
-        const fromAt =
-          previous && previous.blockNumber === fromBlock
-            ? previous.blockAt
-            : await logs.blockTimes([fromBlock]).then((times) => (times.ok ? (times.value.get(fromBlock) ?? null) : null));
-        if (sum && fromAt) {
-          swaps = {
-            fromBlock,
+  const swapLogs = logs
+    ? await readPoolSwapLogsTogetherV1({
+        pools: entries.map((entry) => ({ poolAddress: entry.pool, fromBlock: entry.fromBlock })),
+        toBlock: input.blockNumber,
+        window: YIELD_LOG_WINDOW_V1,
+        readLogs: ({ addresses, fromBlock, toBlock }) =>
+          logs.eventLogs({ tokens: addresses, topics: [CL_SWAP_TOPIC_V1], fromBlock, toBlock }),
+      })
+    : new Map<string, null>();
+  // A start that no earlier reading dates is dated by the chain, all in one read.
+  const dated = (entry: (typeof entries)[number]) => entry.previous !== null && entry.previous.blockNumber === entry.fromBlock;
+  const undated = [...new Set(entries.filter((entry) => swapLogs.get(entry.pool.toLowerCase()) && !dated(entry)).map((entry) => entry.fromBlock))];
+  const startTimes = logs && undated.length > 0 ? await logs.blockTimes(undated) : null;
+
+  for (const entry of entries) {
+    const collected = swapLogs.get(entry.pool.toLowerCase()) ?? null;
+    const sum = collected ? sumPoolSwapsV1(entry.pool, collected) : null;
+    const fromAt = dated(entry)
+      ? entry.previous!.blockAt
+      : startTimes?.ok
+        ? (startTimes.value.get(entry.fromBlock) ?? null)
+        : null;
+    const swaps =
+      sum && fromAt
+        ? {
+            fromBlock: entry.fromBlock,
             fromAt,
             count: sum.count,
             amount0InAtomic: sum.amount0In.toString(),
             amount1InAtomic: sum.amount1In.toString(),
-          };
-        }
-      }
-    }
+          }
+        : null;
 
     const outcome = await yields.record({
       chainId: CHAIN_ID_V1,
-      tokenAddress: token,
+      tokenAddress: entry.token,
       blockNumber: input.blockNumber,
       blockAt,
       readAt: new Date().toISOString(),
-      ...state.state,
+      ...entry.state,
       swaps,
     });
     if (outcome === 'recorded') recorded += 1;
     if (swaps) withSwaps += 1;
     console.log(
-      `  ${token}  yield ${pool}  ${swaps ? `${swaps.count} swap(s) since block ${swaps.fromBlock}` : 'swaps not read'}`,
+      `  ${entry.token}  yield ${entry.pool}  ${swaps ? `${swaps.count} swap(s) since block ${swaps.fromBlock}` : 'swaps not read'}`,
     );
   }
   const pruned = await yields.prune({ before: new Date(Date.now() - YIELD_KEEP_DAYS_V1 * 86_400_000).toISOString() });
