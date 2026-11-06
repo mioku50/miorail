@@ -32,3 +32,22 @@ export function tailRangeV1(input: {
   const spanEnd = fromBlock + maxSpan - 1;
   return { ok: true, fromBlock, toBlock: Math.min(safeHead, spanEnd), reachedHead: safeHead <= spanEnd };
 }
+
+/**
+ * Whether a run may start another pass inside its time budget: the time used
+ * plus the slowest pass so far must fit. A run that stops here has not failed:
+ * the cursor holds every pass it finished, and the next run continues from it.
+ * Without the budget, a backlog longer than one run (a host move, a throttled
+ * hour) ran every pass until systemd killed the run, which reported a failed
+ * unit each hour and skipped the corporate-action stage that follows the passes.
+ * No budget leaves `--passes` as the only bound.
+ */
+export function passFitsBudgetV1(input: {
+  elapsedMs: number;
+  /** The slowest pass of this run so far; 0 before the first. */
+  slowestPassMs: number;
+  budgetMs: number | null;
+}): boolean {
+  if (input.budgetMs === null) return true;
+  return input.elapsedMs + input.slowestPassMs <= input.budgetMs;
+}

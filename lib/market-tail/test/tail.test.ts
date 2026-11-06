@@ -11,7 +11,7 @@ import {
 } from '../src/constants.js';
 import { assetTransfersFromLogsV1, type RawLogV1 } from '../src/ledger.js';
 import { venueTransfersFromLedgerV1, venueTransferSideV1 } from '../src/events.js';
-import { tailRangeV1 } from '../src/range.js';
+import { passFitsBudgetV1, tailRangeV1 } from '../src/range.js';
 import { createMarketTailSourceV1 } from '../src/source.js';
 import {
   addressFromCallResultV1,
@@ -226,6 +226,30 @@ describe('Denim: five blocks a second', () => {
     assert.ok(flag('passes') * MARKET_TAIL_MAX_SPAN_V1 >= 2 * BLOCKS_PER_HOUR_V1);
     // A corporate-action pass reads 10,000 blocks (scripts/market_tail.ts, --actions-blocks).
     assert.ok(flag('actions-passes') * 10_000 >= 2 * BLOCKS_PER_HOUR_V1);
+  });
+
+  test('a run stops starting passes with five minutes of its timeout left for the stage after them', () => {
+    const unit = readFileSync(resolve(import.meta.dirname, '../../../ops/systemd/miorail-rwa-market-tail.service'), 'utf8');
+    const budget = Number(unit.match(/--budget-seconds (\d+)/)?.[1]);
+    const timeout = Number(unit.match(/^TimeoutStartSec=(\d+)$/m)?.[1]);
+    assert.ok(budget > 0 && timeout > 0, 'both are stated in the unit');
+    assert.ok(timeout - budget >= 300);
+  });
+});
+
+describe('the run budget', () => {
+  test('no budget leaves --passes as the only bound', () => {
+    assert.equal(passFitsBudgetV1({ elapsedMs: 10 * 3_600_000, slowestPassMs: 60_000, budgetMs: null }), true);
+  });
+
+  test('the first pass always starts', () => {
+    assert.equal(passFitsBudgetV1({ elapsedMs: 0, slowestPassMs: 0, budgetMs: 600_000 }), true);
+  });
+
+  test('another pass starts only if the slowest one so far would still end inside the budget', () => {
+    // 2026-11-06: passes of about 45 s; the run was killed at 900 s with the backlog unread.
+    assert.equal(passFitsBudgetV1({ elapsedMs: 555_000, slowestPassMs: 45_000, budgetMs: 600_000 }), true);
+    assert.equal(passFitsBudgetV1({ elapsedMs: 556_000, slowestPassMs: 45_000, budgetMs: 600_000 }), false);
   });
 });
 

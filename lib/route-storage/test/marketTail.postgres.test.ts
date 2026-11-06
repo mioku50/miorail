@@ -2,11 +2,14 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import test, { after, before, describe } from 'node:test';
 
+import assert from 'node:assert/strict';
+
 import postgres from 'postgres';
 
 import type { SqlTemplateExecutor } from '../src/types.js';
 
-import { createDatabaseMarketTailRepository } from '../src/marketTailDatabase.js';
+import { MarketVenueUnidentifiedError } from '../src/marketTail.js';
+import { createDatabaseMarketTailRepository, type MarketTailTransactionV1 } from '../src/marketTailDatabase.js';
 import { marketTailContractV1 } from './marketTail.contract.js';
 
 // ---------------------------------------------------------------------------
@@ -47,13 +50,47 @@ if (!throwaway) {
     test('skipped: set MIOAGENT_MIGRATION_TEST_URL to a throwaway local database', () => {});
   });
 } else {
+  const asExecutor = (run: unknown): SqlTemplateExecutor => (strings, ...values) =>
+    (run as (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Record<string, unknown>[]>)(strings, ...values);
+  // What scripts/market_tail.ts passes: each pass in one transaction.
+  const transaction: MarketTailTransactionV1 = async (work) =>
+    (await sql!.begin((inside) => work(asExecutor(inside)))) as unknown as Awaited<ReturnType<typeof work>>;
+  const truncate = () => sql!.unsafe('TRUNCATE market_venue_transfers, market_venues, market_tail_cursors RESTART IDENTITY CASCADE');
+
   marketTailContractV1('postgres', async () => {
-    await sql!.unsafe('TRUNCATE market_venue_transfers, market_venues, market_tail_cursors RESTART IDENTITY CASCADE');
-    const executor: SqlTemplateExecutor = (strings, ...values) =>
-      (sql as unknown as (
-        strings: TemplateStringsArray,
-        ...values: unknown[]
-      ) => Promise<Record<string, unknown>[]>)(strings, ...values);
-    return { repository: createDatabaseMarketTailRepository(executor) };
+    await truncate();
+    return { repository: createDatabaseMarketTailRepository(asExecutor(sql)) };
+  });
+  marketTailContractV1('postgres, one transaction per pass', async () => {
+    await truncate();
+    return { repository: createDatabaseMarketTailRepository(asExecutor(sql), transaction) };
+  });
+
+  describe('postgres market tail, one transaction per pass', () => {
+    test('a pass that fails part way stores none of its events and leaves the cursor where it was', async () => {
+      await truncate();
+      const repository = createDatabaseMarketTailRepository(asExecutor(sql), transaction);
+      const pool = '0xa3b1e3f9747065e2073722ff4c9027d3ea4994f0';
+      const event = (logIndex: number, venueAddress: string) => ({
+        chainId: 8453 as const, tokenAddress: '0xb200000000000000000000c2e324d24d7eecd1fb', venueAddress,
+        direction: 'out_of_venue' as const, counterparty: '0x1111111111111111111111111111111111111111',
+        amountAtomic: '322751470', blockNumber: 50_428_000, transactionHash: `0x${'ab'.repeat(32)}`, logIndex,
+        observedAt: '2026-08-25T09:00:00.000Z',
+      });
+      await assert.rejects(
+        repository.recordPass({
+          tailKey: 'official_asset_ledger', chainId: 8453, toBlock: 50_428_100, observedAt: '2026-08-25T09:05:00.000Z',
+          logCalls: 1, identityCalls: 2,
+          venues: [{ chainId: 8453, address: pool, kind: 'paired_pool', token0: '0x833589fcd6edb6e08f4c7c32d4f71b54bda02913',
+            token1: '0xb200000000000000000000c2e324d24d7eecd1fb', firstSeenAt: '2026-08-25T09:00:00.000Z', identifiedAt: '2026-08-25T09:00:00.000Z' }],
+          // The first event is through the pool this pass names; the second through an address nobody identified.
+          events: [event(7, pool), event(8, '0x9999999999999999999999999999999999999999')],
+        }),
+        MarketVenueUnidentifiedError,
+      );
+      const [counts] = await sql!`SELECT (SELECT count(*) FROM market_venue_transfers)::int AS events,
+        (SELECT count(*) FROM market_venues)::int AS venues, (SELECT count(*) FROM market_tail_cursors)::int AS cursors`;
+      assert.deepEqual({ ...counts }, { events: 0, venues: 0, cursors: 0 });
+    });
   });
 }

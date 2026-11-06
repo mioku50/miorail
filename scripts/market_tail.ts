@@ -32,7 +32,7 @@
  *   pnpm rwa:market-tail --dry
  *   pnpm rwa:market-tail --passes 4
  */
-import { client, closeDb } from '@mioagent/db';
+import { client, closeDb, withDatabaseTransaction } from '@mioagent/db';
 import {
   B20_CORPORATE_ACTION_TOPIC_LIST_V1,
   B20_TOKENIZED_STOCK_GENESIS_BLOCK_V1,
@@ -46,6 +46,7 @@ import {
   UNISWAP_V4_SINGLETON_V1,
   assetTransfersFromLogsV1,
   createMarketTailSourceV1,
+  passFitsBudgetV1,
   tailRangeV1,
   venueTransfersFromLedgerV1,
   venueCandidatesFromTransfersV1,
@@ -94,6 +95,10 @@ interface ArgsV1 {
   actionsOnly: boolean;
   skipActions: boolean;
   dry: boolean;
+  /** Seconds the transfer passes may use before the run stops starting new
+   * ones (passFitsBudgetV1). Kept under the unit's TimeoutStartSec, with room
+   * for the corporate-action stage and the summary after it. */
+  budgetSeconds: number | null;
 }
 
 function parseArgsV1(argv: readonly string[]): ArgsV1 {
@@ -126,6 +131,7 @@ function parseArgsV1(argv: readonly string[]): ArgsV1 {
     actionsOnly: argv.includes('--actions-only'),
     skipActions: argv.includes('--skip-actions'),
     dry: argv.includes('--dry'),
+    budgetSeconds: optional('--budget-seconds'),
   };
 }
 
@@ -322,7 +328,7 @@ async function main(): Promise<void> {
 
   const source = createMarketTailSourceV1({ rpcUrl });
   const official = createDatabaseOfficialAssetRepository(client);
-  const tail = createDatabaseMarketTailRepository(client);
+  const tail = createDatabaseMarketTailRepository(client, withDatabaseTransaction);
 
   // The universe is what a reviewed source still lists. A background reader
   // whose universe is a hand-kept array is a budget with no owner.
@@ -357,7 +363,22 @@ async function main(): Promise<void> {
       `${tokens.length - registryTokens.length} reviewed with tokens outstanding\n`,
   );
 
+  const runStartedAt = Date.now();
+  let passStartedAt: number | null = null;
+  let slowestPassMs = 0;
+  // The first block this run stored; the summary below counts from it.
+  let runFromBlock: number | null = null;
   for (let pass = 0; args.actionsOnly ? false : pass < args.passes; pass += 1) {
+    if (passStartedAt !== null) slowestPassMs = Math.max(slowestPassMs, Date.now() - passStartedAt);
+    const elapsedMs = Date.now() - runStartedAt;
+    if (!passFitsBudgetV1({ elapsedMs, slowestPassMs, budgetMs: args.budgetSeconds === null ? null : args.budgetSeconds * 1000 })) {
+      console.log(
+        `pass ${pass + 1}: not started: ${Math.round(elapsedMs / 1000)} s of the ${args.budgetSeconds} s budget used, ` +
+          `and a pass has taken up to ${Math.round(slowestPassMs / 1000)} s. The next run continues from the cursor.`,
+      );
+      break;
+    }
+    passStartedAt = Date.now();
     const head = await source.headBlock();
     if (!head.ok) {
       console.log(`pass ${pass + 1}: ${head.reason}`);
@@ -518,6 +539,7 @@ async function main(): Promise<void> {
       venues: venueRows,
       events,
     });
+    runFromBlock ??= range.fromBlock;
     console.log(
       `  stored ${outcome.inserted} new, ${outcome.duplicates} already seen; ` +
         `venues +${outcome.venuesAdded} new, ${outcome.venuesIdentified} answered; ` +
@@ -529,13 +551,17 @@ async function main(): Promise<void> {
 
   if (!args.skipActions) await corporateActionStageV1({ args, source, tail, tokens });
 
-  if (!args.dry && !args.actionsOnly) {
+  // What this run stored, not all history: the all-history count read the whole
+  // table (8.3M rows, 4.5 GB on 2026-11-06) every hour for a log line, about
+  // 35 GB in fifteen hours, and pushed the index the next run's inserts need
+  // out of memory.
+  if (!args.dry && !args.actionsOnly && runFromBlock !== null) {
     const activity = await tail.venueActivity({
       chainId: CHAIN_ID_V1,
       tokenAddresses: tokens,
-      sinceBlock: 0,
+      sinceBlock: runFromBlock,
     });
-    console.log('\nobserved so far:');
+    console.log(`\nobserved in this run, from block ${runFromBlock}:`);
     for (const row of activity) {
       const asset = assets.find((entry) => entry.tokenAddress === row.tokenAddress);
       console.log(
@@ -547,7 +573,7 @@ async function main(): Promise<void> {
     // A token with no row was not observed trading. That is different from a
     // measured zero, and it is printed as absence rather than as a count.
     const silent = tokens.filter((token) => !activity.some((row) => row.tokenAddress === token));
-    if (silent.length > 0) console.log(`  ${silent.length} tracked asset(s) not observed at all`);
+    if (silent.length > 0) console.log(`  ${silent.length} tracked asset(s) not observed in these blocks`);
   }
 }
 

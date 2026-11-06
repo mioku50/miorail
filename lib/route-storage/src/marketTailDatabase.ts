@@ -59,7 +59,22 @@ function cursorFromRowV1(row: Record<string, unknown>): MarketTailCursorV1 {
   };
 }
 
-export function createDatabaseMarketTailRepository(sql: SqlTemplateExecutor): MarketTailRepositoryV1 {
+export type MarketTailTransactionV1 = <T>(
+  work: (transaction: SqlTemplateExecutor) => Promise<T>,
+) => Promise<T>;
+
+/**
+ * `transaction`, when given, writes each pass as one transaction: one commit
+ * for its thousands of rows instead of one per row, and nothing at all of a
+ * pass that throws part way, so a pass is either stored with its cursor or
+ * read again. On the 2026-11-06 host a pass of ~2,000 events took 9-20 s to
+ * store this way, which with a backlog ran the hourly tail into its timeout.
+ * Readers (the API's routes) need none.
+ */
+export function createDatabaseMarketTailRepository(
+  sql: SqlTemplateExecutor,
+  transaction?: MarketTailTransactionV1,
+): MarketTailRepositoryV1 {
   return {
     async readCursor(input) {
       const rows = (await sql`
@@ -71,6 +86,7 @@ export function createDatabaseMarketTailRepository(sql: SqlTemplateExecutor): Ma
     },
 
     async recordPass(input) {
+      if (transaction) return transaction((inside) => createDatabaseMarketTailRepository(inside).recordPass(input));
       const existingRows = (await sql`
         SELECT * FROM market_tail_cursors WHERE tail_key = ${input.tailKey} LIMIT 1`) as Record<
         string,
@@ -125,16 +141,21 @@ export function createDatabaseMarketTailRepository(sql: SqlTemplateExecutor): Ma
       }
 
       const eventRows = input.events.map((row) => assertMarketVenueTransferV1(row, 'write'));
+      // Each venue's kind, read once per pass after the upserts above: a pass
+      // carries thousands of events through a few dozen venues, and a read per
+      // event was a round trip per row.
+      const kindOf = new Map<string, MarketVenueKindV1>();
+      for (const chainId of new Set(eventRows.map((row) => row.chainId))) {
+        const addresses = [...new Set(eventRows.filter((row) => row.chainId === chainId).map((row) => row.venueAddress))];
+        const found = (await sql`
+          SELECT address, kind FROM market_venues
+           WHERE chain_id = ${chainId} AND address = ANY(${addresses})`) as Record<string, unknown>[];
+        for (const row of found) kindOf.set(`${chainId}:${String(row.address)}`, row.kind as MarketVenueKindV1);
+      }
       let inserted = 0;
       let duplicates = 0;
       for (const row of eventRows) {
-        const venueRow = (await sql`
-          SELECT kind FROM market_venues
-           WHERE chain_id = ${row.chainId} AND address = ${row.venueAddress} LIMIT 1`) as Record<
-          string,
-          unknown
-        >[];
-        const kind = venueRow[0]?.kind as MarketVenueKindV1 | undefined;
+        const kind = kindOf.get(`${row.chainId}:${row.venueAddress}`);
         if (!kind) {
           throw new MarketVenueUnidentifiedError(row.venueAddress, 'the store has no such address');
         }

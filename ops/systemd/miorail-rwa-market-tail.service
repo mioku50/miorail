@@ -24,7 +24,10 @@ WorkingDirectory=/home/miorail/mioagent
 EnvironmentFile=/home/miorail/mioagent/.env
 Environment=NODE_ENV=production
 Environment=PATH=/home/miorail/.nvm/versions/node/v22.23.1/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/market_tail.ts --passes 24 --actions-passes 6
+# --budget-seconds stops starting transfer passes after ten minutes, leaving five of the timeout for
+# the corporate-action stage and the summary. A backlog (a host move, a throttled hour) is then read
+# over several runs, each one finished, instead of one run killed every hour (2026-11-06).
+ExecStart=/home/miorail/.nvm/versions/node/v22.23.1/bin/node --import tsx scripts/market_tail.ts --passes 24 --actions-passes 6 --budget-seconds 600
 
 TimeoutStartSec=900
 NoNewPrivileges=true
