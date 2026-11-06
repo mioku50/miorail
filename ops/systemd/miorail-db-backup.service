@@ -1,0 +1,34 @@
+[Unit]
+# Miorail's nightly database dump, on this host: seven nights and four Sundays
+# in /var/backups/miorail/{daily,weekly}. The rules and the two checks a dump
+# must pass are in ops/backup/miorail-db-backup.sh.
+#
+# Added on 2026-11-06, after the move to the new host showed that no Miorail
+# dump had been taken since 2026-09-07 except by hand. A failure fails this
+# unit, which ops-alerts announces like any other miorail-* unit.
+#
+# Oneshot, driven by miorail-db-backup.timer. Root, because the script lives in
+# /home/miorail, which postgres cannot enter; every database step runs as
+# postgres over the local socket. Reads the database; writes only its own
+# directory.
+Description=Miorail nightly database dump
+Documentation=https://github.com/mioku50/miorail
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /home/miorail/mioagent/ops/backup/miorail-db-backup.sh
+TimeoutStartSec=3600
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=miorail-db-backup

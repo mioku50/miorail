@@ -1,0 +1,13 @@
+[Unit]
+# Every night at about 03:30 UTC, the quietest hour of the day. Persistent, so
+# a night the host was down is made up at boot, and the first enable takes a
+# dump at once instead of waiting for the night.
+Description=Take Miorail's nightly database dump
+
+[Timer]
+OnCalendar=*-*-* 03:30:00 UTC
+Persistent=true
+RandomizedDelaySec=10min
+
+[Install]
+WantedBy=timers.target
