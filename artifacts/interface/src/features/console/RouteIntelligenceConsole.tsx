@@ -1946,11 +1946,10 @@ export function RouteIntelligenceConsole() {
       onSelectSession={() => setScreen(projection ? 'route' : 'plan')}
       onSelectProof={(routeRunId) => consoleNav.openActivityRun(routeRunId)}
     >
-      {/* T67C.2: an unfinished submission surfaces above everything else. A
-          user who reloaded mid-flight needs to finish CHECKING that batch
-          before they start planning another route — offering them a fresh
-          plan first is how one transaction becomes two. */}
+      {/* Unresolved requests stay visible before the working area as a count;
+          their details expand on demand. Recovery never sends another batch. */}
       <SubmissionRecoveryRail
+        compact
         walletAddress={address ?? null}
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}

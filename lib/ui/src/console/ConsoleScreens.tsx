@@ -50,6 +50,19 @@ function Kpis({ items, two }: { items: readonly KpiV1[]; two?: boolean }) {
   );
 }
 
+function RouteProgressDetails({ steps }: { steps: readonly ConsoleStepViewV1[] }) {
+  if (steps.length === 0) return null;
+  return (
+    <details className="evidence-fold">
+      <summary>
+        <span className="evidence-fold-k">Route progress</span>
+        <span className="evidence-fold-v">Steps and timings</span>
+      </summary>
+      <div className="pb"><ConsoleStepper steps={steps} /></div>
+    </details>
+  );
+}
+
 function CandidateTable({
   rows,
   onSelect,
@@ -177,8 +190,6 @@ export interface RouteScreenModelV1 {
 export function RouteScreen(model: RouteScreenModelV1) {
   return (
     <section aria-label="Route card">
-      <ConsoleStepper steps={model.steps} />
-
       <div className="herostrip">
         <div className="heroL">
           <p className="eyebrow">{model.eyebrow}</p>
@@ -197,6 +208,17 @@ export function RouteScreen(model: RouteScreenModelV1) {
           <Kpis items={model.kpis} />
         </div>
       </div>
+
+      <div className="ctarow cta-dock">
+        <button type="button" className="btn lg" onClick={model.onReview} disabled={Boolean(model.reviewDisabledReason)}>
+          {model.primaryActionLabel ?? 'Review transaction'}
+        </button>
+        <button type="button" className="btn sec lg" onClick={model.onChangeGoal}>
+          Change goal
+        </button>
+        <span className="nt">{model.reviewDisabledReason ?? CONSOLE_COPY_V1.nothingSigned}</span>
+      </div>
+      <RouteProgressDetails steps={model.steps} />
 
       <div className="panel">
         <div className="ph">
@@ -325,17 +347,6 @@ export function RouteScreen(model: RouteScreenModelV1) {
         </div>
       </div>
 
-      {/* Docked: it stays on screen while the evidence above it scrolls. On
-          2026-10-19 the person had to guess that Review was down there. */}
-      <div className="ctarow cta-dock">
-        <button type="button" className="btn lg" onClick={model.onReview} disabled={Boolean(model.reviewDisabledReason)}>
-          {model.primaryActionLabel ?? 'Review transaction'}
-        </button>
-        <button type="button" className="btn sec lg" onClick={model.onChangeGoal}>
-          Change goal
-        </button>
-        <span className="nt">{model.reviewDisabledReason ?? CONSOLE_COPY_V1.nothingSigned}</span>
-      </div>
     </section>
   );
 }
@@ -737,8 +748,6 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
   const knownBalances = model.balanceChanges.some((row) => row.before !== '—' || row.after !== '—');
   return (
     <section aria-label="Review transaction">
-      <ConsoleStepper steps={model.steps} />
-
       {/* First, above everything: when the server refused to prepare, that is
           the whole state of this screen and the panels below it are empty for
           that reason rather than for a reason of their own. */}
@@ -764,7 +773,7 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
         </div>
       )}
 
-      <div className="cols2" style={{ marginBottom: 14 }}>
+      <div className="cols2 review-terms" style={{ marginBottom: 14 }}>
         <div className="panel">
           <div className="ph">
             <h3>Calls to sign</h3>
@@ -776,7 +785,10 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
                 <span className="cidx">{call.index}</span>
                 <div>
                   <div className="ct">{call.title}</div>
-                  <div className={`cs${call.mono ? ' mono' : ''}`}>{call.detail}</div>
+                  <details className="call-evidence">
+                    <summary>Call details</summary>
+                    <div className={`cs${call.mono ? ' mono' : ''}`}>{call.detail}</div>
+                  </details>
                 </div>
               </div>
             ))}
@@ -818,6 +830,27 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
           </div>
         </div>
       </div>
+
+      <p className="note" role="status">{model.simulation.headline} · {model.simulation.subLabel}</p>
+      {model.honesty ? <p className="note warn">{model.honesty.note}</p> : null}
+
+      {/* The only signing control follows the calls and amounts the person
+          reviews, before the longer technical evidence. It is never cloned. */}
+      <div className="ctarow cta-dock">
+        {model.signSlot ?? (
+          <button type="button" className="btn lg" onClick={model.onApprove} disabled>
+            {model.approvePending ? 'Waiting for your wallet…' : 'Approve in your wallet'}
+          </button>
+        )}
+        <button type="button" className="btn sec lg" onClick={model.onBack}>
+          {model.backLabel ?? 'Back to routes'}
+        </button>
+        <span className="nt">
+          {model.simulation.disabledReason ??
+            (model.signSlot || model.approvePending ? CONSOLE_COPY_V1.prepared : CONSOLE_COPY_V1.nothingToApprove)}
+        </span>
+      </div>
+      <RouteProgressDetails steps={model.steps} />
 
       <div className="panel">
         <div className="ph">
@@ -918,31 +951,6 @@ export function ReviewScreen(model: ReviewScreenModelV1) {
       </div>
       )}
 
-      <div className="ctarow cta-dock">
-        {/* The REAL signing control, when the container has one to give. It
-            used to live in its own panel far below, while this row showed a
-            large primary button wired to `() => undefined` — so the obvious
-            button did nothing and the working one was under the fold. A CTA
-            that looks like the action and is not the action is a lie about
-            what the screen does. */}
-        {/* No slot means nothing was prepared that this screen can sign — a
-            refusal, or a prepare still running — so the placeholder is never
-            live. 2026-09-23: it was enabled by a passed simulation alone, while
-            the Safety Kernel had refused the batch; it looked like the action,
-            said "Miorail prepared these calls", and pressing it did nothing. */}
-        {model.signSlot ?? (
-          <button type="button" className="btn lg" onClick={model.onApprove} disabled>
-            {model.approvePending ? 'Waiting for your wallet…' : 'Approve in your wallet'}
-          </button>
-        )}
-        <button type="button" className="btn sec lg" onClick={model.onBack}>
-          {model.backLabel ?? 'Back to routes'}
-        </button>
-        <span className="nt">
-          {model.simulation.disabledReason ??
-            (model.signSlot || model.approvePending ? CONSOLE_COPY_V1.prepared : CONSOLE_COPY_V1.nothingToApprove)}
-        </span>
-      </div>
     </section>
   );
 }

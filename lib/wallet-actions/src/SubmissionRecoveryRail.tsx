@@ -30,6 +30,8 @@ export interface SubmissionRecoveryRailProps {
   walletAddress: string | null | undefined;
   chainId: number | null | undefined;
   enabled?: boolean;
+  /** Keep the unresolved count visible without stacking old requests above the swap. */
+  compact?: boolean;
   onResolved?: (result: { proofId: string | null; finalStatus: string | null }) => void;
   markerStorage?: MarkerStorageV1 | null;
 }
@@ -38,6 +40,7 @@ export function SubmissionRecoveryRail({
   walletAddress,
   chainId,
   enabled = true,
+  compact = false,
   onResolved,
   markerStorage,
 }: SubmissionRecoveryRailProps): ReactNode {
@@ -70,7 +73,7 @@ export function SubmissionRecoveryRail({
 
   if (!active || attempts.length === 0) return null;
 
-  return (
+  const cards = (
     <>
       {attempts.map((attempt) => (
         <SubmissionRecoveryCard
@@ -82,5 +85,16 @@ export function SubmissionRecoveryRail({
         />
       ))}
     </>
+  );
+
+  if (!compact) return cards;
+  return (
+    <details className="evidence-fold" aria-label="Wallet requests to check">
+      <summary>
+        <span className="evidence-fold-k">Wallet requests to check · {attempts.length}</span>
+        <span className="evidence-fold-v">Check wallet activity before another transaction</span>
+      </summary>
+      {cards}
+    </details>
   );
 }

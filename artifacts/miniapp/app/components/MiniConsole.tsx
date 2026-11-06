@@ -2854,6 +2854,7 @@ export function MiniConsole() {
           Not scoped to a section: an unfinished submission has to be visible
           wherever the user happens to be. */}
       <SubmissionRecoveryRail
+        compact
         walletAddress={address ?? null}
         chainId={chainId ?? null}
         enabled={Boolean(flags?.submissionRecoveryV1)}

@@ -21,6 +21,8 @@ void React;
  */
 export interface ConsoleFrameV1Props {
   crumb: readonly string[];
+  /** Lets the host keep transaction work ahead of navigation and history. */
+  section?: ConsoleSectionV1;
   /** Live-data panels, for a column beside the page on a wide screen. */
   right: ReactNode;
   /** The same panels folded under the page on a narrow one. */
@@ -311,6 +313,7 @@ export function ConsoleShell(props: ConsoleShellProps) {
   return (
     <Frame
       crumb={props.header.crumb}
+      section={section ?? undefined}
       right={props.right}
       railFold={props.railFold}
       execution={section === 'routes' || section === 'activity' ? <ExecutionRail {...props} /> : null}

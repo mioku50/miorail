@@ -171,6 +171,11 @@ html.still-host[data-theme='dark'] { color-scheme: dark !important; }
 .still-head-text { min-width: 0; }
 .still-head h1 { margin: 0; font-weight: 600; font-size: 32px; letter-spacing: -0.01em; line-height: 1.1; color: var(--sm-band-ink); }
 .still-head .still-trail { color: var(--sm-band-ink2); }
+/* A transaction's working area comes before its scenery. */
+.still-head.is-compact { padding: 12px 18px; border-radius: 18px; }
+.still-head.is-compact h1 { font-size: 24px; }
+.still-head.is-compact .still-trail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.still-head.is-compact .still-head-city { width: min(280px, 45%); opacity: 0.6; }
 .still-head-lede { grid-column: 1 / -1; margin-top: 10px; max-width: 62ch; font-size: 15px; line-height: 1.45; color: var(--sm-band-ink); }
 /* The seller named in a lede: a light chip on the band, as the clock pill is. */
 .still-provider { display: inline-block; padding: 0 9px; border-radius: 999px; background: var(--sm-card); color: var(--sm-accent); font-weight: 600; line-height: 1.55; box-shadow: 0 1px 3px #0D1B3D1F; }
@@ -654,6 +659,7 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still .still-console .mr-sections { border-radius: 14px; }
 .still .still-console .mr-sections .item { border-radius: 10px; }
 .still .still-console-body { min-width: 0; padding: 14px 20px 28px; }
+.still .mio-console .ctarow.cta-dock { top: 72px; }
 .still .still-console > aside.right { display: none; }
 .still .still-console .railfold { display: block; }
 @media (min-width: 1181px) {
@@ -666,8 +672,8 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 }
 @media (max-width: 899px) {
   .still .still-console-body { padding: 12px 16px 24px; }
-  /* Docked actions sit above the bar at the bottom of a phone, not under it. */
-  .still .mio-console .ctarow.cta-dock { bottom: calc(76px + env(safe-area-inset-bottom)); }
+  /* The account label can wrap to three lines on a phone. */
+  .still .mio-console .ctarow.cta-dock { top: 104px; }
 }
 /* A wide table scrolls in its own box, as it did inside the console's
    scrolling column, instead of widening the page. */

@@ -18,23 +18,27 @@ export function StillConsolePage({
   tab,
   sky,
   crumb,
+  section,
   right,
   railFold,
   execution,
   children,
 }: ConsoleFrameV1Props & { tab: StillTabV1; sky: SkyStateV1 }) {
+  const transactionPage = section === 'routes';
+  const history = execution ? (
+    <details className="still-execution">
+      <summary>Goals and proofs</summary>
+      {execution}
+    </details>
+  ) : null;
   return (
     <StillFrame tab={tab} sky={sky} wide>
-      <StillHeader title={crumb[0] ?? ''} trail={crumb.slice(1).join(' · ') || null} sky={sky} />
+      <StillHeader title={crumb[0] ?? ''} trail={crumb.slice(1).join(' · ') || null} sky={sky} compact={transactionPage} />
       <div className={`mio-console still-console${right ? '' : ' no-right'}`}>
         <div className="still-console-body">
-          {execution ? (
-            <details className="still-execution">
-              <summary>Goals and proofs</summary>
-              {execution}
-            </details>
-          ) : null}
+          {!transactionPage ? history : null}
           {children}
+          {transactionPage ? history : null}
           {railFold ? <div className="railfold">{railFold}</div> : null}
         </div>
         {right ? <aside className="right" aria-label="Live data">{right}</aside> : null}

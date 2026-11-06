@@ -485,11 +485,9 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
    2026-10-31 the reason sat in the button's hover title and the row said only
    "Failed — retry". */
 .mio-console .ctarow > .sign-reason { flex-basis: 100%; margin: 0; order: 1; }
-/* The swap screens' action, docked to the bottom of the scrolling column so it
-   stays on screen while the evidence above it scrolls. On 2026-10-19 Review
-   and Confirm sat under screens of evidence, and the person had to guess they
-   were down there at all. */
-.mio-console .ctarow.cta-dock { position: sticky; bottom: 0; z-index: 2; margin-top: 14px; padding: 12px 14px;
+/* Start beside the terms, then stay at the top while details scroll. A bottom
+   sticky element placed after the evidence only appeared after scrolling. */
+.mio-console .ctarow.cta-dock { position: sticky; top: 0; z-index: 3; margin: 14px 0; padding: 12px 14px;
   border-radius: var(--r); background: var(--chrome-bg); backdrop-filter: blur(16px);
   box-shadow: inset 0 0 0 1px var(--line), var(--shadow-card); }
 /* Evidence on the swap screens, folded under a line that names what is inside
@@ -537,6 +535,16 @@ html.mio-console-host, body.mio-console-host { margin: 0; height: 100%; overflow
   color: var(--br-text); background: var(--gsoft); box-shadow: inset 0 0 0 1px var(--br-line); }
 .mio-console .ct { font-size: var(--fs-base); font-weight: 600; }
 .mio-console .cs { font-size: var(--fs-meta); color: var(--dim); margin-top: 2px; }
+.mio-console .call-evidence { margin-top: 4px; font-size: var(--fs-meta); color: var(--muted); }
+.mio-console .call-evidence > summary { cursor: pointer; color: var(--blue); }
+.mio-console .call-evidence .cs { overflow-wrap: anywhere; }
+/* Keep amounts and permission titles ahead of the wallet action; raw contract
+   details remain one disclosure away without enlarging the initial review. */
+.mio-console .review-terms .ph { padding: 8px 12px; gap: 4px 8px; }
+.mio-console .review-terms .pb.tight { padding: 6px 12px; }
+.mio-console .review-terms .call { padding: 7px 0; }
+.mio-console .review-terms th { padding-bottom: 5px; }
+.mio-console .review-terms td { padding-top: 6px; padding-bottom: 6px; }
 .mio-console .simbox { border-radius: var(--r); padding: 14px 16px; background: var(--sim-bg);
   box-shadow: inset 0 0 0 1px var(--sim-line), var(--sim-shadow); }
 .mio-console .simbox.na { background: var(--n-bg); box-shadow: inset 0 0 0 1px var(--line); }

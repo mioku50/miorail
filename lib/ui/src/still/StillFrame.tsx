@@ -216,9 +216,9 @@ export function StillFrame({ tab, sky, children, wide }: { tab: StillTabV1; sky:
 }
 
 /** A page's title on a band of the same sky as Home's, with the market clock. */
-export function StillHeader({ title, trail, sky, extra, lede }: { title: string; trail?: string | null; sky: SkyStateV1; extra?: ReactNode; lede?: ReactNode }) {
+export function StillHeader({ title, trail, sky, extra, lede, compact = false }: { title: string; trail?: string | null; sky: SkyStateV1; extra?: ReactNode; lede?: ReactNode; compact?: boolean }) {
   return (
-    <div className="still-head">
+    <div className={`still-head${compact ? ' is-compact' : ''}`}>
       <div className="still-head-text">
         <h1>{title}</h1>
         {trail ? <div className="still-trail">{trail}</div> : null}

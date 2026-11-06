@@ -153,7 +153,8 @@ export function SubmissionRecoveryCard({
 
   return (
     <section className="panel">
-      <h3>Unfinished submission</h3>
+      <div className="ph"><h3>Unfinished submission</h3></div>
+      <div className="pb">
       <div className="kv">
         <span>Route</span>
         <span>
@@ -183,10 +184,6 @@ export function SubmissionRecoveryCard({
             Resuming asks your wallet what happened to that batch and records the answer. It does not
             send a new transaction.
           </p>
-          <button type="button" onClick={() => setResuming(true)} disabled={resuming}>
-            {resuming ? 'Checking with your wallet…' : 'Resume verification'}
-          </button>
-          {poller}
         </>
       ) : (
         <>
@@ -195,20 +192,28 @@ export function SubmissionRecoveryCard({
               {line}
             </p>
           ))}
-          <a className="mono" href={baseAccountActivityUrlV1(attempt.walletAddress)} target="_blank" rel="noreferrer">
-            Open wallet activity
-          </a>
         </>
       )}
 
+      <div className="ctarow">
+        {attempt.batchId ? (
+          <button className="btn" type="button" onClick={() => setResuming(true)} disabled={resuming}>
+            {resuming ? 'Checking with your wallet…' : 'Resume verification'}
+          </button>
+        ) : (
+          <a className="btn sec" href={baseAccountActivityUrlV1(attempt.walletAddress)} target="_blank" rel="noreferrer">
+            Open wallet activity
+          </a>
+        )}
+        <button className="btn sec" type="button" onClick={() => void dismiss()}>Dismiss recovery</button>
+      </div>
+      {poller}
       {outcome && <p className="note">Recorded as {outcome}.</p>}
-      {error && <p className="note">{error}</p>}
-      <button type="button" onClick={() => void dismiss()}>
-        Dismiss recovery
-      </button>
+      {error && <p className="note" role="alert">{error}</p>}
       <p className="note">
         Dismissing only hides this card. It changes no proof, no receipt and nothing onchain.
       </p>
+      </div>
     </section>
   );
 }
