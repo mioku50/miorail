@@ -1,7 +1,9 @@
 [Unit]
 # Every night at about 03:30 UTC, the quietest hour of the day. Persistent, so
-# a night the host was down is made up at boot, and the first enable takes a
-# dump at once instead of waiting for the night.
+# a night the host was down is made up at boot. The first enable does not take
+# a dump at once: with no run recorded there is no missed night to make up
+# (2026-11-06: the first scheduled run waited for 03:35), so a new host is
+# dumped by hand with `systemctl start miorail-db-backup`.
 Description=Take Miorail's nightly database dump
 
 [Timer]
