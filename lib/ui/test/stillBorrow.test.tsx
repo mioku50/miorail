@@ -91,7 +91,7 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     const crypto = choiceGroup(html, 'Crypto and gold · Morpho');
     // 2026-11-07: gold (PAXG) joined the Morpho markets, marked with its chemical symbol; ETH and
     // WETH wear the ETH diamond; cbBTC and PAXG keep Still's marks (their issuers' brand rules).
-    assert.deepEqual(crypto.map((card) => [card.asset, card.mark]), [['cbBTC', '₿'], ['WETH', '/tokens/eth.svg'], ['ETH', '/tokens/eth.svg'], ['PAXG', 'Au']]);
+    assert.deepEqual(crypto.map((card) => [card.asset, card.mark]), [['cbBTC', '₿'], ['WETH', '/marks/eth.svg'], ['ETH', '/marks/eth.svg'], ['PAXG', 'Au']]);
     assert(crypto.every((card) => !card.stock), 'a coin wears the wired mark');
     const stocks = choiceGroup(html, 'Stock collateral · Aave V4');
     // Counted against the registry, not sampled: a stock added there appears here.

@@ -22,7 +22,7 @@ Protocol addresses and ABI fragments
   facts, pinned here so that no deployment can substitute one silently.
 
 Token marks
-  artifacts/interface/public/tokens/eth.svg is the ETH diamond from
+  artifacts/interface/public/marks/eth.svg is the ETH diamond from
   ethereum.org's brand assets (https://ethereum.org/en/assets/), unchanged.
   The stock icons Still's Get money shows are the ones Coinbase publishes for
   its tokenized stocks in its Tokenized Stocks API; Miorail serves them from

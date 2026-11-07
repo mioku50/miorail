@@ -88,7 +88,7 @@ export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletNam
  * - a stock wears the icon Coinbase publishes for its tokenized stock in its Tokenized Stocks
  *   API, served from our own origin as the Stocks pages serve it;
  * - ETH and WETH wear the ETH diamond from ethereum.org's brand assets, kept in
- *   public/tokens (see NOTICE);
+ *   public/marks (see NOTICE);
  * - cbBTC and PAXG keep Still's own marks. Paxos's brand rules ask for a written agreement
  *   before its logos are used, and Coinbase publishes no cbBTC mark to integrators.
  * A picture that does not load gives way to the mark, so a card is never blank.
@@ -96,7 +96,8 @@ export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletNam
 export function stockIconPathV1(token: string): string {
   return `/api/public/stocks/icons/${token.toLowerCase()}.png`;
 }
-const ETH_ICON_V1 = '/tokens/eth.svg';
+// Not under /tokens: nginx's OAuth `location ^~ /token` takes every path that begins so (2026-11-07).
+const ETH_ICON_V1 = '/marks/eth.svg';
 
 const CRYPTO_CHOICES_V1 = [
   ['cbBTC', 'Bitcoin on Base', '₿', null],

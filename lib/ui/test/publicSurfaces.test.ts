@@ -434,3 +434,27 @@ test('the Wallet MCP plugin is served as markdown and follows the plugin spec', 
   assert.match(plugin, /https:\/\/github\.com\/coinbase\/agents\/blob\/main\/skills\/wallet-mcp\/references\/approval-mode\.md/);
 });
 
+
+test('every file in the interface’s public folder is served as itself, not by a proxied location', () => {
+  // 2026-11-07: /tokens/eth.svg answered the OAuth token endpoint's 404, because nginx's
+  // `location ^~ /token` takes every path that begins with "/token". A public file under a
+  // proxied prefix is built and copied, and then never reaches a browser.
+  // nginx's own order: an exact `=` location first, then the longest prefix (`^~` or plain).
+  const nginx = source('ops/nginx/miorail-app.conf');
+  const locations = [...nginx.matchAll(/location\s+(\^~\s+|=\s+)?(\/[^\s{]*)\s*\{([^}]*)\}/g)]
+    .map((match) => ({ exact: match[1]?.trim() === '=', path: match[2]!, proxied: /proxy_pass/.test(match[3]!) }));
+  assert.ok(locations.some((location) => location.path === '/token' && !location.exact && location.proxied), 'the scan finds the OAuth token location');
+  const servedBy = (file: string) => locations.find((location) => location.exact && location.path === file)
+    ?? locations.filter((location) => !location.exact && file.startsWith(location.path)).sort((a, b) => b.path.length - a.path.length)[0];
+  const publicRoot = path.join(root, 'artifacts', 'interface', 'public');
+  const walk = (directory: string): string[] => readdirSync(directory).flatMap((name) => {
+    const full = path.join(directory, name);
+    return statSync(full).isDirectory() ? walk(full) : [`/${path.relative(publicRoot, full).split(path.sep).join('/')}`];
+  });
+  const files = walk(publicRoot);
+  assert.ok(files.includes('/marks/eth.svg'), 'the scan finds the ETH mark');
+  for (const file of files) {
+    const location = servedBy(file);
+    assert.ok(location && !location.proxied, `${file} is taken by nginx's proxied location ${location?.path}`);
+  }
+});
