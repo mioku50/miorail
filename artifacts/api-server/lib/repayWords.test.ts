@@ -11,7 +11,7 @@ test('a repayment that cannot be prepared is said in the wallet’s own numbers'
   assert.equal(usdcWordsV1(3n), '0.000003 USDC');
   assert.equal(
     repayMaximumBelowDebtWordsV1({ debt: 2_000_003n, maximum: 2_000_000n, wallet: 2_000_000n }),
-    'The debt is 2.000003 USDC now, more than your maximum of 2 USDC: interest adds to it every second. Set the maximum to at least the debt; what is not needed stays in your wallet. This wallet holds 2 USDC, 0.000003 USDC short of the debt: add a little more than that, then read the position again.',
+    'The debt is 2.000003 USDC now, more than your maximum of 2 USDC: interest adds to it every second. Set the maximum to at least the debt; what is not needed stays in your wallet. This wallet holds 2 USDC, 0.000003 USDC short of the debt: send it a little more USDC than that, then read the position again.',
   );
   assert.doesNotMatch(repayMaximumBelowDebtWordsV1({ debt: 2_000_003n, maximum: 2_000_000n, wallet: 5_000_000n }), /short/);
   assert.equal(

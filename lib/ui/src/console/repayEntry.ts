@@ -102,12 +102,18 @@ export function repayTopUpAtomicV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' 
 }
 
 /** Why Repay all cannot be prepared from this wallet yet, in its own numbers (2026-11-03: a
- * wallet holding the 2 USDC it borrowed owed 2.000003 eleven minutes later). */
+ * wallet holding the 2 USDC it borrowed owed 2.000003 eleven minutes later). It says where the
+ * USDC goes: on 2026-11-07 a wallet holding the 0.85 USDC it had just borrowed owed 0.850001,
+ * and "add a little more" read as an error, not as USDC to send to the wallet. */
 export function repayShortTextV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>): string | null {
   const add = repayTopUpAtomicV1(read);
   if (add === null) return null;
   const short = BigInt(read.debtAtomic) - BigInt(read.walletUsdcAtomic);
+  // Under a cent short, the wallet holds about what it borrowed: the debt passed it by rounding and interest alone.
+  const send = short < BigInt(10_000)
+    ? 'A debt is counted rounded up and grows every second, so the USDC a loan paid out never quite covers it. Send this wallet a little more USDC'
+    : 'Interest adds to the debt every second, so send this wallet a little more USDC than that';
   return `This wallet holds ${usdcTextV1(read.walletUsdcAtomic)} and the debt is ${usdcTextV1(read.debtAtomic)} now, ${usdcTextV1(short)} short. `
-    + `Interest adds to the debt every second, so add a little more than that, for example ${usdcTextV1(add)}, then read the position again.`;
+    + `${send}, for example ${usdcTextV1(add)}, then read the position again.`;
 }
 

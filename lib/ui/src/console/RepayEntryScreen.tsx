@@ -137,7 +137,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
           </> : <p className="still-note">No debt was recorded in this market at the reading block.</p> : <>
           {short && model.read && model.mode === 'assets' ? <p className="still-warn" role="note">
             This wallet holds {tokenDecimalV1(model.read.walletUsdcAtomic, 6)} USDC on Base, and the debt is {tokenDecimalV1(model.read.debtAtomic, 6)} USDC.
-            A loan is repaid in USDC from this wallet: add at least the debt, and a little more for the interest that keeps accruing, then read the position again.
+            A loan is repaid in USDC from this wallet: to repay all of it, send this wallet at least the debt and a little more for the interest that keeps accruing, then read the position again.
             {model.mode === 'assets' ? ' An exact repayment can be smaller than the debt.' : null}
           </p> : null}
           <form onSubmit={event => { event.preventDefault(); model.onReview(); }}>

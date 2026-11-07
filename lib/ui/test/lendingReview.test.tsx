@@ -482,6 +482,11 @@ describe('repay all and take the stock back', () => {
     // 2026-11-03: a wallet holding the 2 USDC it borrowed owed 2.000003 eleven minutes later.
     const dust = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, walletUsdcAtomic: '2000000', debtAtomic: '2000003' }, canReturn: true, mode: 'return', maximum: '2' })} />);
     assert.match(dust, /This wallet holds 2 USDC and the debt is 2\.000003 USDC now, 0\.000003 USDC short\..*for example 0\.02 USDC/);
+    // 2026-11-07: "add a little more" read as an error; it says the USDC is sent to this wallet, and why a wallet holding
+    // what it borrowed is short.
+    assert.match(dust, /short\. A debt is counted rounded up and grows every second, so the USDC a loan paid out never quite covers it\. Send this wallet a little more USDC, for example 0\.02 USDC, then read the position again\./);
+    assert.match(html, /short\. Interest adds to the debt every second, so send this wallet a little more USDC than that, for example 0\.2 USDC/);
+    assert.doesNotMatch(html + dust, /\badd a little more\b/);
     assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000000' }), BigInt(20_000));
     assert.equal(repayTopUpAtomicV1({ debtAtomic: '2000003', walletUsdcAtomic: '2000003' }), null);
     // A maximum below the debt is refused before any review, with both numbers.

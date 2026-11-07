@@ -15,7 +15,7 @@ export function usdcWordsV1(atomic: bigint): string {
 
 function shortWordsV1(debt: bigint, wallet: bigint): string {
   return wallet < debt
-    ? ` This wallet holds ${usdcWordsV1(wallet)}, ${usdcWordsV1(debt - wallet)} short of the debt: add a little more than that, then read the position again.`
+    ? ` This wallet holds ${usdcWordsV1(wallet)}, ${usdcWordsV1(debt - wallet)} short of the debt: send it a little more USDC than that, then read the position again.`
     : '';
 }
 
@@ -30,7 +30,7 @@ export function repayWalletBelowMaximumWordsV1(input: { debt: bigint; maximum: b
   return `This wallet holds ${usdcWordsV1(input.wallet)}, less than your maximum of ${usdcWordsV1(input.maximum)}.`
     + (input.wallet >= input.debt
       ? ` The debt is ${usdcWordsV1(input.debt)}, so a maximum between that and what the wallet holds covers it.`
-      : ` The debt is ${usdcWordsV1(input.debt)}, ${usdcWordsV1(input.debt - input.wallet)} more than the wallet holds: add a little more than that, then read the position again.`);
+      : ` The debt is ${usdcWordsV1(input.debt)}, ${usdcWordsV1(input.debt - input.wallet)} more than the wallet holds: send it a little more USDC than that, then read the position again.`);
 }
 
 /** An exact repayment at or above a Morpho debt. Morpho keeps a debt as shares, and the debt shown
