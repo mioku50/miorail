@@ -101,6 +101,7 @@ export const AGENT_ASSET_WORDS_V2: ReadonlyArray<readonly [string, RegExp]> = [
   ['METAc', new RegExp(`${EDGE}(?:meta|мета)(?:$|[^\\p{L}])`, 'iu')],
   ['cbBTC', /cbbtc|btc|bitcoin|биткоин|биткойн|битк/iu],
   ['ETH', new RegExp(`${EDGE}(?:w?eth|ether|ethereum|эфир)`, 'iu')],
+  ['PAXG', new RegExp(`${EDGE}(?:paxg|gold|xau|золот)`, 'iu')],
 ];
 
 /** Every asset the question names, in the order of the table. */
@@ -624,8 +625,8 @@ export function agentAnswerV1(input: {
         : '',
       owed > BigInt(0) ? (ru ? `Ваш долг ${formatCents(owed)} уже учтён.` : `Your ${formatCents(owed)} owed is already counted.`) : '',
       ru
-        ? 'Это расчёт, а не доступный к подписанию займ. Get money поддерживает проверенные акции через Aave V4 и cbBTC и WETH через Morpho: точный текущий лимит нужно проверить для выбранного залога.'
-        : 'This is a modelled amount, not a loan ready to sign. Get money supports reviewed stocks through Aave V4 and cbBTC and WETH through Morpho; check the live limit for your exact collateral choice there.',
+        ? 'Это расчёт, а не доступный к подписанию займ. Get money поддерживает проверенные акции через Aave V4, а cbBTC, WETH и PAXG (золото) через Morpho: точный текущий лимит нужно проверить для выбранного залога.'
+        : 'This is a modelled amount, not a loan ready to sign. Get money supports reviewed stocks through Aave V4, and cbBTC, WETH and PAXG (gold) through Morpho; check the live limit for your exact collateral choice there.',
     ];
     return { topic, mode: 'fast', text: parts.filter(Boolean).join(' '), sources: [...terms, ...read] };
   }
@@ -701,7 +702,7 @@ export function agentAnswerV1(input: {
     topic,
     mode: 'fast',
     text: held.length === 0
-      ? ru ? 'В проверенном наборе Still не установлены активы этого кошелька: акции Coinbase, cbBTC или ETH.' : 'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC or ETH.'
+      ? ru ? 'В проверенном наборе Still не установлены активы этого кошелька: акции Coinbase, cbBTC, ETH или PAXG.' : 'No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.'
       : `${ru ? 'Прочитанные активы' : 'Reviewed holdings'}: ${held.map((l) => `${l.name} ${l.valueCents === null ? ru ? '(стоимость не прочитана)' : '(value not read)' : formatCents(l.valueCents)}`).join(', ')}.`,
     sources: read
   };

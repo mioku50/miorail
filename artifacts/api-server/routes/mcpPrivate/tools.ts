@@ -1769,7 +1769,7 @@ export async function miorailReadBorrowCapacityV1(
       blockNumber: entry.market.state.blockNumber,
     })),
     nextStep:
-      'Give every market its own row and never summarise them into one figure. For cbBTC and WETH this is Still’s registered market, not an inventory of every Morpho market. availableToBorrowAtomic is the protocol maximum, never Still’s allowance. When present, still.availableAtomic is the stricter Still allowance against collateral ALREADY deposited in that exact registered market; null is unread, not zero. Wallet balances and native ETH are not automatically deposited. Nothing is executable; only an explicitly requested miorail_review_borrow can produce a browser review.',
+      'Give every market its own row and never summarise them into one figure. For cbBTC, WETH and PAXG this is Still’s registered market, not an inventory of every Morpho market. availableToBorrowAtomic is the protocol maximum, never Still’s allowance. When present, still.availableAtomic is the stricter Still allowance against collateral ALREADY deposited in that exact registered market; null is unread, not zero. Wallet balances and native ETH are not automatically deposited. Nothing is executable; only an explicitly requested miorail_review_borrow can produce a browser review.',
   };
 }
 

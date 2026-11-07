@@ -43,7 +43,7 @@ import { STILL_PUBLIC_HOST_V1, STILL_PUBLIC_ORIGIN_V1 } from '../../lib/stillOri
 
 export const STILL_MCP_NAME_V1 = 'still';
 /** Moves whenever the tool list moves: a client's cached list has no other key. */
-export const STILL_MCP_VERSION_V1 = '1.3.0';
+export const STILL_MCP_VERSION_V1 = '1.4.0';
 /** Still's own mark, for a host that draws a server's icon (MCP 2025-11-25), on both of Still's servers. */
 export const STILL_MCP_IDENTITY_V1 = {
   title: 'Still',
@@ -56,9 +56,9 @@ export const STILL_MCP_IDENTITY_V1 = {
 
 export const STILL_MCP_TOOLS_V1 = ['get_still_terms', 'still_check_wallet', 'still_what_if', 'still_find_spend', 'still_spend_product'] as const;
 
-export const STILL_MCP_INSTRUCTIONS_V1 = `Still: spend without selling. Still answers how much a Base wallet could borrow in USDC against its tokenized stocks (Coinbase AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc), cbBTC and ETH without selling them, how safe its loans are, and what a price move, more borrowing, a repayment or a deposit would do. Every figure is read from Base at one block by the same engine as Still's own pages.
+export const STILL_MCP_INSTRUCTIONS_V1 = `Still: spend without selling. Still answers how much a Base wallet could borrow in USDC against its tokenized stocks (Coinbase AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc), cbBTC, ETH and PAXG (Paxos gold) without selling them, how safe its loans are, and what a price move, more borrowing, a repayment or a deposit would do. Every figure is read from Base at one block by the same engine as Still's own pages.
 
-Still is not a lender. The loans live in Aave V4 (stocks) and Morpho (cbBTC, WETH), under the wallet. Still lends at 50% of the protocol's own limit, and at 40% for a stock while Wall Street is closed and around its earnings report. On Aave, a loan that SPCXc covers also pays Aave's risk premium: up to 10% of the rate, which each loan's borrowRateBps already includes. This server only reads: it prepares, signs and sends nothing. A loan is reviewed and approved on Still's site (${STILL_PUBLIC_HOST_V1}), in the owner's own wallet.
+Still is not a lender. The loans live in Aave V4 (stocks) and Morpho (cbBTC, WETH, PAXG), under the wallet. Still lends at 50% of the protocol's own limit, and at 40% for a stock while Wall Street is closed and around its earnings report. On Aave, a loan that SPCXc covers also pays Aave's risk premium: up to 10% of the rate, which each loan's borrowRateBps already includes. This server only reads: it prepares, signs and sends nothing. A loan is reviewed and approved on Still's site (${STILL_PUBLIC_HOST_V1}), in the owner's own wallet.
 
 Five tools:
 1. get_still_terms: the shares and windows in force now. No wallet needed.
@@ -112,7 +112,7 @@ export function createStillMcpServerV1(): McpServer {
 
   server.registerTool('still_what_if', {
     title: 'What a change would do to a wallet’s Still loans',
-    description: 'Applies one to four changes together to one wallet’s current reading and recomputes it with the same engine as the page and the Still Agent: a price moving by a percentage (price), a price going to a dollar figure (price_to), more USDC borrowed on a loan (borrow), USDC paid back or all of it (repay), or tokens pledged from the wallet or bought new (deposit). Loans are "aave-v4" (stocks), "morpho:cbBTC" and "morpho:ETH". Returns answer.text, the engine’s answer in words, with its steps and what it holds fixed, and the before and after figures. A refused outcome names why (unread, out_of_range, no_debt, no_collateral, exceeds_liquidity, exceeds_wallet). Nothing is prepared or sent.',
+    description: 'Applies one to four changes together to one wallet’s current reading and recomputes it with the same engine as the page and the Still Agent: a price moving by a percentage (price), a price going to a dollar figure (price_to), more USDC borrowed on a loan (borrow), USDC paid back or all of it (repay), or tokens pledged from the wallet or bought new (deposit). Loans are "aave-v4" (stocks), "morpho:cbBTC", "morpho:ETH" and "morpho:PAXG" (gold). Returns answer.text, the engine’s answer in words, with its steps and what it holds fixed, and the before and after figures. A refused outcome names why (unread, out_of_range, no_debt, no_collateral, exceeds_liquidity, exceeds_wallet). Nothing is prepared or sent.',
     inputSchema: StillWhatIfInputV1Schema,
     outputSchema: StillWhatIfOutputV1Schema,
     annotations: READ_ONLY,

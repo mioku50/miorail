@@ -201,6 +201,44 @@ describe('a market holiday', () => {
   });
 });
 
+describe('gold on Morpho (PAXG, 2026-11-07)', () => {
+  const ONE = 10n ** 18n;
+
+  it('lends half of the market’s 77% against gold, at the gold price its oracle answers', () => {
+    const r = run(snapshot({ wallet: { PAXG: ONE } }));
+    // 1 PAXG at $4,063.55: the contract would lend $3,128.93; Still half of it, $1,564.46.
+    assertMatches(line(r, 'PAXG'), {
+      kind: 'crypto', name: 'Gold', symbol: 'PAXG', venue: 'morpho',
+      priceCents: '406355', valueCents: '406355', protocolFactorBps: 7700, stillFactorBps: 3850, capacityCents: '156446',
+    });
+    const gold = venue(r, 'PAXG');
+    assert.equal(gold.label, 'Morpho · PAXG/USDC');
+    assert.equal(gold.availableCents, '156446');
+    assert.equal(gold.liquidityCents, '188962');
+  });
+
+  it('never offers more than the market has left to lend, and says how much that held back', () => {
+    // 2 PAXG would allow $3,128.93, but the market had $1,889.62 left.
+    const gold = venue(run(snapshot({ wallet: { PAXG: 2n * ONE } })), 'PAXG');
+    assert.equal(gold.capacityCents, '312893');
+    assert.equal(gold.availableCents, '188962');
+    assert.deepEqual(gold.deductions, { loansCents: '0', venueLimitCents: String(312_893 - 188_962) });
+  });
+
+  it('keeps its terms on a weekend, as bitcoin does', () => {
+    // Its oracle stands still while the gold market is closed, but a draw starts 50% from
+    // liquidation, far beyond any weekend gap gold has had.
+    const r = run(snapshot({ wallet: { PAXG: ONE } }, SATURDAY));
+    assert.equal(r.terms.weekend.active, true);
+    assert.equal(line(r, 'PAXG').stillFactorBps, 3850);
+  });
+
+  it('a wallet with no gold shows no gold', () => {
+    assert.equal(run(snapshot(EXAMPLE)).assets.some((l) => l.asset === 'PAXG'), false);
+    assert.equal(run(snapshot(EXAMPLE)).venues.some((v) => v.label.includes('PAXG')), false);
+  });
+});
+
 describe('Morpho debt', () => {
   it('adds interest since the last update before stating a debt', () => {
     const position = { cbBTC: { collateral: 10_000_000n, borrowShares: 1_000_000_000_000_000n } };

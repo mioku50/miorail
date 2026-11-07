@@ -48,7 +48,7 @@ export function useStillBorrowEntryV1(input: {
 
   const onReadLimit = () => {
     if (!signedIn || !owner || preparing.current || limit.isFetching) return;
-    if (!asset) { setError('Choose a stock, cbBTC, WETH or native ETH first.'); return; }
+    if (!asset) { setError('Choose a stock, cbBTC, WETH, native ETH or PAXG first.'); return; }
     const parsed = parseBorrowDecimalV1(collateralAmount, borrowCollateralDecimalsV1(asset), asset !== 'ETH');
     if (parsed.atomic === null) { setError(parsed.error); return; }
     setError(null);
@@ -84,7 +84,7 @@ export function useStillBorrowEntryV1(input: {
   const onReview = async () => {
     if (preparing.current || !signedIn || !owner || !asset || needsRead || reading || !view.capacity) return;
     if (input.spend && (fixedAmount === null || fixedAmount === '')) return;
-    if (input.spend && asset === 'ETH') { setError('A payment cannot ride on native ETH. Choose WETH, cbBTC or a stock.'); return; }
+    if (input.spend && asset === 'ETH') { setError('A payment cannot ride on native ETH. Choose WETH, cbBTC, PAXG or a stock.'); return; }
     const supply = parseBorrowDecimalV1(collateralAmount, borrowCollateralDecimalsV1(asset), asset !== 'ETH');
     const borrow = parseBorrowDecimalV1(fixedAmount ?? borrowAmount, 6);
     if (supply.atomic === null || borrow.atomic === null) { setError(supply.error ?? borrow.error); return; }

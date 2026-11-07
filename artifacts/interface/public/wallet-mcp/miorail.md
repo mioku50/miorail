@@ -3,7 +3,7 @@ title: "Miorail Plugin"
 description: "Still terms, wallet readings and loan, purchase and repayment reviews via Miorail MCP; stock actions → send_calls."
 tags: [tokenized-stocks, trading, swap, discovery, borrowing]
 name: miorail
-version: 0.3.2
+version: 0.4.0
 integration: external-mcp
 chains: [base]
 requires:
@@ -27,7 +27,7 @@ risk: [slippage, liquidation]
 
 ## Overview
 
-[Still](https://miorail.xyz) is the front door to Miorail's engine on Base: it reads what a wallet could borrow in USDC without selling supported collateral, and what such a loan could pay for at Bitrefill (eSIM data plans, phone top-ups, gift cards). Its terms and wallet Mirror cover Coinbase tokenized stocks through Aave V4 and cbBTC and ETH through Morpho Blue; a reading is not an executable loan. Miorail also measures reviewed stock contracts, prices, cash-out costs, pools and lending. A stock buy or sell can produce **unsigned calldata** for Wallet MCP `send_calls`, after the user confirms Miorail's live review. A Still loan, a Bitrefill purchase paid by a loan, a repayment and a Morpho borrow review each return a browser link and no calls; the person decides and signs there. Miorail never signs, never broadcasts and holds no key.
+[Still](https://miorail.xyz) is the front door to Miorail's engine on Base: it reads what a wallet could borrow in USDC without selling supported collateral, and what such a loan could pay for at Bitrefill (eSIM data plans, phone top-ups, gift cards). Its terms and wallet Mirror cover Coinbase tokenized stocks through Aave V4 and cbBTC, ETH and PAXG (Paxos gold) through Morpho Blue; a reading is not an executable loan. Miorail also measures reviewed stock contracts, prices, cash-out costs, pools and lending. A stock buy or sell can produce **unsigned calldata** for Wallet MCP `send_calls`, after the user confirms Miorail's live review. A Still loan, a Bitrefill purchase paid by a loan, a repayment and a Morpho borrow review each return a browser link and no calls; the person decides and signs there. Miorail never signs, never broadcasts and holds no key.
 
 ## Detection
 

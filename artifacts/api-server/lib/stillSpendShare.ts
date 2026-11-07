@@ -28,12 +28,12 @@ export interface StillSpendShareV1 {
   packageLabel: string;
   /** USDC base units: what the loan borrowed and paid to the invoice. */
   priceAtomic: string;
-  /** Still's registry id of the collateral: a stock (NVDAc), cbBTC, WETH or ETH. */
+  /** Still's registry id of the collateral: a stock (NVDAc), cbBTC, WETH, ETH or PAXG. */
   collateral: string;
   venue: 'aave-v4' | 'morpho';
 }
 
-const COLLATERAL_V1 = new Set<string>([...STOCKS.map((stock) => stock.id), 'cbBTC', 'WETH', 'ETH']);
+const COLLATERAL_V1 = new Set<string>([...STOCKS.map((stock) => stock.id), 'cbBTC', 'WETH', 'ETH', 'PAXG']);
 const label = (value: unknown, max: number): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= max &&
   !Array.from(value).some((character) => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
@@ -88,7 +88,7 @@ const LOAN_CONTEXT_V1 = 'still-loan-share/v1';
 export interface StillLoanShareV1 {
   /** USDC base units the loan paid out to the wallet. */
   borrowedAtomic: string;
-  /** Still's registry id of the collateral: a stock (NVDAc), cbBTC, WETH or ETH. */
+  /** Still's registry id of the collateral: a stock (NVDAc), cbBTC, WETH, ETH or PAXG. */
   collateral: string;
   venue: 'aave-v4' | 'morpho';
 }
@@ -176,7 +176,7 @@ export function stillSpendShareWordsV1(share: Pick<StillSpendShareV1, 'priceAtom
     priceUsdc: `${(atomic / 1_000_000n).toString()}.${trimmed.length <= 2 ? micro.slice(0, 2) : trimmed}`,
     collateralLabel: stock ? stock.ticker : share.collateral,
     collateralKind: stock ? 'stock' : 'crypto',
-    collateralName: stock ? `${stock.name} stock` : share.collateral === 'cbBTC' ? 'bitcoin' : 'ether',
+    collateralName: stock ? `${stock.name} stock` : share.collateral === 'cbBTC' ? 'bitcoin' : share.collateral === 'PAXG' ? 'gold' : 'ether',
     venueName: share.venue === 'aave-v4' ? 'Aave' : 'Morpho',
   };
 }

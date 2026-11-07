@@ -148,7 +148,7 @@ export function stillLoanShareMetaV1(input: { origin: string; canonical: string;
   const path = `/spend/p/${input.token}`;
   const card = (shape: 'wide' | 'tall') =>
     `${input.origin}/api/public/still/spend-card.png?t=${encodeURIComponent(input.token)}${shape === 'tall' ? '&shape=tall' : ''}`;
-  const kept = words.collateralKind === 'stock' ? 'stock' : 'coin';
+  const kept = words.collateralKind === 'stock' ? 'stock' : words.collateralLabel === 'PAXG' ? 'gold' : 'coin';
   return {
     status: 200,
     meta: {

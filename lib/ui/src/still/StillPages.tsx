@@ -52,7 +52,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
               <StillLink href="/borrow" className="still-btn">Get money</StillLink>
               <StillLink href="/repay" className="still-btn sec">Repay</StillLink>
             </div>
-            <p className="still-balance-note">Reviewed stocks through Aave V4; cbBTC and WETH through Morpho.</p>
+            <p className="still-balance-note">Reviewed stocks through Aave V4; cbBTC, WETH and PAXG (gold) through Morpho.</p>
           </div>
           <div className="still-tabs" role="tablist" aria-label="Assets">
             <button type="button" role="tab" aria-selected={tab === 'holdings'} onClick={() => setTab('holdings')}>Holdings</button>
@@ -61,7 +61,7 @@ export function StillAssets({ model }: { model: StillAssetsModelV1 }) {
           {tab === 'holdings' ? (
             <div className="still-assets-layout">
               <div className="still-assets-primary">
-                {view.count === 0 ? <p className="still-section still-note">No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC or ETH.</p> : null}
+                {view.count === 0 ? <p className="still-section still-note">No holdings were established in Still’s reviewed set: Coinbase stocks, cbBTC, ETH or PAXG.</p> : null}
                 <ul className="still-rows" role="tabpanel" aria-label="Holdings">
                   {view.rows.map((row) => (
                     <li key={row.id} className="still-row">

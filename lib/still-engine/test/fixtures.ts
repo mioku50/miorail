@@ -5,7 +5,7 @@
 import type { Address } from 'viem';
 import type { CalendarRead } from '../src/calendar.js';
 import type { AaveReserveInfo, AaveReserveSnapshot, MorphoSnapshot, Universe, WalletSnapshot } from '../src/read.js';
-import { ADDRESSES, CRYPTO, STOCKS, type StockId } from '../src/registry.js';
+import { ADDRESSES, CRYPTO, STOCKS, type CryptoId, type StockId } from '../src/registry.js';
 import type { Outcome } from '../src/rpc.js';
 
 export const ok = <T>(value: T): Outcome<T> => ({ ok: true, value });
@@ -41,6 +41,16 @@ export const FACTORS: Record<StockId, bigint> = {
 export const CBBTC_PRICE = 80_300_250_000n * 10n ** 28n;
 export const WETH_PRICE = 2_330_250_000n * 10n ** 18n;
 export const LLTV = 860_000_000_000_000_000n;
+/** USDC per whole PAXG is 4,063.55, the gold price its market's oracle answered on 2026-11-07. */
+export const PAXG_PRICE = 4_063_550n * 10n ** 21n;
+export const PAXG_LLTV = 770_000_000_000_000_000n;
+/** The PAXG/USDC market's totals at block 54,244,482: $21,584.71 supplied, $19,695.09 lent, $1,889.62 left. */
+export const PAXG_MARKET = {
+  totalSupplyAssets: 21_584_711_881n,
+  totalSupplyShares: 21_551_573_327_549_534n,
+  totalBorrowAssets: 19_695_089_430n,
+  totalBorrowShares: 19_662_126_352_425_741n,
+} as const;
 
 /** Reserve ids as the spoke numbers them: the first seven stocks, USDC, then SPCXc (listed 2026-11-01). */
 const RESERVE_IDS: Record<StockId, number> = { AAPLc: 0, AMZNc: 1, GOOGLc: 2, METAc: 3, MSFTc: 4, NVDAc: 5, TSLAc: 6, SPCXc: 8 };
@@ -74,20 +84,20 @@ export function universe(): Universe {
       market: {
         asset,
         id: asset.morphoMarket,
-        params: { loanToken: ADDRESSES.usdc, collateralToken: asset.token, oracle: '0x00000000000000000000000000000000000000a1', irm: '0x00000000000000000000000000000000000000a2', lltv: LLTV },
+        params: { loanToken: ADDRESSES.usdc, collateralToken: asset.token, oracle: '0x00000000000000000000000000000000000000a1', irm: '0x00000000000000000000000000000000000000a2', lltv: asset.id === 'PAXG' ? PAXG_LLTV : LLTV },
       },
     })),
   };
 }
 
 export interface Holdings {
-  wallet?: Partial<Record<StockId | 'cbBTC' | 'WETH' | 'ETH', bigint>>;
+  wallet?: Partial<Record<StockId | 'cbBTC' | 'WETH' | 'ETH' | 'PAXG', bigint>>;
   pledged?: Partial<Record<StockId, bigint>>;
   /** USDC base units owed on Aave. */
   aaveDebt?: bigint;
   /** The risk premium Aave stored for the position, in bps; null for one that was not read. Default 0. */
   aaveRiskPremium?: bigint | null;
-  morpho?: Partial<Record<'cbBTC' | 'ETH', { collateral: bigint; borrowShares: bigint }>>;
+  morpho?: Partial<Record<CryptoId, { collateral: bigint; borrowShares: bigint }>>;
 }
 
 const seconds = (iso: string): bigint => BigInt(Date.parse(iso) / 1000);
@@ -116,6 +126,7 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
   for (const s of STOCKS) balances.set(s.token.toLowerCase(), ok(h.wallet?.[s.id] ?? 0n));
   balances.set(ADDRESSES.cbbtc.toLowerCase(), ok(h.wallet?.cbBTC ?? 0n));
   balances.set(ADDRESSES.weth.toLowerCase(), ok(h.wallet?.WETH ?? 0n));
+  balances.set(ADDRESSES.paxg.toLowerCase(), ok(h.wallet?.PAXG ?? 0n));
 
   const reserves: AaveReserveSnapshot[] = u.aave.reserves.map((info) => {
     const stock = info.role.kind === 'stock' ? info.role.asset : null;
@@ -136,7 +147,7 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
     };
   });
 
-  const morpho = new Map<'cbBTC' | 'ETH', MorphoSnapshot | null>();
+  const morpho = new Map<CryptoId, MorphoSnapshot | null>();
   for (const entry of u.morpho) {
     if (!entry.ok) continue;
     const id = entry.market.asset.id;
@@ -144,15 +155,17 @@ export function snapshot(h: Holdings, timestamp = WEEKDAY): WalletSnapshot {
     morpho.set(id, {
       info: entry.market,
       market: ok({
-        totalSupplyAssets: 1_785_094_342_861_495n,
-        totalSupplyShares: 1_606_934_596_929_172_956_296n,
-        totalBorrowAssets: 1_610_573_516_105_827n,
-        totalBorrowShares: 1_430_870_927_866_694_633_712n,
+        ...(id === 'PAXG' ? PAXG_MARKET : {
+          totalSupplyAssets: 1_785_094_342_861_495n,
+          totalSupplyShares: 1_606_934_596_929_172_956_296n,
+          totalBorrowAssets: 1_610_573_516_105_827n,
+          totalBorrowShares: 1_430_870_927_866_694_633_712n,
+        }),
         lastUpdate: timestamp,
         fee: 0n,
       }),
       position: ok(position),
-      price: ok(id === 'cbBTC' ? CBBTC_PRICE : WETH_PRICE),
+      price: ok(id === 'cbBTC' ? CBBTC_PRICE : id === 'PAXG' ? PAXG_PRICE : WETH_PRICE),
       borrowRatePerSecond: ok(1_665_852_318n),
     });
   }

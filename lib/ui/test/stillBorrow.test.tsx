@@ -54,7 +54,7 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
       assert.match(html, />Where your loan lives<\/h2>/);
       assert.match(html, /Still is not a lender and never holds your collateral or your USDC\./);
       assert.match(html, /<dt>Tokenized stocks<\/dt><dd>Aave V4<\/dd>/);
-      assert.match(html, /<dt>cbBTC, WETH or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
+      assert.match(html, /<dt>cbBTC, WETH, PAXG \(gold\) or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
     }
   });
 
@@ -69,14 +69,16 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     }
   });
 
-  it('offers the registered stocks, cbBTC, WETH and explicit native ETH without automatic-Max choices', () => {
+  it('offers the registered stocks, cbBTC, WETH, explicit native ETH and PAXG without automatic-Max choices', () => {
     const html = render({ asset: null, collateralAmount: '' });
     assert.match(html, /<strong>cbBTC<\/strong>/);
     assert.match(html, /<strong>WETH<\/strong>/);
     assert.match(html, /<strong>ETH<\/strong>/);
+    assert.match(html, /<strong>PAXG<\/strong>/);
     assert.match(html, /Wrapped ETH/);
     assert.match(html, /Wrap native ETH/);
-    assert.match(html, /<dt>cbBTC, WETH or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
+    assert.match(html, /Gold, by Paxos/);
+    assert.match(html, /<dt>cbBTC, WETH, PAXG \(gold\) or explicitly selected ETH<\/dt><dd>Morpho<\/dd>/);
     assert.match(button(html, 'Read borrowing limit'), /disabled=""/);
     assert.doesNotMatch(html, /<button[^>]*>Max|Review loan/);
     assert.match(html, /Choose your collateral and read the borrowing limit first/);
@@ -85,8 +87,9 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
   it('shows every registered stock as a card like cbBTC’s, in a group that names Aave V4', () => {
     // 2026-11-05, the operator: the stocks are chosen the way cbBTC and WETH are, with a mark each.
     const html = render({ asset: null, collateralAmount: '' });
-    const crypto = choiceGroup(html, 'Crypto collateral · Morpho');
-    assert.deepEqual(crypto.map((card) => card.asset), ['cbBTC', 'WETH', 'ETH']);
+    const crypto = choiceGroup(html, 'Crypto and gold · Morpho');
+    // 2026-11-07: gold (PAXG) joined the Morpho markets, marked with its chemical symbol.
+    assert.deepEqual(crypto.map((card) => [card.asset, card.mark]), [['cbBTC', '₿'], ['WETH', 'Ξ'], ['ETH', 'Ξ'], ['PAXG', 'Au']]);
     assert(crypto.every((card) => !card.stock), 'a coin wears the wired mark');
     const stocks = choiceGroup(html, 'Stock collateral · Aave V4');
     // Counted against the registry, not sampled: a stock added there appears here.
@@ -100,9 +103,9 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
   it('marks the chosen stock alone, and holds every card while the limit is read', () => {
     const chosen = choiceGroup(render({ asset: 'SPCXc' }), 'Stock collateral · Aave V4');
     assert.deepEqual(chosen.filter((card) => card.pressed).map((card) => card.asset), ['SPCXc']);
-    assert(choiceGroup(render({ asset: 'SPCXc' }), 'Crypto collateral · Morpho').every((card) => !card.pressed));
+    assert(choiceGroup(render({ asset: 'SPCXc' }), 'Crypto and gold · Morpho').every((card) => !card.pressed));
     const reading = render({ asset: 'SPCXc', reading: true });
-    for (const label of ['Crypto collateral · Morpho', 'Stock collateral · Aave V4']) {
+    for (const label of ['Crypto and gold · Morpho', 'Stock collateral · Aave V4']) {
       assert(choiceGroup(reading, label).every((card) => card.disabled), label);
     }
   });
@@ -249,17 +252,19 @@ describe('Max beside the amount', () => {
 });
 
 describe('what Get money says to a wallet that cannot send a batch', () => {
-  it('a stock loan goes in steps; cbBTC, WETH, ETH and a Spend payment need one transaction', async () => {
+  it('a stock loan goes in steps; cbBTC, WETH, ETH, PAXG and a Spend payment need one transaction', async () => {
     const { stillBorrowWalletNoteV1 } = await import('../src/still/StillBorrow');
     assert.equal(stillBorrowWalletNoteV1({ cannotBatch: false, walletName: 'Rabby Wallet', asset: 'cbBTC', paying: false }), null);
     assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: 'NVDAc' as never, paying: false })!,
       /^Rabby Wallet sends one transaction at a time, so a loan against a stock goes in steps/);
     assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Injected', asset: 'WETH', paying: false })!,
-      /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now\. Choose a stock/);
+      /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now\. Choose a stock/);
+    assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: 'PAXG', paying: false })!,
+      /a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now/);
     // A Spend payment goes as the last step of a stock loan, and only in one transaction against crypto.
     assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: 'Rabby Wallet', asset: 'NVDAc' as never, paying: true })!,
       /^Rabby Wallet sends one transaction at a time, so this loan goes in steps and the last one pays Bitrefill\. Still reads the invoice again before that step/);
     assert.match(stillBorrowWalletNoteV1({ cannotBatch: true, walletName: null, asset: 'cbBTC', paying: true })!,
-      /paying Bitrefill from a loan against cbBTC, WETH or ETH goes only as one transaction\. Choose a stock/);
+      /paying Bitrefill from a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction\. Choose a stock/);
   });
 });

@@ -17,19 +17,20 @@ import { SPEND_ID_V1 } from '../stillPublic.js';
 // whole gate again on a fresh block: the venue's state, Still's share, the
 // simulation. Until 2026-11-01 the connected surface could prepare a review
 // for the two Morpho markets only, so an assistant asked for a loan against
-// NVDAc, Still's main case, had no way to start one.
+// NVDAc, Still's main case, had no way to start one. PAXG (gold) joined the
+// Morpho markets on 2026-11-07.
 // ---------------------------------------------------------------------------
 
-export const STILL_LOAN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'WETH', 'ETH'] as const;
+export const STILL_LOAN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'WETH', 'ETH', 'PAXG'] as const;
 type StillLoanCollateralV1 = (typeof STILL_LOAN_COLLATERAL_V1)[number];
 /** A purchase and a repayment name a loan by its token: native ETH is pledged as WETH. */
-export const STILL_TOKEN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'WETH'] as const;
+export const STILL_TOKEN_COLLATERAL_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'WETH', 'PAXG'] as const;
 
 const DECIMAL_V1 = /^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,18})?$/;
 
 export const StillPrepareLoanReviewInputV1Schema = z.object({
   collateral: z.enum(STILL_LOAN_COLLATERAL_V1)
-    .describe('The collateral: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC, WETH, or native ETH (wrapped to WETH in the same transaction) on Morpho.'),
+    .describe('The collateral: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC, WETH, native ETH (wrapped to WETH in the same transaction) or PAXG (Paxos gold) on Morpho.'),
   addCollateral: z.string().regex(DECIMAL_V1)
     .describe('Tokens to pledge from this wallet with the loan, in whole-token units such as "0.05". "0" borrows against what is already pledged. For ETH, the exact ETH to wrap and pledge, above zero.'),
   borrowUsdc: z.string().regex(DECIMAL_V1).describe('USDC to borrow, such as "500".'),
@@ -63,7 +64,9 @@ function unitsV1(text: string, decimals: number): bigint | null {
 function tokenOfV1(collateral: StillLoanCollateralV1): { token: string; decimals: number; venue: 'aave-v4' | 'morpho' } {
   const stock = STOCKS.find((row) => row.id === collateral);
   if (stock) return { token: stock.token.toLowerCase(), decimals: stock.decimals, venue: 'aave-v4' };
-  const crypto = CRYPTO.find((row) => row.id === (collateral === 'cbBTC' ? 'cbBTC' : 'ETH'))!;
+  // WETH and native ETH share the WETH market; cbBTC and PAXG are their own ids.
+  const id = collateral === 'WETH' || collateral === 'ETH' ? 'ETH' : collateral;
+  const crypto = CRYPTO.find((row) => row.id === id)!;
   return { token: crypto.token.toLowerCase(), decimals: crypto.decimals, venue: 'morpho' };
 }
 
@@ -126,7 +129,7 @@ export const StillPreparePurchaseInputV1Schema = z.object({
   phone: z.string().min(1).max(32).optional()
     .describe('A phone top-up only: the number it goes to, as the USER gave it, in international format starting with the calling code still_spend_product lists. A top-up sent to a wrong number cannot be taken back.'),
   collateral: z.enum(STILL_TOKEN_COLLATERAL_V1)
-    .describe('What the loan is against: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC or WETH on Morpho. Native ETH cannot pay a purchase; WETH can.'),
+    .describe('What the loan is against: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC, WETH or PAXG (Paxos gold) on Morpho. Native ETH cannot pay a purchase; WETH can.'),
   addCollateral: z.string().regex(DECIMAL_V1)
     .describe('Tokens to pledge from this wallet with the loan, in whole-token units such as "0.05". "0" borrows against what is already pledged.'),
 }).strict();
@@ -221,7 +224,7 @@ export async function stillPreparePurchaseV1(
       productId: order.productId, productName: order.productName, packageValue: order.packageValue, faceCurrency: order.faceCurrency,
       priceUsdc: price, invoiceExpiresAt: order.expiresAt,
     },
-    next: 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC or WETH it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
+    next: 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes; Bitrefill holds the price until purchase.invoiceExpiresAt. The review borrows exactly the price and pays the invoice from the loan, after reading the position again, applying Still’s limit and simulating the exact calls. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) takes a loan against a stock in steps, the payment last; against cbBTC, WETH or PAXG it needs Base Account, Coinbase Wallet (Base App) or MetaMask. Bitrefill emails the receipt and the order to the address the user gave. Nothing has been borrowed or paid. After the user signs, miorail_get_still_review_status with reviewId reads what happened, Bitrefill’s invoice included.',
   };
 }
 
@@ -303,13 +306,13 @@ export async function stillPrepareWalletPurchaseV1(
 
 export const StillPrepareRepayInputV1Schema = z.object({
   collateral: z.enum(STILL_TOKEN_COLLATERAL_V1)
-    .describe('The loan, by its collateral: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC or WETH on Morpho (WETH also for a loan opened with native ETH).'),
+    .describe('The loan, by its collateral: a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc) on Aave V4, or cbBTC, WETH or PAXG on Morpho (WETH also for a loan opened with native ETH).'),
   repayUsdc: z.union([z.string().regex(DECIMAL_V1), z.literal('all')])
     .describe('USDC to pay back from this wallet, such as "50", or "all" to close the loan with its interest.'),
   maximumUsdc: z.string().regex(DECIMAL_V1).optional()
     .describe('With "all" only, and needed there: the most USDC the user agreed to pay, interest included. The review refuses if the debt has grown past it.'),
   returnCollateral: z.boolean().optional()
-    .describe('true when the user asked for their collateral back: with "all", the same review then returns the whole collateral to this wallet, for a stock on Aave V4 or cbBTC or WETH on Morpho (a loan opened with native ETH comes back as WETH). When nothing is owed any more it only returns the collateral, and maximumUsdc may be "0".'),
+    .describe('true when the user asked for their collateral back: with "all", the same review then returns the whole collateral to this wallet, for a stock on Aave V4 or cbBTC, WETH or PAXG on Morpho (a loan opened with native ETH comes back as WETH). When nothing is owed any more it only returns the collateral, and maximumUsdc may be "0".'),
 }).strict();
 
 export const StillPrepareRepayOutputV1Schema = z.object({
@@ -364,7 +367,7 @@ export function stillPrepareRepayReviewV1(
     repayUsdc: args.repayUsdc,
     maximumUsdc: usdcTextV1(maximum),
     returnCollateral: back,
-    next: 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes. The page reads the loan again and simulates the exact calls before the user’s own wallet opens; the USDC comes from this wallet, and "all" closes the loan with its interest up to maximumUsdc. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) repays a stock loan in steps; cbBTC and WETH need one transaction. Nothing has been sent. After the user signs, miorail_get_still_review_status with reviewId reads what happened.',
+    next: 'Give the user this link. It opens a review for this wallet only, signed in with it, and works for five minutes. The page reads the loan again and simulates the exact calls before the user’s own wallet opens; the USDC comes from this wallet, and "all" closes the loan with its interest up to maximumUsdc. A wallet that cannot send a batch (Rabby, or Coinbase Wallet with an imported key) repays a stock loan in steps; cbBTC, WETH and PAXG need one transaction. Nothing has been sent. After the user signs, miorail_get_still_review_status with reviewId reads what happened.',
   };
 }
 

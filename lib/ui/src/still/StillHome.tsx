@@ -263,7 +263,7 @@ export function StillHomeSignedIn({ model }: { model: StillHomeModelV1 }) {
           <div className="still-section">
             <div className="still-eyebrow">Live borrowing limit</div>
             <div className="still-live-limit">Not checked</div>
-            <p className="still-note">Get money checks your selected stock collateral through Aave V4, or cbBTC and WETH through Morpho. Read the live limit for your exact choice.</p>
+            <p className="still-note">Get money checks your selected stock collateral through Aave V4, or cbBTC, WETH and PAXG (gold) through Morpho. Read the live limit for your exact choice.</p>
             {view.owed ? (
               <div className="still-owed">
                 <span className="sw" aria-hidden="true" />
@@ -340,7 +340,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
       <div className="still-home-content">
       <div className="still-section">
         <h1 className="still-word">Spend without selling.</h1>
-        <div className="still-sub">Explore modelled borrowing room for the reviewed stocks and crypto in a Base wallet. Read from Base itself.</div>
+        <div className="still-sub">Explore modelled borrowing room for the reviewed stocks, crypto and gold in a Base wallet. Read from Base itself.</div>
       </div>
       <form
         className="still-section still-field"
@@ -376,7 +376,7 @@ export function StillHomeSignedOut({ model }: { model: StillCheckModelV1 }) {
             <div className="still-sub">Not read this time.</div>
           )}
           <div className="still-sub">{result.view.stateWord} {result.view.stateLine}</div>
-          <p className="still-note">This model includes stock collateral. Get money checks reviewed stocks through Aave V4 and cbBTC/WETH through Morpho; the live allowance must be read for your exact collateral choice.</p>
+          <p className="still-note">This model includes stock collateral. Get money checks reviewed stocks through Aave V4 and cbBTC, WETH and PAXG through Morpho; the live allowance must be read for your exact collateral choice.</p>
           <div className="mono still-clock" style={{ marginTop: 8 }}>
             READ FROM BASE · BLOCK {Number(result.report.reading.block).toLocaleString('en-US')}
           </div>

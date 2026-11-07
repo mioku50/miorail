@@ -15,7 +15,7 @@ export type LendingQuestionV1 =
   | { operation: 'borrow'; collateralTokenAddress: string; borrowAssets: string; collateralSupplyAssets: string; nativeFundingAssets?: string; payment?: LendingPaymentV1 }
   | { operation: 'repay'; collateralTokenAddress: string; amountMode: 'assets' | 'all'; repayAssets: string | null; maximumAssets: string;
       /** Repay all, then take the collateral back to the wallet: a stock on Aave V4,
-       * cbBTC or WETH on Morpho. With no debt left only it moves, so the maximum may be zero. */
+       * cbBTC, WETH or PAXG on Morpho. With no debt left only it moves, so the maximum may be zero. */
       returnCollateral?: true };
 export interface LendingDraftClaimsV1 {
   version: 1 | 2 | 3; chainId: 8453; tenantId: string; walletAddress: string; draftId: string;

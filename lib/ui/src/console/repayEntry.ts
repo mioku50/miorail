@@ -10,7 +10,7 @@ export const REPAY_COLLATERALS_V1 = [
 export interface RepayCapacityWireV1 {
   venue: 'morpho' | 'aave-v4'; marketId: string; collateralTokenAddress: string; collateralSymbol: string;
   collateralDecimals: number; debtAtomic: string; walletUsdcAtomic: string; blockNumber: number;
-  /** The collateral deposited (a stock on Aave V4, cbBTC or WETH on Morpho), which Repay all can take back. */
+  /** The collateral deposited (a stock on Aave V4, cbBTC, WETH or PAXG on Morpho), which Repay all can take back. */
   collateralAtomic?: string;
 }
 /** How a repayment is asked: an exact amount, all of it, or all of it and the stock back. */

@@ -6,15 +6,21 @@ import type { StillBorrowAssetV1, StillBorrowComparisonV1, StillBorrowModelV1 } 
 
 /** The host accepts a label from a query, never an arbitrary token address. */
 export function borrowAssetFromQueryV1(value: string | null): StillBorrowAssetV1 | null {
-  return value === 'cbBTC' || value === 'WETH' || value === 'ETH' ? value : STOCKS.find(stock => stock.id === value)?.id ?? null;
+  return value === 'cbBTC' || value === 'WETH' || value === 'ETH' || value === 'PAXG' ? value : STOCKS.find(stock => stock.id === value)?.id ?? null;
+}
+
+/** The registry row a choice pledges: WETH and native ETH both pledge into the WETH market. */
+function collateralRowV1(asset: StillBorrowAssetV1) {
+  return [...STOCKS, ...CRYPTO].find(row => row.id === (asset === 'WETH' ? 'ETH' : asset))!;
 }
 
 export function borrowCollateralTokenV1(asset: StillBorrowAssetV1): `0x${string}` {
-  return [...STOCKS, ...CRYPTO].find(row => row.id === (asset === 'WETH' ? 'ETH' : asset))!.token;
+  return collateralRowV1(asset).token;
 }
 
+/** From the registry: 8 for a stock and cbBTC, 18 for WETH, ETH and PAXG. */
 export function borrowCollateralDecimalsV1(asset: StillBorrowAssetV1): number {
-  return asset === 'WETH' || asset === 'ETH' ? 18 : 8;
+  return collateralRowV1(asset).decimals;
 }
 
 /** Interpret text exactly; no risk calculation, balance assumption or rounding. */
@@ -94,7 +100,7 @@ export function stillBorrowBalanceViewV1(payload: unknown, asset: StillBorrowAss
   }
   const stock = STOCKS.find(row => row.id === asset);
   if (payload.state !== 'read' || payload.marketScope !== (stock ? 'still_aave_spoke' : 'still_registered_market') || !Array.isArray(payload.markets)) return failed;
-  const marketId = stock ? ADDRESSES.aaveSpoke.toLowerCase() : CRYPTO.find(row => row.id === (asset === 'cbBTC' ? 'cbBTC' : 'ETH'))!.morphoMarket;
+  const marketId = stock ? ADDRESSES.aaveSpoke.toLowerCase() : CRYPTO.find(row => row.id === (asset === 'WETH' ? 'ETH' : asset))!.morphoMarket;
   const rows = payload.markets.filter(row => object(row) && row.marketId === marketId && (!stock || row.collateralTokenAddress === stock.token.toLowerCase()));
   if (rows.length !== 1) return failed;
   const row = rows[0] as Record<string, unknown>;
@@ -125,7 +131,7 @@ export function stillBorrowCapacityViewV1(payload: unknown, asset: StillBorrowAs
   }
   const stock = STOCKS.find(row => row.id === asset);
   if (payload.state !== 'read' || payload.marketScope !== (stock ? 'still_aave_spoke' : 'still_registered_market') || !Array.isArray(payload.markets)) return failed;
-  const expected = stock ?? CRYPTO.find(row => row.id === (asset === 'WETH' || asset === 'ETH' ? 'ETH' : 'cbBTC'))!;
+  const expected = stock ?? CRYPTO.find(row => row.id === (asset === 'WETH' ? 'ETH' : asset))!;
   const marketId = stock ? ADDRESSES.aaveSpoke.toLowerCase() : CRYPTO.find(row => row.token === expected.token)!.morphoMarket;
   const rows = payload.markets.filter(row => object(row) && row.marketId === marketId && (!stock || row.collateralTokenAddress === stock.token.toLowerCase()));
   if (rows.length !== 1) return failed;

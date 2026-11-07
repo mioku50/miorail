@@ -179,7 +179,7 @@ export function registerMiorailReadOnlyToolsV1(server: McpServer, hooks: Evidenc
 
   server.registerTool('get_still_terms', {
     title: 'Still terms — spend without selling',
-    description: 'Reads Still’s versioned terms without a wallet, using the same earnings-calendar service and cache as the page. Still uses 50% of the protocol’s collateral factor. Stocks count at 40% in Still’s closed-market window (including weekends and market holidays), in their earnings window, or while their earnings calendar is unread. Read the returned active flags, window boundaries and per-stock calendarRead: a missing earnings read is not an empty schedule. The stock reduction does not apply to cbBTC or ETH. These are terms, not a personal borrowing quote or a recommendation to borrow. Still is not offered to US persons.',
+    description: 'Reads Still’s versioned terms without a wallet, using the same earnings-calendar service and cache as the page. Still uses 50% of the protocol’s collateral factor. Stocks count at 40% in Still’s closed-market window (including weekends and market holidays), in their earnings window, or while their earnings calendar is unread. Read the returned active flags, window boundaries and per-stock calendarRead: a missing earnings read is not an empty schedule. The stock reduction does not apply to cbBTC, ETH or PAXG. These are terms, not a personal borrowing quote or a recommendation to borrow. Still is not offered to US persons.',
     inputSchema: StillTermsInputV1Schema,
     outputSchema: StillTermsSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },

@@ -104,7 +104,7 @@ export const StillTermsSchema = z
     assets: z.array(
       z
         .object({
-          id: z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH']),
+          id: z.enum(['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH', 'PAXG']),
           name: z.string(),
           token: ADDRESS,
           venue: z.string(),

@@ -7,7 +7,7 @@ import { STOCKS, type StockId } from '@mioagent/still-engine/registry';
 
 void React;
 
-export type StillBorrowAssetV1 = 'cbBTC' | 'WETH' | 'ETH' | StockId;
+export type StillBorrowAssetV1 = 'cbBTC' | 'WETH' | 'ETH' | 'PAXG' | StockId;
 /** Still's limit beside the protocol's own, in the page's words. */
 export interface StillBorrowComparisonV1 {
   protocol: 'Aave V4' | 'Morpho';
@@ -66,16 +66,16 @@ export type StillBorrowSpendV1 =
 
 /** What Get money says to a wallet that cannot send a batch, before anything is
  * asked: a stock loan goes in steps, a Spend payment as the last of them;
- * cbBTC, WETH and ETH need one transaction. */
+ * cbBTC, WETH, ETH and PAXG need one transaction. */
 export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletName: string | null; asset: StillBorrowAssetV1 | null; paying: boolean }): string | null {
   if (!input.cannotBatch) return null;
   const name = input.walletName?.trim();
   const wallet = name && name.length <= 40 && !/^(injected|browser wallet)$/i.test(name) ? name : 'This wallet';
   const others = 'Base Account, Coinbase Wallet (Base App) or MetaMask';
-  if (input.asset === 'cbBTC' || input.asset === 'WETH' || input.asset === 'ETH') {
+  if (input.asset === 'cbBTC' || input.asset === 'WETH' || input.asset === 'ETH' || input.asset === 'PAXG') {
     return input.paying
-      ? `${wallet} sends one transaction at a time, and paying Bitrefill from a loan against cbBTC, WETH or ETH goes only as one transaction. Choose a stock, or use ${others}.`
-      : `${wallet} sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now. Choose a stock, or use ${others}.`;
+      ? `${wallet} sends one transaction at a time, and paying Bitrefill from a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction. Choose a stock, or use ${others}.`
+      : `${wallet} sends one transaction at a time, and a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now. Choose a stock, or use ${others}.`;
   }
   if (input.paying) {
     return `${wallet} sends one transaction at a time, so this loan goes in steps and the last one pays Bitrefill. Still reads the invoice again before that step; if Bitrefill no longer waits for it, nothing is paid and the loan stays yours to repay.`;
@@ -87,6 +87,8 @@ const CRYPTO_CHOICES_V1 = [
   ['cbBTC', 'Bitcoin on Base', '₿'],
   ['WETH', 'Wrapped ETH', 'Ξ'],
   ['ETH', 'Wrap native ETH', 'Ξ'],
+  // Gold's chemical symbol: Still's own mark, not Paxos's logo.
+  ['PAXG', 'Gold, by Paxos', 'Au'],
 ] as const;
 
 /** One collateral card: its mark, its token, and what it is. */
@@ -142,7 +144,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
           </p>
           <dl className="still-borrow-venue-list">
             <div><dt>Tokenized stocks</dt><dd>Aave V4</dd></div>
-            <div><dt>cbBTC, WETH or explicitly selected ETH</dt><dd>Morpho</dd></div>
+            <div><dt>cbBTC, WETH, PAXG (gold) or explicitly selected ETH</dt><dd>Morpho</dd></div>
           </dl>
         </section>
       </div>
@@ -186,7 +188,7 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     way cbBTC and WETH are, with a mark each, instead of from a list. The mark is Still's
                     own: a stock's is the blue circle with its company's initial, as on Assets, never the
                     company's logo, which is not ours to copy. */}
-                <p className="still-borrow-label" id={`${id}-crypto-label`}>Crypto collateral · Morpho</p>
+                <p className="still-borrow-label" id={`${id}-crypto-label`}>Crypto and gold · Morpho</p>
                 <div className="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby={`${id}-crypto-label`}>
                   {CRYPTO_CHOICES_V1.filter(([asset]) => !(model.spend && asset === 'ETH')).map(([asset, description, symbol]) => (
                     <BorrowChoiceV1 key={asset} asset={asset} description={description} mark={symbol} stock={false} pressed={model.asset === asset} disabled={busy} onChoose={model.onAsset} />

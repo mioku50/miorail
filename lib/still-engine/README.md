@@ -7,7 +7,7 @@ here from Still's `packages/engine` on 2026-10-26, when Still became Miorail's f
   stocks while Wall Street is closed (weekends and market holidays, by Miorail's reviewed market
   calendar) and around an earnings report.
 - `read.ts` and `mirror.ts`: one-block reads of the Aave V4 "Coinbase Stocks" spoke and the Morpho
-  cbBTC and WETH markets. They compute the Mirror report: limits, debt, safety and the headline.
+  cbBTC, WETH and PAXG markets. They compute the Mirror report: limits, debt, safety and the headline.
 - `math.ts`: bigint arithmetic for money. Every division names its rounding direction. Morpho
   Blue's own arithmetic (accrual, debt, the health check, the liquidation price) is not here: it
   comes from `@mioagent/rwa-issuer/morphoBorrowMath`, the module Miorail's borrow review checks a
@@ -29,4 +29,6 @@ On 2026-10-26 Still's Morpho arithmetic gave way to `rwa-issuer`'s, the Aave API
 person's position gave way to this engine's chain read, and Still's dividend reader gave way to
 Miorail's Stocks calendar. Each pair was run on the same data first. The replay test borrows what
 the Mirror offers through `morphoAfterBorrowV1`, the borrow review's check, and expects a health
-factor of 2.
+factor of 2. Its fixture is the public burn address read at one pinned block; after a change to
+what is read, `test/capture.ts` reads it again there through an archive node and refuses to write
+if any earlier call answers differently.

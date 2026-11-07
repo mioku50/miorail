@@ -203,7 +203,7 @@ export async function runMorphoBorrowV1(
   const loanDecimals = market.loan.decimals;
   const stillAsset = stillBorrowAssetV1(request.collateralTokenAddress);
   if (supply > 0n && !stillAsset) {
-    return refusedV1('market', 'collateral_supply_not_supported', 'New collateral supply is available only for the registered cbBTC and WETH markets.', marketId, null);
+    return refusedV1('market', 'collateral_supply_not_supported', 'New collateral supply is available only for the registered cbBTC, WETH and PAXG markets.', marketId, null);
   }
   if (stillAsset && (
     marketId.toLowerCase() !== stillAsset.morphoMarket.toLowerCase() ||
@@ -500,7 +500,7 @@ export async function runMorphoBorrowV1(
   const review = render(standing.position, after, null);
   if (stillPolicy) review.warnings = [
     supply > 0n
-      ? `You chose to add ${atomicToDecimalStringV1(supply, stillAsset!.decimals)} ${stillAsset!.id === 'ETH' ? 'WETH' : 'cbBTC'} from your wallet to this market. Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} with that collateral.`
+      ? `You chose to add ${atomicToDecimalStringV1(supply, stillAsset!.decimals)} ${stillAsset!.id === 'ETH' ? 'WETH' : stillAsset!.symbol} from your wallet to this market. Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} with that collateral.`
       : `Still permits up to ${formatCents(BigInt(stillPolicy.availableAtomic) / 10_000n)} against collateral already deposited in this market. Tokens held in your wallet are not added.`,
     ...review.warnings,
   ];

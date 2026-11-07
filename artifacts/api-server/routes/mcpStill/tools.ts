@@ -30,8 +30,8 @@ import { McpPublicError } from '../mcp/tools.js';
 // nothing: a loan is reviewed and signed on Still's site, in the owner's wallet.
 // ---------------------------------------------------------------------------
 
-const ASSET_IDS_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH'] as const;
-const LOANS_V1 = ['aave-v4', 'morpho:cbBTC', 'morpho:ETH'] as const;
+const ASSET_IDS_V1 = ['AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc', 'cbBTC', 'ETH', 'PAXG'] as const;
+const LOANS_V1 = ['aave-v4', 'morpho:cbBTC', 'morpho:ETH', 'morpho:PAXG'] as const;
 const DECIMAL_V1 = /^(?:0|[1-9][0-9]{0,17})(?:\.[0-9]{1,18})?$/;
 
 const WalletArgV1 = z.string().trim().min(1).max(256)
@@ -98,7 +98,7 @@ const StillChangeV1Schema = z.discriminatedUnion('kind', [
 export const StillWhatIfInputV1Schema = z.object({
   wallet: WalletArgV1,
   changes: z.array(StillChangeV1Schema).min(1).max(4)
-    .describe('One to four changes, applied together to the same reading. Loans: "aave-v4" is the stock loan, "morpho:cbBTC" and "morpho:ETH" the crypto ones.'),
+    .describe('One to four changes, applied together to the same reading. Loans: "aave-v4" is the stock loan, "morpho:cbBTC" and "morpho:ETH" the crypto ones, "morpho:PAXG" the gold one.'),
 }).strict();
 
 const LoanSummaryV1Schema = z.object({

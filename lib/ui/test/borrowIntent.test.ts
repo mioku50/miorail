@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { ADDRESSES, CRYPTO, STOCKS } from '@mioagent/still-engine/registry';
-import { borrowAssetFromQueryV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
+import { borrowAssetFromQueryV1, borrowCollateralDecimalsV1, borrowCollateralTokenV1, parseBorrowDecimalV1, stillBorrowBalanceViewV1, stillBorrowCapacityViewV1 } from '../src/still/borrowIntent.js';
 import { repayMaxV1 } from '../src/console/repayEntry.js';
 
 describe('a chosen collateral amount is interpreted exactly', () => {
@@ -90,6 +90,25 @@ describe('Get money shows a server allowance for one selected pledge', () => {
     ] as const) {
       assert.equal('suggestedAmount' in stillBorrowCapacityViewV1(payload, asset, '3300000000000000'), false);
     }
+  });
+});
+
+describe('gold is chosen like bitcoin, with its own decimals and market (2026-11-07)', () => {
+  const PAXG = CRYPTO.find(row => row.id === 'PAXG')!;
+  it('takes PAXG from a link, pledges its token and counts 18 decimals, as the registry says', () => {
+    assert.equal(borrowAssetFromQueryV1('PAXG'), 'PAXG');
+    assert.equal(borrowCollateralTokenV1('PAXG'), PAXG.token);
+    // Read from the registry: before gold, every coin that was not WETH or ETH was taken for 8.
+    assert.equal(borrowCollateralDecimalsV1('PAXG'), 18);
+    assert.equal(borrowCollateralDecimalsV1('cbBTC'), 8);
+    assert.equal(borrowCollateralDecimalsV1('WETH'), 18);
+    assert.equal(borrowCollateralDecimalsV1('NVDAc'), 8);
+    assert.equal(parseBorrowDecimalV1('0.5', borrowCollateralDecimalsV1('PAXG'), true).atomic, '500000000000000000');
+  });
+  it('reads PAXG’s own market row, never the bitcoin or ether one', () => {
+    const row = { marketId: PAXG.morphoMarket, walletCollateralAtomic: '1000000000000000000' };
+    assert.deepEqual(stillBorrowBalanceViewV1({ state: 'read', marketScope: 'still_registered_market', markets: [row] }, 'PAXG'), { maxAtomic: '1000000000000000000', error: null });
+    assert.equal(stillBorrowBalanceViewV1(response(), 'PAXG').maxAtomic, null);
   });
 });
 

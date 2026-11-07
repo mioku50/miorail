@@ -11,6 +11,17 @@
 //
 // SPCXc is the spoke's ninth reserve (seen 2026-11-01; Aave announced it 2026-11-04): its name,
 // ISIN and decimals were read the same way on 2026-11-04 at block 53,519,193.
+//
+// PAXG, Paxos's gold token, on Morpho (2026-11-07, block 54,244,482). Coinbase Borrow has taken it
+// since 2026-11-06 through Morpho on Base. Of the four PAXG/USDC markets, all at LLTV 77%, this is
+// the one Morpho lists and the Steakhouse USDC vaults supply. Read on chain:
+// - idToMarketParams: USDC lent, PAXG ("Paxos Gold", 18 decimals) pledged, the Adaptive Curve IRM
+//   every Still market uses, LLTV 77%;
+// - its oracle prices gold, not the token: Chainlink XAU/USD, which stands still while the gold
+//   market is closed, with Chainlink PAXG/USD as a backup it moves to only after the two have
+//   differed by more than 5% for three days;
+// - Paxos can pause the token and freeze a holder (paused(), isFrozen()); it has no transfer fee;
+// - the market had $1,889 left to lend, so its own liquidity, not the collateral, bounds a loan.
 
 import type { Address, Hex } from 'viem';
 
@@ -21,6 +32,7 @@ export const ADDRESSES = {
   usdc: '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
   weth: '0x4200000000000000000000000000000000000006',
   cbbtc: '0xcbB7C0000aB88B473b1f5aFd9ef808440eed33Bf',
+  paxg: '0xe904AEA5E1b110c9174728fA2efFc8aeD19E98Ef',
   aaveSpoke: '0x17905Db0e4A3514467539956c084180616AE7B8D',
   aaveHub: '0xa4d5947Eb727A052bae69C593FfC84247EC9864E',
   aaveOracle: '0xaBaf048fD7675Ea34a84332371ffd5D55E322A47',
@@ -35,7 +47,7 @@ export const ADDRESSES = {
 } as const satisfies Record<string, Address>;
 
 export type StockId = 'AAPLc' | 'AMZNc' | 'GOOGLc' | 'METAc' | 'MSFTc' | 'NVDAc' | 'SPCXc' | 'TSLAc';
-export type CryptoId = 'cbBTC' | 'ETH';
+export type CryptoId = 'cbBTC' | 'ETH' | 'PAXG';
 export type AssetId = StockId | CryptoId;
 
 export interface StockAsset {
@@ -52,13 +64,14 @@ export interface StockAsset {
   readonly isin: string;
 }
 
+/** A token Still lends against on Morpho: bitcoin, ether, and gold (PAXG) since 2026-11-07. */
 export interface CryptoAsset {
   readonly kind: 'crypto';
   readonly id: CryptoId;
   readonly token: Address;
   readonly decimals: number;
   readonly name: string;
-  /** The token people hold: cbBTC, or ETH counted together with WETH. */
+  /** The token people hold: cbBTC, PAXG, or ETH counted together with WETH. */
   readonly symbol: string;
   readonly morphoMarket: Hex;
   /** Native ETH counts too: the same signature can wrap it into WETH. */
@@ -98,6 +111,16 @@ export const CRYPTO: readonly CryptoAsset[] = [
     symbol: 'ETH',
     morphoMarket: '0x8793cf302b8ffd655ab97bd1c695dbd967807e8367a65cb2f4edaf1380ba1bda',
     includesNativeEth: true,
+  },
+  {
+    kind: 'crypto',
+    id: 'PAXG',
+    token: ADDRESSES.paxg,
+    decimals: 18,
+    name: 'Gold',
+    symbol: 'PAXG',
+    morphoMarket: '0x48dca3ed245fb30931013a676d3451f7602b11150f92743ad93159628cbbe392',
+    includesNativeEth: false,
   },
 ];
 

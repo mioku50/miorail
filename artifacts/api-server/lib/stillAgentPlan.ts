@@ -38,7 +38,14 @@ export type StillAgentPlanV1 =
   | { task: 'needs'; what: PlanNeedV1 }
   | { task: 'unsupported'; reason: PlanUnsupportedV1 };
 
-const VENUES_V1 = ['aave', 'morpho_cbbtc', 'morpho_eth'] as const;
+const VENUES_V1 = ['aave', 'morpho_cbbtc', 'morpho_eth', 'morpho_paxg'] as const;
+/** The planner's names for the loans the engine reads. */
+const PLANNER_VENUE_V1: Record<ScenarioVenueV1, (typeof VENUES_V1)[number]> = {
+  'aave-v4': 'aave',
+  'morpho:cbBTC': 'morpho_cbbtc',
+  'morpho:ETH': 'morpho_eth',
+  'morpho:PAXG': 'morpho_paxg',
+};
 
 /** The model's answer, and the rules' too: the same shape goes through the same grounding. */
 export const StillAgentProposalSchemaV1 = z.object({
@@ -104,6 +111,7 @@ function assetIdV1(text: string): AssetId | null {
   }
   if (key === 'btc' || key === 'bitcoin') return 'cbBTC';
   if (key === 'ether' || key === 'ethereum') return 'ETH';
+  if (key === 'gold' || key === 'xau' || key === 'золото') return 'PAXG';
   return null;
 }
 
@@ -352,16 +360,17 @@ function plannerPromptV1(report: MirrorReport): string {
   const held = heldV1(report);
   const loans = venueLinesV1(report)
     .filter(({ line }) => line.debtCents !== null && BigInt(line.debtCents) > 0n)
-    .map(({ venue }) => (venue === 'aave-v4' ? 'aave' : venue === 'morpho:cbBTC' ? 'morpho_cbbtc' : 'morpho_eth'));
+    .map(({ venue }) => (venue ? PLANNER_VENUE_V1[venue] : null))
+    .filter((venue) => venue !== null);
   return [
     'You turn one question about the reader\'s own Base wallet into a JSON calculation request for Still\'s engine. You never answer the question and never compute anything.',
-    'Assets the engine reads (id: names): NVDAc: NVIDIA, NVDA; AAPLc: Apple, AAPL; TSLAc: Tesla, TSLA; SPCXc: SpaceX, SPCX; MSFTc: Microsoft, MSFT; AMZNc: Amazon, AMZN; GOOGLc: Alphabet, Google, GOOGL; METAc: Meta, META; cbBTC: Bitcoin, BTC; ETH: Ether, WETH.',
+    'Assets the engine reads (id: names): NVDAc: NVIDIA, NVDA; AAPLc: Apple, AAPL; TSLAc: Tesla, TSLA; SPCXc: SpaceX, SPCX; MSFTc: Microsoft, MSFT; AMZNc: Amazon, AMZN; GOOGLc: Alphabet, Google, GOOGL; METAc: Meta, META; cbBTC: Bitcoin, BTC; ETH: Ether, WETH; PAXG: Gold, Paxos Gold.',
     `The wallet holds: ${held.length ? held.join(', ') : 'none of them'}. Its loans: ${loans.length ? loans.join(', ') : 'none'}.`,
     'Answer with ONE JSON object and nothing else:',
     '{"task": "scenario"|"repay_options"|"interest"|"limit"|"status"|"unsupported"|"chat",',
     ' "price": [{"asset": id, "changePct": number, "toUsd": number}] (scenario: a price moving by a percentage OR to a dollar price),',
     ' "borrowUsd": number (scenario: borrowing more), "repayUsd": number or "all", "deposit": {"asset": id, "amount": tokens},',
-    ' "venue": "aave"|"morpho_cbbtc"|"morpho_eth" (only if the question names the loan), "days": number (interest period),',
+    ' "venue": "aave"|"morpho_cbbtc"|"morpho_eth"|"morpho_paxg" (only if the question names the loan), "days": number (interest period),',
     ' "reason": "not_reviewed_asset"|"other_wallet"|"forecast"|"tax"|"trade"|"other" (unsupported only)}',
     'Tasks: scenario = what a price move, more borrowing, a repayment or more collateral would do; repay_options = ways to pay a loan down; interest = what the loan costs over a period; limit = why the borrowing room is what it is or changed; status = a plain question about the room, loan safety, holdings, market hours or dividends; chat = greetings and thanks; unsupported = anything else, including predictions, other wallets, taxes, trades and assets not listed.',
     'Rules: copy every number exactly as the question writes it, as a positive number; never add a number, asset or loan the question does not give; leave out a field the question does not give; changePct is always positive, the question\'s words say the direction.',

@@ -113,7 +113,7 @@ describe('the Agent distinguishes a model from an executable loan', () => {
     const answer = agentAnswerV1({ question: 'How much can I borrow?', report: report(), sky });
     assert.match(answer.text, /^Modelled borrowing room:/);
     assert.match(answer.text, /not a loan ready to sign/);
-    assert.match(answer.text, /cbBTC and WETH through Morpho/);
+    assert.match(answer.text, /cbBTC, WETH and PAXG \(gold\) through Morpho/);
     assert.match(answer.text, /reviewed stocks through Aave V4/);
     assert.doesNotMatch(answer.text, /^Now \$/);
   });

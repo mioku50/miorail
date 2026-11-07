@@ -271,7 +271,7 @@ export function stillLoanCardSvgV1(shape: StillCardShapeV1, share: StillLoanShar
     brandV1(x, top + 18),
     `<text x="${x}" y="${top + 128}" font-family="${MONO}" font-size="19" letter-spacing="2" fill="${INK2}">SPENT WITHOUT SELLING</text>`,
     `<text x="${x}" y="${top + 250}" font-family="${SANS}" font-weight="300" fill="${INK}"><tspan font-size="112">${escapeXmlV1(whole!)}</tspan><tspan font-size="52" dy="-46">.${escapeXmlV1(cents!)}</tspan><tspan font-size="40" dy="46" font-weight="500"> USDC</tspan></text>`,
-    textLinesV1(wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}. Nothing was sold: the ${words.collateralKind === 'stock' ? 'stock' : 'coin'} is the loan’s collateral.`, 25, width, 3), x, top + 318, 25, 35, `font-family="${SANS}" fill="${INK2}"`),
+    textLinesV1(wrapV1(`Borrowed against ${words.collateralLabel} through ${words.venueName}. Nothing was sold: the ${words.collateralKind === 'stock' ? 'stock' : words.collateralLabel === 'PAXG' ? 'gold' : 'coin'} is the loan’s collateral.`, 25, width, 3), x, top + 318, 25, 35, `font-family="${SANS}" fill="${INK2}"`),
     baseSquareV1(x, bottom - 26, 24),
     `<text x="${x + 38}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" fill="${INK2}">CHECKED ONCHAIN ON BASE</text>`,
     `<text x="${x + width}" y="${bottom - 6}" font-family="${MONO}" font-size="17" letter-spacing="2" text-anchor="end" fill="${INK2}">MIORAIL.XYZ</text>`,

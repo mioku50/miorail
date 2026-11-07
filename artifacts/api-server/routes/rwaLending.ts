@@ -133,8 +133,8 @@ rwaLendingRouter.get('/rwa/lending/review/:draft', async (req, res) => {
   const sequential = req.query.delivery === 'sequential';
   if (sequential && (claims.venue !== 'aave-v4' || (q.operation === 'borrow' && q.nativeFundingAssets !== undefined))) {
     res.json({ state: 'refused', refusal: 'lending_steps_unavailable', detail: q.operation === 'borrow' && q.payment !== undefined
-      ? 'Paying Bitrefill from a loan against cbBTC, WETH or ETH goes only as one transaction, and this wallet sends one at a time. Nothing was sent. Choose a stock, or use Base Account, Coinbase Wallet (Base App) or MetaMask.'
-      : 'A loan against cbBTC, WETH or ETH goes only as one transaction for now, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.' });
+      ? 'Paying Bitrefill from a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction, and this wallet sends one at a time. Nothing was sent. Choose a stock, or use Base Account, Coinbase Wallet (Base App) or MetaMask.'
+      : 'A loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now, and this wallet sends one at a time. Nothing was sent. Use Base Account, Coinbase Wallet (Base App) or MetaMask.' });
     return;
   }
   const store = await rwaLendingRuntimeV1.store();

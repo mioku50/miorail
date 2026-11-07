@@ -622,9 +622,9 @@ export function computeMirror({ universe, snapshot, calendar, subject, assembled
     venues: actual.venues,
     coverage: {
       measured: [
-        'Wallet balances of the 7 stock tokens Aave V4 accepts, cbBTC, WETH and ETH',
+        `Wallet balances of the ${STOCKS.length} stock tokens Aave V4 accepts, cbBTC, WETH, ETH and PAXG`,
         'Aave V4 Coinbase Stocks: collateral supplied and USDC owed',
-        'Morpho cbBTC/USDC and WETH/USDC: collateral and USDC owed',
+        'Morpho cbBTC/USDC, WETH/USDC and PAXG/USDC: collateral and USDC owed',
         `Earnings report dates of the ${STOCKS.length} stocks, from the Aave V4 API calendar`,
       ],
       notCounted: [

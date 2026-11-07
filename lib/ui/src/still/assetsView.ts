@@ -49,7 +49,7 @@ export interface AssetsViewV1 {
   /** What the reviewed holdings are worth, wallet and pledged. USDC is not one of them. */
   total: string | null;
   count: number;
-  /** USDC when it was read beside the report, ETH and cbBTC, then the stocks by value. */
+  /** USDC when it was read beside the report, ETH, cbBTC and PAXG, then the stocks by value. */
   rows: AssetRowV1[];
   /** Coinbase stocks outside Still's reviewed set: an amount, priced on their own page. */
   others: Array<{ symbol: string; amount: string; href: string }>;
@@ -162,10 +162,12 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
 
   const rows: AssetRowV1[] = input.usdc === undefined ? [] : [usdcRowV1(input.usdc)];
   // ETH is shown either way, as what a wallet without sponsored gas pays
-  // with; cbBTC and the stocks when there is some.
+  // with; cbBTC, gold and the stocks when there is some.
   rows.push(coins.get('ETH') ?? { id: 'ETH', kind: 'crypto', name: CRYPTO.find((asset) => asset.id === 'ETH')!.name, amount: '0 ETH', value: formatCents(BigInt(0)), lines: [] });
   const btc = coins.get('cbBTC');
   if (btc) rows.push(btc);
+  const gold = coins.get('PAXG');
+  if (gold) rows.push(gold);
   stocks.sort((a, b) => (a.cents === b.cents ? a.row.name.localeCompare(b.row.name) : a.cents > b.cents ? -1 : 1));
   rows.push(...stocks.map((stock) => stock.row));
 
@@ -181,7 +183,7 @@ export function assetsViewV1(input: { report: MirrorReport; dividends?: Dividend
       id: v.market,
       // Aave's USDC debt belongs to the whole Spoke, not to a guessed stock.
       repayHref: v.venue === 'aave-v4' ? '/repay' :
-        CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase()) ? `/repay?asset=${CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase())!.id === 'ETH' ? 'WETH' : 'cbBTC'}` : null,
+        CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase()) ? `/repay?asset=${CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase())!.id === 'ETH' ? 'WETH' : CRYPTO.find(asset => asset.morphoMarket.toLowerCase() === v.market.toLowerCase())!.id}` : null,
       label: v.label,
       owed:
         v.debtAtomic != null && BigInt(v.debtAtomic) > BigInt(0) && BigInt(v.debtAtomic) < BigInt(10_000)

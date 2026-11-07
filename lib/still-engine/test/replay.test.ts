@@ -19,6 +19,10 @@ import { assertMatches } from './matches.js';
 // Recaptured at the same pinned block on 2026-11-05, when SPCXc joined the stocks and the read
 // gained the position's stored risk premium: all 142 earlier calls answered byte for byte as
 // recorded, and three were new (the wallet's SPCXc, Coinbase's registry for it, the premium).
+// Recaptured there again on 2026-11-07, when PAXG joined on Morpho (test/capture.ts): all 145
+// earlier calls answered as recorded, and two were new, the wallet's PAXG and the PAXG market's
+// parameters. That market was created on 2026-10-27, after this block, so its parameters answer
+// zeros and the registry check closes it, as it would close any market that is not the one we name.
 const fixture = JSON.parse(readFileSync(new URL('./fixtures/burn-address.json', import.meta.url), 'utf8')) as {
   address: Address;
   block: string;
@@ -51,7 +55,7 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
       'AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'TSLAc', 'usdc',
     ]);
     assert.equal(universe.aave.oracleDecimals, 8);
-    assert.deepEqual(universe.morpho.map((m) => m.ok && m.market.params.lltv), [860_000_000_000_000_000n, 860_000_000_000_000_000n]);
+    assert.deepEqual(universe.morpho.map((m) => (m.ok ? m.market.params.lltv : m.problem)), [860_000_000_000_000_000n, 860_000_000_000_000_000n, 'market_mismatch']);
   });
 
   it('reads one block for everything', async () => {
@@ -59,8 +63,8 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
     assert.equal(snapshot.block.number.toString(), fixture.block);
     assert.equal(fixture.batches.filter((b) => b.blockNumber !== null).every((b) => b.blockNumber === fixture.block), true);
     assert.equal(snapshot.balances.get(ADDRESSES.usdc.toLowerCase())?.ok, true);
-    // USDC, cbBTC, WETH and the eight stocks.
-    assert.equal(snapshot.balances.size, 11);
+    // USDC, cbBTC, WETH, PAXG and the eight stocks.
+    assert.equal(snapshot.balances.size, 12);
   });
 
   it('can pin the initial wallet batch and refuses a provider answering another block', async () => {
@@ -100,6 +104,12 @@ describe('a real read, replayed from raw Multicall3 bytes', () => {
     // counted, borrow exactly what it offers, on the same block's totals.
     const { snapshot, report } = await replay();
     for (const asset of CRYPTO) {
+      // PAXG's market did not exist yet at this block: no market, so nothing offered there.
+      if (asset.id === 'PAXG') {
+        assert.equal(snapshot.morpho.get(asset.id), null);
+        assert.equal(report.venues.some((v) => v.market === asset.morphoMarket), false);
+        continue;
+      }
       const market = snapshot.morpho.get(asset.id)!;
       if (!market.market.ok || !market.price.ok || !market.borrowRatePerSecond.ok || !market.position.ok) throw new Error(asset.id);
       const token = snapshot.balances.get(asset.token.toLowerCase());
