@@ -152,7 +152,7 @@ export function RepayEntryScreen({ model }: { model: RepayEntryModelV1 }) {
                 <span>USDC</span></div>
               <p className="still-note" id={`${id}-funding-note`}>{model.mode === 'assets'
                 ? 'This exact amount is also your maximum USDC debit. Amounts are never rounded.'
-                : `Enter your own maximum. Interest can change the exact debt. The contract cannot spend more than this bound; unused funding is returned or stays in your wallet.${
+                : `${model.read ? `This repays the whole debt: ${tokenDecimalV1(model.read.debtAtomic, 6)} USDC at block ${model.read.blockNumber.toLocaleString('en-US')}, plus the interest until your transaction lands. ` : ''}Enter your own maximum: it is a cap, not the amount. The contract cannot spend more than it, and what is not needed stays in your wallet.${
                   model.mode === 'return' ? ` Then your ${deposit ?? symbol} comes back to this wallet in the same review.` : ''}`}</p>
               {shortForAll ? <p className="still-warn" role="note">{shortForAll}</p> : null}
               {errorAtForm && model.error !== shortForAll ? <p className="still-warn" role="alert">{model.error}</p> : null}

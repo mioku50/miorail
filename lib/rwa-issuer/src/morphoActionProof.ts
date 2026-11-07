@@ -3,6 +3,16 @@ import { partnerFetch } from '@mioagent/security/httpAllowlist';
 
 export const MORPHO_ACTION_ORIGIN_V1 = 'https://api.morpho.org';
 export const MORPHO_ACTION_JWKS_V1 = `${MORPHO_ACTION_ORIGIN_V1}/.well-known/morpho-actions-jwks.json`;
+/**
+ * The names Morpho's attestor signs its proofs as. It was "morpho-actions-attestor"; by
+ * 2026-11-07 it was the Actions origin itself, and every Still loan and repayment on Morpho was
+ * refused as unauthenticated until this list had it. The signature, checked against Morpho's own
+ * key set, is what authenticates an answer; the issuer only has to be one of Morpho's names.
+ */
+export const MORPHO_ACTION_ISSUERS_V1: readonly string[] = [`${MORPHO_ACTION_ORIGIN_V1}/v0/actions`, 'morpho-actions-attestor'];
+/** Which part of a proof did not hold, for the log and the refusal's detail: never the token. */
+export type MorphoActionProofFailureV1 =
+  | 'path' | 'missing' | 'malformed' | 'header' | 'key' | 'signature' | 'time' | 'issuer' | 'audience' | 'binding' | 'exchange' | 'decision';
 
 type RecordV1 = Record<string, unknown>;
 const object = (value: unknown): value is RecordV1 => typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -49,43 +59,46 @@ export async function verifyMorphoActionProofV1(input: {
   now: Date;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
-}): Promise<{ ok: true; expiresAtMs: number } | { ok: false }> {
+}): Promise<{ ok: true; expiresAtMs: number } | { ok: false; failed: MorphoActionProofFailureV1 }> {
+  const no = (failed: MorphoActionProofFailureV1) => ({ ok: false as const, failed });
   try {
-    if (!input.path.startsWith('/v0/actions/') || input.path.includes('?') || input.path.includes('#')) return { ok: false };
+    if (!input.path.startsWith('/v0/actions/') || input.path.includes('?') || input.path.includes('#')) return no('path');
     const token = input.response.headers.get('Morpho-Action-Proof');
-    if (!token || token.length > 32_000) return { ok: false };
+    if (!token || token.length > 32_000) return no('missing');
     const parts = token.split('.');
-    if (parts.length !== 3 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) return { ok: false };
+    if (parts.length !== 3 || parts.some((part) => !/^[A-Za-z0-9_-]+$/.test(part))) return no('malformed');
     const header: unknown = JSON.parse(Buffer.from(parts[0]!, 'base64url').toString('utf8'));
     const claims: unknown = JSON.parse(Buffer.from(parts[1]!, 'base64url').toString('utf8'));
-    if (!object(header) || !object(claims) || header.alg !== 'ES256' || header.typ !== 'morpho-action-proof+jwt' ||
+    if (!object(header) || !object(claims)) return no('malformed');
+    if (header.alg !== 'ES256' || header.typ !== 'morpho-action-proof+jwt' ||
         typeof header.kid !== 'string' || header.kid.length < 1 || header.kid.length > 200 ||
-        header.crit !== undefined || header.b64 !== undefined) return { ok: false };
+        header.crit !== undefined || header.b64 !== undefined) return no('header');
     const key = await publicKey(header.kid, input);
-    if (!key) return { ok: false };
+    if (!key) return no('key');
     const signature = Buffer.from(parts[2]!, 'base64url');
     if (signature.length !== 64 || !verify('sha256', Buffer.from(`${parts[0]}.${parts[1]}`),
-      { key: createPublicKey({ key, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, signature)) return { ok: false };
+      { key: createPublicKey({ key, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, signature)) return no('signature');
     const now = input.now.getTime() / 1000;
     const { exp, iat } = claims;
     if (!Number.isSafeInteger(exp) || !Number.isSafeInteger(iat) || (exp as number) <= now ||
-        (iat as number) > now + 5 || now - (iat as number) > 60 || (exp as number) <= (iat as number)) return { ok: false };
-    if (claims.nbf !== undefined && (!Number.isSafeInteger(claims.nbf) || (claims.nbf as number) > now + 5)) return { ok: false };
-    if (claims.iss !== 'morpho-actions-attestor' || claims.aud !== 'morpho-actions-client' || claims.sub !== 'action-response') return { ok: false };
+        (iat as number) > now + 5 || now - (iat as number) > 60 || (exp as number) <= (iat as number)) return no('time');
+    if (claims.nbf !== undefined && (!Number.isSafeInteger(claims.nbf) || (claims.nbf as number) > now + 5)) return no('time');
+    if (typeof claims.iss !== 'string' || !MORPHO_ACTION_ISSUERS_V1.includes(claims.iss)) return no('issuer');
+    if (claims.aud !== 'morpho-actions-client' || claims.sub !== 'action-response') return no('audience');
     const requestId = input.response.headers.get('X-Request-Id');
     if (!requestId || claims.request_id !== requestId || typeof input.data.action_id !== 'string' || !input.data.action_id ||
-        claims.action_id !== input.data.action_id || claims.action !== input.data.action) return { ok: false };
+        claims.action_id !== input.data.action_id || claims.action !== input.data.action) return no('binding');
     const request = claims.request, response = claims.response;
     if (!object(request) || !object(response) || request.method !== 'POST' || request.target !== input.path ||
         request.content_type !== 'application/json' || request.body_sha256 !== hash(input.requestBytes) ||
         response.status !== input.response.status || response.content_type !== input.response.headers.get('Content-Type') ||
-        response.body_sha256 !== hash(input.responseBytes)) return { ok: false };
+        response.body_sha256 !== hash(input.responseBytes)) return no('exchange');
     const expectedDecision = input.data.status === 'signature_required' ? 'signature_required'
       : input.data.status === 'prepared' && object(input.data.simulation) && input.data.simulation.status === 'success' ? 'approved'
         : input.data.status === 'simulation_failed' ? 'rejected' : null;
-    if (!expectedDecision || claims.decision !== expectedDecision) return { ok: false };
+    if (!expectedDecision || claims.decision !== expectedDecision) return no('decision');
     return { ok: true, expiresAtMs: Math.min((exp as number) * 1000, ((iat as number) + 60) * 1000) };
   } catch {
-    return { ok: false };
+    return no('malformed');
   }
 }

@@ -97,7 +97,7 @@ export async function prepareMorphoRepayV1(input: {
   const data = payload.data;
   const now = deps.now?.() ?? new Date();
   const proof = await verifyMorphoActionProofV1({ response, responseBytes: bytes, requestBytes, path, data, now, fetchImpl: deps.fetchImpl, timeoutMs: deps.timeoutMs });
-  if (!proof.ok) return fail('venue_proof_invalid', 'The exact Actions repayment exchange could not be authenticated.');
+  if (!proof.ok) return fail('venue_proof_invalid', `The exact Actions repayment exchange could not be authenticated (${proof.failed}).`);
   if (data.chain_id !== 8453) return fail('venue_prepared_another_chain');
   if (address(data.account) !== wallet || data.action !== 'blue.repay') return fail('venue_intent_mismatch');
   if (!Number.isSafeInteger(data.expires_at) || (data.expires_at as number) * 1000 <= now.getTime() || proof.expiresAtMs <= now.getTime()) return fail('venue_expired');

@@ -273,7 +273,10 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
   });
   it('never autofills an amount or maximum from the position, and Max fills only when pressed', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ mode: 'all', read: capacity })} />);
-    assert.match(html, /Enter your own maximum/); assert.match(html, /value=""/); assert.doesNotMatch(html, /value="4\.5"|value="3\.125001"/);
+    assert.match(html, /Enter your own maximum: it is a cap, not the amount\./); assert.match(html, /value=""/); assert.doesNotMatch(html, /value="4\.5"|value="3\.125001"/);
+    // 2026-11-07, the operator: the cap read as a second, larger debt (0.95 against 0.78 owed). The
+    // note says what is repaid, the debt read and its interest, and that the cap is not it.
+    assert.match(html, /This repays the whole debt: 3\.125001 USDC at block [\d,]+, plus the interest until your transaction lands\./);
     // 2026-11-01, the operator: a Max beside the amount, so the wallet need not be opened to look.
     // It is the person's press, never a value the page chose for them.
     assert.match(html, /<button type="button" class="still-borrow-max" title="All the USDC in your wallet, as the most this can spend">Max<\/button>/);

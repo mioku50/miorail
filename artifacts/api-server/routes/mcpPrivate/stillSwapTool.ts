@@ -34,8 +34,11 @@ export const StillPrepareSwapInputV1Schema = z.object({
   give: z.enum(STILL_SWAP_TOKENS_V1)
     .describe('The token the user gives: USDC, native ETH, WETH, cbBTC, PAXG (Paxos gold) or a Coinbase stock token (AAPLc, AMZNc, GOOGLc, METAc, MSFTc, NVDAc, SPCXc, TSLAc).'),
   receive: z.enum(STILL_SWAP_TOKENS_V1).describe('The token the user receives, from the same list. Not the one given.'),
-  amount: z.union([z.string().regex(DECIMAL_V1), z.literal('all'), z.literal('half')])
-    .describe('How much of `give` to swap, in whole-token units such as "10" or "0.005", exactly as the user said it; or "all" or "half" of what this wallet holds, which the server reads at one Base block. Native ETH takes an exact amount only: some has to stay for network fees. Never an amount of `receive`: Swap AI takes what is spent, not what is received.'),
+  // A string or a number: on 2026-11-07 an assistant spent eight calls finding the one form a
+  // stricter schema took, because a refused union says only "Invalid input". The handler reads
+  // either and says exactly what it wants when it cannot.
+  amount: z.union([z.string().max(80), z.number()])
+    .describe('How much of `give` to swap, in whole-token units such as "10" or "0.005" (a JSON number such as 10 works too), exactly as the user said it; or "all" or "half" of what this wallet holds, which the server reads at one Base block. Native ETH takes an exact amount only: some has to stay for network fees. Never an amount of `receive`: Swap AI takes what is spent, not what is received.'),
 }).strict();
 
 export const StillPrepareSwapOutputV1Schema = z.object({
@@ -78,6 +81,23 @@ export function stillSwapTokenV1(id: string): SwapTokenV1 {
   throw new StillSwapRefusalV1('still_swap_token_unknown', `${id} is not a token Still names.`);
 }
 
+/** The amount as said, in one form: a decimal, "all" or "half"; null for anything else. */
+export function stillSwapAmountTextV1(raw: string | number, give: string): string | null {
+  if (typeof raw === 'number') {
+    if (!Number.isFinite(raw) || raw <= 0) return null;
+    const text = String(raw);
+    return DECIMAL_V1.test(text) ? text : null;
+  }
+  let text = raw.trim();
+  const word = text.toLowerCase();
+  if (word === 'all' || word === 'half') return word;
+  // "2 USDC" and "$2" name the same two dollars: the token said again is not a second amount.
+  // A comma is never read: "1,000" and "1,5" mean different things in different places.
+  text = text.replace(new RegExp(`\\s*${give}$`, 'i'), '');
+  if (give === 'USDC') text = text.replace(/^\$\s*/, '');
+  return DECIMAL_V1.test(text) ? text : null;
+}
+
 function unitsV1(text: string, decimals: number): bigint | null {
   const [whole = '0', fraction = ''] = text.split('.');
   if (fraction.length > decimals) return null;
@@ -103,9 +123,13 @@ export async function stillPrepareSwapV1(
     throw new StillSwapRefusalV1('still_swap_is_a_wrap', 'ETH and WETH are the same asset: that is wrapping or unwrapping in the wallet, not a swap between routes.');
   }
 
+  const said = stillSwapAmountTextV1(args.amount, from.id);
+  if (said === null) {
+    throw new StillSwapRefusalV1('still_swap_amount_invalid', `amount is how much ${from.id} to swap: a decimal such as "2" or "0.5" (a JSON number works too), or "all" or "half" of this wallet's ${from.id}. Nothing was prepared.`);
+  }
   let amount: string;
   let balance: StillPrepareSwapOutputV1['balance'] = null;
-  if (args.amount === 'all' || args.amount === 'half') {
+  if (said === 'all' || said === 'half') {
     if (from.token === null) {
       throw new StillSwapRefusalV1('still_swap_eth_needs_an_amount', 'Name an amount of ETH: some ETH has to stay in the wallet for network fees, so "all" or "half" of it is not worked out here.');
     }
@@ -113,12 +137,12 @@ export async function stillPrepareSwapV1(
     if (!held.ok) throw new StillSwapRefusalV1('still_swap_balance_unread', `This wallet's ${from.id} could not be read just now. That is our failure, not an empty wallet. Ask for an exact amount, or try again.`);
     if (held.decimals !== from.decimals) throw new StillSwapRefusalV1('still_swap_balance_unread', `${from.id} answered with ${held.decimals} decimals where Still has ${from.decimals}; nothing was prepared.`);
     const raw = BigInt(held.balanceAtomic);
-    const spent = args.amount === 'all' ? raw : raw / 2n;
+    const spent = said === 'all' ? raw : raw / 2n;
     if (spent === 0n) throw new StillSwapRefusalV1('still_swap_nothing_held', `This wallet holds no ${from.id} to swap at block ${held.blockNumber}.`);
     amount = atomicToDecimalV2(spent, from.decimals);
     balance = { amount: atomicToDecimalV2(raw, from.decimals), block: held.blockNumber };
   } else {
-    const units = unitsV1(args.amount, from.decimals);
+    const units = unitsV1(said, from.decimals);
     if (units === null) throw new StillSwapRefusalV1('still_swap_amount_invalid', `${from.id} has ${from.decimals} decimals; the amount has more.`);
     if (units === 0n) throw new StillSwapRefusalV1('still_swap_amount_invalid', 'A swap of zero is not a swap.');
     amount = atomicToDecimalV2(units, from.decimals);
@@ -131,7 +155,7 @@ export async function stillPrepareSwapV1(
     give: { id: from.id, token: from.token, decimals: from.decimals },
     receive: { id: to.id, token: to.token, decimals: to.decimals },
     amount,
-    amountSource: args.amount === 'all' ? 'wallet_all' : args.amount === 'half' ? 'wallet_half' : 'stated',
+    amountSource: said === 'all' ? 'wallet_all' : said === 'half' ? 'wallet_half' : 'stated',
     balance,
     next: 'Give the user this link, to open signed in with this same wallet. It opens Swap AI with this exact swap written in its box, and nothing runs until the user presses Compare: Swap AI then compares the routes, simulates the swap on a fresh block, and the user signs in their own wallet. This reply is not a quote. It holds no price, route or calldata, so never state what the user would receive, and do not prepare it again to learn one.',
   };

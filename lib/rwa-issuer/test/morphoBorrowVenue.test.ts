@@ -74,6 +74,23 @@ describe('Morpho raw Actions transport', () => {
   });
 });
 
+describe('Morpho’s attestor, by either of the names it has signed as', () => {
+  // 2026-11-07: every Still loan and repayment on Morpho was refused as unauthenticated, because
+  // the attestor began signing as the Actions origin instead of "morpho-actions-attestor".
+  it('takes the Actions origin, the name it signs as now', async () => {
+    assert.equal((await run(signedActionsFixtureV1(preparedActionV1()))).ok, true);
+  });
+  it('still takes the name it signed as before', async () => {
+    assert.equal((await run(signedActionsFixtureV1(preparedActionV1(), { claims: { iss: 'morpho-actions-attestor' } }))).ok, true);
+  });
+  it('and says which claim failed when one does, without the token', async () => {
+    const result = await run(signedActionsFixtureV1(preparedActionV1(), { claims: { iss: 'https://api.morpho.org.evil/v0/actions' } }));
+    assert.equal(result.ok, false);
+    if (result.ok) return;
+    assert.deepEqual([result.refusal, result.detail], ['venue_proof_invalid', 'the exact Actions response could not be authenticated (issuer)']);
+  });
+});
+
 describe('proof verification binds the whole exchange', () => {
   for (const [label, options] of [
     ['missing proof', { proof: null }],

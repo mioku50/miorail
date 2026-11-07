@@ -42,7 +42,8 @@ export function signedActionsFixtureV1(data: Record<string, any>, options: {
     const now = (options.now?.() ?? ACTIONS_NOW).getTime() / 1000;
     const header = Buffer.from(JSON.stringify({ alg: 'ES256', typ: 'morpho-action-proof+jwt', kid: 'test-key', ...options.header })).toString('base64url');
     const claimBody = {
-      iss: 'morpho-actions-attestor', aud: 'morpho-actions-client', sub: 'action-response', iat: now, exp: now + 60,
+      // As Morpho's attestor signs since 2026-11-07 (it was 'morpho-actions-attestor' before).
+      iss: 'https://api.morpho.org/v0/actions', aud: 'morpho-actions-client', sub: 'action-response', iat: now, exp: now + 60,
       request_id: 'request-test', action_id: data.action_id, action: data.action,
       decision: data.status === 'signature_required' ? 'signature_required' : data.status === 'prepared' && data.simulation?.status === 'success' ? 'approved' : 'rejected',
       request: { method: 'POST', target: new URL(location).pathname, content_type: 'application/json', body_sha256: hash(request) },

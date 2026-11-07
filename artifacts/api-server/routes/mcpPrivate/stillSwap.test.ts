@@ -47,6 +47,21 @@ test('the amount is kept exactly as said, within the token’s own decimals', as
   await assert.rejects(stillPrepareSwapV1(ME, { give: 'USDC', receive: 'PAXG', amount: '0' }), refused('still_swap_amount_invalid'));
 });
 
+test('an amount arrives as a string or a number, and a refused one says the form it wants', async () => {
+  // 2026-11-07: Grok spent eight calls on "2 USDC" before trying "all", told only "Invalid input".
+  for (const amount of [2, '2', ' 2 ', '2 USDC', '2usdc', '$2', '$ 2']) {
+    const out = await stillPrepareSwapV1(ME, { give: 'USDC', receive: 'PAXG', amount });
+    assert.equal(out.amount, '2', String(amount));
+    assert.equal(out.goal, `Swap 2 ${ADDRESSES.usdc} to ${PAXG.token} on Base`);
+  }
+  assert.equal((await stillPrepareSwapV1(ME, { give: 'PAXG', receive: 'USDC', amount: 0.0005 })).amount, '0.0005');
+  assert.equal((await stillPrepareSwapV1(ME, { give: 'PAXG', receive: 'USDC', amount: 'ALL' }, { readBalance: holding('7', 18) })).amountSource, 'wallet_all');
+  for (const amount of [1e-7, -1, Number.NaN, '1,5', '2 PAXG', '2 dollars', 'two']) {
+    await assert.rejects(stillPrepareSwapV1(ME, { give: 'USDC', receive: 'PAXG', amount }),
+      (error: unknown) => refused('still_swap_amount_invalid')(error) && /a decimal such as "2" or "0\.5" \(a JSON number works too\), or "all" or "half"/.test((error as Error).message), String(amount));
+  }
+});
+
 test('all and half are this wallet’s own balance, read at one block, never a guess', async () => {
   const asked: string[] = [];
   const read = async (token: string, wallet: string) => { asked.push(`${token}:${wallet}`); return holding('1500000000000000001', 18)(); };
@@ -92,6 +107,10 @@ test('on the connected server: a read that writes a link, for this wallet, and t
   assert.equal(out.goal, `Swap 1 ${ADDRESSES.usdc} to ${PAXG.token} on Base`);
   // The connected wallet's balance, never one named in the arguments.
   assert.deepEqual(asked, [WALLET]);
+
+  // A JSON number goes through the protocol as well as a string.
+  const numeric = await client.callTool({ name: 'miorail_prepare_swap', arguments: { give: 'USDC', receive: 'PAXG', amount: 2 } });
+  assert.equal((numeric.structuredContent as { amount: string }).amount, '2');
 
   const no = await client.callTool({ name: 'miorail_prepare_swap', arguments: { give: 'ETH', receive: 'USDC', amount: 'all' } });
   assert.equal(no.isError, true);
