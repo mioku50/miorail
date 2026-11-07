@@ -93,6 +93,26 @@ describe('Get money shows a server allowance for one selected pledge', () => {
   });
 });
 
+describe('a phone’s decimal comma is the decimal point (2026-11-07)', () => {
+  // An iPhone set to Russian has no dot on its decimal keypad: "0,8" was refused.
+  it('reads a lone comma as the point, exactly', () => {
+    assert.deepEqual(parseBorrowDecimalV1('0,8', 6), { atomic: '800000', error: null });
+    assert.deepEqual(parseBorrowDecimalV1(' 1,5 ', 6), { atomic: '1500000', error: null });
+    assert.deepEqual(parseBorrowDecimalV1('0,000543068208472116', 18), { atomic: '543068208472116', error: null });
+    assert.deepEqual(parseBorrowDecimalV1('12,5', 6), { atomic: '12500000', error: null });
+    assert.deepEqual(parseBorrowDecimalV1('0,500', 6), { atomic: '500000', error: null });
+    assert.equal(parseBorrowDecimalV1('1,0000001', 6).error, 'Use at most 6 decimal places. Amounts are never rounded.');
+  });
+  it('never guesses at a comma that could be a thousands separator, and says why', () => {
+    for (const text of ['1,000', '12,500', '999,999']) {
+      const parsed = parseBorrowDecimalV1(text, 6);
+      assert.equal(parsed.atomic, null, text);
+      assert.match(parsed.error!, /without the comma, or with a dot: it could be \d+ or \d+\.\d+\./, text);
+    }
+    for (const text of ['1,5,0', '1,5.0', '1.000,5', ',']) assert.equal(parseBorrowDecimalV1(text, 6).atomic, null, text);
+  });
+});
+
 describe('gold is chosen like bitcoin, with its own decimals and market (2026-11-07)', () => {
   const PAXG = CRYPTO.find(row => row.id === 'PAXG')!;
   it('takes PAXG from a link, pledges its token and counts 18 decimals, as the registry says', () => {

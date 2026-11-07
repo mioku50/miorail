@@ -1,6 +1,6 @@
 import { CRYPTO, STOCKS, ADDRESSES } from '@mioagent/still-engine/registry';
 import { formatCents, formatPercentBps } from '@mioagent/still-engine/format';
-import { tokenDecimalV1 } from '../console/stockSellAmount';
+import { decimalSpellingV1, tokenDecimalV1 } from '../console/stockSellAmount';
 import { STILL_SHARES_V1, newYorkMomentV1 } from './skyState';
 import type { StillBorrowAssetV1, StillBorrowComparisonV1, StillBorrowModelV1 } from './StillBorrow';
 
@@ -25,10 +25,13 @@ export function borrowCollateralDecimalsV1(asset: StillBorrowAssetV1): number {
 
 /** Interpret text exactly; no risk calculation, balance assumption or rounding. */
 export function parseBorrowDecimalV1(text: string, decimals: number, allowZero = false): { atomic: string | null; error: string | null } {
-  const value = text.trim();
+  const value = decimalSpellingV1(text);
+  if (/^[1-9][0-9]{0,2},[0-9]{3}$/.test(value)) {
+    return { atomic: null, error: `Write ${value} again without the comma, or with a dot: it could be ${value.replace(',', '')} or ${value.replace(',', '.')}.` };
+  }
   if (!Number.isInteger(decimals) || decimals < 0 || decimals > 36 || value.length > 120 ||
       !/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(value)) {
-    return { atomic: null, error: 'Enter a decimal amount with a dot, without commas or exponents.' };
+    return { atomic: null, error: 'Enter a decimal amount such as 0.8 or 0,8, without thousands separators or exponents.' };
   }
   const [whole = '', fraction = ''] = value.split('.');
   if (fraction.length > decimals) return { atomic: null, error: `Use at most ${decimals} decimal places. Amounts are never rounded.` };

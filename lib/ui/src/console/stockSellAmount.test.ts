@@ -9,10 +9,13 @@ test('SELL input preserves the exact balance and the smallest token unit', () =>
   assert.equal(stockSellAmountV1('.00000001', holding).atomic, '1');
   assert.equal(stockSellAmountV1(' 000.00043417 ', holding).atomic, '43417');
   assert.equal(stockSellAmountV1('', holding).balance, '0.00043417');
+  // 2026-11-07: a phone's decimal keypad in Russian has a comma and no dot; a lone comma is the point.
+  assert.equal(stockSellAmountV1('0,00043417', holding).atomic, '43417');
 });
 
 test('SELL never rounds, accepts scientific notation or exceeds the read balance', () => {
-  for (const input of ['', '0', '-1', '+1', '1e-8', '0,00043417', '0.000434171', '0.00043418', 'NaN', '.']) {
+  // A comma that could separate thousands is refused, never guessed at; so are two of them.
+  for (const input of ['', '0', '-1', '+1', '1e-8', '1,000', '0,0004,3417', '0.000434171', '0.00043418', 'NaN', '.']) {
     assert.equal(stockSellAmountV1(input, holding).atomic, null, input);
   }
 });

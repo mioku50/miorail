@@ -254,6 +254,18 @@ describe('Max beside the amount', () => {
   });
 });
 
+describe('Max puts Still’s limit in the loan amount, only when pressed (2026-11-07)', () => {
+  it('sits beside the loan amount once the limit is read, and fills nothing by itself', () => {
+    const html = render({ needsRead: false, capacity, borrowAmount: '' });
+    assert.match(html, /<div class="still-borrow-amount has-max"><input id="[^"]+-loan"[^>]*value=""[^>]*\/><button type="button" class="still-borrow-max" title="Still’s whole limit for this collateral, as just read">Max<\/button>/);
+  });
+  it('is not offered for a payment, whose loan is the invoice’s price', () => {
+    const spend = { state: 'ready' as const, productName: 'Bitrefill eSIM Germany', packageValue: '10GB, 30 Days', priceUsdc: '13.25', expiresAt: '2026-11-01T12:15:00.000Z' };
+    const html = render({ spend, needsRead: false, capacity, borrowAmount: '13.25' });
+    assert.doesNotMatch(html, /title="Still’s whole limit for this collateral, as just read"/);
+  });
+});
+
 describe('what Get money says to a wallet that cannot send a batch', () => {
   it('a stock loan goes in steps; cbBTC, WETH, ETH, PAXG and a Spend payment need one transaction', async () => {
     const { stillBorrowWalletNoteV1 } = await import('../src/still/StillBorrow');

@@ -12,6 +12,19 @@ export function tokenDecimalV1(atomic: string, decimals: number): string {
   return `${padded.slice(0, -decimals)}${fraction ? `.${fraction}` : ''}`;
 }
 
+/**
+ * A typed decimal in one spelling: a phone's decimal keypad gives a comma where the language
+ * writes one (an iPhone set to Russian has no dot key, 2026-11-07), so a lone comma is the
+ * decimal point. One that could be a thousands separator ("1,000", "12,500") is not guessed at:
+ * it stays, and the amount is refused with a request to write it again.
+ */
+export function decimalSpellingV1(text: string): string {
+  const value = text.trim();
+  if (!value.includes(',') || value.includes('.') || value.indexOf(',') !== value.lastIndexOf(',')) return value;
+  if (/^[1-9][0-9]{0,2},[0-9]{3}$/.test(value)) return value;
+  return value.replace(',', '.');
+}
+
 /** Convert user text exactly. Never round a position or pass it through Number. */
 export function stockSellAmountV1(value: string, holding?: StockHoldingV1 | null): {
   atomic: string | null; balance: string | null; error: string | null;
@@ -25,10 +38,13 @@ export function stockSellAmountV1(value: string, holding?: StockHoldingV1 | null
   if (BigInt(holding.balanceAtomic!) === 0n) {
     return { atomic: null, balance, error: 'This wallet has no tokens of this exact contract to sell.' };
   }
-  const text = value.trim();
+  const text = decimalSpellingV1(value);
   if (!text) return { atomic: null, balance, error: 'Enter the exact token amount to sell.' };
+  if (/^[1-9][0-9]{0,2},[0-9]{3}$/.test(text)) {
+    return { atomic: null, balance, error: `Write ${text} again without the comma, or with a dot: it could be ${text.replace(',', '')} or ${text.replace(',', '.')}.` };
+  }
   if (text.length > 336 || !/^(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)$/.test(text)) {
-    return { atomic: null, balance, error: 'Use a decimal amount with a dot, without commas or exponents.' };
+    return { atomic: null, balance, error: 'Use a decimal amount such as 0.5 or 0,5, without thousands separators or exponents.' };
   }
   const [whole = '', fraction = ''] = text.split('.');
   if (fraction.length > decimals!) {

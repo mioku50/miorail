@@ -268,8 +268,14 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                   {capacity.nativeReserve ? <p className="still-note">At least {capacity.nativeReserve} ETH is kept out of the collateral for wallet/network fees. Fees are not quoted here; your wallet calculates them before approval.</p> : null}
                   <form onSubmit={(event) => { event.preventDefault(); if (canReview) model.onReview(); }}>
                     <label className="still-borrow-label" htmlFor={`${id}-loan`}>{model.spend ? 'USDC to borrow · the invoice’s price' : 'USDC to borrow'}</label>
-                    <div className="still-borrow-amount">
+                    {/* Max fills Still's limit when pressed, never before (operator, 2026-11-07: a phone
+                        had no way to put the limit in but to type it). A payment's loan is the invoice's price. */}
+                    <div className={model.spend == null ? 'still-borrow-amount has-max' : 'still-borrow-amount'}>
                       <input id={`${id}-loan`} type="text" inputMode="decimal" autoComplete="off" spellCheck={false} value={model.borrowAmount} readOnly={model.spend != null} disabled={busy || capacity.maximumUsdc === null} aria-describedby={`${id}-loan-help`} onChange={(event) => model.onBorrowAmount(event.target.value)} />
+                      {model.spend == null ? (
+                        <button type="button" className="still-borrow-max" disabled={busy || capacity.maximumUsdc === null}
+                          title="Still’s whole limit for this collateral, as just read" onClick={() => { if (capacity.maximumUsdc !== null) model.onBorrowAmount(capacity.maximumUsdc); }}>Max</button>
+                      ) : null}
                       <span className="mono" aria-hidden="true">USDC</span>
                     </div>
                     <p id={`${id}-loan-help`} className="still-note">{model.spend
