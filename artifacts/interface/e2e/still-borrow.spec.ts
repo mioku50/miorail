@@ -281,7 +281,7 @@ for (const width of [390, 1366]) {
     const state = await install(page, true, 'no-batches');
     await openSignedIn(page, '/borrow?asset=ETH');
     // The catch-all injected connector names no wallet, so the sentence does not either.
-    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH or ETH goes only as one transaction for now\./ })).toBeVisible();
+    await expect(page.getByRole('status').filter({ hasText: /^This wallet sends one transaction at a time, and a loan against cbBTC, WETH, ETH or PAXG goes only as one transaction for now\./ })).toBeVisible();
     await expect(page.getByText(/Choose a stock, or use Base Account, Coinbase Wallet \(Base App\) or MetaMask\./)).toBeVisible();
     const methods = await page.evaluate(() => (window as unknown as { __stillBorrowWalletMethods: string[] }).__stillBorrowWalletMethods);
     expect(methods).toContain('wallet_getCapabilities');
