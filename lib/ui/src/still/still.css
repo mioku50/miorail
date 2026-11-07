@@ -707,6 +707,12 @@ a.still-extra.is-lead:hover { border-color: transparent; transform: translateY(-
 .still-borrow .still-borrow-collateral { grid-template-columns: repeat(auto-fill, minmax(min(140px, calc(50% - 5px)), 1fr)); }
 .still-borrow .still-borrow-collateral .still-borrow-choice > span:last-child { min-width: 0; }
 .still-borrow .still-borrow-symbol.is-stock { border-color: var(--sm-stock); background: var(--sm-stock); color: var(--sm-stock-text); font-size: 15px; font-weight: 600; }
+/* A card with a picture (2026-11-07): a stock's Coinbase icon fills its circle; the ETH diamond
+   sits inside the coin's wired one. */
+.still-borrow .still-borrow-symbol.has-icon { overflow: hidden; }
+.still-borrow .still-borrow-symbol.has-icon img { display: block; width: 62%; height: 62%; object-fit: contain; }
+.still-borrow .still-borrow-symbol.is-stock.has-icon { border-color: var(--sm-line); background: transparent; }
+.still-borrow .still-borrow-symbol.is-stock.has-icon img { width: 100%; height: 100%; object-fit: cover; }
 .still-borrow .still-borrow-label { display: block; margin: 18px 0 7px; font-size: 14px; font-weight: 500; }
 .still-borrow .still-borrow-amount { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; border: 1.5px solid var(--sm-line); border-radius: 14px; background: var(--sm-ground); padding-right: 14px; }
 .still-borrow .still-borrow-amount input { width: 100%; min-width: 0; height: 52px; border: 0; border-radius: 14px; background: transparent; padding: 0 14px; color: var(--sm-ink); font: inherit; font-size: 20px; }

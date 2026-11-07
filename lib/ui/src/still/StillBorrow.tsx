@@ -1,4 +1,4 @@
-import React, { useId } from 'react';
+import React, { useId, useState } from 'react';
 
 import type { SkyStateV1 } from './skyState';
 import { StillHeader, StillLink } from './StillFrame';
@@ -83,19 +83,39 @@ export function stillBorrowWalletNoteV1(input: { cannotBatch: boolean; walletNam
   return `${wallet} sends one transaction at a time, so a loan against a stock goes in steps: your wallet asks for each one, and Still checks each next step again before it does.`;
 }
 
+/**
+ * The pictures on the collateral cards (operator, 2026-11-07: "their real icons"):
+ * - a stock wears the icon Coinbase publishes for its tokenized stock in its Tokenized Stocks
+ *   API, served from our own origin as the Stocks pages serve it;
+ * - ETH and WETH wear the ETH diamond from ethereum.org's brand assets, kept in
+ *   public/tokens (see NOTICE);
+ * - cbBTC and PAXG keep Still's own marks. Paxos's brand rules ask for a written agreement
+ *   before its logos are used, and Coinbase publishes no cbBTC mark to integrators.
+ * A picture that does not load gives way to the mark, so a card is never blank.
+ */
+export function stockIconPathV1(token: string): string {
+  return `/api/public/stocks/icons/${token.toLowerCase()}.png`;
+}
+const ETH_ICON_V1 = '/tokens/eth.svg';
+
 const CRYPTO_CHOICES_V1 = [
-  ['cbBTC', 'Bitcoin on Base', '₿'],
-  ['WETH', 'Wrapped ETH', 'Ξ'],
-  ['ETH', 'Wrap native ETH', 'Ξ'],
+  ['cbBTC', 'Bitcoin on Base', '₿', null],
+  ['WETH', 'Wrapped ETH', 'Ξ', ETH_ICON_V1],
+  ['ETH', 'Wrap native ETH', 'Ξ', ETH_ICON_V1],
   // Gold's chemical symbol: Still's own mark, not Paxos's logo.
-  ['PAXG', 'Gold, by Paxos', 'Au'],
+  ['PAXG', 'Gold, by Paxos', 'Au', null],
 ] as const;
 
-/** One collateral card: its mark, its token, and what it is. */
-function BorrowChoiceV1(props: { asset: StillBorrowAssetV1; description: string; mark: string; stock: boolean; pressed: boolean; disabled: boolean; onChoose: (asset: StillBorrowAssetV1) => void }) {
+/** One collateral card: its picture or mark, its token, and what it is. */
+function BorrowChoiceV1(props: { asset: StillBorrowAssetV1; description: string; mark: string; icon?: string | null; stock: boolean; pressed: boolean; disabled: boolean; onChoose: (asset: StillBorrowAssetV1) => void }) {
+  const [broken, setBroken] = useState(false);
+  const picture = props.icon && !broken ? props.icon : null;
+  const classes = ['still-borrow-symbol', props.stock ? 'is-stock' : '', picture ? 'has-icon' : ''].filter(Boolean).join(' ');
   return (
     <button className="still-borrow-choice" type="button" aria-pressed={props.pressed} disabled={props.disabled} onClick={() => props.onChoose(props.asset)}>
-      <span className={props.stock ? 'still-borrow-symbol is-stock' : 'still-borrow-symbol'} aria-hidden="true">{props.mark}</span>
+      <span className={classes} aria-hidden="true">
+        {picture ? <img src={picture} alt="" width={32} height={32} loading="lazy" decoding="async" onError={() => setBroken(true)} /> : props.mark}
+      </span>
       <span><strong>{props.asset}</strong><span className="still-note">{props.description}</span></span>
     </button>
   );
@@ -190,14 +210,14 @@ export function StillBorrow({ model }: { model: StillBorrowModelV1 }) {
                     company's logo, which is not ours to copy. */}
                 <p className="still-borrow-label" id={`${id}-crypto-label`}>Crypto and gold · Morpho</p>
                 <div className="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby={`${id}-crypto-label`}>
-                  {CRYPTO_CHOICES_V1.filter(([asset]) => !(model.spend && asset === 'ETH')).map(([asset, description, symbol]) => (
-                    <BorrowChoiceV1 key={asset} asset={asset} description={description} mark={symbol} stock={false} pressed={model.asset === asset} disabled={busy} onChoose={model.onAsset} />
+                  {CRYPTO_CHOICES_V1.filter(([asset]) => !(model.spend && asset === 'ETH')).map(([asset, description, symbol, icon]) => (
+                    <BorrowChoiceV1 key={asset} asset={asset} description={description} mark={symbol} icon={icon} stock={false} pressed={model.asset === asset} disabled={busy} onChoose={model.onAsset} />
                   ))}
                 </div>
                 <p className="still-borrow-label" id={`${id}-stock-label`}>Stock collateral · Aave V4</p>
                 <div className="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby={`${id}-stock-label`}>
                   {STOCKS.map((stock) => (
-                    <BorrowChoiceV1 key={stock.id} asset={stock.id} description={stock.name} mark={stock.name.charAt(0)} stock pressed={model.asset === stock.id} disabled={busy} onChoose={model.onAsset} />
+                    <BorrowChoiceV1 key={stock.id} asset={stock.id} description={stock.name} mark={stock.name.charAt(0)} icon={stockIconPathV1(stock.token)} stock pressed={model.asset === stock.id} disabled={busy} onChoose={model.onAsset} />
                   ))}
                 </div>
                 <label className="still-borrow-label" htmlFor={`${id}-collateral`}>Amount to add</label>

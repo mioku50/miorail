@@ -20,3 +20,10 @@ Protocol addresses and ABI fragments
   Router, factory, pool and token addresses for Aerodrome, Balancer, Hydrex,
   Uniswap, Moonwell, Morpho, OpenSea and o1.exchange are public on-chain
   facts, pinned here so that no deployment can substitute one silently.
+
+Token marks
+  artifacts/interface/public/tokens/eth.svg is the ETH diamond from
+  ethereum.org's brand assets (https://ethereum.org/en/assets/), unchanged.
+  The stock icons Still's Get money shows are the ones Coinbase publishes for
+  its tokenized stocks in its Tokenized Stocks API; Miorail serves them from
+  its own origin and they are not part of this repository.

@@ -35,8 +35,9 @@ function choiceGroup(html: string, label: string) {
   assert(id, `expected the label ${label}`);
   const group = html.match(new RegExp(`<div class="still-borrow-assets still-borrow-collateral" role="group" aria-labelledby="${escapeRegExp(id)}">(.*?)</div>`))?.[1];
   assert(group !== undefined, `expected the group ${label}`);
-  return [...group.matchAll(/<button class="still-borrow-choice" type="button" aria-pressed="(true|false)"( disabled="")?><span class="still-borrow-symbol( is-stock)?" aria-hidden="true">([^<]*)<\/span><span><strong>([^<]+)<\/strong><span class="still-note">([^<]+)<\/span><\/span><\/button>/g)]
-    .map((card) => ({ asset: card[5], description: card[6], mark: card[4], stock: card[3] !== undefined, pressed: card[1] === 'true', disabled: card[2] !== undefined }));
+  // A card's mark is a letter or glyph, or since 2026-11-07 a picture: its src is the mark then.
+  return [...group.matchAll(/<button class="still-borrow-choice" type="button" aria-pressed="(true|false)"( disabled="")?><span class="still-borrow-symbol( is-stock)?( has-icon)?" aria-hidden="true">(?:<img src="([^"]+)" alt="" width="32" height="32" loading="lazy" decoding="async"\/>|([^<]*))<\/span><span><strong>([^<]+)<\/strong><span class="still-note">([^<]+)<\/span><\/span><\/button>/g)]
+    .map((card) => ({ asset: card[7], description: card[8], mark: card[5] ?? card[6], stock: card[3] !== undefined, pressed: card[1] === 'true', disabled: card[2] !== undefined }));
 }
 
 describe('Still borrowing starts with a selected pledge and a server read', () => {
@@ -88,14 +89,16 @@ describe('Still borrowing starts with a selected pledge and a server read', () =
     // 2026-11-05, the operator: the stocks are chosen the way cbBTC and WETH are, with a mark each.
     const html = render({ asset: null, collateralAmount: '' });
     const crypto = choiceGroup(html, 'Crypto and gold · Morpho');
-    // 2026-11-07: gold (PAXG) joined the Morpho markets, marked with its chemical symbol.
-    assert.deepEqual(crypto.map((card) => [card.asset, card.mark]), [['cbBTC', '₿'], ['WETH', 'Ξ'], ['ETH', 'Ξ'], ['PAXG', 'Au']]);
+    // 2026-11-07: gold (PAXG) joined the Morpho markets, marked with its chemical symbol; ETH and
+    // WETH wear the ETH diamond; cbBTC and PAXG keep Still's marks (their issuers' brand rules).
+    assert.deepEqual(crypto.map((card) => [card.asset, card.mark]), [['cbBTC', '₿'], ['WETH', '/tokens/eth.svg'], ['ETH', '/tokens/eth.svg'], ['PAXG', 'Au']]);
     assert(crypto.every((card) => !card.stock), 'a coin wears the wired mark');
     const stocks = choiceGroup(html, 'Stock collateral · Aave V4');
     // Counted against the registry, not sampled: a stock added there appears here.
     assert.deepEqual(stocks.map((card) => card.asset), STOCKS.map((stock) => stock.id));
+    // Each stock wears the icon Coinbase publishes for it, from our own origin (2026-11-07).
     for (const [index, stock] of STOCKS.entries()) {
-      assert.deepEqual(stocks[index], { asset: stock.id, description: stock.name, mark: stock.name.charAt(0), stock: true, pressed: false, disabled: false }, stock.id);
+      assert.deepEqual(stocks[index], { asset: stock.id, description: stock.name, mark: `/api/public/stocks/icons/${stock.token.toLowerCase()}.png`, stock: true, pressed: false, disabled: false }, stock.id);
     }
     assert.doesNotMatch(html, /<select|<option/);
   });
