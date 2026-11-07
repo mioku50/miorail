@@ -52,6 +52,7 @@ import {
   usdcTextV1,
 } from './stillLoanTool.js';
 import { StillReviewStatusInputV1Schema, StillReviewStatusOutputV1Schema, stillReviewStatusV1 } from './stillReviewTool.js';
+import { StillPrepareSwapInputV1Schema, StillPrepareSwapOutputV1Schema, StillSwapRefusalV1, stillPrepareSwapV1 } from './stillSwapTool.js';
 import { registerStillCardV1, stillCardRuntimeV1, stillCardToolMetaV1 } from './stillCard.js';
 import { STILL_CARD_LENDING_TOOL_V1, StillCardLendingInputV1Schema, StillCardLendingOutputV1Schema, stillCardLendingV1 } from './stillCardLending.js';
 import { STILL_MCP_IDENTITY_V1, registerStillSpendReadsV1 } from '../mcpStill/server.js';
@@ -92,15 +93,17 @@ import { STILL_PUBLIC_HOST_V1 } from '../../lib/stillOrigin.js';
  * Connected" and the path stays `/mcp/private`, which nobody has to see.
  */
 export const MIORAIL_PRIVATE_MCP_NAME_V1 = 'miorail-connected';
-export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.16.0';
+export const MIORAIL_PRIVATE_MCP_VERSION_V1 = '1.17.0';
 
 export const MIORAIL_PRIVATE_INSTRUCTIONS_V1 = `Miorail Connected — the authenticated surface, bound to ONE wallet: the one that issued the token you are using. You cannot read, prepare or execute anything for any other wallet, and there is no argument that would let you try.
 
 Miorail never signs and never broadcasts. It holds no private key. What it can do is prove a route is executable, persist the exact calls it simulated, and hand those calls to you so the USER can approve them in their own wallet through Coinbase Wallet MCP (wallet-mcp.coinbase.com, formerly Base MCP at mcp.base.org: the same tools, including send_calls).
 
-THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound twenty-one below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
+THIS SURFACE ALSO CARRIES EVERY READ-ONLY MIORAIL TOOL. You do not need a second connection to find anything: list_reviewed_stocks turns a company or ticker into an underlying key, get_representations returns every reviewed Base representation of it separately by exact address, compare_market_reality answers one exact question, get_market_changes reads stored public history, and the miorail_* B20 tools read the launch corpus. Those tools take no wallet and are identical to the public server's — the wallet-bound twenty-two below are what this surface adds. Find the exact representation with the read tools FIRST; nothing below will guess one for you.
 
 Still is spend without selling: get_still_terms reads its public terms and miorail_get_my_still reads this connected wallet's Mirror through the same service as the page. Preserve the reading block and time. When headline.complete is false, availableCents is at least that amount, not a complete total; null stays unknown. A chain_unavailable outcome is our failure, never an empty wallet. Beside it, walletUsdc is the USDC already in the wallet, read at its own block (the Mirror reads only what can be collateral); null is unread, never zero. This read prepares nothing. To borrow through Still, miorail_prepare_still_loan turns the collateral and the amount the USER named into a five-minute review link for this wallet: stocks on Aave V4; cbBTC, WETH, native ETH or PAXG (Paxos gold) on Morpho. To pay for something, still_find_spend and still_spend_product read Bitrefill's catalogue; miorail_prepare_still_purchase opens the invoice the USER chose, with the email and any number they gave, and returns the review of the loan that pays it, and miorail_prepare_still_wallet_purchase opens it to be paid from the USDC already in the wallet, with no loan, and returns Spend's payment page for it. Which way pays is the USER's choice: name both when the wallet's USDC or its loan room covers the price. To pay a loan back, miorail_prepare_still_repay returns the review of an exact repayment, or of all of it up to a bound the USER named; with returnCollateral, the same review then gives the loan's whole collateral back to the wallet. The page reads everything again and the user's own wallet signs; afterwards miorail_get_still_review_status, with the reviewId each link came with, reads what happened from Base, and for a purchase Bitrefill's own reading of the invoice. Still's terms are not advice to borrow or to buy; Still is not offered to US persons.
+
+To swap, miorail_prepare_swap writes ONE swap the USER named (what they give, what they receive, and how much of what they give: an exact amount, or all or half of what this wallet holds) for Swap AI on ${STILL_PUBLIC_HOST_V1}, and returns that link. Nothing runs from the link: the user presses Compare there, Swap AI compares routes and simulates the swap on a fresh block, and the user's own wallet signs. Its reply holds no price, route or calldata, so never state what the user would receive.
 
 Call the reopen, the weekend game: get_reopen_round reads the round; miorail_get_my_reopen reads this wallet's picks, score and record; miorail_call_the_reopen makes or changes this wallet's picks before the Sunday 17:00 ET lock, for the stocks the USER named and with the side the USER said — never a pick of yours. Nothing is won but the record.
 
@@ -301,6 +304,23 @@ export function createMiorailPrivateMcpServerV1(identity: McpPrivateIdentityV1, 
       return reply(stillPrepareRepayReviewV1(identity, args, { secret: rwaLendingRuntimeV1.secret(), now: rwaLendingRuntimeV1.now() }));
     } catch (error) {
       if (error instanceof StillLoanRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
+      return refuse(error);
+    }
+  });
+
+  // A swap is written out for Swap AI, as the Still Agent writes it on the page
+  // (operator, 2026-11-07): a link, never a call, and nothing runs from it.
+  server.registerTool('miorail_prepare_swap', {
+    title: 'Write one swap for Swap AI, for this wallet to compare and sign',
+    description: `Writes ONE swap the USER named into a link to Swap AI on ${STILL_PUBLIC_HOST_V1}: what they give, what they receive, and how much of what they give, an exact amount or "all" or "half" of what this wallet holds (read at one Base block; native ETH takes an exact amount only, since some must stay for network fees). The tokens are USDC, native ETH, WETH, cbBTC, PAXG and Still's Coinbase stock tokens, named in the link by their exact addresses. Returns the link and the exact sentence it carries, nothing more: no price, route, quote or calldata, because a route quote lives about twenty seconds and Swap AI's page is where terms are established. Nothing runs from the link: Swap AI fills in the swap and waits for the user to press Compare, then compares the routes, simulates the swap on a fresh block, and the user signs in their own wallet. Never state an amount the user would receive.`,
+    inputSchema: StillPrepareSwapInputV1Schema.shape,
+    outputSchema: StillPrepareSwapOutputV1Schema,
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  }, async (args) => {
+    try {
+      return reply(await stillPrepareSwapV1(identity, args));
+    } catch (error) {
+      if (error instanceof StillSwapRefusalV1) return { isError: true as const, content: [{ type: 'text' as const, text: `${error.code}: ${error.message}` }] };
       return refuse(error);
     }
   });

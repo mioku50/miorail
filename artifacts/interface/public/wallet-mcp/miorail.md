@@ -3,7 +3,7 @@ title: "Miorail Plugin"
 description: "Still terms, wallet readings and loan, purchase and repayment reviews via Miorail MCP; stock actions → send_calls."
 tags: [tokenized-stocks, trading, swap, discovery, borrowing]
 name: miorail
-version: 0.4.0
+version: 0.5.0
 integration: external-mcp
 chains: [base]
 requires:
@@ -89,6 +89,7 @@ The grant is bound to the ONE wallet that signed in. No argument can read, prepa
 | Find a company's tokenized stocks, prices on Base, cost to buy or sell, pools and lending | Miorail MCP read tools (external MCP). |
 | A personal daily read, or what the user's whole position would fetch | Miorail MCP wallet-bound tools (signed-in connector). |
 | Prepare a buy or sell | `miorail_prepare_stock_action` → a review link the user opens in a browser. |
+| Prepare a swap between USDC, ETH, WETH, cbBTC, PAXG and Still's stock tokens | `miorail_prepare_swap` → a Swap AI link; the user presses Compare there, Swap AI simulates it and the user's wallet signs. |
 | Submit a stock buy or sell after the user confirmed | `miorail_get_stock_base_mcp_action` → Wallet MCP `send_calls` → approval in the user's wallet. |
 
 No surface needs a shell or the `web_request` allowlist: every Miorail call is an MCP tool call. On a surface whose harness has no remote MCP connectors, stop and tell the user Miorail needs one.
@@ -199,6 +200,10 @@ For Still's terms, Mirror, Spend and borrow-capacity reads, submission is **none
 2. `still_spend_product` → its packages and USDC prices; the user chooses a package and gives the email for Bitrefill's receipt.
 3. `miorail_prepare_still_purchase` with that product, package and email, `collateral: "NVDAc"` and the `addCollateral` the user names (`"0"` for what is already pledged) → give `reviewUrl` and its expiry, and stop. Do not call Wallet MCP `send_calls`.
 4. After the user signs on the review page, `miorail_get_still_review_status` with the returned `reviewId` → `confirmed`, Bitrefill's `invoiceStatus`, and `shareUrl`.
+
+**"Swap 10 USDC to PAXG."**
+1. `miorail_prepare_swap` with `give: "USDC"`, `receive: "PAXG"` and `amount: "10"` (or `"all"` or `"half"` of the wallet's own, read at one block; native ETH takes an exact amount only).
+2. Give `reviewUrl` and stop. Swap AI fills in the swap and waits for the user to press Compare, then compares the routes and simulates; the user signs in their own wallet. The reply holds no price: never state what the user would receive, and do not call Wallet MCP `send_calls` with it.
 
 ## Risks & Warnings
 

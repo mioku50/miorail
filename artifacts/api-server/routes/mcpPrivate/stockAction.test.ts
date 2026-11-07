@@ -492,6 +492,8 @@ describe('the existing execution boundary is unchanged', () => {
         'miorail_prepare_still_repay',
         'miorail_prepare_still_wallet_purchase',
         'miorail_prepare_stock_action',
+        // A link to Swap AI, never a call (2026-11-07): nothing new can execute from here.
+        'miorail_prepare_swap',
         'miorail_read_borrow_capacity',
         'miorail_record_base_mcp_submission',
         'miorail_review_borrow',

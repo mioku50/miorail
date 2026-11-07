@@ -815,6 +815,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       'stillCardLending.ts',
       'stillLoanTool.ts',
       'stillReviewTool.ts',
+      'stillSwapTool.ts',
       'tools.ts',
     ]);
   });
@@ -910,7 +911,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     }
   });
 
-  test('the connected surface is exactly the public registry, twenty-one of its own and Still’s two Spend reads', async () => {
+  test('the connected surface is exactly the public registry, twenty-two of its own and Still’s two Spend reads', async () => {
     const connected = await connectedClient();
     const connectedNames = new Set((await connected.listTools()).tools.map((tool) => tool.name));
     await connected.close();
@@ -929,7 +930,7 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
       assert.ok(connectedNames.has(name), `the connected surface is missing public ${name}`);
     }
     for (const name of ['still_find_spend', 'still_spend_product']) assert.ok(connectedNames.has(name), `the connected surface is missing ${name}`);
-    assert.equal(connectedNames.size, publicNames.length + 21 + 2);
+    assert.equal(connectedNames.size, publicNames.length + 22 + 2);
   });
 
   test('every tool says what kind of call it is, and says it truthfully', async () => {
@@ -1047,6 +1048,14 @@ describe('§6/§10 — what this surface cannot do, and cannot leak', () => {
     const names = new Set((await client.listTools()).tools.map((tool) => tool.name));
     for (const forbidden of ['miorail_swap', 'miorail_execute_trade', 'miorail_send_calls']) {
       assert.ok(!names.has(forbidden), `${forbidden} exists`);
+    }
+    // The one swap tool writes a link to Swap AI and nothing executable (2026-11-07). Its
+    // tokens are a fixed reviewed list, never an address the caller supplies.
+    const swap = (await client.listTools()).tools.find((tool) => tool.name === 'miorail_prepare_swap');
+    assert.ok(swap, 'miorail_prepare_swap is listed');
+    const sides = (swap.inputSchema as { properties: Record<string, { enum?: string[] }> }).properties;
+    for (const side of ['give', 'receive']) {
+      assert.deepEqual(sides[side]?.enum, ['USDC', 'ETH', 'WETH', 'cbBTC', 'PAXG', 'AAPLc', 'AMZNc', 'GOOGLc', 'METAc', 'MSFTc', 'NVDAc', 'SPCXc', 'TSLAc'], side);
     }
     for (const tool of (await client.listTools()).tools) {
       const properties = Object.keys(
