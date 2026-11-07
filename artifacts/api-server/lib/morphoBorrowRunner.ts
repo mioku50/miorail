@@ -4,6 +4,7 @@ import {
   morphoAfterBorrowV1,
   atomicToDecimalStringV1,
   morphoBorrowPlanV1,
+  narrowMorphoCollateralApprovalV1,
   morphoBorrowSimulationFromBatchV1,
   morphoBorrowVerdictV1,
   morphoLiquidationIncentiveWadV1,
@@ -359,8 +360,14 @@ export async function runMorphoBorrowV1(
   }
 
   // --- 4. What can be proven from the bytes, before anything is executed ---
+  // Morpho now approves its bundles contract for the whole collateral token; Still narrows that
+  // one approval to the pledge before anything is read or simulated (2026-11-07).
+  const approvals = narrowMorphoCollateralApprovalV1(prepared.prepared.transactions, {
+    collateralToken: request.collateralTokenAddress, supplyAssets: supply,
+  });
+  if (approvals.narrowed > 0) logger.info('Morpho collateral approval narrowed to the pledge', { marketId, narrowed: approvals.narrowed });
   const plan = morphoBorrowPlanV1({
-    prepared: prepared.prepared.transactions,
+    prepared: approvals.transactions,
     walletAddress: wallet,
     venueSimulation: prepared.prepared.venueSimulation,
   });

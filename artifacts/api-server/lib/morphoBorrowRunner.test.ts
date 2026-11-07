@@ -207,6 +207,26 @@ describe('selected collateral is an explicit part of the measured borrow', () =>
       assert.equal('calls' in run, false);
     });
   }
+  test('Morpho’s approval of the whole token to its bundles contract is narrowed to the pledge (2026-11-07)', async () => {
+    // What the Actions API prepares now, for cbBTC and PAXG alike: 2^256 − 1 to Morpho's bundles contract.
+    const asset = CRYPTO[0]!, supply = 1_000_000_000n, ask = 200_000_000n;
+    const BUNDLES = '0x4d28d900e381ece4b351302f1abe588496793a2b';
+    const max = ((1n << 256n) - 1n).toString(16);
+    const venue = cryptoVenue(supply, ask, [
+      { id: 'call_0', kind: 'approval', to: asset.token, data: `0x095ea7b3${BUNDLES.slice(2).padStart(64, '0')}${max}`, value: '0' },
+      { id: 'call_1', kind: 'blue_supply_collateral_borrow', to: BUNDLER, data: BUNDLE_DATA, value: '0' },
+    ]);
+    const run = await runMorphoBorrowV1({ ...ASK, collateralTokenAddress: asset.token, marketId: asset.morphoMarket, borrowAssets: ask, collateralSupplyAssets: supply }, depsV1({
+      read: async () => ({ state: 'read', readAt: ACTIONS_NOW.toISOString(), markets: [cryptoStanding()] }),
+      venue: { fetchImpl: venue.fetchImpl }, chain: cryptoSimulationChain(10n ** 36n, false, supply, ask),
+    }));
+    assert.equal(run.state, 'ready', run.state === 'refused' ? `${run.refusal}: ${run.detail}` : '');
+    if (run.state !== 'ready') return;
+    const approval = run.calls.find((call) => call.callType === 'approval')!;
+    // The wallet signs an approval of exactly the pledge, never of the whole token.
+    assert.equal(approval.data, `0x095ea7b3${BUNDLES.slice(2).padStart(64, '0')}${supply.toString(16).padStart(64, '0')}`);
+    assert.equal(approval.amountAtomic, supply.toString());
+  });
   test('a top-level approval cannot exceed the chosen collateral', async () => {
     const asset = CRYPTO[0]!, supply = 1_000_000_000n;
     const venue = cryptoVenue(supply, ASK.borrowAssets, [

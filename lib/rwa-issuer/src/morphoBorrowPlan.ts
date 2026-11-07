@@ -43,6 +43,7 @@
 // health headroom alone. `morphoBorrowCapacityV1` is bounded by both.
 // ---------------------------------------------------------------------------
 
+import { decodeFunctionData, encodeFunctionData, parseAbi } from 'viem';
 import { selectorV1 } from '@mioagent/b20-control';
 import type { ExecutionCallV1 } from '@mioagent/route-domain';
 
@@ -160,6 +161,43 @@ function isZeroValueV1(value: PreparedTransactionV1['value']): boolean {
  * call we cannot decode would refuse the entire flow, since the venue's own
  * bundler nests the operation several frames deep.
  */
+/** Morpho's bundles contract on Base, the one spender a Still borrow's approval may name. */
+const MORPHO_BUNDLES_BASE_V1 = '0x4d28d900e381ece4b351302f1abe588496793a2b';
+const ERC20_APPROVE_ABI_V1 = parseAbi(['function approve(address spender,uint256 amount) returns (bool)']);
+
+/**
+ * Morpho's Actions API approves its bundles contract for every unit of the collateral token
+ * (2^256 − 1), as Morpho's SDK does by default. On 2026-11-07 it did so for cbBTC and PAXG alike,
+ * where it had approved the exact pledge, and every Still borrow that pledged a token was refused
+ * as an "unrequested_token_approval". A Still borrow leaves no standing allowance behind:
+ * - a canonical approval of exactly the collateral token, to exactly Morpho's bundles contract,
+ *   for more than the pledge, is narrowed to the pledge, which the bundle then pulls whole;
+ * - nothing else about an authenticated call is changed, and any other approval is left as it
+ *   came, for the checks after this to refuse;
+ * - the simulation then runs on what the wallet will sign.
+ */
+export function narrowMorphoCollateralApprovalV1(
+  transactions: readonly PreparedTransactionV1[],
+  input: { collateralToken: string; supplyAssets: bigint },
+): { transactions: PreparedTransactionV1[]; narrowed: number } {
+  const token = input.collateralToken.toLowerCase();
+  let narrowed = 0;
+  const out = transactions.map((tx) => {
+    if (input.supplyAssets <= 0n || typeof tx.to !== 'string' || tx.to.toLowerCase() !== token ||
+        typeof tx.data !== 'string' || !tx.data.toLowerCase().startsWith('0x095ea7b3')) return tx;
+    try {
+      const { args } = decodeFunctionData({ abi: ERC20_APPROVE_ABI_V1, data: tx.data as `0x${string}` });
+      if (encodeFunctionData({ abi: ERC20_APPROVE_ABI_V1, functionName: 'approve', args }).toLowerCase() !== tx.data.toLowerCase()) return tx;
+      if (args[0].toLowerCase() !== MORPHO_BUNDLES_BASE_V1 || args[1] <= input.supplyAssets) return tx;
+      narrowed += 1;
+      return { ...tx, data: encodeFunctionData({ abi: ERC20_APPROVE_ABI_V1, functionName: 'approve', args: [args[0], input.supplyAssets] }) };
+    } catch {
+      return tx;
+    }
+  });
+  return { transactions: out, narrowed };
+}
+
 export function morphoBorrowPlanV1(input: {
   prepared: readonly PreparedTransactionV1[];
   walletAddress: string;
