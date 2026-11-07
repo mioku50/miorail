@@ -61,9 +61,16 @@ export function LendingReviewScreen({ model }: { model: LendingReviewConsoleMode
         {body.state === 'ready' ? <>
           {repay ? <>
             {onlyBack ? <p className="still-sub">No USDC debt is open. Take back <strong>{asset(back!)}</strong> to this wallet; no USDC moves.</p> : <>
-              <p className="still-sub">{facts.amountMode === 'all' ? 'Repay the entire debt position at execution.' : <>Repay exactly {usdc(facts.requestedAssets!)}.</>}</p>
-              <p className="still-sub">Maximum USDC funding: <strong>{usdc(facts.maximumDebitAssets)}</strong>.</p>
-              <p className="still-note">Your wallet must hold that maximum. Unused funding is returned or remains in your wallet.{back !== null ? '' : ' Your collateral stays deposited.'}</p>
+              {/* 2026-11-07, the operator: the cap read as what is paid. What is paid comes first, measured; the cap after it. */}
+              {facts.amountMode === 'all' ? <>
+                <p className="still-sub">Repay all of the debt: <strong>{usdc((BigInt(facts.debtBeforeAssets) > BigInt(facts.debtAfterAssets) ? BigInt(facts.debtBeforeAssets) - BigInt(facts.debtAfterAssets) : BigInt(0)).toString())}</strong> in
+                  the simulation at block {facts.blockNumber.toLocaleString('en-US')}, plus the interest until your transaction lands.</p>
+                <p className="still-sub">The most it may take: {usdc(facts.maximumDebitAssets)}.</p>
+                <p className="still-note">That is a cap, not the payment. Your wallet must hold it, and what is not needed comes back in the same transaction.{back !== null ? '' : ' Your collateral stays deposited.'}</p>
+              </> : <>
+                <p className="still-sub">Repay exactly {usdc(facts.requestedAssets!)}.</p>
+                <p className="still-note">Your wallet pays exactly that.{back !== null ? '' : ' Your collateral stays deposited.'}</p>
+              </>}
               {back !== null ? <p className="still-sub">Then take back <strong>{asset(back)}</strong> to this wallet, {inSteps ? 'as the last step' : 'in the same transaction'}.</p> : null}
             </>}
             {facts.amountMode === 'assets' && BigInt(facts.debtAfterAssets) > BigInt(0) && BigInt(facts.debtAfterAssets) < BigInt(10_000) ? <p className="still-note">Remaining micro-debt ({usdc(facts.debtAfterAssets)}) comes from onchain share rounding and accrued interest when repaying exact {usdc(facts.requestedAssets!)}. To close the entire debt to 0 USDC, use Repay all debt with a small USDC buffer.</p> : null}

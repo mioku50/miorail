@@ -8,7 +8,7 @@ import { readRepayStandingV1, STILL_REPAY_BLUE_BUNDLES_V1 } from './stillRepaySt
 import { buildMorphoRepayProbesV1, verifyMorphoRepayPoststateV1 } from './morphoRepayPoststate.js';
 import { buildSimulationChainV1, runSimulationChainV1, type SimulationChainV1 } from './swapSimulation.js';
 import { lendingSigningTermsFactsV1, type LendingRunV1, type LendingFactsV1 } from './lendingReview.js';
-import { repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
+import { repayExactOverDebtWordsV1, repayExactRoundsToZeroWordsV1, repayMaximumBelowDebtWordsV1, repayWalletBelowMaximumWordsV1 } from './repayWords.js';
 
 export interface MorphoRepayRequestV1 {
   collateralTokenAddress: string;
@@ -59,7 +59,11 @@ export async function runMorphoRepayV1(request: MorphoRepayRequestV1, deps: Morp
       ? 'No debt shares were recorded in this market at the reading block.'
       : projected.refusal === 'repay_maximum_exceeded' && amount.mode === 'all'
         ? repayMaximumBelowDebtWordsV1({ debt, maximum: request.maximumAssets, wallet: s.walletLoanAssets })
-        : 'The exact repayment and maximum USDC budget could not be established.');
+        : projected.refusal === 'repay_exceeds_debt' && amount.mode === 'assets'
+          ? repayExactOverDebtWordsV1({ assets: amount.assets, debt, block: s.block.number })
+          : projected.refusal === 'repay_rounds_to_zero' && amount.mode === 'assets'
+            ? repayExactRoundsToZeroWordsV1({ assets: amount.assets })
+            : 'The exact repayment and maximum USDC budget could not be established.');
     if (s.walletLoanAssets < encodedMaximum) return fail('repay_usdc_insufficient', repayWalletBelowMaximumWordsV1({ debt, maximum: encodedMaximum, wallet: s.walletLoanAssets }));
     const planned = buildMorphoRepayPlanV1({ marketId: s.marketId, walletAddress: s.walletAddress, marketParams: s.params,
       amount, maximumAssets: request.maximumAssets, runtimeCodeHash: s.blueBundlesRuntimeHash, now: now(), returnsCollateralAfter: returning });

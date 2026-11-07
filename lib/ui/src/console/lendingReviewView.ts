@@ -174,6 +174,38 @@ export function labelLendingTargetV1(to: string, facts: LendingFactsWireV1): str
   return 'Verified contract';
 }
 
+/** What a person reads on a ready review, as one comparable value: every
+ * figure, every limit, the health ratio as it is weighed (to the hundredth),
+ * each risk note, the money that moves and each wallet step with its target.
+ * Left out: the clock, the block, debt shares, and the calls' own bytes. A
+ * loan's calls carry a deadline and a share-price bound, so the bytes are new
+ * on every read (2026-11-07: two Morpho preparations three seconds apart
+ * differed in those two words only). The call count, targets and values stay
+ * in. */
+function lendingReadingV1(body: LendingReadyWireV1): string {
+  const f = body.facts;
+  return JSON.stringify({
+    operation: f.operation, venue: f.venue, token: f.collateralTokenAddress.toLowerCase(), symbol: f.collateralSymbol, decimals: f.collateralDecimals,
+    market: f.marketId.toLowerCase(), mode: f.amountMode, requested: f.requestedAssets, maximum: f.maximumDebitAssets, supply: f.collateralSupplyAssets,
+    debt: [f.debtBeforeAssets, f.debtAfterAssets], collateral: [f.collateralBeforeAssets, f.collateralAfterAssets],
+    health: [materialLendingHealthBucketV1(f.healthBeforeWad, f.debtBeforeAssets), materialLendingHealthBucketV1(f.healthAfterWad, f.debtAfterAssets)],
+    limits: [f.policyLimitAssets ?? null, f.protocolLimitAssets ?? null], terms: f.termsVersion ?? null,
+    native: f.nativeFunding ? [f.nativeFunding.maximumNativeAssets, f.nativeFunding.reserveAssets, f.nativeFunding.authorizedBefore, f.nativeFunding.feeQuoteState] : null,
+    payment: f.payment ? [f.payment.orderId, f.payment.payTo.toLowerCase(), f.payment.assets] : null,
+    back: f.collateralReturnAssets ?? null, warnings: f.warnings, moved: body.measured?.loanDeltaAssets ?? null,
+    delivery: [body.atomicRequired, body.delivery ?? null],
+    steps: body.steps.map(step => [step.index, step.to.toLowerCase(), step.reading]),
+    calls: body.calls.map(call => [call.to.toLowerCase(), call.value]),
+  });
+}
+
+/** Whether a fresh review reads exactly as the one the person pressed on, so
+ * that its calls, prepared again for this moment, can go to the wallet with no
+ * second press: the person has read every term these calls carry. */
+export function lendingReviewReadsTheSameV1(previous: LendingReadyWireV1, next: LendingReadyWireV1): boolean {
+  return previous.state === 'ready' && next.state === 'ready' && lendingReadingV1(previous) === lendingReadingV1(next);
+}
+
 export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next: LendingReadyWireV1): string {
   const p = previous.facts, n = next.facts;
   const usdc = (v: string) => `${tokenDecimalV1(v, 6)} USDC`;
@@ -207,6 +239,9 @@ export function describeLendingTermsChangesV1(previous: LendingReadyWireV1, next
   if ((p.protocolLimitAssets ?? null) !== (n.protocolLimitAssets ?? null) && p.protocolLimitAssets && n.protocolLimitAssets) {
     changes.push(`protocol debt limit (${usdc(p.protocolLimitAssets)} → ${usdc(n.protocolLimitAssets)})`);
   }
+  if (JSON.stringify(p.warnings) !== JSON.stringify(n.warnings)) changes.push('risk notes');
+  const steps = (body: LendingReadyWireV1) => JSON.stringify(body.steps.map(step => [step.index, step.to.toLowerCase(), step.reading]));
+  if (steps(previous) !== steps(next)) changes.push('wallet steps');
   if (changes.length === 0 && previous.callsHash !== next.callsHash) {
     // A loan's calls carry a deadline, so they are new on every fresh read;
     // "the terms changed (approved calldata)" read as if the loan had.

@@ -14,19 +14,29 @@ for (const width of [390, 1366]) {
     await page.screenshot({ path: testInfo.outputPath(`lending-refused-${width}.png`), fullPage: true });
   });
 }
-test('changed lending terms require another explicit click; arm precedes wallet and a batch is not confirmation', async ({ page }) => {
+test('calls prepared again under the same terms go to the wallet at the first press; arm precedes wallet and a batch is not confirmation', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');
   const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
-  state.response = { ...ready(), callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}` };
-  // Only the calls are new, as a loan's deadline makes them on every read: said as that.
-  await open.click(); await expect(page.getByText(/The calls were prepared again for this moment/)).toBeVisible(); expect(await attempts(page)).toBe(0);
-  const reads = state.reviewReads; await open.click();
+  // Only the calls are new, as a loan's deadline makes them on every read (2026-11-07: the first press always asked again).
+  state.response = { ...ready(), callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}`, calls: [{ to: ready().calls[0]!.to, data: '0x12345679', value: '0' }] };
+  await open.click();
   await expect.poll(() => attempts(page)).toBe(1); await expect(open).toHaveCount(0);
-  expect(state.reviewReads).toBe(reads); expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
+  await expect(page.getByText(/prepared again for this moment|The terms changed/)).toHaveCount(0);
+  expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
   await expect(page.locator('body')).toContainText('not a confirmed blockchain result');
   await expect(page.locator('body')).not.toContainText('Confirmed onchain:');
   state.executionState = 'confirmed'; await page.getByRole('button', { name: 'Check onchain result', exact: true }).click();
   await expect(page.locator('body')).toContainText('Confirmed onchain:'); expect(await attempts(page)).toBe(1);
+});
+test('changed lending terms require another explicit click, which sends that exact review', async ({ page }) => {
+  const state = await install(page); await page.goto('/lending/fixture-lending');
+  const open = page.getByRole('button', { name: 'Open in your wallet', exact: true }); await expect(open).toBeVisible();
+  const fresh = ready();
+  state.response = { ...fresh, facts: { ...fresh.facts, debtBeforeAssets: '3125002' }, callsHash: `0x${'3'.repeat(64)}`, signingTermsHash: `0x${'4'.repeat(64)}` };
+  await open.click(); await expect(page.getByText(/^The terms changed \(debt before \(3\.125001 USDC → 3\.125002 USDC\)/)).toBeVisible(); expect(await attempts(page)).toBe(0);
+  const reads = state.reviewReads; await open.click();
+  await expect.poll(() => attempts(page)).toBe(1); await expect(open).toHaveCount(0);
+  expect(state.reviewReads).toBe(reads); expect(state.order).toEqual(['review', 'review', 'arm', 'submission:submitted']);
 });
 test('a failed refresh cannot fall back to cached executable calls', async ({ page }) => {
   const state = await install(page); await page.goto('/lending/fixture-lending');

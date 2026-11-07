@@ -53,6 +53,31 @@ describe('the borrow review that reaches a wallet', () => {
     assert.equal(measurements, 1, 'interest or venue nonces must not cause a perpetual re-prepare on the second click');
     assert.equal(state.sent[0], fresh.calls);
   });
+  it('sends calls prepared again under the same reading on the first press, and only those fresh calls', async () => {
+    // 2026-11-07: a Morpho loan's calls carry a deadline and a share-price bound, new on every read.
+    const state = input();
+    const fresh = ready({ signingTermsHash: `0x${'3'.repeat(64)}`, callsHash: `0x${'4'.repeat(64)}`,
+      calls: [{ to: `0x${'1'.repeat(40)}`, value: '0', data: '0x12345679' }] });
+    const asked: Array<[FreshBorrowReviewV1, FreshBorrowReviewV1]> = [];
+    const result = await handOffFreshBorrowV1({ ...state, refresh: async () => fresh,
+      readsTheSame: (seen, next) => { asked.push([seen, next]); return true; } });
+    assert.deepEqual(result, { state: 'submitted', batchId: 'wallet-batch' });
+    assert.equal(state.sent.length, 1); assert.equal(state.sent[0], fresh.calls);
+    assert.equal(asked.length, 1); assert.equal(asked[0]![0], state.seen); assert.equal(asked[0]![1], fresh);
+  });
+  it('still asks again when the fresh review reads differently, or when nobody can tell', async () => {
+    const fresh = ready({ signingTermsHash: `0x${'3'.repeat(64)}`, callsHash: `0x${'4'.repeat(64)}` });
+    for (const readsTheSame of [() => false, undefined]) {
+      const state = input();
+      const result = await handOffFreshBorrowV1({ ...state, refresh: async () => fresh, ...(readsTheSame ? { readsTheSame } : {}) });
+      assert.equal(result.state, 'review_changed');
+      assert.equal(state.sent.length, 0);
+    }
+    // Nothing was seen: there is nothing for the fresh review to read the same as.
+    const state = input();
+    const unseen = await handOffFreshBorrowV1({ ...state, seen: null, refresh: async () => fresh, readsTheSame: () => true });
+    assert.equal(unseen.state, 'review_changed'); assert.equal(state.sent.length, 0);
+  });
   it('does not reuse the changed review after its server expiry', async () => {
     const state = input();
     const expired = ready({ expiresAt: new Date(NOW - 1).toISOString() });

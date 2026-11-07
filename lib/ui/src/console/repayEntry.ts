@@ -39,7 +39,24 @@ export function repayCapacityViewV1(payload: unknown, token: string): { read: Re
       (row.collateralAtomic !== undefined && !atomic(row.collateralAtomic))) return fail;
   return { read: row as unknown as RepayCapacityWireV1, error: null };
 }
-export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string; maximum: string; walletUsdcAtomic: string; debtAtomic?: string }): {
+/** Whether a typed exact amount is the whole debt read, or more. An exact
+ * repayment repays part of a loan; all of it is Repay all's (2026-11-07: Max
+ * put the Morpho debt shown, 0.840001 USDC, in Exact USDC, and the review was
+ * refused, since that debt's shares were worth a little less). */
+export function repayExactCoversDebtV1(amount: string, debtAtomic: string): boolean {
+  const exact = parseBorrowDecimalV1(amount, 6);
+  return exact.atomic !== null && atomic(debtAtomic) && BigInt(debtAtomic) > BigInt(0) && BigInt(exact.atomic) >= BigInt(debtAtomic);
+}
+
+/** Why an exact amount at or above the debt is not offered, in the position's own numbers. */
+export function repayExactWholeDebtTextV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'blockNumber' | 'venue'>): string {
+  return `That is the whole debt, or more: ${usdcTextV1(read.debtAtomic)} at block ${read.blockNumber.toLocaleString('en-US')}. `
+    + 'An exact amount repays part of a loan, so it has to be less than the debt'
+    + (read.venue === 'morpho' ? '. Morpho keeps a debt as shares, and the debt shown is rounded up, so this exact amount is more than what is owed. ' : '. ')
+    + 'To repay all of it, choose Repay all debt: it pays what is owed when your transaction lands, interest included, and leaves nothing behind.';
+}
+
+export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string; maximum: string; walletUsdcAtomic: string; debtAtomic?: string; blockNumber?: number; venue?: RepayCapacityWireV1['venue'] }): {
   intent: { amountMode: 'assets' | 'all'; repayAmountAtomic: string | null; maximumUsdcAtomic: string; returnCollateral?: true } | null; error: string | null;
 } {
   // Nothing owed: taking the stock back spends no USDC, so no maximum is asked.
@@ -47,6 +64,9 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
   const exact = parseBorrowDecimalV1(input.mode === 'assets' ? input.amount : input.maximum, 6);
   if (exact.atomic === null) return { intent: null, error: exact.error };
   if (!atomic(input.walletUsdcAtomic)) return { intent: null, error: 'The wallet USDC balance has not been read.' };
+  if (input.mode === 'assets' && input.debtAtomic !== undefined && repayExactCoversDebtV1(input.amount, input.debtAtomic)) {
+    return { intent: null, error: repayExactWholeDebtTextV1({ debtAtomic: input.debtAtomic, blockNumber: input.blockNumber ?? 0, venue: input.venue ?? 'morpho' }) };
+  }
   // Repay all closes the loan, so its bound must cover the debt the wallet holds the USDC for.
   if (input.mode !== 'assets' && input.debtAtomic !== undefined && atomic(input.debtAtomic) && BigInt(input.debtAtomic) > BigInt(0)) {
     const short = repayShortTextV1({ debtAtomic: input.debtAtomic, walletUsdcAtomic: input.walletUsdcAtomic });
@@ -60,13 +80,16 @@ export function repayIntentAmountsV1(input: { mode: RepayModeV1; amount: string;
     ...(input.mode === 'return' ? { returnCollateral: true as const } : {}) }, error: null };
 }
 
-/** What Max fills on Repay, from the position just read: the smaller of the
- * debt and the wallet's USDC, or for Repay all the wallet's USDC as the bound.
- * Interest can move the exact debt before the transaction, which is why
- * Repay all, with a bound, is the way to close a loan completely. */
-export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>, mode: RepayModeV1): string {
+/** What Max does on Repay, from the position just read. For Repay all, the
+ * wallet's USDC goes in as the bound. For an exact amount, the wallet's USDC
+ * when it is short of the debt; when it covers the debt, the most it can
+ * repay is all of it, which only Repay all does, so Max moves there with the
+ * wallet's USDC as the bound. Interest moves the exact debt every second, and
+ * a Morpho debt shown is rounded up from its shares: an exact amount equal to
+ * it is refused, and on Aave it would leave the interest since the read. */
+export function repayMaxV1(read: Pick<RepayCapacityWireV1, 'debtAtomic' | 'walletUsdcAtomic'>, mode: RepayModeV1): { mode: RepayModeV1; atomic: string } {
   const wallet = BigInt(read.walletUsdcAtomic), debt = BigInt(read.debtAtomic);
-  return (mode !== 'assets' || wallet < debt ? wallet : debt).toString();
+  return { mode: mode === 'assets' && wallet >= debt ? 'all' : mode, atomic: wallet.toString() };
 }
 
 const usdcTextV1 = (atomicUsdc: string | bigint) => `${tokenDecimalV1(atomicUsdc.toString(), 6)} USDC`;

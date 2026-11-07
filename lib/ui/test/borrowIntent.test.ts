@@ -155,10 +155,13 @@ describe('Max fills the amount from the server’s own read', () => {
     assert.deepEqual(stillBorrowBalanceViewV1({ state: 'refused', detail: 'Still could not establish this Aave account at one Base block.' }, 'NVDAc'),
       { maxAtomic: null, error: 'Still could not establish this Aave account at one Base block.' });
   });
-  it('on Repay, the smaller of the debt and the wallet’s USDC; for Repay all, the wallet’s USDC as the bound', () => {
-    assert.equal(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'assets'), '10000000');
-    assert.equal(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '4000000' }, 'assets'), '4000000');
-    assert.equal(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'all'), '25000000');
+  it('on Repay, the wallet’s USDC short of the debt; a wallet that covers it moves to Repay all, with the wallet’s USDC as the bound', () => {
+    // 2026-11-07: Max put the whole Morpho debt, 0.840001 USDC, into Exact USDC, and the review was refused.
+    assert.deepEqual(repayMaxV1({ debtAtomic: '840001', walletUsdcAtomic: '909427' }, 'assets'), { mode: 'all', atomic: '909427' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '10000000' }, 'assets'), { mode: 'all', atomic: '10000000' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '4000000' }, 'assets'), { mode: 'assets', atomic: '4000000' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'all'), { mode: 'all', atomic: '25000000' });
+    assert.deepEqual(repayMaxV1({ debtAtomic: '10000000', walletUsdcAtomic: '25000000' }, 'return'), { mode: 'return', atomic: '25000000' });
   });
 });
 

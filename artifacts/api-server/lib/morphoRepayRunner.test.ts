@@ -55,6 +55,18 @@ describe('canonical repayment runner proves the actual debt reduction', () => {
     }
     assert.equal(h.simulated(), 0);
   });
+  it('an exact repayment above the debt is refused in its own numbers, pointing to Repay all, before any simulation', async () => {
+    // 2026-11-07: Max put the 0.840001 USDC shown into Exact USDC, and the review said only that it could not be established.
+    const h = harness(), r = await runMorphoRepayV1({ ...h.request, amount: { mode: 'assets', assets: 500_001n }, maximumAssets: 500_001n }, h.deps);
+    assert.equal(r.state, 'refused');
+    if (r.state === 'refused') {
+      assert.equal(r.refusal, 'repay_exceeds_debt');
+      assert.equal(r.detail, 'An exact repayment of 0.500001 USDC is more than this debt. Morpho keeps a debt as shares: at block 53,100,000 these are worth no more than 0.5 USDC, '
+        + 'the debt shown, which is rounded up. An exact repayment has to be less than the debt. To repay all of it, choose Repay all debt: it repays the shares themselves, '
+        + 'with the interest until the transaction lands, and leaves nothing behind.');
+    }
+    assert.equal(h.simulated(), 0);
+  });
   it('accepts exact assets and full shares with an atomic bounded funding/refund', async () => {
     for (const all of [false, true]) {
       const h = harness(all), r = await runMorphoRepayV1(h.request, h.deps);

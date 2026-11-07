@@ -4,7 +4,7 @@ import { handOffFreshBorrowV1 } from './borrowReviewFreshness';
 import { borrowSubmissionKeyV1, borrowSubmissionMarkerV1, borrowSubmissionLockCopyV1, borrowUserRejectedV1,
   BorrowSubmissionStorageErrorV1, submitBorrowOnceV1, type BorrowSubmissionMarkerV1 } from './borrowSubmissionGuard';
 import { walletCannotSendSentenceV1, walletDidNotSendV1 } from './walletBatchSupport';
-import { describeLendingTermsChangesV1, lendingBackLinkV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
+import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingExecutionWireV1, parseLendingReviewWireV1,
   type LendingExecutionWireV1, type LendingReadyWireV1, type LendingReviewWireV1 } from './lendingReviewView';
 
 const ROOT = '/api/route-intelligence/rwa/lending';
@@ -214,6 +214,9 @@ export function useLendingReviewConsoleV1(input: {
     try {
       const result = await handOffFreshBorrowV1({ seen: approved, confirmedTermsHash: confirmed.current?.identity === identity ? confirmed.current.hash : null,
         maxCalls: 8, current: () => alive.current && current.current === identity,
+        // Calls prepared again for this moment, under every figure and step the person just read, go on at once.
+        readsTheSame: (seen, fresh) => seen.state === 'ready' && fresh.state === 'ready' &&
+          lendingReviewReadsTheSameV1(seen as LendingReadyWireV1, fresh as LendingReadyWireV1),
         refresh: async () => { const fresh = await read(); if (fresh.state === 'ready') approved = fresh; return fresh; },
         send: async calls => {
           let key: string | null;

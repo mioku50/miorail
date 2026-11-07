@@ -51,24 +51,48 @@ test('full repayment requires the person to type a maximum and keeps stock marke
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await expect(page.getByText('3.125001 USDC', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Repay all debt', exact: true }).click();
-  const max = page.getByLabel('Maximum USDC funding', { exact: true }); await expect(max).toHaveValue('');
+  const max = page.getByLabel('Most USDC it may take', { exact: true }); await expect(max).toHaveValue('');
   const review = page.getByRole('button', { name: 'Review repayment', exact: true }); await expect(review).toBeDisabled();
   await max.fill('4'); await review.click(); await expect.poll(() => state.intents.length).toBe(1);
   expect(state.intents[0]).toEqual({ collateralTokenAddress: STOCKS.find(s => s.id === 'NVDAc')!.token.toLowerCase(), amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '4000000' });
 });
-test('Max fills from the position just read: the smaller of debt and wallet USDC, or the wallet as the bound', async ({ page }) => {
-  const state = await install(page); await page.goto('/repay?asset=cbBTC');
+test('Max fills from the position just read: the wallet short of the debt as an exact amount, else Repay all with the wallet as the bound', async ({ page }) => {
+  const state = await install(page); state.wallet = '2000000'; await page.goto('/repay?asset=cbBTC');
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await expect(page.getByText('3.125001 USDC', { exact: true })).toBeVisible();
   const amount = page.getByLabel('USDC to repay', { exact: true }); await expect(amount).toHaveValue('');
   await page.getByRole('button', { name: 'Max', exact: true }).click();
-  await expect(amount).toHaveValue('3.125001');
-  await page.getByRole('button', { name: 'Repay all debt', exact: true }).click();
-  const bound = page.getByLabel('Maximum USDC funding', { exact: true }); await expect(bound).toHaveValue('');
+  await expect(amount).toHaveValue('2');
+  // 2026-11-07: a wallet that covers the debt repays all of it, which only Repay all does, so Max moves there.
+  state.wallet = '4500000'; await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await expect(page.getByText('4.5 USDC', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Max', exact: true }).click();
-  await expect(bound).toHaveValue('4.5');
+  await expect(page.getByRole('button', { name: 'Repay all debt', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  const bound = page.getByLabel('Most USDC it may take', { exact: true }); await expect(bound).toHaveValue('4.5');
+  await expect(page.getByText(/^You pay the whole debt: 3\.125001 USDC at block 53,200,000, plus the interest until your transaction lands\.$/)).toBeVisible();
+  await page.getByRole('button', { name: 'Max', exact: true }).click(); await expect(bound).toHaveValue('4.5');
   // Pressing Max read nothing more and prepared nothing.
-  expect(state.reads).toEqual([CBBTC]); expect(state.intents).toEqual([]);
+  expect(state.reads).toEqual([CBBTC, CBBTC]); expect(state.intents).toEqual([]);
+});
+test('an exact amount that is the whole debt is never sent: the page says why, and the way to Repay all', async ({ page }) => {
+  // 2026-11-07: Exact USDC with the Morpho debt shown, 0.840001 USDC, came back refused from the review.
+  await page.setViewportSize({ width: 390, height: 844 });
+  const state = await install(page); await page.goto('/repay?asset=cbBTC');
+  await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
+  await expect(page.getByText('3.125001 USDC', { exact: true })).toBeVisible();
+  const amount = page.getByLabel('USDC to repay', { exact: true }), review = page.getByRole('button', { name: 'Review repayment', exact: true });
+  for (const whole of ['3.125001', '3,125001', '5']) {
+    await amount.fill(whole);
+    await expect(page.getByText(/^That is the whole debt, or more: 3\.125001 USDC at block 53,200,000\./)).toBeVisible();
+    await expect(review).toBeDisabled();
+  }
+  await amount.fill('3.125'); await expect(page.getByText(/That is the whole debt/)).toHaveCount(0); await expect(review).toBeEnabled();
+  await amount.fill('3.125001');
+  await page.getByRole('button', { name: 'Repay all debt instead', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Repay all debt', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByLabel('Most USDC it may take', { exact: true })).toHaveValue('');
+  expect(state.intents).toEqual([]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 });
 test('a stock loan is repaid in full and its stock taken back in one review; with no debt left, the stock alone', async ({ page }) => {
   const state = await install(page), nvda = STOCKS.find(s => s.id === 'NVDAc')!.token.toLowerCase();
@@ -76,14 +100,14 @@ test('a stock loan is repaid in full and its stock taken back in one review; wit
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await expect(page.getByText('0.03014121 NVDAc', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Repay all, take back NVDAc', exact: true }).click();
-  await page.getByLabel('Maximum USDC funding', { exact: true }).fill('4');
+  await page.getByLabel('Most USDC it may take', { exact: true }).fill('4');
   await expect(page.getByText(/Then your 0\.03014121 NVDAc comes back to this wallet in the same review/)).toBeVisible();
   await page.getByRole('button', { name: 'Review repayment', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(1);
   expect(state.intents[0]).toEqual({ collateralTokenAddress: nvda, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '4000000', returnCollateral: true });
   state.zeroDebt = true; await page.goto('/repay?asset=NVDAc');
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await expect(page.getByText(/No debt is open in this market/)).toBeVisible();
-  await expect(page.getByLabel('Maximum USDC funding', { exact: true })).toHaveCount(0);
+  await expect(page.getByLabel('Most USDC it may take', { exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Take back NVDAc', exact: true }).click(); await expect.poll(() => state.intents.length).toBe(2);
   expect(state.intents[1]).toEqual({ collateralTokenAddress: nvda, amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
   // A Morpho loan's collateral comes back the same way.
@@ -99,7 +123,7 @@ test('Repay all from a wallet short of the debt by interest says so by the butto
   await page.goto('/repay?asset=NVDAc');
   await page.getByRole('button', { name: 'Read repayment position', exact: true }).click();
   await page.getByRole('button', { name: 'Repay all, take back NVDAc', exact: true }).click();
-  await page.getByLabel('Maximum USDC funding', { exact: true }).fill('2');
+  await page.getByLabel('Most USDC it may take', { exact: true }).fill('2');
   const why = page.getByText(/^This wallet holds 2 USDC and the debt is 2\.000003 USDC now, 0\.000003 USDC short\./);
   await expect(why).toBeVisible();
   await expect(why).toContainText('for example 0.02 USDC, then read the position again.');

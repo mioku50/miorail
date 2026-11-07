@@ -32,3 +32,19 @@ export function repayWalletBelowMaximumWordsV1(input: { debt: bigint; maximum: b
       ? ` The debt is ${usdcWordsV1(input.debt)}, so a maximum between that and what the wallet holds covers it.`
       : ` The debt is ${usdcWordsV1(input.debt)}, ${usdcWordsV1(input.debt - input.wallet)} more than the wallet holds: add a little more than that, then read the position again.`);
 }
+
+/** An exact repayment at or above a Morpho debt. Morpho keeps a debt as shares, and the debt shown
+ * is rounded up from them, so repaying exactly that amount is more than is owed, and Morpho would
+ * revert it (2026-11-07: Max put the 0.840001 USDC shown into Exact USDC; the shares were worth
+ * between 0.84 and 0.840001, and the review said only that it could not be established). */
+export function repayExactOverDebtWordsV1(input: { assets: bigint; debt: bigint; block: bigint | number }): string {
+  return `An exact repayment of ${usdcWordsV1(input.assets)} is more than this debt. Morpho keeps a debt as shares: at block `
+    + `${BigInt(input.block).toLocaleString('en-US')} these are worth no more than ${usdcWordsV1(input.debt)}, the debt shown, which is rounded up. `
+    + 'An exact repayment has to be less than the debt. To repay all of it, choose Repay all debt: it repays the shares themselves, '
+    + 'with the interest until the transaction lands, and leaves nothing behind.';
+}
+
+/** An exact repayment too small to repay one debt share. */
+export function repayExactRoundsToZeroWordsV1(input: { assets: bigint }): string {
+  return `An exact repayment of ${usdcWordsV1(input.assets)} is less than one share of this Morpho debt is worth, so it would repay nothing. Enter a larger amount.`;
+}

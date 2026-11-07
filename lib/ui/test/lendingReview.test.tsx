@@ -3,10 +3,10 @@ import { describe, it } from 'node:test';
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LendingReviewScreen } from '../src/console/LendingReviewScreen';
-import { describeLendingTermsChangesV1, lendingBackLinkV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
+import { describeLendingTermsChangesV1, lendingBackLinkV1, lendingReviewReadsTheSameV1, parseLendingReviewWireV1, parseLendingExecutionWireV1, lendingExecutionCopyV1, type LendingReadyWireV1 } from '../src/console/lendingReviewView';
 import { stepsStoppedV1, stepsUnknownV1, type LendingReviewConsoleModelV1 } from '../src/console/useLendingReviewConsole';
 import { RepayEntryScreen, type RepayEntryModelV1 } from '../src/console/RepayEntryScreen';
-import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayInitialAssetV1, repayIntentAmountsV1, repayTopUpAtomicV1 } from '../src/console/repayEntry';
+import { REPAY_COLLATERALS_V1, repayCanReturnV1, repayCapacityViewV1, repayExactCoversDebtV1, repayExactWholeDebtTextV1, repayInitialAssetV1, repayIntentAmountsV1, repayTopUpAtomicV1 } from '../src/console/repayEntry';
 
 void React;
 const NOOP = () => {};
@@ -100,13 +100,14 @@ describe('lending review presentation does not call a submission a repayment', (
   it('shows exact before/after debt, retained collateral and maximum funding before the wallet control', () => {
     const html = render();
     assert.match(html, /Review repayment/); assert.match(html, /3\.125001 USDC/); assert.match(html, /0\.125001 USDC/);
-    assert.match(html, /0\.01234567 cbBTC/); assert.match(html, /Maximum USDC funding/); assert.match(html, /collateral stays deposited/);
+    assert.match(html, /0\.01234567 cbBTC/); assert.match(html, /Repay exactly 3 USDC\./); assert.match(html, /Your wallet pays exactly that\. Your collateral stays deposited\./);
     assert.match(html, /53,200,000/); assert.match(html, /53,200,001/); assert.match(html, /Open in your wallet/);
     assert.doesNotMatch(html, /Confirmed onchain|Repayment completed/);
   });
   it('all has an explicit maximum and never uses the rounded debt as its amount', () => {
     const body = ready(); body.facts.amountMode = 'all'; body.facts.requestedAssets = null; body.facts.maximumDebitAssets = '4000000';
-    const html = render({ body }); assert.match(html, /entire debt position at execution/); assert.match(html, /4 USDC/); assert.doesNotMatch(html, /Repay exactly/);
+    const html = render({ body }); assert.match(html, /Repay all of the debt: <strong>3 USDC<\/strong> in the simulation/); assert.match(html, /The most it may take: 4 USDC\./);
+    assert.doesNotMatch(html, /Repay exactly/);
   });
   it('formats server health ratios exactly without rounding a ratio below one up to one, and explains repayment health ratio N/A', () => {
     const repayBody = ready(); repayBody.facts.healthBeforeWad = null; repayBody.facts.healthAfterWad = null;
@@ -239,6 +240,34 @@ describe('lending review presentation does not call a submission a repayment', (
       describeLendingTermsChangesV1(body, recalled),
       'The calls were prepared again for this moment. The amounts, collateral, health ratio and limits above did not change. Open your wallet again to send these exact calls.',
     );
+
+    // 2026-11-07: that case reads the same, so its fresh calls go to the wallet at the first press.
+    // Health within the same hundredth, a new block, new debt shares and new call bytes read the same too.
+    const later = structuredClone(recalled);
+    later.calls = later.calls.map(call => ({ ...call, data: `${call.data}00` }));
+    later.facts.healthAfterWad = '2264514776615360449'; later.facts.debtAfterShares = '49504';
+    later.facts.blockNumber += 15; later.measured = { ...later.measured, blockNumber: later.measured.blockNumber + 15 };
+    assert.equal(lendingReviewReadsTheSameV1(body, recalled), true);
+    assert.equal(lendingReviewReadsTheSameV1(body, later), true);
+    // Anything the person reads that differs asks again, and is named.
+    assert.equal(lendingReviewReadsTheSameV1(body, next), false);
+    const changed = (edit: (copy: LendingReadyWireV1) => void) => { const copy = structuredClone(recalled); edit(copy); return copy; };
+    for (const edit of [
+      (c: LendingReadyWireV1) => { c.facts.debtAfterAssets = '50002'; },
+      (c: LendingReadyWireV1) => { c.facts.requestedAssets = '50001'; },
+      (c: LendingReadyWireV1) => { c.facts.collateralAfterAssets = '80001'; },
+      (c: LendingReadyWireV1) => { c.facts.policyLimitAssets = '60000'; },
+      (c: LendingReadyWireV1) => { c.measured = { ...c.measured, loanDeltaAssets: '49999' }; },
+      (c: LendingReadyWireV1) => { c.calls = c.calls.map(call => ({ ...call, value: '1' })); },
+      (c: LendingReadyWireV1) => { c.calls = [...c.calls, c.calls[0]!]; },
+      (c: LendingReadyWireV1) => { c.atomicRequired = !c.atomicRequired; },
+    ]) assert.equal(lendingReviewReadsTheSameV1(body, changed(edit)), false);
+    const step = changed(c => { c.steps = c.steps.map(s => ({ ...s, to: `0x${'7'.repeat(40)}` })); });
+    assert.equal(lendingReviewReadsTheSameV1(body, step), false);
+    assert.match(describeLendingTermsChangesV1(body, step), /^The terms changed \(wallet steps; approved calldata\)/);
+    const note = changed(c => { c.facts.warnings = [...c.facts.warnings, 'A 49.9% fall in the NVDAc price liquidates this position.']; });
+    assert.equal(lendingReviewReadsTheSameV1(body, note), false);
+    assert.match(describeLendingTermsChangesV1(body, note), /^The terms changed \(risk notes; approved calldata\)/);
   });
 });
 
@@ -267,19 +296,43 @@ describe('repayment entry is exact and does not choose a wallet maximum', () => 
       { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '4000000' });
     for (const text of ['', '3.0000001', '3e0', '0', '-1', '4.500001']) assert.equal(repayIntentAmountsV1({ mode: 'all', amount: '3', maximum: text, walletUsdcAtomic: '4500000' }).intent, null);
   });
+  it('an exact amount at or above the debt is Repay all’s: said in the position’s numbers, with the way there, and never sent', () => {
+    // 2026-11-07: Exact USDC with the Morpho debt shown, 0.840001 USDC, was refused by the review.
+    for (const amount of ['3.125001', '3,125001', '4']) {
+      assert.equal(repayExactCoversDebtV1(amount, '3125001'), true, amount);
+      const asked = repayIntentAmountsV1({ mode: 'assets', amount, maximum: '', walletUsdcAtomic: '4500000', debtAtomic: '3125001', blockNumber: 53_200_000, venue: 'morpho' });
+      assert.equal(asked.intent, null);
+      assert.match(asked.error!, /^That is the whole debt, or more: 3\.125001 USDC at block 53,200,000\. .*Morpho keeps a debt as shares, and the debt shown is rounded up.*choose Repay all debt/);
+    }
+    for (const amount of ['3.125', '0.000001', '', 'x']) assert.equal(repayExactCoversDebtV1(amount, '3125001'), false, amount);
+    assert.equal(repayExactCoversDebtV1('1', '0'), false);
+    assert.deepEqual(repayIntentAmountsV1({ mode: 'assets', amount: '3.125', maximum: '', walletUsdcAtomic: '4500000', debtAtomic: '3125001' }).intent,
+      { amountMode: 'assets', repayAmountAtomic: '3125000', maximumUsdcAtomic: '3125000' });
+    // Aave keeps no shares to round, so its words leave Morpho out.
+    assert.doesNotMatch(repayExactWholeDebtTextV1({ ...capacity, venue: 'aave-v4' }), /Morpho/);
+    const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ read: capacity, amount: '3.125001' })} />);
+    assert.match(html, /That is the whole debt, or more: 3\.125001 USDC at block 53,200,000\./);
+    assert.match(html, /<button type="button" class="still-btn sec">Repay all debt instead<\/button>/);
+    assert.match(html, /<button type="submit" class="still-btn" disabled="">Review repayment<\/button>/);
+    const partial = renderToStaticMarkup(<RepayEntryScreen model={entry({ read: capacity, amount: '3.125' })} />);
+    assert.doesNotMatch(partial, /That is the whole debt|Repay all debt instead/);
+    assert.match(partial, /<button type="submit" class="still-btn">Review repayment<\/button>/);
+  });
   it('hides a supplied private balance when signed out', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ signedIn: false, read: capacity })} />);
     assert.match(html, /Sign in/); assert.doesNotMatch(html, /3\.125001|4\.5|Read repayment position|Review repayment|<input/);
   });
   it('never autofills an amount or maximum from the position, and Max fills only when pressed', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ mode: 'all', read: capacity })} />);
-    assert.match(html, /Enter your own maximum: it is a cap, not the amount\./); assert.match(html, /value=""/); assert.doesNotMatch(html, /value="4\.5"|value="3\.125001"/);
-    // 2026-11-07, the operator: the cap read as a second, larger debt (0.95 against 0.78 owed). The
-    // note says what is repaid, the debt read and its interest, and that the cap is not it.
-    assert.match(html, /This repays the whole debt: 3\.125001 USDC at block [\d,]+, plus the interest until your transaction lands\./);
+    assert.match(html, /Enter your own maximum: it is a cap, not the payment\./); assert.match(html, /value=""/); assert.doesNotMatch(html, /value="4\.5"|value="3\.125001"/);
+    // 2026-11-07, the operator, twice: the cap read as a second, larger debt (0.95 against 0.78 owed,
+    // then 0.909427 against 0.840001). What is paid comes first, above the cap, which is named as one.
+    assert.match(html, /You pay the whole debt: <strong class="mono">3\.125001 USDC<\/strong> at block [\d,]+, plus the interest until your transaction lands\./);
+    assert.match(html, /<label class="still-borrow-label" for="[^"]+">Most USDC it may take<\/label>/);
+    assert.ok(html.indexOf('You pay the whole debt') < html.indexOf('Most USDC it may take'));
     // 2026-11-01, the operator: a Max beside the amount, so the wallet need not be opened to look.
     // It is the person's press, never a value the page chose for them.
-    assert.match(html, /<button type="button" class="still-borrow-max" title="All the USDC in your wallet, as the most this can spend">Max<\/button>/);
+    assert.match(html, /<button type="button" class="still-borrow-max" title="All the USDC in your wallet, as the most this can take">Max<\/button>/);
     assert.match(renderToStaticMarkup(<RepayEntryScreen model={entry({ read: { ...capacity, debtAtomic: '0' } })} />), /No debt was recorded in this market/);
     assert.doesNotMatch(renderToStaticMarkup(<RepayEntryScreen model={entry()} />), /No debt was recorded/);
   });
@@ -450,7 +503,7 @@ describe('repay all and take the stock back', () => {
   });
   it('with no debt left offers the stock back alone, asking for no USDC', () => {
     const html = renderToStaticMarkup(<RepayEntryScreen model={entry({ asset: 'NVDAc', read: { ...stock, debtAtomic: '0' }, canReturn: true })} />);
-    assert.match(html, /No debt is open in this market/); assert.match(html, /Take back NVDAc/); assert.doesNotMatch(html, /Maximum USDC funding/);
+    assert.match(html, /No debt is open in this market/); assert.match(html, /Take back NVDAc/); assert.doesNotMatch(html, /Most USDC it may take|The most it may take/);
     assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '', walletUsdcAtomic: '0', debtAtomic: '0' }).intent,
       { amountMode: 'all', repayAmountAtomic: null, maximumUsdcAtomic: '0', returnCollateral: true });
     assert.deepEqual(repayIntentAmountsV1({ mode: 'return', amount: '', maximum: '0.19', walletUsdcAtomic: '200000', debtAtomic: '180030' }).intent,
@@ -462,8 +515,12 @@ describe('repay all and take the stock back', () => {
     const html = render({ body: returned() });
     assert.match(html, /Repay all and take back NVDAc/); assert.match(html, /Then take back <strong>0\.03014121 NVDAc<\/strong> to this wallet, in the same transaction/);
     assert.doesNotMatch(html, /Your collateral stays deposited/);
+    // 2026-11-07, the operator: the cap read as what is paid. What the simulation repaid comes first; the cap after it, named as one.
+    assert.match(html, /Repay all of the debt: <strong>0\.18003 USDC<\/strong> in the simulation at block 53,200,000, plus the interest until your transaction lands\./);
+    assert.match(html, /The most it may take: 0\.19 USDC\./); assert.match(html, /That is a cap, not the payment\./);
+    assert.ok(html.indexOf('Repay all of the debt') < html.indexOf('The most it may take'));
     const alone = render({ body: returned(true) });
-    assert.match(alone, /Take back NVDAc/); assert.match(alone, /No USDC debt is open/); assert.doesNotMatch(alone, /Maximum USDC funding/);
+    assert.match(alone, /Take back NVDAc/); assert.match(alone, /No USDC debt is open/); assert.doesNotMatch(alone, /Most USDC it may take|The most it may take/);
   });
   it('refuses a return on a borrow or an exact repayment, and accepts one on Morpho', () => {
     const morpho = returned(); Object.assign(morpho.facts, { venue: 'morpho' });

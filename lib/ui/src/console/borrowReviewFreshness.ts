@@ -38,6 +38,13 @@ export async function handOffFreshBorrowV1(input: {
   current: () => boolean;
   now?: () => number;
   maxCalls?: number;
+  /** Whether the fresh review shows the person everything the one they read
+   * did, every figure and every wallet step, so that only the calls' bytes are
+   * new. A Morpho loan's calls carry a deadline and a share-price bound, so
+   * they are new on every read, and the first press always asked again
+   * (2026-11-07). The fresh calls then go to the wallet at once. Left out, any
+   * new calls ask again. */
+  readsTheSame?: (seen: FreshBorrowReviewV1, fresh: FreshBorrowReviewV1) => boolean;
 }): Promise<BorrowHandoffV1> {
   const now = input.now ?? Date.now;
   let fresh = input.seen;
@@ -47,10 +54,12 @@ export async function handOffFreshBorrowV1(input: {
   if (fresh?.state === 'refused') return { state: 'refused', message: fresh.detail || 'The server refused this fresh review. Nothing was sent.' };
   if (!hasBorrowSigningTermsV1(fresh, input.maxCalls)) return { state: 'refused', message: 'This response did not establish fresh signing terms. Nothing was sent.' };
   if (Date.parse(fresh.expiresAt) <= now()) return { state: 'refused', message: 'This preparation expired. Measure again before opening your wallet.' };
-  if (!armed && (input.seen?.signingTermsHash !== fresh.signingTermsHash || input.seen?.callsHash !== fresh.callsHash)) {
+  if (!armed && (input.seen?.signingTermsHash !== fresh.signingTermsHash || input.seen?.callsHash !== fresh.callsHash) &&
+      !(input.seen && input.readsTheSame?.(input.seen, fresh) === true)) {
     return { state: 'review_changed', termsHash: fresh.signingTermsHash, message: 'The terms changed. Read the updated review, then open your wallet again to accept these exact terms.' };
   }
-  // No cached calls cross this boundary: it is either the fresh server result
-  // or the fresh changed review the person explicitly accepted next.
+  // No cached calls cross this boundary: it is either the fresh server result,
+  // reading as the review the person pressed on did, or the fresh changed
+  // review the person explicitly accepted next.
   return { state: 'submitted', batchId: await input.send(fresh.calls) };
 }
